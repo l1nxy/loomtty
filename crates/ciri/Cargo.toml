@@ -1,0 +1,24 @@
+[package]
+name = "ciri"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "ciri"
+path = "src/main.rs"
+
+[dependencies]
+ciri-render = { workspace = true }
+ciri-term = { workspace = true }
+ciri-layout = { path = "../ciri-layout" }
+ciri-anim = { path = "../ciri-anim" }
+ciri-input = { path = "../ciri-input" }
+ciri-config = { workspace = true }
+winit = { workspace = true }
+wgpu = { workspace = true }
+glyphon = { workspace = true }
+tokio = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+anyhow = { workspace = true }
+pollster = "0.4"

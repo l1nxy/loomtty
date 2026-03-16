@@ -1,0 +1,93 @@
+# Ciri default configuration
+# Copy to ~/.config/ciri/config.toml and customize.
+
+[font]
+family = "monospace"
+size = 16.0
+
+[appearance]
+padding = 4.0
+column_gap = 8.0
+border_width = 2.0
+active_border_color = "#88C0D0"
+inactive_border_color = "#4C566A"
+
+[animation]
+speed = 12.0
+enabled = true
+epsilon = 0.1
+overview_zoom_fit = 0.9
+zoom_threshold = 0.99
+
+[window]
+width = 1024.0
+height = 768.0
+title = "ciri"
+
+[terminal]
+default_cols = 80
+default_rows = 24
+cursor_color = "#E6E6E6"
+cursor_opacity = 0.7
+
+[statusbar]
+height_padding = 4.0
+background_color = "#1F1F26"
+text_baseline = 0.8
+leader_text_color = "#4CE64C"
+text_color = "#B3B3B3"
+active_mode_color = "#4CE64C"
+inactive_text_color = "#808080"
+leader_indicator_color = "#4CE64C"
+leader_indicator_height = 2.0
+
+[input]
+leader_timeout_ms = 1000
+double_tap_window_ms = 300
+scroll_multiplier = 50.0
+
+[render]
+frame_interval_ms = 16
+clear_color = "#010114"
+atlas_size = 2048
+max_glyph_instances = 32768
+max_rectangles = 8192
+frame_latency = 2
+
+[theme]
+foreground = "#E6E6E6"
+background = "#1A1A1A"
+black = "#000000"
+red = "#CC0000"
+green = "#00CC00"
+yellow = "#CCCC00"
+blue = "#4D4DE6"
+magenta = "#CC00CC"
+cyan = "#00CCCC"
+white = "#BFBFBF"
+bright_black = "#808080"
+bright_red = "#FF0000"
+bright_green = "#00FF00"
+bright_yellow = "#FFFF00"
+bright_blue = "#6666FF"
+bright_magenta = "#FF00FF"
+bright_cyan = "#00FFFF"
+bright_white = "#FFFFFF"
+
+[keys]
+leader = "ctrl+space"
+
+[keys.bindings]
+n = "new_column_right"
+d = "split_down"
+x = "close_pane"
+h = "focus_left"
+l = "focus_right"
+k = "focus_up"
+j = "focus_down"
+"shift+h" = "move_pane_left"
+"shift+l" = "move_pane_right"
+"1" = "column_width_one_third"
+"2" = "column_width_half"
+"3" = "column_width_two_thirds"
+f = "column_width_full"

@@ -1,0 +1,11 @@
+[package]
+name = "ciri-term"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+alacritty_terminal = { workspace = true }
+nix = { workspace = true }
+libc = { workspace = true }
+log = { workspace = true }
+anyhow = { workspace = true }

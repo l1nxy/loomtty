@@ -1,0 +1,21 @@
+[package]
+name = "ciri-server"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "ciri-server"
+path = "src/main.rs"
+
+[dependencies]
+ciri-term = { workspace = true }
+ciri-layout = { path = "../ciri-layout" }
+ciri-protocol = { workspace = true }
+ciri-session = { workspace = true }
+ciri-config = { workspace = true }
+tokio = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+anyhow = { workspace = true }
+serde_json = "1"
+libc = { workspace = true }

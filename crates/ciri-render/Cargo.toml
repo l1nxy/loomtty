@@ -1,0 +1,16 @@
+[package]
+name = "ciri-render"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wgpu = { workspace = true }
+winit = { workspace = true }
+glyphon = { workspace = true }
+alacritty_terminal = { workspace = true }
+log = { workspace = true }
+anyhow = { workspace = true }
+bytemuck = { version = "1", features = ["derive"] }
+bytemuck_derive = "1"
+swash = "0.1"
+ciri-config = { path = "../ciri-config" }

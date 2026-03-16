@@ -245,9 +245,18 @@ impl CiriConfig {
 }
 
 pub fn config_path() -> PathBuf {
-    let config_home = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        format!("{home}/.config")
-    });
-    PathBuf::from(config_home).join("ciri").join("config.toml")
+    #[cfg(unix)]
+    {
+        let config_home = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+            format!("{home}/.config")
+        });
+        PathBuf::from(config_home).join("ciri").join("config.toml")
+    }
+    #[cfg(windows)]
+    {
+        let appdata = std::env::var("APPDATA")
+            .unwrap_or_else(|_| r"C:\Users\Default\AppData\Roaming".to_string());
+        PathBuf::from(appdata).join("ciri").join("config.toml")
+    }
 }

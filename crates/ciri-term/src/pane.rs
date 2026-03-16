@@ -4,7 +4,6 @@ use alacritty_terminal::term::Config as TermConfig;
 use alacritty_terminal::term::Term;
 use alacritty_terminal::vte::ansi::Processor;
 use anyhow::Result;
-use std::os::fd::AsRawFd;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
@@ -45,12 +44,6 @@ impl Pane {
         let (event_listener, event_rx) = PtyEventListener::new();
         let term = Term::new(config, &size, event_listener);
 
-        let fd = pty.master_fd().as_raw_fd();
-        let flags = nix::fcntl::fcntl(fd, nix::fcntl::FcntlArg::F_GETFL)?;
-        let mut oflags = nix::fcntl::OFlag::from_bits_truncate(flags);
-        oflags.insert(nix::fcntl::OFlag::O_NONBLOCK);
-        nix::fcntl::fcntl(fd, nix::fcntl::FcntlArg::F_SETFL(oflags))?;
-
         Ok(Pane {
             id,
             term: Arc::new(Mutex::new(term)),
@@ -70,24 +63,22 @@ impl Pane {
             return false;
         }
 
-        let fd = self.pty.master_fd().as_raw_fd();
-        let mut buf = [0u8; 65536];
         let mut processed = false;
 
-        loop {
-            match nix::unistd::read(fd, &mut buf) {
-                Ok(0) => { self.exited = true; break; }
-                Ok(n) => {
-                    let mut term = self.term.lock().unwrap();
-                    for byte in &buf[..n] {
-                        self.processor.advance(&mut *term, *byte);
-                    }
-                    processed = true;
+        // Drain all available output from the background reader thread
+        let chunks = self.pty.drain_output();
+        if !chunks.is_empty() {
+            let mut term = self.term.lock().unwrap();
+            for chunk in &chunks {
+                for byte in chunk {
+                    self.processor.advance(&mut *term, *byte);
                 }
-                Err(nix::errno::Errno::EAGAIN) => break,
-                Err(nix::errno::Errno::EIO) => { self.exited = true; break; }
-                Err(_) => { self.exited = true; break; }
             }
+            processed = true;
+        }
+
+        if self.pty.reader_eof() {
+            self.exited = true;
         }
 
         // Process terminal events (PtyWrite for DA1/DA2 responses, etc.)
@@ -99,7 +90,7 @@ impl Pane {
                 Event::Exit | Event::ChildExit(_) => {
                     self.exited = true;
                 }
-                _ => {} // Bell, Title, etc. — handle later
+                _ => {}
             }
         }
 
@@ -115,8 +106,7 @@ impl Pane {
 
     pub fn write_to_pty(&self, data: &[u8]) {
         if self.exited { return; }
-        let fd = self.pty.master_fd();
-        let _ = nix::unistd::write(fd, data);
+        let _ = self.pty.write(data);
     }
 
     pub fn resize(&mut self, cols: u16, rows: u16) {

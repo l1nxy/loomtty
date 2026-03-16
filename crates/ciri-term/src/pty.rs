@@ -1,93 +1,102 @@
 use anyhow::{Context, Result};
-use nix::pty::{openpty, OpenptyResult};
-use nix::sys::signal::{Signal, kill};
-use nix::sys::wait::{WaitPidFlag, waitpid};
-use nix::unistd::{ForkResult, Pid, close, dup2, execvp, fork, setsid};
-use std::ffi::CString;
-use std::os::fd::{AsRawFd, OwnedFd};
+use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use std::io::{Read, Write};
+use std::sync::mpsc;
+use std::sync::Mutex;
 
+/// Cross-platform PTY wrapper using portable-pty.
+/// Uses a background reader thread because portable-pty's reader is blocking.
 pub struct Pty {
-    master: OwnedFd,
-    child_pid: Pid,
+    master: Box<dyn MasterPty + Send>,
+    writer: Mutex<Box<dyn Write + Send>>,
+    child: Mutex<Box<dyn portable_pty::Child + Send + Sync>>,
+    /// Channel receiving PTY output from the reader thread.
+    output_rx: mpsc::Receiver<Vec<u8>>,
+    /// Set to true when the reader thread detects EOF.
+    reader_done: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Pty {
     pub fn spawn(cols: u16, rows: u16) -> Result<Self> {
-        let OpenptyResult { master, slave } = openpty(None, None)
+        let pty_system = native_pty_system();
+
+        let pair = pty_system
+            .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
             .context("openpty failed")?;
 
-        set_winsize(master.as_raw_fd(), cols, rows);
+        let shell = if cfg!(windows) {
+            CommandBuilder::new("cmd.exe")
+        } else {
+            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+            CommandBuilder::new(shell)
+        };
 
-        match unsafe { fork() }.context("fork failed")? {
-            ForkResult::Child => {
-                drop(master);
-                setsid().ok();
-                unsafe { libc::ioctl(slave.as_raw_fd(), libc::TIOCSCTTY, 0) };
-                dup2(slave.as_raw_fd(), 0).ok();
-                dup2(slave.as_raw_fd(), 1).ok();
-                dup2(slave.as_raw_fd(), 2).ok();
-                if slave.as_raw_fd() > 2 {
-                    close(slave.as_raw_fd()).ok();
+        let child = pair.slave.spawn_command(shell).context("spawn failed")?;
+        drop(pair.slave);
+
+        let mut reader = pair.master.try_clone_reader().context("clone reader failed")?;
+        let writer = pair.master.take_writer().context("take writer failed")?;
+
+        // Spawn background reader thread
+        let (output_tx, output_rx) = mpsc::channel();
+        let reader_done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reader_done_clone = reader_done.clone();
+
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 65536];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => {
+                        reader_done_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                        break;
+                    }
+                    Ok(n) => {
+                        if output_tx.send(buf[..n].to_vec()).is_err() {
+                            break; // Receiver dropped
+                        }
+                    }
+                    Err(_) => {
+                        reader_done_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                        break;
+                    }
                 }
-
-                // Close inherited fds (3..1024) to avoid leaking GPU/event fds
-                for fd in 3..1024 {
-                    let _ = close(fd);
-                }
-
-                let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-                let shell_c = CString::new(shell).unwrap();
-                let _ = execvp(&shell_c, &[&shell_c]);
-                std::process::exit(1);
             }
-            ForkResult::Parent { child } => {
-                drop(slave);
-                Ok(Pty {
-                    master,
-                    child_pid: child,
-                })
-            }
+        });
+
+        Ok(Pty {
+            master: pair.master,
+            writer: Mutex::new(writer),
+            child: Mutex::new(child),
+            output_rx,
+            reader_done,
+        })
+    }
+
+    /// Drain all available output from the reader thread (non-blocking).
+    pub fn drain_output(&self) -> Vec<Vec<u8>> {
+        let mut chunks = Vec::new();
+        while let Ok(chunk) = self.output_rx.try_recv() {
+            chunks.push(chunk);
         }
+        chunks
     }
 
-    pub fn master_fd(&self) -> &OwnedFd {
-        &self.master
+    /// Check if the reader thread has finished (EOF).
+    pub fn reader_eof(&self) -> bool {
+        self.reader_done.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    pub fn child_pid(&self) -> Pid {
-        self.child_pid
+    /// Write data to the PTY.
+    pub fn write(&self, data: &[u8]) -> std::io::Result<usize> {
+        self.writer.lock().unwrap().write(data)
     }
 
-    /// Check if child process has exited (non-blocking).
+    /// Check if child has exited (non-blocking).
     pub fn try_wait(&self) -> bool {
-        match waitpid(self.child_pid, Some(WaitPidFlag::WNOHANG)) {
-            Ok(nix::sys::wait::WaitStatus::Exited(_, _))
-            | Ok(nix::sys::wait::WaitStatus::Signaled(_, _, _)) => true,
-            _ => false,
-        }
+        self.child.lock().unwrap().try_wait().ok().flatten().is_some()
     }
 
     pub fn resize(&self, cols: u16, rows: u16) {
-        set_winsize(self.master.as_raw_fd(), cols, rows);
+        let _ = self.master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
     }
-}
-
-impl Drop for Pty {
-    fn drop(&mut self) {
-        // Only signal+reap if the child hasn't been reaped yet.
-        // kill() returns ESRCH if the process doesn't exist — that's fine.
-        if kill(self.child_pid, Signal::SIGHUP).is_ok() {
-            let _ = waitpid(self.child_pid, Some(WaitPidFlag::WNOHANG));
-        }
-    }
-}
-
-fn set_winsize(fd: i32, cols: u16, rows: u16) {
-    let ws = libc::winsize {
-        ws_row: rows,
-        ws_col: cols,
-        ws_xpixel: 0,
-        ws_ypixel: 0,
-    };
-    unsafe { libc::ioctl(fd, libc::TIOCSWINSZ, &ws) };
 }

@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 /// Available presets: "one_dark", "catppuccin_mocha", "tokyo_night", "dracula", "nord", "gruvbox_dark"
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct ThemeConfig {
     /// Preset name. Applied first, then individual fields override.
     #[serde(default)]
@@ -49,27 +50,6 @@ pub struct ThemeConfig {
     pub accent: String,
 }
 
-impl Default for ThemeConfig {
-    fn default() -> Self {
-        // All fields default to "" so resolve_preset() can distinguish
-        // user-set values from unset ones. After resolve_preset(), all
-        // fields will be filled with preset or user values.
-        ThemeConfig {
-            preset: String::new(),
-            foreground: String::new(), background: String::new(),
-            black: String::new(), red: String::new(), green: String::new(),
-            yellow: String::new(), blue: String::new(), magenta: String::new(),
-            cyan: String::new(), white: String::new(),
-            bright_black: String::new(), bright_red: String::new(),
-            bright_green: String::new(), bright_yellow: String::new(),
-            bright_blue: String::new(), bright_magenta: String::new(),
-            bright_cyan: String::new(), bright_white: String::new(),
-            ui_background: String::new(), statusbar_background: String::new(),
-            border_active: String::new(), border_inactive: String::new(),
-            accent: String::new(),
-        }
-    }
-}
 
 impl ThemeConfig {
     pub fn parse_color(hex: &str) -> [f32; 4] {

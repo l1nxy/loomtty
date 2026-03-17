@@ -11,6 +11,12 @@ pub enum ViewOffset {
     Gesture(f64),
 }
 
+impl Default for ViewOffset {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ViewOffset {
     pub fn new() -> Self {
         ViewOffset::Static(0.0)
@@ -20,6 +26,15 @@ impl ViewOffset {
         match self {
             ViewOffset::Static(v) => *v,
             ViewOffset::Animating(s) => s.position,
+            ViewOffset::Gesture(v) => *v,
+        }
+    }
+
+    /// The target value (final destination of animation, or current value if static).
+    pub fn target(&self) -> f64 {
+        match self {
+            ViewOffset::Static(v) => *v,
+            ViewOffset::Animating(s) => s.target,
             ViewOffset::Gesture(v) => *v,
         }
     }

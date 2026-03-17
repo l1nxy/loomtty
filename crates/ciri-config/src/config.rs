@@ -7,6 +7,7 @@ use crate::theme::ThemeConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct CiriConfig {
     pub font: FontConfig,
     pub appearance: AppearanceConfig,
@@ -20,22 +21,6 @@ pub struct CiriConfig {
     pub render: RenderConfig,
 }
 
-impl Default for CiriConfig {
-    fn default() -> Self {
-        CiriConfig {
-            font: FontConfig::default(),
-            appearance: AppearanceConfig::default(),
-            animation: AnimationConfig::default(),
-            keys: KeybindConfig::default(),
-            theme: ThemeConfig::default(),
-            window: WindowConfig::default(),
-            terminal: TerminalConfig::default(),
-            statusbar: StatusBarConfig::default(),
-            input: InputConfig::default(),
-            render: RenderConfig::default(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -226,11 +211,13 @@ impl CiriConfig {
 pub fn config_path() -> PathBuf {
     #[cfg(unix)]
     {
-        let config_home = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-            format!("{home}/.config")
-        });
-        PathBuf::from(config_home).join("ciri").join("config.toml")
+        if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME")
+            && !config_home.is_empty() {
+                return PathBuf::from(config_home).join("ciri").join("config.toml");
+            }
+        // $HOME/.config is the XDG default when XDG_CONFIG_HOME is unset
+        let home = std::env::var("HOME").expect("neither XDG_CONFIG_HOME nor HOME is set");
+        PathBuf::from(home).join(".config").join("ciri").join("config.toml")
     }
     #[cfg(windows)]
     {

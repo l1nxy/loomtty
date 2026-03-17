@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 
 /// Cross-platform PTY wrapper using portable-pty.
 /// Uses a background reader thread because portable-pty's reader is blocking.
@@ -13,7 +15,32 @@ pub struct Pty {
     /// Channel receiving PTY output from the reader thread.
     output_rx: mpsc::Receiver<Vec<u8>>,
     /// Set to true when the reader thread detects EOF.
-    reader_done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    reader_done: Arc<AtomicBool>,
+    /// Handle to the background reader thread for cleanup on drop.
+    _reader_handle: Option<JoinHandle<()>>,
+}
+
+/// Query the user's login shell via getpwuid_r (thread-safe).
+#[cfg(unix)]
+fn get_pw_shell() -> Option<String> {
+    let uid = unsafe { libc::getuid() };
+    let mut buf = vec![0u8; 4096];
+    let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut result = std::ptr::null_mut();
+    let ret = unsafe {
+        libc::getpwuid_r(
+            uid,
+            &mut pwd,
+            buf.as_mut_ptr() as *mut libc::c_char,
+            buf.len(),
+            &mut result,
+        )
+    };
+    if ret != 0 || result.is_null() {
+        return None;
+    }
+    let shell = unsafe { std::ffi::CStr::from_ptr(pwd.pw_shell) };
+    shell.to_str().ok().map(|s| s.to_string())
 }
 
 impl Pty {
@@ -24,14 +51,29 @@ impl Pty {
             .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
             .context("openpty failed")?;
 
-        let cmd = if !shell.is_empty() {
+        let mut cmd = if !shell.is_empty() {
             CommandBuilder::new(shell)
         } else if cfg!(windows) {
             CommandBuilder::new("cmd.exe")
         } else {
-            let default = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+            let default = std::env::var("SHELL")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .or_else(|| {
+                    #[cfg(unix)]
+                    { get_pw_shell() }
+                    #[cfg(not(unix))]
+                    { None }
+                })
+                .unwrap_or_else(|| "/bin/sh".to_string());
             CommandBuilder::new(default)
         };
+
+        // Ensure child knows its terminal type.
+        cmd.env("TERM", "xterm-256color");
+        if std::env::var_os("COLORTERM").is_none() {
+            cmd.env("COLORTERM", "truecolor");
+        }
 
         let child = pair.slave.spawn_command(cmd).context("spawn failed")?;
         drop(pair.slave);
@@ -41,29 +83,32 @@ impl Pty {
 
         // Spawn background reader thread
         let (output_tx, output_rx) = mpsc::channel();
-        let reader_done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reader_done = Arc::new(AtomicBool::new(false));
         let reader_done_clone = reader_done.clone();
 
-        std::thread::spawn(move || {
-            let mut buf = [0u8; 65536];
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) => {
-                        reader_done_clone.store(true, std::sync::atomic::Ordering::Relaxed);
-                        break;
-                    }
-                    Ok(n) => {
-                        if output_tx.send(buf[..n].to_vec()).is_err() {
-                            break; // Receiver dropped
+        let reader_handle = std::thread::Builder::new()
+            .name("pty-reader".into())
+            .spawn(move || {
+                let mut buf = [0u8; 65536];
+                loop {
+                    match reader.read(&mut buf) {
+                        Ok(0) => {
+                            reader_done_clone.store(true, Ordering::Release);
+                            break;
+                        }
+                        Ok(n) => {
+                            if output_tx.send(buf[..n].to_vec()).is_err() {
+                                break; // Receiver dropped
+                            }
+                        }
+                        Err(_) => {
+                            reader_done_clone.store(true, Ordering::Release);
+                            break;
                         }
                     }
-                    Err(_) => {
-                        reader_done_clone.store(true, std::sync::atomic::Ordering::Relaxed);
-                        break;
-                    }
                 }
-            }
-        });
+            })
+            .context("failed to spawn pty reader thread")?;
 
         Ok(Pty {
             master: pair.master,
@@ -71,6 +116,7 @@ impl Pty {
             child: Mutex::new(child),
             output_rx,
             reader_done,
+            _reader_handle: Some(reader_handle),
         })
     }
 
@@ -85,20 +131,46 @@ impl Pty {
 
     /// Check if the reader thread has finished (EOF).
     pub fn reader_eof(&self) -> bool {
-        self.reader_done.load(std::sync::atomic::Ordering::Relaxed)
+        self.reader_done.load(Ordering::Acquire)
     }
 
     /// Write data to the PTY.
     pub fn write(&self, data: &[u8]) -> std::io::Result<usize> {
-        self.writer.lock().unwrap().write(data)
+        self.writer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .write(data)
     }
 
     /// Check if child has exited (non-blocking).
     pub fn try_wait(&self) -> bool {
-        self.child.lock().unwrap().try_wait().ok().flatten().is_some()
+        self.child
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .try_wait()
+            .ok()
+            .flatten()
+            .is_some()
     }
 
     pub fn resize(&self, cols: u16, rows: u16) {
-        let _ = self.master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
+        if let Err(e) = self.master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }) {
+            log::warn!("pty resize failed: {e}");
+        }
+    }
+}
+
+impl Drop for Pty {
+    fn drop(&mut self) {
+        // Signal reader thread to stop by dropping the master fd.
+        // The reader will get an error/EOF on the next read() and exit.
+        // We also kill the child process to avoid orphans.
+        if let Ok(mut child) = self.child.lock() {
+            let _ = child.kill();
+        }
+        // The reader thread will exit once the master fd is dropped (which
+        // happens when `self.master` is dropped after this method returns).
+        // We intentionally do NOT join the thread here to avoid blocking
+        // the UI — the thread will exit on its own when read() returns an error.
     }
 }

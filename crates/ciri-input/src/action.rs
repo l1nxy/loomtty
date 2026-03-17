@@ -55,11 +55,10 @@ impl Action {
             "send_leader_key" => Some(Action::SendLeaderKey),
             _ => {
                 // Handle switch_workspace_N
-                if let Some(rest) = s.strip_prefix("switch_workspace_") {
-                    if let Ok(n) = rest.parse::<usize>() {
+                if let Some(rest) = s.strip_prefix("switch_workspace_")
+                    && let Ok(n) = rest.parse::<usize>() {
                         return Some(Action::SwitchWorkspace(n));
                     }
-                }
                 None
             }
         }

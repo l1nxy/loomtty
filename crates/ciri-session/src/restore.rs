@@ -21,8 +21,11 @@ pub fn list_sessions(dir: &Path) -> Result<Vec<String>> {
     }
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
-        if let Some(name) = entry.path().file_stem() {
-            sessions.push(name.to_string_lossy().to_string());
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext == "json") {
+            if let Some(name) = path.file_stem() {
+                sessions.push(name.to_string_lossy().to_string());
+            }
         }
     }
     sessions.sort();
@@ -31,8 +34,9 @@ pub fn list_sessions(dir: &Path) -> Result<Vec<String>> {
 
 pub fn delete_session(name: &str, dir: &Path) -> Result<()> {
     let path = dir.join(format!("{name}.json"));
-    if path.exists() {
-        fs::remove_file(path)?;
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
     }
-    Ok(())
 }

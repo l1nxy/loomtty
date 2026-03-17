@@ -219,6 +219,27 @@ impl App {
         }
     }
 
+    /// Recalculate overview zoom to fit the current layout. Call after any layout change in overview.
+    fn refresh_overview_zoom(&mut self) {
+        if !self.overview_active {
+            return;
+        }
+        let omega = self.config.animation.speed;
+        let vw = self.workspaces.view_size.width;
+        let vh = self.workspaces.view_size.height;
+        let max_w = self.workspaces.rows.iter()
+            .map(|ws| ws.total_width())
+            .fold(0.0f32, f32::max)
+            .max(vw);
+        let nrows = self.workspaces.rows.iter().filter(|ws| !ws.is_empty()).count().max(1);
+        let total_h = nrows as f32 * vh + (nrows.saturating_sub(1)) as f32 * self.workspaces.row_gap;
+        let fit = self.config.animation.overview_zoom_fit;
+        let zoom_x = vw / max_w;
+        let zoom_y = vh / total_h;
+        let zoom = (zoom_x.min(zoom_y).min(1.0) * fit).max(0.15);
+        self.overview_zoom.animate_to(zoom as f64, omega);
+    }
+
     fn switch_to_workspace(&mut self, idx: usize) {
         let old = self.workspaces.active_workspace_idx();
         self.workspaces.switch_to(idx);
@@ -234,8 +255,15 @@ impl App {
         match action {
             Action::NewColumnRight => {
                 if let Some(id) = self.create_pane() {
+                    let insert_idx = self.workspaces.active_mut().active_column_idx;
                     self.workspaces.active_mut().add_column_right(id);
-                    self.snap_all_col_widths();
+                    let new_idx = self.workspaces.active_mut().active_column_idx;
+                    // Insert a zero-width animation entry — it will animate from 0 to target
+                    let mut entry = ViewOffset::new();
+                    entry.jump_to(1.0); // start tiny, sync_col_animations will animate to target
+                    if new_idx <= self.col_widths.len() {
+                        self.col_widths.insert(new_idx, entry);
+                    }
                     self.resize_panes_to_layout();
                     self.animate_to_active();
                 }
@@ -244,13 +272,12 @@ impl App {
                 if let Some(id) = self.create_pane() {
                     self.workspaces.add_row_below(id);
                     self.view_offset_x.jump_to(0.0);
-                    self.snap_all_col_widths();
+                    self.col_widths.clear(); // new row = new col_widths
                     self.animate_to_active();
                     self.resize_panes_to_layout();
                 }
             }
             Action::ClosePane => {
-                // Remember where the remaining columns were before closing
                 let ws = self.workspaces.active_mut();
                 let closing_idx = ws.active_column_idx;
                 let closing_width = ws.columns.get(closing_idx)
@@ -260,16 +287,24 @@ impl App {
                 if let Some(pane_id) = self.workspaces.active_mut().close_active_pane() {
                     self.panes.remove(&pane_id);
                     self.cached_views.remove(&pane_id);
-                    self.snap_all_col_widths();
+
+                    // Remove the closed column's width animation entry (preserve the rest).
+                    // This lets remaining columns smoothly slide to fill the gap.
+                    if closing_idx < self.col_widths.len() {
+                        self.col_widths.remove(closing_idx);
+                    }
 
                     if self.workspaces.active().is_empty() {
                         self.workspaces.cleanup_empty();
+                        self.col_widths.clear();
                         self.snap_all_col_widths();
                         self.animate_to_active();
                         self.resize_panes_to_layout();
                     } else {
+                        // Compensate camera so columns don't visually jump
                         let cur = self.view_offset_x.value();
-                        self.view_offset_x.jump_to(cur - closing_width as f64);
+                        self.view_offset_x.jump_to((cur - closing_width as f64).max(0.0));
+                        // Don't snap — let sync_col_animations drive smooth transitions
                         self.animate_to_active();
                         self.resize_panes_to_layout();
                     }
@@ -279,13 +314,13 @@ impl App {
             Action::FocusRight => { self.workspaces.active_mut().focus_right(); self.animate_to_active(); }
             Action::FocusDown => {
                 self.workspaces.focus_down();
-                self.snap_all_col_widths();
+                self.col_widths.clear(); // switching row, reset width state
                 self.animate_to_active();
                 self.resize_panes_to_layout();
             }
             Action::FocusUp => {
                 self.workspaces.focus_up();
-                self.snap_all_col_widths();
+                self.col_widths.clear(); // switching row, reset width state
                 self.animate_to_active();
                 self.resize_panes_to_layout();
             }
@@ -316,13 +351,12 @@ impl App {
                 self.resize_panes_to_layout(); self.animate_to_active();
             }
             Action::ColumnWidthIncrease => {
-                self.workspaces.active_mut().resize_active_column(0.05);
-                self.snap_all_col_widths();
+                self.workspaces.active_mut().resize_active_column(0.02);
+                // Don't snap — sync_col_animations will animate the width change
                 self.resize_panes_to_layout(); self.animate_to_active();
             }
             Action::ColumnWidthDecrease => {
-                self.workspaces.active_mut().resize_active_column(-0.05);
-                self.snap_all_col_widths();
+                self.workspaces.active_mut().resize_active_column(-0.02);
                 self.resize_panes_to_layout(); self.animate_to_active();
             }
             Action::ExitOverview => {
@@ -337,20 +371,7 @@ impl App {
                 self.overview_active = !self.overview_active;
                 let omega = self.config.animation.speed;
                 if self.overview_active {
-                    // Compute zoom to fit ALL workspaces
-                    let vw = self.workspaces.view_size.width;
-                    let vh = self.workspaces.view_size.height;
-                    let max_w = self.workspaces.rows.iter()
-                        .map(|ws| ws.total_width())
-                        .fold(0.0f32, f32::max)
-                        .max(vw);
-                    let nrows = self.workspaces.rows.iter().filter(|ws| !ws.is_empty()).count().max(1);
-                    let total_h = nrows as f32 * vh + (nrows.saturating_sub(1)) as f32 * self.workspaces.row_gap;
-                    let fit = self.config.animation.overview_zoom_fit;
-                    let zoom_x = vw / max_w;
-                    let zoom_y = vh / total_h;
-                    let zoom = zoom_x.min(zoom_y).min(1.0) * fit;
-                    self.overview_zoom.animate_to(zoom as f64, omega);
+                    self.refresh_overview_zoom();
                     self.view_offset_x.animate_to(0.0, omega);
                     self.view_offset_y.animate_to(0.0, omega);
                 } else {
@@ -359,13 +380,13 @@ impl App {
                 }
             }
             Action::SendLeaderKey => {
-                if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
-                    if let Some(pane) = self.panes.get(&pid) {
+                if let Some(pid) = self.workspaces.active_mut().active_pane_id()
+                    && let Some(pane) = self.panes.get(&pid) {
                         pane.write_to_pty(&[0x17]);
                     }
-                }
             }
         }
+
     }
 
     fn animate_to_active(&mut self) {
@@ -404,10 +425,13 @@ impl App {
         for (i, col) in self.workspaces.active().columns.iter().enumerate() {
             let target = col.resolve_width(vw) as f64;
             let current = self.col_widths[i].value();
+            let anim_target = self.col_widths[i].target();
             if self.config.animation.enabled {
                 if current == 0.0 {
                     self.col_widths[i].jump_to(target);
-                } else if (current - target).abs() > 1.0 && !self.col_widths[i].is_animating() {
+                } else if (anim_target - target).abs() > 1.0 {
+                    // Target changed (or new entry) — start/retarget animation.
+                    // animate_to preserves velocity for smooth redirection.
                     self.col_widths[i].animate_to(target, omega);
                 }
             } else {
@@ -709,9 +733,9 @@ impl App {
         // Update terminal views for dirty panes
         for (pane_id, _, _) in &tiles {
             let is_dirty = self.panes.get(pane_id).is_some_and(|p| p.dirty);
-            if is_dirty || !self.cached_views.contains_key(pane_id) {
-                if let Some(pane) = self.panes.get_mut(pane_id) {
-                    let term = pane.term.lock().unwrap();
+            if (is_dirty || !self.cached_views.contains_key(pane_id))
+                && let Some(pane) = self.panes.get_mut(pane_id) {
+                    let term = pane.term.lock().unwrap_or_else(|e| e.into_inner());
                     let view = terminal::build_terminal_view(
                         &*term, atlas, &mut renderer.text.font_system, &renderer.queue,
                         &self.config,
@@ -720,15 +744,14 @@ impl App {
                     pane.dirty = false;
                     self.cached_views.insert(*pane_id, view);
                 }
-            }
         }
 
         // Update IME cursor area only when position changes
-        if let Some(window) = &self.window {
-            if let Some(active_pid) = self.workspaces.active().active_pane_id() {
-                if let Some((_, tile_rect, _)) = tiles.iter().find(|(id, _, _)| *id == active_pid) {
-                    if let Some(view) = self.cached_views.get(&active_pid) {
-                        if let Some(cursor) = &view.cursor_rect {
+        if let Some(window) = &self.window
+            && let Some(active_pid) = self.workspaces.active().active_pane_id()
+                && let Some((_, tile_rect, _)) = tiles.iter().find(|(id, _, _)| *id == active_pid)
+                    && let Some(view) = self.cached_views.get(&active_pid)
+                        && let Some(cursor) = &view.cursor_rect {
                             let padding = self.config.appearance.padding;
                             let border_w = self.config.appearance.border_width;
                             let cx = (tile_rect.x + border_w + padding + cursor.x) as i32;
@@ -745,10 +768,6 @@ impl App {
                                 );
                             }
                         }
-                    }
-                }
-            }
-        }
 
         // Build scene
         let mut bg_rects = std::mem::take(&mut self.bg_rects_buf);
@@ -769,9 +788,8 @@ impl App {
         self.bg_rects_buf = bg_rects;
         self.glyph_buf = glyphs;
 
-        if animating {
-            if let Some(w) = &self.window { w.request_redraw(); }
-        }
+        if animating
+            && let Some(w) = &self.window { w.request_redraw(); }
     }
 }
 
@@ -790,8 +808,8 @@ fn emit_status_text(
     glyphs: &mut Vec<GlyphInstance>,
 ) {
     for (i, ch) in text.chars().enumerate() {
-        if let Some(entry) = atlas.ensure_char(ch, font_system, queue) {
-            if entry.width > 0 && entry.height > 0 {
+        if let Some(entry) = atlas.ensure_char(ch, font_system, queue)
+            && entry.width > 0 && entry.height > 0 {
                 let sx = x_start + i as f32 * cell_width + entry.bearing_x as f32;
                 let sy = text_y + baseline - entry.bearing_y as f32;
                 glyphs.push(GlyphInstance {
@@ -802,7 +820,6 @@ fn emit_status_text(
                     color,
                 });
             }
-        }
     }
 }
 
@@ -847,6 +864,20 @@ impl ApplicationHandler for App {
                     }
                 }
 
+                // Remove dead columns' animation entries before removing from workspace
+                // (so indices match). Process active workspace only for col_widths.
+                {
+                    let ws = self.workspaces.active_mut();
+                    let mut i = 0;
+                    while i < ws.columns.len() {
+                        if dead_ids.contains(&ws.columns[i].pane_id) && i < self.col_widths.len() {
+                            self.col_widths.remove(i);
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
+
                 for id in &dead_ids {
                     self.panes.remove(id);
                     self.cached_views.remove(id);
@@ -855,14 +886,13 @@ impl ApplicationHandler for App {
                     }
                 }
                 self.workspaces.cleanup_empty();
-                if self.workspaces.active().is_empty() {
-                    if let Some(idx) = self.workspaces.rows.iter()
+                if self.workspaces.active().is_empty()
+                    && let Some(idx) = self.workspaces.rows.iter()
                         .position(|ws| !ws.is_empty())
                     {
                         self.workspaces.active_row = idx;
+                        self.col_widths.clear(); // switched row
                     }
-                }
-                self.snap_all_col_widths();
                 // Camera compensation: offset so remaining columns stay on screen
                 if left_removed_width > 0.0 {
                     let cur = self.view_offset_x.value();
@@ -882,9 +912,8 @@ impl ApplicationHandler for App {
                 return;
             }
 
-            if needs_redraw {
-                if let Some(w) = &self.window { w.request_redraw(); }
-            }
+            if needs_redraw
+                && let Some(w) = &self.window { w.request_redraw(); }
         }
     }
 
@@ -1020,13 +1049,11 @@ impl ApplicationHandler for App {
                         InputResult::Consumed => {}
                         InputResult::PassThrough => {
                             let bytes = key_event_to_pty_bytes(&event, ctrl);
-                            if !bytes.is_empty() {
-                                if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
-                                    if let Some(pane) = self.panes.get(&pid) {
+                            if !bytes.is_empty()
+                                && let Some(pid) = self.workspaces.active_mut().active_pane_id()
+                                    && let Some(pane) = self.panes.get(&pid) {
                                         pane.write_to_pty(&bytes);
                                     }
-                                }
-                            }
                         }
                     }
                 }
@@ -1041,12 +1068,14 @@ impl ApplicationHandler for App {
                 if self.overview_active {
                     // Hover: select the pane under cursor
                     if let Some((row_idx, pane_id)) = self.hit_test_overview(mx, my) {
-                        self.workspaces.active_row = row_idx;
-                        let ws = self.workspaces.active_mut();
-                        for (col_idx, col) in ws.columns.iter().enumerate() {
-                            if col.pane_id == pane_id {
-                                ws.active_column_idx = col_idx;
-                                break;
+                        if row_idx < self.workspaces.rows.len() {
+                            self.workspaces.active_row = row_idx;
+                            let ws = self.workspaces.active_mut();
+                            for (col_idx, col) in ws.columns.iter().enumerate() {
+                                if col.pane_id == pane_id {
+                                    ws.active_column_idx = col_idx;
+                                    break;
+                                }
                             }
                         }
                         if let Some(w) = &self.window { w.request_redraw(); }
@@ -1115,12 +1144,14 @@ impl ApplicationHandler for App {
                         if self.overview_active {
                             // Click on a panel: select it and exit overview
                             if let Some((row_idx, pane_id)) = self.hit_test_overview(mx, my) {
-                                self.workspaces.active_row = row_idx;
-                                let ws = self.workspaces.active_mut();
-                                for (col_idx, col) in ws.columns.iter().enumerate() {
-                                    if col.pane_id == pane_id {
-                                        ws.active_column_idx = col_idx;
-                                        break;
+                                if row_idx < self.workspaces.rows.len() {
+                                    self.workspaces.active_row = row_idx;
+                                    let ws = self.workspaces.active_mut();
+                                    for (col_idx, col) in ws.columns.iter().enumerate() {
+                                        if col.pane_id == pane_id {
+                                            ws.active_column_idx = col_idx;
+                                            break;
+                                        }
                                     }
                                 }
                                 self.overview_active = false;
@@ -1235,11 +1266,10 @@ impl ApplicationHandler for App {
                     Ime::Commit(text) => {
                         self.ime_preedit_active = false;
                         // Write committed IME text to active pane's PTY
-                        if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
-                            if let Some(pane) = self.panes.get(&pid) {
+                        if let Some(pid) = self.workspaces.active_mut().active_pane_id()
+                            && let Some(pane) = self.panes.get(&pid) {
                                 pane.write_to_pty(text.as_bytes());
                             }
-                        }
                         if let Some(w) = &self.window { w.request_redraw(); }
                     }
                     Ime::Preedit(text, _cursor) => {
@@ -1286,8 +1316,8 @@ impl ApplicationHandler for App {
 
 fn key_event_to_pty_bytes(event: &winit::event::KeyEvent, ctrl: bool) -> Vec<u8> {
     // Ctrl+key combinations → control codes
-    if ctrl {
-        if let Key::Character(c) = &event.logical_key {
+    if ctrl
+        && let Key::Character(c) = &event.logical_key {
             let ch = c.as_str();
             if ch.len() == 1 {
                 let byte = ch.as_bytes()[0];
@@ -1300,48 +1330,44 @@ fn key_event_to_pty_bytes(event: &winit::event::KeyEvent, ctrl: bool) -> Vec<u8>
                 };
             }
         }
-    }
 
     // Named keys → escape sequences (checked before text to avoid consuming
     // control chars like \x08 from text_with_all_modifiers).
-    match &event.logical_key {
-        Key::Named(key) => match key {
-            NamedKey::Enter => return vec![b'\r'],
-            NamedKey::Backspace => return vec![0x7f],
-            NamedKey::Tab => return vec![b'\t'],
-            NamedKey::Escape => return vec![0x1b],
-            NamedKey::Space => return vec![b' '],
-            NamedKey::ArrowUp => return b"\x1b[A".to_vec(),
-            NamedKey::ArrowDown => return b"\x1b[B".to_vec(),
-            NamedKey::ArrowRight => return b"\x1b[C".to_vec(),
-            NamedKey::ArrowLeft => return b"\x1b[D".to_vec(),
-            NamedKey::Home => return b"\x1b[H".to_vec(),
-            NamedKey::End => return b"\x1b[F".to_vec(),
-            NamedKey::PageUp => return b"\x1b[5~".to_vec(),
-            NamedKey::PageDown => return b"\x1b[6~".to_vec(),
-            NamedKey::Delete => return b"\x1b[3~".to_vec(),
-            NamedKey::Insert => return b"\x1b[2~".to_vec(),
-            NamedKey::F1 => return b"\x1bOP".to_vec(),
-            NamedKey::F2 => return b"\x1bOQ".to_vec(),
-            NamedKey::F3 => return b"\x1bOR".to_vec(),
-            NamedKey::F4 => return b"\x1bOS".to_vec(),
-            NamedKey::F5 => return b"\x1b[15~".to_vec(),
-            NamedKey::F6 => return b"\x1b[17~".to_vec(),
-            NamedKey::F7 => return b"\x1b[18~".to_vec(),
-            NamedKey::F8 => return b"\x1b[19~".to_vec(),
-            NamedKey::F9 => return b"\x1b[20~".to_vec(),
-            NamedKey::F10 => return b"\x1b[21~".to_vec(),
-            NamedKey::F11 => return b"\x1b[23~".to_vec(),
-            NamedKey::F12 => return b"\x1b[24~".to_vec(),
-            _ => {}
-        },
+    if let Key::Named(key) = &event.logical_key { match key {
+        NamedKey::Enter => return vec![b'\r'],
+        NamedKey::Backspace => return vec![0x7f],
+        NamedKey::Tab => return vec![b'\t'],
+        NamedKey::Escape => return vec![0x1b],
+        NamedKey::Space => return vec![b' '],
+        NamedKey::ArrowUp => return b"\x1b[A".to_vec(),
+        NamedKey::ArrowDown => return b"\x1b[B".to_vec(),
+        NamedKey::ArrowRight => return b"\x1b[C".to_vec(),
+        NamedKey::ArrowLeft => return b"\x1b[D".to_vec(),
+        NamedKey::Home => return b"\x1b[H".to_vec(),
+        NamedKey::End => return b"\x1b[F".to_vec(),
+        NamedKey::PageUp => return b"\x1b[5~".to_vec(),
+        NamedKey::PageDown => return b"\x1b[6~".to_vec(),
+        NamedKey::Delete => return b"\x1b[3~".to_vec(),
+        NamedKey::Insert => return b"\x1b[2~".to_vec(),
+        NamedKey::F1 => return b"\x1bOP".to_vec(),
+        NamedKey::F2 => return b"\x1bOQ".to_vec(),
+        NamedKey::F3 => return b"\x1bOR".to_vec(),
+        NamedKey::F4 => return b"\x1bOS".to_vec(),
+        NamedKey::F5 => return b"\x1b[15~".to_vec(),
+        NamedKey::F6 => return b"\x1b[17~".to_vec(),
+        NamedKey::F7 => return b"\x1b[18~".to_vec(),
+        NamedKey::F8 => return b"\x1b[19~".to_vec(),
+        NamedKey::F9 => return b"\x1b[20~".to_vec(),
+        NamedKey::F10 => return b"\x1b[21~".to_vec(),
+        NamedKey::F11 => return b"\x1b[23~".to_vec(),
+        NamedKey::F12 => return b"\x1b[24~".to_vec(),
         _ => {}
-    }
+    } }
 
     // Text input: use text_with_all_modifiers (like Alacritty) for accurate
     // character data. This is the path for regular typing (a-z, symbols, etc.).
     if let Some(text) = event.text_with_all_modifiers() {
-        let s: &str = &text;
+        let s: &str = text;
         if !s.is_empty() {
             return s.as_bytes().to_vec();
         }

@@ -221,13 +221,11 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
 
                         let mut s = state.lock().unwrap();
                         s.process_pty_all();
-                        if let Some(response) = s.handle_message(msg) {
-                            if let Ok(data) = codec::encode(&response) {
-                                if stream.write_all(&data).is_err() {
+                        if let Some(response) = s.handle_message(msg)
+                            && let Ok(data) = codec::encode(&response)
+                                && stream.write_all(&data).is_err() {
                                     break;
                                 }
-                            }
-                        }
                     }
                 });
             }

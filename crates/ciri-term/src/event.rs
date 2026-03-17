@@ -16,6 +16,8 @@ impl PtyEventListener {
 
 impl EventListener for PtyEventListener {
     fn send_event(&self, event: Event) {
-        let _ = self.sender.send(event);
+        if self.sender.send(event).is_err() {
+            log::debug!("terminal event dropped: receiver closed");
+        }
     }
 }

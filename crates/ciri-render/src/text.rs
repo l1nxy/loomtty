@@ -7,6 +7,12 @@ pub struct TextRenderer {
     pub font_system: FontSystem,
 }
 
+impl Default for TextRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TextRenderer {
     pub fn new() -> Self {
         TextRenderer {

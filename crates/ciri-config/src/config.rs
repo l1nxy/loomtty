@@ -48,7 +48,7 @@ impl Default for FontConfig {
     fn default() -> Self {
         FontConfig {
             family: "monospace".to_string(),
-            size: 18.0,
+            size: 14.0,
         }
     }
 }
@@ -59,8 +59,6 @@ pub struct AppearanceConfig {
     pub padding: f32,
     pub column_gap: f32,
     pub border_width: f32,
-    pub active_border_color: String,
-    pub inactive_border_color: String,
 }
 
 impl Default for AppearanceConfig {
@@ -69,8 +67,6 @@ impl Default for AppearanceConfig {
             padding: 4.0,
             column_gap: 8.0,
             border_width: 2.0,
-            active_border_color: "#88C0D0".to_string(),
-            inactive_border_color: "#4C566A".to_string(),
         }
     }
 }
@@ -149,20 +145,8 @@ impl Default for TerminalConfig {
 pub struct StatusBarConfig {
     /// Extra height added to cell height for status bar.
     pub height_padding: f32,
-    /// Status bar background color.
-    pub background_color: String,
     /// Text baseline factor (0.0-1.0) relative to cell height.
     pub text_baseline: f32,
-    /// Text color when leader mode is active.
-    pub leader_text_color: String,
-    /// Normal text color.
-    pub text_color: String,
-    /// Active mode text color (overview, leader).
-    pub active_mode_color: String,
-    /// Inactive/dimmed text color.
-    pub inactive_text_color: String,
-    /// Leader indicator line color.
-    pub leader_indicator_color: String,
     /// Leader indicator line height.
     pub leader_indicator_height: f32,
 }
@@ -171,13 +155,7 @@ impl Default for StatusBarConfig {
     fn default() -> Self {
         StatusBarConfig {
             height_padding: 4.0,
-            background_color: "#1F1F26".to_string(),
             text_baseline: 0.8,
-            leader_text_color: "#4CE64C".to_string(),
-            text_color: "#B3B3B3".to_string(),
-            active_mode_color: "#4CE64C".to_string(),
-            inactive_text_color: "#808080".to_string(),
-            leader_indicator_color: "#4CE64C".to_string(),
             leader_indicator_height: 2.0,
         }
     }
@@ -209,8 +187,6 @@ impl Default for InputConfig {
 pub struct RenderConfig {
     /// Frame interval in milliseconds (16 = ~60fps).
     pub frame_interval_ms: u64,
-    /// Background clear color.
-    pub clear_color: String,
     /// Glyph atlas texture size (width and height).
     pub atlas_size: u32,
     /// Maximum glyph instances per frame.
@@ -225,7 +201,6 @@ impl Default for RenderConfig {
     fn default() -> Self {
         RenderConfig {
             frame_interval_ms: 16,
-            clear_color: "#010114".to_string(),
             atlas_size: 2048,
             max_glyph_instances: 32768,
             max_rectangles: 8192,
@@ -237,13 +212,14 @@ impl Default for RenderConfig {
 impl CiriConfig {
     pub fn load() -> Result<Self> {
         let path = config_path();
-        if path.exists() {
+        let mut config = if path.exists() {
             let content = std::fs::read_to_string(&path)?;
-            let config: CiriConfig = toml::from_str(&content)?;
-            Ok(config)
+            toml::from_str(&content)?
         } else {
-            Ok(CiriConfig::default())
-        }
+            CiriConfig::default()
+        };
+        config.theme.resolve_preset();
+        Ok(config)
     }
 }
 

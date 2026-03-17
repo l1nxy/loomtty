@@ -19,6 +19,13 @@ pub struct GlyphEntry {
     pub bearing_y: i16,
 }
 
+impl GlyphEntry {
+    pub const EMPTY: Self = GlyphEntry {
+        u0: 0.0, v0: 0.0, u1: 0.0, v1: 0.0,
+        width: 0, height: 0, bearing_x: 0, bearing_y: 0,
+    };
+}
+
 /// Simple shelf-based atlas packer.
 struct ShelfPacker {
     shelf_y: u32,
@@ -77,7 +84,8 @@ pub struct GlyphAtlas {
     cache: HashMap<char, GlyphEntry>,
     packer: ShelfPacker,
     scale_context: ScaleContext,
-    font_id: Option<fontdb::ID>,
+    /// Primary font + all system fonts for fallback.
+    font_ids: Vec<fontdb::ID>,
     font_size: f32,
     pub cell_width: f32,
     pub cell_height: f32,
@@ -96,29 +104,58 @@ pub struct GlyphInstance {
 impl GlyphAtlas {
     pub fn new(
         device: &wgpu::Device,
-        _queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
         font_system: &mut FontSystem,
-        font_size: f32,
+        font_size_pt: f32,
+        dpi_scale: f64,
+        family_name: &str,
         render_config: &RenderConfig,
     ) -> Self {
         let atlas_size = render_config.atlas_size;
+        // Convert point size to pixels: pt * dpi_scale * (96/72)
+        let font_size = font_size_pt * dpi_scale as f32 * (96.0 / 72.0);
 
-        // Find a monospace font
-        let font_id = {
+        // Find font by family name, fallback to first monospace
+        let mut font_ids = Vec::new();
+        {
             let db = font_system.db();
-            let mut found = None;
+            let mut primary = None;
+            let mut first_mono = None;
+            let family_lower = family_name.to_ascii_lowercase();
             for face in db.faces() {
-                if face.monospaced {
-                    found = Some(face.id);
-                    break;
+                if first_mono.is_none() && face.monospaced {
+                    first_mono = Some(face.id);
+                }
+                // Match by family name (case-insensitive, also partial match for Nerd Font variants)
+                for family in &face.families {
+                    if family.0.eq_ignore_ascii_case(family_name)
+                        || (family_name != "monospace"
+                            && family.0.to_ascii_lowercase().contains(&family_lower))
+                    {
+                        primary = Some(face.id);
+                    }
                 }
             }
-            found
+            // Primary font
+            if let Some(id) = primary.or(first_mono) {
+                font_ids.push(id);
+                if let Some(face) = db.face(id) {
+                    let name = face.families.first().map(|f| f.0.as_str()).unwrap_or("?");
+                    log::info!("primary font: {name} (monospaced={})", face.monospaced);
+                }
+            }
+            // Add all other fonts as fallbacks (for CJK etc.)
+            for face in db.faces() {
+                if !font_ids.contains(&face.id) {
+                    font_ids.push(face.id);
+                }
+            }
+            log::info!("font fallback chain: {} fonts total", font_ids.len());
         };
 
-        // Determine cell metrics from the font
-        let (cell_width, cell_height) = if let Some(fid) = font_id {
+        // Determine cell metrics from the primary font
+        let primary_id = font_ids.first().copied();
+        let (cell_width, cell_height) = if let Some(fid) = primary_id {
             if let Some(font) = font_system.get_font(fid) {
                 let swash_font = font.as_swash();
                 let metrics = swash_font.metrics(&[]);
@@ -278,7 +315,7 @@ impl GlyphAtlas {
             cache: HashMap::new(),
             packer: ShelfPacker::new(atlas_size),
             scale_context: ScaleContext::new(),
-            font_id,
+            font_ids,
             font_size,
             cell_width,
             cell_height,
@@ -298,29 +335,39 @@ impl GlyphAtlas {
 
         // Space and control chars: no glyph needed
         if ch == ' ' || ch == '\0' || ch.is_control() {
-            let entry = GlyphEntry {
-                u0: 0.0, v0: 0.0, u1: 0.0, v1: 0.0,
-                width: 0, height: 0, bearing_x: 0, bearing_y: 0,
-            };
+            let entry = GlyphEntry::EMPTY;
             self.cache.insert(ch, entry);
             return Some(entry);
         }
 
-        let font_id = self.font_id?;
+        if self.font_ids.is_empty() {
+            return None;
+        }
+
+        // Two-phase fallback: find which font has the glyph
+        let mut resolved_font_id = None;
+        let mut resolved_glyph_id = 0u16;
+        for &fid in &self.font_ids {
+            if let Some(font) = font_system.get_font(fid) {
+                let swash_font = font.as_swash();
+                let gid = swash_font.charmap().map(ch);
+                if gid != 0 {
+                    resolved_font_id = Some(fid);
+                    resolved_glyph_id = gid;
+                    break;
+                }
+            }
+        }
+
+        let Some(font_id) = resolved_font_id else {
+            // No font has this glyph
+            let entry = GlyphEntry::EMPTY;
+            self.cache.insert(ch, entry);
+            return Some(entry);
+        };
+
         let font = font_system.get_font(font_id)?;
         let swash_font = font.as_swash();
-        let charmap = swash_font.charmap();
-        let glyph_id = charmap.map(ch);
-
-        if glyph_id == 0 && ch != '\0' {
-            // Glyph not found, use a fallback (empty)
-            let entry = GlyphEntry {
-                u0: 0.0, v0: 0.0, u1: 0.0, v1: 0.0,
-                width: 0, height: 0, bearing_x: 0, bearing_y: 0,
-            };
-            self.cache.insert(ch, entry);
-            return Some(entry);
-        }
 
         // Rasterize with swash
         let mut scaler = self.scale_context
@@ -335,16 +382,13 @@ impl GlyphAtlas {
             Source::Outline,
         ])
         .format(Format::Alpha)
-        .render(&mut scaler, glyph_id)?;
+        .render(&mut scaler, resolved_glyph_id)?;
 
         let w = image.placement.width;
         let h = image.placement.height;
 
         if w == 0 || h == 0 {
-            let entry = GlyphEntry {
-                u0: 0.0, v0: 0.0, u1: 0.0, v1: 0.0,
-                width: 0, height: 0, bearing_x: 0, bearing_y: 0,
-            };
+            let entry = GlyphEntry::EMPTY;
             self.cache.insert(ch, entry);
             return Some(entry);
         }

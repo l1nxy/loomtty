@@ -1,5 +1,6 @@
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point};
+use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::term::Term;
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor};
 use ciri_config::config::CiriConfig;
@@ -121,9 +122,17 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
             let cell = &grid[point];
             let px = col as f32 * cw;
 
+            // Skip spacer cells (second cell of a wide char)
+            if cell.flags.contains(CellFlags::WIDE_CHAR_SPACER) {
+                continue;
+            }
+
+            let is_wide = cell.flags.contains(CellFlags::WIDE_CHAR);
+            let bg_width = if is_wide { cw * 2.0 } else { cw };
+
             let bg = ansi_color_to_rgba(cell.bg, config);
             if bg != default_bg {
-                bg_rects.push(Rect { x: px, y: py, w: cw, h: ch, color: bg });
+                bg_rects.push(Rect { x: px, y: py, w: bg_width, h: ch, color: bg });
             }
 
             let c = cell.c;

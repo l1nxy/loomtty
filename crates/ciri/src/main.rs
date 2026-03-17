@@ -16,9 +16,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseScrollDelta, StartCause, TouchPhase, WindowEvent};
+use winit::event::{ElementState, Ime, MouseScrollDelta, StartCause, TouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
+use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 use winit::window::{Window, WindowAttributes, WindowId};
 
 struct App {
@@ -27,6 +28,7 @@ struct App {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     glyph_atlas: Option<GlyphAtlas>,
+    dpi_scale: f64,
     workspaces: WorkspaceSet,
     panes: HashMap<u64, Pane>,
     next_pane_id: u64,
@@ -46,6 +48,10 @@ struct App {
     // Reusable render buffers to avoid per-frame allocation
     bg_rects_buf: Vec<Rect>,
     glyph_buf: Vec<GlyphInstance>,
+    /// True when IME has active preedit text — KeyboardInput is suppressed.
+    ime_preedit_active: bool,
+    /// Last IME cursor position, for change detection.
+    last_ime_pos: Option<(i32, i32)>,
 }
 
 impl App {
@@ -65,6 +71,7 @@ impl App {
             window: None,
             renderer: None,
             glyph_atlas: None,
+            dpi_scale: 1.0,
             workspaces: WorkspaceSet::new(initial_view),
             panes: HashMap::new(),
             next_pane_id: 1,
@@ -86,6 +93,8 @@ impl App {
             },
             bg_rects_buf: Vec::new(),
             glyph_buf: Vec::new(),
+            ime_preedit_active: false,
+            last_ime_pos: None,
         }
     }
 
@@ -130,6 +139,15 @@ impl App {
 
     fn total_inset(&self) -> f32 {
         (self.config.appearance.padding + self.config.appearance.border_width) * 2.0
+    }
+
+    /// Status bar height in pixels. Must be subtracted from viewport for usable area.
+    fn status_bar_height(&self) -> f32 {
+        let cell_h = self.glyph_atlas.as_ref()
+            .map(|a| a.cell_height)
+            // Fallback for pre-atlas window resize events.
+            .unwrap_or(self.config.font.size * 1.2);
+        cell_h + self.config.statusbar.height_padding
     }
 
     fn create_pane(&mut self) -> Option<u64> {
@@ -406,8 +424,8 @@ impl App {
         let border_w = self.config.appearance.border_width;
 
         // Pre-parse colors used per tile
-        let active_border = ThemeConfig::parse_color(&self.config.appearance.active_border_color);
-        let inactive_border = ThemeConfig::parse_color(&self.config.appearance.inactive_border_color);
+        let active_border = ThemeConfig::parse_color(&self.config.theme.border_active);
+        let inactive_border = ThemeConfig::parse_color(&self.config.theme.border_inactive);
         let bg_color = ThemeConfig::parse_color(&self.config.theme.background);
 
         for (pane_id, tile_rect, is_active) in tiles {
@@ -520,7 +538,7 @@ impl App {
         let bar_y = vh - bar_height;
         bg_rects.push(Rect {
             x: 0.0, y: bar_y, w: vw, h: bar_height,
-            color: ThemeConfig::parse_color(&self.config.statusbar.background_color),
+            color: ThemeConfig::parse_color(&self.config.theme.statusbar_background),
         });
 
         let ws_idx = self.workspaces.active_workspace_idx();
@@ -548,14 +566,14 @@ impl App {
         let baseline = atlas.cell_height * self.config.statusbar.text_baseline;
 
         let left_color = if self.input.is_awaiting_action() {
-            ThemeConfig::parse_color(&self.config.statusbar.leader_text_color)
+            ThemeConfig::parse_color(&self.config.theme.accent)
         } else {
-            ThemeConfig::parse_color(&self.config.statusbar.text_color)
+            ThemeConfig::parse_color(&self.config.theme.foreground)
         };
         let right_color = if self.overview_active || self.input.is_awaiting_action() {
-            ThemeConfig::parse_color(&self.config.statusbar.active_mode_color)
+            ThemeConfig::parse_color(&self.config.theme.accent)
         } else {
-            ThemeConfig::parse_color(&self.config.statusbar.inactive_text_color)
+            ThemeConfig::parse_color(&self.config.theme.bright_black)
         };
 
         emit_status_text(atlas, &mut renderer.text.font_system, &renderer.queue,
@@ -569,7 +587,7 @@ impl App {
             let indicator_h = self.config.statusbar.leader_indicator_height;
             bg_rects.push(Rect {
                 x: 0.0, y: bar_y - indicator_h, w: vw, h: indicator_h,
-                color: ThemeConfig::parse_color(&self.config.statusbar.leader_indicator_color),
+                color: ThemeConfig::parse_color(&self.config.theme.accent),
             });
         }
     }
@@ -666,6 +684,33 @@ impl App {
             }
         }
 
+        // Update IME cursor area only when position changes
+        if let Some(window) = &self.window {
+            if let Some(active_pid) = self.workspaces.active().active_pane_id() {
+                if let Some((_, tile_rect, _)) = tiles.iter().find(|(id, _, _)| *id == active_pid) {
+                    if let Some(view) = self.cached_views.get(&active_pid) {
+                        if let Some(cursor) = &view.cursor_rect {
+                            let padding = self.config.appearance.padding;
+                            let border_w = self.config.appearance.border_width;
+                            let cx = (tile_rect.x + border_w + padding + cursor.x) as i32;
+                            let cy = (tile_rect.y + border_w + padding + cursor.y) as i32;
+                            let pos = (cx, cy);
+                            if self.last_ime_pos != Some(pos) {
+                                self.last_ime_pos = Some(pos);
+                                window.set_ime_cursor_area(
+                                    winit::dpi::PhysicalPosition::new(cx as f64, cy as f64),
+                                    winit::dpi::PhysicalSize::new(
+                                        atlas.cell_width as f64,
+                                        atlas.cell_height as f64,
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Build scene
         let mut bg_rects = std::mem::take(&mut self.bg_rects_buf);
         let mut glyphs = std::mem::take(&mut self.glyph_buf);
@@ -676,7 +721,7 @@ impl App {
         self.build_status_bar(vw_f, vh_f, &mut bg_rects, &mut glyphs);
 
         // Submit to GPU
-        let clear_color = ThemeConfig::parse_color(&self.config.render.clear_color);
+        let clear_color = ThemeConfig::parse_color(&self.config.theme.ui_background);
         let renderer = self.renderer.as_mut().unwrap();
         let atlas = self.glyph_atlas.as_mut().unwrap();
         Self::submit_frame(renderer, atlas, clear_color, &bg_rects, &glyphs);
@@ -815,25 +860,31 @@ impl ApplicationHandler for App {
             ));
 
         let window = Arc::new(event_loop.create_window(attrs).expect("failed to create window"));
+        window.set_ime_allowed(true);
+        let dpi_scale = window.scale_factor();
         let mut renderer = pollster::block_on(Renderer::new(window.clone(), &self.config.render)).expect("renderer init failed");
 
         let fmt = renderer.surface_format();
         let atlas = GlyphAtlas::new(
-            &renderer.device, &renderer.queue, fmt,
+            &renderer.device, fmt,
             &mut renderer.text.font_system, self.config.font.size,
+            dpi_scale, &self.config.font.family,
             &self.config.render,
         );
 
         let (w, h) = renderer.surface_size();
-        self.workspaces.resize_view(ViewSize { width: w as f32, height: h as f32 });
+        // Reserve space for status bar at bottom
+        let bar_h = atlas.cell_height + self.config.statusbar.height_padding;
+        self.workspaces.resize_view(ViewSize { width: w as f32, height: h as f32 - bar_h });
 
-        log::info!("cell: {:.1}x{:.1}", atlas.cell_width, atlas.cell_height);
+        log::info!("cell: {:.1}x{:.1} (dpi_scale={:.2})", atlas.cell_width, atlas.cell_height, dpi_scale);
 
         if let Some(id) = self.create_pane() {
             self.workspaces.active_mut().add_column_right(id);
             self.workspaces.active_mut().set_active_column_width(ColumnWidth::Proportion(1.0));
         }
 
+        self.dpi_scale = dpi_scale;
         self.glyph_atlas = Some(atlas);
         self.snap_all_col_widths();
         self.animate_to_active();
@@ -862,8 +913,9 @@ impl ApplicationHandler for App {
                 if let Some(renderer) = &mut self.renderer {
                     renderer.resize(size.width, size.height);
                 }
+                let bar_h = self.status_bar_height();
                 self.workspaces.resize_view(ViewSize {
-                    width: size.width as f32, height: size.height as f32,
+                    width: size.width as f32, height: size.height as f32 - bar_h,
                 });
                 self.snap_all_col_widths();
                 for pane in self.panes.values_mut() { pane.dirty = true; }
@@ -875,6 +927,12 @@ impl ApplicationHandler for App {
 
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state != ElementState::Pressed { return; }
+
+                // When IME is composing (preedit active), suppress all keyboard
+                // processing. Text will arrive via Ime::Commit instead.
+                if self.ime_preedit_active {
+                    return;
+                }
 
                 let ctrl = self.modifiers.control_key();
                 let shift = self.modifiers.shift_key();
@@ -1069,6 +1127,53 @@ impl ApplicationHandler for App {
                 if let Some(w) = &self.window { w.request_redraw(); }
             }
 
+            WindowEvent::Ime(ime) => {
+                match ime {
+                    Ime::Commit(text) => {
+                        self.ime_preedit_active = false;
+                        // Write committed IME text to active pane's PTY
+                        if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
+                            if let Some(pane) = self.panes.get(&pid) {
+                                pane.write_to_pty(text.as_bytes());
+                            }
+                        }
+                        if let Some(w) = &self.window { w.request_redraw(); }
+                    }
+                    Ime::Preedit(text, _cursor) => {
+                        // Track whether IME is composing — if so, KeyboardInput is suppressed.
+                        self.ime_preedit_active = !text.is_empty();
+                    }
+                    Ime::Enabled | Ime::Disabled => {}
+                }
+            }
+
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                if (scale_factor - self.dpi_scale).abs() > 0.01 {
+                    self.dpi_scale = scale_factor;
+                    // Rebuild glyph atlas with new DPI
+                    if let Some(renderer) = &mut self.renderer {
+                        let fmt = renderer.surface_format();
+                        let atlas = GlyphAtlas::new(
+                            &renderer.device, fmt,
+                            &mut renderer.text.font_system, self.config.font.size,
+                            scale_factor, &self.config.font.family,
+                            &self.config.render,
+                        );
+                        log::info!("DPI changed: scale={:.2} cell={:.1}x{:.1}", scale_factor, atlas.cell_width, atlas.cell_height);
+                        // Update view size with new status bar height
+                        let bar_h = atlas.cell_height + self.config.statusbar.height_padding;
+                        let (w, h) = renderer.surface_size();
+                        self.workspaces.resize_view(ViewSize {
+                            width: w as f32, height: h as f32 - bar_h,
+                        });
+                        self.glyph_atlas = Some(atlas);
+                        self.cached_views.clear();
+                        self.resize_panes_to_layout();
+                    }
+                    if let Some(w) = &self.window { w.request_redraw(); }
+                }
+            }
+
             WindowEvent::RedrawRequested => self.render(),
 
             _ => {}
@@ -1077,6 +1182,7 @@ impl ApplicationHandler for App {
 }
 
 fn key_event_to_pty_bytes(event: &winit::event::KeyEvent, ctrl: bool) -> Vec<u8> {
+    // Ctrl+key combinations → control codes
     if ctrl {
         if let Key::Character(c) = &event.logical_key {
             let ch = c.as_str();
@@ -1093,44 +1199,53 @@ fn key_event_to_pty_bytes(event: &winit::event::KeyEvent, ctrl: bool) -> Vec<u8>
         }
     }
 
-    if let Some(ref text) = event.text {
-        let s = text.as_str();
-        if !s.is_empty() { return s.as_bytes().to_vec(); }
-    }
-
+    // Named keys → escape sequences (checked before text to avoid consuming
+    // control chars like \x08 from text_with_all_modifiers).
     match &event.logical_key {
         Key::Named(key) => match key {
-            NamedKey::Enter => vec![b'\r'],
-            NamedKey::Backspace => vec![0x7f],
-            NamedKey::Tab => vec![b'\t'],
-            NamedKey::Escape => vec![0x1b],
-            NamedKey::Space => vec![b' '],
-            NamedKey::ArrowUp => b"\x1b[A".to_vec(),
-            NamedKey::ArrowDown => b"\x1b[B".to_vec(),
-            NamedKey::ArrowRight => b"\x1b[C".to_vec(),
-            NamedKey::ArrowLeft => b"\x1b[D".to_vec(),
-            NamedKey::Home => b"\x1b[H".to_vec(),
-            NamedKey::End => b"\x1b[F".to_vec(),
-            NamedKey::PageUp => b"\x1b[5~".to_vec(),
-            NamedKey::PageDown => b"\x1b[6~".to_vec(),
-            NamedKey::Delete => b"\x1b[3~".to_vec(),
-            NamedKey::Insert => b"\x1b[2~".to_vec(),
-            NamedKey::F1 => b"\x1bOP".to_vec(),
-            NamedKey::F2 => b"\x1bOQ".to_vec(),
-            NamedKey::F3 => b"\x1bOR".to_vec(),
-            NamedKey::F4 => b"\x1bOS".to_vec(),
-            NamedKey::F5 => b"\x1b[15~".to_vec(),
-            NamedKey::F6 => b"\x1b[17~".to_vec(),
-            NamedKey::F7 => b"\x1b[18~".to_vec(),
-            NamedKey::F8 => b"\x1b[19~".to_vec(),
-            NamedKey::F9 => b"\x1b[20~".to_vec(),
-            NamedKey::F10 => b"\x1b[21~".to_vec(),
-            NamedKey::F11 => b"\x1b[23~".to_vec(),
-            NamedKey::F12 => b"\x1b[24~".to_vec(),
-            _ => vec![],
+            NamedKey::Enter => return vec![b'\r'],
+            NamedKey::Backspace => return vec![0x7f],
+            NamedKey::Tab => return vec![b'\t'],
+            NamedKey::Escape => return vec![0x1b],
+            NamedKey::Space => return vec![b' '],
+            NamedKey::ArrowUp => return b"\x1b[A".to_vec(),
+            NamedKey::ArrowDown => return b"\x1b[B".to_vec(),
+            NamedKey::ArrowRight => return b"\x1b[C".to_vec(),
+            NamedKey::ArrowLeft => return b"\x1b[D".to_vec(),
+            NamedKey::Home => return b"\x1b[H".to_vec(),
+            NamedKey::End => return b"\x1b[F".to_vec(),
+            NamedKey::PageUp => return b"\x1b[5~".to_vec(),
+            NamedKey::PageDown => return b"\x1b[6~".to_vec(),
+            NamedKey::Delete => return b"\x1b[3~".to_vec(),
+            NamedKey::Insert => return b"\x1b[2~".to_vec(),
+            NamedKey::F1 => return b"\x1bOP".to_vec(),
+            NamedKey::F2 => return b"\x1bOQ".to_vec(),
+            NamedKey::F3 => return b"\x1bOR".to_vec(),
+            NamedKey::F4 => return b"\x1bOS".to_vec(),
+            NamedKey::F5 => return b"\x1b[15~".to_vec(),
+            NamedKey::F6 => return b"\x1b[17~".to_vec(),
+            NamedKey::F7 => return b"\x1b[18~".to_vec(),
+            NamedKey::F8 => return b"\x1b[19~".to_vec(),
+            NamedKey::F9 => return b"\x1b[20~".to_vec(),
+            NamedKey::F10 => return b"\x1b[21~".to_vec(),
+            NamedKey::F11 => return b"\x1b[23~".to_vec(),
+            NamedKey::F12 => return b"\x1b[24~".to_vec(),
+            _ => {}
         },
-        _ => vec![],
+        _ => {}
     }
+
+    // Text input: use text_with_all_modifiers (like Alacritty) for accurate
+    // character data. This is the path for regular typing (a-z, symbols, etc.).
+    if let Some(text) = event.text_with_all_modifiers() {
+        let s: &str = &text;
+        if !s.is_empty() {
+            return s.as_bytes().to_vec();
+        }
+    }
+
+    // Fallback: nothing to send
+    vec![]
 }
 
 fn main() -> Result<()> {

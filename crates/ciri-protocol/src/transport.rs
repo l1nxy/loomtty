@@ -1,12 +1,61 @@
 use std::path::PathBuf;
 
-/// Get the socket path for a session (Unix only for now).
+/// Resolve the user's home directory.
+/// Prefers $HOME, falls back to getpwuid_r on Unix.
+fn home_dir() -> Option<PathBuf> {
+    if let Ok(home) = std::env::var("HOME")
+        && !home.is_empty() {
+            return Some(PathBuf::from(home));
+        }
+    #[cfg(unix)]
+    {
+        let uid = unsafe { libc::getuid() };
+        let mut buf = vec![0u8; 4096];
+        let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut result = std::ptr::null_mut();
+        let ret = unsafe {
+            libc::getpwuid_r(
+                uid,
+                &mut pwd,
+                buf.as_mut_ptr() as *mut libc::c_char,
+                buf.len(),
+                &mut result,
+            )
+        };
+        if ret == 0 && !result.is_null() {
+            let dir = unsafe { std::ffi::CStr::from_ptr(pwd.pw_dir) };
+            if let Ok(s) = dir.to_str() {
+                return Some(PathBuf::from(s));
+            }
+        }
+    }
+    None
+}
+
+/// XDG_RUNTIME_DIR with proper fallback.
+#[cfg(unix)]
+pub fn runtime_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
+        return PathBuf::from(dir);
+    }
+    // Fallback: /run/user/<uid> (systemd convention)
+    let uid = unsafe { libc::getuid() };
+    let candidate = PathBuf::from(format!("/run/user/{uid}"));
+    if candidate.is_dir() {
+        return candidate;
+    }
+    // Last resort: ~/.cache as a per-user writable directory
+    if let Some(home) = home_dir() {
+        return home.join(".cache");
+    }
+    PathBuf::from("/tmp")
+}
+
+/// Get the socket path for a session.
 pub fn socket_path(session_name: &str) -> PathBuf {
     #[cfg(unix)]
     {
-        let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-            .unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }));
-        PathBuf::from(runtime_dir).join("ciri").join(format!("{session_name}.sock"))
+        runtime_dir().join("ciri").join(format!("{session_name}.sock"))
     }
     #[cfg(windows)]
     {
@@ -21,11 +70,14 @@ pub fn state_dir() -> PathBuf {
     #[cfg(unix)]
     {
         let state_home = std::env::var("XDG_STATE_HOME")
-            .unwrap_or_else(|_| {
-                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-                format!("{home}/.local/state")
-            });
-        PathBuf::from(state_home).join("ciri").join("sessions")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| home_dir().map(|h| h.join(".local/state")));
+        match state_home {
+            Some(p) => p.join("ciri").join("sessions"),
+            None => runtime_dir().join("ciri").join("sessions"),
+        }
     }
     #[cfg(windows)]
     {

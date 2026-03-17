@@ -40,11 +40,10 @@ impl InputHandler {
     }
 
     pub fn check_timeout(&mut self) {
-        if let LeaderState::AwaitingAction { entered_at } = &self.state {
-            if entered_at.elapsed() > self.leader_timeout {
+        if let LeaderState::AwaitingAction { entered_at } = &self.state
+            && entered_at.elapsed() > self.leader_timeout {
                 self.state = LeaderState::Idle;
             }
-        }
     }
 
     /// Process a key event. Only handles leader-related keys.
@@ -61,12 +60,11 @@ impl InputHandler {
             LeaderState::Idle => {
                 // Only intercept the leader key (Ctrl+Space)
                 if ctrl && key_name == self.leader_ctrl_key {
-                    if let Some(last) = self.last_leader_press {
-                        if last.elapsed() < self.double_tap_window {
+                    if let Some(last) = self.last_leader_press
+                        && last.elapsed() < self.double_tap_window {
                             self.last_leader_press = None;
                             return InputResult::Action(Action::SendLeaderKey);
                         }
-                    }
                     self.last_leader_press = Some(Instant::now());
                     self.state = LeaderState::AwaitingAction {
                         entered_at: Instant::now(),

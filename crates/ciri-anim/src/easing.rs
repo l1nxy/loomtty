@@ -1,4 +1,4 @@
-/// Easing functions for animations.
+//! Easing functions for animations.
 
 pub fn ease_out_cubic(t: f64) -> f64 {
     let t = t.clamp(0.0, 1.0);

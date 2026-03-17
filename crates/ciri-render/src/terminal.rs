@@ -2,7 +2,7 @@ use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point};
 use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::term::Term;
-use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor};
+use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape, NamedColor};
 use ciri_config::config::CiriConfig;
 use ciri_config::theme::ThemeConfig;
 use glyphon::FontSystem;
@@ -165,7 +165,10 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
     let cursor = content.cursor;
     let cursor_line = cursor.point.line.0;
     let cursor_color = ThemeConfig::parse_color(&config.terminal.cursor_color);
-    let cursor_rect = if cursor_line >= 0 && (cursor_line as usize) < total_rows {
+    // Respect cursor visibility: programs hide it with \x1b[?25l during
+    // multi-line redraws (e.g. cargo progress bars) to avoid flicker.
+    let cursor_visible = cursor.shape != CursorShape::Hidden;
+    let cursor_rect = if cursor_visible && cursor_line >= 0 && (cursor_line as usize) < total_rows {
         Some(Rect {
             x: cursor.point.column.0 as f32 * cw,
             y: cursor_line as f32 * ch,
@@ -180,38 +183,3 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
     TerminalView { glyph_instances, bg_rects, cursor_rect }
 }
 
-/// Convert a cached TerminalView to actual GlyphInstance array for GPU rendering,
-/// applying the tile's screen offset and viewport dimensions.
-pub fn resolve_glyph_instances(
-    view: &TerminalView,
-    offset_x: f32,
-    offset_y: f32,
-    vw: f32,
-    vh: f32,
-) -> Vec<GlyphInstance> {
-    view.glyph_instances
-        .iter()
-        .map(|g| {
-            let sx = offset_x + g.px;
-            let sy = offset_y + g.py;
-            GlyphInstance {
-                pos: [sx / vw * 2.0 - 1.0, 1.0 - sy / vh * 2.0],
-                size: [g.glyph_w / vw * 2.0, -(g.glyph_h / vh * 2.0)],
-                uv_pos: [g.u0, g.v0],
-                uv_size: [g.u1 - g.u0, g.v1 - g.v0],
-                color: g.color,
-            }
-        })
-        .collect()
-}
-
-/// Apply tile offset to background rects.
-pub fn resolve_bg_rects(view: &TerminalView, offset_x: f32, offset_y: f32) -> Vec<Rect> {
-    view.bg_rects.iter().map(|r| Rect {
-        x: r.x + offset_x,
-        y: r.y + offset_y,
-        w: r.w,
-        h: r.h,
-        color: r.color,
-    }).collect()
-}

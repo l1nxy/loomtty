@@ -3,7 +3,6 @@ use std::io::{self, Read};
 
 /// Length-prefixed JSON codec for control messages.
 /// Format: [4 bytes big-endian length][JSON payload]
-
 pub fn encode<T: Serialize>(msg: &T) -> io::Result<Vec<u8>> {
     let json = serde_json::to_vec(msg).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     let len = json.len() as u32;

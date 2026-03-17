@@ -68,10 +68,10 @@ impl Pane {
         // Drain all available output from the background reader thread
         let chunks = self.pty.drain_output();
         if !chunks.is_empty() {
-            let mut term = self.term.lock().unwrap();
+            let mut term = self.term.lock().unwrap_or_else(|e| e.into_inner());
             for chunk in &chunks {
-                for byte in chunk {
-                    self.processor.advance(&mut *term, *byte);
+                for &byte in chunk {
+                    self.processor.advance(&mut *term, byte);
                 }
             }
             processed = true;
@@ -106,7 +106,9 @@ impl Pane {
 
     pub fn write_to_pty(&self, data: &[u8]) {
         if self.exited { return; }
-        let _ = self.pty.write(data);
+        if let Err(e) = self.pty.write(data) {
+            log::warn!("pty write failed (pane {}): {e}", self.id);
+        }
     }
 
     pub fn resize(&mut self, cols: u16, rows: u16) {
@@ -115,7 +117,7 @@ impl Pane {
         self.rows = rows;
         self.pty.resize(cols, rows);
         let size = TermSize { cols: cols as usize, rows: rows as usize };
-        let mut term = self.term.lock().unwrap();
+        let mut term = self.term.lock().unwrap_or_else(|e| e.into_inner());
         term.resize(size);
         self.dirty = true;
     }

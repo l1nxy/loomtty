@@ -6,6 +6,114 @@ use swash::scale::{Render, ScaleContext, Source, StrikeWith};
 use swash::zeno::Format;
 use wgpu;
 
+/// Build font fallback chain using fontconfig (Unix) or simple scan (Windows).
+/// Returns fontdb IDs in priority order: primary font first, then fallbacks
+/// in the order fontconfig recommends.
+fn build_fallback_chain(font_system: &mut FontSystem, family_name: &str) -> Vec<fontdb::ID> {
+    let mut font_ids = Vec::new();
+
+    #[cfg(unix)]
+    {
+        // Use fontconfig's FcFontSort for correct locale-aware fallback ordering.
+        use fontconfig::{Fontconfig, Pattern};
+        use std::ffi::CString;
+
+        if let Some(fc) = Fontconfig::new() {
+            // Step 1: Find primary font by exact family match in fontdb
+            let db = font_system.db();
+            let family_lower = family_name.to_ascii_lowercase();
+            for face in db.faces() {
+                for family in &face.families {
+                    if family.0.eq_ignore_ascii_case(family_name)
+                        || family.0.to_ascii_lowercase().contains(&family_lower)
+                    {
+                        if !font_ids.contains(&face.id) {
+                            font_ids.push(face.id);
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // Step 2: Use fontconfig FcFontSort for fallback ordering
+            let mut pat = Pattern::new(&fc);
+            if let Ok(fam) = CString::new(family_name) {
+                pat.add_string(c"family", &fam);
+            }
+            // sort_fonts() internally calls config_substitute + default_substitute.
+            // Do NOT call them manually — double-substitute corrupts the pattern.
+            let sorted = pat.sort_fonts(false);
+
+            // Build a path→fontdb::ID lookup for fast matching
+            let db = font_system.db();
+            let mut path_to_ids: HashMap<(String, u32), fontdb::ID> = HashMap::new();
+            for face in db.faces() {
+                if let fontdb::Source::File(ref path) = face.source {
+                    path_to_ids.insert((path.to_string_lossy().to_string(), face.index), face.id);
+                }
+            }
+
+            for fc_font in sorted.iter() {
+                let Some(fc_path_raw) = fc_font.filename() else { continue };
+                let fc_path = fc_path_raw.replace("\\", "");
+                let fc_index = fc_font.face_index().unwrap_or(0) as u32;
+                if let Some(&id) = path_to_ids.get(&(fc_path, fc_index))
+                    && !font_ids.contains(&id) {
+                        font_ids.push(id);
+                    }
+            }
+
+            // Add any remaining fontdb fonts not covered by fontconfig
+            for face in db.faces() {
+                if !font_ids.contains(&face.id) {
+                    font_ids.push(face.id);
+                }
+            }
+        }
+    }
+
+    // Fallback: no fontconfig or Windows — scan fontdb directly
+    if font_ids.is_empty() {
+        let db = font_system.db();
+        let mut primary = None;
+        let mut first_mono = None;
+        let family_lower = family_name.to_ascii_lowercase();
+        for face in db.faces() {
+            if first_mono.is_none() && face.monospaced {
+                first_mono = Some(face.id);
+            }
+            for family in &face.families {
+                if family.0.eq_ignore_ascii_case(family_name)
+                    || (family_name != "monospace"
+                        && family.0.to_ascii_lowercase().contains(&family_lower))
+                {
+                    primary = Some(face.id);
+                }
+            }
+        }
+        if let Some(id) = primary.or(first_mono) {
+            font_ids.push(id);
+        }
+        for face in db.faces() {
+            if !font_ids.contains(&face.id) {
+                font_ids.push(face.id);
+            }
+        }
+    }
+
+    // Log the primary font
+    if let Some(&first) = font_ids.first() {
+        let db = font_system.db();
+        if let Some(face) = db.face(first) {
+            let name = face.families.first().map(|f| f.0.as_str()).unwrap_or("?");
+            log::info!("primary font: {name} (monospaced={})", face.monospaced);
+        }
+    }
+    log::info!("font fallback chain: {} fonts total", font_ids.len());
+
+    font_ids
+}
+
 /// UV coordinates of a glyph in the atlas.
 #[derive(Debug, Clone, Copy)]
 pub struct GlyphEntry {
@@ -112,46 +220,12 @@ impl GlyphAtlas {
         render_config: &RenderConfig,
     ) -> Self {
         let atlas_size = render_config.atlas_size;
-        // Convert point size to pixels: pt * dpi_scale * (96/72)
-        let font_size = font_size_pt * dpi_scale as f32 * (96.0 / 72.0);
+        // Convert point size to pixels: pt * dpi / 72
+        // where dpi = 96 * scale_factor (winit's dpi_scale).
+        // This matches ghostty/alacritty's font sizing.
+        let font_size = font_size_pt * (96.0 * dpi_scale as f32) / 72.0;
 
-        // Find font by family name, fallback to first monospace
-        let mut font_ids = Vec::new();
-        {
-            let db = font_system.db();
-            let mut primary = None;
-            let mut first_mono = None;
-            let family_lower = family_name.to_ascii_lowercase();
-            for face in db.faces() {
-                if first_mono.is_none() && face.monospaced {
-                    first_mono = Some(face.id);
-                }
-                // Match by family name (case-insensitive, also partial match for Nerd Font variants)
-                for family in &face.families {
-                    if family.0.eq_ignore_ascii_case(family_name)
-                        || (family_name != "monospace"
-                            && family.0.to_ascii_lowercase().contains(&family_lower))
-                    {
-                        primary = Some(face.id);
-                    }
-                }
-            }
-            // Primary font
-            if let Some(id) = primary.or(first_mono) {
-                font_ids.push(id);
-                if let Some(face) = db.face(id) {
-                    let name = face.families.first().map(|f| f.0.as_str()).unwrap_or("?");
-                    log::info!("primary font: {name} (monospaced={})", face.monospaced);
-                }
-            }
-            // Add all other fonts as fallbacks (for CJK etc.)
-            for face in db.faces() {
-                if !font_ids.contains(&face.id) {
-                    font_ids.push(face.id);
-                }
-            }
-            log::info!("font fallback chain: {} fonts total", font_ids.len());
-        };
+        let font_ids = build_fallback_chain(font_system, family_name);
 
         // Determine cell metrics from the primary font
         let primary_id = font_ids.first().copied();

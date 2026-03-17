@@ -34,7 +34,7 @@ impl Workspace {
 
     pub fn column_x(&self, idx: usize) -> f32 {
         let mut x = 0.0;
-        for i in 0..idx {
+        for i in 0..idx.min(self.columns.len()) {
             x += self.columns[i].effective_width(self.view_size.width) + self.column_gap;
         }
         x
@@ -53,11 +53,10 @@ impl Workspace {
     }
 
     pub fn target_offset_for_active(&self) -> f32 {
-        if self.columns.is_empty() {
+        let Some(col) = self.columns.get(self.active_column_idx) else {
             return 0.0;
-        }
+        };
         let vw = self.view_size.width;
-        let col = &self.columns[self.active_column_idx];
         let col_w = col.effective_width(vw);
         let col_center = self.column_x(self.active_column_idx) + col_w / 2.0;
         let centered = col_center - vw / 2.0;
@@ -122,9 +121,11 @@ impl Workspace {
         let n = self.columns.len();
         if n == 0 { return; }
         if n == 1 {
-            self.columns[0].width = ColumnWidth::Proportion(1.0);
-        } else {
-            self.columns[self.active_column_idx].width = ColumnWidth::Proportion(2.0 / 3.0);
+            if let Some(col) = self.columns.first_mut() {
+                col.width = ColumnWidth::Proportion(1.0);
+            }
+        } else if let Some(col) = self.columns.get_mut(self.active_column_idx) {
+            col.width = ColumnWidth::Proportion(2.0 / 3.0);
         }
     }
 
@@ -180,7 +181,8 @@ impl Workspace {
         }
     }
 
-    /// Resize the active column by a proportion delta, clamping to 0.1..0.9.
+    /// Resize the active column by a proportion delta.
+    /// Clamped to 10%-100% of viewport.
     pub fn resize_active_column(&mut self, delta_proportion: f64) {
         if let Some(col) = self.columns.get_mut(self.active_column_idx) {
             let current_proportion = match col.width {
@@ -193,7 +195,7 @@ impl Workspace {
                     }
                 }
             };
-            let new_proportion = (current_proportion + delta_proportion).clamp(0.1, 0.9);
+            let new_proportion = (current_proportion + delta_proportion).clamp(0.1, 1.0);
             col.width = ColumnWidth::Proportion(new_proportion);
         }
     }

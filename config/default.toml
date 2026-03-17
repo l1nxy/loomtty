@@ -2,15 +2,15 @@
 # Copy to ~/.config/ciri/config.toml and customize.
 
 [font]
-family = "monospace"
-size = 18.0
+family = "Google Sans Code NF"
+size = 10.0
 
 [appearance]
 padding = 4.0
 column_gap = 8.0
 border_width = 2.0
-active_border_color = "#88C0D0"
-inactive_border_color = "#4C566A"
+active_border_color = "#528BFF"
+inactive_border_color = "#3E4452"
 
 [animation]
 speed = 12.0
@@ -27,22 +27,14 @@ title = "ciri"
 [terminal]
 default_cols = 80
 default_rows = 24
-cursor_color = "#E6E6E6"
-cursor_opacity = 0.7
-# Shell to spawn. Leave empty for platform default (cmd.exe on Windows, $SHELL on Unix).
-# Examples: "pwsh.exe", "powershell.exe", "bash.exe", "wsl.exe"
+cursor_color = "#528BFF"
+cursor_opacity = 0.8
+# Shell to spawn. Leave empty for platform default ($SHELL / getpwuid on Unix, cmd.exe on Windows).
 shell = ""
 
 [statusbar]
 height_padding = 4.0
-background_color = "#1F1F26"
 text_baseline = 0.8
-leader_text_color = "#4CE64C"
-text_color = "#B3B3B3"
-active_mode_color = "#4CE64C"
-inactive_text_color = "#808080"
-leader_indicator_color = "#4CE64C"
-leader_indicator_height = 2.0
 
 [input]
 leader_timeout_ms = 1000
@@ -51,38 +43,22 @@ scroll_multiplier = 50.0
 
 [render]
 frame_interval_ms = 16
-clear_color = "#010114"
 atlas_size = 2048
 max_glyph_instances = 32768
 max_rectangles = 8192
 frame_latency = 2
 
 [theme]
-foreground = "#E6E6E6"
-background = "#1E1E2E"
-black = "#000000"
-red = "#CC0000"
-green = "#00CC00"
-yellow = "#CCCC00"
-blue = "#4D4DE6"
-magenta = "#CC00CC"
-cyan = "#00CCCC"
-white = "#BFBFBF"
-bright_black = "#808080"
-bright_red = "#FF0000"
-bright_green = "#00FF00"
-bright_yellow = "#FFFF00"
-bright_blue = "#6666FF"
-bright_magenta = "#FF00FF"
-bright_cyan = "#00FFFF"
-bright_white = "#FFFFFF"
+# Available presets: "one_dark", "catppuccin_mocha", "tokyo_night", "dracula", "nord", "gruvbox_dark"
+# Set preset, then override individual colors below if needed.
+preset = "one_dark"
 
 [keys]
-leader = "ctrl+space"
+leader = "ctrl+w"
 
 [keys.bindings]
 n = "new_column_right"
-d = "split_down"
+d = "new_row_below"
 x = "close_pane"
 h = "focus_left"
 l = "focus_right"
@@ -90,7 +66,23 @@ k = "focus_up"
 j = "focus_down"
 "shift+h" = "move_pane_left"
 "shift+l" = "move_pane_right"
-"1" = "column_width_one_third"
-"2" = "column_width_half"
-"3" = "column_width_two_thirds"
+"shift+[" = "column_width_decrease"
+"shift+]" = "column_width_increase"
 f = "column_width_full"
+e = "column_width_half"
+"[" = "column_width_one_third"
+"]" = "column_width_two_thirds"
+o = "toggle_overview"
+tab = "toggle_overview"
+
+[keys.overview_bindings]
+h = "focus_left"
+l = "focus_right"
+j = "focus_down"
+k = "focus_up"
+x = "close_pane"
+n = "new_column_right"
+escape = "exit_overview"
+enter = "exit_overview"
+o = "exit_overview"
+tab = "exit_overview"

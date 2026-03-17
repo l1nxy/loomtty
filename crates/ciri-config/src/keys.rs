@@ -6,6 +6,7 @@ use std::collections::HashMap;
 pub struct KeybindConfig {
     pub leader: String,
     pub bindings: HashMap<String, String>,
+    pub overview_bindings: HashMap<String, String>,
 }
 
 impl Default for KeybindConfig {
@@ -25,9 +26,29 @@ impl Default for KeybindConfig {
         bindings.insert("3".to_string(), "column_width_two_thirds".to_string());
         bindings.insert("f".to_string(), "column_width_full".to_string());
 
+        let mut overview_bindings = HashMap::new();
+        // Navigation
+        overview_bindings.insert("h".to_string(), "focus_left".to_string());
+        overview_bindings.insert("l".to_string(), "focus_right".to_string());
+        overview_bindings.insert("j".to_string(), "focus_down".to_string());
+        overview_bindings.insert("k".to_string(), "focus_up".to_string());
+        overview_bindings.insert("left".to_string(), "focus_left".to_string());
+        overview_bindings.insert("right".to_string(), "focus_right".to_string());
+        overview_bindings.insert("up".to_string(), "focus_up".to_string());
+        overview_bindings.insert("down".to_string(), "focus_down".to_string());
+        // Actions
+        overview_bindings.insert("x".to_string(), "close_pane".to_string());
+        overview_bindings.insert("n".to_string(), "new_column_right".to_string());
+        // Exit overview
+        overview_bindings.insert("escape".to_string(), "exit_overview".to_string());
+        overview_bindings.insert("enter".to_string(), "exit_overview".to_string());
+        overview_bindings.insert("o".to_string(), "exit_overview".to_string());
+        overview_bindings.insert("tab".to_string(), "exit_overview".to_string());
+
         KeybindConfig {
             leader: "ctrl+space".to_string(),
             bindings,
+            overview_bindings,
         }
     }
 }

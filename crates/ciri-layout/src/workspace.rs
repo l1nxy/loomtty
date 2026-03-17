@@ -56,10 +56,14 @@ impl Workspace {
         if self.columns.is_empty() {
             return 0.0;
         }
+        let vw = self.view_size.width;
         let col = &self.columns[self.active_column_idx];
-        let col_w = col.effective_width(self.view_size.width);
+        let col_w = col.effective_width(vw);
         let col_center = self.column_x(self.active_column_idx) + col_w / 2.0;
-        (col_center - self.view_size.width / 2.0).max(0.0)
+        let centered = col_center - vw / 2.0;
+        // Clamp: don't scroll past the end of content (no blank space on right)
+        let max_offset = (self.total_width() - vw).max(0.0);
+        centered.clamp(0.0, max_offset)
     }
 
     /// Get visible columns as (pane_id, screen_rect, is_active).
@@ -108,6 +112,20 @@ impl Workspace {
         };
         self.columns.insert(insert_at, Column::new(pane_id));
         self.active_column_idx = insert_at;
+        self.auto_size_new_column();
+    }
+
+    /// Set the width of the newly inserted column.
+    /// Existing columns keep their widths; the camera scrolls to reveal the new one.
+    /// Camera clamping ensures no blank space on the right.
+    fn auto_size_new_column(&mut self) {
+        let n = self.columns.len();
+        if n == 0 { return; }
+        if n == 1 {
+            self.columns[0].width = ColumnWidth::Proportion(1.0);
+        } else {
+            self.columns[self.active_column_idx].width = ColumnWidth::Proportion(2.0 / 3.0);
+        }
     }
 
     pub fn close_pane(&mut self, pane_id: PaneId) -> Option<PaneId> {
@@ -158,6 +176,31 @@ impl Workspace {
 
     pub fn set_active_column_width(&mut self, width: ColumnWidth) {
         if let Some(col) = self.columns.get_mut(self.active_column_idx) {
+            col.width = width;
+        }
+    }
+
+    /// Resize the active column by a proportion delta, clamping to 0.1..0.9.
+    pub fn resize_active_column(&mut self, delta_proportion: f64) {
+        if let Some(col) = self.columns.get_mut(self.active_column_idx) {
+            let current_proportion = match col.width {
+                ColumnWidth::Proportion(p) => p,
+                ColumnWidth::Fixed(px) => {
+                    if self.view_size.width > 0.0 {
+                        px / self.view_size.width as f64
+                    } else {
+                        0.5
+                    }
+                }
+            };
+            let new_proportion = (current_proportion + delta_proportion).clamp(0.1, 0.9);
+            col.width = ColumnWidth::Proportion(new_proportion);
+        }
+    }
+
+    /// Set a specific column's width by index (not just the active one).
+    pub fn set_column_width_by_index(&mut self, idx: usize, width: ColumnWidth) {
+        if let Some(col) = self.columns.get_mut(idx) {
             col.width = width;
         }
     }
@@ -230,7 +273,9 @@ mod tests {
         let mut w = ws();
         w.add_column_right(1);
         w.add_column_right(2);
-        let tiles = w.visible_tiles();
+        // First column is full-width (1000), second is half (500) and off-screen
+        // so only 1 tile is visible without scrolling; 2 are visible if scrolled
+        let tiles = w.all_tiles_unculled();
         assert_eq!(tiles.len(), 2);
     }
 
@@ -250,7 +295,8 @@ mod tests {
         let mut w = ws();
         w.add_column_right(1);
         w.add_column_right(2);
+        // Col 0 = Proportion(1.0) = 1000px, col 1 at 1000+8=1008
         assert_eq!(w.column_x(0), 0.0);
-        assert_eq!(w.column_x(1), 508.0);
+        assert_eq!(w.column_x(1), 1008.0);
     }
 }

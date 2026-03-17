@@ -3,6 +3,7 @@ use ciri_anim::animation::ViewOffset;
 use ciri_config::config::CiriConfig;
 use ciri_config::theme::ThemeConfig;
 use ciri_input::action::Action;
+use ciri_input::keybind::{KeyCombo, KeybindMap};
 use ciri_input::leader::InputHandler;
 use ciri_layout::column::ColumnWidth;
 use ciri_layout::geometry::{Rect as GeoRect, ViewSize};
@@ -52,6 +53,12 @@ struct App {
     ime_preedit_active: bool,
     /// Last IME cursor position, for change detection.
     last_ime_pos: Option<(i32, i32)>,
+    /// Configurable overview-mode keybindings.
+    overview_keybinds: KeybindMap,
+    /// Mouse drag resize state: column index being resized (left border).
+    resize_dragging: Option<usize>,
+    resize_drag_start_x: f32,
+    resize_drag_start_width: f32,
 }
 
 impl App {
@@ -61,10 +68,23 @@ impl App {
             width: config.window.width as f32,
             height: config.window.height as f32,
         };
-        let input = InputHandler::new(
+        let mut input = InputHandler::new(
             Duration::from_millis(config.input.leader_timeout_ms),
             Duration::from_millis(config.input.double_tap_window_ms),
         );
+
+        // Initialize leader keybinds from config
+        input.keybinds = KeybindMap::from_config(&config.keys.bindings);
+
+        // Parse leader key from config (e.g. "ctrl+space" -> leader_ctrl_key = "space")
+        let leader_str = &config.keys.leader;
+        if let Some(rest) = leader_str.strip_prefix("ctrl+") {
+            input.leader_ctrl_key = rest.to_string();
+        }
+
+        // Initialize overview keybinds from config
+        let overview_keybinds = KeybindMap::from_overview_config(&config.keys.overview_bindings);
+
         App {
             config,
             frame_interval,
@@ -95,6 +115,10 @@ impl App {
             glyph_buf: Vec::new(),
             ime_preedit_active: false,
             last_ime_pos: None,
+            overview_keybinds,
+            resize_dragging: None,
+            resize_drag_start_x: 0.0,
+            resize_drag_start_width: 0.0,
         }
     }
 
@@ -290,6 +314,21 @@ impl App {
             Action::ColumnWidthFull => {
                 self.workspaces.active_mut().set_active_column_width(ColumnWidth::Proportion(1.0));
                 self.resize_panes_to_layout(); self.animate_to_active();
+            }
+            Action::ColumnWidthIncrease => {
+                self.workspaces.active_mut().resize_active_column(0.05);
+                self.snap_all_col_widths();
+                self.resize_panes_to_layout(); self.animate_to_active();
+            }
+            Action::ColumnWidthDecrease => {
+                self.workspaces.active_mut().resize_active_column(-0.05);
+                self.snap_all_col_widths();
+                self.resize_panes_to_layout(); self.animate_to_active();
+            }
+            Action::ExitOverview => {
+                self.overview_active = false;
+                self.overview_zoom.animate_to(1.0, self.config.animation.speed);
+                self.animate_to_active();
             }
             Action::SwitchWorkspace(idx) => {
                 self.switch_to_workspace(idx);
@@ -881,7 +920,6 @@ impl ApplicationHandler for App {
 
         if let Some(id) = self.create_pane() {
             self.workspaces.active_mut().add_column_right(id);
-            self.workspaces.active_mut().set_active_column_width(ColumnWidth::Proportion(1.0));
         }
 
         self.dpi_scale = dpi_scale;
@@ -954,19 +992,20 @@ impl ApplicationHandler for App {
                 };
 
                 if self.overview_active {
-                    let key_lower = key_name.to_lowercase();
-                    match key_lower.as_str() {
-                        "h" | "left" => { self.workspaces.active_mut().focus_left(); self.animate_to_active(); }
-                        "l" | "right" => { self.workspaces.active_mut().focus_right(); self.animate_to_active(); }
-                        "k" | "up" => { self.workspaces.focus_up(); self.animate_to_active(); }
-                        "j" | "down" => { self.workspaces.focus_down(); self.animate_to_active(); }
-                        "x" => { self.handle_action(Action::ClosePane); }
-                        "escape" | "enter" | "o" | "tab" => {
-                            self.overview_active = false;
-                            self.overview_zoom.animate_to(1.0, self.config.animation.speed);
-                            self.animate_to_active();
+                    let combo = if shift {
+                        KeyCombo::with_shift(&key_name.to_lowercase())
+                    } else {
+                        KeyCombo::new(&key_name.to_lowercase())
+                    };
+                    if let Some(action) = self.overview_keybinds.lookup(&combo) {
+                        match action {
+                            Action::ExitOverview => {
+                                self.overview_active = false;
+                                self.overview_zoom.animate_to(1.0, self.config.animation.speed);
+                                self.animate_to_active();
+                            }
+                            other => self.handle_action(other),
                         }
-                        _ => {}
                     }
                 } else {
                     use ciri_input::leader::InputResult;
@@ -1032,6 +1071,41 @@ impl ApplicationHandler for App {
                         }
                         self.drag_last_pos = Some((mx, my));
                     }
+                } else {
+                    // Normal mode: mouse drag resize + border hover cursor
+                    if let Some(drag_col) = self.resize_dragging {
+                        // Active drag: compute delta and resize column to the LEFT of border
+                        let delta = mx - self.resize_drag_start_x;
+                        let new_width = (self.resize_drag_start_width + delta).max(50.0);
+                        let vw = self.workspaces.active().view_size.width;
+                        let proportion = (new_width as f64 / vw as f64).clamp(0.1, 0.9);
+                        self.workspaces.active_mut().set_column_width_by_index(
+                            drag_col,
+                            ColumnWidth::Proportion(proportion),
+                        );
+                        self.snap_all_col_widths();
+                        self.resize_panes_to_layout();
+                        if let Some(w) = &self.window { w.request_redraw(); }
+                    } else {
+                        // Hit-test column borders for cursor change
+                        let ws = self.workspaces.active();
+                        let vox = ws.view_offset_x;
+                        let mut near_border = false;
+                        for i in 1..ws.columns.len() {
+                            let col_x = ws.column_x(i) - vox;
+                            if (mx - col_x).abs() < 4.0 {
+                                near_border = true;
+                                break;
+                            }
+                        }
+                        if let Some(w) = &self.window {
+                            if near_border {
+                                w.set_cursor(winit::window::CursorIcon::ColResize);
+                            } else {
+                                w.set_cursor(winit::window::CursorIcon::Default);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1058,24 +1132,53 @@ impl ApplicationHandler for App {
                                 self.drag_last_pos = Some((mx, my));
                             }
                         } else {
-                            // Normal mode: click to focus pane
-                            let tiles = self.workspaces.active_mut().visible_tiles();
-                            let clicked_pane = tiles.iter()
-                                .find(|(_, r, _)| r.contains(mx, my))
-                                .map(|(id, _, _)| *id);
-                            if let Some(target_pane) = clicked_pane {
-                                let ws = self.workspaces.active_mut();
-                                for col_idx in 0..ws.columns.len() {
-                                    if ws.columns[col_idx].pane_id == target_pane {
-                                        ws.active_column_idx = col_idx;
-                                        break;
-                                    }
+                            // Normal mode: check if clicking near a column border to start drag resize
+                            let ws = self.workspaces.active();
+                            let vox = ws.view_offset_x;
+                            let vw = ws.view_size.width;
+                            let mut started_drag = false;
+                            for i in 1..ws.columns.len() {
+                                let col_x = ws.column_x(i) - vox;
+                                if (mx - col_x).abs() < 4.0 {
+                                    // Start resizing the column to the left of this border
+                                    let left_col_idx = i - 1;
+                                    let left_col_width = ws.columns[left_col_idx].effective_width(vw);
+                                    self.resize_dragging = Some(left_col_idx);
+                                    self.resize_drag_start_x = mx;
+                                    self.resize_drag_start_width = left_col_width;
+                                    started_drag = true;
+                                    break;
                                 }
-                                self.animate_to_active();
+                            }
+
+                            if !started_drag {
+                                // Normal click to focus pane
+                                let tiles = self.workspaces.active_mut().visible_tiles();
+                                let clicked_pane = tiles.iter()
+                                    .find(|(_, r, _)| r.contains(mx, my))
+                                    .map(|(id, _, _)| *id);
+                                if let Some(target_pane) = clicked_pane {
+                                    let ws = self.workspaces.active_mut();
+                                    for col_idx in 0..ws.columns.len() {
+                                        if ws.columns[col_idx].pane_id == target_pane {
+                                            ws.active_column_idx = col_idx;
+                                            break;
+                                        }
+                                    }
+                                    self.animate_to_active();
+                                }
                             }
                         }
                     } else {
                         // Mouse released
+                        if self.resize_dragging.is_some() {
+                            self.resize_dragging = None;
+                            self.snap_all_col_widths();
+                            self.resize_panes_to_layout();
+                            if let Some(w) = &self.window {
+                                w.set_cursor(winit::window::CursorIcon::Default);
+                            }
+                        }
                         self.overview_dragging = false;
                         self.drag_last_pos = None;
                     }

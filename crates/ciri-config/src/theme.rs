@@ -27,7 +27,7 @@ impl Default for ThemeConfig {
     fn default() -> Self {
         ThemeConfig {
             foreground: "#E6E6E6".to_string(),
-            background: "#1A1A1A".to_string(),
+            background: "#1E1E2E".to_string(),
             black: "#000000".to_string(),
             red: "#CC0000".to_string(),
             green: "#00CC00".to_string(),

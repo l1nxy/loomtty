@@ -18,8 +18,9 @@ impl Default for ColumnWidth {
 pub struct Column {
     pub pane_id: PaneId,
     pub width: ColumnWidth,
-    /// Animated width in pixels, set by the App's animation system.
-    pub animated_width: Option<f32>,
+    /// Current rendered width in pixels. Set once at creation/resize,
+    /// then only changed by explicit animation or jump.
+    rendered_width: Option<f32>,
 }
 
 impl Column {
@@ -27,7 +28,7 @@ impl Column {
         Column {
             pane_id,
             width: ColumnWidth::default(),
-            animated_width: None,
+            rendered_width: None,
         }
     }
 
@@ -39,7 +40,17 @@ impl Column {
     }
 
     pub fn effective_width(&self, viewport_w: f32) -> f32 {
-        self.animated_width.unwrap_or_else(|| self.resolve_width(viewport_w))
+        self.rendered_width.unwrap_or_else(|| self.resolve_width(viewport_w))
+    }
+
+    /// Set the rendered width immediately (no animation).
+    pub fn snap_width(&mut self, viewport_w: f32) {
+        self.rendered_width = Some(self.resolve_width(viewport_w));
+    }
+
+    /// Set the rendered width to an explicit pixel value.
+    pub fn set_rendered_width(&mut self, w: f32) {
+        self.rendered_width = Some(w);
     }
 }
 
@@ -54,9 +65,16 @@ mod tests {
     }
 
     #[test]
-    fn effective_width_uses_animated() {
+    fn effective_width_uses_rendered() {
         let mut col = Column::new(1);
-        col.animated_width = Some(300.0);
+        col.set_rendered_width(300.0);
         assert_eq!(col.effective_width(1000.0), 300.0);
+    }
+
+    #[test]
+    fn snap_width_sets_resolve() {
+        let mut col = Column::new(1);
+        col.snap_width(1000.0);
+        assert_eq!(col.effective_width(1000.0), 500.0);
     }
 }

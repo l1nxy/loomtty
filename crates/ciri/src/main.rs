@@ -5,7 +5,7 @@ use ciri_config::theme::ThemeConfig;
 use ciri_input::action::Action;
 use ciri_input::leader::InputHandler;
 use ciri_layout::column::ColumnWidth;
-use ciri_layout::geometry::ViewSize;
+use ciri_layout::geometry::{Rect as GeoRect, ViewSize};
 use ciri_layout::workspace_set::WorkspaceSet;
 use ciri_render::glyph_cache::{GlyphAtlas, GlyphInstance};
 use ciri_render::rect::Rect;
@@ -31,6 +31,7 @@ struct App {
     panes: HashMap<u64, Pane>,
     next_pane_id: u64,
     input: InputHandler,
+    /// Global horizontal scroll offset (shared across all workspaces).
     view_offset_x: ViewOffset,
     view_offset_y: ViewOffset,
     col_widths: Vec<ViewOffset>,
@@ -40,6 +41,11 @@ struct App {
     last_mouse_pos: Option<(f32, f32)>,
     overview_active: bool,
     overview_zoom: ViewOffset,
+    overview_dragging: bool,
+    drag_last_pos: Option<(f32, f32)>,
+    // Reusable render buffers to avoid per-frame allocation
+    bg_rects_buf: Vec<Rect>,
+    glyph_buf: Vec<GlyphInstance>,
 }
 
 impl App {
@@ -71,30 +77,76 @@ impl App {
             cached_views: HashMap::new(),
             last_mouse_pos: None,
             overview_active: false,
+            overview_dragging: false,
+            drag_last_pos: None,
             overview_zoom: {
                 let mut v = ViewOffset::new();
                 v.jump_to(1.0);
                 v
             },
+            bg_rects_buf: Vec::new(),
+            glyph_buf: Vec::new(),
         }
     }
 
-    fn create_pane(&mut self) -> u64 {
+    /// Find which (workspace_row, pane_id) is under the screen position (mx, my),
+    /// accounting for the current zoom level.
+    fn hit_test_overview(&self, mx: f32, my: f32) -> Option<(usize, u64)> {
+        let zoom = self.overview_zoom.value() as f32;
+        let zoom_threshold = self.config.animation.zoom_threshold;
+        let tiles = if self.overview_active || zoom < zoom_threshold {
+            self.workspaces.all_tiles_2d()
+        } else {
+            self.workspaces.visible_tiles_2d()
+        };
+        let (vw, vh) = self.renderer.as_ref()
+            .map(|r| { let (w, h) = r.surface_size(); (w as f32, h as f32) })
+            .unwrap_or((self.config.window.width as f32, self.config.window.height as f32));
+        let cx = vw / 2.0;
+        let cy = vh / 2.0;
+
+        for (pane_id, tile_rect, _) in &tiles {
+            let tr = if zoom < zoom_threshold {
+                GeoRect::new(
+                    cx + (tile_rect.x - cx) * zoom,
+                    cy + (tile_rect.y - cy) * zoom,
+                    tile_rect.w * zoom,
+                    tile_rect.h * zoom,
+                )
+            } else {
+                *tile_rect
+            };
+            if tr.contains(mx, my) {
+                // Find which workspace row this pane belongs to
+                for (row_idx, ws) in self.workspaces.rows.iter().enumerate() {
+                    if ws.columns.iter().any(|c| c.pane_id == *pane_id) {
+                        return Some((row_idx, *pane_id));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn total_inset(&self) -> f32 {
+        (self.config.appearance.padding + self.config.appearance.border_width) * 2.0
+    }
+
+    fn create_pane(&mut self) -> Option<u64> {
         let id = self.next_pane_id;
         self.next_pane_id += 1;
         let (cols, rows) = self.default_grid_size();
-        match Pane::new(id, cols, rows) {
-            Ok(pane) => { self.panes.insert(id, pane); }
-            Err(e) => { log::error!("failed to create pane: {e}"); }
+        match Pane::new(id, cols, rows, &self.config.terminal.shell) {
+            Ok(pane) => { self.panes.insert(id, pane); Some(id) }
+            Err(e) => { log::error!("failed to create pane: {e}"); None }
         }
-        id
     }
 
     fn default_grid_size(&self) -> (u16, u16) {
         if let Some(atlas) = &self.glyph_atlas {
             let col_w = self.workspaces.active().view_size.width * 0.5;
             let col_h = self.workspaces.active().view_size.height;
-            let pad = self.config.appearance.padding * 2.0 + self.config.appearance.border_width * 2.0;
+            let pad = self.total_inset();
             atlas.grid_size(col_w - pad, col_h - pad)
         } else {
             (self.config.terminal.default_cols, self.config.terminal.default_rows)
@@ -103,7 +155,7 @@ impl App {
 
     fn resize_panes_to_layout(&mut self) {
         let Some(atlas) = &self.glyph_atlas else { return };
-        let pad = self.config.appearance.padding * 2.0 + self.config.appearance.border_width * 2.0;
+        let pad = self.total_inset();
         let tiles = self.workspaces.active_mut().visible_tiles();
         for (pane_id, rect, _) in &tiles {
             if let Some(pane) = self.panes.get_mut(pane_id) {
@@ -113,47 +165,70 @@ impl App {
         }
     }
 
+    /// Snap all columns in ALL workspaces to their target width (no animation).
+    /// Ensures every workspace has correct rendered_width regardless of which is active.
+    fn snap_all_col_widths(&mut self) {
+        let vw = self.workspaces.view_size.width;
+        self.col_widths.clear();
+        for ws in &mut self.workspaces.rows {
+            for col in &mut ws.columns {
+                col.snap_width(vw);
+            }
+        }
+    }
+
     fn switch_to_workspace(&mut self, idx: usize) {
         let old = self.workspaces.active_workspace_idx();
         self.workspaces.switch_to(idx);
         if old != idx {
-            self.col_widths.clear();
+            self.snap_all_col_widths();
             self.cached_views.clear();
-            self.resize_panes_to_layout();
             self.animate_to_active();
+            self.resize_panes_to_layout();
         }
     }
 
     fn handle_action(&mut self, action: Action) {
         match action {
             Action::NewColumnRight => {
-                if self.workspaces.active_mut().columns.len() == 1 {
-                    self.workspaces.active_mut().set_active_column_width(ColumnWidth::Proportion(0.5));
+                if let Some(id) = self.create_pane() {
+                    self.workspaces.active_mut().add_column_right(id);
+                    self.snap_all_col_widths();
+                    self.resize_panes_to_layout();
+                    self.animate_to_active();
                 }
-                let id = self.create_pane();
-                self.workspaces.active_mut().add_column_right(id);
-                self.resize_panes_to_layout();
-                self.animate_to_active();
             }
             Action::NewRowBelow => {
-                let id = self.create_pane();
-                self.workspaces.add_row_below(id);
-                self.view_offset_x.jump_to(0.0);
-                self.col_widths.clear();
-                self.resize_panes_to_layout();
-                self.animate_to_active();
+                if let Some(id) = self.create_pane() {
+                    self.workspaces.add_row_below(id);
+                    self.view_offset_x.jump_to(0.0);
+                    self.snap_all_col_widths();
+                    self.animate_to_active();
+                    self.resize_panes_to_layout();
+                }
             }
             Action::ClosePane => {
+                // Remember where the remaining columns were before closing
+                let ws = self.workspaces.active_mut();
+                let closing_idx = ws.active_column_idx;
+                let closing_width = ws.columns.get(closing_idx)
+                    .map(|c| c.effective_width(ws.view_size.width) + ws.column_gap)
+                    .unwrap_or(0.0);
+
                 if let Some(pane_id) = self.workspaces.active_mut().close_active_pane() {
                     self.panes.remove(&pane_id);
                     self.cached_views.remove(&pane_id);
-                    self.resize_panes_to_layout();
-                    self.animate_to_active();
+                    self.snap_all_col_widths();
+
                     if self.workspaces.active().is_empty() {
                         self.workspaces.cleanup_empty();
-                        let target = self.workspaces.active_mut().target_offset_for_active();
-                        self.view_offset_x.jump_to(target as f64);
-                        self.col_widths.clear();
+                        self.snap_all_col_widths();
+                        self.animate_to_active();
+                        self.resize_panes_to_layout();
+                    } else {
+                        let cur = self.view_offset_x.value();
+                        self.view_offset_x.jump_to(cur - closing_width as f64);
+                        self.animate_to_active();
                         self.resize_panes_to_layout();
                     }
                 }
@@ -162,15 +237,15 @@ impl App {
             Action::FocusRight => { self.workspaces.active_mut().focus_right(); self.animate_to_active(); }
             Action::FocusDown => {
                 self.workspaces.focus_down();
-                self.col_widths.clear();
-                self.resize_panes_to_layout();
+                self.snap_all_col_widths();
                 self.animate_to_active();
+                self.resize_panes_to_layout();
             }
             Action::FocusUp => {
                 self.workspaces.focus_up();
-                self.col_widths.clear();
-                self.resize_panes_to_layout();
+                self.snap_all_col_widths();
                 self.animate_to_active();
+                self.resize_panes_to_layout();
             }
             Action::MovePaneLeft => {
                 self.workspaces.active_mut().move_pane_left();
@@ -205,15 +280,22 @@ impl App {
                 self.overview_active = !self.overview_active;
                 let omega = self.config.animation.speed;
                 if self.overview_active {
-                    let ws = self.workspaces.active_mut();
-                    let total_w = ws.total_width();
-                    let vw = ws.view_size.width;
-                    if total_w > 0.0 {
-                        let fit = self.config.animation.overview_zoom_fit;
-                        let zoom = (vw / total_w).min(1.0) * fit;
-                        self.overview_zoom.animate_to(zoom as f64, omega);
-                    }
+                    // Compute zoom to fit ALL workspaces
+                    let vw = self.workspaces.view_size.width;
+                    let vh = self.workspaces.view_size.height;
+                    let max_w = self.workspaces.rows.iter()
+                        .map(|ws| ws.total_width())
+                        .fold(0.0f32, f32::max)
+                        .max(vw);
+                    let nrows = self.workspaces.rows.iter().filter(|ws| !ws.is_empty()).count().max(1);
+                    let total_h = nrows as f32 * vh + (nrows.saturating_sub(1)) as f32 * self.workspaces.row_gap;
+                    let fit = self.config.animation.overview_zoom_fit;
+                    let zoom_x = vw / max_w;
+                    let zoom_y = vh / total_h;
+                    let zoom = zoom_x.min(zoom_y).min(1.0) * fit;
+                    self.overview_zoom.animate_to(zoom as f64, omega);
                     self.view_offset_x.animate_to(0.0, omega);
+                    self.view_offset_y.animate_to(0.0, omega);
                 } else {
                     self.overview_zoom.animate_to(1.0, omega);
                     self.animate_to_active();
@@ -238,7 +320,6 @@ impl App {
             self.view_offset_x.animate_to(target_x as f64, omega);
         } else {
             self.view_offset_x.jump_to(target_x as f64);
-            self.workspaces.active_mut().view_offset_x = target_x;
         }
 
         let target_y = self.workspaces.target_offset_y();
@@ -252,6 +333,8 @@ impl App {
         self.sync_col_animations();
     }
 
+    /// Sync col_widths animations for within-workspace width changes (e.g. adding columns).
+    /// Only animates when col_widths already has non-zero values from the same workspace.
     fn sync_col_animations(&mut self) {
         let ncols = self.workspaces.active().columns.len();
         while self.col_widths.len() < ncols {
@@ -274,75 +357,64 @@ impl App {
                 self.col_widths[i].jump_to(target);
             }
         }
+
+        // Update rendered_width from col_widths
+        let ws = self.workspaces.active_mut();
+        for (i, col) in ws.columns.iter_mut().enumerate() {
+            if i < self.col_widths.len() {
+                col.set_rendered_width(self.col_widths[i].value() as f32);
+            }
+        }
     }
 
-    fn render(&mut self) {
-        if self.renderer.is_none() || self.glyph_atlas.is_none() {
-            return;
-        }
-
-        let now = Instant::now();
-        let dt = (now - self.last_frame).as_secs_f64();
-        self.last_frame = now;
-
+    fn advance_animations(&mut self, dt: f64) -> bool {
         let mut animating = self.view_offset_x.advance(dt);
         if self.view_offset_y.advance(dt) { animating = true; }
         if self.overview_zoom.advance(dt) { animating = true; }
-        self.workspaces.active_mut().view_offset_x = self.view_offset_x.value() as f32;
+        // Write the SAME view_offset_x to ALL workspaces (unified coordinate system)
+        let vox = self.view_offset_x.value() as f32;
+        for ws in &mut self.workspaces.rows {
+            ws.view_offset_x = vox;
+        }
         self.workspaces.view_offset_y = self.view_offset_y.value() as f32;
 
-        self.sync_col_animations();
-        {
+        // Only advance col_widths if there are active animations
+        if !self.col_widths.is_empty() {
+            self.sync_col_animations();
             let ws = self.workspaces.active_mut();
             for (i, col) in ws.columns.iter_mut().enumerate() {
                 if i < self.col_widths.len() {
                     if self.col_widths[i].advance(dt) { animating = true; }
-                    col.animated_width = Some(self.col_widths[i].value() as f32);
+                    col.set_rendered_width(self.col_widths[i].value() as f32);
                 }
             }
         }
+        animating
+    }
 
-        let renderer = self.renderer.as_mut().unwrap();
-        let atlas = self.glyph_atlas.as_mut().unwrap();
-
-        let (vw, vh) = renderer.surface_size();
-        let vw_f = vw as f32;
-        let vh_f = vh as f32;
-        let zoom = self.overview_zoom.value() as f32;
+    fn build_tiles(
+        &mut self,
+        tiles: &[(u64, GeoRect, bool)],
+        zoom: f32,
+        vw: f32,
+        vh: f32,
+        bg_rects: &mut Vec<Rect>,
+        glyphs: &mut Vec<GlyphInstance>,
+    ) {
         let zoom_threshold = self.config.animation.zoom_threshold;
-
-        let tiles = if self.overview_active || zoom < zoom_threshold {
-            self.workspaces.all_tiles_2d()
-        } else {
-            self.workspaces.visible_tiles_2d()
-        };
         let padding = self.config.appearance.padding;
         let border_w = self.config.appearance.border_width;
 
-        for (pane_id, _, _) in &tiles {
-            let is_dirty = self.panes.get(pane_id).is_some_and(|p| p.dirty);
-            if is_dirty || !self.cached_views.contains_key(pane_id) {
-                if let Some(pane) = self.panes.get_mut(pane_id) {
-                    let term = pane.term.lock().unwrap();
-                    let view = terminal::build_terminal_view(
-                        &*term, atlas, &mut renderer.text.font_system, &renderer.queue,
-                        &self.config,
-                    );
-                    drop(term);
-                    pane.dirty = false;
-                    self.cached_views.insert(*pane_id, view);
-                }
-            }
-        }
+        // Pre-parse colors used per tile
+        let active_border = ThemeConfig::parse_color(&self.config.appearance.active_border_color);
+        let inactive_border = ThemeConfig::parse_color(&self.config.appearance.inactive_border_color);
+        let bg_color = ThemeConfig::parse_color(&self.config.theme.background);
 
-        let mut all_bg_rects: Vec<Rect> = Vec::new();
-        let mut all_glyph_instances: Vec<GlyphInstance> = Vec::new();
-
-        for (pane_id, tile_rect, is_active) in &tiles {
+        for (pane_id, tile_rect, is_active) in tiles {
             let tr = if zoom < zoom_threshold {
-                let cx = vw_f / 2.0;
-                let cy = vh_f / 2.0;
-                ciri_layout::geometry::Rect::new(
+                let cx = vw / 2.0;
+                let cy = vh / 2.0;
+                GeoRect::new(
                     cx + (tile_rect.x - cx) * zoom,
                     cy + (tile_rect.y - cy) * zoom,
                     tile_rect.w * zoom,
@@ -352,76 +424,102 @@ impl App {
                 *tile_rect
             };
 
-            let border_color = if *is_active {
-                ThemeConfig::parse_color(&self.config.appearance.active_border_color)
-            } else {
-                ThemeConfig::parse_color(&self.config.appearance.inactive_border_color)
-            };
-            all_bg_rects.push(Rect {
-                x: tr.x, y: tr.y, w: tr.w, h: tr.h, color: border_color,
+            // Border rect
+            bg_rects.push(Rect {
+                x: tr.x, y: tr.y, w: tr.w, h: tr.h,
+                color: if *is_active { active_border } else { inactive_border },
             });
-            all_bg_rects.push(Rect {
+            // Inner background rect
+            bg_rects.push(Rect {
                 x: tr.x + border_w * zoom, y: tr.y + border_w * zoom,
                 w: tr.w - border_w * zoom * 2.0, h: tr.h - border_w * zoom * 2.0,
-                color: ThemeConfig::parse_color(&self.config.theme.background),
+                color: bg_color,
             });
 
-            if let Some(view) = self.cached_views.get(pane_id) {
-                let inner_x = tr.x + (border_w + padding) * zoom;
-                let inner_y = tr.y + (border_w + padding) * zoom;
+            let Some(view) = self.cached_views.get(pane_id) else { continue };
+            let inner_x = tr.x + (border_w + padding) * zoom;
+            let inner_y = tr.y + (border_w + padding) * zoom;
 
-                for r in &view.bg_rects {
-                    let rx = inner_x + r.x * zoom;
-                    let ry = inner_y + r.y * zoom;
-                    let rw = r.w * zoom;
-                    let rh = r.h * zoom;
-                    if rx + rw < tr.x || rx > tr.x + tr.w || ry + rh < tr.y || ry > tr.y + tr.h {
-                        continue;
-                    }
-                    let cx = rx.max(tr.x);
-                    let cy = ry.max(tr.y);
-                    let cw = (rx + rw).min(tr.x + tr.w) - cx;
-                    let ch = (ry + rh).min(tr.y + tr.h) - cy;
-                    if cw > 0.0 && ch > 0.0 {
-                        all_bg_rects.push(Rect { x: cx, y: cy, w: cw, h: ch, color: r.color });
-                    }
+            // Clip bg rects to tile bounds
+            for r in &view.bg_rects {
+                let src = GeoRect::new(
+                    inner_x + r.x * zoom,
+                    inner_y + r.y * zoom,
+                    r.w * zoom,
+                    r.h * zoom,
+                );
+                if let Some(c) = src.intersection(&tr) {
+                    bg_rects.push(Rect { x: c.x, y: c.y, w: c.w, h: c.h, color: r.color });
                 }
+            }
 
-                if let Some(cursor) = &view.cursor_rect {
-                    all_bg_rects.push(Rect {
-                        x: inner_x + cursor.x * zoom, y: inner_y + cursor.y * zoom,
-                        w: cursor.w * zoom, h: cursor.h * zoom, color: cursor.color,
-                    });
+            // Clip cursor to tile bounds
+            if let Some(cursor) = &view.cursor_rect {
+                let src = GeoRect::new(
+                    inner_x + cursor.x * zoom,
+                    inner_y + cursor.y * zoom,
+                    cursor.w * zoom,
+                    cursor.h * zoom,
+                );
+                if let Some(c) = src.intersection(&tr) {
+                    bg_rects.push(Rect { x: c.x, y: c.y, w: c.w, h: c.h, color: cursor.color });
                 }
+            }
 
-                all_glyph_instances.extend(view.glyph_instances.iter().filter_map(|g| {
-                    let sx = inner_x + g.px * zoom;
-                    let sy = inner_y + g.py * zoom;
-                    let gw = g.glyph_w * zoom;
-                    let gh = g.glyph_h * zoom;
+            // Clip glyphs to tile bounds, adjusting UVs proportionally
+            glyphs.extend(view.glyph_instances.iter().filter_map(|g| {
+                let sx = inner_x + g.px * zoom;
+                let sy = inner_y + g.py * zoom;
+                let gw = g.glyph_w * zoom;
+                let gh = g.glyph_h * zoom;
 
-                    if sx + gw < tr.x || sx > tr.x + tr.w
-                        || sy + gh < tr.y || sy > tr.y + tr.h
-                    {
-                        return None;
-                    }
+                if gw <= 0.0 || gh <= 0.0 { return None; }
 
-                    Some(GlyphInstance {
-                        pos: [sx / vw_f * 2.0 - 1.0, 1.0 - sy / vh_f * 2.0],
-                        size: [gw / vw_f * 2.0, -(gh / vh_f * 2.0)],
+                // Fast path: glyph fully inside tile
+                if sx >= tr.x && sy >= tr.y && sx + gw <= tr.x + tr.w && sy + gh <= tr.y + tr.h {
+                    return Some(GlyphInstance {
+                        pos: [sx / vw * 2.0 - 1.0, 1.0 - sy / vh * 2.0],
+                        size: [gw / vw * 2.0, -(gh / vh * 2.0)],
                         uv_pos: [g.u0, g.v0],
                         uv_size: [g.u1 - g.u0, g.v1 - g.v0],
                         color: g.color,
-                    })
-                }));
-            }
-        }
+                    });
+                }
 
-        // --- Status bar ---
+                let src = GeoRect::new(sx, sy, gw, gh);
+                let c = src.intersection(&tr)?;
+
+                let u_full = g.u1 - g.u0;
+                let v_full = g.v1 - g.v0;
+
+                Some(GlyphInstance {
+                    pos: [c.x / vw * 2.0 - 1.0, 1.0 - c.y / vh * 2.0],
+                    size: [c.w / vw * 2.0, -(c.h / vh * 2.0)],
+                    uv_pos: [
+                        g.u0 + u_full * (c.x - sx) / gw,
+                        g.v0 + v_full * (c.y - sy) / gh,
+                    ],
+                    uv_size: [u_full * c.w / gw, v_full * c.h / gh],
+                    color: g.color,
+                })
+            }));
+        }
+    }
+
+    fn build_status_bar(
+        &mut self,
+        vw: f32,
+        vh: f32,
+        bg_rects: &mut Vec<Rect>,
+        glyphs: &mut Vec<GlyphInstance>,
+    ) {
+        let renderer = self.renderer.as_mut().unwrap();
+        let atlas = self.glyph_atlas.as_mut().unwrap();
+
         let bar_height = atlas.cell_height + self.config.statusbar.height_padding;
-        let bar_y = vh_f - bar_height;
-        all_bg_rects.push(Rect {
-            x: 0.0, y: bar_y, w: vw_f, h: bar_height,
+        let bar_y = vh - bar_height;
+        bg_rects.push(Rect {
+            x: 0.0, y: bar_y, w: vw, h: bar_height,
             color: ThemeConfig::parse_color(&self.config.statusbar.background_color),
         });
 
@@ -449,65 +547,47 @@ impl App {
         let cw = atlas.cell_width;
         let baseline = atlas.cell_height * self.config.statusbar.text_baseline;
 
-        let leader_text_color = ThemeConfig::parse_color(&self.config.statusbar.leader_text_color);
-        let normal_text_color = ThemeConfig::parse_color(&self.config.statusbar.text_color);
-        let active_mode_color = ThemeConfig::parse_color(&self.config.statusbar.active_mode_color);
-        let inactive_text_color = ThemeConfig::parse_color(&self.config.statusbar.inactive_text_color);
+        let left_color = if self.input.is_awaiting_action() {
+            ThemeConfig::parse_color(&self.config.statusbar.leader_text_color)
+        } else {
+            ThemeConfig::parse_color(&self.config.statusbar.text_color)
+        };
+        let right_color = if self.overview_active || self.input.is_awaiting_action() {
+            ThemeConfig::parse_color(&self.config.statusbar.active_mode_color)
+        } else {
+            ThemeConfig::parse_color(&self.config.statusbar.inactive_text_color)
+        };
 
-        for (i, ch) in status_left.chars().enumerate() {
-            if let Some(entry) = atlas.ensure_char(ch, &mut renderer.text.font_system, &renderer.queue) {
-                if entry.width > 0 && entry.height > 0 {
-                    let sx = i as f32 * cw + entry.bearing_x as f32;
-                    let sy = text_y + baseline - entry.bearing_y as f32;
-                    all_glyph_instances.push(GlyphInstance {
-                        pos: [sx / vw_f * 2.0 - 1.0, 1.0 - sy / vh_f * 2.0],
-                        size: [entry.width as f32 / vw_f * 2.0, -(entry.height as f32 / vh_f * 2.0)],
-                        uv_pos: [entry.u0, entry.v0],
-                        uv_size: [entry.u1 - entry.u0, entry.v1 - entry.v0],
-                        color: if self.input.is_awaiting_action() { leader_text_color } else { normal_text_color },
-                    });
-                }
-            }
-        }
+        emit_status_text(atlas, &mut renderer.text.font_system, &renderer.queue,
+            &status_left, 0.0, text_y, cw, baseline, left_color, vw, vh, glyphs);
 
-        let right_start_x = vw_f - status_right.len() as f32 * cw;
-        for (i, ch) in status_right.chars().enumerate() {
-            if let Some(entry) = atlas.ensure_char(ch, &mut renderer.text.font_system, &renderer.queue) {
-                if entry.width > 0 && entry.height > 0 {
-                    let sx = right_start_x + i as f32 * cw + entry.bearing_x as f32;
-                    let sy = text_y + baseline - entry.bearing_y as f32;
-                    let color = if self.overview_active || self.input.is_awaiting_action() {
-                        active_mode_color
-                    } else {
-                        inactive_text_color
-                    };
-                    all_glyph_instances.push(GlyphInstance {
-                        pos: [sx / vw_f * 2.0 - 1.0, 1.0 - sy / vh_f * 2.0],
-                        size: [entry.width as f32 / vw_f * 2.0, -(entry.height as f32 / vh_f * 2.0)],
-                        uv_pos: [entry.u0, entry.v0],
-                        uv_size: [entry.u1 - entry.u0, entry.v1 - entry.v0],
-                        color,
-                    });
-                }
-            }
-        }
+        let right_start_x = vw - status_right.len() as f32 * cw;
+        emit_status_text(atlas, &mut renderer.text.font_system, &renderer.queue,
+            &status_right, right_start_x, text_y, cw, baseline, right_color, vw, vh, glyphs);
 
         if self.input.is_awaiting_action() {
             let indicator_h = self.config.statusbar.leader_indicator_height;
-            all_bg_rects.push(Rect {
-                x: 0.0, y: bar_y - indicator_h, w: vw_f, h: indicator_h,
+            bg_rects.push(Rect {
+                x: 0.0, y: bar_y - indicator_h, w: vw, h: indicator_h,
                 color: ThemeConfig::parse_color(&self.config.statusbar.leader_indicator_color),
             });
         }
+    }
 
-        // --- GPU rendering ---
-        let clear_color = ThemeConfig::parse_color(&self.config.render.clear_color);
+    fn submit_frame(
+        renderer: &mut Renderer,
+        atlas: &mut GlyphAtlas,
+        clear_color: [f32; 4],
+        bg_rects: &[Rect],
+        glyphs: &[GlyphInstance],
+    ) {
+        let (vw, vh) = renderer.surface_size();
+        let vw_f = vw as f32;
+        let vh_f = vh as f32;
+
         let output = match renderer.surface.get_current_texture() {
             Ok(t) => t,
-            Err(wgpu::SurfaceError::Lost) => {
-                renderer.resize(vw, vh);
-                return;
-            }
+            Err(wgpu::SurfaceError::Lost) => { renderer.resize(vw, vh); return; }
             Err(e) => { log::error!("surface error: {e}"); return; }
         };
 
@@ -536,15 +616,108 @@ impl App {
                 ..Default::default()
             });
 
-            renderer.rects.render(&renderer.queue, &mut pass, &all_bg_rects, vw_f, vh_f);
-            atlas.render(&renderer.queue, &mut pass, &all_glyph_instances);
+            renderer.rects.render(&renderer.queue, &mut pass, bg_rects, vw_f, vh_f);
+            atlas.render(&renderer.queue, &mut pass, glyphs);
         }
 
         renderer.queue.submit(std::iter::once(encoder.finish()));
         output.present();
+    }
+
+    fn render(&mut self) {
+        if self.renderer.is_none() || self.glyph_atlas.is_none() {
+            return;
+        }
+
+        let now = Instant::now();
+        let dt = (now - self.last_frame).as_secs_f64();
+        self.last_frame = now;
+
+        let animating = self.advance_animations(dt);
+
+        let renderer = self.renderer.as_mut().unwrap();
+        let atlas = self.glyph_atlas.as_mut().unwrap();
+        let (vw, vh) = renderer.surface_size();
+        let vw_f = vw as f32;
+        let vh_f = vh as f32;
+        let zoom = self.overview_zoom.value() as f32;
+        let zoom_threshold = self.config.animation.zoom_threshold;
+
+        let tiles = if self.overview_active || zoom < zoom_threshold {
+            self.workspaces.all_tiles_2d()
+        } else {
+            self.workspaces.visible_tiles_2d()
+        };
+
+        // Update terminal views for dirty panes
+        for (pane_id, _, _) in &tiles {
+            let is_dirty = self.panes.get(pane_id).is_some_and(|p| p.dirty);
+            if is_dirty || !self.cached_views.contains_key(pane_id) {
+                if let Some(pane) = self.panes.get_mut(pane_id) {
+                    let term = pane.term.lock().unwrap();
+                    let view = terminal::build_terminal_view(
+                        &*term, atlas, &mut renderer.text.font_system, &renderer.queue,
+                        &self.config,
+                    );
+                    drop(term);
+                    pane.dirty = false;
+                    self.cached_views.insert(*pane_id, view);
+                }
+            }
+        }
+
+        // Build scene
+        let mut bg_rects = std::mem::take(&mut self.bg_rects_buf);
+        let mut glyphs = std::mem::take(&mut self.glyph_buf);
+        bg_rects.clear();
+        glyphs.clear();
+
+        self.build_tiles(&tiles, zoom, vw_f, vh_f, &mut bg_rects, &mut glyphs);
+        self.build_status_bar(vw_f, vh_f, &mut bg_rects, &mut glyphs);
+
+        // Submit to GPU
+        let clear_color = ThemeConfig::parse_color(&self.config.render.clear_color);
+        let renderer = self.renderer.as_mut().unwrap();
+        let atlas = self.glyph_atlas.as_mut().unwrap();
+        Self::submit_frame(renderer, atlas, clear_color, &bg_rects, &glyphs);
+
+        // Return buffers for reuse
+        self.bg_rects_buf = bg_rects;
+        self.glyph_buf = glyphs;
 
         if animating {
             if let Some(w) = &self.window { w.request_redraw(); }
+        }
+    }
+}
+
+fn emit_status_text(
+    atlas: &mut GlyphAtlas,
+    font_system: &mut glyphon::FontSystem,
+    queue: &wgpu::Queue,
+    text: &str,
+    x_start: f32,
+    text_y: f32,
+    cell_width: f32,
+    baseline: f32,
+    color: [f32; 4],
+    vw: f32,
+    vh: f32,
+    glyphs: &mut Vec<GlyphInstance>,
+) {
+    for (i, ch) in text.chars().enumerate() {
+        if let Some(entry) = atlas.ensure_char(ch, font_system, queue) {
+            if entry.width > 0 && entry.height > 0 {
+                let sx = x_start + i as f32 * cell_width + entry.bearing_x as f32;
+                let sy = text_y + baseline - entry.bearing_y as f32;
+                glyphs.push(GlyphInstance {
+                    pos: [sx / vw * 2.0 - 1.0, 1.0 - sy / vh * 2.0],
+                    size: [entry.width as f32 / vw * 2.0, -(entry.height as f32 / vh * 2.0)],
+                    uv_pos: [entry.u0, entry.v0],
+                    uv_size: [entry.u1 - entry.u0, entry.v1 - entry.v0],
+                    color,
+                });
+            }
         }
     }
 }
@@ -568,15 +741,51 @@ impl ApplicationHandler for App {
                 .map(|(id, _)| *id)
                 .collect();
             if !dead_ids.is_empty() {
+                // Calculate width of columns being removed that are LEFT of the
+                // active column in the active workspace (for camera compensation).
+                let ws = self.workspaces.active_mut();
+                let gap = ws.column_gap;
+                let vw = ws.view_size.width;
+                let active_idx = ws.active_column_idx;
+                let mut left_removed_width: f32 = 0.0;
+                for (i, col) in ws.columns.iter().enumerate() {
+                    if i < active_idx && dead_ids.contains(&col.pane_id) {
+                        left_removed_width += col.effective_width(vw) + gap;
+                    }
+                }
+                // Also check if the active column itself is dying
+                let active_dying = ws.columns.get(active_idx)
+                    .is_some_and(|c| dead_ids.contains(&c.pane_id));
+                if active_dying {
+                    // Active column is dying; include its width for camera offset
+                    if let Some(c) = ws.columns.get(active_idx) {
+                        left_removed_width += c.effective_width(vw) + gap;
+                    }
+                }
+
                 for id in &dead_ids {
                     self.panes.remove(id);
                     self.cached_views.remove(id);
-                    self.workspaces.active_mut().close_pane(*id);
+                    for ws in &mut self.workspaces.rows {
+                        ws.close_pane(*id);
+                    }
                 }
-                if !self.workspaces.active_mut().is_empty() {
-                    self.resize_panes_to_layout();
-                    self.animate_to_active();
+                self.workspaces.cleanup_empty();
+                if self.workspaces.active().is_empty() {
+                    if let Some(idx) = self.workspaces.rows.iter()
+                        .position(|ws| !ws.is_empty())
+                    {
+                        self.workspaces.active_row = idx;
+                    }
                 }
+                self.snap_all_col_widths();
+                // Camera compensation: offset so remaining columns stay on screen
+                if left_removed_width > 0.0 {
+                    let cur = self.view_offset_x.value();
+                    self.view_offset_x.jump_to(cur - left_removed_width as f64);
+                }
+                self.animate_to_active();
+                self.resize_panes_to_layout();
                 needs_redraw = true;
             }
 
@@ -620,11 +829,14 @@ impl ApplicationHandler for App {
 
         log::info!("cell: {:.1}x{:.1}", atlas.cell_width, atlas.cell_height);
 
-        let id = self.create_pane();
-        self.workspaces.active_mut().add_column_right(id);
-        self.workspaces.active_mut().set_active_column_width(ColumnWidth::Proportion(1.0));
+        if let Some(id) = self.create_pane() {
+            self.workspaces.active_mut().add_column_right(id);
+            self.workspaces.active_mut().set_active_column_width(ColumnWidth::Proportion(1.0));
+        }
 
         self.glyph_atlas = Some(atlas);
+        self.snap_all_col_widths();
+        self.animate_to_active();
         self.resize_panes_to_layout();
         self.window = Some(window);
         self.renderer = Some(renderer);
@@ -653,6 +865,7 @@ impl ApplicationHandler for App {
                 self.workspaces.resize_view(ViewSize {
                     width: size.width as f32, height: size.height as f32,
                 });
+                self.snap_all_col_widths();
                 for pane in self.panes.values_mut() { pane.dirty = true; }
                 self.cached_views.clear();
                 self.resize_panes_to_layout();
@@ -689,6 +902,7 @@ impl ApplicationHandler for App {
                         "l" | "right" => { self.workspaces.active_mut().focus_right(); self.animate_to_active(); }
                         "k" | "up" => { self.workspaces.focus_up(); self.animate_to_active(); }
                         "j" | "down" => { self.workspaces.focus_down(); self.animate_to_active(); }
+                        "x" => { self.handle_action(Action::ClosePane); }
                         "escape" | "enter" | "o" | "tab" => {
                             self.overview_active = false;
                             self.overview_zoom.animate_to(1.0, self.config.animation.speed);
@@ -723,54 +937,133 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::CursorMoved { position, .. } => {
-                self.last_mouse_pos = Some((position.x as f32, position.y as f32));
-            }
+                let mx = position.x as f32;
+                let my = position.y as f32;
+                self.last_mouse_pos = Some((mx, my));
 
-            WindowEvent::MouseInput { state: ElementState::Pressed, button: winit::event::MouseButton::Left, .. } => {
-                if let Some((mx, my)) = self.last_mouse_pos {
-                    let tiles = self.workspaces.active_mut().visible_tiles();
-                    let mut clicked_pane = None;
-                    for (pane_id, tile_rect, _) in &tiles {
-                        if mx >= tile_rect.x && mx < tile_rect.x + tile_rect.w
-                            && my >= tile_rect.y && my < tile_rect.y + tile_rect.h
-                        {
-                            clicked_pane = Some(*pane_id);
-                            break;
-                        }
-                    }
-                    if let Some(target_pane) = clicked_pane {
+                if self.overview_active {
+                    // Hover: select the pane under cursor
+                    if let Some((row_idx, pane_id)) = self.hit_test_overview(mx, my) {
+                        self.workspaces.active_row = row_idx;
                         let ws = self.workspaces.active_mut();
-                        for col_idx in 0..ws.columns.len() {
-                            if ws.columns[col_idx].pane_id == target_pane {
+                        for (col_idx, col) in ws.columns.iter().enumerate() {
+                            if col.pane_id == pane_id {
                                 ws.active_column_idx = col_idx;
                                 break;
                             }
                         }
-                        if self.overview_active {
-                            self.overview_active = false;
-                            self.overview_zoom.animate_to(1.0, self.config.animation.speed);
+                        if let Some(w) = &self.window { w.request_redraw(); }
+                    }
+
+                    // Drag panning
+                    if self.overview_dragging {
+                        if let Some((lx, ly)) = self.drag_last_pos {
+                            let zoom = self.overview_zoom.value() as f32;
+                            let dx = (mx - lx) / zoom;
+                            let dy = (my - ly) / zoom;
+                            let cur_x = self.view_offset_x.value();
+                            self.view_offset_x.jump_to(cur_x - dx as f64);
+                            let vox = self.view_offset_x.value() as f32;
+                            for ws in &mut self.workspaces.rows {
+                                ws.view_offset_x = vox;
+                            }
+                            let cur_y = self.view_offset_y.value();
+                            self.view_offset_y.jump_to(cur_y - dy as f64);
+                            self.workspaces.view_offset_y = self.view_offset_y.value() as f32;
+                            if let Some(w) = &self.window { w.request_redraw(); }
                         }
-                        self.animate_to_active();
+                        self.drag_last_pos = Some((mx, my));
+                    }
+                }
+            }
+
+            WindowEvent::MouseInput { state, button: winit::event::MouseButton::Left, .. } => {
+                if let Some((mx, my)) = self.last_mouse_pos {
+                    if state == ElementState::Pressed {
+                        if self.overview_active {
+                            // Click on a panel: select it and exit overview
+                            if let Some((row_idx, pane_id)) = self.hit_test_overview(mx, my) {
+                                self.workspaces.active_row = row_idx;
+                                let ws = self.workspaces.active_mut();
+                                for (col_idx, col) in ws.columns.iter().enumerate() {
+                                    if col.pane_id == pane_id {
+                                        ws.active_column_idx = col_idx;
+                                        break;
+                                    }
+                                }
+                                self.overview_active = false;
+                                self.overview_zoom.animate_to(1.0, self.config.animation.speed);
+                                self.animate_to_active();
+                            } else {
+                                // Click on empty space: start drag panning
+                                self.overview_dragging = true;
+                                self.drag_last_pos = Some((mx, my));
+                            }
+                        } else {
+                            // Normal mode: click to focus pane
+                            let tiles = self.workspaces.active_mut().visible_tiles();
+                            let clicked_pane = tiles.iter()
+                                .find(|(_, r, _)| r.contains(mx, my))
+                                .map(|(id, _, _)| *id);
+                            if let Some(target_pane) = clicked_pane {
+                                let ws = self.workspaces.active_mut();
+                                for col_idx in 0..ws.columns.len() {
+                                    if ws.columns[col_idx].pane_id == target_pane {
+                                        ws.active_column_idx = col_idx;
+                                        break;
+                                    }
+                                }
+                                self.animate_to_active();
+                            }
+                        }
+                    } else {
+                        // Mouse released
+                        self.overview_dragging = false;
+                        self.drag_last_pos = None;
                     }
                     if let Some(w) = &self.window { w.request_redraw(); }
                 }
             }
 
             WindowEvent::MouseWheel { delta, phase, .. } => {
-                let scroll_mult = self.config.input.scroll_multiplier;
-                let dx = match delta {
-                    MouseScrollDelta::LineDelta(x, _) => x as f64 * scroll_mult,
-                    MouseScrollDelta::PixelDelta(pos) => pos.x,
-                };
-                match phase {
-                    TouchPhase::Started => self.view_offset_x.begin_gesture(),
-                    TouchPhase::Moved => {
-                        self.view_offset_x.update_gesture(dx);
-                        self.workspaces.active_mut().view_offset_x = self.view_offset_x.value() as f32;
+                if self.overview_active {
+                    // In overview: scroll wheel zooms
+                    let dy = match delta {
+                        MouseScrollDelta::LineDelta(_, y) => y as f64 * 0.05,
+                        MouseScrollDelta::PixelDelta(pos) => pos.y * 0.001,
+                    };
+                    let cur_zoom = self.overview_zoom.value();
+                    let new_zoom = (cur_zoom + dy).clamp(0.05, 1.0);
+                    let omega = self.config.animation.speed;
+                    if new_zoom >= self.config.animation.zoom_threshold as f64 {
+                        // Zoomed back to ~1.0: exit overview
+                        self.overview_active = false;
+                        self.overview_zoom.animate_to(1.0, omega);
+                        self.animate_to_active();
+                    } else {
+                        self.overview_zoom.animate_to(new_zoom, omega);
                     }
-                    TouchPhase::Ended | TouchPhase::Cancelled => {
-                        let t = self.workspaces.active_mut().target_offset_for_active();
-                        self.view_offset_x.end_gesture(t as f64, self.config.animation.speed);
+                } else {
+                    // Normal mode: horizontal scroll gesture
+                    let scroll_mult = self.config.input.scroll_multiplier;
+                    let dx = match delta {
+                        MouseScrollDelta::LineDelta(x, _) => x as f64 * scroll_mult,
+                        MouseScrollDelta::PixelDelta(pos) => pos.x,
+                    };
+                    match phase {
+                        TouchPhase::Started => { self.view_offset_x.begin_gesture(); }
+                        TouchPhase::Moved => {
+                            self.view_offset_x.update_gesture(dx);
+                            let val = self.view_offset_x.value() as f32;
+                            for ws in &mut self.workspaces.rows {
+                                ws.view_offset_x = val;
+                            }
+                        }
+                        TouchPhase::Ended | TouchPhase::Cancelled => {
+                            let t = self.workspaces.active_mut().target_offset_for_active();
+                            let speed = self.config.animation.speed;
+                            self.view_offset_x.end_gesture(t as f64, speed);
+                        }
                     }
                 }
                 if let Some(w) = &self.window { w.request_redraw(); }

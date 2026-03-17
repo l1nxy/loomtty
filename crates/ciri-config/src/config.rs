@@ -48,7 +48,7 @@ impl Default for FontConfig {
     fn default() -> Self {
         FontConfig {
             family: "monospace".to_string(),
-            size: 16.0,
+            size: 18.0,
         }
     }
 }
@@ -128,6 +128,8 @@ pub struct TerminalConfig {
     pub cursor_color: String,
     /// Cursor opacity (0.0-1.0).
     pub cursor_opacity: f32,
+    /// Shell program to spawn. If empty, uses platform default (cmd.exe on Windows, $SHELL on Unix).
+    pub shell: String,
 }
 
 impl Default for TerminalConfig {
@@ -137,6 +139,7 @@ impl Default for TerminalConfig {
             default_rows: 24,
             cursor_color: "#E6E6E6".to_string(),
             cursor_opacity: 0.7,
+            shell: String::new(),
         }
     }
 }

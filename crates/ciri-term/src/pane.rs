@@ -36,8 +36,8 @@ pub struct Pane {
 }
 
 impl Pane {
-    pub fn new(id: PaneId, cols: u16, rows: u16) -> Result<Self> {
-        let pty = Pty::spawn(cols, rows)?;
+    pub fn new(id: PaneId, cols: u16, rows: u16, shell: &str) -> Result<Self> {
+        let pty = Pty::spawn(cols, rows, shell)?;
 
         let size = TermSize { cols: cols as usize, rows: rows as usize };
         let config = TermConfig::default();

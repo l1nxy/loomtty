@@ -22,6 +22,19 @@ impl Rect {
             && self.y < other.y + other.h
             && self.y + self.h > other.y
     }
+
+    /// Returns the intersection of two rectangles, or `None` if they don't overlap.
+    pub fn intersection(&self, clip: &Rect) -> Option<Rect> {
+        let x0 = self.x.max(clip.x);
+        let y0 = self.y.max(clip.y);
+        let x1 = (self.x + self.w).min(clip.x + clip.w);
+        let y1 = (self.y + self.h).min(clip.y + clip.h);
+        if x0 < x1 && y0 < y1 {
+            Some(Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
+        } else {
+            None
+        }
+    }
 }
 
 /// Size of the viewport in pixels.

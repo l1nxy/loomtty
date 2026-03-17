@@ -17,21 +17,23 @@ pub struct Pty {
 }
 
 impl Pty {
-    pub fn spawn(cols: u16, rows: u16) -> Result<Self> {
+    pub fn spawn(cols: u16, rows: u16, shell: &str) -> Result<Self> {
         let pty_system = native_pty_system();
 
         let pair = pty_system
             .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
             .context("openpty failed")?;
 
-        let shell = if cfg!(windows) {
+        let cmd = if !shell.is_empty() {
+            CommandBuilder::new(shell)
+        } else if cfg!(windows) {
             CommandBuilder::new("cmd.exe")
         } else {
-            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-            CommandBuilder::new(shell)
+            let default = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+            CommandBuilder::new(default)
         };
 
-        let child = pair.slave.spawn_command(shell).context("spawn failed")?;
+        let child = pair.slave.spawn_command(cmd).context("spawn failed")?;
         drop(pair.slave);
 
         let mut reader = pair.master.try_clone_reader().context("clone reader failed")?;

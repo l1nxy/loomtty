@@ -40,7 +40,7 @@ impl ServerState {
     fn create_pane(&mut self) -> Result<u64, anyhow::Error> {
         let id = self.next_pane_id;
         self.next_pane_id += 1;
-        let pane = Pane::new(id, self.default_cols, self.default_rows)?;
+        let pane = Pane::new(id, self.default_cols, self.default_rows, "")?;
         self.panes.insert(id, pane);
         self.workspace.add_column_right(id);
         Ok(id)
@@ -49,7 +49,7 @@ impl ServerState {
     fn create_pane_new_column(&mut self) -> Result<u64, anyhow::Error> {
         let id = self.next_pane_id;
         self.next_pane_id += 1;
-        let pane = Pane::new(id, self.default_cols, self.default_rows)?;
+        let pane = Pane::new(id, self.default_cols, self.default_rows, "")?;
         self.panes.insert(id, pane);
         self.workspace.add_column_right(id);
         Ok(id)

@@ -267,6 +267,14 @@ impl App {
         }
     }
 
+    fn cell_dimensions(&self) -> (f32, f32) {
+        if let Some(atlas) = &self.glyph_atlas {
+            (atlas.cell_width, atlas.cell_height)
+        } else {
+            (8.0, 16.0)
+        }
+    }
+
     fn status_bar_height(&self) -> f32 {
         let cell_h = self.glyph_atlas.as_ref()
             .map(|a| a.cell_height)
@@ -515,7 +523,7 @@ impl App {
                 }
             }
 
-            if let Some(cursor) = &view.cursor_rect {
+            for cursor in &view.cursor_rects {
                 let src = GeoRect::new(
                     inner_x + cursor.x * zoom,
                     inner_y + cursor.y * zoom,
@@ -728,7 +736,7 @@ impl App {
             && let Some(active_pid) = self.workspaces.active().active_pane_id()
                 && let Some((_, tile_rect, _)) = tiles.iter().find(|(id, _, _)| *id == active_pid)
                     && let Some(view) = self.cached_views.get(&active_pid)
-                        && let Some(cursor) = &view.cursor_rect {
+                        && let Some(cursor) = view.cursor_rects.first() {
                             let padding = self.config.appearance.padding;
                             let border_w = self.config.appearance.border_width;
                             let cx = (tile_rect.x + border_w + padding + cursor.x) as i32;
@@ -867,11 +875,16 @@ impl ApplicationHandler for App {
         log::info!("cell: {:.1}x{:.1} (dpi_scale={:.2})", atlas.cell_width, atlas.cell_height, dpi_scale);
 
         // Connect to server (or spawn one)
-        match connection::connect_or_spawn("default") {
+        let (cw, ch) = self.cell_dimensions();
+        let view = &self.workspaces.view_size;
+        let viewport = ciri_protocol::codec::ClientViewport {
+            width: view.width as u32,
+            height: view.height as u32,
+            cell_width: cw,
+            cell_height: ch,
+        };
+        match connection::connect_or_spawn("default", viewport) {
             Ok((tx, rx)) => {
-                // Send attach with current viewport size
-                let (cols, rows) = self.compute_grid_size();
-                let _ = tx.send(ClientMessage::Attach { cols, rows });
                 self.server_tx = Some(tx);
                 self.server_rx = Some(rx);
             }
@@ -920,9 +933,12 @@ impl ApplicationHandler for App {
                 self.animate_to_active();
                 // Notify server of resize
                 let (cols, rows) = self.compute_grid_size();
+                let (cw, ch) = self.cell_dimensions();
+                let view = &self.workspaces.view_size;
                 self.send(ClientMessage::Resize {
                     cols, rows,
-                    width: size.width, height: size.height,
+                    width: view.width as u32, height: view.height as u32,
+                    cell_width: cw, cell_height: ch,
                 });
                 if let Some(w) = &self.window { w.request_redraw(); }
             }

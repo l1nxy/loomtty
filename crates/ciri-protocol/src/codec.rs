@@ -2,12 +2,134 @@ use crate::message::*;
 use std::io;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-// ─── Protocol version ───────────────────────────────────────────────
-// TODO(H6): Add a proper handshake that exchanges PROTOCOL_VERSION on connect.
-// For now, both sides must be compiled from the same revision. When the wire
-// format changes in an incompatible way, bump this constant so a future
-// handshake can detect mismatches.
-pub const PROTOCOL_VERSION: u16 = 1;
+// ─── Protocol handshake ─────────────────────────────────────────────
+
+/// Pack semver "major.minor.patch" into u32: major(8).minor(8).patch(16).
+const fn pack_version(major: u8, minor: u8, patch: u16) -> u32 {
+    (major as u32) << 24 | (minor as u32) << 16 | patch as u32
+}
+
+fn parse_pkg_version() -> u32 {
+    let v = env!("CARGO_PKG_VERSION");
+    let parts: Vec<&str> = v.split('.').collect();
+    assert!(parts.len() == 3, "CARGO_PKG_VERSION must be major.minor.patch");
+    let major: u8 = parts[0].parse().expect("bad major");
+    let minor: u8 = parts[1].parse().expect("bad minor");
+    let patch: u16 = parts[2].parse().expect("bad patch");
+    pack_version(major, minor, patch)
+}
+
+fn unpack_version(v: u32) -> String {
+    let major = (v >> 24) & 0xFF;
+    let minor = (v >> 16) & 0xFF;
+    let patch = v & 0xFFFF;
+    format!("{major}.{minor}.{patch}")
+}
+
+const HANDSHAKE_MAGIC: [u8; 4] = *b"CIRI";
+
+/// Version compatibility result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VersionCompat {
+    Exact(String),
+    PatchMismatch { peer: String, local: String },
+    MinorMismatch { peer: String, local: String },
+}
+
+fn check_version(peer: u32) -> io::Result<VersionCompat> {
+    let local = parse_pkg_version();
+    let peer_major = (peer >> 24) & 0xFF;
+    let peer_minor = (peer >> 16) & 0xFF;
+    let local_major = (local >> 24) & 0xFF;
+    let local_minor = (local >> 16) & 0xFF;
+
+    if peer_major != local_major {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "incompatible major version: peer={}, local={}",
+                unpack_version(peer), unpack_version(local),
+            ),
+        ));
+    }
+    if peer == local {
+        Ok(VersionCompat::Exact(unpack_version(peer)))
+    } else if peer_minor != local_minor {
+        Ok(VersionCompat::MinorMismatch {
+            peer: unpack_version(peer), local: unpack_version(local),
+        })
+    } else {
+        Ok(VersionCompat::PatchMismatch {
+            peer: unpack_version(peer), local: unpack_version(local),
+        })
+    }
+}
+
+/// Client viewport info sent in the hello message.
+#[derive(Debug, Clone)]
+pub struct ClientViewport {
+    pub width: u32,
+    pub height: u32,
+    pub cell_width: f32,
+    pub cell_height: f32,
+}
+
+/// ClientHello: [magic(4)][version(4)][width(4)][height(4)][cell_w(4)][cell_h(4)] = 24 bytes
+pub async fn write_client_hello<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    viewport: &ClientViewport,
+) -> io::Result<()> {
+    let mut buf = [0u8; 24];
+    buf[0..4].copy_from_slice(&HANDSHAKE_MAGIC);
+    buf[4..8].copy_from_slice(&parse_pkg_version().to_le_bytes());
+    buf[8..12].copy_from_slice(&viewport.width.to_le_bytes());
+    buf[12..16].copy_from_slice(&viewport.height.to_le_bytes());
+    buf[16..20].copy_from_slice(&viewport.cell_width.to_bits().to_le_bytes());
+    buf[20..24].copy_from_slice(&viewport.cell_height.to_bits().to_le_bytes());
+    writer.write_all(&buf).await?;
+    writer.flush().await
+}
+
+/// Server reads ClientHello. Returns version compat + viewport.
+pub async fn read_client_hello<R: AsyncRead + Unpin>(
+    reader: &mut R,
+) -> io::Result<(VersionCompat, ClientViewport)> {
+    let mut buf = [0u8; 24];
+    reader.read_exact(&mut buf).await?;
+    if buf[0..4] != HANDSHAKE_MAGIC {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "bad magic bytes"));
+    }
+    let peer_ver = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
+    let compat = check_version(peer_ver)?;
+    let viewport = ClientViewport {
+        width: u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]),
+        height: u32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]]),
+        cell_width: f32::from_bits(u32::from_le_bytes([buf[16], buf[17], buf[18], buf[19]])),
+        cell_height: f32::from_bits(u32::from_le_bytes([buf[20], buf[21], buf[22], buf[23]])),
+    };
+    Ok((compat, viewport))
+}
+
+/// ServerHello: [magic(4)][version(4)] = 8 bytes
+pub async fn write_server_hello<W: AsyncWrite + Unpin>(writer: &mut W) -> io::Result<()> {
+    let mut buf = [0u8; 8];
+    buf[0..4].copy_from_slice(&HANDSHAKE_MAGIC);
+    buf[4..8].copy_from_slice(&parse_pkg_version().to_le_bytes());
+    writer.write_all(&buf).await?;
+    // Don't flush here — caller will send StateSync frames right after
+    Ok(())
+}
+
+/// Client reads ServerHello.
+pub async fn read_server_hello<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<VersionCompat> {
+    let mut buf = [0u8; 8];
+    reader.read_exact(&mut buf).await?;
+    if buf[0..4] != HANDSHAKE_MAGIC {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "bad magic bytes"));
+    }
+    let peer_ver = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
+    check_version(peer_ver)
+}
 
 // ─── Safe integer readers ───────────────────────────────────────────
 
@@ -43,10 +165,17 @@ fn read_packed_cell(buf: &[u8], off: usize) -> io::Result<PackedCell> {
     let end = off + PACKED_CELL_SIZE;
     let slice = buf.get(off..end)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "truncated cell"))?;
-    let cell_buf: &[u8; PACKED_CELL_SIZE] = slice
-        .try_into()
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "truncated cell"))?;
-    Ok(PackedCell::from_bytes(cell_buf))
+    Ok(*bytemuck::from_bytes::<PackedCell>(slice))
+}
+
+/// Zero-copy: interpret a byte slice as a slice of PackedCells.
+pub fn cells_from_bytes(buf: &[u8]) -> &[PackedCell] {
+    bytemuck::cast_slice(buf)
+}
+
+/// Zero-copy: view a slice of PackedCells as bytes.
+pub fn cells_to_bytes(cells: &[PackedCell]) -> &[u8] {
+    bytemuck::cast_slice(cells)
 }
 
 // ─── Frame tags ─────────────────────────────────────────────────────
@@ -123,19 +252,20 @@ pub fn encode_cell_delta_payload(delta: &CellDelta) -> io::Result<Vec<u8>> {
             "too many regions for CellDelta (exceeds u16::MAX)",
         ));
     }
-    // [u64 pane_id][u64 generation][u16 num_regions]
+    // [u64 pane_id][u64 generation][i16 cursor_line][u16 cursor_col][u8 cursor_shape][u16 num_regions]
     // per region: [u16 line][u16 left][u16 right][PackedCell × (right-left+1)]
     let mut buf = Vec::with_capacity(256);
     buf.extend_from_slice(&delta.pane_id.to_le_bytes());
     buf.extend_from_slice(&delta.generation.to_le_bytes());
+    buf.extend_from_slice(&delta.cursor_line.to_le_bytes());
+    buf.extend_from_slice(&delta.cursor_col.to_le_bytes());
+    buf.push(delta.cursor_shape);
     buf.extend_from_slice(&(delta.regions.len() as u16).to_le_bytes());
     for region in &delta.regions {
         buf.extend_from_slice(&region.line.to_le_bytes());
         buf.extend_from_slice(&region.left.to_le_bytes());
         buf.extend_from_slice(&region.right.to_le_bytes());
-        for cell in &region.cells {
-            buf.extend_from_slice(&cell.to_bytes());
-        }
+        buf.extend_from_slice(cells_to_bytes(&region.cells));
     }
     Ok(buf)
 }
@@ -149,13 +279,17 @@ pub async fn encode_cell_delta<W: AsyncWrite + Unpin>(
 }
 
 pub fn decode_cell_delta(payload: &[u8]) -> io::Result<CellDelta> {
-    if payload.len() < 18 {
+    // 8 + 8 + 2 + 2 + 1 + 2 = 23 bytes minimum
+    if payload.len() < 23 {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "CellDelta too short"));
     }
     let pane_id = read_u64_le(payload, 0)?;
     let generation = read_u64_le(payload, 8)?;
-    let num_regions = read_u16_le(payload, 16)? as usize;
-    let mut offset = 18;
+    let cursor_line = read_i16_le(payload, 16)?;
+    let cursor_col = read_u16_le(payload, 18)?;
+    let cursor_shape = payload[20];
+    let num_regions = read_u16_le(payload, 21)? as usize;
+    let mut offset = 23;
     let mut regions = Vec::with_capacity(num_regions);
     for _ in 0..num_regions {
         if offset + 6 > payload.len() {
@@ -184,7 +318,7 @@ pub fn decode_cell_delta(payload: &[u8]) -> io::Result<CellDelta> {
         offset += cell_bytes;
         regions.push(DamageRegion { line, left, right, cells });
     }
-    Ok(CellDelta { pane_id, generation, regions })
+    Ok(CellDelta { pane_id, generation, cursor_line, cursor_col, cursor_shape, regions })
 }
 
 // ─── Encode FullPaneSync (custom binary with RLE) ───────────────────
@@ -207,19 +341,19 @@ fn rle_encode_cells(cells: &[PackedCell]) -> Vec<u8> {
             // RLE: [0xFF][u16 count][14B cell]
             buf.push(RLE_MARKER);
             buf.extend_from_slice(&run.to_le_bytes());
-            buf.extend_from_slice(&cell.to_bytes());
+            buf.extend_from_slice(bytemuck::bytes_of(&cell));
             i += run as usize;
         } else {
             // Raw cell(s)
             for _ in 0..run {
-                let bytes = cells[i].to_bytes();
+                let bytes = bytemuck::bytes_of(&cells[i]);
                 // If first byte happens to be 0xFF, escape it with run=1
                 if bytes[0] == RLE_MARKER {
                     buf.push(RLE_MARKER);
                     buf.extend_from_slice(&1u16.to_le_bytes());
-                    buf.extend_from_slice(&bytes);
+                    buf.extend_from_slice(bytes);
                 } else {
-                    buf.extend_from_slice(&bytes);
+                    buf.extend_from_slice(bytes);
                 }
                 i += 1;
             }
@@ -389,15 +523,18 @@ mod tests {
         let delta = CellDelta {
             pane_id: 42,
             generation: 100,
+            cursor_line: 5,
+            cursor_col: 10,
+            cursor_shape: 0,
             regions: vec![
                 DamageRegion {
                     line: 5,
                     left: 10,
                     right: 12,
                     cells: vec![
-                        PackedCell { ch: 'A', fg: PackedColor::Named(7), bg: PackedColor::Named(0), flags: 0 },
-                        PackedCell { ch: 'B', fg: PackedColor::Rgb(255, 0, 0), bg: PackedColor::Named(0), flags: FLAG_BOLD },
-                        PackedCell { ch: 'C', fg: PackedColor::Indexed(196), bg: PackedColor::Named(0), flags: 0 },
+                        { let mut c = PackedCell::with_ch('A'); c.fg = PackedColor::named(7); c.bg = PackedColor::named(0); c },
+                        { let mut c = PackedCell::with_ch('B'); c.fg = PackedColor::rgb(255, 0, 0); c.bg = PackedColor::named(0); c.flags = FLAG_BOLD.to_le_bytes(); c },
+                        { let mut c = PackedCell::with_ch('C'); c.fg = PackedColor::indexed(196); c.bg = PackedColor::named(0); c },
                     ],
                 },
             ],
@@ -409,8 +546,8 @@ mod tests {
         assert_eq!(decoded.regions.len(), 1);
         assert_eq!(decoded.regions[0].line, 5);
         assert_eq!(decoded.regions[0].cells.len(), 3);
-        assert_eq!(decoded.regions[0].cells[0].ch, 'A');
-        assert_eq!(decoded.regions[0].cells[1].flags, FLAG_BOLD);
+        assert_eq!(decoded.regions[0].cells[0].ch(), 'A');
+        assert_eq!(decoded.regions[0].cells[1].flags_u16(), FLAG_BOLD);
     }
 
     #[test]
@@ -470,11 +607,14 @@ mod tests {
         let delta = CellDelta {
             pane_id: 1,
             generation: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: 0,
             regions: vec![DamageRegion {
                 line: 0,
                 left: 0,
                 right: 0,
-                cells: vec![PackedCell { ch: 'X', ..PackedCell::default() }],
+                cells: vec![PackedCell::with_ch('X')],
             }],
         };
         let mut buf = Vec::new();
@@ -482,7 +622,7 @@ mod tests {
         let frame = read_frame(&mut &buf[..]).await.unwrap();
         match frame {
             Frame::CellDelta(d) => {
-                assert_eq!(d.regions[0].cells[0].ch, 'X');
+                assert_eq!(d.regions[0].cells[0].ch(), 'X');
             }
             _ => panic!("wrong frame type"),
         }

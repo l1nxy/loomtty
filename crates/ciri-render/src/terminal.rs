@@ -75,8 +75,8 @@ pub struct TerminalView {
     pub glyph_instances: Vec<RelativeGlyph>,
     /// Background rects with pixel positions relative to (0, 0).
     pub bg_rects: Vec<Rect>,
-    /// Cursor rect relative to (0, 0).
-    pub cursor_rect: Option<Rect>,
+    /// Cursor rects relative to (0, 0). One rect for solid/beam/underline, four for hollow outline.
+    pub cursor_rects: Vec<Rect>,
 }
 
 /// A glyph instance stored with pixel-relative position (not NDC).
@@ -165,31 +165,42 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
     let cursor = content.cursor;
     let cursor_line = cursor.point.line.0;
     let cursor_color = ThemeConfig::parse_color(&config.terminal.cursor_color);
-    // Respect cursor visibility: programs hide it with \x1b[?25l during
-    // multi-line redraws (e.g. cargo progress bars) to avoid flicker.
     let cursor_visible = cursor.shape != CursorShape::Hidden;
-    let cursor_rect = if cursor_visible && cursor_line >= 0 && (cursor_line as usize) < total_rows {
-        Some(Rect {
-            x: cursor.point.column.0 as f32 * cw,
-            y: cursor_line as f32 * ch,
-            w: cw,
-            h: ch,
-            color: [cursor_color[0], cursor_color[1], cursor_color[2], config.terminal.cursor_opacity],
-        })
+    let cursor_rects = if cursor_visible && cursor_line >= 0 && (cursor_line as usize) < total_rows {
+        let cx = cursor.point.column.0 as f32 * cw;
+        let cy = cursor_line as f32 * ch;
+        let c = [cursor_color[0], cursor_color[1], cursor_color[2], config.terminal.cursor_opacity];
+        build_cursor_rects(cursor.shape == CursorShape::HollowBlock, cx, cy, cw, ch, c)
     } else {
-        None
+        Vec::new()
     };
 
-    TerminalView { glyph_instances, bg_rects, cursor_rect }
+    TerminalView { glyph_instances, bg_rects, cursor_rects }
+}
+
+/// Build cursor rects: 1 filled rect for solid cursors, 4 border rects for hollow block.
+fn build_cursor_rects(hollow: bool, cx: f32, cy: f32, cw: f32, ch: f32, color: [f32; 4]) -> Vec<Rect> {
+    if hollow {
+        let t = 1.0_f32; // border thickness in pixels
+        vec![
+            Rect { x: cx, y: cy, w: cw, h: t, color },           // top
+            Rect { x: cx, y: cy + ch - t, w: cw, h: t, color },  // bottom
+            Rect { x: cx, y: cy + t, w: t, h: ch - 2.0 * t, color }, // left
+            Rect { x: cx + cw - t, y: cy + t, w: t, h: ch - 2.0 * t, color }, // right
+        ]
+    } else {
+        vec![Rect { x: cx, y: cy, w: cw, h: ch, color }]
+    }
 }
 
 // ─── PackedColor → RGBA resolution (client-side theme mapping) ──────
 
-use ciri_protocol::message::{PackedColor, PackedCell, FLAG_WIDE_CHAR, FLAG_WIDE_CHAR_SPACER, FLAG_HIDDEN, CURSOR_HIDDEN, CURSOR_HOLLOW_BLOCK};
+use ciri_protocol::message::{PackedColor, PackedCell, COLOR_NAMED, COLOR_RGB, COLOR_INDEXED, FLAG_WIDE_CHAR, FLAG_WIDE_CHAR_SPACER, FLAG_HIDDEN, CURSOR_HIDDEN, CURSOR_HOLLOW_BLOCK};
 
 fn packed_color_to_rgba(color: PackedColor, config: &CiriConfig) -> [f32; 4] {
-    match color {
-        PackedColor::Named(n) => {
+    match color.tag {
+        COLOR_NAMED => {
+            let n = color.b1;
             let theme = &config.theme;
             match n {
                 0 => named_color_to_rgba(NamedColor::Black, config),
@@ -208,23 +219,23 @@ fn packed_color_to_rgba(color: PackedColor, config: &CiriConfig) -> [f32; 4] {
                 13 => named_color_to_rgba(NamedColor::BrightMagenta, config),
                 14 => named_color_to_rgba(NamedColor::BrightCyan, config),
                 15 => named_color_to_rgba(NamedColor::BrightWhite, config),
-                16 | 27 => ThemeConfig::parse_color(&theme.foreground),  // Foreground + BrightForeground
-                17 => ThemeConfig::parse_color(&theme.background),       // Background
-                18 => ThemeConfig::parse_color(&theme.foreground),       // Cursor (use foreground as default)
-                // Dim colors: apply 2/3 brightness to base color
+                16 | 27 => ThemeConfig::parse_color(&theme.foreground),
+                17 => ThemeConfig::parse_color(&theme.background),
+                18 => ThemeConfig::parse_color(&theme.foreground),
                 19..=26 => {
-                    let base = packed_color_to_rgba(PackedColor::Named(n - 19), config);
+                    let base = packed_color_to_rgba(PackedColor::named(n - 19), config);
                     [base[0] * 0.67, base[1] * 0.67, base[2] * 0.67, base[3]]
                 }
-                28 => {  // DimForeground
+                28 => {
                     let fg = ThemeConfig::parse_color(&theme.foreground);
                     [fg[0] * 0.67, fg[1] * 0.67, fg[2] * 0.67, fg[3]]
                 }
                 _ => ThemeConfig::parse_color(&theme.foreground),
             }
         }
-        PackedColor::Rgb(r, g, b) => [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0],
-        PackedColor::Indexed(idx) => indexed_color_to_rgba(idx, config),
+        COLOR_RGB => [color.b1 as f32 / 255.0, color.b2 as f32 / 255.0, color.b3 as f32 / 255.0, 1.0],
+        COLOR_INDEXED => indexed_color_to_rgba(color.b1, config),
+        _ => [1.0, 1.0, 1.0, 1.0],
     }
 }
 
@@ -257,15 +268,16 @@ pub fn build_view_from_grid(
             let cell = &cells[idx];
             let px = col as f32 * cw;
 
-            if cell.flags & FLAG_WIDE_CHAR_SPACER != 0 {
+            let f = cell.flags_u16();
+            if f & FLAG_WIDE_CHAR_SPACER != 0 {
                 continue;
             }
 
-            if cell.flags & FLAG_HIDDEN != 0 {
+            if f & FLAG_HIDDEN != 0 {
                 continue; // SGR 8: invisible text
             }
 
-            let is_wide = cell.flags & FLAG_WIDE_CHAR != 0;
+            let is_wide = f & FLAG_WIDE_CHAR != 0;
             let bg_width = if is_wide { cw * 2.0 } else { cw };
 
             let bg = packed_color_to_rgba(cell.bg, config);
@@ -273,7 +285,7 @@ pub fn build_view_from_grid(
                 bg_rects.push(Rect { x: px, y: py, w: bg_width, h: ch, color: bg });
             }
 
-            let c = cell.ch;
+            let c = cell.ch();
             if c == ' ' || c == '\0' || c.is_control() {
                 continue;
             }
@@ -301,20 +313,15 @@ pub fn build_view_from_grid(
 
     let cursor_color = ThemeConfig::parse_color(&config.terminal.cursor_color);
     let cursor_visible = cursor_shape != CURSOR_HIDDEN;
-    let cursor_rect = if cursor_visible && cursor_line >= 0 && (cursor_line as usize) < rows as usize {
+    let cursor_rects = if cursor_visible && cursor_line >= 0 && (cursor_line as usize) < rows as usize {
         let cx = cursor_col as f32 * cw;
         let cy = cursor_line as f32 * ch;
         let c = [cursor_color[0], cursor_color[1], cursor_color[2], config.terminal.cursor_opacity];
-        if cursor_shape == CURSOR_HOLLOW_BLOCK {
-            // TODO: render just the outline; for now treat same as solid block
-            Some(Rect { x: cx, y: cy, w: cw, h: ch, color: c })
-        } else {
-            Some(Rect { x: cx, y: cy, w: cw, h: ch, color: c })
-        }
+        build_cursor_rects(cursor_shape == CURSOR_HOLLOW_BLOCK, cx, cy, cw, ch, c)
     } else {
-        None
+        Vec::new()
     };
 
-    TerminalView { glyph_instances, bg_rects, cursor_rect }
+    TerminalView { glyph_instances, bg_rects, cursor_rects }
 }
 

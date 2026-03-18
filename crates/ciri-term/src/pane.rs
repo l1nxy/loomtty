@@ -36,6 +36,7 @@ pub struct Pane {
     event_rx: mpsc::Receiver<Event>,
     cols: u16,
     rows: u16,
+    pub title: String,
 }
 
 impl Pane {
@@ -57,6 +58,7 @@ impl Pane {
             event_rx,
             cols,
             rows,
+            title: String::new(),
         })
     }
 
@@ -87,6 +89,12 @@ impl Pane {
             match event {
                 Event::PtyWrite(text) => {
                     self.write_to_pty(text.as_bytes());
+                }
+                Event::Title(t) => {
+                    self.title = t;
+                }
+                Event::ResetTitle => {
+                    self.title.clear();
                 }
                 Event::Exit | Event::ChildExit(_) => {
                     self.exited = true;
@@ -234,7 +242,7 @@ impl Pane {
             cursor_line: content.cursor.point.line.0 as i16,
             cursor_col: content.cursor.point.column.0 as u16,
             cursor_shape,
-            title: String::new(), // TODO: track title from OSC sequences
+            title: self.title.clone(),
             cells,
         }
     }
@@ -242,7 +250,6 @@ impl Pane {
 
 /// Pack an alacritty cell into our wire format.
 pub fn pack_cell(cell: &alacritty_terminal::term::cell::Cell) -> PackedCell {
-    let ch = cell.c;
     let fg = pack_color(cell.fg);
     let bg = pack_color(cell.bg);
     let mut flags = 0u16;
@@ -255,15 +262,21 @@ pub fn pack_cell(cell: &alacritty_terminal::term::cell::Cell) -> PackedCell {
     if cell.flags.contains(CellFlags::DIM) { flags |= FLAG_DIM; }
     if cell.flags.contains(CellFlags::STRIKEOUT) { flags |= FLAG_STRIKEOUT; }
     if cell.flags.contains(CellFlags::HIDDEN) { flags |= FLAG_HIDDEN; }
-    PackedCell { ch, fg, bg, flags }
+    let mut packed = PackedCell {
+        ch_bytes: [0; 4],
+        fg, bg,
+        flags: flags.to_le_bytes(),
+    };
+    packed.set_ch(cell.c);
+    packed
 }
 
 /// Convert alacritty AnsiColor to PackedColor.
 pub fn pack_color(color: AnsiColor) -> PackedColor {
     match color {
-        AnsiColor::Named(n) => PackedColor::Named(named_color_to_compact(n)),
-        AnsiColor::Spec(rgb) => PackedColor::Rgb(rgb.r, rgb.g, rgb.b),
-        AnsiColor::Indexed(i) => PackedColor::Indexed(i),
+        AnsiColor::Named(n) => PackedColor::named(named_color_to_compact(n)),
+        AnsiColor::Spec(rgb) => PackedColor::rgb(rgb.r, rgb.g, rgb.b),
+        AnsiColor::Indexed(i) => PackedColor::indexed(i),
     }
 }
 

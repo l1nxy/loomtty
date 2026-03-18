@@ -30,6 +30,7 @@ ciri-config = { path = "crates/ciri-config" }
 ciri-session = { path = "crates/ciri-session" }
 
 # External
+bytemuck = { version = "1", features = ["derive"] }
 rmp-serde = "1"
 bytes = "1"
 crossbeam-channel = "0.5"

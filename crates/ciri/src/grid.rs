@@ -39,8 +39,11 @@ impl ClientPaneGrid {
         self.dirty = true;
     }
 
-    /// Apply incremental CellDelta: patch changed regions in-place.
+    /// Apply incremental CellDelta: patch changed regions and cursor in-place.
     pub fn apply_delta(&mut self, delta: &CellDelta) {
+        self.cursor_line = delta.cursor_line;
+        self.cursor_col = delta.cursor_col;
+        self.cursor_shape = delta.cursor_shape;
         for region in &delta.regions {
             let line = region.line as usize;
             if line >= self.rows as usize { continue; }

@@ -616,7 +616,13 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
             ticker.tick().await;
 
             // M6: Acquire lock, process state, collect outgoing data, then drop lock before sending
-            let mut outgoing: Vec<(u64, Vec<u8>)> = Vec::new();
+            struct OutgoingFrame {
+                client_id: u64,
+                frame: Vec<u8>,
+                /// If this was a FullPaneSync, the pane_id and history count to record on success.
+                history_update: Option<(u64, usize)>,
+            }
+            let mut outgoing: Vec<OutgoingFrame> = Vec::new();
             let mut should_shutdown = false;
 
             {
@@ -716,16 +722,17 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                                 None
                             };
                             if let Some((sync, current_history)) = sync_result {
-                                if let Some(client) = s.clients.get_mut(&client_id) {
-                                    client.history_sent.insert(pane_id, current_history);
-                                }
-
+                                // Don't update history_sent yet - only after successful send
                                 if let Ok(payload) = codec::encode_full_pane_sync_payload(&sync) {
                                     let mut frame = Vec::with_capacity(5 + payload.len());
                                     frame.push(0x21);
                                     frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
                                     frame.extend_from_slice(&payload);
-                                    outgoing.push((client_id, frame));
+                                    outgoing.push(OutgoingFrame {
+                                        client_id,
+                                        frame,
+                                        history_update: Some((pane_id, current_history)),
+                                    });
                                 }
                             }
                         } else if let Some(pane) = s.panes.get(&pane_id) {
@@ -752,7 +759,11 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                                 frame.push(0x20); // TAG_CELL_DELTA
                                 frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
                                 frame.extend_from_slice(&payload);
-                                outgoing.push((client_id, frame));
+                                outgoing.push(OutgoingFrame {
+                                    client_id,
+                                    frame,
+                                    history_update: None,
+                                });
                             }
                         }
                     }
@@ -770,7 +781,7 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
             if !outgoing.is_empty() {
                 let mut s = tick_state.lock().await;
                 let mut to_disconnect = Vec::new();
-                for (client_id, frame) in outgoing {
+                for OutgoingFrame { client_id, frame, history_update } in outgoing {
                     if let Some(client) = s.clients.get_mut(&client_id) {
                         if let Err(e) = client.tx.try_send(frame) {
                             client.send_failures += 1;
@@ -780,8 +791,16 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                             } else {
                                 log::debug!("send to client {client_id} failed (#{}) : {e}", client.send_failures);
                             }
+                            // On failure for FullPaneSync, re-mark full so it retries next tick
+                            if let Some((pid, _)) = history_update {
+                                client.damage.entry(pid).or_insert_with(DamageAccumulator::new).mark_full();
+                            }
                         } else {
                             client.send_failures = 0;
+                            // Only advance history_sent after successful send
+                            if let Some((pid, hist)) = history_update {
+                                client.history_sent.insert(pid, hist);
+                            }
                         }
                     }
                 }

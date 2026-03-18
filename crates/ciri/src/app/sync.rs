@@ -14,7 +14,11 @@ impl App {
     /// Process all pending server events. Returns true if a redraw is needed.
     pub fn process_server_events(&mut self) -> bool {
         let Some(rx) = self.server_rx.as_ref() else { return false };
-        let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        let budget = 200;
+        let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok())
+            .take(budget)
+            .collect();
+        let hit_budget = events.len() >= budget;
         if events.is_empty() { return false; }
         let mut needs_redraw = false;
 
@@ -104,6 +108,10 @@ impl App {
                     return true;
                 }
             }
+        }
+        // If we hit the budget, there may be more events — ensure we get another tick
+        if hit_budget {
+            needs_redraw = true;
         }
         needs_redraw
     }

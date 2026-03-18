@@ -16,7 +16,9 @@ use tokio::net::UnixListener;
 #[cfg(windows)]
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, Mutex, Notify};
-use tokio::time::{interval, Duration};
+use tokio::time::{interval, Duration, Instant};
+
+const SESSION_AUTOSAVE_DEBOUNCE_MS: u64 = 250;
 
 // ─── Per-client damage accumulator ──────────────────────────────────
 
@@ -90,6 +92,8 @@ struct ServerState {
     clients: HashMap<u64, ClientState>,
     next_client_id: u64,
     default_shell: String,
+    session_dirty: bool,
+    last_session_change: Option<Instant>,
 }
 
 impl ServerState {
@@ -106,6 +110,8 @@ impl ServerState {
             clients: HashMap::new(),
             next_client_id: 1,
             default_shell: shell.to_string(),
+            session_dirty: false,
+            last_session_change: None,
         }
     }
 
@@ -255,6 +261,35 @@ impl ServerState {
         save_session(&state, &transport::state_dir())
     }
 
+    fn mark_session_dirty(&mut self) {
+        self.session_dirty = true;
+        self.last_session_change = Some(Instant::now());
+    }
+
+    fn autosave_due_at(&self, now: Instant) -> bool {
+        self.session_dirty
+            && self
+                .last_session_change
+                .is_some_and(|changed_at| now.duration_since(changed_at) >= Duration::from_millis(SESSION_AUTOSAVE_DEBOUNCE_MS))
+    }
+
+    fn autosave_if_due(&mut self, now: Instant) {
+        if !self.autosave_due_at(now) || self.panes.is_empty() {
+            return;
+        }
+
+        match self.save_session() {
+            Ok(()) => {
+                self.session_dirty = false;
+                log::debug!("autosaved session '{}'", self.session_name);
+            }
+            Err(e) => {
+                self.last_session_change = Some(now);
+                log::warn!("failed to autosave session '{}': {e}", self.session_name);
+            }
+        }
+    }
+
     /// Process PTY output for all panes, extract damage, and merge into per-client accumulators.
     /// Returns any clipboard store requests from OSC 52.
     fn process_pty_and_damage(&mut self) -> Vec<ServerMessage> {
@@ -316,6 +351,7 @@ impl ServerState {
             ClientMessage::CreatePane => {
                 match self.create_pane() {
                     Ok(id) => {
+                        self.mark_session_dirty();
                         responses.push(ServerResponse::BroadcastControl(ServerMessage::PaneCreated {
                             pane_id: id,
                             column_idx: self.workspaces.active().active_column_idx,
@@ -330,6 +366,7 @@ impl ServerState {
             ClientMessage::SplitDown => {
                 match self.create_pane_in_new_row() {
                     Ok(id) => {
+                        self.mark_session_dirty();
                         responses.push(ServerResponse::BroadcastControl(ServerMessage::PaneCreated {
                             pane_id: id,
                             column_idx: self.workspaces.active().active_column_idx,
@@ -343,6 +380,7 @@ impl ServerState {
             }
             ClientMessage::ClosePane { pane_id } => {
                 self.close_pane(pane_id);
+                self.mark_session_dirty();
                 responses.push(ServerResponse::BroadcastControl(ServerMessage::PaneClosed { pane_id }));
                 responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
                     layout: self.layout_state(),
@@ -350,36 +388,42 @@ impl ServerState {
             }
             ClientMessage::FocusLeft => {
                 self.workspaces.active_mut().focus_left();
+                self.mark_session_dirty();
                 responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
                     layout: self.layout_state(),
                 }));
             }
             ClientMessage::FocusRight => {
                 self.workspaces.active_mut().focus_right();
+                self.mark_session_dirty();
                 responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
                     layout: self.layout_state(),
                 }));
             }
             ClientMessage::FocusUp => {
                 self.workspaces.focus_up();
+                self.mark_session_dirty();
                 responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
                     layout: self.layout_state(),
                 }));
             }
             ClientMessage::FocusDown => {
                 self.workspaces.focus_down();
+                self.mark_session_dirty();
                 responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
                     layout: self.layout_state(),
                 }));
             }
             ClientMessage::MovePaneLeft => {
                 self.workspaces.active_mut().move_pane_left();
+                self.mark_session_dirty();
                 responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
                     layout: self.layout_state(),
                 }));
             }
             ClientMessage::MovePaneRight => {
                 self.workspaces.active_mut().move_pane_right();
+                self.mark_session_dirty();
                 responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
                     layout: self.layout_state(),
                 }));
@@ -406,6 +450,7 @@ impl ServerState {
             }
             ClientMessage::SetColumnWidth { proportion } => {
                 self.workspaces.active_mut().set_active_column_width(ColumnWidth::Proportion(proportion));
+                self.mark_session_dirty();
                 responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
                     layout: self.layout_state(),
                 }));
@@ -423,6 +468,7 @@ impl ServerState {
             }
             ClientMessage::SwitchWorkspace { row_idx } => {
                 self.workspaces.switch_to(row_idx);
+                self.mark_session_dirty();
                 responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
                     layout: self.layout_state(),
                 }));
@@ -641,6 +687,7 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                 // Clean up exited panes
                 let dead = s.cleanup_exited_panes();
                 if !dead.is_empty() {
+                    s.mark_session_dirty();
                     // Broadcast close messages
                     let mut broadcasts = Vec::new();
                     for &id in &dead {
@@ -665,6 +712,8 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                         }
                     }
                 }
+
+                s.autosave_if_due(Instant::now());
 
                 // Exit if no panes left
                 if s.panes.is_empty() {
@@ -1022,4 +1071,33 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn autosave_is_debounced() {
+        let mut state = ServerState::new("default", "/bin/sh", 8.0);
+        state.session_dirty = true;
+        let changed_at = Instant::now();
+        state.last_session_change = Some(changed_at);
+
+        assert!(!state.autosave_due_at(changed_at));
+        assert!(!state.autosave_due_at(changed_at + Duration::from_millis(249)));
+        assert!(state.autosave_due_at(changed_at + Duration::from_millis(250)));
+    }
+
+    #[test]
+    fn mark_session_dirty_sets_dirty_and_timestamp() {
+        let mut state = ServerState::new("default", "/bin/sh", 8.0);
+        assert!(!state.session_dirty);
+        assert!(state.last_session_change.is_none());
+
+        state.mark_session_dirty();
+
+        assert!(state.session_dirty);
+        assert!(state.last_session_change.is_some());
+    }
 }

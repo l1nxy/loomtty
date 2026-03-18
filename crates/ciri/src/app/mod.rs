@@ -31,6 +31,13 @@ pub(crate) struct Selection {
     pub active: bool, // true while mouse is held
 }
 
+pub(crate) struct LastLeftClick {
+    pub pane_id: u64,
+    pub col: u16,
+    pub buffer_row: usize,
+    pub at: Instant,
+}
+
 /// Auto-reconnection state.
 pub(crate) struct ReconnectState {
     pub attempt: u32,
@@ -75,6 +82,7 @@ pub(crate) struct App {
     pub cursor_blink_timer: Instant,
     pub clipboard: Option<arboard::Clipboard>,
     pub selection: Option<Selection>,
+    pub last_left_click: Option<LastLeftClick>,
     pub mouse_left_held: bool,
     pub reconnect_state: Option<ReconnectState>,
     pub should_exit: bool,
@@ -146,6 +154,7 @@ impl App {
             cursor_blink_timer: Instant::now(),
             clipboard: arboard::Clipboard::new().ok(),
             selection: None,
+            last_left_click: None,
             mouse_left_held: false,
             reconnect_state: None,
             should_exit: false,

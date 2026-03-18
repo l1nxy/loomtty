@@ -1,6 +1,20 @@
 use ciri_protocol::message::*;
 use std::collections::VecDeque;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkMatch {
+    pub url: String,
+    pub start_col: u16,
+    pub end_col: u16,
+}
+
+#[derive(Clone, Copy)]
+struct RowChar {
+    start_col: u16,
+    end_col: u16,
+    ch: char,
+}
+
 /// Client-side pane grid with scrollback buffer.
 ///
 /// The buffer stores all lines (scrollback + viewport) as a VecDeque of rows.
@@ -268,6 +282,40 @@ impl ClientPaneGrid {
         Some((left as u16, self.cell_end(row, right) as u16))
     }
 
+    pub fn link_at(&self, col: u16, buffer_row: usize) -> Option<LinkMatch> {
+        let row = self.buffer.get(buffer_row)?;
+        let chars = self.row_chars(row);
+        let target_idx = chars
+            .iter()
+            .position(|cell| col >= cell.start_col && col <= cell.end_col)?;
+
+        let mut start_idx = target_idx;
+        while start_idx > 0 && !chars[start_idx - 1].ch.is_whitespace() {
+            start_idx -= 1;
+        }
+
+        let mut end_idx = target_idx;
+        while end_idx + 1 < chars.len() && !chars[end_idx + 1].ch.is_whitespace() {
+            end_idx += 1;
+        }
+
+        let (start_idx, end_idx) = trim_link_token(&chars, start_idx, end_idx)?;
+        if target_idx < start_idx || target_idx > end_idx {
+            return None;
+        }
+
+        let token: String = chars[start_idx..=end_idx]
+            .iter()
+            .map(|cell| cell.ch)
+            .collect();
+        let url = normalize_link_token(&token)?;
+        Some(LinkMatch {
+            url,
+            start_col: chars[start_idx].start_col,
+            end_col: chars[end_idx].end_col,
+        })
+    }
+
     /// Extract text from a buffer range (absolute buffer_rows).
     pub fn text_in_range(&self, start: (u16, usize), end: (u16, usize)) -> String {
         let (start, end) = if start.1 < end.1 || (start.1 == end.1 && start.0 <= end.0) {
@@ -340,6 +388,28 @@ impl ClientPaneGrid {
         }
     }
 
+    fn row_chars(&self, row: &[PackedCell]) -> Vec<RowChar> {
+        let mut chars = Vec::with_capacity(row.len());
+        let mut idx = 0;
+        while idx < row.len() {
+            if row[idx].flags_u16() & FLAG_WIDE_CHAR_SPACER != 0 {
+                idx += 1;
+                continue;
+            }
+            let end = self.cell_end(row, idx);
+            let ch = row[idx].ch();
+            if ch != '\0' {
+                chars.push(RowChar {
+                    start_col: idx as u16,
+                    end_col: end as u16,
+                    ch,
+                });
+            }
+            idx = end + 1;
+        }
+        chars
+    }
+
     fn cell_end(&self, row: &[PackedCell], mut idx: usize) -> usize {
         while idx + 1 < row.len() && row[idx + 1].flags_u16() & FLAG_WIDE_CHAR_SPACER != 0 {
             idx += 1;
@@ -357,6 +427,56 @@ fn classify_word_cell(cell: &PackedCell) -> WordClass {
     } else {
         WordClass::Symbol
     }
+}
+
+fn trim_link_token(
+    chars: &[RowChar],
+    mut start_idx: usize,
+    mut end_idx: usize,
+) -> Option<(usize, usize)> {
+    while start_idx <= end_idx && is_leading_link_punctuation(chars[start_idx].ch) {
+        start_idx += 1;
+    }
+    while start_idx <= end_idx && is_trailing_link_punctuation(chars[end_idx].ch) {
+        if end_idx == 0 {
+            return None;
+        }
+        end_idx -= 1;
+    }
+    if start_idx > end_idx {
+        None
+    } else {
+        Some((start_idx, end_idx))
+    }
+}
+
+fn normalize_link_token(token: &str) -> Option<String> {
+    let lower = token.to_ascii_lowercase();
+    if lower.starts_with("https://") || lower.starts_with("http://") {
+        let scheme_len = if lower.starts_with("https://") { 8 } else { 7 };
+        token[scheme_len..]
+            .chars()
+            .any(|ch| ch.is_alphanumeric())
+            .then(|| token.to_string())
+    } else if lower.starts_with("www.") {
+        token[4..]
+            .chars()
+            .any(|ch| ch.is_alphanumeric())
+            .then(|| format!("https://{token}"))
+    } else {
+        None
+    }
+}
+
+fn is_leading_link_punctuation(ch: char) -> bool {
+    matches!(ch, '(' | '[' | '{' | '<' | '"' | '\'')
+}
+
+fn is_trailing_link_punctuation(ch: char) -> bool {
+    matches!(
+        ch,
+        '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '>' | '"' | '\''
+    )
 }
 
 #[cfg(test)]
@@ -387,5 +507,46 @@ mod tests {
     fn word_bounds_select_symbol_run() {
         let grid = grid_with_line("foo::bar");
         assert_eq!(grid.word_bounds_at(4, 0), Some((3, 4)));
+    }
+
+    #[test]
+    fn link_at_detects_https_url() {
+        let grid = grid_with_line("go https://example.com/docs now");
+        assert_eq!(
+            grid.link_at(8, 0),
+            Some(LinkMatch {
+                url: "https://example.com/docs".to_string(),
+                start_col: 3,
+                end_col: 26,
+            })
+        );
+    }
+
+    #[test]
+    fn link_at_trims_wrapping_punctuation() {
+        let grid = grid_with_line("(https://example.com/path).");
+        assert_eq!(
+            grid.link_at(10, 0),
+            Some(LinkMatch {
+                url: "https://example.com/path".to_string(),
+                start_col: 1,
+                end_col: 24,
+            })
+        );
+        assert_eq!(grid.link_at(0, 0), None);
+        assert_eq!(grid.link_at(25, 0), None);
+    }
+
+    #[test]
+    fn link_at_normalizes_www_urls() {
+        let grid = grid_with_line("visit www.example.com/test soon");
+        assert_eq!(
+            grid.link_at(10, 0),
+            Some(LinkMatch {
+                url: "https://www.example.com/test".to_string(),
+                start_col: 6,
+                end_col: 25,
+            })
+        );
     }
 }

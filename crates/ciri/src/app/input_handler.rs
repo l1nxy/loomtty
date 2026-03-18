@@ -2,6 +2,7 @@ use ciri_input::action::Action;
 use ciri_layout::column::ColumnWidth;
 use ciri_layout::geometry::Rect as GeoRect;
 use ciri_protocol::message::*;
+use std::process::Command;
 use std::time::{Duration, Instant};
 use winit::keyboard::{Key, NamedKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
@@ -296,6 +297,50 @@ impl App {
         true
     }
 
+    pub fn update_hovered_link(&mut self, mx: f32, my: f32) -> bool {
+        let next = self
+            .pixel_to_cell(mx, my)
+            .and_then(|(pane_id, col, buffer_row)| {
+                let link = self.pane_grids.get(&pane_id)?.link_at(col, buffer_row)?;
+                Some(super::HoveredLink {
+                    pane_id,
+                    url: link.url,
+                    start: (link.start_col, buffer_row),
+                    end: (link.end_col, buffer_row),
+                })
+            });
+        if self.hovered_link == next {
+            return false;
+        }
+        self.hovered_link = next;
+        true
+    }
+
+    pub fn clear_hovered_link(&mut self) -> bool {
+        self.hovered_link.take().is_some()
+    }
+
+    pub fn hovered_link_url_at(&self, pane_id: u64, col: u16, buffer_row: usize) -> Option<String> {
+        self.hovered_link.as_ref().and_then(|link| {
+            (link.pane_id == pane_id
+                && link.start.1 == buffer_row
+                && col >= link.start.0
+                && col <= link.end.0)
+                .then(|| link.url.clone())
+        })
+    }
+
+    pub fn link_activation_modifier_active(&self) -> bool {
+        link_activation_modifier_active(self.modifiers)
+    }
+
+    pub fn open_url(&self, url: &str) {
+        if let Err(e) = open_url(url) {
+            log::warn!("failed to open url '{url}': {e}");
+        }
+    }
+
+
     pub fn scroll_active_up(&mut self, lines: usize) {
         if let Some(pid) = self.workspaces.active().active_pane_id() {
             if let Some(grid) = self.pane_grids.get_mut(&pid) {
@@ -388,4 +433,37 @@ pub(crate) fn key_event_to_pty_bytes(event: &winit::event::KeyEvent, ctrl: bool)
     }
 
     vec![]
+}
+
+#[cfg(target_os = "macos")]
+fn link_activation_modifier_active(modifiers: winit::keyboard::ModifiersState) -> bool {
+    modifiers.super_key()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn link_activation_modifier_active(modifiers: winit::keyboard::ModifiersState) -> bool {
+    modifiers.control_key()
+}
+
+fn open_url(url: &str) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open").arg(url).spawn()?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd").args(["/C", "start", "", url]).spawn()?;
+        return Ok(());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Command::new("xdg-open").arg(url).spawn()?;
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Ok(())
 }

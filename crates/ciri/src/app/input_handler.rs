@@ -1,5 +1,4 @@
 use ciri_input::action::Action;
-use ciri_layout::column::ColumnWidth;
 use ciri_layout::geometry::Rect as GeoRect;
 use ciri_protocol::message::*;
 use std::process::Command;
@@ -15,7 +14,7 @@ impl App {
             Action::NewColumnRight => {
                 self.send(ClientMessage::CreatePane);
             }
-            Action::NewRowBelow => {
+            Action::NewWorkspaceBelow => {
                 self.send(ClientMessage::SplitDown);
             }
             Action::ClosePane => {
@@ -41,57 +40,39 @@ impl App {
             Action::MovePaneRight => {
                 self.send(ClientMessage::MovePaneRight);
             }
-            Action::ColumnWidthOneThird => {
-                self.send(ClientMessage::SetColumnWidth {
-                    proportion: 1.0 / 3.0,
-                });
+            Action::CyclePresetWidth => {
+                let presets = self.preset_widths();
+                if let Some(p) = self.workspaces.active_mut().cycle_preset_width(&presets, false) {
+                    self.send(ClientMessage::SetColumnWidth { proportion: p });
+                }
+                self.snap_all_col_widths();
+                self.animate_to_active();
             }
-            Action::ColumnWidthHalf => {
-                self.send(ClientMessage::SetColumnWidth { proportion: 0.5 });
-            }
-            Action::ColumnWidthTwoThirds => {
-                self.send(ClientMessage::SetColumnWidth {
-                    proportion: 2.0 / 3.0,
-                });
+            Action::CyclePresetWidthReverse => {
+                let presets = self.preset_widths();
+                if let Some(p) = self.workspaces.active_mut().cycle_preset_width(&presets, true) {
+                    self.send(ClientMessage::SetColumnWidth { proportion: p });
+                }
+                self.snap_all_col_widths();
+                self.animate_to_active();
             }
             Action::ColumnWidthFull => {
                 self.send(ClientMessage::SetColumnWidth { proportion: 1.0 });
             }
             Action::ColumnWidthIncrease => {
-                self.workspaces.active_mut().resize_active_column(0.02);
-                // Send the resulting proportion to server to stay in sync
-                if let Some(col) = self
-                    .workspaces
-                    .active()
-                    .columns
-                    .get(self.workspaces.active().active_column_idx)
-                {
-                    let p = match col.width {
-                        ColumnWidth::Proportion(p) => p,
-                        ColumnWidth::Fixed(px) => px / self.workspaces.view_size.width as f64,
-                    };
-                    self.send(ClientMessage::SetColumnWidth { proportion: p });
-                }
-                self.snap_all_col_widths();
-                self.animate_to_active();
+                self.send(ClientMessage::AdjustColumnSplit { delta: 0.05 });
             }
             Action::ColumnWidthDecrease => {
-                self.workspaces.active_mut().resize_active_column(-0.02);
-                // Send the resulting proportion to server to stay in sync
-                if let Some(col) = self
-                    .workspaces
-                    .active()
-                    .columns
-                    .get(self.workspaces.active().active_column_idx)
-                {
-                    let p = match col.width {
-                        ColumnWidth::Proportion(p) => p,
-                        ColumnWidth::Fixed(px) => px / self.workspaces.view_size.width as f64,
-                    };
-                    self.send(ClientMessage::SetColumnWidth { proportion: p });
-                }
-                self.snap_all_col_widths();
-                self.animate_to_active();
+                self.send(ClientMessage::AdjustColumnSplit { delta: -0.05 });
+            }
+            Action::EqualizeAdjacentColumns => {
+                self.send(ClientMessage::EqualizeColumnSplit);
+            }
+            Action::ConsumeIntoColumn => {
+                self.send(ClientMessage::ConsumeIntoColumn);
+            }
+            Action::ExpelFromColumn => {
+                self.send(ClientMessage::ExpelFromColumn);
             }
             Action::ExitOverview => {
                 self.overview_active = false;
@@ -100,7 +81,7 @@ impl App {
                 self.animate_to_active();
             }
             Action::SwitchWorkspace(idx) => {
-                self.send(ClientMessage::SwitchWorkspace { row_idx: idx });
+                self.send(ClientMessage::SwitchWorkspace { workspace_idx: idx });
             }
             Action::ToggleOverview => {
                 self.overview_active = !self.overview_active;
@@ -188,9 +169,9 @@ impl App {
                 *tile_rect
             };
             if tr.contains(mx, my) {
-                for (row_idx, ws) in self.workspaces.rows.iter().enumerate() {
-                    if ws.columns.iter().any(|c| c.pane_id == *pane_id) {
-                        return Some((row_idx, *pane_id));
+                for (ws_idx, ws) in self.workspaces.workspaces.iter().enumerate() {
+                    if ws.columns.iter().any(|c| c.contains_pane(*pane_id)) {
+                        return Some((ws_idx, *pane_id));
                     }
                 }
             }

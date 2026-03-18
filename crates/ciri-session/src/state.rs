@@ -4,13 +4,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionState {
     pub name: String,
-    pub rows: Vec<SavedRow>,
-    pub active_row: usize,
+    pub workspaces: Vec<SavedWorkspace>,
+    pub active_workspace_idx: usize,
 }
 
-/// One row (workspace) in the saved layout.
+/// One workspace in the saved layout.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SavedRow {
+pub struct SavedWorkspace {
     pub columns: Vec<SavedColumn>,
     pub active_column_idx: usize,
 }

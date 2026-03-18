@@ -9,7 +9,6 @@ use app::input_handler::key_event_to_pty_bytes;
 use ciri_config::config::CiriConfig;
 use ciri_input::action::Action;
 use ciri_input::keybind::KeyCombo;
-use ciri_layout::column::ColumnWidth;
 use ciri_layout::geometry::ViewSize;
 use ciri_protocol::message::*;
 use ciri_render::glyph_cache::GlyphAtlas;
@@ -289,7 +288,7 @@ impl ApplicationHandler for App {
                 self.cached_views.clear();
                 let t = self.workspaces.active_mut().target_offset_for_active();
                 self.view_offset_x.jump_to(t as f64);
-                for ws in &mut self.workspaces.rows {
+                for ws in &mut self.workspaces.workspaces {
                     ws.view_offset_x = t;
                 }
                 let (cols, rows) = self.compute_grid_size();
@@ -462,12 +461,12 @@ impl ApplicationHandler for App {
 
                 if self.overview_active {
                     let hover_changed = self.clear_hovered_link();
-                    if let Some((row_idx, pane_id)) = self.hit_test_overview(mx, my) {
-                        if row_idx < self.workspaces.rows.len() {
-                            self.workspaces.active_row = row_idx;
+                    if let Some((ws_idx, pane_id)) = self.hit_test_overview(mx, my) {
+                        if ws_idx < self.workspaces.workspaces.len() {
+                            self.workspaces.active_workspace_idx = ws_idx;
                             let ws = self.workspaces.active_mut();
                             for (col_idx, col) in ws.columns.iter().enumerate() {
-                                if col.pane_id == pane_id {
+                                if col.contains_pane(pane_id) {
                                     ws.active_column_idx = col_idx;
                                     break;
                                 }
@@ -489,7 +488,7 @@ impl ApplicationHandler for App {
                             let cur_x = self.view_offset_x.value();
                             self.view_offset_x.jump_to(cur_x - dx as f64);
                             let vox = self.view_offset_x.value() as f32;
-                            for ws in &mut self.workspaces.rows {
+                            for ws in &mut self.workspaces.workspaces {
                                 ws.view_offset_x = vox;
                             }
                             let cur_y = self.view_offset_y.value();
@@ -502,15 +501,25 @@ impl ApplicationHandler for App {
                         self.drag_last_pos = Some((mx, my));
                     }
                 } else {
-                    if let Some(drag_col) = self.resize_dragging {
-                        let delta = mx - self.resize_drag_start_x;
-                        let new_width = (self.resize_drag_start_width + delta).max(50.0);
+                    if let Some((col_idx, top_tile_idx)) = self.tile_resize_dragging {
+                        let delta_y = my - self.tile_resize_drag_start_y;
+                        self.workspaces.active_mut().resize_tile_pair(col_idx, top_tile_idx, delta_y);
+                        self.tile_resize_drag_start_y = my;
+                        if let Some(w) = &self.window { w.request_redraw(); }
+                    } else if let Some(drag_col) = self.resize_dragging {
+                        let delta_px = mx - self.resize_drag_start_x;
                         let vw = self.workspaces.active().view_size.width;
-                        let proportion = (new_width as f64 / vw as f64).clamp(0.1, 0.9);
-                        self.workspaces.active_mut().set_column_width_by_index(
-                            drag_col,
-                            ColumnWidth::Proportion(proportion),
-                        );
+                        if vw > 0.0 {
+                            let delta_proportion = delta_px as f64 / vw as f64;
+                            // Temporarily focus the left column to use resize_active_with_neighbor
+                            let ws = self.workspaces.active_mut();
+                            let saved_idx = ws.active_column_idx;
+                            ws.active_column_idx = drag_col;
+                            ws.resize_active_with_neighbor(delta_proportion);
+                            ws.active_column_idx = saved_idx;
+                            // Reset drag baseline so next move is incremental
+                            self.resize_drag_start_x = mx;
+                        }
                         self.snap_all_col_widths();
                         if let Some(w) = &self.window {
                             w.request_redraw();
@@ -518,22 +527,26 @@ impl ApplicationHandler for App {
                     } else {
                         let ws = self.workspaces.active();
                         let vox = ws.view_offset_x;
-                        let mut near_border = false;
+                        let mut near_col_border = false;
                         for i in 1..ws.columns.len() {
                             let col_x = ws.column_x(i) - vox;
                             if (mx - col_x).abs() < 4.0 {
-                                near_border = true;
+                                near_col_border = true;
                                 break;
                             }
                         }
+                        let near_tile_border = ws.hit_test_tile_border(mx, my, 4.0).is_some();
+                        let near_border = near_col_border || near_tile_border;
                         let hover_changed = if near_border || self.mouse_left_held {
                             self.clear_hovered_link()
                         } else {
                             self.update_hovered_link(mx, my)
                         };
                         if let Some(w) = &self.window {
-                            if near_border {
+                            if near_col_border {
                                 w.set_cursor(winit::window::CursorIcon::ColResize);
+                            } else if near_tile_border {
+                                w.set_cursor(winit::window::CursorIcon::RowResize);
                             } else if self.hovered_link.is_some() {
                                 w.set_cursor(winit::window::CursorIcon::Pointer);
                             } else {
@@ -579,12 +592,12 @@ impl ApplicationHandler for App {
                 if let Some((mx, my)) = self.last_mouse_pos {
                     if state == ElementState::Pressed {
                         if self.overview_active {
-                            if let Some((row_idx, pane_id)) = self.hit_test_overview(mx, my) {
-                                if row_idx < self.workspaces.rows.len() {
-                                    self.workspaces.active_row = row_idx;
+                            if let Some((ws_idx, pane_id)) = self.hit_test_overview(mx, my) {
+                                if ws_idx < self.workspaces.workspaces.len() {
+                                    self.workspaces.active_workspace_idx = ws_idx;
                                     let ws = self.workspaces.active_mut();
                                     for (col_idx, col) in ws.columns.iter().enumerate() {
-                                        if col.pane_id == pane_id {
+                                        if col.contains_pane(pane_id) {
                                             ws.active_column_idx = col_idx;
                                             break;
                                         }
@@ -617,6 +630,15 @@ impl ApplicationHandler for App {
                                 }
                             }
 
+                            // Check for tile border drag
+                            if !started_drag {
+                                if let Some((col_idx, top_tile_idx)) = self.workspaces.active().hit_test_tile_border(mx, my, 4.0) {
+                                    self.tile_resize_dragging = Some((col_idx, top_tile_idx));
+                                    self.tile_resize_drag_start_y = my;
+                                    started_drag = true;
+                                }
+                            }
+
                             if !started_drag {
                                 let shift = self.modifiers.shift_key();
                                 if let Some((pane_id, col, buf_row)) = self.pixel_to_cell(mx, my) {
@@ -639,7 +661,7 @@ impl ApplicationHandler for App {
                                         && self.is_double_left_click(pane_id, col, buf_row, click_now);
                                     let ws = self.workspaces.active_mut();
                                     for col_idx in 0..ws.columns.len() {
-                                        if ws.columns[col_idx].pane_id == pane_id {
+                                        if ws.columns[col_idx].contains_pane(pane_id) {
                                             ws.active_column_idx = col_idx;
                                             break;
                                         }
@@ -686,7 +708,19 @@ impl ApplicationHandler for App {
                     } else {
                         let had_left_hold = self.mouse_left_held;
                         self.mouse_left_held = false;
+                        if self.tile_resize_dragging.is_some() {
+                            self.tile_resize_dragging = None;
+                            if let Some(w) = &self.window {
+                                w.set_cursor(winit::window::CursorIcon::Default);
+                            }
+                        }
                         if self.resize_dragging.is_some() {
+                            // Sync final width to server
+                            let ws = self.workspaces.active();
+                            if let Some(col) = ws.columns.get(ws.active_column_idx) {
+                                let p = col.proportion(ws.view_size.width);
+                                self.send(ClientMessage::SetColumnWidth { proportion: p });
+                            }
                             self.resize_dragging = None;
                             self.snap_all_col_widths();
                             if let Some(w) = &self.window {
@@ -834,7 +868,7 @@ impl ApplicationHandler for App {
                         TouchPhase::Moved => {
                             self.view_offset_x.update_gesture(dx);
                             let val = self.view_offset_x.value() as f32;
-                            for ws in &mut self.workspaces.rows {
+                            for ws in &mut self.workspaces.workspaces {
                                 ws.view_offset_x = val;
                             }
                         }

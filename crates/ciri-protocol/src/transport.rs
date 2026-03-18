@@ -51,6 +51,25 @@ pub fn runtime_dir() -> PathBuf {
     PathBuf::from("/tmp")
 }
 
+/// Runtime dir on Windows — uses LOCALAPPDATA.
+#[cfg(windows)]
+pub fn runtime_dir() -> PathBuf {
+    let appdata = std::env::var("LOCALAPPDATA")
+        .unwrap_or_else(|_| r"C:\Users\Default\AppData\Local".to_string());
+    PathBuf::from(appdata)
+}
+
+/// Derive a localhost TCP port from a session name (for Windows IPC).
+/// Returns a port in the range 49152..65535 (ephemeral range).
+pub fn port_for_session(session_name: &str) -> u16 {
+    let mut hash: u32 = 5381;
+    for b in session_name.bytes() {
+        hash = hash.wrapping_mul(33).wrapping_add(b as u32);
+    }
+    // Map to ephemeral port range 49152..65535
+    49152 + (hash % (65535 - 49152)) as u16
+}
+
 /// Get the socket path for a session.
 pub fn socket_path(session_name: &str) -> PathBuf {
     #[cfg(unix)]

@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 // ─── Compact named color IDs for wire format ────────────────────────
-// Maps from alacritty NamedColor discriminants to compact u8 IDs.
-// Standard ANSI 0-15 map directly; extended named colors are compacted
-// so that all values fit in u8 (alacritty Foreground=256 etc. would not).
 
 pub const NAMED_BLACK: u8 = 0;
 pub const NAMED_RED: u8 = 1;
@@ -35,85 +32,85 @@ pub const NAMED_DIM_WHITE: u8 = 26;
 pub const NAMED_BRIGHT_FOREGROUND: u8 = 27;
 pub const NAMED_DIM_FOREGROUND: u8 = 28;
 
-// ─── PackedColor (4 bytes) ──────────────────────────────────────────
+// ─── PackedColor (4 bytes, POD) ─────────────────────────────────────
+//
+// Layout: [tag, b1, b2, b3]
+//   tag=0 → Named(b1)
+//   tag=1 → Rgb(b1, b2, b3)
+//   tag=2 → Indexed(b1)
 
-/// Compact color representation: transmits semantic color (Named/Indexed)
-/// so the client can resolve using its own theme.
-///
-/// `Named(u8)` uses our compact mapping constants (`NAMED_*`), NOT raw
-/// alacritty NamedColor discriminants (which exceed u8 range).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PackedColor {
-    Named(u8),       // Compact named color ID (see NAMED_* constants)
-    Rgb(u8, u8, u8),
-    Indexed(u8),
+/// Compact color: 4 bytes, zero-copy safe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+pub struct PackedColor {
+    pub tag: u8,
+    pub b1: u8,
+    pub b2: u8,
+    pub b3: u8,
 }
+
+/// Color kind discriminant.
+pub const COLOR_NAMED: u8 = 0;
+pub const COLOR_RGB: u8 = 1;
+pub const COLOR_INDEXED: u8 = 2;
 
 impl PackedColor {
-    pub fn to_bytes(self) -> [u8; 4] {
-        match self {
-            PackedColor::Named(n) => [0, n, 0, 0],
-            PackedColor::Rgb(r, g, b) => [1, r, g, b],
-            PackedColor::Indexed(i) => [2, i, 0, 0],
-        }
-    }
-
-    pub fn from_bytes(b: [u8; 4]) -> Self {
-        match b[0] {
-            0 => PackedColor::Named(b[1]),
-            1 => PackedColor::Rgb(b[1], b[2], b[3]),
-            2 => PackedColor::Indexed(b[1]),
-            _ => PackedColor::Named(0), // fallback to black
-        }
-    }
+    pub const fn named(n: u8) -> Self { PackedColor { tag: COLOR_NAMED, b1: n, b2: 0, b3: 0 } }
+    pub const fn rgb(r: u8, g: u8, b: u8) -> Self { PackedColor { tag: COLOR_RGB, b1: r, b2: g, b3: b } }
+    pub const fn indexed(i: u8) -> Self { PackedColor { tag: COLOR_INDEXED, b1: i, b2: 0, b3: 0 } }
 }
 
-// ─── PackedCell (14 bytes) ──────────────────────────────────────────
+// ─── PackedCell (14 bytes, POD) ─────────────────────────────────────
+//
+// Layout: [0..4] char UTF-8, [4..8] fg, [8..12] bg, [12..14] flags LE
+// `#[repr(C, packed)]` guarantees no padding → bytemuck::cast_slice works.
 
-/// Compact cell representation for wire transfer.
-/// Layout: [0..4] char UTF-8, [4..8] fg, [8..12] bg, [12..14] flags
 pub const PACKED_CELL_SIZE: usize = 14;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C, packed)]
 pub struct PackedCell {
-    pub ch: char,
+    pub ch_bytes: [u8; 4],
     pub fg: PackedColor,
     pub bg: PackedColor,
-    pub flags: u16,
-}
-
-impl Default for PackedCell {
-    fn default() -> Self {
-        PackedCell {
-            ch: ' ',
-            fg: PackedColor::Named(NAMED_FOREGROUND),
-            bg: PackedColor::Named(NAMED_BACKGROUND),
-            flags: 0,
-        }
-    }
+    pub flags: [u8; 2], // u16 LE
 }
 
 impl PackedCell {
-    pub fn to_bytes(self) -> [u8; PACKED_CELL_SIZE] {
-        let mut buf = [0u8; PACKED_CELL_SIZE];
-        let mut ch_buf = [0u8; 4];
-        self.ch.encode_utf8(&mut ch_buf);
-        buf[0..4].copy_from_slice(&ch_buf);
-        buf[4..8].copy_from_slice(&self.fg.to_bytes());
-        buf[8..12].copy_from_slice(&self.bg.to_bytes());
-        buf[12..14].copy_from_slice(&self.flags.to_le_bytes());
-        buf
+    pub fn ch(&self) -> char {
+        let s = std::str::from_utf8(&self.ch_bytes).unwrap_or("\0");
+        s.chars().next().unwrap_or('\0')
     }
 
-    pub fn from_bytes(buf: &[u8; PACKED_CELL_SIZE]) -> Self {
-        let ch = {
-            let s = std::str::from_utf8(&buf[0..4]).unwrap_or("\0");
-            s.chars().next().unwrap_or('\0')
+    pub fn set_ch(&mut self, c: char) {
+        self.ch_bytes = [0; 4];
+        c.encode_utf8(&mut self.ch_bytes);
+    }
+
+    pub fn flags_u16(&self) -> u16 {
+        u16::from_le_bytes(self.flags)
+    }
+
+    /// Convenience: create a cell with a char and default colors.
+    pub fn with_ch(c: char) -> Self {
+        let mut cell = Self::default();
+        cell.set_ch(c);
+        cell
+    }
+}
+
+const _: () = assert!(std::mem::size_of::<PackedCell>() == PACKED_CELL_SIZE);
+
+impl Default for PackedCell {
+    fn default() -> Self {
+        let mut cell = PackedCell {
+            ch_bytes: [0; 4],
+            fg: PackedColor::named(NAMED_FOREGROUND),
+            bg: PackedColor::named(NAMED_BACKGROUND),
+            flags: [0; 2],
         };
-        let fg = PackedColor::from_bytes([buf[4], buf[5], buf[6], buf[7]]);
-        let bg = PackedColor::from_bytes([buf[8], buf[9], buf[10], buf[11]]);
-        let flags = u16::from_le_bytes([buf[12], buf[13]]);
-        PackedCell { ch, fg, bg, flags }
+        cell.set_ch(' ');
+        cell
     }
 }
 
@@ -151,11 +148,11 @@ pub enum ClientMessage {
     MovePaneLeft,
     MovePaneRight,
     /// Resize the viewport.
-    Resize { cols: u16, rows: u16, width: u32, height: u32 },
+    Resize { cols: u16, rows: u16, width: u32, height: u32, cell_width: f32, cell_height: f32 },
     /// Set column width.
     SetColumnWidth { proportion: f64 },
-    /// Client is attaching to the session.
-    Attach { cols: u16, rows: u16 },
+    /// Client is attaching (kept for backwards compat, viewport now sent in ClientHello).
+    Attach,
     /// Client is detaching.
     Detach,
     /// Acknowledge received generation.
@@ -217,6 +214,9 @@ pub struct DamageRegion {
 pub struct CellDelta {
     pub pane_id: u64,
     pub generation: u64,
+    pub cursor_line: i16,
+    pub cursor_col: u16,
+    pub cursor_shape: u8,
     pub regions: Vec<DamageRegion>,
 }
 
@@ -253,40 +253,43 @@ mod tests {
 
     #[test]
     fn packed_cell_roundtrip() {
-        let cell = PackedCell {
-            ch: 'A',
-            fg: PackedColor::Rgb(255, 128, 0),
-            bg: PackedColor::Named(5),
-            flags: FLAG_BOLD | FLAG_WIDE_CHAR,
+        let mut cell = PackedCell {
+            ch_bytes: [0; 4],
+            fg: PackedColor::rgb(255, 128, 0),
+            bg: PackedColor::named(5),
+            flags: (FLAG_BOLD | FLAG_WIDE_CHAR).to_le_bytes(),
         };
-        let bytes = cell.to_bytes();
-        let decoded = PackedCell::from_bytes(&bytes);
-        assert_eq!(cell, decoded);
+        cell.set_ch('A');
+        let bytes: &[u8] = bytemuck::bytes_of(&cell);
+        let decoded: &PackedCell = bytemuck::from_bytes(bytes);
+        assert_eq!(&cell, decoded);
     }
 
     #[test]
     fn packed_cell_cjk() {
-        let cell = PackedCell {
-            ch: '中',
-            fg: PackedColor::Indexed(196),
-            bg: PackedColor::Named(0),
-            flags: FLAG_WIDE_CHAR,
+        let mut cell = PackedCell {
+            ch_bytes: [0; 4],
+            fg: PackedColor::indexed(196),
+            bg: PackedColor::named(0),
+            flags: FLAG_WIDE_CHAR.to_le_bytes(),
         };
-        let bytes = cell.to_bytes();
-        let decoded = PackedCell::from_bytes(&bytes);
-        assert_eq!(decoded.ch, '中');
-        assert_eq!(decoded.fg, PackedColor::Indexed(196));
+        cell.set_ch('中');
+        let bytes: &[u8] = bytemuck::bytes_of(&cell);
+        let decoded: &PackedCell = bytemuck::from_bytes(bytes);
+        assert_eq!(decoded.ch(), '中');
+        assert_eq!(decoded.fg, PackedColor::indexed(196));
     }
 
     #[test]
     fn packed_color_roundtrip() {
         for color in [
-            PackedColor::Named(7),
-            PackedColor::Rgb(1, 2, 3),
-            PackedColor::Indexed(200),
+            PackedColor::named(7),
+            PackedColor::rgb(1, 2, 3),
+            PackedColor::indexed(200),
         ] {
-            let bytes = color.to_bytes();
-            assert_eq!(PackedColor::from_bytes(bytes), color);
+            let bytes: &[u8] = bytemuck::bytes_of(&color);
+            let decoded: &PackedColor = bytemuck::from_bytes(bytes);
+            assert_eq!(*decoded, color);
         }
     }
 }

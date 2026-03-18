@@ -16,16 +16,27 @@ pub enum ServerEvent {
 /// Returns channels for bidirectional communication.
 pub fn connect_or_spawn(
     session_name: &str,
+    viewport: codec::ClientViewport,
 ) -> io::Result<(Sender<ClientMessage>, Receiver<ServerEvent>)> {
     let sock_path = transport::socket_path(session_name);
 
     // Try to connect to existing server
-    if !sock_path.exists() {
+    let server_ready = || -> bool {
+        #[cfg(unix)]
+        { sock_path.exists() }
+        #[cfg(windows)]
+        {
+            let port = transport::port_for_session(session_name);
+            std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok()
+        }
+    };
+
+    if !server_ready() {
         // Spawn server
         spawn_server(session_name)?;
         // Wait a bit for it to start
         for _ in 0..50 {
-            if sock_path.exists() { break; }
+            if server_ready() { break; }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
     }
@@ -44,7 +55,14 @@ pub fn connect_or_spawn(
                 .expect("tokio runtime");
             rt.block_on(async move {
                 let sock_path = transport::socket_path(&session);
-                let stream = match tokio::net::UnixStream::connect(&sock_path).await {
+                #[cfg(unix)]
+                let connect_result = tokio::net::UnixStream::connect(&sock_path).await;
+                #[cfg(windows)]
+                let connect_result = tokio::net::TcpStream::connect(
+                    format!("127.0.0.1:{}", transport::port_for_session(&session))
+                ).await;
+
+                let stream = match connect_result {
                     Ok(s) => s,
                     Err(e) => {
                         log::error!("failed to connect to server: {e}");
@@ -56,6 +74,29 @@ pub fn connect_or_spawn(
                 let (reader, writer) = stream.into_split();
                 let mut reader = tokio::io::BufReader::new(reader);
                 let mut writer = tokio::io::BufWriter::new(writer);
+
+                // Send ClientHello (version + viewport), read ServerHello
+                if let Err(e) = codec::write_client_hello(&mut writer, &viewport).await {
+                    log::error!("hello write failed: {e}");
+                    let _ = event_tx.send(ServerEvent::Disconnected);
+                    return;
+                }
+                match codec::read_server_hello(&mut reader).await {
+                    Ok(codec::VersionCompat::Exact(v)) => {
+                        log::info!("server handshake ok (v{v})");
+                    }
+                    Ok(codec::VersionCompat::PatchMismatch { peer, local }) => {
+                        log::warn!("server version {peer} differs from client {local} (patch mismatch)");
+                    }
+                    Ok(codec::VersionCompat::MinorMismatch { peer, local }) => {
+                        log::warn!("server version {peer} differs from client {local} (minor mismatch, may be unstable)");
+                    }
+                    Err(e) => {
+                        log::error!("server rejected connection: {e}");
+                        let _ = event_tx.send(ServerEvent::Disconnected);
+                        return;
+                    }
+                }
 
                 // Spawn writer task
                 let writer_msg_rx = msg_rx;
@@ -111,10 +152,11 @@ fn spawn_server(session_name: &str) -> io::Result<()> {
     use std::process::Command;
     // Try to find ciri-server binary next to the current executable
     let exe = std::env::current_exe().unwrap_or_default();
+    let server_bin = if cfg!(windows) { "ciri-server.exe" } else { "ciri-server" };
     let server_exe = exe.parent()
-        .map(|p| p.join("ciri-server"))
+        .map(|p| p.join(server_bin))
         .filter(|p| p.exists())
-        .unwrap_or_else(|| std::path::PathBuf::from("ciri-server"));
+        .unwrap_or_else(|| std::path::PathBuf::from(server_bin));
 
     // Ensure socket directory exists
     let sock_path = transport::socket_path(session_name);

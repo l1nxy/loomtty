@@ -11,7 +11,10 @@ use ciri_term::pane::{pack_cell, Pane};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::{AsyncWriteExt, BufWriter};
+#[cfg(unix)]
 use tokio::net::UnixListener;
+#[cfg(windows)]
+use tokio::net::TcpListener;
 use tokio::sync::{mpsc, Mutex, Notify};
 use tokio::time::{interval, Duration};
 
@@ -21,6 +24,8 @@ struct DamageAccumulator {
     full: bool,
     /// Indexed by line. Some((left, right)) = dirty range for that line.
     line_damage: HashMap<u16, (u16, u16)>,
+    /// Whether the cursor has moved since last send.
+    cursor_dirty: bool,
 }
 
 impl DamageAccumulator {
@@ -28,6 +33,7 @@ impl DamageAccumulator {
         DamageAccumulator {
             full: false,
             line_damage: HashMap::new(),
+            cursor_dirty: false,
         }
     }
 
@@ -48,7 +54,7 @@ impl DamageAccumulator {
     }
 
     fn is_empty(&self) -> bool {
-        !self.full && self.line_damage.is_empty()
+        !self.full && self.line_damage.is_empty() && !self.cursor_dirty
     }
 
     fn take(&mut self) -> DamageAccumulator {
@@ -62,6 +68,7 @@ struct ClientState {
     id: u64,
     tx: mpsc::Sender<Vec<u8>>,
     damage: HashMap<u64, DamageAccumulator>, // per pane_id
+    last_acked_generation: u64,
 }
 
 // ─── Server state ───────────────────────────────────────────────────
@@ -75,6 +82,8 @@ struct ServerState {
     clients: HashMap<u64, ClientState>,
     next_client_id: u64,
     default_shell: String,
+    cell_width: f32,
+    cell_height: f32,
 }
 
 impl ServerState {
@@ -91,15 +100,16 @@ impl ServerState {
             clients: HashMap::new(),
             next_client_id: 1,
             default_shell: shell.to_string(),
+            cell_width: 8.0,
+            cell_height: 16.0,
         }
     }
 
     fn create_pane(&mut self) -> Result<u64> {
         let id = self.next_pane_id;
         self.next_pane_id += 1;
-        // Use canonical viewport size for default grid
-        let cols = 80u16;
-        let rows = 24u16;
+        // Compute initial size from current viewport layout
+        let (cols, rows) = self.pane_grid_size(self.workspace.view_size.width, self.workspace.view_size.height);
         let pane = Pane::new(id, cols, rows, &self.default_shell)?;
         self.panes.insert(id, pane);
         self.generation.insert(id, 0);
@@ -109,6 +119,30 @@ impl ServerState {
             client.damage.entry(id).or_insert_with(DamageAccumulator::new).mark_full();
         }
         Ok(id)
+    }
+
+    /// Compute cols/rows for a pane given its pixel area and current cell dimensions.
+    fn pane_grid_size(&self, pane_width: f32, pane_height: f32) -> (u16, u16) {
+        let cols = (pane_width / self.cell_width).floor().max(1.0) as u16;
+        let rows = (pane_height / self.cell_height).floor().max(1.0) as u16;
+        (cols, rows)
+    }
+
+    /// Resize all panes to match their current layout pixel dimensions.
+    fn resize_all_panes(&mut self) {
+        let tiles = self.workspace.visible_tiles();
+        for (pane_id, rect, _) in &tiles {
+            let (cols, rows) = self.pane_grid_size(rect.w, rect.h);
+            if let Some(pane) = self.panes.get_mut(pane_id) {
+                pane.resize(cols, rows);
+                // Bump generation and mark full sync for all clients
+                let g = self.generation.entry(*pane_id).or_insert(0);
+                *g += 1;
+                for client in self.clients.values_mut() {
+                    client.damage.entry(*pane_id).or_insert_with(DamageAccumulator::new).mark_full();
+                }
+            }
+        }
     }
 
     fn close_pane(&mut self, pane_id: u64) {
@@ -163,10 +197,11 @@ impl ServerState {
                 let g = self.generation.entry(pane_id).or_insert(0);
                 *g += 1;
 
-                // Merge damage into each client's accumulator
+                // Merge damage into each client's accumulator and mark cursor dirty
                 for client in self.clients.values_mut() {
                     let acc = client.damage.entry(pane_id).or_insert_with(DamageAccumulator::new);
                     acc.merge_regions(&regions);
+                    acc.cursor_dirty = true;
                 }
             }
         }
@@ -240,20 +275,10 @@ impl ServerState {
                     layout: self.layout_state(),
                 }));
             }
-            // TODO: FocusUp/FocusDown currently map to focus_left/focus_right because
-            // WorkspaceSet only supports horizontal focus. Vertical focus within a column
-            // needs WorkspaceSet support for tiled columns.
-            ClientMessage::FocusUp => {
-                self.workspace.focus_left();
-                responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
-                    layout: self.layout_state(),
-                }));
-            }
-            ClientMessage::FocusDown => {
-                self.workspace.focus_right();
-                responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
-                    layout: self.layout_state(),
-                }));
+            ClientMessage::FocusUp | ClientMessage::FocusDown => {
+                // Vertical focus within a column requires tiled column support.
+                // Currently columns hold a single pane, so vertical focus is a no-op.
+                log::debug!("FocusUp/Down ignored: vertical tiling not yet supported");
             }
             ClientMessage::MovePaneLeft => {
                 self.workspace.move_pane_left();
@@ -267,13 +292,14 @@ impl ServerState {
                     layout: self.layout_state(),
                 }));
             }
-            ClientMessage::Resize { cols: _, rows: _, width, height } => {
+            ClientMessage::Resize { cols: _, rows: _, width, height, cell_width, cell_height } => {
+                self.cell_width = cell_width;
+                self.cell_height = cell_height;
                 self.workspace.resize_view(ViewSize {
                     width: width as f32,
                     height: height as f32,
                 });
-                // Resize all panes in viewport
-                // TODO: compute grid sizes from client's atlas metrics
+                self.resize_all_panes();
                 responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
                     layout: self.layout_state(),
                 }));
@@ -284,14 +310,16 @@ impl ServerState {
                     layout: self.layout_state(),
                 }));
             }
-            ClientMessage::Attach { cols: _, rows: _ } => {
-                // The StateSync will be sent separately during client registration
+            ClientMessage::Attach => {
+                // Viewport already applied during ClientHello handshake
             }
             ClientMessage::Detach => {
                 responses.push(ServerResponse::RemoveClient(client_id));
             }
-            ClientMessage::Ack { generation: _ } => {
-                // TODO: track per-client last acked generation for flow control
+            ClientMessage::Ack { generation } => {
+                if let Some(client) = self.clients.get_mut(&client_id) {
+                    client.last_acked_generation = generation;
+                }
             }
         }
 
@@ -366,11 +394,27 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
     if let Some(parent) = sock_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    if sock_path.exists() {
-        std::fs::remove_file(&sock_path)?;
+
+    #[cfg(unix)]
+    {
+        if sock_path.exists() {
+            std::fs::remove_file(&sock_path)?;
+        }
     }
 
+    #[cfg(unix)]
     let listener = UnixListener::bind(&sock_path)?;
+    #[cfg(windows)]
+    let listener = TcpListener::bind(
+        format!("127.0.0.1:{}", transport::port_for_session(session_name))
+    ).await?;
+
+    // On Windows, create a marker file so list_running_sessions can discover us
+    #[cfg(windows)]
+    {
+        std::fs::write(&sock_path, transport::port_for_session(session_name).to_string())?;
+    }
+
     log::info!("ciri-server listening on {}", sock_path.display());
 
     let state = Arc::new(Mutex::new(ServerState::new(session_name, &shell)));
@@ -481,6 +525,16 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                         } else if let Some(pane) = s.panes.get(&pane_id) {
                             let term = pane.term.lock().unwrap_or_else(|e| e.into_inner());
                             let grid = term.grid();
+                            let content = term.renderable_content();
+                            let cursor_line = content.cursor.point.line.0 as i16;
+                            let cursor_col = content.cursor.point.column.0 as u16;
+                            let cursor_shape = match content.cursor.shape {
+                                alacritty_terminal::vte::ansi::CursorShape::Block => 0,
+                                alacritty_terminal::vte::ansi::CursorShape::Underline => 1,
+                                alacritty_terminal::vte::ansi::CursorShape::Beam => 2,
+                                alacritty_terminal::vte::ansi::CursorShape::HollowBlock => 3,
+                                alacritty_terminal::vte::ansi::CursorShape::Hidden => 4,
+                            };
                             let mut regions = Vec::new();
 
                             for (&line, &(left, right)) in &damage.line_damage {
@@ -495,19 +549,21 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                             }
                             drop(term);
 
-                            if !regions.is_empty() {
-                                let delta = CellDelta {
-                                    pane_id,
-                                    generation: pgen,
-                                    regions,
-                                };
-                                if let Ok(payload) = codec::encode_cell_delta_payload(&delta) {
-                                    let mut frame = Vec::with_capacity(5 + payload.len());
-                                    frame.push(0x20); // TAG_CELL_DELTA
-                                    frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-                                    frame.extend_from_slice(&payload);
-                                    outgoing.push((client_id, frame));
-                                }
+                            // Always send delta (even with empty regions) so cursor updates reach client
+                            let delta = CellDelta {
+                                pane_id,
+                                generation: pgen,
+                                cursor_line,
+                                cursor_col,
+                                cursor_shape,
+                                regions,
+                            };
+                            if let Ok(payload) = codec::encode_cell_delta_payload(&delta) {
+                                let mut frame = Vec::with_capacity(5 + payload.len());
+                                frame.push(0x20); // TAG_CELL_DELTA
+                                frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+                                frame.extend_from_slice(&payload);
+                                outgoing.push((client_id, frame));
                             }
                         }
                     }
@@ -557,6 +613,13 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
             graceful_shutdown(&signal_state, &signal_session).await;
             signal_shutdown.notify_one();
         }
+        #[cfg(windows)]
+        {
+            let _ = tokio::signal::ctrl_c().await;
+            log::info!("received Ctrl-C");
+            graceful_shutdown(&signal_state, &signal_session).await;
+            signal_shutdown.notify_one();
+        }
     });
 
     // Accept connections, with graceful shutdown via select!
@@ -570,6 +633,44 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                     let (reader, writer) = stream.into_split();
                     let mut reader = tokio::io::BufReader::new(reader);
                     let mut writer = BufWriter::new(writer);
+
+                    // Read ClientHello (version + viewport)
+                    let viewport = match codec::read_client_hello(&mut reader).await {
+                        Ok((codec::VersionCompat::Exact(v), vp)) => {
+                            log::info!("client handshake ok (v{v})");
+                            vp
+                        }
+                        Ok((codec::VersionCompat::PatchMismatch { peer, local }, vp)) => {
+                            log::warn!("client version {peer} differs from server {local} (patch mismatch)");
+                            vp
+                        }
+                        Ok((codec::VersionCompat::MinorMismatch { peer, local }, vp)) => {
+                            log::warn!("client version {peer} differs from server {local} (minor mismatch, may be unstable)");
+                            vp
+                        }
+                        Err(e) => {
+                            log::error!("client hello rejected: {e}");
+                            return;
+                        }
+                    };
+
+                    // Apply viewport and resize panes before building StateSync
+                    {
+                        let mut s = state.lock().await;
+                        s.cell_width = viewport.cell_width;
+                        s.cell_height = viewport.cell_height;
+                        s.workspace.resize_view(ViewSize {
+                            width: viewport.width as f32,
+                            height: viewport.height as f32,
+                        });
+                        s.resize_all_panes();
+                    }
+
+                    // Send ServerHello (no flush — frames follow immediately)
+                    if let Err(e) = codec::write_server_hello(&mut writer).await {
+                        log::error!("failed to send server hello: {e}");
+                        return;
+                    }
 
                     // Register client
                     // C3: Collect frames while holding lock, then send after dropping lock
@@ -593,6 +694,7 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                             id: client_id,
                             tx: tx.clone(),
                             damage: damage_map,
+                            last_acked_generation: 0,
                         });
 
                         log::info!("client {client_id} connected");

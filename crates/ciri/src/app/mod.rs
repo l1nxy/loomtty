@@ -38,6 +38,14 @@ pub(crate) struct LastLeftClick {
     pub at: Instant,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HoveredLink {
+    pub pane_id: u64,
+    pub url: String,
+    pub start: (u16, usize),
+    pub end: (u16, usize),
+}
+
 /// Auto-reconnection state.
 pub(crate) struct ReconnectState {
     pub attempt: u32,
@@ -84,6 +92,7 @@ pub(crate) struct App {
     pub clipboard: Option<arboard::Clipboard>,
     pub selection: Option<Selection>,
     pub last_left_click: Option<LastLeftClick>,
+    pub hovered_link: Option<HoveredLink>,
     pub mouse_left_held: bool,
     pub reconnect_state: Option<ReconnectState>,
     pub should_exit: bool,
@@ -154,6 +163,7 @@ impl App {
             clipboard: arboard::Clipboard::new().ok(),
             selection: None,
             last_left_click: None,
+            hovered_link: None,
             mouse_left_held: false,
             reconnect_state: None,
             should_exit: false,

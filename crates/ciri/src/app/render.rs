@@ -149,6 +149,7 @@ impl App {
         let active_border = ThemeConfig::parse_color(&self.config.theme.border_active);
         let inactive_border = ThemeConfig::parse_color(&self.config.theme.border_inactive);
         let bg_color = ThemeConfig::parse_color(&self.config.theme.background);
+        let link_color = ThemeConfig::parse_color(&self.config.theme.accent);
 
         for (pane_id, tile_rect, is_active) in tiles {
             let tr = if zoom < zoom_threshold {
@@ -263,6 +264,32 @@ impl App {
                                     w: c.w,
                                     h: c.h,
                                     color: sel_color,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(link) = &self.hovered_link {
+                if link.pane_id == *pane_id {
+                    if let Some(grid) = self.pane_grids.get(pane_id) {
+                        if let Some(viewport_row) = grid.buffer_to_viewport_row(link.start.1) {
+                            let (cw, ch) = self.cell_dimensions();
+                            let underline_h = (zoom.max(1.0)).clamp(1.0, 2.0);
+                            let sx = inner_x + link.start.0 as f32 * cw * zoom;
+                            let sy = inner_y + (viewport_row as f32 + 1.0) * ch * zoom
+                                - underline_h
+                                - zoom;
+                            let sw = (link.end.0 - link.start.0 + 1) as f32 * cw * zoom;
+                            let src = GeoRect::new(sx, sy, sw, underline_h);
+                            if let Some(c) = src.intersection(&tr) {
+                                bg_rects.push(Rect {
+                                    x: c.x,
+                                    y: c.y,
+                                    w: c.w,
+                                    h: c.h,
+                                    color: link_color,
                                 });
                             }
                         }

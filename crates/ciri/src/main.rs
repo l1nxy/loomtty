@@ -461,6 +461,7 @@ impl ApplicationHandler for App {
                 self.last_mouse_pos = Some((mx, my));
 
                 if self.overview_active {
+                    let hover_changed = self.clear_hovered_link();
                     if let Some((row_idx, pane_id)) = self.hit_test_overview(mx, my) {
                         if row_idx < self.workspaces.rows.len() {
                             self.workspaces.active_row = row_idx;
@@ -475,6 +476,9 @@ impl ApplicationHandler for App {
                         if let Some(w) = &self.window {
                             w.request_redraw();
                         }
+                    }
+                    if hover_changed && let Some(w) = &self.window {
+                        w.request_redraw();
                     }
 
                     if self.overview_dragging {
@@ -522,12 +526,22 @@ impl ApplicationHandler for App {
                                 break;
                             }
                         }
+                        let hover_changed = if near_border || self.mouse_left_held {
+                            self.clear_hovered_link()
+                        } else {
+                            self.update_hovered_link(mx, my)
+                        };
                         if let Some(w) = &self.window {
                             if near_border {
                                 w.set_cursor(winit::window::CursorIcon::ColResize);
+                            } else if self.hovered_link.is_some() {
+                                w.set_cursor(winit::window::CursorIcon::Pointer);
                             } else {
                                 w.set_cursor(winit::window::CursorIcon::Default);
                             }
+                        }
+                        if hover_changed && let Some(w) = &self.window {
+                            w.request_redraw();
                         }
 
                         if self.mouse_left_held {
@@ -604,9 +618,22 @@ impl ApplicationHandler for App {
                             }
 
                             if !started_drag {
-                                self.mouse_left_held = true;
                                 let shift = self.modifiers.shift_key();
                                 if let Some((pane_id, col, buf_row)) = self.pixel_to_cell(mx, my) {
+                                    if !shift
+                                        && self.link_activation_modifier_active()
+                                        && let Some(url) =
+                                            self.hovered_link_url_at(pane_id, col, buf_row)
+                                    {
+                                        self.selection = None;
+                                        self.open_url(&url);
+                                        if let Some(w) = &self.window {
+                                            w.request_redraw();
+                                        }
+                                        return;
+                                    }
+
+                                    self.mouse_left_held = true;
                                     let click_now = Instant::now();
                                     let is_double_click = !shift
                                         && self.is_double_left_click(pane_id, col, buf_row, click_now);
@@ -657,6 +684,7 @@ impl ApplicationHandler for App {
                             }
                         }
                     } else {
+                        let had_left_hold = self.mouse_left_held;
                         self.mouse_left_held = false;
                         if self.resize_dragging.is_some() {
                             self.resize_dragging = None;
@@ -668,7 +696,9 @@ impl ApplicationHandler for App {
                         self.overview_dragging = false;
                         self.drag_last_pos = None;
 
-                        if let Some((pane_id, col, row)) = self.pixel_to_viewport_cell(mx, my) {
+                        if had_left_hold
+                            && let Some((pane_id, col, row)) = self.pixel_to_viewport_cell(mx, my)
+                        {
                             self.send_lossy(ClientMessage::MouseInput {
                                 pane_id,
                                 button: 3,

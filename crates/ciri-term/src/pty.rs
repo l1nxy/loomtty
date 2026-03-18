@@ -4,7 +4,6 @@ use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
 
 /// Cross-platform PTY wrapper using portable-pty.
 /// Uses a background reader thread because portable-pty's reader is blocking.
@@ -16,8 +15,6 @@ pub struct Pty {
     output_rx: mpsc::Receiver<Vec<u8>>,
     /// Set to true when the reader thread detects EOF.
     reader_done: Arc<AtomicBool>,
-    /// Handle to the background reader thread for cleanup on drop.
-    _reader_handle: Option<JoinHandle<()>>,
 }
 
 /// Query the user's login shell via getpwuid_r (thread-safe).
@@ -75,6 +72,8 @@ impl Pty {
             cmd.env("COLORTERM", "truecolor");
         }
 
+        // pair.master is the PTY master fd
+
         let child = pair.slave.spawn_command(cmd).context("spawn failed")?;
         drop(pair.slave);
 
@@ -86,7 +85,7 @@ impl Pty {
         let reader_done = Arc::new(AtomicBool::new(false));
         let reader_done_clone = reader_done.clone();
 
-        let reader_handle = std::thread::Builder::new()
+        std::thread::Builder::new()
             .name("pty-reader".into())
             .spawn(move || {
                 let mut buf = [0u8; 65536];
@@ -116,7 +115,6 @@ impl Pty {
             child: Mutex::new(child),
             output_rx,
             reader_done,
-            _reader_handle: Some(reader_handle),
         })
     }
 
@@ -135,11 +133,8 @@ impl Pty {
     }
 
     /// Write data to the PTY.
-    pub fn write(&self, data: &[u8]) -> std::io::Result<usize> {
-        self.writer
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .write(data)
+    pub fn write(&self, data: &[u8]) -> std::io::Result<()> {
+        self.writer.lock().unwrap_or_else(|e| e.into_inner()).write_all(data)
     }
 
     /// Check if child has exited (non-blocking).

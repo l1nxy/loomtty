@@ -21,20 +21,36 @@ impl App {
                     self.send(ClientMessage::ClosePane { pane_id });
                 }
             }
-            Action::FocusLeft => { self.send(ClientMessage::FocusLeft); }
-            Action::FocusRight => { self.send(ClientMessage::FocusRight); }
-            Action::FocusDown => { self.send(ClientMessage::FocusDown); }
-            Action::FocusUp => { self.send(ClientMessage::FocusUp); }
-            Action::MovePaneLeft => { self.send(ClientMessage::MovePaneLeft); }
-            Action::MovePaneRight => { self.send(ClientMessage::MovePaneRight); }
+            Action::FocusLeft => {
+                self.send(ClientMessage::FocusLeft);
+            }
+            Action::FocusRight => {
+                self.send(ClientMessage::FocusRight);
+            }
+            Action::FocusDown => {
+                self.send(ClientMessage::FocusDown);
+            }
+            Action::FocusUp => {
+                self.send(ClientMessage::FocusUp);
+            }
+            Action::MovePaneLeft => {
+                self.send(ClientMessage::MovePaneLeft);
+            }
+            Action::MovePaneRight => {
+                self.send(ClientMessage::MovePaneRight);
+            }
             Action::ColumnWidthOneThird => {
-                self.send(ClientMessage::SetColumnWidth { proportion: 1.0 / 3.0 });
+                self.send(ClientMessage::SetColumnWidth {
+                    proportion: 1.0 / 3.0,
+                });
             }
             Action::ColumnWidthHalf => {
                 self.send(ClientMessage::SetColumnWidth { proportion: 0.5 });
             }
             Action::ColumnWidthTwoThirds => {
-                self.send(ClientMessage::SetColumnWidth { proportion: 2.0 / 3.0 });
+                self.send(ClientMessage::SetColumnWidth {
+                    proportion: 2.0 / 3.0,
+                });
             }
             Action::ColumnWidthFull => {
                 self.send(ClientMessage::SetColumnWidth { proportion: 1.0 });
@@ -42,7 +58,12 @@ impl App {
             Action::ColumnWidthIncrease => {
                 self.workspaces.active_mut().resize_active_column(0.02);
                 // Send the resulting proportion to server to stay in sync
-                if let Some(col) = self.workspaces.active().columns.get(self.workspaces.active().active_column_idx) {
+                if let Some(col) = self
+                    .workspaces
+                    .active()
+                    .columns
+                    .get(self.workspaces.active().active_column_idx)
+                {
                     let p = match col.width {
                         ColumnWidth::Proportion(p) => p,
                         ColumnWidth::Fixed(px) => px / self.workspaces.view_size.width as f64,
@@ -55,7 +76,12 @@ impl App {
             Action::ColumnWidthDecrease => {
                 self.workspaces.active_mut().resize_active_column(-0.02);
                 // Send the resulting proportion to server to stay in sync
-                if let Some(col) = self.workspaces.active().columns.get(self.workspaces.active().active_column_idx) {
+                if let Some(col) = self
+                    .workspaces
+                    .active()
+                    .columns
+                    .get(self.workspaces.active().active_column_idx)
+                {
                     let p = match col.width {
                         ColumnWidth::Proportion(p) => p,
                         ColumnWidth::Fixed(px) => px / self.workspaces.view_size.width as f64,
@@ -67,7 +93,8 @@ impl App {
             }
             Action::ExitOverview => {
                 self.overview_active = false;
-                self.overview_zoom.animate_to(1.0, self.config.animation.speed);
+                self.overview_zoom
+                    .animate_to(1.0, self.config.animation.speed);
                 self.animate_to_active();
             }
             Action::SwitchWorkspace(idx) => {
@@ -87,15 +114,28 @@ impl App {
             }
             Action::SendLeaderKey => {
                 if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
-                    self.send(ClientMessage::Input { pane_id: pid, data: vec![0x17] });
+                    self.send(ClientMessage::Input {
+                        pane_id: pid,
+                        data: vec![0x17],
+                    });
                 }
             }
             Action::ScrollPageUp => {
-                let rows = self.pane_grids.values().next().map(|g| g.rows as usize).unwrap_or(24);
+                let rows = self
+                    .pane_grids
+                    .values()
+                    .next()
+                    .map(|g| g.rows as usize)
+                    .unwrap_or(24);
                 self.scroll_active_up(rows);
             }
             Action::ScrollPageDown => {
-                let rows = self.pane_grids.values().next().map(|g| g.rows as usize).unwrap_or(24);
+                let rows = self
+                    .pane_grids
+                    .values()
+                    .next()
+                    .map(|g| g.rows as usize)
+                    .unwrap_or(24);
                 self.scroll_active_down(rows);
             }
             Action::ScrollTop => {
@@ -120,9 +160,17 @@ impl App {
         } else {
             self.workspaces.visible_tiles_2d()
         };
-        let (vw, vh) = self.renderer.as_ref()
-            .map(|r| { let (w, h) = r.surface_size(); (w as f32, h as f32) })
-            .unwrap_or((self.config.window.width as f32, self.config.window.height as f32));
+        let (vw, vh) = self
+            .renderer
+            .as_ref()
+            .map(|r| {
+                let (w, h) = r.surface_size();
+                (w as f32, h as f32)
+            })
+            .unwrap_or((
+                self.config.window.width as f32,
+                self.config.window.height as f32,
+            ));
         let cx = vw / 2.0;
         let cy = vh / 2.0;
 
@@ -151,7 +199,9 @@ impl App {
     /// Convert pixel coordinates to (pane_id, col, buffer_row) using absolute buffer indices.
     pub fn pixel_to_cell(&self, mx: f32, my: f32) -> Option<(u64, u16, usize)> {
         let (cw, ch) = self.cell_dimensions();
-        if cw <= 0.0 || ch <= 0.0 { return None; }
+        if cw <= 0.0 || ch <= 0.0 {
+            return None;
+        }
         let border_w = self.config.appearance.border_width;
         let padding = self.config.appearance.padding;
         let tiles = self.workspaces.active().visible_tiles();
@@ -175,7 +225,9 @@ impl App {
     /// Convert pixel coordinates to (pane_id, col, viewport_row) for mouse forwarding.
     pub fn pixel_to_viewport_cell(&self, mx: f32, my: f32) -> Option<(u64, u16, u16)> {
         let (cw, ch) = self.cell_dimensions();
-        if cw <= 0.0 || ch <= 0.0 { return None; }
+        if cw <= 0.0 || ch <= 0.0 {
+            return None;
+        }
         let border_w = self.config.appearance.border_width;
         let padding = self.config.appearance.padding;
         let tiles = self.workspaces.active().visible_tiles();
@@ -231,51 +283,60 @@ impl App {
 }
 
 pub(crate) fn key_event_to_pty_bytes(event: &winit::event::KeyEvent, ctrl: bool) -> Vec<u8> {
-    if ctrl
-        && let Key::Character(c) = &event.logical_key {
-            let ch = c.as_str();
-            if ch.len() == 1 {
-                let byte = ch.as_bytes()[0];
-                if byte.is_ascii_lowercase() { return vec![byte - b'a' + 1]; }
-                if byte.is_ascii_uppercase() { return vec![byte - b'A' + 1]; }
-                return match byte {
-                    b'[' => vec![0x1b], b'\\' => vec![0x1c], b']' => vec![0x1d],
-                    b'^' => vec![0x1e], b'_' => vec![0x1f], b'@' => vec![0x00],
-                    _ => vec![],
-                };
+    if ctrl && let Key::Character(c) = &event.logical_key {
+        let ch = c.as_str();
+        if ch.len() == 1 {
+            let byte = ch.as_bytes()[0];
+            if byte.is_ascii_lowercase() {
+                return vec![byte - b'a' + 1];
             }
+            if byte.is_ascii_uppercase() {
+                return vec![byte - b'A' + 1];
+            }
+            return match byte {
+                b'[' => vec![0x1b],
+                b'\\' => vec![0x1c],
+                b']' => vec![0x1d],
+                b'^' => vec![0x1e],
+                b'_' => vec![0x1f],
+                b'@' => vec![0x00],
+                _ => vec![],
+            };
         }
+    }
 
-    if let Key::Named(key) = &event.logical_key { match key {
-        NamedKey::Enter => return vec![b'\r'],
-        NamedKey::Backspace => return vec![0x7f],
-        NamedKey::Tab => return vec![b'\t'],
-        NamedKey::Escape => return vec![0x1b],
-        NamedKey::Space => return vec![b' '],
-        NamedKey::ArrowUp => return b"\x1b[A".to_vec(),
-        NamedKey::ArrowDown => return b"\x1b[B".to_vec(),
-        NamedKey::ArrowRight => return b"\x1b[C".to_vec(),
-        NamedKey::ArrowLeft => return b"\x1b[D".to_vec(),
-        NamedKey::Home => return b"\x1b[H".to_vec(),
-        NamedKey::End => return b"\x1b[F".to_vec(),
-        NamedKey::PageUp => return b"\x1b[5~".to_vec(),
-        NamedKey::PageDown => return b"\x1b[6~".to_vec(),
-        NamedKey::Delete => return b"\x1b[3~".to_vec(),
-        NamedKey::Insert => return b"\x1b[2~".to_vec(),
-        NamedKey::F1 => return b"\x1bOP".to_vec(),
-        NamedKey::F2 => return b"\x1bOQ".to_vec(),
-        NamedKey::F3 => return b"\x1bOR".to_vec(),
-        NamedKey::F4 => return b"\x1bOS".to_vec(),
-        NamedKey::F5 => return b"\x1b[15~".to_vec(),
-        NamedKey::F6 => return b"\x1b[17~".to_vec(),
-        NamedKey::F7 => return b"\x1b[18~".to_vec(),
-        NamedKey::F8 => return b"\x1b[19~".to_vec(),
-        NamedKey::F9 => return b"\x1b[20~".to_vec(),
-        NamedKey::F10 => return b"\x1b[21~".to_vec(),
-        NamedKey::F11 => return b"\x1b[23~".to_vec(),
-        NamedKey::F12 => return b"\x1b[24~".to_vec(),
-        _ => {}
-    } }
+    if let Key::Named(key) = &event.logical_key {
+        match key {
+            NamedKey::Enter => return vec![b'\r'],
+            NamedKey::Backspace => return vec![0x7f],
+            NamedKey::Tab => return vec![b'\t'],
+            NamedKey::Escape => return vec![0x1b],
+            NamedKey::Space => return vec![b' '],
+            NamedKey::ArrowUp => return b"\x1b[A".to_vec(),
+            NamedKey::ArrowDown => return b"\x1b[B".to_vec(),
+            NamedKey::ArrowRight => return b"\x1b[C".to_vec(),
+            NamedKey::ArrowLeft => return b"\x1b[D".to_vec(),
+            NamedKey::Home => return b"\x1b[H".to_vec(),
+            NamedKey::End => return b"\x1b[F".to_vec(),
+            NamedKey::PageUp => return b"\x1b[5~".to_vec(),
+            NamedKey::PageDown => return b"\x1b[6~".to_vec(),
+            NamedKey::Delete => return b"\x1b[3~".to_vec(),
+            NamedKey::Insert => return b"\x1b[2~".to_vec(),
+            NamedKey::F1 => return b"\x1bOP".to_vec(),
+            NamedKey::F2 => return b"\x1bOQ".to_vec(),
+            NamedKey::F3 => return b"\x1bOR".to_vec(),
+            NamedKey::F4 => return b"\x1bOS".to_vec(),
+            NamedKey::F5 => return b"\x1b[15~".to_vec(),
+            NamedKey::F6 => return b"\x1b[17~".to_vec(),
+            NamedKey::F7 => return b"\x1b[18~".to_vec(),
+            NamedKey::F8 => return b"\x1b[19~".to_vec(),
+            NamedKey::F9 => return b"\x1b[20~".to_vec(),
+            NamedKey::F10 => return b"\x1b[21~".to_vec(),
+            NamedKey::F11 => return b"\x1b[23~".to_vec(),
+            NamedKey::F12 => return b"\x1b[24~".to_vec(),
+            _ => {}
+        }
+    }
 
     if let Some(text) = event.text_with_all_modifiers() {
         let s: &str = text;

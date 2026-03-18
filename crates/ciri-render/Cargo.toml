@@ -8,6 +8,7 @@ wgpu = { workspace = true }
 winit = { workspace = true }
 glyphon = { workspace = true }
 alacritty_terminal = { workspace = true }
+ciri-protocol = { workspace = true }
 log = { workspace = true }
 anyhow = { workspace = true }
 bytemuck = { version = "1", features = ["derive"] }

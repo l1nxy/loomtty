@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 alacritty_terminal = { workspace = true }
+ciri-protocol = { workspace = true }
 portable-pty = "0.8"
 log = { workspace = true }
 anyhow = { workspace = true }

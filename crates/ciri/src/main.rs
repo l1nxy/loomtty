@@ -1,3 +1,6 @@
+mod connection;
+mod grid;
+
 use anyhow::Result;
 use ciri_anim::animation::ViewOffset;
 use ciri_config::config::CiriConfig;
@@ -12,7 +15,10 @@ use ciri_render::glyph_cache::{GlyphAtlas, GlyphInstance};
 use ciri_render::rect::Rect;
 use ciri_render::renderer::Renderer;
 use ciri_render::terminal::{self, TerminalView};
-use ciri_term::pane::Pane;
+use ciri_protocol::message::*;
+use connection::ServerEvent;
+use crossbeam_channel::{Receiver, Sender};
+use grid::ClientPaneGrid;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -31,10 +37,13 @@ struct App {
     glyph_atlas: Option<GlyphAtlas>,
     dpi_scale: f64,
     workspaces: WorkspaceSet,
-    panes: HashMap<u64, Pane>,
-    next_pane_id: u64,
+    /// Client-side cell grid mirrors (no PTY).
+    pane_grids: HashMap<u64, ClientPaneGrid>,
     input: InputHandler,
-    /// Global horizontal scroll offset (shared across all workspaces).
+    /// Server communication channels.
+    server_tx: Option<Sender<ClientMessage>>,
+    server_rx: Option<Receiver<ServerEvent>>,
+    /// Global horizontal scroll offset.
     view_offset_x: ViewOffset,
     view_offset_y: ViewOffset,
     col_widths: Vec<ViewOffset>,
@@ -46,19 +55,16 @@ struct App {
     overview_zoom: ViewOffset,
     overview_dragging: bool,
     drag_last_pos: Option<(f32, f32)>,
-    // Reusable render buffers to avoid per-frame allocation
     bg_rects_buf: Vec<Rect>,
     glyph_buf: Vec<GlyphInstance>,
-    /// True when IME has active preedit text — KeyboardInput is suppressed.
     ime_preedit_active: bool,
-    /// Last IME cursor position, for change detection.
     last_ime_pos: Option<(i32, i32)>,
-    /// Configurable overview-mode keybindings.
     overview_keybinds: KeybindMap,
-    /// Mouse drag resize state: column index being resized (left border).
     resize_dragging: Option<usize>,
     resize_drag_start_x: f32,
     resize_drag_start_width: f32,
+    /// Whether we've received initial StateSync from server.
+    connected: bool,
 }
 
 impl App {
@@ -72,17 +78,11 @@ impl App {
             Duration::from_millis(config.input.leader_timeout_ms),
             Duration::from_millis(config.input.double_tap_window_ms),
         );
-
-        // Initialize leader keybinds from config
         input.keybinds = KeybindMap::from_config(&config.keys.bindings);
-
-        // Parse leader key from config (e.g. "ctrl+space" -> leader_ctrl_key = "space")
         let leader_str = &config.keys.leader;
         if let Some(rest) = leader_str.strip_prefix("ctrl+") {
             input.leader_ctrl_key = rest.to_string();
         }
-
-        // Initialize overview keybinds from config
         let overview_keybinds = KeybindMap::from_overview_config(&config.keys.overview_bindings);
 
         App {
@@ -93,9 +93,10 @@ impl App {
             glyph_atlas: None,
             dpi_scale: 1.0,
             workspaces: WorkspaceSet::new(initial_view),
-            panes: HashMap::new(),
-            next_pane_id: 1,
+            pane_grids: HashMap::new(),
             input,
+            server_tx: None,
+            server_rx: None,
             view_offset_x: ViewOffset::new(),
             view_offset_y: ViewOffset::new(),
             col_widths: Vec::new(),
@@ -119,11 +120,102 @@ impl App {
             resize_dragging: None,
             resize_drag_start_x: 0.0,
             resize_drag_start_width: 0.0,
+            connected: false,
         }
     }
 
-    /// Find which (workspace_row, pane_id) is under the screen position (mx, my),
-    /// accounting for the current zoom level.
+    /// Send a message to the server.
+    fn send(&self, msg: ClientMessage) {
+        if let Some(tx) = &self.server_tx {
+            if let Err(e) = tx.try_send(msg) {
+                log::warn!("failed to send to server: {e}");
+            }
+        }
+    }
+
+    /// Process all pending server events.
+    fn process_server_events(&mut self) -> bool {
+        let Some(rx) = self.server_rx.as_ref() else { return false };
+        // Drain all events first to avoid borrow conflicts
+        let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        if events.is_empty() { return false; }
+        let mut needs_redraw = false;
+
+        for event in events {
+            match event {
+                ServerEvent::Control(ServerMessage::StateSync { layout, pane_ids }) => {
+                    self.apply_layout(&layout);
+                    // Grids will be populated by FullPaneSync messages that follow
+                    for &id in &pane_ids {
+                        self.pane_grids.entry(id).or_insert_with(|| ClientPaneGrid::new(80, 24));
+                    }
+                    self.connected = true;
+                    needs_redraw = true;
+                }
+                ServerEvent::Control(ServerMessage::LayoutUpdate { layout }) => {
+                    self.apply_layout(&layout);
+                    needs_redraw = true;
+                }
+                ServerEvent::Control(ServerMessage::PaneCreated { pane_id, .. }) => {
+                    self.pane_grids.entry(pane_id).or_insert_with(|| ClientPaneGrid::new(80, 24));
+                    needs_redraw = true;
+                }
+                ServerEvent::Control(ServerMessage::PaneClosed { pane_id }) => {
+                    self.pane_grids.remove(&pane_id);
+                    self.cached_views.remove(&pane_id);
+                    needs_redraw = true;
+                }
+                ServerEvent::Control(ServerMessage::ServerShutdown) => {
+                    log::info!("server shut down");
+                    self.pane_grids.clear();
+                    self.cached_views.clear();
+                    needs_redraw = true;
+                }
+                ServerEvent::FullPaneSync(sync) => {
+                    let grid = self.pane_grids.entry(sync.pane_id)
+                        .or_insert_with(|| ClientPaneGrid::new(sync.cols, sync.rows));
+                    grid.apply_full_sync(&sync);
+                    self.cached_views.remove(&sync.pane_id);
+                    needs_redraw = true;
+                }
+                ServerEvent::CellDelta(delta) => {
+                    if let Some(grid) = self.pane_grids.get_mut(&delta.pane_id) {
+                        grid.apply_delta(&delta);
+                        self.cached_views.remove(&delta.pane_id);
+                        needs_redraw = true;
+                    }
+                }
+                ServerEvent::Disconnected => {
+                    log::warn!("disconnected from server, exiting");
+                    self.connected = false;
+                    self.pane_grids.clear();
+                    self.cached_views.clear();
+                    self.server_tx = None;
+                    self.server_rx = None;
+                    return true; // signal caller to exit
+                }
+            }
+        }
+        needs_redraw
+    }
+
+    fn apply_layout(&mut self, layout: &LayoutState) {
+        // Rebuild workspace from server's layout state
+        let ws = self.workspaces.active_mut();
+        ws.columns.clear();
+        for col_state in &layout.columns {
+            if let Some(tile) = col_state.tiles.first() {
+                use ciri_layout::column::Column;
+                let mut col = Column::new(tile.pane_id);
+                col.width = ColumnWidth::Proportion(col_state.width_proportion);
+                ws.columns.push(col);
+            }
+        }
+        ws.active_column_idx = layout.active_column_idx.min(ws.columns.len().saturating_sub(1));
+        self.snap_all_col_widths();
+        self.animate_to_active();
+    }
+
     fn hit_test_overview(&self, mx: f32, my: f32) -> Option<(usize, u64)> {
         let zoom = self.overview_zoom.value() as f32;
         let zoom_threshold = self.config.animation.zoom_threshold;
@@ -150,7 +242,6 @@ impl App {
                 *tile_rect
             };
             if tr.contains(mx, my) {
-                // Find which workspace row this pane belongs to
                 for (row_idx, ws) in self.workspaces.rows.iter().enumerate() {
                     if ws.columns.iter().any(|c| c.pane_id == *pane_id) {
                         return Some((row_idx, *pane_id));
@@ -165,50 +256,24 @@ impl App {
         (self.config.appearance.padding + self.config.appearance.border_width) * 2.0
     }
 
-    /// Status bar height in pixels. Must be subtracted from viewport for usable area.
+    fn compute_grid_size(&self) -> (u16, u16) {
+        if let Some(atlas) = &self.glyph_atlas {
+            let pad = self.total_inset();
+            let vw = self.workspaces.view_size.width - pad;
+            let vh = self.workspaces.view_size.height - pad;
+            atlas.grid_size(vw, vh)
+        } else {
+            (80, 24)
+        }
+    }
+
     fn status_bar_height(&self) -> f32 {
         let cell_h = self.glyph_atlas.as_ref()
             .map(|a| a.cell_height)
-            // Fallback for pre-atlas window resize events.
             .unwrap_or(self.config.font.size * 1.2);
         cell_h + self.config.statusbar.height_padding
     }
 
-    fn create_pane(&mut self) -> Option<u64> {
-        let id = self.next_pane_id;
-        self.next_pane_id += 1;
-        let (cols, rows) = self.default_grid_size();
-        match Pane::new(id, cols, rows, &self.config.terminal.shell) {
-            Ok(pane) => { self.panes.insert(id, pane); Some(id) }
-            Err(e) => { log::error!("failed to create pane: {e}"); None }
-        }
-    }
-
-    fn default_grid_size(&self) -> (u16, u16) {
-        if let Some(atlas) = &self.glyph_atlas {
-            let col_w = self.workspaces.active().view_size.width * 0.5;
-            let col_h = self.workspaces.active().view_size.height;
-            let pad = self.total_inset();
-            atlas.grid_size(col_w - pad, col_h - pad)
-        } else {
-            (self.config.terminal.default_cols, self.config.terminal.default_rows)
-        }
-    }
-
-    fn resize_panes_to_layout(&mut self) {
-        let Some(atlas) = &self.glyph_atlas else { return };
-        let pad = self.total_inset();
-        let tiles = self.workspaces.active_mut().visible_tiles();
-        for (pane_id, rect, _) in &tiles {
-            if let Some(pane) = self.panes.get_mut(pane_id) {
-                let (cols, rows) = atlas.grid_size(rect.w - pad, rect.h - pad);
-                pane.resize(cols, rows);
-            }
-        }
-    }
-
-    /// Snap all columns in ALL workspaces to their target width (no animation).
-    /// Ensures every workspace has correct rendered_width regardless of which is active.
     fn snap_all_col_widths(&mut self) {
         let vw = self.workspaces.view_size.width;
         self.col_widths.clear();
@@ -219,11 +284,8 @@ impl App {
         }
     }
 
-    /// Recalculate overview zoom to fit the current layout. Call after any layout change in overview.
     fn refresh_overview_zoom(&mut self) {
-        if !self.overview_active {
-            return;
-        }
+        if !self.overview_active { return; }
         let omega = self.config.animation.speed;
         let vw = self.workspaces.view_size.width;
         let vh = self.workspaces.view_size.height;
@@ -247,117 +309,50 @@ impl App {
             self.snap_all_col_widths();
             self.cached_views.clear();
             self.animate_to_active();
-            self.resize_panes_to_layout();
         }
     }
 
     fn handle_action(&mut self, action: Action) {
         match action {
             Action::NewColumnRight => {
-                if let Some(id) = self.create_pane() {
-                    let insert_idx = self.workspaces.active_mut().active_column_idx;
-                    self.workspaces.active_mut().add_column_right(id);
-                    let new_idx = self.workspaces.active_mut().active_column_idx;
-                    // Insert a zero-width animation entry — it will animate from 0 to target
-                    let mut entry = ViewOffset::new();
-                    entry.jump_to(1.0); // start tiny, sync_col_animations will animate to target
-                    if new_idx <= self.col_widths.len() {
-                        self.col_widths.insert(new_idx, entry);
-                    }
-                    self.resize_panes_to_layout();
-                    self.animate_to_active();
-                }
+                self.send(ClientMessage::CreatePane);
             }
             Action::NewRowBelow => {
-                if let Some(id) = self.create_pane() {
-                    self.workspaces.add_row_below(id);
-                    self.view_offset_x.jump_to(0.0);
-                    self.col_widths.clear(); // new row = new col_widths
-                    self.animate_to_active();
-                    self.resize_panes_to_layout();
-                }
+                self.send(ClientMessage::SplitDown);
             }
             Action::ClosePane => {
-                let ws = self.workspaces.active_mut();
-                let closing_idx = ws.active_column_idx;
-                let closing_width = ws.columns.get(closing_idx)
-                    .map(|c| c.effective_width(ws.view_size.width) + ws.column_gap)
-                    .unwrap_or(0.0);
-
-                if let Some(pane_id) = self.workspaces.active_mut().close_active_pane() {
-                    self.panes.remove(&pane_id);
-                    self.cached_views.remove(&pane_id);
-
-                    // Remove the closed column's width animation entry (preserve the rest).
-                    // This lets remaining columns smoothly slide to fill the gap.
-                    if closing_idx < self.col_widths.len() {
-                        self.col_widths.remove(closing_idx);
-                    }
-
-                    if self.workspaces.active().is_empty() {
-                        self.workspaces.cleanup_empty();
-                        self.col_widths.clear();
-                        self.snap_all_col_widths();
-                        self.animate_to_active();
-                        self.resize_panes_to_layout();
-                    } else {
-                        // Compensate camera so columns don't visually jump
-                        let cur = self.view_offset_x.value();
-                        self.view_offset_x.jump_to((cur - closing_width as f64).max(0.0));
-                        // Don't snap — let sync_col_animations drive smooth transitions
-                        self.animate_to_active();
-                        self.resize_panes_to_layout();
-                    }
+                if let Some(pane_id) = self.workspaces.active_mut().active_pane_id() {
+                    self.send(ClientMessage::ClosePane { pane_id });
                 }
             }
-            Action::FocusLeft => { self.workspaces.active_mut().focus_left(); self.animate_to_active(); }
-            Action::FocusRight => { self.workspaces.active_mut().focus_right(); self.animate_to_active(); }
-            Action::FocusDown => {
-                self.workspaces.focus_down();
-                self.col_widths.clear(); // switching row, reset width state
-                self.animate_to_active();
-                self.resize_panes_to_layout();
-            }
-            Action::FocusUp => {
-                self.workspaces.focus_up();
-                self.col_widths.clear(); // switching row, reset width state
-                self.animate_to_active();
-                self.resize_panes_to_layout();
-            }
-            Action::MovePaneLeft => {
-                self.workspaces.active_mut().move_pane_left();
-                self.resize_panes_to_layout();
-                self.animate_to_active();
-            }
-            Action::MovePaneRight => {
-                self.workspaces.active_mut().move_pane_right();
-                self.resize_panes_to_layout();
-                self.animate_to_active();
-            }
+            Action::FocusLeft => { self.send(ClientMessage::FocusLeft); }
+            Action::FocusRight => { self.send(ClientMessage::FocusRight); }
+            Action::FocusDown => { self.send(ClientMessage::FocusDown); }
+            Action::FocusUp => { self.send(ClientMessage::FocusUp); }
+            Action::MovePaneLeft => { self.send(ClientMessage::MovePaneLeft); }
+            Action::MovePaneRight => { self.send(ClientMessage::MovePaneRight); }
             Action::ColumnWidthOneThird => {
-                self.workspaces.active_mut().set_active_column_width(ColumnWidth::Proportion(1.0 / 3.0));
-                self.resize_panes_to_layout(); self.animate_to_active();
+                self.send(ClientMessage::SetColumnWidth { proportion: 1.0 / 3.0 });
             }
             Action::ColumnWidthHalf => {
-                self.workspaces.active_mut().set_active_column_width(ColumnWidth::Proportion(0.5));
-                self.resize_panes_to_layout(); self.animate_to_active();
+                self.send(ClientMessage::SetColumnWidth { proportion: 0.5 });
             }
             Action::ColumnWidthTwoThirds => {
-                self.workspaces.active_mut().set_active_column_width(ColumnWidth::Proportion(2.0 / 3.0));
-                self.resize_panes_to_layout(); self.animate_to_active();
+                self.send(ClientMessage::SetColumnWidth { proportion: 2.0 / 3.0 });
             }
             Action::ColumnWidthFull => {
-                self.workspaces.active_mut().set_active_column_width(ColumnWidth::Proportion(1.0));
-                self.resize_panes_to_layout(); self.animate_to_active();
+                self.send(ClientMessage::SetColumnWidth { proportion: 1.0 });
             }
             Action::ColumnWidthIncrease => {
+                // Handle locally for responsiveness, also send to server
                 self.workspaces.active_mut().resize_active_column(0.02);
-                // Don't snap — sync_col_animations will animate the width change
-                self.resize_panes_to_layout(); self.animate_to_active();
+                self.snap_all_col_widths();
+                self.animate_to_active();
             }
             Action::ColumnWidthDecrease => {
                 self.workspaces.active_mut().resize_active_column(-0.02);
-                self.resize_panes_to_layout(); self.animate_to_active();
+                self.snap_all_col_widths();
+                self.animate_to_active();
             }
             Action::ExitOverview => {
                 self.overview_active = false;
@@ -380,13 +375,11 @@ impl App {
                 }
             }
             Action::SendLeaderKey => {
-                if let Some(pid) = self.workspaces.active_mut().active_pane_id()
-                    && let Some(pane) = self.panes.get(&pid) {
-                        pane.write_to_pty(&[0x17]);
-                    }
+                if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
+                    self.send(ClientMessage::Input { pane_id: pid, data: vec![0x17] });
+                }
             }
         }
-
     }
 
     fn animate_to_active(&mut self) {
@@ -411,8 +404,6 @@ impl App {
         self.sync_col_animations();
     }
 
-    /// Sync col_widths animations for within-workspace width changes (e.g. adding columns).
-    /// Only animates when col_widths already has non-zero values from the same workspace.
     fn sync_col_animations(&mut self) {
         let ncols = self.workspaces.active().columns.len();
         while self.col_widths.len() < ncols {
@@ -430,8 +421,6 @@ impl App {
                 if current == 0.0 {
                     self.col_widths[i].jump_to(target);
                 } else if (anim_target - target).abs() > 1.0 {
-                    // Target changed (or new entry) — start/retarget animation.
-                    // animate_to preserves velocity for smooth redirection.
                     self.col_widths[i].animate_to(target, omega);
                 }
             } else {
@@ -439,7 +428,6 @@ impl App {
             }
         }
 
-        // Update rendered_width from col_widths
         let ws = self.workspaces.active_mut();
         for (i, col) in ws.columns.iter_mut().enumerate() {
             if i < self.col_widths.len() {
@@ -452,14 +440,12 @@ impl App {
         let mut animating = self.view_offset_x.advance(dt);
         if self.view_offset_y.advance(dt) { animating = true; }
         if self.overview_zoom.advance(dt) { animating = true; }
-        // Write the SAME view_offset_x to ALL workspaces (unified coordinate system)
         let vox = self.view_offset_x.value() as f32;
         for ws in &mut self.workspaces.rows {
             ws.view_offset_x = vox;
         }
         self.workspaces.view_offset_y = self.view_offset_y.value() as f32;
 
-        // Only advance col_widths if there are active animations
         if !self.col_widths.is_empty() {
             self.sync_col_animations();
             let ws = self.workspaces.active_mut();
@@ -485,8 +471,6 @@ impl App {
         let zoom_threshold = self.config.animation.zoom_threshold;
         let padding = self.config.appearance.padding;
         let border_w = self.config.appearance.border_width;
-
-        // Pre-parse colors used per tile
         let active_border = ThemeConfig::parse_color(&self.config.theme.border_active);
         let inactive_border = ThemeConfig::parse_color(&self.config.theme.border_inactive);
         let bg_color = ThemeConfig::parse_color(&self.config.theme.background);
@@ -505,12 +489,10 @@ impl App {
                 *tile_rect
             };
 
-            // Border rect
             bg_rects.push(Rect {
                 x: tr.x, y: tr.y, w: tr.w, h: tr.h,
                 color: if *is_active { active_border } else { inactive_border },
             });
-            // Inner background rect
             bg_rects.push(Rect {
                 x: tr.x + border_w * zoom, y: tr.y + border_w * zoom,
                 w: tr.w - border_w * zoom * 2.0, h: tr.h - border_w * zoom * 2.0,
@@ -521,7 +503,6 @@ impl App {
             let inner_x = tr.x + (border_w + padding) * zoom;
             let inner_y = tr.y + (border_w + padding) * zoom;
 
-            // Clip bg rects to tile bounds
             for r in &view.bg_rects {
                 let src = GeoRect::new(
                     inner_x + r.x * zoom,
@@ -534,7 +515,6 @@ impl App {
                 }
             }
 
-            // Clip cursor to tile bounds
             if let Some(cursor) = &view.cursor_rect {
                 let src = GeoRect::new(
                     inner_x + cursor.x * zoom,
@@ -547,7 +527,6 @@ impl App {
                 }
             }
 
-            // Clip glyphs to tile bounds, adjusting UVs proportionally
             glyphs.extend(view.glyph_instances.iter().filter_map(|g| {
                 let sx = inner_x + g.px * zoom;
                 let sy = inner_y + g.py * zoom;
@@ -556,7 +535,6 @@ impl App {
 
                 if gw <= 0.0 || gh <= 0.0 { return None; }
 
-                // Fast path: glyph fully inside tile
                 if sx >= tr.x && sy >= tr.y && sx + gw <= tr.x + tr.w && sy + gh <= tr.y + tr.h {
                     return Some(GlyphInstance {
                         pos: [sx / vw * 2.0 - 1.0, 1.0 - sy / vh * 2.0],
@@ -569,7 +547,6 @@ impl App {
 
                 let src = GeoRect::new(sx, sy, gw, gh);
                 let c = src.intersection(&tr)?;
-
                 let u_full = g.u1 - g.u0;
                 let v_full = g.v1 - g.v0;
 
@@ -730,23 +707,23 @@ impl App {
             self.workspaces.visible_tiles_2d()
         };
 
-        // Update terminal views for dirty panes
+        // Update terminal views for dirty pane grids
         for (pane_id, _, _) in &tiles {
-            let is_dirty = self.panes.get(pane_id).is_some_and(|p| p.dirty);
+            let is_dirty = self.pane_grids.get(pane_id).is_some_and(|g| g.dirty);
             if (is_dirty || !self.cached_views.contains_key(pane_id))
-                && let Some(pane) = self.panes.get_mut(pane_id) {
-                    let term = pane.term.lock().unwrap_or_else(|e| e.into_inner());
-                    let view = terminal::build_terminal_view(
-                        &*term, atlas, &mut renderer.text.font_system, &renderer.queue,
+                && let Some(grid) = self.pane_grids.get_mut(pane_id) {
+                    let view = terminal::build_view_from_grid(
+                        &grid.cells, grid.cols, grid.rows,
+                        grid.cursor_line, grid.cursor_col, grid.cursor_shape,
+                        atlas, &mut renderer.text.font_system, &renderer.queue,
                         &self.config,
                     );
-                    drop(term);
-                    pane.dirty = false;
+                    grid.dirty = false;
                     self.cached_views.insert(*pane_id, view);
                 }
         }
 
-        // Update IME cursor area only when position changes
+        // Update IME cursor area
         if let Some(window) = &self.window
             && let Some(active_pid) = self.workspaces.active().active_pane_id()
                 && let Some((_, tile_rect, _)) = tiles.iter().find(|(id, _, _)| *id == active_pid)
@@ -769,7 +746,6 @@ impl App {
                             }
                         }
 
-        // Build scene
         let mut bg_rects = std::mem::take(&mut self.bg_rects_buf);
         let mut glyphs = std::mem::take(&mut self.glyph_buf);
         bg_rects.clear();
@@ -778,13 +754,11 @@ impl App {
         self.build_tiles(&tiles, zoom, vw_f, vh_f, &mut bg_rects, &mut glyphs);
         self.build_status_bar(vw_f, vh_f, &mut bg_rects, &mut glyphs);
 
-        // Submit to GPU
         let clear_color = ThemeConfig::parse_color(&self.config.theme.ui_background);
         let renderer = self.renderer.as_mut().unwrap();
         let atlas = self.glyph_atlas.as_mut().unwrap();
         Self::submit_frame(renderer, atlas, clear_color, &bg_rects, &glyphs);
 
-        // Return buffers for reuse
         self.bg_rects_buf = bg_rects;
         self.glyph_buf = glyphs;
 
@@ -833,77 +807,23 @@ impl ApplicationHandler for App {
                 || self.overview_zoom.is_animating()
                 || self.col_widths.iter().any(|v| v.is_animating());
 
-            for pane in self.panes.values_mut() {
-                if pane.process_pty_output() { needs_redraw = true; }
+            // Process server events
+            if self.process_server_events() { needs_redraw = true; }
+
+            // Exit on disconnect
+            if !self.connected && self.server_rx.is_none() {
+                log::info!("server connection lost, exiting");
+                self.cached_views.clear();
+                self.glyph_atlas = None;
+                self.renderer = None;
+                self.window = None;
+                event_loop.exit();
+                return;
             }
 
-            let dead_ids: Vec<u64> = self.panes.iter()
-                .filter(|(_, p)| p.exited)
-                .map(|(id, _)| *id)
-                .collect();
-            if !dead_ids.is_empty() {
-                // Calculate width of columns being removed that are LEFT of the
-                // active column in the active workspace (for camera compensation).
-                let ws = self.workspaces.active_mut();
-                let gap = ws.column_gap;
-                let vw = ws.view_size.width;
-                let active_idx = ws.active_column_idx;
-                let mut left_removed_width: f32 = 0.0;
-                for (i, col) in ws.columns.iter().enumerate() {
-                    if i < active_idx && dead_ids.contains(&col.pane_id) {
-                        left_removed_width += col.effective_width(vw) + gap;
-                    }
-                }
-                // Also check if the active column itself is dying
-                let active_dying = ws.columns.get(active_idx)
-                    .is_some_and(|c| dead_ids.contains(&c.pane_id));
-                if active_dying {
-                    // Active column is dying; include its width for camera offset
-                    if let Some(c) = ws.columns.get(active_idx) {
-                        left_removed_width += c.effective_width(vw) + gap;
-                    }
-                }
-
-                // Remove dead columns' animation entries before removing from workspace
-                // (so indices match). Process active workspace only for col_widths.
-                {
-                    let ws = self.workspaces.active_mut();
-                    let mut i = 0;
-                    while i < ws.columns.len() {
-                        if dead_ids.contains(&ws.columns[i].pane_id) && i < self.col_widths.len() {
-                            self.col_widths.remove(i);
-                        } else {
-                            i += 1;
-                        }
-                    }
-                }
-
-                for id in &dead_ids {
-                    self.panes.remove(id);
-                    self.cached_views.remove(id);
-                    for ws in &mut self.workspaces.rows {
-                        ws.close_pane(*id);
-                    }
-                }
-                self.workspaces.cleanup_empty();
-                if self.workspaces.active().is_empty()
-                    && let Some(idx) = self.workspaces.rows.iter()
-                        .position(|ws| !ws.is_empty())
-                    {
-                        self.workspaces.active_row = idx;
-                        self.col_widths.clear(); // switched row
-                    }
-                // Camera compensation: offset so remaining columns stay on screen
-                if left_removed_width > 0.0 {
-                    let cur = self.view_offset_x.value();
-                    self.view_offset_x.jump_to(cur - left_removed_width as f64);
-                }
-                self.animate_to_active();
-                self.resize_panes_to_layout();
-                needs_redraw = true;
-            }
-
-            if self.panes.is_empty() && self.window.is_some() {
+            // Check if all panes are gone (server shutdown)
+            if self.connected && self.pane_grids.is_empty() && self.workspaces.active().is_empty() {
+                // Server has no panes left — exit
                 self.cached_views.clear();
                 self.glyph_atlas = None;
                 self.renderer = None;
@@ -941,21 +861,29 @@ impl ApplicationHandler for App {
         );
 
         let (w, h) = renderer.surface_size();
-        // Reserve space for status bar at bottom
         let bar_h = atlas.cell_height + self.config.statusbar.height_padding;
         self.workspaces.resize_view(ViewSize { width: w as f32, height: h as f32 - bar_h });
 
         log::info!("cell: {:.1}x{:.1} (dpi_scale={:.2})", atlas.cell_width, atlas.cell_height, dpi_scale);
 
-        if let Some(id) = self.create_pane() {
-            self.workspaces.active_mut().add_column_right(id);
+        // Connect to server (or spawn one)
+        match connection::connect_or_spawn("default") {
+            Ok((tx, rx)) => {
+                // Send attach with current viewport size
+                let (cols, rows) = self.compute_grid_size();
+                let _ = tx.send(ClientMessage::Attach { cols, rows });
+                self.server_tx = Some(tx);
+                self.server_rx = Some(rx);
+            }
+            Err(e) => {
+                log::error!("failed to connect to server: {e}");
+            }
         }
 
         self.dpi_scale = dpi_scale;
         self.glyph_atlas = Some(atlas);
         self.snap_all_col_widths();
         self.animate_to_active();
-        self.resize_panes_to_layout();
         self.window = Some(window);
         self.renderer = Some(renderer);
         self.last_frame = Instant::now();
@@ -966,7 +894,8 @@ impl ApplicationHandler for App {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => {
-                self.panes.clear();
+                self.send(ClientMessage::Detach);
+                self.pane_grids.clear();
                 self.cached_views.clear();
                 self.glyph_atlas = None;
                 self.renderer = None;
@@ -985,21 +914,22 @@ impl ApplicationHandler for App {
                     width: size.width as f32, height: size.height as f32 - bar_h,
                 });
                 self.snap_all_col_widths();
-                for pane in self.panes.values_mut() { pane.dirty = true; }
+                // Mark all grids dirty
+                for grid in self.pane_grids.values_mut() { grid.dirty = true; }
                 self.cached_views.clear();
-                self.resize_panes_to_layout();
                 self.animate_to_active();
+                // Notify server of resize
+                let (cols, rows) = self.compute_grid_size();
+                self.send(ClientMessage::Resize {
+                    cols, rows,
+                    width: size.width, height: size.height,
+                });
                 if let Some(w) = &self.window { w.request_redraw(); }
             }
 
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state != ElementState::Pressed { return; }
-
-                // When IME is composing (preedit active), suppress all keyboard
-                // processing. Text will arrive via Ime::Commit instead.
-                if self.ime_preedit_active {
-                    return;
-                }
+                if self.ime_preedit_active { return; }
 
                 let ctrl = self.modifiers.control_key();
                 let shift = self.modifiers.shift_key();
@@ -1050,10 +980,9 @@ impl ApplicationHandler for App {
                         InputResult::PassThrough => {
                             let bytes = key_event_to_pty_bytes(&event, ctrl);
                             if !bytes.is_empty()
-                                && let Some(pid) = self.workspaces.active_mut().active_pane_id()
-                                    && let Some(pane) = self.panes.get(&pid) {
-                                        pane.write_to_pty(&bytes);
-                                    }
+                                && let Some(pid) = self.workspaces.active_mut().active_pane_id() {
+                                    self.send(ClientMessage::Input { pane_id: pid, data: bytes });
+                                }
                         }
                     }
                 }
@@ -1066,7 +995,6 @@ impl ApplicationHandler for App {
                 self.last_mouse_pos = Some((mx, my));
 
                 if self.overview_active {
-                    // Hover: select the pane under cursor
                     if let Some((row_idx, pane_id)) = self.hit_test_overview(mx, my) {
                         if row_idx < self.workspaces.rows.len() {
                             self.workspaces.active_row = row_idx;
@@ -1081,7 +1009,6 @@ impl ApplicationHandler for App {
                         if let Some(w) = &self.window { w.request_redraw(); }
                     }
 
-                    // Drag panning
                     if self.overview_dragging {
                         if let Some((lx, ly)) = self.drag_last_pos {
                             let zoom = self.overview_zoom.value() as f32;
@@ -1101,9 +1028,7 @@ impl ApplicationHandler for App {
                         self.drag_last_pos = Some((mx, my));
                     }
                 } else {
-                    // Normal mode: mouse drag resize + border hover cursor
                     if let Some(drag_col) = self.resize_dragging {
-                        // Active drag: compute delta and resize column to the LEFT of border
                         let delta = mx - self.resize_drag_start_x;
                         let new_width = (self.resize_drag_start_width + delta).max(50.0);
                         let vw = self.workspaces.active().view_size.width;
@@ -1113,10 +1038,8 @@ impl ApplicationHandler for App {
                             ColumnWidth::Proportion(proportion),
                         );
                         self.snap_all_col_widths();
-                        self.resize_panes_to_layout();
                         if let Some(w) = &self.window { w.request_redraw(); }
                     } else {
-                        // Hit-test column borders for cursor change
                         let ws = self.workspaces.active();
                         let vox = ws.view_offset_x;
                         let mut near_border = false;
@@ -1142,7 +1065,6 @@ impl ApplicationHandler for App {
                 if let Some((mx, my)) = self.last_mouse_pos {
                     if state == ElementState::Pressed {
                         if self.overview_active {
-                            // Click on a panel: select it and exit overview
                             if let Some((row_idx, pane_id)) = self.hit_test_overview(mx, my) {
                                 if row_idx < self.workspaces.rows.len() {
                                     self.workspaces.active_row = row_idx;
@@ -1158,12 +1080,10 @@ impl ApplicationHandler for App {
                                 self.overview_zoom.animate_to(1.0, self.config.animation.speed);
                                 self.animate_to_active();
                             } else {
-                                // Click on empty space: start drag panning
                                 self.overview_dragging = true;
                                 self.drag_last_pos = Some((mx, my));
                             }
                         } else {
-                            // Normal mode: check if clicking near a column border to start drag resize
                             let ws = self.workspaces.active();
                             let vox = ws.view_offset_x;
                             let vw = ws.view_size.width;
@@ -1171,7 +1091,6 @@ impl ApplicationHandler for App {
                             for i in 1..ws.columns.len() {
                                 let col_x = ws.column_x(i) - vox;
                                 if (mx - col_x).abs() < 4.0 {
-                                    // Start resizing the column to the left of this border
                                     let left_col_idx = i - 1;
                                     let left_col_width = ws.columns[left_col_idx].effective_width(vw);
                                     self.resize_dragging = Some(left_col_idx);
@@ -1183,7 +1102,6 @@ impl ApplicationHandler for App {
                             }
 
                             if !started_drag {
-                                // Normal click to focus pane
                                 let tiles = self.workspaces.active_mut().visible_tiles();
                                 let clicked_pane = tiles.iter()
                                     .find(|(_, r, _)| r.contains(mx, my))
@@ -1201,11 +1119,9 @@ impl ApplicationHandler for App {
                             }
                         }
                     } else {
-                        // Mouse released
                         if self.resize_dragging.is_some() {
                             self.resize_dragging = None;
                             self.snap_all_col_widths();
-                            self.resize_panes_to_layout();
                             if let Some(w) = &self.window {
                                 w.set_cursor(winit::window::CursorIcon::Default);
                             }
@@ -1219,7 +1135,6 @@ impl ApplicationHandler for App {
 
             WindowEvent::MouseWheel { delta, phase, .. } => {
                 if self.overview_active {
-                    // In overview: scroll wheel zooms
                     let dy = match delta {
                         MouseScrollDelta::LineDelta(_, y) => y as f64 * 0.05,
                         MouseScrollDelta::PixelDelta(pos) => pos.y * 0.001,
@@ -1228,7 +1143,6 @@ impl ApplicationHandler for App {
                     let new_zoom = (cur_zoom + dy).clamp(0.05, 1.0);
                     let omega = self.config.animation.speed;
                     if new_zoom >= self.config.animation.zoom_threshold as f64 {
-                        // Zoomed back to ~1.0: exit overview
                         self.overview_active = false;
                         self.overview_zoom.animate_to(1.0, omega);
                         self.animate_to_active();
@@ -1236,7 +1150,6 @@ impl ApplicationHandler for App {
                         self.overview_zoom.animate_to(new_zoom, omega);
                     }
                 } else {
-                    // Normal mode: horizontal scroll gesture
                     let scroll_mult = self.config.input.scroll_multiplier;
                     let dx = match delta {
                         MouseScrollDelta::LineDelta(x, _) => x as f64 * scroll_mult,
@@ -1265,15 +1178,12 @@ impl ApplicationHandler for App {
                 match ime {
                     Ime::Commit(text) => {
                         self.ime_preedit_active = false;
-                        // Write committed IME text to active pane's PTY
-                        if let Some(pid) = self.workspaces.active_mut().active_pane_id()
-                            && let Some(pane) = self.panes.get(&pid) {
-                                pane.write_to_pty(text.as_bytes());
-                            }
+                        if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
+                            self.send(ClientMessage::Input { pane_id: pid, data: text.into_bytes() });
+                        }
                         if let Some(w) = &self.window { w.request_redraw(); }
                     }
                     Ime::Preedit(text, _cursor) => {
-                        // Track whether IME is composing — if so, KeyboardInput is suppressed.
                         self.ime_preedit_active = !text.is_empty();
                     }
                     Ime::Enabled | Ime::Disabled => {}
@@ -1283,7 +1193,6 @@ impl ApplicationHandler for App {
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 if (scale_factor - self.dpi_scale).abs() > 0.01 {
                     self.dpi_scale = scale_factor;
-                    // Rebuild glyph atlas with new DPI
                     if let Some(renderer) = &mut self.renderer {
                         let fmt = renderer.surface_format();
                         let atlas = GlyphAtlas::new(
@@ -1293,7 +1202,6 @@ impl ApplicationHandler for App {
                             &self.config.render,
                         );
                         log::info!("DPI changed: scale={:.2} cell={:.1}x{:.1}", scale_factor, atlas.cell_width, atlas.cell_height);
-                        // Update view size with new status bar height
                         let bar_h = atlas.cell_height + self.config.statusbar.height_padding;
                         let (w, h) = renderer.surface_size();
                         self.workspaces.resize_view(ViewSize {
@@ -1301,7 +1209,6 @@ impl ApplicationHandler for App {
                         });
                         self.glyph_atlas = Some(atlas);
                         self.cached_views.clear();
-                        self.resize_panes_to_layout();
                     }
                     if let Some(w) = &self.window { w.request_redraw(); }
                 }
@@ -1315,7 +1222,6 @@ impl ApplicationHandler for App {
 }
 
 fn key_event_to_pty_bytes(event: &winit::event::KeyEvent, ctrl: bool) -> Vec<u8> {
-    // Ctrl+key combinations → control codes
     if ctrl
         && let Key::Character(c) = &event.logical_key {
             let ch = c.as_str();
@@ -1331,8 +1237,6 @@ fn key_event_to_pty_bytes(event: &winit::event::KeyEvent, ctrl: bool) -> Vec<u8>
             }
         }
 
-    // Named keys → escape sequences (checked before text to avoid consuming
-    // control chars like \x08 from text_with_all_modifiers).
     if let Key::Named(key) = &event.logical_key { match key {
         NamedKey::Enter => return vec![b'\r'],
         NamedKey::Backspace => return vec![0x7f],
@@ -1364,8 +1268,6 @@ fn key_event_to_pty_bytes(event: &winit::event::KeyEvent, ctrl: bool) -> Vec<u8>
         _ => {}
     } }
 
-    // Text input: use text_with_all_modifiers (like Alacritty) for accurate
-    // character data. This is the path for regular typing (a-z, symbols, etc.).
     if let Some(text) = event.text_with_all_modifiers() {
         let s: &str = text;
         if !s.is_empty() {
@@ -1373,7 +1275,6 @@ fn key_event_to_pty_bytes(event: &winit::event::KeyEvent, ctrl: bool) -> Vec<u8>
         }
     }
 
-    // Fallback: nothing to send
     vec![]
 }
 

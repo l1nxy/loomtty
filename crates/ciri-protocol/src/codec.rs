@@ -1,28 +1,490 @@
-use serde::{Deserialize, Serialize};
-use std::io::{self, Read};
+use crate::message::*;
+use std::io;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-/// Length-prefixed JSON codec for control messages.
-/// Format: [4 bytes big-endian length][JSON payload]
-pub fn encode<T: Serialize>(msg: &T) -> io::Result<Vec<u8>> {
-    let json = serde_json::to_vec(msg).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    let len = json.len() as u32;
-    let mut buf = Vec::with_capacity(4 + json.len());
-    buf.extend_from_slice(&len.to_be_bytes());
-    buf.extend_from_slice(&json);
+// ─── Protocol version ───────────────────────────────────────────────
+// TODO(H6): Add a proper handshake that exchanges PROTOCOL_VERSION on connect.
+// For now, both sides must be compiled from the same revision. When the wire
+// format changes in an incompatible way, bump this constant so a future
+// handshake can detect mismatches.
+pub const PROTOCOL_VERSION: u16 = 1;
+
+// ─── Safe integer readers ───────────────────────────────────────────
+
+fn read_u16_le(buf: &[u8], off: usize) -> io::Result<u16> {
+    buf.get(off..off + 2)
+        .and_then(|s| s.try_into().ok())
+        .map(u16::from_le_bytes)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "truncated"))
+}
+
+fn read_u32_le(buf: &[u8], off: usize) -> io::Result<u32> {
+    buf.get(off..off + 4)
+        .and_then(|s| s.try_into().ok())
+        .map(u32::from_le_bytes)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "truncated"))
+}
+
+fn read_u64_le(buf: &[u8], off: usize) -> io::Result<u64> {
+    buf.get(off..off + 8)
+        .and_then(|s| s.try_into().ok())
+        .map(u64::from_le_bytes)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "truncated"))
+}
+
+fn read_i16_le(buf: &[u8], off: usize) -> io::Result<i16> {
+    buf.get(off..off + 2)
+        .and_then(|s| s.try_into().ok())
+        .map(i16::from_le_bytes)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "truncated"))
+}
+
+fn read_packed_cell(buf: &[u8], off: usize) -> io::Result<PackedCell> {
+    let end = off + PACKED_CELL_SIZE;
+    let slice = buf.get(off..end)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "truncated cell"))?;
+    let cell_buf: &[u8; PACKED_CELL_SIZE] = slice
+        .try_into()
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "truncated cell"))?;
+    Ok(PackedCell::from_bytes(cell_buf))
+}
+
+// ─── Frame tags ─────────────────────────────────────────────────────
+
+// Client → Server (msgpack)
+const TAG_CLIENT_MSG: u8 = 0x01;
+
+// Server → Client (msgpack)
+const TAG_SERVER_MSG: u8 = 0x10;
+
+// Server → Client (custom binary, hot path)
+const TAG_CELL_DELTA: u8 = 0x20;
+const TAG_FULL_PANE_SYNC: u8 = 0x21;
+
+// ─── Frame format: [u8 tag][u32 LE payload_len][payload] ───────────
+
+/// Write a framed message to an async writer.
+async fn write_frame<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    tag: u8,
+    payload: &[u8],
+) -> io::Result<()> {
+    let len = payload.len() as u32;
+    let mut header = [0u8; 5];
+    header[0] = tag;
+    header[1..5].copy_from_slice(&len.to_le_bytes());
+    writer.write_all(&header).await?;
+    writer.write_all(payload).await?;
+    Ok(())
+}
+
+/// Read a frame header, returning (tag, payload_length).
+async fn read_frame_header<R: AsyncRead + Unpin>(
+    reader: &mut R,
+) -> io::Result<(u8, u32)> {
+    let mut header = [0u8; 5];
+    reader.read_exact(&mut header).await?;
+    let tag = header[0];
+    let len = u32::from_le_bytes([header[1], header[2], header[3], header[4]]);
+    if len > 16 * 1024 * 1024 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "frame too large"));
+    }
+    Ok((tag, len))
+}
+
+// ─── Encode / decode ClientMessage (msgpack) ────────────────────────
+
+pub async fn encode_client_msg<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    msg: &ClientMessage,
+) -> io::Result<()> {
+    let payload = rmp_serde::to_vec(msg)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    write_frame(writer, TAG_CLIENT_MSG, &payload).await
+}
+
+// ─── Encode / decode ServerMessage (msgpack) ────────────────────────
+
+pub async fn encode_server_msg<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    msg: &ServerMessage,
+) -> io::Result<()> {
+    let payload = rmp_serde::to_vec(msg)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    write_frame(writer, TAG_SERVER_MSG, &payload).await
+}
+
+// ─── Encode CellDelta (custom binary) ───────────────────────────────
+
+pub fn encode_cell_delta_payload(delta: &CellDelta) -> io::Result<Vec<u8>> {
+    if delta.regions.len() > u16::MAX as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "too many regions for CellDelta (exceeds u16::MAX)",
+        ));
+    }
+    // [u64 pane_id][u64 generation][u16 num_regions]
+    // per region: [u16 line][u16 left][u16 right][PackedCell × (right-left+1)]
+    let mut buf = Vec::with_capacity(256);
+    buf.extend_from_slice(&delta.pane_id.to_le_bytes());
+    buf.extend_from_slice(&delta.generation.to_le_bytes());
+    buf.extend_from_slice(&(delta.regions.len() as u16).to_le_bytes());
+    for region in &delta.regions {
+        buf.extend_from_slice(&region.line.to_le_bytes());
+        buf.extend_from_slice(&region.left.to_le_bytes());
+        buf.extend_from_slice(&region.right.to_le_bytes());
+        for cell in &region.cells {
+            buf.extend_from_slice(&cell.to_bytes());
+        }
+    }
     Ok(buf)
 }
 
-pub fn decode_from<T: for<'de> Deserialize<'de>>(reader: &mut impl Read) -> io::Result<T> {
-    let mut len_buf = [0u8; 4];
-    reader.read_exact(&mut len_buf)?;
-    let len = u32::from_be_bytes(len_buf) as usize;
+pub async fn encode_cell_delta<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    delta: &CellDelta,
+) -> io::Result<()> {
+    let payload = encode_cell_delta_payload(delta)?;
+    write_frame(writer, TAG_CELL_DELTA, &payload).await
+}
 
-    if len > 16 * 1024 * 1024 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "message too large"));
+pub fn decode_cell_delta(payload: &[u8]) -> io::Result<CellDelta> {
+    if payload.len() < 18 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "CellDelta too short"));
+    }
+    let pane_id = read_u64_le(payload, 0)?;
+    let generation = read_u64_le(payload, 8)?;
+    let num_regions = read_u16_le(payload, 16)? as usize;
+    let mut offset = 18;
+    let mut regions = Vec::with_capacity(num_regions);
+    for _ in 0..num_regions {
+        if offset + 6 > payload.len() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "truncated region header"));
+        }
+        let line = read_u16_le(payload, offset)?;
+        let left = read_u16_le(payload, offset + 2)?;
+        let right = read_u16_le(payload, offset + 4)?;
+        offset += 6;
+        if left > right {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid damage region: left > right",
+            ));
+        }
+        let count = (right - left + 1) as usize;
+        let cell_bytes = count * PACKED_CELL_SIZE;
+        if offset + cell_bytes > payload.len() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "truncated cell data"));
+        }
+        let mut cells = Vec::with_capacity(count);
+        for i in 0..count {
+            let cell = read_packed_cell(payload, offset + i * PACKED_CELL_SIZE)?;
+            cells.push(cell);
+        }
+        offset += cell_bytes;
+        regions.push(DamageRegion { line, left, right, cells });
+    }
+    Ok(CellDelta { pane_id, generation, regions })
+}
+
+// ─── Encode FullPaneSync (custom binary with RLE) ───────────────────
+
+const RLE_MARKER: u8 = 0xFF;
+
+fn rle_encode_cells(cells: &[PackedCell]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(cells.len() * PACKED_CELL_SIZE / 2);
+    let mut i = 0;
+    while i < cells.len() {
+        let cell = cells[i];
+        let mut run = 1u16;
+        while (i + run as usize) < cells.len()
+            && cells[i + run as usize] == cell
+            && run < u16::MAX
+        {
+            run += 1;
+        }
+        if run >= 3 {
+            // RLE: [0xFF][u16 count][14B cell]
+            buf.push(RLE_MARKER);
+            buf.extend_from_slice(&run.to_le_bytes());
+            buf.extend_from_slice(&cell.to_bytes());
+            i += run as usize;
+        } else {
+            // Raw cell(s)
+            for _ in 0..run {
+                let bytes = cells[i].to_bytes();
+                // If first byte happens to be 0xFF, escape it with run=1
+                if bytes[0] == RLE_MARKER {
+                    buf.push(RLE_MARKER);
+                    buf.extend_from_slice(&1u16.to_le_bytes());
+                    buf.extend_from_slice(&bytes);
+                } else {
+                    buf.extend_from_slice(&bytes);
+                }
+                i += 1;
+            }
+        }
+    }
+    buf
+}
+
+fn rle_decode_cells(data: &[u8], expected_count: usize) -> io::Result<Vec<PackedCell>> {
+    let mut cells = Vec::with_capacity(expected_count);
+    let mut offset = 0;
+    while offset < data.len() && cells.len() < expected_count {
+        if data[offset] == RLE_MARKER {
+            if offset + 3 + PACKED_CELL_SIZE > data.len() {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "truncated RLE"));
+            }
+            let count = read_u16_le(data, offset + 1)? as usize;
+            let cell = read_packed_cell(data, offset + 3)?;
+            for _ in 0..count {
+                if cells.len() >= expected_count {
+                    break;
+                }
+                cells.push(cell);
+            }
+            offset += 3 + PACKED_CELL_SIZE;
+        } else {
+            if offset + PACKED_CELL_SIZE > data.len() {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "truncated cell"));
+            }
+            let cell = read_packed_cell(data, offset)?;
+            cells.push(cell);
+            offset += PACKED_CELL_SIZE;
+        }
+    }
+    Ok(cells)
+}
+
+pub fn encode_full_pane_sync_payload(sync: &FullPaneSync) -> io::Result<Vec<u8>> {
+    let title_bytes = sync.title.as_bytes();
+    if title_bytes.len() > u16::MAX as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "title too long for FullPaneSync (exceeds u16::MAX)",
+        ));
+    }
+    let rle_data = rle_encode_cells(&sync.cells);
+    if rle_data.len() > u32::MAX as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "RLE cell data too large for FullPaneSync (exceeds u32::MAX)",
+        ));
+    }
+    // Header: pane_id(8) + gen(8) + cols(2) + rows(2) + cursor(3+2) + title_len(2) + cell_data_len(4)
+    let header_size = 8 + 8 + 2 + 2 + 2 + 2 + 1 + 2 + 4;
+    let mut buf = Vec::with_capacity(header_size + title_bytes.len() + rle_data.len());
+
+    buf.extend_from_slice(&sync.pane_id.to_le_bytes());
+    buf.extend_from_slice(&sync.generation.to_le_bytes());
+    buf.extend_from_slice(&sync.cols.to_le_bytes());
+    buf.extend_from_slice(&sync.rows.to_le_bytes());
+    buf.extend_from_slice(&sync.cursor_line.to_le_bytes());
+    buf.extend_from_slice(&sync.cursor_col.to_le_bytes());
+    buf.push(sync.cursor_shape);
+    buf.extend_from_slice(&(title_bytes.len() as u16).to_le_bytes());
+    buf.extend_from_slice(title_bytes);
+    buf.extend_from_slice(&(rle_data.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&rle_data);
+    Ok(buf)
+}
+
+pub async fn encode_full_pane_sync<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    sync: &FullPaneSync,
+) -> io::Result<()> {
+    let payload = encode_full_pane_sync_payload(sync)?;
+    write_frame(writer, TAG_FULL_PANE_SYNC, &payload).await
+}
+
+pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
+    // Minimum header: 8+8+2+2+2+2+1+2+4 = 31 bytes
+    if payload.len() < 31 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "FullPaneSync too short"));
+    }
+    let pane_id = read_u64_le(payload, 0)?;
+    let generation = read_u64_le(payload, 8)?;
+    let cols = read_u16_le(payload, 16)?;
+    let rows = read_u16_le(payload, 18)?;
+    let cursor_line = read_i16_le(payload, 20)?;
+    let cursor_col = read_u16_le(payload, 22)?;
+    let cursor_shape = payload[24];
+    let title_len = read_u16_le(payload, 25)? as usize;
+    let mut offset = 27;
+    if offset + title_len + 4 > payload.len() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "truncated title"));
+    }
+    let title = String::from_utf8_lossy(&payload[offset..offset + title_len]).to_string();
+    offset += title_len;
+    let cell_data_len = read_u32_le(payload, offset)? as usize;
+    offset += 4;
+    if offset + cell_data_len > payload.len() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "truncated cell data"));
+    }
+    let expected = cols as usize * rows as usize;
+    let cells = rle_decode_cells(&payload[offset..offset + cell_data_len], expected)?;
+    Ok(FullPaneSync {
+        pane_id,
+        generation,
+        cols,
+        rows,
+        cursor_line,
+        cursor_col,
+        cursor_shape,
+        title,
+        cells,
+    })
+}
+
+// ─── Unified frame reader ───────────────────────────────────────────
+
+/// A decoded frame from the wire.
+#[derive(Debug)]
+pub enum Frame {
+    ClientMsg(ClientMessage),
+    ServerMsg(ServerMessage),
+    CellDelta(CellDelta),
+    FullPaneSync(FullPaneSync),
+}
+
+/// Read one frame from an async reader.
+pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Frame> {
+    let (tag, len) = read_frame_header(reader).await?;
+    let mut payload = vec![0u8; len as usize];
+    reader.read_exact(&mut payload).await?;
+
+    match tag {
+        TAG_CLIENT_MSG => {
+            let msg: ClientMessage = rmp_serde::from_slice(&payload)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            Ok(Frame::ClientMsg(msg))
+        }
+        TAG_SERVER_MSG => {
+            let msg: ServerMessage = rmp_serde::from_slice(&payload)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            Ok(Frame::ServerMsg(msg))
+        }
+        TAG_CELL_DELTA => {
+            let delta = decode_cell_delta(&payload)?;
+            Ok(Frame::CellDelta(delta))
+        }
+        TAG_FULL_PANE_SYNC => {
+            let sync = decode_full_pane_sync(&payload)?;
+            Ok(Frame::FullPaneSync(sync))
+        }
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unknown frame tag: 0x{tag:02x}"),
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cell_delta_roundtrip() {
+        let delta = CellDelta {
+            pane_id: 42,
+            generation: 100,
+            regions: vec![
+                DamageRegion {
+                    line: 5,
+                    left: 10,
+                    right: 12,
+                    cells: vec![
+                        PackedCell { ch: 'A', fg: PackedColor::Named(7), bg: PackedColor::Named(0), flags: 0 },
+                        PackedCell { ch: 'B', fg: PackedColor::Rgb(255, 0, 0), bg: PackedColor::Named(0), flags: FLAG_BOLD },
+                        PackedCell { ch: 'C', fg: PackedColor::Indexed(196), bg: PackedColor::Named(0), flags: 0 },
+                    ],
+                },
+            ],
+        };
+        let payload = encode_cell_delta_payload(&delta).unwrap();
+        let decoded = decode_cell_delta(&payload).unwrap();
+        assert_eq!(decoded.pane_id, 42);
+        assert_eq!(decoded.generation, 100);
+        assert_eq!(decoded.regions.len(), 1);
+        assert_eq!(decoded.regions[0].line, 5);
+        assert_eq!(decoded.regions[0].cells.len(), 3);
+        assert_eq!(decoded.regions[0].cells[0].ch, 'A');
+        assert_eq!(decoded.regions[0].cells[1].flags, FLAG_BOLD);
     }
 
-    let mut json_buf = vec![0u8; len];
-    reader.read_exact(&mut json_buf)?;
+    #[test]
+    fn full_pane_sync_roundtrip() {
+        let blank = PackedCell::default();
+        let cells: Vec<PackedCell> = vec![blank; 80 * 24];
+        let sync = FullPaneSync {
+            pane_id: 1,
+            generation: 50,
+            cols: 80,
+            rows: 24,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            title: "bash".to_string(),
+            cells,
+        };
+        let payload = encode_full_pane_sync_payload(&sync).unwrap();
+        // RLE should compress blank cells significantly
+        assert!(payload.len() < 80 * 24 * PACKED_CELL_SIZE);
+        let decoded = decode_full_pane_sync(&payload).unwrap();
+        assert_eq!(decoded.pane_id, 1);
+        assert_eq!(decoded.cols, 80);
+        assert_eq!(decoded.rows, 24);
+        assert_eq!(decoded.cells.len(), 80 * 24);
+        assert_eq!(decoded.title, "bash");
+    }
 
-    serde_json::from_slice(&json_buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    #[test]
+    fn rle_compression_ratio() {
+        // 200x50 terminal of blank cells should compress well
+        let blank = PackedCell::default();
+        let cells: Vec<PackedCell> = vec![blank; 200 * 50];
+        let raw_size = cells.len() * PACKED_CELL_SIZE;
+        let compressed = rle_encode_cells(&cells);
+        // Should be much smaller than raw
+        assert!(compressed.len() < raw_size / 100, "RLE compressed {}B vs raw {}B", compressed.len(), raw_size);
+    }
+
+    #[tokio::test]
+    async fn frame_roundtrip_client_msg() {
+        let msg = ClientMessage::Input { pane_id: 1, data: b"hello".to_vec() };
+        let mut buf = Vec::new();
+        encode_client_msg(&mut buf, &msg).await.unwrap();
+        let frame = read_frame(&mut &buf[..]).await.unwrap();
+        match frame {
+            Frame::ClientMsg(ClientMessage::Input { pane_id, data }) => {
+                assert_eq!(pane_id, 1);
+                assert_eq!(data, b"hello");
+            }
+            _ => panic!("wrong frame type"),
+        }
+    }
+
+    #[tokio::test]
+    async fn frame_roundtrip_cell_delta() {
+        let delta = CellDelta {
+            pane_id: 1,
+            generation: 1,
+            regions: vec![DamageRegion {
+                line: 0,
+                left: 0,
+                right: 0,
+                cells: vec![PackedCell { ch: 'X', ..PackedCell::default() }],
+            }],
+        };
+        let mut buf = Vec::new();
+        encode_cell_delta(&mut buf, &delta).await.unwrap();
+        let frame = read_frame(&mut &buf[..]).await.unwrap();
+        match frame {
+            Frame::CellDelta(d) => {
+                assert_eq!(d.regions[0].cells[0].ch, 'X');
+            }
+            _ => panic!("wrong frame type"),
+        }
+    }
 }

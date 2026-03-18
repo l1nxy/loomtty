@@ -14,14 +14,18 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    pub fn new(view_size: ViewSize) -> Self {
+    pub fn new_with_gap(view_size: ViewSize, column_gap: f32) -> Self {
         Workspace {
             columns: Vec::new(),
             active_column_idx: 0,
             view_size,
             view_offset_x: 0.0,
-            column_gap: 8.0,
+            column_gap,
         }
+    }
+
+    pub fn new(view_size: ViewSize) -> Self {
+        Self::new_with_gap(view_size, 8.0)
     }
 
     pub fn is_empty(&self) -> bool {

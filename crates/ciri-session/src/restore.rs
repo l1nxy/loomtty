@@ -5,6 +5,7 @@ use std::path::Path;
 use crate::state::SessionState;
 
 pub fn restore_session(name: &str, dir: &Path) -> Result<Option<SessionState>> {
+    crate::save::validate_session_name(name)?;
     let path = dir.join(format!("{name}.json"));
     if !path.exists() {
         return Ok(None);
@@ -33,6 +34,7 @@ pub fn list_sessions(dir: &Path) -> Result<Vec<String>> {
 }
 
 pub fn delete_session(name: &str, dir: &Path) -> Result<()> {
+    crate::save::validate_session_name(name)?;
     let path = dir.join(format!("{name}.json"));
     match fs::remove_file(&path) {
         Ok(()) => Ok(()),

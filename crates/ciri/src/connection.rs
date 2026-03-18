@@ -18,13 +18,22 @@ pub fn connect_or_spawn(
     session_name: &str,
     viewport: codec::ClientViewport,
 ) -> io::Result<(Sender<ClientMessage>, Receiver<ServerEvent>)> {
-    let sock_path = transport::socket_path(session_name);
+    // Validate session name to prevent path traversal
+    if session_name.is_empty()
+        || session_name.contains('/')
+        || session_name.contains('\\')
+        || session_name.contains("..")
+        || session_name.contains('\0')
+    {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("invalid session name: {session_name:?}")));
+    }
+    let _sock_path = transport::socket_path(session_name);
 
     // Spawn server if not running (non-blocking — IO thread handles retry)
     {
         let server_ready = || -> bool {
             #[cfg(unix)]
-            { sock_path.exists() }
+            { _sock_path.exists() }
             #[cfg(windows)]
             {
                 let port = transport::port_for_session(session_name);

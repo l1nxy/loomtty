@@ -197,6 +197,9 @@ pub struct GlyphAtlas {
     font_size: f32,
     pub cell_width: f32,
     pub cell_height: f32,
+    /// Font ascent in pixels (distance from baseline to top of cell).
+    /// Use this for baseline positioning instead of magic multipliers.
+    pub ascent: f32,
 }
 
 #[repr(C)]
@@ -227,27 +230,32 @@ impl GlyphAtlas {
 
         let font_ids = build_fallback_chain(font_system, family_name);
 
-        // Determine cell metrics from the primary font
+        // Determine cell metrics from the primary font.
         let primary_id = font_ids.first().copied();
-        let (cell_width, cell_height) = if let Some(fid) = primary_id {
+        let (cell_width, cell_height, ascent_px) = if let Some(fid) = primary_id {
             if let Some(font) = font_system.get_font(fid) {
                 let swash_font = font.as_swash();
                 let metrics = swash_font.metrics(&[]);
                 let scale = font_size / metrics.units_per_em as f32;
-                let ascent = metrics.ascent * scale;
-                let descent = metrics.descent * scale;
+                let ascent = (metrics.ascent * scale).ceil();
+                let descent = (metrics.descent * scale).ceil();
                 let height = (ascent + descent).ceil();
                 // For cell width, measure 'M'
                 let charmap = swash_font.charmap();
                 let glyph_id = charmap.map('M');
                 let glyph_metrics = swash_font.glyph_metrics(&[]);
                 let advance = glyph_metrics.advance_width(glyph_id) * scale;
-                (advance.ceil(), height.max(font_size * 1.2))
+                let cw = advance.ceil();
+                let ch = height.max(font_size * 1.2);
+                // Clamp ascent to cell_height to prevent glyph positions going out of bounds
+                let safe_ascent = ascent.min(ch);
+                log::info!("font metrics: ascent={ascent:.1} descent={descent:.1} height={height:.1} cw={cw:.1} ch={ch:.1}");
+                (cw, ch, safe_ascent)
             } else {
-                (font_size * 0.6, font_size * 1.2)
+                (font_size * 0.6, font_size * 1.2, font_size * 1.2 * 0.8)
             }
         } else {
-            (font_size * 0.6, font_size * 1.2)
+            (font_size * 0.6, font_size * 1.2, font_size * 1.2 * 0.8)
         };
 
         // Create atlas texture (R8Unorm for alpha mask)
@@ -393,6 +401,7 @@ impl GlyphAtlas {
             font_size,
             cell_width,
             cell_height,
+            ascent: ascent_px,
         }
     }
 
@@ -456,6 +465,7 @@ impl GlyphAtlas {
             Source::Outline,
         ])
         .format(Format::Alpha)
+        .offset(swash::zeno::Vector::new(0.0, 0.0))
         .render(&mut scaler, resolved_glyph_id)?;
 
         let w = image.placement.width;

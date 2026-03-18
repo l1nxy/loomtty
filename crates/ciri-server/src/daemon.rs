@@ -1,12 +1,12 @@
 use anyhow::Result;
 use ciri_layout::column::ColumnWidth;
 use ciri_layout::geometry::ViewSize;
-use ciri_layout::workspace::Workspace;
+use ciri_layout::workspace_set::WorkspaceSet;
 use ciri_protocol::codec;
 use ciri_protocol::message::*;
 use ciri_protocol::transport;
 use ciri_session::save::save_session;
-use ciri_session::state::{SavedColumn, SavedTile, SessionState};
+use ciri_session::state::{SavedColumn, SavedRow, SavedTile, SessionState};
 use ciri_term::pane::{pack_cell, Pane};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -71,12 +71,14 @@ struct ClientState {
     last_acked_generation: u64,
     /// Per-pane: how many history lines this client has received.
     history_sent: HashMap<u64, usize>,
+    /// Consecutive try_send failures; used to detect slow clients.
+    send_failures: u32,
 }
 
 // ─── Server state ───────────────────────────────────────────────────
 
 struct ServerState {
-    workspace: Workspace,
+    workspaces: WorkspaceSet,
     panes: HashMap<u64, Pane>,
     next_pane_id: u64,
     session_name: String,
@@ -89,12 +91,12 @@ struct ServerState {
 }
 
 impl ServerState {
-    fn new(session_name: &str, shell: &str) -> Self {
+    fn new(session_name: &str, shell: &str, column_gap: f32) -> Self {
         ServerState {
-            workspace: Workspace::new(ViewSize {
+            workspaces: WorkspaceSet::new_with_gaps(ViewSize {
                 width: 1024.0,
                 height: 768.0,
-            }),
+            }, column_gap, column_gap),
             panes: HashMap::new(),
             next_pane_id: 1,
             session_name: session_name.to_string(),
@@ -107,16 +109,36 @@ impl ServerState {
         }
     }
 
+    /// Create a new pane in the active workspace's active position (column right).
     fn create_pane(&mut self) -> Result<u64> {
         let id = self.next_pane_id;
         self.next_pane_id += 1;
-        // Compute initial size from current viewport layout
-        let (cols, rows) = self.pane_grid_size(self.workspace.view_size.width, self.workspace.view_size.height);
+        // Compute initial size from the active workspace's view
+        let vw = self.workspaces.view_size.width;
+        let vh = self.workspaces.view_size.height;
+        let (cols, rows) = self.pane_grid_size(vw, vh);
         let pane = Pane::new(id, cols, rows, &self.default_shell)?;
         self.panes.insert(id, pane);
         self.generation.insert(id, 0);
-        self.workspace.add_column_right(id);
+        self.workspaces.active_mut().add_column_right(id);
         // Mark all clients for full sync of this new pane
+        for client in self.clients.values_mut() {
+            client.damage.entry(id).or_insert_with(DamageAccumulator::new).mark_full();
+        }
+        Ok(id)
+    }
+
+    /// Create a new pane in a new row below the active one (SplitDown).
+    fn create_pane_in_new_row(&mut self) -> Result<u64> {
+        let id = self.next_pane_id;
+        self.next_pane_id += 1;
+        let vw = self.workspaces.view_size.width;
+        let vh = self.workspaces.view_size.height;
+        let (cols, rows) = self.pane_grid_size(vw, vh);
+        let pane = Pane::new(id, cols, rows, &self.default_shell)?;
+        self.panes.insert(id, pane);
+        self.generation.insert(id, 0);
+        self.workspaces.add_row_below(id);
         for client in self.clients.values_mut() {
             client.damage.entry(id).or_insert_with(DamageAccumulator::new).mark_full();
         }
@@ -130,59 +152,76 @@ impl ServerState {
         (cols, rows)
     }
 
-    /// Resize all panes to match their current layout pixel dimensions.
+    /// Resize ALL panes from the full layout tree (not just visible ones).
+    /// Off-screen panes get their size from their column width and row height,
+    /// so PTY dimensions stay correct even when scrolled out of view.
     fn resize_all_panes(&mut self) {
-        let tiles = self.workspace.visible_tiles();
-        for (pane_id, rect, _) in &tiles {
-            let (cols, rows) = self.pane_grid_size(rect.w, rect.h);
-            if let Some(pane) = self.panes.get_mut(pane_id) {
-                pane.resize(cols, rows);
-                // Bump generation and mark full sync for all clients
-                let g = self.generation.entry(*pane_id).or_insert(0);
-                *g += 1;
-                for client in self.clients.values_mut() {
-                    client.damage.entry(*pane_id).or_insert_with(DamageAccumulator::new).mark_full();
+        let vw = self.workspaces.view_size.width;
+        let vh = self.workspaces.view_size.height;
+
+        for ws in &self.workspaces.rows {
+            for col in &ws.columns {
+                let col_w = col.effective_width(vw);
+                let (cols, rows) = self.pane_grid_size(col_w, vh);
+                if let Some(pane) = self.panes.get_mut(&col.pane_id) {
+                    pane.resize(cols, rows);
+                    let g = self.generation.entry(col.pane_id).or_insert(0);
+                    *g += 1;
+                    for client in self.clients.values_mut() {
+                        client.damage.entry(col.pane_id)
+                            .or_insert_with(DamageAccumulator::new).mark_full();
+                    }
                 }
             }
         }
     }
 
     fn close_pane(&mut self, pane_id: u64) {
-        self.workspace.close_pane(pane_id);
+        // Remove from whichever row contains it
+        for ws in &mut self.workspaces.rows {
+            ws.close_pane(pane_id);
+        }
+        self.workspaces.cleanup_empty();
         self.panes.remove(&pane_id);
         self.generation.remove(&pane_id);
         for client in self.clients.values_mut() {
             client.damage.remove(&pane_id);
+            client.history_sent.remove(&pane_id);
         }
     }
 
     fn layout_state(&self) -> LayoutState {
         LayoutState {
-            columns: self.workspace.columns.iter().map(|c| ColumnState {
-                tiles: vec![TileState { pane_id: c.pane_id, weight: 1.0 }],
-                active_tile_idx: 0,
-                width_proportion: match c.width {
-                    ColumnWidth::Proportion(p) => p,
-                    ColumnWidth::Fixed(px) => px / self.workspace.view_size.width as f64,
-                },
+            rows: self.workspaces.rows.iter().map(|ws| RowState {
+                columns: ws.columns.iter().map(|c| ColumnState {
+                    tiles: vec![TileState { pane_id: c.pane_id, weight: 1.0 }],
+                    active_tile_idx: 0,
+                    width_proportion: match c.width {
+                        ColumnWidth::Proportion(p) => p,
+                        ColumnWidth::Fixed(px) => px / self.workspaces.view_size.width as f64,
+                    },
+                }).collect(),
+                active_column_idx: ws.active_column_idx,
             }).collect(),
-            active_column_idx: self.workspace.active_column_idx,
-            view_offset_x: self.workspace.view_offset_x,
+            active_row: self.workspaces.active_row,
         }
     }
 
     fn save_session(&self) -> Result<()> {
         let state = SessionState {
             name: self.session_name.clone(),
-            columns: self.workspace.columns.iter().map(|c| SavedColumn {
-                tiles: vec![SavedTile { pane_id: c.pane_id, weight: 1.0, cwd: None, title: None }],
-                active_tile_idx: 0,
-                width_proportion: match c.width {
-                    ColumnWidth::Proportion(p) => p,
-                    ColumnWidth::Fixed(px) => px / self.workspace.view_size.width as f64,
-                },
+            rows: self.workspaces.rows.iter().map(|ws| SavedRow {
+                columns: ws.columns.iter().map(|c| SavedColumn {
+                    tiles: vec![SavedTile { pane_id: c.pane_id, weight: 1.0, cwd: None, title: None }],
+                    active_tile_idx: 0,
+                    width_proportion: match c.width {
+                        ColumnWidth::Proportion(p) => p,
+                        ColumnWidth::Fixed(px) => px / self.workspaces.view_size.width as f64,
+                    },
+                }).collect(),
+                active_column_idx: ws.active_column_idx,
             }).collect(),
-            active_column_idx: self.workspace.active_column_idx,
+            active_row: self.workspaces.active_row,
         };
         save_session(&state, &transport::state_dir())
     }
@@ -242,7 +281,7 @@ impl ServerState {
                     Ok(id) => {
                         responses.push(ServerResponse::BroadcastControl(ServerMessage::PaneCreated {
                             pane_id: id,
-                            column_idx: self.workspace.active_column_idx,
+                            column_idx: self.workspaces.active().active_column_idx,
                         }));
                         responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
                             layout: self.layout_state(),
@@ -252,11 +291,11 @@ impl ServerState {
                 }
             }
             ClientMessage::SplitDown => {
-                match self.create_pane() {
+                match self.create_pane_in_new_row() {
                     Ok(id) => {
                         responses.push(ServerResponse::BroadcastControl(ServerMessage::PaneCreated {
                             pane_id: id,
-                            column_idx: self.workspace.active_column_idx,
+                            column_idx: self.workspaces.active().active_column_idx,
                         }));
                         responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
                             layout: self.layout_state(),
@@ -273,30 +312,37 @@ impl ServerState {
                 }));
             }
             ClientMessage::FocusLeft => {
-                self.workspace.focus_left();
+                self.workspaces.active_mut().focus_left();
                 responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
                     layout: self.layout_state(),
                 }));
             }
             ClientMessage::FocusRight => {
-                self.workspace.focus_right();
+                self.workspaces.active_mut().focus_right();
                 responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
                     layout: self.layout_state(),
                 }));
             }
-            ClientMessage::FocusUp | ClientMessage::FocusDown => {
-                // Vertical focus within a column requires tiled column support.
-                // Currently columns hold a single pane, so vertical focus is a no-op.
-                log::debug!("FocusUp/Down ignored: vertical tiling not yet supported");
+            ClientMessage::FocusUp => {
+                self.workspaces.focus_up();
+                responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
+                    layout: self.layout_state(),
+                }));
+            }
+            ClientMessage::FocusDown => {
+                self.workspaces.focus_down();
+                responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
+                    layout: self.layout_state(),
+                }));
             }
             ClientMessage::MovePaneLeft => {
-                self.workspace.move_pane_left();
+                self.workspaces.active_mut().move_pane_left();
                 responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
                     layout: self.layout_state(),
                 }));
             }
             ClientMessage::MovePaneRight => {
-                self.workspace.move_pane_right();
+                self.workspaces.active_mut().move_pane_right();
                 responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
                     layout: self.layout_state(),
                 }));
@@ -304,7 +350,7 @@ impl ServerState {
             ClientMessage::Resize { cols: _, rows: _, width, height, cell_width, cell_height } => {
                 self.cell_width = cell_width;
                 self.cell_height = cell_height;
-                self.workspace.resize_view(ViewSize {
+                self.workspaces.resize_view(ViewSize {
                     width: width as f32,
                     height: height as f32,
                 });
@@ -314,7 +360,7 @@ impl ServerState {
                 }));
             }
             ClientMessage::SetColumnWidth { proportion } => {
-                self.workspace.set_active_column_width(ColumnWidth::Proportion(proportion));
+                self.workspaces.active_mut().set_active_column_width(ColumnWidth::Proportion(proportion));
                 responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
                     layout: self.layout_state(),
                 }));
@@ -330,6 +376,12 @@ impl ServerState {
                     client.last_acked_generation = generation;
                 }
             }
+            ClientMessage::SwitchWorkspace { row_idx } => {
+                self.workspaces.switch_to(row_idx);
+                responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
+                    layout: self.layout_state(),
+                }));
+            }
             ClientMessage::MouseInput { pane_id, button, col, row, pressed, modifiers } => {
                 if let Some(pane) = self.panes.get(&pane_id) {
                     if pane.has_mouse_mode() {
@@ -344,7 +396,7 @@ impl ServerState {
 
     /// Build initial StateSync for a new client, including FullPaneSync for each pane.
     fn build_state_sync(&self) -> (ServerMessage, Vec<FullPaneSync>) {
-        let pane_ids: Vec<u64> = self.workspace.columns.iter().map(|c| c.pane_id).collect();
+        let pane_ids: Vec<u64> = self.workspaces.all_pane_ids();
 
         let syncs: Vec<FullPaneSync> = pane_ids.iter().filter_map(|&id| {
             let pane = self.panes.get(&id)?;
@@ -403,12 +455,20 @@ async fn cleanup_client(state: &Arc<Mutex<ServerState>>, client_id: u64) {
 // ─── Main daemon loop ───────────────────────────────────────────────
 
 pub async fn run_daemon(session_name: &str) -> Result<()> {
+    // Validate session name early to prevent path traversal in socket/state paths
+    ciri_session::save::validate_session_name(session_name)?;
+
     let config = ciri_config::config::CiriConfig::load().unwrap_or_default();
     let shell = config.terminal.shell.clone();
 
     let sock_path = transport::socket_path(session_name);
     if let Some(parent) = sock_path.parent() {
         std::fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+        }
     }
 
     #[cfg(unix)]
@@ -420,6 +480,14 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
 
     #[cfg(unix)]
     let listener = UnixListener::bind(&sock_path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o700);
+        if let Err(e) = std::fs::set_permissions(&sock_path, perms) {
+            log::warn!("failed to set socket permissions: {e}");
+        }
+    }
     #[cfg(windows)]
     let listener = TcpListener::bind(
         format!("127.0.0.1:{}", transport::port_for_session(session_name))
@@ -433,12 +501,60 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
 
     log::info!("ciri-server listening on {}", sock_path.display());
 
-    let state = Arc::new(Mutex::new(ServerState::new(session_name, &shell)));
+    let state = Arc::new(Mutex::new(ServerState::new(session_name, &shell, config.appearance.column_gap)));
 
-    // Create initial pane
+    // Try restoring saved session, otherwise create initial pane
     {
         let mut s = state.lock().await;
-        s.create_pane()?;
+        let restored = ciri_session::restore::restore_session(session_name, &transport::state_dir())
+            .ok()
+            .flatten();
+        if let Some(saved) = restored {
+            log::info!("restoring session '{}' ({} rows)", session_name, saved.rows.len());
+            // Rebuild workspace layout and create panes
+            s.workspaces.rows.clear();
+            for saved_row in &saved.rows {
+                let mut ws = ciri_layout::workspace::Workspace::new_with_gap(
+                    s.workspaces.view_size,
+                    s.workspaces.column_gap,
+                );
+                for saved_col in &saved_row.columns {
+                    if let Some(_tile) = saved_col.tiles.first() {
+                        let id = s.next_pane_id;
+                        s.next_pane_id += 1;
+                        let vw = s.workspaces.view_size.width;
+                        let vh = s.workspaces.view_size.height;
+                        let col_w = (vw as f64 * saved_col.width_proportion) as f32;
+                        let (cols, rows) = s.pane_grid_size(col_w, vh);
+                        match Pane::new(id, cols, rows, &s.default_shell) {
+                            Ok(pane) => {
+                                s.panes.insert(id, pane);
+                                s.generation.insert(id, 0);
+                                let mut col = ciri_layout::column::Column::new(id);
+                                col.width = ColumnWidth::Proportion(saved_col.width_proportion);
+                                ws.columns.push(col);
+                            }
+                            Err(e) => log::error!("failed to restore pane: {e}"),
+                        }
+                    }
+                }
+                ws.active_column_idx = saved_row.active_column_idx
+                    .min(ws.columns.len().saturating_sub(1));
+                s.workspaces.rows.push(ws);
+            }
+            s.workspaces.active_row = saved.active_row
+                .min(s.workspaces.rows.len().saturating_sub(1));
+            // If restore produced no panes (all failed), create a default one
+            if s.panes.is_empty() {
+                let vs = s.workspaces.view_size;
+                let cg = s.workspaces.column_gap;
+                s.workspaces.rows.clear();
+                s.workspaces.rows.push(ciri_layout::workspace::Workspace::new_with_gap(vs, cg));
+                s.create_pane()?;
+            }
+        } else {
+            s.create_pane()?;
+        }
     }
 
     // Shutdown signal shared between tick loop, signal handler, and accept loop
@@ -494,7 +610,10 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
 
                 // Exit if no panes left
                 if s.panes.is_empty() {
-                    let _ = s.save_session();
+                    // Layout is empty — delete stale session file instead of saving.
+                    let _ = ciri_session::restore::delete_session(
+                        session_name, &transport::state_dir()
+                    );
                     log::info!("all panes exited, shutting down");
                     // Send shutdown to all clients
                     if let Ok(payload) = rmp_serde::to_vec(&ServerMessage::ServerShutdown) {
@@ -576,6 +695,18 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                                     alacritty_terminal::vte::ansi::CursorShape::HollowBlock => 4,
                                 };
 
+                                // Read mode flags while term lock is held (avoid double-lock)
+                                let mode = term.mode();
+                                let mut mode_flags = 0u8;
+                                if mode.contains(alacritty_terminal::term::TermMode::MOUSE_REPORT_CLICK)
+                                    || mode.contains(alacritty_terminal::term::TermMode::MOUSE_DRAG)
+                                    || mode.contains(alacritty_terminal::term::TermMode::MOUSE_MOTION) {
+                                    mode_flags |= ciri_protocol::message::MODE_MOUSE_REPORT;
+                                }
+                                if mode.contains(alacritty_terminal::term::TermMode::ALT_SCREEN) {
+                                    mode_flags |= ciri_protocol::message::MODE_ALT_SCREEN;
+                                }
+
                                 let sync = FullPaneSync {
                                     pane_id,
                                     generation: pgen,
@@ -584,6 +715,7 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                                     cursor_line: content.cursor.point.line.0 as i16,
                                     cursor_col: content.cursor.point.column.0 as u16,
                                     cursor_shape,
+                                    mode_flags,
                                     title: pane.title.clone(),
                                     scrollback: sb_cells,
                                     scrollback_rows: new_lines as u16,
@@ -630,6 +762,8 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                             }
                             drop(term);
 
+                            let mode_flags = pane.mode_flags();
+
                             // Always send delta (even with empty regions) so cursor updates reach client
                             let delta = CellDelta {
                                 pane_id,
@@ -637,6 +771,7 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                                 cursor_line,
                                 cursor_col,
                                 cursor_shape,
+                                mode_flags,
                                 regions,
                             };
                             if let Ok(payload) = codec::encode_cell_delta_payload(&delta) {
@@ -660,14 +795,25 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
 
             // M6: Send frames outside the lock
             if !outgoing.is_empty() {
-                let s = tick_state.lock().await;
+                let mut s = tick_state.lock().await;
+                let mut to_disconnect = Vec::new();
                 for (client_id, frame) in outgoing {
-                    if let Some(client) = s.clients.get(&client_id) {
-                        // M4: Log try_send failures
+                    if let Some(client) = s.clients.get_mut(&client_id) {
                         if let Err(e) = client.tx.try_send(frame) {
-                            log::warn!("failed to send damage frame to client {client_id}: {e}");
+                            client.send_failures += 1;
+                            if client.send_failures >= 100 {
+                                log::warn!("disconnecting slow client {client_id}: {} consecutive failures", client.send_failures);
+                                to_disconnect.push(client_id);
+                            } else {
+                                log::debug!("send to client {client_id} failed (#{}) : {e}", client.send_failures);
+                            }
+                        } else {
+                            client.send_failures = 0;
                         }
                     }
+                }
+                for cid in to_disconnect {
+                    s.clients.remove(&cid);
                 }
             }
         }
@@ -740,7 +886,7 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                         let mut s = state.lock().await;
                         s.cell_width = viewport.cell_width;
                         s.cell_height = viewport.cell_height;
-                        s.workspace.resize_view(ViewSize {
+                        s.workspaces.resize_view(ViewSize {
                             width: viewport.width as f32,
                             height: viewport.height as f32,
                         });
@@ -777,6 +923,7 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                             damage: damage_map,
                             last_acked_generation: 0,
                             history_sent: HashMap::new(),
+                            send_failures: 0,
                         });
 
                         log::info!("client {client_id} connected");
@@ -801,10 +948,22 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                             }
                         }
 
-                        // Clear the initial full-sync markers since we just built them
+                        // Collect current history sizes before mutably borrowing clients
+                        let pane_histories: Vec<(u64, usize)> = s.panes.iter().map(|(&pid, pane)| {
+                            use alacritty_terminal::grid::Dimensions;
+                            let term = pane.term.lock().unwrap_or_else(|e| e.into_inner());
+                            let h = term.grid().history_size();
+                            (pid, h)
+                        }).collect();
+
+                        // Clear the initial full-sync markers and record history_sent
+                        // so subsequent full syncs don't re-send the same scrollback.
                         if let Some(client) = s.clients.get_mut(&client_id) {
                             for acc in client.damage.values_mut() {
                                 *acc = DamageAccumulator::new();
+                            }
+                            for (pane_id, history) in pane_histories {
+                                client.history_sent.insert(pane_id, history);
                             }
                         }
 

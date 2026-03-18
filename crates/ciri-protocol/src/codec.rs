@@ -252,7 +252,7 @@ pub fn encode_cell_delta_payload(delta: &CellDelta) -> io::Result<Vec<u8>> {
             "too many regions for CellDelta (exceeds u16::MAX)",
         ));
     }
-    // [u64 pane_id][u64 generation][i16 cursor_line][u16 cursor_col][u8 cursor_shape][u16 num_regions]
+    // [u64 pane_id][u64 generation][i16 cursor_line][u16 cursor_col][u8 cursor_shape][u8 mode_flags][u16 num_regions]
     // per region: [u16 line][u16 left][u16 right][PackedCell × (right-left+1)]
     let mut buf = Vec::with_capacity(256);
     buf.extend_from_slice(&delta.pane_id.to_le_bytes());
@@ -260,6 +260,7 @@ pub fn encode_cell_delta_payload(delta: &CellDelta) -> io::Result<Vec<u8>> {
     buf.extend_from_slice(&delta.cursor_line.to_le_bytes());
     buf.extend_from_slice(&delta.cursor_col.to_le_bytes());
     buf.push(delta.cursor_shape);
+    buf.push(delta.mode_flags);
     buf.extend_from_slice(&(delta.regions.len() as u16).to_le_bytes());
     for region in &delta.regions {
         buf.extend_from_slice(&region.line.to_le_bytes());
@@ -279,8 +280,8 @@ pub async fn encode_cell_delta<W: AsyncWrite + Unpin>(
 }
 
 pub fn decode_cell_delta(payload: &[u8]) -> io::Result<CellDelta> {
-    // 8 + 8 + 2 + 2 + 1 + 2 = 23 bytes minimum
-    if payload.len() < 23 {
+    // 8 + 8 + 2 + 2 + 1 + 1 + 2 = 24 bytes minimum
+    if payload.len() < 24 {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "CellDelta too short"));
     }
     let pane_id = read_u64_le(payload, 0)?;
@@ -288,8 +289,9 @@ pub fn decode_cell_delta(payload: &[u8]) -> io::Result<CellDelta> {
     let cursor_line = read_i16_le(payload, 16)?;
     let cursor_col = read_u16_le(payload, 18)?;
     let cursor_shape = payload[20];
-    let num_regions = read_u16_le(payload, 21)? as usize;
-    let mut offset = 23;
+    let mode_flags = payload[21];
+    let num_regions = read_u16_le(payload, 22)? as usize;
+    let mut offset = 24;
     let mut regions = Vec::with_capacity(num_regions);
     for _ in 0..num_regions {
         if offset + 6 > payload.len() {
@@ -318,7 +320,7 @@ pub fn decode_cell_delta(payload: &[u8]) -> io::Result<CellDelta> {
         offset += cell_bytes;
         regions.push(DamageRegion { line, left, right, cells });
     }
-    Ok(CellDelta { pane_id, generation, cursor_line, cursor_col, cursor_shape, regions })
+    Ok(CellDelta { pane_id, generation, cursor_line, cursor_col, cursor_shape, mode_flags, regions })
 }
 
 // ─── Encode FullPaneSync (custom binary with RLE) ───────────────────
@@ -372,12 +374,8 @@ fn rle_decode_cells(data: &[u8], expected_count: usize) -> io::Result<Vec<Packed
             }
             let count = read_u16_le(data, offset + 1)? as usize;
             let cell = read_packed_cell(data, offset + 3)?;
-            for _ in 0..count {
-                if cells.len() >= expected_count {
-                    break;
-                }
-                cells.push(cell);
-            }
+            let to_add = count.min(expected_count.saturating_sub(cells.len()));
+            cells.extend(std::iter::repeat(cell).take(to_add));
             offset += 3 + PACKED_CELL_SIZE;
         } else {
             if offset + PACKED_CELL_SIZE > data.len() {
@@ -401,8 +399,8 @@ pub fn encode_full_pane_sync_payload(sync: &FullPaneSync) -> io::Result<Vec<u8>>
     }
     let rle_scrollback = rle_encode_cells(&sync.scrollback);
     let rle_data = rle_encode_cells(&sync.cells);
-    // Header: pane_id(8) + gen(8) + cols(2) + rows(2) + cursor(5) + title_len(2) + sb_rows(2) + sb_data_len(4) + cell_data_len(4)
-    let mut buf = Vec::with_capacity(37 + title_bytes.len() + rle_scrollback.len() + rle_data.len());
+    // Header: pane_id(8) + gen(8) + cols(2) + rows(2) + cursor(5) + mode_flags(1) + title_len(2) + sb_rows(2) + sb_data_len(4) + cell_data_len(4)
+    let mut buf = Vec::with_capacity(38 + title_bytes.len() + rle_scrollback.len() + rle_data.len());
 
     buf.extend_from_slice(&sync.pane_id.to_le_bytes());
     buf.extend_from_slice(&sync.generation.to_le_bytes());
@@ -411,6 +409,7 @@ pub fn encode_full_pane_sync_payload(sync: &FullPaneSync) -> io::Result<Vec<u8>>
     buf.extend_from_slice(&sync.cursor_line.to_le_bytes());
     buf.extend_from_slice(&sync.cursor_col.to_le_bytes());
     buf.push(sync.cursor_shape);
+    buf.push(sync.mode_flags);
     buf.extend_from_slice(&(title_bytes.len() as u16).to_le_bytes());
     buf.extend_from_slice(title_bytes);
     buf.extend_from_slice(&sync.scrollback_rows.to_le_bytes());
@@ -430,18 +429,26 @@ pub async fn encode_full_pane_sync<W: AsyncWrite + Unpin>(
 }
 
 pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
-    if payload.len() < 31 {
+    if payload.len() < 32 {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "FullPaneSync too short"));
     }
     let pane_id = read_u64_le(payload, 0)?;
     let generation = read_u64_le(payload, 8)?;
     let cols = read_u16_le(payload, 16)?;
     let rows = read_u16_le(payload, 18)?;
+    let total_cells = cols as usize * rows as usize;
+    if total_cells > 10_000_000 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("grid too large: {cols}x{rows} = {total_cells} cells (max 10M)"),
+        ));
+    }
     let cursor_line = read_i16_le(payload, 20)?;
     let cursor_col = read_u16_le(payload, 22)?;
     let cursor_shape = payload[24];
-    let title_len = read_u16_le(payload, 25)? as usize;
-    let mut offset = 27;
+    let mode_flags = payload[25];
+    let title_len = read_u16_le(payload, 26)? as usize;
+    let mut offset = 28;
     if offset + title_len > payload.len() {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "truncated title"));
     }
@@ -477,7 +484,7 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
 
     Ok(FullPaneSync {
         pane_id, generation, cols, rows,
-        cursor_line, cursor_col, cursor_shape,
+        cursor_line, cursor_col, cursor_shape, mode_flags,
         title, scrollback, scrollback_rows, cells,
     })
 }
@@ -537,6 +544,7 @@ mod tests {
             cursor_line: 5,
             cursor_col: 10,
             cursor_shape: 0,
+            mode_flags: 0,
             regions: vec![
                 DamageRegion {
                     line: 5,
@@ -573,6 +581,7 @@ mod tests {
             cursor_line: 0,
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
             title: "bash".to_string(),
             scrollback: Vec::new(),
             scrollback_rows: 0,
@@ -623,6 +632,7 @@ mod tests {
             cursor_line: 0,
             cursor_col: 0,
             cursor_shape: 0,
+            mode_flags: 0,
             regions: vec![DamageRegion {
                 line: 0,
                 left: 0,

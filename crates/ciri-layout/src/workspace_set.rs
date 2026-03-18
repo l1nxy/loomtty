@@ -15,17 +15,23 @@ pub struct WorkspaceSet {
     /// Vertical scroll offset (pixels). Animated by App.
     pub view_offset_y: f32,
     pub row_gap: f32,
+    pub column_gap: f32,
 }
 
 impl WorkspaceSet {
-    pub fn new(view_size: ViewSize) -> Self {
+    pub fn new_with_gaps(view_size: ViewSize, row_gap: f32, column_gap: f32) -> Self {
         WorkspaceSet {
-            rows: vec![Workspace::new(view_size)],
+            rows: vec![Workspace::new_with_gap(view_size, column_gap)],
             active_row: 0,
             view_size,
             view_offset_y: 0.0,
-            row_gap: 8.0,
+            row_gap,
+            column_gap,
         }
+    }
+
+    pub fn new(view_size: ViewSize) -> Self {
+        Self::new_with_gaps(view_size, 8.0, 8.0)
     }
 
     pub fn active(&self) -> &Workspace {
@@ -71,7 +77,7 @@ impl WorkspaceSet {
     /// Add a new row below the active row with one pane, switch to it.
     pub fn add_row_below(&mut self, pane_id: PaneId) {
         let insert_at = self.active_row + 1;
-        let mut ws = Workspace::new(self.view_size);
+        let mut ws = Workspace::new_with_gap(self.view_size, self.column_gap);
         ws.add_column_right(pane_id);
         ws.set_active_column_width(ColumnWidth::Proportion(1.0));
         self.rows.insert(insert_at, ws);
@@ -81,7 +87,7 @@ impl WorkspaceSet {
     /// Switch to row by index, creating rows if needed.
     pub fn switch_to(&mut self, idx: usize) {
         while self.rows.len() <= idx {
-            self.rows.push(Workspace::new(self.view_size));
+            self.rows.push(Workspace::new_with_gap(self.view_size, self.column_gap));
         }
         self.active_row = idx;
     }
@@ -168,13 +174,33 @@ impl WorkspaceSet {
     }
 
     /// Remove empty rows (keep at least one).
+    /// If the active row is removed, focus moves to the row above (or below if at top).
     pub fn cleanup_empty(&mut self) {
+        // First: if the active row itself is empty, move focus before cleanup
+        if self.rows.len() > 1 && self.rows[self.active_row].is_empty() {
+            if self.active_row > 0 {
+                self.active_row -= 1;
+            } else {
+                // active_row is 0 and empty — find the first non-empty row
+                for i in 1..self.rows.len() {
+                    if !self.rows[i].is_empty() {
+                        self.active_row = i;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Now remove all empty rows (except keep at least one)
         let mut i = 0;
         while i < self.rows.len() && self.rows.len() > 1 {
-            if i != self.active_row && self.rows[i].is_empty() {
+            if self.rows[i].is_empty() {
                 self.rows.remove(i);
                 if self.active_row > i {
                     self.active_row -= 1;
+                } else if self.active_row == i {
+                    // Shouldn't happen after the fix above, but clamp defensively
+                    self.active_row = self.active_row.min(self.rows.len().saturating_sub(1));
                 }
             } else {
                 i += 1;
@@ -261,5 +287,37 @@ mod tests {
         ws.active_mut().add_column_right(3);
         let all = ws.all_tiles_2d();
         assert_eq!(all.len(), 3); // row 0: pane 1, row 1: pane 2 + pane 3
+    }
+
+    #[test]
+    fn cleanup_empty_focuses_previous_row() {
+        let mut ws = wss(); // row 0 has pane 1
+        ws.add_row_below(2); // row 1 has pane 2, active_row = 1
+        ws.add_row_below(3); // row 2 has pane 3, active_row = 2
+        assert_eq!(ws.active_row, 2);
+
+        // Close the pane in active row (row 2) — making it empty
+        ws.active_mut().close_pane(3);
+        assert!(ws.rows[2].is_empty());
+
+        // cleanup_empty should remove row 2 and focus row 1
+        ws.cleanup_empty();
+        assert_eq!(ws.rows.len(), 2);
+        assert_eq!(ws.active_row, 1);
+        assert_eq!(ws.active().active_pane_id(), Some(2));
+    }
+
+    #[test]
+    fn cleanup_empty_active_row_0() {
+        let mut ws = WorkspaceSet::new(ViewSize { width: 1000.0, height: 600.0 });
+        ws.active_mut().add_column_right(1); // row 0
+        ws.add_row_below(2); // row 1, active
+        ws.active_row = 0; // switch back to row 0
+        ws.active_mut().close_pane(1); // row 0 is now empty
+
+        ws.cleanup_empty();
+        assert_eq!(ws.rows.len(), 1);
+        assert_eq!(ws.active_row, 0);
+        assert_eq!(ws.active().active_pane_id(), Some(2));
     }
 }

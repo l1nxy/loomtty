@@ -159,6 +159,8 @@ pub enum ClientMessage {
     Ack { generation: u64 },
     /// Mouse input forwarded to pane (SGR mouse protocol).
     MouseInput { pane_id: u64, button: u8, col: u16, row: u16, pressed: bool, modifiers: u8 },
+    /// Switch to a workspace row by index.
+    SwitchWorkspace { row_idx: usize },
 }
 
 /// Control messages from server to client (msgpack encoded, tags 0x10-0x1F).
@@ -179,12 +181,19 @@ pub enum ServerMessage {
     ServerShutdown,
 }
 
-/// Serializable layout state.
+/// Serializable layout state (2D: rows × columns).
+/// This is the single source of truth shared by protocol, server, and client.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LayoutState {
+    pub rows: Vec<RowState>,
+    pub active_row: usize,
+}
+
+/// One horizontal row of columns (a workspace).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RowState {
     pub columns: Vec<ColumnState>,
     pub active_column_idx: usize,
-    pub view_offset_x: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -219,6 +228,8 @@ pub struct CellDelta {
     pub cursor_line: i16,
     pub cursor_col: u16,
     pub cursor_shape: u8,
+    /// Terminal mode flags (mouse mode, alt screen, etc.)
+    pub mode_flags: u8,
     pub regions: Vec<DamageRegion>,
 }
 
@@ -232,6 +243,8 @@ pub struct FullPaneSync {
     pub cursor_line: i16,
     pub cursor_col: u16,
     pub cursor_shape: u8,
+    /// Terminal mode flags (mouse mode, alt screen, etc.)
+    pub mode_flags: u8,
     pub title: String,
     /// New scrollback lines that the client hasn't seen yet (oldest first).
     /// Client should prepend these to its buffer before applying the viewport.
@@ -239,6 +252,13 @@ pub struct FullPaneSync {
     pub scrollback_rows: u16,
     pub cells: Vec<PackedCell>, // row-major, rows * cols (viewport)
 }
+
+// ─── Terminal mode flags ────────────────────────────────────────────
+
+/// Pane has mouse reporting enabled (any mouse mode).
+pub const MODE_MOUSE_REPORT: u8 = 0x01;
+/// Pane is in alternate screen buffer (e.g. TUI app).
+pub const MODE_ALT_SCREEN: u8 = 0x02;
 
 // ─── Cursor shape encoding ──────────────────────────────────────────
 

@@ -2,31 +2,29 @@ use std::path::PathBuf;
 
 /// Resolve the user's home directory.
 /// Prefers $HOME, falls back to getpwuid_r on Unix.
+#[cfg(unix)]
 fn home_dir() -> Option<PathBuf> {
     if let Ok(home) = std::env::var("HOME")
         && !home.is_empty() {
             return Some(PathBuf::from(home));
         }
-    #[cfg(unix)]
-    {
-        let uid = unsafe { libc::getuid() };
-        let mut buf = vec![0u8; 4096];
-        let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
-        let mut result = std::ptr::null_mut();
-        let ret = unsafe {
-            libc::getpwuid_r(
-                uid,
-                &mut pwd,
-                buf.as_mut_ptr() as *mut libc::c_char,
-                buf.len(),
-                &mut result,
-            )
-        };
-        if ret == 0 && !result.is_null() {
-            let dir = unsafe { std::ffi::CStr::from_ptr(pwd.pw_dir) };
-            if let Ok(s) = dir.to_str() {
-                return Some(PathBuf::from(s));
-            }
+    let uid = unsafe { libc::getuid() };
+    let mut buf = vec![0u8; 4096];
+    let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut result = std::ptr::null_mut();
+    let ret = unsafe {
+        libc::getpwuid_r(
+            uid,
+            &mut pwd,
+            buf.as_mut_ptr() as *mut libc::c_char,
+            buf.len(),
+            &mut result,
+        )
+    };
+    if ret == 0 && !result.is_null() {
+        let dir = unsafe { std::ffi::CStr::from_ptr(pwd.pw_dir) };
+        if let Ok(s) = dir.to_str() {
+            return Some(PathBuf::from(s));
         }
     }
     None

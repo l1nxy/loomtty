@@ -108,7 +108,7 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
 
     let cw = atlas.cell_width;
     let ch = atlas.cell_height;
-    let baseline_offset = ch * 0.8;
+    let baseline_offset = atlas.ascent;
     let default_bg = ThemeConfig::parse_color(&config.theme.background);
 
     let mut bg_rects = Vec::new();
@@ -122,7 +122,6 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
             let cell = &grid[point];
             let px = col as f32 * cw;
 
-            // Skip spacer cells (second cell of a wide char)
             if cell.flags.contains(CellFlags::WIDE_CHAR_SPACER) {
                 continue;
             }
@@ -130,9 +129,47 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
             let is_wide = cell.flags.contains(CellFlags::WIDE_CHAR);
             let bg_width = if is_wide { cw * 2.0 } else { cw };
 
-            let bg = ansi_color_to_rgba(cell.bg, config);
+            let mut fg = ansi_color_to_rgba(cell.fg, config);
+            let mut bg = ansi_color_to_rgba(cell.bg, config);
+
+            // BOLD: brighten fg
+            if cell.flags.contains(CellFlags::BOLD) {
+                fg[0] = (fg[0] * 1.3).min(1.0);
+                fg[1] = (fg[1] * 1.3).min(1.0);
+                fg[2] = (fg[2] * 1.3).min(1.0);
+            }
+
+            // DIM: dim fg
+            if cell.flags.contains(CellFlags::DIM) {
+                fg[0] *= 0.67;
+                fg[1] *= 0.67;
+                fg[2] *= 0.67;
+            }
+
+            // INVERSE: swap fg and bg
+            if cell.flags.contains(CellFlags::INVERSE) {
+                std::mem::swap(&mut fg, &mut bg);
+            }
+
             if bg != default_bg {
                 bg_rects.push(Rect { x: px, y: py, w: bg_width, h: ch, color: bg });
+            }
+
+            // HIDDEN: background only, no text or decorations
+            if cell.flags.contains(CellFlags::HIDDEN) {
+                continue;
+            }
+
+            // UNDERLINE
+            if cell.flags.contains(CellFlags::UNDERLINE) {
+                let uy = py + baseline_offset + 1.0;
+                bg_rects.push(Rect { x: px, y: uy, w: bg_width, h: 1.0, color: fg });
+            }
+
+            // STRIKETHROUGH
+            if cell.flags.contains(CellFlags::STRIKEOUT) {
+                let sy = py + ch * 0.5;
+                bg_rects.push(Rect { x: px, y: sy, w: bg_width, h: 1.0, color: fg });
             }
 
             let c = cell.c;
@@ -140,16 +177,14 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
                 continue;
             }
 
-            let fg = ansi_color_to_rgba(cell.fg, config);
-
             if let Some(entry) = atlas.ensure_char(c, font_system, queue) {
                 if entry.width == 0 || entry.height == 0 {
                     continue;
                 }
 
                 glyph_instances.push(RelativeGlyph {
-                    px: px + entry.bearing_x as f32,
-                    py: py + baseline_offset - entry.bearing_y as f32,
+                    px: (px + entry.bearing_x as f32).round(),
+                    py: (py + baseline_offset - entry.bearing_y as f32).round(),
                     glyph_w: entry.width as f32,
                     glyph_h: entry.height as f32,
                     u0: entry.u0,
@@ -178,24 +213,54 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
     TerminalView { glyph_instances, bg_rects, cursor_rects }
 }
 
-/// Build cursor rects: 1 filled rect for solid cursors, 4 border rects for hollow block.
+/// Build cursor rects for all cursor shapes.
+/// - Block: filled cell-sized rect
+/// - HollowBlock: 4 border rects forming an outline
+/// - Beam: thin vertical line on left edge (2px)
+/// - Underline: thin horizontal line at bottom (2px)
+fn build_cursor_rects_for_shape(shape: u8, cx: f32, cy: f32, cw: f32, ch: f32, color: [f32; 4]) -> Vec<Rect> {
+    match shape {
+        CURSOR_HOLLOW_BLOCK => {
+            let t = 1.0_f32;
+            vec![
+                Rect { x: cx, y: cy, w: cw, h: t, color },           // top
+                Rect { x: cx, y: cy + ch - t, w: cw, h: t, color },  // bottom
+                Rect { x: cx, y: cy + t, w: t, h: ch - 2.0 * t, color }, // left
+                Rect { x: cx + cw - t, y: cy + t, w: t, h: ch - 2.0 * t, color }, // right
+            ]
+        }
+        CURSOR_BEAM => {
+            // Thin vertical bar at left edge of cell
+            vec![Rect { x: cx, y: cy, w: 2.0, h: ch, color }]
+        }
+        CURSOR_UNDERLINE => {
+            // Thin horizontal bar at bottom of cell
+            vec![Rect { x: cx, y: cy + ch - 2.0, w: cw, h: 2.0, color }]
+        }
+        _ => {
+            // CURSOR_BLOCK and any unknown: filled rect
+            vec![Rect { x: cx, y: cy, w: cw, h: ch, color }]
+        }
+    }
+}
+
+/// Legacy helper for build_terminal_view (direct Term access path).
 fn build_cursor_rects(hollow: bool, cx: f32, cy: f32, cw: f32, ch: f32, color: [f32; 4]) -> Vec<Rect> {
     if hollow {
-        let t = 1.0_f32; // border thickness in pixels
-        vec![
-            Rect { x: cx, y: cy, w: cw, h: t, color },           // top
-            Rect { x: cx, y: cy + ch - t, w: cw, h: t, color },  // bottom
-            Rect { x: cx, y: cy + t, w: t, h: ch - 2.0 * t, color }, // left
-            Rect { x: cx + cw - t, y: cy + t, w: t, h: ch - 2.0 * t, color }, // right
-        ]
+        build_cursor_rects_for_shape(CURSOR_HOLLOW_BLOCK, cx, cy, cw, ch, color)
     } else {
-        vec![Rect { x: cx, y: cy, w: cw, h: ch, color }]
+        build_cursor_rects_for_shape(0, cx, cy, cw, ch, color) // Block
     }
 }
 
 // ─── PackedColor → RGBA resolution (client-side theme mapping) ──────
 
-use ciri_protocol::message::{PackedColor, PackedCell, COLOR_NAMED, COLOR_RGB, COLOR_INDEXED, FLAG_WIDE_CHAR, FLAG_WIDE_CHAR_SPACER, FLAG_HIDDEN, CURSOR_HIDDEN, CURSOR_HOLLOW_BLOCK};
+use ciri_protocol::message::{
+    PackedColor, PackedCell, COLOR_NAMED, COLOR_RGB, COLOR_INDEXED,
+    FLAG_WIDE_CHAR, FLAG_WIDE_CHAR_SPACER, FLAG_HIDDEN,
+    FLAG_BOLD, FLAG_DIM, FLAG_UNDERLINE, FLAG_INVERSE, FLAG_STRIKEOUT,
+    CURSOR_HIDDEN, CURSOR_HOLLOW_BLOCK, CURSOR_BEAM, CURSOR_UNDERLINE,
+};
 
 fn packed_color_to_rgba(color: PackedColor, config: &CiriConfig) -> [f32; 4] {
     match color.tag {
@@ -240,6 +305,15 @@ fn packed_color_to_rgba(color: PackedColor, config: &CiriConfig) -> [f32; 4] {
 }
 
 /// Build rendering data from a PackedCell grid (client-side, no alacritty dependency).
+///
+/// Handles full terminal semantics:
+/// - INVERSE: swap fg/bg colors
+/// - BOLD: brighten the foreground color
+/// - DIM: dim the foreground color (×0.67)
+/// - UNDERLINE: draw a 1px line at the cell baseline
+/// - STRIKEOUT: draw a 1px line through the middle of the cell
+/// - HIDDEN: skip text rendering (SGR 8)
+/// - Cursor shapes: Block (filled), HollowBlock (outline), Beam (thin vertical), Underline (thin horizontal)
 pub fn build_view_from_grid(
     cells: &[PackedCell],
     cols: u16,
@@ -254,7 +328,7 @@ pub fn build_view_from_grid(
 ) -> TerminalView {
     let cw = atlas.cell_width;
     let ch = atlas.cell_height;
-    let baseline_offset = ch * 0.8;
+    let baseline_offset = atlas.ascent;
     let default_bg = ThemeConfig::parse_color(&config.theme.background);
 
     let mut bg_rects = Vec::new();
@@ -273,16 +347,52 @@ pub fn build_view_from_grid(
                 continue;
             }
 
-            if f & FLAG_HIDDEN != 0 {
-                continue; // SGR 8: invisible text
-            }
-
             let is_wide = f & FLAG_WIDE_CHAR != 0;
             let bg_width = if is_wide { cw * 2.0 } else { cw };
 
-            let bg = packed_color_to_rgba(cell.bg, config);
+            // Resolve base colors
+            let mut fg = packed_color_to_rgba(cell.fg, config);
+            let mut bg = packed_color_to_rgba(cell.bg, config);
+
+            // BOLD: brighten foreground (shift toward white by ~30%)
+            if f & FLAG_BOLD != 0 {
+                fg[0] = (fg[0] * 1.3).min(1.0);
+                fg[1] = (fg[1] * 1.3).min(1.0);
+                fg[2] = (fg[2] * 1.3).min(1.0);
+            }
+
+            // DIM: dim foreground (×0.67)
+            if f & FLAG_DIM != 0 {
+                fg[0] *= 0.67;
+                fg[1] *= 0.67;
+                fg[2] *= 0.67;
+            }
+
+            // INVERSE: swap fg and bg
+            if f & FLAG_INVERSE != 0 {
+                std::mem::swap(&mut fg, &mut bg);
+            }
+
+            // Background rect (after INVERSE so swapped bg is used)
             if bg != default_bg {
                 bg_rects.push(Rect { x: px, y: py, w: bg_width, h: ch, color: bg });
+            }
+
+            // HIDDEN: render background but skip text/decorations
+            if f & FLAG_HIDDEN != 0 {
+                continue;
+            }
+
+            // UNDERLINE: 1px line at cell bottom (baseline + 1)
+            if f & FLAG_UNDERLINE != 0 {
+                let uy = py + baseline_offset + 1.0;
+                bg_rects.push(Rect { x: px, y: uy, w: bg_width, h: 1.0, color: fg });
+            }
+
+            // STRIKEOUT: 1px line through middle of cell
+            if f & FLAG_STRIKEOUT != 0 {
+                let sy = py + ch * 0.5;
+                bg_rects.push(Rect { x: px, y: sy, w: bg_width, h: 1.0, color: fg });
             }
 
             let c = cell.ch();
@@ -290,15 +400,13 @@ pub fn build_view_from_grid(
                 continue;
             }
 
-            let fg = packed_color_to_rgba(cell.fg, config);
-
             if let Some(entry) = atlas.ensure_char(c, font_system, queue) {
                 if entry.width == 0 || entry.height == 0 {
                     continue;
                 }
                 glyph_instances.push(RelativeGlyph {
-                    px: px + entry.bearing_x as f32,
-                    py: py + baseline_offset - entry.bearing_y as f32,
+                    px: (px + entry.bearing_x as f32).round(),
+                    py: (py + baseline_offset - entry.bearing_y as f32).round(),
                     glyph_w: entry.width as f32,
                     glyph_h: entry.height as f32,
                     u0: entry.u0,
@@ -317,7 +425,7 @@ pub fn build_view_from_grid(
         let cx = cursor_col as f32 * cw;
         let cy = cursor_line as f32 * ch;
         let c = [cursor_color[0], cursor_color[1], cursor_color[2], config.terminal.cursor_opacity];
-        build_cursor_rects(cursor_shape == CURSOR_HOLLOW_BLOCK, cx, cy, cw, ch, c)
+        build_cursor_rects_for_shape(cursor_shape, cx, cy, cw, ch, c)
     } else {
         Vec::new()
     };

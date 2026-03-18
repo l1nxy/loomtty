@@ -18,6 +18,8 @@ pub struct ClientPaneGrid {
     pub cursor_line: i16,
     pub cursor_col: u16,
     pub cursor_shape: u8,
+    /// Terminal mode flags from server (mouse mode, alt screen, etc.)
+    pub mode_flags: u8,
     pub title: String,
     pub dirty: bool,
 }
@@ -38,14 +40,10 @@ impl ClientPaneGrid {
             cursor_line: 0,
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
             title: String::new(),
             dirty: true,
         }
-    }
-
-    /// Total lines in buffer (scrollback + viewport).
-    pub fn buffer_len(&self) -> usize {
-        self.buffer.len()
     }
 
     /// Maximum scroll offset (how far up the user can scroll).
@@ -87,18 +85,12 @@ impl ClientPaneGrid {
         }
 
         // Step 2: Append new scrollback lines (server sends oldest first → natural order)
-        // Skip entirely blank rows (e.g., from initial terminal startup)
         let sb_rows = sync.scrollback_rows as usize;
-        let blank = PackedCell::default();
         for r in 0..sb_rows {
             let start = r * new_cols;
             let end = (start + new_cols).min(sync.scrollback.len());
             if end <= start { continue; }
-            let row = &sync.scrollback[start..end];
-            let is_blank = row.iter().all(|c| *c == blank);
-            if !is_blank {
-                self.buffer.push_back(row.to_vec());
-            }
+            self.buffer.push_back(sync.scrollback[start..end].to_vec());
         }
 
         // Step 3: Append new live viewport
@@ -122,6 +114,7 @@ impl ClientPaneGrid {
         self.cursor_line = sync.cursor_line;
         self.cursor_col = sync.cursor_col;
         self.cursor_shape = sync.cursor_shape;
+        self.mode_flags = sync.mode_flags;
         self.title = sync.title.clone();
         self.dirty = true;
     }
@@ -131,6 +124,7 @@ impl ClientPaneGrid {
         self.cursor_line = delta.cursor_line;
         self.cursor_col = delta.cursor_col;
         self.cursor_shape = delta.cursor_shape;
+        self.mode_flags = delta.mode_flags;
 
         let buf_len = self.buffer.len();
         let live_start = buf_len.saturating_sub(self.rows as usize);

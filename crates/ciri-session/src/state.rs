@@ -1,9 +1,16 @@
 use serde::{Deserialize, Serialize};
 
-/// Serializable session state for persistence.
+/// Serializable session state for persistence (2D layout).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionState {
     pub name: String,
+    pub rows: Vec<SavedRow>,
+    pub active_row: usize,
+}
+
+/// One row (workspace) in the saved layout.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SavedRow {
     pub columns: Vec<SavedColumn>,
     pub active_column_idx: usize,
 }

@@ -130,6 +130,24 @@ impl Pane {
             || mode.contains(TermMode::MOUSE_MOTION)
     }
 
+    /// Get terminal mode flags for the protocol (mouse mode, alt screen).
+    pub fn mode_flags(&self) -> u8 {
+        use alacritty_terminal::term::TermMode;
+        use ciri_protocol::message::{MODE_MOUSE_REPORT, MODE_ALT_SCREEN};
+        let term = self.term.lock().unwrap_or_else(|e| e.into_inner());
+        let mode = term.mode();
+        let mut flags = 0u8;
+        if mode.contains(TermMode::MOUSE_REPORT_CLICK)
+            || mode.contains(TermMode::MOUSE_DRAG)
+            || mode.contains(TermMode::MOUSE_MOTION) {
+            flags |= MODE_MOUSE_REPORT;
+        }
+        if mode.contains(TermMode::ALT_SCREEN) {
+            flags |= MODE_ALT_SCREEN;
+        }
+        flags
+    }
+
     /// Forward mouse input as SGR escape sequence to the PTY.
     /// Does NOT reset viewport state (TUI apps manage their own scrolling).
     pub fn send_mouse_input(&self, button: u8, col: u16, row: u16, pressed: bool, modifiers: u8) {
@@ -244,14 +262,27 @@ impl Pane {
         let rows = grid.screen_lines();
         let content = term.renderable_content();
 
-        // Server always sends the live viewport (no scrollback).
-        // Scrollback is managed client-side.
         let mut cells = Vec::with_capacity(cols * rows);
         for row in 0..rows {
             for col in 0..cols {
                 let point = Point::new(Line(row as i32), Column(col));
                 let cell = &grid[point];
                 cells.push(pack_cell(cell));
+            }
+        }
+
+        // Include recent scrollback for attach/reattach (capped to avoid huge syncs)
+        let history_size = grid.history_size();
+        let max_scrollback = 1000.min(history_size);
+        let mut sb_cells = Vec::new();
+        if max_scrollback > 0 {
+            sb_cells.reserve(max_scrollback * cols);
+            // Line(-max_scrollback) = oldest, Line(-1) = newest
+            for i in (1..=max_scrollback).rev() {
+                for col in 0..cols {
+                    let point = Point::new(Line(-(i as i32)), Column(col));
+                    sb_cells.push(pack_cell(&grid[point]));
+                }
             }
         }
 
@@ -263,6 +294,20 @@ impl Pane {
             CursorShape::Hidden => CURSOR_HIDDEN,
         };
 
+        // Read mode flags while term lock is already held (avoid double-lock deadlock)
+        use alacritty_terminal::term::TermMode;
+        use ciri_protocol::message::{MODE_MOUSE_REPORT, MODE_ALT_SCREEN};
+        let mode = term.mode();
+        let mut mode_flags = 0u8;
+        if mode.contains(TermMode::MOUSE_REPORT_CLICK)
+            || mode.contains(TermMode::MOUSE_DRAG)
+            || mode.contains(TermMode::MOUSE_MOTION) {
+            mode_flags |= MODE_MOUSE_REPORT;
+        }
+        if mode.contains(TermMode::ALT_SCREEN) {
+            mode_flags |= MODE_ALT_SCREEN;
+        }
+
         FullPaneSync {
             pane_id: self.id,
             generation,
@@ -271,9 +316,10 @@ impl Pane {
             cursor_line: content.cursor.point.line.0 as i16,
             cursor_col: content.cursor.point.column.0 as u16,
             cursor_shape,
+            mode_flags,
             title: self.title.clone(),
-            scrollback: Vec::new(),
-            scrollback_rows: 0,
+            scrollback: sb_cells,
+            scrollback_rows: max_scrollback as u16,
             cells,
         }
     }

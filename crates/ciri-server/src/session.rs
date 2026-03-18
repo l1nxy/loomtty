@@ -5,15 +5,15 @@ use ciri_protocol::transport;
 
 #[allow(dead_code)]
 pub fn is_session_running(session_name: &str) -> bool {
-    let sock_path = transport::socket_path(session_name);
+    let _sock_path = transport::socket_path(session_name);
 
     #[cfg(unix)]
     {
-        if !sock_path.exists() {
+        if !_sock_path.exists() {
             return false;
         }
         // Try connecting to verify the server is actually alive
-        std::os::unix::net::UnixStream::connect(&sock_path).is_ok()
+        std::os::unix::net::UnixStream::connect(&_sock_path).is_ok()
     }
 
     #[cfg(windows)]

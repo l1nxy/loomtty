@@ -25,7 +25,10 @@ pub fn connect_or_spawn(
         || session_name.contains("..")
         || session_name.contains('\0')
     {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("invalid session name: {session_name:?}")));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid session name: {session_name:?}"),
+        ));
     }
     let _sock_path = transport::socket_path(session_name);
 
@@ -33,7 +36,9 @@ pub fn connect_or_spawn(
     {
         let server_ready = || -> bool {
             #[cfg(unix)]
-            { _sock_path.exists() }
+            {
+                _sock_path.exists()
+            }
             #[cfg(windows)]
             {
                 let port = transport::port_for_session(session_name);
@@ -166,8 +171,13 @@ fn spawn_server(session_name: &str) -> io::Result<()> {
     use std::process::Command;
     // Try to find ciri-server binary next to the current executable
     let exe = std::env::current_exe().unwrap_or_default();
-    let server_bin = if cfg!(windows) { "ciri-server.exe" } else { "ciri-server" };
-    let server_exe = exe.parent()
+    let server_bin = if cfg!(windows) {
+        "ciri-server.exe"
+    } else {
+        "ciri-server"
+    };
+    let server_exe = exe
+        .parent()
         .map(|p| p.join(server_bin))
         .filter(|p| p.exists())
         .unwrap_or_else(|| std::path::PathBuf::from(server_bin));

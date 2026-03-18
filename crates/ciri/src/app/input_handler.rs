@@ -2,6 +2,7 @@ use ciri_input::action::Action;
 use ciri_layout::column::ColumnWidth;
 use ciri_layout::geometry::Rect as GeoRect;
 use ciri_protocol::message::*;
+use std::time::{Duration, Instant};
 use winit::keyboard::{Key, NamedKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
@@ -200,6 +201,47 @@ impl App {
         let sel = self.selection.as_ref()?;
         let grid = self.pane_grids.get(&sel.pane_id)?;
         Some(grid.text_in_range(sel.start, sel.end))
+    }
+
+    pub fn is_double_left_click(
+        &self,
+        pane_id: u64,
+        col: u16,
+        buffer_row: usize,
+        now: Instant,
+    ) -> bool {
+        let threshold = Duration::from_millis(self.config.input.double_tap_window_ms);
+        self.last_left_click.as_ref().is_some_and(|last| {
+            last.pane_id == pane_id
+                && last.buffer_row == buffer_row
+                && last.col.abs_diff(col) <= 1
+                && now.duration_since(last.at) <= threshold
+        })
+    }
+
+    pub fn remember_left_click(&mut self, pane_id: u64, col: u16, buffer_row: usize, now: Instant) {
+        self.last_left_click = Some(super::LastLeftClick {
+            pane_id,
+            col,
+            buffer_row,
+            at: now,
+        });
+    }
+
+    pub fn select_word_at(&mut self, pane_id: u64, col: u16, buffer_row: usize) -> bool {
+        let Some(grid) = self.pane_grids.get(&pane_id) else {
+            return false;
+        };
+        let Some((start_col, end_col)) = grid.word_bounds_at(col, buffer_row) else {
+            return false;
+        };
+        self.selection = Some(super::Selection {
+            pane_id,
+            start: (start_col, buffer_row),
+            end: (end_col, buffer_row),
+            active: true,
+        });
+        true
     }
 
     pub fn scroll_active_up(&mut self, lines: usize) {

@@ -472,13 +472,21 @@ impl ApplicationHandler for App {
                         InputResult::PassThrough => {
                             self.scroll_active_to_bottom();
                             let bytes = key_event_to_pty_bytes(&event, ctrl);
-                            if !bytes.is_empty()
-                                && let Some(pid) = self.workspaces.active_mut().active_pane_id()
-                            {
-                                self.send(ClientMessage::Input {
-                                    pane_id: pid,
-                                    data: bytes,
-                                });
+                            if !bytes.is_empty() {
+                                if self.broadcast_mode {
+                                    // Send to all panes in current workspace
+                                    for pid in self.workspaces.active().all_pane_ids() {
+                                        self.send(ClientMessage::Input {
+                                            pane_id: pid,
+                                            data: bytes.clone(),
+                                        });
+                                    }
+                                } else if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
+                                    self.send(ClientMessage::Input {
+                                        pane_id: pid,
+                                        data: bytes,
+                                    });
+                                }
                             }
                         }
                     }

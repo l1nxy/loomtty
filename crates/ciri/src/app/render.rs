@@ -412,6 +412,11 @@ impl App {
         } else {
             ""
         };
+        let broadcast_hint = if self.broadcast_mode {
+            " BROADCAST "
+        } else {
+            ""
+        };
 
         let mut status_left = String::new();
         for (i, ws) in self.workspaces.workspaces.iter().enumerate() {
@@ -431,7 +436,7 @@ impl App {
             .map(|id| format!("pane:{id}"))
             .unwrap_or_default();
         let session_info = format!("session:{}", self.session_name);
-        let status_right = format!("{overview_hint}{leader_hint} {session_info} {active_info} ");
+        let status_right = format!("{broadcast_hint}{overview_hint}{leader_hint} {session_info} {active_info} ");
 
         let text_y = bar_y + 2.0;
         let cw = atlas.cell_width;
@@ -442,7 +447,7 @@ impl App {
         } else {
             ThemeConfig::parse_color(&self.config.theme.foreground)
         };
-        let right_color = if self.overview_active || self.input.is_awaiting_action() {
+        let right_color = if self.broadcast_mode || self.overview_active || self.input.is_awaiting_action() {
             ThemeConfig::parse_color(&self.config.theme.accent)
         } else {
             ThemeConfig::parse_color(&self.config.theme.bright_black)

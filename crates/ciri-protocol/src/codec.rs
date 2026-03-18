@@ -107,6 +107,23 @@ pub async fn read_client_hello<R: AsyncRead + Unpin>(
         cell_width: f32::from_bits(u32::from_le_bytes([buf[16], buf[17], buf[18], buf[19]])),
         cell_height: f32::from_bits(u32::from_le_bytes([buf[20], buf[21], buf[22], buf[23]])),
     };
+    // Validate viewport values
+    if !viewport.cell_width.is_finite() || viewport.cell_width <= 0.0 || viewport.cell_width > 200.0 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData,
+            format!("invalid cell_width: {}", viewport.cell_width)));
+    }
+    if !viewport.cell_height.is_finite() || viewport.cell_height <= 0.0 || viewport.cell_height > 200.0 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData,
+            format!("invalid cell_height: {}", viewport.cell_height)));
+    }
+    if viewport.width == 0 || viewport.width > 16384 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData,
+            format!("invalid viewport width: {}", viewport.width)));
+    }
+    if viewport.height == 0 || viewport.height > 16384 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData,
+            format!("invalid viewport height: {}", viewport.height)));
+    }
     Ok((compat, viewport))
 }
 

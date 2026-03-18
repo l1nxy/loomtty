@@ -28,7 +28,7 @@ impl Dimensions for TermSize {
 
 pub struct Pane {
     pub id: PaneId,
-    pub term: Arc<Mutex<Term<PtyEventListener>>>,
+    pub(crate) term: Arc<Mutex<Term<PtyEventListener>>>,
     dirty: bool,
     exited: bool,
     pty: Pty,
@@ -37,6 +37,8 @@ pub struct Pane {
     cols: u16,
     rows: u16,
     pub title: String,
+    /// Pending clipboard writes from OSC 52 (drained by server each tick).
+    clipboard_pending: Vec<String>,
 }
 
 impl Pane {
@@ -59,6 +61,7 @@ impl Pane {
             cols,
             rows,
             title: String::new(),
+            clipboard_pending: Vec::new(),
         })
     }
 
@@ -96,6 +99,17 @@ impl Pane {
                 Event::ResetTitle => {
                     self.title.clear();
                 }
+                Event::ClipboardStore(_, text) => {
+                    // OSC 52: TUI app wants to write to system clipboard
+                    self.clipboard_pending.push(text);
+                }
+                Event::ClipboardLoad(_, formatter) => {
+                    // OSC 52: TUI app wants to read clipboard.
+                    // We can't access the client clipboard from the server,
+                    // so respond with empty string (common fallback).
+                    let response = formatter("");
+                    self.write_to_pty(response.as_bytes());
+                }
                 Event::Exit | Event::ChildExit(_) => {
                     self.exited = true;
                 }
@@ -111,6 +125,11 @@ impl Pane {
             self.dirty = true;
         }
         processed
+    }
+
+    /// Drain pending OSC 52 clipboard writes.
+    pub fn drain_clipboard(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.clipboard_pending)
     }
 
     pub fn write_to_pty(&mut self, data: &[u8]) {
@@ -234,6 +253,115 @@ impl Pane {
         };
         term.reset_damage();
         Some(regions)
+    }
+
+    /// Read cells for a specific line range (for CellDelta).
+    pub fn read_cells(&self, line: u16, left: u16, right: u16) -> Vec<PackedCell> {
+        let term = self.term.lock().unwrap_or_else(|e| e.into_inner());
+        let grid = term.grid();
+        let mut cells = Vec::with_capacity((right - left + 1) as usize);
+        for col in left..=right {
+            let point = Point::new(Line(line as i32), Column(col as usize));
+            cells.push(pack_cell(&grid[point]));
+        }
+        cells
+    }
+
+    /// Read cursor position, shape, and mode flags.
+    pub fn cursor_info(&self) -> (i16, u16, u8, u8) {
+        let term = self.term.lock().unwrap_or_else(|e| e.into_inner());
+        let content = term.renderable_content();
+        let cursor_line = content.cursor.point.line.0 as i16;
+        let cursor_col = content.cursor.point.column.0 as u16;
+        let cursor_shape = match content.cursor.shape {
+            CursorShape::Block => CURSOR_BLOCK,
+            CursorShape::Underline => CURSOR_UNDERLINE,
+            CursorShape::Beam => CURSOR_BEAM,
+            CursorShape::HollowBlock => CURSOR_HOLLOW_BLOCK,
+            CursorShape::Hidden => CURSOR_HIDDEN,
+        };
+        let mode_flags = self.mode_flags_from_term(&term);
+        (cursor_line, cursor_col, cursor_shape, mode_flags)
+    }
+
+    /// Current history size (number of scrollback lines).
+    pub fn history_size(&self) -> usize {
+        let term = self.term.lock().unwrap_or_else(|e| e.into_inner());
+        term.grid().history_size()
+    }
+
+    /// Create a full pane snapshot with incremental scrollback (only new lines since `history_sent`).
+    pub fn snapshot_incremental(&self, generation: u64, history_sent: usize) -> FullPaneSync {
+        let term = self.term.lock().unwrap_or_else(|e| e.into_inner());
+        let grid = term.grid();
+        let cols = grid.columns();
+        let rows = grid.screen_lines();
+        let current_history = grid.history_size();
+        let content = term.renderable_content();
+
+        // Read viewport cells
+        let mut cells = Vec::with_capacity(cols * rows);
+        for row in 0..rows {
+            for col in 0..cols {
+                let point = Point::new(Line(row as i32), Column(col));
+                cells.push(pack_cell(&grid[point]));
+            }
+        }
+
+        // Read new history lines (only lines not yet sent)
+        let last_sent = history_sent.min(current_history);
+        let new_lines = current_history - last_sent;
+        let mut sb_cells = Vec::new();
+        if new_lines > 0 {
+            sb_cells.reserve(new_lines * cols);
+            for i in (1..=new_lines).rev() {
+                for col in 0..cols {
+                    let point = Point::new(Line(-(i as i32)), Column(col));
+                    sb_cells.push(pack_cell(&grid[point]));
+                }
+            }
+        }
+
+        let cursor_shape = match content.cursor.shape {
+            CursorShape::Block => CURSOR_BLOCK,
+            CursorShape::Underline => CURSOR_UNDERLINE,
+            CursorShape::Beam => CURSOR_BEAM,
+            CursorShape::HollowBlock => CURSOR_HOLLOW_BLOCK,
+            CursorShape::Hidden => CURSOR_HIDDEN,
+        };
+
+        let mode_flags = self.mode_flags_from_term(&term);
+
+        FullPaneSync {
+            pane_id: self.id,
+            generation,
+            cols: cols as u16,
+            rows: rows as u16,
+            cursor_line: content.cursor.point.line.0 as i16,
+            cursor_col: content.cursor.point.column.0 as u16,
+            cursor_shape,
+            mode_flags,
+            title: self.title.clone(),
+            scrollback: sb_cells,
+            scrollback_rows: new_lines as u16,
+            cells,
+        }
+    }
+
+    /// Helper: compute mode flags from a locked term reference (avoids double-locking).
+    fn mode_flags_from_term(&self, term: &Term<PtyEventListener>) -> u8 {
+        use alacritty_terminal::term::TermMode;
+        let mode = term.mode();
+        let mut flags = 0u8;
+        if mode.contains(TermMode::MOUSE_REPORT_CLICK)
+            || mode.contains(TermMode::MOUSE_DRAG)
+            || mode.contains(TermMode::MOUSE_MOTION) {
+            flags |= MODE_MOUSE_REPORT;
+        }
+        if mode.contains(TermMode::ALT_SCREEN) {
+            flags |= MODE_ALT_SCREEN;
+        }
+        flags
     }
 
     /// Read cells from a line range and pack them (live viewport only).

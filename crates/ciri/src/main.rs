@@ -445,7 +445,7 @@ impl ApplicationHandler for App {
                                 }
                             }
                             if let Some((pane_id, col, row)) = self.pixel_to_viewport_cell(mx, my) {
-                                self.send(ClientMessage::MouseInput {
+                                self.send_lossy(ClientMessage::MouseInput {
                                     pane_id, button: 32, col, row, pressed: true, modifiers: 0,
                                 });
                             }
@@ -513,7 +513,7 @@ impl ApplicationHandler for App {
                                         });
                                     } else {
                                         if let Some((_, vcol, vrow)) = self.pixel_to_viewport_cell(mx, my) {
-                                            self.send(ClientMessage::MouseInput {
+                                            self.send_lossy(ClientMessage::MouseInput {
                                                 pane_id, button: 0, col: vcol, row: vrow, pressed: true, modifiers: 0,
                                             });
                                         }
@@ -537,7 +537,7 @@ impl ApplicationHandler for App {
                         self.drag_last_pos = None;
 
                         if let Some((pane_id, col, row)) = self.pixel_to_viewport_cell(mx, my) {
-                            self.send(ClientMessage::MouseInput {
+                            self.send_lossy(ClientMessage::MouseInput {
                                 pane_id, button: 3, col, row, pressed: false, modifiers: 0,
                             });
                         }
@@ -559,6 +559,20 @@ impl ApplicationHandler for App {
                     }
                     if let Some(w) = &self.window { w.request_redraw(); }
                 }
+            }
+
+            WindowEvent::MouseInput { state: ElementState::Pressed, button: winit::event::MouseButton::Right, .. } => {
+                // Right-click = copy selection to clipboard (Ghostty-style)
+                if let Some(text) = self.extract_selected_text() {
+                    if !text.is_empty() {
+                        if let Some(cb) = &mut self.clipboard {
+                            let _ = cb.set_text(&text);
+                            log::debug!("right-click copy: {} bytes", text.len());
+                        }
+                    }
+                }
+                self.selection = None;
+                if let Some(w) = &self.window { w.request_redraw(); }
             }
 
             WindowEvent::MouseWheel { delta, phase, .. } => {
@@ -596,7 +610,7 @@ impl ApplicationHandler for App {
                                     let button = if dy > 0 { 64u8 } else { 65u8 };
                                     let count = dy.unsigned_abs().min(10);
                                     for _ in 0..count {
-                                        self.send(ClientMessage::MouseInput {
+                                        self.send_lossy(ClientMessage::MouseInput {
                                             pane_id: pid, button, col, row, pressed: true, modifiers: 0,
                                         });
                                     }

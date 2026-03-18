@@ -179,6 +179,8 @@ pub enum ServerMessage {
     PaneClosed { pane_id: u64 },
     /// Server is shutting down.
     ServerShutdown,
+    /// OSC 52: TUI app requests clipboard write.
+    ClipboardStore { data: String },
 }
 
 /// Serializable layout state (2D: rows × columns).

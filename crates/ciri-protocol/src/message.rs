@@ -151,6 +151,10 @@ pub enum ClientMessage {
     Resize { cols: u16, rows: u16, width: u32, height: u32, cell_width: f32, cell_height: f32 },
     /// Set column width.
     SetColumnWidth { proportion: f64 },
+    /// Adjust the split between the active column and its nearest neighbor.
+    AdjustColumnSplit { delta: f64 },
+    /// Make the active column and its nearest neighbor 50/50.
+    EqualizeColumnSplit,
     /// Client is attaching (kept for backwards compat, viewport now sent in ClientHello).
     Attach,
     /// Client is detaching.
@@ -159,8 +163,12 @@ pub enum ClientMessage {
     Ack { generation: u64 },
     /// Mouse input forwarded to pane (SGR mouse protocol).
     MouseInput { pane_id: u64, button: u8, col: u16, row: u16, pressed: bool, modifiers: u8 },
-    /// Switch to a workspace row by index.
-    SwitchWorkspace { row_idx: usize },
+    /// Switch to a workspace by index.
+    SwitchWorkspace { workspace_idx: usize },
+    /// Consume the right neighbor column's active pane into the current column.
+    ConsumeIntoColumn,
+    /// Expel the current column's active tile into a new column to the right.
+    ExpelFromColumn,
 }
 
 /// Control messages from server to client (msgpack encoded, tags 0x10-0x1F).
@@ -183,17 +191,17 @@ pub enum ServerMessage {
     ClipboardStore { data: String },
 }
 
-/// Serializable layout state (2D: rows × columns).
+/// Serializable layout state (2D: workspaces × columns).
 /// This is the single source of truth shared by protocol, server, and client.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LayoutState {
-    pub rows: Vec<RowState>,
-    pub active_row: usize,
+    pub workspaces: Vec<WorkspaceState>,
+    pub active_workspace_idx: usize,
 }
 
-/// One horizontal row of columns (a workspace).
+/// One horizontal workspace of columns.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RowState {
+pub struct WorkspaceState {
     pub columns: Vec<ColumnState>,
     pub active_column_idx: usize,
 }

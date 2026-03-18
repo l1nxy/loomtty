@@ -6,7 +6,7 @@ use ciri_protocol::codec;
 use ciri_protocol::message::*;
 use ciri_protocol::transport;
 use ciri_session::save::save_session;
-use ciri_session::state::{SavedColumn, SavedRow, SavedTile, SessionState};
+use ciri_session::state::{SavedColumn, SavedWorkspace, SavedTile, SessionState};
 use ciri_term::pane::Pane;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -92,6 +92,10 @@ struct ServerState {
     clients: HashMap<u64, ClientState>,
     next_client_id: u64,
     default_shell: String,
+    default_column_width: ColumnWidth,
+    /// Total inset per pane: (padding + border_width) * 2, subtracted from pane pixel size
+    /// before computing grid cols/rows.
+    pane_inset: f32,
     session_dirty: bool,
     last_session_change: Option<Instant>,
 }
@@ -110,6 +114,8 @@ impl ServerState {
             clients: HashMap::new(),
             next_client_id: 1,
             default_shell: shell.to_string(),
+            default_column_width: ColumnWidth::Proportion(0.5),
+            pane_inset: 12.0, // (4.0 padding + 2.0 border) * 2 = 12.0 default
             session_dirty: false,
             last_session_change: None,
         }
@@ -119,14 +125,23 @@ impl ServerState {
     fn create_pane(&mut self) -> Result<u64> {
         let id = self.next_pane_id;
         self.next_pane_id += 1;
-        // Compute initial size from the active workspace's view
+        // Compute initial size from the column's actual width (not full viewport)
         let vw = self.workspaces.view_size.width;
         let vh = self.workspaces.view_size.height;
-        let (cols, rows) = self.pane_grid_size(vw, vh);
+        let col_width = self.default_column_width;
+        let col_px = match col_width {
+            ColumnWidth::Proportion(p) => (vw as f64 * p) as f32,
+            ColumnWidth::Fixed(px) => px as f32,
+        };
+        // First pane gets full viewport width
+        let pane_w = if self.workspaces.active().columns.is_empty() { vw } else { col_px };
+        let (cw, ch) = self.effective_cell_dims();
+        let (cols, rows) = self.pane_grid_size(pane_w, vh);
+        log::info!("create_pane {id}: viewport={vw}x{vh} col_px={pane_w:.1} cell={cw}x{ch} inset={} → {cols}x{rows}", self.pane_inset);
         let pane = Pane::new(id, cols, rows, &self.default_shell)?;
         self.panes.insert(id, pane);
         self.generation.insert(id, 0);
-        self.workspaces.active_mut().add_column_right(id);
+        self.workspaces.active_mut().add_column_right(id, self.default_column_width);
         // Mark all clients for full sync of this new pane
         for client in self.clients.values_mut() {
             client.damage.entry(id).or_insert_with(DamageAccumulator::new).mark_full();
@@ -134,8 +149,8 @@ impl ServerState {
         Ok(id)
     }
 
-    /// Create a new pane in a new row below the active one (SplitDown).
-    fn create_pane_in_new_row(&mut self) -> Result<u64> {
+    /// Create a new pane in a new workspace below the active one (SplitDown).
+    fn create_pane_in_new_workspace(&mut self) -> Result<u64> {
         let id = self.next_pane_id;
         self.next_pane_id += 1;
         let vw = self.workspaces.view_size.width;
@@ -144,7 +159,7 @@ impl ServerState {
         let pane = Pane::new(id, cols, rows, &self.default_shell)?;
         self.panes.insert(id, pane);
         self.generation.insert(id, 0);
-        self.workspaces.add_row_below(id);
+        self.workspaces.add_workspace_below(id);
         for client in self.clients.values_mut() {
             client.damage.entry(id).or_insert_with(DamageAccumulator::new).mark_full();
         }
@@ -178,15 +193,18 @@ impl ServerState {
     }
 
     /// Compute cols/rows for a pane given its pixel area and current cell dimensions.
+    /// Subtracts padding + border inset from both dimensions.
     fn pane_grid_size(&self, pane_width: f32, pane_height: f32) -> (u16, u16) {
         let (cw, ch) = self.effective_cell_dims();
-        let cols = (pane_width / cw).floor().max(1.0) as u16;
-        let rows = (pane_height / ch).floor().max(1.0) as u16;
+        let usable_w = (pane_width - self.pane_inset).max(cw);
+        let usable_h = (pane_height - self.pane_inset).max(ch);
+        let cols = (usable_w / cw).floor().max(1.0) as u16;
+        let rows = (usable_h / ch).floor().max(1.0) as u16;
         (cols, rows)
     }
 
     /// Resize ALL panes from the full layout tree (not just visible ones).
-    /// Off-screen panes get their size from their column width and row height,
+    /// Off-screen panes get their size from their column width and workspace height,
     /// so PTY dimensions stay correct even when scrolled out of view.
     fn resize_all_panes(&mut self) {
         let (vp_w, vp_h) = self.effective_viewport();
@@ -194,17 +212,23 @@ impl ServerState {
         let vw = self.workspaces.view_size.width;
         let vh = self.workspaces.view_size.height;
 
-        for ws in &self.workspaces.rows {
+        let (cw, ch) = self.effective_cell_dims();
+        log::debug!("resize_all_panes: viewport={vw}x{vh} cell={cw}x{ch} inset={}", self.pane_inset);
+        for ws in &self.workspaces.workspaces {
             for col in &ws.columns {
                 let col_w = col.effective_width(vw);
-                let (cols, rows) = self.pane_grid_size(col_w, vh);
-                if let Some(pane) = self.panes.get_mut(&col.pane_id) {
-                    pane.resize(cols, rows);
-                    let g = self.generation.entry(col.pane_id).or_insert(0);
-                    *g += 1;
-                    for client in self.clients.values_mut() {
-                        client.damage.entry(col.pane_id)
-                            .or_insert_with(DamageAccumulator::new).mark_full();
+                let tile_rects = col.tile_rects(col_w, vh);
+                for (pane_id, _y, tile_h) in &tile_rects {
+                    let (cols, rows) = self.pane_grid_size(col_w, *tile_h);
+                    log::debug!("  pane {}: col_w={col_w:.1}px tile_h={tile_h:.1}px → {cols}x{rows} chars", pane_id);
+                    if let Some(pane) = self.panes.get_mut(pane_id) {
+                        pane.resize(cols, rows);
+                        let g = self.generation.entry(*pane_id).or_insert(0);
+                        *g += 1;
+                        for client in self.clients.values_mut() {
+                            client.damage.entry(*pane_id)
+                                .or_insert_with(DamageAccumulator::new).mark_full();
+                        }
                     }
                 }
             }
@@ -212,8 +236,8 @@ impl ServerState {
     }
 
     fn close_pane(&mut self, pane_id: u64) {
-        // Remove from whichever row contains it
-        for ws in &mut self.workspaces.rows {
+        // Remove from whichever workspace contains it
+        for ws in &mut self.workspaces.workspaces {
             ws.close_pane(pane_id);
         }
         self.workspaces.cleanup_empty();
@@ -227,10 +251,10 @@ impl ServerState {
 
     fn layout_state(&self) -> LayoutState {
         LayoutState {
-            rows: self.workspaces.rows.iter().map(|ws| RowState {
+            workspaces: self.workspaces.workspaces.iter().map(|ws| WorkspaceState {
                 columns: ws.columns.iter().map(|c| ColumnState {
-                    tiles: vec![TileState { pane_id: c.pane_id, weight: 1.0 }],
-                    active_tile_idx: 0,
+                    tiles: c.tiles.iter().map(|t| TileState { pane_id: t.pane_id, weight: t.height.weight() }).collect(),
+                    active_tile_idx: c.active_tile_idx,
                     width_proportion: match c.width {
                         ColumnWidth::Proportion(p) => p,
                         ColumnWidth::Fixed(px) => px / self.workspaces.view_size.width as f64,
@@ -238,17 +262,17 @@ impl ServerState {
                 }).collect(),
                 active_column_idx: ws.active_column_idx,
             }).collect(),
-            active_row: self.workspaces.active_row,
+            active_workspace_idx: self.workspaces.active_workspace_idx,
         }
     }
 
     fn save_session(&self) -> Result<()> {
         let state = SessionState {
             name: self.session_name.clone(),
-            rows: self.workspaces.rows.iter().map(|ws| SavedRow {
+            workspaces: self.workspaces.workspaces.iter().map(|ws| SavedWorkspace {
                 columns: ws.columns.iter().map(|c| SavedColumn {
-                    tiles: vec![SavedTile { pane_id: c.pane_id, weight: 1.0, cwd: None, title: None }],
-                    active_tile_idx: 0,
+                    tiles: c.tiles.iter().map(|t| SavedTile { pane_id: t.pane_id, weight: t.height.weight(), cwd: None, title: None }).collect(),
+                    active_tile_idx: c.active_tile_idx,
                     width_proportion: match c.width {
                         ColumnWidth::Proportion(p) => p,
                         ColumnWidth::Fixed(px) => px / self.workspaces.view_size.width as f64,
@@ -256,7 +280,7 @@ impl ServerState {
                 }).collect(),
                 active_column_idx: ws.active_column_idx,
             }).collect(),
-            active_row: self.workspaces.active_row,
+            active_workspace_idx: self.workspaces.active_workspace_idx,
         };
         save_session(&state, &transport::state_dir())
     }
@@ -309,7 +333,7 @@ impl ServerState {
                 let g = self.generation.entry(pane_id).or_insert(0);
                 *g += 1;
 
-                // If all rows were damaged, this is likely a scroll or full repaint.
+                // If all terminal rows were damaged, this is likely a scroll or full repaint.
                 // Mark as full so a FullPaneSync is sent (client needs it for scrollback).
                 let is_full = regions.len() >= pane.grid_rows() as usize;
 
@@ -351,6 +375,7 @@ impl ServerState {
             ClientMessage::CreatePane => {
                 match self.create_pane() {
                     Ok(id) => {
+                        self.resize_all_panes();
                         self.mark_session_dirty();
                         responses.push(ServerResponse::BroadcastControl(ServerMessage::PaneCreated {
                             pane_id: id,
@@ -364,8 +389,9 @@ impl ServerState {
                 }
             }
             ClientMessage::SplitDown => {
-                match self.create_pane_in_new_row() {
+                match self.create_pane_in_new_workspace() {
                     Ok(id) => {
+                        self.resize_all_panes();
                         self.mark_session_dirty();
                         responses.push(ServerResponse::BroadcastControl(ServerMessage::PaneCreated {
                             pane_id: id,
@@ -380,6 +406,7 @@ impl ServerState {
             }
             ClientMessage::ClosePane { pane_id } => {
                 self.close_pane(pane_id);
+                self.resize_all_panes();
                 self.mark_session_dirty();
                 responses.push(ServerResponse::BroadcastControl(ServerMessage::PaneClosed { pane_id }));
                 responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
@@ -401,14 +428,22 @@ impl ServerState {
                 }));
             }
             ClientMessage::FocusUp => {
-                self.workspaces.focus_up();
+                // First try to move up within the column's tiles
+                if !self.workspaces.active_mut().focus_tile_up() {
+                    // If at top tile, switch to previous workspace
+                    self.workspaces.focus_up();
+                }
                 self.mark_session_dirty();
                 responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
                     layout: self.layout_state(),
                 }));
             }
             ClientMessage::FocusDown => {
-                self.workspaces.focus_down();
+                // First try to move down within the column's tiles
+                if !self.workspaces.active_mut().focus_tile_down() {
+                    // If at bottom tile, switch to next workspace
+                    self.workspaces.focus_down();
+                }
                 self.mark_session_dirty();
                 responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
                     layout: self.layout_state(),
@@ -451,6 +486,39 @@ impl ServerState {
             ClientMessage::SetColumnWidth { proportion } => {
                 self.workspaces.active_mut().set_active_column_width(ColumnWidth::Proportion(proportion));
                 self.mark_session_dirty();
+                self.resize_all_panes();
+                responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
+                    layout: self.layout_state(),
+                }));
+            }
+            ClientMessage::AdjustColumnSplit { delta } => {
+                self.workspaces.active_mut().resize_active_with_neighbor(delta);
+                self.mark_session_dirty();
+                self.resize_all_panes();
+                responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
+                    layout: self.layout_state(),
+                }));
+            }
+            ClientMessage::EqualizeColumnSplit => {
+                self.workspaces.active_mut().equalize_active_with_neighbor();
+                self.mark_session_dirty();
+                self.resize_all_panes();
+                responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
+                    layout: self.layout_state(),
+                }));
+            }
+            ClientMessage::ConsumeIntoColumn => {
+                self.workspaces.active_mut().consume_from_right();
+                self.resize_all_panes();
+                self.mark_session_dirty();
+                responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
+                    layout: self.layout_state(),
+                }));
+            }
+            ClientMessage::ExpelFromColumn => {
+                self.workspaces.active_mut().expel_active_tile();
+                self.resize_all_panes();
+                self.mark_session_dirty();
                 responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
                     layout: self.layout_state(),
                 }));
@@ -466,8 +534,8 @@ impl ServerState {
                     client.last_acked_generation = generation;
                 }
             }
-            ClientMessage::SwitchWorkspace { row_idx } => {
-                self.workspaces.switch_to(row_idx);
+            ClientMessage::SwitchWorkspace { workspace_idx } => {
+                self.workspaces.switch_to(workspace_idx);
                 self.mark_session_dirty();
                 responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
                     layout: self.layout_state(),
@@ -601,15 +669,15 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
             .ok()
             .flatten();
         if let Some(saved) = restored {
-            log::info!("restoring session '{}' ({} rows)", session_name, saved.rows.len());
+            log::info!("restoring session '{}' ({} workspaces)", session_name, saved.workspaces.len());
             // Rebuild workspace layout and create panes
-            s.workspaces.rows.clear();
-            for saved_row in &saved.rows {
+            s.workspaces.workspaces.clear();
+            for saved_ws in &saved.workspaces {
                 let mut ws = ciri_layout::workspace::Workspace::new_with_gap(
                     s.workspaces.view_size,
                     s.workspaces.column_gap,
                 );
-                for saved_col in &saved_row.columns {
+                for saved_col in &saved_ws.columns {
                     if let Some(_tile) = saved_col.tiles.first() {
                         let id = s.next_pane_id;
                         s.next_pane_id += 1;
@@ -629,18 +697,18 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                         }
                     }
                 }
-                ws.active_column_idx = saved_row.active_column_idx
+                ws.active_column_idx = saved_ws.active_column_idx
                     .min(ws.columns.len().saturating_sub(1));
-                s.workspaces.rows.push(ws);
+                s.workspaces.workspaces.push(ws);
             }
-            s.workspaces.active_row = saved.active_row
-                .min(s.workspaces.rows.len().saturating_sub(1));
+            s.workspaces.active_workspace_idx = saved.active_workspace_idx
+                .min(s.workspaces.workspaces.len().saturating_sub(1));
             // If restore produced no panes (all failed), create a default one
             if s.panes.is_empty() {
                 let vs = s.workspaces.view_size;
                 let cg = s.workspaces.column_gap;
-                s.workspaces.rows.clear();
-                s.workspaces.rows.push(ciri_layout::workspace::Workspace::new_with_gap(vs, cg));
+                s.workspaces.workspaces.clear();
+                s.workspaces.workspaces.push(ciri_layout::workspace::Workspace::new_with_gap(vs, cg));
                 s.create_pane()?;
             }
         } else {

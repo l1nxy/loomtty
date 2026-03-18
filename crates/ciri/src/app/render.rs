@@ -14,7 +14,7 @@ impl App {
     pub fn snap_all_col_widths(&mut self) {
         let vw = self.workspaces.view_size.width;
         self.col_widths.clear();
-        for ws in &mut self.workspaces.rows {
+        for ws in &mut self.workspaces.workspaces {
             for col in &mut ws.columns {
                 col.snap_width(vw);
             }
@@ -30,20 +30,20 @@ impl App {
         let vh = self.workspaces.view_size.height;
         let max_w = self
             .workspaces
-            .rows
+            .workspaces
             .iter()
             .map(|ws| ws.total_width())
             .fold(0.0f32, f32::max)
             .max(vw);
         let nrows = self
             .workspaces
-            .rows
+            .workspaces
             .iter()
             .filter(|ws| !ws.is_empty())
             .count()
             .max(1);
         let total_h =
-            nrows as f32 * vh + (nrows.saturating_sub(1)) as f32 * self.workspaces.row_gap;
+            nrows as f32 * vh + (nrows.saturating_sub(1)) as f32 * self.workspaces.workspace_gap;
         let fit = self.config.animation.overview_zoom_fit;
         let zoom_x = vw / max_w;
         let zoom_y = vh / total_h;
@@ -55,7 +55,12 @@ impl App {
         let omega = self.config.animation.speed;
         let enabled = self.config.animation.enabled;
 
-        let target_x = self.workspaces.active_mut().target_offset_for_active();
+        let center_strategy = match self.config.layout.center_focused_column {
+            ciri_config::config::CenterStrategy::Always => 2,
+            ciri_config::config::CenterStrategy::OnOverflow => 1,
+            ciri_config::config::CenterStrategy::Never => 0,
+        };
+        let target_x = self.workspaces.active_mut().target_offset_for_active_with_strategy(center_strategy);
         if enabled {
             self.view_offset_x.animate_to(target_x as f64, omega);
         } else {
@@ -114,7 +119,7 @@ impl App {
             animating = true;
         }
         let vox = self.view_offset_x.value() as f32;
-        for ws in &mut self.workspaces.rows {
+        for ws in &mut self.workspaces.workspaces {
             ws.view_offset_x = vox;
         }
         self.workspaces.view_offset_y = self.view_offset_y.value() as f32;
@@ -356,7 +361,7 @@ impl App {
             color: ThemeConfig::parse_color(&self.config.theme.statusbar_background),
         });
 
-        let ws_idx = self.workspaces.active_workspace_idx();
+        let ws_idx = self.workspaces.active_workspace_idx;
         let leader_hint = if self.input.is_awaiting_action() {
             " LEADER "
         } else {
@@ -369,7 +374,7 @@ impl App {
         };
 
         let mut status_left = String::new();
-        for (i, ws) in self.workspaces.rows.iter().enumerate() {
+        for (i, ws) in self.workspaces.workspaces.iter().enumerate() {
             if !ws.is_empty() || i == ws_idx {
                 if i == ws_idx {
                     status_left.push_str(&format!(" [{}*] ", i + 1));

@@ -86,6 +86,9 @@ pub(crate) struct App {
     pub resize_dragging: Option<usize>,
     pub resize_drag_start_x: f32,
     pub resize_drag_start_width: f32,
+    /// Tile height drag: (column_idx, tile_idx of top tile in the pair)
+    pub tile_resize_dragging: Option<(usize, usize)>,
+    pub tile_resize_drag_start_y: f32,
     pub connected: bool,
     pub cursor_blink_visible: bool,
     pub cursor_blink_timer: Instant,
@@ -157,6 +160,8 @@ impl App {
             resize_dragging: None,
             resize_drag_start_x: 0.0,
             resize_drag_start_width: 0.0,
+            tile_resize_dragging: None,
+            tile_resize_drag_start_y: 0.0,
             connected: false,
             cursor_blink_visible: true,
             cursor_blink_timer: Instant::now(),
@@ -170,6 +175,16 @@ impl App {
             config_watcher: None,
             config_change_rx: None,
         }
+    }
+
+    /// Convert config preset_widths to layout ColumnWidth values.
+    pub fn preset_widths(&self) -> Vec<ciri_layout::column::ColumnWidth> {
+        use ciri_config::config::PresetWidth;
+        use ciri_layout::column::ColumnWidth;
+        self.config.layout.preset_widths.iter().map(|pw| match pw {
+            PresetWidth::Proportion { proportion } => ColumnWidth::Proportion(*proportion),
+            PresetWidth::Fixed { fixed } => ColumnWidth::Fixed(*fixed),
+        }).collect()
     }
 
     /// Send a critical message to the server (blocks if queue full).

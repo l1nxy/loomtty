@@ -9,6 +9,7 @@ use crate::connection::ServerEvent;
 use crate::grid::ClientPaneGrid;
 
 use ciri_layout::column::Column;
+use ciri_layout::tile::Tile;
 
 impl App {
     /// Process all pending server events. Returns true if a redraw is needed.
@@ -93,7 +94,7 @@ impl App {
                     needs_redraw = true;
                 }
                 ServerEvent::CellDelta(delta) => {
-                    log::debug!(
+                    log::trace!(
                         "CellDelta: pane={} regions={} cursor=({},{})",
                         delta.pane_id,
                         delta.regions.len(),
@@ -139,33 +140,40 @@ impl App {
         let view_size = self.workspaces.view_size;
         let column_gap = self.workspaces.column_gap;
 
-        let mut new_rows: Vec<Workspace> = layout
-            .rows
+        let mut new_workspaces: Vec<Workspace> = layout
+            .workspaces
             .iter()
-            .map(|row_state| {
+            .map(|ws_state| {
                 let mut ws = Workspace::new_with_gap(view_size, column_gap);
-                for col_state in &row_state.columns {
-                    if let Some(tile) = col_state.tiles.first() {
-                        let mut col = Column::new(tile.pane_id);
+                for col_state in &ws_state.columns {
+                    if let Some(first_tile) = col_state.tiles.first() {
+                        let mut col = Column::new(first_tile.pane_id);
+                        // Replace the default single tile with all tiles from state
+                        col.tiles = col_state.tiles.iter().map(|t| {
+                            let mut tile = Tile::new(t.pane_id);
+                            tile.height = ciri_layout::tile::TileHeight::Auto { weight: t.weight as f64 };
+                            tile
+                        }).collect();
+                        col.active_tile_idx = col_state.active_tile_idx.min(col.tiles.len().saturating_sub(1));
                         col.width = ColumnWidth::Proportion(col_state.width_proportion);
                         ws.columns.push(col);
                     }
                 }
-                ws.active_column_idx = row_state
+                ws.active_column_idx = ws_state
                     .active_column_idx
                     .min(ws.columns.len().saturating_sub(1));
                 ws
             })
             .collect();
 
-        if new_rows.is_empty() {
-            new_rows.push(Workspace::new_with_gap(view_size, column_gap));
+        if new_workspaces.is_empty() {
+            new_workspaces.push(Workspace::new_with_gap(view_size, column_gap));
         }
 
-        self.workspaces.rows = new_rows;
-        self.workspaces.active_row = layout
-            .active_row
-            .min(self.workspaces.rows.len().saturating_sub(1));
+        self.workspaces.workspaces = new_workspaces;
+        self.workspaces.active_workspace_idx = layout
+            .active_workspace_idx
+            .min(self.workspaces.workspaces.len().saturating_sub(1));
 
         self.snap_all_col_widths();
         self.animate_to_active();

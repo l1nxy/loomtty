@@ -81,10 +81,13 @@ impl InputHandler {
                 self.state = LeaderState::Idle;
 
                 let combo = KeyCombo::from_modifiers(key_name, ctrl, shift, alt, super_key);
+                log::debug!("leader combo: key={:?} shift={} ctrl={} alt={} super={}", key_name, shift, ctrl, alt, super_key);
 
                 if let Some(action) = self.keybinds.lookup(&combo) {
+                    log::debug!("leader matched action: {:?}", action);
                     InputResult::Action(action)
                 } else {
+                    log::debug!("leader: no match for combo {:?}", combo);
                     // Unknown key after leader: consume it (don't send to PTY)
                     InputResult::Consumed
                 }

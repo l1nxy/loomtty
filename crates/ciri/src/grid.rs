@@ -1,5 +1,5 @@
-use std::collections::VecDeque;
 use ciri_protocol::message::*;
+use std::collections::VecDeque;
 
 /// Client-side pane grid with scrollback buffer.
 ///
@@ -89,7 +89,9 @@ impl ClientPaneGrid {
         for r in 0..sb_rows {
             let start = r * new_cols;
             let end = (start + new_cols).min(sync.scrollback.len());
-            if end <= start { continue; }
+            if end <= start {
+                continue;
+            }
             self.buffer.push_back(sync.scrollback[start..end].to_vec());
         }
 
@@ -131,9 +133,13 @@ impl ClientPaneGrid {
 
         for region in &delta.regions {
             let line = region.line as usize;
-            if line >= self.rows as usize { continue; }
+            if line >= self.rows as usize {
+                continue;
+            }
             let buf_row = live_start + line;
-            if buf_row >= buf_len { continue; }
+            if buf_row >= buf_len {
+                continue;
+            }
             for (i, &cell) in region.cells.iter().enumerate() {
                 let col = region.left as usize + i;
                 if col < self.buffer[buf_row].len() {
@@ -150,7 +156,9 @@ impl ClientPaneGrid {
         let old = self.scroll_offset;
         self.scroll_offset = (self.scroll_offset + lines).min(max);
         let scrolled = self.scroll_offset - old;
-        if scrolled > 0 { self.dirty = true; }
+        if scrolled > 0 {
+            self.dirty = true;
+        }
         scrolled
     }
 
@@ -159,7 +167,9 @@ impl ClientPaneGrid {
         let old = self.scroll_offset;
         self.scroll_offset = self.scroll_offset.saturating_sub(lines);
         let scrolled = old - self.scroll_offset;
-        if scrolled > 0 { self.dirty = true; }
+        if scrolled > 0 {
+            self.dirty = true;
+        }
         scrolled
     }
 
@@ -231,20 +241,38 @@ impl ClientPaneGrid {
         };
         let mut result = String::new();
         for buf_row in start.1..=end.1 {
-            if buf_row >= self.buffer.len() { break; }
+            if buf_row >= self.buffer.len() {
+                break;
+            }
             let row_data = &self.buffer[buf_row];
-            let left = if buf_row == start.1 { start.0 as usize } else { 0 };
-            let right = if buf_row == end.1 { end.0 as usize } else { self.cols.saturating_sub(1) as usize };
+            let left = if buf_row == start.1 {
+                start.0 as usize
+            } else {
+                0
+            };
+            let right = if buf_row == end.1 {
+                end.0 as usize
+            } else {
+                self.cols.saturating_sub(1) as usize
+            };
             let mut line = String::new();
             for col in left..=right {
-                if col >= row_data.len() { break; }
-                if row_data[col].flags_u16() & FLAG_WIDE_CHAR_SPACER != 0 { continue; }
+                if col >= row_data.len() {
+                    break;
+                }
+                if row_data[col].flags_u16() & FLAG_WIDE_CHAR_SPACER != 0 {
+                    continue;
+                }
                 let c = row_data[col].ch();
-                if c != '\0' { line.push(c); }
+                if c != '\0' {
+                    line.push(c);
+                }
             }
             let trimmed = line.trim_end();
             result.push_str(trimmed);
-            if buf_row < end.1 { result.push('\n'); }
+            if buf_row < end.1 {
+                result.push('\n');
+            }
         }
         result
     }

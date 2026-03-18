@@ -1,4 +1,5 @@
 mod app;
+mod cli;
 mod connection;
 mod grid;
 
@@ -12,6 +13,7 @@ use ciri_layout::column::ColumnWidth;
 use ciri_layout::geometry::ViewSize;
 use ciri_protocol::message::*;
 use ciri_render::glyph_cache::GlyphAtlas;
+use cli::CliCommand;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
@@ -39,15 +41,21 @@ impl ApplicationHandler for App {
         let wants_blink = self.config.terminal.cursor_blink;
 
         if is_animating || has_server || is_reconnecting || wants_blink {
-            event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + self.frame_interval));
+            event_loop
+                .set_control_flow(ControlFlow::WaitUntil(Instant::now() + self.frame_interval));
         } else {
             event_loop.set_control_flow(ControlFlow::Wait);
         }
 
-        if matches!(cause, StartCause::ResumeTimeReached { .. } | StartCause::Poll) {
+        if matches!(
+            cause,
+            StartCause::ResumeTimeReached { .. } | StartCause::Poll
+        ) {
             let mut needs_redraw = is_animating;
 
-            if self.process_server_events() { needs_redraw = true; }
+            if self.process_server_events() {
+                needs_redraw = true;
+            }
 
             // Cursor blink
             if self.config.terminal.cursor_blink {
@@ -69,9 +77,13 @@ impl ApplicationHandler for App {
 
             // Auto-reconnect
             if !self.connected && self.server_rx.is_none() {
-                let should_try = self.reconnect_state.as_ref()
+                let should_try = self
+                    .reconnect_state
+                    .as_ref()
                     .is_some_and(|s| Instant::now() >= s.next_retry);
-                let gave_up = self.reconnect_state.as_ref()
+                let gave_up = self
+                    .reconnect_state
+                    .as_ref()
                     .is_some_and(|s| s.attempt >= s.max_attempts);
                 let has_reconnect = self.reconnect_state.is_some();
 
@@ -83,15 +95,17 @@ impl ApplicationHandler for App {
                     let (cw, ch) = self.cell_dimensions();
                     let view = &self.workspaces.view_size;
                     let viewport = ciri_protocol::codec::ClientViewport {
-                        width: view.width as u32, height: view.height as u32,
-                        cell_width: cw, cell_height: ch,
+                        width: view.width as u32,
+                        height: view.height as u32,
+                        cell_width: cw,
+                        cell_height: ch,
                     };
                     if let Some(state) = &mut self.reconnect_state {
                         state.attempt += 1;
                     }
-                    match connection::connect_or_spawn("default", viewport) {
+                    match connection::connect_or_spawn(&self.session_name, viewport) {
                         Ok((tx, rx)) => {
-                            log::info!("reconnected");
+                            log::info!("reconnected to session '{}'", self.session_name);
                             self.server_tx = Some(tx);
                             self.server_rx = Some(rx);
                             self.reconnect_state = None;
@@ -128,39 +142,63 @@ impl ApplicationHandler for App {
                 return;
             }
 
-            if needs_redraw
-                && let Some(w) = &self.window { w.request_redraw(); }
+            if needs_redraw && let Some(w) = &self.window {
+                w.request_redraw();
+            }
         }
     }
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() { return; }
+        if self.window.is_some() {
+            return;
+        }
 
+        let window_title = format!("{} [{}]", self.config.window.title, self.session_name);
         let attrs = WindowAttributes::default()
-            .with_title(&self.config.window.title)
+            .with_title(window_title)
             .with_inner_size(winit::dpi::LogicalSize::new(
                 self.config.window.width,
                 self.config.window.height,
             ));
 
-        let window = Arc::new(event_loop.create_window(attrs).expect("failed to create window"));
+        let window = Arc::new(
+            event_loop
+                .create_window(attrs)
+                .expect("failed to create window"),
+        );
         window.set_ime_allowed(true);
         let dpi_scale = window.scale_factor();
-        let mut renderer = pollster::block_on(ciri_render::renderer::Renderer::new(window.clone(), &self.config.render)).expect("renderer init failed");
+        let mut renderer = pollster::block_on(ciri_render::renderer::Renderer::new(
+            window.clone(),
+            &self.config.render,
+        ))
+        .expect("renderer init failed");
 
         let fmt = renderer.surface_format();
         let atlas = GlyphAtlas::new(
-            &renderer.device, fmt,
-            &mut renderer.text.font_system, self.config.font.size,
-            dpi_scale, &self.config.font.family,
+            &renderer.device,
+            fmt,
+            &mut renderer.text.font_system,
+            self.config.font.size,
+            dpi_scale,
+            &self.config.font.family,
             &self.config.render,
         );
 
         let (w, h) = renderer.surface_size();
         let bar_h = atlas.cell_height + self.config.statusbar.height_padding;
-        self.workspaces.resize_view(ViewSize { width: w as f32, height: h as f32 - bar_h });
+        self.workspaces.resize_view(ViewSize {
+            width: w as f32,
+            height: h as f32 - bar_h,
+        });
 
-        log::info!("cell: {:.1}x{:.1} ascent={:.1} (dpi_scale={:.2})", atlas.cell_width, atlas.cell_height, atlas.ascent, dpi_scale);
+        log::info!(
+            "cell: {:.1}x{:.1} ascent={:.1} (dpi_scale={:.2})",
+            atlas.cell_width,
+            atlas.cell_height,
+            atlas.ascent,
+            dpi_scale
+        );
 
         let (cw, ch) = self.cell_dimensions();
         let view = &self.workspaces.view_size;
@@ -170,7 +208,8 @@ impl ApplicationHandler for App {
             cell_width: cw,
             cell_height: ch,
         };
-        match connection::connect_or_spawn("default", viewport) {
+        log::info!("connecting to session '{}'", self.session_name);
+        match connection::connect_or_spawn(&self.session_name, viewport) {
             Ok((tx, rx)) => {
                 self.server_tx = Some(tx);
                 self.server_rx = Some(rx);
@@ -189,7 +228,8 @@ impl ApplicationHandler for App {
                         let _ = ctx.try_send(());
                     }
                 }
-            }).ok();
+            })
+            .ok();
             if let Some(mut w) = watcher {
                 use notify::Watcher;
                 let path = ciri_config::config::config_path();
@@ -226,37 +266,55 @@ impl ApplicationHandler for App {
                 event_loop.exit();
             }
 
-            WindowEvent::ModifiersChanged(mods) => { self.modifiers = mods.state(); }
+            WindowEvent::ModifiersChanged(mods) => {
+                self.modifiers = mods.state();
+            }
 
             WindowEvent::Resized(size) => {
-                if size.width == 0 || size.height == 0 { return; }
+                if size.width == 0 || size.height == 0 {
+                    return;
+                }
                 if let Some(renderer) = &mut self.renderer {
                     renderer.resize(size.width, size.height);
                 }
                 let bar_h = self.status_bar_height();
                 self.workspaces.resize_view(ViewSize {
-                    width: size.width as f32, height: size.height as f32 - bar_h,
+                    width: size.width as f32,
+                    height: size.height as f32 - bar_h,
                 });
                 self.snap_all_col_widths();
-                for grid in self.pane_grids.values_mut() { grid.dirty = true; }
+                for grid in self.pane_grids.values_mut() {
+                    grid.dirty = true;
+                }
                 self.cached_views.clear();
                 let t = self.workspaces.active_mut().target_offset_for_active();
                 self.view_offset_x.jump_to(t as f64);
-                for ws in &mut self.workspaces.rows { ws.view_offset_x = t; }
+                for ws in &mut self.workspaces.rows {
+                    ws.view_offset_x = t;
+                }
                 let (cols, rows) = self.compute_grid_size();
                 let (cw, ch) = self.cell_dimensions();
                 let view = &self.workspaces.view_size;
                 self.send(ClientMessage::Resize {
-                    cols, rows,
-                    width: view.width as u32, height: view.height as u32,
-                    cell_width: cw, cell_height: ch,
+                    cols,
+                    rows,
+                    width: view.width as u32,
+                    height: view.height as u32,
+                    cell_width: cw,
+                    cell_height: ch,
                 });
-                if let Some(w) = &self.window { w.request_redraw(); }
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
             }
 
             WindowEvent::KeyboardInput { event, .. } => {
-                if event.state != ElementState::Pressed { return; }
-                if self.ime_preedit_active { return; }
+                if event.state != ElementState::Pressed {
+                    return;
+                }
+                if self.ime_preedit_active {
+                    return;
+                }
 
                 self.cursor_blink_visible = true;
                 self.cursor_blink_timer = Instant::now();
@@ -266,11 +324,15 @@ impl ApplicationHandler for App {
                 let alt = self.modifiers.alt_key();
                 let super_key = self.modifiers.super_key();
 
-                log::debug!("key: ctrl={ctrl} shift={shift} alt={alt} super={super_key} logical={:?} physical={:?}", event.logical_key, event.physical_key);
+                log::debug!(
+                    "key: ctrl={ctrl} shift={shift} alt={alt} super={super_key} logical={:?} physical={:?}",
+                    event.logical_key,
+                    event.physical_key
+                );
 
                 // Clipboard: Ctrl+Shift+V / Ctrl+Shift+C
                 if ctrl && shift {
-                    use winit::keyboard::{PhysicalKey, KeyCode};
+                    use winit::keyboard::{KeyCode, PhysicalKey};
                     log::info!("ctrl+shift detected, physical={:?}", event.physical_key);
                     match event.physical_key {
                         PhysicalKey::Code(KeyCode::KeyV) => {
@@ -281,24 +343,36 @@ impl ApplicationHandler for App {
                                     Err(e) => log::warn!("clipboard read failed: {e}"),
                                     Ok(text) => {
                                         log::info!("clipboard text: {} bytes", text.len());
-                                        if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
-                                            self.send(ClientMessage::Input { pane_id: pid, data: text.into_bytes() });
+                                        if let Some(pid) =
+                                            self.workspaces.active_mut().active_pane_id()
+                                        {
+                                            self.send(ClientMessage::Input {
+                                                pane_id: pid,
+                                                data: text.into_bytes(),
+                                            });
                                         }
                                     }
-                                }
+                                },
                             }
-                            if let Some(w) = &self.window { w.request_redraw(); }
+                            if let Some(w) = &self.window {
+                                w.request_redraw();
+                            }
                             return;
                         }
                         PhysicalKey::Code(KeyCode::KeyC) => {
-                            log::info!("clipboard copy triggered, selection={}", self.selection.is_some());
+                            log::info!(
+                                "clipboard copy triggered, selection={}",
+                                self.selection.is_some()
+                            );
                             if let Some(text) = self.extract_selected_text() {
                                 log::info!("copying {} bytes", text.len());
                                 if let Some(cb) = &mut self.clipboard {
                                     let _ = cb.set_text(&text);
                                 }
                             }
-                            if let Some(w) = &self.window { w.request_redraw(); }
+                            if let Some(w) = &self.window {
+                                w.request_redraw();
+                            }
                             return;
                         }
                         _ => {}
@@ -307,7 +381,9 @@ impl ApplicationHandler for App {
 
                 let is_modifier_only = matches!(
                     event.logical_key,
-                    Key::Named(NamedKey::Control | NamedKey::Shift | NamedKey::Alt | NamedKey::Super)
+                    Key::Named(
+                        NamedKey::Control | NamedKey::Shift | NamedKey::Alt | NamedKey::Super
+                    )
                 );
                 if !is_modifier_only {
                     self.selection = None;
@@ -330,12 +406,19 @@ impl ApplicationHandler for App {
                 };
 
                 if self.overview_active {
-                    let combo = KeyCombo::from_modifiers(&key_name.to_lowercase(), ctrl, shift, alt, super_key);
+                    let combo = KeyCombo::from_modifiers(
+                        &key_name.to_lowercase(),
+                        ctrl,
+                        shift,
+                        alt,
+                        super_key,
+                    );
                     if let Some(action) = self.overview_keybinds.lookup(&combo) {
                         match action {
                             Action::ExitOverview => {
                                 self.overview_active = false;
-                                self.overview_zoom.animate_to(1.0, self.config.animation.speed);
+                                self.overview_zoom
+                                    .animate_to(1.0, self.config.animation.speed);
                                 self.animate_to_active();
                             }
                             other => self.handle_action(other),
@@ -344,7 +427,8 @@ impl ApplicationHandler for App {
                 } else {
                     use ciri_input::leader::InputResult;
                     let result = if !key_name.is_empty() {
-                        self.input.process_key(key_name, ctrl, shift, alt, super_key)
+                        self.input
+                            .process_key(key_name, ctrl, shift, alt, super_key)
                     } else {
                         InputResult::PassThrough
                     };
@@ -356,13 +440,19 @@ impl ApplicationHandler for App {
                             self.scroll_active_to_bottom();
                             let bytes = key_event_to_pty_bytes(&event, ctrl);
                             if !bytes.is_empty()
-                                && let Some(pid) = self.workspaces.active_mut().active_pane_id() {
-                                self.send(ClientMessage::Input { pane_id: pid, data: bytes });
+                                && let Some(pid) = self.workspaces.active_mut().active_pane_id()
+                            {
+                                self.send(ClientMessage::Input {
+                                    pane_id: pid,
+                                    data: bytes,
+                                });
                             }
                         }
                     }
                 }
-                if let Some(w) = &self.window { w.request_redraw(); }
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
             }
 
             WindowEvent::CursorMoved { position, .. } => {
@@ -382,7 +472,9 @@ impl ApplicationHandler for App {
                                 }
                             }
                         }
-                        if let Some(w) = &self.window { w.request_redraw(); }
+                        if let Some(w) = &self.window {
+                            w.request_redraw();
+                        }
                     }
 
                     if self.overview_dragging {
@@ -399,7 +491,9 @@ impl ApplicationHandler for App {
                             let cur_y = self.view_offset_y.value();
                             self.view_offset_y.jump_to(cur_y - dy as f64);
                             self.workspaces.view_offset_y = self.view_offset_y.value() as f32;
-                            if let Some(w) = &self.window { w.request_redraw(); }
+                            if let Some(w) = &self.window {
+                                w.request_redraw();
+                            }
                         }
                         self.drag_last_pos = Some((mx, my));
                     }
@@ -414,7 +508,9 @@ impl ApplicationHandler for App {
                             ColumnWidth::Proportion(proportion),
                         );
                         self.snap_all_col_widths();
-                        if let Some(w) = &self.window { w.request_redraw(); }
+                        if let Some(w) = &self.window {
+                            w.request_redraw();
+                        }
                     } else {
                         let ws = self.workspaces.active();
                         let vox = ws.view_offset_x;
@@ -441,12 +537,19 @@ impl ApplicationHandler for App {
                                     if let Some(sel) = &mut self.selection {
                                         sel.end = (col, buf_row);
                                     }
-                                    if let Some(w) = &self.window { w.request_redraw(); }
+                                    if let Some(w) = &self.window {
+                                        w.request_redraw();
+                                    }
                                 }
                             }
                             if let Some((pane_id, col, row)) = self.pixel_to_viewport_cell(mx, my) {
                                 self.send_lossy(ClientMessage::MouseInput {
-                                    pane_id, button: 32, col, row, pressed: true, modifiers: 0,
+                                    pane_id,
+                                    button: 32,
+                                    col,
+                                    row,
+                                    pressed: true,
+                                    modifiers: 0,
                                 });
                             }
                         }
@@ -454,7 +557,11 @@ impl ApplicationHandler for App {
                 }
             }
 
-            WindowEvent::MouseInput { state, button: winit::event::MouseButton::Left, .. } => {
+            WindowEvent::MouseInput {
+                state,
+                button: winit::event::MouseButton::Left,
+                ..
+            } => {
                 if let Some((mx, my)) = self.last_mouse_pos {
                     if state == ElementState::Pressed {
                         if self.overview_active {
@@ -470,7 +577,8 @@ impl ApplicationHandler for App {
                                     }
                                 }
                                 self.overview_active = false;
-                                self.overview_zoom.animate_to(1.0, self.config.animation.speed);
+                                self.overview_zoom
+                                    .animate_to(1.0, self.config.animation.speed);
                                 self.animate_to_active();
                             } else {
                                 self.overview_dragging = true;
@@ -485,7 +593,8 @@ impl ApplicationHandler for App {
                                 let col_x = ws.column_x(i) - vox;
                                 if (mx - col_x).abs() < 4.0 {
                                     let left_col_idx = i - 1;
-                                    let left_col_width = ws.columns[left_col_idx].effective_width(vw);
+                                    let left_col_width =
+                                        ws.columns[left_col_idx].effective_width(vw);
                                     self.resize_dragging = Some(left_col_idx);
                                     self.resize_drag_start_x = mx;
                                     self.resize_drag_start_width = left_col_width;
@@ -509,16 +618,29 @@ impl ApplicationHandler for App {
 
                                     if shift {
                                         self.selection = Some(app::Selection {
-                                            pane_id, start: (col, buf_row), end: (col, buf_row), active: true,
+                                            pane_id,
+                                            start: (col, buf_row),
+                                            end: (col, buf_row),
+                                            active: true,
                                         });
                                     } else {
-                                        if let Some((_, vcol, vrow)) = self.pixel_to_viewport_cell(mx, my) {
+                                        if let Some((_, vcol, vrow)) =
+                                            self.pixel_to_viewport_cell(mx, my)
+                                        {
                                             self.send_lossy(ClientMessage::MouseInput {
-                                                pane_id, button: 0, col: vcol, row: vrow, pressed: true, modifiers: 0,
+                                                pane_id,
+                                                button: 0,
+                                                col: vcol,
+                                                row: vrow,
+                                                pressed: true,
+                                                modifiers: 0,
                                             });
                                         }
                                         self.selection = Some(app::Selection {
-                                            pane_id, start: (col, buf_row), end: (col, buf_row), active: true,
+                                            pane_id,
+                                            start: (col, buf_row),
+                                            end: (col, buf_row),
+                                            active: true,
                                         });
                                     }
                                 }
@@ -538,12 +660,22 @@ impl ApplicationHandler for App {
 
                         if let Some((pane_id, col, row)) = self.pixel_to_viewport_cell(mx, my) {
                             self.send_lossy(ClientMessage::MouseInput {
-                                pane_id, button: 3, col, row, pressed: false, modifiers: 0,
+                                pane_id,
+                                button: 3,
+                                col,
+                                row,
+                                pressed: false,
+                                modifiers: 0,
                             });
                         }
 
                         if let Some(sel) = &self.selection {
-                            log::debug!("selection release: start={:?} end={:?} active={}", sel.start, sel.end, sel.active);
+                            log::debug!(
+                                "selection release: start={:?} end={:?} active={}",
+                                sel.start,
+                                sel.end,
+                                sel.active
+                            );
                             if sel.active && sel.start != sel.end {
                                 if let Some(text) = self.extract_selected_text() {
                                     log::info!("auto-copy selection: {} bytes", text.len());
@@ -557,11 +689,17 @@ impl ApplicationHandler for App {
                             sel.active = false;
                         }
                     }
-                    if let Some(w) = &self.window { w.request_redraw(); }
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
                 }
             }
 
-            WindowEvent::MouseInput { state: ElementState::Pressed, button: winit::event::MouseButton::Right, .. } => {
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: winit::event::MouseButton::Right,
+                ..
+            } => {
                 // Right-click = copy selection to clipboard (Ghostty-style)
                 if let Some(text) = self.extract_selected_text() {
                     if !text.is_empty() {
@@ -572,7 +710,9 @@ impl ApplicationHandler for App {
                     }
                 }
                 self.selection = None;
-                if let Some(w) = &self.window { w.request_redraw(); }
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
             }
 
             WindowEvent::MouseWheel { delta, phase, .. } => {
@@ -596,22 +736,39 @@ impl ApplicationHandler for App {
                         MouseScrollDelta::LineDelta(_, y) => y as i32 * 3,
                         MouseScrollDelta::PixelDelta(pos) => {
                             let (_, ch) = self.cell_dimensions();
-                            if ch > 0.0 { (pos.y as f32 / ch).round() as i32 } else { 0 }
+                            if ch > 0.0 {
+                                (pos.y as f32 / ch).round() as i32
+                            } else {
+                                0
+                            }
                         }
                     };
                     if dy != 0 {
-                        let has_mouse = self.workspaces.active().active_pane_id()
+                        let has_mouse = self
+                            .workspaces
+                            .active()
+                            .active_pane_id()
                             .and_then(|pid| self.pane_grids.get(&pid))
-                            .is_some_and(|g| g.mode_flags & ciri_protocol::message::MODE_MOUSE_REPORT != 0);
+                            .is_some_and(|g| {
+                                g.mode_flags & ciri_protocol::message::MODE_MOUSE_REPORT != 0
+                            });
 
                         if has_mouse {
                             if let Some(pid) = self.workspaces.active().active_pane_id() {
-                                if let Some((_, col, row)) = self.last_mouse_pos.and_then(|(mx, my)| self.pixel_to_viewport_cell(mx, my)) {
+                                if let Some((_, col, row)) = self
+                                    .last_mouse_pos
+                                    .and_then(|(mx, my)| self.pixel_to_viewport_cell(mx, my))
+                                {
                                     let button = if dy > 0 { 64u8 } else { 65u8 };
                                     let count = dy.unsigned_abs().min(10);
                                     for _ in 0..count {
                                         self.send_lossy(ClientMessage::MouseInput {
-                                            pane_id: pid, button, col, row, pressed: true, modifiers: 0,
+                                            pane_id: pid,
+                                            button,
+                                            col,
+                                            row,
+                                            pressed: true,
+                                            modifiers: 0,
                                         });
                                     }
                                 }
@@ -631,7 +788,9 @@ impl ApplicationHandler for App {
                         MouseScrollDelta::PixelDelta(pos) => pos.x,
                     };
                     match phase {
-                        TouchPhase::Started => { self.view_offset_x.begin_gesture(); }
+                        TouchPhase::Started => {
+                            self.view_offset_x.begin_gesture();
+                        }
                         TouchPhase::Moved => {
                             self.view_offset_x.update_gesture(dx);
                             let val = self.view_offset_x.value() as f32;
@@ -646,24 +805,29 @@ impl ApplicationHandler for App {
                         }
                     }
                 }
-                if let Some(w) = &self.window { w.request_redraw(); }
-            }
-
-            WindowEvent::Ime(ime) => {
-                match ime {
-                    Ime::Commit(text) => {
-                        self.ime_preedit_active = false;
-                        if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
-                            self.send(ClientMessage::Input { pane_id: pid, data: text.into_bytes() });
-                        }
-                        if let Some(w) = &self.window { w.request_redraw(); }
-                    }
-                    Ime::Preedit(text, _cursor) => {
-                        self.ime_preedit_active = !text.is_empty();
-                    }
-                    Ime::Enabled | Ime::Disabled => {}
+                if let Some(w) = &self.window {
+                    w.request_redraw();
                 }
             }
+
+            WindowEvent::Ime(ime) => match ime {
+                Ime::Commit(text) => {
+                    self.ime_preedit_active = false;
+                    if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
+                        self.send(ClientMessage::Input {
+                            pane_id: pid,
+                            data: text.into_bytes(),
+                        });
+                    }
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                }
+                Ime::Preedit(text, _cursor) => {
+                    self.ime_preedit_active = !text.is_empty();
+                }
+                Ime::Enabled | Ime::Disabled => {}
+            },
 
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 if (scale_factor - self.dpi_scale).abs() > 0.01 {
@@ -671,21 +835,32 @@ impl ApplicationHandler for App {
                     if let Some(renderer) = &mut self.renderer {
                         let fmt = renderer.surface_format();
                         let atlas = GlyphAtlas::new(
-                            &renderer.device, fmt,
-                            &mut renderer.text.font_system, self.config.font.size,
-                            scale_factor, &self.config.font.family,
+                            &renderer.device,
+                            fmt,
+                            &mut renderer.text.font_system,
+                            self.config.font.size,
+                            scale_factor,
+                            &self.config.font.family,
                             &self.config.render,
                         );
-                        log::info!("DPI changed: scale={:.2} cell={:.1}x{:.1}", scale_factor, atlas.cell_width, atlas.cell_height);
+                        log::info!(
+                            "DPI changed: scale={:.2} cell={:.1}x{:.1}",
+                            scale_factor,
+                            atlas.cell_width,
+                            atlas.cell_height
+                        );
                         let bar_h = atlas.cell_height + self.config.statusbar.height_padding;
                         let (w, h) = renderer.surface_size();
                         self.workspaces.resize_view(ViewSize {
-                            width: w as f32, height: h as f32 - bar_h,
+                            width: w as f32,
+                            height: h as f32 - bar_h,
                         });
                         self.glyph_atlas = Some(atlas);
                         self.cached_views.clear();
                     }
-                    if let Some(w) = &self.window { w.request_redraw(); }
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
                 }
             }
 
@@ -699,13 +874,34 @@ impl ApplicationHandler for App {
 fn main() -> Result<()> {
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info,wgpu_hal=warn,wgpu_core=warn,naga=warn"),
-    ).init();
+    )
+    .init();
+
+    let cli = match cli::parse_args(std::env::args().skip(1)) {
+        Ok(cli) => cli,
+        Err(usage) => {
+            eprintln!("{usage}");
+            std::process::exit(2);
+        }
+    };
+    if matches!(cli, CliCommand::Help) {
+        println!("{}", cli::usage());
+        return Ok(());
+    }
 
     let config = CiriConfig::load().unwrap_or_default();
-    log::info!("config: font={} size={}", config.font.family, config.font.size);
+    log::info!(
+        "config: font={} size={}",
+        config.font.family,
+        config.font.size
+    );
 
     let event_loop = EventLoop::new()?;
-    let mut app = App::new(config);
+    let session_name = match cli {
+        CliCommand::Run { session_name } => session_name,
+        CliCommand::Help => unreachable!("help exits before app startup"),
+    };
+    let mut app = App::new(config, session_name);
     event_loop.run_app(&mut app)?;
     Ok(())
 }

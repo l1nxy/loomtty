@@ -45,6 +45,14 @@ pub struct AppearanceConfig {
     pub padding: f32,
     pub column_gap: f32,
     pub border_width: f32,
+    /// Override active border color (hex). If empty, uses theme border_active.
+    pub active_border_color: String,
+    /// Override inactive border color (hex). If empty, uses theme border_inactive.
+    pub inactive_border_color: String,
+    /// Opacity for inactive (non-focused) panes, 0.0-1.0. Default 0.7.
+    pub inactive_opacity: f32,
+    /// Corner radius for pane borders. Default 0.0 (reserved for future use).
+    pub border_radius: f32,
 }
 
 impl Default for AppearanceConfig {
@@ -53,6 +61,10 @@ impl Default for AppearanceConfig {
             padding: 4.0,
             column_gap: 8.0,
             border_width: 2.0,
+            active_border_color: String::new(),
+            inactive_border_color: String::new(),
+            inactive_opacity: 0.7,
+            border_radius: 0.0,
         }
     }
 }

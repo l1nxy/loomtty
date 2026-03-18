@@ -151,8 +151,17 @@ impl App {
         let zoom_threshold = self.config.animation.zoom_threshold;
         let padding = self.config.appearance.padding;
         let border_w = self.config.appearance.border_width;
-        let active_border = ThemeConfig::parse_color(&self.config.theme.border_active);
-        let inactive_border = ThemeConfig::parse_color(&self.config.theme.border_inactive);
+        let active_border = if self.config.appearance.active_border_color.is_empty() {
+            ThemeConfig::parse_color(&self.config.theme.border_active)
+        } else {
+            ThemeConfig::parse_color(&self.config.appearance.active_border_color)
+        };
+        let inactive_border = if self.config.appearance.inactive_border_color.is_empty() {
+            ThemeConfig::parse_color(&self.config.theme.border_inactive)
+        } else {
+            ThemeConfig::parse_color(&self.config.appearance.inactive_border_color)
+        };
+        let inactive_opacity = self.config.appearance.inactive_opacity;
         let bg_color = ThemeConfig::parse_color(&self.config.theme.background);
         let link_color = ThemeConfig::parse_color(&self.config.theme.accent);
 
@@ -342,6 +351,12 @@ impl App {
                 }
             }
 
+            // Dim factor for inactive panes: multiply glyph colors to reduce brightness
+            let dim = if *is_active { 1.0 } else { inactive_opacity };
+            // Apply open animation opacity on top of dim
+            let open_opacity = self.pane_open_opacity.get(pane_id).copied().unwrap_or(1.0);
+            let dim = dim * open_opacity;
+
             glyphs.extend(view.glyph_instances.iter().filter_map(|g| {
                 let sx = (inner_x + g.px * zoom).round();
                 let sy = (inner_y + g.py * zoom).round();
@@ -352,13 +367,20 @@ impl App {
                     return None;
                 }
 
+                let color = [
+                    g.color[0] * dim,
+                    g.color[1] * dim,
+                    g.color[2] * dim,
+                    g.color[3],
+                ];
+
                 if sx >= tr.x && sy >= tr.y && sx + gw <= tr.x + tr.w && sy + gh <= tr.y + tr.h {
                     return Some(GlyphInstance {
                         pos: [sx / vw * 2.0 - 1.0, 1.0 - sy / vh * 2.0],
                         size: [gw / vw * 2.0, -(gh / vh * 2.0)],
                         uv_pos: [g.u0, g.v0],
                         uv_size: [g.u1 - g.u0, g.v1 - g.v0],
-                        color: g.color,
+                        color,
                     });
                 }
 
@@ -375,9 +397,44 @@ impl App {
                         g.v0 + v_full * (c.y - sy) / gh,
                     ],
                     uv_size: [u_full * c.w / gw, v_full * c.h / gh],
-                    color: g.color,
+                    color,
                 })
             }));
+
+            // Dimming overlay for inactive panes: semi-transparent black rect over pane content
+            if !*is_active && inactive_opacity < 1.0 {
+                let overlay_alpha = 1.0 - inactive_opacity;
+                bg_rects.push(Rect {
+                    x: tr.x + border_w * zoom,
+                    y: tr.y + border_w * zoom,
+                    w: tr.w - border_w * zoom * 2.0,
+                    h: tr.h - border_w * zoom * 2.0,
+                    color: [0.0, 0.0, 0.0, overlay_alpha],
+                });
+            }
+
+            // Fade-in overlay for newly opened panes
+            if open_opacity < 1.0 {
+                let overlay_alpha = 1.0 - open_opacity;
+                bg_rects.push(Rect {
+                    x: tr.x,
+                    y: tr.y,
+                    w: tr.w,
+                    h: tr.h,
+                    color: [0.0, 0.0, 0.0, overlay_alpha],
+                });
+            }
+        }
+
+        // Render closing panes as fading-out rects
+        for cp in &self.closing_panes {
+            bg_rects.push(Rect {
+                x: cp.rect.x,
+                y: cp.rect.y,
+                w: cp.rect.w,
+                h: cp.rect.h,
+                color: [0.1, 0.1, 0.1, cp.opacity * 0.5],
+            });
         }
     }
 
@@ -639,7 +696,31 @@ impl App {
         let dt = (now - self.last_frame).as_secs_f64();
         self.last_frame = now;
 
-        let animating = self.advance_animations(dt);
+        let mut animating = self.advance_animations(dt);
+
+        // Update pane open fade-in animations
+        let fade_speed = 5.0; // opacity units per second (~200ms to reach 1.0)
+        let mut open_done = Vec::new();
+        for (pane_id, opacity) in &mut self.pane_open_opacity {
+            *opacity = (*opacity + dt as f32 * fade_speed).min(1.0);
+            if *opacity >= 1.0 {
+                open_done.push(*pane_id);
+            }
+        }
+        for pid in open_done {
+            self.pane_open_opacity.remove(&pid);
+        }
+
+        // Update closing pane fade-out animations
+        self.closing_panes.retain_mut(|cp| {
+            let elapsed = cp.started.elapsed().as_millis() as u64;
+            cp.opacity = 1.0 - (elapsed as f32 / cp.duration_ms as f32).min(1.0);
+            cp.opacity > 0.0
+        });
+
+        if !self.pane_open_opacity.is_empty() || !self.closing_panes.is_empty() {
+            animating = true;
+        }
 
         let renderer = self.renderer.as_mut().unwrap();
         let atlas = self.glyph_atlas.as_mut().unwrap();

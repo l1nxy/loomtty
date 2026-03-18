@@ -17,6 +17,7 @@ use crossbeam_channel::{Receiver, Sender};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use ciri_layout::geometry::Rect as GeoRect;
 use winit::keyboard::ModifiersState;
 use winit::window::Window;
 
@@ -59,6 +60,14 @@ pub(crate) struct SearchMatch {
     pub buffer_row: usize,
     pub start_col: u16,
     pub end_col: u16,
+}
+
+/// State for a pane that is being animated out (fade-to-close).
+pub(crate) struct ClosingPaneState {
+    pub rect: GeoRect,
+    pub opacity: f32,
+    pub started: Instant,
+    pub duration_ms: u64,
 }
 
 /// Auto-reconnection state.
@@ -115,6 +124,10 @@ pub(crate) struct App {
     pub reconnect_state: Option<ReconnectState>,
     pub search_state: Option<SearchState>,
     pub broadcast_mode: bool,
+    /// Pane open fade-in: pane_id -> opacity (0.0 to 1.0, animated)
+    pub pane_open_opacity: HashMap<u64, f32>,
+    /// Closing panes being faded out
+    pub closing_panes: Vec<ClosingPaneState>,
     pub should_exit: bool,
     #[allow(dead_code)]
     pub config_watcher: Option<notify::RecommendedWatcher>,
@@ -190,6 +203,8 @@ impl App {
             reconnect_state: None,
             search_state: None,
             broadcast_mode: false,
+            pane_open_opacity: HashMap::new(),
+            closing_panes: Vec::new(),
             should_exit: false,
             config_watcher: None,
             config_change_rx: None,

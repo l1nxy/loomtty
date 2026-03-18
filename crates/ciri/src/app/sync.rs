@@ -43,11 +43,23 @@ impl App {
                     self.pane_grids.entry(pane_id).or_insert_with(|| {
                         ClientPaneGrid::new(80, 24, self.config.terminal.scrollback_lines)
                     });
+                    self.pane_open_opacity.insert(pane_id, 0.0); // start fade-in
                     needs_redraw = true;
                 }
                 ServerEvent::Control(ServerMessage::PaneClosed { pane_id }) => {
+                    // Capture pane rect for close animation before removing
+                    let tiles = self.workspaces.active().visible_tiles();
+                    if let Some((_, rect, _)) = tiles.iter().find(|(pid, _, _)| *pid == pane_id) {
+                        self.closing_panes.push(super::ClosingPaneState {
+                            rect: *rect,
+                            opacity: 1.0,
+                            started: std::time::Instant::now(),
+                            duration_ms: 200,
+                        });
+                    }
                     self.pane_grids.remove(&pane_id);
                     self.cached_views.remove(&pane_id);
+                    self.pane_open_opacity.remove(&pane_id);
                     needs_redraw = true;
                 }
                 ServerEvent::Control(ServerMessage::ServerShutdown) => {

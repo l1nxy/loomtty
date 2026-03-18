@@ -34,13 +34,18 @@ impl ApplicationHandler for App {
             || self.view_offset_y.is_animating()
             || self.overview_zoom.is_animating()
             || self.col_widths.iter().any(|v| v.is_animating());
-        let has_server = self.server_rx.is_some();
+        let has_pending = self.server_rx.as_ref().is_some_and(|rx| !rx.is_empty());
         let is_reconnecting = self.reconnect_state.is_some();
         let wants_blink = self.config.terminal.cursor_blink;
 
-        if is_animating || has_server || is_reconnecting || wants_blink {
+        if is_animating || has_pending || is_reconnecting {
+            // Active rendering or pending data: poll at frame rate
             event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + self.frame_interval));
+        } else if wants_blink || self.server_rx.is_some() {
+            // Connected but idle: poll at reduced rate (50ms = 20fps idle)
+            event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(50)));
         } else {
+            // Disconnected, no animations: fully idle
             event_loop.set_control_flow(ControlFlow::Wait);
         }
 
@@ -497,6 +502,12 @@ impl ApplicationHandler for App {
                             if !started_drag {
                                 self.mouse_left_held = true;
                                 let shift = self.modifiers.shift_key();
+
+                                // Check if active pane has mouse reporting mode
+                                let has_mouse = self.workspaces.active().active_pane_id()
+                                    .and_then(|pid| self.pane_grids.get(&pid))
+                                    .is_some_and(|g| g.mode_flags & ciri_protocol::message::MODE_MOUSE_REPORT != 0);
+
                                 if let Some((pane_id, col, buf_row)) = self.pixel_to_cell(mx, my) {
                                     let ws = self.workspaces.active_mut();
                                     for col_idx in 0..ws.columns.len() {
@@ -508,10 +519,19 @@ impl ApplicationHandler for App {
                                     self.animate_to_active();
 
                                     if shift {
+                                        // Shift-click: always start selection (override mouse mode)
                                         self.selection = Some(app::Selection {
                                             pane_id, start: (col, buf_row), end: (col, buf_row), active: true,
                                         });
+                                    } else if has_mouse {
+                                        // Mouse mode active: forward only, no selection
+                                        if let Some((_, vcol, vrow)) = self.pixel_to_viewport_cell(mx, my) {
+                                            self.send_lossy(ClientMessage::MouseInput {
+                                                pane_id, button: 0, col: vcol, row: vrow, pressed: true, modifiers: 0,
+                                            });
+                                        }
                                     } else {
+                                        // Normal mode: forward + start selection
                                         if let Some((_, vcol, vrow)) = self.pixel_to_viewport_cell(mx, my) {
                                             self.send_lossy(ClientMessage::MouseInput {
                                                 pane_id, button: 0, col: vcol, row: vrow, pressed: true, modifiers: 0,
@@ -604,6 +624,10 @@ impl ApplicationHandler for App {
                             .and_then(|pid| self.pane_grids.get(&pid))
                             .is_some_and(|g| g.mode_flags & ciri_protocol::message::MODE_MOUSE_REPORT != 0);
 
+                        let is_alt_screen = self.workspaces.active().active_pane_id()
+                            .and_then(|pid| self.pane_grids.get(&pid))
+                            .is_some_and(|g| g.mode_flags & ciri_protocol::message::MODE_ALT_SCREEN != 0);
+
                         if has_mouse {
                             if let Some(pid) = self.workspaces.active().active_pane_id() {
                                 if let Some((_, col, row)) = self.last_mouse_pos.and_then(|(mx, my)| self.pixel_to_viewport_cell(mx, my)) {
@@ -614,6 +638,15 @@ impl ApplicationHandler for App {
                                             pane_id: pid, button, col, row, pressed: true, modifiers: 0,
                                         });
                                     }
+                                }
+                            }
+                        } else if is_alt_screen {
+                            // Alt screen but no mouse mode: send arrow keys for scrolling
+                            if let Some(pid) = self.workspaces.active().active_pane_id() {
+                                let key = if dy > 0 { b"\x1b[A" } else { b"\x1b[B" };
+                                let count = dy.unsigned_abs().min(10) as usize;
+                                for _ in 0..count {
+                                    self.send(ClientMessage::Input { pane_id: pid, data: key.to_vec() });
                                 }
                             }
                         } else {

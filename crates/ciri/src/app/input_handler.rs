@@ -322,6 +322,127 @@ impl App {
     }
 
 
+    pub fn handle_search_key(&mut self, event: &winit::event::KeyEvent, ctrl: bool, shift: bool) {
+        let Some(search) = &mut self.search_state else {
+            return;
+        };
+        let pane_id = search.pane_id;
+
+        match &event.logical_key {
+            Key::Named(NamedKey::Escape) => {
+                // Restore original scroll position
+                let orig = search.original_scroll_offset;
+                if let Some(grid) = self.pane_grids.get_mut(&pane_id) {
+                    grid.scroll_offset = orig;
+                    grid.dirty = true;
+                    self.cached_views.remove(&pane_id);
+                }
+                self.search_state = None;
+            }
+            Key::Named(NamedKey::Enter) if shift => {
+                // Previous match
+                self.jump_to_match(true);
+            }
+            Key::Named(NamedKey::Enter) => {
+                if search.query.is_empty() {
+                    // Exit search, keep current position
+                    self.search_state = None;
+                } else {
+                    // Next match
+                    self.jump_to_match(false);
+                }
+            }
+            Key::Named(NamedKey::Backspace) => {
+                search.query.pop();
+                self.update_search_results();
+            }
+            Key::Character(c) if !ctrl => {
+                let s: &str = c.as_str();
+                search.query.push_str(s);
+                self.update_search_results();
+            }
+            _ => {}
+        }
+    }
+
+    fn update_search_results(&mut self) {
+        let Some(search) = &mut self.search_state else {
+            return;
+        };
+        let pane_id = search.pane_id;
+        let query = search.query.clone();
+
+        if let Some(grid) = self.pane_grids.get(&pane_id) {
+            let raw_matches = grid.search(&query);
+            search.matches = raw_matches
+                .into_iter()
+                .map(|(row, sc, ec)| super::SearchMatch {
+                    buffer_row: row,
+                    start_col: sc,
+                    end_col: ec,
+                })
+                .collect();
+            search.current_match_idx = 0;
+
+            // If there are matches, scroll to the first one near current viewport
+            if !search.matches.is_empty() {
+                let viewport_top = grid.viewport_top();
+                let idx = search
+                    .matches
+                    .iter()
+                    .position(|m| m.buffer_row >= viewport_top)
+                    .unwrap_or(0);
+                search.current_match_idx = idx;
+                self.scroll_to_match(idx);
+            }
+        }
+    }
+
+    fn jump_to_match(&mut self, reverse: bool) {
+        let Some(search) = &mut self.search_state else {
+            return;
+        };
+        if search.matches.is_empty() {
+            return;
+        }
+
+        if reverse {
+            search.current_match_idx = if search.current_match_idx == 0 {
+                search.matches.len() - 1
+            } else {
+                search.current_match_idx - 1
+            };
+        } else {
+            search.current_match_idx =
+                (search.current_match_idx + 1) % search.matches.len();
+        }
+        let idx = search.current_match_idx;
+        self.scroll_to_match(idx);
+    }
+
+    fn scroll_to_match(&mut self, match_idx: usize) {
+        let Some(search) = &self.search_state else {
+            return;
+        };
+        let Some(m) = search.matches.get(match_idx) else {
+            return;
+        };
+        let pane_id = search.pane_id;
+        let target_row = m.buffer_row;
+
+        if let Some(grid) = self.pane_grids.get_mut(&pane_id) {
+            let total = grid.buffer_len();
+            let rows = grid.rows as usize;
+            // Calculate scroll_offset to put target_row in the middle of viewport
+            let desired_top = target_row.saturating_sub(rows / 2);
+            let max_scroll = total.saturating_sub(rows);
+            let new_offset = max_scroll.saturating_sub(desired_top);
+            grid.scroll_offset = new_offset.min(max_scroll);
+            grid.dirty = true;
+            self.cached_views.remove(&pane_id);
+        }
+    }
+
     pub fn scroll_active_up(&mut self, lines: usize) {
         if let Some(pid) = self.workspaces.active().active_pane_id() {
             if let Some(grid) = self.pane_grids.get_mut(&pid) {

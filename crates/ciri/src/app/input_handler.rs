@@ -68,6 +68,10 @@ impl App {
             Action::EqualizeAdjacentColumns => {
                 self.send(ClientMessage::EqualizeColumnSplit);
             }
+            Action::ToggleBroadcast => {
+                self.broadcast_mode = !self.broadcast_mode;
+                log::info!("broadcast mode: {}", self.broadcast_mode);
+            }
             Action::ConsumeIntoColumn => {
                 self.send(ClientMessage::ConsumeIntoColumn);
             }

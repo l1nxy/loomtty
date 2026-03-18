@@ -31,6 +31,8 @@ pub enum Action {
     ConsumeIntoColumn,
     /// Expel the current column's active tile into a new column to the right.
     ExpelFromColumn,
+    /// Toggle broadcast mode: send input to all panes in current workspace.
+    ToggleBroadcast,
     /// Switch to workspace by index (0-8).
     SwitchWorkspace(usize),
     ToggleOverview,
@@ -64,6 +66,7 @@ impl Action {
             "equalize_adjacent_columns" => Some(Action::EqualizeAdjacentColumns),
             "consume_into_column" => Some(Action::ConsumeIntoColumn),
             "expel_from_column" => Some(Action::ExpelFromColumn),
+            "toggle_broadcast" => Some(Action::ToggleBroadcast),
             "toggle_overview" => Some(Action::ToggleOverview),
             "exit_overview" => Some(Action::ExitOverview),
             "send_leader_key" => Some(Action::SendLeaderKey),

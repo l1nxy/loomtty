@@ -114,6 +114,7 @@ pub(crate) struct App {
     pub mouse_left_held: bool,
     pub reconnect_state: Option<ReconnectState>,
     pub search_state: Option<SearchState>,
+    pub broadcast_mode: bool,
     pub should_exit: bool,
     #[allow(dead_code)]
     pub config_watcher: Option<notify::RecommendedWatcher>,
@@ -188,6 +189,7 @@ impl App {
             mouse_left_held: false,
             reconnect_state: None,
             search_state: None,
+            broadcast_mode: false,
             should_exit: false,
             config_watcher: None,
             config_change_rx: None,

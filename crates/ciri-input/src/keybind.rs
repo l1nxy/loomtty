@@ -109,6 +109,9 @@ impl Default for KeybindMap {
         b.insert(KeyCombo::new("c"), Action::ConsumeIntoColumn);
         b.insert(KeyCombo::new("v"), Action::ExpelFromColumn);
 
+        // Broadcast mode
+        b.insert(KeyCombo::new("b"), Action::ToggleBroadcast);
+
         // Workspace switching by number
         for i in 1u8..=9 {
             b.insert(KeyCombo::new(&format!("{i}")), Action::SwitchWorkspace((i - 1) as usize));

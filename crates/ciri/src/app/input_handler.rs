@@ -40,17 +40,10 @@ impl App {
             Action::MovePaneRight => {
                 self.send(ClientMessage::MovePaneRight);
             }
-            Action::CyclePresetWidth => {
+            Action::CyclePresetWidth | Action::CyclePresetWidthReverse => {
+                let reverse = matches!(action, Action::CyclePresetWidthReverse);
                 let presets = self.preset_widths();
-                if let Some(p) = self.workspaces.active_mut().cycle_preset_width(&presets, false) {
-                    self.send(ClientMessage::SetColumnWidth { proportion: p });
-                }
-                self.snap_all_col_widths();
-                self.animate_to_active();
-            }
-            Action::CyclePresetWidthReverse => {
-                let presets = self.preset_widths();
-                if let Some(p) = self.workspaces.active_mut().cycle_preset_width(&presets, true) {
+                if let Some(p) = self.workspaces.active_mut().cycle_preset_width(&presets, reverse) {
                     self.send(ClientMessage::SetColumnWidth { proportion: p });
                 }
                 self.snap_all_col_widths();

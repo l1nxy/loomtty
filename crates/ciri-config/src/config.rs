@@ -51,8 +51,6 @@ pub struct AppearanceConfig {
     pub inactive_border_color: String,
     /// Opacity for inactive (non-focused) panes, 0.0-1.0. Default 0.7.
     pub inactive_opacity: f32,
-    /// Corner radius for pane borders. Default 0.0 (reserved for future use).
-    pub border_radius: f32,
 }
 
 impl Default for AppearanceConfig {
@@ -64,7 +62,6 @@ impl Default for AppearanceConfig {
             active_border_color: String::new(),
             inactive_border_color: String::new(),
             inactive_opacity: 0.7,
-            border_radius: 0.0,
         }
     }
 }

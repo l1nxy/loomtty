@@ -37,6 +37,16 @@ impl Column {
         }
     }
 
+    pub fn new_with_tile(tile: Tile) -> Self {
+        Column {
+            tiles: vec![tile],
+            active_tile_idx: 0,
+            width: ColumnWidth::default(),
+            preset_width_idx: None,
+            rendered_width: None,
+        }
+    }
+
     /// Returns the pane_id of the active tile.
     pub fn active_pane_id(&self) -> PaneId {
         self.tiles[self.active_tile_idx].pane_id

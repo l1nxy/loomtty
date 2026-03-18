@@ -4,6 +4,13 @@ use crate::tile::{PaneId, TileHeight};
 
 const MIN_COLUMN_PROPORTION: f64 = 0.05;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CenterStrategy {
+    Always,
+    OnOverflow,
+    Never,
+}
+
 /// A workspace is one horizontal row of columns.
 /// Each column = one pane. No vertical stacking within a row.
 #[derive(Debug)]
@@ -59,8 +66,7 @@ impl Workspace {
     }
 
     /// Compute target viewport offset for the active column.
-    /// `center`: 0 = never, 1 = on-overflow, 2 = always.
-    pub fn target_offset_for_active_with_strategy(&self, center: u8) -> f32 {
+    pub fn target_offset_for_active_with_strategy(&self, center: CenterStrategy) -> f32 {
         let Some(col) = self.columns.get(self.active_column_idx) else {
             return 0.0;
         };
@@ -70,9 +76,9 @@ impl Workspace {
         let max_offset = (self.total_width() - vw).max(0.0);
 
         let should_center = match center {
-            2 => true,                  // always
-            1 => col_w > vw,            // on-overflow
-            _ => false,                 // never
+            CenterStrategy::Always => true,
+            CenterStrategy::OnOverflow => col_w > vw,
+            CenterStrategy::Never => false,
         };
 
         if should_center {
@@ -100,12 +106,22 @@ impl Workspace {
 
     /// Backward-compatible: always center.
     pub fn target_offset_for_active(&self) -> f32 {
-        self.target_offset_for_active_with_strategy(2)
+        self.target_offset_for_active_with_strategy(CenterStrategy::Always)
     }
 
     /// Get visible tiles as (pane_id, screen_rect, is_active).
     /// Multi-tile columns return one entry per tile, splitting column height by weight.
     pub fn visible_tiles(&self) -> Vec<(PaneId, Rect, bool)> {
+        self.collect_tiles(true)
+    }
+
+    /// Get ALL tiles without viewport culling (for overview).
+    /// Multi-tile columns return one entry per tile.
+    pub fn all_tiles_unculled(&self) -> Vec<(PaneId, Rect, bool)> {
+        self.collect_tiles(false)
+    }
+
+    fn collect_tiles(&self, cull: bool) -> Vec<(PaneId, Rect, bool)> {
         let mut result = Vec::new();
         let vp_left = self.view_offset_x;
         let vp_right = vp_left + self.view_size.width;
@@ -115,33 +131,15 @@ impl Workspace {
             let col_x = self.column_x(col_idx);
             let col_w = col.effective_width(self.view_size.width);
 
-            if col_x + col_w < vp_left || col_x > vp_right {
+            if cull && (col_x + col_w < vp_left || col_x > vp_right) {
                 continue;
             }
 
             let screen_x = col_x - self.view_offset_x;
             let tile_rects = col.tile_rects(col_w, self.view_size.height);
             for (pane_id, y, h) in &tile_rects {
-                let rect = Rect::new(screen_x, *y, col_w, *h);
                 let is_active = Some(*pane_id) == active_pane;
-                result.push((*pane_id, rect, is_active));
-            }
-        }
-        result
-    }
-
-    /// Get ALL tiles without viewport culling (for overview).
-    /// Multi-tile columns return one entry per tile.
-    pub fn all_tiles_unculled(&self) -> Vec<(PaneId, Rect, bool)> {
-        let mut result = Vec::new();
-        let active_pane = self.active_pane_id();
-        for (i, col) in self.columns.iter().enumerate() {
-            let x = self.column_x(i) - self.view_offset_x;
-            let w = col.effective_width(self.view_size.width);
-            let tile_rects = col.tile_rects(w, self.view_size.height);
-            for (pane_id, y, h) in &tile_rects {
-                let is_active = Some(*pane_id) == active_pane;
-                result.push((*pane_id, Rect::new(x, *y, w, *h), is_active));
+                result.push((*pane_id, Rect::new(screen_x, *y, col_w, *h), is_active));
             }
         }
         result
@@ -169,7 +167,6 @@ impl Workspace {
 
     pub fn close_pane(&mut self, pane_id: PaneId) -> Option<PaneId> {
         if let Some(idx) = self.columns.iter().position(|c| c.contains_pane(pane_id)) {
-            self.normalize_widths();
             let removed_width = self.columns[idx].proportion(self.view_size.width);
             self.columns.remove(idx);
             if self.columns.is_empty() {
@@ -237,9 +234,8 @@ impl Workspace {
         // Create new column to the right with the same width
         let width = col.width;
         let insert_at = self.active_column_idx + 1;
-        let mut new_col = Column::new(pane_id);
+        let mut new_col = Column::new_with_tile(tile);
         new_col.width = width;
-        new_col.tiles[0] = tile; // preserve the tile's height setting
         self.columns.insert(insert_at, new_col);
         self.active_column_idx = insert_at;
 

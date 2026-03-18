@@ -255,10 +255,7 @@ impl ServerState {
                 columns: ws.columns.iter().map(|c| ColumnState {
                     tiles: c.tiles.iter().map(|t| TileState { pane_id: t.pane_id, weight: t.height.weight() }).collect(),
                     active_tile_idx: c.active_tile_idx,
-                    width_proportion: match c.width {
-                        ColumnWidth::Proportion(p) => p,
-                        ColumnWidth::Fixed(px) => px / self.workspaces.view_size.width as f64,
-                    },
+                    width_proportion: c.proportion(self.workspaces.view_size.width),
                 }).collect(),
                 active_column_idx: ws.active_column_idx,
             }).collect(),
@@ -273,10 +270,7 @@ impl ServerState {
                 columns: ws.columns.iter().map(|c| SavedColumn {
                     tiles: c.tiles.iter().map(|t| SavedTile { pane_id: t.pane_id, weight: t.height.weight(), cwd: None, title: None }).collect(),
                     active_tile_idx: c.active_tile_idx,
-                    width_proportion: match c.width {
-                        ColumnWidth::Proportion(p) => p,
-                        ColumnWidth::Fixed(px) => px / self.workspaces.view_size.width as f64,
-                    },
+                    width_proportion: c.proportion(self.workspaces.view_size.width),
                 }).collect(),
                 active_column_idx: ws.active_column_idx,
             }).collect(),

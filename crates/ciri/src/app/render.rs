@@ -56,9 +56,9 @@ impl App {
         let enabled = self.config.animation.enabled;
 
         let center_strategy = match self.config.layout.center_focused_column {
-            ciri_config::config::CenterStrategy::Always => 2,
-            ciri_config::config::CenterStrategy::OnOverflow => 1,
-            ciri_config::config::CenterStrategy::Never => 0,
+            ciri_config::config::CenterStrategy::Always => ciri_layout::workspace::CenterStrategy::Always,
+            ciri_config::config::CenterStrategy::OnOverflow => ciri_layout::workspace::CenterStrategy::OnOverflow,
+            ciri_config::config::CenterStrategy::Never => ciri_layout::workspace::CenterStrategy::Never,
         };
         let target_x = self.workspaces.active_mut().target_offset_for_active_with_strategy(center_strategy);
         if enabled {
@@ -400,18 +400,6 @@ impl App {
                     color,
                 })
             }));
-
-            // Dimming overlay for inactive panes: semi-transparent black rect over pane content
-            if !*is_active && inactive_opacity < 1.0 {
-                let overlay_alpha = 1.0 - inactive_opacity;
-                bg_rects.push(Rect {
-                    x: tr.x + border_w * zoom,
-                    y: tr.y + border_w * zoom,
-                    w: tr.w - border_w * zoom * 2.0,
-                    h: tr.h - border_w * zoom * 2.0,
-                    color: [0.0, 0.0, 0.0, overlay_alpha],
-                });
-            }
 
             // Fade-in overlay for newly opened panes
             if open_opacity < 1.0 {

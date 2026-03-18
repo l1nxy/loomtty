@@ -157,6 +157,8 @@ pub enum ClientMessage {
     Detach,
     /// Acknowledge received generation.
     Ack { generation: u64 },
+    /// Mouse input forwarded to pane (SGR mouse protocol).
+    MouseInput { pane_id: u64, button: u8, col: u16, row: u16, pressed: bool, modifiers: u8 },
 }
 
 /// Control messages from server to client (msgpack encoded, tags 0x10-0x1F).
@@ -231,7 +233,11 @@ pub struct FullPaneSync {
     pub cursor_col: u16,
     pub cursor_shape: u8,
     pub title: String,
-    pub cells: Vec<PackedCell>, // row-major, cols * rows
+    /// New scrollback lines that the client hasn't seen yet (oldest first).
+    /// Client should prepend these to its buffer before applying the viewport.
+    pub scrollback: Vec<PackedCell>, // row-major, scrollback_rows * cols
+    pub scrollback_rows: u16,
+    pub cells: Vec<PackedCell>, // row-major, rows * cols (viewport)
 }
 
 // ─── Cursor shape encoding ──────────────────────────────────────────

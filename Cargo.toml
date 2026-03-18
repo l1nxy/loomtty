@@ -30,7 +30,9 @@ ciri-config = { path = "crates/ciri-config" }
 ciri-session = { path = "crates/ciri-session" }
 
 # External
+arboard = "3"
 bytemuck = { version = "1", features = ["derive"] }
+notify = { version = "6", default-features = false, features = ["macos_kqueue"] }
 rmp-serde = "1"
 bytes = "1"
 crossbeam-channel = "0.5"

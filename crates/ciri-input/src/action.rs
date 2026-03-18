@@ -29,6 +29,10 @@ pub enum Action {
     /// Exit overview mode (return to normal).
     ExitOverview,
     SendLeaderKey,
+    ScrollPageUp,
+    ScrollPageDown,
+    ScrollTop,
+    ScrollBottom,
 }
 
 impl Action {
@@ -53,6 +57,10 @@ impl Action {
             "toggle_overview" => Some(Action::ToggleOverview),
             "exit_overview" => Some(Action::ExitOverview),
             "send_leader_key" => Some(Action::SendLeaderKey),
+            "scroll_page_up" => Some(Action::ScrollPageUp),
+            "scroll_page_down" => Some(Action::ScrollPageDown),
+            "scroll_top" => Some(Action::ScrollTop),
+            "scroll_bottom" => Some(Action::ScrollBottom),
             _ => {
                 // Handle switch_workspace_N
                 if let Some(rest) = s.strip_prefix("switch_workspace_")

@@ -109,8 +109,14 @@ pub struct TerminalConfig {
     pub cursor_color: String,
     /// Cursor opacity (0.0-1.0).
     pub cursor_opacity: f32,
+    /// Enable cursor blinking.
+    pub cursor_blink: bool,
+    /// Cursor blink interval in milliseconds.
+    pub cursor_blink_interval_ms: u64,
     /// Shell program to spawn. If empty, uses platform default (cmd.exe on Windows, $SHELL on Unix).
     pub shell: String,
+    /// Maximum scrollback lines per pane. 0 = no scrollback.
+    pub scrollback_lines: usize,
 }
 
 impl Default for TerminalConfig {
@@ -120,7 +126,10 @@ impl Default for TerminalConfig {
             default_rows: 24,
             cursor_color: "#E6E6E6".to_string(),
             cursor_opacity: 0.7,
+            cursor_blink: true,
+            cursor_blink_interval_ms: 500,
             shell: String::new(),
+            scrollback_lines: 10000,
         }
     }
 }

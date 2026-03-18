@@ -7,7 +7,7 @@ use ciri_protocol::message::*;
 use ciri_protocol::transport;
 use ciri_session::save::save_session;
 use ciri_session::state::{SavedColumn, SavedRow, SavedTile, SessionState};
-use ciri_term::pane::{pack_cell, Pane};
+use ciri_term::pane::Pane;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::{AsyncWriteExt, BufWriter};
@@ -73,6 +73,10 @@ struct ClientState {
     history_sent: HashMap<u64, usize>,
     /// Consecutive try_send failures; used to detect slow clients.
     send_failures: u32,
+    cell_width: f32,
+    cell_height: f32,
+    viewport_width: f32,
+    viewport_height: f32,
 }
 
 // ─── Server state ───────────────────────────────────────────────────
@@ -86,8 +90,6 @@ struct ServerState {
     clients: HashMap<u64, ClientState>,
     next_client_id: u64,
     default_shell: String,
-    cell_width: f32,
-    cell_height: f32,
 }
 
 impl ServerState {
@@ -104,8 +106,6 @@ impl ServerState {
             clients: HashMap::new(),
             next_client_id: 1,
             default_shell: shell.to_string(),
-            cell_width: 8.0,
-            cell_height: 16.0,
         }
     }
 
@@ -145,10 +145,37 @@ impl ServerState {
         Ok(id)
     }
 
+    /// Compute effective cell dimensions (smallest client wins, like tmux).
+    fn effective_cell_dims(&self) -> (f32, f32) {
+        let mut cw = f32::MAX;
+        let mut ch = f32::MAX;
+        for client in self.clients.values() {
+            cw = cw.min(client.cell_width);
+            ch = ch.min(client.cell_height);
+        }
+        if cw == f32::MAX { cw = 8.0; }
+        if ch == f32::MAX { ch = 16.0; }
+        (cw, ch)
+    }
+
+    /// Compute effective viewport (smallest client wins).
+    fn effective_viewport(&self) -> (f32, f32) {
+        let mut w = f32::MAX;
+        let mut h = f32::MAX;
+        for client in self.clients.values() {
+            w = w.min(client.viewport_width);
+            h = h.min(client.viewport_height);
+        }
+        if w == f32::MAX { w = 1024.0; }
+        if h == f32::MAX { h = 768.0; }
+        (w, h)
+    }
+
     /// Compute cols/rows for a pane given its pixel area and current cell dimensions.
     fn pane_grid_size(&self, pane_width: f32, pane_height: f32) -> (u16, u16) {
-        let cols = (pane_width / self.cell_width).floor().max(1.0) as u16;
-        let rows = (pane_height / self.cell_height).floor().max(1.0) as u16;
+        let (cw, ch) = self.effective_cell_dims();
+        let cols = (pane_width / cw).floor().max(1.0) as u16;
+        let rows = (pane_height / ch).floor().max(1.0) as u16;
         (cols, rows)
     }
 
@@ -156,6 +183,8 @@ impl ServerState {
     /// Off-screen panes get their size from their column width and row height,
     /// so PTY dimensions stay correct even when scrolled out of view.
     fn resize_all_panes(&mut self) {
+        let (vp_w, vp_h) = self.effective_viewport();
+        self.workspaces.resize_view(ViewSize { width: vp_w, height: vp_h });
         let vw = self.workspaces.view_size.width;
         let vh = self.workspaces.view_size.height;
 
@@ -227,11 +256,18 @@ impl ServerState {
     }
 
     /// Process PTY output for all panes, extract damage, and merge into per-client accumulators.
-    fn process_pty_and_damage(&mut self) {
+    /// Returns any clipboard store requests from OSC 52.
+    fn process_pty_and_damage(&mut self) -> Vec<ServerMessage> {
+        let mut clipboard_msgs = Vec::new();
         let pane_ids: Vec<u64> = self.panes.keys().copied().collect();
         for pane_id in pane_ids {
             let pane = self.panes.get_mut(&pane_id).unwrap();
             pane.process_pty_output();
+
+            // Drain OSC 52 clipboard writes
+            for data in pane.drain_clipboard() {
+                clipboard_msgs.push(ServerMessage::ClipboardStore { data });
+            }
 
             if let Some(regions) = pane.extract_damage() {
                 // Bump generation
@@ -253,6 +289,7 @@ impl ServerState {
                 }
             }
         }
+        clipboard_msgs
     }
 
     /// Check for exited panes and clean them up. Returns list of closed pane IDs.
@@ -348,16 +385,24 @@ impl ServerState {
                 }));
             }
             ClientMessage::Resize { cols: _, rows: _, width, height, cell_width, cell_height } => {
-                self.cell_width = cell_width;
-                self.cell_height = cell_height;
-                self.workspaces.resize_view(ViewSize {
-                    width: width as f32,
-                    height: height as f32,
-                });
-                self.resize_all_panes();
-                responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
-                    layout: self.layout_state(),
-                }));
+                // Validate
+                if cell_width.is_finite() && cell_width > 0.0 && cell_width <= 200.0
+                    && cell_height.is_finite() && cell_height > 0.0 && cell_height <= 200.0
+                    && width > 0 && width <= 16384 && height > 0 && height <= 16384
+                {
+                    if let Some(client) = self.clients.get_mut(&client_id) {
+                        client.cell_width = cell_width;
+                        client.cell_height = cell_height;
+                        client.viewport_width = width as f32;
+                        client.viewport_height = height as f32;
+                    }
+                    self.resize_all_panes();
+                    responses.push(ServerResponse::BroadcastControl(ServerMessage::LayoutUpdate {
+                        layout: self.layout_state(),
+                    }));
+                } else {
+                    log::warn!("ignoring invalid resize from client {client_id}: {width}x{height} cell={cell_width}x{cell_height}");
+                }
             }
             ClientMessage::SetColumnWidth { proportion } => {
                 self.workspaces.active_mut().set_active_column_width(ColumnWidth::Proportion(proportion));
@@ -578,7 +623,20 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                 let mut s = tick_state.lock().await;
 
                 // Process PTY output and extract damage
-                s.process_pty_and_damage();
+                let clipboard_msgs = s.process_pty_and_damage();
+
+                // Broadcast OSC 52 clipboard writes to all clients
+                for clip_msg in &clipboard_msgs {
+                    if let Ok(payload) = rmp_serde::to_vec(clip_msg) {
+                        let mut frame = Vec::with_capacity(5 + payload.len());
+                        frame.push(0x10); // TAG_SERVER_MSG
+                        frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+                        frame.extend_from_slice(&payload);
+                        for client in s.clients.values() {
+                            let _ = client.tx.try_send(frame.clone());
+                        }
+                    }
+                }
 
                 // Clean up exited panes
                 let dead = s.cleanup_exited_panes();
@@ -647,82 +705,17 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                         let pgen = s.generation.get(&pane_id).copied().unwrap_or(0);
 
                         if damage.full {
-                            if let Some(pane) = s.panes.get(&pane_id) {
-                                // Single lock: read viewport + history together
-                                let term = pane.term.lock().unwrap_or_else(|e| e.into_inner());
-                                use alacritty_terminal::grid::Dimensions;
-                                use alacritty_terminal::index::{Column, Line, Point};
-                                let grid = term.grid();
-                                let cols = grid.columns();
-                                let rows = grid.screen_lines();
-                                let current_history = grid.history_size();
-                                let content = term.renderable_content();
-
-                                // Read viewport cells
-                                let mut cells = Vec::with_capacity(cols * rows);
-                                for row in 0..rows {
-                                    for col in 0..cols {
-                                        let point = Point::new(Line(row as i32), Column(col));
-                                        cells.push(pack_cell(&grid[point]));
-                                    }
-                                }
-
-                                // Read new history lines
+                            let sync_result = if let Some(pane) = s.panes.get(&pane_id) {
                                 let last_sent = s.clients.get(&client_id)
                                     .and_then(|c| c.history_sent.get(&pane_id).copied())
                                     .unwrap_or(0);
-                                // Safety: if history shrank, clamp
-                                let last_sent = last_sent.min(current_history);
-                                let new_lines = current_history - last_sent;
-
-                                let mut sb_cells = Vec::new();
-                                if new_lines > 0 {
-                                    sb_cells.reserve(new_lines * cols);
-                                    // Line(-new_lines) = oldest new line, Line(-1) = newest
-                                    for i in (1..=new_lines).rev() {
-                                        for col in 0..cols {
-                                            let point = Point::new(Line(-(i as i32)), Column(col));
-                                            sb_cells.push(pack_cell(&grid[point]));
-                                        }
-                                    }
-                                }
-
-                                let cursor_shape = match content.cursor.shape {
-                                    alacritty_terminal::vte::ansi::CursorShape::Block => 0,
-                                    alacritty_terminal::vte::ansi::CursorShape::Underline => 1,
-                                    alacritty_terminal::vte::ansi::CursorShape::Beam => 2,
-                                    alacritty_terminal::vte::ansi::CursorShape::Hidden => 3,
-                                    alacritty_terminal::vte::ansi::CursorShape::HollowBlock => 4,
-                                };
-
-                                // Read mode flags while term lock is held (avoid double-lock)
-                                let mode = term.mode();
-                                let mut mode_flags = 0u8;
-                                if mode.contains(alacritty_terminal::term::TermMode::MOUSE_REPORT_CLICK)
-                                    || mode.contains(alacritty_terminal::term::TermMode::MOUSE_DRAG)
-                                    || mode.contains(alacritty_terminal::term::TermMode::MOUSE_MOTION) {
-                                    mode_flags |= ciri_protocol::message::MODE_MOUSE_REPORT;
-                                }
-                                if mode.contains(alacritty_terminal::term::TermMode::ALT_SCREEN) {
-                                    mode_flags |= ciri_protocol::message::MODE_ALT_SCREEN;
-                                }
-
-                                let sync = FullPaneSync {
-                                    pane_id,
-                                    generation: pgen,
-                                    cols: cols as u16,
-                                    rows: rows as u16,
-                                    cursor_line: content.cursor.point.line.0 as i16,
-                                    cursor_col: content.cursor.point.column.0 as u16,
-                                    cursor_shape,
-                                    mode_flags,
-                                    title: pane.title.clone(),
-                                    scrollback: sb_cells,
-                                    scrollback_rows: new_lines as u16,
-                                    cells,
-                                };
-                                drop(term);
-
+                                let sync = pane.snapshot_incremental(pgen, last_sent);
+                                let current_history = pane.history_size();
+                                Some((sync, current_history))
+                            } else {
+                                None
+                            };
+                            if let Some((sync, current_history)) = sync_result {
                                 if let Some(client) = s.clients.get_mut(&client_id) {
                                     client.history_sent.insert(pane_id, current_history);
                                 }
@@ -736,33 +729,13 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                                 }
                             }
                         } else if let Some(pane) = s.panes.get(&pane_id) {
-                            let term = pane.term.lock().unwrap_or_else(|e| e.into_inner());
-                            let grid = term.grid();
-                            let content = term.renderable_content();
-                            let cursor_line = content.cursor.point.line.0 as i16;
-                            let cursor_col = content.cursor.point.column.0 as u16;
-                            let cursor_shape = match content.cursor.shape {
-                                alacritty_terminal::vte::ansi::CursorShape::Block => 0,
-                                alacritty_terminal::vte::ansi::CursorShape::Underline => 1,
-                                alacritty_terminal::vte::ansi::CursorShape::Beam => 2,
-                                alacritty_terminal::vte::ansi::CursorShape::Hidden => 3,
-                                alacritty_terminal::vte::ansi::CursorShape::HollowBlock => 4,
-                            };
+                            let (cursor_line, cursor_col, cursor_shape, mode_flags) = pane.cursor_info();
                             let mut regions = Vec::new();
 
                             for (&line, &(left, right)) in &damage.line_damage {
-                                let mut cells = Vec::with_capacity((right - left + 1) as usize);
-                                for col in left..=right {
-                                    use alacritty_terminal::index::{Column, Line, Point};
-                                    let point = Point::new(Line(line as i32), Column(col as usize));
-                                    let cell = &grid[point];
-                                    cells.push(pack_cell(cell));
-                                }
+                                let cells = pane.read_cells(line, left, right);
                                 regions.push(DamageRegion { line, left, right, cells });
                             }
-                            drop(term);
-
-                            let mode_flags = pane.mode_flags();
 
                             // Always send delta (even with empty regions) so cursor updates reach client
                             let delta = CellDelta {
@@ -881,17 +854,11 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                         }
                     };
 
-                    // Apply viewport and resize panes before building StateSync
-                    {
-                        let mut s = state.lock().await;
-                        s.cell_width = viewport.cell_width;
-                        s.cell_height = viewport.cell_height;
-                        s.workspaces.resize_view(ViewSize {
-                            width: viewport.width as f32,
-                            height: viewport.height as f32,
-                        });
-                        s.resize_all_panes();
-                    }
+                    // Store viewport locally; will be applied per-client after registration
+                    let client_viewport_w = viewport.width as f32;
+                    let client_viewport_h = viewport.height as f32;
+                    let client_cell_w = viewport.cell_width;
+                    let client_cell_h = viewport.cell_height;
 
                     // Send ServerHello (no flush — frames follow immediately)
                     if let Err(e) = codec::write_server_hello(&mut writer).await {
@@ -924,7 +891,14 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                             last_acked_generation: 0,
                             history_sent: HashMap::new(),
                             send_failures: 0,
+                            cell_width: client_cell_w,
+                            cell_height: client_cell_h,
+                            viewport_width: client_viewport_w,
+                            viewport_height: client_viewport_h,
                         });
+
+                        // Recompute effective viewport now that this client is registered
+                        s.resize_all_panes();
 
                         log::info!("client {client_id} connected");
 
@@ -950,10 +924,7 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
 
                         // Collect current history sizes before mutably borrowing clients
                         let pane_histories: Vec<(u64, usize)> = s.panes.iter().map(|(&pid, pane)| {
-                            use alacritty_terminal::grid::Dimensions;
-                            let term = pane.term.lock().unwrap_or_else(|e| e.into_inner());
-                            let h = term.grid().history_size();
-                            (pid, h)
+                            (pid, pane.history_size())
                         }).collect();
 
                         // Clear the initial full-sync markers and record history_sent

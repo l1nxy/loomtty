@@ -46,6 +46,16 @@ impl App {
                     self.should_exit = true;
                     break;
                 }
+                ServerEvent::Control(ServerMessage::ClipboardStore { data }) => {
+                    // OSC 52: TUI app wrote to clipboard via server
+                    if let Some(cb) = &mut self.clipboard {
+                        if let Err(e) = cb.set_text(&data) {
+                            log::warn!("OSC 52 clipboard write failed: {e}");
+                        } else {
+                            log::debug!("OSC 52: clipboard set ({} bytes)", data.len());
+                        }
+                    }
+                }
                 ServerEvent::FullPaneSync(sync) => {
                     let cols = sync.cols as usize;
                     for line in 0..3.min(sync.rows as usize) {
@@ -60,7 +70,7 @@ impl App {
                     let grid = self.pane_grids.entry(sync.pane_id)
                         .or_insert_with(|| ClientPaneGrid::new(sync.cols, sync.rows, self.config.terminal.scrollback_lines));
                     grid.apply_full_sync(&sync);
-                    self.send(ClientMessage::Ack { generation: sync.generation });
+                    self.send_lossy(ClientMessage::Ack { generation: sync.generation });
                     self.cached_views.remove(&sync.pane_id);
                     needs_redraw = true;
                 }
@@ -69,7 +79,7 @@ impl App {
                         delta.pane_id, delta.regions.len(), delta.cursor_col, delta.cursor_line);
                     if let Some(grid) = self.pane_grids.get_mut(&delta.pane_id) {
                         grid.apply_delta(&delta);
-                        self.send(ClientMessage::Ack { generation: delta.generation });
+                        self.send_lossy(ClientMessage::Ack { generation: delta.generation });
                         self.cached_views.remove(&delta.pane_id);
                         needs_redraw = true;
                     }

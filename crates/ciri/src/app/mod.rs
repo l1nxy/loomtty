@@ -154,11 +154,22 @@ impl App {
         }
     }
 
-    /// Send a message to the server.
+    /// Send a critical message to the server (blocks if queue full).
+    /// Used for: Input, Resize, ClosePane, CreatePane, SplitDown, Focus*, MovePane*, SetColumnWidth, SwitchWorkspace.
     pub fn send(&self, msg: ClientMessage) {
         if let Some(tx) = &self.server_tx {
+            if let Err(e) = tx.send(msg) {
+                log::warn!("server channel closed: {e}");
+            }
+        }
+    }
+
+    /// Send a non-critical message (drops if queue full).
+    /// Used for: Ack, MouseInput.
+    pub fn send_lossy(&self, msg: ClientMessage) {
+        if let Some(tx) = &self.server_tx {
             if let Err(e) = tx.try_send(msg) {
-                log::warn!("failed to send to server: {e}");
+                log::debug!("dropped non-critical message: {e}");
             }
         }
     }

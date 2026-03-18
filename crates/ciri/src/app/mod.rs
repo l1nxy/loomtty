@@ -48,6 +48,7 @@ pub(crate) struct ReconnectState {
 
 pub(crate) struct App {
     pub config: CiriConfig,
+    pub session_name: String,
     pub frame_interval: Duration,
     pub window: Option<Arc<Window>>,
     pub renderer: Option<Renderer>,
@@ -92,12 +93,13 @@ pub(crate) struct App {
 }
 
 impl App {
-    pub fn new(config: CiriConfig) -> Self {
+    pub fn new(config: CiriConfig, session_name: impl Into<String>) -> Self {
         let frame_interval = Duration::from_millis(config.render.frame_interval_ms);
         let initial_view = ViewSize {
             width: config.window.width as f32,
             height: config.window.height as f32,
         };
+        let session_name = session_name.into();
         let mut input = InputHandler::new(
             Duration::from_millis(config.input.leader_timeout_ms),
             Duration::from_millis(config.input.double_tap_window_ms),
@@ -112,16 +114,13 @@ impl App {
 
         App {
             config,
+            session_name,
             frame_interval,
             window: None,
             renderer: None,
             glyph_atlas: None,
             dpi_scale: 1.0,
-            workspaces: WorkspaceSet::new_with_gaps(
-                initial_view,
-                column_gap,
-                column_gap,
-            ),
+            workspaces: WorkspaceSet::new_with_gaps(initial_view, column_gap, column_gap),
             pane_grids: HashMap::new(),
             input,
             server_tx: None,
@@ -207,7 +206,9 @@ impl App {
     }
 
     pub fn status_bar_height(&self) -> f32 {
-        let cell_h = self.glyph_atlas.as_ref()
+        let cell_h = self
+            .glyph_atlas
+            .as_ref()
             .map(|a| a.cell_height)
             .unwrap_or(self.config.font.size * 1.2);
         cell_h + self.config.statusbar.height_padding

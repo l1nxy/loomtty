@@ -329,6 +329,40 @@ impl ApplicationHandler for App {
                     event.physical_key
                 );
 
+                // Ctrl+Shift+F: enter search mode
+                if ctrl && shift {
+                    use winit::keyboard::{KeyCode, PhysicalKey};
+                    if event.physical_key == PhysicalKey::Code(KeyCode::KeyF) {
+                        if let Some(pane_id) = self.workspaces.active().active_pane_id() {
+                            let scroll_offset = self
+                                .pane_grids
+                                .get(&pane_id)
+                                .map(|g| g.scroll_offset)
+                                .unwrap_or(0);
+                            self.search_state = Some(app::SearchState {
+                                query: String::new(),
+                                matches: Vec::new(),
+                                current_match_idx: 0,
+                                pane_id,
+                                original_scroll_offset: scroll_offset,
+                            });
+                            if let Some(w) = &self.window {
+                                w.request_redraw();
+                            }
+                        }
+                        return;
+                    }
+                }
+
+                // Search mode: intercept all input
+                if self.search_state.is_some() {
+                    self.handle_search_key(&event, ctrl, shift);
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                    return;
+                }
+
                 // Clipboard: Ctrl+Shift+V / Ctrl+Shift+C
                 if ctrl && shift {
                     use winit::keyboard::{KeyCode, PhysicalKey};

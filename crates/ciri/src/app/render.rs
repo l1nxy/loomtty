@@ -302,6 +302,46 @@ impl App {
                 }
             }
 
+            // Search match highlights
+            if let Some(search) = &self.search_state {
+                if search.pane_id == *pane_id {
+                    if let Some(grid) = self.pane_grids.get(pane_id) {
+                        let (cw, ch) = self.cell_dimensions();
+                        let vp_top = grid.viewport_top();
+                        let vp_bottom = vp_top + grid.rows as usize;
+
+                        for (match_idx, m) in search.matches.iter().enumerate() {
+                            if m.buffer_row < vp_top || m.buffer_row >= vp_bottom {
+                                continue;
+                            }
+                            let vp_row = m.buffer_row - vp_top;
+
+                            let sx = inner_x + m.start_col as f32 * cw * zoom;
+                            let sy = inner_y + vp_row as f32 * ch * zoom;
+                            let sw = (m.end_col - m.start_col + 1) as f32 * cw * zoom;
+                            let sh = ch * zoom;
+
+                            let color = if match_idx == search.current_match_idx {
+                                [1.0, 0.6, 0.0, 0.5] // orange for current match
+                            } else {
+                                [1.0, 1.0, 0.0, 0.3] // yellow for other matches
+                            };
+
+                            let src = GeoRect::new(sx, sy, sw, sh);
+                            if let Some(c) = src.intersection(&tr) {
+                                bg_rects.push(Rect {
+                                    x: c.x,
+                                    y: c.y,
+                                    w: c.w,
+                                    h: c.h,
+                                    color,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
             glyphs.extend(view.glyph_instances.iter().filter_map(|g| {
                 let sx = (inner_x + g.px * zoom).round();
                 let sy = (inner_y + g.py * zoom).round();
@@ -449,6 +489,74 @@ impl App {
                 color: ThemeConfig::parse_color(&self.config.theme.accent),
             });
         }
+    }
+
+    pub fn build_search_bar(
+        &mut self,
+        tiles: &[(u64, GeoRect, bool)],
+        vw: f32,
+        vh: f32,
+        bg_rects: &mut Vec<Rect>,
+        glyphs: &mut Vec<GlyphInstance>,
+    ) {
+        let Some(search) = &self.search_state else {
+            return;
+        };
+        let renderer = self.renderer.as_mut().unwrap();
+        let atlas = self.glyph_atlas.as_mut().unwrap();
+
+        // Find the tile rect for the search pane
+        let Some((_, pane_rect, _)) = tiles.iter().find(|(pid, _, _)| *pid == search.pane_id)
+        else {
+            return;
+        };
+
+        let border_w = self.config.appearance.border_width;
+        let padding = self.config.appearance.padding;
+        let bar_height = atlas.cell_height + 4.0;
+        let bar_y = pane_rect.y + pane_rect.h - border_w - bar_height;
+        let bar_x = pane_rect.x + border_w;
+        let bar_w = pane_rect.w - border_w * 2.0;
+
+        // Search bar background
+        bg_rects.push(Rect {
+            x: bar_x,
+            y: bar_y,
+            w: bar_w,
+            h: bar_height,
+            color: [0.15, 0.15, 0.2, 0.95],
+        });
+
+        let match_info = if search.matches.is_empty() {
+            if search.query.is_empty() {
+                String::new()
+            } else {
+                " [no matches]".to_string()
+            }
+        } else {
+            format!(" [{}/{}]", search.current_match_idx + 1, search.matches.len())
+        };
+        let bar_text = format!(" Search: {}{}", search.query, match_info);
+
+        let cw = atlas.cell_width;
+        let baseline = atlas.cell_height * self.config.statusbar.text_baseline;
+        let text_y = bar_y + 2.0;
+        let text_color = [1.0, 1.0, 1.0, 1.0];
+
+        emit_status_text(
+            atlas,
+            &mut renderer.text.font_system,
+            &renderer.queue,
+            &bar_text,
+            bar_x + padding,
+            text_y,
+            cw,
+            baseline,
+            text_color,
+            vw,
+            vh,
+            glyphs,
+        );
     }
 
     pub fn submit_frame(
@@ -603,6 +711,7 @@ impl App {
 
         self.build_tiles(&tiles, zoom, vw_f, vh_f, &mut bg_rects, &mut glyphs);
         self.build_status_bar(vw_f, vh_f, &mut bg_rects, &mut glyphs);
+        self.build_search_bar(&tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs);
 
         let clear_color = ThemeConfig::parse_color(&self.config.theme.ui_background);
         let renderer = self.renderer.as_mut().unwrap();

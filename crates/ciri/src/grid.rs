@@ -72,8 +72,13 @@ impl ClientPaneGrid {
         self.buffer.len().saturating_sub(self.rows as usize)
     }
 
+    /// Total number of rows in the buffer (scrollback + viewport).
+    pub fn buffer_len(&self) -> usize {
+        self.buffer.len()
+    }
+
     /// The buffer_row index of the top of the current viewport.
-    fn viewport_top(&self) -> usize {
+    pub fn viewport_top(&self) -> usize {
         let total = self.buffer.len();
         let bottom = total.saturating_sub(self.rows as usize);
         bottom.saturating_sub(self.scroll_offset)
@@ -415,6 +420,46 @@ impl ClientPaneGrid {
             idx += 1;
         }
         idx
+    }
+
+    /// Search all lines in the buffer for `query` (case-insensitive).
+    /// Returns list of (buffer_row, start_col, end_col) matches.
+    pub fn search(&self, query: &str) -> Vec<(usize, u16, u16)> {
+        if query.is_empty() {
+            return vec![];
+        }
+        let query_lower = query.to_lowercase();
+        let mut results = Vec::new();
+
+        for (row_idx, row) in self.buffer.iter().enumerate() {
+            let mut text = String::new();
+            let mut col_positions: Vec<u16> = Vec::new();
+
+            for (col, cell) in row.iter().enumerate() {
+                if cell.flags_u16() & FLAG_WIDE_CHAR_SPACER != 0 {
+                    continue;
+                }
+                let ch = cell.ch();
+                if ch == '\0' {
+                    text.push(' ');
+                } else {
+                    text.push(ch);
+                }
+                col_positions.push(col as u16);
+            }
+
+            let text_lower = text.to_lowercase();
+            let mut search_from = 0;
+            while let Some(pos) = text_lower[search_from..].find(&query_lower) {
+                let char_start = search_from + pos;
+                let char_end = char_start + query_lower.len() - 1;
+                if char_start < col_positions.len() && char_end < col_positions.len() {
+                    results.push((row_idx, col_positions[char_start], col_positions[char_end]));
+                }
+                search_from = char_start + 1;
+            }
+        }
+        results
     }
 }
 

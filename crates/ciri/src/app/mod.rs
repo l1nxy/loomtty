@@ -46,6 +46,21 @@ pub(crate) struct HoveredLink {
     pub end: (u16, usize),
 }
 
+/// Active search session state.
+pub(crate) struct SearchState {
+    pub query: String,
+    pub matches: Vec<SearchMatch>,
+    pub current_match_idx: usize,
+    pub pane_id: u64,
+    pub original_scroll_offset: usize,
+}
+
+pub(crate) struct SearchMatch {
+    pub buffer_row: usize,
+    pub start_col: u16,
+    pub end_col: u16,
+}
+
 /// Auto-reconnection state.
 pub(crate) struct ReconnectState {
     pub attempt: u32,
@@ -98,6 +113,7 @@ pub(crate) struct App {
     pub hovered_link: Option<HoveredLink>,
     pub mouse_left_held: bool,
     pub reconnect_state: Option<ReconnectState>,
+    pub search_state: Option<SearchState>,
     pub should_exit: bool,
     #[allow(dead_code)]
     pub config_watcher: Option<notify::RecommendedWatcher>,
@@ -171,6 +187,7 @@ impl App {
             hovered_link: None,
             mouse_left_held: false,
             reconnect_state: None,
+            search_state: None,
             should_exit: false,
             config_watcher: None,
             config_change_rx: None,

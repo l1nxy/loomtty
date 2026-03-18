@@ -24,6 +24,13 @@ pub struct ClientPaneGrid {
     pub dirty: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WordClass {
+    Whitespace,
+    Word,
+    Symbol,
+}
+
 impl ClientPaneGrid {
     pub fn new(cols: u16, rows: u16, max_scrollback: usize) -> Self {
         let blank_row = vec![PackedCell::default(); cols as usize];
@@ -222,6 +229,35 @@ impl ClientPaneGrid {
         }
     }
 
+    pub fn word_bounds_at(&self, col: u16, buffer_row: usize) -> Option<(u16, u16)> {
+        let row = self.buffer.get(buffer_row)?;
+        if row.is_empty() {
+            return None;
+        }
+
+        let mut idx = (col as usize).min(row.len().saturating_sub(1));
+        idx = self.normalize_cell_start(row, idx);
+
+        let class = classify_word_cell(row.get(idx)?);
+        let mut left = idx;
+        while let Some(prev) = self.prev_cell_start(row, left) {
+            if classify_word_cell(&row[prev]) != class {
+                break;
+            }
+            left = prev;
+        }
+
+        let mut right = idx;
+        while let Some(next) = self.next_cell_start(row, right) {
+            if classify_word_cell(&row[next]) != class {
+                break;
+            }
+            right = next;
+        }
+
+        Some((left as u16, self.cell_end(row, right) as u16))
+    }
+
     /// Extract text from a buffer range (absolute buffer_rows).
     pub fn text_in_range(&self, start: (u16, usize), end: (u16, usize)) -> String {
         let (start, end) = if start.1 < end.1 || (start.1 == end.1 && start.0 <= end.0) {
@@ -247,5 +283,81 @@ impl ClientPaneGrid {
             if buf_row < end.1 { result.push('\n'); }
         }
         result
+    }
+
+    fn normalize_cell_start(&self, row: &[PackedCell], mut idx: usize) -> usize {
+        while idx > 0 && row[idx].flags_u16() & FLAG_WIDE_CHAR_SPACER != 0 {
+            idx -= 1;
+        }
+        idx
+    }
+
+    fn prev_cell_start(&self, row: &[PackedCell], idx: usize) -> Option<usize> {
+        if idx == 0 {
+            return None;
+        }
+        let mut prev = idx - 1;
+        while prev > 0 && row[prev].flags_u16() & FLAG_WIDE_CHAR_SPACER != 0 {
+            prev -= 1;
+        }
+        Some(prev)
+    }
+
+    fn next_cell_start(&self, row: &[PackedCell], idx: usize) -> Option<usize> {
+        let next = self.cell_end(row, idx) + 1;
+        if next < row.len() {
+            Some(next)
+        } else {
+            None
+        }
+    }
+
+    fn cell_end(&self, row: &[PackedCell], mut idx: usize) -> usize {
+        while idx + 1 < row.len() && row[idx + 1].flags_u16() & FLAG_WIDE_CHAR_SPACER != 0 {
+            idx += 1;
+        }
+        idx
+    }
+}
+
+fn classify_word_cell(cell: &PackedCell) -> WordClass {
+    let ch = cell.ch();
+    if ch == '\0' || ch.is_whitespace() {
+        WordClass::Whitespace
+    } else if ch.is_alphanumeric() || ch == '_' {
+        WordClass::Word
+    } else {
+        WordClass::Symbol
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn grid_with_line(text: &str) -> ClientPaneGrid {
+        let mut grid = ClientPaneGrid::new(text.chars().count() as u16, 1, 0);
+        let row = grid.buffer.get_mut(0).unwrap();
+        row.clear();
+        row.extend(text.chars().map(PackedCell::with_ch));
+        grid
+    }
+
+    #[test]
+    fn word_bounds_select_identifier() {
+        let grid = grid_with_line("echo hello_world test");
+        assert_eq!(grid.word_bounds_at(7, 0), Some((5, 15)));
+    }
+
+    #[test]
+    fn word_bounds_select_whitespace_run() {
+        let grid = grid_with_line("a   b");
+        assert_eq!(grid.word_bounds_at(2, 0), Some((1, 3)));
+    }
+
+    #[test]
+    fn word_bounds_select_symbol_run() {
+        let grid = grid_with_line("foo::bar");
+        assert_eq!(grid.word_bounds_at(4, 0), Some((3, 4)));
     }
 }

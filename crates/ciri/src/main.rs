@@ -498,6 +498,9 @@ impl ApplicationHandler for App {
                                 self.mouse_left_held = true;
                                 let shift = self.modifiers.shift_key();
                                 if let Some((pane_id, col, buf_row)) = self.pixel_to_cell(mx, my) {
+                                    let click_now = Instant::now();
+                                    let is_double_click = !shift
+                                        && self.is_double_left_click(pane_id, col, buf_row, click_now);
                                     let ws = self.workspaces.active_mut();
                                     for col_idx in 0..ws.columns.len() {
                                         if ws.columns[col_idx].pane_id == pane_id {
@@ -506,11 +509,18 @@ impl ApplicationHandler for App {
                                         }
                                     }
                                     self.animate_to_active();
+                                    self.remember_left_click(pane_id, col, buf_row, click_now);
 
                                     if shift {
                                         self.selection = Some(app::Selection {
                                             pane_id, start: (col, buf_row), end: (col, buf_row), active: true,
                                         });
+                                    } else if is_double_click {
+                                        if !self.select_word_at(pane_id, col, buf_row) {
+                                            self.selection = Some(app::Selection {
+                                                pane_id, start: (col, buf_row), end: (col, buf_row), active: true,
+                                            });
+                                        }
                                     } else {
                                         if let Some((_, vcol, vrow)) = self.pixel_to_viewport_cell(mx, my) {
                                             self.send_lossy(ClientMessage::MouseInput {

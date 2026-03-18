@@ -572,8 +572,8 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                                     alacritty_terminal::vte::ansi::CursorShape::Block => 0,
                                     alacritty_terminal::vte::ansi::CursorShape::Underline => 1,
                                     alacritty_terminal::vte::ansi::CursorShape::Beam => 2,
-                                    alacritty_terminal::vte::ansi::CursorShape::HollowBlock => 3,
-                                    alacritty_terminal::vte::ansi::CursorShape::Hidden => 4,
+                                    alacritty_terminal::vte::ansi::CursorShape::Hidden => 3,
+                                    alacritty_terminal::vte::ansi::CursorShape::HollowBlock => 4,
                                 };
 
                                 let sync = FullPaneSync {
@@ -613,8 +613,8 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                                 alacritty_terminal::vte::ansi::CursorShape::Block => 0,
                                 alacritty_terminal::vte::ansi::CursorShape::Underline => 1,
                                 alacritty_terminal::vte::ansi::CursorShape::Beam => 2,
-                                alacritty_terminal::vte::ansi::CursorShape::HollowBlock => 3,
-                                alacritty_terminal::vte::ansi::CursorShape::Hidden => 4,
+                                alacritty_terminal::vte::ansi::CursorShape::Hidden => 3,
+                                alacritty_terminal::vte::ansi::CursorShape::HollowBlock => 4,
                             };
                             let mut regions = Vec::new();
 

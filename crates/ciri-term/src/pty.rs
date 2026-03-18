@@ -80,8 +80,10 @@ impl Pty {
         let mut reader = pair.master.try_clone_reader().context("clone reader failed")?;
         let writer = pair.master.take_writer().context("take writer failed")?;
 
-        // Spawn background reader thread
-        let (output_tx, output_rx) = mpsc::channel();
+        // Spawn background reader thread with bounded channel to prevent
+        // memory spikes when PTY output exceeds processing bandwidth (e.g. cat large_file).
+        // 8 slots × 64KB buffer = ~512KB max buffered.
+        let (output_tx, output_rx) = mpsc::sync_channel(8);
         let reader_done = Arc::new(AtomicBool::new(false));
         let reader_done_clone = reader_done.clone();
 

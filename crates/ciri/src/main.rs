@@ -1273,9 +1273,11 @@ impl ApplicationHandler for App {
 
                 let ctrl = self.modifiers.control_key();
                 let shift = self.modifiers.shift_key();
+                let alt = self.modifiers.alt_key();
+                let super_key = self.modifiers.super_key();
 
                 // Debug: log all key events with modifiers
-                log::debug!("key: ctrl={ctrl} shift={shift} logical={:?} physical={:?}", event.logical_key, event.physical_key);
+                log::debug!("key: ctrl={ctrl} shift={shift} alt={alt} super={super_key} logical={:?} physical={:?}", event.logical_key, event.physical_key);
 
                 // Clipboard: Ctrl+Shift+V (paste) / Ctrl+Shift+C (copy)
                 // Use physical key because logical_key returns control chars when Ctrl is held
@@ -1342,11 +1344,7 @@ impl ApplicationHandler for App {
                 };
 
                 if self.overview_active {
-                    let combo = if shift {
-                        KeyCombo::with_shift(&key_name.to_lowercase())
-                    } else {
-                        KeyCombo::new(&key_name.to_lowercase())
-                    };
+                    let combo = KeyCombo::from_modifiers(&key_name.to_lowercase(), ctrl, shift, alt, super_key);
                     if let Some(action) = self.overview_keybinds.lookup(&combo) {
                         match action {
                             Action::ExitOverview => {
@@ -1360,7 +1358,7 @@ impl ApplicationHandler for App {
                 } else {
                     use ciri_input::leader::InputResult;
                     let result = if !key_name.is_empty() {
-                        self.input.process_key(key_name, ctrl, shift)
+                        self.input.process_key(key_name, ctrl, shift, alt, super_key)
                     } else {
                         InputResult::PassThrough
                     };

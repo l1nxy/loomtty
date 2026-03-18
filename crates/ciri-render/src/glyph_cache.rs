@@ -527,6 +527,35 @@ impl GlyphAtlas {
         pass.draw(0..4, 0..count as u32);
     }
 
+    /// Clear the glyph cache and reset the atlas packer.
+    /// Call this when the font family or size changes (e.g. config hot-reload).
+    pub fn clear_cache(&mut self, queue: &wgpu::Queue) {
+        self.cache.clear();
+        self.packer = ShelfPacker::new(self.atlas_size);
+        // Clear texture to zero (transparent)
+        let zeros = vec![0u8; (self.atlas_size * self.atlas_size) as usize];
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &self.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &zeros,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(self.atlas_size),
+                rows_per_image: Some(self.atlas_size),
+            },
+            wgpu::Extent3d {
+                width: self.atlas_size,
+                height: self.atlas_size,
+                depth_or_array_layers: 1,
+            },
+        );
+        log::info!("glyph cache cleared (atlas {}×{})", self.atlas_size, self.atlas_size);
+    }
+
     pub fn grid_size(&self, viewport_w: f32, viewport_h: f32) -> (u16, u16) {
         let cols = (viewport_w / self.cell_width).floor() as u16;
         let rows = (viewport_h / self.cell_height).floor() as u16;

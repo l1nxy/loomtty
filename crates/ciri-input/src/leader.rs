@@ -53,6 +53,8 @@ impl InputHandler {
         key_name: &str,
         ctrl: bool,
         shift: bool,
+        alt: bool,
+        super_key: bool,
     ) -> InputResult {
         self.check_timeout();
 
@@ -78,11 +80,7 @@ impl InputHandler {
             LeaderState::AwaitingAction { .. } => {
                 self.state = LeaderState::Idle;
 
-                let combo = if shift {
-                    KeyCombo::with_shift(key_name)
-                } else {
-                    KeyCombo::new(key_name)
-                };
+                let combo = KeyCombo::from_modifiers(key_name, ctrl, shift, alt, super_key);
 
                 if let Some(action) = self.keybinds.lookup(&combo) {
                     InputResult::Action(action)
@@ -112,21 +110,21 @@ mod tests {
     #[test]
     fn normal_key_passes_through() {
         let mut h = test_handler();
-        assert!(matches!(h.process_key("a", false, false), InputResult::PassThrough));
+        assert!(matches!(h.process_key("a", false, false, false, false), InputResult::PassThrough));
     }
 
     #[test]
     fn leader_key_enters_awaiting() {
         let mut h = test_handler();
-        assert!(matches!(h.process_key("w", true, false), InputResult::Consumed));
+        assert!(matches!(h.process_key("w", true, false, false, false), InputResult::Consumed));
         assert!(h.is_awaiting_action());
     }
 
     #[test]
     fn leader_then_action() {
         let mut h = test_handler();
-        h.process_key("w", true, false);
-        match h.process_key("n", false, false) {
+        h.process_key("w", true, false, false, false);
+        match h.process_key("n", false, false, false, false) {
             InputResult::Action(Action::NewColumnRight) => {}
             other => panic!("expected NewColumnRight, got {:?}", matches!(other, InputResult::PassThrough)),
         }
@@ -136,14 +134,14 @@ mod tests {
     #[test]
     fn leader_then_unknown_is_consumed() {
         let mut h = test_handler();
-        h.process_key("w", true, false);
-        assert!(matches!(h.process_key("z", false, false), InputResult::Consumed));
+        h.process_key("w", true, false, false, false);
+        assert!(matches!(h.process_key("z", false, false, false, false), InputResult::Consumed));
     }
 
     #[test]
     fn leader_timeout_resets() {
         let mut h = test_handler();
-        h.process_key("w", true, false);
+        h.process_key("w", true, false, false, false);
         assert!(h.is_awaiting_action());
         // Simulate timeout by setting entered_at to the past
         h.state = LeaderState::AwaitingAction {
@@ -156,8 +154,8 @@ mod tests {
     #[test]
     fn shift_keybinds() {
         let mut h = test_handler();
-        h.process_key("w", true, false);
-        match h.process_key("H", false, true) {
+        h.process_key("w", true, false, false, false);
+        match h.process_key("H", false, true, false, false) {
             InputResult::Action(Action::MovePaneLeft) => {}
             _ => panic!("expected MovePaneLeft"),
         }
@@ -167,6 +165,6 @@ mod tests {
     fn ctrl_key_not_leader_passes_through() {
         let mut h = test_handler();
         // Ctrl+C should pass through (not leader key)
-        assert!(matches!(h.process_key("c", true, false), InputResult::PassThrough));
+        assert!(matches!(h.process_key("c", true, false, false, false), InputResult::PassThrough));
     }
 }

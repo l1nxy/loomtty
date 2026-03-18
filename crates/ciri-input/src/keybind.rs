@@ -5,14 +5,64 @@ use std::collections::HashMap;
 pub struct KeyCombo {
     pub key: String,
     pub shift: bool,
+    pub alt: bool,
+    pub ctrl: bool,
+    pub super_key: bool,
 }
 
 impl KeyCombo {
     pub fn new(key: &str) -> Self {
-        KeyCombo { key: key.to_lowercase(), shift: false }
+        KeyCombo { key: key.to_lowercase(), shift: false, alt: false, ctrl: false, super_key: false }
     }
     pub fn with_shift(key: &str) -> Self {
-        KeyCombo { key: key.to_lowercase(), shift: true }
+        KeyCombo { key: key.to_lowercase(), shift: true, alt: false, ctrl: false, super_key: false }
+    }
+
+    /// Parse a combo string like "ctrl+alt+shift+h" into a KeyCombo.
+    pub fn parse(s: &str) -> Self {
+        let mut shift = false;
+        let mut alt = false;
+        let mut ctrl = false;
+        let mut super_key = false;
+        let mut key_part = s;
+
+        // Strip modifier prefixes in any order
+        loop {
+            if let Some(rest) = key_part.strip_prefix("shift+") {
+                shift = true;
+                key_part = rest;
+            } else if let Some(rest) = key_part.strip_prefix("alt+") {
+                alt = true;
+                key_part = rest;
+            } else if let Some(rest) = key_part.strip_prefix("ctrl+") {
+                ctrl = true;
+                key_part = rest;
+            } else if let Some(rest) = key_part.strip_prefix("super+") {
+                super_key = true;
+                key_part = rest;
+            } else {
+                break;
+            }
+        }
+
+        KeyCombo {
+            key: key_part.to_lowercase(),
+            shift,
+            alt,
+            ctrl,
+            super_key,
+        }
+    }
+
+    /// Build a KeyCombo from runtime modifier state + key name.
+    pub fn from_modifiers(key: &str, ctrl: bool, shift: bool, alt: bool, super_key: bool) -> Self {
+        KeyCombo {
+            key: key.to_lowercase(),
+            shift,
+            alt,
+            ctrl,
+            super_key,
+        }
     }
 }
 
@@ -98,12 +148,9 @@ impl KeybindMap {
         // Overlay user config
         for (key_str, action_str) in bindings {
             if let Some(action) = Action::from_name(action_str) {
-                let combo = if let Some(rest) = key_str.strip_prefix("shift+") {
-                    KeyCombo::with_shift(rest)
-                } else {
-                    KeyCombo::new(key_str)
-                };
-                map.bindings.insert(combo, action);
+                map.bindings.insert(KeyCombo::parse(key_str), action);
+            } else {
+                log::warn!("unknown action in keybinding config: {action_str:?} (key: {key_str:?})");
             }
         }
         map
@@ -114,12 +161,9 @@ impl KeybindMap {
         let mut map = Self::overview_default();
         for (key_str, action_str) in bindings {
             if let Some(action) = Action::from_name(action_str) {
-                let combo = if let Some(rest) = key_str.strip_prefix("shift+") {
-                    KeyCombo::with_shift(rest)
-                } else {
-                    KeyCombo::new(key_str)
-                };
-                map.bindings.insert(combo, action);
+                map.bindings.insert(KeyCombo::parse(key_str), action);
+            } else {
+                log::warn!("unknown action in overview keybinding config: {action_str:?} (key: {key_str:?})");
             }
         }
         map
@@ -130,12 +174,9 @@ impl KeybindMap {
         let mut b = HashMap::new();
         for (key_str, action_str) in bindings {
             if let Some(action) = Action::from_name(action_str) {
-                let combo = if let Some(rest) = key_str.strip_prefix("shift+") {
-                    KeyCombo::with_shift(rest)
-                } else {
-                    KeyCombo::new(key_str)
-                };
-                b.insert(combo, action);
+                b.insert(KeyCombo::parse(key_str), action);
+            } else {
+                log::warn!("unknown action in keybinding config: {action_str:?} (key: {key_str:?})");
             }
         }
         KeybindMap { bindings: b }

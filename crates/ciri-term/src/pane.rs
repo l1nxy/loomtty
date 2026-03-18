@@ -113,9 +113,30 @@ impl Pane {
         processed
     }
 
-    pub fn write_to_pty(&self, data: &[u8]) {
+    pub fn write_to_pty(&mut self, data: &[u8]) {
         if self.exited { return; }
         if let Err(e) = self.pty.write(data) {
+            log::warn!("pty write failed (pane {}): {e}", self.id);
+        }
+    }
+
+    /// Check if the terminal has mouse reporting mode enabled.
+    pub fn has_mouse_mode(&self) -> bool {
+        use alacritty_terminal::term::TermMode;
+        let term = self.term.lock().unwrap_or_else(|e| e.into_inner());
+        let mode = term.mode();
+        mode.contains(TermMode::MOUSE_REPORT_CLICK)
+            || mode.contains(TermMode::MOUSE_DRAG)
+            || mode.contains(TermMode::MOUSE_MOTION)
+    }
+
+    /// Forward mouse input as SGR escape sequence to the PTY.
+    /// Does NOT reset viewport state (TUI apps manage their own scrolling).
+    pub fn send_mouse_input(&self, button: u8, col: u16, row: u16, pressed: bool, modifiers: u8) {
+        let btn_with_mods = button as u32 | ((modifiers as u32) << 2);
+        let suffix = if pressed { 'M' } else { 'm' };
+        let seq = format!("\x1b[<{};{};{}{}", btn_with_mods, col + 1, row + 1, suffix);
+        if let Err(e) = self.pty.write(seq.as_bytes()) {
             log::warn!("pty write failed (pane {}): {e}", self.id);
         }
     }
@@ -174,15 +195,21 @@ impl Pane {
                     term.reset_damage();
                     return None;
                 }
+                // Expand each damaged line to full width to catch cleared cells
+                // (e.g., PSReadLine prediction text that was erased)
+                let right = cols.saturating_sub(1);
+                let mut seen_lines = std::collections::HashSet::new();
                 let mut regions = Vec::with_capacity(bounds.len());
                 for b in bounds {
-                    let cells = self.read_line_cells(&term, b.line, b.left, b.right);
-                    regions.push(DamageRegion {
-                        line: b.line as u16,
-                        left: b.left as u16,
-                        right: b.right as u16,
-                        cells,
-                    });
+                    if seen_lines.insert(b.line) {
+                        let cells = self.read_line_cells(&term, b.line, 0, right);
+                        regions.push(DamageRegion {
+                            line: b.line as u16,
+                            left: 0,
+                            right: right as u16,
+                            cells,
+                        });
+                    }
                 }
                 regions
             }
@@ -191,7 +218,7 @@ impl Pane {
         Some(regions)
     }
 
-    /// Read cells from a line range and pack them.
+    /// Read cells from a line range and pack them (live viewport only).
     fn read_line_cells(
         &self,
         term: &Term<PtyEventListener>,
@@ -217,6 +244,8 @@ impl Pane {
         let rows = grid.screen_lines();
         let content = term.renderable_content();
 
+        // Server always sends the live viewport (no scrollback).
+        // Scrollback is managed client-side.
         let mut cells = Vec::with_capacity(cols * rows);
         for row in 0..rows {
             for col in 0..cols {
@@ -243,6 +272,8 @@ impl Pane {
             cursor_col: content.cursor.point.column.0 as u16,
             cursor_shape,
             title: self.title.clone(),
+            scrollback: Vec::new(),
+            scrollback_rows: 0,
             cells,
         }
     }

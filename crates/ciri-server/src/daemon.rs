@@ -69,6 +69,8 @@ struct ClientState {
     tx: mpsc::Sender<Vec<u8>>,
     damage: HashMap<u64, DamageAccumulator>, // per pane_id
     last_acked_generation: u64,
+    /// Per-pane: how many history lines this client has received.
+    history_sent: HashMap<u64, usize>,
 }
 
 // ─── Server state ───────────────────────────────────────────────────
@@ -197,10 +199,17 @@ impl ServerState {
                 let g = self.generation.entry(pane_id).or_insert(0);
                 *g += 1;
 
-                // Merge damage into each client's accumulator and mark cursor dirty
+                // If all rows were damaged, this is likely a scroll or full repaint.
+                // Mark as full so a FullPaneSync is sent (client needs it for scrollback).
+                let is_full = regions.len() >= pane.grid_rows() as usize;
+
                 for client in self.clients.values_mut() {
                     let acc = client.damage.entry(pane_id).or_insert_with(DamageAccumulator::new);
-                    acc.merge_regions(&regions);
+                    if is_full {
+                        acc.mark_full();
+                    } else {
+                        acc.merge_regions(&regions);
+                    }
                     acc.cursor_dirty = true;
                 }
             }
@@ -224,7 +233,7 @@ impl ServerState {
 
         match msg {
             ClientMessage::Input { pane_id, data } => {
-                if let Some(pane) = self.panes.get(&pane_id) {
+                if let Some(pane) = self.panes.get_mut(&pane_id) {
                     pane.write_to_pty(&data);
                 }
             }
@@ -319,6 +328,13 @@ impl ServerState {
             ClientMessage::Ack { generation } => {
                 if let Some(client) = self.clients.get_mut(&client_id) {
                     client.last_acked_generation = generation;
+                }
+            }
+            ClientMessage::MouseInput { pane_id, button, col, row, pressed, modifiers } => {
+                if let Some(pane) = self.panes.get(&pane_id) {
+                    if pane.has_mouse_mode() {
+                        pane.send_mouse_input(button, col, row, pressed, modifiers);
+                    }
                 }
             }
         }
@@ -513,10 +529,75 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
 
                         if damage.full {
                             if let Some(pane) = s.panes.get(&pane_id) {
-                                let sync = pane.snapshot(pgen);
+                                // Single lock: read viewport + history together
+                                let term = pane.term.lock().unwrap_or_else(|e| e.into_inner());
+                                use alacritty_terminal::grid::Dimensions;
+                                use alacritty_terminal::index::{Column, Line, Point};
+                                let grid = term.grid();
+                                let cols = grid.columns();
+                                let rows = grid.screen_lines();
+                                let current_history = grid.history_size();
+                                let content = term.renderable_content();
+
+                                // Read viewport cells
+                                let mut cells = Vec::with_capacity(cols * rows);
+                                for row in 0..rows {
+                                    for col in 0..cols {
+                                        let point = Point::new(Line(row as i32), Column(col));
+                                        cells.push(pack_cell(&grid[point]));
+                                    }
+                                }
+
+                                // Read new history lines
+                                let last_sent = s.clients.get(&client_id)
+                                    .and_then(|c| c.history_sent.get(&pane_id).copied())
+                                    .unwrap_or(0);
+                                // Safety: if history shrank, clamp
+                                let last_sent = last_sent.min(current_history);
+                                let new_lines = current_history - last_sent;
+
+                                let mut sb_cells = Vec::new();
+                                if new_lines > 0 {
+                                    sb_cells.reserve(new_lines * cols);
+                                    // Line(-new_lines) = oldest new line, Line(-1) = newest
+                                    for i in (1..=new_lines).rev() {
+                                        for col in 0..cols {
+                                            let point = Point::new(Line(-(i as i32)), Column(col));
+                                            sb_cells.push(pack_cell(&grid[point]));
+                                        }
+                                    }
+                                }
+
+                                let cursor_shape = match content.cursor.shape {
+                                    alacritty_terminal::vte::ansi::CursorShape::Block => 0,
+                                    alacritty_terminal::vte::ansi::CursorShape::Underline => 1,
+                                    alacritty_terminal::vte::ansi::CursorShape::Beam => 2,
+                                    alacritty_terminal::vte::ansi::CursorShape::HollowBlock => 3,
+                                    alacritty_terminal::vte::ansi::CursorShape::Hidden => 4,
+                                };
+
+                                let sync = FullPaneSync {
+                                    pane_id,
+                                    generation: pgen,
+                                    cols: cols as u16,
+                                    rows: rows as u16,
+                                    cursor_line: content.cursor.point.line.0 as i16,
+                                    cursor_col: content.cursor.point.column.0 as u16,
+                                    cursor_shape,
+                                    title: pane.title.clone(),
+                                    scrollback: sb_cells,
+                                    scrollback_rows: new_lines as u16,
+                                    cells,
+                                };
+                                drop(term);
+
+                                if let Some(client) = s.clients.get_mut(&client_id) {
+                                    client.history_sent.insert(pane_id, current_history);
+                                }
+
                                 if let Ok(payload) = codec::encode_full_pane_sync_payload(&sync) {
                                     let mut frame = Vec::with_capacity(5 + payload.len());
-                                    frame.push(0x21); // TAG_FULL_PANE_SYNC
+                                    frame.push(0x21);
                                     frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
                                     frame.extend_from_slice(&payload);
                                     outgoing.push((client_id, frame));
@@ -695,6 +776,7 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                             tx: tx.clone(),
                             damage: damage_map,
                             last_acked_generation: 0,
+                            history_sent: HashMap::new(),
                         });
 
                         log::info!("client {client_id} connected");

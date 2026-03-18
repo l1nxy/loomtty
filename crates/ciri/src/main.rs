@@ -29,6 +29,22 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 use winit::window::{Window, WindowAttributes, WindowId};
 
+/// Text selection state with absolute buffer coordinates.
+struct Selection {
+    pane_id: u64,
+    start: (u16, usize), // (col, buffer_row)
+    end: (u16, usize),
+    active: bool, // true while mouse is held
+}
+
+/// Auto-reconnection state.
+struct ReconnectState {
+    attempt: u32,
+    max_attempts: u32,
+    next_retry: Instant,
+    backoff: Duration,
+}
+
 struct App {
     config: CiriConfig,
     frame_interval: Duration,
@@ -65,6 +81,21 @@ struct App {
     resize_drag_start_width: f32,
     /// Whether we've received initial StateSync from server.
     connected: bool,
+    // ── Cursor blink ──
+    cursor_blink_visible: bool,
+    cursor_blink_timer: Instant,
+    // ── Clipboard ──
+    clipboard: Option<arboard::Clipboard>,
+    // ── Text selection ──
+    selection: Option<Selection>,
+    // ── Mouse button state (for drag/motion forwarding) ──
+    mouse_left_held: bool,
+    // ── Auto-reconnect ──
+    reconnect_state: Option<ReconnectState>,
+    // ── Config hot-reload ──
+    #[allow(dead_code)]
+    config_watcher: Option<notify::RecommendedWatcher>,
+    config_change_rx: Option<crossbeam_channel::Receiver<()>>,
 }
 
 impl App {
@@ -121,6 +152,14 @@ impl App {
             resize_drag_start_x: 0.0,
             resize_drag_start_width: 0.0,
             connected: false,
+            cursor_blink_visible: true,
+            cursor_blink_timer: Instant::now(),
+            clipboard: arboard::Clipboard::new().ok(),
+            selection: None,
+            mouse_left_held: false,
+            reconnect_state: None,
+            config_watcher: None,
+            config_change_rx: None,
         }
     }
 
@@ -147,7 +186,7 @@ impl App {
                     self.apply_layout(&layout);
                     // Grids will be populated by FullPaneSync messages that follow
                     for &id in &pane_ids {
-                        self.pane_grids.entry(id).or_insert_with(|| ClientPaneGrid::new(80, 24));
+                        self.pane_grids.entry(id).or_insert_with(|| ClientPaneGrid::new(80, 24, self.config.terminal.scrollback_lines));
                     }
                     self.connected = true;
                     needs_redraw = true;
@@ -157,7 +196,7 @@ impl App {
                     needs_redraw = true;
                 }
                 ServerEvent::Control(ServerMessage::PaneCreated { pane_id, .. }) => {
-                    self.pane_grids.entry(pane_id).or_insert_with(|| ClientPaneGrid::new(80, 24));
+                    self.pane_grids.entry(pane_id).or_insert_with(|| ClientPaneGrid::new(80, 24, self.config.terminal.scrollback_lines));
                     needs_redraw = true;
                 }
                 ServerEvent::Control(ServerMessage::PaneClosed { pane_id }) => {
@@ -172,13 +211,26 @@ impl App {
                     needs_redraw = true;
                 }
                 ServerEvent::FullPaneSync(sync) => {
+                    // Log first 3 lines to check content difference
+                    let cols = sync.cols as usize;
+                    for line in 0..3.min(sync.rows as usize) {
+                        let start = line * cols;
+                        let end = (start + 30).min(sync.cells.len());
+                        let chars: String = sync.cells[start..end].iter().map(|c| {
+                            let ch = c.ch();
+                            if ch == '\0' || ch == ' ' { '.' } else { ch }
+                        }).collect();
+                        log::info!("FullPaneSync pane={} line {line}: [{chars}]", sync.pane_id);
+                    }
                     let grid = self.pane_grids.entry(sync.pane_id)
-                        .or_insert_with(|| ClientPaneGrid::new(sync.cols, sync.rows));
+                        .or_insert_with(|| ClientPaneGrid::new(sync.cols, sync.rows, self.config.terminal.scrollback_lines));
                     grid.apply_full_sync(&sync);
                     self.cached_views.remove(&sync.pane_id);
                     needs_redraw = true;
                 }
                 ServerEvent::CellDelta(delta) => {
+                    log::debug!("CellDelta: pane={} regions={} cursor=({},{})",
+                        delta.pane_id, delta.regions.len(), delta.cursor_col, delta.cursor_line);
                     if let Some(grid) = self.pane_grids.get_mut(&delta.pane_id) {
                         grid.apply_delta(&delta);
                         self.cached_views.remove(&delta.pane_id);
@@ -186,13 +238,19 @@ impl App {
                     }
                 }
                 ServerEvent::Disconnected => {
-                    log::warn!("disconnected from server, exiting");
+                    log::warn!("disconnected from server");
                     self.connected = false;
                     self.pane_grids.clear();
                     self.cached_views.clear();
                     self.server_tx = None;
                     self.server_rx = None;
-                    return true; // signal caller to exit
+                    self.reconnect_state = Some(ReconnectState {
+                        attempt: 0,
+                        max_attempts: 10,
+                        next_retry: Instant::now() + Duration::from_millis(500),
+                        backoff: Duration::from_millis(500),
+                    });
+                    return true;
                 }
             }
         }
@@ -275,11 +333,125 @@ impl App {
         }
     }
 
+    /// Convert pixel coordinates to (pane_id, col, buffer_row) using absolute buffer indices.
+    fn pixel_to_cell(&self, mx: f32, my: f32) -> Option<(u64, u16, usize)> {
+        let (cw, ch) = self.cell_dimensions();
+        if cw <= 0.0 || ch <= 0.0 { return None; }
+        let border_w = self.config.appearance.border_width;
+        let padding = self.config.appearance.padding;
+        let tiles = self.workspaces.active().visible_tiles();
+        for (pane_id, rect, _) in &tiles {
+            if rect.contains(mx, my) {
+                let inner_x = rect.x + border_w + padding;
+                let inner_y = rect.y + border_w + padding;
+                let col = ((mx - inner_x) / cw).floor().max(0.0) as u16;
+                let viewport_row = ((my - inner_y) / ch).floor().max(0.0) as u16;
+                if let Some(grid) = self.pane_grids.get(pane_id) {
+                    let col = col.min(grid.cols.saturating_sub(1));
+                    let viewport_row = viewport_row.min(grid.rows.saturating_sub(1));
+                    let buffer_row = grid.viewport_to_buffer_row(viewport_row);
+                    return Some((*pane_id, col, buffer_row));
+                }
+            }
+        }
+        None
+    }
+
+    /// Convert pixel coordinates to (pane_id, col, viewport_row) for mouse forwarding.
+    fn pixel_to_viewport_cell(&self, mx: f32, my: f32) -> Option<(u64, u16, u16)> {
+        let (cw, ch) = self.cell_dimensions();
+        if cw <= 0.0 || ch <= 0.0 { return None; }
+        let border_w = self.config.appearance.border_width;
+        let padding = self.config.appearance.padding;
+        let tiles = self.workspaces.active().visible_tiles();
+        for (pane_id, rect, _) in &tiles {
+            if rect.contains(mx, my) {
+                let inner_x = rect.x + border_w + padding;
+                let inner_y = rect.y + border_w + padding;
+                let col = ((mx - inner_x) / cw).floor().max(0.0) as u16;
+                let row = ((my - inner_y) / ch).floor().max(0.0) as u16;
+                if let Some(grid) = self.pane_grids.get(pane_id) {
+                    let col = col.min(grid.cols.saturating_sub(1));
+                    let row = row.min(grid.rows.saturating_sub(1));
+                    return Some((*pane_id, col, row));
+                }
+            }
+        }
+        None
+    }
+
+    /// Extract selected text from the pane grid using absolute buffer coordinates.
+    fn extract_selected_text(&self) -> Option<String> {
+        let sel = self.selection.as_ref()?;
+        let grid = self.pane_grids.get(&sel.pane_id)?;
+        Some(grid.text_in_range(sel.start, sel.end))
+    }
+
+    /// Scroll the active pane up (into history).
+    fn scroll_active_up(&mut self, lines: usize) {
+        if let Some(pid) = self.workspaces.active().active_pane_id() {
+            if let Some(grid) = self.pane_grids.get_mut(&pid) {
+                grid.scroll_up(lines);
+                self.cached_views.remove(&pid);
+            }
+        }
+    }
+
+    /// Scroll the active pane down (toward live).
+    fn scroll_active_down(&mut self, lines: usize) {
+        if let Some(pid) = self.workspaces.active().active_pane_id() {
+            if let Some(grid) = self.pane_grids.get_mut(&pid) {
+                grid.scroll_down(lines);
+                self.cached_views.remove(&pid);
+            }
+        }
+    }
+
+    /// Scroll active pane to bottom (live viewport).
+    fn scroll_active_to_bottom(&mut self) {
+        if let Some(pid) = self.workspaces.active().active_pane_id() {
+            if let Some(grid) = self.pane_grids.get_mut(&pid) {
+                grid.scroll_to_bottom();
+                self.cached_views.remove(&pid);
+            }
+        }
+    }
+
     fn status_bar_height(&self) -> f32 {
         let cell_h = self.glyph_atlas.as_ref()
             .map(|a| a.cell_height)
             .unwrap_or(self.config.font.size * 1.2);
         cell_h + self.config.statusbar.height_padding
+    }
+
+    fn reload_config(&mut self) {
+        match ciri_config::config::CiriConfig::load() {
+            Ok(new_config) => {
+                let font_changed = new_config.font.family != self.config.font.family
+                    || (new_config.font.size - self.config.font.size).abs() > 0.01;
+                self.config = new_config;
+                // Rebuild keybinds
+                self.input.keybinds = KeybindMap::from_config(&self.config.keys.bindings);
+                self.overview_keybinds = KeybindMap::from_overview_config(&self.config.keys.overview_bindings);
+                // Rebuild glyph atlas if font changed
+                if font_changed {
+                    if let Some(renderer) = &mut self.renderer {
+                        let fmt = renderer.surface_format();
+                        let atlas = GlyphAtlas::new(
+                            &renderer.device, fmt,
+                            &mut renderer.text.font_system, self.config.font.size,
+                            self.dpi_scale, &self.config.font.family,
+                            &self.config.render,
+                        );
+                        self.glyph_atlas = Some(atlas);
+                    }
+                }
+                self.cached_views.clear();
+                for grid in self.pane_grids.values_mut() { grid.dirty = true; }
+                log::info!("config reloaded");
+            }
+            Err(e) => log::warn!("config reload failed: {e}"),
+        }
     }
 
     fn snap_all_col_widths(&mut self) {
@@ -386,6 +558,25 @@ impl App {
                 if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
                     self.send(ClientMessage::Input { pane_id: pid, data: vec![0x17] });
                 }
+            }
+            Action::ScrollPageUp => {
+                let rows = self.pane_grids.values().next().map(|g| g.rows as usize).unwrap_or(24);
+                self.scroll_active_up(rows);
+            }
+            Action::ScrollPageDown => {
+                let rows = self.pane_grids.values().next().map(|g| g.rows as usize).unwrap_or(24);
+                self.scroll_active_down(rows);
+            }
+            Action::ScrollTop => {
+                if let Some(pid) = self.workspaces.active().active_pane_id() {
+                    if let Some(grid) = self.pane_grids.get_mut(&pid) {
+                        grid.scroll_up(grid.max_scroll_offset());
+                        self.cached_views.remove(&pid);
+                    }
+                }
+            }
+            Action::ScrollBottom => {
+                self.scroll_active_to_bottom();
             }
         }
     }
@@ -523,15 +714,49 @@ impl App {
                 }
             }
 
-            for cursor in &view.cursor_rects {
-                let src = GeoRect::new(
-                    inner_x + cursor.x * zoom,
-                    inner_y + cursor.y * zoom,
-                    cursor.w * zoom,
-                    cursor.h * zoom,
-                );
-                if let Some(c) = src.intersection(&tr) {
-                    bg_rects.push(Rect { x: c.x, y: c.y, w: c.w, h: c.h, color: cursor.color });
+            if self.cursor_blink_visible && *is_active {
+                for cursor in &view.cursor_rects {
+                    let src = GeoRect::new(
+                        inner_x + cursor.x * zoom,
+                        inner_y + cursor.y * zoom,
+                        cursor.w * zoom,
+                        cursor.h * zoom,
+                    );
+                    if let Some(c) = src.intersection(&tr) {
+                        bg_rects.push(Rect { x: c.x, y: c.y, w: c.w, h: c.h, color: cursor.color });
+                    }
+                }
+            }
+
+            // Selection overlay (absolute buffer_row → viewport_row conversion)
+            if let Some(sel) = &self.selection {
+                if sel.pane_id == *pane_id {
+                    if let Some(grid) = self.pane_grids.get(pane_id) {
+                        let (cw, ch) = self.cell_dimensions();
+                        let (start, end) = if sel.start.1 < sel.end.1 || (sel.start.1 == sel.end.1 && sel.start.0 <= sel.end.0) {
+                            (sel.start, sel.end)
+                        } else {
+                            (sel.end, sel.start)
+                        };
+                        let sel_color = [0.3, 0.5, 0.8, 0.3];
+                        for buf_row in start.1..=end.1 {
+                            // Convert buffer_row to viewport_row; skip if not visible
+                            let viewport_row = match grid.buffer_to_viewport_row(buf_row) {
+                                Some(r) => r,
+                                None => continue,
+                            };
+                            let left = if buf_row == start.1 { start.0 } else { 0 };
+                            let right = if buf_row == end.1 { end.0 } else { grid.cols.saturating_sub(1) };
+                            let sx = inner_x + left as f32 * cw * zoom;
+                            let sy = inner_y + viewport_row as f32 * ch * zoom;
+                            let sw = (right - left + 1) as f32 * cw * zoom;
+                            let sh = ch * zoom;
+                            let src = GeoRect::new(sx, sy, sw, sh);
+                            if let Some(c) = src.intersection(&tr) {
+                                bg_rects.push(Rect { x: c.x, y: c.y, w: c.w, h: c.h, color: sel_color });
+                            }
+                        }
+                    }
                 }
             }
 
@@ -694,6 +919,9 @@ impl App {
         if self.renderer.is_none() || self.glyph_atlas.is_none() {
             return;
         }
+        // Skip rendering when minimized (surface size = 0)
+        let (sw, sh) = self.renderer.as_ref().unwrap().surface_size();
+        if sw == 0 || sh == 0 { return; }
 
         let now = Instant::now();
         let dt = (now - self.last_frame).as_secs_f64();
@@ -720,9 +948,15 @@ impl App {
             let is_dirty = self.pane_grids.get(pane_id).is_some_and(|g| g.dirty);
             if (is_dirty || !self.cached_views.contains_key(pane_id))
                 && let Some(grid) = self.pane_grids.get_mut(pane_id) {
+                    let visible = grid.visible_cells();
+                    let (cur_col, cur_line, cur_shape) = if let Some((col, line)) = grid.cursor_in_viewport() {
+                        (col, line, grid.cursor_shape)
+                    } else {
+                        (0, 0, CURSOR_HIDDEN) // hide cursor when scrolled
+                    };
                     let view = terminal::build_view_from_grid(
-                        &grid.cells, grid.cols, grid.rows,
-                        grid.cursor_line, grid.cursor_col, grid.cursor_shape,
+                        &visible, grid.cols, grid.rows,
+                        cur_line, cur_col, cur_shape,
                         atlas, &mut renderer.text.font_system, &renderer.queue,
                         &self.config,
                     );
@@ -818,15 +1052,73 @@ impl ApplicationHandler for App {
             // Process server events
             if self.process_server_events() { needs_redraw = true; }
 
-            // Exit on disconnect
+            // Cursor blink
+            if self.config.terminal.cursor_blink {
+                let interval = Duration::from_millis(self.config.terminal.cursor_blink_interval_ms);
+                if self.cursor_blink_timer.elapsed() >= interval {
+                    self.cursor_blink_visible = !self.cursor_blink_visible;
+                    self.cursor_blink_timer = Instant::now();
+                    needs_redraw = true;
+                }
+            }
+
+            // Config hot-reload
+            if let Some(rx) = &self.config_change_rx {
+                if rx.try_recv().is_ok() {
+                    self.reload_config();
+                    needs_redraw = true;
+                }
+            }
+
+            // Auto-reconnect on disconnect
             if !self.connected && self.server_rx.is_none() {
-                log::info!("server connection lost, exiting");
-                self.cached_views.clear();
-                self.glyph_atlas = None;
-                self.renderer = None;
-                self.window = None;
-                event_loop.exit();
-                return;
+                let should_try = self.reconnect_state.as_ref()
+                    .is_some_and(|s| Instant::now() >= s.next_retry);
+                let gave_up = self.reconnect_state.as_ref()
+                    .is_some_and(|s| s.attempt >= s.max_attempts);
+                let has_reconnect = self.reconnect_state.is_some();
+
+                if gave_up {
+                    log::error!("max reconnect attempts reached, exiting");
+                    event_loop.exit();
+                    return;
+                } else if should_try {
+                    let (cw, ch) = self.cell_dimensions();
+                    let view = &self.workspaces.view_size;
+                    let viewport = ciri_protocol::codec::ClientViewport {
+                        width: view.width as u32, height: view.height as u32,
+                        cell_width: cw, cell_height: ch,
+                    };
+                    if let Some(state) = &mut self.reconnect_state {
+                        state.attempt += 1;
+                    }
+                    match connection::connect_or_spawn("default", viewport) {
+                        Ok((tx, rx)) => {
+                            log::info!("reconnected");
+                            self.server_tx = Some(tx);
+                            self.server_rx = Some(rx);
+                            self.reconnect_state = None;
+                        }
+                        Err(e) => {
+                            log::warn!("reconnect failed: {e}");
+                            if let Some(state) = &mut self.reconnect_state {
+                                state.backoff = (state.backoff * 2).min(Duration::from_secs(10));
+                                state.next_retry = Instant::now() + state.backoff;
+                            }
+                        }
+                    }
+                    needs_redraw = true;
+                } else if has_reconnect {
+                    needs_redraw = true; // keep redrawing overlay
+                } else {
+                    log::info!("server connection lost, exiting");
+                    self.cached_views.clear();
+                    self.glyph_atlas = None;
+                    self.renderer = None;
+                    self.window = None;
+                    event_loop.exit();
+                    return;
+                }
             }
 
             // Check if all panes are gone (server shutdown)
@@ -893,6 +1185,29 @@ impl ApplicationHandler for App {
             }
         }
 
+        // Config hot-reload watcher
+        {
+            let (ctx, crx) = crossbeam_channel::bounded(1);
+            let watcher = notify::recommended_watcher(move |res: Result<notify::Event, _>| {
+                if let Ok(evt) = res {
+                    if evt.kind.is_modify() {
+                        let _ = ctx.try_send(());
+                    }
+                }
+            }).ok();
+            if let Some(mut w) = watcher {
+                use notify::Watcher;
+                let path = ciri_config::config::config_path();
+                if let Err(e) = w.watch(&path, notify::RecursiveMode::NonRecursive) {
+                    log::warn!("failed to watch config: {e}");
+                } else {
+                    self.config_watcher = Some(w);
+                    self.config_change_rx = Some(crx);
+                    log::info!("config watcher active: {}", path.display());
+                }
+            }
+        }
+
         self.dpi_scale = dpi_scale;
         self.glyph_atlas = Some(atlas);
         self.snap_all_col_widths();
@@ -919,6 +1234,8 @@ impl ApplicationHandler for App {
             WindowEvent::ModifiersChanged(mods) => { self.modifiers = mods.state(); }
 
             WindowEvent::Resized(size) => {
+                // Skip minimize (size=0)
+                if size.width == 0 || size.height == 0 { return; }
                 if let Some(renderer) = &mut self.renderer {
                     renderer.resize(size.width, size.height);
                 }
@@ -930,7 +1247,10 @@ impl ApplicationHandler for App {
                 // Mark all grids dirty
                 for grid in self.pane_grids.values_mut() { grid.dirty = true; }
                 self.cached_views.clear();
-                self.animate_to_active();
+                // Jump to correct offset without animation (avoid jarring animation on restore)
+                let t = self.workspaces.active_mut().target_offset_for_active();
+                self.view_offset_x.jump_to(t as f64);
+                for ws in &mut self.workspaces.rows { ws.view_offset_x = t; }
                 // Notify server of resize
                 let (cols, rows) = self.compute_grid_size();
                 let (cw, ch) = self.cell_dimensions();
@@ -947,8 +1267,63 @@ impl ApplicationHandler for App {
                 if event.state != ElementState::Pressed { return; }
                 if self.ime_preedit_active { return; }
 
+                // Reset cursor blink on any keypress
+                self.cursor_blink_visible = true;
+                self.cursor_blink_timer = Instant::now();
+
                 let ctrl = self.modifiers.control_key();
                 let shift = self.modifiers.shift_key();
+
+                // Debug: log all key events with modifiers
+                log::debug!("key: ctrl={ctrl} shift={shift} logical={:?} physical={:?}", event.logical_key, event.physical_key);
+
+                // Clipboard: Ctrl+Shift+V (paste) / Ctrl+Shift+C (copy)
+                // Use physical key because logical_key returns control chars when Ctrl is held
+                if ctrl && shift {
+                    use winit::keyboard::{PhysicalKey, KeyCode};
+                    log::info!("ctrl+shift detected, physical={:?}", event.physical_key);
+                    match event.physical_key {
+                        PhysicalKey::Code(KeyCode::KeyV) => {
+                            log::info!("clipboard paste triggered");
+                            match &mut self.clipboard {
+                                None => log::warn!("clipboard not available"),
+                                Some(cb) => match cb.get_text() {
+                                    Err(e) => log::warn!("clipboard read failed: {e}"),
+                                    Ok(text) => {
+                                        log::info!("clipboard text: {} bytes", text.len());
+                                        if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
+                                            self.send(ClientMessage::Input { pane_id: pid, data: text.into_bytes() });
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some(w) = &self.window { w.request_redraw(); }
+                            return;
+                        }
+                        PhysicalKey::Code(KeyCode::KeyC) => {
+                            log::info!("clipboard copy triggered, selection={}", self.selection.is_some());
+                            if let Some(text) = self.extract_selected_text() {
+                                log::info!("copying {} bytes", text.len());
+                                if let Some(cb) = &mut self.clipboard {
+                                    let _ = cb.set_text(&text);
+                                }
+                            }
+                            if let Some(w) = &self.window { w.request_redraw(); }
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Clear text selection on non-modifier keypress
+                // Don't clear when only pressing Ctrl/Shift/Alt (to allow Ctrl+Shift+C)
+                let is_modifier_only = matches!(
+                    event.logical_key,
+                    Key::Named(NamedKey::Control | NamedKey::Shift | NamedKey::Alt | NamedKey::Super)
+                );
+                if !is_modifier_only {
+                    self.selection = None;
+                }
 
                 let key_name = match &event.logical_key {
                     Key::Named(n) => match n {
@@ -994,6 +1369,8 @@ impl ApplicationHandler for App {
                         InputResult::Action(action) => self.handle_action(action),
                         InputResult::Consumed => {}
                         InputResult::PassThrough => {
+                            // Scroll to bottom on any input (like typing)
+                            self.scroll_active_to_bottom();
                             let bytes = key_event_to_pty_bytes(&event, ctrl);
                             if !bytes.is_empty()
                                 && let Some(pid) = self.workspaces.active_mut().active_pane_id() {
@@ -1073,6 +1450,26 @@ impl ApplicationHandler for App {
                                 w.set_cursor(winit::window::CursorIcon::Default);
                             }
                         }
+
+                        // Extend text selection during drag + forward mouse motion
+                        if self.mouse_left_held {
+                            // Selection uses buffer_row (absolute)
+                            let sel_active = self.selection.as_ref().is_some_and(|s| s.active);
+                            if sel_active {
+                                if let Some((_, col, buf_row)) = self.pixel_to_cell(mx, my) {
+                                    if let Some(sel) = &mut self.selection {
+                                        sel.end = (col, buf_row);
+                                    }
+                                    if let Some(w) = &self.window { w.request_redraw(); }
+                                }
+                            }
+                            // Mouse forwarding uses viewport_row
+                            if let Some((pane_id, col, row)) = self.pixel_to_viewport_cell(mx, my) {
+                                self.send(ClientMessage::MouseInput {
+                                    pane_id, button: 32, col, row, pressed: true, modifiers: 0,
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -1118,23 +1515,42 @@ impl ApplicationHandler for App {
                             }
 
                             if !started_drag {
-                                let tiles = self.workspaces.active_mut().visible_tiles();
-                                let clicked_pane = tiles.iter()
-                                    .find(|(_, r, _)| r.contains(mx, my))
-                                    .map(|(id, _, _)| *id);
-                                if let Some(target_pane) = clicked_pane {
+                                self.mouse_left_held = true;
+                                let shift = self.modifiers.shift_key();
+                                if let Some((pane_id, col, buf_row)) = self.pixel_to_cell(mx, my) {
+                                    // Focus the clicked pane
                                     let ws = self.workspaces.active_mut();
                                     for col_idx in 0..ws.columns.len() {
-                                        if ws.columns[col_idx].pane_id == target_pane {
+                                        if ws.columns[col_idx].pane_id == pane_id {
                                             ws.active_column_idx = col_idx;
                                             break;
                                         }
                                     }
                                     self.animate_to_active();
+
+                                    // Alacritty pattern: Shift forces selection, otherwise forward if mouse mode
+                                    if shift {
+                                        self.selection = Some(Selection {
+                                            pane_id, start: (col, buf_row), end: (col, buf_row), active: true,
+                                        });
+                                    } else {
+                                        // Forward to server using viewport coords
+                                        if let Some((_, vcol, vrow)) = self.pixel_to_viewport_cell(mx, my) {
+                                            self.send(ClientMessage::MouseInput {
+                                                pane_id, button: 0, col: vcol, row: vrow, pressed: true, modifiers: 0,
+                                            });
+                                        }
+                                        // Start selection with buffer coords
+                                        self.selection = Some(Selection {
+                                            pane_id, start: (col, buf_row), end: (col, buf_row), active: true,
+                                        });
+                                    }
                                 }
                             }
                         }
                     } else {
+                        // Mouse released
+                        self.mouse_left_held = false;
                         if self.resize_dragging.is_some() {
                             self.resize_dragging = None;
                             self.snap_all_col_widths();
@@ -1144,6 +1560,29 @@ impl ApplicationHandler for App {
                         }
                         self.overview_dragging = false;
                         self.drag_last_pos = None;
+
+                        // Forward mouse release to server (viewport coords)
+                        if let Some((pane_id, col, row)) = self.pixel_to_viewport_cell(mx, my) {
+                            self.send(ClientMessage::MouseInput {
+                                pane_id, button: 3, col, row, pressed: false, modifiers: 0,
+                            });
+                        }
+
+                        // Finalize selection: copy to clipboard if non-trivial
+                        if let Some(sel) = &self.selection {
+                            log::debug!("selection release: start={:?} end={:?} active={}", sel.start, sel.end, sel.active);
+                            if sel.active && sel.start != sel.end {
+                                if let Some(text) = self.extract_selected_text() {
+                                    log::info!("auto-copy selection: {} bytes", text.len());
+                                    if let Some(cb) = &mut self.clipboard {
+                                        let _ = cb.set_text(&text);
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(sel) = &mut self.selection {
+                            sel.active = false;
+                        }
                     }
                     if let Some(w) = &self.window { w.request_redraw(); }
                 }
@@ -1166,6 +1605,32 @@ impl ApplicationHandler for App {
                         self.overview_zoom.animate_to(new_zoom, omega);
                     }
                 } else {
+                    // Vertical scroll → client-side scrollback (zero latency)
+                    let dy = match delta {
+                        MouseScrollDelta::LineDelta(_, y) => y as i32 * 3,
+                        MouseScrollDelta::PixelDelta(pos) => {
+                            let (_, ch) = self.cell_dimensions();
+                            if ch > 0.0 { (pos.y as f32 / ch).round() as i32 } else { 0 }
+                        }
+                    };
+                    if dy != 0 {
+                        if dy > 0 {
+                            self.scroll_active_up(dy as usize);
+                        } else {
+                            self.scroll_active_down((-dy) as usize);
+                        }
+                        // Forward mouse wheel to server for TUI apps (server checks mouse mode)
+                        if let Some(pid) = self.workspaces.active().active_pane_id() {
+                            if let Some((_, col, row)) = self.last_mouse_pos.and_then(|(mx, my)| self.pixel_to_viewport_cell(mx, my)) {
+                                let button = if dy > 0 { 64u8 } else { 65u8 };
+                                self.send(ClientMessage::MouseInput {
+                                    pane_id: pid, button, col, row, pressed: true, modifiers: 0,
+                                });
+                            }
+                        }
+                    }
+
+                    // Horizontal scroll → pane panning
                     let scroll_mult = self.config.input.scroll_multiplier;
                     let dx = match delta {
                         MouseScrollDelta::LineDelta(x, _) => x as f64 * scroll_mult,

@@ -20,24 +20,19 @@ pub fn connect_or_spawn(
 ) -> io::Result<(Sender<ClientMessage>, Receiver<ServerEvent>)> {
     let sock_path = transport::socket_path(session_name);
 
-    // Try to connect to existing server
-    let server_ready = || -> bool {
-        #[cfg(unix)]
-        { sock_path.exists() }
-        #[cfg(windows)]
-        {
-            let port = transport::port_for_session(session_name);
-            std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok()
-        }
-    };
-
-    if !server_ready() {
-        // Spawn server
-        spawn_server(session_name)?;
-        // Wait a bit for it to start
-        for _ in 0..50 {
-            if server_ready() { break; }
-            std::thread::sleep(std::time::Duration::from_millis(20));
+    // Spawn server if not running (non-blocking — IO thread handles retry)
+    {
+        let server_ready = || -> bool {
+            #[cfg(unix)]
+            { sock_path.exists() }
+            #[cfg(windows)]
+            {
+                let port = transport::port_for_session(session_name);
+                std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok()
+            }
+        };
+        if !server_ready() {
+            spawn_server(session_name)?;
         }
     }
 
@@ -54,13 +49,23 @@ pub fn connect_or_spawn(
                 .build()
                 .expect("tokio runtime");
             rt.block_on(async move {
-                let sock_path = transport::socket_path(&session);
-                #[cfg(unix)]
-                let connect_result = tokio::net::UnixStream::connect(&sock_path).await;
-                #[cfg(windows)]
-                let connect_result = tokio::net::TcpStream::connect(
-                    format!("127.0.0.1:{}", transport::port_for_session(&session))
-                ).await;
+                // Retry connecting with backoff (server may still be starting)
+                let mut connect_result = Err(io::Error::new(io::ErrorKind::ConnectionRefused, ""));
+                for attempt in 0..50 {
+                    #[cfg(unix)]
+                    { let sock_path = transport::socket_path(&session);
+                      connect_result = tokio::net::UnixStream::connect(&sock_path).await; }
+                    #[cfg(windows)]
+                    { connect_result = tokio::net::TcpStream::connect(
+                        format!("127.0.0.1:{}", transport::port_for_session(&session))
+                      ).await; }
+                    if connect_result.is_ok() { break; }
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    if attempt == 0 {
+                        log::debug!("waiting for server...");
+                    }
+                }
+                let connect_result = connect_result;
 
                 let stream = match connect_result {
                     Ok(s) => s,
@@ -191,8 +196,8 @@ fn spawn_server(session_name: &str) -> io::Result<()> {
         Command::new(&server_exe)
             .arg(session_name)
             .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
             .spawn()?;
     }
 

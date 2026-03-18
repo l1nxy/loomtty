@@ -399,16 +399,10 @@ pub fn encode_full_pane_sync_payload(sync: &FullPaneSync) -> io::Result<Vec<u8>>
             "title too long for FullPaneSync (exceeds u16::MAX)",
         ));
     }
+    let rle_scrollback = rle_encode_cells(&sync.scrollback);
     let rle_data = rle_encode_cells(&sync.cells);
-    if rle_data.len() > u32::MAX as usize {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "RLE cell data too large for FullPaneSync (exceeds u32::MAX)",
-        ));
-    }
-    // Header: pane_id(8) + gen(8) + cols(2) + rows(2) + cursor(3+2) + title_len(2) + cell_data_len(4)
-    let header_size = 8 + 8 + 2 + 2 + 2 + 2 + 1 + 2 + 4;
-    let mut buf = Vec::with_capacity(header_size + title_bytes.len() + rle_data.len());
+    // Header: pane_id(8) + gen(8) + cols(2) + rows(2) + cursor(5) + title_len(2) + sb_rows(2) + sb_data_len(4) + cell_data_len(4)
+    let mut buf = Vec::with_capacity(37 + title_bytes.len() + rle_scrollback.len() + rle_data.len());
 
     buf.extend_from_slice(&sync.pane_id.to_le_bytes());
     buf.extend_from_slice(&sync.generation.to_le_bytes());
@@ -419,6 +413,9 @@ pub fn encode_full_pane_sync_payload(sync: &FullPaneSync) -> io::Result<Vec<u8>>
     buf.push(sync.cursor_shape);
     buf.extend_from_slice(&(title_bytes.len() as u16).to_le_bytes());
     buf.extend_from_slice(title_bytes);
+    buf.extend_from_slice(&sync.scrollback_rows.to_le_bytes());
+    buf.extend_from_slice(&(rle_scrollback.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&rle_scrollback);
     buf.extend_from_slice(&(rle_data.len() as u32).to_le_bytes());
     buf.extend_from_slice(&rle_data);
     Ok(buf)
@@ -433,7 +430,6 @@ pub async fn encode_full_pane_sync<W: AsyncWrite + Unpin>(
 }
 
 pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
-    // Minimum header: 8+8+2+2+2+2+1+2+4 = 31 bytes
     if payload.len() < 31 {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "FullPaneSync too short"));
     }
@@ -446,11 +442,31 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
     let cursor_shape = payload[24];
     let title_len = read_u16_le(payload, 25)? as usize;
     let mut offset = 27;
-    if offset + title_len + 4 > payload.len() {
+    if offset + title_len > payload.len() {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "truncated title"));
     }
     let title = String::from_utf8_lossy(&payload[offset..offset + title_len]).to_string();
     offset += title_len;
+
+    // Scrollback lines
+    if offset + 6 > payload.len() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "truncated scrollback header"));
+    }
+    let scrollback_rows = read_u16_le(payload, offset)?;
+    offset += 2;
+    let sb_data_len = read_u32_le(payload, offset)? as usize;
+    offset += 4;
+    if offset + sb_data_len > payload.len() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "truncated scrollback data"));
+    }
+    let sb_expected = scrollback_rows as usize * cols as usize;
+    let scrollback = rle_decode_cells(&payload[offset..offset + sb_data_len], sb_expected)?;
+    offset += sb_data_len;
+
+    // Viewport cells
+    if offset + 4 > payload.len() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "truncated cell header"));
+    }
     let cell_data_len = read_u32_le(payload, offset)? as usize;
     offset += 4;
     if offset + cell_data_len > payload.len() {
@@ -458,16 +474,11 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
     }
     let expected = cols as usize * rows as usize;
     let cells = rle_decode_cells(&payload[offset..offset + cell_data_len], expected)?;
+
     Ok(FullPaneSync {
-        pane_id,
-        generation,
-        cols,
-        rows,
-        cursor_line,
-        cursor_col,
-        cursor_shape,
-        title,
-        cells,
+        pane_id, generation, cols, rows,
+        cursor_line, cursor_col, cursor_shape,
+        title, scrollback, scrollback_rows, cells,
     })
 }
 
@@ -563,6 +574,8 @@ mod tests {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             title: "bash".to_string(),
+            scrollback: Vec::new(),
+            scrollback_rows: 0,
             cells,
         };
         let payload = encode_full_pane_sync_payload(&sync).unwrap();

@@ -31,6 +31,14 @@ pub(crate) struct Selection {
     pub active: bool, // true while mouse is held
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HoveredLink {
+    pub pane_id: u64,
+    pub url: String,
+    pub start: (u16, usize),
+    pub end: (u16, usize),
+}
+
 /// Auto-reconnection state.
 pub(crate) struct ReconnectState {
     pub attempt: u32,
@@ -75,6 +83,7 @@ pub(crate) struct App {
     pub cursor_blink_timer: Instant,
     pub clipboard: Option<arboard::Clipboard>,
     pub selection: Option<Selection>,
+    pub hovered_link: Option<HoveredLink>,
     pub mouse_left_held: bool,
     pub reconnect_state: Option<ReconnectState>,
     pub should_exit: bool,
@@ -109,11 +118,7 @@ impl App {
             renderer: None,
             glyph_atlas: None,
             dpi_scale: 1.0,
-            workspaces: WorkspaceSet::new_with_gaps(
-                initial_view,
-                column_gap,
-                column_gap,
-            ),
+            workspaces: WorkspaceSet::new_with_gaps(initial_view, column_gap, column_gap),
             pane_grids: HashMap::new(),
             input,
             server_tx: None,
@@ -146,6 +151,7 @@ impl App {
             cursor_blink_timer: Instant::now(),
             clipboard: arboard::Clipboard::new().ok(),
             selection: None,
+            hovered_link: None,
             mouse_left_held: false,
             reconnect_state: None,
             should_exit: false,
@@ -198,7 +204,9 @@ impl App {
     }
 
     pub fn status_bar_height(&self) -> f32 {
-        let cell_h = self.glyph_atlas.as_ref()
+        let cell_h = self
+            .glyph_atlas
+            .as_ref()
             .map(|a| a.cell_height)
             .unwrap_or(self.config.font.size * 1.2);
         cell_h + self.config.statusbar.height_padding

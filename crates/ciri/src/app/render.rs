@@ -22,16 +22,28 @@ impl App {
     }
 
     pub fn refresh_overview_zoom(&mut self) {
-        if !self.overview_active { return; }
+        if !self.overview_active {
+            return;
+        }
         let omega = self.config.animation.speed;
         let vw = self.workspaces.view_size.width;
         let vh = self.workspaces.view_size.height;
-        let max_w = self.workspaces.rows.iter()
+        let max_w = self
+            .workspaces
+            .rows
+            .iter()
             .map(|ws| ws.total_width())
             .fold(0.0f32, f32::max)
             .max(vw);
-        let nrows = self.workspaces.rows.iter().filter(|ws| !ws.is_empty()).count().max(1);
-        let total_h = nrows as f32 * vh + (nrows.saturating_sub(1)) as f32 * self.workspaces.row_gap;
+        let nrows = self
+            .workspaces
+            .rows
+            .iter()
+            .filter(|ws| !ws.is_empty())
+            .count()
+            .max(1);
+        let total_h =
+            nrows as f32 * vh + (nrows.saturating_sub(1)) as f32 * self.workspaces.row_gap;
         let fit = self.config.animation.overview_zoom_fit;
         let zoom_x = vw / max_w;
         let zoom_y = vh / total_h;
@@ -95,8 +107,12 @@ impl App {
 
     pub fn advance_animations(&mut self, dt: f64) -> bool {
         let mut animating = self.view_offset_x.advance(dt);
-        if self.view_offset_y.advance(dt) { animating = true; }
-        if self.overview_zoom.advance(dt) { animating = true; }
+        if self.view_offset_y.advance(dt) {
+            animating = true;
+        }
+        if self.overview_zoom.advance(dt) {
+            animating = true;
+        }
         let vox = self.view_offset_x.value() as f32;
         for ws in &mut self.workspaces.rows {
             ws.view_offset_x = vox;
@@ -108,7 +124,9 @@ impl App {
             let ws = self.workspaces.active_mut();
             for (i, col) in ws.columns.iter_mut().enumerate() {
                 if i < self.col_widths.len() {
-                    if self.col_widths[i].advance(dt) { animating = true; }
+                    if self.col_widths[i].advance(dt) {
+                        animating = true;
+                    }
                     col.set_rendered_width(self.col_widths[i].value() as f32);
                 }
             }
@@ -131,6 +149,7 @@ impl App {
         let active_border = ThemeConfig::parse_color(&self.config.theme.border_active);
         let inactive_border = ThemeConfig::parse_color(&self.config.theme.border_inactive);
         let bg_color = ThemeConfig::parse_color(&self.config.theme.background);
+        let link_color = ThemeConfig::parse_color(&self.config.theme.accent);
 
         for (pane_id, tile_rect, is_active) in tiles {
             let tr = if zoom < zoom_threshold {
@@ -147,16 +166,27 @@ impl App {
             };
 
             bg_rects.push(Rect {
-                x: tr.x, y: tr.y, w: tr.w, h: tr.h,
-                color: if *is_active { active_border } else { inactive_border },
+                x: tr.x,
+                y: tr.y,
+                w: tr.w,
+                h: tr.h,
+                color: if *is_active {
+                    active_border
+                } else {
+                    inactive_border
+                },
             });
             bg_rects.push(Rect {
-                x: tr.x + border_w * zoom, y: tr.y + border_w * zoom,
-                w: tr.w - border_w * zoom * 2.0, h: tr.h - border_w * zoom * 2.0,
+                x: tr.x + border_w * zoom,
+                y: tr.y + border_w * zoom,
+                w: tr.w - border_w * zoom * 2.0,
+                h: tr.h - border_w * zoom * 2.0,
                 color: bg_color,
             });
 
-            let Some(view) = self.cached_views.get(pane_id) else { continue };
+            let Some(view) = self.cached_views.get(pane_id) else {
+                continue;
+            };
             let inner_x = tr.x + (border_w + padding) * zoom;
             let inner_y = tr.y + (border_w + padding) * zoom;
 
@@ -168,7 +198,13 @@ impl App {
                     r.h * zoom,
                 );
                 if let Some(c) = src.intersection(&tr) {
-                    bg_rects.push(Rect { x: c.x, y: c.y, w: c.w, h: c.h, color: r.color });
+                    bg_rects.push(Rect {
+                        x: c.x,
+                        y: c.y,
+                        w: c.w,
+                        h: c.h,
+                        color: r.color,
+                    });
                 }
             }
 
@@ -181,7 +217,13 @@ impl App {
                         cursor.h * zoom,
                     );
                     if let Some(c) = src.intersection(&tr) {
-                        bg_rects.push(Rect { x: c.x, y: c.y, w: c.w, h: c.h, color: cursor.color });
+                        bg_rects.push(Rect {
+                            x: c.x,
+                            y: c.y,
+                            w: c.w,
+                            h: c.h,
+                            color: cursor.color,
+                        });
                     }
                 }
             }
@@ -191,7 +233,9 @@ impl App {
                 if sel.pane_id == *pane_id {
                     if let Some(grid) = self.pane_grids.get(pane_id) {
                         let (cw, ch) = self.cell_dimensions();
-                        let (start, end) = if sel.start.1 < sel.end.1 || (sel.start.1 == sel.end.1 && sel.start.0 <= sel.end.0) {
+                        let (start, end) = if sel.start.1 < sel.end.1
+                            || (sel.start.1 == sel.end.1 && sel.start.0 <= sel.end.0)
+                        {
                             (sel.start, sel.end)
                         } else {
                             (sel.end, sel.start)
@@ -203,14 +247,50 @@ impl App {
                                 None => continue,
                             };
                             let left = if buf_row == start.1 { start.0 } else { 0 };
-                            let right = if buf_row == end.1 { end.0 } else { grid.cols.saturating_sub(1) };
+                            let right = if buf_row == end.1 {
+                                end.0
+                            } else {
+                                grid.cols.saturating_sub(1)
+                            };
                             let sx = inner_x + left as f32 * cw * zoom;
                             let sy = inner_y + viewport_row as f32 * ch * zoom;
                             let sw = (right - left + 1) as f32 * cw * zoom;
                             let sh = ch * zoom;
                             let src = GeoRect::new(sx, sy, sw, sh);
                             if let Some(c) = src.intersection(&tr) {
-                                bg_rects.push(Rect { x: c.x, y: c.y, w: c.w, h: c.h, color: sel_color });
+                                bg_rects.push(Rect {
+                                    x: c.x,
+                                    y: c.y,
+                                    w: c.w,
+                                    h: c.h,
+                                    color: sel_color,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(link) = &self.hovered_link {
+                if link.pane_id == *pane_id {
+                    if let Some(grid) = self.pane_grids.get(pane_id) {
+                        if let Some(viewport_row) = grid.buffer_to_viewport_row(link.start.1) {
+                            let (cw, ch) = self.cell_dimensions();
+                            let underline_h = (zoom.max(1.0)).clamp(1.0, 2.0);
+                            let sx = inner_x + link.start.0 as f32 * cw * zoom;
+                            let sy = inner_y + (viewport_row as f32 + 1.0) * ch * zoom
+                                - underline_h
+                                - zoom;
+                            let sw = (link.end.0 - link.start.0 + 1) as f32 * cw * zoom;
+                            let src = GeoRect::new(sx, sy, sw, underline_h);
+                            if let Some(c) = src.intersection(&tr) {
+                                bg_rects.push(Rect {
+                                    x: c.x,
+                                    y: c.y,
+                                    w: c.w,
+                                    h: c.h,
+                                    color: link_color,
+                                });
                             }
                         }
                     }
@@ -223,7 +303,9 @@ impl App {
                 let gw = (g.glyph_w * zoom).round();
                 let gh = (g.glyph_h * zoom).round();
 
-                if gw <= 0.0 || gh <= 0.0 { return None; }
+                if gw <= 0.0 || gh <= 0.0 {
+                    return None;
+                }
 
                 if sx >= tr.x && sy >= tr.y && sx + gw <= tr.x + tr.w && sy + gh <= tr.y + tr.h {
                     return Some(GlyphInstance {
@@ -267,13 +349,24 @@ impl App {
         let bar_height = atlas.cell_height + self.config.statusbar.height_padding;
         let bar_y = vh - bar_height;
         bg_rects.push(Rect {
-            x: 0.0, y: bar_y, w: vw, h: bar_height,
+            x: 0.0,
+            y: bar_y,
+            w: vw,
+            h: bar_height,
             color: ThemeConfig::parse_color(&self.config.theme.statusbar_background),
         });
 
         let ws_idx = self.workspaces.active_workspace_idx();
-        let leader_hint = if self.input.is_awaiting_action() { " LEADER " } else { "" };
-        let overview_hint = if self.overview_active { " OVERVIEW " } else { "" };
+        let leader_hint = if self.input.is_awaiting_action() {
+            " LEADER "
+        } else {
+            ""
+        };
+        let overview_hint = if self.overview_active {
+            " OVERVIEW "
+        } else {
+            ""
+        };
 
         let mut status_left = String::new();
         for (i, ws) in self.workspaces.rows.iter().enumerate() {
@@ -286,7 +379,10 @@ impl App {
             }
         }
 
-        let active_info = self.workspaces.active().active_pane_id()
+        let active_info = self
+            .workspaces
+            .active()
+            .active_pane_id()
             .map(|id| format!("pane:{id}"))
             .unwrap_or_default();
         let status_right = format!("{overview_hint}{leader_hint} {active_info} ");
@@ -306,17 +402,44 @@ impl App {
             ThemeConfig::parse_color(&self.config.theme.bright_black)
         };
 
-        emit_status_text(atlas, &mut renderer.text.font_system, &renderer.queue,
-            &status_left, 0.0, text_y, cw, baseline, left_color, vw, vh, glyphs);
+        emit_status_text(
+            atlas,
+            &mut renderer.text.font_system,
+            &renderer.queue,
+            &status_left,
+            0.0,
+            text_y,
+            cw,
+            baseline,
+            left_color,
+            vw,
+            vh,
+            glyphs,
+        );
 
         let right_start_x = vw - status_right.len() as f32 * cw;
-        emit_status_text(atlas, &mut renderer.text.font_system, &renderer.queue,
-            &status_right, right_start_x, text_y, cw, baseline, right_color, vw, vh, glyphs);
+        emit_status_text(
+            atlas,
+            &mut renderer.text.font_system,
+            &renderer.queue,
+            &status_right,
+            right_start_x,
+            text_y,
+            cw,
+            baseline,
+            right_color,
+            vw,
+            vh,
+            glyphs,
+        );
 
         if self.input.is_awaiting_action() {
             let indicator_h = self.config.statusbar.leader_indicator_height;
             bg_rects.push(Rect {
-                x: 0.0, y: bar_y - indicator_h, w: vw, h: indicator_h,
+                x: 0.0,
+                y: bar_y - indicator_h,
+                w: vw,
+                h: indicator_h,
                 color: ThemeConfig::parse_color(&self.config.theme.accent),
             });
         }
@@ -335,14 +458,24 @@ impl App {
 
         let output = match renderer.surface.get_current_texture() {
             Ok(t) => t,
-            Err(wgpu::SurfaceError::Lost) => { renderer.resize(vw, vh); return; }
-            Err(e) => { log::error!("surface error: {e}"); return; }
+            Err(wgpu::SurfaceError::Lost) => {
+                renderer.resize(vw, vh);
+                return;
+            }
+            Err(e) => {
+                log::error!("surface error: {e}");
+                return;
+            }
         };
 
-        let tex_view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = renderer.device.create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("ciri") },
-        );
+        let tex_view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = renderer
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("ciri"),
+            });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -364,7 +497,9 @@ impl App {
                 ..Default::default()
             });
 
-            renderer.rects.render(&renderer.queue, &mut pass, bg_rects, vw_f, vh_f);
+            renderer
+                .rects
+                .render(&renderer.queue, &mut pass, bg_rects, vw_f, vh_f);
             atlas.render(&renderer.queue, &mut pass, glyphs);
         }
 
@@ -377,7 +512,9 @@ impl App {
             return;
         }
         let (sw, sh) = self.renderer.as_ref().unwrap().surface_size();
-        if sw == 0 || sh == 0 { return; }
+        if sw == 0 || sh == 0 {
+            return;
+        }
 
         let now = Instant::now();
         let dt = (now - self.last_frame).as_secs_f64();
@@ -403,46 +540,55 @@ impl App {
         for (pane_id, _, _) in &tiles {
             let is_dirty = self.pane_grids.get(pane_id).is_some_and(|g| g.dirty);
             if (is_dirty || !self.cached_views.contains_key(pane_id))
-                && let Some(grid) = self.pane_grids.get_mut(pane_id) {
-                    let visible = grid.visible_cells();
-                    let (cur_col, cur_line, cur_shape) = if let Some((col, line)) = grid.cursor_in_viewport() {
+                && let Some(grid) = self.pane_grids.get_mut(pane_id)
+            {
+                let visible = grid.visible_cells();
+                let (cur_col, cur_line, cur_shape) =
+                    if let Some((col, line)) = grid.cursor_in_viewport() {
                         (col, line, grid.cursor_shape)
                     } else {
                         (0, 0, CURSOR_HIDDEN)
                     };
-                    let view = terminal::build_view_from_grid(
-                        &visible, grid.cols, grid.rows,
-                        cur_line, cur_col, cur_shape,
-                        atlas, &mut renderer.text.font_system, &renderer.queue,
-                        &self.config,
-                    );
-                    grid.dirty = false;
-                    self.cached_views.insert(*pane_id, view);
-                }
+                let view = terminal::build_view_from_grid(
+                    &visible,
+                    grid.cols,
+                    grid.rows,
+                    cur_line,
+                    cur_col,
+                    cur_shape,
+                    atlas,
+                    &mut renderer.text.font_system,
+                    &renderer.queue,
+                    &self.config,
+                );
+                grid.dirty = false;
+                self.cached_views.insert(*pane_id, view);
+            }
         }
 
         // Update IME cursor area
         if let Some(window) = &self.window
             && let Some(active_pid) = self.workspaces.active().active_pane_id()
-                && let Some((_, tile_rect, _)) = tiles.iter().find(|(id, _, _)| *id == active_pid)
-                    && let Some(view) = self.cached_views.get(&active_pid)
-                        && let Some(cursor) = view.cursor_rects.first() {
-                            let padding = self.config.appearance.padding;
-                            let border_w = self.config.appearance.border_width;
-                            let cx = (tile_rect.x + border_w + padding + cursor.x) as i32;
-                            let cy = (tile_rect.y + border_w + padding + cursor.y) as i32;
-                            let pos = (cx, cy);
-                            if self.last_ime_pos != Some(pos) {
-                                self.last_ime_pos = Some(pos);
-                                window.set_ime_cursor_area(
-                                    winit::dpi::PhysicalPosition::new(cx as f64, cy as f64),
-                                    winit::dpi::PhysicalSize::new(
-                                        atlas.cell_width as f64,
-                                        atlas.cell_height as f64,
-                                    ),
-                                );
-                            }
-                        }
+            && let Some((_, tile_rect, _)) = tiles.iter().find(|(id, _, _)| *id == active_pid)
+            && let Some(view) = self.cached_views.get(&active_pid)
+            && let Some(cursor) = view.cursor_rects.first()
+        {
+            let padding = self.config.appearance.padding;
+            let border_w = self.config.appearance.border_width;
+            let cx = (tile_rect.x + border_w + padding + cursor.x) as i32;
+            let cy = (tile_rect.y + border_w + padding + cursor.y) as i32;
+            let pos = (cx, cy);
+            if self.last_ime_pos != Some(pos) {
+                self.last_ime_pos = Some(pos);
+                window.set_ime_cursor_area(
+                    winit::dpi::PhysicalPosition::new(cx as f64, cy as f64),
+                    winit::dpi::PhysicalSize::new(
+                        atlas.cell_width as f64,
+                        atlas.cell_height as f64,
+                    ),
+                );
+            }
+        }
 
         let mut bg_rects = std::mem::take(&mut self.bg_rects_buf);
         let mut glyphs = std::mem::take(&mut self.glyph_buf);
@@ -460,8 +606,9 @@ impl App {
         self.bg_rects_buf = bg_rects;
         self.glyph_buf = glyphs;
 
-        if animating
-            && let Some(w) = &self.window { w.request_redraw(); }
+        if animating && let Some(w) = &self.window {
+            w.request_redraw();
+        }
     }
 }
 
@@ -481,16 +628,21 @@ fn emit_status_text(
 ) {
     for (i, ch) in text.chars().enumerate() {
         if let Some(entry) = atlas.ensure_char(ch, font_system, queue)
-            && entry.width > 0 && entry.height > 0 {
-                let sx = x_start + i as f32 * cell_width + entry.bearing_x as f32;
-                let sy = text_y + baseline - entry.bearing_y as f32;
-                glyphs.push(GlyphInstance {
-                    pos: [sx / vw * 2.0 - 1.0, 1.0 - sy / vh * 2.0],
-                    size: [entry.width as f32 / vw * 2.0, -(entry.height as f32 / vh * 2.0)],
-                    uv_pos: [entry.u0, entry.v0],
-                    uv_size: [entry.u1 - entry.u0, entry.v1 - entry.v0],
-                    color,
-                });
-            }
+            && entry.width > 0
+            && entry.height > 0
+        {
+            let sx = x_start + i as f32 * cell_width + entry.bearing_x as f32;
+            let sy = text_y + baseline - entry.bearing_y as f32;
+            glyphs.push(GlyphInstance {
+                pos: [sx / vw * 2.0 - 1.0, 1.0 - sy / vh * 2.0],
+                size: [
+                    entry.width as f32 / vw * 2.0,
+                    -(entry.height as f32 / vh * 2.0),
+                ],
+                uv_pos: [entry.u0, entry.v0],
+                uv_size: [entry.u1 - entry.u0, entry.v1 - entry.v0],
+                color,
+            });
+        }
     }
 }

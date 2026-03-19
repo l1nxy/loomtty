@@ -47,7 +47,7 @@ impl Default for KeybindConfig {
         overview_bindings.insert("tab".to_string(), "exit_overview".to_string());
 
         KeybindConfig {
-            leader: "alt".to_string(),
+            leader: "ctrl+space".to_string(),
             bindings,
             overview_bindings,
         }

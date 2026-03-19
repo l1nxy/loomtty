@@ -148,6 +148,8 @@ impl ClientPaneGrid {
     }
 
     /// Apply incremental CellDelta: patch the live viewport rows in the buffer.
+    /// Kept for use with non-borrowed CellDelta (e.g. tests, offline replay).
+    #[allow(dead_code)]
     pub fn apply_delta(&mut self, delta: &CellDelta) {
         self.cursor_line = delta.cursor_line;
         self.cursor_col = delta.cursor_col;
@@ -166,11 +168,44 @@ impl ClientPaneGrid {
             if buf_row >= buf_len {
                 continue;
             }
-            for (i, &cell) in region.cells.iter().enumerate() {
-                let col = region.left as usize + i;
-                if col < self.buffer[buf_row].len() {
-                    self.buffer[buf_row][col] = cell;
-                }
+            let row = &mut self.buffer[buf_row];
+            let dst_start = region.left as usize;
+            let dst_end = (dst_start + region.cells.len()).min(row.len());
+            let copy_len = dst_end.saturating_sub(dst_start);
+            if copy_len > 0 {
+                row[dst_start..dst_end].copy_from_slice(&region.cells[..copy_len]);
+            }
+        }
+        self.dirty = true;
+    }
+
+    /// Apply incremental CellDeltaBorrowed (zero-copy variant): patch the live
+    /// viewport rows using bytemuck-cast cell slices from the raw payload.
+    pub fn apply_delta_borrowed(&mut self, delta: &CellDeltaBorrowed) {
+        self.cursor_line = delta.cursor_line;
+        self.cursor_col = delta.cursor_col;
+        self.cursor_shape = delta.cursor_shape;
+        self.mode_flags = delta.mode_flags;
+
+        let buf_len = self.buffer.len();
+        let live_start = buf_len.saturating_sub(self.rows as usize);
+
+        for (i, region) in delta.regions.iter().enumerate() {
+            let line = region.line as usize;
+            if line >= self.rows as usize {
+                continue;
+            }
+            let buf_row = live_start + line;
+            if buf_row >= buf_len {
+                continue;
+            }
+            let cells = delta.cells(i);
+            let row = &mut self.buffer[buf_row];
+            let dst_start = region.left as usize;
+            let dst_end = (dst_start + cells.len()).min(row.len());
+            let copy_len = dst_end.saturating_sub(dst_start);
+            if copy_len > 0 {
+                row[dst_start..dst_end].copy_from_slice(&cells[..copy_len]);
             }
         }
         self.dirty = true;

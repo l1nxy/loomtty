@@ -366,8 +366,8 @@ impl App {
             let open_opacity = self.pane_open_opacity.get(pane_id).copied().unwrap_or(1.0);
             let dim = dim * open_opacity;
 
-            // Helper closure to convert relative glyph to NDC GlyphInstance with clipping
-            let convert_glyph = |g: &terminal::RelativeGlyph| -> Option<GlyphInstance> {
+            // Convert a relative glyph to an NDC GlyphInstance with tile clipping.
+            let make_instance = |g: &terminal::RelativeGlyph, color: [f32; 4]| -> Option<GlyphInstance> {
                 let sx = (inner_x + g.px * zoom).round();
                 let sy = (inner_y + g.py * zoom).round();
                 let gw = (g.glyph_w * zoom).round();
@@ -376,13 +376,6 @@ impl App {
                 if gw <= 0.0 || gh <= 0.0 {
                     return None;
                 }
-
-                let color = [
-                    g.color[0] * dim,
-                    g.color[1] * dim,
-                    g.color[2] * dim,
-                    g.color[3],
-                ];
 
                 if sx >= tr.x && sy >= tr.y && sx + gw <= tr.x + tr.w && sy + gh <= tr.y + tr.h {
                     return Some(GlyphInstance {
@@ -411,11 +404,18 @@ impl App {
                 })
             };
 
-            // Regular text glyphs (alpha atlas)
-            glyphs.extend(view.glyph_instances.iter().filter_map(&convert_glyph));
+            // Regular text glyphs (alpha atlas): dim the foreground color
+            glyphs.extend(view.glyph_instances.iter().filter_map(|g| {
+                let color = [g.color[0] * dim, g.color[1] * dim, g.color[2] * dim, g.color[3]];
+                make_instance(g, color)
+            }));
 
-            // Color emoji glyphs (RGBA atlas)
-            color_glyphs.extend(view.color_glyph_instances.iter().filter_map(&convert_glyph));
+            // Color emoji glyphs (RGBA atlas): shader multiplies texel.rgb by color.rgb
+            // so pass dim as a uniform tint; alpha carries the fade.
+            let emoji_color = [dim, dim, dim, 1.0];
+            color_glyphs.extend(view.color_glyph_instances.iter().filter_map(|g| {
+                make_instance(g, emoji_color)
+            }));
 
             // Fade-in overlay for newly opened panes
             if open_opacity < 1.0 {

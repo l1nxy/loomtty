@@ -2,7 +2,7 @@ use ciri_config::config::RenderConfig;
 use glyphon::fontdb;
 use glyphon::FontSystem;
 use std::collections::HashMap;
-use swash::scale::{Render, ScaleContext, Source, StrikeWith};
+use swash::scale::{image::Content, Render, ScaleContext, Source, StrikeWith};
 use swash::zeno::Format;
 use wgpu;
 
@@ -264,6 +264,7 @@ pub struct GlyphAtlas {
     color_texture_view: wgpu::TextureView,
     color_bind_group: wgpu::BindGroup,
     color_pipeline: wgpu::RenderPipeline,
+    color_instance_buffer: wgpu::Buffer,
     color_packer: ShelfPacker,
 
     atlas_size: u32,
@@ -534,9 +535,16 @@ impl GlyphAtlas {
         });
 
         let max_instances = render_config.max_glyph_instances;
+        let buf_size = (max_instances * std::mem::size_of::<GlyphInstance>()) as u64;
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("glyph_instances"),
-            size: (max_instances * std::mem::size_of::<GlyphInstance>()) as u64,
+            size: buf_size,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let color_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("color_emoji_instances"),
+            size: buf_size,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -553,6 +561,7 @@ impl GlyphAtlas {
             color_texture_view,
             color_bind_group,
             color_pipeline,
+            color_instance_buffer,
             color_packer: ShelfPacker::new(atlas_size),
             atlas_size,
             cache: HashMap::new(),
@@ -648,19 +657,25 @@ impl GlyphAtlas {
 
         let embolden_strength = if need_synth_bold { 0.02 * self.font_size } else { 0.0 };
 
-        // Try color first, then alpha
+        // Try color bitmap first (for emoji), then fall back to alpha outline.
+        // Color bitmaps require Subpixel format to preserve RGBA data.
         let image = {
             let mut r = Render::new(&[
-                Source::ColorOutline(0),
                 Source::ColorBitmap(StrikeWith::BestFit),
-                Source::Outline,
+                Source::ColorOutline(0),
             ]);
+            r.format(Format::Subpixel)
+             .offset(swash::zeno::Vector::new(0.0, 0.0));
+            r.render(&mut scaler, resolved_glyph_id)
+        }.or_else(|| {
+            // No color data — rasterize as alpha mask (regular text path)
+            let mut r = Render::new(&[Source::Outline]);
             r.format(Format::Alpha)
              .offset(swash::zeno::Vector::new(0.0, 0.0))
              .transform(italic_transform)
              .embolden(embolden_strength);
             r.render(&mut scaler, resolved_glyph_id)
-        }?;
+        })?;
 
         let w = image.placement.width;
         let h = image.placement.height;
@@ -671,8 +686,8 @@ impl GlyphAtlas {
             return Some(entry);
         }
 
-        // Determine if this is a color glyph (4 bytes per pixel)
-        let is_color = image.data.len() == (w * h * 4) as usize;
+        // Determine if this is a color glyph via the swash content tag
+        let is_color = matches!(image.content, Content::Color);
 
         let entry = if is_color {
             // Color emoji → RGBA atlas
@@ -786,7 +801,7 @@ impl GlyphAtlas {
         pass.draw(0..4, 0..count as u32);
     }
 
-    /// Render color emoji instances (RGBA atlas).
+    /// Render color emoji instances (RGBA atlas, separate instance buffer).
     pub fn render_color(
         &self,
         queue: &wgpu::Queue,
@@ -799,11 +814,11 @@ impl GlyphAtlas {
 
         let count = instances.len().min(self.max_instances);
         let data = bytemuck::cast_slice(&instances[..count]);
-        queue.write_buffer(&self.instance_buffer, 0, data);
+        queue.write_buffer(&self.color_instance_buffer, 0, data);
 
         pass.set_pipeline(&self.color_pipeline);
         pass.set_bind_group(0, &self.color_bind_group, &[]);
-        pass.set_vertex_buffer(0, self.instance_buffer.slice(..data.len() as u64));
+        pass.set_vertex_buffer(0, self.color_instance_buffer.slice(..data.len() as u64));
         pass.draw(0..4, 0..count as u32);
     }
 
@@ -945,7 +960,7 @@ struct Instance {
 struct VsOut {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
-    @location(1) opacity: f32,
+    @location(1) color: vec4<f32>,
 };
 
 @vertex
@@ -955,7 +970,7 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: Instance) -> VsOut {
 
     var out: VsOut;
     out.uv = inst.uv_pos + vec2<f32>(x, y) * inst.uv_size;
-    out.opacity = inst.color.a;
+    out.color = inst.color;
     let px = inst.pos + vec2<f32>(x, y) * inst.size;
     out.position = vec4<f32>(px.x, px.y, 0.0, 1.0);
     return out;
@@ -967,7 +982,9 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: Instance) -> VsOut {
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let texel = textureSample(atlas_tex, atlas_sampler, in.uv);
-    return vec4<f32>(texel.rgb, texel.a * in.opacity);
+    // Dim RGB by instance color brightness, fade alpha by instance alpha.
+    // Instance color RGB carries the dim factor (pre-multiplied in build_tiles).
+    return vec4<f32>(texel.rgb * in.color.rgb, texel.a * in.color.a);
 }
 "#;
 

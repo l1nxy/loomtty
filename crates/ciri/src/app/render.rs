@@ -1,4 +1,5 @@
 use ciri_anim::animation::ViewOffset;
+use ciri_config::config::{FocusRingStyle, PaneOpenStyle};
 use ciri_config::theme::ThemeConfig;
 use ciri_layout::geometry::Rect as GeoRect;
 use ciri_protocol::message::*;
@@ -178,17 +179,35 @@ impl App {
                 *tile_rect
             };
 
-            bg_rects.push(Rect {
-                x: tr.x,
-                y: tr.y,
-                w: tr.w,
-                h: tr.h,
-                color: if *is_active {
-                    active_border
-                } else {
-                    inactive_border
-                },
-            });
+            // Focus ring: configurable style for active pane
+            if *is_active {
+                match &self.config.appearance.focus_ring.style {
+                    FocusRingStyle::Glow => {
+                        let fr = &self.config.appearance.focus_ring;
+                        let layers = fr.glow_layers.max(1) as usize;
+                        for layer in (0..layers).rev() {
+                            let offset = fr.glow_radius * (layer + 1) as f32 / layers as f32;
+                            let alpha = active_border[3] * (1.0 - layer as f32 / layers as f32) * 0.3;
+                            bg_rects.push(Rect {
+                                x: tr.x - offset, y: tr.y - offset,
+                                w: tr.w + offset * 2.0, h: tr.h + offset * 2.0,
+                                color: [active_border[0], active_border[1], active_border[2], alpha],
+                            });
+                        }
+                        bg_rects.push(Rect { x: tr.x, y: tr.y, w: tr.w, h: tr.h, color: active_border });
+                    }
+                    FocusRingStyle::Dashed => {
+                        let fr = &self.config.appearance.focus_ring;
+                        let bw = border_w * zoom;
+                        emit_dashed_border(bg_rects, &tr, bw, fr.dash_length, fr.gap_length, active_border);
+                    }
+                    FocusRingStyle::Solid => {
+                        bg_rects.push(Rect { x: tr.x, y: tr.y, w: tr.w, h: tr.h, color: active_border });
+                    }
+                }
+            } else {
+                bg_rects.push(Rect { x: tr.x, y: tr.y, w: tr.w, h: tr.h, color: inactive_border });
+            }
             bg_rects.push(Rect {
                 x: tr.x + border_w * zoom,
                 y: tr.y + border_w * zoom,
@@ -363,16 +382,26 @@ impl App {
                 }
             }
 
-            // Dim factor for inactive panes: multiply glyph colors to reduce brightness
-            let dim = if *is_active { 1.0 } else { inactive_opacity };
-            // Apply open animation opacity on top of dim
+            // Animated focus opacity (smooth transition on focus change)
+            let focus_dim = self.pane_focus_opacity.get(pane_id)
+                .map(|v| v.value() as f32)
+                .unwrap_or(if *is_active { 1.0 } else { inactive_opacity });
             let open_opacity = self.pane_open_opacity.get(pane_id).copied().unwrap_or(1.0);
-            let dim = dim * open_opacity;
+            let dim = focus_dim * open_opacity;
+
+            // Pane open slide offset
+            let slide_progress = self.pane_open_slides.get(pane_id).copied().unwrap_or(0.0);
+            let (slide_dx, slide_dy) = match self.config.animation.pane_open_style {
+                PaneOpenStyle::SlideUp | PaneOpenStyle::FadeSlideUp => (0.0, -tr.h * slide_progress),
+                PaneOpenStyle::SlideDown => (0.0, tr.h * slide_progress),
+                PaneOpenStyle::SlideLeft => (-tr.w * slide_progress, 0.0),
+                PaneOpenStyle::Fade => (0.0, 0.0),
+            };
 
             // Convert a relative glyph to an NDC GlyphInstance with tile clipping.
             let make_instance = |g: &terminal::RelativeGlyph, color: [f32; 4]| -> Option<GlyphInstance> {
-                let sx = (inner_x + g.px * zoom).round();
-                let sy = (inner_y + g.py * zoom).round();
+                let sx = (inner_x + g.px * zoom + slide_dx).round();
+                let sy = (inner_y + g.py * zoom + slide_dy).round();
                 let gw = (g.glyph_w * zoom).round();
                 let gh = (g.glyph_h * zoom).round();
 
@@ -829,18 +858,43 @@ impl App {
 
         let mut animating = self.advance_animations(dt);
 
-        // Update pane open fade-in animations
-        let fade_speed = 5.0; // opacity units per second (~200ms to reach 1.0)
+        // Update pane open fade-in + slide animations
+        let open_duration = self.config.animation.pane_open_duration_ms.max(1) as f32 / 1000.0;
+        let fade_speed = 1.0 / open_duration;
         let mut open_done = Vec::new();
         for (pane_id, opacity) in &mut self.pane_open_opacity {
             *opacity = (*opacity + dt as f32 * fade_speed).min(1.0);
-            if *opacity >= 1.0 {
-                open_done.push(*pane_id);
+            if *opacity >= 1.0 { open_done.push(*pane_id); }
+        }
+        for pid in &open_done { self.pane_open_opacity.remove(pid); }
+
+        let mut slide_done = Vec::new();
+        for (pane_id, slide) in &mut self.pane_open_slides {
+            *slide = (*slide - dt as f32 * fade_speed).max(0.0);
+            if *slide <= 0.0 { slide_done.push(*pane_id); }
+        }
+        for pid in slide_done { self.pane_open_slides.remove(&pid); }
+
+        // Focus opacity transitions
+        let current_focus = self.workspaces.active().active_pane_id();
+        if current_focus != self.prev_focused_pane {
+            let omega = self.config.animation.focus_transition_speed;
+            let target_inactive = self.config.appearance.inactive_opacity as f64;
+            if let Some(prev) = self.prev_focused_pane {
+                let mut v = self.pane_focus_opacity.remove(&prev)
+                    .unwrap_or_else(|| { let mut vo = ViewOffset::new(); vo.jump_to(1.0); vo });
+                if self.config.animation.enabled { v.animate_to(target_inactive, omega); } else { v.jump_to(target_inactive); }
+                self.pane_focus_opacity.insert(prev, v);
             }
+            if let Some(curr) = current_focus {
+                let mut v = self.pane_focus_opacity.remove(&curr)
+                    .unwrap_or_else(|| { let mut vo = ViewOffset::new(); vo.jump_to(target_inactive); vo });
+                if self.config.animation.enabled { v.animate_to(1.0, omega); } else { v.jump_to(1.0); }
+                self.pane_focus_opacity.insert(curr, v);
+            }
+            self.prev_focused_pane = current_focus;
         }
-        for pid in open_done {
-            self.pane_open_opacity.remove(&pid);
-        }
+        for (_, v) in &mut self.pane_focus_opacity { v.advance(dt); }
 
         // Update closing pane fade-out animations
         self.closing_panes.retain_mut(|cp| {
@@ -849,7 +903,12 @@ impl App {
             cp.opacity > 0.0
         });
 
-        if !self.pane_open_opacity.is_empty() || !self.closing_panes.is_empty() || self.bell_flash.is_some() {
+        if !self.pane_open_opacity.is_empty()
+            || !self.pane_open_slides.is_empty()
+            || self.pane_focus_opacity.values().any(|v| v.is_animating())
+            || !self.closing_panes.is_empty()
+            || self.bell_flash.is_some()
+        {
             animating = true;
         }
 
@@ -967,4 +1026,24 @@ impl App {
             w.request_redraw();
         }
     }
+}
+
+/// Emit a dashed border (4 edges) as rect segments.
+fn emit_dashed_border(rects: &mut Vec<Rect>, tr: &GeoRect, bw: f32, dash: f32, gap: f32, color: [f32; 4]) {
+    let mut emit = |x, y, total, horizontal: bool| {
+        let mut off = 0.0;
+        while off < total {
+            let seg = dash.min(total - off);
+            if horizontal {
+                rects.push(Rect { x: x + off, y, w: seg, h: bw, color });
+            } else {
+                rects.push(Rect { x, y: y + off, w: bw, h: seg, color });
+            }
+            off += dash + gap;
+        }
+    };
+    emit(tr.x, tr.y, tr.w, true);                     // top
+    emit(tr.x, tr.y + tr.h - bw, tr.w, true);         // bottom
+    emit(tr.x, tr.y + bw, tr.h - bw * 2.0, false);    // left
+    emit(tr.x + tr.w - bw, tr.y + bw, tr.h - bw * 2.0, false); // right
 }

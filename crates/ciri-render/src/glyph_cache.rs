@@ -15,6 +15,8 @@ use swash::scale::{image::Content, Render, ScaleContext, Source, StrikeWith};
 use swash::zeno::Format;
 use wgpu;
 
+use crate::shaper::TextShaper;
+
 // ─── Font style ──────────────────────────────────────────────────────
 
 /// Font style for glyph cache lookups.
@@ -280,6 +282,8 @@ pub struct GlyphAtlas {
     atlas_size: u32,
     /// Cache: (char, style) → atlas entry.
     cache: HashMap<(char, FontStyle), GlyphEntry>,
+    /// Cache: (glyph_id, font_id, style) → atlas entry for shaped glyphs.
+    glyph_id_cache: HashMap<(u32, fontdb::ID, FontStyle), GlyphEntry>,
     scale_context: ScaleContext,
     /// Font fallback chains per style (Regular, Bold, Italic, BoldItalic).
     font_chains: HashMap<FontStyle, Vec<fontdb::ID>>,
@@ -288,6 +292,10 @@ pub struct GlyphAtlas {
     pub cell_height: f32,
     /// Font ascent in pixels (distance from baseline to top of cell).
     pub ascent: f32,
+    /// Text shaper for ligature detection and grapheme cluster support.
+    pub shaper: TextShaper,
+    /// Primary font ID (first in the regular chain) for shaping.
+    primary_font_id: Option<fontdb::ID>,
 }
 
 /// Per-instance data for instanced glyph rendering.
@@ -380,15 +388,24 @@ impl GlyphAtlas {
             "color_emoji_atlas",
         );
 
+        let primary_font_id = base_chain.first().copied();
+        let mut shaper = TextShaper::new();
+        if let Some(fid) = primary_font_id {
+            shaper.load_font(fid, font_system);
+        }
+
         GlyphAtlas {
             alpha, color, max_instances, atlas_size,
             cache: HashMap::new(),
+            glyph_id_cache: HashMap::new(),
             scale_context: ScaleContext::new(),
             font_chains,
             font_size,
             cell_width,
             cell_height,
             ascent,
+            shaper,
+            primary_font_id,
         }
     }
 
@@ -448,6 +465,57 @@ impl GlyphAtlas {
         Some(entry)
     }
 
+    /// Ensure a glyph by its ID (from text shaping) is in the atlas.
+    pub fn ensure_glyph_id(
+        &mut self,
+        glyph_id: u32,
+        font_id: fontdb::ID,
+        style: FontStyle,
+        font_system: &mut FontSystem,
+        queue: &wgpu::Queue,
+    ) -> Option<GlyphEntry> {
+        let key = (glyph_id, font_id, style);
+        if let Some(entry) = self.glyph_id_cache.get(&key) {
+            return Some(*entry);
+        }
+        if glyph_id == 0 {
+            self.glyph_id_cache.insert(key, GlyphEntry::EMPTY);
+            return Some(GlyphEntry::EMPTY);
+        }
+
+        let image = rasterize_glyph(
+            &mut self.scale_context, font_system, font_id, glyph_id as u16,
+            self.font_size, style,
+        )?;
+
+        let w = image.placement.width;
+        let h = image.placement.height;
+        if w == 0 || h == 0 {
+            self.glyph_id_cache.insert(key, GlyphEntry::EMPTY);
+            return Some(GlyphEntry::EMPTY);
+        }
+
+        let is_color = matches!(image.content, Content::Color);
+        let entry = if is_color {
+            let (ax, ay) = self.color.packer.allocate(w, h)?;
+            self.color.upload(queue, ax, ay, w, h, &image.data);
+            make_glyph_entry(ax, ay, w, h, &image, self.atlas_size, true)
+        } else {
+            let alpha_data = to_alpha(&image.data, w, h);
+            let (ax, ay) = self.alpha.packer.allocate(w, h)?;
+            self.alpha.upload(queue, ax, ay, w, h, &alpha_data);
+            make_glyph_entry(ax, ay, w, h, &image, self.atlas_size, false)
+        };
+
+        self.glyph_id_cache.insert(key, entry);
+        Some(entry)
+    }
+
+    /// Get the primary font ID (first in the regular fallback chain).
+    pub fn primary_font_id(&self) -> Option<fontdb::ID> {
+        self.primary_font_id
+    }
+
     /// Ensure a regular-style character is in the atlas.
     pub fn ensure_char(
         &mut self,
@@ -482,6 +550,7 @@ impl GlyphAtlas {
     /// Call on font family/size change (e.g. config hot-reload).
     pub fn clear_cache(&mut self, queue: &wgpu::Queue) {
         self.cache.clear();
+        self.glyph_id_cache.clear();
         self.alpha.clear(queue, self.atlas_size);
         self.color.clear(queue, self.atlas_size);
         log::info!("glyph cache cleared (atlas {}×{})", self.atlas_size, self.atlas_size);

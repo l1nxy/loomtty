@@ -138,6 +138,10 @@ impl App {
             Action::ScrollBottom => {
                 self.scroll_active_to_bottom();
             }
+            Action::Detach => {
+                self.send(ClientMessage::Detach);
+                self.should_exit = true;
+            }
         }
     }
 

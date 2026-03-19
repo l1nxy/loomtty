@@ -30,6 +30,7 @@ impl Default for KeybindConfig {
         bindings.insert("f".to_string(), "column_width_full".to_string());
         bindings.insert("o".to_string(), "toggle_overview".to_string());
         bindings.insert("tab".to_string(), "toggle_overview".to_string());
+        bindings.insert("q".to_string(), "detach".to_string());
 
         let mut overview_bindings = HashMap::new();
         overview_bindings.insert("h".to_string(), "focus_left".to_string());

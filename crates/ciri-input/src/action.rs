@@ -49,6 +49,8 @@ pub enum Action {
     ScrollPageDown,
     ScrollTop,
     ScrollBottom,
+    /// Detach from session (close client, server keeps running).
+    Detach,
 }
 
 impl Action {
@@ -83,6 +85,7 @@ impl Action {
             "scroll_page_down" => Some(Action::ScrollPageDown),
             "scroll_top" => Some(Action::ScrollTop),
             "scroll_bottom" => Some(Action::ScrollBottom),
+            "detach" => Some(Action::Detach),
             _ => {
                 // Handle switch_workspace_N
                 if let Some(rest) = s.strip_prefix("switch_workspace_")

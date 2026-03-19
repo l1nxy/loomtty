@@ -19,6 +19,12 @@ pub enum Action {
     CyclePresetWidth,
     /// Cycle backward through configured width presets.
     CyclePresetWidthReverse,
+    /// Set column to one-third viewport width.
+    ColumnWidthOneThird,
+    /// Set column to half viewport width.
+    ColumnWidthHalf,
+    /// Set column to two-thirds viewport width.
+    ColumnWidthTwoThirds,
     /// Set column to full viewport width.
     ColumnWidthFull,
     /// Increase the active column's width proportion.
@@ -60,6 +66,9 @@ impl Action {
             "move_pane_right" => Some(Action::MovePaneRight),
             "cycle_preset_width" => Some(Action::CyclePresetWidth),
             "cycle_preset_width_reverse" => Some(Action::CyclePresetWidthReverse),
+            "column_width_one_third" => Some(Action::ColumnWidthOneThird),
+            "column_width_half" => Some(Action::ColumnWidthHalf),
+            "column_width_two_thirds" => Some(Action::ColumnWidthTwoThirds),
             "column_width_full" => Some(Action::ColumnWidthFull),
             "column_width_increase" => Some(Action::ColumnWidthIncrease),
             "column_width_decrease" => Some(Action::ColumnWidthDecrease),

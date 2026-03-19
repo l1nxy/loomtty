@@ -1,5 +1,10 @@
+pub(crate) mod event;
+pub(crate) mod ime;
 pub(crate) mod input_handler;
+pub(crate) mod keyboard;
+pub(crate) mod mouse;
 pub(crate) mod render;
+pub(crate) mod status_bar;
 pub(crate) mod sync;
 
 use ciri_anim::animation::ViewOffset;

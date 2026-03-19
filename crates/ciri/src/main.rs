@@ -426,6 +426,9 @@ impl ApplicationHandler for App {
                     self.selection = None;
                 }
 
+                // Resolve key name: prefer logical_key, but fall back to
+                // key_without_modifiers for Ctrl combos where logical_key
+                // becomes a control character (e.g. Ctrl+Space → '\0').
                 let key_name = match &event.logical_key {
                     Key::Named(n) => match n {
                         NamedKey::Space => "space",
@@ -441,7 +444,19 @@ impl ApplicationHandler for App {
                         NamedKey::Super => "Super",
                         _ => "",
                     },
-                    Key::Character(c) => c.as_str(),
+                    Key::Character(c) => {
+                        let s = c.as_str();
+                        // Control characters: fall back to physical key
+                        if s.len() == 1 && s.as_bytes()[0] < 0x20 {
+                            use winit::keyboard::{KeyCode, PhysicalKey};
+                            match event.physical_key {
+                                PhysicalKey::Code(KeyCode::Space) => "space",
+                                _ => s,
+                            }
+                        } else {
+                            s
+                        }
+                    }
                     _ => "",
                 };
 

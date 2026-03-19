@@ -36,6 +36,9 @@ pub struct ClientPaneGrid {
     pub mode_flags: u8,
     pub title: String,
     pub dirty: bool,
+    /// Per-viewport-row dirty tracking. If set, only these rows need rebuilding.
+    /// Empty = full rebuild needed (e.g., after scroll or resize).
+    pub dirty_rows: Vec<bool>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -64,7 +67,13 @@ impl ClientPaneGrid {
             mode_flags: 0,
             title: String::new(),
             dirty: true,
+            dirty_rows: Vec::new(),
         }
+    }
+
+    /// Total number of lines in the buffer (scrollback + viewport).
+    pub fn total_lines(&self) -> usize {
+        self.buffer.len()
     }
 
     /// Maximum scroll offset (how far up the user can scroll).
@@ -148,6 +157,7 @@ impl ClientPaneGrid {
     }
 
     /// Apply incremental CellDelta: patch the live viewport rows in the buffer.
+    /// Tracks which viewport rows were actually changed for damage-based rendering.
     pub fn apply_delta(&mut self, delta: &CellDelta) {
         self.cursor_line = delta.cursor_line;
         self.cursor_col = delta.cursor_col;
@@ -157,9 +167,15 @@ impl ClientPaneGrid {
         let buf_len = self.buffer.len();
         let live_start = buf_len.saturating_sub(self.rows as usize);
 
+        // Ensure dirty_rows is sized correctly
+        let nrows = self.rows as usize;
+        if self.dirty_rows.len() != nrows {
+            self.dirty_rows = vec![false; nrows];
+        }
+
         for region in &delta.regions {
             let line = region.line as usize;
-            if line >= self.rows as usize {
+            if line >= nrows {
                 continue;
             }
             let buf_row = live_start + line;
@@ -172,8 +188,17 @@ impl ClientPaneGrid {
                     self.buffer[buf_row][col] = cell;
                 }
             }
+            self.dirty_rows[line] = true;
         }
         self.dirty = true;
+    }
+
+    /// Clear dirty row tracking (called after the view is rebuilt).
+    #[allow(dead_code)]
+    pub fn clear_dirty_rows(&mut self) {
+        for row in &mut self.dirty_rows {
+            *row = false;
+        }
     }
 
     /// Scroll up (into history). Returns actual lines scrolled.

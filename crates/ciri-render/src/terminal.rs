@@ -7,7 +7,7 @@ use ciri_config::config::CiriConfig;
 use ciri_config::theme::ThemeConfig;
 use glyphon::FontSystem;
 
-use crate::glyph_cache::GlyphAtlas;
+use crate::glyph_cache::{FontStyle, GlyphAtlas};
 use crate::rect::Rect;
 
 fn ansi_color_to_rgba(color: AnsiColor, config: &CiriConfig) -> [f32; 4] {
@@ -71,12 +71,16 @@ fn indexed_color_to_rgba(idx: u8, config: &CiriConfig) -> [f32; 4] {
 /// Cached terminal view with positions RELATIVE to the tile's inner origin (0,0).
 /// The actual screen offset is applied at render time, NOT baked into the cache.
 pub struct TerminalView {
-    /// Glyph instances with pixel positions relative to (0, 0).
+    /// Regular text glyph instances (alpha atlas).
     pub glyph_instances: Vec<RelativeGlyph>,
+    /// Color emoji glyph instances (RGBA atlas).
+    pub color_glyph_instances: Vec<RelativeGlyph>,
     /// Background rects with pixel positions relative to (0, 0).
     pub bg_rects: Vec<Rect>,
     /// Cursor rects relative to (0, 0). One rect for solid/beam/underline, four for hollow outline.
     pub cursor_rects: Vec<Rect>,
+    /// Scrollbar rect (if any), relative to the pane.
+    pub scrollbar_rect: Option<Rect>,
 }
 
 /// A glyph instance stored with pixel-relative position (not NDC).
@@ -113,6 +117,7 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
 
     let mut bg_rects = Vec::new();
     let mut glyph_instances = Vec::with_capacity(cols * total_rows / 2);
+    let mut color_glyph_instances = Vec::new();
 
     for row in 0..total_rows {
         let py = row as f32 * ch;
@@ -132,8 +137,18 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
             let mut fg = ansi_color_to_rgba(cell.fg, config);
             let mut bg = ansi_color_to_rgba(cell.bg, config);
 
-            // BOLD: brighten fg
-            if cell.flags.contains(CellFlags::BOLD) {
+            // Determine font style
+            let is_bold = cell.flags.contains(CellFlags::BOLD);
+            let is_italic = cell.flags.contains(CellFlags::ITALIC);
+            let font_style = match (is_bold, is_italic) {
+                (true, true) => FontStyle::BoldItalic,
+                (true, false) => FontStyle::Bold,
+                (false, true) => FontStyle::Italic,
+                (false, false) => FontStyle::Regular,
+            };
+
+            // BOLD: brighten fg (in addition to using bold font)
+            if is_bold {
                 fg[0] = (fg[0] * 1.3).min(1.0);
                 fg[1] = (fg[1] * 1.3).min(1.0);
                 fg[2] = (fg[2] * 1.3).min(1.0);
@@ -160,10 +175,10 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
                 continue;
             }
 
-            // UNDERLINE
-            if cell.flags.contains(CellFlags::UNDERLINE) {
+            // UNDERLINE variants
+            if cell.flags.contains(CellFlags::ALL_UNDERLINES) {
                 let uy = py + baseline_offset + 1.0;
-                bg_rects.push(Rect { x: px, y: uy, w: bg_width, h: 1.0, color: fg });
+                emit_underline_rects(&mut bg_rects, cell.flags, px, uy, bg_width, fg, cw);
             }
 
             // STRIKETHROUGH
@@ -177,12 +192,12 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
                 continue;
             }
 
-            if let Some(entry) = atlas.ensure_char(c, font_system, queue) {
+            if let Some(entry) = atlas.ensure_styled_char(c, font_style, font_system, queue) {
                 if entry.width == 0 || entry.height == 0 {
                     continue;
                 }
 
-                glyph_instances.push(RelativeGlyph {
+                let glyph = RelativeGlyph {
                     px: (px + entry.bearing_x as f32).round(),
                     py: (py + baseline_offset - entry.bearing_y as f32).round(),
                     glyph_w: entry.width as f32,
@@ -192,7 +207,13 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
                     u1: entry.u1,
                     v1: entry.v1,
                     color: fg,
-                });
+                };
+
+                if entry.is_color {
+                    color_glyph_instances.push(glyph);
+                } else {
+                    glyph_instances.push(glyph);
+                }
             }
         }
     }
@@ -210,14 +231,53 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
         Vec::new()
     };
 
-    TerminalView { glyph_instances, bg_rects, cursor_rects }
+    TerminalView { glyph_instances, color_glyph_instances, bg_rects, cursor_rects, scrollbar_rect: None }
+}
+
+/// Emit underline decoration rects based on underline style.
+fn emit_underline_rects(
+    bg_rects: &mut Vec<Rect>,
+    flags: CellFlags,
+    px: f32,
+    uy: f32,
+    width: f32,
+    color: [f32; 4],
+    cell_width: f32,
+) {
+    if flags.contains(CellFlags::DOUBLE_UNDERLINE) {
+        // Double: two 1px lines with 1px gap
+        bg_rects.push(Rect { x: px, y: uy, w: width, h: 1.0, color });
+        bg_rects.push(Rect { x: px, y: uy + 2.0, w: width, h: 1.0, color });
+    } else if flags.contains(CellFlags::UNDERCURL) {
+        // Curly: approximate with a series of small rects forming a wave
+        let wave_len = cell_width.max(8.0);
+        let segments = (width / 2.0).ceil() as usize;
+        for i in 0..segments {
+            let x = px + i as f32 * 2.0;
+            let phase = (i as f32 / wave_len * std::f32::consts::TAU * 2.0).sin();
+            let y_off = phase * 1.5;
+            let w = 2.0_f32.min(width - i as f32 * 2.0);
+            if w > 0.0 {
+                bg_rects.push(Rect { x, y: uy + y_off, w, h: 1.0, color });
+            }
+        }
+    } else if flags.contains(CellFlags::DOTTED_UNDERLINE) || flags.contains(CellFlags::DASHED_UNDERLINE) {
+        // Dotted/dashed: alternating 2px on, 2px off
+        let dot_len: f32 = if flags.contains(CellFlags::DASHED_UNDERLINE) { 4.0 } else { 2.0 };
+        let gap_len: f32 = 2.0;
+        let mut x = px;
+        while x < px + width {
+            let w = dot_len.min(px + width - x);
+            bg_rects.push(Rect { x, y: uy, w, h: 1.0, color });
+            x += dot_len + gap_len;
+        }
+    } else {
+        // Single underline (default)
+        bg_rects.push(Rect { x: px, y: uy, w: width, h: 1.0, color });
+    }
 }
 
 /// Build cursor rects for all cursor shapes.
-/// - Block: filled cell-sized rect
-/// - HollowBlock: 4 border rects forming an outline
-/// - Beam: thin vertical line on left edge (2px)
-/// - Underline: thin horizontal line at bottom (2px)
 fn build_cursor_rects_for_shape(shape: u8, cx: f32, cy: f32, cw: f32, ch: f32, color: [f32; 4]) -> Vec<Rect> {
     match shape {
         CURSOR_HOLLOW_BLOCK => {
@@ -230,26 +290,22 @@ fn build_cursor_rects_for_shape(shape: u8, cx: f32, cy: f32, cw: f32, ch: f32, c
             ]
         }
         CURSOR_BEAM => {
-            // Thin vertical bar at left edge of cell
             vec![Rect { x: cx, y: cy, w: 2.0, h: ch, color }]
         }
         CURSOR_UNDERLINE => {
-            // Thin horizontal bar at bottom of cell
             vec![Rect { x: cx, y: cy + ch - 2.0, w: cw, h: 2.0, color }]
         }
         _ => {
-            // CURSOR_BLOCK and any unknown: filled rect
             vec![Rect { x: cx, y: cy, w: cw, h: ch, color }]
         }
     }
 }
 
-/// Legacy helper for build_terminal_view (direct Term access path).
 fn build_cursor_rects(hollow: bool, cx: f32, cy: f32, cw: f32, ch: f32, color: [f32; 4]) -> Vec<Rect> {
     if hollow {
         build_cursor_rects_for_shape(CURSOR_HOLLOW_BLOCK, cx, cy, cw, ch, color)
     } else {
-        build_cursor_rects_for_shape(0, cx, cy, cw, ch, color) // Block
+        build_cursor_rects_for_shape(0, cx, cy, cw, ch, color)
     }
 }
 
@@ -258,7 +314,8 @@ fn build_cursor_rects(hollow: bool, cx: f32, cy: f32, cw: f32, ch: f32, color: [
 use ciri_protocol::message::{
     PackedColor, PackedCell, COLOR_NAMED, COLOR_RGB, COLOR_INDEXED,
     FLAG_WIDE_CHAR, FLAG_WIDE_CHAR_SPACER, FLAG_HIDDEN,
-    FLAG_BOLD, FLAG_DIM, FLAG_UNDERLINE, FLAG_INVERSE, FLAG_STRIKEOUT,
+    FLAG_BOLD, FLAG_ITALIC, FLAG_DIM, FLAG_UNDERLINE, FLAG_INVERSE, FLAG_STRIKEOUT,
+    FLAG_UNDERLINE_STYLE_MASK, FLAG_UNDERLINE_DOUBLE, FLAG_UNDERLINE_CURLY, FLAG_UNDERLINE_DOTTED,
     CURSOR_HIDDEN, CURSOR_HOLLOW_BLOCK, CURSOR_BEAM, CURSOR_UNDERLINE,
 };
 
@@ -306,14 +363,11 @@ fn packed_color_to_rgba(color: PackedColor, config: &CiriConfig) -> [f32; 4] {
 
 /// Build rendering data from a PackedCell grid (client-side, no alacritty dependency).
 ///
-/// Handles full terminal semantics:
-/// - INVERSE: swap fg/bg colors
-/// - BOLD: brighten the foreground color
-/// - DIM: dim the foreground color (×0.67)
-/// - UNDERLINE: draw a 1px line at the cell baseline
-/// - STRIKEOUT: draw a 1px line through the middle of the cell
-/// - HIDDEN: skip text rendering (SGR 8)
-/// - Cursor shapes: Block (filled), HollowBlock (outline), Beam (thin vertical), Underline (thin horizontal)
+/// Supports:
+/// - BOLD/ITALIC: font style variants (true bold/italic fonts with fallback to synthesis)
+/// - Underline variants: single, double, curly, dotted/dashed
+/// - Color emoji: separated into dedicated color glyph list
+/// - Scrollbar: optional visual indicator
 pub fn build_view_from_grid(
     cells: &[PackedCell],
     cols: u16,
@@ -333,6 +387,7 @@ pub fn build_view_from_grid(
 
     let mut bg_rects = Vec::new();
     let mut glyph_instances = Vec::with_capacity(cols as usize * rows as usize / 2);
+    let mut color_glyph_instances = Vec::new();
 
     for row in 0..rows as usize {
         let py = row as f32 * ch;
@@ -350,12 +405,22 @@ pub fn build_view_from_grid(
             let is_wide = f & FLAG_WIDE_CHAR != 0;
             let bg_width = if is_wide { cw * 2.0 } else { cw };
 
+            // Determine font style from flags
+            let is_bold = f & FLAG_BOLD != 0;
+            let is_italic = f & FLAG_ITALIC != 0;
+            let font_style = match (is_bold, is_italic) {
+                (true, true) => FontStyle::BoldItalic,
+                (true, false) => FontStyle::Bold,
+                (false, true) => FontStyle::Italic,
+                (false, false) => FontStyle::Regular,
+            };
+
             // Resolve base colors
             let mut fg = packed_color_to_rgba(cell.fg, config);
             let mut bg = packed_color_to_rgba(cell.bg, config);
 
-            // BOLD: brighten foreground (shift toward white by ~30%)
-            if f & FLAG_BOLD != 0 {
+            // BOLD: brighten foreground (in addition to bold font)
+            if is_bold {
                 fg[0] = (fg[0] * 1.3).min(1.0);
                 fg[1] = (fg[1] * 1.3).min(1.0);
                 fg[2] = (fg[2] * 1.3).min(1.0);
@@ -383,10 +448,11 @@ pub fn build_view_from_grid(
                 continue;
             }
 
-            // UNDERLINE: 1px line at cell bottom (baseline + 1)
+            // UNDERLINE variants
             if f & FLAG_UNDERLINE != 0 {
                 let uy = py + baseline_offset + 1.0;
-                bg_rects.push(Rect { x: px, y: uy, w: bg_width, h: 1.0, color: fg });
+                let ul_style = f & FLAG_UNDERLINE_STYLE_MASK;
+                emit_packed_underline_rects(&mut bg_rects, ul_style, px, uy, bg_width, fg, cw);
             }
 
             // STRIKEOUT: 1px line through middle of cell
@@ -400,11 +466,11 @@ pub fn build_view_from_grid(
                 continue;
             }
 
-            if let Some(entry) = atlas.ensure_char(c, font_system, queue) {
+            if let Some(entry) = atlas.ensure_styled_char(c, font_style, font_system, queue) {
                 if entry.width == 0 || entry.height == 0 {
                     continue;
                 }
-                glyph_instances.push(RelativeGlyph {
+                let glyph = RelativeGlyph {
                     px: (px + entry.bearing_x as f32).round(),
                     py: (py + baseline_offset - entry.bearing_y as f32).round(),
                     glyph_w: entry.width as f32,
@@ -414,7 +480,13 @@ pub fn build_view_from_grid(
                     u1: entry.u1,
                     v1: entry.v1,
                     color: fg,
-                });
+                };
+
+                if entry.is_color {
+                    color_glyph_instances.push(glyph);
+                } else {
+                    glyph_instances.push(glyph);
+                }
             }
         }
     }
@@ -430,6 +502,94 @@ pub fn build_view_from_grid(
         Vec::new()
     };
 
-    TerminalView { glyph_instances, bg_rects, cursor_rects }
+    TerminalView { glyph_instances, color_glyph_instances, bg_rects, cursor_rects, scrollbar_rect: None }
 }
 
+/// Build a scrollbar rect for a pane grid with scrollback.
+/// Returns None if there is no scrollback or the scrollbar is not needed.
+pub fn build_scrollbar(
+    scroll_offset: usize,
+    total_lines: usize,
+    visible_rows: u16,
+    pane_width: f32,
+    pane_height: f32,
+    config: &CiriConfig,
+) -> Option<Rect> {
+    let total = total_lines;
+    let visible = visible_rows as usize;
+    if total <= visible {
+        return None; // No scrollback, no scrollbar
+    }
+
+    let scrollbar_width = 4.0;
+    let scrollbar_margin = 2.0;
+
+    // Thumb proportional size
+    let ratio = visible as f32 / total as f32;
+    let thumb_height = (ratio * pane_height).max(10.0);
+
+    // Thumb position: scroll_offset=0 means at bottom, max_offset means at top
+    let max_offset = total - visible;
+    let position_ratio = if max_offset > 0 {
+        1.0 - (scroll_offset as f32 / max_offset as f32)
+    } else {
+        1.0
+    };
+    let thumb_y = position_ratio * (pane_height - thumb_height);
+
+    let scrollbar_color = ThemeConfig::parse_color(&config.theme.bright_black);
+    let color = [scrollbar_color[0], scrollbar_color[1], scrollbar_color[2], 0.4];
+
+    Some(Rect {
+        x: pane_width - scrollbar_width - scrollbar_margin,
+        y: thumb_y,
+        w: scrollbar_width,
+        h: thumb_height,
+        color,
+    })
+}
+
+/// Emit underline rects from packed flags (client-side rendering).
+fn emit_packed_underline_rects(
+    bg_rects: &mut Vec<Rect>,
+    ul_style: u16,
+    px: f32,
+    uy: f32,
+    width: f32,
+    color: [f32; 4],
+    cell_width: f32,
+) {
+    match ul_style {
+        FLAG_UNDERLINE_DOUBLE => {
+            bg_rects.push(Rect { x: px, y: uy, w: width, h: 1.0, color });
+            bg_rects.push(Rect { x: px, y: uy + 2.0, w: width, h: 1.0, color });
+        }
+        FLAG_UNDERLINE_CURLY => {
+            let wave_len = cell_width.max(8.0);
+            let segments = (width / 2.0).ceil() as usize;
+            for i in 0..segments {
+                let x = px + i as f32 * 2.0;
+                let phase = (i as f32 / wave_len * std::f32::consts::TAU * 2.0).sin();
+                let y_off = phase * 1.5;
+                let w = 2.0_f32.min(width - i as f32 * 2.0);
+                if w > 0.0 {
+                    bg_rects.push(Rect { x, y: uy + y_off, w, h: 1.0, color });
+                }
+            }
+        }
+        FLAG_UNDERLINE_DOTTED => {
+            let dot_len: f32 = 2.0;
+            let gap_len: f32 = 2.0;
+            let mut x = px;
+            while x < px + width {
+                let w = dot_len.min(px + width - x);
+                bg_rects.push(Rect { x, y: uy, w, h: 1.0, color });
+                x += dot_len + gap_len;
+            }
+        }
+        _ => {
+            // Single underline (default)
+            bg_rects.push(Rect { x: px, y: uy, w: width, h: 1.0, color });
+        }
+    }
+}

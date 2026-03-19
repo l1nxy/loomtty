@@ -462,7 +462,16 @@ pub fn pack_cell(cell: &alacritty_terminal::term::cell::Cell) -> PackedCell {
     if cell.flags.contains(CellFlags::WIDE_CHAR_SPACER) { flags |= FLAG_WIDE_CHAR_SPACER; }
     if cell.flags.contains(CellFlags::BOLD) { flags |= FLAG_BOLD; }
     if cell.flags.contains(CellFlags::ITALIC) { flags |= FLAG_ITALIC; }
-    if cell.flags.contains(CellFlags::ALL_UNDERLINES) { flags |= FLAG_UNDERLINE; }
+    // Preserve underline style variants
+    if cell.flags.contains(CellFlags::DOUBLE_UNDERLINE) {
+        flags |= FLAG_UNDERLINE | FLAG_UNDERLINE_DOUBLE;
+    } else if cell.flags.contains(CellFlags::UNDERCURL) {
+        flags |= FLAG_UNDERLINE | FLAG_UNDERLINE_CURLY;
+    } else if cell.flags.contains(CellFlags::DOTTED_UNDERLINE) || cell.flags.contains(CellFlags::DASHED_UNDERLINE) {
+        flags |= FLAG_UNDERLINE | FLAG_UNDERLINE_DOTTED;
+    } else if cell.flags.contains(CellFlags::ALL_UNDERLINES) {
+        flags |= FLAG_UNDERLINE;
+    }
     if cell.flags.contains(CellFlags::INVERSE) { flags |= FLAG_INVERSE; }
     if cell.flags.contains(CellFlags::DIM) { flags |= FLAG_DIM; }
     if cell.flags.contains(CellFlags::STRIKEOUT) { flags |= FLAG_STRIKEOUT; }

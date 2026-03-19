@@ -456,6 +456,7 @@ dependencies = [
  "glyphon",
  "log",
  "swash",
+ "unicode-segmentation",
  "wgpu",
  "winit",
 ]

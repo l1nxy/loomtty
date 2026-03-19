@@ -15,6 +15,7 @@ bytemuck = { version = "1", features = ["derive"] }
 bytemuck_derive = "1"
 swash = "0.1"
 ciri-config = { path = "../ciri-config" }
+unicode-segmentation = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 fontconfig = "0.10"

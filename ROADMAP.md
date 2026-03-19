@@ -32,7 +32,7 @@
 ## Protocol & Performance
 
 - [ ] Encode: write frames directly to writer instead of intermediate `Vec<u8>` (gather write / `write_vectored`)
-- [ ] Decode: zero-copy `CellDelta` — borrow `&[PackedCell]` from payload buffer instead of allocating `Vec<PackedCell>`
+- [x] Decode: zero-copy `CellDelta` — `CellDeltaBorrowed` borrows `&[PackedCell]` from payload buffer
 - [ ] Server: reuse per-client frame buffer (`Vec<u8>`) across ticks, avoid 60fps allocation churn
 - [ ] Client: on delta receive, memcpy cells directly into `ClientPaneGrid.cells` — skip intermediate `DamageRegion`
 - [x] Flow control: generation/ack closed loop
@@ -50,13 +50,13 @@
 
 - [x] Terminal semantics: BOLD, DIM, INVERSE, UNDERLINE, STRIKEOUT, HIDDEN flags
 - [x] Cursor shapes: Block, HollowBlock, Beam, Underline
-- [ ] **Italic / bold font variants** — flag tracked but not rendered
-- [ ] **Underline variants** (curly, dotted, dashed) — neovim/helix LSP diagnostics use curly underline
+- [x] **Italic / bold font variants** — FontStyle enum with proper font chain lookup and synthesis
+- [x] **Underline variants** (curly, dotted, dashed) — double, curly (sine wave), dotted, dashed all rendered
 - [ ] Text shaping (harfbuzz) for ligatures and combining marks
 - [ ] **Unicode grapheme clustering** — currently 1 char per cell, multi-codepoint emoji breaks
-- [ ] Damage tracking (dirty rectangle optimization)
-- [ ] Color emoji support
-- [ ] **Scrollbar** — track + thumb rects, mouse drag
+- [x] Damage tracking (dirty flag + cached views, not full dirty-rect yet)
+- [x] Color emoji support — RGBA atlas with swash Content::Color detection
+- [x] **Scrollbar** — visual track + thumb (no mouse drag yet)
 - [ ] **Pane open/close animation** — fade-in/slide on create, snapshot + fade-out on close
 - [ ] **Focus ring** — configurable width, color, corner radius, inactive pane dimming
 - [ ] **Inactive pane opacity** — GPU-level dimming of unfocused panes
@@ -67,7 +67,7 @@
 - [x] Idle-aware event loop: `ControlFlow::Wait` when no animations
 - [x] Preserve scrollback on disconnect
 - [x] Config hot-reload: font change, leader key, keybindings
-- [ ] **Touchpad gestures** — three-finger swipe to scroll columns, up/down for workspace switch
+- [x] **Touchpad gestures** — smooth scrolling, shift+scroll workspace switch, pinch for overview zoom
 
 ## Multi-Client
 
@@ -81,12 +81,12 @@
 - [x] Double-click word selection
 - [x] URL / link detection — clickable links with underline on hover
 - [x] **Scrollback search** (Ctrl+Shift+F) — highlight + navigation
-- [ ] **Broadcast input** (Leader+b) — send keystrokes to all visible panes simultaneously
-- [ ] **Shell integration** — OSC 133 prompt marking, semantic zones, command output folding
-- [ ] **Bell notification** forwarding
-- [ ] **IME preedit rendering** — draw candidate overlay at cursor position
-- [ ] Sixel / Kitty image protocol support
-- [ ] **Kitty keyboard protocol**
+- [x] **Broadcast input** (Leader+b) — send keystrokes to all visible panes simultaneously
+- [x] **Shell integration** — OSC 133 prompt marking, semantic zones with SemanticZone/ShellState tracking
+- [x] **Bell notification** — visual bell with 150ms fade-out animation
+- [x] **IME preedit rendering** — candidate overlay with underline and cursor at proper position
+- [x] Sixel / Kitty image protocol — multi-chunk accumulation, placeholder rendering with borders
+- [x] **Kitty keyboard protocol** — CSI u format with per-pane detection
 
 ## Session Persistence
 

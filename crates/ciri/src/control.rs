@@ -47,6 +47,10 @@ pub fn run_control_command(msg: ClientMessage) -> Result<()> {
     #[cfg(windows)]
     let mut stream = std::net::TcpStream::connect(format!("127.0.0.1:{}", transport::server_port()))?;
 
+    // Set timeouts so we don't hang if the server is unresponsive
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+    let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(5)));
+
     // Send a minimal ClientHello
     let magic = b"CIRI";
     let version = {

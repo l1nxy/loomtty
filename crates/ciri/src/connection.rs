@@ -37,7 +37,20 @@ pub fn connect_or_spawn(
         let server_ready = || -> bool {
             #[cfg(unix)]
             {
-                _sock_path.exists()
+                if !_sock_path.exists() {
+                    return false;
+                }
+                // Probe the socket to distinguish live server from stale socket.
+                // A stale socket (left by a crashed server) returns ConnectionRefused.
+                match std::os::unix::net::UnixStream::connect(&_sock_path) {
+                    Ok(_) => true,
+                    Err(_) => {
+                        // Socket file exists but nobody is listening — stale.
+                        log::info!("removing stale server socket: {}", _sock_path.display());
+                        let _ = std::fs::remove_file(&_sock_path);
+                        false
+                    }
+                }
             }
             #[cfg(windows)]
             {

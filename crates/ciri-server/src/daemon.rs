@@ -435,9 +435,11 @@ struct Server {
     default_column_width: ColumnWidth,
     column_gap: f32,
     pane_inset: f32,
-    /// True once server has had at least one session. Prevents premature
-    /// shutdown on startup before any client has connected.
+    /// True once server has had at least one real (non-control) session.
     had_session: bool,
+    /// When the server started. Used for orphan cleanup: if no sessions and
+    /// no clients after a grace period, shut down even if `had_session` is false.
+    started_at: Instant,
 }
 
 impl Server {
@@ -452,6 +454,7 @@ impl Server {
             column_gap,
             pane_inset: 12.0,
             had_session: false,
+            started_at: Instant::now(),
         }
     }
 
@@ -1041,6 +1044,34 @@ pub async fn run_daemon() -> Result<()> {
         }
     }
 
+    // Acquire an exclusive lock to prevent multiple server instances.
+    // The lock is held for the lifetime of the server (released on exit/crash).
+    #[cfg(unix)]
+    let _lock_file = {
+        use std::os::unix::io::AsRawFd;
+        let lock_path = sock_path.with_extension("lock");
+        let lock_file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&lock_path)?;
+        let fd = lock_file.as_raw_fd();
+        let ret = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
+        if ret != 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::WouldBlock {
+                log::info!("another ciri-server is already running (lock held), exiting");
+                return Ok(());
+            }
+            return Err(err.into());
+        }
+        // Write PID for debugging
+        use std::io::Write;
+        let _ = writeln!(&lock_file, "{}", std::process::id());
+        log::info!("acquired server lock: {}", lock_path.display());
+        lock_file // keep alive — dropping releases the lock
+    };
+
     #[cfg(unix)]
     {
         if sock_path.exists() {
@@ -1295,10 +1326,19 @@ pub async fn run_daemon() -> Result<()> {
                     s.sessions.remove(&name);
                 }
 
-                // Server shutdown: had sessions before but now all gone and no clients
-                if s.had_session && s.sessions.is_empty() && s.clients.is_empty() {
-                    log::info!("all sessions ended and no clients, shutting down server");
-                    should_shutdown = true;
+                // Server shutdown: shut down when no sessions and no clients, if either:
+                // (a) we previously had a session (normal case), or
+                // (b) 30 seconds have passed since startup (orphan cleanup)
+                if s.sessions.is_empty() && s.clients.is_empty() {
+                    let orphan_timeout = s.started_at.elapsed() > Duration::from_secs(30);
+                    if s.had_session || orphan_timeout {
+                        if orphan_timeout && !s.had_session {
+                            log::info!("no clients connected after 30s, shutting down orphan server");
+                        } else {
+                            log::info!("all sessions ended and no clients, shutting down server");
+                        }
+                        should_shutdown = true;
+                    }
                 }
             } // lock dropped here — Phase 1 complete
 

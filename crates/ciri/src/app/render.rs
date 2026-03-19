@@ -499,7 +499,7 @@ impl App {
 
         emit_status_text(
             atlas,
-            &mut renderer.text.font_system,
+            &mut renderer.font_system,
             &renderer.queue,
             &bar_text,
             bar_x + padding,
@@ -624,7 +624,7 @@ impl App {
         let text_color = [1.0, 1.0, 1.0, 1.0];
         emit_status_text(
             atlas,
-            &mut renderer.text.font_system,
+            &mut renderer.font_system,
             &renderer.queue,
             text,
             base_x + 2.0,
@@ -731,7 +731,7 @@ impl App {
                 let baseline = ch * self.config.statusbar.text_baseline;
                 emit_status_text(
                     atlas,
-                    &mut renderer.text.font_system,
+                    &mut renderer.font_system,
                     &renderer.queue,
                     &label,
                     ix + 4.0 * zoom,
@@ -890,7 +890,7 @@ impl App {
                     cur_col,
                     cur_shape,
                     atlas,
-                    &mut renderer.text.font_system,
+                    &mut renderer.font_system,
                     &renderer.queue,
                     &self.config,
                 );

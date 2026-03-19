@@ -21,6 +21,7 @@ impl ApplicationHandler for App {
         let is_animating = self.view_offset_x.is_animating()
             || self.view_offset_y.is_animating()
             || self.overview_zoom.is_animating()
+            || self.gesture_row_offset.is_animating()
             || self.col_widths.iter().any(|v| v.is_animating())
             || !self.pane_open_opacity.is_empty()
             || !self.closing_panes.is_empty();
@@ -343,6 +344,10 @@ impl ApplicationHandler for App {
 
             WindowEvent::MouseWheel { delta, phase, .. } => {
                 self.handle_mouse_wheel(delta, phase);
+            }
+
+            WindowEvent::PinchGesture { delta, phase, .. } => {
+                self.handle_pinch_gesture(delta, phase);
             }
 
             WindowEvent::Ime(ime) => {

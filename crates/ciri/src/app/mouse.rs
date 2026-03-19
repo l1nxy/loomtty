@@ -221,6 +221,12 @@ impl App {
                     for col_idx in 0..ws.columns.len() {
                         if ws.columns[col_idx].contains_pane(pane_id) {
                             ws.active_column_idx = col_idx;
+                            // Also focus the specific tile within the column
+                            if let Some(tile_idx) = ws.columns[col_idx].tiles.iter()
+                                .position(|t| t.pane_id == pane_id)
+                            {
+                                ws.columns[col_idx].active_tile_idx = tile_idx;
+                            }
                             break;
                         }
                     }
@@ -273,27 +279,36 @@ impl App {
 
         let had_left_hold = self.mouse_left_held;
         self.mouse_left_held = false;
-        if self.tile_resize_dragging.is_some() {
+        if let Some((col_idx, top_tile_idx)) = self.tile_resize_dragging {
+            // Send the final absolute tile weights to the server so PTYs are
+            // resized and the layout is persisted. Read from local preview state
+            // which already reflects the drag.
+            let ws = self.workspaces.active();
+            if let Some(col) = ws.columns.get(col_idx) {
+                let bot_idx = top_tile_idx + 1;
+                if bot_idx < col.tiles.len() {
+                    let top_w = col.tiles[top_tile_idx].height.weight() as f64;
+                    let bot_w = col.tiles[bot_idx].height.weight() as f64;
+                    self.send(ClientMessage::SetTileWeights {
+                        column_idx: col_idx,
+                        top_tile_idx,
+                        top_weight: top_w,
+                        bottom_weight: bot_w,
+                    });
+                }
+            }
             self.tile_resize_dragging = None;
             if let Some(w) = &self.window {
                 w.set_cursor(winit::window::CursorIcon::Default);
             }
         }
         if let Some(drag_col) = self.resize_dragging {
-            // Sync both columns to server via AdjustColumnSplit.
-            // The server needs the active column to match drag_col, so send
-            // FocusLeft/FocusRight as needed — but we don't have that message.
-            // Instead, send the accumulated delta which the server applies via
-            // resize_active_with_neighbor on whatever is active. For correctness,
-            // also send both column proportions individually.
-            let ws = self.workspaces.active();
-            if let Some(left_col) = ws.columns.get(drag_col) {
-                let left_p = left_col.proportion(ws.view_size.width);
-                let right_p = ws.columns.get(drag_col + 1).map(|c| c.proportion(ws.view_size.width));
-                // Send left column width
-                self.send(ClientMessage::AdjustColumnSplit { delta: self.resize_drag_accumulated_delta });
-                let _ = (left_p, right_p); // proportions available if needed later
-            }
+            // Send the accumulated delta to the specific column pair being dragged
+            // (not the active column) using AdjustColumnSplitAt.
+            self.send(ClientMessage::AdjustColumnSplitAt {
+                column_idx: drag_col,
+                delta: self.resize_drag_accumulated_delta,
+            });
             self.resize_dragging = None;
             self.snap_all_col_widths();
             if let Some(w) = &self.window {
@@ -540,7 +555,14 @@ impl App {
                     self.view_offset_x.update_gesture(dx);
                 }
                 TouchPhase::Ended | TouchPhase::Cancelled => {
-                    let t = self.workspaces.active_mut().target_offset_for_active();
+                    let center_strategy = match self.config.layout.center_focused_column {
+                        ciri_config::config::CenterStrategy::Always => ciri_layout::workspace::CenterStrategy::Always,
+                        ciri_config::config::CenterStrategy::OnOverflow => ciri_layout::workspace::CenterStrategy::OnOverflow,
+                        ciri_config::config::CenterStrategy::Never => ciri_layout::workspace::CenterStrategy::Never,
+                    };
+                    let current_vox = self.view_offset_x.value() as f32;
+                    let t = self.workspaces.active_mut()
+                        .target_offset_for_active_with_strategy(center_strategy, current_vox);
                     let speed = self.config.animation.speed;
                     self.view_offset_x.end_gesture(t as f64, speed);
                 }

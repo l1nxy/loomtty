@@ -49,6 +49,16 @@ pub struct ImagePlacement {
     pub data: Vec<u8>,
 }
 
+/// Kitty image metadata parsed from the first chunk of a transmission.
+#[derive(Debug, Clone)]
+struct KittyImageMeta {
+    format: String,     // "png", "rgb", "rgba"
+    width: u32,
+    height: u32,
+    cols: u16,
+    rows: u16,
+}
+
 /// Shell integration state tracked via OSC 133.
 #[derive(Debug, Clone)]
 pub struct ShellState {
@@ -98,6 +108,9 @@ pub struct Pane {
     kitty_image_buf: Vec<u8>,
     /// Kitty graphics: metadata from the first chunk (a=T transmit-and-display).
     kitty_image_meta: Option<KittyImageMeta>,
+    /// Partial APC frame buffer: holds bytes from an unterminated `ESC _ G ...`
+    /// sequence that was split across PTY reads.
+    kitty_apc_partial: Vec<u8>,
 }
 
 impl Pane {
@@ -129,6 +142,11 @@ impl Pane {
                 prompt_line: None,
                 output_line: None,
             },
+            image_placements: Vec::new(),
+            next_image_id: 1,
+            kitty_image_buf: Vec::new(),
+            kitty_image_meta: None,
+            kitty_apc_partial: Vec::new(),
         })
     }
 
@@ -143,13 +161,29 @@ impl Pane {
         // Drain all available output from the background reader thread
         let chunks = self.pty.drain_output();
         if !chunks.is_empty() {
-            // Scan for OSC 133 shell integration sequences before VT parsing.
+            // Scan for OSC 133 shell integration sequences before VT parsing
+            // (alacritty_terminal ignores these).
             for chunk in &chunks {
                 self.scan_osc133(chunk);
             }
+
+            // VT-parse all chunks first so the cursor reflects any preceding
+            // movement sequences (CSI H, etc.) in the same read batch.
             let mut term = self.term.lock().unwrap_or_else(|e| e.into_inner());
             for chunk in &chunks {
                 self.processor.advance(&mut *term, chunk);
+            }
+
+            // Now read cursor position for image placement — after parsing.
+            let (cursor_col, cursor_row) = {
+                let cursor = term.grid().cursor.point;
+                (cursor.column.0 as u16, cursor.line.0.max(0) as u16)
+            };
+            drop(term);
+
+            // Scan for Kitty graphics sequences with the post-parse cursor position.
+            for chunk in &chunks {
+                self.scan_kitty_graphics(chunk, cursor_col, cursor_row);
             }
             processed = true;
         }
@@ -532,6 +566,157 @@ impl Pane {
         }
     }
 
+    /// Scan for Kitty graphics protocol sequences (APC: ESC _ G ... ESC \).
+    /// Handles frames split across PTY reads by buffering partial sequences.
+    fn scan_kitty_graphics(&mut self, data: &[u8], cursor_col: u16, cursor_row: u16) {
+        use base64::Engine;
+
+        // If we have a partial APC from a previous read, prepend it
+        let working_data;
+        let data = if !self.kitty_apc_partial.is_empty() {
+            self.kitty_apc_partial.extend_from_slice(data);
+            working_data = std::mem::take(&mut self.kitty_apc_partial);
+            &working_data[..]
+        } else {
+            data
+        };
+
+        let mut i = 0;
+        while i + 3 < data.len() {
+            // Look for ESC _ G (APC for Kitty graphics)
+            if data[i] == 0x1b && data[i + 1] == b'_' && data[i + 2] == b'G' {
+                // Find the string terminator (ESC \)
+                let start = i + 3;
+                let mut end = start;
+                while end + 1 < data.len() {
+                    if data[end] == 0x1b && data[end + 1] == b'\\' {
+                        break;
+                    }
+                    end += 1;
+                }
+                if end + 1 >= data.len() {
+                    // Incomplete sequence — buffer from the APC start for next read
+                    self.kitty_apc_partial = data[i..].to_vec();
+                    return;
+                }
+
+                let payload = &data[start..end];
+
+                // Split at first ';' into control and data parts
+                let (control, img_data) = if let Some(sep) = payload.iter().position(|&b| b == b';') {
+                    (&payload[..sep], &payload[sep + 1..])
+                } else {
+                    (payload, &[][..])
+                };
+
+                // Parse key=value pairs from control
+                let control_str = String::from_utf8_lossy(control);
+                let mut action = 'T'; // default: transmit and display
+                let mut format_val = 32u32; // 32=PNG, 24=RGB, 32=RGBA
+                let mut width = 0u32;
+                let mut height = 0u32;
+                let mut cols = 0u16;
+                let mut rows = 0u16;
+                let mut more_chunks = false;
+
+                for pair in control_str.split(',') {
+                    if let Some((k, v)) = pair.split_once('=') {
+                        match k {
+                            "a" => action = v.chars().next().unwrap_or('T'),
+                            "f" => format_val = v.parse().unwrap_or(32),
+                            "s" => width = v.parse().unwrap_or(0),
+                            "v" => height = v.parse().unwrap_or(0),
+                            "c" => cols = v.parse().unwrap_or(0),
+                            "r" => rows = v.parse().unwrap_or(0),
+                            "m" => more_chunks = v == "1",
+                            _ => {}
+                        }
+                    }
+                }
+
+                // Decode base64 image data
+                let decoded = base64::engine::general_purpose::STANDARD
+                    .decode(img_data)
+                    .unwrap_or_default();
+
+                match action {
+                    'T' | 't' => {
+                        // Transmit (and display if 'T')
+                        if more_chunks {
+                            // First/middle chunk: accumulate
+                            if self.kitty_image_meta.is_none() {
+                                let fmt = match format_val {
+                                    24 => "rgb",
+                                    32 => "rgba",
+                                    _ => "png",
+                                };
+                                self.kitty_image_meta = Some(KittyImageMeta {
+                                    format: fmt.to_string(),
+                                    width,
+                                    height,
+                                    cols: if cols > 0 { cols } else { 10 },
+                                    rows: if rows > 0 { rows } else { 5 },
+                                });
+                            }
+                            self.kitty_image_buf.extend_from_slice(&decoded);
+                        } else {
+                            // Final (or only) chunk
+                            let mut full_data = std::mem::take(&mut self.kitty_image_buf);
+                            full_data.extend_from_slice(&decoded);
+
+                            let meta = self.kitty_image_meta.take().unwrap_or(KittyImageMeta {
+                                format: match format_val {
+                                    24 => "rgb".to_string(),
+                                    32 => "rgba".to_string(),
+                                    _ => "png".to_string(),
+                                },
+                                width,
+                                height,
+                                cols: if cols > 0 { cols } else { 10 },
+                                rows: if rows > 0 { rows } else { 5 },
+                            });
+
+                            if !full_data.is_empty() {
+                                let id = self.next_image_id;
+                                self.next_image_id += 1;
+                                log::info!(
+                                    "kitty image #{id}: {}x{} pixels, {} cells, {}x{} grid, {} bytes",
+                                    meta.width, meta.height, meta.format,
+                                    meta.cols, meta.rows, full_data.len()
+                                );
+                                self.image_placements.push(ImagePlacement {
+                                    id,
+                                    row: cursor_row,
+                                    col: cursor_col,
+                                    width_cells: meta.cols,
+                                    height_cells: meta.rows,
+                                    pixel_width: meta.width,
+                                    pixel_height: meta.height,
+                                    format: meta.format,
+                                    data: full_data,
+                                });
+                            }
+                        }
+                    }
+                    'd' => {
+                        // Delete images (we clear all for now)
+                        self.image_placements.clear();
+                    }
+                    _ => {}
+                }
+
+                i = end + 2; // skip past ESC \
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    /// Drain new image placements since last call.
+    pub fn drain_images(&mut self) -> Vec<ImagePlacement> {
+        std::mem::take(&mut self.image_placements)
+    }
+
     /// Read cells from a line range and pack them (live viewport only).
     fn read_line_cells(
         &self,
@@ -590,19 +775,7 @@ impl Pane {
             CursorShape::Hidden => CURSOR_HIDDEN,
         };
 
-        // Read mode flags while term lock is already held (avoid double-lock deadlock)
-        use alacritty_terminal::term::TermMode;
-        use ciri_protocol::message::{MODE_MOUSE_REPORT, MODE_ALT_SCREEN};
-        let mode = term.mode();
-        let mut mode_flags = 0u8;
-        if mode.contains(TermMode::MOUSE_REPORT_CLICK)
-            || mode.contains(TermMode::MOUSE_DRAG)
-            || mode.contains(TermMode::MOUSE_MOTION) {
-            mode_flags |= MODE_MOUSE_REPORT;
-        }
-        if mode.contains(TermMode::ALT_SCREEN) {
-            mode_flags |= MODE_ALT_SCREEN;
-        }
+        let mode_flags = self.mode_flags_from_term(&term);
 
         FullPaneSync {
             pane_id: self.id,

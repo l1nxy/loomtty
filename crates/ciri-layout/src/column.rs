@@ -98,6 +98,16 @@ impl Column {
         self.rendered_width = Some(w);
     }
 
+    /// Set absolute weights for two adjacent tiles. Used by the server when
+    /// receiving the final drag result from the client.
+    pub fn set_tile_weights(&mut self, top_idx: usize, top_weight: f64, bottom_weight: f64) {
+        let bot_idx = top_idx + 1;
+        if bot_idx >= self.tiles.len() { return; }
+        let min_w = 0.05;
+        self.tiles[top_idx].height = TileHeight::Auto { weight: top_weight.max(min_w) };
+        self.tiles[bot_idx].height = TileHeight::Auto { weight: bottom_weight.max(min_w) };
+    }
+
     /// Compute (pane_id, y_offset, height) for each tile based on weights.
     pub fn tile_rects(&self, _col_width: f32, col_height: f32) -> Vec<(PaneId, f32, f32)> {
         if self.tiles.len() == 1 {

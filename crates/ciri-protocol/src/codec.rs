@@ -46,6 +46,16 @@ fn unpack_version(v: u32) -> String {
 
 const HANDSHAKE_MAGIC: [u8; 4] = *b"CIRI";
 
+/// Wire protocol version. Incremented whenever the handshake or frame format
+/// changes in a backward-incompatible way. This is separate from CARGO_PKG_VERSION
+/// so that rolling upgrades between patch/minor releases fail cleanly instead of
+/// silently misparsing.
+///
+/// History:
+///   1 = initial fixed 24-byte ClientHello
+///   2 = variable-length ClientHello with session_name_len(u16) prefix
+pub const WIRE_PROTOCOL_VERSION: u8 = 2;
+
 /// Version compatibility result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VersionCompat {
@@ -93,8 +103,11 @@ pub struct ClientHello {
     pub cell_height: f32,
 }
 
-/// ClientHello wire format (v2, variable length):
-/// [magic(4)][version(4)][session_name_len(2)][session_name(N)][width(4)][height(4)][cell_w(4)][cell_h(4)]
+/// ClientHello wire format:
+/// [magic(4)][version(4)][wire_ver(1)][session_name_len(2)][session_name(N)][width(4)][height(4)][cell_w(4)][cell_h(4)]
+///
+/// `wire_ver` is checked independently of the cargo version. If it doesn't match,
+/// the connection is rejected immediately, ensuring rolling upgrades fail cleanly.
 pub async fn write_client_hello<W: AsyncWrite + Unpin>(
     writer: &mut W,
     hello: &ClientHello,
@@ -103,9 +116,10 @@ pub async fn write_client_hello<W: AsyncWrite + Unpin>(
     if name_bytes.len() > 255 {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "session name too long"));
     }
-    let mut buf = Vec::with_capacity(26 + name_bytes.len());
+    let mut buf = Vec::with_capacity(27 + name_bytes.len());
     buf.extend_from_slice(&HANDSHAKE_MAGIC);
     buf.extend_from_slice(&parse_pkg_version().to_le_bytes());
+    buf.push(WIRE_PROTOCOL_VERSION);
     buf.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
     buf.extend_from_slice(name_bytes);
     buf.extend_from_slice(&hello.width.to_le_bytes());
@@ -120,15 +134,25 @@ pub async fn write_client_hello<W: AsyncWrite + Unpin>(
 pub async fn read_client_hello<R: AsyncRead + Unpin>(
     reader: &mut R,
 ) -> io::Result<(VersionCompat, ClientHello)> {
-    // Read fixed header: magic(4) + version(4) + name_len(2) = 10 bytes
-    let mut header = [0u8; 10];
+    // Read fixed header: magic(4) + version(4) + wire_ver(1) + name_len(2) = 11 bytes
+    let mut header = [0u8; 11];
     reader.read_exact(&mut header).await?;
     if header[0..4] != HANDSHAKE_MAGIC {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "bad magic bytes"));
     }
     let peer_ver = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
     let compat = check_version(peer_ver)?;
-    let name_len = u16::from_le_bytes([header[8], header[9]]) as usize;
+    let wire_ver = header[8];
+    if wire_ver != WIRE_PROTOCOL_VERSION {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "incompatible wire protocol: peer={wire_ver}, local={WIRE_PROTOCOL_VERSION} \
+                 (client and server binaries must be the same build)",
+            ),
+        ));
+    }
+    let name_len = u16::from_le_bytes([header[9], header[10]]) as usize;
     if name_len > 255 {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "session name too long"));
     }

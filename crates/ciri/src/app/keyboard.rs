@@ -223,11 +223,27 @@ impl App {
                     };
                     if !bytes.is_empty() {
                         if self.broadcast_mode {
-                            // Send to all panes in current workspace
-                            for pid in self.workspaces.active().all_pane_ids() {
+                            // Send to visible panes only — off-screen panes should
+                            // not receive destructive commands unexpectedly.
+                            let vox = self.view_offset_x.value() as f32;
+                            let visible_pids: Vec<u64> = self.workspaces.active()
+                                .visible_tiles(vox)
+                                .iter()
+                                .map(|(pid, _, _)| *pid)
+                                .collect();
+                            for pid in visible_pids {
+                                let pane_kitty = self.pane_grids.get(&pid)
+                                    .is_some_and(|g| g.has_kitty_keyboard);
+                                let pane_bytes = if pane_kitty == use_kitty {
+                                    bytes.clone()
+                                } else if pane_kitty {
+                                    key_event_to_kitty_bytes(event, ctrl, shift, alt, super_key)
+                                } else {
+                                    key_event_to_pty_bytes(event, ctrl)
+                                };
                                 self.send(ClientMessage::Input {
                                     pane_id: pid,
-                                    data: bytes.clone(),
+                                    data: pane_bytes,
                                 });
                             }
                         } else if let Some(pid) = self.workspaces.active_mut().active_pane_id() {

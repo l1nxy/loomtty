@@ -170,7 +170,11 @@ impl Workspace {
             // Multi-tile column: remove just this tile
             if let Some(tile_idx) = col.tiles.iter().position(|t| t.pane_id == pane_id) {
                 col.tiles.remove(tile_idx);
-                if col.active_tile_idx >= col.tiles.len() {
+                if tile_idx < col.active_tile_idx {
+                    // Removed tile before active: shift index down
+                    col.active_tile_idx -= 1;
+                } else if col.active_tile_idx >= col.tiles.len() {
+                    // Active was the last tile and it was removed
                     col.active_tile_idx = col.tiles.len() - 1;
                 }
             }
@@ -356,8 +360,8 @@ impl Workspace {
     }
 
     /// Cycle the active column's width through the given presets.
-    /// Returns the new width as a proportion (for syncing to server), or None if no columns.
-    pub fn cycle_preset_width(&mut self, presets: &[ColumnWidth], reverse: bool) -> Option<f64> {
+    /// Returns the new ColumnWidth (for syncing to server), or None if no columns.
+    pub fn cycle_preset_width(&mut self, presets: &[ColumnWidth], reverse: bool) -> Option<ColumnWidth> {
         if presets.is_empty() || self.columns.is_empty() {
             return None;
         }
@@ -393,8 +397,7 @@ impl Workspace {
         self.set_active_column_width(new_width);
         // Restore the preset_width_idx that set_active_column_width may not preserve
         self.columns[self.active_column_idx].preset_width_idx = Some(new_idx);
-        let vw = self.view_size.width;
-        Some(self.columns[self.active_column_idx].proportion(vw))
+        Some(new_width)
     }
 
     /// Hit-test tile borders: returns (col_idx, top_tile_idx) if mouse is near
@@ -419,6 +422,7 @@ impl Workspace {
     }
 
     /// Resize two adjacent tiles within a column by pixel delta.
+    /// Preserves the pair's combined weight so other tiles in the column are unaffected.
     pub fn resize_tile_pair(&mut self, col_idx: usize, top_tile_idx: usize, delta_y: f32) {
         let Some(col) = self.columns.get_mut(col_idx) else { return };
         let bot_tile_idx = top_tile_idx + 1;
@@ -429,15 +433,22 @@ impl Workspace {
         let rects = col.tile_rects(col_w, vh);
         let top_h = rects[top_tile_idx].2;
         let bot_h = rects[bot_tile_idx].2;
-        let total = top_h + bot_h;
-        let min_h = 30.0_f32; // minimum tile height in pixels
+        let total_h = top_h + bot_h;
+        let min_h = 30.0_f32;
 
-        let new_top = (top_h + delta_y).clamp(min_h, total - min_h);
-        let new_bot = total - new_top;
+        let new_top_h = (top_h + delta_y).clamp(min_h, total_h - min_h);
 
-        // Convert back to weights (proportional to viewport height)
-        col.tiles[top_tile_idx].height = TileHeight::Auto { weight: (new_top / vh) as f64 };
-        col.tiles[bot_tile_idx].height = TileHeight::Auto { weight: (new_bot / vh) as f64 };
+        // Redistribute the pair's original combined weight proportionally,
+        // so other tiles in the column keep their share unchanged.
+        let original_top_w = col.tiles[top_tile_idx].height.weight() as f64;
+        let original_bot_w = col.tiles[bot_tile_idx].height.weight() as f64;
+        let total_w = original_top_w + original_bot_w;
+
+        if total_h > 0.0 {
+            let ratio = new_top_h as f64 / total_h as f64;
+            col.tiles[top_tile_idx].height = TileHeight::Auto { weight: total_w * ratio };
+            col.tiles[bot_tile_idx].height = TileHeight::Auto { weight: total_w * (1.0 - ratio) };
+        }
     }
 
     pub fn resize_view(&mut self, size: ViewSize) {

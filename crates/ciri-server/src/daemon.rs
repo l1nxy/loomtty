@@ -347,6 +347,22 @@ impl Session {
                 clipboard_msgs.push(ServerMessage::Bell { pane_id });
             }
 
+            // Drain image placements (Kitty/Sixel)
+            for img in pane.drain_images() {
+                clipboard_msgs.push(ServerMessage::ImagePlacement {
+                    pane_id,
+                    image_id: img.id,
+                    col: img.col,
+                    row: img.row,
+                    width_cells: img.width_cells,
+                    height_cells: img.height_cells,
+                    pixel_width: img.pixel_width,
+                    pixel_height: img.pixel_height,
+                    format: img.format,
+                    data: img.data,
+                });
+            }
+
             if let Some(regions) = pane.extract_damage() {
                 // Bump generation
                 let g = self.generation.entry(pane_id).or_insert(0);
@@ -453,23 +469,47 @@ impl Server {
                         session.workspaces.column_gap,
                     );
                     for saved_col in &saved_ws.columns {
-                        if let Some(_tile) = saved_col.tiles.first() {
+                        if saved_col.tiles.is_empty() {
+                            continue;
+                        }
+                        let vw = session.workspaces.view_size.width;
+                        let vh = session.workspaces.view_size.height;
+                        let col_w = (vw as f64 * saved_col.width_proportion) as f32;
+
+                        // Restore every tile in this column (not just the first)
+                        let mut col_opt: Option<ciri_layout::column::Column> = None;
+                        for saved_tile in &saved_col.tiles {
                             let id = self.next_pane_id;
                             self.next_pane_id += 1;
-                            let vw = session.workspaces.view_size.width;
-                            let vh = session.workspaces.view_size.height;
-                            let col_w = (vw as f64 * saved_col.width_proportion) as f32;
-                            let (cols, rows) = session.pane_grid_size_with_cells(col_w, vh, 8.0, 16.0);
+                            let tile_h = vh / saved_col.tiles.len() as f32;
+                            let (cols, rows) = session.pane_grid_size_with_cells(col_w, tile_h, 8.0, 16.0);
                             match Pane::new(id, cols, rows, &session.default_shell) {
                                 Ok(pane) => {
                                     session.panes.insert(id, pane);
                                     session.generation.insert(id, 0);
-                                    let mut col = ciri_layout::column::Column::new(id);
-                                    col.width = ColumnWidth::Proportion(saved_col.width_proportion);
-                                    ws.columns.push(col);
+                                    if let Some(col) = &mut col_opt {
+                                        // Add as stacked tile with saved weight
+                                        let mut tile = ciri_layout::tile::Tile::new(id);
+                                        tile.height = ciri_layout::tile::TileHeight::Auto { weight: saved_tile.weight as f64 };
+                                        col.tiles.push(tile);
+                                    } else {
+                                        // First tile: create the column
+                                        let mut col = ciri_layout::column::Column::new(id);
+                                        col.width = ColumnWidth::Proportion(saved_col.width_proportion);
+                                        // Set weight on the first tile too
+                                        if let Some(first_tile) = col.tiles.first_mut() {
+                                            first_tile.height = ciri_layout::tile::TileHeight::Auto { weight: saved_tile.weight as f64 };
+                                        }
+                                        col_opt = Some(col);
+                                    }
                                 }
                                 Err(e) => log::error!("failed to restore pane: {e}"),
                             }
+                        }
+                        if let Some(mut col) = col_opt {
+                            col.active_tile_idx = saved_col.active_tile_idx
+                                .min(col.tiles.len().saturating_sub(1));
+                            ws.columns.push(col);
                         }
                     }
                     ws.active_column_idx = saved_ws.active_column_idx
@@ -682,9 +722,13 @@ impl Server {
                     log::warn!("ignoring invalid resize from client {client_id}: {width}x{height} cell={cell_width}x{cell_height}");
                 }
             }
-            ClientMessage::SetColumnWidth { proportion } => {
+            ClientMessage::SetColumnWidth { proportion, fixed_px } => {
                 if let Some(mut session) = self.sessions.remove(&session_name) {
-                    session.workspaces.active_mut().set_active_column_width(ColumnWidth::Proportion(proportion));
+                    let width = match fixed_px {
+                        Some(px) => ColumnWidth::Fixed(px),
+                        None => ColumnWidth::Proportion(proportion),
+                    };
+                    session.workspaces.active_mut().set_active_column_width(width);
                     session.mark_session_dirty();
                     session.resize_all_panes(&mut self.clients);
                     responses.push(ServerResponse::BroadcastToSession(session_name.clone(), ServerMessage::LayoutUpdate {
@@ -707,6 +751,35 @@ impl Server {
             ClientMessage::EqualizeColumnSplit => {
                 if let Some(mut session) = self.sessions.remove(&session_name) {
                     session.workspaces.active_mut().equalize_active_with_neighbor();
+                    session.mark_session_dirty();
+                    session.resize_all_panes(&mut self.clients);
+                    responses.push(ServerResponse::BroadcastToSession(session_name.clone(), ServerMessage::LayoutUpdate {
+                        layout: session.layout_state(),
+                    }));
+                    self.sessions.insert(session_name, session);
+                }
+            }
+            ClientMessage::SetTileWeights { column_idx, top_tile_idx, top_weight, bottom_weight } => {
+                if let Some(mut session) = self.sessions.remove(&session_name) {
+                    let ws = session.workspaces.active_mut();
+                    if let Some(col) = ws.columns.get_mut(column_idx) {
+                        col.set_tile_weights(top_tile_idx, top_weight, bottom_weight);
+                    }
+                    session.mark_session_dirty();
+                    session.resize_all_panes(&mut self.clients);
+                    responses.push(ServerResponse::BroadcastToSession(session_name.clone(), ServerMessage::LayoutUpdate {
+                        layout: session.layout_state(),
+                    }));
+                    self.sessions.insert(session_name, session);
+                }
+            }
+            ClientMessage::AdjustColumnSplitAt { column_idx, delta } => {
+                if let Some(mut session) = self.sessions.remove(&session_name) {
+                    let ws = session.workspaces.active_mut();
+                    let saved_idx = ws.active_column_idx;
+                    ws.active_column_idx = column_idx;
+                    ws.resize_active_with_neighbor(delta);
+                    ws.active_column_idx = saved_idx;
                     session.mark_session_dirty();
                     session.resize_all_panes(&mut self.clients);
                     responses.push(ServerResponse::BroadcastToSession(session_name.clone(), ServerMessage::LayoutUpdate {
@@ -992,7 +1065,23 @@ pub async fn run_daemon() -> Result<()> {
 
     log::info!("ciri-server listening on {}", sock_path.display());
 
-    let state = Arc::new(Mutex::new(Server::new(&shell, config.appearance.column_gap)));
+    let mut server = Server::new(&shell, config.appearance.column_gap);
+    // Apply default_column_width from config
+    if let Some(ref pw) = config.layout.default_column_width {
+        use ciri_config::config::PresetWidth;
+        server.default_column_width = match pw {
+            PresetWidth::Proportion { proportion } => ColumnWidth::Proportion(*proportion),
+            PresetWidth::Fixed { fixed } => ColumnWidth::Fixed(*fixed),
+        };
+    } else if let Some(first) = config.layout.preset_widths.first() {
+        use ciri_config::config::PresetWidth;
+        server.default_column_width = match first {
+            PresetWidth::Proportion { proportion } => ColumnWidth::Proportion(*proportion),
+            PresetWidth::Fixed { fixed } => ColumnWidth::Fixed(*fixed),
+        };
+    }
+    server.pane_inset = (config.appearance.padding + config.appearance.border_width) * 2.0;
+    let state = Arc::new(Mutex::new(server));
 
     // Shutdown signal shared between tick loop, signal handler, and accept loop
     let shutdown = Arc::new(Notify::new());
@@ -1407,8 +1496,9 @@ pub async fn run_daemon() -> Result<()> {
                     let requested_session = hello.session_name.clone();
                     log::info!("client requested session: {}", requested_session);
 
-                    // Validate session name
-                    if ciri_session::save::validate_session_name(&requested_session).is_err() {
+                    // Validate session name (allow __control__ for CLI commands)
+                    let is_control = requested_session == "__control__";
+                    if !is_control && ciri_session::save::validate_session_name(&requested_session).is_err() {
                         log::error!("invalid session name from client: {:?}", requested_session);
                         return;
                     }
@@ -1448,64 +1538,68 @@ pub async fn run_daemon() -> Result<()> {
                             session_name: requested_session.clone(),
                         });
 
-                        // Get or create the session
-                        s.get_or_create_session(&requested_session);
+                        // Skip session creation for control clients (CLI commands)
+                        if !is_control {
+                            s.get_or_create_session(&requested_session);
+                        }
 
                         // Temporarily remove session to avoid borrow conflicts
-                        let mut session = s.sessions.remove(&requested_session).unwrap();
+                        let session_opt = s.sessions.remove(&requested_session);
 
-                        // Mark all session panes for full sync for this client
-                        let pane_keys: Vec<u64> = session.panes.keys().copied().collect();
-                        if let Some(client) = s.clients.get_mut(&client_id) {
-                            for pane_id in &pane_keys {
-                                let mut acc = DamageAccumulator::new();
-                                acc.mark_full();
-                                client.damage.insert(*pane_id, acc);
+                        if let Some(ref session) = session_opt {
+                            // Mark all session panes for full sync for this client
+                            let pane_keys: Vec<u64> = session.panes.keys().copied().collect();
+                            if let Some(client) = s.clients.get_mut(&client_id) {
+                                for pane_id in &pane_keys {
+                                    let mut acc = DamageAccumulator::new();
+                                    acc.mark_full();
+                                    client.damage.insert(*pane_id, acc);
+                                }
                             }
                         }
 
-                        // Recompute effective viewport now that this client is registered
-                        session.resize_all_panes(&mut s.clients);
-
-                        log::info!("client {client_id} connected to session '{}'", requested_session);
-
-                        // Build frames to send
+                        // Recompute effective viewport and build initial sync frames
                         let mut frames = Vec::new();
-                        let (sync_msg, pane_syncs) = session.build_state_sync();
-                        if let Ok(payload) = rmp_serde::to_vec(&sync_msg) {
-                            let mut frame = Vec::with_capacity(5 + payload.len());
-                            frame.push(0x10);
-                            frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-                            frame.extend_from_slice(&payload);
-                            frames.push(frame);
-                        }
-                        for sync in &pane_syncs {
-                            if let Ok(payload) = codec::encode_full_pane_sync_payload(sync) {
+                        if let Some(mut session) = session_opt {
+                            session.resize_all_panes(&mut s.clients);
+
+                            log::info!("client {client_id} connected to session '{}'", requested_session);
+
+                            let (sync_msg, pane_syncs) = session.build_state_sync();
+                            if let Ok(payload) = rmp_serde::to_vec(&sync_msg) {
                                 let mut frame = Vec::with_capacity(5 + payload.len());
-                                frame.push(0x21);
+                                frame.push(0x10);
                                 frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
                                 frame.extend_from_slice(&payload);
                                 frames.push(frame);
                             }
-                        }
-
-                        // Record history_sent for the session's panes
-                        let pane_histories: Vec<(u64, usize)> = session.panes.iter().map(|(&pid, pane)| {
-                            (pid, pane.history_size())
-                        }).collect();
-
-                        // Clear the initial full-sync markers and record history_sent
-                        if let Some(client) = s.clients.get_mut(&client_id) {
-                            for acc in client.damage.values_mut() {
-                                *acc = DamageAccumulator::new();
+                            for sync in &pane_syncs {
+                                if let Ok(payload) = codec::encode_full_pane_sync_payload(sync) {
+                                    let mut frame = Vec::with_capacity(5 + payload.len());
+                                    frame.push(0x21);
+                                    frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+                                    frame.extend_from_slice(&payload);
+                                    frames.push(frame);
+                                }
                             }
-                            for (pane_id, history) in pane_histories {
-                                client.history_sent.insert(pane_id, history);
-                            }
-                        }
 
-                        // Put session back
-                        s.sessions.insert(requested_session.clone(), session);
+                            let pane_histories: Vec<(u64, usize)> = session.panes.iter().map(|(&pid, pane)| {
+                                (pid, pane.history_size())
+                            }).collect();
+
+                            if let Some(client) = s.clients.get_mut(&client_id) {
+                                for acc in client.damage.values_mut() {
+                                    *acc = DamageAccumulator::new();
+                                }
+                                for (pane_id, history) in pane_histories {
+                                    client.history_sent.insert(pane_id, history);
+                                }
+                            }
+
+                            s.sessions.insert(requested_session.clone(), session);
+                        } else {
+                            log::info!("control client {client_id} connected (no session)");
+                        }
 
                         initial_frames = frames;
                     } // lock dropped here

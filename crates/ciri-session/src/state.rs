@@ -4,11 +4,15 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionState {
     pub name: String,
+    /// Workspaces in this session. Previously called `rows`.
+    #[serde(alias = "rows")]
     pub workspaces: Vec<SavedWorkspace>,
+    /// Active workspace index. Previously called `active_row`.
+    #[serde(alias = "active_row")]
     pub active_workspace_idx: usize,
 }
 
-/// One workspace in the saved layout.
+/// One workspace in the saved layout. Previously called `SavedRow`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedWorkspace {
     pub columns: Vec<SavedColumn>,

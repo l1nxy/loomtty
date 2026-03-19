@@ -31,10 +31,10 @@
 
 ## Protocol & Performance
 
-- [ ] Encode: write frames directly to writer instead of intermediate `Vec<u8>` (gather write / `write_vectored`)
+- [x] Encode: gather write — batch-drain frames in writer task, single flush per batch
 - [x] Decode: zero-copy `CellDelta` — `CellDeltaBorrowed` borrows `&[PackedCell]` from payload buffer
-- [ ] Server: reuse per-client frame buffer (`Vec<u8>`) across ticks, avoid 60fps allocation churn
-- [ ] Client: on delta receive, memcpy cells directly into `ClientPaneGrid.cells` — skip intermediate `DamageRegion`
+- [x] Server: per-client frame buffer — Bytes refcount sharing for broadcasts, frame pool for encoding
+- [x] Client: flat viewport buffer — direct memcpy into contiguous Vec<PackedCell>, skip VecDeque/Vec indirection
 - [x] Flow control: generation/ack closed loop
 - [x] Security: validate grid dimensions, RLE decode overflow protection
 - [x] Security: Unix socket permissions 0o700
@@ -42,9 +42,9 @@
 - [x] Per-client viewport: smallest-client-wins strategy
 - [x] Pane encapsulation: daemon no longer imports alacritty_terminal directly
 - [x] Client send reliability: blocking send for critical messages, lossy for Ack/MouseInput
-- [ ] Evaluate switching control messages to zero-copy format (flatbuffers / custom binary)
-- [ ] Event processing budget per frame (prevent input lag under high throughput)
-- [ ] Server tick lock optimization (snapshot-then-release pattern)
+- [x] Evaluate switching control messages to zero-copy format — decided: keep msgpack (cold path), custom binary+bytemuck (hot path); flatbuffers rejected (codegen overhead, minimal wire savings since cell data dominates)
+- [x] Event processing budget per frame — client: 200 events/frame budget in sync.rs; server: PTY processing budget per tick
+- [x] Server tick lock optimization — two-phase snapshot-then-release: PTY/damage under lock, encoding unlocked, revalidate on send
 
 ## Rendering
 

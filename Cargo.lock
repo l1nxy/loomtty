@@ -468,6 +468,7 @@ name = "ciri-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "ciri-config",
  "ciri-layout",
  "ciri-protocol",

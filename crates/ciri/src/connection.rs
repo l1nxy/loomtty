@@ -121,14 +121,19 @@ pub fn connect_or_spawn(
                 let writer_msg_rx = msg_rx;
                 let write_handle = tokio::spawn(async move {
                     loop {
-                        // Use blocking recv in a spawned blocking task to avoid busy-waiting
                         let msg = match tokio::task::block_in_place(|| writer_msg_rx.recv()) {
                             Ok(m) => m,
-                            Err(_) => break, // sender dropped
+                            Err(_) => break,
                         };
                         if let Err(e) = codec::encode_client_msg(&mut writer, &msg).await {
                             log::warn!("write error: {e}");
                             break;
+                        }
+                        while let Ok(extra) = writer_msg_rx.try_recv() {
+                            if let Err(e) = codec::encode_client_msg(&mut writer, &extra).await {
+                                log::warn!("write error: {e}");
+                                return;
+                            }
                         }
                         use tokio::io::AsyncWriteExt;
                         if writer.flush().await.is_err() { break; }

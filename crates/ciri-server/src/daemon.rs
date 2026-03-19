@@ -1,4 +1,5 @@
 use anyhow::Result;
+use bytes::Bytes;
 use ciri_layout::column::ColumnWidth;
 use ciri_layout::geometry::ViewSize;
 use ciri_layout::workspace_set::WorkspaceSet;
@@ -68,7 +69,7 @@ impl DamageAccumulator {
 
 struct ClientState {
     id: u64,
-    tx: mpsc::Sender<Vec<u8>>,
+    tx: mpsc::Sender<Bytes>,
     damage: HashMap<u64, DamageAccumulator>, // per pane_id
     last_acked_generation: u64,
     /// Per-pane: how many history lines this client has received.
@@ -542,14 +543,20 @@ impl Server {
         self.sessions.get_mut(session_name).unwrap()
     }
 
+    /// Build a framed control message as Bytes (tag 0x10 + length + msgpack payload).
+    fn frame_control_msg(msg: &ServerMessage) -> Option<Bytes> {
+        let payload = rmp_serde::to_vec(msg).ok()?;
+        let mut frame = Vec::with_capacity(5 + payload.len());
+        frame.push(0x10);
+        frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        frame.extend_from_slice(&payload);
+        Some(Bytes::from(frame))
+    }
+
     /// Send a framed control message to a specific client.
     fn send_to_client(&self, client_id: u64, msg: &ServerMessage) {
         if let Some(client) = self.clients.get(&client_id) {
-            if let Ok(payload) = rmp_serde::to_vec(msg) {
-                let mut frame = Vec::with_capacity(5 + payload.len());
-                frame.push(0x10);
-                frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-                frame.extend_from_slice(&payload);
+            if let Some(frame) = Self::frame_control_msg(msg) {
                 if let Err(e) = client.tx.try_send(frame) {
                     log::warn!("failed to send to client {client_id}: {e}");
                 }
@@ -558,12 +565,9 @@ impl Server {
     }
 
     /// Broadcast a control message to all clients of a session.
+    /// Uses Bytes for zero-copy sharing: encode once, refcount-clone per client.
     fn broadcast_to_session(&self, session_name: &str, msg: &ServerMessage) {
-        if let Ok(payload) = rmp_serde::to_vec(msg) {
-            let mut frame = Vec::with_capacity(5 + payload.len());
-            frame.push(0x10);
-            frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-            frame.extend_from_slice(&payload);
+        if let Some(frame) = Self::frame_control_msg(msg) {
             for client in self.clients.values() {
                 if client.session_name == session_name {
                     if let Err(e) = client.tx.try_send(frame.clone()) {
@@ -1000,13 +1004,9 @@ async fn graceful_shutdown(state: &Arc<Mutex<Server>>) {
     log::info!("shutting down gracefully");
 
     // Send shutdown to all clients
-    if let Ok(payload) = rmp_serde::to_vec(&ServerMessage::ServerShutdown) {
+    if let Some(frame) = Server::frame_control_msg(&ServerMessage::ServerShutdown) {
         for client in s.clients.values() {
-            let mut frame = Vec::with_capacity(5 + payload.len());
-            frame.push(0x10);
-            frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-            frame.extend_from_slice(&payload);
-            if let Err(e) = client.tx.try_send(frame) {
+            if let Err(e) = client.tx.try_send(frame.clone()) {
                 log::warn!("failed to send shutdown to client {}: {e}", client.id);
             }
         }
@@ -1148,20 +1148,11 @@ pub async fn run_daemon() -> Result<()> {
 
                     // Send OSC 52 clipboard writes to clients of this session
                     for clip_msg in &clipboard_msgs {
-                        if let Ok(payload) = rmp_serde::to_vec(clip_msg) {
-                            let mut frame = frame_pool.pop().unwrap_or_default();
-                            frame.clear();
-                            frame.reserve(5 + payload.len());
-                            frame.push(0x10); // TAG_SERVER_MSG
-                            frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-                            frame.extend_from_slice(&payload);
+                        if let Some(frame) = Server::frame_control_msg(clip_msg) {
                             for client in s.clients.values() {
                                 if client.session_name == *session_name {
                                     let _ = client.tx.try_send(frame.clone());
                                 }
-                            }
-                            if frame_pool.len() < FRAME_POOL_CAP {
-                                frame_pool.push(frame);
                             }
                         }
                     }
@@ -1171,31 +1162,25 @@ pub async fn run_daemon() -> Result<()> {
                     if !dead.is_empty() {
                         session.mark_session_dirty();
                         // Broadcast close messages to session clients
-                        let mut broadcasts = Vec::new();
+                        let mut broadcast_frames: Vec<Bytes> = Vec::new();
                         for &id in &dead {
-                            let close_payload = rmp_serde::to_vec(&ServerMessage::PaneClosed { pane_id: id })
-                                .unwrap_or_default();
-                            broadcasts.push(close_payload);
+                            if let Some(frame) = Server::frame_control_msg(
+                                &ServerMessage::PaneClosed { pane_id: id }
+                            ) {
+                                broadcast_frames.push(frame);
+                            }
                         }
-                        let layout_payload = rmp_serde::to_vec(&ServerMessage::LayoutUpdate {
-                            layout: session.layout_state(),
-                        }).unwrap_or_default();
-                        broadcasts.push(layout_payload);
+                        if let Some(frame) = Server::frame_control_msg(
+                            &ServerMessage::LayoutUpdate { layout: session.layout_state() }
+                        ) {
+                            broadcast_frames.push(frame);
+                        }
 
                         for client in s.clients.values() {
                             if client.session_name == *session_name {
-                                for payload in &broadcasts {
-                                    let mut frame = frame_pool.pop().unwrap_or_default();
-                                    frame.clear();
-                                    frame.reserve(5 + payload.len());
-                                    frame.push(0x10);
-                                    frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-                                    frame.extend_from_slice(payload);
+                                for frame in &broadcast_frames {
                                     if let Err(e) = client.tx.try_send(frame.clone()) {
                                         log::warn!("failed to send close frame to client {}: {e}", client.id);
-                                    }
-                                    if frame_pool.len() < FRAME_POOL_CAP {
-                                        frame_pool.push(frame);
                                     }
                                 }
                             }
@@ -1212,20 +1197,11 @@ pub async fn run_daemon() -> Result<()> {
                         log::info!("session '{}': all panes exited, removing session", session_name);
 
                         // Send shutdown to clients of this session
-                        if let Ok(payload) = rmp_serde::to_vec(&ServerMessage::ServerShutdown) {
+                        if let Some(frame) = Server::frame_control_msg(&ServerMessage::ServerShutdown) {
                             for client in s.clients.values() {
                                 if client.session_name == *session_name {
-                                    let mut frame = frame_pool.pop().unwrap_or_default();
-                                    frame.clear();
-                                    frame.reserve(5 + payload.len());
-                                    frame.push(0x10);
-                                    frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-                                    frame.extend_from_slice(&payload);
                                     if let Err(e) = client.tx.try_send(frame.clone()) {
                                         log::warn!("failed to send shutdown to client {}: {e}", client.id);
-                                    }
-                                    if frame_pool.len() < FRAME_POOL_CAP {
-                                        frame_pool.push(frame);
                                     }
                                 }
                             }
@@ -1346,7 +1322,7 @@ pub async fn run_daemon() -> Result<()> {
                 struct EncodedFrame {
                     client_id: u64,
                     session_name: String,
-                    buf: Vec<u8>,
+                    buf: Bytes,
                     history_update: Option<(u64, usize)>,
                 }
                 let mut encoded: Vec<EncodedFrame> = Vec::new();
@@ -1365,7 +1341,12 @@ pub async fn run_daemon() -> Result<()> {
                     };
 
                     if encode_ok {
-                        encoded.push(EncodedFrame { client_id, session_name, buf, history_update });
+                        encoded.push(EncodedFrame {
+                            client_id,
+                            session_name,
+                            buf: Bytes::from(buf),
+                            history_update,
+                        });
                     } else {
                         // Return buffer to pool on encode failure
                         if frame_pool.len() < FRAME_POOL_CAP {
@@ -1386,20 +1367,16 @@ pub async fn run_daemon() -> Result<()> {
                                 "client {client_id} switched session ({session_name} -> {}), dropping stale frame",
                                 client.session_name
                             );
-                            if frame_pool.len() < FRAME_POOL_CAP {
-                                frame_pool.push(buf);
-                            }
                             continue;
                         }
                         match client.tx.try_send(buf) {
                             Ok(()) => {
-                                // buf consumed by channel — do not return to pool
                                 client.send_failures = 0;
                                 if let Some((pid, hist)) = history_update {
                                     client.history_sent.insert(pid, hist);
                                 }
                             }
-                            Err(e) => {
+                            Err(_) => {
                                 client.send_failures += 1;
                                 if client.send_failures >= 100 {
                                     log::warn!("disconnecting slow client {client_id}: {} consecutive failures", client.send_failures);
@@ -1411,17 +1388,7 @@ pub async fn run_daemon() -> Result<()> {
                                 if let Some((pid, _)) = history_update {
                                     client.damage.entry(pid).or_insert_with(DamageAccumulator::new).mark_full();
                                 }
-                                // Recover the buffer and return it to the pool
-                                let buf = e.into_inner();
-                                if frame_pool.len() < FRAME_POOL_CAP {
-                                    frame_pool.push(buf);
-                                }
                             }
-                        }
-                    } else {
-                        // Client not found — return buffer to pool
-                        if frame_pool.len() < FRAME_POOL_CAP {
-                            frame_pool.push(buf);
                         }
                     }
                 }
@@ -1516,9 +1483,9 @@ pub async fn run_daemon() -> Result<()> {
                     }
 
                     // Register client and get/create session
-                    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(256);
+                    let (tx, mut rx) = mpsc::channel::<Bytes>(256);
                     let client_id;
-                    let initial_frames: Vec<Vec<u8>>;
+                    let initial_frames: Vec<Bytes>;
                     {
                         let mut s = state.lock().await;
                         client_id = s.next_client_id;
@@ -1567,20 +1534,13 @@ pub async fn run_daemon() -> Result<()> {
                             log::info!("client {client_id} connected to session '{}'", requested_session);
 
                             let (sync_msg, pane_syncs) = session.build_state_sync();
-                            if let Ok(payload) = rmp_serde::to_vec(&sync_msg) {
-                                let mut frame = Vec::with_capacity(5 + payload.len());
-                                frame.push(0x10);
-                                frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-                                frame.extend_from_slice(&payload);
+                            if let Some(frame) = Server::frame_control_msg(&sync_msg) {
                                 frames.push(frame);
                             }
                             for sync in &pane_syncs {
-                                if let Ok(payload) = codec::encode_full_pane_sync_payload(sync) {
-                                    let mut frame = Vec::with_capacity(5 + payload.len());
-                                    frame.push(0x21);
-                                    frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-                                    frame.extend_from_slice(&payload);
-                                    frames.push(frame);
+                                let mut buf = Vec::new();
+                                if codec::encode_full_pane_sync_framed(&mut buf, sync).is_ok() {
+                                    frames.push(Bytes::from(buf));
                                 }
                             }
 
@@ -1612,8 +1572,14 @@ pub async fn run_daemon() -> Result<()> {
 
                     // Spawn writer task
                     let write_handle = tokio::spawn(async move {
-                        while let Some(frame) = rx.recv().await {
-                            if writer.write_all(&frame).await.is_err() {
+                        let mut gather_buf: Vec<u8> = Vec::with_capacity(64 * 1024);
+                        while let Some(first) = rx.recv().await {
+                            gather_buf.clear();
+                            gather_buf.extend_from_slice(&first);
+                            while let Ok(extra) = rx.try_recv() {
+                                gather_buf.extend_from_slice(&extra);
+                            }
+                            if writer.write_all(&gather_buf).await.is_err() {
                                 break;
                             }
                             if writer.flush().await.is_err() {
@@ -1640,12 +1606,9 @@ pub async fn run_daemon() -> Result<()> {
                                             }
                                             ServerResponse::SendFullPaneSync(cid, sync) => {
                                                 if let Some(client) = s.clients.get(&cid) {
-                                                    if let Ok(payload) = codec::encode_full_pane_sync_payload(&sync) {
-                                                        let mut frame = Vec::with_capacity(5 + payload.len());
-                                                        frame.push(0x21);
-                                                        frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-                                                        frame.extend_from_slice(&payload);
-                                                        if let Err(e) = client.tx.try_send(frame) {
+                                                    let mut buf = Vec::new();
+                                                    if codec::encode_full_pane_sync_framed(&mut buf, &sync).is_ok() {
+                                                        if let Err(e) = client.tx.try_send(Bytes::from(buf)) {
                                                             log::warn!("failed to send full pane sync to client {cid}: {e}");
                                                         }
                                                     }
@@ -1663,13 +1626,9 @@ pub async fn run_daemon() -> Result<()> {
                                                 for session in s.sessions.values() {
                                                     let _ = session.save_session();
                                                 }
-                                                if let Ok(payload) = rmp_serde::to_vec(&ServerMessage::ServerShutdown) {
+                                                if let Some(frame) = Server::frame_control_msg(&ServerMessage::ServerShutdown) {
                                                     for client in s.clients.values() {
-                                                        let mut frame = Vec::with_capacity(5 + payload.len());
-                                                        frame.push(0x10);
-                                                        frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-                                                        frame.extend_from_slice(&payload);
-                                                        let _ = client.tx.try_send(frame);
+                                                        let _ = client.tx.try_send(frame.clone());
                                                     }
                                                 }
                                                 drop(s);
@@ -1724,6 +1683,36 @@ mod tests {
         assert!(!session.autosave_due_at(changed_at));
         assert!(!session.autosave_due_at(changed_at + Duration::from_millis(249)));
         assert!(session.autosave_due_at(changed_at + Duration::from_millis(250)));
+    }
+
+    #[test]
+    fn frame_control_msg_produces_valid_frame() {
+        let msg = ServerMessage::PaneClosed { pane_id: 42 };
+        let frame = Server::frame_control_msg(&msg).expect("encode should succeed");
+
+        // Frame format: [0x10][u32 LE payload_len][msgpack payload]
+        assert!(frame.len() >= 5);
+        assert_eq!(frame[0], 0x10);
+        let payload_len = u32::from_le_bytes([frame[1], frame[2], frame[3], frame[4]]) as usize;
+        assert_eq!(frame.len(), 5 + payload_len);
+
+        // Decode the msgpack payload
+        let decoded: ServerMessage = rmp_serde::from_slice(&frame[5..]).unwrap();
+        match decoded {
+            ServerMessage::PaneClosed { pane_id } => assert_eq!(pane_id, 42),
+            _ => panic!("wrong message type"),
+        }
+    }
+
+    #[test]
+    fn frame_control_msg_bytes_clone_shares_data() {
+        let msg = ServerMessage::ServerShutdown;
+        let frame = Server::frame_control_msg(&msg).unwrap();
+        let clone = frame.clone();
+
+        // Bytes::clone is refcount — both point to same data
+        assert_eq!(frame.as_ref() as *const [u8], clone.as_ref() as *const [u8]);
+        assert_eq!(frame.len(), clone.len());
     }
 
     #[test]

@@ -19,11 +19,13 @@ fn main() -> Result<()> {
 
     let cli = match cli::parse_args(std::env::args().skip(1)) {
         Ok(cli) => cli,
-        Err(usage) => {
-            eprintln!("{usage}");
+        Err(msg) => {
+            eprintln!("{msg}");
             std::process::exit(2);
         }
     };
+
+    // Handle non-GUI commands first
     match cli {
         CliCommand::Help => {
             println!("{}", cli::usage());
@@ -46,21 +48,42 @@ fn main() -> Result<()> {
             }
             return Ok(());
         }
-        CliCommand::Run { ref session_name } => {
-            log::info!("session: {session_name}");
-        }
+        _ => {}
     }
 
+    // Resolve session name
     let session_name = match cli {
-        CliCommand::Run { session_name } => session_name,
+        CliCommand::New => {
+            let existing = ciri_session::restore::list_sessions(&ciri_protocol::transport::state_dir())
+                .unwrap_or_default();
+            let name = ciri_session::names::unique_name(&existing);
+            log::info!("creating new session: {name}");
+            name
+        }
+        CliCommand::Run { session_name } => {
+            if let Err(e) = ciri_session::names::validate_name(&session_name) {
+                eprintln!("invalid session name: {e}");
+                std::process::exit(2);
+            }
+            session_name
+        }
+        CliCommand::Attach { session_name } => {
+            if let Err(e) = ciri_session::names::validate_name(&session_name) {
+                eprintln!("invalid session name: {e}");
+                std::process::exit(2);
+            }
+            // TODO: check if session exists on server before launching GUI
+            session_name
+        }
         _ => unreachable!(),
     };
 
     let config = CiriConfig::load().unwrap_or_default();
     log::info!(
-        "config: font={} size={}",
+        "config: font={} size={}, session={}",
         config.font.family,
-        config.font.size
+        config.font.size,
+        session_name
     );
 
     let event_loop = EventLoop::new()?;

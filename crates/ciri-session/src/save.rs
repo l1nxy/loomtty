@@ -1,20 +1,13 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 use std::fs;
 use std::path::Path;
 
+use crate::names;
 use crate::state::SessionState;
 
-/// Validate session name to prevent path traversal.
+/// Validate session name. Delegates to names::validate_name.
 pub fn validate_session_name(name: &str) -> Result<()> {
-    if name.is_empty()
-        || name.contains('/')
-        || name.contains('\\')
-        || name.contains("..")
-        || name.contains('\0')
-    {
-        bail!("invalid session name: {name:?}");
-    }
-    Ok(())
+    names::validate_name(name).map_err(|e| anyhow::anyhow!(e))
 }
 
 pub fn save_session(state: &SessionState, dir: &Path) -> Result<()> {
@@ -23,7 +16,6 @@ pub fn save_session(state: &SessionState, dir: &Path) -> Result<()> {
     let path = dir.join(format!("{}.json", state.name));
     let tmp_path = dir.join(format!(".{}.json.tmp", state.name));
     let json = serde_json::to_string_pretty(state)?;
-    // Write to temp file first, then atomic rename to prevent corruption.
     fs::write(&tmp_path, &json)?;
     fs::rename(&tmp_path, &path)?;
     Ok(())

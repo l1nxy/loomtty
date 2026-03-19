@@ -157,11 +157,18 @@ impl Pane {
         // Drain all available output from the background reader thread
         let chunks = self.pty.drain_output();
         if !chunks.is_empty() {
+            // Read cursor position for image placement before scanning.
+            let (cursor_col, cursor_row) = {
+                let term = self.term.lock().unwrap_or_else(|e| e.into_inner());
+                let cursor = term.grid().cursor.point;
+                (cursor.column.0 as u16, cursor.line.0.max(0) as u16)
+            };
+
             // Scan for OSC 133 shell integration and image protocol sequences
             // before VT parsing (alacritty_terminal ignores these).
             for chunk in &chunks {
                 self.scan_osc133(chunk);
-                self.scan_kitty_graphics(chunk);
+                self.scan_kitty_graphics(chunk, cursor_col, cursor_row);
             }
             let mut term = self.term.lock().unwrap_or_else(|e| e.into_inner());
             for chunk in &chunks {
@@ -549,7 +556,7 @@ impl Pane {
     }
 
     /// Scan for Kitty graphics protocol sequences (APC: ESC _ G ... ESC \).
-    fn scan_kitty_graphics(&mut self, data: &[u8]) {
+    fn scan_kitty_graphics(&mut self, data: &[u8], cursor_col: u16, cursor_row: u16) {
         use base64::Engine;
         let mut i = 0;
         while i + 3 < data.len() {
@@ -654,8 +661,8 @@ impl Pane {
                                 );
                                 self.image_placements.push(ImagePlacement {
                                     id,
-                                    row: 0, // will be set from cursor position at snapshot time
-                                    col: 0,
+                                    row: cursor_row,
+                                    col: cursor_col,
                                     width_cells: meta.cols,
                                     height_cells: meta.rows,
                                     pixel_width: meta.width,

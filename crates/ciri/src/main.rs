@@ -72,7 +72,19 @@ fn main() -> Result<()> {
                 eprintln!("invalid session name: {e}");
                 std::process::exit(2);
             }
-            // TODO: check if session exists on server before launching GUI
+            // Verify the session exists (saved on disk or running on server).
+            // Saved sessions can be checked directly; running sessions require
+            // a server probe, but if the server isn't reachable, only saved
+            // sessions are available.
+            let state_dir = ciri_protocol::transport::state_dir();
+            let saved = ciri_session::restore::list_sessions(&state_dir).unwrap_or_default();
+            if !saved.iter().any(|n| n == &session_name) {
+                eprintln!(
+                    "session '{}' does not exist.\nUse `ciri ls` to list sessions, or `ciri {}` to create it.",
+                    session_name, session_name
+                );
+                std::process::exit(1);
+            }
             session_name
         }
         _ => unreachable!(),

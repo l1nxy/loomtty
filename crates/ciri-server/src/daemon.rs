@@ -755,11 +755,11 @@ impl Server {
                     self.sessions.insert(session_name, session);
                 }
             }
-            ClientMessage::ResizeTilePair { column_idx, top_tile_idx, delta_weight } => {
+            ClientMessage::SetTileWeights { column_idx, top_tile_idx, top_weight, bottom_weight } => {
                 if let Some(mut session) = self.sessions.remove(&session_name) {
                     let ws = session.workspaces.active_mut();
                     if let Some(col) = ws.columns.get_mut(column_idx) {
-                        col.adjust_tile_weights(top_tile_idx, delta_weight);
+                        col.set_tile_weights(top_tile_idx, top_weight, bottom_weight);
                     }
                     session.mark_session_dirty();
                     session.resize_all_panes(&mut self.clients);

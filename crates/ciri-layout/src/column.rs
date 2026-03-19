@@ -98,18 +98,14 @@ impl Column {
         self.rendered_width = Some(w);
     }
 
-    /// Adjust weights between two adjacent tiles. Positive delta transfers
-    /// weight from bottom to top (top grows). Ensures minimum weight of 0.05.
-    pub fn adjust_tile_weights(&mut self, top_idx: usize, delta: f64) {
+    /// Set absolute weights for two adjacent tiles. Used by the server when
+    /// receiving the final drag result from the client.
+    pub fn set_tile_weights(&mut self, top_idx: usize, top_weight: f64, bottom_weight: f64) {
         let bot_idx = top_idx + 1;
         if bot_idx >= self.tiles.len() { return; }
-        let top_w = self.tiles[top_idx].height.weight() as f64;
-        let bot_w = self.tiles[bot_idx].height.weight() as f64;
         let min_w = 0.05;
-        let new_top = (top_w + delta).max(min_w).min(top_w + bot_w - min_w);
-        let new_bot = (top_w + bot_w) - new_top;
-        self.tiles[top_idx].height = TileHeight::Auto { weight: new_top };
-        self.tiles[bot_idx].height = TileHeight::Auto { weight: new_bot };
+        self.tiles[top_idx].height = TileHeight::Auto { weight: top_weight.max(min_w) };
+        self.tiles[bot_idx].height = TileHeight::Auto { weight: bottom_weight.max(min_w) };
     }
 
     /// Compute (pane_id, y_offset, height) for each tile based on weights.

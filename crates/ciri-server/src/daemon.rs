@@ -347,6 +347,22 @@ impl Session {
                 clipboard_msgs.push(ServerMessage::Bell { pane_id });
             }
 
+            // Drain image placements (Kitty/Sixel)
+            for img in pane.drain_images() {
+                clipboard_msgs.push(ServerMessage::ImagePlacement {
+                    pane_id,
+                    image_id: img.id,
+                    col: img.col,
+                    row: img.row,
+                    width_cells: img.width_cells,
+                    height_cells: img.height_cells,
+                    pixel_width: img.pixel_width,
+                    pixel_height: img.pixel_height,
+                    format: img.format,
+                    data: img.data,
+                });
+            }
+
             if let Some(regions) = pane.extract_damage() {
                 // Bump generation
                 let g = self.generation.entry(pane_id).or_insert(0);

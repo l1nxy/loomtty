@@ -207,6 +207,19 @@ pub enum ServerMessage {
     Error { message: String },
     /// Bell notification from a pane (BEL / \x07).
     Bell { pane_id: u64 },
+    /// Inline image placement from Kitty/Sixel protocol.
+    ImagePlacement {
+        pane_id: u64,
+        image_id: u64,
+        col: u16,
+        row: u16,
+        width_cells: u16,
+        height_cells: u16,
+        pixel_width: u32,
+        pixel_height: u32,
+        format: String,
+        data: Vec<u8>,
+    },
 }
 
 /// Session info returned in SessionList.

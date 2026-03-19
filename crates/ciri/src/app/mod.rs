@@ -75,6 +75,18 @@ pub(crate) struct ClosingPaneState {
     pub duration_ms: u64,
 }
 
+/// Client-side image placement for rendering.
+#[allow(dead_code)]
+pub(crate) struct ClientImagePlacement {
+    pub image_id: u64,
+    pub col: u16,
+    pub row: u16,
+    pub width_cells: u16,
+    pub height_cells: u16,
+    pub pixel_width: u32,
+    pub pixel_height: u32,
+}
+
 /// Auto-reconnection state.
 pub(crate) struct ReconnectState {
     pub attempt: u32,
@@ -139,6 +151,8 @@ pub(crate) struct App {
     pub closing_panes: Vec<ClosingPaneState>,
     /// Visual bell flash: (pane_id, start_time)
     pub bell_flash: Option<(u64, Instant)>,
+    /// Inline image placements per pane.
+    pub image_placements: HashMap<u64, Vec<ClientImagePlacement>>,
     pub should_exit: bool,
     #[allow(dead_code)]
     pub config_watcher: Option<notify::RecommendedWatcher>,
@@ -221,6 +235,7 @@ impl App {
             pane_open_opacity: HashMap::new(),
             closing_panes: Vec::new(),
             bell_flash: None,
+            image_placements: HashMap::new(),
             should_exit: false,
             config_watcher: None,
             config_change_rx: None,

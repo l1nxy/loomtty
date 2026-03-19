@@ -176,7 +176,7 @@ impl ApplicationHandler for App {
         let atlas = GlyphAtlas::new(
             &renderer.device,
             fmt,
-            &mut renderer.text.font_system,
+            &mut renderer.font_system,
             self.config.font.size,
             dpi_scale,
             &self.config.font.family,
@@ -368,7 +368,7 @@ impl ApplicationHandler for App {
                         let atlas = GlyphAtlas::new(
                             &renderer.device,
                             fmt,
-                            &mut renderer.text.font_system,
+                            &mut renderer.font_system,
                             self.config.font.size,
                             scale_factor,
                             &self.config.font.family,

@@ -260,7 +260,7 @@ impl App {
                         let atlas = GlyphAtlas::new(
                             &renderer.device,
                             fmt,
-                            &mut renderer.text.font_system,
+                            &mut renderer.font_system,
                             self.config.font.size,
                             self.dpi_scale,
                             &self.config.font.family,

@@ -1,18 +1,19 @@
 use anyhow::Result;
 use ciri_config::config::RenderConfig;
+use glyphon::FontSystem;
 use std::sync::Arc;
 use wgpu;
 use winit::window::Window;
 
 use crate::rect::RectRenderer;
-use crate::text::TextRenderer;
 
 pub struct Renderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub surface: wgpu::Surface<'static>,
     pub surface_config: wgpu::SurfaceConfiguration,
-    pub text: TextRenderer,
+    /// Font system for glyph discovery and rasterization.
+    pub font_system: FontSystem,
     pub rects: RectRenderer,
 }
 
@@ -64,7 +65,6 @@ impl Renderer {
         };
         surface.configure(&device, &surface_config);
 
-        let text = TextRenderer::new();
         let rects = RectRenderer::new(&device, surface_format, render_config.max_rectangles);
 
         Ok(Renderer {
@@ -72,7 +72,7 @@ impl Renderer {
             queue,
             surface,
             surface_config,
-            text,
+            font_system: FontSystem::new(),
             rects,
         })
     }

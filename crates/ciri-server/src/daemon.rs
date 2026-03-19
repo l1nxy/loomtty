@@ -400,6 +400,9 @@ struct Server {
     default_column_width: ColumnWidth,
     column_gap: f32,
     pane_inset: f32,
+    /// True once server has had at least one session. Prevents premature
+    /// shutdown on startup before any client has connected.
+    had_session: bool,
 }
 
 impl Server {
@@ -413,12 +416,14 @@ impl Server {
             default_column_width: ColumnWidth::Proportion(0.5),
             column_gap,
             pane_inset: 12.0,
+            had_session: false,
         }
     }
 
     /// Get or create a session by name, restoring from saved state if available.
     fn get_or_create_session(&mut self, session_name: &str) -> &mut Session {
         if !self.sessions.contains_key(session_name) {
+            self.had_session = true;
             let mut session = Session::new(session_name, &self.default_shell, self.column_gap);
             session.default_column_width = self.default_column_width;
             session.pane_inset = self.pane_inset;
@@ -1173,9 +1178,9 @@ pub async fn run_daemon() -> Result<()> {
                     s.sessions.remove(&name);
                 }
 
-                // Server shutdown: no sessions and no clients
-                if s.sessions.is_empty() && s.clients.is_empty() {
-                    log::info!("no sessions and no clients, shutting down server");
+                // Server shutdown: had sessions before but now all gone and no clients
+                if s.had_session && s.sessions.is_empty() && s.clients.is_empty() {
+                    log::info!("all sessions ended and no clients, shutting down server");
                     should_shutdown = true;
                 }
             } // lock dropped here

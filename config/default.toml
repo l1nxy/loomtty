@@ -37,6 +37,9 @@ height_padding = 4.0
 text_baseline = 0.8
 
 [input]
+# "prefix" = tmux-style (leader → one action → back to normal)
+# "sticky" = zellij-style (leader → stay in mode until Esc)
+mode = "prefix"
 leader_timeout_ms = 1000
 double_tap_window_ms = 300
 scroll_multiplier = 50.0

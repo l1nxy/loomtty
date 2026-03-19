@@ -148,6 +148,10 @@ impl App {
         );
         input.keybinds = KeybindMap::from_config(&config.keys.bindings);
         input.leader_key = ciri_input::leader::LeaderKey::parse(&config.keys.leader);
+        input.input_mode = match config.input.mode.as_str() {
+            "sticky" => ciri_input::leader::InputMode::Sticky,
+            _ => ciri_input::leader::InputMode::Prefix,
+        };
         let overview_keybinds = KeybindMap::from_overview_config(&config.keys.overview_bindings);
         let column_gap = config.appearance.column_gap;
 

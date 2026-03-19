@@ -216,6 +216,8 @@ pub enum ServerMessage {
     SessionKilled { session_name: String },
     /// Error response.
     Error { message: String },
+    /// Bell notification from a pane (BEL / \x07).
+    Bell { pane_id: u64 },
 }
 
 /// Session info returned in SessionList.
@@ -302,12 +304,72 @@ pub struct FullPaneSync {
     pub cells: Vec<PackedCell>, // row-major, rows * cols (viewport)
 }
 
+// ─── Zero-copy borrowed CellDelta ───────────────────────────────────
+
+/// Metadata for a single borrowed damage region (offsets into the payload).
+#[derive(Debug, Clone)]
+pub struct BorrowedRegionMeta {
+    pub line: u16,
+    pub left: u16,
+    pub right: u16,
+    /// Byte offset into `CellDeltaBorrowed::payload` where cell data starts.
+    pub cells_offset: usize,
+    /// Number of cells in this region.
+    pub cell_count: usize,
+}
+
+/// Zero-copy variant of `CellDelta`. Owns the raw payload `Vec<u8>` and stores
+/// parsed region metadata (offsets), but borrows the cell data in-place via
+/// `bytemuck::cast_slice` instead of copying into per-region `Vec<PackedCell>`.
+#[derive(Debug)]
+pub struct CellDeltaBorrowed {
+    pub pane_id: u64,
+    pub generation: u64,
+    pub cursor_line: i16,
+    pub cursor_col: u16,
+    pub cursor_shape: u8,
+    pub mode_flags: u8,
+    pub regions: Vec<BorrowedRegionMeta>,
+    /// Raw payload bytes — cell data is read directly from here.
+    payload: Vec<u8>,
+}
+
+impl CellDeltaBorrowed {
+    /// Construct from pre-parsed metadata and the raw payload.
+    pub fn new(
+        pane_id: u64,
+        generation: u64,
+        cursor_line: i16,
+        cursor_col: u16,
+        cursor_shape: u8,
+        mode_flags: u8,
+        regions: Vec<BorrowedRegionMeta>,
+        payload: Vec<u8>,
+    ) -> Self {
+        Self { pane_id, generation, cursor_line, cursor_col, cursor_shape, mode_flags, regions, payload }
+    }
+
+    /// Zero-copy access to the cells for a given region index.
+    /// Returns an empty slice if `region_idx` is out of bounds.
+    pub fn cells(&self, region_idx: usize) -> &[PackedCell] {
+        let Some(meta) = self.regions.get(region_idx) else {
+            return &[];
+        };
+        let end = meta.cells_offset + meta.cell_count * PACKED_CELL_SIZE;
+        bytemuck::cast_slice(&self.payload[meta.cells_offset..end])
+    }
+}
+
 // ─── Terminal mode flags ────────────────────────────────────────────
 
 /// Pane has mouse reporting enabled (any mouse mode).
 pub const MODE_MOUSE_REPORT: u8 = 0x01;
 /// Pane is in alternate screen buffer (e.g. TUI app).
 pub const MODE_ALT_SCREEN: u8 = 0x02;
+/// Shell integration is active (OSC 133 detected).
+pub const MODE_SHELL_INTEGRATION: u8 = 0x04;
+/// Kitty keyboard protocol: disambiguate escape codes (CSI u encoding).
+pub const MODE_KITTY_KEYBOARD: u8 = 0x08;
 
 // ─── Cursor shape encoding ──────────────────────────────────────────
 

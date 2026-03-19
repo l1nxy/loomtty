@@ -15,6 +15,53 @@ use crate::pty::Pty;
 
 pub type PaneId = u64;
 
+/// Semantic zone type from OSC 133 shell integration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SemanticZone {
+    /// After prompt start (OSC 133;A) — the prompt region.
+    Prompt,
+    /// After command start (OSC 133;B) — user is typing a command.
+    Input,
+    /// After command executed (OSC 133;C) — command output region.
+    Output,
+}
+
+/// An inline image placement in the terminal grid.
+#[derive(Debug, Clone)]
+pub struct ImagePlacement {
+    /// Unique ID for this image.
+    pub id: u64,
+    /// Row (viewport-relative) where the image starts.
+    pub row: u16,
+    /// Column where the image starts.
+    pub col: u16,
+    /// Width in cells.
+    pub width_cells: u16,
+    /// Height in cells.
+    pub height_cells: u16,
+    /// Image width in pixels (from protocol).
+    pub pixel_width: u32,
+    /// Image height in pixels (from protocol).
+    pub pixel_height: u32,
+    /// Image format: "png", "rgb", "rgba", "sixel".
+    pub format: String,
+    /// Raw image data (PNG/RGB/RGBA bytes, or decoded sixel).
+    pub data: Vec<u8>,
+}
+
+/// Shell integration state tracked via OSC 133.
+#[derive(Debug, Clone)]
+pub struct ShellState {
+    /// Current semantic zone.
+    pub zone: SemanticZone,
+    /// Last command exit code (from OSC 133;D;exitcode).
+    pub last_exit_code: Option<i32>,
+    /// Line where the current prompt started.
+    pub prompt_line: Option<i32>,
+    /// Line where command output started.
+    pub output_line: Option<i32>,
+}
+
 struct TermSize {
     cols: usize,
     rows: usize,
@@ -39,6 +86,18 @@ pub struct Pane {
     pub title: String,
     /// Pending clipboard writes from OSC 52 (drained by server each tick).
     clipboard_pending: Vec<String>,
+    /// Bell fired since last drain (BEL / \x07).
+    bell_pending: bool,
+    /// Shell integration state (OSC 133).
+    pub shell_state: ShellState,
+    /// Inline image placements (Kitty graphics / Sixel).
+    pub image_placements: Vec<ImagePlacement>,
+    /// Next image ID counter.
+    next_image_id: u64,
+    /// Kitty graphics: partial payload accumulator for multi-chunk transmissions.
+    kitty_image_buf: Vec<u8>,
+    /// Kitty graphics: metadata from the first chunk (a=T transmit-and-display).
+    kitty_image_meta: Option<KittyImageMeta>,
 }
 
 impl Pane {
@@ -46,7 +105,8 @@ impl Pane {
         let pty = Pty::spawn(cols, rows, shell)?;
 
         let size = TermSize { cols: cols as usize, rows: rows as usize };
-        let config = TermConfig::default();
+        let mut config = TermConfig::default();
+        config.kitty_keyboard = true;
         let (event_listener, event_rx) = PtyEventListener::new();
         let term = Term::new(config, &size, event_listener);
 
@@ -62,6 +122,13 @@ impl Pane {
             rows,
             title: String::new(),
             clipboard_pending: Vec::new(),
+            bell_pending: false,
+            shell_state: ShellState {
+                zone: SemanticZone::Prompt,
+                last_exit_code: None,
+                prompt_line: None,
+                output_line: None,
+            },
         })
     }
 
@@ -76,6 +143,10 @@ impl Pane {
         // Drain all available output from the background reader thread
         let chunks = self.pty.drain_output();
         if !chunks.is_empty() {
+            // Scan for OSC 133 shell integration sequences before VT parsing.
+            for chunk in &chunks {
+                self.scan_osc133(chunk);
+            }
             let mut term = self.term.lock().unwrap_or_else(|e| e.into_inner());
             for chunk in &chunks {
                 self.processor.advance(&mut *term, chunk);
@@ -110,6 +181,9 @@ impl Pane {
                     let response = formatter("");
                     self.write_to_pty(response.as_bytes());
                 }
+                Event::Bell => {
+                    self.bell_pending = true;
+                }
                 Event::Exit | Event::ChildExit(_) => {
                     self.exited = true;
                 }
@@ -130,6 +204,21 @@ impl Pane {
     /// Drain pending OSC 52 clipboard writes.
     pub fn drain_clipboard(&mut self) -> Vec<String> {
         std::mem::take(&mut self.clipboard_pending)
+    }
+
+    /// Check and clear the bell pending flag.
+    pub fn drain_bell(&mut self) -> bool {
+        std::mem::take(&mut self.bell_pending)
+    }
+
+    /// Get the current shell semantic zone (from OSC 133).
+    pub fn shell_zone(&self) -> SemanticZone {
+        self.shell_state.zone
+    }
+
+    /// Get the last command exit code (from OSC 133;D).
+    pub fn last_exit_code(&self) -> Option<i32> {
+        self.shell_state.last_exit_code
     }
 
     pub fn write_to_pty(&mut self, data: &[u8]) {
@@ -361,7 +450,86 @@ impl Pane {
         if mode.contains(TermMode::ALT_SCREEN) {
             flags |= MODE_ALT_SCREEN;
         }
+        // Shell integration detected if we've seen OSC 133 sequences
+        if self.shell_state.prompt_line.is_some() {
+            flags |= MODE_SHELL_INTEGRATION;
+        }
+        // Kitty keyboard protocol: at minimum, disambiguate escape codes
+        if mode.contains(TermMode::DISAMBIGUATE_ESC_CODES) {
+            flags |= MODE_KITTY_KEYBOARD;
+        }
         flags
+    }
+
+    /// Scan raw PTY output for OSC 133 shell integration sequences.
+    /// Pattern: ESC ] 133 ; <cmd> [; params] BEL   or   ESC ] 133 ; <cmd> [; params] ESC \
+    fn scan_osc133(&mut self, data: &[u8]) {
+        let mut i = 0;
+        while i + 6 < data.len() {
+            // Look for ESC ] 1 3 3 ;
+            if data[i] == 0x1b && data[i + 1] == b']'
+                && data[i + 2] == b'1'
+                && data[i + 3] == b'3'
+                && data[i + 4] == b'3'
+                && data[i + 5] == b';'
+            {
+                let cmd = data[i + 6];
+                // Find the string terminator and collect params
+                let mut end = i + 7;
+                let mut params = String::new();
+                while end < data.len() {
+                    if data[end] == 0x07 {
+                        break;
+                    }
+                    if data[end] == 0x1b && data.get(end + 1) == Some(&b'\\') {
+                        break;
+                    }
+                    if data[end] == b';' && params.is_empty() {
+                        let rest_start = end + 1;
+                        let mut rest_end = rest_start;
+                        while rest_end < data.len() {
+                            if data[rest_end] == 0x07 || (data[rest_end] == 0x1b && data.get(rest_end + 1) == Some(&b'\\')) {
+                                break;
+                            }
+                            rest_end += 1;
+                        }
+                        params = String::from_utf8_lossy(&data[rest_start..rest_end]).to_string();
+                        end = rest_end;
+                        break;
+                    }
+                    end += 1;
+                }
+
+                match cmd {
+                    b'A' => {
+                        self.shell_state.zone = SemanticZone::Prompt;
+                        self.shell_state.prompt_line = Some(0); // exact line resolved at snapshot time
+                        log::debug!("OSC 133;A prompt start");
+                    }
+                    b'B' => {
+                        self.shell_state.zone = SemanticZone::Input;
+                        log::debug!("OSC 133;B command input");
+                    }
+                    b'C' => {
+                        self.shell_state.zone = SemanticZone::Output;
+                        self.shell_state.output_line = Some(0);
+                        log::debug!("OSC 133;C command output");
+                    }
+                    b'D' => {
+                        self.shell_state.zone = SemanticZone::Prompt;
+                        let exit_code = params.trim().parse::<i32>().ok();
+                        self.shell_state.last_exit_code = exit_code;
+                        log::debug!("OSC 133;D command done, exit={exit_code:?}");
+                    }
+                    _ => {
+                        log::trace!("OSC 133;{} unknown subcommand", cmd as char);
+                    }
+                }
+                i = end + 1;
+            } else {
+                i += 1;
+            }
+        }
     }
 
     /// Read cells from a line range and pack them (live viewport only).

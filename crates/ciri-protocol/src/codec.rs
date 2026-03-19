@@ -1,3 +1,21 @@
+// ─── Serialization format evaluation (ROADMAP item 5) ───────────────
+//
+// Control messages (ServerMessage/ClientMessage) use msgpack on the cold path —
+// overhead is negligible since these are infrequent (resize, focus, layout).
+//
+// Hot-path messages (CellDelta/FullPaneSync) already use a custom binary format
+// with bytemuck zero-copy for PackedCell data. CellDeltaBorrowed avoids even
+// per-region Vec<PackedCell> allocation by casting directly from the payload.
+//
+// Flatbuffers was evaluated but is not worth the added complexity or dependency:
+//   - Our hot-path encoding is already zero-copy where it matters (cell data).
+//   - Flatbuffers would add a build-time codegen step and ~3k lines of generated code.
+//   - The wire format savings would be minimal since cell data dominates frame size.
+//
+// Conclusion: keep the current approach (msgpack for control, custom binary + bytemuck
+// for hot-path). Re-evaluate only if a new variable-length hot-path message is added.
+// ─────────────────────────────────────────────────────────────────────
+
 use crate::message::*;
 use std::io;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -361,6 +379,130 @@ pub fn decode_cell_delta(payload: &[u8]) -> io::Result<CellDelta> {
     Ok(CellDelta { pane_id, generation, cursor_line, cursor_col, cursor_shape, mode_flags, regions })
 }
 
+// ─── Framed encode helpers (single allocation) ─────────────────────
+
+/// Encode a CellDelta directly into `buf` as a complete frame [tag][len][payload],
+/// avoiding a separate payload allocation + copy.
+pub fn encode_cell_delta_framed(buf: &mut Vec<u8>, delta: &CellDelta) -> io::Result<()> {
+    if delta.regions.len() > u16::MAX as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "too many regions for CellDelta (exceeds u16::MAX)",
+        ));
+    }
+    buf.clear();
+    // Reserve tag(1) + len(4) + header(24) conservatively
+    buf.reserve(5 + 24 + delta.regions.len() * 64);
+    // Placeholder for tag + length (filled in after payload is written)
+    buf.push(TAG_CELL_DELTA);
+    buf.extend_from_slice(&[0u8; 4]); // placeholder for payload length
+    let payload_start = 5;
+    // Write payload inline
+    buf.extend_from_slice(&delta.pane_id.to_le_bytes());
+    buf.extend_from_slice(&delta.generation.to_le_bytes());
+    buf.extend_from_slice(&delta.cursor_line.to_le_bytes());
+    buf.extend_from_slice(&delta.cursor_col.to_le_bytes());
+    buf.push(delta.cursor_shape);
+    buf.push(delta.mode_flags);
+    buf.extend_from_slice(&(delta.regions.len() as u16).to_le_bytes());
+    for region in &delta.regions {
+        buf.extend_from_slice(&region.line.to_le_bytes());
+        buf.extend_from_slice(&region.left.to_le_bytes());
+        buf.extend_from_slice(&region.right.to_le_bytes());
+        buf.extend_from_slice(cells_to_bytes(&region.cells));
+    }
+    // Patch the length field
+    let payload_len = (buf.len() - payload_start) as u32;
+    buf[1..5].copy_from_slice(&payload_len.to_le_bytes());
+    Ok(())
+}
+
+/// Encode a FullPaneSync directly into `buf` as a complete frame [tag][len][payload],
+/// avoiding a separate payload allocation + copy.
+pub fn encode_full_pane_sync_framed(buf: &mut Vec<u8>, sync: &FullPaneSync) -> io::Result<()> {
+    buf.clear();
+    let title_bytes = sync.title.as_bytes();
+    if title_bytes.len() > u16::MAX as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "title too long for FullPaneSync (exceeds u16::MAX)",
+        ));
+    }
+    // Tag + length placeholder
+    buf.push(TAG_FULL_PANE_SYNC);
+    buf.extend_from_slice(&[0u8; 4]);
+    let payload_start = 5;
+    // Header fields
+    buf.extend_from_slice(&sync.pane_id.to_le_bytes());
+    buf.extend_from_slice(&sync.generation.to_le_bytes());
+    buf.extend_from_slice(&sync.cols.to_le_bytes());
+    buf.extend_from_slice(&sync.rows.to_le_bytes());
+    buf.extend_from_slice(&sync.cursor_line.to_le_bytes());
+    buf.extend_from_slice(&sync.cursor_col.to_le_bytes());
+    buf.push(sync.cursor_shape);
+    buf.push(sync.mode_flags);
+    buf.extend_from_slice(&(title_bytes.len() as u16).to_le_bytes());
+    buf.extend_from_slice(title_bytes);
+    buf.extend_from_slice(&sync.scrollback_rows.to_le_bytes());
+    let rle_scrollback = rle_encode_cells(&sync.scrollback);
+    buf.extend_from_slice(&(rle_scrollback.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&rle_scrollback);
+    let rle_data = rle_encode_cells(&sync.cells);
+    buf.extend_from_slice(&(rle_data.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&rle_data);
+    // Patch the length field
+    let payload_len = (buf.len() - payload_start) as u32;
+    buf[1..5].copy_from_slice(&payload_len.to_le_bytes());
+    Ok(())
+}
+
+/// Zero-copy decode: parse region metadata but borrow cell data from the payload.
+pub fn decode_cell_delta_borrowed(payload: Vec<u8>) -> io::Result<CellDeltaBorrowed> {
+    if payload.len() < 24 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "CellDelta too short"));
+    }
+    let pane_id = read_u64_le(&payload, 0)?;
+    let generation = read_u64_le(&payload, 8)?;
+    let cursor_line = read_i16_le(&payload, 16)?;
+    let cursor_col = read_u16_le(&payload, 18)?;
+    let cursor_shape = payload[20];
+    let mode_flags = payload[21];
+    let num_regions = read_u16_le(&payload, 22)? as usize;
+    let mut offset = 24;
+    let mut regions = Vec::with_capacity(num_regions);
+    for _ in 0..num_regions {
+        if offset + 6 > payload.len() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "truncated region header"));
+        }
+        let line = read_u16_le(&payload, offset)?;
+        let left = read_u16_le(&payload, offset + 2)?;
+        let right = read_u16_le(&payload, offset + 4)?;
+        offset += 6;
+        if left > right {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid damage region: left > right",
+            ));
+        }
+        let count = (right - left + 1) as usize;
+        let cell_bytes = count * PACKED_CELL_SIZE;
+        if offset + cell_bytes > payload.len() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "truncated cell data"));
+        }
+        regions.push(BorrowedRegionMeta {
+            line,
+            left,
+            right,
+            cells_offset: offset,
+            cell_count: count,
+        });
+        offset += cell_bytes;
+    }
+    Ok(CellDeltaBorrowed::new(
+        pane_id, generation, cursor_line, cursor_col, cursor_shape, mode_flags, regions, payload,
+    ))
+}
+
 // ─── Encode FullPaneSync (custom binary with RLE) ───────────────────
 
 const RLE_MARKER: u8 = 0xFF;
@@ -534,7 +676,7 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
 pub enum Frame {
     ClientMsg(ClientMessage),
     ServerMsg(ServerMessage),
-    CellDelta(CellDelta),
+    CellDelta(CellDeltaBorrowed),
     FullPaneSync(FullPaneSync),
 }
 
@@ -556,7 +698,7 @@ pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Fram
             Ok(Frame::ServerMsg(msg))
         }
         TAG_CELL_DELTA => {
-            let delta = decode_cell_delta(&payload)?;
+            let delta = decode_cell_delta_borrowed(payload)?;
             Ok(Frame::CellDelta(delta))
         }
         TAG_FULL_PANE_SYNC => {
@@ -683,7 +825,7 @@ mod tests {
         let frame = read_frame(&mut &buf[..]).await.unwrap();
         match frame {
             Frame::CellDelta(d) => {
-                assert_eq!(d.regions[0].cells[0].ch(), 'X');
+                assert_eq!(d.cells(0)[0].ch(), 'X');
             }
             _ => panic!("wrong frame type"),
         }

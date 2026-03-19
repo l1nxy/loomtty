@@ -72,13 +72,18 @@ fn main() -> Result<()> {
                 eprintln!("invalid session name: {e}");
                 std::process::exit(2);
             }
-            // Verify the session exists (saved on disk or running on server).
-            // Saved sessions can be checked directly; running sessions require
-            // a server probe, but if the server isn't reachable, only saved
-            // sessions are available.
+            // Verify the session exists: check saved state on disk first,
+            // then probe the running server for live sessions that haven't
+            // been saved yet (autosave triggers on layout changes only).
             let state_dir = ciri_protocol::transport::state_dir();
             let saved = ciri_session::restore::list_sessions(&state_dir).unwrap_or_default();
-            if !saved.iter().any(|n| n == &session_name) {
+            let has_saved = saved.iter().any(|n| n == &session_name);
+            let has_running = if !has_saved {
+                control::session_exists_on_server(&session_name)
+            } else {
+                false
+            };
+            if !has_saved && !has_running {
                 eprintln!(
                     "session '{}' does not exist.\nUse `ciri ls` to list sessions, or `ciri {}` to create it.",
                     session_name, session_name

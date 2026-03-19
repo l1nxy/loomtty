@@ -221,6 +221,12 @@ impl App {
                     for col_idx in 0..ws.columns.len() {
                         if ws.columns[col_idx].contains_pane(pane_id) {
                             ws.active_column_idx = col_idx;
+                            // Also focus the specific tile within the column
+                            if let Some(tile_idx) = ws.columns[col_idx].tiles.iter()
+                                .position(|t| t.pane_id == pane_id)
+                            {
+                                ws.columns[col_idx].active_tile_idx = tile_idx;
+                            }
                             break;
                         }
                     }

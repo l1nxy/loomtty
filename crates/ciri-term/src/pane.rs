@@ -108,6 +108,9 @@ pub struct Pane {
     kitty_image_buf: Vec<u8>,
     /// Kitty graphics: metadata from the first chunk (a=T transmit-and-display).
     kitty_image_meta: Option<KittyImageMeta>,
+    /// Partial APC frame buffer: holds bytes from an unterminated `ESC _ G ...`
+    /// sequence that was split across PTY reads.
+    kitty_apc_partial: Vec<u8>,
 }
 
 impl Pane {
@@ -143,6 +146,7 @@ impl Pane {
             next_image_id: 1,
             kitty_image_buf: Vec::new(),
             kitty_image_meta: None,
+            kitty_apc_partial: Vec::new(),
         })
     }
 
@@ -556,8 +560,20 @@ impl Pane {
     }
 
     /// Scan for Kitty graphics protocol sequences (APC: ESC _ G ... ESC \).
+    /// Handles frames split across PTY reads by buffering partial sequences.
     fn scan_kitty_graphics(&mut self, data: &[u8], cursor_col: u16, cursor_row: u16) {
         use base64::Engine;
+
+        // If we have a partial APC from a previous read, prepend it
+        let working_data;
+        let data = if !self.kitty_apc_partial.is_empty() {
+            self.kitty_apc_partial.extend_from_slice(data);
+            working_data = std::mem::take(&mut self.kitty_apc_partial);
+            &working_data[..]
+        } else {
+            data
+        };
+
         let mut i = 0;
         while i + 3 < data.len() {
             // Look for ESC _ G (APC for Kitty graphics)
@@ -572,7 +588,9 @@ impl Pane {
                     end += 1;
                 }
                 if end + 1 >= data.len() {
-                    break; // Incomplete sequence, wait for more data
+                    // Incomplete sequence — buffer from the APC start for next read
+                    self.kitty_apc_partial = data[i..].to_vec();
+                    return;
                 }
 
                 let payload = &data[start..end];

@@ -190,7 +190,7 @@ pub enum ServerMessage {
     /// Layout changed (focus, column widths, etc.).
     LayoutUpdate { layout: LayoutState },
     /// A pane was created.
-    PaneCreated { pane_id: u64, column_idx: usize },
+    PaneCreated { pane_id: u64, column_idx: usize, cols: u16, rows: u16 },
     /// A pane was closed.
     PaneClosed { pane_id: u64 },
     /// Server is shutting down.

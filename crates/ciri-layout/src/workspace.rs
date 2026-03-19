@@ -160,10 +160,22 @@ impl Workspace {
         self.active_column_idx = insert_at;
     }
 
-    /// Close a pane's column. The column is simply removed and the layout
-    /// naturally shrinks (niri model: no width redistribution).
+    /// Close a pane. If the pane is in a multi-tile column, only that tile is
+    /// removed. If it's the last tile, the entire column is removed.
     pub fn close_pane(&mut self, pane_id: PaneId) -> Option<PaneId> {
-        if let Some(idx) = self.columns.iter().position(|c| c.contains_pane(pane_id)) {
+        let idx = self.columns.iter().position(|c| c.contains_pane(pane_id))?;
+
+        let col = &mut self.columns[idx];
+        if col.tile_count() > 1 {
+            // Multi-tile column: remove just this tile
+            if let Some(tile_idx) = col.tiles.iter().position(|t| t.pane_id == pane_id) {
+                col.tiles.remove(tile_idx);
+                if col.active_tile_idx >= col.tiles.len() {
+                    col.active_tile_idx = col.tiles.len() - 1;
+                }
+            }
+        } else {
+            // Single-tile column: remove entire column
             self.columns.remove(idx);
             if self.columns.is_empty() {
                 self.active_column_idx = 0;
@@ -172,9 +184,8 @@ impl Workspace {
             } else if self.active_column_idx >= self.columns.len() {
                 self.active_column_idx = self.columns.len() - 1;
             }
-            return Some(pane_id);
         }
-        None
+        Some(pane_id)
     }
 
     pub fn close_active_pane(&mut self) -> Option<PaneId> {

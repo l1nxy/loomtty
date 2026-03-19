@@ -394,6 +394,8 @@ pub const MODE_ALT_SCREEN: u8 = 0x02;
 pub const MODE_SHELL_INTEGRATION: u8 = 0x04;
 /// Kitty keyboard protocol: disambiguate escape codes (CSI u encoding).
 pub const MODE_KITTY_KEYBOARD: u8 = 0x08;
+/// Bracketed paste mode (DECSET 2004) is active.
+pub const MODE_BRACKETED_PASTE: u8 = 0x10;
 
 // ─── Cursor shape encoding ──────────────────────────────────────────
 

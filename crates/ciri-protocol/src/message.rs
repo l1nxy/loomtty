@@ -1,5 +1,11 @@
 use serde::{Deserialize, Serialize};
 
+// ─── Safety limits ──────────────────────────────────────────────────
+
+/// Maximum number of cells (cols × rows) allowed in a single grid.
+/// Prevents OOM from malformed messages claiming huge grid dimensions.
+pub const MAX_GRID_CELLS: usize = 10_000_000;
+
 // ─── Compact named color IDs for wire format ────────────────────────
 
 pub const NAMED_BLACK: u8 = 0;

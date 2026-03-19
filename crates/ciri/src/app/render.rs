@@ -460,14 +460,14 @@ impl App {
             (" NORMAL ", dim)
         };
 
-        // Build keybinding hints per mode
+        // Build keybinding hints per mode (must match default.toml bindings)
         let leader_key = self.config.keys.leader.to_uppercase();
         let hints = if is_broadcast {
-            format!("{}+b:exit broadcast", leader_key)
+            format!("b:exit broadcast  leader:{}", leader_key)
         } else if is_overview {
-            "h/l/j/k:navigate  x:close  n:new  esc:exit".to_string()
+            "h/l/j/k:navigate  x:close  n:new  esc/o:exit".to_string()
         } else if is_leader {
-            "n:new  x:close  h/l:\u{2190}\u{2192}  j/k:\u{2191}\u{2193}  f:full  1/2/3:width  c/e:stack  o:overview  q:detach".to_string()
+            "n:new  d:split  x:close  h/l:\u{2190}\u{2192}  j/k:\u{2191}\u{2193}  H/L:move  [/]:resize  1/2/3/f:width  c/e:stack  b:broadcast  o:overview  q:detach".to_string()
         } else {
             format!("leader:{}", leader_key)
         };

@@ -225,7 +225,7 @@ impl UnderlineStyle {
 
 // ─── Core rendering (shared by both paths) ───────────────────────────
 
-/// Render a single cell: emit background rect, decorations, and glyph.
+/// Render a single cell: emit decorations and glyph (NOT background — handled by strip merger).
 fn render_cell(
     row: usize,
     col: usize,
@@ -242,12 +242,7 @@ fn render_cell(
     let py = row as f32 * m.ch;
     let bg_width = if cell.is_wide { m.cw * 2.0 } else { m.cw };
 
-    // Background rect (skip if same as terminal background)
-    if cell.bg != m.default_bg {
-        bg_rects.push(Rect { x: px, y: py, w: bg_width, h: m.ch, color: cell.bg });
-    }
-
-    // Hidden cells: background only, no text or decorations
+    // Hidden cells: no text or decorations (background handled by strip merger)
     if cell.is_hidden {
         return;
     }
@@ -429,15 +424,37 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
     let mut color_glyphs = Vec::new();
 
     for row in 0..total_rows {
+        let mut strip_color: Option<[f32; 4]> = None;
+        let mut strip_start: usize = 0;
+
         for col in 0..cols {
             let cell = &grid[Point::new(Line(row as i32), Column(col))];
             if let Some(props) = CellProps::from_term_cell(cell, config) {
+                // Merge adjacent same-color bg cells into strips
+                if props.bg != m.default_bg {
+                    if let Some(sc) = strip_color {
+                        if sc != props.bg {
+                            flush_bg_strip(&mut bg_rects, sc, strip_start, col, row, &m);
+                            strip_color = Some(props.bg);
+                            strip_start = col;
+                        }
+                    } else {
+                        strip_color = Some(props.bg);
+                        strip_start = col;
+                    }
+                } else if let Some(sc) = strip_color.take() {
+                    flush_bg_strip(&mut bg_rects, sc, strip_start, col, row, &m);
+                }
+
                 render_cell(
                     row, col, &props, &m,
                     atlas, font_system, queue,
                     &mut bg_rects, &mut glyphs, &mut color_glyphs,
                 );
             }
+        }
+        if let Some(sc) = strip_color {
+            flush_bg_strip(&mut bg_rects, sc, strip_start, cols, row, &m);
         }
     }
 
@@ -482,14 +499,34 @@ pub fn build_view_from_grid(
         // Detect ligatures via text shaping (pre-pass)
         let ligature_cols = detect_row_ligatures(cells, row, cols, config, atlas, primary_font_id);
 
+        // Track current background strip for merging adjacent same-color cells
+        let mut strip_color: Option<[f32; 4]> = None;
+        let mut strip_start: usize = 0;
+
         for col in 0..cols as usize {
             let idx = row * cols as usize + col;
             if idx >= cells.len() { break; }
 
             let Some(props) = CellProps::from_packed_cell(&cells[idx], config) else { continue };
 
-            // Background + decorations always rendered
-            render_cell_bg_only(row, col, &props, &m, &mut bg_rects);
+            // Merge adjacent same-color bg cells into strips (instead of one rect per cell)
+            if props.bg != m.default_bg {
+                if let Some(sc) = strip_color {
+                    if sc != props.bg {
+                        flush_bg_strip(&mut bg_rects, sc, strip_start, col, row, &m);
+                        strip_color = Some(props.bg);
+                        strip_start = col;
+                    }
+                } else {
+                    strip_color = Some(props.bg);
+                    strip_start = col;
+                }
+            } else if let Some(sc) = strip_color.take() {
+                flush_bg_strip(&mut bg_rects, sc, strip_start, col, row, &m);
+            }
+
+            // Decorations (underline, strikeout)
+            render_cell_decorations(row, col, &props, &m, &mut bg_rects);
 
             if props.is_hidden || props.ch == ' ' || props.ch == '\0' || props.ch.is_control() {
                 continue;
@@ -511,6 +548,10 @@ pub fn build_view_from_grid(
             // Normal single-char rendering
             emit_glyph(col, row, &props, &m, atlas, font_system, queue, &mut glyphs, &mut color_glyphs);
         }
+        // Flush remaining strip at end of row
+        if let Some(sc) = strip_color {
+            flush_bg_strip(&mut bg_rects, sc, strip_start, cols as usize, row, &m);
+        }
 
         // Render ligature glyphs (shaped multi-char → single glyph)
         render_ligature_glyphs(cells, row, cols, config, &m, atlas, font_system, queue,
@@ -526,21 +567,35 @@ pub fn build_view_from_grid(
 
 // ─── Text shaping integration ───────────────────────────────────────
 
-/// Render background + decorations for a cell (no glyph).
-fn render_cell_bg_only(row: usize, col: usize, cell: &CellProps, m: &CellMetrics, bg_rects: &mut Vec<Rect>) {
+/// Render decorations (underline, strikeout) for a cell. Background is handled by strip merger.
+fn render_cell_decorations(row: usize, col: usize, cell: &CellProps, m: &CellMetrics, bg_rects: &mut Vec<Rect>) {
+    if cell.is_hidden { return; }
     let px = col as f32 * m.cw;
     let py = row as f32 * m.ch;
     let bg_width = if cell.is_wide { m.cw * 2.0 } else { m.cw };
-    if cell.bg != m.default_bg {
-        bg_rects.push(Rect { x: px, y: py, w: bg_width, h: m.ch, color: cell.bg });
-    }
-    if cell.is_hidden { return; }
     if cell.underline != UnderlineStyle::None {
         emit_underline_rects(bg_rects, cell.underline, px, py + m.baseline + 1.0, bg_width, cell.fg, m.cw);
     }
     if cell.is_strikeout {
         bg_rects.push(Rect { x: px, y: py + m.ch * 0.5, w: bg_width, h: 1.0, color: cell.fg });
     }
+}
+
+/// Flush a pending background strip as a single rect.
+/// Merges adjacent cells with the same background color into one rect per run,
+/// reducing rect count from `cols` to typically 1–5 per row.
+#[inline]
+fn flush_bg_strip(
+    bg_rects: &mut Vec<Rect>,
+    color: [f32; 4],
+    start_col: usize,
+    end_col: usize,
+    row: usize,
+    m: &CellMetrics,
+) {
+    let x = start_col as f32 * m.cw;
+    let w = (end_col - start_col) as f32 * m.cw;
+    bg_rects.push(Rect { x, y: row as f32 * m.ch, w, h: m.ch, color });
 }
 
 /// Emit a single glyph for a character at (col, row).

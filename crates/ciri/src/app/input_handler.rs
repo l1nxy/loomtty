@@ -43,7 +43,16 @@ impl App {
             Action::CyclePresetWidth | Action::CyclePresetWidthReverse => {
                 let reverse = matches!(action, Action::CyclePresetWidthReverse);
                 let presets = self.preset_widths();
-                if let Some(p) = self.workspaces.active_mut().cycle_preset_width(&presets, reverse) {
+                if let Some(w) = self.workspaces.active_mut().cycle_preset_width(&presets, reverse) {
+                    // Protocol only carries proportion; fixed-pixel presets are
+                    // converted here (the server will treat them as proportional).
+                    let p = match w {
+                        ciri_layout::column::ColumnWidth::Proportion(p) => p,
+                        ciri_layout::column::ColumnWidth::Fixed(px) => {
+                            let vw = self.workspaces.view_size.width as f64;
+                            if vw > 0.0 { px / vw } else { 0.5 }
+                        }
+                    };
                     self.send(ClientMessage::SetColumnWidth { proportion: p });
                 }
                 self.snap_all_col_widths();

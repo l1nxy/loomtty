@@ -360,8 +360,8 @@ impl Workspace {
     }
 
     /// Cycle the active column's width through the given presets.
-    /// Returns the new width as a proportion (for syncing to server), or None if no columns.
-    pub fn cycle_preset_width(&mut self, presets: &[ColumnWidth], reverse: bool) -> Option<f64> {
+    /// Returns the new ColumnWidth (for syncing to server), or None if no columns.
+    pub fn cycle_preset_width(&mut self, presets: &[ColumnWidth], reverse: bool) -> Option<ColumnWidth> {
         if presets.is_empty() || self.columns.is_empty() {
             return None;
         }
@@ -397,8 +397,7 @@ impl Workspace {
         self.set_active_column_width(new_width);
         // Restore the preset_width_idx that set_active_column_width may not preserve
         self.columns[self.active_column_idx].preset_width_idx = Some(new_idx);
-        let vw = self.view_size.width;
-        Some(self.columns[self.active_column_idx].proportion(vw))
+        Some(new_width)
     }
 
     /// Hit-test tile borders: returns (col_idx, top_tile_idx) if mouse is near

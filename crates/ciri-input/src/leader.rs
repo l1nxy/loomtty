@@ -61,9 +61,11 @@ impl LeaderKey {
             if !is_mod_key {
                 return false;
             }
-            if self.alt && key_name.eq_ignore_ascii_case("alt") { return true; }
-            if self.ctrl && key_name.eq_ignore_ascii_case("control") { return true; }
-            if self.super_key && (key_name.eq_ignore_ascii_case("super") || key_name.eq_ignore_ascii_case("meta")) { return true; }
+            // Only match if the bare modifier is pressed alone (no other modifiers held).
+            // This prevents e.g. Ctrl+Alt+Left from triggering an "alt" leader.
+            if self.alt && key_name.eq_ignore_ascii_case("alt") && !ctrl && !super_key { return true; }
+            if self.ctrl && key_name.eq_ignore_ascii_case("control") && !alt && !super_key { return true; }
+            if self.super_key && (key_name.eq_ignore_ascii_case("super") || key_name.eq_ignore_ascii_case("meta")) && !ctrl && !alt { return true; }
             return false;
         }
 

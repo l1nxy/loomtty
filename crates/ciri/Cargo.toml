@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 ciri-render = { workspace = true }
 ciri-protocol = { workspace = true }
+ciri-session = { path = "../ciri-session" }
 ciri-layout = { path = "../ciri-layout" }
 ciri-anim = { path = "../ciri-anim" }
 ciri-input = { path = "../ciri-input" }

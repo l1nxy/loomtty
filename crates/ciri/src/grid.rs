@@ -1,5 +1,19 @@
-use std::collections::VecDeque;
 use ciri_protocol::message::*;
+use std::collections::VecDeque;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkMatch {
+    pub url: String,
+    pub start_col: u16,
+    pub end_col: u16,
+}
+
+#[derive(Clone, Copy)]
+struct RowChar {
+    start_col: u16,
+    end_col: u16,
+    ch: char,
+}
 
 /// Client-side pane grid with scrollback buffer.
 ///
@@ -22,6 +36,13 @@ pub struct ClientPaneGrid {
     pub mode_flags: u8,
     pub title: String,
     pub dirty: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WordClass {
+    Whitespace,
+    Word,
+    Symbol,
 }
 
 impl ClientPaneGrid {
@@ -51,8 +72,13 @@ impl ClientPaneGrid {
         self.buffer.len().saturating_sub(self.rows as usize)
     }
 
+    /// Total number of rows in the buffer (scrollback + viewport).
+    pub fn buffer_len(&self) -> usize {
+        self.buffer.len()
+    }
+
     /// The buffer_row index of the top of the current viewport.
-    fn viewport_top(&self) -> usize {
+    pub fn viewport_top(&self) -> usize {
         let total = self.buffer.len();
         let bottom = total.saturating_sub(self.rows as usize);
         bottom.saturating_sub(self.scroll_offset)
@@ -89,7 +115,9 @@ impl ClientPaneGrid {
         for r in 0..sb_rows {
             let start = r * new_cols;
             let end = (start + new_cols).min(sync.scrollback.len());
-            if end <= start { continue; }
+            if end <= start {
+                continue;
+            }
             self.buffer.push_back(sync.scrollback[start..end].to_vec());
         }
 
@@ -131,9 +159,13 @@ impl ClientPaneGrid {
 
         for region in &delta.regions {
             let line = region.line as usize;
-            if line >= self.rows as usize { continue; }
+            if line >= self.rows as usize {
+                continue;
+            }
             let buf_row = live_start + line;
-            if buf_row >= buf_len { continue; }
+            if buf_row >= buf_len {
+                continue;
+            }
             for (i, &cell) in region.cells.iter().enumerate() {
                 let col = region.left as usize + i;
                 if col < self.buffer[buf_row].len() {
@@ -150,7 +182,9 @@ impl ClientPaneGrid {
         let old = self.scroll_offset;
         self.scroll_offset = (self.scroll_offset + lines).min(max);
         let scrolled = self.scroll_offset - old;
-        if scrolled > 0 { self.dirty = true; }
+        if scrolled > 0 {
+            self.dirty = true;
+        }
         scrolled
     }
 
@@ -159,7 +193,9 @@ impl ClientPaneGrid {
         let old = self.scroll_offset;
         self.scroll_offset = self.scroll_offset.saturating_sub(lines);
         let scrolled = old - self.scroll_offset;
-        if scrolled > 0 { self.dirty = true; }
+        if scrolled > 0 {
+            self.dirty = true;
+        }
         scrolled
     }
 
@@ -222,6 +258,69 @@ impl ClientPaneGrid {
         }
     }
 
+    pub fn word_bounds_at(&self, col: u16, buffer_row: usize) -> Option<(u16, u16)> {
+        let row = self.buffer.get(buffer_row)?;
+        if row.is_empty() {
+            return None;
+        }
+
+        let mut idx = (col as usize).min(row.len().saturating_sub(1));
+        idx = self.normalize_cell_start(row, idx);
+
+        let class = classify_word_cell(row.get(idx)?);
+        let mut left = idx;
+        while let Some(prev) = self.prev_cell_start(row, left) {
+            if classify_word_cell(&row[prev]) != class {
+                break;
+            }
+            left = prev;
+        }
+
+        let mut right = idx;
+        while let Some(next) = self.next_cell_start(row, right) {
+            if classify_word_cell(&row[next]) != class {
+                break;
+            }
+            right = next;
+        }
+
+        Some((left as u16, self.cell_end(row, right) as u16))
+    }
+
+    pub fn link_at(&self, col: u16, buffer_row: usize) -> Option<LinkMatch> {
+        let row = self.buffer.get(buffer_row)?;
+        let chars = self.row_chars(row);
+        let target_idx = chars
+            .iter()
+            .position(|cell| col >= cell.start_col && col <= cell.end_col)?;
+
+        let mut start_idx = target_idx;
+        while start_idx > 0 && !chars[start_idx - 1].ch.is_whitespace() {
+            start_idx -= 1;
+        }
+
+        let mut end_idx = target_idx;
+        while end_idx + 1 < chars.len() && !chars[end_idx + 1].ch.is_whitespace() {
+            end_idx += 1;
+        }
+
+        let (start_idx, end_idx) = trim_link_token(&chars, start_idx, end_idx)?;
+        if target_idx < start_idx || target_idx > end_idx {
+            return None;
+        }
+
+        let token: String = chars[start_idx..=end_idx]
+            .iter()
+            .map(|cell| cell.ch)
+            .collect();
+        let url = normalize_link_token(&token)?;
+        Some(LinkMatch {
+            url,
+            start_col: chars[start_idx].start_col,
+            end_col: chars[end_idx].end_col,
+        })
+    }
+
     /// Extract text from a buffer range (absolute buffer_rows).
     pub fn text_in_range(&self, start: (u16, usize), end: (u16, usize)) -> String {
         let (start, end) = if start.1 < end.1 || (start.1 == end.1 && start.0 <= end.0) {
@@ -231,21 +330,268 @@ impl ClientPaneGrid {
         };
         let mut result = String::new();
         for buf_row in start.1..=end.1 {
-            if buf_row >= self.buffer.len() { break; }
+            if buf_row >= self.buffer.len() {
+                break;
+            }
             let row_data = &self.buffer[buf_row];
-            let left = if buf_row == start.1 { start.0 as usize } else { 0 };
-            let right = if buf_row == end.1 { end.0 as usize } else { self.cols.saturating_sub(1) as usize };
+            let left = if buf_row == start.1 {
+                start.0 as usize
+            } else {
+                0
+            };
+            let right = if buf_row == end.1 {
+                end.0 as usize
+            } else {
+                self.cols.saturating_sub(1) as usize
+            };
             let mut line = String::new();
             for col in left..=right {
-                if col >= row_data.len() { break; }
-                if row_data[col].flags_u16() & FLAG_WIDE_CHAR_SPACER != 0 { continue; }
+                if col >= row_data.len() {
+                    break;
+                }
+                if row_data[col].flags_u16() & FLAG_WIDE_CHAR_SPACER != 0 {
+                    continue;
+                }
                 let c = row_data[col].ch();
-                if c != '\0' { line.push(c); }
+                if c != '\0' {
+                    line.push(c);
+                }
             }
             let trimmed = line.trim_end();
             result.push_str(trimmed);
-            if buf_row < end.1 { result.push('\n'); }
+            if buf_row < end.1 {
+                result.push('\n');
+            }
         }
         result
+    }
+
+    fn normalize_cell_start(&self, row: &[PackedCell], mut idx: usize) -> usize {
+        while idx > 0 && row[idx].flags_u16() & FLAG_WIDE_CHAR_SPACER != 0 {
+            idx -= 1;
+        }
+        idx
+    }
+
+    fn prev_cell_start(&self, row: &[PackedCell], idx: usize) -> Option<usize> {
+        if idx == 0 {
+            return None;
+        }
+        let mut prev = idx - 1;
+        while prev > 0 && row[prev].flags_u16() & FLAG_WIDE_CHAR_SPACER != 0 {
+            prev -= 1;
+        }
+        Some(prev)
+    }
+
+    fn next_cell_start(&self, row: &[PackedCell], idx: usize) -> Option<usize> {
+        let next = self.cell_end(row, idx) + 1;
+        if next < row.len() {
+            Some(next)
+        } else {
+            None
+        }
+    }
+
+    fn row_chars(&self, row: &[PackedCell]) -> Vec<RowChar> {
+        let mut chars = Vec::with_capacity(row.len());
+        let mut idx = 0;
+        while idx < row.len() {
+            if row[idx].flags_u16() & FLAG_WIDE_CHAR_SPACER != 0 {
+                idx += 1;
+                continue;
+            }
+            let end = self.cell_end(row, idx);
+            let ch = row[idx].ch();
+            if ch != '\0' {
+                chars.push(RowChar {
+                    start_col: idx as u16,
+                    end_col: end as u16,
+                    ch,
+                });
+            }
+            idx = end + 1;
+        }
+        chars
+    }
+
+    fn cell_end(&self, row: &[PackedCell], mut idx: usize) -> usize {
+        while idx + 1 < row.len() && row[idx + 1].flags_u16() & FLAG_WIDE_CHAR_SPACER != 0 {
+            idx += 1;
+        }
+        idx
+    }
+
+    /// Search all lines in the buffer for `query` (case-insensitive).
+    /// Returns list of (buffer_row, start_col, end_col) matches.
+    pub fn search(&self, query: &str) -> Vec<(usize, u16, u16)> {
+        if query.is_empty() {
+            return vec![];
+        }
+        let query_lower = query.to_lowercase();
+        let mut results = Vec::new();
+
+        for (row_idx, row) in self.buffer.iter().enumerate() {
+            let mut text = String::new();
+            let mut col_positions: Vec<u16> = Vec::new();
+
+            for (col, cell) in row.iter().enumerate() {
+                if cell.flags_u16() & FLAG_WIDE_CHAR_SPACER != 0 {
+                    continue;
+                }
+                let ch = cell.ch();
+                if ch == '\0' {
+                    text.push(' ');
+                } else {
+                    text.push(ch);
+                }
+                col_positions.push(col as u16);
+            }
+
+            let text_lower = text.to_lowercase();
+            let mut search_from = 0;
+            while let Some(pos) = text_lower[search_from..].find(&query_lower) {
+                let char_start = search_from + pos;
+                let char_end = char_start + query_lower.len() - 1;
+                if char_start < col_positions.len() && char_end < col_positions.len() {
+                    results.push((row_idx, col_positions[char_start], col_positions[char_end]));
+                }
+                search_from = char_start + 1;
+            }
+        }
+        results
+    }
+}
+
+fn classify_word_cell(cell: &PackedCell) -> WordClass {
+    let ch = cell.ch();
+    if ch == '\0' || ch.is_whitespace() {
+        WordClass::Whitespace
+    } else if ch.is_alphanumeric() || ch == '_' {
+        WordClass::Word
+    } else {
+        WordClass::Symbol
+    }
+}
+
+fn trim_link_token(
+    chars: &[RowChar],
+    mut start_idx: usize,
+    mut end_idx: usize,
+) -> Option<(usize, usize)> {
+    while start_idx <= end_idx && is_leading_link_punctuation(chars[start_idx].ch) {
+        start_idx += 1;
+    }
+    while start_idx <= end_idx && is_trailing_link_punctuation(chars[end_idx].ch) {
+        if end_idx == 0 {
+            return None;
+        }
+        end_idx -= 1;
+    }
+    if start_idx > end_idx {
+        None
+    } else {
+        Some((start_idx, end_idx))
+    }
+}
+
+fn normalize_link_token(token: &str) -> Option<String> {
+    let lower = token.to_ascii_lowercase();
+    if lower.starts_with("https://") || lower.starts_with("http://") {
+        let scheme_len = if lower.starts_with("https://") { 8 } else { 7 };
+        token[scheme_len..]
+            .chars()
+            .any(|ch| ch.is_alphanumeric())
+            .then(|| token.to_string())
+    } else if lower.starts_with("www.") {
+        token[4..]
+            .chars()
+            .any(|ch| ch.is_alphanumeric())
+            .then(|| format!("https://{token}"))
+    } else {
+        None
+    }
+}
+
+fn is_leading_link_punctuation(ch: char) -> bool {
+    matches!(ch, '(' | '[' | '{' | '<' | '"' | '\'')
+}
+
+fn is_trailing_link_punctuation(ch: char) -> bool {
+    matches!(
+        ch,
+        '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '>' | '"' | '\''
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn grid_with_line(text: &str) -> ClientPaneGrid {
+        let mut grid = ClientPaneGrid::new(text.chars().count() as u16, 1, 0);
+        let row = grid.buffer.get_mut(0).unwrap();
+        row.clear();
+        row.extend(text.chars().map(PackedCell::with_ch));
+        grid
+    }
+
+    #[test]
+    fn word_bounds_select_identifier() {
+        let grid = grid_with_line("echo hello_world test");
+        assert_eq!(grid.word_bounds_at(7, 0), Some((5, 15)));
+    }
+
+    #[test]
+    fn word_bounds_select_whitespace_run() {
+        let grid = grid_with_line("a   b");
+        assert_eq!(grid.word_bounds_at(2, 0), Some((1, 3)));
+    }
+
+    #[test]
+    fn word_bounds_select_symbol_run() {
+        let grid = grid_with_line("foo::bar");
+        assert_eq!(grid.word_bounds_at(4, 0), Some((3, 4)));
+    }
+
+    #[test]
+    fn link_at_detects_https_url() {
+        let grid = grid_with_line("go https://example.com/docs now");
+        assert_eq!(
+            grid.link_at(8, 0),
+            Some(LinkMatch {
+                url: "https://example.com/docs".to_string(),
+                start_col: 3,
+                end_col: 26,
+            })
+        );
+    }
+
+    #[test]
+    fn link_at_trims_wrapping_punctuation() {
+        let grid = grid_with_line("(https://example.com/path).");
+        assert_eq!(
+            grid.link_at(10, 0),
+            Some(LinkMatch {
+                url: "https://example.com/path".to_string(),
+                start_col: 1,
+                end_col: 24,
+            })
+        );
+        assert_eq!(grid.link_at(0, 0), None);
+        assert_eq!(grid.link_at(25, 0), None);
+    }
+
+    #[test]
+    fn link_at_normalizes_www_urls() {
+        let grid = grid_with_line("visit www.example.com/test soon");
+        assert_eq!(
+            grid.link_at(10, 0),
+            Some(LinkMatch {
+                url: "https://www.example.com/test".to_string(),
+                start_col: 6,
+                end_col: 25,
+            })
+        );
     }
 }

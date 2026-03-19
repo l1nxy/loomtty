@@ -75,33 +75,42 @@ impl Default for KeybindMap {
         let mut b = HashMap::new();
 
         // Pane lifecycle
-        b.insert(KeyCombo::new("n"), Action::NewColumnRight);   // new column in this row
-        b.insert(KeyCombo::new("d"), Action::NewRowBelow);      // new row below
+        b.insert(KeyCombo::new("n"), Action::NewColumnRight);   // new column in this workspace
+        b.insert(KeyCombo::new("d"), Action::NewWorkspaceBelow);  // new workspace below
         b.insert(KeyCombo::new("x"), Action::ClosePane);
 
-        // Navigation: h/l = within row, j/k = between rows
+        // Navigation: h/l = within workspace, j/k = between workspaces
         b.insert(KeyCombo::new("h"), Action::FocusLeft);
         b.insert(KeyCombo::new("l"), Action::FocusRight);
-        b.insert(KeyCombo::new("j"), Action::FocusDown);        // next row
-        b.insert(KeyCombo::new("k"), Action::FocusUp);          // prev row
+        b.insert(KeyCombo::new("j"), Action::FocusDown);        // next workspace
+        b.insert(KeyCombo::new("k"), Action::FocusUp);          // prev workspace
         b.insert(KeyCombo::new("left"), Action::FocusLeft);
         b.insert(KeyCombo::new("right"), Action::FocusRight);
         b.insert(KeyCombo::new("up"), Action::FocusUp);
         b.insert(KeyCombo::new("down"), Action::FocusDown);
 
-        // Move column within row
+        // Move column within workspace
         b.insert(KeyCombo::with_shift("h"), Action::MovePaneLeft);
         b.insert(KeyCombo::with_shift("l"), Action::MovePaneRight);
 
-        // Column width
+        // Column width: cycle through presets
+        b.insert(KeyCombo::new("r"), Action::CyclePresetWidth);
+        b.insert(KeyCombo::with_shift("r"), Action::CyclePresetWidthReverse);
         b.insert(KeyCombo::new("f"), Action::ColumnWidthFull);
-        b.insert(KeyCombo::new("e"), Action::ColumnWidthHalf);
-        b.insert(KeyCombo::new("["), Action::ColumnWidthOneThird);
-        b.insert(KeyCombo::new("]"), Action::ColumnWidthTwoThirds);
 
-        // Column width resize (Shift+[ / Shift+])
-        b.insert(KeyCombo::with_shift("["), Action::ColumnWidthDecrease);
-        b.insert(KeyCombo::with_shift("]"), Action::ColumnWidthIncrease);
+        // Incremental resize against the nearest split
+        b.insert(KeyCombo::new("["), Action::ColumnWidthDecrease);
+        b.insert(KeyCombo::new("]"), Action::ColumnWidthIncrease);
+
+        // Equalize active column with its right neighbor
+        b.insert(KeyCombo::new("="), Action::EqualizeAdjacentColumns);
+
+        // Consume/Expel tiles within columns
+        b.insert(KeyCombo::new("c"), Action::ConsumeIntoColumn);
+        b.insert(KeyCombo::new("v"), Action::ExpelFromColumn);
+
+        // Broadcast mode
+        b.insert(KeyCombo::new("b"), Action::ToggleBroadcast);
 
         // Workspace switching by number
         for i in 1u8..=9 {

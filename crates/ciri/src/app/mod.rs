@@ -1,5 +1,10 @@
+pub(crate) mod event;
+pub(crate) mod ime;
 pub(crate) mod input_handler;
+pub(crate) mod keyboard;
+pub(crate) mod mouse;
 pub(crate) mod render;
+pub(crate) mod status_bar;
 pub(crate) mod sync;
 
 use ciri_anim::animation::ViewOffset;
@@ -17,6 +22,7 @@ use crossbeam_channel::{Receiver, Sender};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use ciri_layout::geometry::Rect as GeoRect;
 use winit::keyboard::ModifiersState;
 use winit::window::Window;
 
@@ -31,6 +37,44 @@ pub(crate) struct Selection {
     pub active: bool, // true while mouse is held
 }
 
+pub(crate) struct LastLeftClick {
+    pub pane_id: u64,
+    pub col: u16,
+    pub buffer_row: usize,
+    pub at: Instant,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HoveredLink {
+    pub pane_id: u64,
+    pub url: String,
+    pub start: (u16, usize),
+    pub end: (u16, usize),
+}
+
+/// Active search session state.
+pub(crate) struct SearchState {
+    pub query: String,
+    pub matches: Vec<SearchMatch>,
+    pub current_match_idx: usize,
+    pub pane_id: u64,
+    pub original_scroll_offset: usize,
+}
+
+pub(crate) struct SearchMatch {
+    pub buffer_row: usize,
+    pub start_col: u16,
+    pub end_col: u16,
+}
+
+/// State for a pane that is being animated out (fade-to-close).
+pub(crate) struct ClosingPaneState {
+    pub rect: GeoRect,
+    pub opacity: f32,
+    pub started: Instant,
+    pub duration_ms: u64,
+}
+
 /// Auto-reconnection state.
 pub(crate) struct ReconnectState {
     pub attempt: u32,
@@ -41,6 +85,7 @@ pub(crate) struct ReconnectState {
 
 pub(crate) struct App {
     pub config: CiriConfig,
+    pub session_name: String,
     pub frame_interval: Duration,
     pub window: Option<Arc<Window>>,
     pub renderer: Option<Renderer>,
@@ -70,13 +115,24 @@ pub(crate) struct App {
     pub resize_dragging: Option<usize>,
     pub resize_drag_start_x: f32,
     pub resize_drag_start_width: f32,
+    /// Tile height drag: (column_idx, tile_idx of top tile in the pair)
+    pub tile_resize_dragging: Option<(usize, usize)>,
+    pub tile_resize_drag_start_y: f32,
     pub connected: bool,
     pub cursor_blink_visible: bool,
     pub cursor_blink_timer: Instant,
     pub clipboard: Option<arboard::Clipboard>,
     pub selection: Option<Selection>,
+    pub last_left_click: Option<LastLeftClick>,
+    pub hovered_link: Option<HoveredLink>,
     pub mouse_left_held: bool,
     pub reconnect_state: Option<ReconnectState>,
+    pub search_state: Option<SearchState>,
+    pub broadcast_mode: bool,
+    /// Pane open fade-in: pane_id -> opacity (0.0 to 1.0, animated)
+    pub pane_open_opacity: HashMap<u64, f32>,
+    /// Closing panes being faded out
+    pub closing_panes: Vec<ClosingPaneState>,
     pub should_exit: bool,
     #[allow(dead_code)]
     pub config_watcher: Option<notify::RecommendedWatcher>,
@@ -84,36 +140,35 @@ pub(crate) struct App {
 }
 
 impl App {
-    pub fn new(config: CiriConfig) -> Self {
+    pub fn new(config: CiriConfig, session_name: impl Into<String>) -> Self {
         let frame_interval = Duration::from_millis(config.render.frame_interval_ms);
         let initial_view = ViewSize {
             width: config.window.width as f32,
             height: config.window.height as f32,
         };
+        let session_name = session_name.into();
         let mut input = InputHandler::new(
             Duration::from_millis(config.input.leader_timeout_ms),
             Duration::from_millis(config.input.double_tap_window_ms),
         );
         input.keybinds = KeybindMap::from_config(&config.keys.bindings);
-        let leader_str = &config.keys.leader;
-        if let Some(rest) = leader_str.strip_prefix("ctrl+") {
-            input.leader_ctrl_key = rest.to_string();
-        }
+        input.leader_key = ciri_input::leader::LeaderKey::parse(&config.keys.leader);
+        input.input_mode = match config.input.mode.as_str() {
+            "sticky" => ciri_input::leader::InputMode::Sticky,
+            _ => ciri_input::leader::InputMode::Prefix,
+        };
         let overview_keybinds = KeybindMap::from_overview_config(&config.keys.overview_bindings);
         let column_gap = config.appearance.column_gap;
 
         App {
             config,
+            session_name,
             frame_interval,
             window: None,
             renderer: None,
             glyph_atlas: None,
             dpi_scale: 1.0,
-            workspaces: WorkspaceSet::new_with_gaps(
-                initial_view,
-                column_gap,
-                column_gap,
-            ),
+            workspaces: WorkspaceSet::new_with_gaps(initial_view, column_gap, column_gap),
             pane_grids: HashMap::new(),
             input,
             server_tx: None,
@@ -141,17 +196,35 @@ impl App {
             resize_dragging: None,
             resize_drag_start_x: 0.0,
             resize_drag_start_width: 0.0,
+            tile_resize_dragging: None,
+            tile_resize_drag_start_y: 0.0,
             connected: false,
             cursor_blink_visible: true,
             cursor_blink_timer: Instant::now(),
             clipboard: arboard::Clipboard::new().ok(),
             selection: None,
+            last_left_click: None,
+            hovered_link: None,
             mouse_left_held: false,
             reconnect_state: None,
+            search_state: None,
+            broadcast_mode: false,
+            pane_open_opacity: HashMap::new(),
+            closing_panes: Vec::new(),
             should_exit: false,
             config_watcher: None,
             config_change_rx: None,
         }
+    }
+
+    /// Convert config preset_widths to layout ColumnWidth values.
+    pub fn preset_widths(&self) -> Vec<ciri_layout::column::ColumnWidth> {
+        use ciri_config::config::PresetWidth;
+        use ciri_layout::column::ColumnWidth;
+        self.config.layout.preset_widths.iter().map(|pw| match pw {
+            PresetWidth::Proportion { proportion } => ColumnWidth::Proportion(*proportion),
+            PresetWidth::Fixed { fixed } => ColumnWidth::Fixed(*fixed),
+        }).collect()
     }
 
     /// Send a critical message to the server (blocks if queue full).
@@ -198,7 +271,9 @@ impl App {
     }
 
     pub fn status_bar_height(&self) -> f32 {
-        let cell_h = self.glyph_atlas.as_ref()
+        let cell_h = self
+            .glyph_atlas
+            .as_ref()
             .map(|a| a.cell_height)
             .unwrap_or(self.config.font.size * 1.2);
         cell_h + self.config.statusbar.height_padding

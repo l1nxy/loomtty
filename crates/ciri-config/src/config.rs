@@ -19,6 +19,7 @@ pub struct CiriConfig {
     pub statusbar: StatusBarConfig,
     pub input: InputConfig,
     pub render: RenderConfig,
+    pub layout: LayoutConfig,
 }
 
 
@@ -44,6 +45,12 @@ pub struct AppearanceConfig {
     pub padding: f32,
     pub column_gap: f32,
     pub border_width: f32,
+    /// Override active border color (hex). If empty, uses theme border_active.
+    pub active_border_color: String,
+    /// Override inactive border color (hex). If empty, uses theme border_inactive.
+    pub inactive_border_color: String,
+    /// Opacity for inactive (non-focused) panes, 0.0-1.0. Default 0.7.
+    pub inactive_opacity: f32,
 }
 
 impl Default for AppearanceConfig {
@@ -52,6 +59,9 @@ impl Default for AppearanceConfig {
             padding: 4.0,
             column_gap: 8.0,
             border_width: 2.0,
+            active_border_color: String::new(),
+            inactive_border_color: String::new(),
+            inactive_opacity: 0.7,
         }
     }
 }
@@ -158,12 +168,15 @@ impl Default for StatusBarConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct InputConfig {
-    /// Leader mode timeout in milliseconds.
+    /// Leader mode timeout in milliseconds (prefix mode only).
     pub leader_timeout_ms: u64,
     /// Double-tap window in milliseconds for SendLeaderKey.
     pub double_tap_window_ms: u64,
     /// Scroll multiplier for line-based scroll delta.
     pub scroll_multiplier: f64,
+    /// Input mode: "prefix" (tmux-style, one action per leader press)
+    /// or "sticky" (zellij-style, stay in leader until Esc).
+    pub mode: String,
 }
 
 impl Default for InputConfig {
@@ -172,6 +185,7 @@ impl Default for InputConfig {
             leader_timeout_ms: 1000,
             double_tap_window_ms: 300,
             scroll_multiplier: 50.0,
+            mode: "prefix".to_string(),
         }
     }
 }
@@ -199,6 +213,53 @@ impl Default for RenderConfig {
             max_glyph_instances: 32768,
             max_rectangles: 8192,
             frame_latency: 2,
+        }
+    }
+}
+
+/// A single width preset: either a proportion of viewport or fixed pixels.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PresetWidth {
+    Proportion { proportion: f64 },
+    Fixed { fixed: f64 },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LayoutConfig {
+    /// Default width for newly created columns.
+    /// If not set, uses the first entry in preset_widths.
+    pub default_column_width: Option<PresetWidth>,
+    /// Width presets to cycle through with the preset key.
+    /// Supports both proportional and fixed-pixel widths.
+    pub preset_widths: Vec<PresetWidth>,
+    /// How the viewport centers on the focused column.
+    /// "always" = always center, "on-overflow" = center only when column wider than viewport,
+    /// "never" = left-aligned scrolling.
+    pub center_focused_column: CenterStrategy,
+}
+
+/// Strategy for centering the focused column in the viewport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CenterStrategy {
+    Always,
+    OnOverflow,
+    Never,
+}
+
+impl Default for LayoutConfig {
+    fn default() -> Self {
+        LayoutConfig {
+            default_column_width: None,
+            center_focused_column: CenterStrategy::Always,
+            preset_widths: vec![
+                PresetWidth::Proportion { proportion: 1.0 / 3.0 },
+                PresetWidth::Proportion { proportion: 0.5 },
+                PresetWidth::Proportion { proportion: 2.0 / 3.0 },
+                PresetWidth::Proportion { proportion: 1.0 },
+            ],
         }
     }
 }

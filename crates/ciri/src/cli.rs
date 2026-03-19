@@ -1,8 +1,11 @@
-const DEFAULT_SESSION: &str = "default";
-
 #[derive(Debug)]
 pub enum CliCommand {
+    /// Create a new session with random name and connect.
+    New,
+    /// Connect to a session by name (create if not exists).
     Run { session_name: String },
+    /// Attach to an existing session (error if not exists).
+    Attach { session_name: String },
     List,
     Kill { session_name: String },
     KillServer,
@@ -12,7 +15,7 @@ pub enum CliCommand {
 
 /// Reserved subcommand names that cannot be used as positional session names.
 fn is_subcommand(arg: &str) -> bool {
-    matches!(arg, "list" | "ls" | "kill" | "k" | "kill-server" | "ks" | "delete" | "rm" | "attach" | "help")
+    matches!(arg, "new" | "list" | "ls" | "kill" | "k" | "kill-server" | "ks" | "delete" | "rm" | "attach" | "a" | "help")
 }
 
 pub fn parse_args<I>(args: I) -> Result<CliCommand, String>
@@ -23,9 +26,8 @@ where
     let usage = usage();
 
     match args.as_slice() {
-        [] => Ok(CliCommand::Run {
-            session_name: DEFAULT_SESSION.to_string(),
-        }),
+        [] => Ok(CliCommand::New),
+        [cmd] if cmd == "new" => Ok(CliCommand::New),
         [cmd] if cmd == "list" || cmd == "ls" => Ok(CliCommand::List),
         [cmd] if cmd == "kill-server" || cmd == "ks" => Ok(CliCommand::KillServer),
         [cmd, name] if cmd == "kill" || cmd == "k" => Ok(CliCommand::Kill {
@@ -34,12 +36,10 @@ where
         [cmd, name] if cmd == "delete" || cmd == "rm" => Ok(CliCommand::Delete {
             session_name: name.clone(),
         }),
-        [cmd] if cmd == "attach" => Ok(CliCommand::Run {
-            session_name: DEFAULT_SESSION.to_string(),
+        [cmd, name] if cmd == "attach" || cmd == "a" => Ok(CliCommand::Attach {
+            session_name: name.clone(),
         }),
-        [cmd, session_name] if cmd == "attach" => Ok(CliCommand::Run {
-            session_name: session_name.clone(),
-        }),
+        [cmd] if cmd == "attach" || cmd == "a" => Err("attach requires a session name.\nUse `ciri ls` to list sessions.".to_string()),
         [flag, session_name] if flag == "--session" || flag == "-s" => Ok(CliCommand::Run {
             session_name: session_name.clone(),
         }),
@@ -52,20 +52,18 @@ where
 }
 
 pub fn usage() -> String {
-    format!(
-        "\
+    "\
 Usage:
-  ciri                          Connect to default session
-  ciri <session>                Connect to named session
-  ciri attach [session]         Connect to session (alias)
+  ciri                          Create new session and connect
+  ciri new                      Create new session and connect
+  ciri <name>                   Connect to session (create if needed)
+  ciri attach|a <name>          Attach to existing session (must exist)
   ciri list|ls                  List all sessions
-  ciri kill|k <session>         Kill a session
+  ciri kill|k <name>            Kill a session
   ciri kill-server|ks           Kill the server
-  ciri delete|rm <session>      Delete saved session
-  ciri --help|-h                Show this help
-
-Default session: {DEFAULT_SESSION}"
-    )
+  ciri delete|rm <name>         Delete saved session
+  ciri --help|-h                Show this help"
+        .to_string()
 }
 
 fn is_help_flag(arg: &str) -> bool {
@@ -81,8 +79,13 @@ mod tests {
     }
 
     #[test]
-    fn default_session_without_args() {
-        assert!(matches!(parse(&[]), CliCommand::Run { session_name } if session_name == "default"));
+    fn no_args_creates_new() {
+        assert!(matches!(parse(&[]), CliCommand::New));
+    }
+
+    #[test]
+    fn new_command() {
+        assert!(matches!(parse(&["new"]), CliCommand::New));
     }
 
     #[test]
@@ -91,13 +94,15 @@ mod tests {
     }
 
     #[test]
-    fn attach_subcommand_defaults_to_default() {
-        assert!(matches!(parse(&["attach"]), CliCommand::Run { session_name } if session_name == "default"));
+    fn attach_requires_name() {
+        let err = parse_args(["attach"].into_iter().map(|s| s.to_string()));
+        assert!(err.is_err());
     }
 
     #[test]
-    fn attach_subcommand_accepts_name() {
-        assert!(matches!(parse(&["attach", "ops"]), CliCommand::Run { session_name } if session_name == "ops"));
+    fn attach_with_name() {
+        assert!(matches!(parse(&["attach", "ops"]), CliCommand::Attach { session_name } if session_name == "ops"));
+        assert!(matches!(parse(&["a", "ops"]), CliCommand::Attach { session_name } if session_name == "ops"));
     }
 
     #[test]

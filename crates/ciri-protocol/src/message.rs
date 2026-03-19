@@ -137,11 +137,6 @@ pub const FLAG_UNDERLINE_CURLY: u16 = 0b010 << 9;
 pub const FLAG_UNDERLINE_DOTTED: u16 = 0b011 << 9;
 pub const FLAG_UNDERLINE_DASHED: u16 = 0b100 << 9;
 
-/// Extract underline style from flags. Returns 0=single, 1=double, 2=curly, 3=dotted, 4=dashed.
-pub fn underline_style(flags: u16) -> u8 {
-    ((flags >> 9) & 0b111) as u8
-}
-
 // ─── Wire messages ──────────────────────────────────────────────────
 
 /// Messages sent from client to server (msgpack encoded).

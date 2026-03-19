@@ -254,7 +254,7 @@ fn emit_underline_rects(
         let segments = (width / 2.0).ceil() as usize;
         for i in 0..segments {
             let x = px + i as f32 * 2.0;
-            let phase = (i as f32 / wave_len * std::f32::consts::TAU * 2.0).sin();
+            let phase = (i as f32 / wave_len * std::f32::consts::TAU).sin();
             let y_off = phase * 1.5;
             let w = 2.0_f32.min(width - i as f32 * 2.0);
             if w > 0.0 {
@@ -569,7 +569,7 @@ fn emit_packed_underline_rects(
             let segments = (width / 2.0).ceil() as usize;
             for i in 0..segments {
                 let x = px + i as f32 * 2.0;
-                let phase = (i as f32 / wave_len * std::f32::consts::TAU * 2.0).sin();
+                let phase = (i as f32 / wave_len * std::f32::consts::TAU).sin();
                 let y_off = phase * 1.5;
                 let w = 2.0_f32.min(width - i as f32 * 2.0);
                 if w > 0.0 {

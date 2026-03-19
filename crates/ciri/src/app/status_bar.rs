@@ -144,7 +144,7 @@ impl App {
                 break; // drop remaining left segments
             }
             emit_status_text(
-                atlas, &mut renderer.text.font_system, &renderer.queue,
+                atlas, &mut renderer.font_system, &renderer.queue,
                 text, x, text_y, cw, baseline, *color, vw, vh, glyphs,
             );
             x += text.len() as f32 * cw;
@@ -157,7 +157,7 @@ impl App {
 
         for (text, color) in &right_segments {
             emit_status_text(
-                atlas, &mut renderer.text.font_system, &renderer.queue,
+                atlas, &mut renderer.font_system, &renderer.queue,
                 text, rx, text_y, cw, baseline, *color, vw, vh, glyphs,
             );
             rx += text.len() as f32 * cw;

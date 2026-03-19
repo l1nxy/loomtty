@@ -40,29 +40,54 @@ impl Default for FontConfig {
     }
 }
 
+/// Focus ring style for the active pane border.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FocusRingStyle { Solid, Glow, Dashed }
+
+impl Default for FocusRingStyle { fn default() -> Self { Self::Solid } }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FocusRingConfig {
+    pub style: FocusRingStyle,
+    pub glow_radius: f32,
+    pub glow_layers: u8,
+    pub dash_length: f32,
+    pub gap_length: f32,
+}
+
+impl Default for FocusRingConfig {
+    fn default() -> Self {
+        FocusRingConfig { style: FocusRingStyle::Solid, glow_radius: 4.0, glow_layers: 3, dash_length: 8.0, gap_length: 4.0 }
+    }
+}
+
+/// Pane open/close animation style.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PaneOpenStyle { Fade, SlideUp, SlideDown, SlideLeft, FadeSlideUp }
+
+impl Default for PaneOpenStyle { fn default() -> Self { Self::Fade } }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppearanceConfig {
     pub padding: f32,
     pub column_gap: f32,
     pub border_width: f32,
-    /// Override active border color (hex). If empty, uses theme border_active.
     pub active_border_color: String,
-    /// Override inactive border color (hex). If empty, uses theme border_inactive.
     pub inactive_border_color: String,
-    /// Opacity for inactive (non-focused) panes, 0.0-1.0. Default 0.7.
     pub inactive_opacity: f32,
+    pub focus_ring: FocusRingConfig,
 }
 
 impl Default for AppearanceConfig {
     fn default() -> Self {
         AppearanceConfig {
-            padding: 4.0,
-            column_gap: 8.0,
-            border_width: 2.0,
-            active_border_color: String::new(),
-            inactive_border_color: String::new(),
-            inactive_opacity: 0.7,
+            padding: 4.0, column_gap: 8.0, border_width: 2.0,
+            active_border_color: String::new(), inactive_border_color: String::new(),
+            inactive_opacity: 0.7, focus_ring: FocusRingConfig::default(),
         }
     }
 }
@@ -70,25 +95,25 @@ impl Default for AppearanceConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AnimationConfig {
-    /// Animation speed (omega). Higher = faster. 8-15 recommended.
     pub speed: f64,
     pub enabled: bool,
-    /// Spring rest threshold. Lower = more precise settling.
     pub epsilon: f64,
-    /// Overview zoom fit factor (0.0-1.0). 0.9 = 90% of viewport.
     pub overview_zoom_fit: f32,
-    /// Zoom threshold below which overview tiles are rendered.
     pub zoom_threshold: f32,
+    pub pane_open_style: PaneOpenStyle,
+    pub pane_open_duration_ms: u64,
+    pub pane_close_duration_ms: u64,
+    pub focus_transition_speed: f64,
 }
 
 impl Default for AnimationConfig {
     fn default() -> Self {
         AnimationConfig {
-            speed: 12.0,
-            enabled: true,
-            epsilon: 0.1,
-            overview_zoom_fit: 0.9,
-            zoom_threshold: 0.99,
+            speed: 12.0, enabled: true, epsilon: 0.1,
+            overview_zoom_fit: 0.9, zoom_threshold: 0.99,
+            pane_open_style: PaneOpenStyle::Fade,
+            pane_open_duration_ms: 200, pane_close_duration_ms: 150,
+            focus_transition_speed: 15.0,
         }
     }
 }

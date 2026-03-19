@@ -16,6 +16,9 @@ use ciri_config::config::CiriConfig;
 use ciri_config::theme::ThemeConfig;
 use glyphon::FontSystem;
 
+use std::collections::HashSet;
+use unicode_segmentation::UnicodeSegmentation;
+
 use crate::glyph_cache::{FontStyle, GlyphAtlas};
 use crate::rect::Rect;
 use ciri_protocol::message::{
@@ -453,6 +456,9 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
 }
 
 /// Build rendering data from a `PackedCell` grid (client-side path).
+///
+/// Integrates text shaping (harfbuzz via rustybuzz) for ligature rendering
+/// and Unicode grapheme clustering for multi-codepoint emoji.
 pub fn build_view_from_grid(
     cells: &[PackedCell],
     cols: u16,
@@ -466,23 +472,49 @@ pub fn build_view_from_grid(
     config: &CiriConfig,
 ) -> TerminalView {
     let m = CellMetrics::new(atlas, config);
+    let primary_font_id = atlas.primary_font_id();
 
     let mut bg_rects = Vec::new();
     let mut glyphs = Vec::with_capacity(cols as usize * rows as usize / 2);
     let mut color_glyphs = Vec::new();
 
     for row in 0..rows as usize {
+        // Detect ligatures via text shaping (pre-pass)
+        let ligature_cols = detect_row_ligatures(cells, row, cols, config, atlas, primary_font_id);
+
         for col in 0..cols as usize {
             let idx = row * cols as usize + col;
             if idx >= cells.len() { break; }
-            if let Some(props) = CellProps::from_packed_cell(&cells[idx], config) {
-                render_cell(
-                    row, col, &props, &m,
-                    atlas, font_system, queue,
-                    &mut bg_rects, &mut glyphs, &mut color_glyphs,
-                );
+
+            let Some(props) = CellProps::from_packed_cell(&cells[idx], config) else { continue };
+
+            // Background + decorations always rendered
+            render_cell_bg_only(row, col, &props, &m, &mut bg_rects);
+
+            if props.is_hidden || props.ch == ' ' || props.ch == '\0' || props.ch.is_control() {
+                continue;
             }
+
+            // Skip cells that are continuation of a ligature
+            if ligature_cols.contains(&col) {
+                continue;
+            }
+
+            // Try grapheme cluster shaping for multi-codepoint sequences
+            if try_render_grapheme_cluster(
+                cells, row, col, cols, &props, &m, atlas, font_system, queue,
+                primary_font_id, &mut glyphs, &mut color_glyphs,
+            ) {
+                continue;
+            }
+
+            // Normal single-char rendering
+            emit_glyph(col, row, &props, &m, atlas, font_system, queue, &mut glyphs, &mut color_glyphs);
         }
+
+        // Render ligature glyphs (shaped multi-char → single glyph)
+        render_ligature_glyphs(cells, row, cols, config, &m, atlas, font_system, queue,
+                               primary_font_id, &mut glyphs, &mut color_glyphs);
     }
 
     let cursor_rects = make_cursor_rects(
@@ -490,6 +522,231 @@ pub fn build_view_from_grid(
     );
 
     TerminalView { glyph_instances: glyphs, color_glyph_instances: color_glyphs, bg_rects, cursor_rects, scrollbar_rect: None }
+}
+
+// ─── Text shaping integration ───────────────────────────────────────
+
+/// Render background + decorations for a cell (no glyph).
+fn render_cell_bg_only(row: usize, col: usize, cell: &CellProps, m: &CellMetrics, bg_rects: &mut Vec<Rect>) {
+    let px = col as f32 * m.cw;
+    let py = row as f32 * m.ch;
+    let bg_width = if cell.is_wide { m.cw * 2.0 } else { m.cw };
+    if cell.bg != m.default_bg {
+        bg_rects.push(Rect { x: px, y: py, w: bg_width, h: m.ch, color: cell.bg });
+    }
+    if cell.is_hidden { return; }
+    if cell.underline != UnderlineStyle::None {
+        emit_underline_rects(bg_rects, cell.underline, px, py + m.baseline + 1.0, bg_width, cell.fg, m.cw);
+    }
+    if cell.is_strikeout {
+        bg_rects.push(Rect { x: px, y: py + m.ch * 0.5, w: bg_width, h: 1.0, color: cell.fg });
+    }
+}
+
+/// Emit a single glyph for a character at (col, row).
+fn emit_glyph(
+    col: usize, row: usize, cell: &CellProps, m: &CellMetrics,
+    atlas: &mut GlyphAtlas, font_system: &mut FontSystem, queue: &wgpu::Queue,
+    glyphs: &mut Vec<RelativeGlyph>, color_glyphs: &mut Vec<RelativeGlyph>,
+) {
+    if let Some(entry) = atlas.ensure_styled_char(cell.ch, cell.style, font_system, queue) {
+        if entry.width == 0 || entry.height == 0 { return; }
+        let px = col as f32 * m.cw;
+        let py = row as f32 * m.ch;
+        let g = RelativeGlyph {
+            px: (px + entry.bearing_x as f32).round(),
+            py: (py + m.baseline - entry.bearing_y as f32).round(),
+            glyph_w: entry.width as f32, glyph_h: entry.height as f32,
+            u0: entry.u0, v0: entry.v0, u1: entry.u1, v1: entry.v1,
+            color: cell.fg,
+        };
+        if entry.is_color { color_glyphs.push(g); } else { glyphs.push(g); }
+    }
+}
+
+/// Detect columns that are part of ligatures in a row. Returns set of "continuation" columns
+/// (i.e., columns consumed by a ligature but NOT the start column).
+fn detect_row_ligatures(
+    cells: &[PackedCell], row: usize, cols: u16, config: &CiriConfig,
+    atlas: &GlyphAtlas, primary_font_id: Option<glyphon::fontdb::ID>,
+) -> HashSet<usize> {
+    let mut lig_cols = HashSet::new();
+    let Some(fid) = primary_font_id else { return lig_cols };
+
+    // Collect same-style text runs
+    let mut run_start = None;
+    let mut run_text = String::new();
+    let mut run_style = FontStyle::Regular;
+
+    for col in 0..=cols as usize {
+        let (ch, style) = if col < cols as usize {
+            let idx = row * cols as usize + col;
+            if idx < cells.len() {
+                if let Some(props) = CellProps::from_packed_cell(&cells[idx], config) {
+                    if !props.is_hidden && props.ch != ' ' && props.ch != '\0' && !props.ch.is_control() {
+                        (Some((props.ch, col)), props.style)
+                    } else { (None, FontStyle::Regular) }
+                } else { (None, FontStyle::Regular) }
+            } else { (None, FontStyle::Regular) }
+        } else { (None, FontStyle::Regular) };
+
+        if let Some((c, _)) = ch {
+            if run_start.is_some() && style == run_style {
+                run_text.push(c);
+                continue;
+            }
+            // Flush previous run
+            if run_start.is_some() && run_text.len() >= 2 {
+                let start = run_start.unwrap();
+                for lig in atlas.shaper.detect_ligatures(&run_text, fid) {
+                    for k in 1..lig.char_count {
+                        lig_cols.insert(start + lig.start_col + k);
+                    }
+                }
+            }
+            run_start = Some(col);
+            run_text.clear();
+            run_text.push(c);
+            run_style = style;
+        } else {
+            if run_start.is_some() && run_text.len() >= 2 {
+                let start = run_start.unwrap();
+                for lig in atlas.shaper.detect_ligatures(&run_text, fid) {
+                    for k in 1..lig.char_count {
+                        lig_cols.insert(start + lig.start_col + k);
+                    }
+                }
+            }
+            run_start = None;
+            run_text.clear();
+        }
+    }
+    lig_cols
+}
+
+/// Render ligature glyphs (shaped) for a row.
+fn render_ligature_glyphs(
+    cells: &[PackedCell], row: usize, cols: u16, config: &CiriConfig,
+    m: &CellMetrics, atlas: &mut GlyphAtlas, font_system: &mut FontSystem,
+    queue: &wgpu::Queue, primary_font_id: Option<glyphon::fontdb::ID>,
+    glyphs: &mut Vec<RelativeGlyph>, color_glyphs: &mut Vec<RelativeGlyph>,
+) {
+    let Some(fid) = primary_font_id else { return };
+
+    let mut run_start = 0usize;
+    let mut run_text = String::new();
+    let mut run_style = FontStyle::Regular;
+    let mut run_fg = [1.0f32; 4];
+
+    for col in 0..=cols as usize {
+        let cell_info = if col < cols as usize {
+            let idx = row * cols as usize + col;
+            if idx < cells.len() {
+                CellProps::from_packed_cell(&cells[idx], config)
+                    .filter(|p| !p.is_hidden && p.ch != ' ' && p.ch != '\0' && !p.ch.is_control())
+            } else { None }
+        } else { None };
+
+        if let Some(props) = &cell_info {
+            if !run_text.is_empty() && props.style == run_style {
+                run_text.push(props.ch);
+                continue;
+            }
+            // Flush
+            flush_ligatures(&run_text, run_start, row, run_style, run_fg, fid, m, atlas, font_system, queue, glyphs, color_glyphs);
+            run_start = col;
+            run_text.clear();
+            run_text.push(props.ch);
+            run_style = props.style;
+            run_fg = props.fg;
+        } else {
+            flush_ligatures(&run_text, run_start, row, run_style, run_fg, fid, m, atlas, font_system, queue, glyphs, color_glyphs);
+            run_text.clear();
+        }
+    }
+}
+
+fn flush_ligatures(
+    text: &str, start_col: usize, row: usize, style: FontStyle, fg: [f32; 4],
+    fid: glyphon::fontdb::ID, m: &CellMetrics, atlas: &mut GlyphAtlas,
+    font_system: &mut FontSystem, queue: &wgpu::Queue,
+    glyphs: &mut Vec<RelativeGlyph>, color_glyphs: &mut Vec<RelativeGlyph>,
+) {
+    if text.len() < 2 { return; }
+    for lig in atlas.shaper.detect_ligatures(text, fid) {
+        let col = start_col + lig.start_col;
+        let px = col as f32 * m.cw;
+        let py = row as f32 * m.ch;
+        if let Some(entry) = atlas.ensure_glyph_id(lig.glyph_id, lig.font_id, style, font_system, queue) {
+            if entry.width == 0 || entry.height == 0 { continue; }
+            let g = RelativeGlyph {
+                px: (px + entry.bearing_x as f32).round(),
+                py: (py + m.baseline - entry.bearing_y as f32).round(),
+                glyph_w: entry.width as f32, glyph_h: entry.height as f32,
+                u0: entry.u0, v0: entry.v0, u1: entry.u1, v1: entry.v1,
+                color: fg,
+            };
+            if entry.is_color { color_glyphs.push(g); } else { glyphs.push(g); }
+        }
+    }
+}
+
+/// Try to render a multi-codepoint grapheme cluster. Returns true if handled.
+fn try_render_grapheme_cluster(
+    cells: &[PackedCell], row: usize, col: usize, cols: u16,
+    cell: &CellProps, m: &CellMetrics,
+    atlas: &mut GlyphAtlas, font_system: &mut FontSystem, queue: &wgpu::Queue,
+    primary_font_id: Option<glyphon::fontdb::ID>,
+    glyphs: &mut Vec<RelativeGlyph>, color_glyphs: &mut Vec<RelativeGlyph>,
+) -> bool {
+    let fid = match primary_font_id { Some(f) => f, None => return false };
+
+    // Look ahead for combining/modifier characters
+    let mut cluster_str = String::from(cell.ch);
+    let mut look = col + if cell.is_wide { 2 } else { 1 };
+    while look < cols as usize {
+        let li = row * cols as usize + look;
+        if li >= cells.len() { break; }
+        let next_ch = cells[li].ch();
+        if is_combining_or_modifier(next_ch) { cluster_str.push(next_ch); look += 1; } else { break; }
+    }
+
+    // Only process if it's a single grapheme with multiple codepoints
+    if cluster_str.graphemes(true).count() != 1 || cluster_str.chars().count() <= 1 {
+        return false;
+    }
+
+    let gid = match atlas.shaper.shape_grapheme(&cluster_str, fid) { Some(g) => g, None => return false };
+    let entry = match atlas.ensure_glyph_id(gid, fid, cell.style, font_system, queue) { Some(e) => e, None => return false };
+    if entry.width == 0 || entry.height == 0 { return false; }
+
+    let px = col as f32 * m.cw;
+    let py = row as f32 * m.ch;
+    let g = RelativeGlyph {
+        px: (px + entry.bearing_x as f32).round(),
+        py: (py + m.baseline - entry.bearing_y as f32).round(),
+        glyph_w: entry.width as f32, glyph_h: entry.height as f32,
+        u0: entry.u0, v0: entry.v0, u1: entry.u1, v1: entry.v1,
+        color: cell.fg,
+    };
+    if entry.is_color { color_glyphs.push(g); } else { glyphs.push(g); }
+    true
+}
+
+/// Check if a character is a Unicode combining character, ZWJ, or variation selector.
+fn is_combining_or_modifier(c: char) -> bool {
+    matches!(c,
+        '\u{200D}'          // Zero Width Joiner
+        | '\u{FE0E}'..='\u{FE0F}'  // Variation Selectors
+        | '\u{0300}'..='\u{036F}'   // Combining Diacritical Marks
+        | '\u{20D0}'..='\u{20FF}'   // Combining Marks for Symbols
+        | '\u{1AB0}'..='\u{1AFF}'   // Combining Diacritical Marks Extended
+        | '\u{1DC0}'..='\u{1DFF}'   // Combining Diacritical Marks Supplement
+        | '\u{FE20}'..='\u{FE2F}'   // Combining Half Marks
+        | '\u{E0100}'..='\u{E01EF}' // Variation Selectors Supplement
+        | '\u{1F3FB}'..='\u{1F3FF}' // Emoji skin tone modifiers
+        | '\u{1F1E0}'..='\u{1F1FF}' // Regional Indicator Symbols
+    )
 }
 
 /// Build a scrollbar rect for a pane with scrollback.

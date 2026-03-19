@@ -432,107 +432,134 @@ impl App {
 
         let bar_height = atlas.cell_height + self.config.statusbar.height_padding;
         let bar_y = vh - bar_height;
-        bg_rects.push(Rect {
-            x: 0.0,
-            y: bar_y,
-            w: vw,
-            h: bar_height,
-            color: ThemeConfig::parse_color(&self.config.theme.statusbar_background),
-        });
+        let cw = atlas.cell_width;
+        let baseline = atlas.cell_height * self.config.statusbar.text_baseline;
+        let text_y = bar_y + 2.0;
 
+        // Colors
+        let bar_bg = ThemeConfig::parse_color(&self.config.theme.statusbar_background);
+        let dim = ThemeConfig::parse_color(&self.config.theme.statusbar_dim);
+        let accent = ThemeConfig::parse_color(&self.config.theme.accent);
+        let broadcast_color = ThemeConfig::parse_color(&self.config.theme.mode_broadcast);
+
+        // Background
+        bg_rects.push(Rect { x: 0.0, y: bar_y, w: vw, h: bar_height, color: bar_bg });
+
+        // Determine mode
+        let is_leader = self.input.is_awaiting_action();
+        let is_broadcast = self.broadcast_mode;
+        let is_overview = self.overview_active;
+
+        let (mode_label, mode_color) = if is_broadcast {
+            (" BROADCAST ", broadcast_color)
+        } else if is_overview {
+            (" OVERVIEW ", accent)
+        } else if is_leader {
+            (" LEADER ", accent)
+        } else {
+            (" NORMAL ", dim)
+        };
+
+        // Build keybinding hints per mode
+        let leader_key = self.config.keys.leader.to_uppercase();
+        let hints = if is_broadcast {
+            format!("{}+b:exit broadcast", leader_key)
+        } else if is_overview {
+            "h/l/j/k:navigate  x:close  n:new  esc:exit".to_string()
+        } else if is_leader {
+            "n:new  x:close  h/l:\u{2190}\u{2192}  j/k:\u{2191}\u{2193}  f:full  1/2/3:width  o:overview".to_string()
+        } else {
+            format!("leader:{}", leader_key)
+        };
+
+        // === Build left segments: session + workspaces ===
+        let session_text = format!(" {}  ", self.session_name);
         let ws_idx = self.workspaces.active_workspace_idx;
-        let leader_hint = if self.input.is_awaiting_action() {
-            " LEADER "
-        } else {
-            ""
-        };
-        let overview_hint = if self.overview_active {
-            " OVERVIEW "
-        } else {
-            ""
-        };
-        let broadcast_hint = if self.broadcast_mode {
-            " BROADCAST "
-        } else {
-            ""
-        };
-
-        let mut status_left = String::new();
+        let mut left_segments: Vec<(String, [f32; 4])> = Vec::new();
+        left_segments.push((session_text, dim));
         for (i, ws) in self.workspaces.workspaces.iter().enumerate() {
             if !ws.is_empty() || i == ws_idx {
-                if i == ws_idx {
-                    status_left.push_str(&format!(" [{}*] ", i + 1));
-                } else {
-                    status_left.push_str(&format!(" [{}] ", i + 1));
-                }
+                let label = format!("[{}] ", i + 1);
+                let color = if i == ws_idx { accent } else { dim };
+                left_segments.push((label, color));
             }
         }
 
-        let active_info = self
-            .workspaces
-            .active()
-            .active_pane_id()
-            .map(|id| format!("pane:{id}"))
-            .unwrap_or_default();
-        let session_info = format!("session:{}", self.session_name);
-        let status_right = format!("{broadcast_hint}{overview_hint}{leader_hint} {session_info} {active_info} ");
+        // === Build right segments: mode + hints ===
+        let right_segments: Vec<(&str, [f32; 4])> = vec![
+            (&hints, dim),
+            ("  ", dim),
+            (mode_label, mode_color),
+        ];
 
-        let text_y = bar_y + 2.0;
-        let cw = atlas.cell_width;
-        let baseline = atlas.cell_height * self.config.statusbar.text_baseline;
+        // Progressive degradation: check if everything fits
+        let left_chars: usize = left_segments.iter().map(|(s, _)| s.len()).sum();
+        let right_chars: usize = right_segments.iter().map(|(s, _)| s.len()).sum();
+        let available = (vw / cw) as usize;
+        let show_hints = left_chars + right_chars <= available;
 
-        let left_color = if self.input.is_awaiting_action() {
-            ThemeConfig::parse_color(&self.config.theme.accent)
+        // Render left segments
+        let mut x = 0.0;
+        for (text, color) in &left_segments {
+            emit_status_text(
+                atlas, &mut renderer.text.font_system, &renderer.queue,
+                text, x, text_y, cw, baseline, *color, vw, vh, glyphs,
+            );
+            x += text.len() as f32 * cw;
+        }
+
+        // Render right segments (right-aligned)
+        let right_text_chars: usize = if show_hints {
+            right_segments.iter().map(|(s, _)| s.len()).sum()
         } else {
-            ThemeConfig::parse_color(&self.config.theme.foreground)
+            // Only show mode label
+            mode_label.len()
         };
-        let right_color = if self.broadcast_mode || self.overview_active || self.input.is_awaiting_action() {
-            ThemeConfig::parse_color(&self.config.theme.accent)
+        let mut rx = vw - right_text_chars as f32 * cw;
+
+        if show_hints {
+            for (text, color) in &right_segments {
+                emit_status_text(
+                    atlas, &mut renderer.text.font_system, &renderer.queue,
+                    text, rx, text_y, cw, baseline, *color, vw, vh, glyphs,
+                );
+                rx += text.len() as f32 * cw;
+            }
         } else {
-            ThemeConfig::parse_color(&self.config.theme.bright_black)
-        };
+            emit_status_text(
+                atlas, &mut renderer.text.font_system, &renderer.queue,
+                mode_label, rx, text_y, cw, baseline, mode_color, vw, vh, glyphs,
+            );
+        }
 
-        emit_status_text(
-            atlas,
-            &mut renderer.text.font_system,
-            &renderer.queue,
-            &status_left,
-            0.0,
-            text_y,
-            cw,
-            baseline,
-            left_color,
-            vw,
-            vh,
-            glyphs,
-        );
-
-        let right_start_x = vw - status_right.len() as f32 * cw;
-        emit_status_text(
-            atlas,
-            &mut renderer.text.font_system,
-            &renderer.queue,
-            &status_right,
-            right_start_x,
-            text_y,
-            cw,
-            baseline,
-            right_color,
-            vw,
-            vh,
-            glyphs,
-        );
-
-        if self.input.is_awaiting_action() {
+        // Mode indicator line above status bar (for non-normal modes)
+        if is_leader || is_broadcast || is_overview {
             let indicator_h = self.config.statusbar.leader_indicator_height;
+            let indicator_color = if is_broadcast { broadcast_color } else { accent };
             bg_rects.push(Rect {
                 x: 0.0,
                 y: bar_y - indicator_h,
                 w: vw,
                 h: indicator_h,
-                color: ThemeConfig::parse_color(&self.config.theme.accent),
+                color: indicator_color,
             });
         }
+
+        // Mode label background pill
+        let pill_x = if show_hints {
+            vw - right_text_chars as f32 * cw + right_segments[0].0.len() as f32 * cw + right_segments[1].0.len() as f32 * cw
+        } else {
+            vw - mode_label.len() as f32 * cw
+        };
+        let mut pill_bg = mode_color;
+        pill_bg[3] = 0.15; // translucent
+        bg_rects.push(Rect {
+            x: pill_x,
+            y: bar_y,
+            w: mode_label.len() as f32 * cw,
+            h: bar_height,
+            color: pill_bg,
+        });
     }
 
     pub fn build_search_bar(

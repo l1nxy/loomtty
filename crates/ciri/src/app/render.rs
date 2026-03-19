@@ -650,6 +650,103 @@ impl App {
         }
     }
 
+    pub fn build_image_placements(
+        &mut self,
+        tiles: &[(u64, GeoRect, bool)],
+        zoom: f32,
+        vw: f32,
+        vh: f32,
+        bg_rects: &mut Vec<Rect>,
+        glyphs: &mut Vec<GlyphInstance>,
+    ) {
+        if self.image_placements.is_empty() {
+            return;
+        }
+        let renderer = self.renderer.as_mut().unwrap();
+        let atlas = self.glyph_atlas.as_mut().unwrap();
+        let border_w = self.config.appearance.border_width;
+        let padding = self.config.appearance.padding;
+        let (cw, ch) = (atlas.cell_width, atlas.cell_height);
+        let zoom_threshold = self.config.animation.zoom_threshold;
+
+        for (pane_id, tile_rect, _) in tiles {
+            let Some(placements) = self.image_placements.get(pane_id) else {
+                continue;
+            };
+            if placements.is_empty() {
+                continue;
+            }
+
+            let tr = if zoom < zoom_threshold {
+                let cx = vw / 2.0;
+                let cy = vh / 2.0;
+                GeoRect::new(
+                    cx + (tile_rect.x - cx) * zoom,
+                    cy + (tile_rect.y - cy) * zoom,
+                    tile_rect.w * zoom,
+                    tile_rect.h * zoom,
+                )
+            } else {
+                *tile_rect
+            };
+
+            let inner_x = tr.x + (border_w + padding) * zoom;
+            let inner_y = tr.y + (border_w + padding) * zoom;
+
+            for img in placements {
+                let ix = inner_x + img.col as f32 * cw * zoom;
+                let iy = inner_y + img.row as f32 * ch * zoom;
+                let iw = img.width_cells as f32 * cw * zoom;
+                let ih = img.height_cells as f32 * ch * zoom;
+
+                // Image placeholder: dark semi-transparent background
+                let src = GeoRect::new(ix, iy, iw, ih);
+                if let Some(c) = src.intersection(&tr) {
+                    bg_rects.push(Rect {
+                        x: c.x, y: c.y, w: c.w, h: c.h,
+                        color: [0.1, 0.1, 0.15, 0.8],
+                    });
+                    // Border
+                    let bw = (1.0 * zoom).max(1.0);
+                    bg_rects.push(Rect {
+                        x: c.x, y: c.y, w: c.w, h: bw,
+                        color: [0.4, 0.6, 0.8, 0.6],
+                    });
+                    bg_rects.push(Rect {
+                        x: c.x, y: c.y + c.h - bw, w: c.w, h: bw,
+                        color: [0.4, 0.6, 0.8, 0.6],
+                    });
+                    bg_rects.push(Rect {
+                        x: c.x, y: c.y, w: bw, h: c.h,
+                        color: [0.4, 0.6, 0.8, 0.6],
+                    });
+                    bg_rects.push(Rect {
+                        x: c.x + c.w - bw, y: c.y, w: bw, h: c.h,
+                        color: [0.4, 0.6, 0.8, 0.6],
+                    });
+                }
+
+                // "IMG" label
+                let label = format!("IMG {}x{}", img.pixel_width, img.pixel_height);
+                let baseline = ch * self.config.statusbar.text_baseline;
+                emit_status_text(
+                    atlas,
+                    &mut renderer.text.font_system,
+                    &renderer.queue,
+                    &label,
+                    ix + 4.0 * zoom,
+                    iy + 2.0 * zoom,
+                    cw * zoom,
+                    baseline * zoom,
+                    [0.6, 0.8, 1.0, 0.7],
+                    vw,
+                    vh,
+                    glyphs,
+                );
+            }
+        }
+    }
+
     pub fn submit_frame(
         renderer: &mut Renderer,
         atlas: &mut GlyphAtlas,
@@ -855,6 +952,7 @@ impl App {
         self.build_search_bar(&tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs);
         self.build_bell_flash(&tiles, zoom, vw_f, vh_f, &mut bg_rects);
         self.build_ime_preedit(&tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs);
+        self.build_image_placements(&tiles, zoom, vw_f, vh_f, &mut bg_rects, &mut glyphs);
 
         let clear_color = ThemeConfig::parse_color(&self.config.theme.ui_background);
         let renderer = self.renderer.as_mut().unwrap();

@@ -102,6 +102,21 @@ impl App {
                     self.bell_flash = Some((pane_id, std::time::Instant::now()));
                     needs_redraw = true;
                 }
+                ServerEvent::Control(ServerMessage::ImagePlacement {
+                    pane_id, image_id, col, row,
+                    width_cells, height_cells,
+                    pixel_width, pixel_height,
+                    ..
+                }) => {
+                    log::debug!("image #{image_id} for pane {pane_id}: {width_cells}x{height_cells} cells");
+                    let placements = self.image_placements.entry(pane_id).or_default();
+                    placements.push(super::ClientImagePlacement {
+                        image_id, col, row,
+                        width_cells, height_cells,
+                        pixel_width, pixel_height,
+                    });
+                    needs_redraw = true;
+                }
                 ServerEvent::Control(ServerMessage::SessionList { .. })
                 | ServerEvent::Control(ServerMessage::SessionSwitched { .. })
                 | ServerEvent::Control(ServerMessage::SessionKilled { .. })

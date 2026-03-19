@@ -160,8 +160,8 @@ pub enum ClientMessage {
     MovePaneRight,
     /// Resize the viewport.
     Resize { cols: u16, rows: u16, width: u32, height: u32, cell_width: f32, cell_height: f32 },
-    /// Set column width.
-    SetColumnWidth { proportion: f64 },
+    /// Set column width. If `fixed_px` is Some, use fixed pixel width; otherwise proportion.
+    SetColumnWidth { proportion: f64, fixed_px: Option<f64> },
     /// Adjust the split between the active column and its nearest neighbor.
     AdjustColumnSplit { delta: f64 },
     /// Make the active column and its nearest neighbor 50/50.
@@ -188,6 +188,11 @@ pub enum ClientMessage {
     KillServer,
     /// Switch this client to a different session (create if needed).
     SwitchSession { session_name: String },
+    /// Set absolute weights for two adjacent stacked tiles in a column.
+    /// Sent on mouse-up after dragging a tile border.
+    SetTileWeights { column_idx: usize, top_tile_idx: usize, top_weight: f64, bottom_weight: f64 },
+    /// Adjust the split between a specific column pair (identified by left index).
+    AdjustColumnSplitAt { column_idx: usize, delta: f64 },
 }
 
 /// Control messages from server to client (msgpack encoded, tags 0x10-0x1F).
@@ -218,6 +223,19 @@ pub enum ServerMessage {
     Error { message: String },
     /// Bell notification from a pane (BEL / \x07).
     Bell { pane_id: u64 },
+    /// Inline image placement from Kitty/Sixel protocol.
+    ImagePlacement {
+        pane_id: u64,
+        image_id: u64,
+        col: u16,
+        row: u16,
+        width_cells: u16,
+        height_cells: u16,
+        pixel_width: u32,
+        pixel_height: u32,
+        format: String,
+        data: Vec<u8>,
+    },
 }
 
 /// Session info returned in SessionList.

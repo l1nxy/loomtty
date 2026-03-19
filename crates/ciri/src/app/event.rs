@@ -290,7 +290,13 @@ impl ApplicationHandler for App {
                     grid.dirty = true;
                 }
                 self.cached_views.clear();
-                let t = self.workspaces.active_mut().target_offset_for_active();
+                let center_strategy = match self.config.layout.center_focused_column {
+                    ciri_config::config::CenterStrategy::Always => ciri_layout::workspace::CenterStrategy::Always,
+                    ciri_config::config::CenterStrategy::OnOverflow => ciri_layout::workspace::CenterStrategy::OnOverflow,
+                    ciri_config::config::CenterStrategy::Never => ciri_layout::workspace::CenterStrategy::Never,
+                };
+                let current_vox = self.view_offset_x.value() as f32;
+                let t = self.workspaces.active_mut().target_offset_for_active_with_strategy(center_strategy, current_vox);
                 self.view_offset_x.jump_to(t as f64);
                 let (cols, rows) = self.compute_grid_size();
                 let (cw, ch) = self.cell_dimensions();

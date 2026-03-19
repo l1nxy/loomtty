@@ -945,6 +945,7 @@ struct Instance {
 struct VsOut {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
+    @location(1) opacity: f32,
 };
 
 @vertex
@@ -954,6 +955,7 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: Instance) -> VsOut {
 
     var out: VsOut;
     out.uv = inst.uv_pos + vec2<f32>(x, y) * inst.uv_size;
+    out.opacity = inst.color.a;
     let px = inst.pos + vec2<f32>(x, y) * inst.size;
     out.position = vec4<f32>(px.x, px.y, 0.0, 1.0);
     return out;
@@ -964,8 +966,8 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: Instance) -> VsOut {
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    // Color emoji: use texture color directly (already sRGB from Rgba8UnormSrgb)
-    return textureSample(atlas_tex, atlas_sampler, in.uv);
+    let texel = textureSample(atlas_tex, atlas_sampler, in.uv);
+    return vec4<f32>(texel.rgb, texel.a * in.opacity);
 }
 "#;
 

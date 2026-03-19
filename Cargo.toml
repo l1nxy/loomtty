@@ -47,6 +47,8 @@ log = "0.4"
 env_logger = "0.11"
 anyhow = "1"
 base64 = "0.22"
+rustybuzz = "0.18"
+unicode-segmentation = "1.11"
 nix = { version = "0.29", features = ["term", "process", "fs", "signal"] }
 libc = "0.2"
 

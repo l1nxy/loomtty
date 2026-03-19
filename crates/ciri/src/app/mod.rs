@@ -148,6 +148,12 @@ pub(crate) struct App {
     pub broadcast_mode: bool,
     /// Pane open fade-in: pane_id -> opacity (0.0 to 1.0, animated)
     pub pane_open_opacity: HashMap<u64, f32>,
+    /// Pane open slide offset: pane_id -> slide progress (1.0 = fully off-screen, 0.0 = in place)
+    pub pane_open_slides: HashMap<u64, f32>,
+    /// Animated focus opacity per pane (smooth transition on focus change)
+    pub pane_focus_opacity: HashMap<u64, ViewOffset>,
+    /// Previously focused pane ID (for detecting focus transitions)
+    pub prev_focused_pane: Option<u64>,
     /// Closing panes being faded out
     pub closing_panes: Vec<ClosingPaneState>,
     /// Visual bell flash: (pane_id, start_time)
@@ -243,6 +249,9 @@ impl App {
             search_state: None,
             broadcast_mode: false,
             pane_open_opacity: HashMap::new(),
+            pane_open_slides: HashMap::new(),
+            pane_focus_opacity: HashMap::new(),
+            prev_focused_pane: None,
             closing_panes: Vec::new(),
             bell_flash: None,
             image_placements: HashMap::new(),

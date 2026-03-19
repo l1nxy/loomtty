@@ -61,6 +61,9 @@ impl App {
                         ClientPaneGrid::new(cols, rows, self.config.terminal.scrollback_lines)
                     });
                     self.pane_open_opacity.insert(pane_id, 0.0); // start fade-in
+                    if !matches!(self.config.animation.pane_open_style, ciri_config::config::PaneOpenStyle::Fade) {
+                        self.pane_open_slides.insert(pane_id, 1.0);
+                    }
                     needs_redraw = true;
                 }
                 ServerEvent::Control(ServerMessage::PaneClosed { pane_id }) => {

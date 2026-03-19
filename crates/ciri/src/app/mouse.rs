@@ -543,7 +543,7 @@ impl App {
 
     /// Handle pinch-to-zoom gesture (macOS/trackpad).
     pub(crate) fn handle_pinch_gesture(&mut self, delta: f64, phase: TouchPhase) {
-        if !self.config.gesture.enabled {
+        if !self.config.gesture.enabled || !delta.is_finite() {
             return;
         }
         let sensitivity = self.config.gesture.pinch_sensitivity;

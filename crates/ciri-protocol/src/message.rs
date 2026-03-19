@@ -125,6 +125,17 @@ pub const FLAG_INVERSE: u16 = 1 << 5;
 pub const FLAG_DIM: u16 = 1 << 6;
 pub const FLAG_STRIKEOUT: u16 = 1 << 7;
 pub const FLAG_HIDDEN: u16 = 1 << 8;
+/// Underline style variants (3 bits, bits 9-11).
+/// 0b000 = single (default when FLAG_UNDERLINE is set)
+/// 0b001 = double
+/// 0b010 = curly
+/// 0b011 = dotted
+/// 0b100 = dashed
+pub const FLAG_UNDERLINE_STYLE_MASK: u16 = 0b111 << 9;
+pub const FLAG_UNDERLINE_DOUBLE: u16 = 0b001 << 9;
+pub const FLAG_UNDERLINE_CURLY: u16 = 0b010 << 9;
+pub const FLAG_UNDERLINE_DOTTED: u16 = 0b011 << 9;
+pub const FLAG_UNDERLINE_DASHED: u16 = 0b100 << 9;
 
 // ─── Wire messages ──────────────────────────────────────────────────
 

@@ -145,6 +145,7 @@ impl App {
         vh: f32,
         bg_rects: &mut Vec<Rect>,
         glyphs: &mut Vec<GlyphInstance>,
+        color_glyphs: &mut Vec<GlyphInstance>,
     ) {
         let zoom_threshold = self.config.animation.zoom_threshold;
         let padding = self.config.appearance.padding;
@@ -237,6 +238,19 @@ impl App {
                             color: cursor.color,
                         });
                     }
+                }
+            }
+
+            // Scrollbar
+            if let Some(sb) = &view.scrollbar_rect {
+                let src = GeoRect::new(
+                    inner_x + sb.x * zoom,
+                    inner_y + sb.y * zoom,
+                    sb.w * zoom,
+                    sb.h * zoom,
+                );
+                if let Some(c) = src.intersection(&tr) {
+                    bg_rects.push(Rect { x: c.x, y: c.y, w: c.w, h: c.h, color: sb.color });
                 }
             }
 
@@ -355,7 +369,8 @@ impl App {
             let open_opacity = self.pane_open_opacity.get(pane_id).copied().unwrap_or(1.0);
             let dim = dim * open_opacity;
 
-            glyphs.extend(view.glyph_instances.iter().filter_map(|g| {
+            // Convert a relative glyph to an NDC GlyphInstance with tile clipping.
+            let make_instance = |g: &terminal::RelativeGlyph, color: [f32; 4]| -> Option<GlyphInstance> {
                 let sx = (inner_x + g.px * zoom).round();
                 let sy = (inner_y + g.py * zoom).round();
                 let gw = (g.glyph_w * zoom).round();
@@ -364,13 +379,6 @@ impl App {
                 if gw <= 0.0 || gh <= 0.0 {
                     return None;
                 }
-
-                let color = [
-                    g.color[0] * dim,
-                    g.color[1] * dim,
-                    g.color[2] * dim,
-                    g.color[3],
-                ];
 
                 if sx >= tr.x && sy >= tr.y && sx + gw <= tr.x + tr.w && sy + gh <= tr.y + tr.h {
                     return Some(GlyphInstance {
@@ -397,6 +405,19 @@ impl App {
                     uv_size: [u_full * c.w / gw, v_full * c.h / gh],
                     color,
                 })
+            };
+
+            // Regular text glyphs (alpha atlas): dim the foreground color
+            glyphs.extend(view.glyph_instances.iter().filter_map(|g| {
+                let color = [g.color[0] * dim, g.color[1] * dim, g.color[2] * dim, g.color[3]];
+                make_instance(g, color)
+            }));
+
+            // Color emoji glyphs (RGBA atlas): shader multiplies texel.rgb by color.rgb
+            // so pass dim as a uniform tint; alpha carries the fade.
+            let emoji_color = [dim, dim, dim, 1.0];
+            color_glyphs.extend(view.color_glyph_instances.iter().filter_map(|g| {
+                make_instance(g, emoji_color)
             }));
 
             // Fade-in overlay for newly opened panes
@@ -498,6 +519,7 @@ impl App {
         clear_color: [f32; 4],
         bg_rects: &[Rect],
         glyphs: &[GlyphInstance],
+        color_glyphs: &[GlyphInstance],
     ) {
         let (vw, vh) = renderer.surface_size();
         let vw_f = vw as f32;
@@ -544,10 +566,14 @@ impl App {
                 ..Default::default()
             });
 
+            // 1. Background rects (cell backgrounds, borders, decorations, scrollbar)
             renderer
                 .rects
                 .render(&renderer.queue, &mut pass, bg_rects, vw_f, vh_f);
+            // 2. Regular text (alpha atlas)
             atlas.render(&renderer.queue, &mut pass, glyphs);
+            // 3. Color emoji (RGBA atlas)
+            atlas.render_color(&renderer.queue, &mut pass, color_glyphs);
         }
 
         renderer.queue.submit(std::iter::once(encoder.finish()));
@@ -610,7 +636,7 @@ impl App {
         };
 
         // Update terminal views for dirty pane grids
-        for (pane_id, _, _) in &tiles {
+        for (pane_id, tile_rect, _) in &tiles {
             let is_dirty = self.pane_grids.get(pane_id).is_some_and(|g| g.dirty);
             if (is_dirty || !self.cached_views.contains_key(pane_id))
                 && let Some(grid) = self.pane_grids.get_mut(pane_id)
@@ -634,8 +660,25 @@ impl App {
                     &renderer.queue,
                     &self.config,
                 );
+
                 grid.dirty = false;
                 self.cached_views.insert(*pane_id, view);
+            }
+
+            // Always recompute scrollbar from current tile dimensions so
+            // layout-only changes (column/tile resize) update the thumb.
+            if let Some(grid) = self.pane_grids.get(pane_id)
+                && let Some(view) = self.cached_views.get_mut(pane_id)
+            {
+                let inset = (self.config.appearance.border_width + self.config.appearance.padding) * 2.0;
+                view.scrollbar_rect = terminal::build_scrollbar(
+                    grid.scroll_offset,
+                    grid.total_lines(),
+                    grid.rows,
+                    tile_rect.w - inset,
+                    tile_rect.h - inset,
+                    &self.config,
+                );
             }
         }
 
@@ -665,20 +708,23 @@ impl App {
 
         let mut bg_rects = std::mem::take(&mut self.bg_rects_buf);
         let mut glyphs = std::mem::take(&mut self.glyph_buf);
+        let mut color_glyphs = std::mem::take(&mut self.color_glyph_buf);
         bg_rects.clear();
         glyphs.clear();
+        color_glyphs.clear();
 
-        self.build_tiles(&tiles, zoom, vw_f, vh_f, &mut bg_rects, &mut glyphs);
+        self.build_tiles(&tiles, zoom, vw_f, vh_f, &mut bg_rects, &mut glyphs, &mut color_glyphs);
         self.build_status_bar(vw_f, vh_f, &mut bg_rects, &mut glyphs);
         self.build_search_bar(&tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs);
 
         let clear_color = ThemeConfig::parse_color(&self.config.theme.ui_background);
         let renderer = self.renderer.as_mut().unwrap();
         let atlas = self.glyph_atlas.as_mut().unwrap();
-        Self::submit_frame(renderer, atlas, clear_color, &bg_rects, &glyphs);
+        Self::submit_frame(renderer, atlas, clear_color, &bg_rects, &glyphs, &color_glyphs);
 
         self.bg_rects_buf = bg_rects;
         self.glyph_buf = glyphs;
+        self.color_glyph_buf = color_glyphs;
 
         if animating && let Some(w) = &self.window {
             w.request_redraw();

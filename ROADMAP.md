@@ -80,7 +80,7 @@
 - [x] Clipboard: OSC 52, left-click select, right-click copy, Ctrl+Shift+C/V
 - [x] Double-click word selection
 - [x] URL / link detection — clickable links with underline on hover
-- [ ] **Scrollback search** (Ctrl+F) — highlight + navigation (highest priority missing feature)
+- [x] **Scrollback search** (Ctrl+Shift+F) — highlight + navigation
 - [ ] **Broadcast input** (Leader+b) — send keystrokes to all visible panes simultaneously
 - [ ] **Shell integration** — OSC 133 prompt marking, semantic zones, command output folding
 - [ ] **Bell notification** forwarding

@@ -201,8 +201,13 @@ impl Session {
     fn pane_grid_size_with_cells(&self, pane_width: f32, pane_height: f32, cw: f32, ch: f32) -> (u16, u16) {
         let usable_w = (pane_width - self.pane_inset).max(cw);
         let usable_h = (pane_height - self.pane_inset).max(ch);
-        let cols = (usable_w / cw).floor().max(1.0) as u16;
-        let rows = (usable_h / ch).floor().max(1.0) as u16;
+        let mut cols = (usable_w / cw).floor().max(1.0) as u16;
+        let mut rows = (usable_h / ch).floor().max(1.0) as u16;
+        // Cap grid dimensions to prevent OOM from extreme viewport sizes
+        const MAX_GRID_CELLS: usize = 10_000_000;
+        while cols as usize * rows as usize > MAX_GRID_CELLS {
+            if cols > rows { cols /= 2; } else { rows /= 2; }
+        }
         (cols, rows)
     }
 

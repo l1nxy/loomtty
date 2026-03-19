@@ -577,6 +577,9 @@ fn rle_decode_cells(data: &[u8], expected_count: usize) -> io::Result<Vec<Packed
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "truncated RLE"));
             }
             let count = read_u16_le(data, offset + 1)? as usize;
+            if count == 0 {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "RLE count is zero"));
+            }
             let cell = read_packed_cell(data, offset + 3)?;
             let to_add = count.min(expected_count.saturating_sub(cells.len()));
             cells.extend(std::iter::repeat(cell).take(to_add));
@@ -589,6 +592,12 @@ fn rle_decode_cells(data: &[u8], expected_count: usize) -> io::Result<Vec<Packed
             cells.push(cell);
             offset += PACKED_CELL_SIZE;
         }
+    }
+    if cells.len() != expected_count {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("expected {expected_count} cells but decoded {}", cells.len()),
+        ));
     }
     Ok(cells)
 }
@@ -641,10 +650,10 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
     let cols = read_u16_le(payload, 16)?;
     let rows = read_u16_le(payload, 18)?;
     let total_cells = cols as usize * rows as usize;
-    if total_cells > 10_000_000 {
+    if total_cells > MAX_GRID_CELLS {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("grid too large: {cols}x{rows} = {total_cells} cells (max 10M)"),
+            format!("grid too large: {cols}x{rows} = {total_cells} cells (max {MAX_GRID_CELLS})"),
         ));
     }
     let cursor_line = read_i16_le(payload, 20)?;

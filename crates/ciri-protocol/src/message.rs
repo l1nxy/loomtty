@@ -177,10 +177,9 @@ pub enum ClientMessage {
     KillServer,
     /// Switch this client to a different session (create if needed).
     SwitchSession { session_name: String },
-    /// Adjust the split between two stacked tiles in a column.
-    /// `column_idx` and `top_tile_idx` identify the border being dragged.
-    /// `delta_weight` is the weight to transfer from top to bottom (positive = top grows).
-    ResizeTilePair { column_idx: usize, top_tile_idx: usize, delta_weight: f64 },
+    /// Set absolute weights for two adjacent stacked tiles in a column.
+    /// Sent on mouse-up after dragging a tile border.
+    SetTileWeights { column_idx: usize, top_tile_idx: usize, top_weight: f64, bottom_weight: f64 },
     /// Adjust the split between a specific column pair (identified by left index).
     AdjustColumnSplitAt { column_idx: usize, delta: f64 },
 }

@@ -274,31 +274,23 @@ impl App {
         let had_left_hold = self.mouse_left_held;
         self.mouse_left_held = false;
         if let Some((col_idx, top_tile_idx)) = self.tile_resize_dragging {
-            // Send the final tile weights to the server so PTYs are resized
-            // and the layout is persisted.
-            let delta_weight = {
-                let ws = self.workspaces.active();
-                if let Some(col) = ws.columns.get(col_idx) {
-                    let vh = ws.view_size.height;
-                    let col_w = col.effective_width(ws.view_size.width);
-                    let rects = col.tile_rects(col_w, vh);
-                    let top_h = rects.get(top_tile_idx).map(|r| r.2).unwrap_or(0.0);
-                    let bot_h = rects.get(top_tile_idx + 1).map(|r| r.2).unwrap_or(0.0);
-                    let original_h = (top_h + bot_h) / 2.0;
-                    if original_h > 0.0 {
-                        (top_h - original_h) as f64 / vh as f64
-                    } else {
-                        0.0
-                    }
-                } else {
-                    0.0
+            // Send the final absolute tile weights to the server so PTYs are
+            // resized and the layout is persisted. Read from local preview state
+            // which already reflects the drag.
+            let ws = self.workspaces.active();
+            if let Some(col) = ws.columns.get(col_idx) {
+                let bot_idx = top_tile_idx + 1;
+                if bot_idx < col.tiles.len() {
+                    let top_w = col.tiles[top_tile_idx].height.weight() as f64;
+                    let bot_w = col.tiles[bot_idx].height.weight() as f64;
+                    self.send(ClientMessage::SetTileWeights {
+                        column_idx: col_idx,
+                        top_tile_idx,
+                        top_weight: top_w,
+                        bottom_weight: bot_w,
+                    });
                 }
-            };
-            self.send(ClientMessage::ResizeTilePair {
-                column_idx: col_idx,
-                top_tile_idx,
-                delta_weight,
-            });
+            }
             self.tile_resize_dragging = None;
             if let Some(w) = &self.window {
                 w.set_cursor(winit::window::CursorIcon::Default);

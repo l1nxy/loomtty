@@ -138,7 +138,7 @@ impl App {
                         delta.cursor_line
                     );
                     if let Some(grid) = self.pane_grids.get_mut(&delta.pane_id) {
-                        grid.apply_delta(&delta);
+                        grid.apply_delta_borrowed(&delta);
                         self.send_lossy(ClientMessage::Ack {
                             generation: delta.generation,
                         });

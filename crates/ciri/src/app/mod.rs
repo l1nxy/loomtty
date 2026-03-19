@@ -137,6 +137,14 @@ pub(crate) struct App {
     #[allow(dead_code)]
     pub config_watcher: Option<notify::RecommendedWatcher>,
     pub config_change_rx: Option<crossbeam_channel::Receiver<()>>,
+    /// Accumulated vertical pixel delta during a scroll gesture (for smooth scrollback).
+    pub gesture_scroll_accum: f64,
+    /// Vertical gesture offset for workspace row switching.
+    pub gesture_row_offset: ViewOffset,
+    /// Whether a vertical row-switch gesture is in progress.
+    pub gesture_row_active: bool,
+    /// The workspace row index when the vertical gesture started.
+    pub gesture_row_start: usize,
 }
 
 impl App {
@@ -214,6 +222,10 @@ impl App {
             should_exit: false,
             config_watcher: None,
             config_change_rx: None,
+            gesture_scroll_accum: 0.0,
+            gesture_row_offset: ViewOffset::new(),
+            gesture_row_active: false,
+            gesture_row_start: 0,
         }
     }
 

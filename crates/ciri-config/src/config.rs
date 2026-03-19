@@ -20,6 +20,7 @@ pub struct CiriConfig {
     pub input: InputConfig,
     pub render: RenderConfig,
     pub layout: LayoutConfig,
+    pub gesture: GestureConfig,
 }
 
 
@@ -260,6 +261,39 @@ impl Default for LayoutConfig {
                 PresetWidth::Proportion { proportion: 2.0 / 3.0 },
                 PresetWidth::Proportion { proportion: 1.0 },
             ],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GestureConfig {
+    /// Enable trackpad gesture support.
+    pub enabled: bool,
+    /// Pinch-to-zoom sensitivity multiplier.
+    pub pinch_sensitivity: f64,
+    /// Natural (inverted) scrolling direction for trackpad.
+    pub natural_scroll: bool,
+    /// Pixel threshold to trigger a workspace row switch via vertical swipe.
+    pub vertical_swipe_threshold: f64,
+    /// Pixel threshold to trigger a column switch via horizontal swipe.
+    pub horizontal_swipe_threshold: f64,
+    /// Smooth scrollback: track gesture phases for momentum scrolling.
+    pub smooth_scroll: bool,
+    /// Pixels per scrollback line for smooth scroll conversion.
+    pub scroll_pixels_per_line: f64,
+}
+
+impl Default for GestureConfig {
+    fn default() -> Self {
+        GestureConfig {
+            enabled: true,
+            pinch_sensitivity: 2.0,
+            natural_scroll: true,
+            vertical_swipe_threshold: 50.0,
+            horizontal_swipe_threshold: 50.0,
+            smooth_scroll: true,
+            scroll_pixels_per_line: 20.0,
         }
     }
 }

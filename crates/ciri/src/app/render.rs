@@ -645,7 +645,7 @@ impl App {
                     } else {
                         (0, 0, CURSOR_HIDDEN)
                     };
-                let mut view = terminal::build_view_from_grid(
+                let view = terminal::build_view_from_grid(
                     &visible,
                     grid.cols,
                     grid.rows,
@@ -658,20 +658,24 @@ impl App {
                     &self.config,
                 );
 
-                // Build scrollbar for this pane
-                let pane_inner_w = tile_rect.w - (self.config.appearance.border_width + self.config.appearance.padding) * 2.0;
-                let pane_inner_h = tile_rect.h - (self.config.appearance.border_width + self.config.appearance.padding) * 2.0;
+                grid.dirty = false;
+                self.cached_views.insert(*pane_id, view);
+            }
+
+            // Always recompute scrollbar from current tile dimensions so
+            // layout-only changes (column/tile resize) update the thumb.
+            if let Some(grid) = self.pane_grids.get(pane_id)
+                && let Some(view) = self.cached_views.get_mut(pane_id)
+            {
+                let inset = (self.config.appearance.border_width + self.config.appearance.padding) * 2.0;
                 view.scrollbar_rect = terminal::build_scrollbar(
                     grid.scroll_offset,
                     grid.total_lines(),
                     grid.rows,
-                    pane_inner_w,
-                    pane_inner_h,
+                    tile_rect.w - inset,
+                    tile_rect.h - inset,
                     &self.config,
                 );
-
-                grid.dirty = false;
-                self.cached_views.insert(*pane_id, view);
             }
         }
 

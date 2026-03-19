@@ -177,6 +177,12 @@ pub enum ClientMessage {
     KillServer,
     /// Switch this client to a different session (create if needed).
     SwitchSession { session_name: String },
+    /// Adjust the split between two stacked tiles in a column.
+    /// `column_idx` and `top_tile_idx` identify the border being dragged.
+    /// `delta_weight` is the weight to transfer from top to bottom (positive = top grows).
+    ResizeTilePair { column_idx: usize, top_tile_idx: usize, delta_weight: f64 },
+    /// Adjust the split between a specific column pair (identified by left index).
+    AdjustColumnSplitAt { column_idx: usize, delta: f64 },
 }
 
 /// Control messages from server to client (msgpack encoded, tags 0x10-0x1F).

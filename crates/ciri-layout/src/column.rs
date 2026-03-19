@@ -98,6 +98,20 @@ impl Column {
         self.rendered_width = Some(w);
     }
 
+    /// Adjust weights between two adjacent tiles. Positive delta transfers
+    /// weight from bottom to top (top grows). Ensures minimum weight of 0.05.
+    pub fn adjust_tile_weights(&mut self, top_idx: usize, delta: f64) {
+        let bot_idx = top_idx + 1;
+        if bot_idx >= self.tiles.len() { return; }
+        let top_w = self.tiles[top_idx].height.weight() as f64;
+        let bot_w = self.tiles[bot_idx].height.weight() as f64;
+        let min_w = 0.05;
+        let new_top = (top_w + delta).max(min_w).min(top_w + bot_w - min_w);
+        let new_bot = (top_w + bot_w) - new_top;
+        self.tiles[top_idx].height = TileHeight::Auto { weight: new_top };
+        self.tiles[bot_idx].height = TileHeight::Auto { weight: new_bot };
+    }
+
     /// Compute (pane_id, y_offset, height) for each tile based on weights.
     pub fn tile_rects(&self, _col_width: f32, col_height: f32) -> Vec<(PaneId, f32, f32)> {
         if self.tiles.len() == 1 {

@@ -768,19 +768,7 @@ impl Pane {
             CursorShape::Hidden => CURSOR_HIDDEN,
         };
 
-        // Read mode flags while term lock is already held (avoid double-lock deadlock)
-        use alacritty_terminal::term::TermMode;
-        use ciri_protocol::message::{MODE_MOUSE_REPORT, MODE_ALT_SCREEN};
-        let mode = term.mode();
-        let mut mode_flags = 0u8;
-        if mode.contains(TermMode::MOUSE_REPORT_CLICK)
-            || mode.contains(TermMode::MOUSE_DRAG)
-            || mode.contains(TermMode::MOUSE_MOTION) {
-            mode_flags |= MODE_MOUSE_REPORT;
-        }
-        if mode.contains(TermMode::ALT_SCREEN) {
-            mode_flags |= MODE_ALT_SCREEN;
-        }
+        let mode_flags = self.mode_flags_from_term(&term);
 
         FullPaneSync {
             pane_id: self.id,

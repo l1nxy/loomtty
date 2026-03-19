@@ -244,10 +244,7 @@ impl App {
                     grid.dirty = true;
                 }
                 // Update leader key from config
-                let leader_str = &self.config.keys.leader;
-                if let Some(rest) = leader_str.strip_prefix("ctrl+") {
-                    self.input.leader_ctrl_key = rest.to_string();
-                }
+                self.input.leader_key = ciri_input::leader::LeaderKey::parse(&self.config.keys.leader);
                 // Notify server of new cell dimensions after font change
                 if font_changed {
                     let (cw, ch) = self.cell_dimensions();

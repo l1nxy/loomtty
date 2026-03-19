@@ -9,9 +9,70 @@ pub enum LeaderState {
     AwaitingAction { entered_at: Instant },
 }
 
+/// Parsed leader key specification.
+#[derive(Debug, Clone)]
+pub struct LeaderKey {
+    /// The key name to match (e.g. "w", "space"), or empty if matching a bare modifier.
+    pub key: String,
+    /// Required modifiers.
+    pub ctrl: bool,
+    pub alt: bool,
+    pub super_key: bool,
+}
+
+impl LeaderKey {
+    /// Parse a leader key string like "ctrl+w", "alt", "ctrl+space", "super+a".
+    pub fn parse(s: &str) -> Self {
+        let parts: Vec<&str> = s.split('+').collect();
+        let mut ctrl = false;
+        let mut alt = false;
+        let mut super_key = false;
+        let mut key = String::new();
+
+        for part in &parts {
+            match part.to_lowercase().as_str() {
+                "ctrl" | "control" => ctrl = true,
+                "alt" => alt = true,
+                "super" | "meta" | "win" => super_key = true,
+                other => key = other.to_string(),
+            }
+        }
+
+        // If the entire string is just a modifier (e.g. "alt"), key stays empty
+        // and we match when that modifier is pressed alone.
+        LeaderKey { key, ctrl, alt, super_key }
+    }
+
+    /// Check if a key event matches this leader key.
+    pub fn matches(&self, key_name: &str, ctrl: bool, alt: bool, super_key: bool) -> bool {
+        if self.key.is_empty() {
+            // Bare modifier key (e.g. "alt"): match when that modifier's own
+            // key name appears (winit sends "Alt" as the key).
+            let is_mod_key = key_name.eq_ignore_ascii_case("alt")
+                || key_name.eq_ignore_ascii_case("control")
+                || key_name.eq_ignore_ascii_case("super")
+                || key_name.eq_ignore_ascii_case("meta");
+            if !is_mod_key {
+                return false;
+            }
+            // Check that the right modifier flag is expected
+            if self.alt && key_name.eq_ignore_ascii_case("alt") { return true; }
+            if self.ctrl && key_name.eq_ignore_ascii_case("control") { return true; }
+            if self.super_key && (key_name.eq_ignore_ascii_case("super") || key_name.eq_ignore_ascii_case("meta")) { return true; }
+            return false;
+        }
+
+        // Regular key + modifier combo (e.g. "ctrl+w")
+        key_name == self.key
+            && ctrl == self.ctrl
+            && alt == self.alt
+            && super_key == self.super_key
+    }
+}
+
 pub struct InputHandler {
     pub state: LeaderState,
-    pub leader_ctrl_key: String,
+    pub leader_key: LeaderKey,
     pub keybinds: KeybindMap,
     leader_timeout: Duration,
     double_tap_window: Duration,
@@ -31,7 +92,7 @@ impl InputHandler {
     pub fn new(leader_timeout: Duration, double_tap_window: Duration) -> Self {
         InputHandler {
             state: LeaderState::Idle,
-            leader_ctrl_key: "w".to_string(),
+            leader_key: LeaderKey::parse("ctrl+w"),
             keybinds: KeybindMap::default(),
             leader_timeout,
             double_tap_window,
@@ -60,8 +121,7 @@ impl InputHandler {
 
         match &self.state {
             LeaderState::Idle => {
-                // Only intercept the leader key (Ctrl+Space)
-                if ctrl && key_name == self.leader_ctrl_key {
+                if self.leader_key.matches(key_name, ctrl, alt, super_key) {
                     if let Some(last) = self.last_leader_press
                         && last.elapsed() < self.double_tap_window {
                             self.last_leader_press = None;
@@ -107,7 +167,9 @@ mod tests {
     use std::time::Duration;
 
     fn test_handler() -> InputHandler {
-        InputHandler::new(Duration::from_millis(1000), Duration::from_millis(300))
+        let mut h = InputHandler::new(Duration::from_millis(1000), Duration::from_millis(300));
+        h.leader_key = LeaderKey::parse("ctrl+w");
+        h
     }
 
     #[test]
@@ -146,7 +208,6 @@ mod tests {
         let mut h = test_handler();
         h.process_key("w", true, false, false, false);
         assert!(h.is_awaiting_action());
-        // Simulate timeout by setting entered_at to the past
         h.state = LeaderState::AwaitingAction {
             entered_at: std::time::Instant::now() - std::time::Duration::from_secs(2),
         };
@@ -167,7 +228,35 @@ mod tests {
     #[test]
     fn ctrl_key_not_leader_passes_through() {
         let mut h = test_handler();
-        // Ctrl+C should pass through (not leader key)
         assert!(matches!(h.process_key("c", true, false, false, false), InputResult::PassThrough));
+    }
+
+    #[test]
+    fn alt_leader_key() {
+        let mut h = test_handler();
+        h.leader_key = LeaderKey::parse("alt");
+        // Alt key press should enter leader mode
+        assert!(matches!(h.process_key("Alt", false, false, true, false), InputResult::Consumed));
+        assert!(h.is_awaiting_action());
+        // Then pressing 'n' should trigger action
+        match h.process_key("n", false, false, false, false) {
+            InputResult::Action(Action::NewColumnRight) => {}
+            _ => panic!("expected NewColumnRight"),
+        }
+    }
+
+    #[test]
+    fn parse_leader_key_formats() {
+        let k = LeaderKey::parse("ctrl+w");
+        assert!(k.ctrl && !k.alt && k.key == "w");
+
+        let k = LeaderKey::parse("alt");
+        assert!(!k.ctrl && k.alt && k.key.is_empty());
+
+        let k = LeaderKey::parse("ctrl+space");
+        assert!(k.ctrl && k.key == "space");
+
+        let k = LeaderKey::parse("super+a");
+        assert!(k.super_key && k.key == "a");
     }
 }

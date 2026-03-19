@@ -147,10 +147,7 @@ impl App {
             Duration::from_millis(config.input.double_tap_window_ms),
         );
         input.keybinds = KeybindMap::from_config(&config.keys.bindings);
-        let leader_str = &config.keys.leader;
-        if let Some(rest) = leader_str.strip_prefix("ctrl+") {
-            input.leader_ctrl_key = rest.to_string();
-        }
+        input.leader_key = ciri_input::leader::LeaderKey::parse(&config.keys.leader);
         let overview_keybinds = KeybindMap::from_overview_config(&config.keys.overview_bindings);
         let column_gap = config.appearance.column_gap;
 

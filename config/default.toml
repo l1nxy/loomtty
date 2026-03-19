@@ -54,7 +54,7 @@ frame_latency = 2
 preset = "one_dark"
 
 [keys]
-leader = "alt"
+leader = "ctrl+space"
 
 [keys.bindings]
 n = "new_column_right"

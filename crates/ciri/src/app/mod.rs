@@ -110,11 +110,15 @@ pub(crate) struct App {
     pub bg_rects_buf: Vec<Rect>,
     pub glyph_buf: Vec<GlyphInstance>,
     pub ime_preedit_active: bool,
+    /// Current IME preedit text and cursor offset (char index).
+    pub ime_preedit_text: String,
+    pub ime_preedit_cursor: Option<usize>,
     pub last_ime_pos: Option<(i32, i32)>,
     pub overview_keybinds: KeybindMap,
     pub resize_dragging: Option<usize>,
     pub resize_drag_start_x: f32,
     pub resize_drag_start_width: f32,
+    pub resize_drag_accumulated_delta: f64,
     /// Tile height drag: (column_idx, tile_idx of top tile in the pair)
     pub tile_resize_dragging: Option<(usize, usize)>,
     pub tile_resize_drag_start_y: f32,
@@ -133,6 +137,8 @@ pub(crate) struct App {
     pub pane_open_opacity: HashMap<u64, f32>,
     /// Closing panes being faded out
     pub closing_panes: Vec<ClosingPaneState>,
+    /// Visual bell flash: (pane_id, start_time)
+    pub bell_flash: Option<(u64, Instant)>,
     pub should_exit: bool,
     #[allow(dead_code)]
     pub config_watcher: Option<notify::RecommendedWatcher>,
@@ -191,11 +197,14 @@ impl App {
             bg_rects_buf: Vec::new(),
             glyph_buf: Vec::new(),
             ime_preedit_active: false,
+            ime_preedit_text: String::new(),
+            ime_preedit_cursor: None,
             last_ime_pos: None,
             overview_keybinds,
             resize_dragging: None,
             resize_drag_start_x: 0.0,
             resize_drag_start_width: 0.0,
+            resize_drag_accumulated_delta: 0.0,
             tile_resize_dragging: None,
             tile_resize_drag_start_y: 0.0,
             connected: false,
@@ -211,6 +220,7 @@ impl App {
             broadcast_mode: false,
             pane_open_opacity: HashMap::new(),
             closing_panes: Vec::new(),
+            bell_flash: None,
             should_exit: false,
             config_watcher: None,
             config_change_rx: None,

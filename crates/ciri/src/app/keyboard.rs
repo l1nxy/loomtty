@@ -6,7 +6,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, NamedKey};
 
 use super::App;
-use super::input_handler::key_event_to_pty_bytes;
+use super::input_handler::{key_event_to_kitty_bytes, key_event_to_pty_bytes};
 
 impl App {
     pub(crate) fn handle_keyboard_input(
@@ -212,7 +212,15 @@ impl App {
                 InputResult::Consumed => {}
                 InputResult::PassThrough => {
                     self.scroll_active_to_bottom();
-                    let bytes = key_event_to_pty_bytes(event, ctrl);
+                    // Use Kitty keyboard encoding if the active pane has it enabled
+                    let use_kitty = self.workspaces.active().active_pane_id()
+                        .and_then(|pid| self.pane_grids.get(&pid))
+                        .is_some_and(|grid| grid.has_kitty_keyboard);
+                    let bytes = if use_kitty {
+                        key_event_to_kitty_bytes(event, ctrl, shift, alt, super_key)
+                    } else {
+                        key_event_to_pty_bytes(event, ctrl)
+                    };
                     if !bytes.is_empty() {
                         if self.broadcast_mode {
                             // Send to all panes in current workspace

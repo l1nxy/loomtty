@@ -342,6 +342,11 @@ impl Session {
                 clipboard_msgs.push(ServerMessage::ClipboardStore { data });
             }
 
+            // Drain bell events
+            if pane.drain_bell() {
+                clipboard_msgs.push(ServerMessage::Bell { pane_id });
+            }
+
             if let Some(regions) = pane.extract_damage() {
                 // Bump generation
                 let g = self.generation.entry(pane_id).or_insert(0);
@@ -1296,14 +1301,15 @@ pub async fn run_daemon() -> Result<()> {
                             }
                             continue;
                         }
-                        match client.tx.try_send(buf.clone()) {
+                        match client.tx.try_send(buf) {
                             Ok(()) => {
+                                // buf consumed by channel — do not return to pool
                                 client.send_failures = 0;
                                 if let Some((pid, hist)) = history_update {
                                     client.history_sent.insert(pid, hist);
                                 }
                             }
-                            Err(_) => {
+                            Err(e) => {
                                 client.send_failures += 1;
                                 if client.send_failures >= 100 {
                                     log::warn!("disconnecting slow client {client_id}: {} consecutive failures", client.send_failures);
@@ -1315,12 +1321,18 @@ pub async fn run_daemon() -> Result<()> {
                                 if let Some((pid, _)) = history_update {
                                     client.damage.entry(pid).or_insert_with(DamageAccumulator::new).mark_full();
                                 }
+                                // Recover the buffer and return it to the pool
+                                let buf = e.into_inner();
+                                if frame_pool.len() < FRAME_POOL_CAP {
+                                    frame_pool.push(buf);
+                                }
                             }
                         }
-                    }
-                    // Return buffer to pool
-                    if frame_pool.len() < FRAME_POOL_CAP {
-                        frame_pool.push(buf);
+                    } else {
+                        // Client not found — return buffer to pool
+                        if frame_pool.len() < FRAME_POOL_CAP {
+                            frame_pool.push(buf);
+                        }
                     }
                 }
                 for cid in to_disconnect {
@@ -1365,6 +1377,7 @@ pub async fn run_daemon() -> Result<()> {
             result = listener.accept() => {
                 let (stream, _) = result?;
                 let state = state.clone();
+                let client_shutdown = shutdown.clone();
 
                 tokio::spawn(async move {
                     let (reader, writer) = stream.into_split();
@@ -1566,9 +1579,8 @@ pub async fn run_daemon() -> Result<()> {
                                                 }
                                                 drop(s);
                                                 let _ = std::fs::remove_file(&transport::server_socket_path());
-                                                // Note: This will cause the reader to exit,
-                                                // but the actual server shutdown is via the tick loop
-                                                // detecting no sessions/clients.
+                                                // Signal the accept loop and tick loop to shut down
+                                                client_shutdown.notify_one();
                                                 return;
                                             }
                                         }

@@ -384,6 +384,12 @@ pub fn decode_cell_delta(payload: &[u8]) -> io::Result<CellDelta> {
 /// Encode a CellDelta directly into `buf` as a complete frame [tag][len][payload],
 /// avoiding a separate payload allocation + copy.
 pub fn encode_cell_delta_framed(buf: &mut Vec<u8>, delta: &CellDelta) -> io::Result<()> {
+    if delta.regions.len() > u16::MAX as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "too many regions for CellDelta (exceeds u16::MAX)",
+        ));
+    }
     buf.clear();
     // Reserve tag(1) + len(4) + header(24) conservatively
     buf.reserve(5 + 24 + delta.regions.len() * 64);

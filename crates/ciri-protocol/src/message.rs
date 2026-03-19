@@ -205,6 +205,8 @@ pub enum ServerMessage {
     SessionKilled { session_name: String },
     /// Error response.
     Error { message: String },
+    /// Bell notification from a pane (BEL / \x07).
+    Bell { pane_id: u64 },
 }
 
 /// Session info returned in SessionList.
@@ -337,8 +339,11 @@ impl CellDeltaBorrowed {
     }
 
     /// Zero-copy access to the cells for a given region index.
+    /// Returns an empty slice if `region_idx` is out of bounds.
     pub fn cells(&self, region_idx: usize) -> &[PackedCell] {
-        let meta = &self.regions[region_idx];
+        let Some(meta) = self.regions.get(region_idx) else {
+            return &[];
+        };
         let end = meta.cells_offset + meta.cell_count * PACKED_CELL_SIZE;
         bytemuck::cast_slice(&self.payload[meta.cells_offset..end])
     }
@@ -350,6 +355,10 @@ impl CellDeltaBorrowed {
 pub const MODE_MOUSE_REPORT: u8 = 0x01;
 /// Pane is in alternate screen buffer (e.g. TUI app).
 pub const MODE_ALT_SCREEN: u8 = 0x02;
+/// Shell integration is active (OSC 133 detected).
+pub const MODE_SHELL_INTEGRATION: u8 = 0x04;
+/// Kitty keyboard protocol: disambiguate escape codes (CSI u encoding).
+pub const MODE_KITTY_KEYBOARD: u8 = 0x08;
 
 // ─── Cursor shape encoding ──────────────────────────────────────────
 

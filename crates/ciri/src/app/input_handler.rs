@@ -44,31 +44,30 @@ impl App {
                 let reverse = matches!(action, Action::CyclePresetWidthReverse);
                 let presets = self.preset_widths();
                 if let Some(w) = self.workspaces.active_mut().cycle_preset_width(&presets, reverse) {
-                    // Protocol only carries proportion; fixed-pixel presets are
-                    // converted here (the server will treat them as proportional).
-                    let p = match w {
-                        ciri_layout::column::ColumnWidth::Proportion(p) => p,
+                    let (proportion, fixed_px) = match w {
+                        ciri_layout::column::ColumnWidth::Proportion(p) => (p, None),
                         ciri_layout::column::ColumnWidth::Fixed(px) => {
                             let vw = self.workspaces.view_size.width as f64;
-                            if vw > 0.0 { px / vw } else { 0.5 }
+                            let p = if vw > 0.0 { px / vw } else { 0.5 };
+                            (p, Some(px))
                         }
                     };
-                    self.send(ClientMessage::SetColumnWidth { proportion: p });
+                    self.send(ClientMessage::SetColumnWidth { proportion, fixed_px });
                 }
                 self.snap_all_col_widths();
                 self.animate_to_active();
             }
             Action::ColumnWidthOneThird => {
-                self.send(ClientMessage::SetColumnWidth { proportion: 1.0 / 3.0 });
+                self.send(ClientMessage::SetColumnWidth { proportion: 1.0 / 3.0, fixed_px: None });
             }
             Action::ColumnWidthHalf => {
-                self.send(ClientMessage::SetColumnWidth { proportion: 0.5 });
+                self.send(ClientMessage::SetColumnWidth { proportion: 0.5, fixed_px: None });
             }
             Action::ColumnWidthTwoThirds => {
-                self.send(ClientMessage::SetColumnWidth { proportion: 2.0 / 3.0 });
+                self.send(ClientMessage::SetColumnWidth { proportion: 2.0 / 3.0, fixed_px: None });
             }
             Action::ColumnWidthFull => {
-                self.send(ClientMessage::SetColumnWidth { proportion: 1.0 });
+                self.send(ClientMessage::SetColumnWidth { proportion: 1.0, fixed_px: None });
             }
             Action::ColumnWidthIncrease => {
                 self.send(ClientMessage::AdjustColumnSplit { delta: 0.05 });

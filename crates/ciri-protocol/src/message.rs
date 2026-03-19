@@ -149,8 +149,8 @@ pub enum ClientMessage {
     MovePaneRight,
     /// Resize the viewport.
     Resize { cols: u16, rows: u16, width: u32, height: u32, cell_width: f32, cell_height: f32 },
-    /// Set column width.
-    SetColumnWidth { proportion: f64 },
+    /// Set column width. If `fixed_px` is Some, use fixed pixel width; otherwise proportion.
+    SetColumnWidth { proportion: f64, fixed_px: Option<f64> },
     /// Adjust the split between the active column and its nearest neighbor.
     AdjustColumnSplit { delta: f64 },
     /// Make the active column and its nearest neighbor 50/50.

@@ -446,11 +446,28 @@ impl ApplicationHandler for App {
                     },
                     Key::Character(c) => {
                         let s = c.as_str();
-                        // Control characters: fall back to physical key
-                        if s.len() == 1 && s.as_bytes()[0] < 0x20 {
+                        // Ctrl turns letters into control chars (e.g. Ctrl+W → 0x17).
+                        // Fall back to physical key to recover the original letter.
+                        if ctrl && s.len() == 1 && s.as_bytes()[0] < 0x20 {
                             use winit::keyboard::{KeyCode, PhysicalKey};
                             match event.physical_key {
-                                PhysicalKey::Code(KeyCode::Space) => "space",
+                                PhysicalKey::Code(code) => match code {
+                                    KeyCode::Space => "space",
+                                    KeyCode::KeyA => "a", KeyCode::KeyB => "b",
+                                    KeyCode::KeyC => "c", KeyCode::KeyD => "d",
+                                    KeyCode::KeyE => "e", KeyCode::KeyF => "f",
+                                    KeyCode::KeyG => "g", KeyCode::KeyH => "h",
+                                    KeyCode::KeyI => "i", KeyCode::KeyJ => "j",
+                                    KeyCode::KeyK => "k", KeyCode::KeyL => "l",
+                                    KeyCode::KeyM => "m", KeyCode::KeyN => "n",
+                                    KeyCode::KeyO => "o", KeyCode::KeyP => "p",
+                                    KeyCode::KeyQ => "q", KeyCode::KeyR => "r",
+                                    KeyCode::KeyS => "s", KeyCode::KeyT => "t",
+                                    KeyCode::KeyU => "u", KeyCode::KeyV => "v",
+                                    KeyCode::KeyW => "w", KeyCode::KeyX => "x",
+                                    KeyCode::KeyY => "y", KeyCode::KeyZ => "z",
+                                    _ => s,
+                                },
                                 _ => s,
                             }
                         } else {

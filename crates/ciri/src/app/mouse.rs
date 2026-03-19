@@ -381,6 +381,15 @@ impl App {
                         g.mode_flags & ciri_protocol::message::MODE_MOUSE_REPORT != 0
                     });
 
+                let is_alt_screen = self
+                    .workspaces
+                    .active()
+                    .active_pane_id()
+                    .and_then(|pid| self.pane_grids.get(&pid))
+                    .is_some_and(|g| {
+                        g.mode_flags & ciri_protocol::message::MODE_ALT_SCREEN != 0
+                    });
+
                 if has_mouse {
                     if let Some(pid) = self.workspaces.active().active_pane_id() {
                         if let Some((_, col, row)) = self
@@ -399,6 +408,18 @@ impl App {
                                     modifiers: 0,
                                 });
                             }
+                        }
+                    }
+                } else if is_alt_screen {
+                    // Alt screen but no mouse mode: send arrow keys for scrolling
+                    if let Some(pid) = self.workspaces.active().active_pane_id() {
+                        let key = if dy > 0 { b"\x1b[A" } else { b"\x1b[B" };
+                        let count = dy.unsigned_abs().min(10) as usize;
+                        for _ in 0..count {
+                            self.send(ClientMessage::Input {
+                                pane_id: pid,
+                                data: key.to_vec(),
+                            });
                         }
                     }
                 } else {

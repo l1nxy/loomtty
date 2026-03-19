@@ -28,10 +28,18 @@ impl ApplicationHandler for App {
         let is_reconnecting = self.reconnect_state.is_some();
         let wants_blink = self.config.terminal.cursor_blink;
 
-        if is_animating || has_server || is_reconnecting || wants_blink {
+        let has_pending = self.server_rx.as_ref().is_some_and(|rx| !rx.is_empty());
+
+        if is_animating || has_pending || is_reconnecting {
+            // Active rendering or pending data: poll at frame rate
             event_loop
                 .set_control_flow(ControlFlow::WaitUntil(Instant::now() + self.frame_interval));
+        } else if wants_blink || has_server {
+            // Connected but idle: poll at reduced rate (50ms = 20fps idle)
+            event_loop
+                .set_control_flow(ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(50)));
         } else {
+            // Disconnected, no animations: fully idle
             event_loop.set_control_flow(ControlFlow::Wait);
         }
 

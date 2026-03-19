@@ -1026,18 +1026,12 @@ pub async fn run_daemon() -> Result<()> {
 
             struct PendingSend {
                 client_id: u64,
-                tx: mpsc::Sender<Vec<u8>>,
+                session_name: String,
                 snapshot: Snapshot,
             }
 
             let mut pending_sends: Vec<PendingSend> = Vec::new();
             let mut should_shutdown = false;
-            /// Clients to update send_failures / history_sent after sending.
-            struct SendResult {
-                client_id: u64,
-                success: bool,
-                history_update: Option<(u64, usize)>,
-            }
 
             {
                 let mut s = tick_state.lock().await;
@@ -1177,10 +1171,9 @@ pub async fn run_daemon() -> Result<()> {
                         // clone tx handles for deferred sending.
                         for (cid, pane_id, damage) in pending {
                             let pgen = session.generation.get(&pane_id).copied().unwrap_or(0);
-                            let tx = match s.clients.get(&cid) {
-                                Some(c) => c.tx.clone(),
-                                None => continue,
-                            };
+                            if !s.clients.contains_key(&cid) {
+                                continue;
+                            }
 
                             if damage.full {
                                 if let Some(pane) = session.panes.get(&pane_id) {
@@ -1191,7 +1184,7 @@ pub async fn run_daemon() -> Result<()> {
                                     let current_history = pane.history_size();
                                     pending_sends.push(PendingSend {
                                         client_id: cid,
-                                        tx,
+                                        session_name: session_name.clone(),
                                         snapshot: Snapshot::FullSync { sync, current_history, pane_id },
                                     });
                                 }
@@ -1215,7 +1208,7 @@ pub async fn run_daemon() -> Result<()> {
                                 };
                                 pending_sends.push(PendingSend {
                                     client_id: cid,
-                                    tx,
+                                    session_name: session_name.clone(),
                                     snapshot: Snapshot::Delta(delta),
                                 });
                             }
@@ -1245,14 +1238,25 @@ pub async fn run_daemon() -> Result<()> {
                 return;
             }
 
-            // ── Phase 2 (unlocked): encode snapshots + send via cloned tx handles ──
+            // ── Phase 2 (unlocked): encode snapshots, then re-lock to validate + send ──
             //
             // Encoding (RLE, bytemuck serialization) happens without holding
             // the server lock. We use the frame pool to avoid per-frame alloc.
+            //
+            // After encoding, we re-acquire the lock to validate client session
+            // affinity before sending. A client may have switched sessions
+            // (SwitchSession) between Phase 1 and Phase 2; sending old-session
+            // data to such a client would corrupt its state.
             if !pending_sends.is_empty() {
-                let mut send_results: Vec<SendResult> = Vec::new();
+                struct EncodedFrame {
+                    client_id: u64,
+                    session_name: String,
+                    buf: Vec<u8>,
+                    history_update: Option<(u64, usize)>,
+                }
+                let mut encoded: Vec<EncodedFrame> = Vec::new();
 
-                for PendingSend { client_id, tx, snapshot } in pending_sends.drain(..) {
+                for PendingSend { client_id, session_name, snapshot } in pending_sends.drain(..) {
                     let mut buf = frame_pool.pop().unwrap_or_default();
                     let (history_update, encode_ok) = match &snapshot {
                         Snapshot::FullSync { sync, current_history, pane_id } => {
@@ -1266,39 +1270,57 @@ pub async fn run_daemon() -> Result<()> {
                     };
 
                     if encode_ok {
-                        let success = tx.try_send(buf.clone()).is_ok();
-                        send_results.push(SendResult { client_id, success, history_update });
-                    }
-
-                    // Return buffer to pool
-                    if frame_pool.len() < FRAME_POOL_CAP {
-                        frame_pool.push(buf);
+                        encoded.push(EncodedFrame { client_id, session_name, buf, history_update });
+                    } else {
+                        // Return buffer to pool on encode failure
+                        if frame_pool.len() < FRAME_POOL_CAP {
+                            frame_pool.push(buf);
+                        }
                     }
                 }
 
-                // Update client state (send_failures, history_sent) — requires lock
+                // Re-lock to validate affinity and send
                 let mut s = tick_state.lock().await;
                 let mut to_disconnect = Vec::new();
-                for SendResult { client_id, success, history_update } in send_results {
+                for EncodedFrame { client_id, session_name, buf, history_update } in encoded.drain(..) {
                     if let Some(client) = s.clients.get_mut(&client_id) {
-                        if success {
-                            client.send_failures = 0;
-                            if let Some((pid, hist)) = history_update {
-                                client.history_sent.insert(pid, hist);
+                        // Revalidate client affinity: if the client switched sessions
+                        // between Phase 1 and now, drop the stale frame.
+                        if client.session_name != session_name {
+                            log::debug!(
+                                "client {client_id} switched session ({session_name} -> {}), dropping stale frame",
+                                client.session_name
+                            );
+                            if frame_pool.len() < FRAME_POOL_CAP {
+                                frame_pool.push(buf);
                             }
-                        } else {
-                            client.send_failures += 1;
-                            if client.send_failures >= 100 {
-                                log::warn!("disconnecting slow client {client_id}: {} consecutive failures", client.send_failures);
-                                to_disconnect.push(client_id);
-                            } else {
-                                log::debug!("send to client {client_id} failed (#{})", client.send_failures);
+                            continue;
+                        }
+                        match client.tx.try_send(buf.clone()) {
+                            Ok(()) => {
+                                client.send_failures = 0;
+                                if let Some((pid, hist)) = history_update {
+                                    client.history_sent.insert(pid, hist);
+                                }
                             }
-                            // On failure for FullPaneSync, re-mark full so it retries next tick
-                            if let Some((pid, _)) = history_update {
-                                client.damage.entry(pid).or_insert_with(DamageAccumulator::new).mark_full();
+                            Err(_) => {
+                                client.send_failures += 1;
+                                if client.send_failures >= 100 {
+                                    log::warn!("disconnecting slow client {client_id}: {} consecutive failures", client.send_failures);
+                                    to_disconnect.push(client_id);
+                                } else {
+                                    log::debug!("send to client {client_id} failed (#{})", client.send_failures);
+                                }
+                                // On failure for FullPaneSync, re-mark full so it retries next tick
+                                if let Some((pid, _)) = history_update {
+                                    client.damage.entry(pid).or_insert_with(DamageAccumulator::new).mark_full();
+                                }
                             }
                         }
+                    }
+                    // Return buffer to pool
+                    if frame_pool.len() < FRAME_POOL_CAP {
+                        frame_pool.push(buf);
                     }
                 }
                 for cid in to_disconnect {

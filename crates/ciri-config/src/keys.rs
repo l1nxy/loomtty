@@ -28,6 +28,7 @@ impl Default for KeybindConfig {
         bindings.insert("2".to_string(), "column_width_half".to_string());
         bindings.insert("3".to_string(), "column_width_two_thirds".to_string());
         bindings.insert("f".to_string(), "column_width_full".to_string());
+        bindings.insert("b".to_string(), "toggle_broadcast".to_string());
         bindings.insert("c".to_string(), "consume_into_column".to_string());
         bindings.insert("e".to_string(), "expel_from_column".to_string());
         bindings.insert("o".to_string(), "toggle_overview".to_string());
@@ -47,7 +48,7 @@ impl Default for KeybindConfig {
         overview_bindings.insert("tab".to_string(), "exit_overview".to_string());
 
         KeybindConfig {
-            leader: "ctrl+w".to_string(),
+            leader: "alt".to_string(),
             bindings,
             overview_bindings,
         }

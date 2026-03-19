@@ -1274,7 +1274,7 @@ pub async fn run_daemon() -> Result<()> {
                             h
                         }
                         Err(e) => {
-                            log::error!("client hello rejected: {e}");
+                            log::debug!("client hello rejected: {e}");
                             return;
                         }
                     };

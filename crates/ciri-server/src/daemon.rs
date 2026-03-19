@@ -551,6 +551,12 @@ impl ServerState {
                     }
                 }
             }
+            ClientMessage::ListSessions
+            | ClientMessage::KillSession { .. }
+            | ClientMessage::KillServer
+            | ClientMessage::SwitchSession { .. } => {
+                log::warn!("session management not yet implemented");
+            }
         }
 
         responses
@@ -583,7 +589,7 @@ enum ServerResponse {
 // ─── Graceful shutdown helper ───────────────────────────────────────
 
 /// Perform graceful shutdown: save session, notify clients, remove socket.
-async fn graceful_shutdown(state: &Arc<Mutex<ServerState>>, session_name: &str) {
+async fn graceful_shutdown(state: &Arc<Mutex<ServerState>>, _session_name: &str) {
     let s = state.lock().await;
     let _ = s.save_session();
     log::info!("shutting down gracefully");
@@ -601,7 +607,7 @@ async fn graceful_shutdown(state: &Arc<Mutex<ServerState>>, session_name: &str) 
         }
     }
     drop(s);
-    let _ = std::fs::remove_file(&transport::socket_path(session_name));
+    let _ = std::fs::remove_file(&transport::server_socket_path());
 }
 
 // ─── Client cleanup helper ──────────────────────────────────────────
@@ -623,7 +629,7 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
     let config = ciri_config::config::CiriConfig::load().unwrap_or_default();
     let shell = config.terminal.shell.clone();
 
-    let sock_path = transport::socket_path(session_name);
+    let sock_path = transport::server_socket_path();
     if let Some(parent) = sock_path.parent() {
         std::fs::create_dir_all(parent)?;
         #[cfg(unix)]
@@ -652,13 +658,13 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
     }
     #[cfg(windows)]
     let listener = TcpListener::bind(
-        format!("127.0.0.1:{}", transport::port_for_session(session_name))
+        format!("127.0.0.1:{}", transport::server_port())
     ).await?;
 
     // On Windows, create a marker file so list_running_sessions can discover us
     #[cfg(windows)]
     {
-        std::fs::write(&sock_path, transport::port_for_session(session_name).to_string())?;
+        std::fs::write(&sock_path, transport::server_port().to_string())?;
     }
 
     log::info!("ciri-server listening on {}", sock_path.display());
@@ -881,7 +887,7 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
 
             // C2: Signal shutdown instead of process::exit
             if should_shutdown {
-                let _ = std::fs::remove_file(&transport::socket_path(session_name));
+                let _ = std::fs::remove_file(&transport::server_socket_path());
                 tick_shutdown.notify_one();
                 return;
             }
@@ -954,19 +960,19 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                     let mut reader = tokio::io::BufReader::new(reader);
                     let mut writer = BufWriter::new(writer);
 
-                    // Read ClientHello (version + viewport)
-                    let viewport = match codec::read_client_hello(&mut reader).await {
-                        Ok((codec::VersionCompat::Exact(v), vp)) => {
-                            log::info!("client handshake ok (v{v})");
-                            vp
+                    // Read ClientHello (version + viewport + session name)
+                    let hello = match codec::read_client_hello(&mut reader).await {
+                        Ok((codec::VersionCompat::Exact(v), h)) => {
+                            log::info!("client handshake ok (v{v}), session={}", h.session_name);
+                            h
                         }
-                        Ok((codec::VersionCompat::PatchMismatch { peer, local }, vp)) => {
+                        Ok((codec::VersionCompat::PatchMismatch { peer, local }, h)) => {
                             log::warn!("client version {peer} differs from server {local} (patch mismatch)");
-                            vp
+                            h
                         }
-                        Ok((codec::VersionCompat::MinorMismatch { peer, local }, vp)) => {
+                        Ok((codec::VersionCompat::MinorMismatch { peer, local }, h)) => {
                             log::warn!("client version {peer} differs from server {local} (minor mismatch, may be unstable)");
-                            vp
+                            h
                         }
                         Err(e) => {
                             log::error!("client hello rejected: {e}");
@@ -974,11 +980,13 @@ pub async fn run_daemon(session_name: &str) -> Result<()> {
                         }
                     };
 
+                    log::info!("client requested session: {}", hello.session_name);
+
                     // Store viewport locally; will be applied per-client after registration
-                    let client_viewport_w = viewport.width as f32;
-                    let client_viewport_h = viewport.height as f32;
-                    let client_cell_w = viewport.cell_width;
-                    let client_cell_h = viewport.cell_height;
+                    let client_viewport_w = hello.width as f32;
+                    let client_viewport_h = hello.height as f32;
+                    let client_cell_w = hello.cell_width;
+                    let client_cell_h = hello.cell_height;
 
                     // Send ServerHello (no flush — frames follow immediately)
                     if let Err(e) = codec::write_server_hello(&mut writer).await {

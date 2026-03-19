@@ -65,66 +65,87 @@ fn check_version(peer: u32) -> io::Result<VersionCompat> {
     }
 }
 
-/// Client viewport info sent in the hello message.
+/// Client hello payload sent during handshake.
 #[derive(Debug, Clone)]
-pub struct ClientViewport {
+pub struct ClientHello {
+    pub session_name: String,
     pub width: u32,
     pub height: u32,
     pub cell_width: f32,
     pub cell_height: f32,
 }
 
-/// ClientHello: [magic(4)][version(4)][width(4)][height(4)][cell_w(4)][cell_h(4)] = 24 bytes
+/// ClientHello wire format (v2, variable length):
+/// [magic(4)][version(4)][session_name_len(2)][session_name(N)][width(4)][height(4)][cell_w(4)][cell_h(4)]
 pub async fn write_client_hello<W: AsyncWrite + Unpin>(
     writer: &mut W,
-    viewport: &ClientViewport,
+    hello: &ClientHello,
 ) -> io::Result<()> {
-    let mut buf = [0u8; 24];
-    buf[0..4].copy_from_slice(&HANDSHAKE_MAGIC);
-    buf[4..8].copy_from_slice(&parse_pkg_version().to_le_bytes());
-    buf[8..12].copy_from_slice(&viewport.width.to_le_bytes());
-    buf[12..16].copy_from_slice(&viewport.height.to_le_bytes());
-    buf[16..20].copy_from_slice(&viewport.cell_width.to_bits().to_le_bytes());
-    buf[20..24].copy_from_slice(&viewport.cell_height.to_bits().to_le_bytes());
+    let name_bytes = hello.session_name.as_bytes();
+    if name_bytes.len() > 255 {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "session name too long"));
+    }
+    let mut buf = Vec::with_capacity(26 + name_bytes.len());
+    buf.extend_from_slice(&HANDSHAKE_MAGIC);
+    buf.extend_from_slice(&parse_pkg_version().to_le_bytes());
+    buf.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+    buf.extend_from_slice(name_bytes);
+    buf.extend_from_slice(&hello.width.to_le_bytes());
+    buf.extend_from_slice(&hello.height.to_le_bytes());
+    buf.extend_from_slice(&hello.cell_width.to_bits().to_le_bytes());
+    buf.extend_from_slice(&hello.cell_height.to_bits().to_le_bytes());
     writer.write_all(&buf).await?;
     writer.flush().await
 }
 
-/// Server reads ClientHello. Returns version compat + viewport.
+/// Server reads ClientHello. Returns version compat + hello payload.
 pub async fn read_client_hello<R: AsyncRead + Unpin>(
     reader: &mut R,
-) -> io::Result<(VersionCompat, ClientViewport)> {
-    let mut buf = [0u8; 24];
-    reader.read_exact(&mut buf).await?;
-    if buf[0..4] != HANDSHAKE_MAGIC {
+) -> io::Result<(VersionCompat, ClientHello)> {
+    // Read fixed header: magic(4) + version(4) + name_len(2) = 10 bytes
+    let mut header = [0u8; 10];
+    reader.read_exact(&mut header).await?;
+    if header[0..4] != HANDSHAKE_MAGIC {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "bad magic bytes"));
     }
-    let peer_ver = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
+    let peer_ver = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
     let compat = check_version(peer_ver)?;
-    let viewport = ClientViewport {
-        width: u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]),
-        height: u32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]]),
-        cell_width: f32::from_bits(u32::from_le_bytes([buf[16], buf[17], buf[18], buf[19]])),
-        cell_height: f32::from_bits(u32::from_le_bytes([buf[20], buf[21], buf[22], buf[23]])),
+    let name_len = u16::from_le_bytes([header[8], header[9]]) as usize;
+    if name_len > 255 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "session name too long"));
+    }
+
+    // Read session name + viewport (N + 16 bytes)
+    let mut rest = vec![0u8; name_len + 16];
+    reader.read_exact(&mut rest).await?;
+    let session_name = String::from_utf8(rest[..name_len].to_vec())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid session name utf8"))?;
+    let off = name_len;
+    let hello = ClientHello {
+        session_name,
+        width: u32::from_le_bytes([rest[off], rest[off+1], rest[off+2], rest[off+3]]),
+        height: u32::from_le_bytes([rest[off+4], rest[off+5], rest[off+6], rest[off+7]]),
+        cell_width: f32::from_bits(u32::from_le_bytes([rest[off+8], rest[off+9], rest[off+10], rest[off+11]])),
+        cell_height: f32::from_bits(u32::from_le_bytes([rest[off+12], rest[off+13], rest[off+14], rest[off+15]])),
     };
     // Validate viewport values
-    if !viewport.cell_width.is_finite() || viewport.cell_width <= 0.0 || viewport.cell_width > 200.0 {
+    if !hello.cell_width.is_finite() || hello.cell_width <= 0.0 || hello.cell_width > 200.0 {
         return Err(io::Error::new(io::ErrorKind::InvalidData,
-            format!("invalid cell_width: {}", viewport.cell_width)));
+            format!("invalid cell_width: {}", hello.cell_width)));
     }
-    if !viewport.cell_height.is_finite() || viewport.cell_height <= 0.0 || viewport.cell_height > 200.0 {
+    if !hello.cell_height.is_finite() || hello.cell_height <= 0.0 || hello.cell_height > 200.0 {
         return Err(io::Error::new(io::ErrorKind::InvalidData,
-            format!("invalid cell_height: {}", viewport.cell_height)));
+            format!("invalid cell_height: {}", hello.cell_height)));
     }
-    if viewport.width == 0 || viewport.width > 16384 {
+    if hello.width == 0 || hello.width > 16384 {
         return Err(io::Error::new(io::ErrorKind::InvalidData,
-            format!("invalid viewport width: {}", viewport.width)));
+            format!("invalid viewport width: {}", hello.width)));
     }
-    if viewport.height == 0 || viewport.height > 16384 {
+    if hello.height == 0 || hello.height > 16384 {
         return Err(io::Error::new(io::ErrorKind::InvalidData,
-            format!("invalid viewport height: {}", viewport.height)));
+            format!("invalid viewport height: {}", hello.height)));
     }
-    Ok((compat, viewport))
+    Ok((compat, hello))
 }
 
 /// ServerHello: [magic(4)][version(4)] = 8 bytes

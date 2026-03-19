@@ -91,6 +91,12 @@ impl App {
                         }
                     }
                 }
+                ServerEvent::Control(ServerMessage::SessionList { .. })
+                | ServerEvent::Control(ServerMessage::SessionSwitched { .. })
+                | ServerEvent::Control(ServerMessage::SessionKilled { .. })
+                | ServerEvent::Control(ServerMessage::Error { .. }) => {
+                    // Session management responses — not yet handled by GUI client
+                }
                 ServerEvent::FullPaneSync(sync) => {
                     let cols = sync.cols as usize;
                     for line in 0..3.min(sync.rows as usize) {

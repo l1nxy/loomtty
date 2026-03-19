@@ -28,6 +28,8 @@ impl Default for KeybindConfig {
         bindings.insert("2".to_string(), "column_width_half".to_string());
         bindings.insert("3".to_string(), "column_width_two_thirds".to_string());
         bindings.insert("f".to_string(), "column_width_full".to_string());
+        bindings.insert("c".to_string(), "consume_into_column".to_string());
+        bindings.insert("e".to_string(), "expel_from_column".to_string());
         bindings.insert("o".to_string(), "toggle_overview".to_string());
         bindings.insert("tab".to_string(), "toggle_overview".to_string());
         bindings.insert("q".to_string(), "detach".to_string());

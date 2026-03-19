@@ -169,6 +169,14 @@ pub enum ClientMessage {
     ConsumeIntoColumn,
     /// Expel the current column's active tile into a new column to the right.
     ExpelFromColumn,
+    /// Request the list of all sessions (running + saved).
+    ListSessions,
+    /// Kill a session by name.
+    KillSession { session_name: String },
+    /// Kill the entire server process.
+    KillServer,
+    /// Switch this client to a different session (create if needed).
+    SwitchSession { session_name: String },
 }
 
 /// Control messages from server to client (msgpack encoded, tags 0x10-0x1F).
@@ -189,6 +197,26 @@ pub enum ServerMessage {
     ServerShutdown,
     /// OSC 52: TUI app requests clipboard write.
     ClipboardStore { data: String },
+    /// Response to ListSessions.
+    SessionList { sessions: Vec<SessionInfo> },
+    /// Client has been switched to a new session (followed by StateSync + FullPaneSync).
+    SessionSwitched { session_name: String },
+    /// A session was killed.
+    SessionKilled { session_name: String },
+    /// Error response.
+    Error { message: String },
+}
+
+/// Session info returned in SessionList.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionInfo {
+    pub name: String,
+    /// True if the session is currently live in the server.
+    pub running: bool,
+    /// Number of panes (0 if saved-only).
+    pub pane_count: usize,
+    /// Number of attached clients.
+    pub client_count: usize,
 }
 
 /// Serializable layout state (2D: workspaces × columns).

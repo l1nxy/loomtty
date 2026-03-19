@@ -95,7 +95,8 @@ impl ApplicationHandler for App {
                 } else if should_try {
                     let (cw, ch) = self.cell_dimensions();
                     let view = &self.workspaces.view_size;
-                    let viewport = ciri_protocol::codec::ClientViewport {
+                    let viewport = ciri_protocol::codec::ClientHello {
+                        session_name: self.session_name.clone(),
                         width: view.width as u32,
                         height: view.height as u32,
                         cell_width: cw,
@@ -203,7 +204,8 @@ impl ApplicationHandler for App {
 
         let (cw, ch) = self.cell_dimensions();
         let view = &self.workspaces.view_size;
-        let viewport = ciri_protocol::codec::ClientViewport {
+        let viewport = ciri_protocol::codec::ClientHello {
+            session_name: self.session_name.clone(),
             width: view.width as u32,
             height: view.height as u32,
             cell_width: cw,

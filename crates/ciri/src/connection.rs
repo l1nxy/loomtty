@@ -16,7 +16,7 @@ pub enum ServerEvent {
 /// Returns channels for bidirectional communication.
 pub fn connect_or_spawn(
     session_name: &str,
-    viewport: codec::ClientViewport,
+    viewport: codec::ClientHello,
 ) -> io::Result<(Sender<ClientMessage>, Receiver<ServerEvent>)> {
     // Validate session name to prevent path traversal
     if session_name.is_empty()
@@ -30,7 +30,7 @@ pub fn connect_or_spawn(
             format!("invalid session name: {session_name:?}"),
         ));
     }
-    let _sock_path = transport::socket_path(session_name);
+    let _sock_path = transport::server_socket_path();
 
     // Spawn server if not running (non-blocking — IO thread handles retry)
     {
@@ -41,7 +41,7 @@ pub fn connect_or_spawn(
             }
             #[cfg(windows)]
             {
-                let port = transport::port_for_session(session_name);
+                let port = transport::server_port();
                 std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok()
             }
         };
@@ -53,7 +53,7 @@ pub fn connect_or_spawn(
     let (msg_tx, msg_rx) = crossbeam_channel::bounded::<ClientMessage>(256);
     let (event_tx, event_rx) = crossbeam_channel::bounded::<ServerEvent>(256);
 
-    let session = session_name.to_string();
+    let _session = session_name.to_string();
     std::thread::Builder::new()
         .name("server-io".into())
         .spawn(move || {
@@ -67,11 +67,11 @@ pub fn connect_or_spawn(
                 let mut connect_result = Err(io::Error::new(io::ErrorKind::ConnectionRefused, ""));
                 for attempt in 0..50 {
                     #[cfg(unix)]
-                    { let sock_path = transport::socket_path(&session);
+                    { let sock_path = transport::server_socket_path();
                       connect_result = tokio::net::UnixStream::connect(&sock_path).await; }
                     #[cfg(windows)]
                     { connect_result = tokio::net::TcpStream::connect(
-                        format!("127.0.0.1:{}", transport::port_for_session(&session))
+                        format!("127.0.0.1:{}", transport::server_port())
                       ).await; }
                     if connect_result.is_ok() { break; }
                     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -167,7 +167,7 @@ pub fn connect_or_spawn(
     Ok((msg_tx, event_rx))
 }
 
-fn spawn_server(session_name: &str) -> io::Result<()> {
+fn spawn_server(_session_name: &str) -> io::Result<()> {
     use std::process::Command;
     // Try to find ciri-server binary next to the current executable
     let exe = std::env::current_exe().unwrap_or_default();
@@ -183,20 +183,19 @@ fn spawn_server(session_name: &str) -> io::Result<()> {
         .unwrap_or_else(|| std::path::PathBuf::from(server_bin));
 
     // Ensure socket directory exists
-    let sock_path = transport::socket_path(session_name);
+    let sock_path = transport::server_socket_path();
     if let Some(parent) = sock_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
-    log::info!("spawning server: {} {}", server_exe.display(), session_name);
+    log::info!("spawning server: {}", server_exe.display());
 
     // Fork server as daemon (setsid for session independence)
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
         let mut cmd = Command::new(&server_exe);
-        cmd.arg(session_name)
-            .stdin(std::process::Stdio::null())
+        cmd.stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
         unsafe {
@@ -213,7 +212,6 @@ fn spawn_server(session_name: &str) -> io::Result<()> {
     #[cfg(not(unix))]
     {
         Command::new(&server_exe)
-            .arg(session_name)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::inherit())
             .stderr(std::process::Stdio::inherit())

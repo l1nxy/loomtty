@@ -74,6 +74,7 @@ j = "focus_down"
 f = "column_width_full"
 o = "toggle_overview"
 tab = "toggle_overview"
+q = "detach"
 
 [keys.overview_bindings]
 h = "focus_left"

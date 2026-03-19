@@ -3,7 +3,16 @@ const DEFAULT_SESSION: &str = "default";
 #[derive(Debug)]
 pub enum CliCommand {
     Run { session_name: String },
+    List,
+    Kill { session_name: String },
+    KillServer,
+    Delete { session_name: String },
     Help,
+}
+
+/// Reserved subcommand names that cannot be used as positional session names.
+fn is_subcommand(arg: &str) -> bool {
+    matches!(arg, "list" | "ls" | "kill" | "k" | "kill-server" | "ks" | "delete" | "rm" | "attach" | "help")
 }
 
 pub fn parse_args<I>(args: I) -> Result<CliCommand, String>
@@ -17,6 +26,14 @@ where
         [] => Ok(CliCommand::Run {
             session_name: DEFAULT_SESSION.to_string(),
         }),
+        [cmd] if cmd == "list" || cmd == "ls" => Ok(CliCommand::List),
+        [cmd] if cmd == "kill-server" || cmd == "ks" => Ok(CliCommand::KillServer),
+        [cmd, name] if cmd == "kill" || cmd == "k" => Ok(CliCommand::Kill {
+            session_name: name.clone(),
+        }),
+        [cmd, name] if cmd == "delete" || cmd == "rm" => Ok(CliCommand::Delete {
+            session_name: name.clone(),
+        }),
         [cmd] if cmd == "attach" => Ok(CliCommand::Run {
             session_name: DEFAULT_SESSION.to_string(),
         }),
@@ -27,7 +44,7 @@ where
             session_name: session_name.clone(),
         }),
         [arg] if is_help_flag(arg) => Ok(CliCommand::Help),
-        [arg] => Ok(CliCommand::Run {
+        [arg] if !is_subcommand(arg) => Ok(CliCommand::Run {
             session_name: arg.clone(),
         }),
         _ => Err(usage),
@@ -36,7 +53,18 @@ where
 
 pub fn usage() -> String {
     format!(
-        "Usage:\n  ciri\n  ciri <session>\n  ciri attach [session]\n  ciri --session <session>\n  ciri --help\n\nDefault session: {DEFAULT_SESSION}"
+        "\
+Usage:
+  ciri                          Connect to default session
+  ciri <session>                Connect to named session
+  ciri attach [session]         Connect to session (alias)
+  ciri list|ls                  List all sessions
+  ciri kill|k <session>         Kill a session
+  ciri kill-server|ks           Kill the server
+  ciri delete|rm <session>      Delete saved session
+  ciri --help|-h                Show this help
+
+Default session: {DEFAULT_SESSION}"
     )
 }
 
@@ -54,47 +82,56 @@ mod tests {
 
     #[test]
     fn default_session_without_args() {
-        match parse(&[]) {
-            CliCommand::Run { session_name } => assert_eq!(session_name, "default"),
-            CliCommand::Help => panic!("expected run command"),
-        }
+        assert!(matches!(parse(&[]), CliCommand::Run { session_name } if session_name == "default"));
     }
 
     #[test]
     fn positional_session_name() {
-        match parse(&["work"]) {
-            CliCommand::Run { session_name } => assert_eq!(session_name, "work"),
-            CliCommand::Help => panic!("expected run command"),
-        }
+        assert!(matches!(parse(&["work"]), CliCommand::Run { session_name } if session_name == "work"));
     }
 
     #[test]
     fn attach_subcommand_defaults_to_default() {
-        match parse(&["attach"]) {
-            CliCommand::Run { session_name } => assert_eq!(session_name, "default"),
-            CliCommand::Help => panic!("expected run command"),
-        }
+        assert!(matches!(parse(&["attach"]), CliCommand::Run { session_name } if session_name == "default"));
     }
 
     #[test]
     fn attach_subcommand_accepts_name() {
-        match parse(&["attach", "ops"]) {
-            CliCommand::Run { session_name } => assert_eq!(session_name, "ops"),
-            CliCommand::Help => panic!("expected run command"),
-        }
+        assert!(matches!(parse(&["attach", "ops"]), CliCommand::Run { session_name } if session_name == "ops"));
     }
 
     #[test]
     fn explicit_session_flag() {
-        match parse(&["--session", "qa"]) {
-            CliCommand::Run { session_name } => assert_eq!(session_name, "qa"),
-            CliCommand::Help => panic!("expected run command"),
-        }
+        assert!(matches!(parse(&["--session", "qa"]), CliCommand::Run { session_name } if session_name == "qa"));
     }
 
     #[test]
     fn help_flag() {
         assert!(matches!(parse(&["--help"]), CliCommand::Help));
+    }
+
+    #[test]
+    fn list_command() {
+        assert!(matches!(parse(&["list"]), CliCommand::List));
+        assert!(matches!(parse(&["ls"]), CliCommand::List));
+    }
+
+    #[test]
+    fn kill_command() {
+        assert!(matches!(parse(&["kill", "dev"]), CliCommand::Kill { session_name } if session_name == "dev"));
+        assert!(matches!(parse(&["k", "dev"]), CliCommand::Kill { session_name } if session_name == "dev"));
+    }
+
+    #[test]
+    fn kill_server_command() {
+        assert!(matches!(parse(&["kill-server"]), CliCommand::KillServer));
+        assert!(matches!(parse(&["ks"]), CliCommand::KillServer));
+    }
+
+    #[test]
+    fn delete_command() {
+        assert!(matches!(parse(&["delete", "old"]), CliCommand::Delete { session_name } if session_name == "old"));
+        assert!(matches!(parse(&["rm", "old"]), CliCommand::Delete { session_name } if session_name == "old"));
     }
 
     #[test]

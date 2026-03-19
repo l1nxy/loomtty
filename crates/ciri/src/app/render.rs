@@ -467,7 +467,7 @@ impl App {
         } else if is_overview {
             "h/l/j/k:navigate  x:close  n:new  esc:exit".to_string()
         } else if is_leader {
-            "n:new  x:close  h/l:\u{2190}\u{2192}  j/k:\u{2191}\u{2193}  f:full  1/2/3:width  o:overview".to_string()
+            "n:new  x:close  h/l:\u{2190}\u{2192}  j/k:\u{2191}\u{2193}  f:full  1/2/3:width  o:overview  q:detach".to_string()
         } else {
             format!("leader:{}", leader_key)
         };

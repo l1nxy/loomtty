@@ -67,6 +67,11 @@ impl ClientPaneGrid {
         }
     }
 
+    /// Total number of lines in the buffer (scrollback + viewport).
+    pub fn total_lines(&self) -> usize {
+        self.buffer.len()
+    }
+
     /// Maximum scroll offset (how far up the user can scroll).
     pub fn max_scroll_offset(&self) -> usize {
         self.buffer.len().saturating_sub(self.rows as usize)

@@ -80,6 +80,17 @@ impl ViewOffset {
         matches!(self, ViewOffset::Animating(_))
     }
 
+    pub fn is_gesture(&self) -> bool {
+        matches!(self, ViewOffset::Gesture(_))
+    }
+
+    /// Update gesture position without clamping to >= 0 (allows negative offsets for bidirectional gestures).
+    pub fn update_gesture_unclamped(&mut self, delta: f64) {
+        if let ViewOffset::Gesture(v) = self {
+            *v -= delta;
+        }
+    }
+
     /// Begin a gesture (trackpad scroll).
     pub fn begin_gesture(&mut self) {
         let v = self.value();

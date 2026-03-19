@@ -4,8 +4,8 @@
 use ciri_protocol::transport;
 
 #[allow(dead_code)]
-pub fn is_session_running(session_name: &str) -> bool {
-    let _sock_path = transport::socket_path(session_name);
+pub fn is_session_running(_session_name: &str) -> bool {
+    let _sock_path = transport::server_socket_path();
 
     #[cfg(unix)]
     {
@@ -18,7 +18,7 @@ pub fn is_session_running(session_name: &str) -> bool {
 
     #[cfg(windows)]
     {
-        let port = transport::port_for_session(session_name);
+        let port = transport::server_port();
         std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok()
     }
 }

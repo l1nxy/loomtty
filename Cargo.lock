@@ -385,6 +385,7 @@ dependencies = [
  "ciri-layout",
  "ciri-protocol",
  "ciri-render",
+ "ciri-session",
  "crossbeam-channel",
  "env_logger",
  "glyphon",

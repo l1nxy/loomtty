@@ -1,4 +1,4 @@
-use crate::tile::PaneId;
+use crate::tile::{PaneId, Tile, TileHeight};
 
 /// Width specification for a column.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -13,11 +13,14 @@ impl Default for ColumnWidth {
     }
 }
 
-/// A column is one pane in a horizontal row. No vertical stacking.
+/// A column is a vertical stack of tiles in a horizontal row.
 #[derive(Debug, Clone)]
 pub struct Column {
-    pub pane_id: PaneId,
+    pub tiles: Vec<Tile>,
+    pub active_tile_idx: usize,
     pub width: ColumnWidth,
+    /// Currently selected preset index, or None if manually resized.
+    pub preset_width_idx: Option<usize>,
     /// Current rendered width in pixels. Set once at creation/resize,
     /// then only changed by explicit animation or jump.
     rendered_width: Option<f32>,
@@ -26,9 +29,51 @@ pub struct Column {
 impl Column {
     pub fn new(pane_id: PaneId) -> Self {
         Column {
-            pane_id,
+            tiles: vec![Tile::new(pane_id)],
+            active_tile_idx: 0,
             width: ColumnWidth::default(),
+            preset_width_idx: None,
             rendered_width: None,
+        }
+    }
+
+    pub fn new_with_tile(tile: Tile) -> Self {
+        Column {
+            tiles: vec![tile],
+            active_tile_idx: 0,
+            width: ColumnWidth::default(),
+            preset_width_idx: None,
+            rendered_width: None,
+        }
+    }
+
+    /// Returns the pane_id of the active tile.
+    pub fn active_pane_id(&self) -> PaneId {
+        self.tiles[self.active_tile_idx].pane_id
+    }
+
+    /// Returns all pane_ids across all tiles.
+    pub fn all_pane_ids(&self) -> Vec<PaneId> {
+        self.tiles.iter().map(|t| t.pane_id).collect()
+    }
+
+    /// Returns true if any tile in this column contains the given pane_id.
+    pub fn contains_pane(&self, pane_id: PaneId) -> bool {
+        self.tiles.iter().any(|t| t.pane_id == pane_id)
+    }
+
+    /// Returns the number of tiles in this column.
+    pub fn tile_count(&self) -> usize {
+        self.tiles.len()
+    }
+
+    /// Get the column's width as a proportion of viewport.
+    pub fn proportion(&self, viewport_w: f32) -> f64 {
+        match self.width {
+            ColumnWidth::Proportion(p) => p,
+            ColumnWidth::Fixed(px) => {
+                if viewport_w > 0.0 { px / viewport_w as f64 } else { 0.5 }
+            }
         }
     }
 
@@ -51,6 +96,43 @@ impl Column {
     /// Set the rendered width to an explicit pixel value.
     pub fn set_rendered_width(&mut self, w: f32) {
         self.rendered_width = Some(w);
+    }
+
+    /// Compute (pane_id, y_offset, height) for each tile based on weights.
+    pub fn tile_rects(&self, _col_width: f32, col_height: f32) -> Vec<(PaneId, f32, f32)> {
+        if self.tiles.len() == 1 {
+            return vec![(self.tiles[0].pane_id, 0.0, col_height)];
+        }
+
+        let total_weight: f64 = self.tiles.iter().map(|t| match t.height {
+            TileHeight::Auto { weight } => weight,
+            TileHeight::Fixed(_) => 0.0,
+        }).sum();
+
+        let fixed_total: f32 = self.tiles.iter().map(|t| match t.height {
+            TileHeight::Fixed(px) => px as f32,
+            _ => 0.0,
+        }).sum();
+
+        let auto_height = (col_height - fixed_total).max(0.0);
+
+        let mut result = Vec::with_capacity(self.tiles.len());
+        let mut y = 0.0f32;
+        for tile in &self.tiles {
+            let h = match tile.height {
+                TileHeight::Auto { weight } => {
+                    if total_weight > 0.0 {
+                        (auto_height as f64 * weight / total_weight) as f32
+                    } else {
+                        auto_height / self.tiles.len() as f32
+                    }
+                }
+                TileHeight::Fixed(px) => px as f32,
+            };
+            result.push((tile.pane_id, y, h));
+            y += h;
+        }
+        result
     }
 }
 

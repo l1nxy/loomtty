@@ -37,6 +37,9 @@ height_padding = 4.0
 text_baseline = 0.8
 
 [input]
+# "prefix" = tmux-style (leader → one action → back to normal)
+# "sticky" = zellij-style (leader → stay in mode until Esc)
+mode = "prefix"
 leader_timeout_ms = 1000
 double_tap_window_ms = 300
 scroll_multiplier = 50.0
@@ -66,14 +69,17 @@ k = "focus_up"
 j = "focus_down"
 "shift+h" = "move_pane_left"
 "shift+l" = "move_pane_right"
-"shift+[" = "column_width_decrease"
-"shift+]" = "column_width_increase"
+"[" = "column_width_decrease"
+"]" = "column_width_increase"
+r = "cycle_preset_width"
+"shift+r" = "cycle_preset_width_reverse"
 f = "column_width_full"
-e = "column_width_half"
-"[" = "column_width_one_third"
-"]" = "column_width_two_thirds"
+b = "toggle_broadcast"
+c = "consume_into_column"
+e = "expel_from_column"
 o = "toggle_overview"
 tab = "toggle_overview"
+q = "detach"
 
 [keys.overview_bindings]
 h = "focus_left"

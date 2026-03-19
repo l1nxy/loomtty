@@ -57,7 +57,7 @@ pub fn run_control_command(msg: ClientMessage) -> Result<()> {
         let patch: u16 = parts[2].parse().unwrap();
         (major as u32) << 24 | (minor as u32) << 16 | patch as u32
     };
-    let session_name = "control";
+    let session_name = "__control__";
     let name_bytes = session_name.as_bytes();
     let mut hello = Vec::with_capacity(26 + name_bytes.len());
     hello.extend_from_slice(magic);

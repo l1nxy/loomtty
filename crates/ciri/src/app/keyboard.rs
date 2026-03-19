@@ -223,11 +223,21 @@ impl App {
                     };
                     if !bytes.is_empty() {
                         if self.broadcast_mode {
-                            // Send to all panes in current workspace
+                            // Send to all panes in current workspace, encoding
+                            // per-pane based on each pane's kitty keyboard mode.
                             for pid in self.workspaces.active().all_pane_ids() {
+                                let pane_kitty = self.pane_grids.get(&pid)
+                                    .is_some_and(|g| g.has_kitty_keyboard);
+                                let pane_bytes = if pane_kitty == use_kitty {
+                                    bytes.clone()
+                                } else if pane_kitty {
+                                    key_event_to_kitty_bytes(event, ctrl, shift, alt, super_key)
+                                } else {
+                                    key_event_to_pty_bytes(event, ctrl)
+                                };
                                 self.send(ClientMessage::Input {
                                     pane_id: pid,
-                                    data: bytes.clone(),
+                                    data: pane_bytes,
                                 });
                             }
                         } else if let Some(pid) = self.workspaces.active_mut().active_pane_id() {

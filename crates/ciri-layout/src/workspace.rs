@@ -170,7 +170,11 @@ impl Workspace {
             // Multi-tile column: remove just this tile
             if let Some(tile_idx) = col.tiles.iter().position(|t| t.pane_id == pane_id) {
                 col.tiles.remove(tile_idx);
-                if col.active_tile_idx >= col.tiles.len() {
+                if tile_idx < col.active_tile_idx {
+                    // Removed tile before active: shift index down
+                    col.active_tile_idx -= 1;
+                } else if col.active_tile_idx >= col.tiles.len() {
+                    // Active was the last tile and it was removed
                     col.active_tile_idx = col.tiles.len() - 1;
                 }
             }

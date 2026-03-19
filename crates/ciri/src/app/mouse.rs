@@ -273,27 +273,44 @@ impl App {
 
         let had_left_hold = self.mouse_left_held;
         self.mouse_left_held = false;
-        if self.tile_resize_dragging.is_some() {
+        if let Some((col_idx, top_tile_idx)) = self.tile_resize_dragging {
+            // Send the final tile weights to the server so PTYs are resized
+            // and the layout is persisted.
+            let delta_weight = {
+                let ws = self.workspaces.active();
+                if let Some(col) = ws.columns.get(col_idx) {
+                    let vh = ws.view_size.height;
+                    let col_w = col.effective_width(ws.view_size.width);
+                    let rects = col.tile_rects(col_w, vh);
+                    let top_h = rects.get(top_tile_idx).map(|r| r.2).unwrap_or(0.0);
+                    let bot_h = rects.get(top_tile_idx + 1).map(|r| r.2).unwrap_or(0.0);
+                    let original_h = (top_h + bot_h) / 2.0;
+                    if original_h > 0.0 {
+                        (top_h - original_h) as f64 / vh as f64
+                    } else {
+                        0.0
+                    }
+                } else {
+                    0.0
+                }
+            };
+            self.send(ClientMessage::ResizeTilePair {
+                column_idx: col_idx,
+                top_tile_idx,
+                delta_weight,
+            });
             self.tile_resize_dragging = None;
             if let Some(w) = &self.window {
                 w.set_cursor(winit::window::CursorIcon::Default);
             }
         }
         if let Some(drag_col) = self.resize_dragging {
-            // Sync both columns to server via AdjustColumnSplit.
-            // The server needs the active column to match drag_col, so send
-            // FocusLeft/FocusRight as needed — but we don't have that message.
-            // Instead, send the accumulated delta which the server applies via
-            // resize_active_with_neighbor on whatever is active. For correctness,
-            // also send both column proportions individually.
-            let ws = self.workspaces.active();
-            if let Some(left_col) = ws.columns.get(drag_col) {
-                let left_p = left_col.proportion(ws.view_size.width);
-                let right_p = ws.columns.get(drag_col + 1).map(|c| c.proportion(ws.view_size.width));
-                // Send left column width
-                self.send(ClientMessage::AdjustColumnSplit { delta: self.resize_drag_accumulated_delta });
-                let _ = (left_p, right_p); // proportions available if needed later
-            }
+            // Send the accumulated delta to the specific column pair being dragged
+            // (not the active column) using AdjustColumnSplitAt.
+            self.send(ClientMessage::AdjustColumnSplitAt {
+                column_idx: drag_col,
+                delta: self.resize_drag_accumulated_delta,
+            });
             self.resize_dragging = None;
             self.snap_all_col_widths();
             if let Some(w) = &self.window {

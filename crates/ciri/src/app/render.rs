@@ -522,44 +522,36 @@ impl App {
             (mode_label, mode_color),
         ];
 
-        // Progressive degradation: check if everything fits
-        let left_chars: usize = left_segments.iter().map(|(s, _)| s.len()).sum();
+        // Progressive degradation: hints are priority, drop left segments if needed.
         let right_chars: usize = right_segments.iter().map(|(s, _)| s.len()).sum();
         let available = (vw / cw) as usize;
-        let show_hints = left_chars + right_chars <= available;
+        let left_budget = available.saturating_sub(right_chars);
 
-        // Render left segments
+        // Render left segments, truncating if they don't fit
         let mut x = 0.0;
+        let mut left_used = 0usize;
         for (text, color) in &left_segments {
+            if left_used + text.len() > left_budget {
+                break; // drop remaining left segments
+            }
             emit_status_text(
                 atlas, &mut renderer.text.font_system, &renderer.queue,
                 text, x, text_y, cw, baseline, *color, vw, vh, glyphs,
             );
             x += text.len() as f32 * cw;
+            left_used += text.len();
         }
 
-        // Render right segments (right-aligned)
-        let right_text_chars: usize = if show_hints {
-            right_segments.iter().map(|(s, _)| s.len()).sum()
-        } else {
-            // Only show mode label
-            mode_label.len()
-        };
+        // Render right segments (right-aligned, always shown)
+        let right_text_chars: usize = right_chars.min(available);
         let mut rx = vw - right_text_chars as f32 * cw;
 
-        if show_hints {
-            for (text, color) in &right_segments {
-                emit_status_text(
-                    atlas, &mut renderer.text.font_system, &renderer.queue,
-                    text, rx, text_y, cw, baseline, *color, vw, vh, glyphs,
-                );
-                rx += text.len() as f32 * cw;
-            }
-        } else {
+        for (text, color) in &right_segments {
             emit_status_text(
                 atlas, &mut renderer.text.font_system, &renderer.queue,
-                mode_label, rx, text_y, cw, baseline, mode_color, vw, vh, glyphs,
+                text, rx, text_y, cw, baseline, *color, vw, vh, glyphs,
             );
+            rx += text.len() as f32 * cw;
         }
 
         // Mode indicator line above status bar (for non-normal modes)
@@ -576,9 +568,7 @@ impl App {
         }
 
         // Mode label background pill
-        let pill_x = if show_hints {
-            vw - right_text_chars as f32 * cw + right_segments[0].0.len() as f32 * cw + right_segments[1].0.len() as f32 * cw
-        } else {
+        let pill_x = {
             vw - mode_label.len() as f32 * cw
         };
         let mut pill_bg = mode_color;

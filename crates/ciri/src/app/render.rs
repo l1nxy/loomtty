@@ -460,14 +460,41 @@ impl App {
             (" NORMAL ", dim)
         };
 
-        // Build keybinding hints per mode (must match default.toml bindings)
+        // Build keybinding hints dynamically from config
         let leader_key = self.config.keys.leader.to_uppercase();
         let hints = if is_broadcast {
-            format!("b:exit broadcast  leader:{}", leader_key)
+            let key = find_key_for_action(&self.config.keys.bindings, "toggle_broadcast");
+            format!("{}:exit broadcast  leader:{}", key, leader_key)
         } else if is_overview {
-            "h/l/j/k:navigate  x:close  n:new  esc/o:exit".to_string()
+            build_hints_from_bindings(&self.config.keys.overview_bindings, &[
+                ("focus_left",  "\u{2190}"), ("focus_right", "\u{2192}"),
+                ("focus_up",    "\u{2191}"), ("focus_down",  "\u{2193}"),
+                ("close_pane",  "close"), ("new_column_right", "new"),
+                ("exit_overview", "exit"),
+            ])
         } else if is_leader {
-            "n:new  d:split  x:close  h/l:\u{2190}\u{2192}  j/k:\u{2191}\u{2193}  H/L:move  [/]:resize  1/2/3/f:width  c/e:stack  b:broadcast  o:overview  q:detach".to_string()
+            build_hints_from_bindings(&self.config.keys.bindings, &[
+                ("new_column_right",     "new"),
+                ("new_row_below",        "split"),
+                ("close_pane",           "close"),
+                ("focus_left",           "\u{2190}"),
+                ("focus_right",          "\u{2192}"),
+                ("focus_up",             "\u{2191}"),
+                ("focus_down",           "\u{2193}"),
+                ("move_pane_left",       "mv\u{2190}"),
+                ("move_pane_right",      "mv\u{2192}"),
+                ("column_width_decrease","w-"),
+                ("column_width_increase","w+"),
+                ("column_width_one_third","1/3"),
+                ("column_width_half",    "1/2"),
+                ("column_width_two_thirds","2/3"),
+                ("column_width_full",    "full"),
+                ("consume_into_column",  "stack"),
+                ("expel_from_column",    "unstack"),
+                ("toggle_broadcast",     "broadcast"),
+                ("toggle_overview",      "overview"),
+                ("detach",               "detach"),
+            ])
         } else {
             format!("leader:{}", leader_key)
         };
@@ -822,6 +849,46 @@ impl App {
             w.request_redraw();
         }
     }
+}
+
+/// Find the key bound to a given action in a bindings map. Returns "?" if not found.
+fn find_key_for_action(bindings: &std::collections::HashMap<String, String>, action: &str) -> String {
+    for (key, act) in bindings {
+        if act == action {
+            return key.clone();
+        }
+    }
+    "?".to_string()
+}
+
+/// Build hints string from a bindings map and an ordered list of (action, label) pairs.
+/// Groups adjacent keys that share the same label (e.g. h/l for ←/→ become "h/l:←→").
+/// Only includes actions that have a key binding.
+fn build_hints_from_bindings(
+    bindings: &std::collections::HashMap<String, String>,
+    action_labels: &[(&str, &str)],
+) -> String {
+    // Reverse map: action -> list of keys (sorted shortest first)
+    let mut action_to_keys: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
+    for (key, action) in bindings {
+        action_to_keys.entry(action.as_str()).or_default().push(key.as_str());
+    }
+    for keys in action_to_keys.values_mut() {
+        keys.sort_by_key(|k| k.len());
+    }
+
+    let mut parts = Vec::new();
+    for (action, label) in action_labels {
+        if let Some(keys) = action_to_keys.get(action) {
+            let key_str = if keys.len() == 1 {
+                keys[0].to_string()
+            } else {
+                keys.iter().take(2).copied().collect::<Vec<_>>().join("/")
+            };
+            parts.push(format!("{}:{}", key_str, label));
+        }
+    }
+    parts.join("  ")
 }
 
 fn emit_status_text(

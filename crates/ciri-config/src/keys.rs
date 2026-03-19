@@ -24,9 +24,8 @@ impl Default for KeybindConfig {
         bindings.insert("shift+l".to_string(), "move_pane_right".to_string());
         bindings.insert("[".to_string(), "column_width_decrease".to_string());
         bindings.insert("]".to_string(), "column_width_increase".to_string());
-        bindings.insert("1".to_string(), "column_width_one_third".to_string());
-        bindings.insert("2".to_string(), "column_width_half".to_string());
-        bindings.insert("3".to_string(), "column_width_two_thirds".to_string());
+        bindings.insert("r".to_string(), "cycle_preset_width".to_string());
+        bindings.insert("shift+r".to_string(), "cycle_preset_width_reverse".to_string());
         bindings.insert("f".to_string(), "column_width_full".to_string());
         bindings.insert("b".to_string(), "toggle_broadcast".to_string());
         bindings.insert("c".to_string(), "consume_into_column".to_string());

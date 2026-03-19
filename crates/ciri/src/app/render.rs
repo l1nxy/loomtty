@@ -60,7 +60,8 @@ impl App {
             ciri_config::config::CenterStrategy::OnOverflow => ciri_layout::workspace::CenterStrategy::OnOverflow,
             ciri_config::config::CenterStrategy::Never => ciri_layout::workspace::CenterStrategy::Never,
         };
-        let target_x = self.workspaces.active_mut().target_offset_for_active_with_strategy(center_strategy);
+        let current_vox = self.view_offset_x.value() as f32;
+        let target_x = self.workspaces.active_mut().target_offset_for_active_with_strategy(center_strategy, current_vox);
         if enabled {
             self.view_offset_x.animate_to(target_x as f64, omega);
         } else {
@@ -72,7 +73,6 @@ impl App {
             self.view_offset_y.animate_to(target_y as f64, omega);
         } else {
             self.view_offset_y.jump_to(target_y as f64);
-            self.workspaces.view_offset_y = target_y;
         }
 
         self.sync_col_animations();
@@ -118,12 +118,6 @@ impl App {
         if self.overview_zoom.advance(dt) {
             animating = true;
         }
-        let vox = self.view_offset_x.value() as f32;
-        for ws in &mut self.workspaces.workspaces {
-            ws.view_offset_x = vox;
-        }
-        self.workspaces.view_offset_y = self.view_offset_y.value() as f32;
-
         if !self.col_widths.is_empty() {
             self.sync_col_animations();
             let ws = self.workspaces.active_mut();
@@ -718,10 +712,12 @@ impl App {
         let zoom = self.overview_zoom.value() as f32;
         let zoom_threshold = self.config.animation.zoom_threshold;
 
+        let vox = self.view_offset_x.value() as f32;
+        let voy = self.view_offset_y.value() as f32;
         let tiles = if self.overview_active || zoom < zoom_threshold {
-            self.workspaces.all_tiles_2d()
+            self.workspaces.all_tiles_2d(vox, voy)
         } else {
-            self.workspaces.visible_tiles_2d()
+            self.workspaces.visible_tiles_2d(vox, voy)
         };
 
         // Update terminal views for dirty pane grids

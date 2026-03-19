@@ -49,6 +49,15 @@ impl App {
                 self.snap_all_col_widths();
                 self.animate_to_active();
             }
+            Action::ColumnWidthOneThird => {
+                self.send(ClientMessage::SetColumnWidth { proportion: 1.0 / 3.0 });
+            }
+            Action::ColumnWidthHalf => {
+                self.send(ClientMessage::SetColumnWidth { proportion: 0.5 });
+            }
+            Action::ColumnWidthTwoThirds => {
+                self.send(ClientMessage::SetColumnWidth { proportion: 2.0 / 3.0 });
+            }
             Action::ColumnWidthFull => {
                 self.send(ClientMessage::SetColumnWidth { proportion: 1.0 });
             }
@@ -135,10 +144,12 @@ impl App {
     pub fn hit_test_overview(&self, mx: f32, my: f32) -> Option<(usize, u64)> {
         let zoom = self.overview_zoom.value() as f32;
         let zoom_threshold = self.config.animation.zoom_threshold;
+        let vox = self.view_offset_x.value() as f32;
+        let voy = self.view_offset_y.value() as f32;
         let tiles = if self.overview_active || zoom < zoom_threshold {
-            self.workspaces.all_tiles_2d()
+            self.workspaces.all_tiles_2d(vox, voy)
         } else {
-            self.workspaces.visible_tiles_2d()
+            self.workspaces.visible_tiles_2d(vox, voy)
         };
         let (vw, vh) = self
             .renderer
@@ -184,7 +195,8 @@ impl App {
         }
         let border_w = self.config.appearance.border_width;
         let padding = self.config.appearance.padding;
-        let tiles = self.workspaces.active().visible_tiles();
+        let vox = self.view_offset_x.value() as f32;
+        let tiles = self.workspaces.active().visible_tiles(vox);
         for (pane_id, rect, _) in &tiles {
             if rect.contains(mx, my) {
                 let inner_x = rect.x + border_w + padding;
@@ -210,7 +222,8 @@ impl App {
         }
         let border_w = self.config.appearance.border_width;
         let padding = self.config.appearance.padding;
-        let tiles = self.workspaces.active().visible_tiles();
+        let vox = self.view_offset_x.value() as f32;
+        let tiles = self.workspaces.active().visible_tiles(vox);
         for (pane_id, rect, _) in &tiles {
             if rect.contains(mx, my) {
                 let inner_x = rect.x + border_w + padding;

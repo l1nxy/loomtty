@@ -36,10 +36,21 @@ impl App {
                     needs_redraw = true;
                 }
                 ServerEvent::Control(ServerMessage::LayoutUpdate { layout }) => {
+                    log::debug!("LayoutUpdate: {} workspaces, active={}",
+                        layout.workspaces.len(), layout.active_workspace_idx);
+                    for (i, ws) in layout.workspaces.iter().enumerate() {
+                        log::debug!("  ws[{}]: {} columns, active_col={}",
+                            i, ws.columns.len(), ws.active_column_idx);
+                        for (j, col) in ws.columns.iter().enumerate() {
+                            log::debug!("    col[{}]: width={:.3}, {} tiles",
+                                j, col.width_proportion, col.tiles.len());
+                        }
+                    }
                     self.apply_layout(&layout);
                     needs_redraw = true;
                 }
                 ServerEvent::Control(ServerMessage::PaneCreated { pane_id, .. }) => {
+                    log::debug!("PaneCreated: pane_id={pane_id}");
                     self.pane_grids.entry(pane_id).or_insert_with(|| {
                         ClientPaneGrid::new(80, 24, self.config.terminal.scrollback_lines)
                     });
@@ -47,8 +58,11 @@ impl App {
                     needs_redraw = true;
                 }
                 ServerEvent::Control(ServerMessage::PaneClosed { pane_id }) => {
+                    log::debug!("PaneClosed: pane_id={pane_id}");
                     // Capture pane rect for close animation before removing
-                    let tiles = self.workspaces.active().visible_tiles();
+                    let vox = self.view_offset_x.value() as f32;
+                    let voy = self.view_offset_y.value() as f32;
+                    let tiles = self.workspaces.visible_tiles_2d(vox, voy);
                     if let Some((_, rect, _)) = tiles.iter().find(|(pid, _, _)| *pid == pane_id) {
                         self.closing_panes.push(super::ClosingPaneState {
                             rect: *rect,
@@ -149,6 +163,10 @@ impl App {
 
     /// Rebuild the full 2D WorkspaceSet from the server's authoritative layout.
     pub fn apply_layout(&mut self, layout: &LayoutState) {
+        log::debug!("apply_layout: view_size={:?}, vox={:.1}, voy={:.1}",
+            self.workspaces.view_size,
+            self.view_offset_x.value(),
+            self.view_offset_y.value());
         let view_size = self.workspaces.view_size;
         let column_gap = self.workspaces.column_gap;
 

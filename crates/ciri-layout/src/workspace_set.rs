@@ -12,8 +12,6 @@ pub struct WorkspaceSet {
     pub workspaces: Vec<Workspace>,
     pub active_workspace_idx: usize,
     pub view_size: ViewSize,
-    /// Vertical scroll offset (pixels). Animated by App.
-    pub view_offset_y: f32,
     pub workspace_gap: f32,
     pub column_gap: f32,
 }
@@ -24,7 +22,6 @@ impl WorkspaceSet {
             workspaces: vec![Workspace::new_with_gap(view_size, column_gap)],
             active_workspace_idx: 0,
             view_size,
-            view_offset_y: 0.0,
             workspace_gap,
             column_gap,
         }
@@ -93,10 +90,10 @@ impl WorkspaceSet {
 
     /// Get ALL visible tiles across all visible workspaces with screen coordinates.
     /// Returns (pane_id, screen_rect, is_active).
-    /// Multi-tile columns return one entry per tile, splitting column height by weight.
-    pub fn visible_tiles_2d(&self) -> Vec<(PaneId, Rect, bool)> {
+    /// `view_offset_x` / `view_offset_y` are the current animated viewport offsets from App.
+    pub fn visible_tiles_2d(&self, view_offset_x: f32, view_offset_y: f32) -> Vec<(PaneId, Rect, bool)> {
         let mut result = Vec::new();
-        let vp_top = self.view_offset_y;
+        let vp_top = view_offset_y;
         let vp_bottom = vp_top + self.view_size.height;
 
         let active_pane = self.active().active_pane_id();
@@ -105,15 +102,13 @@ impl WorkspaceSet {
             let wy = self.workspace_y(ws_idx);
             let ws_h = self.view_size.height;
 
-            // Skip workspaces fully off-screen
             if wy + ws_h < vp_top || wy > vp_bottom {
                 continue;
             }
 
-            let screen_y = wy - self.view_offset_y;
+            let screen_y = wy - view_offset_y;
 
-            // Get visible columns in this workspace
-            let vp_left = ws.view_offset_x;
+            let vp_left = view_offset_x;
             let vp_right = vp_left + self.view_size.width;
 
             for (col_idx, col) in ws.columns.iter().enumerate() {
@@ -129,7 +124,7 @@ impl WorkspaceSet {
                     let is_active = ws_idx == self.active_workspace_idx && Some(*pane_id) == active_pane;
                     result.push((
                         *pane_id,
-                        Rect::new(col_x - ws.view_offset_x, screen_y + *tile_y, col_w, *tile_h),
+                        Rect::new(col_x - view_offset_x, screen_y + *tile_y, col_w, *tile_h),
                         is_active,
                     ));
                 }
@@ -140,17 +135,17 @@ impl WorkspaceSet {
     }
 
     /// Get ALL tiles without culling (for overview).
-    /// Multi-tile columns return one entry per tile.
-    pub fn all_tiles_2d(&self) -> Vec<(PaneId, Rect, bool)> {
+    /// `view_offset_x` / `view_offset_y` are the current animated viewport offsets from App.
+    pub fn all_tiles_2d(&self, view_offset_x: f32, view_offset_y: f32) -> Vec<(PaneId, Rect, bool)> {
         let mut result = Vec::new();
         let active_pane = self.active().active_pane_id();
 
         for (ws_idx, ws) in self.workspaces.iter().enumerate() {
-            let wy = self.workspace_y(ws_idx) - self.view_offset_y;
+            let wy = self.workspace_y(ws_idx) - view_offset_y;
             let ws_h = self.view_size.height;
 
             for (col_idx, col) in ws.columns.iter().enumerate() {
-                let col_x = ws.column_x(col_idx) - ws.view_offset_x;
+                let col_x = ws.column_x(col_idx) - view_offset_x;
                 let col_w = col.effective_width(self.view_size.width);
                 let tile_rects = col.tile_rects(col_w, ws_h);
                 for (pane_id, tile_y, tile_h) in &tile_rects {
@@ -281,7 +276,7 @@ mod tests {
         ws.add_workspace_below(2);
         // Both workspaces visible when view_offset_y = 0 (workspaces are at y=0 and y=608)
         // But workspace 1 at y=608 > viewport height 600, so it's off-screen
-        let tiles = ws.visible_tiles_2d();
+        let tiles = ws.visible_tiles_2d(0.0, 0.0);
         // Only workspace 0 is visible (its pane 1)... wait, workspace 0 has pane 1 but view_offset_y=0
         // and workspace 1 is at y=608 which is > 600, so not visible
         assert_eq!(tiles.len(), 1);
@@ -301,7 +296,7 @@ mod tests {
         let mut ws = wss();
         ws.add_workspace_below(2);
         ws.active_mut().add_column_right_test(3);
-        let all = ws.all_tiles_2d();
+        let all = ws.all_tiles_2d(0.0, 0.0);
         assert_eq!(all.len(), 3); // workspace 0: pane 1, workspace 1: pane 2 + pane 3
     }
 

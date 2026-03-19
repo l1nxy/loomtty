@@ -250,7 +250,7 @@ impl ServerState {
     }
 
     fn layout_state(&self) -> LayoutState {
-        LayoutState {
+        let state = LayoutState {
             workspaces: self.workspaces.workspaces.iter().map(|ws| WorkspaceState {
                 columns: ws.columns.iter().map(|c| ColumnState {
                     tiles: c.tiles.iter().map(|t| TileState { pane_id: t.pane_id, weight: t.height.weight() }).collect(),
@@ -260,7 +260,15 @@ impl ServerState {
                 active_column_idx: ws.active_column_idx,
             }).collect(),
             active_workspace_idx: self.workspaces.active_workspace_idx,
+        };
+        log::debug!("layout_state: {} ws, active={}", state.workspaces.len(), state.active_workspace_idx);
+        for (i, ws) in state.workspaces.iter().enumerate() {
+            for (j, col) in ws.columns.iter().enumerate() {
+                let panes: Vec<u64> = col.tiles.iter().map(|t| t.pane_id).collect();
+                log::debug!("  ws[{i}].col[{j}]: width={:.3}, panes={:?}", col.width_proportion, panes);
+            }
         }
+        state
     }
 
     fn save_session(&self) -> Result<()> {
@@ -458,6 +466,7 @@ impl ServerState {
                 }));
             }
             ClientMessage::Resize { cols: _, rows: _, width, height, cell_width, cell_height } => {
+                log::debug!("client {client_id} Resize: {width}x{height}px, cell={cell_width:.1}x{cell_height:.1}");
                 // Validate
                 if cell_width.is_finite() && cell_width > 0.0 && cell_width <= 200.0
                     && cell_height.is_finite() && cell_height > 0.0 && cell_height <= 200.0

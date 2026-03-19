@@ -18,7 +18,6 @@ pub struct Workspace {
     pub columns: Vec<Column>,
     pub active_column_idx: usize,
     pub view_size: ViewSize,
-    pub view_offset_x: f32,
     pub column_gap: f32,
 }
 
@@ -28,7 +27,6 @@ impl Workspace {
             columns: Vec::new(),
             active_column_idx: 0,
             view_size,
-            view_offset_x: 0.0,
             column_gap,
         }
     }
@@ -66,7 +64,8 @@ impl Workspace {
     }
 
     /// Compute target viewport offset for the active column.
-    pub fn target_offset_for_active_with_strategy(&self, center: CenterStrategy) -> f32 {
+    /// `current_offset` is the current (or animated) view offset X, needed for `Never` strategy.
+    pub fn target_offset_for_active_with_strategy(&self, center: CenterStrategy, current_offset: f32) -> f32 {
         let Some(col) = self.columns.get(self.active_column_idx) else {
             return 0.0;
         };
@@ -87,16 +86,12 @@ impl Workspace {
             centered.clamp(0.0, max_offset)
         } else {
             // Ensure the active column is fully visible, minimal scrolling.
-            // If column fits, scroll just enough to show it.
-            let current = self.view_offset_x;
             let left = col_x;
             let right = col_x + col_w;
-            let mut offset = current;
-            // If column is to the right of viewport, scroll right
+            let mut offset = current_offset;
             if right > offset + vw {
                 offset = right - vw;
             }
-            // If column is to the left of viewport, scroll left
             if left < offset {
                 offset = left;
             }
@@ -106,24 +101,24 @@ impl Workspace {
 
     /// Backward-compatible: always center.
     pub fn target_offset_for_active(&self) -> f32 {
-        self.target_offset_for_active_with_strategy(CenterStrategy::Always)
+        self.target_offset_for_active_with_strategy(CenterStrategy::Always, 0.0)
     }
 
     /// Get visible tiles as (pane_id, screen_rect, is_active).
     /// Multi-tile columns return one entry per tile, splitting column height by weight.
-    pub fn visible_tiles(&self) -> Vec<(PaneId, Rect, bool)> {
-        self.collect_tiles(true)
+    pub fn visible_tiles(&self, view_offset_x: f32) -> Vec<(PaneId, Rect, bool)> {
+        self.collect_tiles(true, view_offset_x)
     }
 
     /// Get ALL tiles without viewport culling (for overview).
     /// Multi-tile columns return one entry per tile.
     pub fn all_tiles_unculled(&self) -> Vec<(PaneId, Rect, bool)> {
-        self.collect_tiles(false)
+        self.collect_tiles(false, 0.0)
     }
 
-    fn collect_tiles(&self, cull: bool) -> Vec<(PaneId, Rect, bool)> {
+    fn collect_tiles(&self, cull: bool, view_offset_x: f32) -> Vec<(PaneId, Rect, bool)> {
         let mut result = Vec::new();
-        let vp_left = self.view_offset_x;
+        let vp_left = view_offset_x;
         let vp_right = vp_left + self.view_size.width;
         let active_pane = self.active_pane_id();
 
@@ -135,7 +130,7 @@ impl Workspace {
                 continue;
             }
 
-            let screen_x = col_x - self.view_offset_x;
+            let screen_x = col_x - view_offset_x;
             let tile_rects = col.tile_rects(col_w, self.view_size.height);
             for (pane_id, y, h) in &tile_rects {
                 let is_active = Some(*pane_id) == active_pane;
@@ -165,9 +160,10 @@ impl Workspace {
         self.active_column_idx = insert_at;
     }
 
+    /// Close a pane's column. The column is simply removed and the layout
+    /// naturally shrinks (niri model: no width redistribution).
     pub fn close_pane(&mut self, pane_id: PaneId) -> Option<PaneId> {
         if let Some(idx) = self.columns.iter().position(|c| c.contains_pane(pane_id)) {
-            let removed_width = self.columns[idx].proportion(self.view_size.width);
             self.columns.remove(idx);
             if self.columns.is_empty() {
                 self.active_column_idx = 0;
@@ -175,13 +171,6 @@ impl Workspace {
                 self.active_column_idx -= 1;
             } else if self.active_column_idx >= self.columns.len() {
                 self.active_column_idx = self.columns.len() - 1;
-            }
-            if !self.columns.is_empty() {
-                let recipient_idx = idx.min(self.columns.len() - 1);
-                let recipient_width = self.columns[recipient_idx].proportion(self.view_size.width);
-                self.columns[recipient_idx].width =
-                    ColumnWidth::Proportion(recipient_width + removed_width);
-                self.normalize_widths();
             }
             return Some(pane_id);
         }
@@ -292,57 +281,24 @@ impl Workspace {
         }
     }
 
+    /// Set the active column's width. Other columns are NOT affected (niri model:
+    /// each column is independently sized, overflow handled by horizontal scrolling).
     pub fn set_active_column_width(&mut self, width: ColumnWidth) {
         if self.columns.is_empty() {
             return;
         }
-
-        if self.columns.len() == 1 {
-            self.columns[0].width = ColumnWidth::Proportion(1.0);
-            return;
-        }
-
-        self.normalize_widths();
-
-        let idx = self.active_column_idx;
-        let vw = self.view_size.width;
-        let mut target = match width {
-            ColumnWidth::Proportion(p) => p,
+        let target = match width {
+            ColumnWidth::Proportion(p) => p.max(MIN_COLUMN_PROPORTION),
             ColumnWidth::Fixed(px) => {
+                let vw = self.view_size.width;
                 if vw > 0.0 {
-                    px / vw as f64
+                    (px / vw as f64).max(MIN_COLUMN_PROPORTION)
                 } else {
                     0.5
                 }
             }
         };
-
-        let other_count = self.columns.len() - 1;
-        let max_active = (1.0 - other_count as f64 * MIN_COLUMN_PROPORTION)
-            .max(MIN_COLUMN_PROPORTION);
-        target = target.clamp(MIN_COLUMN_PROPORTION, max_active);
-
-        let current_active = self.columns[idx].proportion(vw);
-        let other_total = (1.0 - current_active).max(0.0);
-        let remaining = (1.0 - target).max(0.0);
-
-        if other_total <= f64::EPSILON {
-            let even = remaining / other_count as f64;
-            for (col_idx, col) in self.columns.iter_mut().enumerate() {
-                if col_idx != idx {
-                    col.width = ColumnWidth::Proportion(even);
-                }
-            }
-        } else {
-            for (col_idx, col) in self.columns.iter_mut().enumerate() {
-                if col_idx == idx {
-                    continue;
-                }
-                let proportion = col.proportion(vw);
-                col.width = ColumnWidth::Proportion(proportion / other_total * remaining);
-            }
-        }
-        self.columns[idx].width = ColumnWidth::Proportion(target);
+        self.columns[self.active_column_idx].width = ColumnWidth::Proportion(target);
     }
 
     /// Resize the active column against its nearest neighbor.
@@ -432,8 +388,8 @@ impl Workspace {
 
     /// Hit-test tile borders: returns (col_idx, top_tile_idx) if mouse is near
     /// a horizontal border between tiles within a visible column.
-    pub fn hit_test_tile_border(&self, mx: f32, my: f32, threshold: f32) -> Option<(usize, usize)> {
-        let vox = self.view_offset_x;
+    pub fn hit_test_tile_border(&self, view_offset_x: f32, mx: f32, my: f32, threshold: f32) -> Option<(usize, usize)> {
+        let vox = view_offset_x;
         for (col_idx, col) in self.columns.iter().enumerate() {
             if col.tile_count() < 2 { continue; }
             let col_x = self.column_x(col_idx) - vox;
@@ -493,32 +449,6 @@ impl Workspace {
         }
     }
 
-    fn normalize_widths(&mut self) {
-        if self.columns.is_empty() {
-            return;
-        }
-
-        let vw = self.view_size.width;
-        let mut proportions = Vec::with_capacity(self.columns.len());
-        let mut total = 0.0;
-        for col in &self.columns {
-            let proportion = col.proportion(vw).max(0.0);
-            proportions.push(proportion);
-            total += proportion;
-        }
-
-        if total <= f64::EPSILON {
-            let even = 1.0 / self.columns.len() as f64;
-            for col in &mut self.columns {
-                col.width = ColumnWidth::Proportion(even);
-            }
-            return;
-        }
-
-        for (col, proportion) in self.columns.iter_mut().zip(proportions) {
-            col.width = ColumnWidth::Proportion(proportion / total);
-        }
-    }
 }
 
 #[cfg(test)]
@@ -623,10 +553,11 @@ mod tests {
     }
 
     #[test]
-    fn set_active_column_width_redistributes_rest() {
+    fn set_active_column_width_only_changes_active() {
         let mut w = ws();
         w.add_column_right_default(1);
         w.add_column_right_default(2);
+        let original_width_1 = w.columns[1].proportion(w.view_size.width);
         w.active_column_idx = 0;
         w.set_active_column_width(ColumnWidth::Proportion(0.7));
 
@@ -636,7 +567,8 @@ mod tests {
             .map(|c| c.proportion(w.view_size.width))
             .collect();
         assert!((widths[0] - 0.7).abs() < 1e-6);
-        assert!((widths[1] - 0.3).abs() < 1e-6);
+        // Other column unchanged
+        assert!((widths[1] - original_width_1).abs() < 1e-6);
     }
 
     #[test]
@@ -671,12 +603,13 @@ mod tests {
     }
 
     #[test]
-    fn equalize_active_with_neighbor_makes_two_columns_half_and_half() {
+    fn equalize_active_with_neighbor_averages_pair() {
         let mut w = ws();
         w.add_column_right_default(1);
         w.add_column_right_default(2);
         w.active_column_idx = 0;
         w.set_active_column_width(ColumnWidth::Proportion(0.8));
+        // col[0]=0.8, col[1]=0.5 (default, unchanged by set_active_column_width)
         w.equalize_active_with_neighbor();
 
         let widths: Vec<f64> = w
@@ -684,7 +617,8 @@ mod tests {
             .iter()
             .map(|c| c.proportion(w.view_size.width))
             .collect();
-        assert!((widths[0] - 0.5).abs() < 1e-6);
-        assert!((widths[1] - 0.5).abs() < 1e-6);
+        let expected = (0.8 + 0.5) / 2.0;
+        assert!((widths[0] - expected).abs() < 1e-6);
+        assert!((widths[1] - expected).abs() < 1e-6);
     }
 }

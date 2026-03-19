@@ -275,6 +275,7 @@ impl ApplicationHandler for App {
                 if size.width == 0 || size.height == 0 {
                     return;
                 }
+                log::debug!("window resized: {}x{}", size.width, size.height);
                 if let Some(renderer) = &mut self.renderer {
                     renderer.resize(size.width, size.height);
                 }
@@ -283,6 +284,7 @@ impl ApplicationHandler for App {
                     width: size.width as f32,
                     height: size.height as f32 - bar_h,
                 });
+                log::debug!("  view_size: {}x{}", size.width as f32, size.height as f32 - bar_h);
                 self.snap_all_col_widths();
                 for grid in self.pane_grids.values_mut() {
                     grid.dirty = true;
@@ -290,12 +292,10 @@ impl ApplicationHandler for App {
                 self.cached_views.clear();
                 let t = self.workspaces.active_mut().target_offset_for_active();
                 self.view_offset_x.jump_to(t as f64);
-                for ws in &mut self.workspaces.workspaces {
-                    ws.view_offset_x = t;
-                }
                 let (cols, rows) = self.compute_grid_size();
                 let (cw, ch) = self.cell_dimensions();
                 let view = &self.workspaces.view_size;
+                log::debug!("  sending Resize: {cols}x{rows} cells, {cw:.1}x{ch:.1} cell_px");
                 self.send(ClientMessage::Resize {
                     cols,
                     rows,
@@ -531,13 +531,8 @@ impl ApplicationHandler for App {
                             let dy = (my - ly) / zoom;
                             let cur_x = self.view_offset_x.value();
                             self.view_offset_x.jump_to(cur_x - dx as f64);
-                            let vox = self.view_offset_x.value() as f32;
-                            for ws in &mut self.workspaces.workspaces {
-                                ws.view_offset_x = vox;
-                            }
                             let cur_y = self.view_offset_y.value();
                             self.view_offset_y.jump_to(cur_y - dy as f64);
-                            self.workspaces.view_offset_y = self.view_offset_y.value() as f32;
                             if let Some(w) = &self.window {
                                 w.request_redraw();
                             }
@@ -570,7 +565,7 @@ impl ApplicationHandler for App {
                         }
                     } else {
                         let ws = self.workspaces.active();
-                        let vox = ws.view_offset_x;
+                        let vox = self.view_offset_x.value() as f32;
                         let mut near_col_border = false;
                         for i in 1..ws.columns.len() {
                             let col_x = ws.column_x(i) - vox;
@@ -579,7 +574,7 @@ impl ApplicationHandler for App {
                                 break;
                             }
                         }
-                        let near_tile_border = ws.hit_test_tile_border(mx, my, 4.0).is_some();
+                        let near_tile_border = ws.hit_test_tile_border(vox, mx, my, 4.0).is_some();
                         let near_border = near_col_border || near_tile_border;
                         let hover_changed = if near_border || self.mouse_left_held {
                             self.clear_hovered_link()
@@ -657,7 +652,7 @@ impl ApplicationHandler for App {
                             }
                         } else {
                             let ws = self.workspaces.active();
-                            let vox = ws.view_offset_x;
+                            let vox = self.view_offset_x.value() as f32;
                             let vw = ws.view_size.width;
                             let mut started_drag = false;
                             for i in 1..ws.columns.len() {
@@ -676,7 +671,7 @@ impl ApplicationHandler for App {
 
                             // Check for tile border drag
                             if !started_drag {
-                                if let Some((col_idx, top_tile_idx)) = self.workspaces.active().hit_test_tile_border(mx, my, 4.0) {
+                                if let Some((col_idx, top_tile_idx)) = self.workspaces.active().hit_test_tile_border(self.view_offset_x.value() as f32, mx, my, 4.0) {
                                     self.tile_resize_dragging = Some((col_idx, top_tile_idx));
                                     self.tile_resize_drag_start_y = my;
                                     started_drag = true;
@@ -911,10 +906,6 @@ impl ApplicationHandler for App {
                         }
                         TouchPhase::Moved => {
                             self.view_offset_x.update_gesture(dx);
-                            let val = self.view_offset_x.value() as f32;
-                            for ws in &mut self.workspaces.workspaces {
-                                ws.view_offset_x = val;
-                            }
                         }
                         TouchPhase::Ended | TouchPhase::Cancelled => {
                             let t = self.workspaces.active_mut().target_offset_for_active();

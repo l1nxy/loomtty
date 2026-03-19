@@ -460,6 +460,19 @@ impl App {
             (" NORMAL ", dim)
         };
 
+        // === Build left segments: session + workspaces ===
+        let session_text = format!(" {}  ", self.session_name);
+        let ws_idx = self.workspaces.active_workspace_idx;
+        let mut left_segments: Vec<(String, [f32; 4])> = Vec::new();
+        left_segments.push((session_text, dim));
+        for (i, ws) in self.workspaces.workspaces.iter().enumerate() {
+            if !ws.is_empty() || i == ws_idx {
+                let label = format!("[{}] ", i + 1);
+                let color = if i == ws_idx { accent } else { dim };
+                left_segments.push((label, color));
+            }
+        }
+
         // Build keybinding hints dynamically from config
         let leader_key = self.config.keys.leader.to_uppercase();
         let hints = if is_broadcast {
@@ -474,26 +487,50 @@ impl App {
             ])
         } else if is_leader {
             let is_sticky = self.config.input.mode == "sticky";
-            let mut h = build_hints_from_bindings(&self.config.keys.bindings, &[
+            let bindings = &self.config.keys.bindings;
+
+            // Core hints (always shown)
+            let core = build_hints_from_bindings(bindings, &[
                 ("new_column_right",     "new"),
-                ("new_row_below",        "split"),
                 ("close_pane",           "close"),
                 ("focus_left",           "\u{2190}"),
                 ("focus_right",          "\u{2192}"),
                 ("focus_up",             "\u{2191}"),
                 ("focus_down",           "\u{2193}"),
+                ("cycle_preset_width",   "width"),
+                ("toggle_overview",      "overview"),
+                ("detach",               "detach"),
+            ]);
+
+            // Extended hints (shown if space allows)
+            let extended = build_hints_from_bindings(bindings, &[
+                ("new_row_below",        "split"),
                 ("move_pane_left",       "mv\u{2190}"),
                 ("move_pane_right",      "mv\u{2192}"),
                 ("column_width_decrease","w-"),
                 ("column_width_increase","w+"),
-                ("cycle_preset_width",  "width"),
                 ("column_width_full",    "full"),
                 ("consume_into_column",  "stack"),
                 ("expel_from_column",    "unstack"),
                 ("toggle_broadcast",     "broadcast"),
-                ("toggle_overview",      "overview"),
-                ("detach",               "detach"),
             ]);
+
+            let avail = (vw / cw) as usize;
+            let mode_chars = mode_label.len() + 2; // "  " + mode
+            let left_chars: usize = left_segments.iter().map(|(s, _)| s.len()).sum::<usize>();
+            let budget = avail.saturating_sub(mode_chars + left_chars);
+
+            let full = if extended.is_empty() {
+                core.clone()
+            } else {
+                format!("{}  {}", core, extended)
+            };
+
+            let mut h = if full.len() <= budget {
+                full
+            } else {
+                core
+            };
             if is_sticky {
                 h.push_str("  esc:exit");
             }
@@ -501,19 +538,6 @@ impl App {
         } else {
             format!("leader:{}", leader_key)
         };
-
-        // === Build left segments: session + workspaces ===
-        let session_text = format!(" {}  ", self.session_name);
-        let ws_idx = self.workspaces.active_workspace_idx;
-        let mut left_segments: Vec<(String, [f32; 4])> = Vec::new();
-        left_segments.push((session_text, dim));
-        for (i, ws) in self.workspaces.workspaces.iter().enumerate() {
-            if !ws.is_empty() || i == ws_idx {
-                let label = format!("[{}] ", i + 1);
-                let color = if i == ws_idx { accent } else { dim };
-                left_segments.push((label, color));
-            }
-        }
 
         // === Build right segments: mode + hints ===
         let right_segments: Vec<(&str, [f32; 4])> = vec![

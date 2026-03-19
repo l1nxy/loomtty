@@ -8,6 +8,8 @@ impl App {
         match ime {
             Ime::Commit(text) => {
                 self.ime_preedit_active = false;
+                self.ime_preedit_text.clear();
+                self.ime_preedit_cursor = None;
                 if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
                     self.send(ClientMessage::Input {
                         pane_id: pid,
@@ -18,8 +20,13 @@ impl App {
                     w.request_redraw();
                 }
             }
-            Ime::Preedit(text, _cursor) => {
+            Ime::Preedit(text, cursor) => {
                 self.ime_preedit_active = !text.is_empty();
+                self.ime_preedit_text = text;
+                self.ime_preedit_cursor = cursor.map(|(start, _)| start);
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
             }
             Ime::Enabled | Ime::Disabled => {}
         }

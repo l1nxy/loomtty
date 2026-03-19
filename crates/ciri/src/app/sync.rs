@@ -40,17 +40,19 @@ impl App {
                     needs_redraw = true;
                 }
                 ServerEvent::Control(ServerMessage::LayoutUpdate { layout }) => {
-                    log::debug!("LayoutUpdate: {} workspaces, active={}",
+                    log::trace!("LayoutUpdate: {} workspaces, active={}",
                         layout.workspaces.len(), layout.active_workspace_idx);
                     for (i, ws) in layout.workspaces.iter().enumerate() {
-                        log::debug!("  ws[{}]: {} columns, active_col={}",
+                        log::trace!("  ws[{}]: {} columns, active_col={}",
                             i, ws.columns.len(), ws.active_column_idx);
                         for (j, col) in ws.columns.iter().enumerate() {
-                            log::debug!("    col[{}]: width={:.3}, {} tiles",
+                            log::trace!("    col[{}]: width={:.3}, {} tiles",
                                 j, col.width_proportion, col.tiles.len());
                         }
                     }
                     self.apply_layout(&layout);
+                    // Cancel any active tile drag — layout indices may have changed
+                    self.tile_resize_dragging = None;
                     needs_redraw = true;
                 }
                 ServerEvent::Control(ServerMessage::PaneCreated { pane_id, cols, rows, .. }) => {
@@ -94,6 +96,11 @@ impl App {
                             log::debug!("OSC 52: clipboard set ({} bytes)", data.len());
                         }
                     }
+                }
+                ServerEvent::Control(ServerMessage::Bell { pane_id }) => {
+                    log::debug!("bell from pane {pane_id}");
+                    self.bell_flash = Some((pane_id, std::time::Instant::now()));
+                    needs_redraw = true;
                 }
                 ServerEvent::Control(ServerMessage::SessionList { .. })
                 | ServerEvent::Control(ServerMessage::SessionSwitched { .. })

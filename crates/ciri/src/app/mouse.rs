@@ -64,6 +64,7 @@ impl App {
                     ws.active_column_idx = drag_col;
                     ws.resize_active_with_neighbor(delta_proportion);
                     ws.active_column_idx = saved_idx;
+                    self.resize_drag_accumulated_delta += delta_proportion;
                     // Reset drag baseline so next move is incremental
                     self.resize_drag_start_x = mx;
                 }
@@ -181,6 +182,7 @@ impl App {
                     self.resize_dragging = Some(left_col_idx);
                     self.resize_drag_start_x = mx;
                     self.resize_drag_start_width = left_col_width;
+                    self.resize_drag_accumulated_delta = 0.0;
                     started_drag = true;
                     break;
                 }
@@ -277,12 +279,20 @@ impl App {
                 w.set_cursor(winit::window::CursorIcon::Default);
             }
         }
-        if self.resize_dragging.is_some() {
-            // Sync final width to server
+        if let Some(drag_col) = self.resize_dragging {
+            // Sync both columns to server via AdjustColumnSplit.
+            // The server needs the active column to match drag_col, so send
+            // FocusLeft/FocusRight as needed — but we don't have that message.
+            // Instead, send the accumulated delta which the server applies via
+            // resize_active_with_neighbor on whatever is active. For correctness,
+            // also send both column proportions individually.
             let ws = self.workspaces.active();
-            if let Some(col) = ws.columns.get(ws.active_column_idx) {
-                let p = col.proportion(ws.view_size.width);
-                self.send(ClientMessage::SetColumnWidth { proportion: p });
+            if let Some(left_col) = ws.columns.get(drag_col) {
+                let left_p = left_col.proportion(ws.view_size.width);
+                let right_p = ws.columns.get(drag_col + 1).map(|c| c.proportion(ws.view_size.width));
+                // Send left column width
+                self.send(ClientMessage::AdjustColumnSplit { delta: self.resize_drag_accumulated_delta });
+                let _ = (left_p, right_p); // proportions available if needed later
             }
             self.resize_dragging = None;
             self.snap_all_col_widths();

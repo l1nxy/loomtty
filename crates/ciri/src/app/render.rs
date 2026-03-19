@@ -513,6 +513,143 @@ impl App {
         );
     }
 
+    pub fn build_bell_flash(
+        &mut self,
+        tiles: &[(u64, GeoRect, bool)],
+        zoom: f32,
+        vw: f32,
+        vh: f32,
+        bg_rects: &mut Vec<Rect>,
+    ) {
+        let Some((pane_id, started)) = &self.bell_flash else {
+            return;
+        };
+        let elapsed = started.elapsed().as_millis() as f32;
+        let duration_ms = 150.0;
+        if elapsed >= duration_ms {
+            self.bell_flash = None;
+            return;
+        }
+        let alpha = 0.15 * (1.0 - elapsed / duration_ms);
+        let zoom_threshold = self.config.animation.zoom_threshold;
+
+        // Flash the specific pane that belled
+        if let Some((_, tile_rect, _)) = tiles.iter().find(|(pid, _, _)| *pid == *pane_id) {
+            let tr = if zoom < zoom_threshold {
+                let cx = vw / 2.0;
+                let cy = vh / 2.0;
+                GeoRect::new(
+                    cx + (tile_rect.x - cx) * zoom,
+                    cy + (tile_rect.y - cy) * zoom,
+                    tile_rect.w * zoom,
+                    tile_rect.h * zoom,
+                )
+            } else {
+                *tile_rect
+            };
+            bg_rects.push(Rect {
+                x: tr.x,
+                y: tr.y,
+                w: tr.w,
+                h: tr.h,
+                color: [1.0, 0.9, 0.5, alpha],
+            });
+        }
+    }
+
+    pub fn build_ime_preedit(
+        &mut self,
+        tiles: &[(u64, GeoRect, bool)],
+        vw: f32,
+        vh: f32,
+        bg_rects: &mut Vec<Rect>,
+        glyphs: &mut Vec<GlyphInstance>,
+    ) {
+        if !self.ime_preedit_active || self.ime_preedit_text.is_empty() {
+            return;
+        }
+        let renderer = self.renderer.as_mut().unwrap();
+        let atlas = self.glyph_atlas.as_mut().unwrap();
+
+        // Find active pane tile rect and cursor position
+        let active_pid = match self.workspaces.active().active_pane_id() {
+            Some(pid) => pid,
+            None => return,
+        };
+        let tile_rect = match tiles.iter().find(|(pid, _, _)| *pid == active_pid) {
+            Some((_, rect, _)) => *rect,
+            None => return,
+        };
+        let view = match self.cached_views.get(&active_pid) {
+            Some(v) => v,
+            None => return,
+        };
+        let cursor_rect = match view.cursor_rects.first() {
+            Some(c) => c,
+            None => return,
+        };
+
+        let border_w = self.config.appearance.border_width;
+        let padding = self.config.appearance.padding;
+        let cw = atlas.cell_width;
+        let ch = atlas.cell_height;
+
+        // Position at cursor
+        let base_x = tile_rect.x + border_w + padding + cursor_rect.x;
+        let base_y = tile_rect.y + border_w + padding + cursor_rect.y;
+
+        let text = &self.ime_preedit_text;
+        let text_width = text.chars().count() as f32 * cw;
+
+        // Background box
+        bg_rects.push(Rect {
+            x: base_x,
+            y: base_y,
+            w: text_width + 4.0,
+            h: ch + 2.0,
+            color: [0.15, 0.15, 0.25, 0.95],
+        });
+
+        // Underline the preedit region
+        bg_rects.push(Rect {
+            x: base_x,
+            y: base_y + ch,
+            w: text_width + 4.0,
+            h: 2.0,
+            color: [0.5, 0.7, 1.0, 0.9],
+        });
+
+        // Render text
+        let baseline = ch * self.config.statusbar.text_baseline;
+        let text_color = [1.0, 1.0, 1.0, 1.0];
+        emit_status_text(
+            atlas,
+            &mut renderer.text.font_system,
+            &renderer.queue,
+            text,
+            base_x + 2.0,
+            base_y + 1.0,
+            cw,
+            baseline,
+            text_color,
+            vw,
+            vh,
+            glyphs,
+        );
+
+        // Cursor within preedit text
+        if let Some(cursor_pos) = self.ime_preedit_cursor {
+            let cx = base_x + 2.0 + cursor_pos as f32 * cw;
+            bg_rects.push(Rect {
+                x: cx,
+                y: base_y + 1.0,
+                w: 2.0,
+                h: ch,
+                color: [1.0, 1.0, 1.0, 0.8],
+            });
+        }
+    }
+
     pub fn submit_frame(
         renderer: &mut Renderer,
         atlas: &mut GlyphAtlas,
@@ -615,7 +752,7 @@ impl App {
             cp.opacity > 0.0
         });
 
-        if !self.pane_open_opacity.is_empty() || !self.closing_panes.is_empty() {
+        if !self.pane_open_opacity.is_empty() || !self.closing_panes.is_empty() || self.bell_flash.is_some() {
             animating = true;
         }
 
@@ -716,6 +853,8 @@ impl App {
         self.build_tiles(&tiles, zoom, vw_f, vh_f, &mut bg_rects, &mut glyphs, &mut color_glyphs);
         self.build_status_bar(vw_f, vh_f, &mut bg_rects, &mut glyphs);
         self.build_search_bar(&tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs);
+        self.build_bell_flash(&tiles, zoom, vw_f, vh_f, &mut bg_rects);
+        self.build_ime_preedit(&tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs);
 
         let clear_color = ThemeConfig::parse_color(&self.config.theme.ui_background);
         let renderer = self.renderer.as_mut().unwrap();

@@ -551,6 +551,134 @@ pub(crate) fn key_event_to_pty_bytes(event: &winit::event::KeyEvent, ctrl: bool)
     vec![]
 }
 
+/// Encode a key event using the Kitty keyboard protocol (CSI u format).
+///
+/// Format: CSI unicode-key-code [; modifier-value] u
+/// Modifier bits: shift=1, alt=2, ctrl=4, super=8 (value = bits + 1)
+///
+/// For special keys (arrows, function keys, etc.) that have legacy encodings,
+/// we use: CSI 1 ; modifier-value <suffix>
+pub(crate) fn key_event_to_kitty_bytes(
+    event: &winit::event::KeyEvent,
+    ctrl: bool,
+    shift: bool,
+    alt: bool,
+    super_key: bool,
+) -> Vec<u8> {
+    // Compute modifier value (kitty uses modifier_bits + 1)
+    let mut modifier_bits: u8 = 0;
+    if shift { modifier_bits |= 1; }
+    if alt { modifier_bits |= 2; }
+    if ctrl { modifier_bits |= 4; }
+    if super_key { modifier_bits |= 8; }
+    let modifier_val = modifier_bits + 1; // 1 = no modifiers
+
+    // Helper: format CSI <keycode> [; modifier] u
+    let csi_u = |keycode: u32| -> Vec<u8> {
+        if modifier_val > 1 {
+            format!("\x1b[{};{}u", keycode, modifier_val).into_bytes()
+        } else {
+            format!("\x1b[{}u", keycode).into_bytes()
+        }
+    };
+
+    // Helper: format CSI 1 ; modifier <suffix> for special keys
+    let csi_special = |suffix: char| -> Vec<u8> {
+        if modifier_val > 1 {
+            format!("\x1b[1;{}{}", modifier_val, suffix).into_bytes()
+        } else {
+            // Fall back to legacy encoding when no modifiers
+            format!("\x1b[{}", suffix).into_bytes()
+        }
+    };
+
+    // Helper: format CSI <keycode> ; modifier ~ for tilde keys
+    let csi_tilde = |keycode: u32| -> Vec<u8> {
+        if modifier_val > 1 {
+            format!("\x1b[{};{}~", keycode, modifier_val).into_bytes()
+        } else {
+            format!("\x1b[{}~", keycode).into_bytes()
+        }
+    };
+
+    // Named keys first
+    if let Key::Named(key) = &event.logical_key {
+        return match key {
+            NamedKey::Enter => csi_u(13),
+            NamedKey::Tab => csi_u(9),
+            NamedKey::Backspace => csi_u(127),
+            NamedKey::Escape => csi_u(27),
+            NamedKey::Space => csi_u(32),
+            NamedKey::ArrowUp => csi_special('A'),
+            NamedKey::ArrowDown => csi_special('B'),
+            NamedKey::ArrowRight => csi_special('C'),
+            NamedKey::ArrowLeft => csi_special('D'),
+            NamedKey::Home => csi_special('H'),
+            NamedKey::End => csi_special('F'),
+            NamedKey::PageUp => csi_tilde(5),
+            NamedKey::PageDown => csi_tilde(6),
+            NamedKey::Insert => csi_tilde(2),
+            NamedKey::Delete => csi_tilde(3),
+            NamedKey::F1 => csi_tilde(11),
+            NamedKey::F2 => csi_tilde(12),
+            NamedKey::F3 => csi_tilde(13),
+            NamedKey::F4 => csi_tilde(14),
+            NamedKey::F5 => csi_tilde(15),
+            NamedKey::F6 => csi_tilde(17),
+            NamedKey::F7 => csi_tilde(18),
+            NamedKey::F8 => csi_tilde(19),
+            NamedKey::F9 => csi_tilde(20),
+            NamedKey::F10 => csi_tilde(21),
+            NamedKey::F11 => csi_tilde(23),
+            NamedKey::F12 => csi_tilde(24),
+            // Modifier-only keys: don't send in kitty protocol unless explicitly requested
+            NamedKey::Control | NamedKey::Shift | NamedKey::Alt | NamedKey::Super => vec![],
+            _ => vec![],
+        };
+    }
+
+    // Character keys: encode as CSI <unicode_codepoint> [; modifier] u
+    if let Key::Character(c) = &event.logical_key {
+        let text = c.as_str();
+        // For kitty protocol, use the base key character's Unicode codepoint.
+        // With modifiers, the raw character may be a control char, so use
+        // key_without_modifiers to get the base letter.
+        if let Some(ch) = text.chars().next() {
+            let codepoint = if ctrl && (ch as u32) < 0x20 {
+                // Recover the original letter from physical key
+                use winit::keyboard::{KeyCode, PhysicalKey};
+                match event.physical_key {
+                    PhysicalKey::Code(code) => {
+                        let base = match code {
+                            KeyCode::KeyA => 'a', KeyCode::KeyB => 'b',
+                            KeyCode::KeyC => 'c', KeyCode::KeyD => 'd',
+                            KeyCode::KeyE => 'e', KeyCode::KeyF => 'f',
+                            KeyCode::KeyG => 'g', KeyCode::KeyH => 'h',
+                            KeyCode::KeyI => 'i', KeyCode::KeyJ => 'j',
+                            KeyCode::KeyK => 'k', KeyCode::KeyL => 'l',
+                            KeyCode::KeyM => 'm', KeyCode::KeyN => 'n',
+                            KeyCode::KeyO => 'o', KeyCode::KeyP => 'p',
+                            KeyCode::KeyQ => 'q', KeyCode::KeyR => 'r',
+                            KeyCode::KeyS => 's', KeyCode::KeyT => 't',
+                            KeyCode::KeyU => 'u', KeyCode::KeyV => 'v',
+                            KeyCode::KeyW => 'w', KeyCode::KeyX => 'x',
+                            KeyCode::KeyY => 'y', KeyCode::KeyZ => 'z',
+                            _ => ch,
+                        };
+                        base as u32
+                    }
+                    _ => ch as u32,
+                }
+            } else {
+                ch as u32
+            };
+            return csi_u(codepoint);
+        }
+    }
+
+    vec![]
+}
+
 #[cfg(target_os = "macos")]
 fn link_activation_modifier_active(modifiers: winit::keyboard::ModifiersState) -> bool {
     modifiers.super_key()

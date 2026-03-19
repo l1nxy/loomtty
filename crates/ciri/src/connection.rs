@@ -7,7 +7,7 @@ use std::io;
 /// Messages from server to client (received on the winit thread).
 pub enum ServerEvent {
     Control(ServerMessage),
-    CellDelta(CellDelta),
+    CellDelta(CellDeltaBorrowed),
     FullPaneSync(FullPaneSync),
     Disconnected,
 }

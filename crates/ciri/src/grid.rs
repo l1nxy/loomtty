@@ -36,6 +36,10 @@ pub struct ClientPaneGrid {
     pub mode_flags: u8,
     pub title: String,
     pub dirty: bool,
+    /// True if shell integration (OSC 133) is active for this pane.
+    pub has_shell_integration: bool,
+    /// True if kitty keyboard protocol is active for this pane.
+    pub has_kitty_keyboard: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -64,6 +68,8 @@ impl ClientPaneGrid {
             mode_flags: 0,
             title: String::new(),
             dirty: true,
+            has_shell_integration: false,
+            has_kitty_keyboard: false,
         }
     }
 
@@ -148,16 +154,22 @@ impl ClientPaneGrid {
         self.cursor_col = sync.cursor_col;
         self.cursor_shape = sync.cursor_shape;
         self.mode_flags = sync.mode_flags;
+        self.has_shell_integration = sync.mode_flags & MODE_SHELL_INTEGRATION != 0;
+        self.has_kitty_keyboard = sync.mode_flags & MODE_KITTY_KEYBOARD != 0;
         self.title = sync.title.clone();
         self.dirty = true;
     }
 
     /// Apply incremental CellDelta: patch the live viewport rows in the buffer.
+    /// Kept for use with non-borrowed CellDelta (e.g. tests, offline replay).
+    #[allow(dead_code)]
     pub fn apply_delta(&mut self, delta: &CellDelta) {
         self.cursor_line = delta.cursor_line;
         self.cursor_col = delta.cursor_col;
         self.cursor_shape = delta.cursor_shape;
         self.mode_flags = delta.mode_flags;
+        self.has_shell_integration = delta.mode_flags & MODE_SHELL_INTEGRATION != 0;
+        self.has_kitty_keyboard = delta.mode_flags & MODE_KITTY_KEYBOARD != 0;
 
         let buf_len = self.buffer.len();
         let live_start = buf_len.saturating_sub(self.rows as usize);
@@ -171,11 +183,46 @@ impl ClientPaneGrid {
             if buf_row >= buf_len {
                 continue;
             }
-            for (i, &cell) in region.cells.iter().enumerate() {
-                let col = region.left as usize + i;
-                if col < self.buffer[buf_row].len() {
-                    self.buffer[buf_row][col] = cell;
-                }
+            let row = &mut self.buffer[buf_row];
+            let dst_start = region.left as usize;
+            let dst_end = (dst_start + region.cells.len()).min(row.len());
+            let copy_len = dst_end.saturating_sub(dst_start);
+            if copy_len > 0 {
+                row[dst_start..dst_end].copy_from_slice(&region.cells[..copy_len]);
+            }
+        }
+        self.dirty = true;
+    }
+
+    /// Apply incremental CellDeltaBorrowed (zero-copy variant): patch the live
+    /// viewport rows using bytemuck-cast cell slices from the raw payload.
+    pub fn apply_delta_borrowed(&mut self, delta: &CellDeltaBorrowed) {
+        self.cursor_line = delta.cursor_line;
+        self.cursor_col = delta.cursor_col;
+        self.cursor_shape = delta.cursor_shape;
+        self.mode_flags = delta.mode_flags;
+        self.has_shell_integration = delta.mode_flags & MODE_SHELL_INTEGRATION != 0;
+        self.has_kitty_keyboard = delta.mode_flags & MODE_KITTY_KEYBOARD != 0;
+
+        let buf_len = self.buffer.len();
+        let live_start = buf_len.saturating_sub(self.rows as usize);
+
+        for (i, region) in delta.regions.iter().enumerate() {
+            let line = region.line as usize;
+            if line >= self.rows as usize {
+                continue;
+            }
+            let buf_row = live_start + line;
+            if buf_row >= buf_len {
+                continue;
+            }
+            let cells = delta.cells(i);
+            let row = &mut self.buffer[buf_row];
+            let dst_start = region.left as usize;
+            let dst_end = (dst_start + cells.len()).min(row.len());
+            let copy_len = dst_end.saturating_sub(dst_start);
+            if copy_len > 0 {
+                row[dst_start..dst_end].copy_from_slice(&cells[..copy_len]);
             }
         }
         self.dirty = true;
@@ -436,8 +483,10 @@ impl ClientPaneGrid {
         let query_lower = query.to_lowercase();
         let mut results = Vec::new();
 
+        let query_chars: Vec<char> = query_lower.chars().collect();
+
         for (row_idx, row) in self.buffer.iter().enumerate() {
-            let mut text = String::new();
+            let mut chars: Vec<char> = Vec::new();
             let mut col_positions: Vec<u16> = Vec::new();
 
             for (col, cell) in row.iter().enumerate() {
@@ -445,23 +494,23 @@ impl ClientPaneGrid {
                     continue;
                 }
                 let ch = cell.ch();
-                if ch == '\0' {
-                    text.push(' ');
-                } else {
-                    text.push(ch);
+                let lower_ch = if ch == '\0' { ' ' } else { ch };
+                for lc in lower_ch.to_lowercase() {
+                    chars.push(lc);
+                    col_positions.push(col as u16);
                 }
-                col_positions.push(col as u16);
             }
 
-            let text_lower = text.to_lowercase();
             let mut search_from = 0;
-            while let Some(pos) = text_lower[search_from..].find(&query_lower) {
-                let char_start = search_from + pos;
-                let char_end = char_start + query_lower.len() - 1;
-                if char_start < col_positions.len() && char_end < col_positions.len() {
+            while search_from + query_chars.len() <= chars.len() {
+                if chars[search_from..search_from + query_chars.len()] == query_chars[..] {
+                    let char_start = search_from;
+                    let char_end = search_from + query_chars.len() - 1;
                     results.push((row_idx, col_positions[char_start], col_positions[char_end]));
+                    search_from += 1;
+                } else {
+                    search_from += 1;
                 }
-                search_from = char_start + 1;
             }
         }
         results

@@ -342,6 +342,11 @@ impl Session {
                 clipboard_msgs.push(ServerMessage::ClipboardStore { data });
             }
 
+            // Drain bell events
+            if pane.drain_bell() {
+                clipboard_msgs.push(ServerMessage::Bell { pane_id });
+            }
+
             if let Some(regions) = pane.extract_damage() {
                 // Bump generation
                 let g = self.generation.entry(pane_id).or_insert(0);
@@ -997,17 +1002,40 @@ pub async fn run_daemon() -> Result<()> {
     let tick_shutdown = shutdown.clone();
     tokio::spawn(async move {
         let mut ticker = interval(Duration::from_millis(16));
+
+        // ── Frame buffer pool (optimization #2) ─────────────────────
+        // Reusable Vec<u8> buffers to avoid per-frame allocation.
+        // Capped at 64 to bound memory usage.
+        const FRAME_POOL_CAP: usize = 64;
+        let mut frame_pool: Vec<Vec<u8>> = Vec::with_capacity(FRAME_POOL_CAP);
+
         loop {
             ticker.tick().await;
 
-            // Acquire lock, process state, collect outgoing data, then drop lock before sending
-            struct OutgoingFrame {
-                client_id: u64,
-                frame: Vec<u8>,
-                /// If this was a FullPaneSync, the pane_id and history count to record on success.
-                history_update: Option<(u64, usize)>,
+            // ── Phase 1 (locked): process PTY, extract damage, collect snapshots ──
+            //
+            // Snapshot-then-release pattern (optimization #5): we read all pane
+            // data while holding the lock, collect it into lightweight snapshot
+            // structs, clone the tx handles we need, then drop the lock before
+            // doing any encoding or sending.
+
+            /// Raw snapshot data extracted under the lock for deferred encoding.
+            enum Snapshot {
+                FullSync {
+                    sync: FullPaneSync,
+                    current_history: usize,
+                    pane_id: u64,
+                },
+                Delta(CellDelta),
             }
-            let mut outgoing: Vec<OutgoingFrame> = Vec::new();
+
+            struct PendingSend {
+                client_id: u64,
+                session_name: String,
+                snapshot: Snapshot,
+            }
+
+            let mut pending_sends: Vec<PendingSend> = Vec::new();
             let mut should_shutdown = false;
 
             {
@@ -1031,7 +1059,9 @@ pub async fn run_daemon() -> Result<()> {
                     // Send OSC 52 clipboard writes to clients of this session
                     for clip_msg in &clipboard_msgs {
                         if let Ok(payload) = rmp_serde::to_vec(clip_msg) {
-                            let mut frame = Vec::with_capacity(5 + payload.len());
+                            let mut frame = frame_pool.pop().unwrap_or_default();
+                            frame.clear();
+                            frame.reserve(5 + payload.len());
                             frame.push(0x10); // TAG_SERVER_MSG
                             frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
                             frame.extend_from_slice(&payload);
@@ -1039,6 +1069,9 @@ pub async fn run_daemon() -> Result<()> {
                                 if client.session_name == *session_name {
                                     let _ = client.tx.try_send(frame.clone());
                                 }
+                            }
+                            if frame_pool.len() < FRAME_POOL_CAP {
+                                frame_pool.push(frame);
                             }
                         }
                     }
@@ -1062,12 +1095,17 @@ pub async fn run_daemon() -> Result<()> {
                         for client in s.clients.values() {
                             if client.session_name == *session_name {
                                 for payload in &broadcasts {
-                                    let mut frame = Vec::with_capacity(5 + payload.len());
+                                    let mut frame = frame_pool.pop().unwrap_or_default();
+                                    frame.clear();
+                                    frame.reserve(5 + payload.len());
                                     frame.push(0x10);
                                     frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
                                     frame.extend_from_slice(payload);
-                                    if let Err(e) = client.tx.try_send(frame) {
+                                    if let Err(e) = client.tx.try_send(frame.clone()) {
                                         log::warn!("failed to send close frame to client {}: {e}", client.id);
+                                    }
+                                    if frame_pool.len() < FRAME_POOL_CAP {
+                                        frame_pool.push(frame);
                                     }
                                 }
                             }
@@ -1087,12 +1125,17 @@ pub async fn run_daemon() -> Result<()> {
                         if let Ok(payload) = rmp_serde::to_vec(&ServerMessage::ServerShutdown) {
                             for client in s.clients.values() {
                                 if client.session_name == *session_name {
-                                    let mut frame = Vec::with_capacity(5 + payload.len());
+                                    let mut frame = frame_pool.pop().unwrap_or_default();
+                                    frame.clear();
+                                    frame.reserve(5 + payload.len());
                                     frame.push(0x10);
                                     frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
                                     frame.extend_from_slice(&payload);
-                                    if let Err(e) = client.tx.try_send(frame) {
+                                    if let Err(e) = client.tx.try_send(frame.clone()) {
                                         log::warn!("failed to send shutdown to client {}: {e}", client.id);
+                                    }
+                                    if frame_pool.len() < FRAME_POOL_CAP {
+                                        frame_pool.push(frame);
                                     }
                                 }
                             }
@@ -1110,7 +1153,7 @@ pub async fn run_daemon() -> Result<()> {
                         sessions_to_remove.push(session_name.clone());
                         // Don't re-insert this session
                     } else {
-                        // Collect damage frames for clients of this session
+                        // Collect damage snapshots for clients of this session
                         let session_client_ids: Vec<u64> = s.clients.iter()
                             .filter(|(_, c)| c.session_name == *session_name)
                             .map(|(id, _)| *id)
@@ -1129,34 +1172,26 @@ pub async fn run_daemon() -> Result<()> {
                             }
                         }
 
-                        // Build frames from pane data
+                        // Phase 1: read pane data under lock, build snapshot structs,
+                        // clone tx handles for deferred sending.
                         for (cid, pane_id, damage) in pending {
                             let pgen = session.generation.get(&pane_id).copied().unwrap_or(0);
+                            if !s.clients.contains_key(&cid) {
+                                continue;
+                            }
 
                             if damage.full {
-                                let sync_result = if let Some(pane) = session.panes.get(&pane_id) {
+                                if let Some(pane) = session.panes.get(&pane_id) {
                                     let last_sent = s.clients.get(&cid)
                                         .and_then(|c| c.history_sent.get(&pane_id).copied())
                                         .unwrap_or(0);
                                     let sync = pane.snapshot_incremental(pgen, last_sent);
                                     let current_history = pane.history_size();
-                                    Some((sync, current_history))
-                                } else {
-                                    None
-                                };
-                                if let Some((sync, current_history)) = sync_result {
-                                    // Don't update history_sent yet — only after successful send
-                                    if let Ok(payload) = codec::encode_full_pane_sync_payload(&sync) {
-                                        let mut frame = Vec::with_capacity(5 + payload.len());
-                                        frame.push(0x21);
-                                        frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-                                        frame.extend_from_slice(&payload);
-                                        outgoing.push(OutgoingFrame {
-                                            client_id: cid,
-                                            frame,
-                                            history_update: Some((pane_id, current_history)),
-                                        });
-                                    }
+                                    pending_sends.push(PendingSend {
+                                        client_id: cid,
+                                        session_name: session_name.clone(),
+                                        snapshot: Snapshot::FullSync { sync, current_history, pane_id },
+                                    });
                                 }
                             } else if let Some(pane) = session.panes.get(&pane_id) {
                                 let (cursor_line, cursor_col, cursor_shape, mode_flags) = pane.cursor_info();
@@ -1176,17 +1211,11 @@ pub async fn run_daemon() -> Result<()> {
                                     mode_flags,
                                     regions,
                                 };
-                                if let Ok(payload) = codec::encode_cell_delta_payload(&delta) {
-                                    let mut frame = Vec::with_capacity(5 + payload.len());
-                                    frame.push(0x20); // TAG_CELL_DELTA
-                                    frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-                                    frame.extend_from_slice(&payload);
-                                    outgoing.push(OutgoingFrame {
-                                        client_id: cid,
-                                        frame,
-                                        history_update: None,
-                                    });
-                                }
+                                pending_sends.push(PendingSend {
+                                    client_id: cid,
+                                    session_name: session_name.clone(),
+                                    snapshot: Snapshot::Delta(delta),
+                                });
                             }
                         }
 
@@ -1205,7 +1234,7 @@ pub async fn run_daemon() -> Result<()> {
                     log::info!("all sessions ended and no clients, shutting down server");
                     should_shutdown = true;
                 }
-            } // lock dropped here
+            } // lock dropped here — Phase 1 complete
 
             // Signal shutdown
             if should_shutdown {
@@ -1214,30 +1243,95 @@ pub async fn run_daemon() -> Result<()> {
                 return;
             }
 
-            // Send frames outside the lock
-            if !outgoing.is_empty() {
+            // ── Phase 2 (unlocked): encode snapshots, then re-lock to validate + send ──
+            //
+            // Encoding (RLE, bytemuck serialization) happens without holding
+            // the server lock. We use the frame pool to avoid per-frame alloc.
+            //
+            // After encoding, we re-acquire the lock to validate client session
+            // affinity before sending. A client may have switched sessions
+            // (SwitchSession) between Phase 1 and Phase 2; sending old-session
+            // data to such a client would corrupt its state.
+            if !pending_sends.is_empty() {
+                struct EncodedFrame {
+                    client_id: u64,
+                    session_name: String,
+                    buf: Vec<u8>,
+                    history_update: Option<(u64, usize)>,
+                }
+                let mut encoded: Vec<EncodedFrame> = Vec::new();
+
+                for PendingSend { client_id, session_name, snapshot } in pending_sends.drain(..) {
+                    let mut buf = frame_pool.pop().unwrap_or_default();
+                    let (history_update, encode_ok) = match &snapshot {
+                        Snapshot::FullSync { sync, current_history, pane_id } => {
+                            let ok = codec::encode_full_pane_sync_framed(&mut buf, sync).is_ok();
+                            (Some((*pane_id, *current_history)), ok)
+                        }
+                        Snapshot::Delta(delta) => {
+                            let ok = codec::encode_cell_delta_framed(&mut buf, delta).is_ok();
+                            (None, ok)
+                        }
+                    };
+
+                    if encode_ok {
+                        encoded.push(EncodedFrame { client_id, session_name, buf, history_update });
+                    } else {
+                        // Return buffer to pool on encode failure
+                        if frame_pool.len() < FRAME_POOL_CAP {
+                            frame_pool.push(buf);
+                        }
+                    }
+                }
+
+                // Re-lock to validate affinity and send
                 let mut s = tick_state.lock().await;
                 let mut to_disconnect = Vec::new();
-                for OutgoingFrame { client_id, frame, history_update } in outgoing {
+                for EncodedFrame { client_id, session_name, buf, history_update } in encoded.drain(..) {
                     if let Some(client) = s.clients.get_mut(&client_id) {
-                        if let Err(e) = client.tx.try_send(frame) {
-                            client.send_failures += 1;
-                            if client.send_failures >= 100 {
-                                log::warn!("disconnecting slow client {client_id}: {} consecutive failures", client.send_failures);
-                                to_disconnect.push(client_id);
-                            } else {
-                                log::debug!("send to client {client_id} failed (#{}) : {e}", client.send_failures);
+                        // Revalidate client affinity: if the client switched sessions
+                        // between Phase 1 and now, drop the stale frame.
+                        if client.session_name != session_name {
+                            log::debug!(
+                                "client {client_id} switched session ({session_name} -> {}), dropping stale frame",
+                                client.session_name
+                            );
+                            if frame_pool.len() < FRAME_POOL_CAP {
+                                frame_pool.push(buf);
                             }
-                            // On failure for FullPaneSync, re-mark full so it retries next tick
-                            if let Some((pid, _)) = history_update {
-                                client.damage.entry(pid).or_insert_with(DamageAccumulator::new).mark_full();
+                            continue;
+                        }
+                        match client.tx.try_send(buf) {
+                            Ok(()) => {
+                                // buf consumed by channel — do not return to pool
+                                client.send_failures = 0;
+                                if let Some((pid, hist)) = history_update {
+                                    client.history_sent.insert(pid, hist);
+                                }
                             }
-                        } else {
-                            client.send_failures = 0;
-                            // Only advance history_sent after successful send
-                            if let Some((pid, hist)) = history_update {
-                                client.history_sent.insert(pid, hist);
+                            Err(e) => {
+                                client.send_failures += 1;
+                                if client.send_failures >= 100 {
+                                    log::warn!("disconnecting slow client {client_id}: {} consecutive failures", client.send_failures);
+                                    to_disconnect.push(client_id);
+                                } else {
+                                    log::debug!("send to client {client_id} failed (#{})", client.send_failures);
+                                }
+                                // On failure for FullPaneSync, re-mark full so it retries next tick
+                                if let Some((pid, _)) = history_update {
+                                    client.damage.entry(pid).or_insert_with(DamageAccumulator::new).mark_full();
+                                }
+                                // Recover the buffer and return it to the pool
+                                let buf = e.into_inner();
+                                if frame_pool.len() < FRAME_POOL_CAP {
+                                    frame_pool.push(buf);
+                                }
                             }
+                        }
+                    } else {
+                        // Client not found — return buffer to pool
+                        if frame_pool.len() < FRAME_POOL_CAP {
+                            frame_pool.push(buf);
                         }
                     }
                 }
@@ -1283,6 +1377,7 @@ pub async fn run_daemon() -> Result<()> {
             result = listener.accept() => {
                 let (stream, _) = result?;
                 let state = state.clone();
+                let client_shutdown = shutdown.clone();
 
                 tokio::spawn(async move {
                     let (reader, writer) = stream.into_split();
@@ -1484,9 +1579,8 @@ pub async fn run_daemon() -> Result<()> {
                                                 }
                                                 drop(s);
                                                 let _ = std::fs::remove_file(&transport::server_socket_path());
-                                                // Note: This will cause the reader to exit,
-                                                // but the actual server shutdown is via the tick loop
-                                                // detecting no sessions/clients.
+                                                // Signal the accept loop and tick loop to shut down
+                                                client_shutdown.notify_one();
                                                 return;
                                             }
                                         }

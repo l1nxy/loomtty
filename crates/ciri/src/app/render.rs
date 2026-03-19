@@ -473,7 +473,8 @@ impl App {
                 ("exit_overview", "exit"),
             ])
         } else if is_leader {
-            build_hints_from_bindings(&self.config.keys.bindings, &[
+            let is_sticky = self.config.input.mode == "sticky";
+            let mut h = build_hints_from_bindings(&self.config.keys.bindings, &[
                 ("new_column_right",     "new"),
                 ("new_row_below",        "split"),
                 ("close_pane",           "close"),
@@ -492,7 +493,11 @@ impl App {
                 ("toggle_broadcast",     "broadcast"),
                 ("toggle_overview",      "overview"),
                 ("detach",               "detach"),
-            ])
+            ]);
+            if is_sticky {
+                h.push_str("  esc:exit");
+            }
+            h
         } else {
             format!("leader:{}", leader_key)
         };

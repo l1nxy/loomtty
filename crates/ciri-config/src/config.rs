@@ -168,12 +168,15 @@ impl Default for StatusBarConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct InputConfig {
-    /// Leader mode timeout in milliseconds.
+    /// Leader mode timeout in milliseconds (prefix mode only).
     pub leader_timeout_ms: u64,
     /// Double-tap window in milliseconds for SendLeaderKey.
     pub double_tap_window_ms: u64,
     /// Scroll multiplier for line-based scroll delta.
     pub scroll_multiplier: f64,
+    /// Input mode: "prefix" (tmux-style, one action per leader press)
+    /// or "sticky" (zellij-style, stay in leader until Esc).
+    pub mode: String,
 }
 
 impl Default for InputConfig {
@@ -182,6 +185,7 @@ impl Default for InputConfig {
             leader_timeout_ms: 1000,
             double_tap_window_ms: 300,
             scroll_multiplier: 50.0,
+            mode: "prefix".to_string(),
         }
     }
 }

@@ -243,8 +243,12 @@ impl App {
                 for grid in self.pane_grids.values_mut() {
                     grid.dirty = true;
                 }
-                // Update leader key from config
+                // Update leader key and input mode from config
                 self.input.leader_key = ciri_input::leader::LeaderKey::parse(&self.config.keys.leader);
+                self.input.input_mode = match self.config.input.mode.as_str() {
+                    "sticky" => ciri_input::leader::InputMode::Sticky,
+                    _ => ciri_input::leader::InputMode::Prefix,
+                };
                 // Notify server of new cell dimensions after font change
                 if font_changed {
                     let (cw, ch) = self.cell_dimensions();

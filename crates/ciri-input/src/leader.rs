@@ -9,6 +9,15 @@ pub enum LeaderState {
     AwaitingAction { entered_at: Instant },
 }
 
+/// Input mode preset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputMode {
+    /// tmux-style: press leader, execute one action, return to normal.
+    Prefix,
+    /// zellij-style: press leader to enter sticky mode, stay until Esc.
+    Sticky,
+}
+
 /// Parsed leader key specification.
 #[derive(Debug, Clone)]
 pub struct LeaderKey {
@@ -38,16 +47,13 @@ impl LeaderKey {
             }
         }
 
-        // If the entire string is just a modifier (e.g. "alt"), key stays empty
-        // and we match when that modifier is pressed alone.
         LeaderKey { key, ctrl, alt, super_key }
     }
 
     /// Check if a key event matches this leader key.
     pub fn matches(&self, key_name: &str, ctrl: bool, alt: bool, super_key: bool) -> bool {
         if self.key.is_empty() {
-            // Bare modifier key (e.g. "alt"): match when that modifier's own
-            // key name appears (winit sends "Alt" as the key).
+            // Bare modifier key (e.g. "alt"): match when that modifier's own key name appears
             let is_mod_key = key_name.eq_ignore_ascii_case("alt")
                 || key_name.eq_ignore_ascii_case("control")
                 || key_name.eq_ignore_ascii_case("super")
@@ -55,7 +61,6 @@ impl LeaderKey {
             if !is_mod_key {
                 return false;
             }
-            // Check that the right modifier flag is expected
             if self.alt && key_name.eq_ignore_ascii_case("alt") { return true; }
             if self.ctrl && key_name.eq_ignore_ascii_case("control") { return true; }
             if self.super_key && (key_name.eq_ignore_ascii_case("super") || key_name.eq_ignore_ascii_case("meta")) { return true; }
@@ -73,6 +78,7 @@ impl LeaderKey {
 pub struct InputHandler {
     pub state: LeaderState,
     pub leader_key: LeaderKey,
+    pub input_mode: InputMode,
     pub keybinds: KeybindMap,
     leader_timeout: Duration,
     double_tap_window: Duration,
@@ -92,7 +98,8 @@ impl InputHandler {
     pub fn new(leader_timeout: Duration, double_tap_window: Duration) -> Self {
         InputHandler {
             state: LeaderState::Idle,
-            leader_key: LeaderKey::parse("ctrl+w"),
+            leader_key: LeaderKey::parse("ctrl+space"),
+            input_mode: InputMode::Prefix,
             keybinds: KeybindMap::default(),
             leader_timeout,
             double_tap_window,
@@ -101,6 +108,10 @@ impl InputHandler {
     }
 
     pub fn check_timeout(&mut self) {
+        // In sticky mode, don't timeout — only Esc exits
+        if self.input_mode == InputMode::Sticky {
+            return;
+        }
         if let LeaderState::AwaitingAction { entered_at } = &self.state
             && entered_at.elapsed() > self.leader_timeout {
                 self.state = LeaderState::Idle;
@@ -134,21 +145,44 @@ impl InputHandler {
                     return InputResult::Consumed;
                 }
 
-                // Everything else goes to PTY
                 InputResult::PassThrough
             }
             LeaderState::AwaitingAction { .. } => {
-                self.state = LeaderState::Idle;
+                // Esc always exits leader mode (both prefix and sticky)
+                if key_name == "escape" || key_name == "Escape" {
+                    self.state = LeaderState::Idle;
+                    return InputResult::Consumed;
+                }
 
+                // In prefix mode: execute action and return to idle
+                // In sticky mode: execute action and stay in leader mode
                 let combo = KeyCombo::from_modifiers(key_name, ctrl, shift, alt, super_key);
                 log::debug!("leader combo: key={:?} shift={} ctrl={} alt={} super={}", key_name, shift, ctrl, alt, super_key);
 
                 if let Some(action) = self.keybinds.lookup(&combo) {
                     log::debug!("leader matched action: {:?}", action);
+                    match self.input_mode {
+                        InputMode::Prefix => {
+                            self.state = LeaderState::Idle;
+                        }
+                        InputMode::Sticky => {
+                            // Stay in AwaitingAction, refresh timestamp
+                            self.state = LeaderState::AwaitingAction {
+                                entered_at: Instant::now(),
+                            };
+                        }
+                    }
                     InputResult::Action(action)
                 } else {
                     log::debug!("leader: no match for combo {:?}", combo);
-                    // Unknown key after leader: consume it (don't send to PTY)
+                    match self.input_mode {
+                        InputMode::Prefix => {
+                            self.state = LeaderState::Idle;
+                        }
+                        InputMode::Sticky => {
+                            // Stay in leader mode, consume unknown key
+                        }
+                    }
                     InputResult::Consumed
                 }
             }
@@ -169,6 +203,12 @@ mod tests {
     fn test_handler() -> InputHandler {
         let mut h = InputHandler::new(Duration::from_millis(1000), Duration::from_millis(300));
         h.leader_key = LeaderKey::parse("ctrl+w");
+        h
+    }
+
+    fn sticky_handler() -> InputHandler {
+        let mut h = test_handler();
+        h.input_mode = InputMode::Sticky;
         h
     }
 
@@ -209,7 +249,7 @@ mod tests {
         h.process_key("w", true, false, false, false);
         assert!(h.is_awaiting_action());
         h.state = LeaderState::AwaitingAction {
-            entered_at: std::time::Instant::now() - std::time::Duration::from_secs(2),
+            entered_at: Instant::now() - Duration::from_secs(2),
         };
         h.check_timeout();
         assert!(!h.is_awaiting_action());
@@ -235,10 +275,8 @@ mod tests {
     fn alt_leader_key() {
         let mut h = test_handler();
         h.leader_key = LeaderKey::parse("alt");
-        // Alt key press should enter leader mode
         assert!(matches!(h.process_key("Alt", false, false, true, false), InputResult::Consumed));
         assert!(h.is_awaiting_action());
-        // Then pressing 'n' should trigger action
         match h.process_key("n", false, false, false, false) {
             InputResult::Action(Action::NewColumnRight) => {}
             _ => panic!("expected NewColumnRight"),
@@ -258,5 +296,66 @@ mod tests {
 
         let k = LeaderKey::parse("super+a");
         assert!(k.super_key && k.key == "a");
+    }
+
+    // ── Sticky mode tests ──
+
+    #[test]
+    fn sticky_stays_in_leader_after_action() {
+        let mut h = sticky_handler();
+        h.process_key("w", true, false, false, false);
+        assert!(h.is_awaiting_action());
+        // Execute action — should stay in leader mode
+        match h.process_key("n", false, false, false, false) {
+            InputResult::Action(Action::NewColumnRight) => {}
+            _ => panic!("expected NewColumnRight"),
+        }
+        assert!(h.is_awaiting_action()); // still in leader!
+        // Execute another action without re-pressing leader
+        match h.process_key("x", false, false, false, false) {
+            InputResult::Action(Action::ClosePane) => {}
+            _ => panic!("expected ClosePane"),
+        }
+        assert!(h.is_awaiting_action()); // still in leader!
+    }
+
+    #[test]
+    fn sticky_esc_exits_leader() {
+        let mut h = sticky_handler();
+        h.process_key("w", true, false, false, false);
+        assert!(h.is_awaiting_action());
+        assert!(matches!(h.process_key("escape", false, false, false, false), InputResult::Consumed));
+        assert!(!h.is_awaiting_action());
+    }
+
+    #[test]
+    fn sticky_no_timeout() {
+        let mut h = sticky_handler();
+        h.process_key("w", true, false, false, false);
+        assert!(h.is_awaiting_action());
+        // Set entered_at to the past
+        h.state = LeaderState::AwaitingAction {
+            entered_at: Instant::now() - Duration::from_secs(100),
+        };
+        h.check_timeout();
+        // Should NOT timeout in sticky mode
+        assert!(h.is_awaiting_action());
+    }
+
+    #[test]
+    fn sticky_unknown_key_stays_in_leader() {
+        let mut h = sticky_handler();
+        h.process_key("w", true, false, false, false);
+        assert!(matches!(h.process_key("z", false, false, false, false), InputResult::Consumed));
+        assert!(h.is_awaiting_action()); // still in leader, not kicked out
+    }
+
+    #[test]
+    fn prefix_esc_exits_leader() {
+        let mut h = test_handler();
+        h.process_key("w", true, false, false, false);
+        assert!(h.is_awaiting_action());
+        assert!(matches!(h.process_key("escape", false, false, false, false), InputResult::Consumed));
+        assert!(!h.is_awaiting_action());
     }
 }

@@ -57,7 +57,7 @@ frame_latency = 2
 preset = "one_dark"
 
 [keys]
-leader = "ctrl+space"
+leader = "ctrl+w"
 
 [keys.bindings]
 n = "new_column_right"

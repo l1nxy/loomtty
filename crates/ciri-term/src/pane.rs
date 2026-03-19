@@ -161,22 +161,29 @@ impl Pane {
         // Drain all available output from the background reader thread
         let chunks = self.pty.drain_output();
         if !chunks.is_empty() {
-            // Read cursor position for image placement before scanning.
-            let (cursor_col, cursor_row) = {
-                let term = self.term.lock().unwrap_or_else(|e| e.into_inner());
-                let cursor = term.grid().cursor.point;
-                (cursor.column.0 as u16, cursor.line.0.max(0) as u16)
-            };
-
-            // Scan for OSC 133 shell integration and image protocol sequences
-            // before VT parsing (alacritty_terminal ignores these).
+            // Scan for OSC 133 shell integration sequences before VT parsing
+            // (alacritty_terminal ignores these).
             for chunk in &chunks {
                 self.scan_osc133(chunk);
-                self.scan_kitty_graphics(chunk, cursor_col, cursor_row);
             }
+
+            // VT-parse all chunks first so the cursor reflects any preceding
+            // movement sequences (CSI H, etc.) in the same read batch.
             let mut term = self.term.lock().unwrap_or_else(|e| e.into_inner());
             for chunk in &chunks {
                 self.processor.advance(&mut *term, chunk);
+            }
+
+            // Now read cursor position for image placement — after parsing.
+            let (cursor_col, cursor_row) = {
+                let cursor = term.grid().cursor.point;
+                (cursor.column.0 as u16, cursor.line.0.max(0) as u16)
+            };
+            drop(term);
+
+            // Scan for Kitty graphics sequences with the post-parse cursor position.
+            for chunk in &chunks {
+                self.scan_kitty_graphics(chunk, cursor_col, cursor_row);
             }
             processed = true;
         }

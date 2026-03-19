@@ -722,9 +722,13 @@ impl Server {
                     log::warn!("ignoring invalid resize from client {client_id}: {width}x{height} cell={cell_width}x{cell_height}");
                 }
             }
-            ClientMessage::SetColumnWidth { proportion } => {
+            ClientMessage::SetColumnWidth { proportion, fixed_px } => {
                 if let Some(mut session) = self.sessions.remove(&session_name) {
-                    session.workspaces.active_mut().set_active_column_width(ColumnWidth::Proportion(proportion));
+                    let width = match fixed_px {
+                        Some(px) => ColumnWidth::Fixed(px),
+                        None => ColumnWidth::Proportion(proportion),
+                    };
+                    session.workspaces.active_mut().set_active_column_width(width);
                     session.mark_session_dirty();
                     session.resize_all_panes(&mut self.clients);
                     responses.push(ServerResponse::BroadcastToSession(session_name.clone(), ServerMessage::LayoutUpdate {

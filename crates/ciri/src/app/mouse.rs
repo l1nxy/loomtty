@@ -345,6 +345,7 @@ impl App {
 
     pub(crate) fn handle_mouse_wheel(&mut self, delta: MouseScrollDelta, phase: TouchPhase) {
         if self.overview_active {
+            // Overview mode: vertical scroll controls zoom level
             let dy = match delta {
                 MouseScrollDelta::LineDelta(_, y) => y as f64 * 0.05,
                 MouseScrollDelta::PixelDelta(pos) => pos.y * 0.001,
@@ -360,77 +361,162 @@ impl App {
                 self.overview_zoom.animate_to(new_zoom, omega);
             }
         } else {
-            let dy = match delta {
-                MouseScrollDelta::LineDelta(_, y) => y as i32 * 3,
-                MouseScrollDelta::PixelDelta(pos) => {
-                    let (_, ch) = self.cell_dimensions();
-                    if ch > 0.0 {
-                        (pos.y as f32 / ch).round() as i32
-                    } else {
-                        0
+            let gestures_enabled = self.config.gesture.enabled;
+            let smooth_scroll = gestures_enabled && self.config.gesture.smooth_scroll;
+            let has_mouse = self
+                .workspaces
+                .active()
+                .active_pane_id()
+                .and_then(|pid| self.pane_grids.get(&pid))
+                .is_some_and(|g| {
+                    g.mode_flags & ciri_protocol::message::MODE_MOUSE_REPORT != 0
+                });
+            let is_alt_screen = self
+                .workspaces
+                .active()
+                .active_pane_id()
+                .and_then(|pid| self.pane_grids.get(&pid))
+                .is_some_and(|g| {
+                    g.mode_flags & ciri_protocol::message::MODE_ALT_SCREEN != 0
+                });
+            let shift_held = self.modifiers.shift_key();
+            let multi_row = self.workspaces.workspaces.len() > 1;
+
+            // ── Shift + vertical scroll: workspace row switching gesture ──
+            if gestures_enabled
+                && shift_held
+                && multi_row
+                && matches!(delta, MouseScrollDelta::PixelDelta(_))
+            {
+                let py = match delta {
+                    MouseScrollDelta::PixelDelta(pos) => pos.y,
+                    _ => unreachable!(),
+                };
+                let threshold = self.config.gesture.vertical_swipe_threshold;
+                let omega = self.config.animation.speed;
+
+                match phase {
+                    TouchPhase::Started => {
+                        self.gesture_row_active = true;
+                        self.gesture_row_start = self.workspaces.active_workspace_idx;
+                        self.gesture_row_offset.begin_gesture();
                     }
-                }
-            };
-            if dy != 0 {
-                let has_mouse = self
-                    .workspaces
-                    .active()
-                    .active_pane_id()
-                    .and_then(|pid| self.pane_grids.get(&pid))
-                    .is_some_and(|g| {
-                        g.mode_flags & ciri_protocol::message::MODE_MOUSE_REPORT != 0
-                    });
-
-                let is_alt_screen = self
-                    .workspaces
-                    .active()
-                    .active_pane_id()
-                    .and_then(|pid| self.pane_grids.get(&pid))
-                    .is_some_and(|g| {
-                        g.mode_flags & ciri_protocol::message::MODE_ALT_SCREEN != 0
-                    });
-
-                if has_mouse {
-                    if let Some(pid) = self.workspaces.active().active_pane_id() {
-                        if let Some((_, col, row)) = self
-                            .last_mouse_pos
-                            .and_then(|(mx, my)| self.pixel_to_viewport_cell(mx, my))
-                        {
-                            let button = if dy > 0 { 64u8 } else { 65u8 };
-                            let count = dy.unsigned_abs().min(10);
-                            for _ in 0..count {
-                                self.send_lossy(ClientMessage::MouseInput {
-                                    pane_id: pid,
-                                    button,
-                                    col,
-                                    row,
-                                    pressed: true,
-                                    modifiers: 0,
-                                });
+                    TouchPhase::Moved => {
+                        if self.gesture_row_active {
+                            self.gesture_row_offset.update_gesture_unclamped(py);
+                            let accum = self.gesture_row_offset.value();
+                            if accum > threshold {
+                                self.workspaces.focus_down();
+                                self.gesture_row_offset.jump_to(0.0);
+                                self.gesture_row_offset.begin_gesture();
+                                self.animate_to_active();
+                            } else if accum < -threshold {
+                                self.workspaces.focus_up();
+                                self.gesture_row_offset.jump_to(0.0);
+                                self.gesture_row_offset.begin_gesture();
+                                self.animate_to_active();
                             }
                         }
                     }
-                } else if is_alt_screen {
-                    // Alt screen but no mouse mode: send arrow keys for scrolling
-                    if let Some(pid) = self.workspaces.active().active_pane_id() {
-                        let key = if dy > 0 { b"\x1b[A" } else { b"\x1b[B" };
-                        let count = dy.unsigned_abs().min(10) as usize;
-                        for _ in 0..count {
-                            self.send(ClientMessage::Input {
-                                pane_id: pid,
-                                data: key.to_vec(),
-                            });
+                    TouchPhase::Ended | TouchPhase::Cancelled => {
+                        self.gesture_row_active = false;
+                        self.gesture_row_offset.end_gesture(0.0, omega);
+                        self.animate_to_active();
+                    }
+                }
+            }
+            // ── Smooth pixel-level scrollback (trackpad gestures) ──
+            else if smooth_scroll
+                && matches!(delta, MouseScrollDelta::PixelDelta(_))
+                && !has_mouse
+                && !is_alt_screen
+            {
+                let py = match delta {
+                    MouseScrollDelta::PixelDelta(pos) => {
+                        if self.config.gesture.natural_scroll {
+                            pos.y
+                        } else {
+                            -pos.y
                         }
                     }
-                } else {
-                    if dy > 0 {
-                        self.scroll_active_up(dy as usize);
+                    _ => unreachable!(),
+                };
+
+                match phase {
+                    TouchPhase::Started => {
+                        self.gesture_scroll_accum = 0.0;
+                    }
+                    TouchPhase::Moved | TouchPhase::Ended | TouchPhase::Cancelled => {
+                        self.gesture_scroll_accum += py;
+                        let ppl = self.config.gesture.scroll_pixels_per_line;
+                        let lines = (self.gesture_scroll_accum / ppl) as i64;
+                        if lines != 0 {
+                            self.gesture_scroll_accum -= lines as f64 * ppl;
+                            if lines > 0 {
+                                self.scroll_active_up(lines as usize);
+                            } else {
+                                self.scroll_active_down((-lines) as usize);
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Discrete line-based scrollback (mouse wheel or non-smooth mode)
+                let dy = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y as i32 * 3,
+                    MouseScrollDelta::PixelDelta(pos) => {
+                        let (_, ch) = self.cell_dimensions();
+                        if ch > 0.0 {
+                            (pos.y as f32 / ch).round() as i32
+                        } else {
+                            0
+                        }
+                    }
+                };
+                if dy != 0 {
+                    if has_mouse {
+                        if let Some(pid) = self.workspaces.active().active_pane_id() {
+                            if let Some((_, col, row)) = self
+                                .last_mouse_pos
+                                .and_then(|(mx, my)| self.pixel_to_viewport_cell(mx, my))
+                            {
+                                let button = if dy > 0 { 64u8 } else { 65u8 };
+                                let count = dy.unsigned_abs().min(10);
+                                for _ in 0..count {
+                                    self.send_lossy(ClientMessage::MouseInput {
+                                        pane_id: pid,
+                                        button,
+                                        col,
+                                        row,
+                                        pressed: true,
+                                        modifiers: 0,
+                                    });
+                                }
+                            }
+                        }
+                    } else if is_alt_screen {
+                        // Alt screen but no mouse mode: send arrow keys for scrolling
+                        if let Some(pid) = self.workspaces.active().active_pane_id() {
+                            let key = if dy > 0 { b"\x1b[A" } else { b"\x1b[B" };
+                            let count = dy.unsigned_abs().min(10) as usize;
+                            for _ in 0..count {
+                                self.send(ClientMessage::Input {
+                                    pane_id: pid,
+                                    data: key.to_vec(),
+                                });
+                            }
+                        }
                     } else {
-                        self.scroll_active_down((-dy) as usize);
+                        if dy > 0 {
+                            self.scroll_active_up(dy as usize);
+                        } else {
+                            self.scroll_active_down((-dy) as usize);
+                        }
                     }
                 }
             }
 
+            // ── Horizontal gesture: column switching ──
             let scroll_mult = self.config.input.scroll_multiplier;
             let dx = match delta {
                 MouseScrollDelta::LineDelta(x, _) => x as f64 * scroll_mult,
@@ -447,6 +533,55 @@ impl App {
                     let t = self.workspaces.active_mut().target_offset_for_active();
                     let speed = self.config.animation.speed;
                     self.view_offset_x.end_gesture(t as f64, speed);
+                }
+            }
+        }
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+    }
+
+    /// Handle pinch-to-zoom gesture (macOS/trackpad).
+    pub(crate) fn handle_pinch_gesture(&mut self, delta: f64, phase: TouchPhase) {
+        if !self.config.gesture.enabled || !delta.is_finite() {
+            return;
+        }
+        let sensitivity = self.config.gesture.pinch_sensitivity;
+        let omega = self.config.animation.speed;
+
+        match phase {
+            TouchPhase::Started => {}
+            TouchPhase::Moved => {
+                let zoom_delta = delta * sensitivity;
+                if self.overview_active {
+                    // In overview: pinch out (delta > 0) zooms in toward normal
+                    let cur_zoom = self.overview_zoom.value();
+                    let new_zoom = (cur_zoom + zoom_delta).clamp(0.05, 1.0);
+                    if new_zoom >= self.config.animation.zoom_threshold as f64 {
+                        self.overview_active = false;
+                        self.overview_zoom.animate_to(1.0, omega);
+                        self.animate_to_active();
+                    } else {
+                        self.overview_zoom.animate_to(new_zoom, omega);
+                    }
+                } else {
+                    // In normal mode: pinch in (delta < 0) enters overview
+                    if zoom_delta < -0.02 {
+                        self.overview_active = true;
+                        self.refresh_overview_zoom();
+                        self.view_offset_x.animate_to(0.0, omega);
+                        self.view_offset_y.animate_to(0.0, omega);
+                    }
+                }
+            }
+            TouchPhase::Ended | TouchPhase::Cancelled => {
+                // Snap: if barely zoomed out, snap back to normal
+                if self.overview_active
+                    && self.overview_zoom.value() > self.config.animation.zoom_threshold as f64
+                {
+                    self.overview_active = false;
+                    self.overview_zoom.animate_to(1.0, omega);
+                    self.animate_to_active();
                 }
             }
         }

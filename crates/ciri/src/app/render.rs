@@ -119,6 +119,9 @@ impl App {
         if self.overview_zoom.advance(dt) {
             animating = true;
         }
+        if self.gesture_row_offset.advance(dt) {
+            animating = true;
+        }
         if !self.col_widths.is_empty() {
             self.sync_col_animations();
             let ws = self.workspaces.active_mut();

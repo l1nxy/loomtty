@@ -492,6 +492,9 @@ impl Pane {
         if mode.contains(TermMode::DISAMBIGUATE_ESC_CODES) {
             flags |= MODE_KITTY_KEYBOARD;
         }
+        if mode.contains(TermMode::BRACKETED_PASTE) {
+            flags |= MODE_BRACKETED_PASTE;
+        }
         flags
     }
 

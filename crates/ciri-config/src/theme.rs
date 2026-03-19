@@ -48,6 +48,10 @@ pub struct ThemeConfig {
     pub border_inactive: String,
     /// Accent color (leader indicator, active mode text).
     pub accent: String,
+    /// Status bar dim text color.
+    pub statusbar_dim: String,
+    /// Broadcast mode indicator color.
+    pub mode_broadcast: String,
 }
 
 
@@ -90,7 +94,8 @@ impl ThemeConfig {
             black, red, green, yellow, blue, magenta, cyan, white,
             bright_black, bright_red, bright_green, bright_yellow,
             bright_blue, bright_magenta, bright_cyan, bright_white,
-            ui_background, statusbar_background, border_active, border_inactive, accent
+            ui_background, statusbar_background, border_active, border_inactive, accent,
+            statusbar_dim, mode_broadcast
         );
     }
 }
@@ -121,6 +126,8 @@ fn one_dark() -> ThemeConfig {
         border_active: "#528BFF".to_string(),
         border_inactive: "#3E4452".to_string(),
         accent: "#98C379".to_string(),
+        statusbar_dim: "#5C6370".to_string(),
+        mode_broadcast: "#E5C07B".to_string(),
     }
 }
 
@@ -150,6 +157,8 @@ fn catppuccin_mocha() -> ThemeConfig {
         border_active: "#89B4FA".to_string(),
         border_inactive: "#313244".to_string(),
         accent: "#A6E3A1".to_string(),
+        statusbar_dim: "#585B70".to_string(),
+        mode_broadcast: "#F9E2AF".to_string(),
     }
 }
 
@@ -179,6 +188,8 @@ fn tokyo_night() -> ThemeConfig {
         border_active: "#7AA2F7".to_string(),
         border_inactive: "#292E42".to_string(),
         accent: "#9ECE6A".to_string(),
+        statusbar_dim: "#414868".to_string(),
+        mode_broadcast: "#E0AF68".to_string(),
     }
 }
 
@@ -208,6 +219,8 @@ fn dracula() -> ThemeConfig {
         border_active: "#BD93F9".to_string(),
         border_inactive: "#44475A".to_string(),
         accent: "#50FA7B".to_string(),
+        statusbar_dim: "#6272A4".to_string(),
+        mode_broadcast: "#F1FA8C".to_string(),
     }
 }
 
@@ -237,6 +250,8 @@ fn nord() -> ThemeConfig {
         border_active: "#88C0D0".to_string(),
         border_inactive: "#4C566A".to_string(),
         accent: "#A3BE8C".to_string(),
+        statusbar_dim: "#4C566A".to_string(),
+        mode_broadcast: "#EBCB8B".to_string(),
     }
 }
 
@@ -266,5 +281,7 @@ fn gruvbox_dark() -> ThemeConfig {
         border_active: "#FABD2F".to_string(),
         border_inactive: "#504945".to_string(),
         accent: "#B8BB26".to_string(),
+        statusbar_dim: "#928374".to_string(),
+        mode_broadcast: "#FABD2F".to_string(),
     }
 }

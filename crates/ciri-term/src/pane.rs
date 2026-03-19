@@ -467,8 +467,10 @@ pub fn pack_cell(cell: &alacritty_terminal::term::cell::Cell) -> PackedCell {
         flags |= FLAG_UNDERLINE | FLAG_UNDERLINE_DOUBLE;
     } else if cell.flags.contains(CellFlags::UNDERCURL) {
         flags |= FLAG_UNDERLINE | FLAG_UNDERLINE_CURLY;
-    } else if cell.flags.contains(CellFlags::DOTTED_UNDERLINE) || cell.flags.contains(CellFlags::DASHED_UNDERLINE) {
+    } else if cell.flags.contains(CellFlags::DOTTED_UNDERLINE) {
         flags |= FLAG_UNDERLINE | FLAG_UNDERLINE_DOTTED;
+    } else if cell.flags.contains(CellFlags::DASHED_UNDERLINE) {
+        flags |= FLAG_UNDERLINE | FLAG_UNDERLINE_DASHED;
     } else if cell.flags.contains(CellFlags::ALL_UNDERLINES) {
         flags |= FLAG_UNDERLINE;
     }

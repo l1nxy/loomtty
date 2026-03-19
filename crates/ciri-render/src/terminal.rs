@@ -315,7 +315,7 @@ use ciri_protocol::message::{
     PackedColor, PackedCell, COLOR_NAMED, COLOR_RGB, COLOR_INDEXED,
     FLAG_WIDE_CHAR, FLAG_WIDE_CHAR_SPACER, FLAG_HIDDEN,
     FLAG_BOLD, FLAG_ITALIC, FLAG_DIM, FLAG_UNDERLINE, FLAG_INVERSE, FLAG_STRIKEOUT,
-    FLAG_UNDERLINE_STYLE_MASK, FLAG_UNDERLINE_DOUBLE, FLAG_UNDERLINE_CURLY, FLAG_UNDERLINE_DOTTED,
+    FLAG_UNDERLINE_STYLE_MASK, FLAG_UNDERLINE_DOUBLE, FLAG_UNDERLINE_CURLY, FLAG_UNDERLINE_DOTTED, FLAG_UNDERLINE_DASHED,
     CURSOR_HIDDEN, CURSOR_HOLLOW_BLOCK, CURSOR_BEAM, CURSOR_UNDERLINE,
 };
 
@@ -585,6 +585,16 @@ fn emit_packed_underline_rects(
                 let w = dot_len.min(px + width - x);
                 bg_rects.push(Rect { x, y: uy, w, h: 1.0, color });
                 x += dot_len + gap_len;
+            }
+        }
+        FLAG_UNDERLINE_DASHED => {
+            let dash_len: f32 = 4.0;
+            let gap_len: f32 = 2.0;
+            let mut x = px;
+            while x < px + width {
+                let w = dash_len.min(px + width - x);
+                bg_rects.push(Rect { x, y: uy, w, h: 1.0, color });
+                x += dash_len + gap_len;
             }
         }
         _ => {

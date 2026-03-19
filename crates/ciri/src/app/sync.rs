@@ -49,10 +49,10 @@ impl App {
                     self.apply_layout(&layout);
                     needs_redraw = true;
                 }
-                ServerEvent::Control(ServerMessage::PaneCreated { pane_id, .. }) => {
-                    log::debug!("PaneCreated: pane_id={pane_id}");
+                ServerEvent::Control(ServerMessage::PaneCreated { pane_id, cols, rows, .. }) => {
+                    log::debug!("PaneCreated: pane_id={pane_id} {cols}x{rows}");
                     self.pane_grids.entry(pane_id).or_insert_with(|| {
-                        ClientPaneGrid::new(80, 24, self.config.terminal.scrollback_lines)
+                        ClientPaneGrid::new(cols, rows, self.config.terminal.scrollback_lines)
                     });
                     self.pane_open_opacity.insert(pane_id, 0.0); // start fade-in
                     needs_redraw = true;

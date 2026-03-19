@@ -206,6 +206,13 @@ impl Session {
         (cols, rows)
     }
 
+    /// Get a pane's current grid dimensions.
+    fn pane_grid_dims(&self, pane_id: u64) -> (u16, u16) {
+        self.panes.get(&pane_id)
+            .map(|p| (p.grid_cols(), p.grid_rows()))
+            .unwrap_or((80, 24))
+    }
+
     /// Resize ALL panes from the full layout tree.
     fn resize_all_panes(&mut self, clients: &mut HashMap<u64, ClientState>) {
         let (vp_w, vp_h) = Self::effective_viewport_from(clients, &self.session_name);
@@ -541,9 +548,11 @@ impl Server {
                         Ok(id) => {
                             session.resize_all_panes(&mut self.clients);
                             session.mark_session_dirty();
+                            let (cols, rows) = session.pane_grid_dims(id);
                             responses.push(ServerResponse::BroadcastToSession(session_name.clone(), ServerMessage::PaneCreated {
                                 pane_id: id,
                                 column_idx: session.workspaces.active().active_column_idx,
+                                cols, rows,
                             }));
                             responses.push(ServerResponse::BroadcastToSession(session_name.clone(), ServerMessage::LayoutUpdate {
                                 layout: session.layout_state(),
@@ -560,9 +569,11 @@ impl Server {
                         Ok(id) => {
                             session.resize_all_panes(&mut self.clients);
                             session.mark_session_dirty();
+                            let (cols, rows) = session.pane_grid_dims(id);
                             responses.push(ServerResponse::BroadcastToSession(session_name.clone(), ServerMessage::PaneCreated {
                                 pane_id: id,
                                 column_idx: session.workspaces.active().active_column_idx,
+                                cols, rows,
                             }));
                             responses.push(ServerResponse::BroadcastToSession(session_name.clone(), ServerMessage::LayoutUpdate {
                                 layout: session.layout_state(),

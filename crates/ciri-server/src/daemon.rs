@@ -133,7 +133,7 @@ impl Session {
         let pane_w = if self.workspaces.active().columns.is_empty() { vw } else { col_px };
         let (cw, ch) = Self::effective_cell_dims_from(clients, &self.session_name);
         let (cols, rows) = self.pane_grid_size_with_cells(pane_w, vh, cw, ch);
-        log::info!("create_pane {id}: viewport={vw}x{vh} col_px={pane_w:.1} cell={cw}x{ch} inset={} → {cols}x{rows}", self.pane_inset);
+        log::info!("create_pane {id}: viewport={vw}x{vh} col_px={pane_w:.1} cell={cw}x{ch} inset={} → {cols}x{rows} default_col_width={:?}", self.pane_inset, self.default_column_width);
         let pane = Pane::new(id, cols, rows, &self.default_shell)?;
         self.panes.insert(id, pane);
         self.generation.insert(id, 0);
@@ -221,10 +221,11 @@ impl Session {
         let vh = self.workspaces.view_size.height;
 
         let (cw, ch) = Self::effective_cell_dims_from(clients, &self.session_name);
-        log::debug!("resize_all_panes: viewport={vw}x{vh} cell={cw}x{ch} inset={}", self.pane_inset);
-        for ws in &self.workspaces.workspaces {
-            for col in &ws.columns {
+        log::info!("resize_all_panes: viewport={vw}x{vh} cell={cw}x{ch} inset={}", self.pane_inset);
+        for (ws_idx, ws) in self.workspaces.workspaces.iter().enumerate() {
+            for (col_idx, col) in ws.columns.iter().enumerate() {
                 let col_w = col.effective_width(vw);
+                log::info!("  ws[{ws_idx}] col[{col_idx}]: width={:?} effective={col_w:.1}px", col.width);
                 let tile_rects = col.tile_rects(col_w, vh);
                 for (pane_id, _y, tile_h) in &tile_rects {
                     let (cols, rows) = self.pane_grid_size_with_cells(col_w, *tile_h, cw, ch);
@@ -1073,13 +1074,8 @@ pub async fn run_daemon() -> Result<()> {
             PresetWidth::Proportion { proportion } => ColumnWidth::Proportion(*proportion),
             PresetWidth::Fixed { fixed } => ColumnWidth::Fixed(*fixed),
         };
-    } else if let Some(first) = config.layout.preset_widths.first() {
-        use ciri_config::config::PresetWidth;
-        server.default_column_width = match first {
-            PresetWidth::Proportion { proportion } => ColumnWidth::Proportion(*proportion),
-            PresetWidth::Fixed { fixed } => ColumnWidth::Fixed(*fixed),
-        };
     }
+    // If no explicit default_column_width, keep the default (0.5)
     server.pane_inset = (config.appearance.padding + config.appearance.border_width) * 2.0;
     let state = Arc::new(Mutex::new(server));
 

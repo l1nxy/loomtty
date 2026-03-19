@@ -141,8 +141,17 @@ impl Workspace {
     }
 
     /// Add a new column to the right of the active column.
-    /// Existing columns keep their widths — the viewport scrolls to reveal the new one.
+    /// When adding the second column, the first column is resized from full-width
+    /// to the default width so both columns share the viewport equally.
     pub fn add_column_right(&mut self, pane_id: PaneId, default_width: ColumnWidth) {
+        let vw = self.view_size.width;
+        let vh = self.view_size.height;
+        log::info!("add_column_right: pane={pane_id} viewport={vw}x{vh} existing_cols={} default_width={default_width:?}",
+            self.columns.len());
+        for (i, col) in self.columns.iter().enumerate() {
+            log::info!("  before: col[{i}] width={:?} effective={:.1}px", col.width, col.effective_width(vw));
+        }
+
         let insert_at = if self.columns.is_empty() {
             0
         } else {
@@ -152,12 +161,27 @@ impl Workspace {
             // First column always gets full width
             ColumnWidth::Proportion(1.0)
         } else {
+            // When adding the second column, shrink the first from full-width to default
+            if self.columns.len() == 1 {
+                if let ColumnWidth::Proportion(p) = self.columns[0].width {
+                    if (p - 1.0).abs() < 1e-6 {
+                        log::info!("  shrinking col[0] from 1.0 to {default_width:?}");
+                        self.columns[0].width = default_width;
+                        self.columns[0].preset_width_idx = None;
+                    }
+                }
+            }
+            log::info!("  new col gets {default_width:?}");
             default_width
         };
         let mut col = Column::new(pane_id);
         col.width = width;
         self.columns.insert(insert_at, col);
         self.active_column_idx = insert_at;
+
+        for (i, col) in self.columns.iter().enumerate() {
+            log::info!("  after: col[{i}] width={:?} effective={:.1}px", col.width, col.effective_width(vw));
+        }
     }
 
     /// Close a pane. If the pane is in a multi-tile column, only that tile is
@@ -179,14 +203,21 @@ impl Workspace {
                 }
             }
         } else {
-            // Single-tile column: remove entire column
+            // Single-tile column: remove entire column, viewport shrinks naturally
             self.columns.remove(idx);
             if self.columns.is_empty() {
                 self.active_column_idx = 0;
-            } else if idx < self.active_column_idx {
-                self.active_column_idx -= 1;
-            } else if self.active_column_idx >= self.columns.len() {
-                self.active_column_idx = self.columns.len() - 1;
+            } else {
+                if idx < self.active_column_idx {
+                    self.active_column_idx -= 1;
+                } else if self.active_column_idx >= self.columns.len() {
+                    self.active_column_idx = self.columns.len() - 1;
+                }
+                // When only one column remains, expand to full width
+                if self.columns.len() == 1 {
+                    self.columns[0].width = ColumnWidth::Proportion(1.0);
+                    self.columns[0].preset_width_idx = None;
+                }
             }
         }
         Some(pane_id)
@@ -366,6 +397,9 @@ impl Workspace {
             return None;
         }
         let col = &mut self.columns[self.active_column_idx];
+        let vw_for_log = self.view_size.width;
+        log::info!("cycle_preset_width: active_col={} current_width={:?} effective={:.1}px preset_idx={:?} reverse={reverse} viewport={vw_for_log}x{}",
+            self.active_column_idx, col.width, col.effective_width(vw_for_log), col.preset_width_idx, self.view_size.height);
         let current_idx = col.preset_width_idx;
         let new_idx = match current_idx {
             Some(idx) => {
@@ -391,12 +425,16 @@ impl Workspace {
                 }
             }
         };
+        log::info!("  cycle: current_idx={current_idx:?} → new_idx={new_idx} new_width={:?}", presets[new_idx]);
         col.preset_width_idx = Some(new_idx);
         let new_width = presets[new_idx];
         // Use set_active_column_width to properly redistribute other columns
         self.set_active_column_width(new_width);
         // Restore the preset_width_idx that set_active_column_width may not preserve
         self.columns[self.active_column_idx].preset_width_idx = Some(new_idx);
+        log::info!("  after cycle: col width={:?} effective={:.1}px",
+            self.columns[self.active_column_idx].width,
+            self.columns[self.active_column_idx].effective_width(self.view_size.width));
         Some(new_width)
     }
 
@@ -501,8 +539,8 @@ mod tests {
         assert_eq!(w.columns.len(), 3);
         assert_eq!(w.active_column_idx, 2);
         assert_eq!(w.active_pane_id(), Some(3));
-        // First column = 1.0 (full), second = 0.5 (DW), third = 0.5 (DW)
-        assert!((w.columns[0].proportion(w.view_size.width) - 1.0).abs() < 1e-6);
+        // col[0] shrinks from 1.0 to DW(0.5), all subsequent columns get DW(0.5)
+        assert!((w.columns[0].proportion(w.view_size.width) - 0.5).abs() < 1e-6);
         assert!((w.columns[1].proportion(w.view_size.width) - 0.5).abs() < 1e-6);
         assert!((w.columns[2].proportion(w.view_size.width) - 0.5).abs() < 1e-6);
     }
@@ -547,8 +585,7 @@ mod tests {
         let mut w = ws();
         w.add_column_right_default(1);
         w.add_column_right_default(2);
-        // First column is full-width (1000), second is half (500) and off-screen
-        // so only 1 tile is visible without scrolling; 2 are visible if scrolled
+        // Both columns are half-width (500), fitting within viewport
         let tiles = w.all_tiles_unculled();
         assert_eq!(tiles.len(), 2);
     }
@@ -569,9 +606,9 @@ mod tests {
         let mut w = ws();
         w.add_column_right_default(1);
         w.add_column_right_default(2);
-        // First column = 1.0 (1000px), second at 1000+8=1008
+        // First column shrinks to 0.5 (500px), second at 500+8=508
         assert_eq!(w.column_x(0), 0.0);
-        assert_eq!(w.column_x(1), 1008.0);
+        assert_eq!(w.column_x(1), 508.0);
     }
 
     #[test]
@@ -579,7 +616,9 @@ mod tests {
         let mut w = ws();
         w.add_column_right_default(1);
         w.add_column_right_default(2);
+        // Both columns start at 0.5 (first shrinks from 1.0 when second is added)
         let original_width_1 = w.columns[1].proportion(w.view_size.width);
+        assert!((original_width_1 - 0.5).abs() < 1e-6);
         w.active_column_idx = 0;
         w.set_active_column_width(ColumnWidth::Proportion(0.7));
 
@@ -629,9 +668,10 @@ mod tests {
         let mut w = ws();
         w.add_column_right_default(1);
         w.add_column_right_default(2);
+        // Both columns start at 0.5; manually set col[0] to 0.8
         w.active_column_idx = 0;
         w.set_active_column_width(ColumnWidth::Proportion(0.8));
-        // col[0]=0.8, col[1]=0.5 (default, unchanged by set_active_column_width)
+        // col[0]=0.8, col[1]=0.5
         w.equalize_active_with_neighbor();
 
         let widths: Vec<f64> = w

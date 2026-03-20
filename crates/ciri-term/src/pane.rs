@@ -11,7 +11,9 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
 use crate::event::PtyEventListener;
+use crate::kitty_graphics::KittyGraphicsParser;
 use crate::pty::Pty;
+use crate::shell_integration::Osc133Parser;
 
 pub type PaneId = u64;
 
@@ -47,16 +49,6 @@ pub struct ImagePlacement {
     pub format: String,
     /// Raw image data (PNG/RGB/RGBA bytes, or decoded sixel).
     pub data: Vec<u8>,
-}
-
-/// Kitty image metadata parsed from the first chunk of a transmission.
-#[derive(Debug, Clone)]
-struct KittyImageMeta {
-    format: String,     // "png", "rgb", "rgba"
-    width: u32,
-    height: u32,
-    cols: u16,
-    rows: u16,
 }
 
 /// Shell integration state tracked via OSC 133.
@@ -104,18 +96,10 @@ pub struct Pane {
     active_images: Vec<ImagePlacement>,
     /// Newly added image placements since last drain (broadcast to clients then cleared).
     pending_images: Vec<ImagePlacement>,
-    /// Next image ID counter.
-    next_image_id: u64,
-    /// Kitty graphics: partial payload accumulator for multi-chunk transmissions.
-    kitty_image_buf: Vec<u8>,
-    /// Kitty graphics: metadata from the first chunk (a=T transmit-and-display).
-    kitty_image_meta: Option<KittyImageMeta>,
-    /// Partial APC frame buffer: holds bytes from an unterminated `ESC _ G ...`
-    /// sequence that was split across PTY reads.
-    kitty_apc_partial: Vec<u8>,
-    /// Partial OSC 133 buffer: holds bytes from an unterminated OSC 133 sequence
-    /// that was split across PTY reads.
-    osc133_partial: Vec<u8>,
+    /// Kitty graphics protocol parser.
+    kitty_parser: KittyGraphicsParser,
+    /// OSC 133 shell integration parser.
+    osc133_parser: Osc133Parser,
 }
 
 impl Pane {
@@ -149,11 +133,8 @@ impl Pane {
             },
             active_images: Vec::new(),
             pending_images: Vec::new(),
-            next_image_id: 1,
-            kitty_image_buf: Vec::new(),
-            kitty_image_meta: None,
-            kitty_apc_partial: Vec::new(),
-            osc133_partial: Vec::new(),
+            kitty_parser: KittyGraphicsParser::new(),
+            osc133_parser: Osc133Parser::new(),
         })
     }
 
@@ -171,7 +152,7 @@ impl Pane {
             // Scan for OSC 133 shell integration sequences before VT parsing
             // (alacritty_terminal ignores these).
             for chunk in &chunks {
-                self.scan_osc133(chunk);
+                self.osc133_parser.scan(chunk, &mut self.shell_state);
             }
 
             // VT-parse each chunk individually, recording the cursor position
@@ -192,7 +173,13 @@ impl Pane {
 
             // Scan for Kitty graphics sequences with per-chunk cursor positions.
             for (chunk, (cursor_col, cursor_row)) in chunks.iter().zip(per_chunk_cursors.iter()) {
-                self.scan_kitty_graphics(chunk, *cursor_col, *cursor_row);
+                let new_placements = self.kitty_parser.scan(
+                    chunk,
+                    *cursor_col,
+                    *cursor_row,
+                    &mut self.active_images,
+                );
+                self.pending_images.extend(new_placements);
             }
             processed = true;
         }
@@ -505,257 +492,6 @@ impl Pane {
             flags |= MODE_BRACKETED_PASTE;
         }
         flags
-    }
-
-    /// Scan raw PTY output for OSC 133 shell integration sequences.
-    /// Pattern: ESC ] 133 ; <cmd> [; params] BEL   or   ESC ] 133 ; <cmd> [; params] ESC \
-    /// Handles sequences split across PTY read boundaries via `osc133_partial`.
-    fn scan_osc133(&mut self, data: &[u8]) {
-        // If we have a partial OSC from a previous read, prepend it
-        let working_data;
-        let data = if !self.osc133_partial.is_empty() {
-            self.osc133_partial.extend_from_slice(data);
-            working_data = std::mem::take(&mut self.osc133_partial);
-            &working_data[..]
-        } else {
-            data
-        };
-
-        let mut i = 0;
-        while i + 6 < data.len() {
-            // Look for ESC ] 1 3 3 ;
-            if data[i] == 0x1b && data[i + 1] == b']'
-                && data[i + 2] == b'1'
-                && data[i + 3] == b'3'
-                && data[i + 4] == b'3'
-                && data[i + 5] == b';'
-            {
-                let cmd = data[i + 6];
-                // Find the string terminator and collect params
-                let mut end = i + 7;
-                let mut params = String::new();
-                let mut found_terminator = false;
-                while end < data.len() {
-                    if data[end] == 0x07 {
-                        found_terminator = true;
-                        break;
-                    }
-                    if data[end] == 0x1b && data.get(end + 1) == Some(&b'\\') {
-                        found_terminator = true;
-                        break;
-                    }
-                    if data[end] == b';' && params.is_empty() {
-                        let rest_start = end + 1;
-                        let mut rest_end = rest_start;
-                        while rest_end < data.len() {
-                            if data[rest_end] == 0x07 || (data[rest_end] == 0x1b && data.get(rest_end + 1) == Some(&b'\\')) {
-                                break;
-                            }
-                            rest_end += 1;
-                        }
-                        if rest_end < data.len() {
-                            params = String::from_utf8_lossy(&data[rest_start..rest_end]).to_string();
-                            end = rest_end;
-                            found_terminator = true;
-                        } else {
-                            end = rest_end;
-                        }
-                        break;
-                    }
-                    end += 1;
-                }
-
-                if !found_terminator {
-                    // Incomplete sequence — buffer from the OSC start for next read
-                    self.osc133_partial = data[i..].to_vec();
-                    return;
-                }
-
-                match cmd {
-                    b'A' => {
-                        self.shell_state.zone = SemanticZone::Prompt;
-                        self.shell_state.prompt_line = Some(0); // exact line resolved at snapshot time
-                        log::debug!("OSC 133;A prompt start");
-                    }
-                    b'B' => {
-                        self.shell_state.zone = SemanticZone::Input;
-                        log::debug!("OSC 133;B command input");
-                    }
-                    b'C' => {
-                        self.shell_state.zone = SemanticZone::Output;
-                        self.shell_state.output_line = Some(0);
-                        log::debug!("OSC 133;C command output");
-                    }
-                    b'D' => {
-                        self.shell_state.zone = SemanticZone::Prompt;
-                        let exit_code = params.trim().parse::<i32>().ok();
-                        self.shell_state.last_exit_code = exit_code;
-                        log::debug!("OSC 133;D command done, exit={exit_code:?}");
-                    }
-                    _ => {
-                        log::trace!("OSC 133;{} unknown subcommand", cmd as char);
-                    }
-                }
-                i = end + 1;
-            } else {
-                // Check if we're at a potential partial match at the end of data
-                // (ESC at the tail that could start an OSC 133 sequence)
-                if data[i] == 0x1b && i + 6 >= data.len() {
-                    self.osc133_partial = data[i..].to_vec();
-                    return;
-                }
-                i += 1;
-            }
-        }
-    }
-
-    /// Scan for Kitty graphics protocol sequences (APC: ESC _ G ... ESC \).
-    /// Handles frames split across PTY reads by buffering partial sequences.
-    fn scan_kitty_graphics(&mut self, data: &[u8], cursor_col: u16, cursor_row: u16) {
-        use base64::Engine;
-
-        // If we have a partial APC from a previous read, prepend it
-        let working_data;
-        let data = if !self.kitty_apc_partial.is_empty() {
-            self.kitty_apc_partial.extend_from_slice(data);
-            working_data = std::mem::take(&mut self.kitty_apc_partial);
-            &working_data[..]
-        } else {
-            data
-        };
-
-        let mut i = 0;
-        while i + 3 < data.len() {
-            // Look for ESC _ G (APC for Kitty graphics)
-            if data[i] == 0x1b && data[i + 1] == b'_' && data[i + 2] == b'G' {
-                // Find the string terminator (ESC \)
-                let start = i + 3;
-                let mut end = start;
-                while end + 1 < data.len() {
-                    if data[end] == 0x1b && data[end + 1] == b'\\' {
-                        break;
-                    }
-                    end += 1;
-                }
-                if end + 1 >= data.len() {
-                    // Incomplete sequence — buffer from the APC start for next read
-                    self.kitty_apc_partial = data[i..].to_vec();
-                    return;
-                }
-
-                let payload = &data[start..end];
-
-                // Split at first ';' into control and data parts
-                let (control, img_data) = if let Some(sep) = payload.iter().position(|&b| b == b';') {
-                    (&payload[..sep], &payload[sep + 1..])
-                } else {
-                    (payload, &[][..])
-                };
-
-                // Parse key=value pairs from control
-                let control_str = String::from_utf8_lossy(control);
-                let mut action = 'T'; // default: transmit and display
-                let mut format_val = 32u32; // 32=PNG, 24=RGB, 32=RGBA
-                let mut width = 0u32;
-                let mut height = 0u32;
-                let mut cols = 0u16;
-                let mut rows = 0u16;
-                let mut more_chunks = false;
-
-                for pair in control_str.split(',') {
-                    if let Some((k, v)) = pair.split_once('=') {
-                        match k {
-                            "a" => action = v.chars().next().unwrap_or('T'),
-                            "f" => format_val = v.parse().unwrap_or(32),
-                            "s" => width = v.parse().unwrap_or(0),
-                            "v" => height = v.parse().unwrap_or(0),
-                            "c" => cols = v.parse().unwrap_or(0),
-                            "r" => rows = v.parse().unwrap_or(0),
-                            "m" => more_chunks = v == "1",
-                            _ => {}
-                        }
-                    }
-                }
-
-                // Decode base64 image data
-                let decoded = base64::engine::general_purpose::STANDARD
-                    .decode(img_data)
-                    .unwrap_or_default();
-
-                match action {
-                    'T' | 't' => {
-                        // Transmit (and display if 'T')
-                        if more_chunks {
-                            // First/middle chunk: accumulate
-                            if self.kitty_image_meta.is_none() {
-                                let fmt = match format_val {
-                                    24 => "rgb",
-                                    32 => "rgba",
-                                    _ => "png",
-                                };
-                                self.kitty_image_meta = Some(KittyImageMeta {
-                                    format: fmt.to_string(),
-                                    width,
-                                    height,
-                                    cols: if cols > 0 { cols } else { 10 },
-                                    rows: if rows > 0 { rows } else { 5 },
-                                });
-                            }
-                            self.kitty_image_buf.extend_from_slice(&decoded);
-                        } else {
-                            // Final (or only) chunk
-                            let mut full_data = std::mem::take(&mut self.kitty_image_buf);
-                            full_data.extend_from_slice(&decoded);
-
-                            let meta = self.kitty_image_meta.take().unwrap_or(KittyImageMeta {
-                                format: match format_val {
-                                    24 => "rgb".to_string(),
-                                    32 => "rgba".to_string(),
-                                    _ => "png".to_string(),
-                                },
-                                width,
-                                height,
-                                cols: if cols > 0 { cols } else { 10 },
-                                rows: if rows > 0 { rows } else { 5 },
-                            });
-
-                            if !full_data.is_empty() {
-                                let id = self.next_image_id;
-                                self.next_image_id += 1;
-                                log::info!(
-                                    "kitty image #{id}: {}x{} pixels, {} cells, {}x{} grid, {} bytes",
-                                    meta.width, meta.height, meta.format,
-                                    meta.cols, meta.rows, full_data.len()
-                                );
-                                let placement = ImagePlacement {
-                                    id,
-                                    row: cursor_row,
-                                    col: cursor_col,
-                                    width_cells: meta.cols,
-                                    height_cells: meta.rows,
-                                    pixel_width: meta.width,
-                                    pixel_height: meta.height,
-                                    format: meta.format,
-                                    data: full_data,
-                                };
-                                self.active_images.push(placement.clone());
-                                self.pending_images.push(placement);
-                            }
-                        }
-                    }
-                    'd' => {
-                        // Delete images (we clear all for now)
-                        self.active_images.clear();
-                        self.pending_images.clear();
-                    }
-                    _ => {}
-                }
-
-                i = end + 2; // skip past ESC \
-            } else {
-                i += 1;
-            }
-        }
     }
 
     /// Drain new image placements since last call (for broadcasting to clients).

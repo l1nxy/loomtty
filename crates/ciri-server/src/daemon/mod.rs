@@ -12,7 +12,7 @@ use std::sync::Arc;
 #[cfg(unix)]
 use tokio::net::UnixListener;
 #[cfg(windows)]
-use tokio::net::TcpListener;
+use tokio::net::windows::named_pipe::ServerOptions;
 use tokio::sync::{Mutex, Notify};
 
 use server::Server;
@@ -49,15 +49,16 @@ pub async fn run_daemon() -> Result<()> {
         }
     }
     #[cfg(windows)]
-    let listener = TcpListener::bind(format!("127.0.0.1:{}", transport::server_port())).await?;
-
-    // On Windows, create a marker file so list_running_sessions can discover us
+    let pipe_name = transport::server_pipe_name();
     #[cfg(windows)]
-    {
-        std::fs::write(&sock_path, transport::server_port().to_string())?;
-    }
+    let mut pipe_server = ServerOptions::new()
+        .first_pipe_instance(true)
+        .create(&pipe_name)?;
 
+    #[cfg(unix)]
     log::info!("ciri-server listening on {}", sock_path.display());
+    #[cfg(windows)]
+    log::info!("ciri-server listening on {}", pipe_name);
 
     let mut server = Server::new(&shell, config.appearance.column_gap);
     // Apply default_column_width from config
@@ -120,21 +121,44 @@ pub async fn run_daemon() -> Result<()> {
 
     // Accept connections, with graceful shutdown via select!
     loop {
-        tokio::select! {
-            result = listener.accept() => {
-                let (stream, _) = result?;
-                let state = state.clone();
-                let client_shutdown = shutdown.clone();
-
-                tokio::spawn(async move {
+        #[cfg(unix)]
+        {
+            tokio::select! {
+                result = listener.accept() => {
+                    let (stream, _) = result?;
+                    let state = state.clone();
+                    let client_shutdown = shutdown.clone();
                     let (reader, writer) = stream.into_split();
-                    connection::handle_client(reader, writer, state, client_shutdown).await;
-                });
+                    tokio::spawn(connection::handle_client(reader, writer, state, client_shutdown));
+                }
+                _ = shutdown.notified() => {
+                    log::info!("accept loop shutting down");
+                    break;
+                }
             }
-            _ = shutdown.notified() => {
-                log::info!("accept loop shutting down");
-                break;
+        }
+
+        #[cfg(windows)]
+        {
+            tokio::select! {
+                result = pipe_server.connect() => {
+                    if let Err(e) = result {
+                        log::error!("named pipe accept error: {e}");
+                        continue;
+                    }
+                }
+                _ = shutdown.notified() => {
+                    log::info!("accept loop shutting down");
+                    break;
+                }
             }
+            // After select!, the borrow from connect() is released
+            let connected = pipe_server;
+            pipe_server = ServerOptions::new().create(&pipe_name)?;
+            let state = state.clone();
+            let client_shutdown = shutdown.clone();
+            let (reader, writer) = tokio::io::split(connected);
+            tokio::spawn(connection::handle_client(reader, writer, state, client_shutdown));
         }
     }
 

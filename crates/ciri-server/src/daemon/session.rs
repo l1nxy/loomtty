@@ -180,8 +180,13 @@ impl Session {
     ) -> (u16, u16) {
         let usable_w = (pane_width - self.pane_inset).max(cw);
         let usable_h = (pane_height - self.pane_inset).max(ch);
-        let cols = (usable_w / cw).floor().max(1.0) as u16;
-        let rows = (usable_h / ch).floor().max(1.0) as u16;
+        let mut cols = (usable_w / cw).floor().max(1.0) as u16;
+        let mut rows = (usable_h / ch).floor().max(1.0) as u16;
+        // Cap grid dimensions to prevent OOM from extreme viewport sizes or tiny cell dims
+        const MAX_GRID_CELLS: usize = 10_000_000;
+        while cols as usize * rows as usize > MAX_GRID_CELLS {
+            if cols > rows { cols /= 2; } else { rows /= 2; }
+        }
         (cols, rows)
     }
 
@@ -275,6 +280,10 @@ impl Session {
                                 .collect(),
                             active_tile_idx: c.active_tile_idx,
                             width_proportion: c.proportion(self.workspaces.view_size.width),
+                            width_fixed_px: match c.width {
+                                ColumnWidth::Fixed(px) => Some(px),
+                                _ => None,
+                            },
                         })
                         .collect(),
                     active_column_idx: ws.active_column_idx,
@@ -324,6 +333,10 @@ impl Session {
                                 .collect(),
                             active_tile_idx: c.active_tile_idx,
                             width_proportion: c.proportion(self.workspaces.view_size.width),
+                            width_fixed_px: match c.width {
+                                ColumnWidth::Fixed(px) => Some(px),
+                                _ => None,
+                            },
                         })
                         .collect(),
                     active_column_idx: ws.active_column_idx,

@@ -127,19 +127,6 @@ impl App {
                     // Session management responses — not yet handled by GUI client
                 }
                 ServerEvent::FullPaneSync(sync) => {
-                    let cols = sync.cols as usize;
-                    for line in 0..3.min(sync.rows as usize) {
-                        let start = line * cols;
-                        let end = (start + 30).min(sync.cells.len());
-                        let chars: String = sync.cells[start..end]
-                            .iter()
-                            .map(|c| {
-                                let ch = c.ch();
-                                if ch == '\0' || ch == ' ' { '.' } else { ch }
-                            })
-                            .collect();
-                        log::info!("FullPaneSync pane={} line {line}: [{chars}]", sync.pane_id);
-                    }
                     let grid = self.pane_grids.entry(sync.pane_id).or_insert_with(|| {
                         ClientPaneGrid::new(
                             sync.cols,

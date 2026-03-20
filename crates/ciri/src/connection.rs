@@ -54,11 +54,20 @@ pub fn connect_or_spawn(
             }
             #[cfg(windows)]
             {
-                std::fs::OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .open(transport::server_pipe_name())
-                    .is_ok()
+                // On Windows, opening a named pipe consumes the server's only pipe
+                // instance. Use WaitNamedPipeW to probe without connecting, avoiding
+                // ERROR_PIPE_BUSY (os error 231) on the real connection attempt.
+                use std::os::windows::ffi::OsStrExt;
+                unsafe extern "system" {
+                    fn WaitNamedPipeW(name: *const u16, timeout: u32) -> i32;
+                }
+                let pipe_name = transport::server_pipe_name();
+                let wide: Vec<u16> = std::ffi::OsStr::new(&pipe_name)
+                    .encode_wide()
+                    .chain(std::iter::once(0))
+                    .collect();
+                // Timeout 0 = don't wait, just check if pipe exists
+                unsafe { WaitNamedPipeW(wide.as_ptr(), 0) != 0 }
             }
         };
         if !server_ready() {
@@ -232,12 +241,15 @@ fn spawn_server(_session_name: &str) -> io::Result<()> {
         cmd.spawn()?;
     }
 
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+        use std::process::Stdio;
         Command::new(&server_exe)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::inherit())
-            .stderr(std::process::Stdio::inherit())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .spawn()?;
     }
 

@@ -194,6 +194,14 @@ pub(crate) async fn handle_client<R, W>(
         initial_frames = frames;
     } // lock dropped here
 
+    // Flush ServerHello (still buffered in BufWriter) before handing off to writer task.
+    // Without this, control clients (no initial frames) never receive the hello.
+    if let Err(e) = writer.flush().await {
+        log::error!("failed to flush server hello: {e}");
+        cleanup_client(&state, client_id).await;
+        return;
+    }
+
     // Send frames without holding the lock
     for frame in initial_frames {
         let _ = tx.send(Bytes::from(frame)).await;

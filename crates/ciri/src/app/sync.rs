@@ -40,14 +40,25 @@ impl App {
                     needs_redraw = true;
                 }
                 ServerEvent::Control(ServerMessage::LayoutUpdate { layout }) => {
-                    log::trace!("LayoutUpdate: {} workspaces, active={}",
-                        layout.workspaces.len(), layout.active_workspace_idx);
+                    log::trace!(
+                        "LayoutUpdate: {} workspaces, active={}",
+                        layout.workspaces.len(),
+                        layout.active_workspace_idx
+                    );
                     for (i, ws) in layout.workspaces.iter().enumerate() {
-                        log::trace!("  ws[{}]: {} columns, active_col={}",
-                            i, ws.columns.len(), ws.active_column_idx);
+                        log::trace!(
+                            "  ws[{}]: {} columns, active_col={}",
+                            i,
+                            ws.columns.len(),
+                            ws.active_column_idx
+                        );
                         for (j, col) in ws.columns.iter().enumerate() {
-                            log::trace!("    col[{}]: width={:.3}, {} tiles",
-                                j, col.width_proportion, col.tiles.len());
+                            log::trace!(
+                                "    col[{}]: width={:.3}, {} tiles",
+                                j,
+                                col.width_proportion,
+                                col.tiles.len()
+                            );
                         }
                     }
                     self.apply_layout(&layout);
@@ -55,13 +66,21 @@ impl App {
                     self.drag.tile_dragging = None;
                     needs_redraw = true;
                 }
-                ServerEvent::Control(ServerMessage::PaneCreated { pane_id, cols, rows, .. }) => {
+                ServerEvent::Control(ServerMessage::PaneCreated {
+                    pane_id,
+                    cols,
+                    rows,
+                    ..
+                }) => {
                     log::debug!("PaneCreated: pane_id={pane_id} {cols}x{rows}");
                     self.pane_grids.entry(pane_id).or_insert_with(|| {
                         ClientPaneGrid::new(cols, rows, self.config.terminal.scrollback_lines)
                     });
                     self.pane_anims.open_opacity.insert(pane_id, 0.0); // start fade-in
-                    if !matches!(self.config.animation.pane_open_style, ciri_config::config::PaneOpenStyle::Fade) {
+                    if !matches!(
+                        self.config.animation.pane_open_style,
+                        ciri_config::config::PaneOpenStyle::Fade
+                    ) {
                         self.pane_anims.open_slides.insert(pane_id, 1.0);
                     }
                     needs_redraw = true;
@@ -106,17 +125,28 @@ impl App {
                     needs_redraw = true;
                 }
                 ServerEvent::Control(ServerMessage::ImagePlacement {
-                    pane_id, image_id, col, row,
-                    width_cells, height_cells,
-                    pixel_width, pixel_height,
+                    pane_id,
+                    image_id,
+                    col,
+                    row,
+                    width_cells,
+                    height_cells,
+                    pixel_width,
+                    pixel_height,
                     ..
                 }) => {
-                    log::debug!("image #{image_id} for pane {pane_id}: {width_cells}x{height_cells} cells");
+                    log::debug!(
+                        "image #{image_id} for pane {pane_id}: {width_cells}x{height_cells} cells"
+                    );
                     let placements = self.image_placements.entry(pane_id).or_default();
                     placements.push(super::ClientImagePlacement {
-                        image_id, col, row,
-                        width_cells, height_cells,
-                        pixel_width, pixel_height,
+                        image_id,
+                        col,
+                        row,
+                        width_cells,
+                        height_cells,
+                        pixel_width,
+                        pixel_height,
                     });
                     needs_redraw = true;
                 }
@@ -167,7 +197,7 @@ impl App {
                         grid.dirty = true;
                     }
                     self.cached_views.clear();
-                self.cached_tile_glyphs.clear();
+                    self.cached_tile_glyphs.clear();
                     self.server_tx = None;
                     self.server_rx = None;
                     self.reconnect_state = Some(super::ReconnectState {
@@ -190,10 +220,12 @@ impl App {
 
     /// Rebuild the full 2D WorkspaceSet from the server's authoritative layout.
     pub fn apply_layout(&mut self, layout: &LayoutState) {
-        log::debug!("apply_layout: view_size={:?}, vox={:.1}, voy={:.1}",
+        log::debug!(
+            "apply_layout: view_size={:?}, vox={:.1}, voy={:.1}",
             self.workspaces.view_size,
             self.view_offset_x.value(),
-            self.view_offset_y.value());
+            self.view_offset_y.value()
+        );
         let view_size = self.workspaces.view_size;
         let column_gap = self.workspaces.column_gap;
 
@@ -206,12 +238,20 @@ impl App {
                     if let Some(first_tile) = col_state.tiles.first() {
                         let mut col = Column::new(first_tile.pane_id);
                         // Replace the default single tile with all tiles from state
-                        col.tiles = col_state.tiles.iter().map(|t| {
-                            let mut tile = Tile::new(t.pane_id);
-                            tile.height = ciri_layout::tile::TileHeight::Auto { weight: t.weight as f64 };
-                            tile
-                        }).collect();
-                        col.active_tile_idx = col_state.active_tile_idx.min(col.tiles.len().saturating_sub(1));
+                        col.tiles = col_state
+                            .tiles
+                            .iter()
+                            .map(|t| {
+                                let mut tile = Tile::new(t.pane_id);
+                                tile.height = ciri_layout::tile::TileHeight::Auto {
+                                    weight: t.weight as f64,
+                                };
+                                tile
+                            })
+                            .collect();
+                        col.active_tile_idx = col_state
+                            .active_tile_idx
+                            .min(col.tiles.len().saturating_sub(1));
                         col.width = if let Some(px) = col_state.width_fixed_px {
                             ColumnWidth::Fixed(px)
                         } else {
@@ -276,7 +316,8 @@ impl App {
                     grid.dirty = true;
                 }
                 // Update leader key and input mode from config
-                self.input.leader_key = ciri_input::leader::LeaderKey::parse(&self.config.keys.leader);
+                self.input.leader_key =
+                    ciri_input::leader::LeaderKey::parse(&self.config.keys.leader);
                 self.input.input_mode = match self.config.input.mode.as_str() {
                     "sticky" => ciri_input::leader::InputMode::Sticky,
                     _ => ciri_input::leader::InputMode::Prefix,

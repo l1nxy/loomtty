@@ -54,7 +54,6 @@ pub struct ThemeConfig {
     pub mode_broadcast: String,
 }
 
-
 impl ThemeConfig {
     pub fn parse_color(hex: &str) -> [f32; 4] {
         let hex = hex.trim_start_matches('#');
@@ -91,12 +90,31 @@ impl ThemeConfig {
             };
         }
         fill!(
-            foreground, background,
-            black, red, green, yellow, blue, magenta, cyan, white,
-            bright_black, bright_red, bright_green, bright_yellow,
-            bright_blue, bright_magenta, bright_cyan, bright_white,
-            ui_background, statusbar_background, border_active, border_inactive, accent,
-            statusbar_dim, mode_broadcast
+            foreground,
+            background,
+            black,
+            red,
+            green,
+            yellow,
+            blue,
+            magenta,
+            cyan,
+            white,
+            bright_black,
+            bright_red,
+            bright_green,
+            bright_yellow,
+            bright_blue,
+            bright_magenta,
+            bright_cyan,
+            bright_white,
+            ui_background,
+            statusbar_background,
+            border_active,
+            border_inactive,
+            accent,
+            statusbar_dim,
+            mode_broadcast
         );
     }
 }

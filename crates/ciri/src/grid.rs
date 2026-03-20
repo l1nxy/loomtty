@@ -185,7 +185,8 @@ impl ClientPaneGrid {
             if end <= start {
                 continue;
             }
-            self.scrollback.push_back(sync.scrollback[start..end].to_vec());
+            self.scrollback
+                .push_back(sync.scrollback[start..end].to_vec());
         }
 
         // Step 2: Memcpy cells directly into viewport flat buffer
@@ -511,11 +512,7 @@ impl ClientPaneGrid {
 
     fn next_cell_start(&self, row: &[PackedCell], idx: usize) -> Option<usize> {
         let next = self.cell_end(row, idx) + 1;
-        if next < row.len() {
-            Some(next)
-        } else {
-            None
-        }
+        if next < row.len() { Some(next) } else { None }
     }
 
     fn row_chars(&self, row: &[PackedCell]) -> Vec<RowChar> {
@@ -735,8 +732,14 @@ mod tests {
         for round in 0..3u8 {
             let ch = (b'a' + round) as char;
             let sync = FullPaneSync {
-                pane_id: 1, generation: round as u64, cols: 4, rows: 2,
-                cursor_line: 0, cursor_col: 0, cursor_shape: CURSOR_BLOCK, mode_flags: 0,
+                pane_id: 1,
+                generation: round as u64,
+                cols: 4,
+                rows: 2,
+                cursor_line: 0,
+                cursor_col: 0,
+                cursor_shape: CURSOR_BLOCK,
+                mode_flags: 0,
                 title: String::new(),
                 scrollback: vec![PackedCell::with_ch(ch); 4],
                 scrollback_rows: 1,
@@ -875,10 +878,17 @@ mod tests {
 
         // Resize from 4x2 to 6x3
         let sync = FullPaneSync {
-            pane_id: 1, generation: 10, cols: 6, rows: 3,
-            cursor_line: 1, cursor_col: 2, cursor_shape: CURSOR_BEAM, mode_flags: 0,
+            pane_id: 1,
+            generation: 10,
+            cols: 6,
+            rows: 3,
+            cursor_line: 1,
+            cursor_col: 2,
+            cursor_shape: CURSOR_BEAM,
+            mode_flags: 0,
             title: "resized".into(),
-            scrollback: vec![], scrollback_rows: 0,
+            scrollback: vec![],
+            scrollback_rows: 0,
             cells: vec![PackedCell::with_ch('X'); 18],
         };
         grid.apply_full_sync(&sync);
@@ -904,10 +914,17 @@ mod tests {
     fn full_sync_short_cells_blanks_remainder() {
         let mut grid = ClientPaneGrid::new(4, 2, 10);
         let sync = FullPaneSync {
-            pane_id: 1, generation: 1, cols: 4, rows: 2,
-            cursor_line: 0, cursor_col: 0, cursor_shape: CURSOR_BLOCK, mode_flags: 0,
+            pane_id: 1,
+            generation: 1,
+            cols: 4,
+            rows: 2,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
             title: String::new(),
-            scrollback: vec![], scrollback_rows: 0,
+            scrollback: vec![],
+            scrollback_rows: 0,
             cells: vec![PackedCell::with_ch('A'); 3], // only 3 of 8 cells
         };
         grid.apply_full_sync(&sync);
@@ -923,8 +940,14 @@ mod tests {
         for i in 0u8..10 {
             let ch = (b'0' + i) as char;
             let sync = FullPaneSync {
-                pane_id: 1, generation: i as u64, cols: 2, rows: 1,
-                cursor_line: 0, cursor_col: 0, cursor_shape: CURSOR_BLOCK, mode_flags: 0,
+                pane_id: 1,
+                generation: i as u64,
+                cols: 2,
+                rows: 1,
+                cursor_line: 0,
+                cursor_col: 0,
+                cursor_shape: CURSOR_BLOCK,
+                mode_flags: 0,
                 title: String::new(),
                 scrollback: vec![PackedCell::with_ch(ch); 2],
                 scrollback_rows: 1,
@@ -945,8 +968,14 @@ mod tests {
         // Add some scrollback
         for i in 0..4u8 {
             let sync = FullPaneSync {
-                pane_id: 1, generation: i as u64, cols: 2, rows: 1,
-                cursor_line: 0, cursor_col: 0, cursor_shape: CURSOR_BLOCK, mode_flags: 0,
+                pane_id: 1,
+                generation: i as u64,
+                cols: 2,
+                rows: 1,
+                cursor_line: 0,
+                cursor_col: 0,
+                cursor_shape: CURSOR_BLOCK,
+                mode_flags: 0,
                 title: String::new(),
                 scrollback: vec![PackedCell::with_ch('x'); 2],
                 scrollback_rows: 1,
@@ -960,10 +989,17 @@ mod tests {
 
         // Resize resets scroll_offset to 0, but preserves scrollback
         let sync = FullPaneSync {
-            pane_id: 1, generation: 10, cols: 3, rows: 1, // dimension change
-            cursor_line: 0, cursor_col: 0, cursor_shape: CURSOR_BLOCK, mode_flags: 0,
+            pane_id: 1,
+            generation: 10,
+            cols: 3,
+            rows: 1, // dimension change
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
             title: String::new(),
-            scrollback: vec![], scrollback_rows: 0,
+            scrollback: vec![],
+            scrollback_rows: 0,
             cells: vec![PackedCell::default(); 3],
         };
         grid.apply_full_sync(&sync);
@@ -977,11 +1013,21 @@ mod tests {
     fn delta_apply_second_row() {
         let mut grid = ClientPaneGrid::new(5, 3, 0);
         let delta = CellDelta {
-            pane_id: 1, generation: 1,
-            cursor_line: 0, cursor_col: 0, cursor_shape: 0, mode_flags: 0,
+            pane_id: 1,
+            generation: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: 0,
+            mode_flags: 0,
             regions: vec![DamageRegion {
-                line: 2, left: 1, right: 3,
-                cells: vec![PackedCell::with_ch('X'), PackedCell::with_ch('Y'), PackedCell::with_ch('Z')],
+                line: 2,
+                left: 1,
+                right: 3,
+                cells: vec![
+                    PackedCell::with_ch('X'),
+                    PackedCell::with_ch('Y'),
+                    PackedCell::with_ch('Z'),
+                ],
             }],
         };
         grid.apply_delta(&delta);
@@ -997,10 +1043,16 @@ mod tests {
     fn delta_out_of_bounds_line_skipped() {
         let mut grid = ClientPaneGrid::new(4, 2, 0);
         let delta = CellDelta {
-            pane_id: 1, generation: 1,
-            cursor_line: 0, cursor_col: 0, cursor_shape: 0, mode_flags: 0,
+            pane_id: 1,
+            generation: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: 0,
+            mode_flags: 0,
             regions: vec![DamageRegion {
-                line: 5, left: 0, right: 0, // line 5 doesn't exist in 2-row grid
+                line: 5,
+                left: 0,
+                right: 0, // line 5 doesn't exist in 2-row grid
                 cells: vec![PackedCell::with_ch('X')],
             }],
         };
@@ -1013,10 +1065,16 @@ mod tests {
     fn delta_region_clamped_to_cols() {
         let mut grid = ClientPaneGrid::new(3, 1, 0);
         let delta = CellDelta {
-            pane_id: 1, generation: 1,
-            cursor_line: 0, cursor_col: 0, cursor_shape: 0, mode_flags: 0,
+            pane_id: 1,
+            generation: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: 0,
+            mode_flags: 0,
             regions: vec![DamageRegion {
-                line: 0, left: 1, right: 9, // right extends way past cols=3
+                line: 0,
+                left: 1,
+                right: 9, // right extends way past cols=3
                 cells: vec![PackedCell::with_ch('X'); 9],
             }],
         };
@@ -1031,8 +1089,11 @@ mod tests {
     fn delta_sets_mode_flags() {
         let mut grid = ClientPaneGrid::new(4, 1, 0);
         let delta = CellDelta {
-            pane_id: 1, generation: 1,
-            cursor_line: 0, cursor_col: 3, cursor_shape: CURSOR_BEAM,
+            pane_id: 1,
+            generation: 1,
+            cursor_line: 0,
+            cursor_col: 3,
+            cursor_shape: CURSOR_BEAM,
             mode_flags: MODE_SHELL_INTEGRATION | MODE_ALT_SCREEN,
             regions: vec![],
         };
@@ -1050,15 +1111,25 @@ mod tests {
         let mut grid = ClientPaneGrid::new(3, 1, 10);
         // Add one scrollback row 'abc', viewport row 'XYZ'
         let sync = FullPaneSync {
-            pane_id: 1, generation: 1, cols: 3, rows: 1,
-            cursor_line: 0, cursor_col: 0, cursor_shape: CURSOR_BLOCK, mode_flags: 0,
+            pane_id: 1,
+            generation: 1,
+            cols: 3,
+            rows: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
             title: String::new(),
             scrollback: vec![
-                PackedCell::with_ch('a'), PackedCell::with_ch('b'), PackedCell::with_ch('c'),
+                PackedCell::with_ch('a'),
+                PackedCell::with_ch('b'),
+                PackedCell::with_ch('c'),
             ],
             scrollback_rows: 1,
             cells: vec![
-                PackedCell::with_ch('X'), PackedCell::with_ch('Y'), PackedCell::with_ch('Z'),
+                PackedCell::with_ch('X'),
+                PackedCell::with_ch('Y'),
+                PackedCell::with_ch('Z'),
             ],
         };
         grid.apply_full_sync(&sync);
@@ -1073,17 +1144,29 @@ mod tests {
     fn search_finds_in_scrollback_and_viewport() {
         let mut grid = ClientPaneGrid::new(5, 1, 10);
         let sync = FullPaneSync {
-            pane_id: 1, generation: 1, cols: 5, rows: 1,
-            cursor_line: 0, cursor_col: 0, cursor_shape: CURSOR_BLOCK, mode_flags: 0,
+            pane_id: 1,
+            generation: 1,
+            cols: 5,
+            rows: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
             title: String::new(),
             scrollback: vec![
-                PackedCell::with_ch('h'), PackedCell::with_ch('e'), PackedCell::with_ch('l'),
-                PackedCell::with_ch('l'), PackedCell::with_ch('o'),
+                PackedCell::with_ch('h'),
+                PackedCell::with_ch('e'),
+                PackedCell::with_ch('l'),
+                PackedCell::with_ch('l'),
+                PackedCell::with_ch('o'),
             ],
             scrollback_rows: 1,
             cells: vec![
-                PackedCell::with_ch('h'), PackedCell::with_ch('e'), PackedCell::with_ch('l'),
-                PackedCell::with_ch('l'), PackedCell::with_ch('o'),
+                PackedCell::with_ch('h'),
+                PackedCell::with_ch('e'),
+                PackedCell::with_ch('l'),
+                PackedCell::with_ch('l'),
+                PackedCell::with_ch('o'),
             ],
         };
         grid.apply_full_sync(&sync);
@@ -1111,15 +1194,23 @@ mod tests {
     fn word_bounds_on_viewport_row() {
         let mut grid = ClientPaneGrid::new(5, 1, 10);
         let sync = FullPaneSync {
-            pane_id: 1, generation: 1, cols: 5, rows: 1,
-            cursor_line: 0, cursor_col: 0, cursor_shape: CURSOR_BLOCK, mode_flags: 0,
+            pane_id: 1,
+            generation: 1,
+            cols: 5,
+            rows: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
             title: String::new(),
             scrollback: vec![PackedCell::with_ch('x'); 5],
             scrollback_rows: 1,
             cells: vec![
-                PackedCell::with_ch('a'), PackedCell::with_ch('b'),
+                PackedCell::with_ch('a'),
+                PackedCell::with_ch('b'),
                 PackedCell::with_ch(' '),
-                PackedCell::with_ch('c'), PackedCell::with_ch('d'),
+                PackedCell::with_ch('c'),
+                PackedCell::with_ch('d'),
             ],
         };
         grid.apply_full_sync(&sync);
@@ -1140,14 +1231,16 @@ mod tests {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
-            regions: vec![
-                DamageRegion {
-                    line: 0,
-                    left: 2,
-                    right: 4,
-                    cells: vec![PackedCell::with_ch('A'), PackedCell::with_ch('B'), PackedCell::with_ch('C')],
-                },
-            ],
+            regions: vec![DamageRegion {
+                line: 0,
+                left: 2,
+                right: 4,
+                cells: vec![
+                    PackedCell::with_ch('A'),
+                    PackedCell::with_ch('B'),
+                    PackedCell::with_ch('C'),
+                ],
+            }],
         };
         grid.apply_delta(&delta);
         assert_eq!(grid.viewport[2].ch(), 'A');
@@ -1171,8 +1264,14 @@ mod tests {
             scrollback: vec![PackedCell::with_ch('S'); 4],
             scrollback_rows: 1,
             cells: vec![
-                PackedCell::with_ch('A'), PackedCell::with_ch('B'), PackedCell::with_ch('C'), PackedCell::with_ch('D'),
-                PackedCell::with_ch('E'), PackedCell::with_ch('F'), PackedCell::with_ch('G'), PackedCell::with_ch('H'),
+                PackedCell::with_ch('A'),
+                PackedCell::with_ch('B'),
+                PackedCell::with_ch('C'),
+                PackedCell::with_ch('D'),
+                PackedCell::with_ch('E'),
+                PackedCell::with_ch('F'),
+                PackedCell::with_ch('G'),
+                PackedCell::with_ch('H'),
             ],
         };
         grid.apply_full_sync(&sync);

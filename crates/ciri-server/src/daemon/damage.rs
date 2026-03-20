@@ -10,7 +10,6 @@ pub(crate) struct DamageAccumulator {
 }
 
 impl DamageAccumulator {
-
     pub(crate) fn mark_full(&mut self) {
         self.full = true;
         self.line_damage.clear();

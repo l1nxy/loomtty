@@ -72,7 +72,11 @@ impl Column {
         match self.width {
             ColumnWidth::Proportion(p) => p,
             ColumnWidth::Fixed(px) => {
-                if viewport_w > 0.0 { px / viewport_w as f64 } else { 0.5 }
+                if viewport_w > 0.0 {
+                    px / viewport_w as f64
+                } else {
+                    0.5
+                }
             }
         }
     }
@@ -85,7 +89,8 @@ impl Column {
     }
 
     pub fn effective_width(&self, viewport_w: f32) -> f32 {
-        self.rendered_width.unwrap_or_else(|| self.resolve_width(viewport_w))
+        self.rendered_width
+            .unwrap_or_else(|| self.resolve_width(viewport_w))
     }
 
     /// Set the rendered width immediately (no animation).
@@ -102,10 +107,16 @@ impl Column {
     /// receiving the final drag result from the client.
     pub fn set_tile_weights(&mut self, top_idx: usize, top_weight: f64, bottom_weight: f64) {
         let bot_idx = top_idx + 1;
-        if bot_idx >= self.tiles.len() { return; }
+        if bot_idx >= self.tiles.len() {
+            return;
+        }
         let min_w = 0.05;
-        self.tiles[top_idx].height = TileHeight::Auto { weight: top_weight.max(min_w) };
-        self.tiles[bot_idx].height = TileHeight::Auto { weight: bottom_weight.max(min_w) };
+        self.tiles[top_idx].height = TileHeight::Auto {
+            weight: top_weight.max(min_w),
+        };
+        self.tiles[bot_idx].height = TileHeight::Auto {
+            weight: bottom_weight.max(min_w),
+        };
     }
 
     /// Compute (pane_id, y_offset, height) for each tile based on weights.
@@ -114,15 +125,23 @@ impl Column {
             return vec![(self.tiles[0].pane_id, 0.0, col_height)];
         }
 
-        let total_weight: f64 = self.tiles.iter().map(|t| match t.height {
-            TileHeight::Auto { weight } => weight,
-            TileHeight::Fixed(_) => 0.0,
-        }).sum();
+        let total_weight: f64 = self
+            .tiles
+            .iter()
+            .map(|t| match t.height {
+                TileHeight::Auto { weight } => weight,
+                TileHeight::Fixed(_) => 0.0,
+            })
+            .sum();
 
-        let fixed_total: f32 = self.tiles.iter().map(|t| match t.height {
-            TileHeight::Fixed(px) => px as f32,
-            _ => 0.0,
-        }).sum();
+        let fixed_total: f32 = self
+            .tiles
+            .iter()
+            .map(|t| match t.height {
+                TileHeight::Fixed(px) => px as f32,
+                _ => 0.0,
+            })
+            .sum();
 
         let auto_height = (col_height - fixed_total).max(0.0);
 

@@ -1,7 +1,7 @@
 //! Text shaping via rustybuzz for ligature and complex text layout support.
 
-use glyphon::fontdb;
 use glyphon::FontSystem;
+use glyphon::fontdb;
 use std::collections::HashMap;
 
 /// Font data cached for text shaping.
@@ -136,11 +136,7 @@ impl TextShaper {
     }
 
     /// Shape a grapheme cluster using a pre-created face.
-    pub fn shape_grapheme_with_face(
-        &self,
-        cluster: &str,
-        face: &rustybuzz::Face,
-    ) -> Option<u32> {
+    pub fn shape_grapheme_with_face(&self, cluster: &str, face: &rustybuzz::Face) -> Option<u32> {
         let mut buffer = rustybuzz::UnicodeBuffer::new();
         buffer.push_str(cluster);
 

@@ -55,9 +55,10 @@ impl Server {
             session.pane_inset = self.pane_inset;
 
             // Try restoring saved session
-            let restored = ciri_session::restore::restore_session(session_name, &transport::state_dir())
-                .ok()
-                .flatten();
+            let restored =
+                ciri_session::restore::restore_session(session_name, &transport::state_dir())
+                    .ok()
+                    .flatten();
             if let Some(saved) = restored {
                 log::info!(
                     "restoring session '{}' ({} workspaces)",
@@ -178,8 +179,7 @@ impl Server {
         if let Some(frame) = ciri_protocol::codec::frame_server_msg(msg) {
             let frame = bytes::Bytes::from(frame);
             for client in self.clients.values() {
-                if client.session_name == session_name
-                    && client.tx.try_send(frame.clone()).is_err()
+                if client.session_name == session_name && client.tx.try_send(frame.clone()).is_err()
                 {
                     log::warn!("failed to broadcast to client {}", client.id);
                 }
@@ -210,7 +210,7 @@ impl Server {
     ) {
         session.mark_session_dirty();
         if resize {
-            session.resize_all_panes(clients);
+            let _ = session.resize_all_panes(clients);
         }
         responses.push(ServerResponse::BroadcastToSession(
             session_name.to_string(),
@@ -257,7 +257,13 @@ impl Server {
                                     rows,
                                 },
                             ));
-                            Self::layout_changed(&mut session, &mut self.clients, &session_name, false, &mut responses);
+                            Self::layout_changed(
+                                &mut session,
+                                &mut self.clients,
+                                &session_name,
+                                false,
+                                &mut responses,
+                            );
                         }
                         Err(e) => log::error!("failed to create pane: {e}"),
                     }
@@ -266,7 +272,9 @@ impl Server {
             }
             ClientMessage::SplitDown => {
                 if let Some(mut session) = self.sessions.remove(&session_name) {
-                    match session.create_pane_in_new_workspace(&mut self.next_pane_id, &mut self.clients) {
+                    match session
+                        .create_pane_in_new_workspace(&mut self.next_pane_id, &mut self.clients)
+                    {
                         Ok(id) => {
                             session.resize_all_panes(&mut self.clients);
                             session.mark_session_dirty();
@@ -280,7 +288,13 @@ impl Server {
                                     rows,
                                 },
                             ));
-                            Self::layout_changed(&mut session, &mut self.clients, &session_name, false, &mut responses);
+                            Self::layout_changed(
+                                &mut session,
+                                &mut self.clients,
+                                &session_name,
+                                false,
+                                &mut responses,
+                            );
                         }
                         Err(e) => log::error!("failed to split: {e}"),
                     }
@@ -300,13 +314,25 @@ impl Server {
             ClientMessage::FocusLeft => {
                 if let Some(session) = self.sessions.get_mut(&session_name) {
                     session.workspaces.active_mut().focus_left();
-                    Self::layout_changed(session, &mut self.clients, &session_name, false, &mut responses);
+                    Self::layout_changed(
+                        session,
+                        &mut self.clients,
+                        &session_name,
+                        false,
+                        &mut responses,
+                    );
                 }
             }
             ClientMessage::FocusRight => {
                 if let Some(session) = self.sessions.get_mut(&session_name) {
                     session.workspaces.active_mut().focus_right();
-                    Self::layout_changed(session, &mut self.clients, &session_name, false, &mut responses);
+                    Self::layout_changed(
+                        session,
+                        &mut self.clients,
+                        &session_name,
+                        false,
+                        &mut responses,
+                    );
                 }
             }
             ClientMessage::FocusUp => {
@@ -314,7 +340,13 @@ impl Server {
                     if !session.workspaces.active_mut().focus_tile_up() {
                         session.workspaces.focus_up();
                     }
-                    Self::layout_changed(session, &mut self.clients, &session_name, false, &mut responses);
+                    Self::layout_changed(
+                        session,
+                        &mut self.clients,
+                        &session_name,
+                        false,
+                        &mut responses,
+                    );
                 }
             }
             ClientMessage::FocusDown => {
@@ -322,19 +354,37 @@ impl Server {
                     if !session.workspaces.active_mut().focus_tile_down() {
                         session.workspaces.focus_down();
                     }
-                    Self::layout_changed(session, &mut self.clients, &session_name, false, &mut responses);
+                    Self::layout_changed(
+                        session,
+                        &mut self.clients,
+                        &session_name,
+                        false,
+                        &mut responses,
+                    );
                 }
             }
             ClientMessage::MovePaneLeft => {
                 if let Some(session) = self.sessions.get_mut(&session_name) {
                     session.workspaces.active_mut().move_pane_left();
-                    Self::layout_changed(session, &mut self.clients, &session_name, false, &mut responses);
+                    Self::layout_changed(
+                        session,
+                        &mut self.clients,
+                        &session_name,
+                        false,
+                        &mut responses,
+                    );
                 }
             }
             ClientMessage::MovePaneRight => {
                 if let Some(session) = self.sessions.get_mut(&session_name) {
                     session.workspaces.active_mut().move_pane_right();
-                    Self::layout_changed(session, &mut self.clients, &session_name, false, &mut responses);
+                    Self::layout_changed(
+                        session,
+                        &mut self.clients,
+                        &session_name,
+                        false,
+                        &mut responses,
+                    );
                 }
             }
             ClientMessage::Resize {
@@ -366,7 +416,15 @@ impl Server {
                         client.viewport_height = height as f32;
                     }
                     self.with_session(&session_name, |session, clients| {
-                        Self::layout_changed(session, clients, &session_name, true, &mut responses);
+                        if session.resize_all_panes(clients) {
+                            session.mark_session_dirty();
+                            responses.push(ServerResponse::BroadcastToSession(
+                                session_name.to_string(),
+                                ServerMessage::LayoutUpdate {
+                                    layout: session.layout_state(),
+                                },
+                            ));
+                        }
                     });
                 } else {
                     log::warn!(
@@ -383,19 +441,28 @@ impl Server {
                         Some(px) => ColumnWidth::Fixed(px),
                         None => ColumnWidth::Proportion(proportion),
                     };
-                    session.workspaces.active_mut().set_active_column_width(width);
+                    session
+                        .workspaces
+                        .active_mut()
+                        .set_active_column_width(width);
                     Self::layout_changed(session, clients, &session_name, true, &mut responses);
                 });
             }
             ClientMessage::AdjustColumnSplit { delta } => {
                 self.with_session(&session_name, |session, clients| {
-                    session.workspaces.active_mut().resize_active_with_neighbor(delta);
+                    session
+                        .workspaces
+                        .active_mut()
+                        .resize_active_with_neighbor(delta);
                     Self::layout_changed(session, clients, &session_name, true, &mut responses);
                 });
             }
             ClientMessage::EqualizeColumnSplit => {
                 self.with_session(&session_name, |session, clients| {
-                    session.workspaces.active_mut().equalize_active_with_neighbor();
+                    session
+                        .workspaces
+                        .active_mut()
+                        .equalize_active_with_neighbor();
                     Self::layout_changed(session, clients, &session_name, true, &mut responses);
                 });
             }
@@ -412,10 +479,7 @@ impl Server {
                     Self::layout_changed(session, clients, &session_name, true, &mut responses);
                 });
             }
-            ClientMessage::AdjustColumnSplitAt {
-                column_idx,
-                delta,
-            } => {
+            ClientMessage::AdjustColumnSplitAt { column_idx, delta } => {
                 self.with_session(&session_name, |session, clients| {
                     let ws = session.workspaces.active_mut();
                     let saved_idx = ws.active_column_idx;
@@ -451,7 +515,13 @@ impl Server {
             ClientMessage::SwitchWorkspace { workspace_idx } => {
                 if let Some(session) = self.sessions.get_mut(&session_name) {
                     session.workspaces.switch_to(workspace_idx);
-                    Self::layout_changed(session, &mut self.clients, &session_name, false, &mut responses);
+                    Self::layout_changed(
+                        session,
+                        &mut self.clients,
+                        &session_name,
+                        false,
+                        &mut responses,
+                    );
                 }
             }
             ClientMessage::MouseInput {
@@ -516,8 +586,7 @@ impl Server {
                     // Kill all panes in the session
                     drop(session);
                     // Delete saved session file
-                    let _ =
-                        ciri_session::restore::delete_session(&target, &transport::state_dir());
+                    let _ = ciri_session::restore::delete_session(&target, &transport::state_dir());
                     // Notify clients attached to the killed session
                     let affected_clients: Vec<u64> = self
                         .clients
@@ -538,8 +607,7 @@ impl Server {
                     ));
                 } else {
                     // Try to delete saved session file even if not running
-                    let _ =
-                        ciri_session::restore::delete_session(&target, &transport::state_dir());
+                    let _ = ciri_session::restore::delete_session(&target, &transport::state_dir());
                     responses.push(ServerResponse::SendToClient(
                         client_id,
                         ServerMessage::SessionKilled {

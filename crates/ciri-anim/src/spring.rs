@@ -51,8 +51,7 @@ impl Spring {
     }
 
     pub fn is_at_rest(&self) -> bool {
-        (self.position - self.target).abs() < self.epsilon
-            && self.velocity.abs() < self.epsilon
+        (self.position - self.target).abs() < self.epsilon && self.velocity.abs() < self.epsilon
     }
 
     pub fn settle(&mut self) {
@@ -105,7 +104,12 @@ mod tests {
         let mut prev = 0.0;
         for _ in 0..300 {
             s.advance(1.0 / 60.0);
-            assert!(s.position >= prev - 0.01, "non-monotonic: {} -> {}", prev, s.position);
+            assert!(
+                s.position >= prev - 0.01,
+                "non-monotonic: {} -> {}",
+                prev,
+                s.position
+            );
             prev = s.position;
         }
     }

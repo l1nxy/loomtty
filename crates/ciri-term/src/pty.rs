@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -45,7 +45,12 @@ impl Pty {
         let pty_system = native_pty_system();
 
         let pair = pty_system
-            .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+            .openpty(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
             .context("openpty failed")?;
 
         let mut cmd = if !shell.is_empty() {
@@ -58,9 +63,13 @@ impl Pty {
                 .filter(|s| !s.is_empty())
                 .or_else(|| {
                     #[cfg(unix)]
-                    { get_pw_shell() }
+                    {
+                        get_pw_shell()
+                    }
                     #[cfg(not(unix))]
-                    { None }
+                    {
+                        None
+                    }
                 })
                 .unwrap_or_else(|| "/bin/sh".to_string());
             CommandBuilder::new(default)
@@ -77,7 +86,10 @@ impl Pty {
         let child = pair.slave.spawn_command(cmd).context("spawn failed")?;
         drop(pair.slave);
 
-        let mut reader = pair.master.try_clone_reader().context("clone reader failed")?;
+        let mut reader = pair
+            .master
+            .try_clone_reader()
+            .context("clone reader failed")?;
         let writer = pair.master.take_writer().context("take writer failed")?;
 
         // Spawn background reader thread with bounded channel to prevent
@@ -136,7 +148,10 @@ impl Pty {
 
     /// Write data to the PTY.
     pub fn write(&self, data: &[u8]) -> std::io::Result<()> {
-        self.writer.lock().unwrap_or_else(|e| e.into_inner()).write_all(data)
+        self.writer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .write_all(data)
     }
 
     /// Check if child has exited (non-blocking).
@@ -151,7 +166,12 @@ impl Pty {
     }
 
     pub fn resize(&self, cols: u16, rows: u16) {
-        if let Err(e) = self.master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }) {
+        if let Err(e) = self.master.resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        }) {
             log::warn!("pty resize failed: {e}");
         }
     }

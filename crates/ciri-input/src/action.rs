@@ -58,7 +58,9 @@ impl Action {
     pub fn from_name(s: &str) -> Option<Action> {
         match s {
             "new_column_right" => Some(Action::NewColumnRight),
-            "split_down" | "new_row_below" | "new_workspace_below" => Some(Action::NewWorkspaceBelow),
+            "split_down" | "new_row_below" | "new_workspace_below" => {
+                Some(Action::NewWorkspaceBelow)
+            }
             "close_pane" => Some(Action::ClosePane),
             "focus_left" => Some(Action::FocusLeft),
             "focus_right" => Some(Action::FocusRight),
@@ -89,9 +91,10 @@ impl Action {
             _ => {
                 // Handle switch_workspace_N
                 if let Some(rest) = s.strip_prefix("switch_workspace_")
-                    && let Ok(n) = rest.parse::<usize>() {
-                        return Some(Action::SwitchWorkspace(n));
-                    }
+                    && let Ok(n) = rest.parse::<usize>()
+                {
+                    return Some(Action::SwitchWorkspace(n));
+                }
                 None
             }
         }

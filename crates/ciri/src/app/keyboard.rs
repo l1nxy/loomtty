@@ -82,17 +82,11 @@ impl App {
                             Err(e) => log::warn!("clipboard read failed: {e}"),
                             Ok(text) => {
                                 log::info!("clipboard text: {} bytes", text.len());
-                                if let Some(pid) =
-                                    self.workspaces.active_mut().active_pane_id()
-                                {
-                                    let bracketed = self
-                                        .pane_grids
-                                        .get(&pid)
-                                        .is_some_and(|g| {
-                                            g.mode_flags
-                                                & ciri_protocol::message::MODE_BRACKETED_PASTE
-                                                != 0
-                                        });
+                                if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
+                                    let bracketed = self.pane_grids.get(&pid).is_some_and(|g| {
+                                        g.mode_flags & ciri_protocol::message::MODE_BRACKETED_PASTE
+                                            != 0
+                                    });
                                     let mut data = Vec::with_capacity(
                                         text.len() + if bracketed { 12 } else { 0 },
                                     );
@@ -103,10 +97,7 @@ impl App {
                                     if bracketed {
                                         data.extend_from_slice(b"\x1b[201~");
                                     }
-                                    self.send(ClientMessage::Input {
-                                        pane_id: pid,
-                                        data,
-                                    });
+                                    self.send(ClientMessage::Input { pane_id: pid, data });
                                 }
                             }
                         },
@@ -138,9 +129,7 @@ impl App {
 
         let is_modifier_only = matches!(
             event.logical_key,
-            Key::Named(
-                NamedKey::Control | NamedKey::Shift | NamedKey::Alt | NamedKey::Super
-            )
+            Key::Named(NamedKey::Control | NamedKey::Shift | NamedKey::Alt | NamedKey::Super)
         );
         if !is_modifier_only {
             self.selection = None;
@@ -173,19 +162,32 @@ impl App {
                     match event.physical_key {
                         PhysicalKey::Code(code) => match code {
                             KeyCode::Space => "space",
-                            KeyCode::KeyA => "a", KeyCode::KeyB => "b",
-                            KeyCode::KeyC => "c", KeyCode::KeyD => "d",
-                            KeyCode::KeyE => "e", KeyCode::KeyF => "f",
-                            KeyCode::KeyG => "g", KeyCode::KeyH => "h",
-                            KeyCode::KeyI => "i", KeyCode::KeyJ => "j",
-                            KeyCode::KeyK => "k", KeyCode::KeyL => "l",
-                            KeyCode::KeyM => "m", KeyCode::KeyN => "n",
-                            KeyCode::KeyO => "o", KeyCode::KeyP => "p",
-                            KeyCode::KeyQ => "q", KeyCode::KeyR => "r",
-                            KeyCode::KeyS => "s", KeyCode::KeyT => "t",
-                            KeyCode::KeyU => "u", KeyCode::KeyV => "v",
-                            KeyCode::KeyW => "w", KeyCode::KeyX => "x",
-                            KeyCode::KeyY => "y", KeyCode::KeyZ => "z",
+                            KeyCode::KeyA => "a",
+                            KeyCode::KeyB => "b",
+                            KeyCode::KeyC => "c",
+                            KeyCode::KeyD => "d",
+                            KeyCode::KeyE => "e",
+                            KeyCode::KeyF => "f",
+                            KeyCode::KeyG => "g",
+                            KeyCode::KeyH => "h",
+                            KeyCode::KeyI => "i",
+                            KeyCode::KeyJ => "j",
+                            KeyCode::KeyK => "k",
+                            KeyCode::KeyL => "l",
+                            KeyCode::KeyM => "m",
+                            KeyCode::KeyN => "n",
+                            KeyCode::KeyO => "o",
+                            KeyCode::KeyP => "p",
+                            KeyCode::KeyQ => "q",
+                            KeyCode::KeyR => "r",
+                            KeyCode::KeyS => "s",
+                            KeyCode::KeyT => "t",
+                            KeyCode::KeyU => "u",
+                            KeyCode::KeyV => "v",
+                            KeyCode::KeyW => "w",
+                            KeyCode::KeyX => "x",
+                            KeyCode::KeyY => "y",
+                            KeyCode::KeyZ => "z",
                             _ => s,
                         },
                         _ => s,
@@ -198,18 +200,14 @@ impl App {
         };
 
         if self.overview.active {
-            let combo = KeyCombo::from_modifiers(
-                &key_name.to_lowercase(),
-                ctrl,
-                shift,
-                alt,
-                super_key,
-            );
+            let combo =
+                KeyCombo::from_modifiers(&key_name.to_lowercase(), ctrl, shift, alt, super_key);
             if let Some(action) = self.overview_keybinds.lookup(&combo) {
                 match action {
                     Action::ExitOverview => {
                         self.overview.active = false;
-                        self.overview.zoom
+                        self.overview
+                            .zoom
                             .animate_to(1.0, self.config.animation.speed);
                         self.animate_to_active();
                     }
@@ -231,7 +229,10 @@ impl App {
                 InputResult::PassThrough => {
                     self.scroll_active_to_bottom();
                     // Use Kitty keyboard encoding if the active pane has it enabled
-                    let use_kitty = self.workspaces.active().active_pane_id()
+                    let use_kitty = self
+                        .workspaces
+                        .active()
+                        .active_pane_id()
                         .and_then(|pid| self.pane_grids.get(&pid))
                         .is_some_and(|grid| grid.has_kitty_keyboard);
                     let bytes = if use_kitty {
@@ -244,13 +245,17 @@ impl App {
                             // Send to visible panes only — off-screen panes should
                             // not receive destructive commands unexpectedly.
                             let vox = self.view_offset_x.value() as f32;
-                            let visible_pids: Vec<u64> = self.workspaces.active()
+                            let visible_pids: Vec<u64> = self
+                                .workspaces
+                                .active()
                                 .visible_tiles(vox)
                                 .iter()
                                 .map(|(pid, _, _)| *pid)
                                 .collect();
                             for pid in visible_pids {
-                                let pane_kitty = self.pane_grids.get(&pid)
+                                let pane_kitty = self
+                                    .pane_grids
+                                    .get(&pid)
                                     .is_some_and(|g| g.has_kitty_keyboard);
                                 let pane_bytes = if pane_kitty == use_kitty {
                                     bytes.clone()

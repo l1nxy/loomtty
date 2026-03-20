@@ -8,10 +8,10 @@
 //! stage differs (sRGB conversion for text vs. direct sampling for emoji).
 
 use ciri_config::config::RenderConfig;
-use glyphon::fontdb;
 use glyphon::FontSystem;
+use glyphon::fontdb;
 use std::collections::HashMap;
-use swash::scale::{image::Content, Render, ScaleContext, Source, StrikeWith};
+use swash::scale::{Render, ScaleContext, Source, StrikeWith, image::Content};
 use swash::zeno::Format;
 use wgpu;
 
@@ -57,8 +57,14 @@ pub struct GlyphEntry {
 
 impl GlyphEntry {
     pub const EMPTY: Self = GlyphEntry {
-        u0: 0.0, v0: 0.0, u1: 0.0, v1: 0.0,
-        width: 0, height: 0, bearing_x: 0, bearing_y: 0,
+        u0: 0.0,
+        v0: 0.0,
+        u1: 0.0,
+        v1: 0.0,
+        width: 0,
+        height: 0,
+        bearing_x: 0,
+        bearing_y: 0,
         is_color: false,
     };
 }
@@ -68,15 +74,20 @@ impl GlyphEntry {
 /// Simple shelf-based 2D rectangle packer for atlas allocation.
 /// Allocates left-to-right, top-to-bottom in horizontal shelves.
 struct ShelfPacker {
-    shelf_y: u32,       // y-origin of the current shelf
-    shelf_height: u32,  // tallest glyph on the current shelf
-    cursor_x: u32,      // next free x on the current shelf
-    size: u32,          // atlas dimension (square)
+    shelf_y: u32,      // y-origin of the current shelf
+    shelf_height: u32, // tallest glyph on the current shelf
+    cursor_x: u32,     // next free x on the current shelf
+    size: u32,         // atlas dimension (square)
 }
 
 impl ShelfPacker {
     fn new(size: u32) -> Self {
-        ShelfPacker { shelf_y: 0, shelf_height: 0, cursor_x: 0, size }
+        ShelfPacker {
+            shelf_y: 0,
+            shelf_height: 0,
+            cursor_x: 0,
+            size,
+        }
     }
 
     /// Try to allocate a `w×h` region. Returns `(x, y)` origin or `None` if full.
@@ -132,7 +143,11 @@ impl AtlasLayer {
         // Texture
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
-            size: wgpu::Extent3d { width: atlas_size, height: atlas_size, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: atlas_size,
+                height: atlas_size,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -161,9 +176,18 @@ impl AtlasLayer {
             label: None,
             layout: bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
-                wgpu::BindGroupEntry { binding: 2, resource: uniform_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -222,7 +246,11 @@ impl AtlasLayer {
         };
 
         AtlasLayer {
-            texture, bind_group, pipeline, instance_buffer, uniform_buffer,
+            texture,
+            bind_group,
+            pipeline,
+            instance_buffer,
+            uniform_buffer,
             packer: ShelfPacker::new(atlas_size),
             bpp,
         }
@@ -243,7 +271,11 @@ impl AtlasLayer {
                 bytes_per_row: Some(w * self.bpp),
                 rows_per_image: Some(h),
             },
-            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
         );
     }
 
@@ -271,6 +303,48 @@ impl AtlasLayer {
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.set_vertex_buffer(0, self.instance_buffer.slice(..data.len() as u64));
         pass.draw(0..4, 0..count as u32);
+    }
+
+    fn render_scissored(
+        &self,
+        queue: &wgpu::Queue,
+        pass: &mut wgpu::RenderPass<'_>,
+        instances: &[GlyphInstance],
+        max_instances: usize,
+        viewport_w: f32,
+        viewport_h: f32,
+        viewport_w_px: u32,
+        viewport_h_px: u32,
+        batches: &[ScissoredRange],
+        overlay_start: usize,
+    ) {
+        if instances.is_empty() {
+            return;
+        }
+        let count = instances.len().min(max_instances);
+        let viewport = [viewport_w, viewport_h, 0.0f32, 0.0f32];
+        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&viewport));
+        let data = bytemuck::cast_slice(&instances[..count]);
+        queue.write_buffer(&self.instance_buffer, 0, data);
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_vertex_buffer(0, self.instance_buffer.slice(..data.len() as u64));
+
+        for batch in batches {
+            let start = batch.start.min(count);
+            let end = batch.end.min(count);
+            if start >= end || batch.w == 0 || batch.h == 0 {
+                continue;
+            }
+            pass.set_scissor_rect(batch.x, batch.y, batch.w, batch.h);
+            pass.draw(0..4, start as u32..end as u32);
+        }
+
+        let overlay_start = overlay_start.min(count);
+        if overlay_start < count {
+            pass.set_scissor_rect(0, 0, viewport_w_px.max(1), viewport_h_px.max(1));
+            pass.draw(0..4, overlay_start as u32..count as u32);
+        }
     }
 
     /// Zero out the texture and reset the packer.
@@ -317,11 +391,22 @@ pub struct GlyphAtlas {
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck_derive::Pod, bytemuck_derive::Zeroable)]
 pub struct GlyphInstance {
-    pub pos: [f32; 2],       // pixel position (top-left of glyph quad)
-    pub size: [f32; 2],      // pixel size
-    pub uv_pos: [f32; 2],    // atlas UV top-left
-    pub uv_size: [f32; 2],   // atlas UV size
-    pub color: [f32; 4],     // RGBA color
+    pub pos: [f32; 2],     // pixel position (top-left of glyph quad)
+    pub size: [f32; 2],    // pixel size
+    pub uv_pos: [f32; 2],  // atlas UV top-left
+    pub uv_size: [f32; 2], // atlas UV size
+    pub color: [f32; 4],   // RGBA color
+}
+
+/// Draw range clipped to a scissor rect.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ScissoredRange {
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+    pub start: usize,
+    pub end: usize,
 }
 
 impl GlyphAtlas {
@@ -347,14 +432,22 @@ impl GlyphAtlas {
         let base_chain = build_fallback_chain(font_system, family_name);
         let mut font_chains = HashMap::new();
         font_chains.insert(FontStyle::Regular, base_chain.clone());
-        font_chains.insert(FontStyle::Bold, build_style_chain(font_system, &base_chain, FontStyle::Bold));
-        font_chains.insert(FontStyle::Italic, build_style_chain(font_system, &base_chain, FontStyle::Italic));
-        font_chains.insert(FontStyle::BoldItalic, build_style_chain(font_system, &base_chain, FontStyle::BoldItalic));
+        font_chains.insert(
+            FontStyle::Bold,
+            build_style_chain(font_system, &base_chain, FontStyle::Bold),
+        );
+        font_chains.insert(
+            FontStyle::Italic,
+            build_style_chain(font_system, &base_chain, FontStyle::Italic),
+        );
+        font_chains.insert(
+            FontStyle::BoldItalic,
+            build_style_chain(font_system, &base_chain, FontStyle::BoldItalic),
+        );
 
         // ── Cell metrics from primary font ──
-        let (cell_width, cell_height, ascent) = compute_cell_metrics(
-            font_system, base_chain.first().copied(), font_size,
-        );
+        let (cell_width, cell_height, ascent) =
+            compute_cell_metrics(font_system, base_chain.first().copied(), font_size);
 
         // ── Shared bind group layout (texture + sampler) ──
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -391,7 +484,11 @@ impl GlyphAtlas {
 
         // ── Atlas layers ──
         let alpha = AtlasLayer::new(
-            device, format, &bind_group_layout, atlas_size, max_instances,
+            device,
+            format,
+            &bind_group_layout,
+            atlas_size,
+            max_instances,
             wgpu::TextureFormat::R8Unorm,
             wgpu::FilterMode::Nearest,
             ALPHA_FRAGMENT,
@@ -407,7 +504,11 @@ impl GlyphAtlas {
         );
 
         let color = AtlasLayer::new(
-            device, format, &bind_group_layout, atlas_size, max_instances,
+            device,
+            format,
+            &bind_group_layout,
+            atlas_size,
+            max_instances,
             wgpu::TextureFormat::Rgba8UnormSrgb,
             wgpu::FilterMode::Linear,
             COLOR_FRAGMENT,
@@ -417,19 +518,25 @@ impl GlyphAtlas {
 
         let primary_font_id = base_chain.first().copied();
 
-        (GlyphAtlas {
-            alpha, color, max_instances, atlas_size,
-            cache: HashMap::new(),
-            glyph_id_cache: HashMap::new(),
-            scale_context: ScaleContext::new(),
-            font_chains,
-            font_size,
-            cell_width,
-            cell_height,
-            ascent,
-            atlas_needs_clear: false,
-            alpha_buf: Vec::new(),
-        }, primary_font_id)
+        (
+            GlyphAtlas {
+                alpha,
+                color,
+                max_instances,
+                atlas_size,
+                cache: HashMap::new(),
+                glyph_id_cache: HashMap::new(),
+                scale_context: ScaleContext::new(),
+                font_chains,
+                font_size,
+                cell_width,
+                cell_height,
+                ascent,
+                atlas_needs_clear: false,
+                alpha_buf: Vec::new(),
+            },
+            primary_font_id,
+        )
     }
 
     /// Ensure a glyph for `ch` with the given `style` is in the atlas.
@@ -453,14 +560,20 @@ impl GlyphAtlas {
         }
 
         // Find which font in the fallback chain has this glyph
-        let font_ids = self.font_chains.get(&style)
+        let font_ids = self
+            .font_chains
+            .get(&style)
             .or_else(|| self.font_chains.get(&FontStyle::Regular))?;
         let (font_id, glyph_id) = resolve_glyph(font_system, font_ids, ch)?;
 
         // Rasterize the glyph
         let image = rasterize_glyph(
-            &mut self.scale_context, font_system, font_id, glyph_id,
-            self.font_size, style,
+            &mut self.scale_context,
+            font_system,
+            font_id,
+            glyph_id,
+            self.font_size,
+            style,
         )?;
 
         let w = image.placement.width;
@@ -521,8 +634,12 @@ impl GlyphAtlas {
         }
 
         let image = rasterize_glyph(
-            &mut self.scale_context, font_system, font_id, glyph_id as u16,
-            self.font_size, style,
+            &mut self.scale_context,
+            font_system,
+            font_id,
+            glyph_id as u16,
+            self.font_size,
+            style,
         )?;
 
         let w = image.placement.width;
@@ -580,7 +697,40 @@ impl GlyphAtlas {
         viewport_w: f32,
         viewport_h: f32,
     ) {
-        self.alpha.render(queue, pass, instances, self.max_instances, viewport_w, viewport_h);
+        self.alpha.render(
+            queue,
+            pass,
+            instances,
+            self.max_instances,
+            viewport_w,
+            viewport_h,
+        );
+    }
+
+    pub fn render_scissored(
+        &self,
+        queue: &wgpu::Queue,
+        pass: &mut wgpu::RenderPass<'_>,
+        instances: &[GlyphInstance],
+        viewport_w: f32,
+        viewport_h: f32,
+        viewport_w_px: u32,
+        viewport_h_px: u32,
+        batches: &[ScissoredRange],
+        overlay_start: usize,
+    ) {
+        self.alpha.render_scissored(
+            queue,
+            pass,
+            instances,
+            self.max_instances,
+            viewport_w,
+            viewport_h,
+            viewport_w_px,
+            viewport_h_px,
+            batches,
+            overlay_start,
+        );
     }
 
     /// Render color emoji instances (RGBA atlas).
@@ -592,7 +742,40 @@ impl GlyphAtlas {
         viewport_w: f32,
         viewport_h: f32,
     ) {
-        self.color.render(queue, pass, instances, self.max_instances, viewport_w, viewport_h);
+        self.color.render(
+            queue,
+            pass,
+            instances,
+            self.max_instances,
+            viewport_w,
+            viewport_h,
+        );
+    }
+
+    pub fn render_color_scissored(
+        &self,
+        queue: &wgpu::Queue,
+        pass: &mut wgpu::RenderPass<'_>,
+        instances: &[GlyphInstance],
+        viewport_w: f32,
+        viewport_h: f32,
+        viewport_w_px: u32,
+        viewport_h_px: u32,
+        batches: &[ScissoredRange],
+        overlay_start: usize,
+    ) {
+        self.color.render_scissored(
+            queue,
+            pass,
+            instances,
+            self.max_instances,
+            viewport_w,
+            viewport_h,
+            viewport_w_px,
+            viewport_h_px,
+            batches,
+            overlay_start,
+        );
     }
 
     /// Clear the glyph cache and reset both atlas packers.
@@ -602,7 +785,11 @@ impl GlyphAtlas {
         self.glyph_id_cache.clear();
         self.alpha.clear(queue, self.atlas_size);
         self.color.clear(queue, self.atlas_size);
-        log::info!("glyph cache cleared (atlas {}×{})", self.atlas_size, self.atlas_size);
+        log::info!(
+            "glyph cache cleared (atlas {}×{})",
+            self.atlas_size,
+            self.atlas_size
+        );
     }
 
     /// Compute grid dimensions (cols × rows) for the given viewport size.
@@ -623,8 +810,12 @@ fn compute_cell_metrics(
 ) -> (f32, f32, f32) {
     let fallback = (font_size * 0.6, font_size * 1.2, font_size * 1.2 * 0.8);
 
-    let Some(fid) = primary_id else { return fallback };
-    let Some(font) = font_system.get_font(fid) else { return fallback };
+    let Some(fid) = primary_id else {
+        return fallback;
+    };
+    let Some(font) = font_system.get_font(fid) else {
+        return fallback;
+    };
 
     let swash_font = font.as_swash();
     let metrics = swash_font.metrics(&[]);
@@ -641,7 +832,9 @@ fn compute_cell_metrics(
     // Clamp ascent to cell_height to prevent out-of-bounds glyph positions
     let safe_ascent = ascent.min(ch);
 
-    log::info!("font metrics: ascent={ascent:.1} descent={descent:.1} height={height:.1} cw={cw:.1} ch={ch:.1}");
+    log::info!(
+        "font metrics: ascent={ascent:.1} descent={descent:.1} height={height:.1} cw={cw:.1} ch={ch:.1}"
+    );
     (cw, ch, safe_ascent)
 }
 
@@ -682,10 +875,15 @@ fn rasterize_glyph(
     };
     let need_synth_italic = matches!(style, FontStyle::Italic | FontStyle::BoldItalic) && {
         let db = font_system.db();
-        db.face(font_id).is_some_and(|f| f.style == fontdb::Style::Normal)
+        db.face(font_id)
+            .is_some_and(|f| f.style == fontdb::Style::Normal)
     };
 
-    let mut scaler = scale_ctx.builder(swash_font).size(font_size).hint(true).build();
+    let mut scaler = scale_ctx
+        .builder(swash_font)
+        .size(font_size)
+        .hint(true)
+        .build();
 
     // Try color bitmap (emoji) first
     let color_image = {
@@ -693,24 +891,32 @@ fn rasterize_glyph(
             Source::ColorBitmap(StrikeWith::BestFit),
             Source::ColorOutline(0),
         ]);
-        r.format(Format::Subpixel).offset(swash::zeno::Vector::new(0.0, 0.0));
+        r.format(Format::Subpixel)
+            .offset(swash::zeno::Vector::new(0.0, 0.0));
         r.render(&mut scaler, glyph_id)
     };
 
     color_image.or_else(|| {
         // Fall back to alpha outline with synthetic transformations
         let italic_transform = need_synth_italic.then_some(swash::zeno::Transform {
-            xx: 1.0, yx: 0.0,
-            xy: 0.2125, yy: 1.0, // tan(12°) ≈ 0.2125 oblique skew
-            x: 0.0, y: 0.0,
+            xx: 1.0,
+            yx: 0.0,
+            xy: 0.2125,
+            yy: 1.0, // tan(12°) ≈ 0.2125 oblique skew
+            x: 0.0,
+            y: 0.0,
         });
-        let embolden = if need_synth_bold { 0.02 * font_size } else { 0.0 };
+        let embolden = if need_synth_bold {
+            0.02 * font_size
+        } else {
+            0.0
+        };
 
         let mut r = Render::new(&[Source::Outline]);
         r.format(Format::Alpha)
-         .offset(swash::zeno::Vector::new(0.0, 0.0))
-         .transform(italic_transform)
-         .embolden(embolden);
+            .offset(swash::zeno::Vector::new(0.0, 0.0))
+            .transform(italic_transform)
+            .embolden(embolden);
         r.render(&mut scaler, glyph_id)
     })
 }
@@ -731,9 +937,10 @@ fn to_alpha_into(data: &[u8], w: u32, h: u32, buf: &mut Vec<u8>) {
     } else {
         // Subpixel (3 bytes per pixel) → average RGB to single alpha
         buf.reserve(expected_alpha);
-        buf.extend(data.chunks(3).map(|rgb| {
-            ((rgb[0] as u16 + rgb[1] as u16 + rgb[2] as u16) / 3) as u8
-        }));
+        buf.extend(
+            data.chunks(3)
+                .map(|rgb| ((rgb[0] as u16 + rgb[1] as u16 + rgb[2] as u16) / 3) as u8),
+        );
     }
 }
 
@@ -747,7 +954,10 @@ fn to_alpha(data: &[u8], w: u32, h: u32) -> Vec<u8> {
 
 /// Build a `GlyphEntry` from atlas coordinates and image placement.
 fn make_glyph_entry(
-    ax: u32, ay: u32, w: u32, h: u32,
+    ax: u32,
+    ay: u32,
+    w: u32,
+    h: u32,
     image: &swash::scale::image::Image,
     atlas_size: u32,
     is_color: bool,
@@ -773,11 +983,31 @@ fn glyph_instance_layout() -> wgpu::VertexBufferLayout<'static> {
         array_stride: std::mem::size_of::<GlyphInstance>() as u64,
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &[
-            wgpu::VertexAttribute { offset: 0,  shader_location: 0, format: wgpu::VertexFormat::Float32x2 },
-            wgpu::VertexAttribute { offset: 8,  shader_location: 1, format: wgpu::VertexFormat::Float32x2 },
-            wgpu::VertexAttribute { offset: 16, shader_location: 2, format: wgpu::VertexFormat::Float32x2 },
-            wgpu::VertexAttribute { offset: 24, shader_location: 3, format: wgpu::VertexFormat::Float32x2 },
-            wgpu::VertexAttribute { offset: 32, shader_location: 4, format: wgpu::VertexFormat::Float32x4 },
+            wgpu::VertexAttribute {
+                offset: 0,
+                shader_location: 0,
+                format: wgpu::VertexFormat::Float32x2,
+            },
+            wgpu::VertexAttribute {
+                offset: 8,
+                shader_location: 1,
+                format: wgpu::VertexFormat::Float32x2,
+            },
+            wgpu::VertexAttribute {
+                offset: 16,
+                shader_location: 2,
+                format: wgpu::VertexFormat::Float32x2,
+            },
+            wgpu::VertexAttribute {
+                offset: 24,
+                shader_location: 3,
+                format: wgpu::VertexFormat::Float32x2,
+            },
+            wgpu::VertexAttribute {
+                offset: 32,
+                shader_location: 4,
+                format: wgpu::VertexFormat::Float32x4,
+            },
         ],
     }
 }
@@ -913,13 +1143,16 @@ fn build_fallback_chain(font_system: &mut FontSystem, family_name: &str) -> Vec<
             }
 
             for fc_font in sorted.iter() {
-                let Some(fc_path_raw) = fc_font.filename() else { continue };
+                let Some(fc_path_raw) = fc_font.filename() else {
+                    continue;
+                };
                 let fc_path = fc_path_raw.replace("\\", "");
                 let fc_index = fc_font.face_index().unwrap_or(0) as u32;
                 if let Some(&id) = path_to_ids.get(&(fc_path, fc_index))
-                    && !font_ids.contains(&id) {
-                        font_ids.push(id);
-                    }
+                    && !font_ids.contains(&id)
+                {
+                    font_ids.push(id);
+                }
             }
 
             // Add remaining fontdb fonts not covered by fontconfig
@@ -986,14 +1219,16 @@ fn build_style_chain(
     let want_italic = matches!(style, FontStyle::Italic | FontStyle::BoldItalic);
 
     let db = font_system.db();
-    let primary_family = base_chain.first()
+    let primary_family = base_chain
+        .first()
         .and_then(|id| db.face(*id))
         .and_then(|f| f.families.first())
         .map(|f| f.0.clone())
         .unwrap_or_default();
 
     // Find fonts in the same family with matching weight/style
-    let mut style_ids: Vec<fontdb::ID> = base_chain.iter()
+    let mut style_ids: Vec<fontdb::ID> = base_chain
+        .iter()
         .filter(|&&fid| {
             db.face(fid).is_some_and(|face| {
                 let is_bold = face.weight.0 >= 600;
@@ -1012,7 +1247,8 @@ fn build_style_chain(
                 style_ids.push(fid);
             }
         }
-        let name = db.face(style_ids[0])
+        let name = db
+            .face(style_ids[0])
             .and_then(|f| f.families.first())
             .map(|f| f.0.as_str())
             .unwrap_or("?");
@@ -1073,10 +1309,16 @@ mod tests {
 
     #[test]
     fn font_style_from_bold_italic() {
-        assert_eq!(FontStyle::from_bold_italic(false, false), FontStyle::Regular);
+        assert_eq!(
+            FontStyle::from_bold_italic(false, false),
+            FontStyle::Regular
+        );
         assert_eq!(FontStyle::from_bold_italic(true, false), FontStyle::Bold);
         assert_eq!(FontStyle::from_bold_italic(false, true), FontStyle::Italic);
-        assert_eq!(FontStyle::from_bold_italic(true, true), FontStyle::BoldItalic);
+        assert_eq!(
+            FontStyle::from_bold_italic(true, true),
+            FontStyle::BoldItalic
+        );
     }
 
     #[test]

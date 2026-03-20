@@ -43,7 +43,11 @@ impl App {
             Action::CyclePresetWidth | Action::CyclePresetWidthReverse => {
                 let reverse = matches!(action, Action::CyclePresetWidthReverse);
                 let presets = self.preset_widths();
-                if let Some(w) = self.workspaces.active_mut().cycle_preset_width(&presets, reverse) {
+                if let Some(w) = self
+                    .workspaces
+                    .active_mut()
+                    .cycle_preset_width(&presets, reverse)
+                {
                     let (proportion, fixed_px) = match w {
                         ciri_layout::column::ColumnWidth::Proportion(p) => (p, None),
                         ciri_layout::column::ColumnWidth::Fixed(px) => {
@@ -52,22 +56,37 @@ impl App {
                             (p, Some(px))
                         }
                     };
-                    self.send(ClientMessage::SetColumnWidth { proportion, fixed_px });
+                    self.send(ClientMessage::SetColumnWidth {
+                        proportion,
+                        fixed_px,
+                    });
                 }
                 self.snap_all_col_widths();
                 self.animate_to_active();
             }
             Action::ColumnWidthOneThird => {
-                self.send(ClientMessage::SetColumnWidth { proportion: 1.0 / 3.0, fixed_px: None });
+                self.send(ClientMessage::SetColumnWidth {
+                    proportion: 1.0 / 3.0,
+                    fixed_px: None,
+                });
             }
             Action::ColumnWidthHalf => {
-                self.send(ClientMessage::SetColumnWidth { proportion: 0.5, fixed_px: None });
+                self.send(ClientMessage::SetColumnWidth {
+                    proportion: 0.5,
+                    fixed_px: None,
+                });
             }
             Action::ColumnWidthTwoThirds => {
-                self.send(ClientMessage::SetColumnWidth { proportion: 2.0 / 3.0, fixed_px: None });
+                self.send(ClientMessage::SetColumnWidth {
+                    proportion: 2.0 / 3.0,
+                    fixed_px: None,
+                });
             }
             Action::ColumnWidthFull => {
-                self.send(ClientMessage::SetColumnWidth { proportion: 1.0, fixed_px: None });
+                self.send(ClientMessage::SetColumnWidth {
+                    proportion: 1.0,
+                    fixed_px: None,
+                });
             }
             Action::ColumnWidthIncrease => {
                 self.send(ClientMessage::AdjustColumnSplit { delta: 0.05 });
@@ -90,7 +109,8 @@ impl App {
             }
             Action::ExitOverview => {
                 self.overview.active = false;
-                self.overview.zoom
+                self.overview
+                    .zoom
                     .animate_to(1.0, self.config.animation.speed);
                 self.animate_to_active();
             }
@@ -343,7 +363,6 @@ impl App {
         }
     }
 
-
     pub fn handle_search_key(&mut self, event: &winit::event::KeyEvent, ctrl: bool, shift: bool) {
         let Some(search) = &mut self.search_state else {
             return;
@@ -435,8 +454,7 @@ impl App {
                 search.current_match_idx - 1
             };
         } else {
-            search.current_match_idx =
-                (search.current_match_idx + 1) % search.matches.len();
+            search.current_match_idx = (search.current_match_idx + 1) % search.matches.len();
         }
         let idx = search.current_match_idx;
         self.scroll_to_match(idx);
@@ -599,10 +617,18 @@ pub(crate) fn key_event_to_kitty_bytes(
 ) -> Vec<u8> {
     // Compute modifier value (kitty uses modifier_bits + 1)
     let mut modifier_bits: u8 = 0;
-    if shift { modifier_bits |= 1; }
-    if alt { modifier_bits |= 2; }
-    if ctrl { modifier_bits |= 4; }
-    if super_key { modifier_bits |= 8; }
+    if shift {
+        modifier_bits |= 1;
+    }
+    if alt {
+        modifier_bits |= 2;
+    }
+    if ctrl {
+        modifier_bits |= 4;
+    }
+    if super_key {
+        modifier_bits |= 8;
+    }
     let modifier_val = modifier_bits + 1; // 1 = no modifiers
 
     // Helper: format CSI <keycode> [; modifier] u
@@ -682,19 +708,32 @@ pub(crate) fn key_event_to_kitty_bytes(
                 match event.physical_key {
                     PhysicalKey::Code(code) => {
                         let base = match code {
-                            KeyCode::KeyA => 'a', KeyCode::KeyB => 'b',
-                            KeyCode::KeyC => 'c', KeyCode::KeyD => 'd',
-                            KeyCode::KeyE => 'e', KeyCode::KeyF => 'f',
-                            KeyCode::KeyG => 'g', KeyCode::KeyH => 'h',
-                            KeyCode::KeyI => 'i', KeyCode::KeyJ => 'j',
-                            KeyCode::KeyK => 'k', KeyCode::KeyL => 'l',
-                            KeyCode::KeyM => 'm', KeyCode::KeyN => 'n',
-                            KeyCode::KeyO => 'o', KeyCode::KeyP => 'p',
-                            KeyCode::KeyQ => 'q', KeyCode::KeyR => 'r',
-                            KeyCode::KeyS => 's', KeyCode::KeyT => 't',
-                            KeyCode::KeyU => 'u', KeyCode::KeyV => 'v',
-                            KeyCode::KeyW => 'w', KeyCode::KeyX => 'x',
-                            KeyCode::KeyY => 'y', KeyCode::KeyZ => 'z',
+                            KeyCode::KeyA => 'a',
+                            KeyCode::KeyB => 'b',
+                            KeyCode::KeyC => 'c',
+                            KeyCode::KeyD => 'd',
+                            KeyCode::KeyE => 'e',
+                            KeyCode::KeyF => 'f',
+                            KeyCode::KeyG => 'g',
+                            KeyCode::KeyH => 'h',
+                            KeyCode::KeyI => 'i',
+                            KeyCode::KeyJ => 'j',
+                            KeyCode::KeyK => 'k',
+                            KeyCode::KeyL => 'l',
+                            KeyCode::KeyM => 'm',
+                            KeyCode::KeyN => 'n',
+                            KeyCode::KeyO => 'o',
+                            KeyCode::KeyP => 'p',
+                            KeyCode::KeyQ => 'q',
+                            KeyCode::KeyR => 'r',
+                            KeyCode::KeyS => 's',
+                            KeyCode::KeyT => 't',
+                            KeyCode::KeyU => 'u',
+                            KeyCode::KeyV => 'v',
+                            KeyCode::KeyW => 'w',
+                            KeyCode::KeyX => 'x',
+                            KeyCode::KeyY => 'y',
+                            KeyCode::KeyZ => 'z',
                             _ => ch,
                         };
                         base as u32

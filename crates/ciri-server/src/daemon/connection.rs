@@ -5,7 +5,7 @@ use ciri_protocol::transport;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::{AsyncWriteExt, BufWriter};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 
 use super::client::ClientState;
 use super::damage::DamageAccumulator;
@@ -63,9 +63,7 @@ pub(crate) async fn handle_client<R, W>(
             h
         }
         Ok((codec::VersionCompat::PatchMismatch { peer, local }, h)) => {
-            log::warn!(
-                "client version {peer} differs from server {local} (patch mismatch)"
-            );
+            log::warn!("client version {peer} differs from server {local} (patch mismatch)");
             h
         }
         Ok((codec::VersionCompat::MinorMismatch { peer, local }, h)) => {
@@ -86,10 +84,7 @@ pub(crate) async fn handle_client<R, W>(
     // Validate session name (allow __control__ for CLI commands)
     let is_control = requested_session == CONTROL_SESSION;
     if !is_control && ciri_session::names::validate_name(&requested_session).is_err() {
-        log::error!(
-            "invalid session name from client: {:?}",
-            requested_session
-        );
+        log::error!("invalid session name from client: {:?}", requested_session);
         return;
     }
 
@@ -236,10 +231,9 @@ pub(crate) async fn handle_client<R, W>(
                                 s.send_to_client(cid, &server_msg);
                             }
                             ServerResponse::SendFullPaneSync(cid, sync) => {
-                                if let (Some(client), Some(frame)) = (
-                                    s.clients.get(&cid),
-                                    codec::frame_full_pane_sync(&sync),
-                                ) {
+                                if let (Some(client), Some(frame)) =
+                                    (s.clients.get(&cid), codec::frame_full_pane_sync(&sync))
+                                {
                                     if let Err(e) = client.tx.try_send(Bytes::from(frame)) {
                                         log::warn!(
                                             "failed to send full pane sync to client {cid}: {e}"

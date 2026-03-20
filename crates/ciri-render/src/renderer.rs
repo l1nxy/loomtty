@@ -12,6 +12,9 @@ pub struct Renderer {
     pub queue: wgpu::Queue,
     pub surface: wgpu::Surface<'static>,
     pub surface_config: wgpu::SurfaceConfiguration,
+    /// When true, `surface.configure()` is deferred until the next frame.
+    /// This coalesces rapid resize events into a single swapchain rebuild.
+    surface_dirty: bool,
     /// Font system for glyph discovery and rasterization.
     pub font_system: FontSystem,
     pub rects: RectRenderer,
@@ -20,8 +23,16 @@ pub struct Renderer {
 impl Renderer {
     pub async fn new(window: Arc<Window>, render_config: &RenderConfig) -> Result<Self> {
         let size = window.inner_size();
+
+        let backend = match render_config.backend.as_str() {
+            "vulkan" => wgpu::Backends::VULKAN,
+            "gl" | "gles" => wgpu::Backends::GL,
+            "metal" => wgpu::Backends::METAL,
+            "dx12" => wgpu::Backends::DX12,
+            _ => wgpu::Backends::all(),
+        };
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            backends: backend,
             ..Default::default()
         });
 
@@ -36,13 +47,18 @@ impl Renderer {
             .await
             .ok_or_else(|| anyhow::anyhow!("no suitable GPU adapter found"))?;
 
+        log::info!("GPU adapter: {:?} ({:?})", adapter.get_info().name, adapter.get_info().backend);
+
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("ciri"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-                ..Default::default()
-            }, None)
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("ciri"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::default(),
+                    ..Default::default()
+                },
+                None,
+            )
             .await?;
 
         let surface_caps = surface.get_capabilities(&adapter);
@@ -61,7 +77,10 @@ impl Renderer {
         let present_mode = if surface_caps.present_modes.contains(&desired_mode) {
             desired_mode
         } else {
-            log::warn!("present mode {:?} not supported, falling back to Fifo", desired_mode);
+            log::warn!(
+                "present mode {:?} not supported, falling back to Fifo",
+                desired_mode
+            );
             wgpu::PresentMode::Fifo
         };
 
@@ -84,16 +103,29 @@ impl Renderer {
             queue,
             surface,
             surface_config,
+            surface_dirty: false,
             font_system: FontSystem::new(),
             rects,
         })
     }
 
+    /// Record a new surface size. The actual `surface.configure()` is deferred
+    /// to [`ensure_surface`] so that rapid resize events coalesce into one
+    /// swapchain rebuild per frame.
     pub fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
             self.surface_config.width = width;
             self.surface_config.height = height;
+            self.surface_dirty = true;
+        }
+    }
+
+    /// Apply any pending `surface.configure()`. Call once at the start of each
+    /// frame, before `get_current_texture()`.
+    pub fn ensure_surface(&mut self) {
+        if self.surface_dirty {
             self.surface.configure(&self.device, &self.surface_config);
+            self.surface_dirty = false;
         }
     }
 

@@ -45,6 +45,8 @@ pub struct ClientPaneGrid {
     pub dirty: bool,
     /// Per-row dirty flags for incremental updates. Only meaningful when `dirty` is false.
     pub dirty_rows: Vec<bool>,
+    /// Number of rows currently marked dirty (avoids O(n) scan in is_dirty).
+    dirty_row_count: usize,
     /// True if shell integration (OSC 133) is active for this pane.
     pub has_shell_integration: bool,
     /// True if kitty keyboard protocol is active for this pane.
@@ -74,6 +76,7 @@ impl ClientPaneGrid {
             title: String::new(),
             dirty: true,
             dirty_rows: vec![false; rows as usize],
+            dirty_row_count: 0,
             has_shell_integration: false,
             has_kitty_keyboard: false,
         }
@@ -105,13 +108,33 @@ impl ClientPaneGrid {
 
     /// True if any content has changed (full rebuild or per-row).
     pub fn is_dirty(&self) -> bool {
-        self.dirty || self.dirty_rows.iter().any(|&d| d)
+        self.dirty || self.dirty_row_count > 0
+    }
+
+    /// Mark a single row as dirty (idempotent).
+    fn mark_row_dirty(&mut self, line: usize) {
+        if line < self.dirty_rows.len() && !self.dirty_rows[line] {
+            self.dirty_rows[line] = true;
+            self.dirty_row_count += 1;
+        }
+    }
+
+    /// Swap out the dirty_rows flags and reset the counter.
+    /// Returns the old dirty flags; leaves a zeroed vec in place.
+    pub fn take_dirty_rows(&mut self) -> Vec<bool> {
+        let mut taken = vec![false; self.dirty_rows.len()];
+        std::mem::swap(&mut taken, &mut self.dirty_rows);
+        self.dirty_row_count = 0;
+        taken
     }
 
     /// Clear all dirty flags after rendering.
     pub fn clear_dirty(&mut self) {
         self.dirty = false;
-        self.dirty_rows.iter_mut().for_each(|d| *d = false);
+        if self.dirty_row_count > 0 {
+            self.dirty_rows.iter_mut().for_each(|d| *d = false);
+            self.dirty_row_count = 0;
+        }
     }
 
     /// Maximum scroll offset (how far up the user can scroll).
@@ -150,6 +173,7 @@ impl ClientPaneGrid {
             self.rows = sync.rows;
             self.viewport = vec![PackedCell::default(); new_cols * new_rows];
             self.dirty_rows = vec![false; new_rows];
+            self.dirty_row_count = 0;
             self.scroll_offset = 0;
         }
 
@@ -222,9 +246,7 @@ impl ClientPaneGrid {
                 let dst_start = line * cols + col_start;
                 let dst_end = line * cols + col_end;
                 self.viewport[dst_start..dst_end].copy_from_slice(&region.cells[..copy_len]);
-                if line < self.dirty_rows.len() {
-                    self.dirty_rows[line] = true;
-                }
+                self.mark_row_dirty(line);
             }
         }
         self.dirty = true;
@@ -260,17 +282,15 @@ impl ClientPaneGrid {
                 let dst_start = line * cols + col_start;
                 let dst_end = line * cols + col_end;
                 self.viewport[dst_start..dst_end].copy_from_slice(&cells[..copy_len]);
-                if line < self.dirty_rows.len() {
-                    self.dirty_rows[line] = true;
-                }
+                self.mark_row_dirty(line);
             }
         }
         // Mark old and new cursor rows dirty for cursor movement
-        if old_cursor_line >= 0 && (old_cursor_line as usize) < self.dirty_rows.len() {
-            self.dirty_rows[old_cursor_line as usize] = true;
+        if old_cursor_line >= 0 {
+            self.mark_row_dirty(old_cursor_line as usize);
         }
-        if delta.cursor_line >= 0 && (delta.cursor_line as usize) < self.dirty_rows.len() {
-            self.dirty_rows[delta.cursor_line as usize] = true;
+        if delta.cursor_line >= 0 {
+            self.mark_row_dirty(delta.cursor_line as usize);
         }
     }
 
@@ -538,10 +558,13 @@ impl ClientPaneGrid {
 
         let query_chars: Vec<char> = query_lower.chars().collect();
 
+        let mut chars: Vec<char> = Vec::with_capacity(self.cols as usize);
+        let mut col_positions: Vec<u16> = Vec::with_capacity(self.cols as usize);
+
         for row_idx in 0..self.buffer_len() {
             let row = self.row(row_idx);
-            let mut chars: Vec<char> = Vec::new();
-            let mut col_positions: Vec<u16> = Vec::new();
+            chars.clear();
+            col_positions.clear();
 
             for (col, cell) in row.iter().enumerate() {
                 if cell.flags_u16() & FLAG_WIDE_CHAR_SPACER != 0 {

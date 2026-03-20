@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use ciri_protocol::codec;
 use ciri_protocol::message::*;
 use ciri_protocol::transport;
@@ -10,6 +11,8 @@ use super::client::ClientState;
 use super::damage::DamageAccumulator;
 use super::server::{Server, ServerResponse};
 
+const CONTROL_SESSION: &str = "__control__";
+
 /// Perform graceful shutdown: save all sessions, notify all clients, remove socket.
 pub(crate) async fn graceful_shutdown(state: &Arc<Mutex<Server>>) {
     let s = state.lock().await;
@@ -20,13 +23,10 @@ pub(crate) async fn graceful_shutdown(state: &Arc<Mutex<Server>>) {
     log::info!("shutting down gracefully");
 
     // Send shutdown to all clients
-    if let Ok(payload) = rmp_serde::to_vec(&ServerMessage::ServerShutdown) {
+    if let Some(frame) = codec::frame_server_msg(&ServerMessage::ServerShutdown) {
+        let frame = Bytes::from(frame);
         for client in s.clients.values() {
-            let mut frame = Vec::with_capacity(5 + payload.len());
-            frame.push(0x10);
-            frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-            frame.extend_from_slice(&payload);
-            if let Err(e) = client.tx.try_send(frame) {
+            if let Err(e) = client.tx.try_send(frame.clone()) {
                 log::warn!("failed to send shutdown to client {}: {e}", client.id);
             }
         }
@@ -84,8 +84,8 @@ pub(crate) async fn handle_client<R, W>(
     log::info!("client requested session: {}", requested_session);
 
     // Validate session name (allow __control__ for CLI commands)
-    let is_control = requested_session == "__control__";
-    if !is_control && ciri_session::save::validate_session_name(&requested_session).is_err() {
+    let is_control = requested_session == CONTROL_SESSION;
+    if !is_control && ciri_session::names::validate_name(&requested_session).is_err() {
         log::error!(
             "invalid session name from client: {:?}",
             requested_session
@@ -105,7 +105,7 @@ pub(crate) async fn handle_client<R, W>(
     }
 
     // Register client and get/create session
-    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(256);
+    let (tx, mut rx) = mpsc::channel::<Bytes>(256);
     let client_id;
     let initial_frames: Vec<Vec<u8>>;
     {
@@ -144,7 +144,7 @@ pub(crate) async fn handle_client<R, W>(
             let pane_keys: Vec<u64> = session.panes.keys().copied().collect();
             if let Some(client) = s.clients.get_mut(&client_id) {
                 for pane_id in &pane_keys {
-                    let mut acc = DamageAccumulator::new();
+                    let mut acc = DamageAccumulator::default();
                     acc.mark_full();
                     client.damage.insert(*pane_id, acc);
                 }
@@ -162,19 +162,11 @@ pub(crate) async fn handle_client<R, W>(
             );
 
             let (sync_msg, pane_syncs) = session.build_state_sync();
-            if let Ok(payload) = rmp_serde::to_vec(&sync_msg) {
-                let mut frame = Vec::with_capacity(5 + payload.len());
-                frame.push(0x10);
-                frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-                frame.extend_from_slice(&payload);
+            if let Some(frame) = codec::frame_server_msg(&sync_msg) {
                 frames.push(frame);
             }
             for sync in &pane_syncs {
-                if let Ok(payload) = codec::encode_full_pane_sync_payload(sync) {
-                    let mut frame = Vec::with_capacity(5 + payload.len());
-                    frame.push(0x21);
-                    frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-                    frame.extend_from_slice(&payload);
+                if let Some(frame) = codec::frame_full_pane_sync(sync) {
                     frames.push(frame);
                 }
             }
@@ -187,7 +179,7 @@ pub(crate) async fn handle_client<R, W>(
 
             if let Some(client) = s.clients.get_mut(&client_id) {
                 for acc in client.damage.values_mut() {
-                    *acc = DamageAccumulator::new();
+                    *acc = DamageAccumulator::default();
                 }
                 for (pane_id, history) in pane_histories {
                     client.history_sent.insert(pane_id, history);
@@ -204,7 +196,7 @@ pub(crate) async fn handle_client<R, W>(
 
     // Send frames without holding the lock
     for frame in initial_frames {
-        let _ = tx.send(frame).await;
+        let _ = tx.send(Bytes::from(frame)).await;
     }
 
     // Spawn writer task
@@ -236,22 +228,14 @@ pub(crate) async fn handle_client<R, W>(
                                 s.send_to_client(cid, &server_msg);
                             }
                             ServerResponse::SendFullPaneSync(cid, sync) => {
-                                if let Some(client) = s.clients.get(&cid) {
-                                    if let Ok(payload) =
-                                        codec::encode_full_pane_sync_payload(&sync)
-                                    {
-                                        let mut frame =
-                                            Vec::with_capacity(5 + payload.len());
-                                        frame.push(0x21);
-                                        frame.extend_from_slice(
-                                            &(payload.len() as u32).to_le_bytes(),
+                                if let (Some(client), Some(frame)) = (
+                                    s.clients.get(&cid),
+                                    codec::frame_full_pane_sync(&sync),
+                                ) {
+                                    if let Err(e) = client.tx.try_send(Bytes::from(frame)) {
+                                        log::warn!(
+                                            "failed to send full pane sync to client {cid}: {e}"
                                         );
-                                        frame.extend_from_slice(&payload);
-                                        if let Err(e) = client.tx.try_send(frame) {
-                                            log::warn!(
-                                                "failed to send full pane sync to client {cid}: {e}"
-                                            );
-                                        }
                                     }
                                 }
                             }
@@ -263,29 +247,8 @@ pub(crate) async fn handle_client<R, W>(
                                 }
                             }
                             ServerResponse::ShutdownServer => {
-                                // Save all sessions, notify all clients
-                                for session in s.sessions.values() {
-                                    let _ = session.save_session();
-                                }
-                                if let Ok(payload) =
-                                    rmp_serde::to_vec(&ServerMessage::ServerShutdown)
-                                {
-                                    for client in s.clients.values() {
-                                        let mut frame =
-                                            Vec::with_capacity(5 + payload.len());
-                                        frame.push(0x10);
-                                        frame.extend_from_slice(
-                                            &(payload.len() as u32).to_le_bytes(),
-                                        );
-                                        frame.extend_from_slice(&payload);
-                                        let _ = client.tx.try_send(frame);
-                                    }
-                                }
                                 drop(s);
-                                let _ = std::fs::remove_file(
-                                    &transport::server_socket_path(),
-                                );
-                                // Signal the accept loop and tick loop to shut down
+                                graceful_shutdown(&state).await;
                                 client_shutdown.notify_one();
                                 return;
                             }

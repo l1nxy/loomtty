@@ -323,6 +323,43 @@ pub async fn encode_server_msg<W: AsyncWrite + Unpin>(
     write_frame(writer, TAG_SERVER_MSG, &payload).await
 }
 
+/// Build a complete framed `ServerMessage` as `[tag][u32 LE len][msgpack payload]`.
+/// Returns `None` if serialization fails.
+pub fn frame_server_msg(msg: &ServerMessage) -> Option<Vec<u8>> {
+    let payload = rmp_serde::to_vec(msg).ok()?;
+    let mut frame = Vec::with_capacity(5 + payload.len());
+    frame.push(TAG_SERVER_MSG);
+    frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    frame.extend_from_slice(&payload);
+    Some(frame)
+}
+
+/// Build a complete framed `ServerMessage` into a caller-supplied buffer (for pooled use).
+/// Returns `false` if serialization fails.
+pub fn frame_server_msg_into(buf: &mut Vec<u8>, msg: &ServerMessage) -> bool {
+    let payload = match rmp_serde::to_vec(msg) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    buf.clear();
+    buf.reserve(5 + payload.len());
+    buf.push(TAG_SERVER_MSG);
+    buf.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&payload);
+    true
+}
+
+/// Build a complete framed `FullPaneSync` as `[tag][u32 LE len][payload]`.
+/// Returns `None` if encoding fails.
+pub fn frame_full_pane_sync(sync: &FullPaneSync) -> Option<Vec<u8>> {
+    let payload = encode_full_pane_sync_payload(sync).ok()?;
+    let mut frame = Vec::with_capacity(5 + payload.len());
+    frame.push(TAG_FULL_PANE_SYNC);
+    frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    frame.extend_from_slice(&payload);
+    Some(frame)
+}
+
 // ─── Encode CellDelta (custom binary) ───────────────────────────────
 
 pub fn encode_cell_delta_payload(delta: &CellDelta) -> io::Result<Vec<u8>> {
@@ -475,6 +512,52 @@ pub fn encode_full_pane_sync_framed(buf: &mut Vec<u8>, sync: &FullPaneSync) -> i
     buf.extend_from_slice(&(rle_data.len() as u32).to_le_bytes());
     buf.extend_from_slice(&rle_data);
     // Patch the length field
+    let payload_len = (buf.len() - payload_start) as u32;
+    buf[1..5].copy_from_slice(&payload_len.to_le_bytes());
+    Ok(())
+}
+
+/// Encode a CellDelta frame by streaming cell bytes directly into `buf`,
+/// avoiding all intermediate `Vec<PackedCell>` allocations. The `write_cells`
+/// callback writes packed cell bytes for each region directly into the buffer.
+pub fn encode_cell_delta_streaming_framed<F>(
+    buf: &mut Vec<u8>,
+    pane_id: u64,
+    generation: u64,
+    cursor_line: i16,
+    cursor_col: u16,
+    cursor_shape: u8,
+    mode_flags: u8,
+    regions: &[(u16, u16, u16)], // (line, left, right)
+    mut write_cells: F,
+) -> io::Result<()>
+where
+    F: FnMut(u16, u16, u16, &mut Vec<u8>),
+{
+    if regions.len() > u16::MAX as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "too many regions for CellDelta (exceeds u16::MAX)",
+        ));
+    }
+    buf.clear();
+    buf.reserve(5 + 24 + regions.len() * 64);
+    buf.push(TAG_CELL_DELTA);
+    buf.extend_from_slice(&[0u8; 4]); // placeholder for payload length
+    let payload_start = 5;
+    buf.extend_from_slice(&pane_id.to_le_bytes());
+    buf.extend_from_slice(&generation.to_le_bytes());
+    buf.extend_from_slice(&cursor_line.to_le_bytes());
+    buf.extend_from_slice(&cursor_col.to_le_bytes());
+    buf.push(cursor_shape);
+    buf.push(mode_flags);
+    buf.extend_from_slice(&(regions.len() as u16).to_le_bytes());
+    for &(line, left, right) in regions {
+        buf.extend_from_slice(&line.to_le_bytes());
+        buf.extend_from_slice(&left.to_le_bytes());
+        buf.extend_from_slice(&right.to_le_bytes());
+        write_cells(line, left, right, buf);
+    }
     let payload_len = (buf.len() - payload_start) as u32;
     buf[1..5].copy_from_slice(&payload_len.to_le_bytes());
     Ok(())

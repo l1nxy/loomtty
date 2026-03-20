@@ -16,6 +16,18 @@ impl ApplicationHandler for App {
             event_loop.exit();
             return;
         }
+
+        // Resize strategy:
+        // - preview locally on every resize event
+        // - defer PTY/server resize until the window size settles
+        const RESIZE_SETTLE: Duration = Duration::from_millis(20);
+        if let Some((size, last_event)) = self.pending_resize {
+            if last_event.elapsed() >= RESIZE_SETTLE {
+                self.pending_resize = None;
+                self.apply_resize(size);
+            }
+        }
+
         // Idle-aware event loop: only poll at frame rate when animating or
         // expecting updates. Switch to Wait when idle to save power.
         let is_animating = self.view_offset_x.is_animating()
@@ -31,14 +43,28 @@ impl ApplicationHandler for App {
 
         let has_pending = self.server_rx.as_ref().is_some_and(|rx| !rx.is_empty());
 
-        if is_animating || has_pending || is_reconnecting {
+        let resize_deadline = self
+            .pending_resize
+            .map(|(_, last_event)| last_event + RESIZE_SETTLE);
+
+        let is_resizing = resize_deadline.is_some();
+
+        if let Some(resize_deadline) = resize_deadline {
+            // During live resize: render at frame rate for a smooth preview.
+            // Surface.configure() is deferred to render time so we only
+            // rebuild the swapchain once per frame regardless of event count.
+            let frame_wake = Instant::now() + self.frame_interval;
+            event_loop
+                .set_control_flow(ControlFlow::WaitUntil(frame_wake.min(resize_deadline)));
+        } else if is_animating || has_pending || is_reconnecting {
             // Active rendering or pending data: poll at frame rate
             event_loop
                 .set_control_flow(ControlFlow::WaitUntil(Instant::now() + self.frame_interval));
         } else if wants_blink || has_server {
             // Connected but idle: poll at reduced rate (50ms = 20fps idle)
-            event_loop
-                .set_control_flow(ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(50)));
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(50),
+            ));
         } else {
             // Disconnected, no animations: fully idle
             event_loop.set_control_flow(ControlFlow::Wait);
@@ -48,7 +74,7 @@ impl ApplicationHandler for App {
             cause,
             StartCause::ResumeTimeReached { .. } | StartCause::Poll
         ) {
-            let mut needs_redraw = is_animating;
+            let mut needs_redraw = is_animating || is_resizing;
 
             if self.process_server_events() {
                 needs_redraw = true;
@@ -134,7 +160,7 @@ impl ApplicationHandler for App {
             // Exit if all panes gone
             if self.connected && self.pane_grids.is_empty() && self.workspaces.active().is_empty() {
                 self.cached_views.clear();
-                    self.cached_tile_glyphs.clear();
+                self.cached_tile_glyphs.clear();
                 self.glyph_atlas = None;
                 self.renderer = None;
                 self.window = None;
@@ -190,7 +216,10 @@ impl ApplicationHandler for App {
         }
 
         let (w, h) = renderer.surface_size();
-        let bar_padding = self.config.statusbar.height_padding
+        let bar_padding = self
+            .config
+            .statusbar
+            .height_padding
             .unwrap_or(atlas.cell_height * self.config.statusbar.padding_ratio);
         let bar_h = atlas.cell_height + bar_padding;
         self.workspaces.resize_view(ViewSize {
@@ -270,7 +299,7 @@ impl ApplicationHandler for App {
                 self.send(ClientMessage::Detach);
                 self.pane_grids.clear();
                 self.cached_views.clear();
-                    self.cached_tile_glyphs.clear();
+                self.cached_tile_glyphs.clear();
                 self.glyph_atlas = None;
                 self.renderer = None;
                 self.window = None;
@@ -286,44 +315,20 @@ impl ApplicationHandler for App {
                     return;
                 }
                 log::debug!("window resized: {}x{}", size.width, size.height);
+                // Keep local viewport/layout state in sync immediately so the
+                // user sees a smooth local preview while dragging.
+                self.preview_resize(size);
                 if let Some(renderer) = &mut self.renderer {
-                    renderer.resize(size.width, size.height);
+                    let (surface_w, surface_h) = renderer.surface_size();
+                    if surface_w != size.width || surface_h != size.height {
+                        renderer.resize(size.width, size.height);
+                    }
                 }
-                let bar_h = self.status_bar_height();
-                self.workspaces.resize_view(ViewSize {
-                    width: size.width as f32,
-                    height: size.height as f32 - bar_h,
-                });
-                log::debug!("  view_size: {}x{}", size.width as f32, size.height as f32 - bar_h);
-                self.snap_all_col_widths();
-                for grid in self.pane_grids.values_mut() {
-                    grid.dirty = true;
-                }
-                self.cached_views.clear();
-                    self.cached_tile_glyphs.clear();
-                let center_strategy = match self.config.layout.center_focused_column {
-                    ciri_config::config::CenterStrategy::Always => ciri_layout::workspace::CenterStrategy::Always,
-                    ciri_config::config::CenterStrategy::OnOverflow => ciri_layout::workspace::CenterStrategy::OnOverflow,
-                    ciri_config::config::CenterStrategy::Never => ciri_layout::workspace::CenterStrategy::Never,
-                };
-                let current_vox = self.view_offset_x.value() as f32;
-                let t = self.workspaces.active_mut().target_offset_for_active_with_strategy(center_strategy, current_vox);
-                self.view_offset_x.jump_to(t as f64);
-                let (cols, rows) = self.compute_grid_size();
-                let (cw, ch) = self.cell_dimensions();
-                let view = &self.workspaces.view_size;
-                log::debug!("  sending Resize: {cols}x{rows} cells, {cw:.1}x{ch:.1} cell_px");
-                self.send(ClientMessage::Resize {
-                    cols,
-                    rows,
-                    width: view.width as u32,
-                    height: view.height as u32,
-                    cell_width: cw,
-                    cell_height: ch,
-                });
-                if let Some(w) = &self.window {
-                    w.request_redraw();
-                }
+                // Only the expensive layout/PTY resize stays deferred.
+                self.pending_resize = Some((size, Instant::now()));
+                // Don't request_redraw() on every resize event — the event
+                // loop timer will pick up the next frame at the right cadence.
+                // This avoids queuing redundant redraws during fast drags.
             }
 
             WindowEvent::KeyboardInput { event, .. } => {
@@ -395,8 +400,11 @@ impl ApplicationHandler for App {
                             atlas.cell_width,
                             atlas.cell_height
                         );
-                        let bar_h = atlas.cell_height + self.config.statusbar.height_padding
-                            .unwrap_or(atlas.cell_height * self.config.statusbar.padding_ratio);
+                        let bar_h =
+                            atlas.cell_height
+                                + self.config.statusbar.height_padding.unwrap_or(
+                                    atlas.cell_height * self.config.statusbar.padding_ratio,
+                                );
                         let (w, h) = renderer.surface_size();
                         self.workspaces.resize_view(ViewSize {
                             width: w as f32,
@@ -405,7 +413,7 @@ impl ApplicationHandler for App {
                         self.glyph_atlas = Some(atlas);
                         self.text_shaper = Some(shaper);
                         self.cached_views.clear();
-                    self.cached_tile_glyphs.clear();
+                        self.cached_tile_glyphs.clear();
                     }
                     if let Some(w) = &self.window {
                         w.request_redraw();

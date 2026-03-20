@@ -61,16 +61,10 @@ pub async fn run_daemon() -> Result<()> {
     log::info!("ciri-server listening on {}", pipe_name);
 
     let mut server = Server::new(&shell, config.appearance.column_gap);
-    // Apply default_column_width from config
+    // Apply default_column_width from config (falls back to 0.5 proportion)
     if let Some(ref pw) = config.layout.default_column_width {
         use ciri_config::config::PresetWidth;
         server.default_column_width = match pw {
-            PresetWidth::Proportion { proportion } => ColumnWidth::Proportion(*proportion),
-            PresetWidth::Fixed { fixed } => ColumnWidth::Fixed(*fixed),
-        };
-    } else if let Some(first) = config.layout.preset_widths.first() {
-        use ciri_config::config::PresetWidth;
-        server.default_column_width = match first {
             PresetWidth::Proportion { proportion } => ColumnWidth::Proportion(*proportion),
             PresetWidth::Fixed { fixed } => ColumnWidth::Fixed(*fixed),
         };

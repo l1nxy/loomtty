@@ -6,52 +6,46 @@ pub fn run_control_command(msg: ClientMessage) -> Result<()> {
     use ciri_protocol::transport;
     use std::io::{Read, Write};
 
-    // Check if server is running
+    // Connect to server (single attempt — no separate probe to avoid consuming
+    // the only Windows named pipe instance and causing ERROR_PIPE_BUSY).
     #[cfg(unix)]
-    let (server_running, sock_path) = {
+    let stream_result = {
         let p = transport::server_socket_path();
-        let running = p.exists();
-        (running, p)
+        if !p.exists() {
+            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "socket not found"))
+        } else {
+            std::os::unix::net::UnixStream::connect(&p)
+        }
     };
     #[cfg(windows)]
-    #[allow(unused_variables)]
-    let (server_running, sock_path) = {
-        let p = transport::server_socket_path();
-        let running = std::fs::OpenOptions::new()
+    let stream_result = {
+        std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .open(transport::server_pipe_name())
-            .is_ok();
-        (running, p)
     };
 
-    if !server_running {
-        // For ListSessions, still show saved sessions even if server is not running
-        if matches!(msg, ClientMessage::ListSessions) {
-            let dir = transport::state_dir();
-            let saved = ciri_session::restore::list_sessions(&dir).unwrap_or_default();
-            if saved.is_empty() {
-                println!("no sessions");
-            } else {
-                println!("{:<20} {}", "NAME", "STATUS");
-                for name in saved {
-                    println!("{:<20} saved", name);
+    let mut stream = match stream_result {
+        Ok(s) => s,
+        Err(_) => {
+            // Server is not running
+            if matches!(msg, ClientMessage::ListSessions) {
+                let dir = transport::state_dir();
+                let saved = ciri_session::restore::list_sessions(&dir).unwrap_or_default();
+                if saved.is_empty() {
+                    println!("no sessions");
+                } else {
+                    println!("{:<20} {}", "NAME", "STATUS");
+                    for name in saved {
+                        println!("{:<20} saved", name);
+                    }
                 }
+                return Ok(());
             }
-            return Ok(());
+            eprintln!("server is not running");
+            std::process::exit(1);
         }
-        eprintln!("server is not running");
-        std::process::exit(1);
-    }
-
-    // Connect to server
-    #[cfg(unix)]
-    let mut stream = std::os::unix::net::UnixStream::connect(&sock_path)?;
-    #[cfg(windows)]
-    let mut stream = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(transport::server_pipe_name())?;
+    };
 
     // Set timeouts so we don't hang if the server is unresponsive
     #[cfg(unix)]

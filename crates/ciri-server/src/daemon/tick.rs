@@ -127,29 +127,25 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                         session_name
                     );
 
-                    // Send shutdown to clients of this session
-                    if let Some(frame) = codec::frame_server_msg(&ServerMessage::ServerShutdown) {
-                        let frame = Bytes::from(frame);
-                        for client in s.clients.values() {
-                            if client.session_name == *session_name
-                                && client.tx.try_send(frame.clone()).is_err()
-                            {
-                                log::warn!(
-                                    "failed to send shutdown to client {}",
-                                    client.id
-                                );
-                            }
-                        }
-                    }
-
-                    // Remove clients of this session
-                    let to_remove: Vec<u64> = s
+                    // Send shutdown to clients, then drop their tx senders so
+                    // the writer tasks flush the frame and exit naturally.
+                    // handle_client detects EOF → cleanup_client removes them.
+                    let session_clients: Vec<u64> = s
                         .clients
                         .iter()
                         .filter(|(_, c)| c.session_name == *session_name)
                         .map(|(id, _)| *id)
                         .collect();
-                    for cid in to_remove {
+                    if let Some(frame) = codec::frame_server_msg(&ServerMessage::ServerShutdown) {
+                        let frame = Bytes::from(frame);
+                        for &cid in &session_clients {
+                            if let Some(client) = s.clients.get(&cid) {
+                                let _ = client.tx.try_send(frame.clone());
+                            }
+                        }
+                    }
+                    // Remove clients: drops tx → writer flushes remaining frames → closes socket
+                    for cid in session_clients {
                         s.clients.remove(&cid);
                     }
 
@@ -196,38 +192,61 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                                 });
                             }
                         } else if let Some(pane) = session.panes.get(&pane_id) {
-                            let (cursor_line, cursor_col, cursor_shape, mode_flags) =
-                                pane.cursor_info();
+                            // Check if scrollback has grown since last sent.
+                            // CellDelta only carries viewport cells — scrollback lines
+                            // that scrolled off the top would be lost. Upgrade to
+                            // FullPaneSync when new history is available.
+                            let current_history = pane.history_size();
+                            let last_sent = s
+                                .clients
+                                .get(&cid)
+                                .and_then(|c| c.history_sent.get(&pane_id).copied())
+                                .unwrap_or(0);
 
-                            // Collect region metadata (no cell data — cells streamed directly)
-                            let regions: Vec<(u16, u16, u16)> = damage.line_damage
-                                .iter()
-                                .map(|(&line, &(left, right))| (line, left, right))
-                                .collect();
-
-                            // Stream-encode the delta frame: cells go directly from
-                            // grid → pack_cell → bytes, zero intermediate Vec<PackedCell>.
-                            let mut buf = frame_pool.pop().unwrap_or_default();
-                            let ok = codec::encode_cell_delta_streaming_framed(
-                                &mut buf,
-                                pane_id,
-                                pgen,
-                                cursor_line,
-                                cursor_col,
-                                cursor_shape,
-                                mode_flags,
-                                &regions,
-                                |line, left, right, buf| pane.write_cells_into(line, left, right, buf),
-                            ).is_ok();
-
-                            if ok {
+                            if current_history > last_sent {
+                                // New scrollback — send FullPaneSync with incremental history
+                                let sync = pane.snapshot_incremental(pgen, last_sent);
                                 pending_sends.push(PendingSend {
                                     client_id: cid,
                                     session_name: session_name.clone(),
-                                    snapshot: Snapshot::DeltaEncoded(buf),
+                                    snapshot: Snapshot::FullSync {
+                                        sync,
+                                        current_history,
+                                        pane_id,
+                                    },
                                 });
-                            } else if frame_pool.len() < FRAME_POOL_CAP {
-                                frame_pool.push(buf);
+                            } else {
+                                // No new scrollback — send lightweight CellDelta
+                                let (cursor_line, cursor_col, cursor_shape, mode_flags) =
+                                    pane.cursor_info();
+
+                                let regions: Vec<(u16, u16, u16)> = damage.line_damage
+                                    .iter()
+                                    .map(|(&line, &(left, right))| (line, left, right))
+                                    .collect();
+
+                                let mut buf = frame_pool.pop().unwrap_or_default();
+                                let ok = codec::encode_cell_delta_streaming_framed(
+                                    &mut buf,
+                                    pane_id,
+                                    pgen,
+                                    cursor_line,
+                                    cursor_col,
+                                    cursor_shape,
+                                    mode_flags,
+                                    &regions,
+                                    |line, left, right, buf| pane.write_cells_into(line, left, right, buf),
+                                ).is_ok();
+
+                                if ok {
+                                    pending_sends.push(PendingSend {
+                                        client_id: cid,
+                                        session_name: session_name.clone(),
+                                        snapshot: Snapshot::DeltaEncoded(buf),
+                                    });
+                                } else if frame_pool.len() < FRAME_POOL_CAP {
+                                    frame_pool.push(buf);
+                                }
                             }
                         }
                     }
@@ -246,6 +265,9 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
 
         // Signal shutdown
         if should_shutdown {
+            // Yield to the executor so writer tasks can flush pending
+            // ServerShutdown frames to their sockets before we tear down.
+            tokio::time::sleep(Duration::from_millis(50)).await;
             let _ = std::fs::remove_file(&transport::server_socket_path());
             tick_shutdown.notify_one();
             return;

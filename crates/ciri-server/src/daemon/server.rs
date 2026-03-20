@@ -76,7 +76,15 @@ impl Server {
                         }
                         let vw = session.workspaces.view_size.width;
                         let vh = session.workspaces.view_size.height;
-                        let col_w = (vw as f64 * saved_col.width_proportion) as f32;
+                        let restored_width = if let Some(px) = saved_col.width_fixed_px {
+                            ColumnWidth::Fixed(px)
+                        } else {
+                            ColumnWidth::Proportion(saved_col.width_proportion)
+                        };
+                        let col_w = match restored_width {
+                            ColumnWidth::Fixed(px) => px as f32,
+                            ColumnWidth::Proportion(p) => (vw as f64 * p) as f32,
+                        };
 
                         // Restore every tile in this column (not just the first)
                         let mut col_opt: Option<ciri_layout::column::Column> = None;
@@ -100,8 +108,7 @@ impl Server {
                                     } else {
                                         // First tile: create the column
                                         let mut col = ciri_layout::column::Column::new(id);
-                                        col.width =
-                                            ColumnWidth::Proportion(saved_col.width_proportion);
+                                        col.width = restored_width;
                                         // Set weight on the first tile too
                                         if let Some(first_tile) = col.tiles.first_mut() {
                                             first_tile.height =

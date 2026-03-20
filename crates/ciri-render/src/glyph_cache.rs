@@ -15,8 +15,6 @@ use swash::scale::{image::Content, Render, ScaleContext, Source, StrikeWith};
 use swash::zeno::Format;
 use wgpu;
 
-use crate::shaper::TextShaper;
-
 // ─── Font style ──────────────────────────────────────────────────────
 
 /// Font style for glyph cache lookups.
@@ -111,6 +109,7 @@ struct AtlasLayer {
     bind_group: wgpu::BindGroup,
     pipeline: wgpu::RenderPipeline,
     instance_buffer: wgpu::Buffer,
+    uniform_buffer: wgpu::Buffer,
     packer: ShelfPacker,
     /// Bytes per pixel (1 for R8Unorm, 4 for Rgba8UnormSrgb).
     bpp: u32,
@@ -149,13 +148,22 @@ impl AtlasLayer {
             ..Default::default()
         });
 
-        // Bind group (texture + sampler)
+        // Viewport uniform buffer (vec4<f32>, 16 bytes for std140 alignment)
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("glyph_viewport_uniform"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Bind group (texture + sampler + viewport uniform)
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+                wgpu::BindGroupEntry { binding: 2, resource: uniform_buffer.as_entire_binding() },
             ],
         });
 
@@ -214,7 +222,7 @@ impl AtlasLayer {
         };
 
         AtlasLayer {
-            texture, bind_group, pipeline, instance_buffer,
+            texture, bind_group, pipeline, instance_buffer, uniform_buffer,
             packer: ShelfPacker::new(atlas_size),
             bpp,
         }
@@ -240,17 +248,23 @@ impl AtlasLayer {
     }
 
     /// Upload and render glyph instances.
+    /// `viewport_w`/`viewport_h` are the surface size in pixels for GPU NDC conversion.
     fn render(
         &self,
         queue: &wgpu::Queue,
         pass: &mut wgpu::RenderPass<'_>,
         instances: &[GlyphInstance],
         max_instances: usize,
+        viewport_w: f32,
+        viewport_h: f32,
     ) {
         if instances.is_empty() {
             return;
         }
         let count = instances.len().min(max_instances);
+        // Upload viewport size uniform
+        let viewport = [viewport_w, viewport_h, 0.0f32, 0.0f32];
+        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&viewport));
         let data = bytemuck::cast_slice(&instances[..count]);
         queue.write_buffer(&self.instance_buffer, 0, data);
         pass.set_pipeline(&self.pipeline);
@@ -292,24 +306,27 @@ pub struct GlyphAtlas {
     pub cell_height: f32,
     /// Font ascent in pixels (distance from baseline to top of cell).
     pub ascent: f32,
-    /// Text shaper for ligature detection and grapheme cluster support.
-    pub shaper: TextShaper,
-    /// Primary font ID (first in the regular chain) for shaping.
-    primary_font_id: Option<fontdb::ID>,
+    /// Set when the atlas is full and needs clearing on the next frame.
+    pub atlas_needs_clear: bool,
+    /// Reusable buffer for alpha conversion to avoid per-glyph allocation.
+    alpha_buf: Vec<u8>,
 }
 
 /// Per-instance data for instanced glyph rendering.
+/// `pos`/`size` are in pixel coordinates; the vertex shader converts to NDC.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck_derive::Pod, bytemuck_derive::Zeroable)]
 pub struct GlyphInstance {
-    pub pos: [f32; 2],       // NDC position (top-left of glyph quad)
-    pub size: [f32; 2],      // NDC size
+    pub pos: [f32; 2],       // pixel position (top-left of glyph quad)
+    pub size: [f32; 2],      // pixel size
     pub uv_pos: [f32; 2],    // atlas UV top-left
     pub uv_size: [f32; 2],   // atlas UV size
     pub color: [f32; 4],     // RGBA color
 }
 
 impl GlyphAtlas {
+    /// Create a new GlyphAtlas. Returns `(atlas, primary_font_id)`.
+    /// The caller should use `primary_font_id` to create a `TextShaper` separately.
     pub fn new(
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
@@ -318,7 +335,7 @@ impl GlyphAtlas {
         dpi_scale: f64,
         family_name: &str,
         render_config: &RenderConfig,
-    ) -> Self {
+    ) -> (Self, Option<fontdb::ID>) {
         let atlas_size = render_config.atlas_size;
         let max_instances = render_config.max_glyph_instances;
 
@@ -359,6 +376,16 @@ impl GlyphAtlas {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -389,12 +416,8 @@ impl GlyphAtlas {
         );
 
         let primary_font_id = base_chain.first().copied();
-        let mut shaper = TextShaper::new();
-        if let Some(fid) = primary_font_id {
-            shaper.load_font(fid, font_system);
-        }
 
-        GlyphAtlas {
+        (GlyphAtlas {
             alpha, color, max_instances, atlas_size,
             cache: HashMap::new(),
             glyph_id_cache: HashMap::new(),
@@ -404,9 +427,9 @@ impl GlyphAtlas {
             cell_width,
             cell_height,
             ascent,
-            shaper,
-            primary_font_id,
-        }
+            atlas_needs_clear: false,
+            alpha_buf: Vec::new(),
+        }, primary_font_id)
     }
 
     /// Ensure a glyph for `ch` with the given `style` is in the atlas.
@@ -447,17 +470,31 @@ impl GlyphAtlas {
             return Some(GlyphEntry::EMPTY);
         }
 
-        // Upload to the appropriate atlas layer
+        // Upload to the appropriate atlas layer (with overflow recovery)
         let is_color = matches!(image.content, Content::Color);
         let entry = if is_color {
-            let (ax, ay) = self.color.packer.allocate(w, h)?;
+            let (ax, ay) = match self.color.packer.allocate(w, h) {
+                Some(pos) => pos,
+                None => {
+                    log::warn!("color atlas full, flagging for clear");
+                    self.atlas_needs_clear = true;
+                    return None;
+                }
+            };
             self.color.upload(queue, ax, ay, w, h, &image.data);
             make_glyph_entry(ax, ay, w, h, &image, self.atlas_size, true)
         } else {
-            // Convert pixel data to single-channel alpha
-            let alpha_data = to_alpha(&image.data, w, h);
-            let (ax, ay) = self.alpha.packer.allocate(w, h)?;
-            self.alpha.upload(queue, ax, ay, w, h, &alpha_data);
+            // Convert pixel data to single-channel alpha (reusing buffer)
+            to_alpha_into(&image.data, w, h, &mut self.alpha_buf);
+            let (ax, ay) = match self.alpha.packer.allocate(w, h) {
+                Some(pos) => pos,
+                None => {
+                    log::warn!("alpha atlas full, flagging for clear");
+                    self.atlas_needs_clear = true;
+                    return None;
+                }
+            };
+            self.alpha.upload(queue, ax, ay, w, h, &self.alpha_buf);
             make_glyph_entry(ax, ay, w, h, &image, self.atlas_size, false)
         };
 
@@ -497,23 +534,30 @@ impl GlyphAtlas {
 
         let is_color = matches!(image.content, Content::Color);
         let entry = if is_color {
-            let (ax, ay) = self.color.packer.allocate(w, h)?;
+            let (ax, ay) = match self.color.packer.allocate(w, h) {
+                Some(pos) => pos,
+                None => {
+                    self.atlas_needs_clear = true;
+                    return None;
+                }
+            };
             self.color.upload(queue, ax, ay, w, h, &image.data);
             make_glyph_entry(ax, ay, w, h, &image, self.atlas_size, true)
         } else {
-            let alpha_data = to_alpha(&image.data, w, h);
-            let (ax, ay) = self.alpha.packer.allocate(w, h)?;
-            self.alpha.upload(queue, ax, ay, w, h, &alpha_data);
+            to_alpha_into(&image.data, w, h, &mut self.alpha_buf);
+            let (ax, ay) = match self.alpha.packer.allocate(w, h) {
+                Some(pos) => pos,
+                None => {
+                    self.atlas_needs_clear = true;
+                    return None;
+                }
+            };
+            self.alpha.upload(queue, ax, ay, w, h, &self.alpha_buf);
             make_glyph_entry(ax, ay, w, h, &image, self.atlas_size, false)
         };
 
         self.glyph_id_cache.insert(key, entry);
         Some(entry)
-    }
-
-    /// Get the primary font ID (first in the regular fallback chain).
-    pub fn primary_font_id(&self) -> Option<fontdb::ID> {
-        self.primary_font_id
     }
 
     /// Ensure a regular-style character is in the atlas.
@@ -527,13 +571,16 @@ impl GlyphAtlas {
     }
 
     /// Render text glyph instances (alpha atlas).
+    /// Viewport size is used by the GPU shader for pixel→NDC conversion.
     pub fn render(
         &self,
         queue: &wgpu::Queue,
         pass: &mut wgpu::RenderPass<'_>,
         instances: &[GlyphInstance],
+        viewport_w: f32,
+        viewport_h: f32,
     ) {
-        self.alpha.render(queue, pass, instances, self.max_instances);
+        self.alpha.render(queue, pass, instances, self.max_instances, viewport_w, viewport_h);
     }
 
     /// Render color emoji instances (RGBA atlas).
@@ -542,8 +589,10 @@ impl GlyphAtlas {
         queue: &wgpu::Queue,
         pass: &mut wgpu::RenderPass<'_>,
         instances: &[GlyphInstance],
+        viewport_w: f32,
+        viewport_h: f32,
     ) {
-        self.color.render(queue, pass, instances, self.max_instances);
+        self.color.render(queue, pass, instances, self.max_instances, viewport_w, viewport_h);
     }
 
     /// Clear the glyph cache and reset both atlas packers.
@@ -666,22 +715,34 @@ fn rasterize_glyph(
     })
 }
 
-/// Convert rasterized pixel data to single-channel alpha.
-fn to_alpha(data: &[u8], w: u32, h: u32) -> Vec<u8> {
+/// Convert rasterized pixel data to single-channel alpha into an existing buffer.
+/// Reuses the buffer's allocation to avoid per-glyph heap churn.
+fn to_alpha_into(data: &[u8], w: u32, h: u32, buf: &mut Vec<u8>) {
     let expected_alpha = (w * h) as usize;
     let expected_rgba = (w * h * 4) as usize;
 
+    buf.clear();
     if data.len() == expected_alpha {
-        data.to_vec()
+        buf.extend_from_slice(data);
     } else if data.len() == expected_rgba {
         // RGBA → extract alpha channel
-        data.iter().skip(3).step_by(4).copied().collect()
+        buf.reserve(expected_alpha);
+        buf.extend(data.iter().skip(3).step_by(4).copied());
     } else {
         // Subpixel (3 bytes per pixel) → average RGB to single alpha
-        data.chunks(3).map(|rgb| {
+        buf.reserve(expected_alpha);
+        buf.extend(data.chunks(3).map(|rgb| {
             ((rgb[0] as u16 + rgb[1] as u16 + rgb[2] as u16) / 3) as u8
-        }).collect()
+        }));
     }
+}
+
+/// Convert rasterized pixel data to single-channel alpha (allocating variant for tests).
+#[cfg(test)]
+fn to_alpha(data: &[u8], w: u32, h: u32) -> Vec<u8> {
+    let mut buf = Vec::new();
+    to_alpha_into(data, w, h, &mut buf);
+    buf
 }
 
 /// Build a `GlyphEntry` from atlas coordinates and image placement.
@@ -726,8 +787,15 @@ fn glyph_instance_layout() -> wgpu::VertexBufferLayout<'static> {
 // Vertex stage is shared; only the fragment stage differs per layer.
 // They are concatenated at pipeline creation time.
 
-/// Shared vertex shader: maps instanced glyph quads from NDC positions.
+/// Shared vertex shader: maps instanced glyph quads from pixel coordinates.
+/// Pixel→NDC conversion happens on the GPU using the viewport uniform.
 const VERTEX_SHADER: &str = r#"
+struct Viewport {
+    size: vec4<f32>,
+};
+
+@group(0) @binding(2) var<uniform> viewport: Viewport;
+
 struct Instance {
     @location(0) pos: vec2<f32>,
     @location(1) size: vec2<f32>,
@@ -751,9 +819,13 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: Instance) -> VsOut {
     var out: VsOut;
     out.uv = inst.uv_pos + vec2<f32>(x, y) * inst.uv_size;
     out.color = inst.color;
-    // pos/size are pre-computed NDC from the CPU
+    // pos/size are pixel coords; convert to NDC on GPU
     let px = inst.pos + vec2<f32>(x, y) * inst.size;
-    out.position = vec4<f32>(px.x, px.y, 0.0, 1.0);
+    let ndc = vec2<f32>(
+        px.x / viewport.size.x * 2.0 - 1.0,
+        1.0 - px.y / viewport.size.y * 2.0
+    );
+    out.position = vec4<f32>(ndc, 0.0, 1.0);
     return out;
 }
 "#;

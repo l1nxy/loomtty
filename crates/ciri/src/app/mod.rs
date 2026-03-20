@@ -17,7 +17,8 @@ use ciri_protocol::message::*;
 use ciri_render::glyph_cache::{GlyphAtlas, GlyphInstance};
 use ciri_render::rect::Rect;
 use ciri_render::renderer::Renderer;
-use ciri_render::terminal::TerminalView;
+use ciri_render::shaper::TextShaper;
+use ciri_render::terminal::{ColorTable, TerminalView};
 use crossbeam_channel::{Receiver, Sender};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -75,6 +76,15 @@ pub(crate) struct ClosingPaneState {
     pub duration_ms: u64,
 }
 
+/// Cached pre-transformed glyph instances for a pane tile.
+/// Avoids redundant pixel-position computation when content/position haven't changed.
+pub(crate) struct CachedTileGlyphs {
+    pub generation: u64,
+    pub key: (u32, u32, u32, u32), // (inner_x_bits, inner_y_bits, zoom_bits, dim_bits)
+    pub glyphs: Vec<GlyphInstance>,
+    pub color_glyphs: Vec<GlyphInstance>,
+}
+
 /// Client-side image placement for rendering.
 #[allow(dead_code)]
 pub(crate) struct ClientImagePlacement {
@@ -102,6 +112,7 @@ pub(crate) struct App {
     pub window: Option<Arc<Window>>,
     pub renderer: Option<Renderer>,
     pub glyph_atlas: Option<GlyphAtlas>,
+    pub text_shaper: Option<TextShaper>,
     pub dpi_scale: f64,
     pub workspaces: WorkspaceSet,
     pub pane_grids: HashMap<u64, ClientPaneGrid>,
@@ -160,6 +171,9 @@ pub(crate) struct App {
     pub bell_flash: Option<(u64, Instant)>,
     /// Inline image placements per pane.
     pub image_placements: HashMap<u64, Vec<ClientImagePlacement>>,
+    pub cached_color_table: ColorTable,
+    /// Per-pane cached glyph instances to skip redundant transformation in build_tiles.
+    pub cached_tile_glyphs: HashMap<u64, CachedTileGlyphs>,
     pub should_exit: bool,
     #[allow(dead_code)]
     pub config_watcher: Option<notify::RecommendedWatcher>,
@@ -195,6 +209,7 @@ impl App {
         let overview_keybinds = KeybindMap::from_overview_config(&config.keys.overview_bindings);
         let column_gap = config.appearance.column_gap;
 
+        let cached_color_table = ColorTable::new(&config);
         App {
             config,
             session_name,
@@ -202,6 +217,7 @@ impl App {
             window: None,
             renderer: None,
             glyph_atlas: None,
+            text_shaper: None,
             dpi_scale: 1.0,
             workspaces: WorkspaceSet::new_with_gaps(initial_view, column_gap, column_gap),
             pane_grids: HashMap::new(),
@@ -255,6 +271,8 @@ impl App {
             closing_panes: Vec::new(),
             bell_flash: None,
             image_placements: HashMap::new(),
+            cached_color_table,
+            cached_tile_glyphs: HashMap::new(),
             should_exit: false,
             config_watcher: None,
             config_change_rx: None,
@@ -275,8 +293,7 @@ impl App {
         }).collect()
     }
 
-    /// Send a critical message to the server (blocks if queue full).
-    /// Used for: Input, Resize, ClosePane, CreatePane, SplitDown, Focus*, MovePane*, SetColumnWidth, SwitchWorkspace.
+    /// Send a message to the server.
     pub fn send(&self, msg: ClientMessage) {
         if let Some(tx) = &self.server_tx {
             if let Err(e) = tx.send(msg) {

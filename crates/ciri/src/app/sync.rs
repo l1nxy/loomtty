@@ -82,6 +82,7 @@ impl App {
                     }
                     self.pane_grids.remove(&pane_id);
                     self.cached_views.remove(&pane_id);
+                    self.cached_tile_glyphs.remove(&pane_id);
                     self.pane_open_opacity.remove(&pane_id);
                     needs_redraw = true;
                 }
@@ -151,7 +152,7 @@ impl App {
                     self.send_lossy(ClientMessage::Ack {
                         generation: sync.generation,
                     });
-                    self.cached_views.remove(&sync.pane_id);
+                    // grid.dirty is set by apply_full_sync — no need to remove cached view
                     needs_redraw = true;
                 }
                 ServerEvent::CellDelta(delta) => {
@@ -167,7 +168,7 @@ impl App {
                         self.send_lossy(ClientMessage::Ack {
                             generation: delta.generation,
                         });
-                        self.cached_views.remove(&delta.pane_id);
+                        // grid.dirty is set by apply_delta_borrowed — no need to remove cached view
                         needs_redraw = true;
                     }
                 }
@@ -180,6 +181,7 @@ impl App {
                         grid.dirty = true;
                     }
                     self.cached_views.clear();
+                self.cached_tile_glyphs.clear();
                     self.server_tx = None;
                     self.server_rx = None;
                     self.reconnect_state = Some(super::ReconnectState {
@@ -254,13 +256,14 @@ impl App {
                 let font_changed = new_config.font.family != self.config.font.family
                     || (new_config.font.size - self.config.font.size).abs() > 0.01;
                 self.config = new_config;
+                self.cached_color_table = ciri_render::terminal::ColorTable::new(&self.config);
                 self.input.keybinds = KeybindMap::from_config(&self.config.keys.bindings);
                 self.overview_keybinds =
                     KeybindMap::from_overview_config(&self.config.keys.overview_bindings);
                 if font_changed {
                     if let Some(renderer) = &mut self.renderer {
                         let fmt = renderer.surface_format();
-                        let atlas = GlyphAtlas::new(
+                        let (atlas, primary_font_id) = GlyphAtlas::new(
                             &renderer.device,
                             fmt,
                             &mut renderer.font_system,
@@ -269,10 +272,16 @@ impl App {
                             &self.config.font.family,
                             &self.config.render,
                         );
+                        let mut shaper = ciri_render::shaper::TextShaper::new(primary_font_id);
+                        if let Some(fid) = primary_font_id {
+                            shaper.load_font(fid, &renderer.font_system);
+                        }
                         self.glyph_atlas = Some(atlas);
+                        self.text_shaper = Some(shaper);
                     }
                 }
                 self.cached_views.clear();
+                self.cached_tile_glyphs.clear();
                 for grid in self.pane_grids.values_mut() {
                     grid.dirty = true;
                 }

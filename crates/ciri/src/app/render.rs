@@ -398,56 +398,77 @@ impl App {
                 PaneOpenStyle::Fade => (0.0, 0.0),
             };
 
-            // Convert a relative glyph to an NDC GlyphInstance with tile clipping.
-            let make_instance = |g: &terminal::RelativeGlyph, color: [f32; 4]| -> Option<GlyphInstance> {
-                let sx = (inner_x + g.px * zoom + slide_dx).round();
-                let sy = (inner_y + g.py * zoom + slide_dy).round();
-                let gw = (g.glyph_w * zoom).round();
-                let gh = (g.glyph_h * zoom).round();
+            // Check if cached tile glyphs are still valid
+            let tile_key = (inner_x.to_bits(), inner_y.to_bits(), zoom.to_bits(), dim.to_bits());
+            let cache_hit = self.cached_tile_glyphs.get(pane_id)
+                .is_some_and(|c| c.generation == view.generation && c.key == tile_key);
 
-                if gw <= 0.0 || gh <= 0.0 {
-                    return None;
-                }
+            if cache_hit {
+                let cached = self.cached_tile_glyphs.get(pane_id).unwrap();
+                glyphs.extend_from_slice(&cached.glyphs);
+                color_glyphs.extend_from_slice(&cached.color_glyphs);
+            } else {
+                // Convert relative glyphs to pixel-coord GlyphInstances with tile clipping.
+                let make_instance = |g: &terminal::RelativeGlyph, color: [f32; 4]| -> Option<GlyphInstance> {
+                    let sx = (inner_x + g.px * zoom + slide_dx).round();
+                    let sy = (inner_y + g.py * zoom + slide_dy).round();
+                    let gw = (g.glyph_w * zoom).round();
+                    let gh = (g.glyph_h * zoom).round();
 
-                if sx >= tr.x && sy >= tr.y && sx + gw <= tr.x + tr.w && sy + gh <= tr.y + tr.h {
-                    return Some(GlyphInstance {
-                        pos: [sx / vw * 2.0 - 1.0, 1.0 - sy / vh * 2.0],
-                        size: [gw / vw * 2.0, -(gh / vh * 2.0)],
-                        uv_pos: [g.u0, g.v0],
-                        uv_size: [g.u1 - g.u0, g.v1 - g.v0],
+                    if gw <= 0.0 || gh <= 0.0 {
+                        return None;
+                    }
+
+                    if sx >= tr.x && sy >= tr.y && sx + gw <= tr.x + tr.w && sy + gh <= tr.y + tr.h {
+                        return Some(GlyphInstance {
+                            pos: [sx, sy],
+                            size: [gw, gh],
+                            uv_pos: [g.u0, g.v0],
+                            uv_size: [g.u1 - g.u0, g.v1 - g.v0],
+                            color,
+                        });
+                    }
+
+                    let src = GeoRect::new(sx, sy, gw, gh);
+                    let c = src.intersection(&tr)?;
+                    let u_full = g.u1 - g.u0;
+                    let v_full = g.v1 - g.v0;
+
+                    Some(GlyphInstance {
+                        pos: [c.x, c.y],
+                        size: [c.w, c.h],
+                        uv_pos: [
+                            g.u0 + u_full * (c.x - sx) / gw,
+                            g.v0 + v_full * (c.y - sy) / gh,
+                        ],
+                        uv_size: [u_full * c.w / gw, v_full * c.h / gh],
                         color,
-                    });
-                }
+                    })
+                };
 
-                let src = GeoRect::new(sx, sy, gw, gh);
-                let c = src.intersection(&tr)?;
-                let u_full = g.u1 - g.u0;
-                let v_full = g.v1 - g.v0;
+                let glyph_start = glyphs.len();
+                let color_start = color_glyphs.len();
 
-                Some(GlyphInstance {
-                    pos: [c.x / vw * 2.0 - 1.0, 1.0 - c.y / vh * 2.0],
-                    size: [c.w / vw * 2.0, -(c.h / vh * 2.0)],
-                    uv_pos: [
-                        g.u0 + u_full * (c.x - sx) / gw,
-                        g.v0 + v_full * (c.y - sy) / gh,
-                    ],
-                    uv_size: [u_full * c.w / gw, v_full * c.h / gh],
-                    color,
-                })
-            };
+                // Regular text glyphs (alpha atlas): dim the foreground color
+                glyphs.extend(view.glyph_instances.iter().filter_map(|g| {
+                    let color = [g.color[0] * dim, g.color[1] * dim, g.color[2] * dim, g.color[3]];
+                    make_instance(g, color)
+                }));
 
-            // Regular text glyphs (alpha atlas): dim the foreground color
-            glyphs.extend(view.glyph_instances.iter().filter_map(|g| {
-                let color = [g.color[0] * dim, g.color[1] * dim, g.color[2] * dim, g.color[3]];
-                make_instance(g, color)
-            }));
+                // Color emoji glyphs (RGBA atlas)
+                let emoji_color = [dim, dim, dim, 1.0];
+                color_glyphs.extend(view.color_glyph_instances.iter().filter_map(|g| {
+                    make_instance(g, emoji_color)
+                }));
 
-            // Color emoji glyphs (RGBA atlas): shader multiplies texel.rgb by color.rgb
-            // so pass dim as a uniform tint; alpha carries the fade.
-            let emoji_color = [dim, dim, dim, 1.0];
-            color_glyphs.extend(view.color_glyph_instances.iter().filter_map(|g| {
-                make_instance(g, emoji_color)
-            }));
+                // Cache the result
+                self.cached_tile_glyphs.insert(*pane_id, super::CachedTileGlyphs {
+                    generation: view.generation,
+                    key: tile_key,
+                    glyphs: glyphs[glyph_start..].to_vec(),
+                    color_glyphs: color_glyphs[color_start..].to_vec(),
+                });
+            }
 
             // Fade-in overlay for newly opened panes
             if open_opacity < 1.0 {
@@ -477,8 +498,8 @@ impl App {
     pub fn build_search_bar(
         &mut self,
         tiles: &[(u64, GeoRect, bool)],
-        vw: f32,
-        vh: f32,
+        _vw: f32,
+        _vh: f32,
         bg_rects: &mut Vec<Rect>,
         glyphs: &mut Vec<GlyphInstance>,
     ) {
@@ -536,8 +557,6 @@ impl App {
             cw,
             baseline,
             text_color,
-            vw,
-            vh,
             glyphs,
         );
     }
@@ -589,8 +608,8 @@ impl App {
     pub fn build_ime_preedit(
         &mut self,
         tiles: &[(u64, GeoRect, bool)],
-        vw: f32,
-        vh: f32,
+        _vw: f32,
+        _vh: f32,
         bg_rects: &mut Vec<Rect>,
         glyphs: &mut Vec<GlyphInstance>,
     ) {
@@ -661,8 +680,6 @@ impl App {
             cw,
             baseline,
             text_color,
-            vw,
-            vh,
             glyphs,
         );
 
@@ -768,8 +785,6 @@ impl App {
                     cw * zoom,
                     baseline * zoom,
                     [0.6, 0.8, 1.0, 0.7],
-                    vw,
-                    vh,
                     glyphs,
                 );
             }
@@ -834,9 +849,9 @@ impl App {
                 .rects
                 .render(&renderer.queue, &mut pass, bg_rects, vw_f, vh_f);
             // 2. Regular text (alpha atlas)
-            atlas.render(&renderer.queue, &mut pass, glyphs);
+            atlas.render(&renderer.queue, &mut pass, glyphs, vw_f, vh_f);
             // 3. Color emoji (RGBA atlas)
-            atlas.render_color(&renderer.queue, &mut pass, color_glyphs);
+            atlas.render_color(&renderer.queue, &mut pass, color_glyphs, vw_f, vh_f);
         }
 
         renderer.queue.submit(std::iter::once(encoder.finish()));
@@ -914,6 +929,7 @@ impl App {
 
         let renderer = self.renderer.as_mut().unwrap();
         let atlas = self.glyph_atlas.as_mut().unwrap();
+        let shaper = self.text_shaper.as_ref().unwrap();
         let (vw, vh) = renderer.surface_size();
         let vw_f = vw as f32;
         let vh_f = vh as f32;
@@ -930,10 +946,17 @@ impl App {
 
         // Update terminal views for dirty pane grids
         for (pane_id, tile_rect, _) in &tiles {
-            let is_dirty = self.pane_grids.get(pane_id).is_some_and(|g| g.dirty);
-            if (is_dirty || !self.cached_views.contains_key(pane_id))
-                && let Some(grid) = self.pane_grids.get_mut(pane_id)
-            {
+            // Snapshot dirty state before taking mutable borrows
+            let (needs_full, has_dirty_rows, dirty_rows_copy) =
+                if let Some(g) = self.pane_grids.get(pane_id) {
+                    (g.dirty, g.is_dirty(), g.dirty_rows.clone())
+                } else {
+                    (false, false, Vec::new())
+                };
+            let needs_initial = !self.cached_views.contains_key(pane_id);
+
+            if (needs_full || needs_initial) && let Some(grid) = self.pane_grids.get_mut(pane_id) {
+                // Full rebuild path
                 let visible = grid.visible_cells();
                 let (cur_col, cur_line, cur_shape) =
                     if let Some((col, line)) = grid.cursor_in_viewport() {
@@ -949,29 +972,67 @@ impl App {
                     cur_col,
                     cur_shape,
                     atlas,
+                    shaper,
                     &mut renderer.font_system,
                     &renderer.queue,
                     &self.config,
+                    &self.cached_color_table,
                 );
-
-                grid.dirty = false;
+                grid.clear_dirty();
                 self.cached_views.insert(*pane_id, view);
+            } else if has_dirty_rows && !needs_full {
+                // Incremental update path — only re-render dirty rows
+                if let Some(grid) = self.pane_grids.get_mut(pane_id) {
+                    let (cur_col, cur_line, cur_shape) =
+                        if let Some((col, line)) = grid.cursor_in_viewport() {
+                            (col, line, grid.cursor_shape)
+                        } else {
+                            (0, 0, CURSOR_HIDDEN)
+                        };
+                    // Clear dirty before visible_cells() to avoid borrow conflict
+                    // (clear_dirty only resets flags, not cell data)
+                    grid.clear_dirty();
+                    let visible = grid.visible_cells();
+                    if let Some(view) = self.cached_views.get_mut(pane_id) {
+                        terminal::update_view_from_grid(
+                            view,
+                            &dirty_rows_copy,
+                            &visible,
+                            grid.cols,
+                            grid.rows,
+                            cur_line,
+                            cur_col,
+                            cur_shape,
+                            atlas,
+                            shaper,
+                            &mut renderer.font_system,
+                            &renderer.queue,
+                            &self.config,
+                            &self.cached_color_table,
+                        );
+                    }
+                }
             }
 
-            // Always recompute scrollbar from current tile dimensions so
-            // layout-only changes (column/tile resize) update the thumb.
+            // Recompute scrollbar only when parameters change (avoids redundant float math).
             if let Some(grid) = self.pane_grids.get(pane_id)
                 && let Some(view) = self.cached_views.get_mut(pane_id)
             {
                 let inset = (self.config.appearance.border_width + self.config.appearance.padding) * 2.0;
-                view.scrollbar_rect = terminal::build_scrollbar(
-                    grid.scroll_offset,
-                    grid.total_lines(),
-                    grid.rows,
-                    tile_rect.w - inset,
-                    tile_rect.h - inset,
-                    &self.config,
-                );
+                let pw = tile_rect.w - inset;
+                let ph = tile_rect.h - inset;
+                let sb_key = (grid.scroll_offset, grid.total_lines(), grid.rows, pw.to_bits(), ph.to_bits());
+                if view.scrollbar_key != Some(sb_key) {
+                    view.scrollbar_rect = terminal::build_scrollbar(
+                        grid.scroll_offset,
+                        grid.total_lines(),
+                        grid.rows,
+                        pw,
+                        ph,
+                        &self.config,
+                    );
+                    view.scrollbar_key = Some(sb_key);
+                }
             }
         }
 
@@ -1021,6 +1082,19 @@ impl App {
         self.bg_rects_buf = bg_rects;
         self.glyph_buf = glyphs;
         self.color_glyph_buf = color_glyphs;
+
+        // Atlas overflow recovery: clear and force rebuild on next frame
+        if atlas.atlas_needs_clear {
+            atlas.clear_cache(&renderer.queue);
+            atlas.atlas_needs_clear = false;
+            self.cached_views.clear();
+            self.cached_tile_glyphs.clear();
+            for grid in self.pane_grids.values_mut() {
+                grid.dirty = true;
+            }
+            animating = true; // ensure redraw to rebuild glyphs
+            log::info!("atlas overflow: cleared cache, will rebuild next frame");
+        }
 
         if animating && let Some(w) = &self.window {
             w.request_redraw();

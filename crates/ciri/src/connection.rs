@@ -63,8 +63,8 @@ pub fn connect_or_spawn(
         }
     }
 
-    let (msg_tx, msg_rx) = crossbeam_channel::bounded::<ClientMessage>(256);
-    let (event_tx, event_rx) = crossbeam_channel::bounded::<ServerEvent>(256);
+    let (msg_tx, msg_rx) = crossbeam_channel::unbounded::<ClientMessage>();
+    let (event_tx, event_rx) = crossbeam_channel::unbounded::<ServerEvent>();
 
     let _session = session_name.to_string();
     std::thread::Builder::new()

@@ -229,6 +229,8 @@ pub struct RenderConfig {
     pub max_rectangles: usize,
     /// Desired maximum frame latency.
     pub frame_latency: u32,
+    /// Present mode: "fifo" (vsync), "mailbox" (low-latency), "immediate" (no vsync).
+    pub present_mode: String,
 }
 
 impl Default for RenderConfig {
@@ -239,6 +241,7 @@ impl Default for RenderConfig {
             max_glyph_instances: 32768,
             max_rectangles: 8192,
             frame_latency: 2,
+            present_mode: "fifo".to_string(),
         }
     }
 }

@@ -1,4 +1,5 @@
 use ciri_protocol::message::*;
+use std::borrow::Cow;
 use std::collections::VecDeque;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,7 +41,10 @@ pub struct ClientPaneGrid {
     /// Terminal mode flags from server (mouse mode, alt screen, etc.)
     pub mode_flags: u8,
     pub title: String,
+    /// True when the entire pane needs full rebuild (resize, full sync, scroll, config reload).
     pub dirty: bool,
+    /// Per-row dirty flags for incremental updates. Only meaningful when `dirty` is false.
+    pub dirty_rows: Vec<bool>,
     /// True if shell integration (OSC 133) is active for this pane.
     pub has_shell_integration: bool,
     /// True if kitty keyboard protocol is active for this pane.
@@ -69,6 +73,7 @@ impl ClientPaneGrid {
             mode_flags: 0,
             title: String::new(),
             dirty: true,
+            dirty_rows: vec![false; rows as usize],
             has_shell_integration: false,
             has_kitty_keyboard: false,
         }
@@ -96,6 +101,17 @@ impl ClientPaneGrid {
     /// Total number of lines in the buffer (scrollback + viewport).
     pub fn total_lines(&self) -> usize {
         self.scrollback.len() + self.rows as usize
+    }
+
+    /// True if any content has changed (full rebuild or per-row).
+    pub fn is_dirty(&self) -> bool {
+        self.dirty || self.dirty_rows.iter().any(|&d| d)
+    }
+
+    /// Clear all dirty flags after rendering.
+    pub fn clear_dirty(&mut self) {
+        self.dirty = false;
+        self.dirty_rows.iter_mut().for_each(|d| *d = false);
     }
 
     /// Maximum scroll offset (how far up the user can scroll).
@@ -126,12 +142,14 @@ impl ClientPaneGrid {
         let new_cols = sync.cols as usize;
         let new_rows = sync.rows as usize;
 
-        // If dimensions changed, reset
+        // If dimensions changed, resize viewport but preserve scrollback.
+        // Old scrollback rows may have a different column count; visible_cells()
+        // handles padding/truncation so they remain viewable.
         if sync.cols != self.cols || sync.rows != self.rows {
             self.cols = sync.cols;
             self.rows = sync.rows;
-            self.scrollback.clear();
             self.viewport = vec![PackedCell::default(); new_cols * new_rows];
+            self.dirty_rows = vec![false; new_rows];
             self.scroll_offset = 0;
         }
 
@@ -204,6 +222,9 @@ impl ClientPaneGrid {
                 let dst_start = line * cols + col_start;
                 let dst_end = line * cols + col_end;
                 self.viewport[dst_start..dst_end].copy_from_slice(&region.cells[..copy_len]);
+                if line < self.dirty_rows.len() {
+                    self.dirty_rows[line] = true;
+                }
             }
         }
         self.dirty = true;
@@ -211,7 +232,11 @@ impl ClientPaneGrid {
 
     /// Apply incremental CellDeltaBorrowed (zero-copy variant): patch the live
     /// viewport directly using flat buffer indexing with bytemuck-cast cell slices.
+    /// Only marks individual dirty rows instead of the entire pane.
     pub fn apply_delta_borrowed(&mut self, delta: &CellDeltaBorrowed) {
+        // Track if cursor moved (old and new cursor rows need redraw)
+        let old_cursor_line = self.cursor_line;
+
         self.cursor_line = delta.cursor_line;
         self.cursor_col = delta.cursor_col;
         self.cursor_shape = delta.cursor_shape;
@@ -220,10 +245,11 @@ impl ClientPaneGrid {
         self.has_kitty_keyboard = delta.mode_flags & MODE_KITTY_KEYBOARD != 0;
 
         let cols = self.cols as usize;
+        let nrows = self.rows as usize;
 
         for (i, region) in delta.regions.iter().enumerate() {
             let line = region.line as usize;
-            if line >= self.rows as usize {
+            if line >= nrows {
                 continue;
             }
             let cells = delta.cells(i);
@@ -234,9 +260,18 @@ impl ClientPaneGrid {
                 let dst_start = line * cols + col_start;
                 let dst_end = line * cols + col_end;
                 self.viewport[dst_start..dst_end].copy_from_slice(&cells[..copy_len]);
+                if line < self.dirty_rows.len() {
+                    self.dirty_rows[line] = true;
+                }
             }
         }
-        self.dirty = true;
+        // Mark old and new cursor rows dirty for cursor movement
+        if old_cursor_line >= 0 && (old_cursor_line as usize) < self.dirty_rows.len() {
+            self.dirty_rows[old_cursor_line as usize] = true;
+        }
+        if delta.cursor_line >= 0 && (delta.cursor_line as usize) < self.dirty_rows.len() {
+            self.dirty_rows[delta.cursor_line as usize] = true;
+        }
     }
 
     /// Scroll up (into history). Returns actual lines scrolled.
@@ -271,11 +306,12 @@ impl ClientPaneGrid {
     }
 
     /// Get the cells for the current viewport (respecting scroll_offset).
-    /// Returns a flat Vec of `rows * cols` cells.
-    pub fn visible_cells(&self) -> Vec<PackedCell> {
-        // Fast path: if not scrolled, clone viewport directly
+    /// Returns a borrowed slice when not scrolled (zero-copy fast path),
+    /// or an owned Vec when viewing scrollback history.
+    pub fn visible_cells(&self) -> Cow<'_, [PackedCell]> {
+        // Fast path: if not scrolled, borrow viewport directly (no clone!)
         if self.scroll_offset == 0 {
-            return self.viewport.clone();
+            return Cow::Borrowed(&self.viewport);
         }
 
         let top = self.viewport_top();
@@ -285,13 +321,15 @@ impl ClientPaneGrid {
         for r in 0..rows {
             let buf_row = top + r;
             let row = self.row(buf_row);
-            cells.extend_from_slice(row);
-            // Pad if row is shorter than cols
-            for _ in row.len()..cols {
+            // Scrollback rows may have a different column count after a
+            // resize/DPI change — truncate or pad to current cols.
+            let take = row.len().min(cols);
+            cells.extend_from_slice(&row[..take]);
+            for _ in take..cols {
                 cells.push(PackedCell::default());
             }
         }
-        cells
+        Cow::Owned(cells)
     }
 
     /// Get cursor position in viewport coordinates, or None if cursor is not visible
@@ -808,7 +846,7 @@ mod tests {
     // ─── apply_full_sync edge cases ─────────────────────────────────
 
     #[test]
-    fn full_sync_dimension_change_resets_state() {
+    fn full_sync_dimension_change_preserves_scrollback() {
         let mut grid = grid_with_scrollback();
         assert_eq!(grid.scrollback.len(), 3);
 
@@ -823,10 +861,20 @@ mod tests {
         grid.apply_full_sync(&sync);
         assert_eq!(grid.cols, 6);
         assert_eq!(grid.rows, 3);
-        assert_eq!(grid.scrollback.len(), 0); // cleared on resize
+        assert_eq!(grid.scrollback.len(), 3); // preserved across resize
         assert_eq!(grid.viewport.len(), 18);
         assert_eq!(grid.viewport[0].ch(), 'X');
         assert_eq!(grid.scroll_offset, 0);
+
+        // Old scrollback rows are 4 cols wide; visible_cells() pads to 6
+        grid.scroll_up(1);
+        let cells = grid.visible_cells();
+        assert_eq!(cells.len(), 18); // 3 rows × 6 cols
+        // Last scrollback row ('c' × 4) padded to 6 cols
+        assert_eq!(cells[0].ch(), 'c');
+        assert_eq!(cells[3].ch(), 'c');
+        assert_eq!(cells[4].ch(), ' '); // padded
+        assert_eq!(cells[5].ch(), ' '); // padded
     }
 
     #[test]
@@ -887,7 +935,7 @@ mod tests {
         grid.scroll_up(4); // scroll to top
         assert_eq!(grid.scroll_offset, 4);
 
-        // Now resize — clears scrollback, should clamp scroll_offset
+        // Resize resets scroll_offset to 0, but preserves scrollback
         let sync = FullPaneSync {
             pane_id: 1, generation: 10, cols: 3, rows: 1, // dimension change
             cursor_line: 0, cursor_col: 0, cursor_shape: CURSOR_BLOCK, mode_flags: 0,
@@ -896,7 +944,8 @@ mod tests {
             cells: vec![PackedCell::default(); 3],
         };
         grid.apply_full_sync(&sync);
-        assert_eq!(grid.scroll_offset, 0); // clamped because scrollback is now empty
+        assert_eq!(grid.scroll_offset, 0); // reset by dimension change
+        assert_eq!(grid.scrollback.len(), 4); // scrollback preserved
     }
 
     // ─── apply_delta edge cases ─────────────────────────────────────

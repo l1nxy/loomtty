@@ -145,7 +145,7 @@ impl App {
             }
             emit_status_text(
                 atlas, &mut renderer.font_system, &renderer.queue,
-                text, x, text_y, cw, baseline, *color, vw, vh, glyphs,
+                text, x, text_y, cw, baseline, *color, glyphs,
             );
             x += text.len() as f32 * cw;
             left_used += text.len();
@@ -158,7 +158,7 @@ impl App {
         for (text, color) in &right_segments {
             emit_status_text(
                 atlas, &mut renderer.font_system, &renderer.queue,
-                text, rx, text_y, cw, baseline, *color, vw, vh, glyphs,
+                text, rx, text_y, cw, baseline, *color, glyphs,
             );
             rx += text.len() as f32 * cw;
         }
@@ -242,8 +242,6 @@ pub(crate) fn emit_status_text(
     cell_width: f32,
     baseline: f32,
     color: [f32; 4],
-    vw: f32,
-    vh: f32,
     glyphs: &mut Vec<GlyphInstance>,
 ) {
     for (i, ch) in text.chars().enumerate() {
@@ -254,11 +252,8 @@ pub(crate) fn emit_status_text(
             let sx = x_start + i as f32 * cell_width + entry.bearing_x as f32;
             let sy = text_y + baseline - entry.bearing_y as f32;
             glyphs.push(GlyphInstance {
-                pos: [sx / vw * 2.0 - 1.0, 1.0 - sy / vh * 2.0],
-                size: [
-                    entry.width as f32 / vw * 2.0,
-                    -(entry.height as f32 / vh * 2.0),
-                ],
+                pos: [sx, sy],
+                size: [entry.width as f32, entry.height as f32],
                 uv_pos: [entry.u0, entry.v0],
                 uv_size: [entry.u1 - entry.u0, entry.v1 - entry.v0],
                 color,

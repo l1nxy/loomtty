@@ -226,7 +226,11 @@ impl App {
                             tile
                         }).collect();
                         col.active_tile_idx = col_state.active_tile_idx.min(col.tiles.len().saturating_sub(1));
-                        col.width = ColumnWidth::Proportion(col_state.width_proportion);
+                        col.width = if let Some(px) = col_state.width_fixed_px {
+                            ColumnWidth::Fixed(px)
+                        } else {
+                            ColumnWidth::Proportion(col_state.width_proportion)
+                        };
                         ws.columns.push(col);
                     }
                 }

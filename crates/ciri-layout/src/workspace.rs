@@ -243,6 +243,11 @@ impl Workspace {
         if right_col.tiles.is_empty() {
             // Remove the now-empty column
             self.columns.remove(right_idx);
+            // When only one column remains, expand to full width
+            if self.columns.len() == 1 {
+                self.columns[0].width = ColumnWidth::Proportion(1.0);
+                self.columns[0].preset_width_idx = None;
+            }
         } else {
             right_col.active_tile_idx = right_col.active_tile_idx.min(right_col.tiles.len() - 1);
         }

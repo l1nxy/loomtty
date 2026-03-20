@@ -24,6 +24,9 @@ pub struct SavedColumn {
     pub tiles: Vec<SavedTile>,
     pub active_tile_idx: usize,
     pub width_proportion: f64,
+    /// If set, column uses a fixed pixel width instead of proportion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width_fixed_px: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -100,8 +100,10 @@ pub struct Pane {
     bell_pending: bool,
     /// Shell integration state (OSC 133).
     pub shell_state: ShellState,
-    /// Inline image placements (Kitty graphics / Sixel).
-    pub image_placements: Vec<ImagePlacement>,
+    /// Active image placements (persistent — survives drain, used for reconnecting clients).
+    active_images: Vec<ImagePlacement>,
+    /// Newly added image placements since last drain (broadcast to clients then cleared).
+    pending_images: Vec<ImagePlacement>,
     /// Next image ID counter.
     next_image_id: u64,
     /// Kitty graphics: partial payload accumulator for multi-chunk transmissions.
@@ -111,6 +113,9 @@ pub struct Pane {
     /// Partial APC frame buffer: holds bytes from an unterminated `ESC _ G ...`
     /// sequence that was split across PTY reads.
     kitty_apc_partial: Vec<u8>,
+    /// Partial OSC 133 buffer: holds bytes from an unterminated OSC 133 sequence
+    /// that was split across PTY reads.
+    osc133_partial: Vec<u8>,
 }
 
 impl Pane {
@@ -142,11 +147,13 @@ impl Pane {
                 prompt_line: None,
                 output_line: None,
             },
-            image_placements: Vec::new(),
+            active_images: Vec::new(),
+            pending_images: Vec::new(),
             next_image_id: 1,
             kitty_image_buf: Vec::new(),
             kitty_image_meta: None,
             kitty_apc_partial: Vec::new(),
+            osc133_partial: Vec::new(),
         })
     }
 
@@ -167,23 +174,25 @@ impl Pane {
                 self.scan_osc133(chunk);
             }
 
-            // VT-parse all chunks first so the cursor reflects any preceding
-            // movement sequences (CSI H, etc.) in the same read batch.
-            let mut term = self.term.lock().unwrap_or_else(|e| e.into_inner());
-            for chunk in &chunks {
-                self.processor.advance(&mut *term, chunk);
+            // VT-parse each chunk individually, recording the cursor position
+            // after each one. This ensures Kitty image placements use the cursor
+            // at the time of each sequence, not the final cursor after all chunks.
+            let mut per_chunk_cursors: Vec<(u16, u16)> = Vec::with_capacity(chunks.len());
+            {
+                let mut term = self.term.lock().unwrap_or_else(|e| e.into_inner());
+                for chunk in &chunks {
+                    self.processor.advance(&mut *term, chunk);
+                    let cursor = term.grid().cursor.point;
+                    per_chunk_cursors.push((
+                        cursor.column.0 as u16,
+                        cursor.line.0.max(0) as u16,
+                    ));
+                }
             }
 
-            // Now read cursor position for image placement — after parsing.
-            let (cursor_col, cursor_row) = {
-                let cursor = term.grid().cursor.point;
-                (cursor.column.0 as u16, cursor.line.0.max(0) as u16)
-            };
-            drop(term);
-
-            // Scan for Kitty graphics sequences with the post-parse cursor position.
-            for chunk in &chunks {
-                self.scan_kitty_graphics(chunk, cursor_col, cursor_row);
+            // Scan for Kitty graphics sequences with per-chunk cursor positions.
+            for (chunk, (cursor_col, cursor_row)) in chunks.iter().zip(per_chunk_cursors.iter()) {
+                self.scan_kitty_graphics(chunk, *cursor_col, *cursor_row);
             }
             processed = true;
         }
@@ -500,7 +509,18 @@ impl Pane {
 
     /// Scan raw PTY output for OSC 133 shell integration sequences.
     /// Pattern: ESC ] 133 ; <cmd> [; params] BEL   or   ESC ] 133 ; <cmd> [; params] ESC \
+    /// Handles sequences split across PTY read boundaries via `osc133_partial`.
     fn scan_osc133(&mut self, data: &[u8]) {
+        // If we have a partial OSC from a previous read, prepend it
+        let working_data;
+        let data = if !self.osc133_partial.is_empty() {
+            self.osc133_partial.extend_from_slice(data);
+            working_data = std::mem::take(&mut self.osc133_partial);
+            &working_data[..]
+        } else {
+            data
+        };
+
         let mut i = 0;
         while i + 6 < data.len() {
             // Look for ESC ] 1 3 3 ;
@@ -514,11 +534,14 @@ impl Pane {
                 // Find the string terminator and collect params
                 let mut end = i + 7;
                 let mut params = String::new();
+                let mut found_terminator = false;
                 while end < data.len() {
                     if data[end] == 0x07 {
+                        found_terminator = true;
                         break;
                     }
                     if data[end] == 0x1b && data.get(end + 1) == Some(&b'\\') {
+                        found_terminator = true;
                         break;
                     }
                     if data[end] == b';' && params.is_empty() {
@@ -530,11 +553,22 @@ impl Pane {
                             }
                             rest_end += 1;
                         }
-                        params = String::from_utf8_lossy(&data[rest_start..rest_end]).to_string();
-                        end = rest_end;
+                        if rest_end < data.len() {
+                            params = String::from_utf8_lossy(&data[rest_start..rest_end]).to_string();
+                            end = rest_end;
+                            found_terminator = true;
+                        } else {
+                            end = rest_end;
+                        }
                         break;
                     }
                     end += 1;
+                }
+
+                if !found_terminator {
+                    // Incomplete sequence — buffer from the OSC start for next read
+                    self.osc133_partial = data[i..].to_vec();
+                    return;
                 }
 
                 match cmd {
@@ -564,6 +598,12 @@ impl Pane {
                 }
                 i = end + 1;
             } else {
+                // Check if we're at a potential partial match at the end of data
+                // (ESC at the tail that could start an OSC 133 sequence)
+                if data[i] == 0x1b && i + 6 >= data.len() {
+                    self.osc133_partial = data[i..].to_vec();
+                    return;
+                }
                 i += 1;
             }
         }
@@ -687,7 +727,7 @@ impl Pane {
                                     meta.width, meta.height, meta.format,
                                     meta.cols, meta.rows, full_data.len()
                                 );
-                                self.image_placements.push(ImagePlacement {
+                                let placement = ImagePlacement {
                                     id,
                                     row: cursor_row,
                                     col: cursor_col,
@@ -697,13 +737,16 @@ impl Pane {
                                     pixel_height: meta.height,
                                     format: meta.format,
                                     data: full_data,
-                                });
+                                };
+                                self.active_images.push(placement.clone());
+                                self.pending_images.push(placement);
                             }
                         }
                     }
                     'd' => {
                         // Delete images (we clear all for now)
-                        self.image_placements.clear();
+                        self.active_images.clear();
+                        self.pending_images.clear();
                     }
                     _ => {}
                 }
@@ -715,9 +758,15 @@ impl Pane {
         }
     }
 
-    /// Drain new image placements since last call.
+    /// Drain new image placements since last call (for broadcasting to clients).
+    /// Active images are preserved for reconnecting clients.
     pub fn drain_images(&mut self) -> Vec<ImagePlacement> {
-        std::mem::take(&mut self.image_placements)
+        std::mem::take(&mut self.pending_images)
+    }
+
+    /// Get all currently active image placements (for full sync on client reconnect).
+    pub fn active_images(&self) -> &[ImagePlacement] {
+        &self.active_images
     }
 
     /// Read cells from a line range and pack them (live viewport only).

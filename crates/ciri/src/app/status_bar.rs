@@ -15,11 +15,17 @@ impl App {
         let renderer = self.renderer.as_mut().unwrap();
         let atlas = self.glyph_atlas.as_mut().unwrap();
 
-        let bar_height = atlas.cell_height + self.config.statusbar.height_padding;
+        let ch = atlas.cell_height;
+        let padding = if let Some(px) = self.config.statusbar.height_padding {
+            px
+        } else {
+            ch * self.config.statusbar.padding_ratio
+        };
+        let bar_height = ch + padding;
         let bar_y = vh - bar_height;
         let cw = atlas.cell_width;
-        let baseline = atlas.cell_height * self.config.statusbar.text_baseline;
-        let text_y = bar_y + 2.0;
+        let baseline = ch * self.config.statusbar.text_baseline;
+        let text_y = bar_y + padding * 0.5;
 
         // Colors
         let bar_bg = ThemeConfig::parse_color(&self.config.theme.statusbar_background);
@@ -165,7 +171,7 @@ impl App {
 
         // Mode indicator line above status bar (for non-normal modes)
         if is_leader || is_broadcast || is_overview {
-            let indicator_h = self.config.statusbar.leader_indicator_height;
+            let indicator_h = ch * self.config.statusbar.leader_indicator_ratio;
             let indicator_color = if is_broadcast { broadcast_color } else { accent };
             bg_rects.push(Rect {
                 x: 0.0,

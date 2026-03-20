@@ -341,6 +341,11 @@ impl App {
             .as_ref()
             .map(|a| a.cell_height)
             .unwrap_or(self.config.font.size * 1.2);
-        cell_h + self.config.statusbar.height_padding
+        let padding = if let Some(px) = self.config.statusbar.height_padding {
+            px
+        } else {
+            cell_h * self.config.statusbar.padding_ratio
+        };
+        cell_h + padding
     }
 }

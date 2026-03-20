@@ -190,7 +190,9 @@ impl ApplicationHandler for App {
         }
 
         let (w, h) = renderer.surface_size();
-        let bar_h = atlas.cell_height + self.config.statusbar.height_padding;
+        let bar_padding = self.config.statusbar.height_padding
+            .unwrap_or(atlas.cell_height * self.config.statusbar.padding_ratio);
+        let bar_h = atlas.cell_height + bar_padding;
         self.workspaces.resize_view(ViewSize {
             width: w as f32,
             height: h as f32 - bar_h,
@@ -393,7 +395,8 @@ impl ApplicationHandler for App {
                             atlas.cell_width,
                             atlas.cell_height
                         );
-                        let bar_h = atlas.cell_height + self.config.statusbar.height_padding;
+                        let bar_h = atlas.cell_height + self.config.statusbar.height_padding
+                            .unwrap_or(atlas.cell_height * self.config.statusbar.padding_ratio);
                         let (w, h) = renderer.surface_size();
                         self.workspaces.resize_view(ViewSize {
                             width: w as f32,

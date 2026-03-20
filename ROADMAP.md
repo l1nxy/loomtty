@@ -52,14 +52,14 @@
 - [x] Cursor shapes: Block, HollowBlock, Beam, Underline
 - [x] **Italic / bold font variants** — FontStyle enum with proper font chain lookup and synthesis
 - [x] **Underline variants** (curly, dotted, dashed) — double, curly (sine wave), dotted, dashed all rendered
-- [ ] Text shaping (harfbuzz) for ligatures and combining marks
-- [ ] **Unicode grapheme clustering** — currently 1 char per cell, multi-codepoint emoji breaks
-- [x] Damage tracking (dirty flag + cached views, not full dirty-rect yet)
+- [x] **Text shaping** (rustybuzz) — ligature detection, grapheme shaping with glyph ID output
+- [x] **Unicode grapheme clustering** — unicode-segmentation crate, ZWJ/variation selector/combining mark support
+- [x] Damage tracking (dirty flag + per-row dirty flags, not full dirty-rect yet)
 - [x] Color emoji support — RGBA atlas with swash Content::Color detection
 - [x] **Scrollbar** — visual track + thumb (no mouse drag yet)
-- [ ] **Pane open/close animation** — fade-in/slide on create, snapshot + fade-out on close
-- [ ] **Focus ring** — configurable width, color, corner radius, inactive pane dimming
-- [ ] **Inactive pane opacity** — GPU-level dimming of unfocused panes
+- [x] **Pane open/close animation** — fade + slide variants (SlideUp/Down/Left/FadeSlideUp), configurable duration
+- [x] **Focus ring** — Glow / Dashed / Solid styles, configurable width and color, active/inactive border colors
+- [x] **Inactive pane opacity** — spring-animated focus transitions, GPU-level dimming
 
 ## Client Architecture
 
@@ -85,7 +85,8 @@
 - [x] **Shell integration** — OSC 133 prompt marking, semantic zones with SemanticZone/ShellState tracking
 - [x] **Bell notification** — visual bell with 150ms fade-out animation
 - [x] **IME preedit rendering** — candidate overlay with underline and cursor at proper position
-- [x] Sixel / Kitty image protocol — multi-chunk accumulation, placeholder rendering with borders
+- [x] Kitty image protocol — multi-chunk accumulation, placeholder rendering with borders
+- [ ] Sixel image protocol
 - [x] **Kitty keyboard protocol** — CSI u format with per-pane detection
 
 ## Session Persistence

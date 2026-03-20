@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::pane::ImagePlacement;
 
 const MAX_APC_PARTIAL_SIZE: usize = 16 * 1024 * 1024; // 16MB
@@ -10,6 +12,24 @@ struct KittyImageMeta {
     height: u32,
     cols: u16,
     rows: u16,
+}
+
+/// Map Kitty format value to format string.
+fn kitty_format_str(format_val: u32) -> &'static str {
+    match format_val {
+        24 => "rgb",
+        32 => "rgba",
+        _ => "png",
+    }
+}
+
+/// Result of scanning PTY data for Kitty graphics sequences.
+pub(crate) struct KittyScanResult {
+    /// Newly created image placements in this scan.
+    pub placements: Vec<ImagePlacement>,
+    /// True if a delete command (`a=d`) was encountered, meaning the caller
+    /// should also clear any previously queued pending images.
+    pub deleted: bool,
 }
 
 /// Parser for Kitty graphics protocol APC sequences (ESC _ G ... ESC \).
@@ -31,7 +51,8 @@ impl KittyGraphicsParser {
         }
     }
 
-    /// Scan data for Kitty APC sequences. Returns new placements found.
+    /// Scan data for Kitty APC sequences. Returns new placements and whether
+    /// a delete command was encountered.
     /// `active_images` is updated in-place with new placements (for reconnect).
     pub fn scan(
         &mut self,
@@ -39,7 +60,7 @@ impl KittyGraphicsParser {
         cursor_col: u16,
         cursor_row: u16,
         active_images: &mut Vec<ImagePlacement>,
-    ) -> Vec<ImagePlacement> {
+    ) -> KittyScanResult {
         use base64::Engine;
 
         // If we have a partial APC from a previous read, prepend it
@@ -53,6 +74,7 @@ impl KittyGraphicsParser {
         };
 
         let mut new_placements = Vec::new();
+        let mut deleted = false;
         let mut i = 0;
         while i + 3 < data.len() {
             // Look for ESC _ G (APC for Kitty graphics)
@@ -78,7 +100,7 @@ impl KittyGraphicsParser {
                     } else {
                         self.apc_partial = partial.to_vec();
                     }
-                    return new_placements;
+                    return KittyScanResult { placements: new_placements, deleted };
                 }
 
                 let payload = &data[start..end];
@@ -127,13 +149,8 @@ impl KittyGraphicsParser {
                         if more_chunks {
                             // First/middle chunk: accumulate
                             if self.image_meta.is_none() {
-                                let fmt = match format_val {
-                                    24 => "rgb",
-                                    32 => "rgba",
-                                    _ => "png",
-                                };
                                 self.image_meta = Some(KittyImageMeta {
-                                    format: fmt.to_string(),
+                                    format: kitty_format_str(format_val).to_string(),
                                     width,
                                     height,
                                     cols: if cols > 0 { cols } else { 10 },
@@ -147,11 +164,7 @@ impl KittyGraphicsParser {
                             full_data.extend_from_slice(&decoded);
 
                             let meta = self.image_meta.take().unwrap_or(KittyImageMeta {
-                                format: match format_val {
-                                    24 => "rgb".to_string(),
-                                    32 => "rgba".to_string(),
-                                    _ => "png".to_string(),
-                                },
+                                format: kitty_format_str(format_val).to_string(),
                                 width,
                                 height,
                                 cols: if cols > 0 { cols } else { 10 },
@@ -166,6 +179,7 @@ impl KittyGraphicsParser {
                                     meta.width, meta.height, meta.format,
                                     meta.cols, meta.rows, full_data.len()
                                 );
+                                let data = Arc::new(full_data);
                                 let placement = ImagePlacement {
                                     id,
                                     row: cursor_row,
@@ -175,7 +189,7 @@ impl KittyGraphicsParser {
                                     pixel_width: meta.width,
                                     pixel_height: meta.height,
                                     format: meta.format,
-                                    data: full_data,
+                                    data,
                                 };
                                 active_images.push(placement.clone());
                                 new_placements.push(placement);
@@ -183,9 +197,11 @@ impl KittyGraphicsParser {
                         }
                     }
                     'd' => {
-                        // Delete images (we clear all for now)
+                        // Delete images: clear active set and any placements
+                        // queued earlier in this scan (they're already stale).
                         active_images.clear();
-                        // Signal deletion by returning empty vec (caller clears pending too)
+                        new_placements.clear();
+                        deleted = true;
                     }
                     _ => {}
                 }
@@ -196,7 +212,7 @@ impl KittyGraphicsParser {
             }
         }
 
-        new_placements
+        KittyScanResult { placements: new_placements, deleted }
     }
 
 }

@@ -1,6 +1,6 @@
-use ciri_protocol::message::DamageRegion;
 use std::collections::HashMap;
 
+#[derive(Default)]
 pub(crate) struct DamageAccumulator {
     pub(crate) full: bool,
     /// Indexed by line. Some((left, right)) = dirty range for that line.
@@ -10,27 +10,21 @@ pub(crate) struct DamageAccumulator {
 }
 
 impl DamageAccumulator {
-    pub(crate) fn new() -> Self {
-        DamageAccumulator {
-            full: false,
-            line_damage: HashMap::new(),
-            cursor_dirty: false,
-        }
-    }
 
     pub(crate) fn mark_full(&mut self) {
         self.full = true;
         self.line_damage.clear();
     }
 
-    pub(crate) fn merge_regions(&mut self, regions: &[DamageRegion]) {
+    /// Merge damage metadata (line, left, right) tuples into the accumulator.
+    pub(crate) fn merge_ranges(&mut self, ranges: &[(u16, u16, u16)]) {
         if self.full {
             return; // already marked for full sync
         }
-        for region in regions {
-            let entry = self.line_damage.entry(region.line).or_insert((u16::MAX, 0));
-            entry.0 = entry.0.min(region.left);
-            entry.1 = entry.1.max(region.right);
+        for &(line, left, right) in ranges {
+            let entry = self.line_damage.entry(line).or_insert((u16::MAX, 0));
+            entry.0 = entry.0.min(left);
+            entry.1 = entry.1.max(right);
         }
     }
 
@@ -39,6 +33,6 @@ impl DamageAccumulator {
     }
 
     pub(crate) fn take(&mut self) -> DamageAccumulator {
-        std::mem::replace(self, DamageAccumulator::new())
+        std::mem::take(self)
     }
 }

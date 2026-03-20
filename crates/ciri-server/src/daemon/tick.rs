@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use ciri_protocol::codec;
 use ciri_protocol::message::*;
 use ciri_protocol::transport;
@@ -19,6 +20,27 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
     const FRAME_POOL_CAP: usize = 64;
     let mut frame_pool: Vec<Vec<u8>> = Vec::with_capacity(FRAME_POOL_CAP);
 
+    /// Raw snapshot data extracted under the lock for deferred encoding.
+    enum Snapshot {
+        FullSync {
+            sync: FullPaneSync,
+            current_history: usize,
+            pane_id: u64,
+        },
+        /// Pre-encoded delta frame (cells streamed directly into frame buffer).
+        DeltaEncoded(Vec<u8>),
+    }
+
+    struct PendingSend {
+        client_id: u64,
+        session_name: String,
+        snapshot: Snapshot,
+    }
+
+    // Reusable buffers to avoid per-tick allocations
+    let mut pending_sends: Vec<PendingSend> = Vec::new();
+    let mut session_names: Vec<String> = Vec::new();
+
     loop {
         ticker.tick().await;
 
@@ -29,31 +51,15 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
         // structs, clone the tx handles we need, then drop the lock before
         // doing any encoding or sending.
 
-        /// Raw snapshot data extracted under the lock for deferred encoding.
-        enum Snapshot {
-            FullSync {
-                sync: FullPaneSync,
-                current_history: usize,
-                pane_id: u64,
-            },
-            Delta(CellDelta),
-        }
-
-        struct PendingSend {
-            client_id: u64,
-            session_name: String,
-            snapshot: Snapshot,
-        }
-
-        let mut pending_sends: Vec<PendingSend> = Vec::new();
+        pending_sends.clear();
         let mut should_shutdown = false;
 
         {
             let mut s = tick_state.lock().await;
 
             // Iterate all sessions
-            let session_names: Vec<String> = s.sessions.keys().cloned().collect();
-            let mut sessions_to_remove: Vec<String> = Vec::new();
+            session_names.clear();
+            session_names.extend(s.sessions.keys().cloned());
 
             for session_name in &session_names {
                 // Temporarily remove session from the map to avoid borrow conflicts
@@ -68,20 +74,12 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
 
                 // Send OSC 52 clipboard writes to clients of this session
                 for clip_msg in &clipboard_msgs {
-                    if let Ok(payload) = rmp_serde::to_vec(clip_msg) {
-                        let mut frame = frame_pool.pop().unwrap_or_default();
-                        frame.clear();
-                        frame.reserve(5 + payload.len());
-                        frame.push(0x10); // TAG_SERVER_MSG
-                        frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-                        frame.extend_from_slice(&payload);
+                    if let Some(frame) = codec::frame_server_msg(clip_msg) {
+                        let frame = Bytes::from(frame);
                         for client in s.clients.values() {
                             if client.session_name == *session_name {
                                 let _ = client.tx.try_send(frame.clone());
                             }
-                        }
-                        if frame_pool.len() < FRAME_POOL_CAP {
-                            frame_pool.push(frame);
                         }
                     }
                 }
@@ -90,39 +88,26 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                 let dead = session.cleanup_exited_panes(&mut s.clients);
                 if !dead.is_empty() {
                     session.mark_session_dirty();
-                    // Broadcast close messages to session clients
-                    let mut broadcasts = Vec::new();
+                    // Build broadcast frames for close + layout update
+                    let mut broadcast_frames: Vec<Bytes> = Vec::new();
                     for &id in &dead {
-                        let close_payload =
-                            rmp_serde::to_vec(&ServerMessage::PaneClosed { pane_id: id })
-                                .unwrap_or_default();
-                        broadcasts.push(close_payload);
+                        if let Some(f) = codec::frame_server_msg(&ServerMessage::PaneClosed { pane_id: id }) {
+                            broadcast_frames.push(Bytes::from(f));
+                        }
                     }
-                    let layout_payload = rmp_serde::to_vec(&ServerMessage::LayoutUpdate {
+                    if let Some(f) = codec::frame_server_msg(&ServerMessage::LayoutUpdate {
                         layout: session.layout_state(),
-                    })
-                    .unwrap_or_default();
-                    broadcasts.push(layout_payload);
-
+                    }) {
+                        broadcast_frames.push(Bytes::from(f));
+                    }
                     for client in s.clients.values() {
                         if client.session_name == *session_name {
-                            for payload in &broadcasts {
-                                let mut frame = frame_pool.pop().unwrap_or_default();
-                                frame.clear();
-                                frame.reserve(5 + payload.len());
-                                frame.push(0x10);
-                                frame.extend_from_slice(
-                                    &(payload.len() as u32).to_le_bytes(),
-                                );
-                                frame.extend_from_slice(payload);
+                            for frame in &broadcast_frames {
                                 if let Err(e) = client.tx.try_send(frame.clone()) {
                                     log::warn!(
                                         "failed to send close frame to client {}: {e}",
                                         client.id
                                     );
-                                }
-                                if frame_pool.len() < FRAME_POOL_CAP {
-                                    frame_pool.push(frame);
                                 }
                             }
                         }
@@ -143,26 +128,16 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                     );
 
                     // Send shutdown to clients of this session
-                    if let Ok(payload) = rmp_serde::to_vec(&ServerMessage::ServerShutdown) {
+                    if let Some(frame) = codec::frame_server_msg(&ServerMessage::ServerShutdown) {
+                        let frame = Bytes::from(frame);
                         for client in s.clients.values() {
-                            if client.session_name == *session_name {
-                                let mut frame = frame_pool.pop().unwrap_or_default();
-                                frame.clear();
-                                frame.reserve(5 + payload.len());
-                                frame.push(0x10);
-                                frame.extend_from_slice(
-                                    &(payload.len() as u32).to_le_bytes(),
+                            if client.session_name == *session_name
+                                && client.tx.try_send(frame.clone()).is_err()
+                            {
+                                log::warn!(
+                                    "failed to send shutdown to client {}",
+                                    client.id
                                 );
-                                frame.extend_from_slice(&payload);
-                                if let Err(e) = client.tx.try_send(frame.clone()) {
-                                    log::warn!(
-                                        "failed to send shutdown to client {}: {e}",
-                                        client.id
-                                    );
-                                }
-                                if frame_pool.len() < FRAME_POOL_CAP {
-                                    frame_pool.push(frame);
-                                }
                             }
                         }
                     }
@@ -178,26 +153,17 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                         s.clients.remove(&cid);
                     }
 
-                    sessions_to_remove.push(session_name.clone());
-                    // Don't re-insert this session
+                    // Don't re-insert this session (already removed above)
                 } else {
-                    // Collect damage snapshots for clients of this session
-                    let session_client_ids: Vec<u64> = s
-                        .clients
-                        .iter()
-                        .filter(|(_, c)| c.session_name == *session_name)
-                        .map(|(id, _)| *id)
-                        .collect();
-
+                    // Collect damage snapshots for clients of this session.
                     let mut pending: Vec<(u64, u64, DamageAccumulator)> = Vec::new();
-                    for &cid in &session_client_ids {
-                        if let Some(client) = s.clients.get_mut(&cid) {
-                            let pane_ids: Vec<u64> = client.damage.keys().copied().collect();
-                            for pane_id in pane_ids {
-                                let acc = client.damage.get_mut(&pane_id).unwrap();
-                                if !acc.is_empty() {
-                                    pending.push((cid, pane_id, acc.take()));
-                                }
+                    for (&cid, client) in s.clients.iter_mut() {
+                        if client.session_name != *session_name {
+                            continue;
+                        }
+                        for (&pane_id, acc) in client.damage.iter_mut() {
+                            if !acc.is_empty() {
+                                pending.push((cid, pane_id, acc.take()));
                             }
                         }
                     }
@@ -232,43 +198,43 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                         } else if let Some(pane) = session.panes.get(&pane_id) {
                             let (cursor_line, cursor_col, cursor_shape, mode_flags) =
                                 pane.cursor_info();
-                            let mut regions = Vec::new();
 
-                            for (&line, &(left, right)) in &damage.line_damage {
-                                let cells = pane.read_cells(line, left, right);
-                                regions.push(DamageRegion {
-                                    line,
-                                    left,
-                                    right,
-                                    cells,
-                                });
-                            }
+                            // Collect region metadata (no cell data — cells streamed directly)
+                            let regions: Vec<(u16, u16, u16)> = damage.line_damage
+                                .iter()
+                                .map(|(&line, &(left, right))| (line, left, right))
+                                .collect();
 
-                            let delta = CellDelta {
+                            // Stream-encode the delta frame: cells go directly from
+                            // grid → pack_cell → bytes, zero intermediate Vec<PackedCell>.
+                            let mut buf = frame_pool.pop().unwrap_or_default();
+                            let ok = codec::encode_cell_delta_streaming_framed(
+                                &mut buf,
                                 pane_id,
-                                generation: pgen,
+                                pgen,
                                 cursor_line,
                                 cursor_col,
                                 cursor_shape,
                                 mode_flags,
-                                regions,
-                            };
-                            pending_sends.push(PendingSend {
-                                client_id: cid,
-                                session_name: session_name.clone(),
-                                snapshot: Snapshot::Delta(delta),
-                            });
+                                &regions,
+                                |line, left, right, buf| pane.write_cells_into(line, left, right, buf),
+                            ).is_ok();
+
+                            if ok {
+                                pending_sends.push(PendingSend {
+                                    client_id: cid,
+                                    session_name: session_name.clone(),
+                                    snapshot: Snapshot::DeltaEncoded(buf),
+                                });
+                            } else if frame_pool.len() < FRAME_POOL_CAP {
+                                frame_pool.push(buf);
+                            }
                         }
                     }
 
                     // Put session back
                     s.sessions.insert(session_name.clone(), session);
                 }
-            }
-
-            // Remove dead sessions
-            for name in sessions_to_remove {
-                s.sessions.remove(&name);
             }
 
             // Server shutdown: had sessions before but now all gone and no clients
@@ -309,33 +275,32 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                 snapshot,
             } in pending_sends.drain(..)
             {
-                let mut buf = frame_pool.pop().unwrap_or_default();
-                let (history_update, encode_ok) = match &snapshot {
+                match snapshot {
                     Snapshot::FullSync {
                         sync,
                         current_history,
                         pane_id,
                     } => {
-                        let ok = codec::encode_full_pane_sync_framed(&mut buf, sync).is_ok();
-                        (Some((*pane_id, *current_history)), ok)
+                        let mut buf = frame_pool.pop().unwrap_or_default();
+                        if codec::encode_full_pane_sync_framed(&mut buf, &sync).is_ok() {
+                            encoded.push(EncodedFrame {
+                                client_id,
+                                session_name,
+                                buf,
+                                history_update: Some((pane_id, current_history)),
+                            });
+                        } else if frame_pool.len() < FRAME_POOL_CAP {
+                            frame_pool.push(buf);
+                        }
                     }
-                    Snapshot::Delta(delta) => {
-                        let ok = codec::encode_cell_delta_framed(&mut buf, delta).is_ok();
-                        (None, ok)
-                    }
-                };
-
-                if encode_ok {
-                    encoded.push(EncodedFrame {
-                        client_id,
-                        session_name,
-                        buf,
-                        history_update,
-                    });
-                } else {
-                    // Return buffer to pool on encode failure
-                    if frame_pool.len() < FRAME_POOL_CAP {
-                        frame_pool.push(buf);
+                    Snapshot::DeltaEncoded(buf) => {
+                        // Already encoded in Phase 1 — no work to do
+                        encoded.push(EncodedFrame {
+                            client_id,
+                            session_name,
+                            buf,
+                            history_update: None,
+                        });
                     }
                 }
             }
@@ -363,9 +328,8 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                         }
                         continue;
                     }
-                    match client.tx.try_send(buf) {
+                    match client.tx.try_send(Bytes::from(buf)) {
                         Ok(()) => {
-                            // buf consumed by channel — do not return to pool
                             client.send_failures = 0;
                             if let Some((pid, hist)) = history_update {
                                 client.history_sent.insert(pid, hist);
@@ -390,14 +354,11 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                                 client
                                     .damage
                                     .entry(pid)
-                                    .or_insert_with(DamageAccumulator::new)
+                                    .or_default()
                                     .mark_full();
                             }
-                            // Recover the buffer and return it to the pool
-                            let buf = e.into_inner();
-                            if frame_pool.len() < FRAME_POOL_CAP {
-                                frame_pool.push(buf);
-                            }
+                            // Bytes consumed the Vec; cannot recover for pool
+                            drop(e);
                         }
                     }
                 } else {

@@ -163,34 +163,61 @@ impl Server {
 
     /// Send a framed control message to a specific client.
     pub(crate) fn send_to_client(&self, client_id: u64, msg: &ServerMessage) {
-        if let Some(client) = self.clients.get(&client_id) {
-            if let Ok(payload) = rmp_serde::to_vec(msg) {
-                let mut frame = Vec::with_capacity(5 + payload.len());
-                frame.push(0x10);
-                frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-                frame.extend_from_slice(&payload);
-                if let Err(e) = client.tx.try_send(frame) {
-                    log::warn!("failed to send to client {client_id}: {e}");
-                }
+        if let (Some(client), Some(frame)) = (
+            self.clients.get(&client_id),
+            ciri_protocol::codec::frame_server_msg(msg),
+        ) {
+            if let Err(e) = client.tx.try_send(bytes::Bytes::from(frame)) {
+                log::warn!("failed to send to client {client_id}: {e}");
             }
         }
     }
 
     /// Broadcast a control message to all clients of a session.
     pub(crate) fn broadcast_to_session(&self, session_name: &str, msg: &ServerMessage) {
-        if let Ok(payload) = rmp_serde::to_vec(msg) {
-            let mut frame = Vec::with_capacity(5 + payload.len());
-            frame.push(0x10);
-            frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-            frame.extend_from_slice(&payload);
+        if let Some(frame) = ciri_protocol::codec::frame_server_msg(msg) {
+            let frame = bytes::Bytes::from(frame);
             for client in self.clients.values() {
-                if client.session_name == session_name {
-                    if let Err(e) = client.tx.try_send(frame.clone()) {
-                        log::warn!("failed to broadcast to client {}: {e}", client.id);
-                    }
+                if client.session_name == session_name
+                    && client.tx.try_send(frame.clone()).is_err()
+                {
+                    log::warn!("failed to broadcast to client {}", client.id);
                 }
             }
         }
+    }
+
+    /// Temporarily remove a session from the map, call `f` with it and `&mut self.clients`,
+    /// then re-insert it. This works around the borrow checker while guaranteeing reinsertion.
+    fn with_session<F, R>(&mut self, name: &str, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut Session, &mut HashMap<u64, ClientState>) -> R,
+    {
+        let mut session = self.sessions.remove(name)?;
+        let result = f(&mut session, &mut self.clients);
+        self.sessions.insert(name.to_string(), session);
+        Some(result)
+    }
+
+    /// Common tail for handlers that mutate session layout: mark dirty, optionally
+    /// resize panes, and broadcast a `LayoutUpdate`.
+    fn layout_changed(
+        session: &mut Session,
+        clients: &mut HashMap<u64, ClientState>,
+        session_name: &str,
+        resize: bool,
+        responses: &mut Vec<ServerResponse>,
+    ) {
+        session.mark_session_dirty();
+        if resize {
+            session.resize_all_panes(clients);
+        }
+        responses.push(ServerResponse::BroadcastToSession(
+            session_name.to_string(),
+            ServerMessage::LayoutUpdate {
+                layout: session.layout_state(),
+            },
+        ));
     }
 
     pub(crate) fn handle_message(
@@ -230,12 +257,7 @@ impl Server {
                                     rows,
                                 },
                             ));
-                            responses.push(ServerResponse::BroadcastToSession(
-                                session_name.clone(),
-                                ServerMessage::LayoutUpdate {
-                                    layout: session.layout_state(),
-                                },
-                            ));
+                            Self::layout_changed(&mut session, &mut self.clients, &session_name, false, &mut responses);
                         }
                         Err(e) => log::error!("failed to create pane: {e}"),
                     }
@@ -244,10 +266,7 @@ impl Server {
             }
             ClientMessage::SplitDown => {
                 if let Some(mut session) = self.sessions.remove(&session_name) {
-                    match session.create_pane_in_new_workspace(
-                        &mut self.next_pane_id,
-                        &mut self.clients,
-                    ) {
+                    match session.create_pane_in_new_workspace(&mut self.next_pane_id, &mut self.clients) {
                         Ok(id) => {
                             session.resize_all_panes(&mut self.clients);
                             session.mark_session_dirty();
@@ -261,12 +280,7 @@ impl Server {
                                     rows,
                                 },
                             ));
-                            responses.push(ServerResponse::BroadcastToSession(
-                                session_name.clone(),
-                                ServerMessage::LayoutUpdate {
-                                    layout: session.layout_state(),
-                                },
-                            ));
+                            Self::layout_changed(&mut session, &mut self.clients, &session_name, false, &mut responses);
                         }
                         Err(e) => log::error!("failed to split: {e}"),
                     }
@@ -274,45 +288,25 @@ impl Server {
                 }
             }
             ClientMessage::ClosePane { pane_id } => {
-                if let Some(mut session) = self.sessions.remove(&session_name) {
-                    session.close_pane(pane_id, &mut self.clients);
-                    session.resize_all_panes(&mut self.clients);
-                    session.mark_session_dirty();
+                self.with_session(&session_name, |session, clients| {
+                    session.close_pane(pane_id, clients);
                     responses.push(ServerResponse::BroadcastToSession(
                         session_name.clone(),
                         ServerMessage::PaneClosed { pane_id },
                     ));
-                    responses.push(ServerResponse::BroadcastToSession(
-                        session_name.clone(),
-                        ServerMessage::LayoutUpdate {
-                            layout: session.layout_state(),
-                        },
-                    ));
-                    self.sessions.insert(session_name, session);
-                }
+                    Self::layout_changed(session, clients, &session_name, true, &mut responses);
+                });
             }
             ClientMessage::FocusLeft => {
                 if let Some(session) = self.sessions.get_mut(&session_name) {
                     session.workspaces.active_mut().focus_left();
-                    session.mark_session_dirty();
-                    responses.push(ServerResponse::BroadcastToSession(
-                        session_name,
-                        ServerMessage::LayoutUpdate {
-                            layout: session.layout_state(),
-                        },
-                    ));
+                    Self::layout_changed(session, &mut self.clients, &session_name, false, &mut responses);
                 }
             }
             ClientMessage::FocusRight => {
                 if let Some(session) = self.sessions.get_mut(&session_name) {
                     session.workspaces.active_mut().focus_right();
-                    session.mark_session_dirty();
-                    responses.push(ServerResponse::BroadcastToSession(
-                        session_name,
-                        ServerMessage::LayoutUpdate {
-                            layout: session.layout_state(),
-                        },
-                    ));
+                    Self::layout_changed(session, &mut self.clients, &session_name, false, &mut responses);
                 }
             }
             ClientMessage::FocusUp => {
@@ -320,13 +314,7 @@ impl Server {
                     if !session.workspaces.active_mut().focus_tile_up() {
                         session.workspaces.focus_up();
                     }
-                    session.mark_session_dirty();
-                    responses.push(ServerResponse::BroadcastToSession(
-                        session_name,
-                        ServerMessage::LayoutUpdate {
-                            layout: session.layout_state(),
-                        },
-                    ));
+                    Self::layout_changed(session, &mut self.clients, &session_name, false, &mut responses);
                 }
             }
             ClientMessage::FocusDown => {
@@ -334,37 +322,19 @@ impl Server {
                     if !session.workspaces.active_mut().focus_tile_down() {
                         session.workspaces.focus_down();
                     }
-                    session.mark_session_dirty();
-                    responses.push(ServerResponse::BroadcastToSession(
-                        session_name,
-                        ServerMessage::LayoutUpdate {
-                            layout: session.layout_state(),
-                        },
-                    ));
+                    Self::layout_changed(session, &mut self.clients, &session_name, false, &mut responses);
                 }
             }
             ClientMessage::MovePaneLeft => {
                 if let Some(session) = self.sessions.get_mut(&session_name) {
                     session.workspaces.active_mut().move_pane_left();
-                    session.mark_session_dirty();
-                    responses.push(ServerResponse::BroadcastToSession(
-                        session_name,
-                        ServerMessage::LayoutUpdate {
-                            layout: session.layout_state(),
-                        },
-                    ));
+                    Self::layout_changed(session, &mut self.clients, &session_name, false, &mut responses);
                 }
             }
             ClientMessage::MovePaneRight => {
                 if let Some(session) = self.sessions.get_mut(&session_name) {
                     session.workspaces.active_mut().move_pane_right();
-                    session.mark_session_dirty();
-                    responses.push(ServerResponse::BroadcastToSession(
-                        session_name,
-                        ServerMessage::LayoutUpdate {
-                            layout: session.layout_state(),
-                        },
-                    ));
+                    Self::layout_changed(session, &mut self.clients, &session_name, false, &mut responses);
                 }
             }
             ClientMessage::Resize {
@@ -395,16 +365,9 @@ impl Server {
                         client.viewport_width = width as f32;
                         client.viewport_height = height as f32;
                     }
-                    if let Some(mut session) = self.sessions.remove(&session_name) {
-                        session.resize_all_panes(&mut self.clients);
-                        responses.push(ServerResponse::BroadcastToSession(
-                            session_name.clone(),
-                            ServerMessage::LayoutUpdate {
-                                layout: session.layout_state(),
-                            },
-                        ));
-                        self.sessions.insert(session_name, session);
-                    }
+                    self.with_session(&session_name, |session, clients| {
+                        Self::layout_changed(session, clients, &session_name, true, &mut responses);
+                    });
                 } else {
                     log::warn!(
                         "ignoring invalid resize from client {client_id}: {width}x{height} cell={cell_width}x{cell_height}"
@@ -415,59 +378,26 @@ impl Server {
                 proportion,
                 fixed_px,
             } => {
-                if let Some(mut session) = self.sessions.remove(&session_name) {
+                self.with_session(&session_name, |session, clients| {
                     let width = match fixed_px {
                         Some(px) => ColumnWidth::Fixed(px),
                         None => ColumnWidth::Proportion(proportion),
                     };
-                    session
-                        .workspaces
-                        .active_mut()
-                        .set_active_column_width(width);
-                    session.mark_session_dirty();
-                    session.resize_all_panes(&mut self.clients);
-                    responses.push(ServerResponse::BroadcastToSession(
-                        session_name.clone(),
-                        ServerMessage::LayoutUpdate {
-                            layout: session.layout_state(),
-                        },
-                    ));
-                    self.sessions.insert(session_name, session);
-                }
+                    session.workspaces.active_mut().set_active_column_width(width);
+                    Self::layout_changed(session, clients, &session_name, true, &mut responses);
+                });
             }
             ClientMessage::AdjustColumnSplit { delta } => {
-                if let Some(mut session) = self.sessions.remove(&session_name) {
-                    session
-                        .workspaces
-                        .active_mut()
-                        .resize_active_with_neighbor(delta);
-                    session.mark_session_dirty();
-                    session.resize_all_panes(&mut self.clients);
-                    responses.push(ServerResponse::BroadcastToSession(
-                        session_name.clone(),
-                        ServerMessage::LayoutUpdate {
-                            layout: session.layout_state(),
-                        },
-                    ));
-                    self.sessions.insert(session_name, session);
-                }
+                self.with_session(&session_name, |session, clients| {
+                    session.workspaces.active_mut().resize_active_with_neighbor(delta);
+                    Self::layout_changed(session, clients, &session_name, true, &mut responses);
+                });
             }
             ClientMessage::EqualizeColumnSplit => {
-                if let Some(mut session) = self.sessions.remove(&session_name) {
-                    session
-                        .workspaces
-                        .active_mut()
-                        .equalize_active_with_neighbor();
-                    session.mark_session_dirty();
-                    session.resize_all_panes(&mut self.clients);
-                    responses.push(ServerResponse::BroadcastToSession(
-                        session_name.clone(),
-                        ServerMessage::LayoutUpdate {
-                            layout: session.layout_state(),
-                        },
-                    ));
-                    self.sessions.insert(session_name, session);
-                }
+                self.with_session(&session_name, |session, clients| {
+                    session.workspaces.active_mut().equalize_active_with_neighbor();
+                    Self::layout_changed(session, clients, &session_name, true, &mut responses);
+                });
             }
             ClientMessage::SetTileWeights {
                 column_idx,
@@ -475,70 +405,37 @@ impl Server {
                 top_weight,
                 bottom_weight,
             } => {
-                if let Some(mut session) = self.sessions.remove(&session_name) {
-                    let ws = session.workspaces.active_mut();
-                    if let Some(col) = ws.columns.get_mut(column_idx) {
+                self.with_session(&session_name, |session, clients| {
+                    if let Some(col) = session.workspaces.active_mut().columns.get_mut(column_idx) {
                         col.set_tile_weights(top_tile_idx, top_weight, bottom_weight);
                     }
-                    session.mark_session_dirty();
-                    session.resize_all_panes(&mut self.clients);
-                    responses.push(ServerResponse::BroadcastToSession(
-                        session_name.clone(),
-                        ServerMessage::LayoutUpdate {
-                            layout: session.layout_state(),
-                        },
-                    ));
-                    self.sessions.insert(session_name, session);
-                }
+                    Self::layout_changed(session, clients, &session_name, true, &mut responses);
+                });
             }
             ClientMessage::AdjustColumnSplitAt {
                 column_idx,
                 delta,
             } => {
-                if let Some(mut session) = self.sessions.remove(&session_name) {
+                self.with_session(&session_name, |session, clients| {
                     let ws = session.workspaces.active_mut();
                     let saved_idx = ws.active_column_idx;
                     ws.active_column_idx = column_idx;
                     ws.resize_active_with_neighbor(delta);
                     ws.active_column_idx = saved_idx;
-                    session.mark_session_dirty();
-                    session.resize_all_panes(&mut self.clients);
-                    responses.push(ServerResponse::BroadcastToSession(
-                        session_name.clone(),
-                        ServerMessage::LayoutUpdate {
-                            layout: session.layout_state(),
-                        },
-                    ));
-                    self.sessions.insert(session_name, session);
-                }
+                    Self::layout_changed(session, clients, &session_name, true, &mut responses);
+                });
             }
             ClientMessage::ConsumeIntoColumn => {
-                if let Some(mut session) = self.sessions.remove(&session_name) {
+                self.with_session(&session_name, |session, clients| {
                     session.workspaces.active_mut().consume_from_right();
-                    session.resize_all_panes(&mut self.clients);
-                    session.mark_session_dirty();
-                    responses.push(ServerResponse::BroadcastToSession(
-                        session_name.clone(),
-                        ServerMessage::LayoutUpdate {
-                            layout: session.layout_state(),
-                        },
-                    ));
-                    self.sessions.insert(session_name, session);
-                }
+                    Self::layout_changed(session, clients, &session_name, true, &mut responses);
+                });
             }
             ClientMessage::ExpelFromColumn => {
-                if let Some(mut session) = self.sessions.remove(&session_name) {
+                self.with_session(&session_name, |session, clients| {
                     session.workspaces.active_mut().expel_active_tile();
-                    session.resize_all_panes(&mut self.clients);
-                    session.mark_session_dirty();
-                    responses.push(ServerResponse::BroadcastToSession(
-                        session_name.clone(),
-                        ServerMessage::LayoutUpdate {
-                            layout: session.layout_state(),
-                        },
-                    ));
-                    self.sessions.insert(session_name, session);
-                }
+                    Self::layout_changed(session, clients, &session_name, true, &mut responses);
+                });
             }
             ClientMessage::Attach => {
                 // Viewport already applied during ClientHello handshake
@@ -554,13 +451,7 @@ impl Server {
             ClientMessage::SwitchWorkspace { workspace_idx } => {
                 if let Some(session) = self.sessions.get_mut(&session_name) {
                     session.workspaces.switch_to(workspace_idx);
-                    session.mark_session_dirty();
-                    responses.push(ServerResponse::BroadcastToSession(
-                        session_name,
-                        ServerMessage::LayoutUpdate {
-                            layout: session.layout_state(),
-                        },
-                    ));
+                    Self::layout_changed(session, &mut self.clients, &session_name, false, &mut responses);
                 }
             }
             ClientMessage::MouseInput {
@@ -572,7 +463,7 @@ impl Server {
                 modifiers,
             } => {
                 if let Some(session) = self.sessions.get_mut(&session_name) {
-                    if let Some(pane) = session.panes.get(&pane_id) {
+                    if let Some(pane) = session.panes.get_mut(&pane_id) {
                         if pane.has_mouse_mode() {
                             pane.send_mouse_input(button, col, row, pressed, modifiers);
                         }
@@ -663,7 +554,7 @@ impl Server {
             ClientMessage::SwitchSession {
                 session_name: target,
             } => {
-                if ciri_session::save::validate_session_name(&target).is_err() {
+                if ciri_session::names::validate_name(&target).is_err() {
                     responses.push(ServerResponse::SendToClient(
                         client_id,
                         ServerMessage::Error {
@@ -678,7 +569,6 @@ impl Server {
                 // Update client's session affinity
                 if let Some(client) = self.clients.get_mut(&client_id) {
                     client.session_name = target.clone();
-                    // Clear old damage and history
                     client.damage.clear();
                     client.history_sent.clear();
                 }
@@ -686,24 +576,21 @@ impl Server {
                 // Get or create target session
                 self.get_or_create_session(&target);
 
-                // Temporarily remove the new session to work with it + clients
-                if let Some(mut new_session) = self.sessions.remove(&target) {
-                    new_session.resize_all_panes(&mut self.clients);
+                self.with_session(&target, |new_session, clients| {
+                    new_session.resize_all_panes(clients);
 
                     // Mark all panes for full sync for this client
-                    let pane_keys: Vec<u64> = new_session.panes.keys().copied().collect();
-                    if let Some(client) = self.clients.get_mut(&client_id) {
-                        for pane_id in &pane_keys {
-                            let mut acc = DamageAccumulator::new();
+                    if let Some(client) = clients.get_mut(&client_id) {
+                        for &pane_id in new_session.panes.keys() {
+                            let mut acc = DamageAccumulator::default();
                             acc.mark_full();
-                            client.damage.insert(*pane_id, acc);
+                            client.damage.insert(pane_id, acc);
                         }
                     }
 
                     // Build state sync for the new session
                     let (sync_msg, pane_syncs) = new_session.build_state_sync();
 
-                    // Send SessionSwitched, then StateSync, then FullPaneSyncs
                     responses.push(ServerResponse::SendToClient(
                         client_id,
                         ServerMessage::SessionSwitched {
@@ -716,31 +603,21 @@ impl Server {
                     }
 
                     // Record history_sent for the new session's panes
-                    let pane_histories: Vec<(u64, usize)> = new_session
-                        .panes
-                        .iter()
-                        .map(|(&pid, pane)| (pid, pane.history_size()))
-                        .collect();
-                    if let Some(client) = self.clients.get_mut(&client_id) {
-                        for (pane_id, history) in pane_histories {
-                            client.history_sent.insert(pane_id, history);
+                    if let Some(client) = clients.get_mut(&client_id) {
+                        for (&pid, pane) in &new_session.panes {
+                            client.history_sent.insert(pid, pane.history_size());
                         }
-                        // Clear damage markers (we just sent full sync)
                         for acc in client.damage.values_mut() {
-                            *acc = DamageAccumulator::new();
+                            *acc = DamageAccumulator::default();
                         }
                     }
-
-                    // Put new session back
-                    self.sessions.insert(target.clone(), new_session);
-                }
+                });
 
                 // Resize panes in old session (client left, viewport may change)
                 if old_session_name != target {
-                    if let Some(mut old_session) = self.sessions.remove(&old_session_name) {
-                        old_session.resize_all_panes(&mut self.clients);
-                        self.sessions.insert(old_session_name, old_session);
-                    }
+                    self.with_session(&old_session_name, |old_session, clients| {
+                        old_session.resize_all_panes(clients);
+                    });
                 }
             }
         }

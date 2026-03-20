@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 
@@ -5,7 +6,7 @@ use super::damage::DamageAccumulator;
 
 pub(crate) struct ClientState {
     pub(crate) id: u64,
-    pub(crate) tx: mpsc::Sender<Vec<u8>>,
+    pub(crate) tx: mpsc::Sender<Bytes>,
     pub(crate) damage: HashMap<u64, DamageAccumulator>, // per pane_id
     pub(crate) last_acked_generation: u64,
     /// Per-pane: how many history lines this client has received.

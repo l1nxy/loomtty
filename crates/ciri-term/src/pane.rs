@@ -8,7 +8,7 @@ use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape, NamedColor,
 use anyhow::Result;
 use ciri_protocol::message::*;
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::event::PtyEventListener;
 use crate::kitty_graphics::KittyGraphicsParser;
@@ -16,6 +16,9 @@ use crate::pty::Pty;
 use crate::shell_integration::Osc133Parser;
 
 pub type PaneId = u64;
+
+/// Maximum number of active image placements retained for reconnecting clients.
+const MAX_ACTIVE_IMAGES: usize = 64;
 
 /// Semantic zone type from OSC 133 shell integration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,7 +51,7 @@ pub struct ImagePlacement {
     /// Image format: "png", "rgb", "rgba", "sixel".
     pub format: String,
     /// Raw image data (PNG/RGB/RGBA bytes, or decoded sixel).
-    pub data: Vec<u8>,
+    pub data: Arc<Vec<u8>>,
 }
 
 /// Shell integration state tracked via OSC 133.
@@ -75,9 +78,20 @@ impl Dimensions for TermSize {
     fn columns(&self) -> usize { self.cols }
 }
 
+/// Map alacritty CursorShape to our wire-format constant.
+fn cursor_shape_to_u8(shape: CursorShape) -> u8 {
+    match shape {
+        CursorShape::Block => CURSOR_BLOCK,
+        CursorShape::Underline => CURSOR_UNDERLINE,
+        CursorShape::Beam => CURSOR_BEAM,
+        CursorShape::HollowBlock => CURSOR_HOLLOW_BLOCK,
+        CursorShape::Hidden => CURSOR_HIDDEN,
+    }
+}
+
 pub struct Pane {
     pub id: PaneId,
-    pub(crate) term: Arc<Mutex<Term<PtyEventListener>>>,
+    term: Term<PtyEventListener>,
     dirty: bool,
     exited: bool,
     pty: Pty,
@@ -114,7 +128,7 @@ impl Pane {
 
         Ok(Pane {
             id,
-            term: Arc::new(Mutex::new(term)),
+            term,
             dirty: true,
             exited: false,
             pty,
@@ -159,28 +173,36 @@ impl Pane {
             // after each one. This ensures Kitty image placements use the cursor
             // at the time of each sequence, not the final cursor after all chunks.
             let mut per_chunk_cursors: Vec<(u16, u16)> = Vec::with_capacity(chunks.len());
-            {
-                let mut term = self.term.lock().unwrap_or_else(|e| e.into_inner());
-                for chunk in &chunks {
-                    self.processor.advance(&mut *term, chunk);
-                    let cursor = term.grid().cursor.point;
-                    per_chunk_cursors.push((
-                        cursor.column.0 as u16,
-                        cursor.line.0.max(0) as u16,
-                    ));
-                }
+            for chunk in &chunks {
+                self.processor.advance(&mut self.term, chunk);
+                let cursor = self.term.grid().cursor.point;
+                per_chunk_cursors.push((
+                    cursor.column.0 as u16,
+                    cursor.line.0.max(0) as u16,
+                ));
             }
 
             // Scan for Kitty graphics sequences with per-chunk cursor positions.
             for (chunk, (cursor_col, cursor_row)) in chunks.iter().zip(per_chunk_cursors.iter()) {
-                let new_placements = self.kitty_parser.scan(
+                let result = self.kitty_parser.scan(
                     chunk,
                     *cursor_col,
                     *cursor_row,
                     &mut self.active_images,
                 );
-                self.pending_images.extend(new_placements);
+                if result.deleted {
+                    // A delete command invalidates everything queued so far.
+                    self.pending_images.clear();
+                }
+                self.pending_images.extend(result.placements);
             }
+
+            // Cap active images to prevent unbounded growth
+            if self.active_images.len() > MAX_ACTIVE_IMAGES {
+                let excess = self.active_images.len() - MAX_ACTIVE_IMAGES;
+                self.active_images.drain(..excess);
+            }
+
             processed = true;
         }
 
@@ -260,41 +282,23 @@ impl Pane {
 
     /// Check if the terminal has mouse reporting mode enabled.
     pub fn has_mouse_mode(&self) -> bool {
-        use alacritty_terminal::term::TermMode;
-        let term = self.term.lock().unwrap_or_else(|e| e.into_inner());
-        let mode = term.mode();
-        mode.contains(TermMode::MOUSE_REPORT_CLICK)
-            || mode.contains(TermMode::MOUSE_DRAG)
-            || mode.contains(TermMode::MOUSE_MOTION)
-    }
-
-    /// Get terminal mode flags for the protocol (mouse mode, alt screen).
-    pub fn mode_flags(&self) -> u8 {
-        use alacritty_terminal::term::TermMode;
-        use ciri_protocol::message::{MODE_MOUSE_REPORT, MODE_ALT_SCREEN};
-        let term = self.term.lock().unwrap_or_else(|e| e.into_inner());
-        let mode = term.mode();
-        let mut flags = 0u8;
-        if mode.contains(TermMode::MOUSE_REPORT_CLICK)
-            || mode.contains(TermMode::MOUSE_DRAG)
-            || mode.contains(TermMode::MOUSE_MOTION) {
-            flags |= MODE_MOUSE_REPORT;
-        }
-        if mode.contains(TermMode::ALT_SCREEN) {
-            flags |= MODE_ALT_SCREEN;
-        }
-        flags
+        self.mode_flags_from_term(&self.term) & MODE_MOUSE_REPORT != 0
     }
 
     /// Forward mouse input as SGR escape sequence to the PTY.
     /// Does NOT reset viewport state (TUI apps manage their own scrolling).
-    pub fn send_mouse_input(&self, button: u8, col: u16, row: u16, pressed: bool, modifiers: u8) {
+    pub fn send_mouse_input(&mut self, button: u8, col: u16, row: u16, pressed: bool, modifiers: u8) {
         let btn_with_mods = button as u32 | ((modifiers as u32) << 2);
-        let suffix = if pressed { 'M' } else { 'm' };
-        let seq = format!("\x1b[<{};{};{}{}", btn_with_mods, col + 1, row + 1, suffix);
-        if let Err(e) = self.pty.write(seq.as_bytes()) {
-            log::warn!("pty write failed (pane {}): {e}", self.id);
-        }
+        let suffix = if pressed { b'M' } else { b'm' };
+        // Stack-allocated buffer avoids heap allocation for every mouse event
+        let mut buf = [0u8; 32];
+        let len = {
+            use std::io::Write;
+            let mut cursor = std::io::Cursor::new(&mut buf[..]);
+            write!(cursor, "\x1b[<{};{};{}{}", btn_with_mods, col + 1, row + 1, suffix as char).unwrap();
+            cursor.position() as usize
+        };
+        self.write_to_pty(&buf[..len]);
     }
 
     pub fn resize(&mut self, cols: u16, rows: u16) {
@@ -303,8 +307,7 @@ impl Pane {
         self.rows = rows;
         self.pty.resize(cols, rows);
         let size = TermSize { cols: cols as usize, rows: rows as usize };
-        let mut term = self.term.lock().unwrap_or_else(|e| e.into_inner());
-        term.resize(size);
+        self.term.resize(size);
         self.dirty = true;
     }
 
@@ -315,107 +318,95 @@ impl Pane {
     pub fn is_exited(&self) -> bool { self.exited }
     pub fn set_dirty(&mut self, dirty: bool) { self.dirty = dirty; }
 
-    /// Extract damage regions from the terminal. Returns None if no damage.
+    /// Extract damage metadata from the terminal. Returns None if no damage.
+    /// Returns (line, left, right) tuples — cells are NOT read here (they are
+    /// read at encoding time via `write_cells_into` to avoid intermediate allocations).
     /// Resets damage tracking after extraction.
-    pub fn extract_damage(&mut self) -> Option<Vec<DamageRegion>> {
-        let mut term = self.term.lock().unwrap_or_else(|e| e.into_inner());
-        let grid = term.grid();
-        let cols = grid.columns();
-        let total_rows = grid.screen_lines();
+    pub fn extract_damage(&mut self) -> Option<Vec<(u16, u16, u16)>> {
+        let cols = self.term.grid().columns();
+        let total_rows = self.term.grid().screen_lines();
 
         if cols == 0 || total_rows == 0 {
-            term.reset_damage();
+            self.term.reset_damage();
             return None;
         }
 
+        let right = cols.saturating_sub(1) as u16;
+
+        // Determine which lines are damaged, consuming the TermDamage borrow.
         use alacritty_terminal::term::TermDamage;
-        let damage = term.damage();
-        let regions = match damage {
+        let ranges = match self.term.damage() {
             TermDamage::Full => {
-                let mut regions = Vec::with_capacity(total_rows);
+                let mut ranges = Vec::with_capacity(total_rows);
                 for row in 0..total_rows {
-                    let right = cols.saturating_sub(1);
-                    let cells = self.read_line_cells(&term, row, 0, right);
-                    regions.push(DamageRegion {
-                        line: row as u16,
-                        left: 0,
-                        right: right as u16,
-                        cells,
-                    });
+                    ranges.push((row as u16, 0u16, right));
                 }
-                regions
+                ranges
             }
             TermDamage::Partial(iter) => {
-                let bounds: Vec<_> = iter.collect();
-                if bounds.is_empty() {
-                    term.reset_damage();
-                    return None;
-                }
-                // Expand each damaged line to full width to catch cleared cells
-                // (e.g., PSReadLine prediction text that was erased)
-                let right = cols.saturating_sub(1);
-                let mut seen_lines = std::collections::HashSet::new();
-                let mut regions = Vec::with_capacity(bounds.len());
-                for b in bounds {
-                    if seen_lines.insert(b.line) {
-                        let cells = self.read_line_cells(&term, b.line, 0, right);
-                        regions.push(DamageRegion {
-                            line: b.line as u16,
-                            left: 0,
-                            right: right as u16,
-                            cells,
-                        });
+                let mut seen = [false; 256];
+                let mut ranges = Vec::new();
+                for b in iter {
+                    let line = b.line;
+                    if line < 256 && !seen[line] {
+                        seen[line] = true;
+                        ranges.push((line as u16, 0u16, right));
+                    } else if line >= 256 {
+                        ranges.push((line as u16, 0u16, right));
                     }
                 }
-                regions
+                ranges
             }
         };
-        term.reset_damage();
-        Some(regions)
+
+        self.term.reset_damage();
+        if ranges.is_empty() { None } else { Some(ranges) }
     }
 
-    /// Read cells for a specific line range (for CellDelta).
-    pub fn read_cells(&self, line: u16, left: u16, right: u16) -> Vec<PackedCell> {
-        let term = self.term.lock().unwrap_or_else(|e| e.into_inner());
-        let grid = term.grid();
-        let mut cells = Vec::with_capacity((right - left + 1) as usize);
-        for col in left..=right {
-            let point = Point::new(Line(line as i32), Column(col as usize));
-            cells.push(pack_cell(&grid[point]));
-        }
-        cells
-    }
 
     /// Read cursor position, shape, and mode flags.
     pub fn cursor_info(&self) -> (i16, u16, u8, u8) {
-        let term = self.term.lock().unwrap_or_else(|e| e.into_inner());
+        let term = &self.term;
         let content = term.renderable_content();
         let cursor_line = content.cursor.point.line.0 as i16;
         let cursor_col = content.cursor.point.column.0 as u16;
-        let cursor_shape = match content.cursor.shape {
-            CursorShape::Block => CURSOR_BLOCK,
-            CursorShape::Underline => CURSOR_UNDERLINE,
-            CursorShape::Beam => CURSOR_BEAM,
-            CursorShape::HollowBlock => CURSOR_HOLLOW_BLOCK,
-            CursorShape::Hidden => CURSOR_HIDDEN,
-        };
+        let cursor_shape = cursor_shape_to_u8(content.cursor.shape);
         let mode_flags = self.mode_flags_from_term(&term);
         (cursor_line, cursor_col, cursor_shape, mode_flags)
     }
 
     /// Current history size (number of scrollback lines).
     pub fn history_size(&self) -> usize {
-        let term = self.term.lock().unwrap_or_else(|e| e.into_inner());
-        term.grid().history_size()
+        self.term.grid().history_size()
     }
 
     /// Create a full pane snapshot with incremental scrollback (only new lines since `history_sent`).
     pub fn snapshot_incremental(&self, generation: u64, history_sent: usize) -> FullPaneSync {
-        let term = self.term.lock().unwrap_or_else(|e| e.into_inner());
+        let term = &self.term;
+        let current_history = term.grid().history_size();
+        let last_sent = history_sent.min(current_history);
+        let new_lines = current_history - last_sent;
+        self.build_snapshot(term, generation, new_lines)
+    }
+
+    /// Create a full pane snapshot for StateSync / reattach.
+    pub fn snapshot(&self, generation: u64) -> FullPaneSync {
+        let term = &self.term;
+        let history_size = term.grid().history_size();
+        let max_scrollback = 1000.min(history_size);
+        self.build_snapshot(term, generation, max_scrollback)
+    }
+
+    /// Shared snapshot builder: reads viewport cells, scrollback, cursor, and mode flags.
+    fn build_snapshot(
+        &self,
+        term: &Term<PtyEventListener>,
+        generation: u64,
+        scrollback_lines: usize,
+    ) -> FullPaneSync {
         let grid = term.grid();
         let cols = grid.columns();
         let rows = grid.screen_lines();
-        let current_history = grid.history_size();
         let content = term.renderable_content();
 
         // Read viewport cells
@@ -427,29 +418,17 @@ impl Pane {
             }
         }
 
-        // Read new history lines (only lines not yet sent)
-        let last_sent = history_sent.min(current_history);
-        let new_lines = current_history - last_sent;
+        // Read scrollback lines (oldest first)
         let mut sb_cells = Vec::new();
-        if new_lines > 0 {
-            sb_cells.reserve(new_lines * cols);
-            for i in (1..=new_lines).rev() {
+        if scrollback_lines > 0 {
+            sb_cells.reserve(scrollback_lines * cols);
+            for i in (1..=scrollback_lines).rev() {
                 for col in 0..cols {
                     let point = Point::new(Line(-(i as i32)), Column(col));
                     sb_cells.push(pack_cell(&grid[point]));
                 }
             }
         }
-
-        let cursor_shape = match content.cursor.shape {
-            CursorShape::Block => CURSOR_BLOCK,
-            CursorShape::Underline => CURSOR_UNDERLINE,
-            CursorShape::Beam => CURSOR_BEAM,
-            CursorShape::HollowBlock => CURSOR_HOLLOW_BLOCK,
-            CursorShape::Hidden => CURSOR_HIDDEN,
-        };
-
-        let mode_flags = self.mode_flags_from_term(&term);
 
         FullPaneSync {
             pane_id: self.id,
@@ -458,16 +437,16 @@ impl Pane {
             rows: rows as u16,
             cursor_line: content.cursor.point.line.0 as i16,
             cursor_col: content.cursor.point.column.0 as u16,
-            cursor_shape,
-            mode_flags,
+            cursor_shape: cursor_shape_to_u8(content.cursor.shape),
+            mode_flags: self.mode_flags_from_term(term),
             title: self.title.clone(),
             scrollback: sb_cells,
-            scrollback_rows: new_lines as u16,
+            scrollback_rows: scrollback_lines as u16,
             cells,
         }
     }
 
-    /// Helper: compute mode flags from a locked term reference (avoids double-locking).
+    /// Helper: compute mode flags from a term reference.
     fn mode_flags_from_term(&self, term: &Term<PtyEventListener>) -> u8 {
         use alacritty_terminal::term::TermMode;
         let mode = term.mode();
@@ -505,81 +484,17 @@ impl Pane {
         &self.active_images
     }
 
-    /// Read cells from a line range and pack them (live viewport only).
-    fn read_line_cells(
-        &self,
-        term: &Term<PtyEventListener>,
-        line: usize,
-        left: usize,
-        right: usize,
-    ) -> Vec<PackedCell> {
-        let grid = term.grid();
-        let mut cells = Vec::with_capacity(right - left + 1);
+    /// Write packed cells for a line range directly into a byte buffer (zero-copy encoding).
+    /// Avoids intermediate Vec<PackedCell> allocation — cells go directly from grid → bytes.
+    pub fn write_cells_into(&self, line: u16, left: u16, right: u16, buf: &mut Vec<u8>) {
+        let grid = self.term.grid();
         for col in left..=right {
-            let point = Point::new(Line(line as i32), Column(col));
-            let cell = &grid[point];
-            cells.push(pack_cell(cell));
-        }
-        cells
-    }
-
-    /// Create a full pane snapshot for StateSync / reattach.
-    pub fn snapshot(&self, generation: u64) -> FullPaneSync {
-        let term = self.term.lock().unwrap_or_else(|e| e.into_inner());
-        let grid = term.grid();
-        let cols = grid.columns();
-        let rows = grid.screen_lines();
-        let content = term.renderable_content();
-
-        let mut cells = Vec::with_capacity(cols * rows);
-        for row in 0..rows {
-            for col in 0..cols {
-                let point = Point::new(Line(row as i32), Column(col));
-                let cell = &grid[point];
-                cells.push(pack_cell(cell));
-            }
-        }
-
-        // Include recent scrollback for attach/reattach (capped to avoid huge syncs)
-        let history_size = grid.history_size();
-        let max_scrollback = 1000.min(history_size);
-        let mut sb_cells = Vec::new();
-        if max_scrollback > 0 {
-            sb_cells.reserve(max_scrollback * cols);
-            // Line(-max_scrollback) = oldest, Line(-1) = newest
-            for i in (1..=max_scrollback).rev() {
-                for col in 0..cols {
-                    let point = Point::new(Line(-(i as i32)), Column(col));
-                    sb_cells.push(pack_cell(&grid[point]));
-                }
-            }
-        }
-
-        let cursor_shape = match content.cursor.shape {
-            CursorShape::Block => CURSOR_BLOCK,
-            CursorShape::Underline => CURSOR_UNDERLINE,
-            CursorShape::Beam => CURSOR_BEAM,
-            CursorShape::HollowBlock => CURSOR_HOLLOW_BLOCK,
-            CursorShape::Hidden => CURSOR_HIDDEN,
-        };
-
-        let mode_flags = self.mode_flags_from_term(&term);
-
-        FullPaneSync {
-            pane_id: self.id,
-            generation,
-            cols: cols as u16,
-            rows: rows as u16,
-            cursor_line: content.cursor.point.line.0 as i16,
-            cursor_col: content.cursor.point.column.0 as u16,
-            cursor_shape,
-            mode_flags,
-            title: self.title.clone(),
-            scrollback: sb_cells,
-            scrollback_rows: max_scrollback as u16,
-            cells,
+            let point = Point::new(Line(line as i32), Column(col as usize));
+            let packed = pack_cell(&grid[point]);
+            buf.extend_from_slice(ciri_protocol::codec::cells_to_bytes(std::slice::from_ref(&packed)));
         }
     }
+
 }
 
 /// Pack an alacritty cell into our wire format.

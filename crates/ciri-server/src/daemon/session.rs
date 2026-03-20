@@ -8,10 +8,10 @@ use ciri_session::save::save_session;
 use ciri_session::state::{SavedColumn, SavedTile, SavedWorkspace, SessionState};
 use ciri_term::pane::Pane;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::time::{Duration, Instant};
 
 use super::client::ClientState;
-use super::damage::DamageAccumulator;
 
 pub(crate) const SESSION_AUTOSAVE_DEBOUNCE_MS: u64 = 250;
 
@@ -51,6 +51,19 @@ impl Session {
         }
     }
 
+    /// Mark a pane as fully damaged for all clients in this session.
+    fn mark_full_damage(
+        clients: &mut HashMap<u64, ClientState>,
+        session_name: &str,
+        pane_id: u64,
+    ) {
+        for client in clients.values_mut() {
+            if client.session_name == session_name {
+                client.damage.entry(pane_id).or_default().mark_full();
+            }
+        }
+    }
+
     /// Create a new pane in the active workspace's active position (column right).
     pub(crate) fn create_pane(
         &mut self,
@@ -73,7 +86,7 @@ impl Session {
         } else {
             col_px
         };
-        let (cw, ch) = Self::effective_cell_dims_from(clients, &self.session_name);
+        let (_, _, cw, ch) = Self::effective_dims_from(clients, &self.session_name);
         let (cols, rows) = self.pane_grid_size_with_cells(pane_w, vh, cw, ch);
         log::info!(
             "create_pane {id}: viewport={vw}x{vh} col_px={pane_w:.1} cell={cw}x{ch} inset={} → {cols}x{rows}",
@@ -85,16 +98,7 @@ impl Session {
         self.workspaces
             .active_mut()
             .add_column_right(id, self.default_column_width);
-        // Mark session clients for full sync of this new pane
-        for client in clients.values_mut() {
-            if client.session_name == self.session_name {
-                client
-                    .damage
-                    .entry(id)
-                    .or_insert_with(DamageAccumulator::new)
-                    .mark_full();
-            }
-        }
+        Self::mark_full_damage(clients, &self.session_name, id);
         Ok(id)
     }
 
@@ -108,66 +112,40 @@ impl Session {
         *next_pane_id += 1;
         let vw = self.workspaces.view_size.width;
         let vh = self.workspaces.view_size.height;
-        let (cw, ch) = Self::effective_cell_dims_from(clients, &self.session_name);
+        let (_, _, cw, ch) = Self::effective_dims_from(clients, &self.session_name);
         let (cols, rows) = self.pane_grid_size_with_cells(vw, vh, cw, ch);
         let pane = Pane::new(id, cols, rows, &self.default_shell)?;
         self.panes.insert(id, pane);
         self.generation.insert(id, 0);
         self.workspaces.add_workspace_below(id);
-        for client in clients.values_mut() {
-            if client.session_name == self.session_name {
-                client
-                    .damage
-                    .entry(id)
-                    .or_insert_with(DamageAccumulator::new)
-                    .mark_full();
-            }
-        }
+        Self::mark_full_damage(clients, &self.session_name, id);
         Ok(id)
     }
 
-    /// Compute effective cell dimensions from a set of clients for this session (smallest wins).
-    pub(crate) fn effective_cell_dims_from(
+    /// Compute effective viewport and cell dimensions from session clients (smallest wins).
+    /// Returns `(viewport_w, viewport_h, cell_w, cell_h)`.
+    pub(crate) fn effective_dims_from(
         clients: &HashMap<u64, ClientState>,
         session_name: &str,
-    ) -> (f32, f32) {
+    ) -> (f32, f32, f32, f32) {
+        let mut vw = f32::MAX;
+        let mut vh = f32::MAX;
         let mut cw = f32::MAX;
         let mut ch = f32::MAX;
         for client in clients.values() {
             if client.session_name == session_name {
+                vw = vw.min(client.viewport_width);
+                vh = vh.min(client.viewport_height);
                 cw = cw.min(client.cell_width);
                 ch = ch.min(client.cell_height);
             }
         }
-        if cw == f32::MAX {
-            cw = 8.0;
-        }
-        if ch == f32::MAX {
-            ch = 16.0;
-        }
-        (cw, ch)
-    }
-
-    /// Compute effective viewport from clients for this session (smallest wins).
-    pub(crate) fn effective_viewport_from(
-        clients: &HashMap<u64, ClientState>,
-        session_name: &str,
-    ) -> (f32, f32) {
-        let mut w = f32::MAX;
-        let mut h = f32::MAX;
-        for client in clients.values() {
-            if client.session_name == session_name {
-                w = w.min(client.viewport_width);
-                h = h.min(client.viewport_height);
-            }
-        }
-        if w == f32::MAX {
-            w = 1024.0;
-        }
-        if h == f32::MAX {
-            h = 768.0;
-        }
-        (w, h)
+        (
+            if vw == f32::MAX { 1024.0 } else { vw },
+            if vh == f32::MAX { 768.0 } else { vh },
+            if cw == f32::MAX { 8.0 } else { cw },
+            if ch == f32::MAX { 16.0 } else { ch },
+        )
     }
 
     /// Compute cols/rows for a pane given its pixel area and specific cell dimensions.
@@ -183,7 +161,7 @@ impl Session {
         let mut cols = (usable_w / cw).floor().max(1.0) as u16;
         let mut rows = (usable_h / ch).floor().max(1.0) as u16;
         // Cap grid dimensions to prevent OOM from extreme viewport sizes or tiny cell dims
-        const MAX_GRID_CELLS: usize = 10_000_000;
+        use ciri_protocol::message::MAX_GRID_CELLS;
         while cols as usize * rows as usize > MAX_GRID_CELLS {
             if cols > rows { cols /= 2; } else { rows /= 2; }
         }
@@ -200,7 +178,7 @@ impl Session {
 
     /// Resize ALL panes from the full layout tree.
     pub(crate) fn resize_all_panes(&mut self, clients: &mut HashMap<u64, ClientState>) {
-        let (vp_w, vp_h) = Self::effective_viewport_from(clients, &self.session_name);
+        let (vp_w, vp_h, cw, ch) = Self::effective_dims_from(clients, &self.session_name);
         self.workspaces
             .resize_view(ViewSize {
                 width: vp_w,
@@ -208,8 +186,6 @@ impl Session {
             });
         let vw = self.workspaces.view_size.width;
         let vh = self.workspaces.view_size.height;
-
-        let (cw, ch) = Self::effective_cell_dims_from(clients, &self.session_name);
         log::debug!(
             "resize_all_panes: viewport={vw}x{vh} cell={cw}x{ch} inset={}",
             self.pane_inset
@@ -228,15 +204,7 @@ impl Session {
                         pane.resize(cols, rows);
                         let g = self.generation.entry(*pane_id).or_insert(0);
                         *g += 1;
-                        for client in clients.values_mut() {
-                            if client.session_name == self.session_name {
-                                client
-                                    .damage
-                                    .entry(*pane_id)
-                                    .or_insert_with(DamageAccumulator::new)
-                                    .mark_full();
-                            }
-                        }
+                        Self::mark_full_damage(clients, &self.session_name, *pane_id);
                     }
                 }
             }
@@ -291,58 +259,57 @@ impl Session {
                 .collect(),
             active_workspace_idx: self.workspaces.active_workspace_idx,
         };
-        log::debug!(
-            "layout_state: {} ws, active={}",
-            state.workspaces.len(),
-            state.active_workspace_idx
-        );
-        for (i, ws) in state.workspaces.iter().enumerate() {
-            for (j, col) in ws.columns.iter().enumerate() {
-                let panes: Vec<u64> = col.tiles.iter().map(|t| t.pane_id).collect();
-                log::debug!(
-                    "  ws[{i}].col[{j}]: width={:.3}, panes={:?}",
-                    col.width_proportion,
-                    panes
-                );
+        if log::log_enabled!(log::Level::Debug) {
+            log::debug!(
+                "layout_state: {} ws, active={}",
+                state.workspaces.len(),
+                state.active_workspace_idx
+            );
+            for (i, ws) in state.workspaces.iter().enumerate() {
+                for (j, col) in ws.columns.iter().enumerate() {
+                    let panes: Vec<u64> = col.tiles.iter().map(|t| t.pane_id).collect();
+                    log::debug!(
+                        "  ws[{i}].col[{j}]: width={:.3}, panes={:?}",
+                        col.width_proportion,
+                        panes
+                    );
+                }
             }
         }
         state
     }
 
     pub(crate) fn save_session(&self) -> Result<()> {
+        let layout = self.layout_state();
         let state = SessionState {
             name: self.session_name.clone(),
-            workspaces: self
+            workspaces: layout
                 .workspaces
-                .workspaces
-                .iter()
+                .into_iter()
                 .map(|ws| SavedWorkspace {
                     columns: ws
                         .columns
-                        .iter()
+                        .into_iter()
                         .map(|c| SavedColumn {
                             tiles: c
                                 .tiles
-                                .iter()
+                                .into_iter()
                                 .map(|t| SavedTile {
                                     pane_id: t.pane_id,
-                                    weight: t.height.weight(),
+                                    weight: t.weight,
                                     cwd: None,
                                     title: None,
                                 })
                                 .collect(),
                             active_tile_idx: c.active_tile_idx,
-                            width_proportion: c.proportion(self.workspaces.view_size.width),
-                            width_fixed_px: match c.width {
-                                ColumnWidth::Fixed(px) => Some(px),
-                                _ => None,
-                            },
+                            width_proportion: c.width_proportion,
+                            width_fixed_px: c.width_fixed_px,
                         })
                         .collect(),
                     active_column_idx: ws.active_column_idx,
                 })
                 .collect(),
-            active_workspace_idx: self.workspaces.active_workspace_idx,
+            active_workspace_idx: layout.active_workspace_idx,
         };
         save_session(&state, &transport::state_dir())
     }
@@ -416,29 +383,22 @@ impl Session {
                     pixel_width: img.pixel_width,
                     pixel_height: img.pixel_height,
                     format: img.format,
-                    data: img.data,
+                    data: Arc::try_unwrap(img.data).unwrap_or_else(|arc| (*arc).clone()),
                 });
             }
 
-            if let Some(regions) = pane.extract_damage() {
+            if let Some(ranges) = pane.extract_damage() {
                 // Bump generation
                 let g = self.generation.entry(pane_id).or_insert(0);
                 *g += 1;
-
-                // If all terminal rows were damaged, this is likely a scroll or full repaint.
-                let is_full = regions.len() >= pane.grid_rows() as usize;
 
                 for client in clients.values_mut() {
                     if client.session_name == self.session_name {
                         let acc = client
                             .damage
                             .entry(pane_id)
-                            .or_insert_with(DamageAccumulator::new);
-                        if is_full {
-                            acc.mark_full();
-                        } else {
-                            acc.merge_regions(&regions);
-                        }
+                            .or_default();
+                        acc.merge_ranges(&ranges);
                         acc.cursor_dirty = true;
                     }
                 }

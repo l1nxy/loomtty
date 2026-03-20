@@ -40,7 +40,9 @@ impl Workspace {
     }
 
     pub fn active_pane_id(&self) -> Option<PaneId> {
-        self.columns.get(self.active_column_idx).map(|c| c.active_pane_id())
+        self.columns
+            .get(self.active_column_idx)
+            .map(|c| c.active_pane_id())
     }
 
     pub fn column_x(&self, idx: usize) -> f32 {
@@ -65,7 +67,11 @@ impl Workspace {
 
     /// Compute target viewport offset for the active column.
     /// `current_offset` is the current (or animated) view offset X, needed for `Never` strategy.
-    pub fn target_offset_for_active_with_strategy(&self, center: CenterStrategy, current_offset: f32) -> f32 {
+    pub fn target_offset_for_active_with_strategy(
+        &self,
+        center: CenterStrategy,
+        current_offset: f32,
+    ) -> f32 {
         let Some(col) = self.columns.get(self.active_column_idx) else {
             return 0.0;
         };
@@ -146,10 +152,16 @@ impl Workspace {
     pub fn add_column_right(&mut self, pane_id: PaneId, default_width: ColumnWidth) {
         let vw = self.view_size.width;
         let vh = self.view_size.height;
-        log::info!("add_column_right: pane={pane_id} viewport={vw}x{vh} existing_cols={} default_width={default_width:?}",
-            self.columns.len());
+        log::info!(
+            "add_column_right: pane={pane_id} viewport={vw}x{vh} existing_cols={} default_width={default_width:?}",
+            self.columns.len()
+        );
         for (i, col) in self.columns.iter().enumerate() {
-            log::info!("  before: col[{i}] width={:?} effective={:.1}px", col.width, col.effective_width(vw));
+            log::info!(
+                "  before: col[{i}] width={:?} effective={:.1}px",
+                col.width,
+                col.effective_width(vw)
+            );
         }
 
         let insert_at = if self.columns.is_empty() {
@@ -180,7 +192,11 @@ impl Workspace {
         self.active_column_idx = insert_at;
 
         for (i, col) in self.columns.iter().enumerate() {
-            log::info!("  after: col[{i}] width={:?} effective={:.1}px", col.width, col.effective_width(vw));
+            log::info!(
+                "  after: col[{i}] width={:?} effective={:.1}px",
+                col.width,
+                col.effective_width(vw)
+            );
         }
     }
 
@@ -233,7 +249,9 @@ impl Workspace {
     /// Returns the consumed pane_id, or None if nothing to consume.
     pub fn consume_from_right(&mut self) -> Option<PaneId> {
         let right_idx = self.active_column_idx + 1;
-        if right_idx >= self.columns.len() { return None; }
+        if right_idx >= self.columns.len() {
+            return None;
+        }
 
         let right_col = &mut self.columns[right_idx];
         let tile = right_col.tiles.remove(right_col.active_tile_idx);
@@ -265,7 +283,9 @@ impl Workspace {
     /// Returns the expelled pane_id, or None if column has only 1 tile.
     pub fn expel_active_tile(&mut self) -> Option<PaneId> {
         let col = &mut self.columns[self.active_column_idx];
-        if col.tiles.len() <= 1 { return None; }
+        if col.tiles.len() <= 1 {
+            return None;
+        }
 
         let tile = col.tiles.remove(col.active_tile_idx);
         let pane_id = tile.pane_id;
@@ -320,14 +340,16 @@ impl Workspace {
 
     pub fn move_pane_left(&mut self) {
         if self.active_column_idx > 0 {
-            self.columns.swap(self.active_column_idx, self.active_column_idx - 1);
+            self.columns
+                .swap(self.active_column_idx, self.active_column_idx - 1);
             self.active_column_idx -= 1;
         }
     }
 
     pub fn move_pane_right(&mut self) {
         if self.active_column_idx + 1 < self.columns.len() {
-            self.columns.swap(self.active_column_idx, self.active_column_idx + 1);
+            self.columns
+                .swap(self.active_column_idx, self.active_column_idx + 1);
             self.active_column_idx += 1;
         }
     }
@@ -397,14 +419,24 @@ impl Workspace {
 
     /// Cycle the active column's width through the given presets.
     /// Returns the new ColumnWidth (for syncing to server), or None if no columns.
-    pub fn cycle_preset_width(&mut self, presets: &[ColumnWidth], reverse: bool) -> Option<ColumnWidth> {
+    pub fn cycle_preset_width(
+        &mut self,
+        presets: &[ColumnWidth],
+        reverse: bool,
+    ) -> Option<ColumnWidth> {
         if presets.is_empty() || self.columns.is_empty() {
             return None;
         }
         let col = &mut self.columns[self.active_column_idx];
         let vw_for_log = self.view_size.width;
-        log::info!("cycle_preset_width: active_col={} current_width={:?} effective={:.1}px preset_idx={:?} reverse={reverse} viewport={vw_for_log}x{}",
-            self.active_column_idx, col.width, col.effective_width(vw_for_log), col.preset_width_idx, self.view_size.height);
+        log::info!(
+            "cycle_preset_width: active_col={} current_width={:?} effective={:.1}px preset_idx={:?} reverse={reverse} viewport={vw_for_log}x{}",
+            self.active_column_idx,
+            col.width,
+            col.effective_width(vw_for_log),
+            col.preset_width_idx,
+            self.view_size.height
+        );
         let current_idx = col.preset_width_idx;
         let new_idx = match current_idx {
             Some(idx) => {
@@ -418,40 +450,73 @@ impl Workspace {
                 // No preset selected: find the closest preset to current width, then advance
                 let vw = self.view_size.width;
                 let current_p = col.proportion(vw);
-                let closest = presets.iter().enumerate().min_by(|(_, a), (_, b)| {
-                    let pa = match a { ColumnWidth::Proportion(p) => *p, ColumnWidth::Fixed(px) => *px / vw as f64 };
-                    let pb = match b { ColumnWidth::Proportion(p) => *p, ColumnWidth::Fixed(px) => *px / vw as f64 };
-                    (pa - current_p).abs().partial_cmp(&(pb - current_p).abs()).unwrap()
-                }).map(|(i, _)| i).unwrap_or(0);
+                let closest = presets
+                    .iter()
+                    .enumerate()
+                    .min_by(|(_, a), (_, b)| {
+                        let pa = match a {
+                            ColumnWidth::Proportion(p) => *p,
+                            ColumnWidth::Fixed(px) => *px / vw as f64,
+                        };
+                        let pb = match b {
+                            ColumnWidth::Proportion(p) => *p,
+                            ColumnWidth::Fixed(px) => *px / vw as f64,
+                        };
+                        (pa - current_p)
+                            .abs()
+                            .partial_cmp(&(pb - current_p).abs())
+                            .unwrap()
+                    })
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
                 if reverse {
-                    if closest == 0 { presets.len() - 1 } else { closest - 1 }
+                    if closest == 0 {
+                        presets.len() - 1
+                    } else {
+                        closest - 1
+                    }
                 } else {
                     (closest + 1) % presets.len()
                 }
             }
         };
-        log::info!("  cycle: current_idx={current_idx:?} → new_idx={new_idx} new_width={:?}", presets[new_idx]);
+        log::info!(
+            "  cycle: current_idx={current_idx:?} → new_idx={new_idx} new_width={:?}",
+            presets[new_idx]
+        );
         col.preset_width_idx = Some(new_idx);
         let new_width = presets[new_idx];
         // Use set_active_column_width to properly redistribute other columns
         self.set_active_column_width(new_width);
         // Restore the preset_width_idx that set_active_column_width may not preserve
         self.columns[self.active_column_idx].preset_width_idx = Some(new_idx);
-        log::info!("  after cycle: col width={:?} effective={:.1}px",
+        log::info!(
+            "  after cycle: col width={:?} effective={:.1}px",
             self.columns[self.active_column_idx].width,
-            self.columns[self.active_column_idx].effective_width(self.view_size.width));
+            self.columns[self.active_column_idx].effective_width(self.view_size.width)
+        );
         Some(new_width)
     }
 
     /// Hit-test tile borders: returns (col_idx, top_tile_idx) if mouse is near
     /// a horizontal border between tiles within a visible column.
-    pub fn hit_test_tile_border(&self, view_offset_x: f32, mx: f32, my: f32, threshold: f32) -> Option<(usize, usize)> {
+    pub fn hit_test_tile_border(
+        &self,
+        view_offset_x: f32,
+        mx: f32,
+        my: f32,
+        threshold: f32,
+    ) -> Option<(usize, usize)> {
         let vox = view_offset_x;
         for (col_idx, col) in self.columns.iter().enumerate() {
-            if col.tile_count() < 2 { continue; }
+            if col.tile_count() < 2 {
+                continue;
+            }
             let col_x = self.column_x(col_idx) - vox;
             let col_w = col.effective_width(self.view_size.width);
-            if mx < col_x || mx > col_x + col_w { continue; }
+            if mx < col_x || mx > col_x + col_w {
+                continue;
+            }
 
             let rects = col.tile_rects(col_w, self.view_size.height);
             for i in 0..rects.len() - 1 {
@@ -467,9 +532,13 @@ impl Workspace {
     /// Resize two adjacent tiles within a column by pixel delta.
     /// Preserves the pair's combined weight so other tiles in the column are unaffected.
     pub fn resize_tile_pair(&mut self, col_idx: usize, top_tile_idx: usize, delta_y: f32) {
-        let Some(col) = self.columns.get_mut(col_idx) else { return };
+        let Some(col) = self.columns.get_mut(col_idx) else {
+            return;
+        };
         let bot_tile_idx = top_tile_idx + 1;
-        if bot_tile_idx >= col.tiles.len() { return; }
+        if bot_tile_idx >= col.tiles.len() {
+            return;
+        }
 
         let vh = self.view_size.height;
         let col_w = col.effective_width(self.view_size.width);
@@ -489,8 +558,12 @@ impl Workspace {
 
         if total_h > 0.0 {
             let ratio = new_top_h as f64 / total_h as f64;
-            col.tiles[top_tile_idx].height = TileHeight::Auto { weight: total_w * ratio };
-            col.tiles[bot_tile_idx].height = TileHeight::Auto { weight: total_w * (1.0 - ratio) };
+            col.tiles[top_tile_idx].height = TileHeight::Auto {
+                weight: total_w * ratio,
+            };
+            col.tiles[bot_tile_idx].height = TileHeight::Auto {
+                weight: total_w * (1.0 - ratio),
+            };
         }
     }
 
@@ -513,7 +586,6 @@ impl Workspace {
             None
         }
     }
-
 }
 
 #[cfg(test)]
@@ -523,7 +595,10 @@ mod tests {
     const DW: ColumnWidth = ColumnWidth::Proportion(0.5);
 
     fn ws() -> Workspace {
-        Workspace::new(ViewSize { width: 1000.0, height: 600.0 })
+        Workspace::new(ViewSize {
+            width: 1000.0,
+            height: 600.0,
+        })
     }
 
     trait TestHelper {

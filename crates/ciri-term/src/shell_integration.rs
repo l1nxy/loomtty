@@ -64,8 +64,8 @@ impl Osc133Parser {
                             rest_end += 1;
                         }
                         if rest_end < data.len() {
-                            params = String::from_utf8_lossy(&data[rest_start..rest_end])
-                                .to_string();
+                            params =
+                                String::from_utf8_lossy(&data[rest_start..rest_end]).to_string();
                             end = rest_end;
                             found_terminator = true;
                         } else {

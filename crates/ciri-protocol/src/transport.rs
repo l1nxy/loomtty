@@ -5,9 +5,10 @@ use std::path::PathBuf;
 #[cfg(unix)]
 fn home_dir() -> Option<PathBuf> {
     if let Ok(home) = std::env::var("HOME")
-        && !home.is_empty() {
-            return Some(PathBuf::from(home));
-        }
+        && !home.is_empty()
+    {
+        return Some(PathBuf::from(home));
+    }
     let uid = unsafe { libc::getuid() };
     let mut buf = vec![0u8; 4096];
     let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };

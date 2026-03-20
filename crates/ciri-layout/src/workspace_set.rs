@@ -56,7 +56,10 @@ impl WorkspaceSet {
             let col_idx = self.active().active_column_idx;
             self.active_workspace_idx -= 1;
             // Clamp column index to new workspace's range
-            let max = self.workspaces[self.active_workspace_idx].columns.len().saturating_sub(1);
+            let max = self.workspaces[self.active_workspace_idx]
+                .columns
+                .len()
+                .saturating_sub(1);
             self.workspaces[self.active_workspace_idx].active_column_idx = col_idx.min(max);
         }
     }
@@ -66,7 +69,10 @@ impl WorkspaceSet {
         if self.active_workspace_idx + 1 < self.workspaces.len() {
             let col_idx = self.active().active_column_idx;
             self.active_workspace_idx += 1;
-            let max = self.workspaces[self.active_workspace_idx].columns.len().saturating_sub(1);
+            let max = self.workspaces[self.active_workspace_idx]
+                .columns
+                .len()
+                .saturating_sub(1);
             self.workspaces[self.active_workspace_idx].active_column_idx = col_idx.min(max);
         }
     }
@@ -83,7 +89,8 @@ impl WorkspaceSet {
     /// Switch to workspace by index, creating workspaces if needed.
     pub fn switch_to(&mut self, idx: usize) {
         while self.workspaces.len() <= idx {
-            self.workspaces.push(Workspace::new_with_gap(self.view_size, self.column_gap));
+            self.workspaces
+                .push(Workspace::new_with_gap(self.view_size, self.column_gap));
         }
         self.active_workspace_idx = idx;
     }
@@ -91,7 +98,11 @@ impl WorkspaceSet {
     /// Get ALL visible tiles across all visible workspaces with screen coordinates.
     /// Returns (pane_id, screen_rect, is_active).
     /// `view_offset_x` / `view_offset_y` are the current animated viewport offsets from App.
-    pub fn visible_tiles_2d(&self, view_offset_x: f32, view_offset_y: f32) -> Vec<(PaneId, Rect, bool)> {
+    pub fn visible_tiles_2d(
+        &self,
+        view_offset_x: f32,
+        view_offset_y: f32,
+    ) -> Vec<(PaneId, Rect, bool)> {
         let mut result = Vec::new();
         let vp_top = view_offset_y;
         let vp_bottom = vp_top + self.view_size.height;
@@ -121,7 +132,8 @@ impl WorkspaceSet {
 
                 let tile_rects = col.tile_rects(col_w, ws_h);
                 for (pane_id, tile_y, tile_h) in &tile_rects {
-                    let is_active = ws_idx == self.active_workspace_idx && Some(*pane_id) == active_pane;
+                    let is_active =
+                        ws_idx == self.active_workspace_idx && Some(*pane_id) == active_pane;
                     result.push((
                         *pane_id,
                         Rect::new(col_x - view_offset_x, screen_y + *tile_y, col_w, *tile_h),
@@ -136,7 +148,11 @@ impl WorkspaceSet {
 
     /// Get ALL tiles without culling (for overview).
     /// `view_offset_x` / `view_offset_y` are the current animated viewport offsets from App.
-    pub fn all_tiles_2d(&self, view_offset_x: f32, view_offset_y: f32) -> Vec<(PaneId, Rect, bool)> {
+    pub fn all_tiles_2d(
+        &self,
+        view_offset_x: f32,
+        view_offset_y: f32,
+    ) -> Vec<(PaneId, Rect, bool)> {
         let mut result = Vec::new();
         let active_pane = self.active().active_pane_id();
 
@@ -149,7 +165,8 @@ impl WorkspaceSet {
                 let col_w = col.effective_width(self.view_size.width);
                 let tile_rects = col.tile_rects(col_w, ws_h);
                 for (pane_id, tile_y, tile_h) in &tile_rects {
-                    let is_active = ws_idx == self.active_workspace_idx && Some(*pane_id) == active_pane;
+                    let is_active =
+                        ws_idx == self.active_workspace_idx && Some(*pane_id) == active_pane;
                     result.push((
                         *pane_id,
                         Rect::new(col_x, wy + *tile_y, col_w, *tile_h),
@@ -162,7 +179,10 @@ impl WorkspaceSet {
     }
 
     pub fn all_pane_ids(&self) -> Vec<PaneId> {
-        self.workspaces.iter().flat_map(|r| r.all_pane_ids()).collect()
+        self.workspaces
+            .iter()
+            .flat_map(|r| r.all_pane_ids())
+            .collect()
     }
 
     pub fn resize_view(&mut self, size: ViewSize) {
@@ -199,7 +219,9 @@ impl WorkspaceSet {
                     self.active_workspace_idx -= 1;
                 } else if self.active_workspace_idx == i {
                     // Shouldn't happen after the fix above, but clamp defensively
-                    self.active_workspace_idx = self.active_workspace_idx.min(self.workspaces.len().saturating_sub(1));
+                    self.active_workspace_idx = self
+                        .active_workspace_idx
+                        .min(self.workspaces.len().saturating_sub(1));
                 }
             } else {
                 i += 1;
@@ -229,7 +251,10 @@ mod tests {
     }
 
     fn wss() -> WorkspaceSet {
-        let mut ws = WorkspaceSet::new(ViewSize { width: 1000.0, height: 600.0 });
+        let mut ws = WorkspaceSet::new(ViewSize {
+            width: 1000.0,
+            height: 600.0,
+        });
         ws.active_mut().add_column_right_test(1);
         ws
     }
@@ -248,7 +273,10 @@ mod tests {
 
     #[test]
     fn focus_preserves_column_index() {
-        let mut ws = WorkspaceSet::new(ViewSize { width: 1000.0, height: 600.0 });
+        let mut ws = WorkspaceSet::new(ViewSize {
+            width: 1000.0,
+            height: 600.0,
+        });
         // Workspace 0: 3 columns
         ws.active_mut().add_column_right_test(1);
         ws.active_mut().add_column_right_test(2);
@@ -320,7 +348,10 @@ mod tests {
 
     #[test]
     fn cleanup_empty_active_workspace_0() {
-        let mut ws = WorkspaceSet::new(ViewSize { width: 1000.0, height: 600.0 });
+        let mut ws = WorkspaceSet::new(ViewSize {
+            width: 1000.0,
+            height: 600.0,
+        });
         ws.active_mut().add_column_right_test(1); // workspace 0
         ws.add_workspace_below(2); // workspace 1, active
         ws.active_workspace_idx = 0; // switch back to workspace 0

@@ -1,14 +1,14 @@
 use alacritty_terminal::event::Event;
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point};
-use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::term::Config as TermConfig;
 use alacritty_terminal::term::Term;
+use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape, NamedColor, Processor};
 use anyhow::Result;
 use ciri_protocol::message::*;
-use std::sync::mpsc;
 use std::sync::Arc;
+use std::sync::mpsc;
 
 use crate::event::PtyEventListener;
 use crate::kitty_graphics::KittyGraphicsParser;
@@ -73,9 +73,15 @@ struct TermSize {
 }
 
 impl Dimensions for TermSize {
-    fn total_lines(&self) -> usize { self.rows }
-    fn screen_lines(&self) -> usize { self.rows }
-    fn columns(&self) -> usize { self.cols }
+    fn total_lines(&self) -> usize {
+        self.rows
+    }
+    fn screen_lines(&self) -> usize {
+        self.rows
+    }
+    fn columns(&self) -> usize {
+        self.cols
+    }
 }
 
 /// Map alacritty CursorShape to our wire-format constant.
@@ -120,7 +126,10 @@ impl Pane {
     pub fn new(id: PaneId, cols: u16, rows: u16, shell: &str) -> Result<Self> {
         let pty = Pty::spawn(cols, rows, shell)?;
 
-        let size = TermSize { cols: cols as usize, rows: rows as usize };
+        let size = TermSize {
+            cols: cols as usize,
+            rows: rows as usize,
+        };
         let mut config = TermConfig::default();
         config.kitty_keyboard = true;
         let (event_listener, event_rx) = PtyEventListener::new();
@@ -176,10 +185,7 @@ impl Pane {
             for chunk in &chunks {
                 self.processor.advance(&mut self.term, chunk);
                 let cursor = self.term.grid().cursor.point;
-                per_chunk_cursors.push((
-                    cursor.column.0 as u16,
-                    cursor.line.0.max(0) as u16,
-                ));
+                per_chunk_cursors.push((cursor.column.0 as u16, cursor.line.0.max(0) as u16));
             }
 
             // Scan for Kitty graphics sequences with per-chunk cursor positions.
@@ -274,7 +280,9 @@ impl Pane {
     }
 
     pub fn write_to_pty(&mut self, data: &[u8]) {
-        if self.exited { return; }
+        if self.exited {
+            return;
+        }
         if let Err(e) = self.pty.write(data) {
             log::warn!("pty write failed (pane {}): {e}", self.id);
         }
@@ -287,7 +295,14 @@ impl Pane {
 
     /// Forward mouse input as SGR escape sequence to the PTY.
     /// Does NOT reset viewport state (TUI apps manage their own scrolling).
-    pub fn send_mouse_input(&mut self, button: u8, col: u16, row: u16, pressed: bool, modifiers: u8) {
+    pub fn send_mouse_input(
+        &mut self,
+        button: u8,
+        col: u16,
+        row: u16,
+        pressed: bool,
+        modifiers: u8,
+    ) {
         let btn_with_mods = button as u32 | ((modifiers as u32) << 2);
         let suffix = if pressed { b'M' } else { b'm' };
         // Stack-allocated buffer avoids heap allocation for every mouse event
@@ -295,28 +310,51 @@ impl Pane {
         let len = {
             use std::io::Write;
             let mut cursor = std::io::Cursor::new(&mut buf[..]);
-            write!(cursor, "\x1b[<{};{};{}{}", btn_with_mods, col + 1, row + 1, suffix as char).unwrap();
+            write!(
+                cursor,
+                "\x1b[<{};{};{}{}",
+                btn_with_mods,
+                col + 1,
+                row + 1,
+                suffix as char
+            )
+            .unwrap();
             cursor.position() as usize
         };
         self.write_to_pty(&buf[..len]);
     }
 
     pub fn resize(&mut self, cols: u16, rows: u16) {
-        if cols == self.cols && rows == self.rows { return; }
+        if cols == self.cols && rows == self.rows {
+            return;
+        }
         self.cols = cols;
         self.rows = rows;
         self.pty.resize(cols, rows);
-        let size = TermSize { cols: cols as usize, rows: rows as usize };
+        let size = TermSize {
+            cols: cols as usize,
+            rows: rows as usize,
+        };
         self.term.resize(size);
         self.dirty = true;
     }
 
-    pub fn grid_cols(&self) -> u16 { self.cols }
-    pub fn grid_rows(&self) -> u16 { self.rows }
+    pub fn grid_cols(&self) -> u16 {
+        self.cols
+    }
+    pub fn grid_rows(&self) -> u16 {
+        self.rows
+    }
 
-    pub fn is_dirty(&self) -> bool { self.dirty }
-    pub fn is_exited(&self) -> bool { self.exited }
-    pub fn set_dirty(&mut self, dirty: bool) { self.dirty = dirty; }
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+    pub fn is_exited(&self) -> bool {
+        self.exited
+    }
+    pub fn set_dirty(&mut self, dirty: bool) {
+        self.dirty = dirty;
+    }
 
     /// Extract damage metadata from the terminal. Returns None if no damage.
     /// Returns (line, left, right) tuples — cells are NOT read here (they are
@@ -360,9 +398,12 @@ impl Pane {
         };
 
         self.term.reset_damage();
-        if ranges.is_empty() { None } else { Some(ranges) }
+        if ranges.is_empty() {
+            None
+        } else {
+            Some(ranges)
+        }
     }
-
 
     /// Read cursor position, shape, and mode flags.
     pub fn cursor_info(&self) -> (i16, u16, u8, u8) {
@@ -453,7 +494,8 @@ impl Pane {
         let mut flags = 0u8;
         if mode.contains(TermMode::MOUSE_REPORT_CLICK)
             || mode.contains(TermMode::MOUSE_DRAG)
-            || mode.contains(TermMode::MOUSE_MOTION) {
+            || mode.contains(TermMode::MOUSE_MOTION)
+        {
             flags |= MODE_MOUSE_REPORT;
         }
         if mode.contains(TermMode::ALT_SCREEN) {
@@ -491,10 +533,11 @@ impl Pane {
         for col in left..=right {
             let point = Point::new(Line(line as i32), Column(col as usize));
             let packed = pack_cell(&grid[point]);
-            buf.extend_from_slice(ciri_protocol::codec::cells_to_bytes(std::slice::from_ref(&packed)));
+            buf.extend_from_slice(ciri_protocol::codec::cells_to_bytes(std::slice::from_ref(
+                &packed,
+            )));
         }
     }
-
 }
 
 /// Pack an alacritty cell into our wire format.
@@ -502,10 +545,18 @@ pub fn pack_cell(cell: &alacritty_terminal::term::cell::Cell) -> PackedCell {
     let fg = pack_color(cell.fg);
     let bg = pack_color(cell.bg);
     let mut flags = 0u16;
-    if cell.flags.contains(CellFlags::WIDE_CHAR) { flags |= FLAG_WIDE_CHAR; }
-    if cell.flags.contains(CellFlags::WIDE_CHAR_SPACER) { flags |= FLAG_WIDE_CHAR_SPACER; }
-    if cell.flags.contains(CellFlags::BOLD) { flags |= FLAG_BOLD; }
-    if cell.flags.contains(CellFlags::ITALIC) { flags |= FLAG_ITALIC; }
+    if cell.flags.contains(CellFlags::WIDE_CHAR) {
+        flags |= FLAG_WIDE_CHAR;
+    }
+    if cell.flags.contains(CellFlags::WIDE_CHAR_SPACER) {
+        flags |= FLAG_WIDE_CHAR_SPACER;
+    }
+    if cell.flags.contains(CellFlags::BOLD) {
+        flags |= FLAG_BOLD;
+    }
+    if cell.flags.contains(CellFlags::ITALIC) {
+        flags |= FLAG_ITALIC;
+    }
     // Preserve underline style variants
     if cell.flags.contains(CellFlags::DOUBLE_UNDERLINE) {
         flags |= FLAG_UNDERLINE | FLAG_UNDERLINE_DOUBLE;
@@ -518,13 +569,22 @@ pub fn pack_cell(cell: &alacritty_terminal::term::cell::Cell) -> PackedCell {
     } else if cell.flags.contains(CellFlags::ALL_UNDERLINES) {
         flags |= FLAG_UNDERLINE;
     }
-    if cell.flags.contains(CellFlags::INVERSE) { flags |= FLAG_INVERSE; }
-    if cell.flags.contains(CellFlags::DIM) { flags |= FLAG_DIM; }
-    if cell.flags.contains(CellFlags::STRIKEOUT) { flags |= FLAG_STRIKEOUT; }
-    if cell.flags.contains(CellFlags::HIDDEN) { flags |= FLAG_HIDDEN; }
+    if cell.flags.contains(CellFlags::INVERSE) {
+        flags |= FLAG_INVERSE;
+    }
+    if cell.flags.contains(CellFlags::DIM) {
+        flags |= FLAG_DIM;
+    }
+    if cell.flags.contains(CellFlags::STRIKEOUT) {
+        flags |= FLAG_STRIKEOUT;
+    }
+    if cell.flags.contains(CellFlags::HIDDEN) {
+        flags |= FLAG_HIDDEN;
+    }
     let mut packed = PackedCell {
         ch_bytes: [0; 4],
-        fg, bg,
+        fg,
+        bg,
         flags: flags.to_le_bytes(),
     };
     packed.set_ch(cell.c);
@@ -544,14 +604,35 @@ fn named_color_to_compact(n: NamedColor) -> u8 {
     use alacritty_terminal::vte::ansi::NamedColor::*;
     #[allow(unreachable_patterns)]
     match n {
-        Black => 0, Red => 1, Green => 2, Yellow => 3,
-        Blue => 4, Magenta => 5, Cyan => 6, White => 7,
-        BrightBlack => 8, BrightRed => 9, BrightGreen => 10, BrightYellow => 11,
-        BrightBlue => 12, BrightMagenta => 13, BrightCyan => 14, BrightWhite => 15,
-        Foreground => 16, Background => 17, Cursor => 18,
-        DimBlack => 19, DimRed => 20, DimGreen => 21, DimYellow => 22,
-        DimBlue => 23, DimMagenta => 24, DimCyan => 25, DimWhite => 26,
-        BrightForeground => 27, DimForeground => 28,
+        Black => 0,
+        Red => 1,
+        Green => 2,
+        Yellow => 3,
+        Blue => 4,
+        Magenta => 5,
+        Cyan => 6,
+        White => 7,
+        BrightBlack => 8,
+        BrightRed => 9,
+        BrightGreen => 10,
+        BrightYellow => 11,
+        BrightBlue => 12,
+        BrightMagenta => 13,
+        BrightCyan => 14,
+        BrightWhite => 15,
+        Foreground => 16,
+        Background => 17,
+        Cursor => 18,
+        DimBlack => 19,
+        DimRed => 20,
+        DimGreen => 21,
+        DimYellow => 22,
+        DimBlue => 23,
+        DimMagenta => 24,
+        DimCyan => 25,
+        DimWhite => 26,
+        BrightForeground => 27,
+        DimForeground => 28,
         _ => 16, // fallback to Foreground
     }
 }

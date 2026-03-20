@@ -100,18 +100,21 @@ impl KittyGraphicsParser {
                     } else {
                         self.apc_partial = partial.to_vec();
                     }
-                    return KittyScanResult { placements: new_placements, deleted };
+                    return KittyScanResult {
+                        placements: new_placements,
+                        deleted,
+                    };
                 }
 
                 let payload = &data[start..end];
 
                 // Split at first ';' into control and data parts
-                let (control, img_data) =
-                    if let Some(sep) = payload.iter().position(|&b| b == b';') {
-                        (&payload[..sep], &payload[sep + 1..])
-                    } else {
-                        (payload, &[][..])
-                    };
+                let (control, img_data) = if let Some(sep) = payload.iter().position(|&b| b == b';')
+                {
+                    (&payload[..sep], &payload[sep + 1..])
+                } else {
+                    (payload, &[][..])
+                };
 
                 // Parse key=value pairs from control
                 let control_str = String::from_utf8_lossy(control);
@@ -176,8 +179,12 @@ impl KittyGraphicsParser {
                                 self.next_image_id += 1;
                                 log::info!(
                                     "kitty image #{id}: {}x{} pixels, {} cells, {}x{} grid, {} bytes",
-                                    meta.width, meta.height, meta.format,
-                                    meta.cols, meta.rows, full_data.len()
+                                    meta.width,
+                                    meta.height,
+                                    meta.format,
+                                    meta.cols,
+                                    meta.rows,
+                                    full_data.len()
                                 );
                                 let data = Arc::new(full_data);
                                 let placement = ImagePlacement {
@@ -212,7 +219,9 @@ impl KittyGraphicsParser {
             }
         }
 
-        KittyScanResult { placements: new_placements, deleted }
+        KittyScanResult {
+            placements: new_placements,
+            deleted,
+        }
     }
-
 }

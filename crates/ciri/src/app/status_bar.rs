@@ -34,7 +34,13 @@ impl App {
         let broadcast_color = ThemeConfig::parse_color(&self.config.theme.mode_broadcast);
 
         // Background
-        bg_rects.push(Rect { x: 0.0, y: bar_y, w: vw, h: bar_height, color: bar_bg });
+        bg_rects.push(Rect {
+            x: 0.0,
+            y: bar_y,
+            w: vw,
+            h: bar_height,
+            color: bar_bg,
+        });
 
         // Determine mode
         let is_leader = self.input.is_awaiting_action();
@@ -70,41 +76,53 @@ impl App {
             let key = find_key_for_action(&self.config.keys.bindings, "toggle_broadcast");
             format!("{}:exit broadcast  leader:{}", key, leader_key)
         } else if is_overview {
-            build_hints_from_bindings(&self.config.keys.overview_bindings, &[
-                ("focus_left",  "\u{2190}"), ("focus_right", "\u{2192}"),
-                ("focus_up",    "\u{2191}"), ("focus_down",  "\u{2193}"),
-                ("close_pane",  "close"), ("new_column_right", "new"),
-                ("exit_overview", "exit"),
-            ])
+            build_hints_from_bindings(
+                &self.config.keys.overview_bindings,
+                &[
+                    ("focus_left", "\u{2190}"),
+                    ("focus_right", "\u{2192}"),
+                    ("focus_up", "\u{2191}"),
+                    ("focus_down", "\u{2193}"),
+                    ("close_pane", "close"),
+                    ("new_column_right", "new"),
+                    ("exit_overview", "exit"),
+                ],
+            )
         } else if is_leader {
             let is_sticky = self.config.input.mode == "sticky";
             let bindings = &self.config.keys.bindings;
 
             // Core hints (always shown)
-            let core = build_hints_from_bindings(bindings, &[
-                ("new_column_right",     "new"),
-                ("close_pane",           "close"),
-                ("focus_left",           "\u{2190}"),
-                ("focus_right",          "\u{2192}"),
-                ("focus_up",             "\u{2191}"),
-                ("focus_down",           "\u{2193}"),
-                ("cycle_preset_width",   "width"),
-                ("toggle_overview",      "overview"),
-                ("detach",               "detach"),
-            ]);
+            let core = build_hints_from_bindings(
+                bindings,
+                &[
+                    ("new_column_right", "new"),
+                    ("close_pane", "close"),
+                    ("focus_left", "\u{2190}"),
+                    ("focus_right", "\u{2192}"),
+                    ("focus_up", "\u{2191}"),
+                    ("focus_down", "\u{2193}"),
+                    ("cycle_preset_width", "width"),
+                    ("toggle_overview", "overview"),
+                    ("detach", "detach"),
+                ],
+            );
 
             // Extended hints (shown if space allows)
-            let extended = build_hints_from_bindings(bindings, &[
-                ("new_row_below",        "split"),
-                ("move_pane_left",       "mv\u{2190}"),
-                ("move_pane_right",      "mv\u{2192}"),
-                ("column_width_decrease","w-"),
-                ("column_width_increase","w+"),
-                ("column_width_full",    "full"),
-                ("consume_into_column",  "stack"),
-                ("expel_from_column",    "unstack"),
-                ("toggle_broadcast",     "broadcast"),
-            ]);
+            let extended = build_hints_from_bindings(
+                bindings,
+                &[
+                    ("new_row_below", "split"),
+                    ("move_pane_left", "mv\u{2190}"),
+                    ("move_pane_right", "mv\u{2192}"),
+                    ("column_width_decrease", "w-"),
+                    ("column_width_increase", "w+"),
+                    ("column_width_full", "full"),
+                    ("consume_into_column", "stack"),
+                    ("expel_from_column", "unstack"),
+                    ("toggle_broadcast", "broadcast"),
+                ],
+            );
 
             let avail = (vw / cw) as usize;
             let mode_chars = mode_label.len() + 2; // "  " + mode
@@ -117,11 +135,7 @@ impl App {
                 format!("{}  {}", core, extended)
             };
 
-            let mut h = if full.len() <= budget {
-                full
-            } else {
-                core
-            };
+            let mut h = if full.len() <= budget { full } else { core };
             if is_sticky {
                 h.push_str("  esc:exit");
             }
@@ -131,11 +145,8 @@ impl App {
         };
 
         // === Build right segments: mode + hints ===
-        let right_segments: Vec<(&str, [f32; 4])> = vec![
-            (&hints, dim),
-            ("  ", dim),
-            (mode_label, mode_color),
-        ];
+        let right_segments: Vec<(&str, [f32; 4])> =
+            vec![(&hints, dim), ("  ", dim), (mode_label, mode_color)];
 
         // Progressive degradation: hints are priority, drop left segments if needed.
         let right_chars: usize = right_segments.iter().map(|(s, _)| s.len()).sum();
@@ -150,8 +161,16 @@ impl App {
                 break; // drop remaining left segments
             }
             emit_status_text(
-                atlas, &mut renderer.font_system, &renderer.queue,
-                text, x, text_y, cw, baseline, *color, glyphs,
+                atlas,
+                &mut renderer.font_system,
+                &renderer.queue,
+                text,
+                x,
+                text_y,
+                cw,
+                baseline,
+                *color,
+                glyphs,
             );
             x += text.len() as f32 * cw;
             left_used += text.len();
@@ -163,8 +182,16 @@ impl App {
 
         for (text, color) in &right_segments {
             emit_status_text(
-                atlas, &mut renderer.font_system, &renderer.queue,
-                text, rx, text_y, cw, baseline, *color, glyphs,
+                atlas,
+                &mut renderer.font_system,
+                &renderer.queue,
+                text,
+                rx,
+                text_y,
+                cw,
+                baseline,
+                *color,
+                glyphs,
             );
             rx += text.len() as f32 * cw;
         }
@@ -172,7 +199,11 @@ impl App {
         // Mode indicator line above status bar (for non-normal modes)
         if is_leader || is_broadcast || is_overview {
             let indicator_h = ch * self.config.statusbar.leader_indicator_ratio;
-            let indicator_color = if is_broadcast { broadcast_color } else { accent };
+            let indicator_color = if is_broadcast {
+                broadcast_color
+            } else {
+                accent
+            };
             bg_rects.push(Rect {
                 x: 0.0,
                 y: bar_y - indicator_h,
@@ -183,9 +214,7 @@ impl App {
         }
 
         // Mode label background pill
-        let pill_x = {
-            vw - mode_label.len() as f32 * cw
-        };
+        let pill_x = { vw - mode_label.len() as f32 * cw };
         let mut pill_bg = mode_color;
         pill_bg[3] = 0.15; // translucent
         bg_rects.push(Rect {
@@ -199,7 +228,10 @@ impl App {
 }
 
 /// Find the key bound to a given action in a bindings map. Returns "?" if not found.
-pub(crate) fn find_key_for_action(bindings: &std::collections::HashMap<String, String>, action: &str) -> String {
+pub(crate) fn find_key_for_action(
+    bindings: &std::collections::HashMap<String, String>,
+    action: &str,
+) -> String {
     for (key, act) in bindings {
         if act == action {
             return key.clone();
@@ -216,9 +248,13 @@ pub(crate) fn build_hints_from_bindings(
     action_labels: &[(&str, &str)],
 ) -> String {
     // Reverse map: action -> list of keys (sorted shortest first)
-    let mut action_to_keys: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
+    let mut action_to_keys: std::collections::HashMap<&str, Vec<&str>> =
+        std::collections::HashMap::new();
     for (key, action) in bindings {
-        action_to_keys.entry(action.as_str()).or_default().push(key.as_str());
+        action_to_keys
+            .entry(action.as_str())
+            .or_default()
+            .push(key.as_str());
     }
     for keys in action_to_keys.values_mut() {
         keys.sort_by_key(|k| k.len());

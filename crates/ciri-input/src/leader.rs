@@ -47,7 +47,12 @@ impl LeaderKey {
             }
         }
 
-        LeaderKey { key, ctrl, alt, super_key }
+        LeaderKey {
+            key,
+            ctrl,
+            alt,
+            super_key,
+        }
     }
 
     /// Check if a key event matches this leader key.
@@ -63,9 +68,19 @@ impl LeaderKey {
             }
             // Only match if the bare modifier is pressed alone (no other modifiers held).
             // This prevents e.g. Ctrl+Alt+Left from triggering an "alt" leader.
-            if self.alt && key_name.eq_ignore_ascii_case("alt") && !ctrl && !super_key { return true; }
-            if self.ctrl && key_name.eq_ignore_ascii_case("control") && !alt && !super_key { return true; }
-            if self.super_key && (key_name.eq_ignore_ascii_case("super") || key_name.eq_ignore_ascii_case("meta")) && !ctrl && !alt { return true; }
+            if self.alt && key_name.eq_ignore_ascii_case("alt") && !ctrl && !super_key {
+                return true;
+            }
+            if self.ctrl && key_name.eq_ignore_ascii_case("control") && !alt && !super_key {
+                return true;
+            }
+            if self.super_key
+                && (key_name.eq_ignore_ascii_case("super") || key_name.eq_ignore_ascii_case("meta"))
+                && !ctrl
+                && !alt
+            {
+                return true;
+            }
             return false;
         }
 
@@ -115,9 +130,10 @@ impl InputHandler {
             return;
         }
         if let LeaderState::AwaitingAction { entered_at } = &self.state
-            && entered_at.elapsed() > self.leader_timeout {
-                self.state = LeaderState::Idle;
-            }
+            && entered_at.elapsed() > self.leader_timeout
+        {
+            self.state = LeaderState::Idle;
+        }
     }
 
     /// Process a key event. Only handles leader-related keys.
@@ -136,10 +152,11 @@ impl InputHandler {
             LeaderState::Idle => {
                 if self.leader_key.matches(key_name, ctrl, alt, super_key) {
                     if let Some(last) = self.last_leader_press
-                        && last.elapsed() < self.double_tap_window {
-                            self.last_leader_press = None;
-                            return InputResult::Action(Action::SendLeaderKey);
-                        }
+                        && last.elapsed() < self.double_tap_window
+                    {
+                        self.last_leader_press = None;
+                        return InputResult::Action(Action::SendLeaderKey);
+                    }
                     self.last_leader_press = Some(Instant::now());
                     self.state = LeaderState::AwaitingAction {
                         entered_at: Instant::now(),
@@ -159,7 +176,14 @@ impl InputHandler {
                 // In prefix mode: execute action and return to idle
                 // In sticky mode: execute action and stay in leader mode
                 let combo = KeyCombo::from_modifiers(key_name, ctrl, shift, alt, super_key);
-                log::debug!("leader combo: key={:?} shift={} ctrl={} alt={} super={}", key_name, shift, ctrl, alt, super_key);
+                log::debug!(
+                    "leader combo: key={:?} shift={} ctrl={} alt={} super={}",
+                    key_name,
+                    shift,
+                    ctrl,
+                    alt,
+                    super_key
+                );
 
                 if let Some(action) = self.keybinds.lookup(&combo) {
                     log::debug!("leader matched action: {:?}", action);
@@ -217,13 +241,19 @@ mod tests {
     #[test]
     fn normal_key_passes_through() {
         let mut h = test_handler();
-        assert!(matches!(h.process_key("a", false, false, false, false), InputResult::PassThrough));
+        assert!(matches!(
+            h.process_key("a", false, false, false, false),
+            InputResult::PassThrough
+        ));
     }
 
     #[test]
     fn leader_key_enters_awaiting() {
         let mut h = test_handler();
-        assert!(matches!(h.process_key("w", true, false, false, false), InputResult::Consumed));
+        assert!(matches!(
+            h.process_key("w", true, false, false, false),
+            InputResult::Consumed
+        ));
         assert!(h.is_awaiting_action());
     }
 
@@ -233,7 +263,10 @@ mod tests {
         h.process_key("w", true, false, false, false);
         match h.process_key("n", false, false, false, false) {
             InputResult::Action(Action::NewColumnRight) => {}
-            other => panic!("expected NewColumnRight, got {:?}", matches!(other, InputResult::PassThrough)),
+            other => panic!(
+                "expected NewColumnRight, got {:?}",
+                matches!(other, InputResult::PassThrough)
+            ),
         }
         assert!(!h.is_awaiting_action());
     }
@@ -242,7 +275,10 @@ mod tests {
     fn leader_then_unknown_is_consumed() {
         let mut h = test_handler();
         h.process_key("w", true, false, false, false);
-        assert!(matches!(h.process_key("z", false, false, false, false), InputResult::Consumed));
+        assert!(matches!(
+            h.process_key("z", false, false, false, false),
+            InputResult::Consumed
+        ));
     }
 
     #[test]
@@ -270,14 +306,20 @@ mod tests {
     #[test]
     fn ctrl_key_not_leader_passes_through() {
         let mut h = test_handler();
-        assert!(matches!(h.process_key("c", true, false, false, false), InputResult::PassThrough));
+        assert!(matches!(
+            h.process_key("c", true, false, false, false),
+            InputResult::PassThrough
+        ));
     }
 
     #[test]
     fn alt_leader_key() {
         let mut h = test_handler();
         h.leader_key = LeaderKey::parse("alt");
-        assert!(matches!(h.process_key("Alt", false, false, true, false), InputResult::Consumed));
+        assert!(matches!(
+            h.process_key("Alt", false, false, true, false),
+            InputResult::Consumed
+        ));
         assert!(h.is_awaiting_action());
         match h.process_key("n", false, false, false, false) {
             InputResult::Action(Action::NewColumnRight) => {}
@@ -326,7 +368,10 @@ mod tests {
         let mut h = sticky_handler();
         h.process_key("w", true, false, false, false);
         assert!(h.is_awaiting_action());
-        assert!(matches!(h.process_key("escape", false, false, false, false), InputResult::Consumed));
+        assert!(matches!(
+            h.process_key("escape", false, false, false, false),
+            InputResult::Consumed
+        ));
         assert!(!h.is_awaiting_action());
     }
 
@@ -348,7 +393,10 @@ mod tests {
     fn sticky_unknown_key_stays_in_leader() {
         let mut h = sticky_handler();
         h.process_key("w", true, false, false, false);
-        assert!(matches!(h.process_key("z", false, false, false, false), InputResult::Consumed));
+        assert!(matches!(
+            h.process_key("z", false, false, false, false),
+            InputResult::Consumed
+        ));
         assert!(h.is_awaiting_action()); // still in leader, not kicked out
     }
 
@@ -357,7 +405,10 @@ mod tests {
         let mut h = test_handler();
         h.process_key("w", true, false, false, false);
         assert!(h.is_awaiting_action());
-        assert!(matches!(h.process_key("escape", false, false, false, false), InputResult::Consumed));
+        assert!(matches!(
+            h.process_key("escape", false, false, false, false),
+            InputResult::Consumed
+        ));
         assert!(!h.is_awaiting_action());
     }
 }

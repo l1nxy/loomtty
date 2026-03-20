@@ -50,9 +50,13 @@ impl App {
         } else {
             if let Some((col_idx, top_tile_idx)) = self.drag.tile_dragging {
                 let delta_y = my - self.drag.tile_start_y;
-                self.workspaces.active_mut().resize_tile_pair(col_idx, top_tile_idx, delta_y);
+                self.workspaces
+                    .active_mut()
+                    .resize_tile_pair(col_idx, top_tile_idx, delta_y);
                 self.drag.tile_start_y = my;
-                if let Some(w) = &self.window { w.request_redraw(); }
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
             } else if let Some(drag_col) = self.drag.col_dragging {
                 let delta_px = mx - self.drag.col_start_x;
                 let vw = self.workspaces.active().view_size.width;
@@ -161,7 +165,8 @@ impl App {
                     }
                 }
                 self.overview.active = false;
-                self.overview.zoom
+                self.overview
+                    .zoom
                     .animate_to(1.0, self.config.animation.speed);
                 self.animate_to_active();
             } else {
@@ -177,8 +182,7 @@ impl App {
                 let col_x = ws.column_x(i) - vox;
                 if (mx - col_x).abs() < 4.0 {
                     let left_col_idx = i - 1;
-                    let left_col_width =
-                        ws.columns[left_col_idx].effective_width(vw);
+                    let left_col_width = ws.columns[left_col_idx].effective_width(vw);
                     self.drag.col_dragging = Some(left_col_idx);
                     self.drag.col_start_x = mx;
                     self.drag.col_start_width = left_col_width;
@@ -190,7 +194,11 @@ impl App {
 
             // Check for tile border drag
             if !started_drag {
-                if let Some((col_idx, top_tile_idx)) = self.workspaces.active().hit_test_tile_border(self.view_offset_x.value() as f32, mx, my, 4.0) {
+                if let Some((col_idx, top_tile_idx)) = self
+                    .workspaces
+                    .active()
+                    .hit_test_tile_border(self.view_offset_x.value() as f32, mx, my, 4.0)
+                {
                     self.drag.tile_dragging = Some((col_idx, top_tile_idx));
                     self.drag.tile_start_y = my;
                     started_drag = true;
@@ -202,8 +210,7 @@ impl App {
                 if let Some((pane_id, col, buf_row)) = self.pixel_to_cell(mx, my) {
                     if !shift
                         && self.link_activation_modifier_active()
-                        && let Some(url) =
-                            self.hovered_link_url_at(pane_id, col, buf_row)
+                        && let Some(url) = self.hovered_link_url_at(pane_id, col, buf_row)
                     {
                         self.selection = None;
                         self.open_url(&url);
@@ -215,14 +222,16 @@ impl App {
 
                     self.mouse_left_held = true;
                     let click_now = Instant::now();
-                    let is_double_click = !shift
-                        && self.is_double_left_click(pane_id, col, buf_row, click_now);
+                    let is_double_click =
+                        !shift && self.is_double_left_click(pane_id, col, buf_row, click_now);
                     let ws = self.workspaces.active_mut();
                     for col_idx in 0..ws.columns.len() {
                         if ws.columns[col_idx].contains_pane(pane_id) {
                             ws.active_column_idx = col_idx;
                             // Also focus the specific tile within the column
-                            if let Some(tile_idx) = ws.columns[col_idx].tiles.iter()
+                            if let Some(tile_idx) = ws.columns[col_idx]
+                                .tiles
+                                .iter()
                                 .position(|t| t.pane_id == pane_id)
                             {
                                 ws.columns[col_idx].active_tile_idx = tile_idx;
@@ -243,13 +252,14 @@ impl App {
                     } else if is_double_click {
                         if !self.select_word_at(pane_id, col, buf_row) {
                             self.selection = Some(super::Selection {
-                                pane_id, start: (col, buf_row), end: (col, buf_row), active: true,
+                                pane_id,
+                                start: (col, buf_row),
+                                end: (col, buf_row),
+                                active: true,
                             });
                         }
                     } else {
-                        if let Some((_, vcol, vrow)) =
-                            self.pixel_to_viewport_cell(mx, my)
-                        {
+                        if let Some((_, vcol, vrow)) = self.pixel_to_viewport_cell(mx, my) {
                             self.send_lossy(ClientMessage::MouseInput {
                                 pane_id,
                                 button: 0,
@@ -318,9 +328,7 @@ impl App {
         self.overview.dragging = false;
         self.overview.drag_last_pos = None;
 
-        if had_left_hold
-            && let Some((pane_id, col, row)) = self.pixel_to_viewport_cell(mx, my)
-        {
+        if had_left_hold && let Some((pane_id, col, row)) = self.pixel_to_viewport_cell(mx, my) {
             self.send_lossy(ClientMessage::MouseInput {
                 pane_id,
                 button: 3,
@@ -393,17 +401,13 @@ impl App {
                 .active()
                 .active_pane_id()
                 .and_then(|pid| self.pane_grids.get(&pid))
-                .is_some_and(|g| {
-                    g.mode_flags & ciri_protocol::message::MODE_MOUSE_REPORT != 0
-                });
+                .is_some_and(|g| g.mode_flags & ciri_protocol::message::MODE_MOUSE_REPORT != 0);
             let is_alt_screen = self
                 .workspaces
                 .active()
                 .active_pane_id()
                 .and_then(|pid| self.pane_grids.get(&pid))
-                .is_some_and(|g| {
-                    g.mode_flags & ciri_protocol::message::MODE_ALT_SCREEN != 0
-                });
+                .is_some_and(|g| g.mode_flags & ciri_protocol::message::MODE_ALT_SCREEN != 0);
             let shift_held = self.modifiers.shift_key();
             let multi_row = self.workspaces.workspaces.len() > 1;
 
@@ -556,12 +560,20 @@ impl App {
                 }
                 TouchPhase::Ended | TouchPhase::Cancelled => {
                     let center_strategy = match self.config.layout.center_focused_column {
-                        ciri_config::config::CenterStrategy::Always => ciri_layout::workspace::CenterStrategy::Always,
-                        ciri_config::config::CenterStrategy::OnOverflow => ciri_layout::workspace::CenterStrategy::OnOverflow,
-                        ciri_config::config::CenterStrategy::Never => ciri_layout::workspace::CenterStrategy::Never,
+                        ciri_config::config::CenterStrategy::Always => {
+                            ciri_layout::workspace::CenterStrategy::Always
+                        }
+                        ciri_config::config::CenterStrategy::OnOverflow => {
+                            ciri_layout::workspace::CenterStrategy::OnOverflow
+                        }
+                        ciri_config::config::CenterStrategy::Never => {
+                            ciri_layout::workspace::CenterStrategy::Never
+                        }
                     };
                     let current_vox = self.view_offset_x.value() as f32;
-                    let t = self.workspaces.active_mut()
+                    let t = self
+                        .workspaces
+                        .active_mut()
                         .target_offset_for_active_with_strategy(center_strategy, current_vox);
                     let speed = self.config.animation.speed;
                     self.view_offset_x.end_gesture(t as f64, speed);

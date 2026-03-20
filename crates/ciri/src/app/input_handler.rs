@@ -89,8 +89,8 @@ impl App {
                 self.send(ClientMessage::ExpelFromColumn);
             }
             Action::ExitOverview => {
-                self.overview_active = false;
-                self.overview_zoom
+                self.overview.active = false;
+                self.overview.zoom
                     .animate_to(1.0, self.config.animation.speed);
                 self.animate_to_active();
             }
@@ -98,14 +98,14 @@ impl App {
                 self.send(ClientMessage::SwitchWorkspace { workspace_idx: idx });
             }
             Action::ToggleOverview => {
-                self.overview_active = !self.overview_active;
+                self.overview.active = !self.overview.active;
                 let omega = self.config.animation.speed;
-                if self.overview_active {
+                if self.overview.active {
                     self.refresh_overview_zoom();
                     self.view_offset_x.animate_to(0.0, omega);
                     self.view_offset_y.animate_to(0.0, omega);
                 } else {
-                    self.overview_zoom.animate_to(1.0, omega);
+                    self.overview.zoom.animate_to(1.0, omega);
                     self.animate_to_active();
                 }
             }
@@ -155,11 +155,11 @@ impl App {
     }
 
     pub fn hit_test_overview(&self, mx: f32, my: f32) -> Option<(usize, u64)> {
-        let zoom = self.overview_zoom.value() as f32;
+        let zoom = self.overview.zoom.value() as f32;
         let zoom_threshold = self.config.animation.zoom_threshold;
         let vox = self.view_offset_x.value() as f32;
         let voy = self.view_offset_y.value() as f32;
-        let tiles = if self.overview_active || zoom < zoom_threshold {
+        let tiles = if self.overview.active || zoom < zoom_threshold {
             self.workspaces.all_tiles_2d(vox, voy)
         } else {
             self.workspaces.visible_tiles_2d(vox, voy)

@@ -39,7 +39,7 @@ impl App {
         // Determine mode
         let is_leader = self.input.is_awaiting_action();
         let is_broadcast = self.broadcast_mode;
-        let is_overview = self.overview_active;
+        let is_overview = self.overview.active;
 
         let (mode_label, mode_color) = if is_broadcast {
             (" BROADCAST ", broadcast_color)

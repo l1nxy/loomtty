@@ -24,7 +24,7 @@ impl App {
     }
 
     pub fn refresh_overview_zoom(&mut self) {
-        if !self.overview_active {
+        if !self.overview.active {
             return;
         }
         let omega = self.config.animation.speed;
@@ -50,7 +50,7 @@ impl App {
         let zoom_x = vw / max_w;
         let zoom_y = vh / total_h;
         let zoom = (zoom_x.min(zoom_y).min(1.0) * fit).max(0.15);
-        self.overview_zoom.animate_to(zoom as f64, omega);
+        self.overview.zoom.animate_to(zoom as f64, omega);
     }
 
     pub fn animate_to_active(&mut self) {
@@ -117,10 +117,10 @@ impl App {
         if self.view_offset_y.advance(dt) {
             animating = true;
         }
-        if self.overview_zoom.advance(dt) {
+        if self.overview.zoom.advance(dt) {
             animating = true;
         }
-        if self.gesture_row_offset.advance(dt) {
+        if self.gestures.row_offset.advance(dt) {
             animating = true;
         }
         if !self.col_widths.is_empty() {
@@ -383,14 +383,14 @@ impl App {
             }
 
             // Animated focus opacity (smooth transition on focus change)
-            let focus_dim = self.pane_focus_opacity.get(pane_id)
+            let focus_dim = self.pane_anims.focus_opacity.get(pane_id)
                 .map(|v| v.value() as f32)
                 .unwrap_or(if *is_active { 1.0 } else { inactive_opacity });
-            let open_opacity = self.pane_open_opacity.get(pane_id).copied().unwrap_or(1.0);
+            let open_opacity = self.pane_anims.open_opacity.get(pane_id).copied().unwrap_or(1.0);
             let dim = focus_dim * open_opacity;
 
             // Pane open slide offset
-            let slide_progress = self.pane_open_slides.get(pane_id).copied().unwrap_or(0.0);
+            let slide_progress = self.pane_anims.open_slides.get(pane_id).copied().unwrap_or(0.0);
             let (slide_dx, slide_dy) = match self.config.animation.pane_open_style {
                 PaneOpenStyle::SlideUp | PaneOpenStyle::FadeSlideUp => (0.0, -tr.h * slide_progress),
                 PaneOpenStyle::SlideDown => (0.0, tr.h * slide_progress),
@@ -484,7 +484,7 @@ impl App {
         }
 
         // Render closing panes as fading-out rects
-        for cp in &self.closing_panes {
+        for cp in &self.pane_anims.closing {
             bg_rects.push(Rect {
                 x: cp.rect.x,
                 y: cp.rect.y,
@@ -569,13 +569,13 @@ impl App {
         vh: f32,
         bg_rects: &mut Vec<Rect>,
     ) {
-        let Some((pane_id, started)) = &self.bell_flash else {
+        let Some((pane_id, started)) = &self.pane_anims.bell_flash else {
             return;
         };
         let elapsed = started.elapsed().as_millis() as f32;
         let duration_ms = 150.0;
         if elapsed >= duration_ms {
-            self.bell_flash = None;
+            self.pane_anims.bell_flash = None;
             return;
         }
         let alpha = 0.15 * (1.0 - elapsed / duration_ms);
@@ -613,7 +613,7 @@ impl App {
         bg_rects: &mut Vec<Rect>,
         glyphs: &mut Vec<GlyphInstance>,
     ) {
-        if !self.ime_preedit_active || self.ime_preedit_text.is_empty() {
+        if !self.ime.preedit_active || self.ime.preedit_text.is_empty() {
             return;
         }
         let renderer = self.renderer.as_mut().unwrap();
@@ -646,7 +646,7 @@ impl App {
         let base_x = tile_rect.x + border_w + padding + cursor_rect.x;
         let base_y = tile_rect.y + border_w + padding + cursor_rect.y;
 
-        let text = &self.ime_preedit_text;
+        let text = &self.ime.preedit_text;
         let text_width = text.chars().count() as f32 * cw;
 
         // Background box
@@ -684,7 +684,7 @@ impl App {
         );
 
         // Cursor within preedit text
-        if let Some(cursor_pos) = self.ime_preedit_cursor {
+        if let Some(cursor_pos) = self.ime.preedit_cursor {
             let cx = base_x + 2.0 + cursor_pos as f32 * cw;
             bg_rects.push(Rect {
                 x: cx,
@@ -877,52 +877,52 @@ impl App {
         let open_duration = self.config.animation.pane_open_duration_ms.max(1) as f32 / 1000.0;
         let fade_speed = 1.0 / open_duration;
         let mut open_done = Vec::new();
-        for (pane_id, opacity) in &mut self.pane_open_opacity {
+        for (pane_id, opacity) in &mut self.pane_anims.open_opacity {
             *opacity = (*opacity + dt as f32 * fade_speed).min(1.0);
             if *opacity >= 1.0 { open_done.push(*pane_id); }
         }
-        for pid in &open_done { self.pane_open_opacity.remove(pid); }
+        for pid in &open_done { self.pane_anims.open_opacity.remove(pid); }
 
         let mut slide_done = Vec::new();
-        for (pane_id, slide) in &mut self.pane_open_slides {
+        for (pane_id, slide) in &mut self.pane_anims.open_slides {
             *slide = (*slide - dt as f32 * fade_speed).max(0.0);
             if *slide <= 0.0 { slide_done.push(*pane_id); }
         }
-        for pid in slide_done { self.pane_open_slides.remove(&pid); }
+        for pid in slide_done { self.pane_anims.open_slides.remove(&pid); }
 
         // Focus opacity transitions
         let current_focus = self.workspaces.active().active_pane_id();
-        if current_focus != self.prev_focused_pane {
+        if current_focus != self.pane_anims.prev_focused {
             let omega = self.config.animation.focus_transition_speed;
             let target_inactive = self.config.appearance.inactive_opacity as f64;
-            if let Some(prev) = self.prev_focused_pane {
-                let mut v = self.pane_focus_opacity.remove(&prev)
+            if let Some(prev) = self.pane_anims.prev_focused {
+                let mut v = self.pane_anims.focus_opacity.remove(&prev)
                     .unwrap_or_else(|| { let mut vo = ViewOffset::new(); vo.jump_to(1.0); vo });
                 if self.config.animation.enabled { v.animate_to(target_inactive, omega); } else { v.jump_to(target_inactive); }
-                self.pane_focus_opacity.insert(prev, v);
+                self.pane_anims.focus_opacity.insert(prev, v);
             }
             if let Some(curr) = current_focus {
-                let mut v = self.pane_focus_opacity.remove(&curr)
+                let mut v = self.pane_anims.focus_opacity.remove(&curr)
                     .unwrap_or_else(|| { let mut vo = ViewOffset::new(); vo.jump_to(target_inactive); vo });
                 if self.config.animation.enabled { v.animate_to(1.0, omega); } else { v.jump_to(1.0); }
-                self.pane_focus_opacity.insert(curr, v);
+                self.pane_anims.focus_opacity.insert(curr, v);
             }
-            self.prev_focused_pane = current_focus;
+            self.pane_anims.prev_focused = current_focus;
         }
-        for (_, v) in &mut self.pane_focus_opacity { v.advance(dt); }
+        for (_, v) in &mut self.pane_anims.focus_opacity { v.advance(dt); }
 
         // Update closing pane fade-out animations
-        self.closing_panes.retain_mut(|cp| {
+        self.pane_anims.closing.retain_mut(|cp| {
             let elapsed = cp.started.elapsed().as_millis() as u64;
             cp.opacity = 1.0 - (elapsed as f32 / cp.duration_ms as f32).min(1.0);
             cp.opacity > 0.0
         });
 
-        if !self.pane_open_opacity.is_empty()
-            || !self.pane_open_slides.is_empty()
-            || self.pane_focus_opacity.values().any(|v| v.is_animating())
-            || !self.closing_panes.is_empty()
-            || self.bell_flash.is_some()
+        if !self.pane_anims.open_opacity.is_empty()
+            || !self.pane_anims.open_slides.is_empty()
+            || self.pane_anims.focus_opacity.values().any(|v| v.is_animating())
+            || !self.pane_anims.closing.is_empty()
+            || self.pane_anims.bell_flash.is_some()
         {
             animating = true;
         }
@@ -933,12 +933,12 @@ impl App {
         let (vw, vh) = renderer.surface_size();
         let vw_f = vw as f32;
         let vh_f = vh as f32;
-        let zoom = self.overview_zoom.value() as f32;
+        let zoom = self.overview.zoom.value() as f32;
         let zoom_threshold = self.config.animation.zoom_threshold;
 
         let vox = self.view_offset_x.value() as f32;
         let voy = self.view_offset_y.value() as f32;
-        let tiles = if self.overview_active || zoom < zoom_threshold {
+        let tiles = if self.overview.active || zoom < zoom_threshold {
             self.workspaces.all_tiles_2d(vox, voy)
         } else {
             self.workspaces.visible_tiles_2d(vox, voy)
@@ -1048,8 +1048,8 @@ impl App {
             let cx = (tile_rect.x + border_w + padding + cursor.x) as i32;
             let cy = (tile_rect.y + border_w + padding + cursor.y) as i32;
             let pos = (cx, cy);
-            if self.last_ime_pos != Some(pos) {
-                self.last_ime_pos = Some(pos);
+            if self.ime.last_pos != Some(pos) {
+                self.ime.last_pos = Some(pos);
                 window.set_ime_cursor_area(
                     winit::dpi::PhysicalPosition::new(cx as f64, cy as f64),
                     winit::dpi::PhysicalSize::new(
@@ -1060,9 +1060,9 @@ impl App {
             }
         }
 
-        let mut bg_rects = std::mem::take(&mut self.bg_rects_buf);
-        let mut glyphs = std::mem::take(&mut self.glyph_buf);
-        let mut color_glyphs = std::mem::take(&mut self.color_glyph_buf);
+        let mut bg_rects = std::mem::take(&mut self.render_bufs.bg_rects);
+        let mut glyphs = std::mem::take(&mut self.render_bufs.glyphs);
+        let mut color_glyphs = std::mem::take(&mut self.render_bufs.color_glyphs);
         bg_rects.clear();
         glyphs.clear();
         color_glyphs.clear();
@@ -1079,9 +1079,9 @@ impl App {
         let atlas = self.glyph_atlas.as_mut().unwrap();
         Self::submit_frame(renderer, atlas, clear_color, &bg_rects, &glyphs, &color_glyphs);
 
-        self.bg_rects_buf = bg_rects;
-        self.glyph_buf = glyphs;
-        self.color_glyph_buf = color_glyphs;
+        self.render_bufs.bg_rects = bg_rects;
+        self.render_bufs.glyphs = glyphs;
+        self.render_bufs.color_glyphs = color_glyphs;
 
         // Atlas overflow recovery: clear and force rebuild on next frame
         if atlas.atlas_needs_clear {

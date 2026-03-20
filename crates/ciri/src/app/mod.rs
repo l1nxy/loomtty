@@ -68,6 +68,57 @@ pub(crate) struct SearchMatch {
     pub end_col: u16,
 }
 
+/// IME composition state.
+pub(crate) struct ImeState {
+    pub preedit_active: bool,
+    pub preedit_text: String,
+    pub preedit_cursor: Option<usize>,
+    pub last_pos: Option<(i32, i32)>,
+}
+
+/// Reusable render buffers (cleared each frame).
+pub(crate) struct RenderBuffers {
+    pub bg_rects: Vec<Rect>,
+    pub glyphs: Vec<GlyphInstance>,
+    pub color_glyphs: Vec<GlyphInstance>,
+}
+
+/// Touchpad gesture tracking state.
+pub(crate) struct GestureState {
+    pub scroll_accum: f64,
+    pub row_offset: ViewOffset,
+    pub row_active: bool,
+    pub row_start: usize,
+}
+
+/// Column/tile border drag resize state.
+pub(crate) struct ResizeDragState {
+    pub col_dragging: Option<usize>,
+    pub col_start_x: f32,
+    pub col_start_width: f32,
+    pub col_delta: f64,
+    pub tile_dragging: Option<(usize, usize)>,
+    pub tile_start_y: f32,
+}
+
+/// Overview zoom mode state.
+pub(crate) struct OverviewState {
+    pub active: bool,
+    pub zoom: ViewOffset,
+    pub dragging: bool,
+    pub drag_last_pos: Option<(f32, f32)>,
+}
+
+/// Per-pane animation state (open/close/focus/bell).
+pub(crate) struct PaneAnimations {
+    pub open_opacity: HashMap<u64, f32>,
+    pub open_slides: HashMap<u64, f32>,
+    pub focus_opacity: HashMap<u64, ViewOffset>,
+    pub prev_focused: Option<u64>,
+    pub closing: Vec<ClosingPaneState>,
+    pub bell_flash: Option<(u64, Instant)>,
+}
+
 /// State for a pane that is being animated out (fade-to-close).
 pub(crate) struct ClosingPaneState {
     pub rect: GeoRect,
@@ -126,26 +177,11 @@ pub(crate) struct App {
     pub modifiers: ModifiersState,
     pub cached_views: HashMap<u64, TerminalView>,
     pub last_mouse_pos: Option<(f32, f32)>,
-    pub overview_active: bool,
-    pub overview_zoom: ViewOffset,
-    pub overview_dragging: bool,
-    pub drag_last_pos: Option<(f32, f32)>,
-    pub bg_rects_buf: Vec<Rect>,
-    pub glyph_buf: Vec<GlyphInstance>,
-    pub color_glyph_buf: Vec<GlyphInstance>,
-    pub ime_preedit_active: bool,
-    /// Current IME preedit text and cursor offset (char index).
-    pub ime_preedit_text: String,
-    pub ime_preedit_cursor: Option<usize>,
-    pub last_ime_pos: Option<(i32, i32)>,
+    pub overview: OverviewState,
+    pub render_bufs: RenderBuffers,
+    pub ime: ImeState,
     pub overview_keybinds: KeybindMap,
-    pub resize_dragging: Option<usize>,
-    pub resize_drag_start_x: f32,
-    pub resize_drag_start_width: f32,
-    pub resize_drag_accumulated_delta: f64,
-    /// Tile height drag: (column_idx, tile_idx of top tile in the pair)
-    pub tile_resize_dragging: Option<(usize, usize)>,
-    pub tile_resize_drag_start_y: f32,
+    pub drag: ResizeDragState,
     pub connected: bool,
     pub cursor_blink_visible: bool,
     pub cursor_blink_timer: Instant,
@@ -157,18 +193,7 @@ pub(crate) struct App {
     pub reconnect_state: Option<ReconnectState>,
     pub search_state: Option<SearchState>,
     pub broadcast_mode: bool,
-    /// Pane open fade-in: pane_id -> opacity (0.0 to 1.0, animated)
-    pub pane_open_opacity: HashMap<u64, f32>,
-    /// Pane open slide offset: pane_id -> slide progress (1.0 = fully off-screen, 0.0 = in place)
-    pub pane_open_slides: HashMap<u64, f32>,
-    /// Animated focus opacity per pane (smooth transition on focus change)
-    pub pane_focus_opacity: HashMap<u64, ViewOffset>,
-    /// Previously focused pane ID (for detecting focus transitions)
-    pub prev_focused_pane: Option<u64>,
-    /// Closing panes being faded out
-    pub closing_panes: Vec<ClosingPaneState>,
-    /// Visual bell flash: (pane_id, start_time)
-    pub bell_flash: Option<(u64, Instant)>,
+    pub pane_anims: PaneAnimations,
     /// Inline image placements per pane.
     pub image_placements: HashMap<u64, Vec<ClientImagePlacement>>,
     pub cached_color_table: ColorTable,
@@ -178,14 +203,7 @@ pub(crate) struct App {
     #[allow(dead_code)]
     pub config_watcher: Option<notify::RecommendedWatcher>,
     pub config_change_rx: Option<crossbeam_channel::Receiver<()>>,
-    /// Accumulated vertical pixel delta during a scroll gesture (for smooth scrollback).
-    pub gesture_scroll_accum: f64,
-    /// Vertical gesture offset for workspace row switching.
-    pub gesture_row_offset: ViewOffset,
-    /// Whether a vertical row-switch gesture is in progress.
-    pub gesture_row_active: bool,
-    /// The workspace row index when the vertical gesture started.
-    pub gesture_row_start: usize,
+    pub gestures: GestureState,
 }
 
 impl App {
@@ -231,28 +249,36 @@ impl App {
             modifiers: ModifiersState::empty(),
             cached_views: HashMap::new(),
             last_mouse_pos: None,
-            overview_active: false,
-            overview_dragging: false,
-            drag_last_pos: None,
-            overview_zoom: {
-                let mut v = ViewOffset::new();
-                v.jump_to(1.0);
-                v
+            overview: OverviewState {
+                active: false,
+                dragging: false,
+                drag_last_pos: None,
+                zoom: {
+                    let mut v = ViewOffset::new();
+                    v.jump_to(1.0);
+                    v
+                },
             },
-            bg_rects_buf: Vec::new(),
-            glyph_buf: Vec::new(),
-            color_glyph_buf: Vec::new(),
-            ime_preedit_active: false,
-            ime_preedit_text: String::new(),
-            ime_preedit_cursor: None,
-            last_ime_pos: None,
+            render_bufs: RenderBuffers {
+                bg_rects: Vec::new(),
+                glyphs: Vec::new(),
+                color_glyphs: Vec::new(),
+            },
+            ime: ImeState {
+                preedit_active: false,
+                preedit_text: String::new(),
+                preedit_cursor: None,
+                last_pos: None,
+            },
             overview_keybinds,
-            resize_dragging: None,
-            resize_drag_start_x: 0.0,
-            resize_drag_start_width: 0.0,
-            resize_drag_accumulated_delta: 0.0,
-            tile_resize_dragging: None,
-            tile_resize_drag_start_y: 0.0,
+            drag: ResizeDragState {
+                col_dragging: None,
+                col_start_x: 0.0,
+                col_start_width: 0.0,
+                col_delta: 0.0,
+                tile_dragging: None,
+                tile_start_y: 0.0,
+            },
             connected: false,
             cursor_blink_visible: true,
             cursor_blink_timer: Instant::now(),
@@ -264,22 +290,26 @@ impl App {
             reconnect_state: None,
             search_state: None,
             broadcast_mode: false,
-            pane_open_opacity: HashMap::new(),
-            pane_open_slides: HashMap::new(),
-            pane_focus_opacity: HashMap::new(),
-            prev_focused_pane: None,
-            closing_panes: Vec::new(),
-            bell_flash: None,
+            pane_anims: PaneAnimations {
+                open_opacity: HashMap::new(),
+                open_slides: HashMap::new(),
+                focus_opacity: HashMap::new(),
+                prev_focused: None,
+                closing: Vec::new(),
+                bell_flash: None,
+            },
             image_placements: HashMap::new(),
             cached_color_table,
             cached_tile_glyphs: HashMap::new(),
             should_exit: false,
             config_watcher: None,
             config_change_rx: None,
-            gesture_scroll_accum: 0.0,
-            gesture_row_offset: ViewOffset::new(),
-            gesture_row_active: false,
-            gesture_row_start: 0,
+            gestures: GestureState {
+                scroll_accum: 0.0,
+                row_offset: ViewOffset::new(),
+                row_active: false,
+                row_start: 0,
+            },
         }
     }
 

@@ -11,7 +11,7 @@ impl App {
         let my = position.y as f32;
         self.last_mouse_pos = Some((mx, my));
 
-        if self.overview_active {
+        if self.overview.active {
             let hover_changed = self.clear_hovered_link();
             if let Some((ws_idx, pane_id)) = self.hit_test_overview(mx, my) {
                 if ws_idx < self.workspaces.workspaces.len() {
@@ -32,9 +32,9 @@ impl App {
                 w.request_redraw();
             }
 
-            if self.overview_dragging {
-                if let Some((lx, ly)) = self.drag_last_pos {
-                    let zoom = self.overview_zoom.value() as f32;
+            if self.overview.dragging {
+                if let Some((lx, ly)) = self.overview.drag_last_pos {
+                    let zoom = self.overview.zoom.value() as f32;
                     let dx = (mx - lx) / zoom;
                     let dy = (my - ly) / zoom;
                     let cur_x = self.view_offset_x.value();
@@ -45,16 +45,16 @@ impl App {
                         w.request_redraw();
                     }
                 }
-                self.drag_last_pos = Some((mx, my));
+                self.overview.drag_last_pos = Some((mx, my));
             }
         } else {
-            if let Some((col_idx, top_tile_idx)) = self.tile_resize_dragging {
-                let delta_y = my - self.tile_resize_drag_start_y;
+            if let Some((col_idx, top_tile_idx)) = self.drag.tile_dragging {
+                let delta_y = my - self.drag.tile_start_y;
                 self.workspaces.active_mut().resize_tile_pair(col_idx, top_tile_idx, delta_y);
-                self.tile_resize_drag_start_y = my;
+                self.drag.tile_start_y = my;
                 if let Some(w) = &self.window { w.request_redraw(); }
-            } else if let Some(drag_col) = self.resize_dragging {
-                let delta_px = mx - self.resize_drag_start_x;
+            } else if let Some(drag_col) = self.drag.col_dragging {
+                let delta_px = mx - self.drag.col_start_x;
                 let vw = self.workspaces.active().view_size.width;
                 if vw > 0.0 {
                     let delta_proportion = delta_px as f64 / vw as f64;
@@ -64,9 +64,9 @@ impl App {
                     ws.active_column_idx = drag_col;
                     ws.resize_active_with_neighbor(delta_proportion);
                     ws.active_column_idx = saved_idx;
-                    self.resize_drag_accumulated_delta += delta_proportion;
+                    self.drag.col_delta += delta_proportion;
                     // Reset drag baseline so next move is incremental
-                    self.resize_drag_start_x = mx;
+                    self.drag.col_start_x = mx;
                 }
                 self.snap_all_col_widths();
                 if let Some(w) = &self.window {
@@ -148,7 +148,7 @@ impl App {
     }
 
     fn handle_left_mouse_pressed(&mut self, mx: f32, my: f32) {
-        if self.overview_active {
+        if self.overview.active {
             if let Some((ws_idx, pane_id)) = self.hit_test_overview(mx, my) {
                 if ws_idx < self.workspaces.workspaces.len() {
                     self.workspaces.active_workspace_idx = ws_idx;
@@ -160,13 +160,13 @@ impl App {
                         }
                     }
                 }
-                self.overview_active = false;
-                self.overview_zoom
+                self.overview.active = false;
+                self.overview.zoom
                     .animate_to(1.0, self.config.animation.speed);
                 self.animate_to_active();
             } else {
-                self.overview_dragging = true;
-                self.drag_last_pos = Some((mx, my));
+                self.overview.dragging = true;
+                self.overview.drag_last_pos = Some((mx, my));
             }
         } else {
             let ws = self.workspaces.active();
@@ -179,10 +179,10 @@ impl App {
                     let left_col_idx = i - 1;
                     let left_col_width =
                         ws.columns[left_col_idx].effective_width(vw);
-                    self.resize_dragging = Some(left_col_idx);
-                    self.resize_drag_start_x = mx;
-                    self.resize_drag_start_width = left_col_width;
-                    self.resize_drag_accumulated_delta = 0.0;
+                    self.drag.col_dragging = Some(left_col_idx);
+                    self.drag.col_start_x = mx;
+                    self.drag.col_start_width = left_col_width;
+                    self.drag.col_delta = 0.0;
                     started_drag = true;
                     break;
                 }
@@ -191,8 +191,8 @@ impl App {
             // Check for tile border drag
             if !started_drag {
                 if let Some((col_idx, top_tile_idx)) = self.workspaces.active().hit_test_tile_border(self.view_offset_x.value() as f32, mx, my, 4.0) {
-                    self.tile_resize_dragging = Some((col_idx, top_tile_idx));
-                    self.tile_resize_drag_start_y = my;
+                    self.drag.tile_dragging = Some((col_idx, top_tile_idx));
+                    self.drag.tile_start_y = my;
                     started_drag = true;
                 }
             }
@@ -279,7 +279,7 @@ impl App {
 
         let had_left_hold = self.mouse_left_held;
         self.mouse_left_held = false;
-        if let Some((col_idx, top_tile_idx)) = self.tile_resize_dragging {
+        if let Some((col_idx, top_tile_idx)) = self.drag.tile_dragging {
             // Send the final absolute tile weights to the server so PTYs are
             // resized and the layout is persisted. Read from local preview state
             // which already reflects the drag.
@@ -297,26 +297,26 @@ impl App {
                     });
                 }
             }
-            self.tile_resize_dragging = None;
+            self.drag.tile_dragging = None;
             if let Some(w) = &self.window {
                 w.set_cursor(winit::window::CursorIcon::Default);
             }
         }
-        if let Some(drag_col) = self.resize_dragging {
+        if let Some(drag_col) = self.drag.col_dragging {
             // Send the accumulated delta to the specific column pair being dragged
             // (not the active column) using AdjustColumnSplitAt.
             self.send(ClientMessage::AdjustColumnSplitAt {
                 column_idx: drag_col,
-                delta: self.resize_drag_accumulated_delta,
+                delta: self.drag.col_delta,
             });
-            self.resize_dragging = None;
+            self.drag.col_dragging = None;
             self.snap_all_col_widths();
             if let Some(w) = &self.window {
                 w.set_cursor(winit::window::CursorIcon::Default);
             }
         }
-        self.overview_dragging = false;
-        self.drag_last_pos = None;
+        self.overview.dragging = false;
+        self.overview.drag_last_pos = None;
 
         if had_left_hold
             && let Some((pane_id, col, row)) = self.pixel_to_viewport_cell(mx, my)
@@ -369,21 +369,21 @@ impl App {
     }
 
     pub(crate) fn handle_mouse_wheel(&mut self, delta: MouseScrollDelta, phase: TouchPhase) {
-        if self.overview_active {
+        if self.overview.active {
             // Overview mode: vertical scroll controls zoom level
             let dy = match delta {
                 MouseScrollDelta::LineDelta(_, y) => y as f64 * 0.05,
                 MouseScrollDelta::PixelDelta(pos) => pos.y * 0.001,
             };
-            let cur_zoom = self.overview_zoom.value();
+            let cur_zoom = self.overview.zoom.value();
             let new_zoom = (cur_zoom + dy).clamp(0.05, 1.0);
             let omega = self.config.animation.speed;
             if new_zoom >= self.config.animation.zoom_threshold as f64 {
-                self.overview_active = false;
-                self.overview_zoom.animate_to(1.0, omega);
+                self.overview.active = false;
+                self.overview.zoom.animate_to(1.0, omega);
                 self.animate_to_active();
             } else {
-                self.overview_zoom.animate_to(new_zoom, omega);
+                self.overview.zoom.animate_to(new_zoom, omega);
             }
         } else {
             let gestures_enabled = self.config.gesture.enabled;
@@ -422,30 +422,30 @@ impl App {
 
                 match phase {
                     TouchPhase::Started => {
-                        self.gesture_row_active = true;
-                        self.gesture_row_start = self.workspaces.active_workspace_idx;
-                        self.gesture_row_offset.begin_gesture();
+                        self.gestures.row_active = true;
+                        self.gestures.row_start = self.workspaces.active_workspace_idx;
+                        self.gestures.row_offset.begin_gesture();
                     }
                     TouchPhase::Moved => {
-                        if self.gesture_row_active {
-                            self.gesture_row_offset.update_gesture_unclamped(py);
-                            let accum = self.gesture_row_offset.value();
+                        if self.gestures.row_active {
+                            self.gestures.row_offset.update_gesture_unclamped(py);
+                            let accum = self.gestures.row_offset.value();
                             if accum > threshold {
                                 self.workspaces.focus_down();
-                                self.gesture_row_offset.jump_to(0.0);
-                                self.gesture_row_offset.begin_gesture();
+                                self.gestures.row_offset.jump_to(0.0);
+                                self.gestures.row_offset.begin_gesture();
                                 self.animate_to_active();
                             } else if accum < -threshold {
                                 self.workspaces.focus_up();
-                                self.gesture_row_offset.jump_to(0.0);
-                                self.gesture_row_offset.begin_gesture();
+                                self.gestures.row_offset.jump_to(0.0);
+                                self.gestures.row_offset.begin_gesture();
                                 self.animate_to_active();
                             }
                         }
                     }
                     TouchPhase::Ended | TouchPhase::Cancelled => {
-                        self.gesture_row_active = false;
-                        self.gesture_row_offset.end_gesture(0.0, omega);
+                        self.gestures.row_active = false;
+                        self.gestures.row_offset.end_gesture(0.0, omega);
                         self.animate_to_active();
                     }
                 }
@@ -469,14 +469,14 @@ impl App {
 
                 match phase {
                     TouchPhase::Started => {
-                        self.gesture_scroll_accum = 0.0;
+                        self.gestures.scroll_accum = 0.0;
                     }
                     TouchPhase::Moved | TouchPhase::Ended | TouchPhase::Cancelled => {
-                        self.gesture_scroll_accum += py;
+                        self.gestures.scroll_accum += py;
                         let ppl = self.config.gesture.scroll_pixels_per_line;
-                        let lines = (self.gesture_scroll_accum / ppl) as i64;
+                        let lines = (self.gestures.scroll_accum / ppl) as i64;
                         if lines != 0 {
-                            self.gesture_scroll_accum -= lines as f64 * ppl;
+                            self.gestures.scroll_accum -= lines as f64 * ppl;
                             if lines > 0 {
                                 self.scroll_active_up(lines as usize);
                             } else {
@@ -585,21 +585,21 @@ impl App {
             TouchPhase::Started => {}
             TouchPhase::Moved => {
                 let zoom_delta = delta * sensitivity;
-                if self.overview_active {
+                if self.overview.active {
                     // In overview: pinch out (delta > 0) zooms in toward normal
-                    let cur_zoom = self.overview_zoom.value();
+                    let cur_zoom = self.overview.zoom.value();
                     let new_zoom = (cur_zoom + zoom_delta).clamp(0.05, 1.0);
                     if new_zoom >= self.config.animation.zoom_threshold as f64 {
-                        self.overview_active = false;
-                        self.overview_zoom.animate_to(1.0, omega);
+                        self.overview.active = false;
+                        self.overview.zoom.animate_to(1.0, omega);
                         self.animate_to_active();
                     } else {
-                        self.overview_zoom.animate_to(new_zoom, omega);
+                        self.overview.zoom.animate_to(new_zoom, omega);
                     }
                 } else {
                     // In normal mode: pinch in (delta < 0) enters overview
                     if zoom_delta < -0.02 {
-                        self.overview_active = true;
+                        self.overview.active = true;
                         self.refresh_overview_zoom();
                         self.view_offset_x.animate_to(0.0, omega);
                         self.view_offset_y.animate_to(0.0, omega);
@@ -608,11 +608,11 @@ impl App {
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
                 // Snap: if barely zoomed out, snap back to normal
-                if self.overview_active
-                    && self.overview_zoom.value() > self.config.animation.zoom_threshold as f64
+                if self.overview.active
+                    && self.overview.zoom.value() > self.config.animation.zoom_threshold as f64
                 {
-                    self.overview_active = false;
-                    self.overview_zoom.animate_to(1.0, omega);
+                    self.overview.active = false;
+                    self.overview.zoom.animate_to(1.0, omega);
                     self.animate_to_active();
                 }
             }

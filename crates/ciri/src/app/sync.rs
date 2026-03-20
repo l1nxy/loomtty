@@ -52,7 +52,7 @@ impl App {
                     }
                     self.apply_layout(&layout);
                     // Cancel any active tile drag — layout indices may have changed
-                    self.tile_resize_dragging = None;
+                    self.drag.tile_dragging = None;
                     needs_redraw = true;
                 }
                 ServerEvent::Control(ServerMessage::PaneCreated { pane_id, cols, rows, .. }) => {
@@ -60,9 +60,9 @@ impl App {
                     self.pane_grids.entry(pane_id).or_insert_with(|| {
                         ClientPaneGrid::new(cols, rows, self.config.terminal.scrollback_lines)
                     });
-                    self.pane_open_opacity.insert(pane_id, 0.0); // start fade-in
+                    self.pane_anims.open_opacity.insert(pane_id, 0.0); // start fade-in
                     if !matches!(self.config.animation.pane_open_style, ciri_config::config::PaneOpenStyle::Fade) {
-                        self.pane_open_slides.insert(pane_id, 1.0);
+                        self.pane_anims.open_slides.insert(pane_id, 1.0);
                     }
                     needs_redraw = true;
                 }
@@ -73,7 +73,7 @@ impl App {
                     let voy = self.view_offset_y.value() as f32;
                     let tiles = self.workspaces.visible_tiles_2d(vox, voy);
                     if let Some((_, rect, _)) = tiles.iter().find(|(pid, _, _)| *pid == pane_id) {
-                        self.closing_panes.push(super::ClosingPaneState {
+                        self.pane_anims.closing.push(super::ClosingPaneState {
                             rect: *rect,
                             opacity: 1.0,
                             started: std::time::Instant::now(),
@@ -83,7 +83,7 @@ impl App {
                     self.pane_grids.remove(&pane_id);
                     self.cached_views.remove(&pane_id);
                     self.cached_tile_glyphs.remove(&pane_id);
-                    self.pane_open_opacity.remove(&pane_id);
+                    self.pane_anims.open_opacity.remove(&pane_id);
                     needs_redraw = true;
                 }
                 ServerEvent::Control(ServerMessage::ServerShutdown) => {
@@ -103,7 +103,7 @@ impl App {
                 }
                 ServerEvent::Control(ServerMessage::Bell { pane_id }) => {
                     log::debug!("bell from pane {pane_id}");
-                    self.bell_flash = Some((pane_id, std::time::Instant::now()));
+                    self.pane_anims.bell_flash = Some((pane_id, std::time::Instant::now()));
                     needs_redraw = true;
                 }
                 ServerEvent::Control(ServerMessage::ImagePlacement {

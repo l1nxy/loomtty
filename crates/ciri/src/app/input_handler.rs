@@ -139,8 +139,7 @@ impl App {
                 if let Some(pid) = self.workspaces.active().active_pane_id() {
                     if let Some(grid) = self.pane_grids.get_mut(&pid) {
                         grid.scroll_up(grid.max_scroll_offset());
-                        self.cached_views.remove(&pid);
-                        self.cached_tile_glyphs.remove(&pid);
+                        self.invalidate_pane_cache(pid);
                     }
                 }
             }
@@ -358,8 +357,7 @@ impl App {
                 if let Some(grid) = self.pane_grids.get_mut(&pane_id) {
                     grid.scroll_offset = orig;
                     grid.dirty = true;
-                    self.cached_views.remove(&pane_id);
-                    self.cached_tile_glyphs.remove(&pane_id);
+                    self.invalidate_pane_cache(pane_id);
                 }
                 self.search_state = None;
             }
@@ -463,8 +461,7 @@ impl App {
             let new_offset = max_scroll.saturating_sub(desired_top);
             grid.scroll_offset = new_offset.min(max_scroll);
             grid.dirty = true;
-            self.cached_views.remove(&pane_id);
-                    self.cached_tile_glyphs.remove(&pane_id);
+            self.invalidate_pane_cache(pane_id);
         }
     }
 
@@ -472,8 +469,7 @@ impl App {
         if let Some(pid) = self.workspaces.active().active_pane_id() {
             if let Some(grid) = self.pane_grids.get_mut(&pid) {
                 grid.scroll_up(lines);
-                self.cached_views.remove(&pid);
-                        self.cached_tile_glyphs.remove(&pid);
+                self.invalidate_pane_cache(pid);
             }
         }
     }
@@ -482,8 +478,7 @@ impl App {
         if let Some(pid) = self.workspaces.active().active_pane_id() {
             if let Some(grid) = self.pane_grids.get_mut(&pid) {
                 grid.scroll_down(lines);
-                self.cached_views.remove(&pid);
-                        self.cached_tile_glyphs.remove(&pid);
+                self.invalidate_pane_cache(pid);
             }
         }
     }
@@ -492,8 +487,7 @@ impl App {
         if let Some(pid) = self.workspaces.active().active_pane_id() {
             if let Some(grid) = self.pane_grids.get_mut(&pid) {
                 grid.scroll_to_bottom();
-                self.cached_views.remove(&pid);
-                        self.cached_tile_glyphs.remove(&pid);
+                self.invalidate_pane_cache(pid);
             }
         }
     }

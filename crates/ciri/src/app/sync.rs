@@ -81,8 +81,7 @@ impl App {
                         });
                     }
                     self.pane_grids.remove(&pane_id);
-                    self.cached_views.remove(&pane_id);
-                    self.cached_tile_glyphs.remove(&pane_id);
+                    self.invalidate_pane_cache(pane_id);
                     self.pane_anims.open_opacity.remove(&pane_id);
                     needs_redraw = true;
                 }

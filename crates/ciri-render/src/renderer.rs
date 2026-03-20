@@ -53,12 +53,24 @@ impl Renderer {
             .copied()
             .unwrap_or(surface_caps.formats[0]);
 
+        let desired_mode = match render_config.present_mode.as_str() {
+            "mailbox" => wgpu::PresentMode::Mailbox,
+            "immediate" => wgpu::PresentMode::Immediate,
+            _ => wgpu::PresentMode::Fifo,
+        };
+        let present_mode = if surface_caps.present_modes.contains(&desired_mode) {
+            desired_mode
+        } else {
+            log::warn!("present mode {:?} not supported, falling back to Fifo", desired_mode);
+            wgpu::PresentMode::Fifo
+        };
+
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
             width: size.width.max(1),
             height: size.height.max(1),
-            present_mode: wgpu::PresentMode::Fifo,
+            present_mode,
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: render_config.frame_latency,

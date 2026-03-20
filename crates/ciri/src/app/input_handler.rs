@@ -140,6 +140,7 @@ impl App {
                     if let Some(grid) = self.pane_grids.get_mut(&pid) {
                         grid.scroll_up(grid.max_scroll_offset());
                         self.cached_views.remove(&pid);
+                        self.cached_tile_glyphs.remove(&pid);
                     }
                 }
             }
@@ -358,6 +359,7 @@ impl App {
                     grid.scroll_offset = orig;
                     grid.dirty = true;
                     self.cached_views.remove(&pane_id);
+                    self.cached_tile_glyphs.remove(&pane_id);
                 }
                 self.search_state = None;
             }
@@ -462,6 +464,7 @@ impl App {
             grid.scroll_offset = new_offset.min(max_scroll);
             grid.dirty = true;
             self.cached_views.remove(&pane_id);
+                    self.cached_tile_glyphs.remove(&pane_id);
         }
     }
 
@@ -470,6 +473,7 @@ impl App {
             if let Some(grid) = self.pane_grids.get_mut(&pid) {
                 grid.scroll_up(lines);
                 self.cached_views.remove(&pid);
+                        self.cached_tile_glyphs.remove(&pid);
             }
         }
     }
@@ -479,6 +483,7 @@ impl App {
             if let Some(grid) = self.pane_grids.get_mut(&pid) {
                 grid.scroll_down(lines);
                 self.cached_views.remove(&pid);
+                        self.cached_tile_glyphs.remove(&pid);
             }
         }
     }
@@ -488,6 +493,7 @@ impl App {
             if let Some(grid) = self.pane_grids.get_mut(&pid) {
                 grid.scroll_to_bottom();
                 self.cached_views.remove(&pid);
+                        self.cached_tile_glyphs.remove(&pid);
             }
         }
     }
@@ -503,6 +509,11 @@ pub(crate) fn key_event_to_pty_bytes(event: &winit::event::KeyEvent, ctrl: bool)
             }
             if byte.is_ascii_uppercase() {
                 return vec![byte - b'A' + 1];
+            }
+            // Some Wayland compositors report the control character directly
+            // (e.g. Ctrl+A → '\x01') rather than the base letter.
+            if byte < 0x20 {
+                return vec![byte];
             }
             return match byte {
                 b'[' => vec![0x1b],
@@ -549,6 +560,25 @@ pub(crate) fn key_event_to_pty_bytes(event: &winit::event::KeyEvent, ctrl: bool)
         }
     }
 
+    // event.text is winit's authoritative text for key presses — derived from
+    // xkb_state_key_get_utf8() on Wayland, so it correctly includes Shift and
+    // other modifier transformations (e.g. Shift+a → "A", Shift+1 → "!").
+    if let Some(text) = &event.text {
+        let s: &str = text;
+        if !s.is_empty() {
+            return s.as_bytes().to_vec();
+        }
+    }
+
+    // Fallback: logical_key Character — also reliable on most platforms.
+    if let Key::Character(c) = &event.logical_key {
+        let s = c.as_str();
+        if !s.is_empty() {
+            return s.as_bytes().to_vec();
+        }
+    }
+
+    // Last resort: platform extension that can return None on some Wayland setups.
     if let Some(text) = event.text_with_all_modifiers() {
         let s: &str = text;
         if !s.is_empty() {

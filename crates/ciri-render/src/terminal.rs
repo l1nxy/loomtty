@@ -16,11 +16,11 @@ use ciri_config::config::CiriConfig;
 use ciri_config::theme::ThemeConfig;
 use glyphon::FontSystem;
 
-use std::collections::HashSet;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::glyph_cache::{FontStyle, GlyphAtlas};
 use crate::rect::Rect;
+use crate::shaper::TextShaper;
 use ciri_protocol::message::{
     PackedCell, PackedColor, COLOR_INDEXED, COLOR_NAMED, COLOR_RGB,
     CURSOR_BEAM, CURSOR_BLOCK, CURSOR_HIDDEN, CURSOR_HOLLOW_BLOCK, CURSOR_UNDERLINE,
@@ -74,6 +74,95 @@ impl CellMetrics {
     }
 }
 
+/// Pre-computed color lookup table to avoid per-cell hex string parsing.
+pub struct ColorTable {
+    named: [[f32; 4]; 16],
+    foreground: [f32; 4],
+    background: [f32; 4],
+    dim_foreground: [f32; 4],
+    dim_colors: [[f32; 4]; 8],
+}
+
+impl ColorTable {
+    pub fn new(config: &CiriConfig) -> Self {
+        let theme = &config.theme;
+        let fg = ThemeConfig::parse_color(&theme.foreground);
+        let named = [
+            ThemeConfig::parse_color(&theme.black),
+            ThemeConfig::parse_color(&theme.red),
+            ThemeConfig::parse_color(&theme.green),
+            ThemeConfig::parse_color(&theme.yellow),
+            ThemeConfig::parse_color(&theme.blue),
+            ThemeConfig::parse_color(&theme.magenta),
+            ThemeConfig::parse_color(&theme.cyan),
+            ThemeConfig::parse_color(&theme.white),
+            ThemeConfig::parse_color(&theme.bright_black),
+            ThemeConfig::parse_color(&theme.bright_red),
+            ThemeConfig::parse_color(&theme.bright_green),
+            ThemeConfig::parse_color(&theme.bright_yellow),
+            ThemeConfig::parse_color(&theme.bright_blue),
+            ThemeConfig::parse_color(&theme.bright_magenta),
+            ThemeConfig::parse_color(&theme.bright_cyan),
+            ThemeConfig::parse_color(&theme.foreground), // bright_white = foreground
+        ];
+        let mut dim_colors = [[0.0f32; 4]; 8];
+        for i in 0..8 {
+            dim_colors[i] = [named[i][0] * 0.67, named[i][1] * 0.67, named[i][2] * 0.67, named[i][3]];
+        }
+        ColorTable {
+            named,
+            foreground: fg,
+            background: ThemeConfig::parse_color(&theme.background),
+            dim_foreground: [fg[0] * 0.67, fg[1] * 0.67, fg[2] * 0.67, fg[3]],
+            dim_colors,
+        }
+    }
+
+    fn resolve_packed(&self, color: PackedColor) -> [f32; 4] {
+        match color.tag {
+            COLOR_NAMED => {
+                let n = color.b1;
+                match n {
+                    0..=15 => self.named[n as usize],
+                    16 | 27 => self.foreground,
+                    17 => self.background,
+                    18 => self.foreground,
+                    19..=26 => self.dim_colors[(n - 19) as usize],
+                    28 => self.dim_foreground,
+                    _ => self.foreground,
+                }
+            }
+            COLOR_RGB => [color.b1 as f32 / 255.0, color.b2 as f32 / 255.0, color.b3 as f32 / 255.0, 1.0],
+            COLOR_INDEXED => indexed_color_to_rgba_table(color.b1, self),
+            _ => [1.0, 1.0, 1.0, 1.0],
+        }
+    }
+}
+
+/// Resolve 256-color index using pre-computed color table.
+fn indexed_color_to_rgba_table(idx: u8, ct: &ColorTable) -> [f32; 4] {
+    if idx < 16 {
+        return ct.named[idx as usize];
+    }
+    if idx < 232 {
+        let i = idx - 16;
+        let r = (i / 36) % 6;
+        let g = (i / 6) % 6;
+        let b = i % 6;
+        let to_f = |v: u8| if v == 0 { 0.0 } else { (55.0 + 40.0 * v as f32) / 255.0 };
+        return [to_f(r), to_f(g), to_f(b), 1.0];
+    }
+    let v = (8 + 10 * (idx - 232) as u32) as f32 / 255.0;
+    [v, v, v, 1.0]
+}
+
+/// Per-row cached rendering data for incremental updates.
+struct RowRenderData {
+    glyphs: Vec<RelativeGlyph>,
+    color_glyphs: Vec<RelativeGlyph>,
+    bg_rects: Vec<Rect>,
+}
+
 /// Cached terminal view with positions RELATIVE to the tile's inner origin (0,0).
 /// The actual screen offset is applied at render time, NOT baked into the cache.
 pub struct TerminalView {
@@ -87,6 +176,15 @@ pub struct TerminalView {
     pub cursor_rects: Vec<Rect>,
     /// Scrollbar rect (if any), relative to the pane.
     pub scrollbar_rect: Option<Rect>,
+    /// Cached scrollbar key: (scroll_offset, total_lines, rows, pane_w_bits, pane_h_bits).
+    /// Avoids redundant scrollbar recomputation when parameters haven't changed.
+    pub scrollbar_key: Option<(usize, usize, u16, u32, u32)>,
+    /// Per-row cached rendering data for incremental rebuilds.
+    row_data: Vec<RowRenderData>,
+    /// Per-row cached shaping data for incremental rebuilds.
+    row_lig_cache: Vec<RowLigatureData>,
+    /// Monotonically increasing generation counter. Bumped on every build/update.
+    pub generation: u64,
 }
 
 /// A glyph instance stored with pixel-relative position (not NDC).
@@ -138,8 +236,8 @@ impl CellProps {
         })
     }
 
-    /// Extract from a protocol `PackedCell`. Returns `None` for wide-char spacers.
-    fn from_packed_cell(cell: &PackedCell, config: &CiriConfig) -> Option<Self> {
+    /// Extract from a protocol `PackedCell` using pre-computed color table.
+    fn from_packed_cell_fast(cell: &PackedCell, ct: &ColorTable) -> Option<Self> {
         let f = cell.flags_u16();
         if f & FLAG_WIDE_CHAR_SPACER != 0 {
             return None;
@@ -147,8 +245,8 @@ impl CellProps {
 
         let is_bold = f & FLAG_BOLD != 0;
         let is_italic = f & FLAG_ITALIC != 0;
-        let mut fg = packed_color_to_rgba(cell.fg, config);
-        let mut bg = packed_color_to_rgba(cell.bg, config);
+        let mut fg = ct.resolve_packed(cell.fg);
+        let mut bg = ct.resolve_packed(cell.bg);
         apply_color_modifiers(
             &mut fg, &mut bg, is_bold,
             f & FLAG_DIM != 0,
@@ -469,13 +567,144 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
         config,
     );
 
-    TerminalView { glyph_instances: glyphs, color_glyph_instances: color_glyphs, bg_rects, cursor_rects, scrollbar_rect: None }
+    TerminalView {
+        glyph_instances: glyphs, color_glyph_instances: color_glyphs, bg_rects, cursor_rects,
+        scrollbar_rect: None, scrollbar_key: None,
+        row_data: Vec::new(), row_lig_cache: Vec::new(),
+        generation: 0,
+    }
 }
 
-/// Build rendering data from a `PackedCell` grid (client-side path).
+/// Pre-computed ligature info for a single row.
+struct RowLigatureData {
+    /// True for columns that are continuations of a ligature (should skip normal rendering).
+    skip_cols: Vec<bool>,
+    /// Ligature glyphs to render: (col, glyph_id, font_id, style, fg_color).
+    ligature_glyphs: Vec<(usize, u32, glyphon::fontdb::ID, FontStyle, [f32; 4])>,
+    /// Pre-shaped grapheme clusters: (col, glyph_id).
+    grapheme_glyphs: Vec<(usize, u32)>,
+}
+
+/// Render a single row of cells into per-row buffers.
+fn render_single_row(
+    cells: &[PackedCell],
+    row: usize,
+    cols: u16,
+    lig: Option<&RowLigatureData>,
+    primary_font_id: Option<glyphon::fontdb::ID>,
+    m: &CellMetrics,
+    ct: &ColorTable,
+    atlas: &mut GlyphAtlas,
+    font_system: &mut FontSystem,
+    queue: &wgpu::Queue,
+) -> RowRenderData {
+    let mut glyphs = Vec::new();
+    let mut color_glyphs = Vec::new();
+    let mut bg_rects = Vec::new();
+
+    let mut strip_color: Option<[f32; 4]> = None;
+    let mut strip_start: usize = 0;
+
+    for col in 0..cols as usize {
+        let idx = row * cols as usize + col;
+        if idx >= cells.len() { break; }
+
+        let Some(props) = CellProps::from_packed_cell_fast(&cells[idx], ct) else { continue };
+
+        if props.bg != m.default_bg {
+            if let Some(sc) = strip_color {
+                if sc != props.bg {
+                    flush_bg_strip(&mut bg_rects, sc, strip_start, col, row, m);
+                    strip_color = Some(props.bg);
+                    strip_start = col;
+                }
+            } else {
+                strip_color = Some(props.bg);
+                strip_start = col;
+            }
+        } else if let Some(sc) = strip_color.take() {
+            flush_bg_strip(&mut bg_rects, sc, strip_start, col, row, m);
+        }
+
+        render_cell_decorations(row, col, &props, m, &mut bg_rects);
+
+        if props.is_hidden || props.ch == ' ' || props.ch == '\0' || props.ch.is_control() {
+            continue;
+        }
+
+        if let Some(ld) = lig {
+            if col < ld.skip_cols.len() && ld.skip_cols[col] {
+                continue;
+            }
+        }
+
+        if let Some(ld) = lig {
+            if let Ok(gi) = ld.grapheme_glyphs.binary_search_by_key(&col, |(c, _)| *c) {
+                let gid = ld.grapheme_glyphs[gi].1;
+                if let Some(fid) = primary_font_id {
+                    if let Some(entry) = atlas.ensure_glyph_id(gid, fid, props.style, font_system, queue) {
+                        if entry.width > 0 && entry.height > 0 {
+                            let px = col as f32 * m.cw;
+                            let py = row as f32 * m.ch;
+                            let g = RelativeGlyph {
+                                px: (px + entry.bearing_x as f32).round(),
+                                py: (py + m.baseline - entry.bearing_y as f32).round(),
+                                glyph_w: entry.width as f32, glyph_h: entry.height as f32,
+                                u0: entry.u0, v0: entry.v0, u1: entry.u1, v1: entry.v1,
+                                color: props.fg,
+                            };
+                            if entry.is_color { color_glyphs.push(g); } else { glyphs.push(g); }
+                        }
+                    }
+                }
+                continue;
+            }
+        }
+
+        emit_glyph(col, row, &props, m, atlas, font_system, queue, &mut glyphs, &mut color_glyphs);
+    }
+    if let Some(sc) = strip_color {
+        flush_bg_strip(&mut bg_rects, sc, strip_start, cols as usize, row, m);
+    }
+
+    if let Some(ld) = lig {
+        for &(col, glyph_id, font_id, style, fg) in &ld.ligature_glyphs {
+            if let Some(entry) = atlas.ensure_glyph_id(glyph_id, font_id, style, font_system, queue) {
+                if entry.width == 0 || entry.height == 0 { continue; }
+                let px = col as f32 * m.cw;
+                let py = row as f32 * m.ch;
+                let g = RelativeGlyph {
+                    px: (px + entry.bearing_x as f32).round(),
+                    py: (py + m.baseline - entry.bearing_y as f32).round(),
+                    glyph_w: entry.width as f32, glyph_h: entry.height as f32,
+                    u0: entry.u0, v0: entry.v0, u1: entry.u1, v1: entry.v1,
+                    color: fg,
+                };
+                if entry.is_color { color_glyphs.push(g); } else { glyphs.push(g); }
+            }
+        }
+    }
+
+    RowRenderData { glyphs, color_glyphs, bg_rects }
+}
+
+/// Flatten per-row cached data into the flat TerminalView vecs.
+fn flatten_view(view: &mut TerminalView) {
+    view.glyph_instances.clear();
+    view.color_glyph_instances.clear();
+    view.bg_rects.clear();
+    for rd in &view.row_data {
+        view.glyph_instances.extend_from_slice(&rd.glyphs);
+        view.color_glyph_instances.extend_from_slice(&rd.color_glyphs);
+        view.bg_rects.extend_from_slice(&rd.bg_rects);
+    }
+}
+
+/// Build rendering data from a `PackedCell` grid (client-side path, full rebuild).
 ///
-/// Integrates text shaping (harfbuzz via rustybuzz) for ligature rendering
-/// and Unicode grapheme clustering for multi-codepoint emoji.
+/// The `shaper` is passed separately from `atlas` to allow simultaneous
+/// immutable shaper access (for Face creation) and mutable atlas access
+/// (for glyph caching).
 pub fn build_view_from_grid(
     cells: &[PackedCell],
     cols: u16,
@@ -484,88 +713,217 @@ pub fn build_view_from_grid(
     cursor_col: u16,
     cursor_shape: u8,
     atlas: &mut GlyphAtlas,
+    shaper: &TextShaper,
     font_system: &mut FontSystem,
     queue: &wgpu::Queue,
     config: &CiriConfig,
+    ct: &ColorTable,
 ) -> TerminalView {
     let m = CellMetrics::new(atlas, config);
-    let primary_font_id = atlas.primary_font_id();
+    let primary_font_id = shaper.primary_font_id();
 
-    let mut bg_rects = Vec::new();
-    let mut glyphs = Vec::with_capacity(cols as usize * rows as usize / 2);
-    let mut color_glyphs = Vec::new();
+    // ─── Phase 1: Pre-compute all shaping data (immutable shaper access) ───
+    let row_lig_data: Vec<RowLigatureData> = if let Some(fid) = primary_font_id {
+        if let Some(face) = shaper.create_face(fid) {
+            (0..rows as usize)
+                .map(|row| precompute_row_shaping(cells, row, cols, ct, shaper, fid, &face))
+                .collect()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
 
+    // ─── Phase 2: Render all rows into per-row buffers ───
+    let mut row_data = Vec::with_capacity(rows as usize);
     for row in 0..rows as usize {
-        // Detect ligatures via text shaping (pre-pass)
-        let ligature_cols = detect_row_ligatures(cells, row, cols, config, atlas, primary_font_id);
-
-        // Track current background strip for merging adjacent same-color cells
-        let mut strip_color: Option<[f32; 4]> = None;
-        let mut strip_start: usize = 0;
-
-        for col in 0..cols as usize {
-            let idx = row * cols as usize + col;
-            if idx >= cells.len() { break; }
-
-            let Some(props) = CellProps::from_packed_cell(&cells[idx], config) else { continue };
-
-            // Merge adjacent same-color bg cells into strips (instead of one rect per cell)
-            if props.bg != m.default_bg {
-                if let Some(sc) = strip_color {
-                    if sc != props.bg {
-                        flush_bg_strip(&mut bg_rects, sc, strip_start, col, row, &m);
-                        strip_color = Some(props.bg);
-                        strip_start = col;
-                    }
-                } else {
-                    strip_color = Some(props.bg);
-                    strip_start = col;
-                }
-            } else if let Some(sc) = strip_color.take() {
-                flush_bg_strip(&mut bg_rects, sc, strip_start, col, row, &m);
-            }
-
-            // Decorations (underline, strikeout)
-            render_cell_decorations(row, col, &props, &m, &mut bg_rects);
-
-            if props.is_hidden || props.ch == ' ' || props.ch == '\0' || props.ch.is_control() {
-                continue;
-            }
-
-            // Skip cells that are continuation of a ligature
-            if ligature_cols.contains(&col) {
-                continue;
-            }
-
-            // Try grapheme cluster shaping for multi-codepoint sequences
-            if try_render_grapheme_cluster(
-                cells, row, col, cols, &props, &m, atlas, font_system, queue,
-                primary_font_id, &mut glyphs, &mut color_glyphs,
-            ) {
-                continue;
-            }
-
-            // Normal single-char rendering
-            emit_glyph(col, row, &props, &m, atlas, font_system, queue, &mut glyphs, &mut color_glyphs);
-        }
-        // Flush remaining strip at end of row
-        if let Some(sc) = strip_color {
-            flush_bg_strip(&mut bg_rects, sc, strip_start, cols as usize, row, &m);
-        }
-
-        // Render ligature glyphs (shaped multi-char → single glyph)
-        render_ligature_glyphs(cells, row, cols, config, &m, atlas, font_system, queue,
-                               primary_font_id, &mut glyphs, &mut color_glyphs);
+        let lig = row_lig_data.get(row);
+        row_data.push(render_single_row(cells, row, cols, lig, primary_font_id, &m, ct, atlas, font_system, queue));
     }
 
+    // ─── Phase 3: Flatten into contiguous vecs ───
     let cursor_rects = make_cursor_rects(
         cursor_shape, cursor_line as i32, cursor_col as usize, rows as usize, &m, config,
     );
 
-    TerminalView { glyph_instances: glyphs, color_glyph_instances: color_glyphs, bg_rects, cursor_rects, scrollbar_rect: None }
+    let mut view = TerminalView {
+        glyph_instances: Vec::new(),
+        color_glyph_instances: Vec::new(),
+        bg_rects: Vec::new(),
+        cursor_rects,
+        scrollbar_rect: None,
+        scrollbar_key: None,
+        row_data,
+        row_lig_cache: row_lig_data,
+        generation: 1,
+    };
+    flatten_view(&mut view);
+    view
+}
+
+/// Incrementally update a TerminalView for only the dirty rows.
+/// Much cheaper than a full rebuild: typically 1-3 rows vs 67 rows at 4K.
+pub fn update_view_from_grid(
+    view: &mut TerminalView,
+    dirty_rows: &[bool],
+    cells: &[PackedCell],
+    cols: u16,
+    rows: u16,
+    cursor_line: i16,
+    cursor_col: u16,
+    cursor_shape: u8,
+    atlas: &mut GlyphAtlas,
+    shaper: &TextShaper,
+    font_system: &mut FontSystem,
+    queue: &wgpu::Queue,
+    config: &CiriConfig,
+    ct: &ColorTable,
+) {
+    let m = CellMetrics::new(atlas, config);
+    let primary_font_id = shaper.primary_font_id();
+    let nrows = rows as usize;
+
+    // Re-shape only dirty rows (immutable shaper access)
+    if let Some(fid) = primary_font_id {
+        if let Some(face) = shaper.create_face(fid) {
+            for (row, &dirty) in dirty_rows.iter().enumerate().take(nrows) {
+                if dirty && row < view.row_lig_cache.len() {
+                    view.row_lig_cache[row] = precompute_row_shaping(cells, row, cols, ct, shaper, fid, &face);
+                }
+            }
+        }
+    }
+
+    // Re-render only dirty rows (mutable atlas access)
+    for (row, &dirty) in dirty_rows.iter().enumerate().take(nrows) {
+        if dirty && row < view.row_data.len() {
+            let lig = view.row_lig_cache.get(row);
+            view.row_data[row] = render_single_row(cells, row, cols, lig, primary_font_id, &m, ct, atlas, font_system, queue);
+        }
+    }
+
+    // Rebuild cursor
+    view.cursor_rects = make_cursor_rects(
+        cursor_shape, cursor_line as i32, cursor_col as usize, nrows, &m, config,
+    );
+
+    // Bump generation and re-flatten
+    view.generation = view.generation.wrapping_add(1);
+    flatten_view(view);
 }
 
 // ─── Text shaping integration ───────────────────────────────────────
+
+/// Pre-compute all ligature/grapheme shaping data for a single row.
+/// Uses a pre-created Face to avoid per-row Face::from_slice overhead.
+fn precompute_row_shaping(
+    cells: &[PackedCell],
+    row: usize,
+    cols: u16,
+    ct: &ColorTable,
+    shaper: &TextShaper,
+    fid: glyphon::fontdb::ID,
+    face: &rustybuzz::Face,
+) -> RowLigatureData {
+    let cols_usize = cols as usize;
+    let mut skip_cols = vec![false; cols_usize];
+    let mut ligature_glyphs = Vec::new();
+    let mut grapheme_glyphs = Vec::new();
+
+    // ── Detect ligatures via text shaping ──
+    let mut run_start = None;
+    let mut run_text = String::new();
+    let mut run_style = FontStyle::Regular;
+    let mut run_fg = [1.0f32; 4];
+
+    for col in 0..=cols_usize {
+        let cell_info = if col < cols_usize {
+            let idx = row * cols_usize + col;
+            if idx < cells.len() {
+                CellProps::from_packed_cell_fast(&cells[idx], ct)
+                    .filter(|p| !p.is_hidden && p.ch != ' ' && p.ch != '\0' && !p.ch.is_control())
+            } else { None }
+        } else { None };
+
+        if let Some(props) = &cell_info {
+            if run_start.is_some() && props.style == run_style {
+                run_text.push(props.ch);
+                continue;
+            }
+            // Flush previous run
+            if run_start.is_some() && run_text.len() >= 2 {
+                let start = run_start.unwrap();
+                for lig in shaper.detect_ligatures_with_face(&run_text, face, fid) {
+                    for k in 1..lig.char_count {
+                        let c = start + lig.start_col + k;
+                        if c < cols_usize { skip_cols[c] = true; }
+                    }
+                    ligature_glyphs.push((
+                        start + lig.start_col,
+                        lig.glyph_id,
+                        lig.font_id,
+                        run_style,
+                        run_fg,
+                    ));
+                }
+            }
+            run_start = Some(col);
+            run_text.clear();
+            run_text.push(props.ch);
+            run_style = props.style;
+            run_fg = props.fg;
+        } else {
+            if run_start.is_some() && run_text.len() >= 2 {
+                let start = run_start.unwrap();
+                for lig in shaper.detect_ligatures_with_face(&run_text, face, fid) {
+                    for k in 1..lig.char_count {
+                        let c = start + lig.start_col + k;
+                        if c < cols_usize { skip_cols[c] = true; }
+                    }
+                    ligature_glyphs.push((
+                        start + lig.start_col,
+                        lig.glyph_id,
+                        lig.font_id,
+                        run_style,
+                        run_fg,
+                    ));
+                }
+            }
+            run_start = None;
+            run_text.clear();
+        }
+    }
+
+    // ── Detect grapheme clusters ──
+    for col in 0..cols_usize {
+        let idx = row * cols_usize + col;
+        if idx >= cells.len() { break; }
+        let Some(props) = CellProps::from_packed_cell_fast(&cells[idx], ct) else { continue };
+        if props.is_hidden || props.ch == ' ' || props.ch == '\0' || props.ch.is_control() {
+            continue;
+        }
+        if skip_cols[col] { continue; }
+
+        // Look ahead for combining/modifier characters
+        let mut cluster_str = String::from(props.ch);
+        let mut look = col + if props.is_wide { 2 } else { 1 };
+        while look < cols_usize {
+            let li = row * cols_usize + look;
+            if li >= cells.len() { break; }
+            let next_ch = cells[li].ch();
+            if is_combining_or_modifier(next_ch) { cluster_str.push(next_ch); look += 1; } else { break; }
+        }
+
+        if cluster_str.graphemes(true).count() == 1 && cluster_str.chars().count() > 1 {
+            if let Some(gid) = shaper.shape_grapheme_with_face(&cluster_str, face) {
+                grapheme_glyphs.push((col, gid));
+            }
+        }
+    }
+
+    RowLigatureData { skip_cols, ligature_glyphs, grapheme_glyphs }
+}
 
 /// Render decorations (underline, strikeout) for a cell. Background is handled by strip merger.
 fn render_cell_decorations(row: usize, col: usize, cell: &CellProps, m: &CellMetrics, bg_rects: &mut Vec<Rect>) {
@@ -617,175 +975,6 @@ fn emit_glyph(
         };
         if entry.is_color { color_glyphs.push(g); } else { glyphs.push(g); }
     }
-}
-
-/// Detect columns that are part of ligatures in a row. Returns set of "continuation" columns
-/// (i.e., columns consumed by a ligature but NOT the start column).
-fn detect_row_ligatures(
-    cells: &[PackedCell], row: usize, cols: u16, config: &CiriConfig,
-    atlas: &GlyphAtlas, primary_font_id: Option<glyphon::fontdb::ID>,
-) -> HashSet<usize> {
-    let mut lig_cols = HashSet::new();
-    let Some(fid) = primary_font_id else { return lig_cols };
-
-    // Collect same-style text runs
-    let mut run_start = None;
-    let mut run_text = String::new();
-    let mut run_style = FontStyle::Regular;
-
-    for col in 0..=cols as usize {
-        let (ch, style) = if col < cols as usize {
-            let idx = row * cols as usize + col;
-            if idx < cells.len() {
-                if let Some(props) = CellProps::from_packed_cell(&cells[idx], config) {
-                    if !props.is_hidden && props.ch != ' ' && props.ch != '\0' && !props.ch.is_control() {
-                        (Some((props.ch, col)), props.style)
-                    } else { (None, FontStyle::Regular) }
-                } else { (None, FontStyle::Regular) }
-            } else { (None, FontStyle::Regular) }
-        } else { (None, FontStyle::Regular) };
-
-        if let Some((c, _)) = ch {
-            if run_start.is_some() && style == run_style {
-                run_text.push(c);
-                continue;
-            }
-            // Flush previous run
-            if run_start.is_some() && run_text.len() >= 2 {
-                let start = run_start.unwrap();
-                for lig in atlas.shaper.detect_ligatures(&run_text, fid) {
-                    for k in 1..lig.char_count {
-                        lig_cols.insert(start + lig.start_col + k);
-                    }
-                }
-            }
-            run_start = Some(col);
-            run_text.clear();
-            run_text.push(c);
-            run_style = style;
-        } else {
-            if run_start.is_some() && run_text.len() >= 2 {
-                let start = run_start.unwrap();
-                for lig in atlas.shaper.detect_ligatures(&run_text, fid) {
-                    for k in 1..lig.char_count {
-                        lig_cols.insert(start + lig.start_col + k);
-                    }
-                }
-            }
-            run_start = None;
-            run_text.clear();
-        }
-    }
-    lig_cols
-}
-
-/// Render ligature glyphs (shaped) for a row.
-fn render_ligature_glyphs(
-    cells: &[PackedCell], row: usize, cols: u16, config: &CiriConfig,
-    m: &CellMetrics, atlas: &mut GlyphAtlas, font_system: &mut FontSystem,
-    queue: &wgpu::Queue, primary_font_id: Option<glyphon::fontdb::ID>,
-    glyphs: &mut Vec<RelativeGlyph>, color_glyphs: &mut Vec<RelativeGlyph>,
-) {
-    let Some(fid) = primary_font_id else { return };
-
-    let mut run_start = 0usize;
-    let mut run_text = String::new();
-    let mut run_style = FontStyle::Regular;
-    let mut run_fg = [1.0f32; 4];
-
-    for col in 0..=cols as usize {
-        let cell_info = if col < cols as usize {
-            let idx = row * cols as usize + col;
-            if idx < cells.len() {
-                CellProps::from_packed_cell(&cells[idx], config)
-                    .filter(|p| !p.is_hidden && p.ch != ' ' && p.ch != '\0' && !p.ch.is_control())
-            } else { None }
-        } else { None };
-
-        if let Some(props) = &cell_info {
-            if !run_text.is_empty() && props.style == run_style {
-                run_text.push(props.ch);
-                continue;
-            }
-            // Flush
-            flush_ligatures(&run_text, run_start, row, run_style, run_fg, fid, m, atlas, font_system, queue, glyphs, color_glyphs);
-            run_start = col;
-            run_text.clear();
-            run_text.push(props.ch);
-            run_style = props.style;
-            run_fg = props.fg;
-        } else {
-            flush_ligatures(&run_text, run_start, row, run_style, run_fg, fid, m, atlas, font_system, queue, glyphs, color_glyphs);
-            run_text.clear();
-        }
-    }
-}
-
-fn flush_ligatures(
-    text: &str, start_col: usize, row: usize, style: FontStyle, fg: [f32; 4],
-    fid: glyphon::fontdb::ID, m: &CellMetrics, atlas: &mut GlyphAtlas,
-    font_system: &mut FontSystem, queue: &wgpu::Queue,
-    glyphs: &mut Vec<RelativeGlyph>, color_glyphs: &mut Vec<RelativeGlyph>,
-) {
-    if text.len() < 2 { return; }
-    for lig in atlas.shaper.detect_ligatures(text, fid) {
-        let col = start_col + lig.start_col;
-        let px = col as f32 * m.cw;
-        let py = row as f32 * m.ch;
-        if let Some(entry) = atlas.ensure_glyph_id(lig.glyph_id, lig.font_id, style, font_system, queue) {
-            if entry.width == 0 || entry.height == 0 { continue; }
-            let g = RelativeGlyph {
-                px: (px + entry.bearing_x as f32).round(),
-                py: (py + m.baseline - entry.bearing_y as f32).round(),
-                glyph_w: entry.width as f32, glyph_h: entry.height as f32,
-                u0: entry.u0, v0: entry.v0, u1: entry.u1, v1: entry.v1,
-                color: fg,
-            };
-            if entry.is_color { color_glyphs.push(g); } else { glyphs.push(g); }
-        }
-    }
-}
-
-/// Try to render a multi-codepoint grapheme cluster. Returns true if handled.
-fn try_render_grapheme_cluster(
-    cells: &[PackedCell], row: usize, col: usize, cols: u16,
-    cell: &CellProps, m: &CellMetrics,
-    atlas: &mut GlyphAtlas, font_system: &mut FontSystem, queue: &wgpu::Queue,
-    primary_font_id: Option<glyphon::fontdb::ID>,
-    glyphs: &mut Vec<RelativeGlyph>, color_glyphs: &mut Vec<RelativeGlyph>,
-) -> bool {
-    let fid = match primary_font_id { Some(f) => f, None => return false };
-
-    // Look ahead for combining/modifier characters
-    let mut cluster_str = String::from(cell.ch);
-    let mut look = col + if cell.is_wide { 2 } else { 1 };
-    while look < cols as usize {
-        let li = row * cols as usize + look;
-        if li >= cells.len() { break; }
-        let next_ch = cells[li].ch();
-        if is_combining_or_modifier(next_ch) { cluster_str.push(next_ch); look += 1; } else { break; }
-    }
-
-    // Only process if it's a single grapheme with multiple codepoints
-    if cluster_str.graphemes(true).count() != 1 || cluster_str.chars().count() <= 1 {
-        return false;
-    }
-
-    let gid = match atlas.shaper.shape_grapheme(&cluster_str, fid) { Some(g) => g, None => return false };
-    let entry = match atlas.ensure_glyph_id(gid, fid, cell.style, font_system, queue) { Some(e) => e, None => return false };
-    if entry.width == 0 || entry.height == 0 { return false; }
-
-    let px = col as f32 * m.cw;
-    let py = row as f32 * m.ch;
-    let g = RelativeGlyph {
-        px: (px + entry.bearing_x as f32).round(),
-        py: (py + m.baseline - entry.bearing_y as f32).round(),
-        glyph_w: entry.width as f32, glyph_h: entry.height as f32,
-        u0: entry.u0, v0: entry.v0, u1: entry.u1, v1: entry.v1,
-        color: cell.fg,
-    };
-    if entry.is_color { color_glyphs.push(g); } else { glyphs.push(g); }
-    true
 }
 
 /// Check if a character is a Unicode combining character, ZWJ, or variation selector.
@@ -852,38 +1041,6 @@ fn ansi_color_to_rgba(color: AnsiColor, config: &CiriConfig) -> [f32; 4] {
         AnsiColor::Named(named) => named_color_to_rgba(named, config),
         AnsiColor::Spec(rgb) => [rgb.r as f32 / 255.0, rgb.g as f32 / 255.0, rgb.b as f32 / 255.0, 1.0],
         AnsiColor::Indexed(idx) => indexed_color_to_rgba(idx, config),
-    }
-}
-
-/// Resolve a protocol `PackedColor` to RGBA.
-fn packed_color_to_rgba(color: PackedColor, config: &CiriConfig) -> [f32; 4] {
-    match color.tag {
-        COLOR_NAMED => {
-            // PackedColor named index maps directly to NamedColor ordinals 0–15,
-            // plus special indices for foreground/background/dim variants.
-            let n = color.b1;
-            let theme = &config.theme;
-            match n {
-                0..=15 => named_color_to_rgba(named_color_from_index(n), config),
-                16 | 27 => ThemeConfig::parse_color(&theme.foreground),
-                17 => ThemeConfig::parse_color(&theme.background),
-                18 => ThemeConfig::parse_color(&theme.foreground),
-                // 19–26: dim variants of colors 0–7
-                19..=26 => {
-                    let base = packed_color_to_rgba(PackedColor::named(n - 19), config);
-                    [base[0] * 0.67, base[1] * 0.67, base[2] * 0.67, base[3]]
-                }
-                // 28: dim foreground
-                28 => {
-                    let fg = ThemeConfig::parse_color(&theme.foreground);
-                    [fg[0] * 0.67, fg[1] * 0.67, fg[2] * 0.67, fg[3]]
-                }
-                _ => ThemeConfig::parse_color(&theme.foreground),
-            }
-        }
-        COLOR_RGB => [color.b1 as f32 / 255.0, color.b2 as f32 / 255.0, color.b3 as f32 / 255.0, 1.0],
-        COLOR_INDEXED => indexed_color_to_rgba(color.b1, config),
-        _ => [1.0, 1.0, 1.0, 1.0],
     }
 }
 

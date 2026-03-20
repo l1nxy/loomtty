@@ -122,6 +122,7 @@ impl ApplicationHandler for App {
                 } else {
                     log::info!("server connection lost, exiting");
                     self.cached_views.clear();
+                    self.cached_tile_glyphs.clear();
                     self.glyph_atlas = None;
                     self.renderer = None;
                     self.window = None;
@@ -133,6 +134,7 @@ impl ApplicationHandler for App {
             // Exit if all panes gone
             if self.connected && self.pane_grids.is_empty() && self.workspaces.active().is_empty() {
                 self.cached_views.clear();
+                    self.cached_tile_glyphs.clear();
                 self.glyph_atlas = None;
                 self.renderer = None;
                 self.window = None;
@@ -173,7 +175,7 @@ impl ApplicationHandler for App {
         .expect("renderer init failed");
 
         let fmt = renderer.surface_format();
-        let atlas = GlyphAtlas::new(
+        let (atlas, primary_font_id) = GlyphAtlas::new(
             &renderer.device,
             fmt,
             &mut renderer.font_system,
@@ -182,6 +184,10 @@ impl ApplicationHandler for App {
             &self.config.font.family,
             &self.config.render,
         );
+        let mut shaper = ciri_render::shaper::TextShaper::new(primary_font_id);
+        if let Some(fid) = primary_font_id {
+            shaper.load_font(fid, &renderer.font_system);
+        }
 
         let (w, h) = renderer.surface_size();
         let bar_h = atlas.cell_height + self.config.statusbar.height_padding;
@@ -244,6 +250,7 @@ impl ApplicationHandler for App {
 
         self.dpi_scale = dpi_scale;
         self.glyph_atlas = Some(atlas);
+        self.text_shaper = Some(shaper);
         self.snap_all_col_widths();
         self.animate_to_active();
         self.window = Some(window);
@@ -261,6 +268,7 @@ impl ApplicationHandler for App {
                 self.send(ClientMessage::Detach);
                 self.pane_grids.clear();
                 self.cached_views.clear();
+                    self.cached_tile_glyphs.clear();
                 self.glyph_atlas = None;
                 self.renderer = None;
                 self.window = None;
@@ -290,6 +298,7 @@ impl ApplicationHandler for App {
                     grid.dirty = true;
                 }
                 self.cached_views.clear();
+                    self.cached_tile_glyphs.clear();
                 let center_strategy = match self.config.layout.center_focused_column {
                     ciri_config::config::CenterStrategy::Always => ciri_layout::workspace::CenterStrategy::Always,
                     ciri_config::config::CenterStrategy::OnOverflow => ciri_layout::workspace::CenterStrategy::OnOverflow,
@@ -365,7 +374,7 @@ impl ApplicationHandler for App {
                     self.dpi_scale = scale_factor;
                     if let Some(renderer) = &mut self.renderer {
                         let fmt = renderer.surface_format();
-                        let atlas = GlyphAtlas::new(
+                        let (atlas, primary_font_id) = GlyphAtlas::new(
                             &renderer.device,
                             fmt,
                             &mut renderer.font_system,
@@ -374,6 +383,10 @@ impl ApplicationHandler for App {
                             &self.config.font.family,
                             &self.config.render,
                         );
+                        let mut shaper = ciri_render::shaper::TextShaper::new(primary_font_id);
+                        if let Some(fid) = primary_font_id {
+                            shaper.load_font(fid, &renderer.font_system);
+                        }
                         log::info!(
                             "DPI changed: scale={:.2} cell={:.1}x{:.1}",
                             scale_factor,
@@ -387,7 +400,9 @@ impl ApplicationHandler for App {
                             height: h as f32 - bar_h,
                         });
                         self.glyph_atlas = Some(atlas);
+                        self.text_shaper = Some(shaper);
                         self.cached_views.clear();
+                    self.cached_tile_glyphs.clear();
                     }
                     if let Some(w) = &self.window {
                         w.request_redraw();

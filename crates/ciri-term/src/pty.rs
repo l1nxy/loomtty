@@ -8,7 +8,13 @@ use std::sync::{Arc, Mutex};
 /// Cross-platform PTY wrapper using portable-pty.
 /// Uses a background reader thread because portable-pty's reader is blocking.
 pub struct Pty {
-    master: Box<dyn MasterPty + Send>,
+    /// Option so Drop can take it and control shutdown order on Windows.
+    /// On Windows, MasterPty::drop calls ClosePseudoConsole which blocks until
+    /// the ConPTY output pipe is fully consumed — we must drain the channel
+    /// concurrently to prevent deadlock (see Drop impl).
+    master: Option<Box<dyn MasterPty + Send>>,
+    /// PTY input handle. Must stay alive until after ClosePseudoConsole —
+    /// closing it early destroys the console and force-kills the child.
     writer: Mutex<Box<dyn Write + Send>>,
     child: Mutex<Box<dyn portable_pty::Child + Send + Sync>>,
     /// Channel receiving PTY output from the reader thread.
@@ -112,7 +118,7 @@ impl Pty {
             .context("failed to spawn pty reader thread")?;
 
         Ok(Pty {
-            master: pair.master,
+            master: Some(pair.master),
             writer: Mutex::new(writer),
             child: Mutex::new(child),
             output_rx,
@@ -151,23 +157,71 @@ impl Pty {
     }
 
     pub fn resize(&self, cols: u16, rows: u16) {
-        if let Err(e) = self.master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }) {
-            log::warn!("pty resize failed: {e}");
+        if let Some(ref master) = self.master {
+            if let Err(e) = master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }) {
+                log::warn!("pty resize failed: {e}");
+            }
         }
     }
 }
 
 impl Drop for Pty {
     fn drop(&mut self) {
-        // Signal reader thread to stop by dropping the master fd.
-        // The reader will get an error/EOF on the next read() and exit.
-        // We also kill the child process to avoid orphans.
+        // Kill child process to avoid orphans.
         if let Ok(mut child) = self.child.lock() {
             let _ = child.kill();
         }
-        // The reader thread will exit once the master fd is dropped (which
-        // happens when `self.master` is dropped after this method returns).
-        // We intentionally do NOT join the thread here to avoid blocking
-        // the UI — the thread will exit on its own when read() returns an error.
+
+        if let Some(master) = self.master.take() {
+            if cfg!(windows) {
+                // On Windows, MasterPty::drop calls ClosePseudoConsole which blocks
+                // until the ConPTY output pipe is fully consumed. Our reader thread
+                // reads that pipe and sends chunks through a bounded channel. If the
+                // channel is full and nobody drains it, the reader blocks on send(),
+                // the pipe stalls, and ClosePseudoConsole deadlocks.
+                //
+                // Fix: drop the master on a background thread (so ClosePseudoConsole
+                // runs there) while we drain the channel here, keeping the reader
+                // thread unblocked so it can finish consuming the pipe.
+                //
+                // Note: the writer (PTY input handle) must outlive ClosePseudoConsole.
+                // Since writer is a later struct field, it drops after this fn returns,
+                // and we wait for ClosePseudoConsole below — so ordering is correct.
+                let close_done = Arc::new(AtomicBool::new(false));
+                let close_done2 = close_done.clone();
+                match std::thread::Builder::new()
+                    .name("pty-close".into())
+                    .spawn(move || {
+                        drop(master);
+                        close_done2.store(true, Ordering::Release);
+                    }) {
+                    Ok(_handle) => {
+                        // Drain the channel while ClosePseudoConsole runs.
+                        // Safety timeout prevents infinite hang if something goes wrong.
+                        let deadline = std::time::Instant::now()
+                            + std::time::Duration::from_secs(5);
+                        while !close_done.load(Ordering::Acquire)
+                            && std::time::Instant::now() < deadline
+                        {
+                            while self.output_rx.try_recv().is_ok() {}
+                            std::thread::sleep(std::time::Duration::from_millis(1));
+                        }
+                        // If timeout expired, the close thread is leaked — OS will
+                        // clean up on process exit. This is better than deadlocking.
+                    }
+                    Err(_) => {
+                        // Thread spawn failed — master was consumed by the closure and
+                        // dropped with it, so ClosePseudoConsole runs on this thread.
+                        // Best-effort drain to reduce blocking time.
+                        while self.output_rx.try_recv().is_ok() {}
+                    }
+                }
+            } else {
+                // On Unix, closing the master fd is instant — no deadlock risk.
+                drop(master);
+            }
+        }
+        // Reader thread exits once the pipe returns EOF/error after
+        // ClosePseudoConsole completes (or fd close on Unix).
     }
 }

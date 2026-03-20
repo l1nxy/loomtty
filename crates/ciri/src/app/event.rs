@@ -20,11 +20,11 @@ impl ApplicationHandler for App {
         // expecting updates. Switch to Wait when idle to save power.
         let is_animating = self.view_offset_x.is_animating()
             || self.view_offset_y.is_animating()
-            || self.overview_zoom.is_animating()
-            || self.gesture_row_offset.is_animating()
+            || self.overview.zoom.is_animating()
+            || self.gestures.row_offset.is_animating()
             || self.col_widths.iter().any(|v| v.is_animating())
-            || !self.pane_open_opacity.is_empty()
-            || !self.closing_panes.is_empty();
+            || !self.pane_anims.open_opacity.is_empty()
+            || !self.pane_anims.closing.is_empty();
         let has_server = self.server_rx.is_some();
         let is_reconnecting = self.reconnect_state.is_some();
         let wants_blink = self.config.terminal.cursor_blink;

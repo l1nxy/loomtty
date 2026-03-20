@@ -378,4 +378,10 @@ impl App {
         };
         cell_h + padding
     }
+
+    /// Invalidate all cached rendering state for a pane (view + glyph cache).
+    pub fn invalidate_pane_cache(&mut self, pane_id: u64) {
+        self.cached_views.remove(&pane_id);
+        self.cached_tile_glyphs.remove(&pane_id);
+    }
 }

@@ -70,7 +70,7 @@ impl LeaderKey {
         }
 
         // Regular key + modifier combo (e.g. "ctrl+w")
-        key_name == self.key
+        key_name.eq_ignore_ascii_case(&self.key)
             && ctrl == self.ctrl
             && alt == self.alt
             && super_key == self.super_key

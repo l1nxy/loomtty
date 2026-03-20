@@ -64,6 +64,7 @@ impl ThemeConfig {
             let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0);
             [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]
         } else {
+            log::warn!("invalid hex color: {:?}, falling back to light gray", hex);
             [0.9, 0.9, 0.9, 1.0]
         }
     }

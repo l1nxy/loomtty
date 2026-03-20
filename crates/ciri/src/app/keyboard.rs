@@ -17,7 +17,7 @@ impl App {
         if event.state != ElementState::Pressed {
             return;
         }
-        if self.ime_preedit_active {
+        if self.ime.preedit_active {
             return;
         }
 
@@ -197,7 +197,7 @@ impl App {
             _ => "",
         };
 
-        if self.overview_active {
+        if self.overview.active {
             let combo = KeyCombo::from_modifiers(
                 &key_name.to_lowercase(),
                 ctrl,
@@ -208,8 +208,8 @@ impl App {
             if let Some(action) = self.overview_keybinds.lookup(&combo) {
                 match action {
                     Action::ExitOverview => {
-                        self.overview_active = false;
-                        self.overview_zoom
+                        self.overview.active = false;
+                        self.overview.zoom
                             .animate_to(1.0, self.config.animation.speed);
                         self.animate_to_active();
                     }

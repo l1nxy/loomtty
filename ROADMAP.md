@@ -110,6 +110,6 @@
 
 ## Platform
 
-- [ ] Windows: named pipes as alternative to TCP localhost
+- [x] Windows: named pipes (`\\.\pipe\ciri-server`) replacing TCP localhost
 - [ ] macOS: test and fix Unix domain socket path handling
 - [ ] Background opacity / blur

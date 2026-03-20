@@ -17,8 +17,11 @@ pub fn run_control_command(msg: ClientMessage) -> Result<()> {
     #[allow(unused_variables)]
     let (server_running, sock_path) = {
         let p = transport::server_socket_path();
-        let port = transport::server_port();
-        let running = std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok();
+        let running = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(transport::server_pipe_name())
+            .is_ok();
         (running, p)
     };
 
@@ -45,11 +48,17 @@ pub fn run_control_command(msg: ClientMessage) -> Result<()> {
     #[cfg(unix)]
     let mut stream = std::os::unix::net::UnixStream::connect(&sock_path)?;
     #[cfg(windows)]
-    let mut stream = std::net::TcpStream::connect(format!("127.0.0.1:{}", transport::server_port()))?;
+    let mut stream = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(transport::server_pipe_name())?;
 
     // Set timeouts so we don't hang if the server is unresponsive
-    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
-    let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(5)));
+    #[cfg(unix)]
+    {
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+        let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(5)));
+    }
 
     // Send a minimal ClientHello
     let magic = b"CIRI";
@@ -147,7 +156,6 @@ pub fn run_control_command(msg: ClientMessage) -> Result<()> {
 pub fn session_exists_on_server(name: &str) -> bool {
     use ciri_protocol::transport;
     use std::io::{Read, Write};
-    use std::time::Duration;
 
     // Try to connect to the server
     #[cfg(unix)]
@@ -158,8 +166,10 @@ pub fn session_exists_on_server(name: &str) -> bool {
     };
     #[cfg(windows)]
     let stream_result = {
-        let port = transport::server_port();
-        std::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(transport::server_pipe_name())
     };
 
     let mut stream = match stream_result {
@@ -168,8 +178,11 @@ pub fn session_exists_on_server(name: &str) -> bool {
     };
 
     // Set a short timeout so we don't hang
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+    #[cfg(unix)]
+    {
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+        let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(2)));
+    }
 
     // Send ClientHello for __control__ session
     let magic = b"CIRI";

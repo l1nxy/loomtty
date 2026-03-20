@@ -73,9 +73,15 @@ pub fn server_socket_path() -> PathBuf {
     runtime_dir().join("ciri").join("ciri.sock")
 }
 
-/// Fixed TCP port for the single ciri-server on Windows.
+/// Fixed TCP port for the single ciri-server on Windows (legacy fallback).
 pub fn server_port() -> u16 {
     port_for_session("__ciri_server__")
+}
+
+/// Named pipe path for the ciri server on Windows.
+#[cfg(windows)]
+pub fn server_pipe_name() -> String {
+    r"\\.\pipe\ciri-server".to_string()
 }
 
 /// Get the directory for session state files.

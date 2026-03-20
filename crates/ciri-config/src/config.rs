@@ -173,20 +173,24 @@ impl Default for TerminalConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StatusBarConfig {
-    /// Extra height added to cell height for status bar.
-    pub height_padding: f32,
+    /// Vertical padding as a proportion of cell height (applied above and below text).
+    pub padding_ratio: f32,
     /// Text baseline factor (0.0-1.0) relative to cell height.
     pub text_baseline: f32,
-    /// Leader indicator line height.
-    pub leader_indicator_height: f32,
+    /// Leader indicator line height as a proportion of cell height.
+    pub leader_indicator_ratio: f32,
+    /// Legacy: extra height in pixels (overrides padding_ratio if set by user config).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height_padding: Option<f32>,
 }
 
 impl Default for StatusBarConfig {
     fn default() -> Self {
         StatusBarConfig {
-            height_padding: 4.0,
+            padding_ratio: 0.25,
             text_baseline: 0.8,
-            leader_indicator_height: 2.0,
+            leader_indicator_ratio: 0.1,
+            height_padding: None,
         }
     }
 }

@@ -18,8 +18,11 @@ pub fn is_session_running(_session_name: &str) -> bool {
 
     #[cfg(windows)]
     {
-        let port = transport::server_port();
-        std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok()
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(transport::server_pipe_name())
+            .is_ok()
     }
 }
 

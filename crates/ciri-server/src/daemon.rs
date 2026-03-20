@@ -15,7 +15,7 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 #[cfg(unix)]
 use tokio::net::UnixListener;
 #[cfg(windows)]
-use tokio::net::TcpListener;
+use tokio::net::windows::named_pipe::ServerOptions;
 use tokio::sync::{mpsc, Mutex, Notify};
 use tokio::time::{interval, Duration, Instant};
 
@@ -275,6 +275,10 @@ impl Session {
                     tiles: c.tiles.iter().map(|t| TileState { pane_id: t.pane_id, weight: t.height.weight() }).collect(),
                     active_tile_idx: c.active_tile_idx,
                     width_proportion: c.proportion(self.workspaces.view_size.width),
+                    width_fixed_px: match c.width {
+                        ColumnWidth::Fixed(px) => Some(px),
+                        _ => None,
+                    },
                 }).collect(),
                 active_column_idx: ws.active_column_idx,
             }).collect(),
@@ -298,6 +302,10 @@ impl Session {
                     tiles: c.tiles.iter().map(|t| SavedTile { pane_id: t.pane_id, weight: t.height.weight(), cwd: None, title: None }).collect(),
                     active_tile_idx: c.active_tile_idx,
                     width_proportion: c.proportion(self.workspaces.view_size.width),
+                    width_fixed_px: match c.width {
+                        ColumnWidth::Fixed(px) => Some(px),
+                        _ => None,
+                    },
                 }).collect(),
                 active_column_idx: ws.active_column_idx,
             }).collect(),
@@ -484,7 +492,15 @@ impl Server {
                         }
                         let vw = session.workspaces.view_size.width;
                         let vh = session.workspaces.view_size.height;
-                        let col_w = (vw as f64 * saved_col.width_proportion) as f32;
+                        let restored_width = if let Some(px) = saved_col.width_fixed_px {
+                            ColumnWidth::Fixed(px)
+                        } else {
+                            ColumnWidth::Proportion(saved_col.width_proportion)
+                        };
+                        let col_w = match restored_width {
+                            ColumnWidth::Fixed(px) => px as f32,
+                            ColumnWidth::Proportion(p) => (vw as f64 * p) as f32,
+                        };
 
                         // Restore every tile in this column (not just the first)
                         let mut col_opt: Option<ciri_layout::column::Column> = None;
@@ -505,7 +521,7 @@ impl Server {
                                     } else {
                                         // First tile: create the column
                                         let mut col = ciri_layout::column::Column::new(id);
-                                        col.width = ColumnWidth::Proportion(saved_col.width_proportion);
+                                        col.width = restored_width;
                                         // Set weight on the first tile too
                                         if let Some(first_tile) = col.tiles.first_mut() {
                                             first_tile.height = ciri_layout::tile::TileHeight::Auto { weight: saved_tile.weight as f64 };
@@ -1090,17 +1106,16 @@ pub async fn run_daemon() -> Result<()> {
         }
     }
     #[cfg(windows)]
-    let listener = TcpListener::bind(
-        format!("127.0.0.1:{}", transport::server_port())
-    ).await?;
-
-    // On Windows, create a marker file so list_running_sessions can discover us
+    let pipe_name = transport::server_pipe_name();
     #[cfg(windows)]
-    {
-        std::fs::write(&sock_path, transport::server_port().to_string())?;
-    }
+    let mut pipe_server = ServerOptions::new()
+        .first_pipe_instance(true)
+        .create(&pipe_name)?;
 
+    #[cfg(unix)]
     log::info!("ciri-server listening on {}", sock_path.display());
+    #[cfg(windows)]
+    log::info!("ciri-server listening on {}", pipe_name);
 
     let mut server = Server::new(&shell, config.appearance.column_gap);
     // Apply default_column_width from config
@@ -1470,243 +1485,301 @@ pub async fn run_daemon() -> Result<()> {
 
     // Accept connections, with graceful shutdown via select!
     loop {
-        tokio::select! {
-            result = listener.accept() => {
-                let (stream, _) = result?;
-                let state = state.clone();
-                let client_shutdown = shutdown.clone();
-
-                tokio::spawn(async move {
+        #[cfg(unix)]
+        {
+            tokio::select! {
+                result = listener.accept() => {
+                    let (stream, _) = result?;
+                    let state = state.clone();
+                    let client_shutdown = shutdown.clone();
                     let (reader, writer) = stream.into_split();
-                    let mut reader = tokio::io::BufReader::new(reader);
-                    let mut writer = BufWriter::new(writer);
-
-                    // Read ClientHello (version + viewport + session name)
-                    let hello = match codec::read_client_hello(&mut reader).await {
-                        Ok((codec::VersionCompat::Exact(v), h)) => {
-                            log::info!("client handshake ok (v{v}), session={}", h.session_name);
-                            h
-                        }
-                        Ok((codec::VersionCompat::PatchMismatch { peer, local }, h)) => {
-                            log::warn!("client version {peer} differs from server {local} (patch mismatch)");
-                            h
-                        }
-                        Ok((codec::VersionCompat::MinorMismatch { peer, local }, h)) => {
-                            log::warn!("client version {peer} differs from server {local} (minor mismatch, may be unstable)");
-                            h
-                        }
-                        Err(e) => {
-                            log::debug!("client hello rejected: {e}");
-                            return;
-                        }
-                    };
-
-                    let requested_session = hello.session_name.clone();
-                    log::info!("client requested session: {}", requested_session);
-
-                    // Validate session name (allow __control__ for CLI commands)
-                    let is_control = requested_session == "__control__";
-                    if !is_control && ciri_session::save::validate_session_name(&requested_session).is_err() {
-                        log::error!("invalid session name from client: {:?}", requested_session);
-                        return;
-                    }
-
-                    let client_viewport_w = hello.width as f32;
-                    let client_viewport_h = hello.height as f32;
-                    let client_cell_w = hello.cell_width;
-                    let client_cell_h = hello.cell_height;
-
-                    // Send ServerHello
-                    if let Err(e) = codec::write_server_hello(&mut writer).await {
-                        log::error!("failed to send server hello: {e}");
-                        return;
-                    }
-
-                    // Register client and get/create session
-                    let (tx, mut rx) = mpsc::channel::<Bytes>(256);
-                    let client_id;
-                    let initial_frames: Vec<Bytes>;
-                    {
-                        let mut s = state.lock().await;
-                        client_id = s.next_client_id;
-                        s.next_client_id += 1;
-
-                        // Register client with session affinity
-                        s.clients.insert(client_id, ClientState {
-                            id: client_id,
-                            tx: tx.clone(),
-                            damage: HashMap::new(),
-                            last_acked_generation: 0,
-                            history_sent: HashMap::new(),
-                            send_failures: 0,
-                            cell_width: client_cell_w,
-                            cell_height: client_cell_h,
-                            viewport_width: client_viewport_w,
-                            viewport_height: client_viewport_h,
-                            session_name: requested_session.clone(),
-                        });
-
-                        // Skip session creation for control clients (CLI commands)
-                        if !is_control {
-                            s.get_or_create_session(&requested_session);
-                        }
-
-                        // Temporarily remove session to avoid borrow conflicts
-                        let session_opt = s.sessions.remove(&requested_session);
-
-                        if let Some(ref session) = session_opt {
-                            // Mark all session panes for full sync for this client
-                            let pane_keys: Vec<u64> = session.panes.keys().copied().collect();
-                            if let Some(client) = s.clients.get_mut(&client_id) {
-                                for pane_id in &pane_keys {
-                                    let mut acc = DamageAccumulator::new();
-                                    acc.mark_full();
-                                    client.damage.insert(*pane_id, acc);
-                                }
-                            }
-                        }
-
-                        // Recompute effective viewport and build initial sync frames
-                        let mut frames = Vec::new();
-                        if let Some(mut session) = session_opt {
-                            session.resize_all_panes(&mut s.clients);
-
-                            log::info!("client {client_id} connected to session '{}'", requested_session);
-
-                            let (sync_msg, pane_syncs) = session.build_state_sync();
-                            if let Some(frame) = Server::frame_control_msg(&sync_msg) {
-                                frames.push(frame);
-                            }
-                            for sync in &pane_syncs {
-                                let mut buf = Vec::new();
-                                if codec::encode_full_pane_sync_framed(&mut buf, sync).is_ok() {
-                                    frames.push(Bytes::from(buf));
-                                }
-                            }
-
-                            let pane_histories: Vec<(u64, usize)> = session.panes.iter().map(|(&pid, pane)| {
-                                (pid, pane.history_size())
-                            }).collect();
-
-                            if let Some(client) = s.clients.get_mut(&client_id) {
-                                for acc in client.damage.values_mut() {
-                                    *acc = DamageAccumulator::new();
-                                }
-                                for (pane_id, history) in pane_histories {
-                                    client.history_sent.insert(pane_id, history);
-                                }
-                            }
-
-                            s.sessions.insert(requested_session.clone(), session);
-                        } else {
-                            log::info!("control client {client_id} connected (no session)");
-                        }
-
-                        initial_frames = frames;
-                    } // lock dropped here
-
-                    // Send frames without holding the lock
-                    for frame in initial_frames {
-                        let _ = tx.send(frame).await;
-                    }
-
-                    // Spawn writer task
-                    let write_handle = tokio::spawn(async move {
-                        let mut gather_buf: Vec<u8> = Vec::with_capacity(64 * 1024);
-                        while let Some(first) = rx.recv().await {
-                            gather_buf.clear();
-                            gather_buf.extend_from_slice(&first);
-                            while let Ok(extra) = rx.try_recv() {
-                                gather_buf.extend_from_slice(&extra);
-                            }
-                            if writer.write_all(&gather_buf).await.is_err() {
-                                break;
-                            }
-                            if writer.flush().await.is_err() {
-                                break;
-                            }
-                        }
-                    });
-
-                    // Reader loop with guaranteed cleanup on panic or error
-                    let reader_result = std::panic::AssertUnwindSafe(async {
-                        loop {
-                            match codec::read_frame(&mut reader).await {
-                                Ok(codec::Frame::ClientMsg(msg)) => {
-                                    let mut s = state.lock().await;
-                                    let responses = s.handle_message(msg, client_id);
-
-                                    for resp in responses {
-                                        match resp {
-                                            ServerResponse::BroadcastToSession(session_name, server_msg) => {
-                                                s.broadcast_to_session(&session_name, &server_msg);
-                                            }
-                                            ServerResponse::SendToClient(cid, server_msg) => {
-                                                s.send_to_client(cid, &server_msg);
-                                            }
-                                            ServerResponse::SendFullPaneSync(cid, sync) => {
-                                                if let Some(client) = s.clients.get(&cid) {
-                                                    let mut buf = Vec::new();
-                                                    if codec::encode_full_pane_sync_framed(&mut buf, &sync).is_ok() {
-                                                        if let Err(e) = client.tx.try_send(Bytes::from(buf)) {
-                                                            log::warn!("failed to send full pane sync to client {cid}: {e}");
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            ServerResponse::RemoveClient(cid) => {
-                                                s.clients.remove(&cid);
-                                                log::info!("client {cid} detached");
-                                                if cid == client_id {
-                                                    return;
-                                                }
-                                            }
-                                            ServerResponse::ShutdownServer => {
-                                                // Save all sessions, notify all clients
-                                                for session in s.sessions.values() {
-                                                    let _ = session.save_session();
-                                                }
-                                                if let Some(frame) = Server::frame_control_msg(&ServerMessage::ServerShutdown) {
-                                                    for client in s.clients.values() {
-                                                        let _ = client.tx.try_send(frame.clone());
-                                                    }
-                                                }
-                                                drop(s);
-                                                let _ = std::fs::remove_file(&transport::server_socket_path());
-                                                // Signal the accept loop and tick loop to shut down
-                                                client_shutdown.notify_one();
-                                                return;
-                                            }
-                                        }
-                                    }
-                                }
-                                Ok(_) => {
-                                    log::warn!("unexpected frame type from client {client_id}");
-                                }
-                                Err(e) => {
-                                    if e.kind() != std::io::ErrorKind::UnexpectedEof {
-                                        log::warn!("client {client_id} read error: {e}");
-                                    }
-                                    break;
-                                }
-                            }
-                        }
-                    }).await;
-
-                    // Cleanup always runs
-                    let _ = reader_result;
-                    cleanup_client(&state, client_id).await;
-                    write_handle.abort();
-                });
+                    tokio::spawn(handle_client(reader, writer, state, client_shutdown));
+                }
+                _ = shutdown.notified() => {
+                    log::info!("accept loop shutting down");
+                    break;
+                }
             }
-            _ = shutdown.notified() => {
-                log::info!("accept loop shutting down");
-                break;
+        }
+
+        #[cfg(windows)]
+        {
+            tokio::select! {
+                result = pipe_server.connect() => {
+                    if let Err(e) = result {
+                        log::error!("named pipe accept error: {e}");
+                        continue;
+                    }
+                }
+                _ = shutdown.notified() => {
+                    log::info!("accept loop shutting down");
+                    break;
+                }
             }
+            // After select!, the borrow from connect() is released
+            let connected = pipe_server;
+            pipe_server = ServerOptions::new().create(&pipe_name)?;
+            let state = state.clone();
+            let client_shutdown = shutdown.clone();
+            let (reader, writer) = tokio::io::split(connected);
+            tokio::spawn(handle_client(reader, writer, state, client_shutdown));
         }
     }
 
     Ok(())
+}
+
+/// Handle a single client connection (shared between Unix and Windows accept loops).
+async fn handle_client<R, W>(
+    reader: R,
+    writer: W,
+    state: Arc<Mutex<Server>>,
+    shutdown: Arc<Notify>,
+)
+where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+    W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let mut reader = tokio::io::BufReader::new(reader);
+    let mut writer = BufWriter::new(writer);
+
+    // Read ClientHello (version + viewport + session name)
+    let hello = match codec::read_client_hello(&mut reader).await {
+        Ok((codec::VersionCompat::Exact(v), h)) => {
+            log::info!("client handshake ok (v{v}), session={}", h.session_name);
+            h
+        }
+        Ok((codec::VersionCompat::PatchMismatch { peer, local }, h)) => {
+            log::warn!("client version {peer} differs from server {local} (patch mismatch)");
+            h
+        }
+        Ok((codec::VersionCompat::MinorMismatch { peer, local }, h)) => {
+            log::warn!("client version {peer} differs from server {local} (minor mismatch, may be unstable)");
+            h
+        }
+        Err(e) => {
+            log::debug!("client hello rejected: {e}");
+            return;
+        }
+    };
+
+    let requested_session = hello.session_name.clone();
+    log::info!("client requested session: {}", requested_session);
+
+    // Validate session name (allow __control__ for CLI commands)
+    let is_control = requested_session == "__control__";
+    if !is_control && ciri_session::save::validate_session_name(&requested_session).is_err() {
+        log::error!("invalid session name from client: {:?}", requested_session);
+        return;
+    }
+
+    let client_viewport_w = hello.width as f32;
+    let client_viewport_h = hello.height as f32;
+    let client_cell_w = hello.cell_width;
+    let client_cell_h = hello.cell_height;
+
+    // Send ServerHello
+    if let Err(e) = codec::write_server_hello(&mut writer).await {
+        log::error!("failed to send server hello: {e}");
+        return;
+    }
+
+    // Register client and get/create session
+    let (tx, mut rx) = mpsc::channel::<Bytes>(256);
+    let client_id;
+    let initial_frames: Vec<Bytes>;
+    {
+        let mut s = state.lock().await;
+        client_id = s.next_client_id;
+        s.next_client_id += 1;
+
+        // Register client with session affinity
+        s.clients.insert(client_id, ClientState {
+            id: client_id,
+            tx: tx.clone(),
+            damage: HashMap::new(),
+            last_acked_generation: 0,
+            history_sent: HashMap::new(),
+            send_failures: 0,
+            cell_width: client_cell_w,
+            cell_height: client_cell_h,
+            viewport_width: client_viewport_w,
+            viewport_height: client_viewport_h,
+            session_name: requested_session.clone(),
+        });
+
+        // Skip session creation for control clients (CLI commands)
+        if !is_control {
+            s.get_or_create_session(&requested_session);
+        }
+
+        // Temporarily remove session to avoid borrow conflicts
+        let session_opt = s.sessions.remove(&requested_session);
+
+        if let Some(ref session) = session_opt {
+            // Mark all session panes for full sync for this client
+            let pane_keys: Vec<u64> = session.panes.keys().copied().collect();
+            if let Some(client) = s.clients.get_mut(&client_id) {
+                for pane_id in &pane_keys {
+                    let mut acc = DamageAccumulator::new();
+                    acc.mark_full();
+                    client.damage.insert(*pane_id, acc);
+                }
+            }
+        }
+
+        // Recompute effective viewport and build initial sync frames
+        let mut frames = Vec::new();
+        if let Some(mut session) = session_opt {
+            session.resize_all_panes(&mut s.clients);
+
+            log::info!("client {client_id} connected to session '{}'", requested_session);
+
+            let (sync_msg, pane_syncs) = session.build_state_sync();
+            if let Some(frame) = Server::frame_control_msg(&sync_msg) {
+                frames.push(frame);
+            }
+            for sync in &pane_syncs {
+                let mut buf = Vec::new();
+                if codec::encode_full_pane_sync_framed(&mut buf, sync).is_ok() {
+                    frames.push(Bytes::from(buf));
+                }
+            }
+
+            // Send active image placements so reconnecting clients see existing images
+            for (&pane_id, pane) in &session.panes {
+                for img in pane.active_images() {
+                    if let Some(frame) = Server::frame_control_msg(&ServerMessage::ImagePlacement {
+                        pane_id,
+                        image_id: img.id,
+                        col: img.col,
+                        row: img.row,
+                        width_cells: img.width_cells,
+                        height_cells: img.height_cells,
+                        pixel_width: img.pixel_width,
+                        pixel_height: img.pixel_height,
+                        format: img.format.clone(),
+                        data: img.data.clone(),
+                    }) {
+                        frames.push(frame);
+                    }
+                }
+            }
+
+            let pane_histories: Vec<(u64, usize)> = session.panes.iter().map(|(&pid, pane)| {
+                (pid, pane.history_size())
+            }).collect();
+
+            if let Some(client) = s.clients.get_mut(&client_id) {
+                for acc in client.damage.values_mut() {
+                    *acc = DamageAccumulator::new();
+                }
+                for (pane_id, history) in pane_histories {
+                    client.history_sent.insert(pane_id, history);
+                }
+            }
+
+            s.sessions.insert(requested_session.clone(), session);
+        } else {
+            log::info!("control client {client_id} connected (no session)");
+        }
+
+        initial_frames = frames;
+    } // lock dropped here
+
+    // Send frames without holding the lock
+    for frame in initial_frames {
+        let _ = tx.send(frame).await;
+    }
+
+    // Spawn writer task
+    let write_handle = tokio::spawn(async move {
+        let mut gather_buf: Vec<u8> = Vec::with_capacity(64 * 1024);
+        while let Some(first) = rx.recv().await {
+            gather_buf.clear();
+            gather_buf.extend_from_slice(&first);
+            while let Ok(extra) = rx.try_recv() {
+                gather_buf.extend_from_slice(&extra);
+            }
+            if writer.write_all(&gather_buf).await.is_err() {
+                break;
+            }
+            if writer.flush().await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Reader loop with guaranteed cleanup on panic or error
+    let reader_result = std::panic::AssertUnwindSafe(async {
+        loop {
+            match codec::read_frame(&mut reader).await {
+                Ok(codec::Frame::ClientMsg(msg)) => {
+                    let mut s = state.lock().await;
+                    let responses = s.handle_message(msg, client_id);
+
+                    for resp in responses {
+                        match resp {
+                            ServerResponse::BroadcastToSession(session_name, server_msg) => {
+                                s.broadcast_to_session(&session_name, &server_msg);
+                            }
+                            ServerResponse::SendToClient(cid, server_msg) => {
+                                s.send_to_client(cid, &server_msg);
+                            }
+                            ServerResponse::SendFullPaneSync(cid, sync) => {
+                                if let Some(client) = s.clients.get(&cid) {
+                                    let mut buf = Vec::new();
+                                    if codec::encode_full_pane_sync_framed(&mut buf, &sync).is_ok() {
+                                        if let Err(e) = client.tx.try_send(Bytes::from(buf)) {
+                                            log::warn!("failed to send full pane sync to client {cid}: {e}");
+                                        }
+                                    }
+                                }
+                            }
+                            ServerResponse::RemoveClient(cid) => {
+                                s.clients.remove(&cid);
+                                log::info!("client {cid} detached");
+                                if cid == client_id {
+                                    return;
+                                }
+                            }
+                            ServerResponse::ShutdownServer => {
+                                // Save all sessions, notify all clients
+                                for session in s.sessions.values() {
+                                    let _ = session.save_session();
+                                }
+                                if let Some(frame) = Server::frame_control_msg(&ServerMessage::ServerShutdown) {
+                                    for client in s.clients.values() {
+                                        let _ = client.tx.try_send(frame.clone());
+                                    }
+                                }
+                                drop(s);
+                                #[cfg(unix)]
+                                let _ = std::fs::remove_file(&transport::server_socket_path());
+                                // Signal the accept loop and tick loop to shut down
+                                shutdown.notify_one();
+                                return;
+                            }
+                        }
+                    }
+                }
+                Ok(_) => {
+                    log::warn!("unexpected frame type from client {client_id}");
+                }
+                Err(e) => {
+                    if e.kind() != std::io::ErrorKind::UnexpectedEof {
+                        log::warn!("client {client_id} read error: {e}");
+                    }
+                    break;
+                }
+            }
+        }
+    }).await;
+
+    // Cleanup always runs
+    let _ = reader_result;
+    cleanup_client(&state, client_id).await;
+    write_handle.abort();
 }
 
 #[cfg(test)]

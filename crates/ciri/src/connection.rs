@@ -54,8 +54,11 @@ pub fn connect_or_spawn(
             }
             #[cfg(windows)]
             {
-                let port = transport::server_port();
-                std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok()
+                std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(transport::server_pipe_name())
+                    .is_ok()
             }
         };
         if !server_ready() {
@@ -63,8 +66,8 @@ pub fn connect_or_spawn(
         }
     }
 
-    let (msg_tx, msg_rx) = crossbeam_channel::unbounded::<ClientMessage>();
-    let (event_tx, event_rx) = crossbeam_channel::unbounded::<ServerEvent>();
+    let (msg_tx, msg_rx) = crossbeam_channel::bounded::<ClientMessage>(256);
+    let (event_tx, event_rx) = crossbeam_channel::bounded::<ServerEvent>(256);
 
     let _session = session_name.to_string();
     std::thread::Builder::new()
@@ -83,9 +86,8 @@ pub fn connect_or_spawn(
                     { let sock_path = transport::server_socket_path();
                       connect_result = tokio::net::UnixStream::connect(&sock_path).await; }
                     #[cfg(windows)]
-                    { connect_result = tokio::net::TcpStream::connect(
-                        format!("127.0.0.1:{}", transport::server_port())
-                      ).await; }
+                    { connect_result = tokio::net::windows::named_pipe::ClientOptions::new()
+                        .open(&transport::server_pipe_name()); }
                     if connect_result.is_ok() { break; }
                     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                     if attempt == 0 {
@@ -103,7 +105,10 @@ pub fn connect_or_spawn(
                     }
                 };
 
+                #[cfg(unix)]
                 let (reader, writer) = stream.into_split();
+                #[cfg(windows)]
+                let (reader, writer) = tokio::io::split(stream);
                 let mut reader = tokio::io::BufReader::new(reader);
                 let mut writer = tokio::io::BufWriter::new(writer);
 

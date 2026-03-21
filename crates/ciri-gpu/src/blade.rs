@@ -604,7 +604,11 @@ pub struct Renderer {
     rects: RectPipeline,
     surface_config: gpu::SurfaceConfig,
     surface_format: gpu::TextureFormat,
-    surface_dirty: bool,
+    /// Pending resize dimensions, applied on next `apply_surface()`.
+    /// `surface_size()` returns committed (current swapchain) dimensions,
+    /// not these pending values, so rendering stays consistent during
+    /// deferred live resize.
+    pending_size: Option<(u32, u32)>,
 }
 
 impl Renderer {
@@ -670,7 +674,7 @@ impl Renderer {
             rects,
             surface_config,
             surface_format,
-            surface_dirty: false,
+            pending_size: None,
         })
     }
 
@@ -678,17 +682,16 @@ impl Renderer {
 
     pub fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
-            self.surface_config.size.width = width;
-            self.surface_config.size.height = height;
-            self.surface_dirty = true;
+            self.pending_size = Some((width, height));
         }
     }
 
     pub fn apply_surface(&mut self) {
-        if self.surface_dirty {
+        if let Some((w, h)) = self.pending_size.take() {
+            self.surface_config.size.width = w;
+            self.surface_config.size.height = h;
             self.context
                 .reconfigure_surface(&mut self.surface, self.surface_config);
-            self.surface_dirty = false;
         }
     }
 

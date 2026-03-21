@@ -231,7 +231,14 @@ impl GlyphCache {
         );
         let regular_key = rasterizer
             .load_font(&regular_desc, font_size)
-            .expect("failed to load regular font");
+            .or_else(|e| {
+                log::warn!("font '{}' not found ({:?}), trying monospace fallback", family_name, e);
+                rasterizer.load_font(
+                    &FontDesc::new("monospace", Style::Description { slant: Slant::Normal, weight: Weight::Normal }),
+                    font_size,
+                )
+            })
+            .expect("no usable font found (neither configured nor monospace fallback)");
 
         let bold_key = rasterizer
             .load_font(

@@ -794,6 +794,15 @@ pub fn encode_full_pane_sync_payload(sync: &FullPaneSync) -> io::Result<Vec<u8>>
     buf.extend_from_slice(&rle_scrollback);
     buf.extend_from_slice(&(rle_data.len() as u32).to_le_bytes());
     buf.extend_from_slice(&rle_data);
+    // Grapheme extras (sparse): count(u16) + [(cell_index(u32), len(u8), utf8...)]
+    let extras = &sync.grapheme_extras.0;
+    buf.extend_from_slice(&(extras.len() as u16).to_le_bytes());
+    for (idx, extra) in extras {
+        buf.extend_from_slice(&idx.to_le_bytes());
+        let bytes = extra.as_bytes();
+        buf.push(bytes.len().min(255) as u8);
+        buf.extend_from_slice(&bytes[..bytes.len().min(255)]);
+    }
     Ok(buf)
 }
 
@@ -876,6 +885,29 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
     }
     let expected = cols as usize * rows as usize;
     let cells = rle_decode_cells(&payload[offset..offset + cell_data_len], expected)?;
+    offset += cell_data_len;
+
+    // Grapheme extras (optional, backward-compatible)
+    let mut grapheme_extras = GraphemeExtras::new();
+    if offset + 2 <= payload.len() {
+        let count = read_u16_le(payload, offset)? as usize;
+        offset += 2;
+        for _ in 0..count {
+            if offset + 5 > payload.len() {
+                break;
+            }
+            let idx = read_u32_le(payload, offset)?;
+            offset += 4;
+            let len = payload[offset] as usize;
+            offset += 1;
+            if offset + len > payload.len() {
+                break;
+            }
+            let extra = String::from_utf8_lossy(&payload[offset..offset + len]).to_string();
+            offset += len;
+            grapheme_extras.push(idx, &extra);
+        }
+    }
 
     Ok(FullPaneSync {
         pane_id,
@@ -890,6 +922,7 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
         scrollback,
         scrollback_rows,
         cells,
+        grapheme_extras,
     })
 }
 
@@ -1004,6 +1037,7 @@ mod tests {
             scrollback: Vec::new(),
             scrollback_rows: 0,
             cells,
+            grapheme_extras: GraphemeExtras::new(),
         };
         let payload = encode_full_pane_sync_payload(&sync).unwrap();
         // RLE should compress blank cells significantly

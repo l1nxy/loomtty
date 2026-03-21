@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["blade"]
+default = ["blade", "gl"]
 blade = ["dep:blade-graphics", "dep:blade-macros"]
 gl = ["dep:glow", "dep:glutin", "dep:glutin-winit", "dep:raw-window-handle"]
 dx = ["dep:windows"]

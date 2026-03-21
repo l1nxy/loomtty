@@ -404,6 +404,7 @@ impl GlyphCache {
     }
 
     /// Rasterize a glyph by ID using the thin FreeType path.
+    /// Tries color bitmap first (for emoji), then falls back to grayscale outline.
     fn rasterize_glyph_id_ft(&self, glyph_id: u32, style: FontStyle) -> Option<RasterizedGlyph> {
         let ft_face = self.ft_face.as_ref()?;
 
@@ -411,6 +412,58 @@ impl GlyphCache {
             .set_char_size(0, (self.ft_pixel_size * 64.0) as isize, 72, 72)
             .ok()?;
 
+        // Try color bitmap first (CBDT/sbix emoji)
+        let color_flags = LoadFlag::COLOR | LoadFlag::RENDER;
+        if ft_face.load_glyph(glyph_id, color_flags).is_ok() {
+            let glyph = ft_face.glyph();
+            let bitmap = glyph.bitmap();
+            let is_bgra = matches!(bitmap.pixel_mode(), Ok(freetype::bitmap::PixelMode::Bgra));
+            if is_bgra && bitmap.width() > 0 && bitmap.rows() > 0 {
+                let w = bitmap.width() as u32;
+                let h = bitmap.rows() as u32;
+                let pitch = bitmap.pitch().unsigned_abs() as u32;
+                let raw = bitmap.buffer();
+                // Convert BGRA → RGBA
+                let mut data = Vec::with_capacity((w * h * 4) as usize);
+                for row in 0..h {
+                    let start = (row * pitch) as usize;
+                    for x in 0..w as usize {
+                        let offset = start + x * 4;
+                        if offset + 3 < raw.len() {
+                            data.push(raw[offset + 2]); // R
+                            data.push(raw[offset + 1]); // G
+                            data.push(raw[offset]);     // B
+                            data.push(raw[offset + 3]); // A
+                        }
+                    }
+                }
+                // Scale color bitmap to cell size if needed
+                let target_h = self.cell_height as u32;
+                if h != target_h && target_h > 0 {
+                    let scale = target_h as f32 / h as f32;
+                    let new_w = (w as f32 * scale).round() as u32;
+                    let scaled = downsample_rgba(&data, w, h, new_w, target_h);
+                    return Some(RasterizedGlyph {
+                        width: new_w,
+                        height: target_h,
+                        bearing_x: (glyph.bitmap_left() as f32 * scale).round() as i16,
+                        bearing_y: (glyph.bitmap_top() as f32 * scale).round() as i16,
+                        is_color: true,
+                        data: scaled,
+                    });
+                }
+                return Some(RasterizedGlyph {
+                    width: w,
+                    height: h,
+                    bearing_x: glyph.bitmap_left() as i16,
+                    bearing_y: glyph.bitmap_top() as i16,
+                    is_color: true,
+                    data,
+                });
+            }
+        }
+
+        // Grayscale outline path
         let load_flags = LoadFlag::TARGET_LIGHT;
         ft_face.load_glyph(glyph_id, load_flags).ok()?;
         let glyph = ft_face.glyph();
@@ -559,6 +612,23 @@ impl GlyphCache {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
+
+/// Nearest-neighbor downscale of RGBA bitmap data.
+fn downsample_rgba(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<u8> {
+    let mut out = vec![0u8; (dst_w * dst_h * 4) as usize];
+    for dy in 0..dst_h {
+        let sy = (dy as f32 * src_h as f32 / dst_h as f32) as u32;
+        for dx in 0..dst_w {
+            let sx = (dx as f32 * src_w as f32 / dst_w as f32) as u32;
+            let si = ((sy * src_w + sx) * 4) as usize;
+            let di = ((dy * dst_w + dx) * 4) as usize;
+            if si + 3 < src.len() {
+                out[di..di + 4].copy_from_slice(&src[si..si + 4]);
+            }
+        }
+    }
+    out
+}
 
 /// Convert a crossfont `RasterizedGlyph` to our internal format.
 ///

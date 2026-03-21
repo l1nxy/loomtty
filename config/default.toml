@@ -62,6 +62,9 @@ atlas_size = 2048
 max_glyph_instances = 32768
 max_rectangles = 8192
 frame_latency = 2
+# GPU backend: "auto" (platform default), "gl", "vulkan", "dx"
+# auto = GL on Linux, Metal on macOS, DX11 on Windows
+backend = "auto"
 
 [theme]
 # Available presets: "one_dark", "catppuccin_mocha", "tokyo_night", "dracula", "nord", "gruvbox_dark"

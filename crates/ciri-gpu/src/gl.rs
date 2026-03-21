@@ -479,6 +479,10 @@ impl Renderer {
                 glow::ONE_MINUS_SRC_ALPHA,
             );
             gl.disable(glow::DEPTH_TEST);
+            // Disable sRGB framebuffer conversion — our color values are already
+            // in sRGB space (parsed from hex like #282C34), so we write them
+            // directly without linear→sRGB re-encoding.
+            gl.disable(glow::FRAMEBUFFER_SRGB);
             gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
         }
 
@@ -564,16 +568,19 @@ impl Renderer {
             self.gl.clear_color(0.0, 0.0, 0.0, 1.0);
             self.gl.clear(glow::COLOR_BUFFER_BIT);
 
-            // 0. Full-screen clear rect + 1. Background rects
-            let clear_rect = Rect {
+            // Background rects: clear rect + per-cell rects in one draw call.
+            // Must be a single batch because the rect pipeline reuses one
+            // buffer — a second render() overwrites before the first draws.
+            let mut all_bg = Vec::with_capacity(1 + scene.bg_rects.len());
+            all_bg.push(Rect {
                 x: 0.0,
                 y: 0.0,
                 w: vw,
                 h: vh,
                 color: scene.clear_color,
-            };
-            self.rects.render(&self.gl, &[clear_rect], vw, vh);
-            self.rects.render(&self.gl, scene.bg_rects, vw, vh);
+            });
+            all_bg.extend_from_slice(scene.bg_rects);
+            self.rects.render(&self.gl, &all_bg, vw, vh);
 
             // 2. Alpha text glyphs (scissored)
             atlas_gpu.alpha.render_scissored(
@@ -695,11 +702,6 @@ uniform vec2 u_viewport;
 
 out vec4 v_color;
 
-float srgb_to_linear(float c) {
-    if (c <= 0.04045) return c / 12.92;
-    return pow((c + 0.055) / 1.055, 2.4);
-}
-
 void main() {
     float x = float(gl_VertexID & 1);
     float y = float((gl_VertexID >> 1) & 1);
@@ -711,7 +713,7 @@ void main() {
     );
 
     gl_Position = vec4(ndc, 0.0, 1.0);
-    v_color = vec4(srgb_to_linear(a_color.r), srgb_to_linear(a_color.g), srgb_to_linear(a_color.b), a_color.a);
+    v_color = a_color;
 }
 "#;
 
@@ -763,17 +765,9 @@ uniform sampler2D u_atlas;
 
 out vec4 frag_color;
 
-float srgb_to_linear(float c) {
-    if (c <= 0.04045) return c / 12.92;
-    return pow((c + 0.055) / 1.055, 2.4);
-}
-
 void main() {
     float alpha = texture(u_atlas, v_uv).r;
-    float r = srgb_to_linear(v_color.r);
-    float g = srgb_to_linear(v_color.g);
-    float b = srgb_to_linear(v_color.b);
-    frag_color = vec4(r, g, b, v_color.a * alpha);
+    frag_color = vec4(v_color.rgb, v_color.a * alpha);
 }
 "#;
 

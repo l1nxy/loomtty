@@ -860,16 +860,19 @@ impl Renderer {
             };
             self.ctx.RSSetScissorRects(Some(&[full_rect]));
 
-            // 0+1. Rects (clear + backgrounds)
-            let clear_rect = Rect {
+            // Background rects: clear rect + per-cell rects in one draw call.
+            // Must be a single batch because the rect pipeline reuses one
+            // buffer — a second render() overwrites before the first draws.
+            let mut all_bg = Vec::with_capacity(1 + scene.bg_rects.len());
+            all_bg.push(Rect {
                 x: 0.0,
                 y: 0.0,
                 w: vw,
                 h: vh,
                 color: scene.clear_color,
-            };
-            self.rects.render(&self.ctx, &[clear_rect], vw, vh);
-            self.rects.render(&self.ctx, scene.bg_rects, vw, vh);
+            });
+            all_bg.extend_from_slice(scene.bg_rects);
+            self.rects.render(&self.ctx, &all_bg, vw, vh);
 
             // 2. Alpha text glyphs
             atlas_gpu.alpha.render_scissored(

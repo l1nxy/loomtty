@@ -45,6 +45,8 @@ pub struct ClientPaneGrid {
     pub dirty: bool,
     /// Per-row dirty flags for incremental updates. Only meaningful when `dirty` is false.
     pub dirty_rows: Vec<bool>,
+    /// Grapheme extras lookup: cell_index → full grapheme (primary + zerowidth).
+    pub grapheme_map: std::collections::HashMap<u32, String>,
     /// Number of rows currently marked dirty (avoids O(n) scan in is_dirty).
     dirty_row_count: usize,
     /// True if shell integration (OSC 133) is active for this pane.
@@ -77,6 +79,7 @@ impl ClientPaneGrid {
             dirty: true,
             dirty_rows: vec![false; rows as usize],
             dirty_row_count: 0,
+            grapheme_map: std::collections::HashMap::new(),
             has_shell_integration: false,
             has_kitty_keyboard: false,
         }
@@ -219,6 +222,7 @@ impl ClientPaneGrid {
         self.has_shell_integration = sync.mode_flags & MODE_SHELL_INTEGRATION != 0;
         self.has_kitty_keyboard = sync.mode_flags & MODE_KITTY_KEYBOARD != 0;
         self.title = sync.title.clone();
+        self.grapheme_map = sync.grapheme_extras.build_lookup(&sync.cells);
         self.dirty = true;
     }
 
@@ -744,6 +748,7 @@ mod tests {
                 scrollback: vec![PackedCell::with_ch(ch); 4],
                 scrollback_rows: 1,
                 cells: vec![PackedCell::with_ch(ch.to_ascii_uppercase()); 8],
+                grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
             };
             grid.apply_full_sync(&sync);
         }
@@ -890,6 +895,7 @@ mod tests {
             scrollback: vec![],
             scrollback_rows: 0,
             cells: vec![PackedCell::with_ch('X'); 18],
+                grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
         };
         grid.apply_full_sync(&sync);
         assert_eq!(grid.cols, 6);
@@ -926,6 +932,7 @@ mod tests {
             scrollback: vec![],
             scrollback_rows: 0,
             cells: vec![PackedCell::with_ch('A'); 3], // only 3 of 8 cells
+            grapheme_extras: GraphemeExtras::new(),
         };
         grid.apply_full_sync(&sync);
         assert_eq!(grid.viewport[0].ch(), 'A');
@@ -952,6 +959,7 @@ mod tests {
                 scrollback: vec![PackedCell::with_ch(ch); 2],
                 scrollback_rows: 1,
                 cells: vec![PackedCell::with_ch('.'); 2],
+                grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
             };
             grid.apply_full_sync(&sync);
         }
@@ -980,6 +988,7 @@ mod tests {
                 scrollback: vec![PackedCell::with_ch('x'); 2],
                 scrollback_rows: 1,
                 cells: vec![PackedCell::default(); 2],
+                grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
             };
             grid.apply_full_sync(&sync);
         }
@@ -1001,6 +1010,7 @@ mod tests {
             scrollback: vec![],
             scrollback_rows: 0,
             cells: vec![PackedCell::default(); 3],
+                grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
         };
         grid.apply_full_sync(&sync);
         assert_eq!(grid.scroll_offset, 0); // reset by dimension change
@@ -1131,6 +1141,7 @@ mod tests {
                 PackedCell::with_ch('Y'),
                 PackedCell::with_ch('Z'),
             ],
+            grapheme_extras: GraphemeExtras::new(),
         };
         grid.apply_full_sync(&sync);
         // buffer_row 0 = scrollback 'abc', buffer_row 1 = viewport 'XYZ'
@@ -1168,6 +1179,7 @@ mod tests {
                 PackedCell::with_ch('l'),
                 PackedCell::with_ch('o'),
             ],
+            grapheme_extras: GraphemeExtras::new(),
         };
         grid.apply_full_sync(&sync);
         let results = grid.search("hello");
@@ -1212,6 +1224,7 @@ mod tests {
                 PackedCell::with_ch('c'),
                 PackedCell::with_ch('d'),
             ],
+            grapheme_extras: GraphemeExtras::new(),
         };
         grid.apply_full_sync(&sync);
         // buffer_row 1 = viewport row → "ab cd"
@@ -1273,6 +1286,7 @@ mod tests {
                 PackedCell::with_ch('G'),
                 PackedCell::with_ch('H'),
             ],
+            grapheme_extras: GraphemeExtras::new(),
         };
         grid.apply_full_sync(&sync);
         assert_eq!(grid.scrollback.len(), 1);

@@ -54,6 +54,37 @@ pub enum Action {
 }
 
 impl Action {
+    /// Whether this action should keep sticky leader mode active.
+    /// Navigation and width adjustment are repeatable; everything else
+    /// (new pane, close, detach, mode toggles) exits leader mode.
+    pub fn is_repeatable(&self) -> bool {
+        matches!(
+            self,
+            Action::FocusLeft
+                | Action::FocusRight
+                | Action::FocusUp
+                | Action::FocusDown
+                | Action::MovePaneLeft
+                | Action::MovePaneRight
+                | Action::CyclePresetWidth
+                | Action::CyclePresetWidthReverse
+                | Action::ColumnWidthOneThird
+                | Action::ColumnWidthHalf
+                | Action::ColumnWidthTwoThirds
+                | Action::ColumnWidthFull
+                | Action::ColumnWidthIncrease
+                | Action::ColumnWidthDecrease
+                | Action::EqualizeAdjacentColumns
+                | Action::ScrollPageUp
+                | Action::ScrollPageDown
+                | Action::ScrollTop
+                | Action::ScrollBottom
+                | Action::SwitchWorkspace(_)
+        )
+    }
+}
+
+impl Action {
     /// Parse an action from its string name (used for config-driven keybindings).
     pub fn from_name(s: &str) -> Option<Action> {
         match s {

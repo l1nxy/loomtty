@@ -450,12 +450,22 @@ impl Pane {
         let rows = grid.screen_lines();
         let content = term.renderable_content();
 
-        // Read viewport cells
+        // Read viewport cells + collect grapheme extras for multi-codepoint chars
         let mut cells = Vec::with_capacity(cols * rows);
+        let mut grapheme_extras = ciri_protocol::message::GraphemeExtras::new();
         for row in 0..rows {
             for col in 0..cols {
                 let point = Point::new(Line(row as i32), Column(col));
-                cells.push(pack_cell(&grid[point]));
+                let cell = &grid[point];
+                let cell_idx = (row * cols + col) as u32;
+                cells.push(pack_cell(cell));
+                // Collect zerowidth combining chars (emoji flag sequences, skin tones, etc.)
+                if let Some(zw) = cell.zerowidth()
+                    && !zw.is_empty()
+                {
+                    let extra: String = zw.iter().collect();
+                    grapheme_extras.push(cell_idx, &extra);
+                }
             }
         }
 
@@ -484,6 +494,7 @@ impl Pane {
             scrollback: sb_cells,
             scrollback_rows: scrollback_lines as u16,
             cells,
+            grapheme_extras,
         }
     }
 

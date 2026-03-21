@@ -993,6 +993,11 @@ fn is_combining_or_modifier(c: char) -> bool {
     )
 }
 
+/// Visual scrollbar width in pixels.
+pub const SCROLLBAR_WIDTH: f32 = 4.0;
+/// Margin between scrollbar and pane edge in pixels.
+pub const SCROLLBAR_MARGIN: f32 = 2.0;
+
 /// Build a scrollbar rect for a pane with scrollback.
 /// Returns `None` if scrollback is empty (nothing to scroll).
 pub fn build_scrollbar(
@@ -1008,8 +1013,8 @@ pub fn build_scrollbar(
         return None;
     }
 
-    let scrollbar_width = 4.0;
-    let scrollbar_margin = 2.0;
+    let scrollbar_width = SCROLLBAR_WIDTH;
+    let scrollbar_margin = SCROLLBAR_MARGIN;
 
     // Thumb size proportional to visible/total ratio
     let ratio = visible as f32 / total_lines as f32;

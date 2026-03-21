@@ -69,6 +69,15 @@ impl App {
             return;
         }
 
+        // Command palette: intercept all keyboard input
+        if self.command_palette.is_some() {
+            self.handle_command_palette_key(event, ctrl, shift, alt);
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+            return;
+        }
+
         // Clipboard: Ctrl+Shift+V / Ctrl+Shift+C
         if ctrl && shift {
             use winit::keyboard::{KeyCode, PhysicalKey};

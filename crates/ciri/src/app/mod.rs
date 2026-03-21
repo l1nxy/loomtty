@@ -27,6 +27,8 @@ use ciri_layout::geometry::Rect as GeoRect;
 use winit::keyboard::ModifiersState;
 use winit::window::Window;
 
+use ciri_input::action::Action;
+
 use crate::connection::ServerEvent;
 use crate::grid::ClientPaneGrid;
 
@@ -76,6 +78,25 @@ pub(crate) struct ImeState {
     pub last_pos: Option<(i32, i32)>,
 }
 
+/// Command palette state.
+pub(crate) struct CommandPaletteState {
+    pub query: String,
+    pub entries: Vec<PaletteEntry>,
+    pub filtered: Vec<usize>, // indices into entries
+    pub selected_idx: usize,
+}
+
+pub(crate) struct PaletteEntry {
+    pub label: String,
+    pub kind: PaletteEntryKind,
+}
+
+pub(crate) enum PaletteEntryKind {
+    Action(Action),
+    SwitchSession(String),
+    KillSession(String),
+}
+
 /// Reusable render buffers (cleared each frame).
 pub(crate) struct RenderBuffers {
     pub bg_rects: Vec<Rect>,
@@ -91,6 +112,15 @@ pub(crate) struct GestureState {
     pub row_start: usize,
 }
 
+/// Scrollbar drag tracking state.
+pub(crate) struct ScrollbarDragInfo {
+    pub pane_id: u64,
+    pub pane_inner_y: f32,
+    pub pane_inner_h: f32,
+    pub total_lines: usize,
+    pub visible_rows: u16,
+}
+
 /// Column/tile border drag resize state.
 pub(crate) struct ResizeDragState {
     pub col_dragging: Option<usize>,
@@ -99,6 +129,7 @@ pub(crate) struct ResizeDragState {
     pub col_delta: f64,
     pub tile_dragging: Option<(usize, usize)>,
     pub tile_start_y: f32,
+    pub scrollbar_dragging: Option<ScrollbarDragInfo>,
 }
 
 /// Overview zoom mode state.
@@ -192,6 +223,7 @@ pub(crate) struct App {
     pub mouse_left_held: bool,
     pub reconnect_state: Option<ReconnectState>,
     pub search_state: Option<SearchState>,
+    pub command_palette: Option<CommandPaletteState>,
     pub broadcast_mode: bool,
     pub pane_anims: PaneAnimations,
     /// Inline image placements per pane.
@@ -278,6 +310,7 @@ impl App {
                 col_delta: 0.0,
                 tile_dragging: None,
                 tile_start_y: 0.0,
+                scrollbar_dragging: None,
             },
             connected: false,
             cursor_blink_visible: true,
@@ -289,6 +322,7 @@ impl App {
             mouse_left_held: false,
             reconnect_state: None,
             search_state: None,
+            command_palette: None,
             broadcast_mode: false,
             pane_anims: PaneAnimations {
                 open_opacity: HashMap::new(),

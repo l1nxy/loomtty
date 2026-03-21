@@ -862,6 +862,7 @@ pub fn build_view_from_grid(
     shaper: &TextShaper,
     config: &CiriConfig,
     ct: &ColorTable,
+    grapheme_map: &std::collections::HashMap<u32, String>,
 ) -> TerminalView {
     let m = CellMetrics::new(atlas, config);
     let primary_font_id = shaper.primary_font_id();
@@ -870,7 +871,7 @@ pub fn build_view_from_grid(
     let row_lig_data: Vec<RowLigatureData> = if let Some(fid) = primary_font_id {
         if let Some(face) = shaper.create_face(fid) {
             (0..rows as usize)
-                .map(|row| precompute_row_shaping(cells, row, cols, ct, shaper, fid, &face))
+                .map(|row| precompute_row_shaping(cells, row, cols, ct, shaper, fid, &face, grapheme_map))
                 .collect()
         } else {
             Vec::new()
@@ -935,6 +936,7 @@ pub fn update_view_from_grid(
     shaper: &TextShaper,
     config: &CiriConfig,
     ct: &ColorTable,
+    grapheme_map: &std::collections::HashMap<u32, String>,
 ) {
     let m = CellMetrics::new(atlas, config);
     let primary_font_id = shaper.primary_font_id();
@@ -946,7 +948,7 @@ pub fn update_view_from_grid(
             for (row, &dirty) in dirty_rows.iter().enumerate().take(nrows) {
                 if dirty && row < view.row_lig_cache.len() {
                     view.row_lig_cache[row] =
-                        precompute_row_shaping(cells, row, cols, ct, shaper, fid, &face);
+                        precompute_row_shaping(cells, row, cols, ct, shaper, fid, &face, grapheme_map);
                 }
             }
         }
@@ -996,6 +998,7 @@ fn precompute_row_shaping(
     shaper: &TextShaper,
     fid: fontdb::ID,
     face: &rustybuzz::Face,
+    grapheme_map: &std::collections::HashMap<u32, String>,
 ) -> RowLigatureData {
     let cols_usize = cols as usize;
     let mut skip_cols = vec![false; cols_usize];
@@ -1090,22 +1093,29 @@ fn precompute_row_shaping(
             continue;
         }
 
-        // Look ahead for combining/modifier characters
-        let mut cluster_str = String::from(props.ch);
-        let mut look = col + if props.is_wide { 2 } else { 1 };
-        while look < cols_usize {
-            let li = row * cols_usize + look;
-            if li >= cells.len() {
-                break;
+        // Check if the grapheme extras map has multi-codepoint data for this cell
+        // (e.g. flag emoji with zerowidth combiners sent by the server)
+        let cluster_str = if let Some(full_grapheme) = grapheme_map.get(&(idx as u32)) {
+            full_grapheme.clone()
+        } else {
+            // Look ahead for combining/modifier characters in adjacent cells
+            let mut s = String::from(props.ch);
+            let mut look = col + if props.is_wide { 2 } else { 1 };
+            while look < cols_usize {
+                let li = row * cols_usize + look;
+                if li >= cells.len() {
+                    break;
+                }
+                let next_ch = cells[li].ch();
+                if is_combining_or_modifier(next_ch) {
+                    s.push(next_ch);
+                    look += 1;
+                } else {
+                    break;
+                }
             }
-            let next_ch = cells[li].ch();
-            if is_combining_or_modifier(next_ch) {
-                cluster_str.push(next_ch);
-                look += 1;
-            } else {
-                break;
-            }
-        }
+            s
+        };
 
         if cluster_str.graphemes(true).count() == 1 && cluster_str.chars().count() > 1 {
             if let Some(gid) = shaper.shape_grapheme_with_face(&cluster_str, face) {

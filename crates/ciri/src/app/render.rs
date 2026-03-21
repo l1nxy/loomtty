@@ -1054,9 +1054,9 @@ impl App {
                     cur_shape,
                     cache,
                     shaper,
-        
                     &self.config,
                     &self.cached_color_table,
+                    &grid.grapheme_map,
                 );
                 grid.clear_dirty();
                 self.cached_views.insert(*pane_id, view);
@@ -1085,9 +1085,9 @@ impl App {
                             cur_shape,
                             cache,
                             shaper,
-                
                             &self.config,
                             &self.cached_color_table,
+                            &grid.grapheme_map,
                         );
                     }
                 }

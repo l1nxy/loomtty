@@ -141,6 +141,48 @@ impl Default for PackedCell {
     }
 }
 
+/// Sparse grapheme overflow: extra codepoints for cells that hold multi-char
+/// grapheme clusters (flag emoji, ZWJ sequences, combining diacritics).
+///
+/// `cell_index` is the flat row-major index into the cell grid.
+/// `extra` contains the combining/zerowidth characters that follow the primary
+/// char stored in `PackedCell::ch_bytes`.
+///
+/// Sent alongside cell data; typically empty (>99.9% of frames have no emoji).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct GraphemeExtras(pub Vec<(u32, String)>);
+
+impl GraphemeExtras {
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    pub fn push(&mut self, cell_index: u32, extra_chars: &str) {
+        self.0.push((cell_index, extra_chars.to_string()));
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Build a lookup: cell_index → full grapheme string (primary char + extras).
+    /// Call once per frame, then look up by index in the render loop.
+    pub fn build_lookup(&self, cells: &[PackedCell]) -> std::collections::HashMap<u32, String> {
+        let mut map = std::collections::HashMap::with_capacity(self.0.len());
+        for (idx, extra) in &self.0 {
+            let i = *idx as usize;
+            if i < cells.len() {
+                let mut s = String::new();
+                let ch = cells[i].ch();
+                s.push(ch);
+                s.push_str(extra);
+                map.insert(*idx, s);
+            }
+        }
+        map
+    }
+}
+
 // ─── Cell flag constants (mirrors alacritty CellFlags) ──────────────
 
 pub const FLAG_WIDE_CHAR: u16 = 1 << 0;
@@ -395,6 +437,9 @@ pub struct FullPaneSync {
     pub scrollback: Vec<PackedCell>, // row-major, scrollback_rows * cols
     pub scrollback_rows: u16,
     pub cells: Vec<PackedCell>, // row-major, rows * cols (viewport)
+    /// Sparse grapheme overflow for multi-codepoint clusters (emoji, etc.).
+    /// Empty for >99.9% of frames.
+    pub grapheme_extras: GraphemeExtras,
 }
 
 // ─── Zero-copy borrowed CellDelta ───────────────────────────────────

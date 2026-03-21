@@ -192,10 +192,15 @@ impl InputHandler {
                             self.state = LeaderState::Idle;
                         }
                         InputMode::Sticky => {
-                            // Stay in AwaitingAction, refresh timestamp
-                            self.state = LeaderState::AwaitingAction {
-                                entered_at: Instant::now(),
-                            };
+                            if action.is_repeatable() {
+                                // Navigation/width: stay in leader for chaining
+                                self.state = LeaderState::AwaitingAction {
+                                    entered_at: Instant::now(),
+                                };
+                            } else {
+                                // One-shot actions (new pane, close, etc.): exit
+                                self.state = LeaderState::Idle;
+                            }
                         }
                     }
                     InputResult::Action(action)
@@ -345,22 +350,34 @@ mod tests {
     // ── Sticky mode tests ──
 
     #[test]
-    fn sticky_stays_in_leader_after_action() {
+    fn sticky_stays_in_leader_after_repeatable_action() {
         let mut h = sticky_handler();
         h.process_key("w", true, false, false, false);
         assert!(h.is_awaiting_action());
-        // Execute action — should stay in leader mode
+        // Repeatable actions (navigation) stay in leader
+        match h.process_key("h", false, false, false, false) {
+            InputResult::Action(Action::FocusLeft) => {}
+            _ => panic!("expected FocusLeft"),
+        }
+        assert!(h.is_awaiting_action()); // still in leader!
+        match h.process_key("l", false, false, false, false) {
+            InputResult::Action(Action::FocusRight) => {}
+            _ => panic!("expected FocusRight"),
+        }
+        assert!(h.is_awaiting_action()); // still in leader!
+    }
+
+    #[test]
+    fn sticky_exits_leader_after_oneshot_action() {
+        let mut h = sticky_handler();
+        h.process_key("w", true, false, false, false);
+        assert!(h.is_awaiting_action());
+        // One-shot actions (new pane, close) exit leader
         match h.process_key("n", false, false, false, false) {
             InputResult::Action(Action::NewColumnRight) => {}
             _ => panic!("expected NewColumnRight"),
         }
-        assert!(h.is_awaiting_action()); // still in leader!
-        // Execute another action without re-pressing leader
-        match h.process_key("x", false, false, false, false) {
-            InputResult::Action(Action::ClosePane) => {}
-            _ => panic!("expected ClosePane"),
-        }
-        assert!(h.is_awaiting_action()); // still in leader!
+        assert!(!h.is_awaiting_action()); // exited!
     }
 
     #[test]

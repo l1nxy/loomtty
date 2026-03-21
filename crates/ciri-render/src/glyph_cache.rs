@@ -1,19 +1,17 @@
-//! GPU glyph atlas — rasterizes and caches terminal text glyphs for instanced rendering.
+//! CPU glyph cache — rasterizes and caches terminal text glyphs.
 //!
-//! Two atlas layers:
-//! - **Alpha** (`R8Unorm`): monochrome text glyphs, tinted by instance color in the shader
-//! - **Color** (`Rgba8UnormSrgb`): color emoji, sampled directly
+//! Two logical atlas layers:
+//! - **Alpha** (`R8`): monochrome text glyphs
+//! - **Color** (`RGBA`): color emoji
 //!
-//! Both share the same bind group layout and vertex shader; only the fragment
-//! stage differs (sRGB conversion for text vs. direct sampling for emoji).
+//! The GPU upload/rendering is handled by the backend's `GlyphAtlasGpu`.
 
 use ciri_config::config::RenderConfig;
-use glyphon::FontSystem;
-use glyphon::fontdb;
+use cosmic_text::FontSystem;
+use cosmic_text::fontdb;
 use std::collections::HashMap;
 use swash::scale::{Render, ScaleContext, Source, StrikeWith, image::Content};
 use swash::zeno::Format;
-use wgpu;
 
 // ─── Font style ──────────────────────────────────────────────────────
 
@@ -73,15 +71,15 @@ impl GlyphEntry {
 
 /// Simple shelf-based 2D rectangle packer for atlas allocation.
 /// Allocates left-to-right, top-to-bottom in horizontal shelves.
-struct ShelfPacker {
-    shelf_y: u32,      // y-origin of the current shelf
-    shelf_height: u32, // tallest glyph on the current shelf
-    cursor_x: u32,     // next free x on the current shelf
-    size: u32,         // atlas dimension (square)
+pub(crate) struct ShelfPacker {
+    shelf_y: u32,
+    shelf_height: u32,
+    cursor_x: u32,
+    size: u32,
 }
 
 impl ShelfPacker {
-    fn new(size: u32) -> Self {
+    pub(crate) fn new(size: u32) -> Self {
         ShelfPacker {
             shelf_y: 0,
             shelf_height: 0,
@@ -91,7 +89,7 @@ impl ShelfPacker {
     }
 
     /// Try to allocate a `w×h` region. Returns `(x, y)` origin or `None` if full.
-    fn allocate(&mut self, w: u32, h: u32) -> Option<(u32, u32)> {
+    pub(crate) fn allocate(&mut self, w: u32, h: u32) -> Option<(u32, u32)> {
         if w > self.size || h > self.size {
             return None;
         }
@@ -111,280 +109,18 @@ impl ShelfPacker {
     }
 }
 
-// ─── Atlas layer ─────────────────────────────────────────────────────
+// ─── Pending upload ──────────────────────────────────────────────────
 
-/// A single GPU texture atlas layer with its own pipeline, bind group, and packer.
-/// Both the alpha (text) and color (emoji) atlases are represented as an `AtlasLayer`.
-struct AtlasLayer {
-    texture: wgpu::Texture,
-    bind_group: wgpu::BindGroup,
-    pipeline: wgpu::RenderPipeline,
-    instance_buffer: wgpu::Buffer,
-    uniform_buffer: wgpu::Buffer,
-    packer: ShelfPacker,
-    /// Bytes per pixel (1 for R8Unorm, 4 for Rgba8UnormSrgb).
-    bpp: u32,
+/// Queued glyph pixel data, flushed to GPU at frame start by the backend.
+pub struct PendingUpload {
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+    pub data: Vec<u8>,
 }
 
-impl AtlasLayer {
-    /// Create a new atlas layer.
-    fn new(
-        device: &wgpu::Device,
-        surface_format: wgpu::TextureFormat,
-        bind_group_layout: &wgpu::BindGroupLayout,
-        atlas_size: u32,
-        max_instances: usize,
-        tex_format: wgpu::TextureFormat,
-        filter: wgpu::FilterMode,
-        fragment_src: &str,
-        blend: wgpu::BlendState,
-        label: &str,
-    ) -> Self {
-        // Texture
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some(label),
-            size: wgpu::Extent3d {
-                width: atlas_size,
-                height: atlas_size,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: tex_format,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: None,
-            mag_filter: filter,
-            min_filter: filter,
-            ..Default::default()
-        });
-
-        // Viewport uniform buffer (vec4<f32>, 16 bytes for std140 alignment)
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("glyph_viewport_uniform"),
-            size: 16,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // Bind group (texture + sampler + viewport uniform)
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: uniform_buffer.as_entire_binding(),
-                },
-            ],
-        });
-
-        // Compose full shader: shared vertex stage + layer-specific fragment stage
-        let full_shader = format!("{VERTEX_SHADER}\n{fragment_src}");
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: None,
-            source: wgpu::ShaderSource::Wgsl(full_shader.into()),
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None,
-            bind_group_layouts: &[bind_group_layout],
-            push_constant_ranges: &[],
-        });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: None,
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[glyph_instance_layout()],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: Some(blend),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
-
-        // Instance buffer
-        let buf_size = (max_instances * std::mem::size_of::<GlyphInstance>()) as u64;
-        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size: buf_size,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let bpp = match tex_format {
-            wgpu::TextureFormat::R8Unorm => 1,
-            _ => 4, // Rgba8UnormSrgb and others
-        };
-
-        AtlasLayer {
-            texture,
-            bind_group,
-            pipeline,
-            instance_buffer,
-            uniform_buffer,
-            packer: ShelfPacker::new(atlas_size),
-            bpp,
-        }
-    }
-
-    /// Upload glyph pixel data at `(x, y)` in the atlas texture.
-    fn upload(&self, queue: &wgpu::Queue, x: u32, y: u32, w: u32, h: u32, data: &[u8]) {
-        queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &self.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d { x, y, z: 0 },
-                aspect: wgpu::TextureAspect::All,
-            },
-            data,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(w * self.bpp),
-                rows_per_image: Some(h),
-            },
-            wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
-        );
-    }
-
-    /// Upload and render glyph instances.
-    /// `viewport_w`/`viewport_h` are the surface size in pixels for GPU NDC conversion.
-    fn render(
-        &self,
-        queue: &wgpu::Queue,
-        pass: &mut wgpu::RenderPass<'_>,
-        instances: &[GlyphInstance],
-        max_instances: usize,
-        viewport_w: f32,
-        viewport_h: f32,
-    ) {
-        if instances.is_empty() {
-            return;
-        }
-        let count = instances.len().min(max_instances);
-        // Upload viewport size uniform
-        let viewport = [viewport_w, viewport_h, 0.0f32, 0.0f32];
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&viewport));
-        let data = bytemuck::cast_slice(&instances[..count]);
-        queue.write_buffer(&self.instance_buffer, 0, data);
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.set_vertex_buffer(0, self.instance_buffer.slice(..data.len() as u64));
-        pass.draw(0..4, 0..count as u32);
-    }
-
-    fn render_scissored(
-        &self,
-        queue: &wgpu::Queue,
-        pass: &mut wgpu::RenderPass<'_>,
-        instances: &[GlyphInstance],
-        max_instances: usize,
-        viewport_w: f32,
-        viewport_h: f32,
-        viewport_w_px: u32,
-        viewport_h_px: u32,
-        batches: &[ScissoredRange],
-        overlay_start: usize,
-    ) {
-        if instances.is_empty() {
-            return;
-        }
-        let count = instances.len().min(max_instances);
-        let viewport = [viewport_w, viewport_h, 0.0f32, 0.0f32];
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&viewport));
-        let data = bytemuck::cast_slice(&instances[..count]);
-        queue.write_buffer(&self.instance_buffer, 0, data);
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.set_vertex_buffer(0, self.instance_buffer.slice(..data.len() as u64));
-
-        for batch in batches {
-            let start = batch.start.min(count);
-            let end = batch.end.min(count);
-            if start >= end || batch.w == 0 || batch.h == 0 {
-                continue;
-            }
-            pass.set_scissor_rect(batch.x, batch.y, batch.w, batch.h);
-            pass.draw(0..4, start as u32..end as u32);
-        }
-
-        let overlay_start = overlay_start.min(count);
-        if overlay_start < count {
-            pass.set_scissor_rect(0, 0, viewport_w_px.max(1), viewport_h_px.max(1));
-            pass.draw(0..4, overlay_start as u32..count as u32);
-        }
-    }
-
-    /// Zero out the texture and reset the packer.
-    fn clear(&mut self, queue: &wgpu::Queue, atlas_size: u32) {
-        self.packer = ShelfPacker::new(atlas_size);
-        let zeros = vec![0u8; (atlas_size * atlas_size * self.bpp) as usize];
-        self.upload(queue, 0, 0, atlas_size, atlas_size, &zeros);
-    }
-}
-
-// ─── Glyph atlas ─────────────────────────────────────────────────────
-
-/// Glyph atlas for fast terminal text rendering.
-/// Manages two atlas layers (alpha text + color emoji), a glyph cache,
-/// and font fallback chains for bold/italic variants.
-pub struct GlyphAtlas {
-    /// Monochrome text glyphs (R8Unorm, tinted by instance color).
-    alpha: AtlasLayer,
-    /// Color emoji (Rgba8UnormSrgb, sampled directly).
-    color: AtlasLayer,
-
-    max_instances: usize,
-    atlas_size: u32,
-    /// Cache: (char, style) → atlas entry.
-    cache: HashMap<(char, FontStyle), GlyphEntry>,
-    /// Cache: (glyph_id, font_id, style) → atlas entry for shaped glyphs.
-    glyph_id_cache: HashMap<(u32, fontdb::ID, FontStyle), GlyphEntry>,
-    scale_context: ScaleContext,
-    /// Font fallback chains per style (Regular, Bold, Italic, BoldItalic).
-    font_chains: HashMap<FontStyle, Vec<fontdb::ID>>,
-    font_size: f32,
-    pub cell_width: f32,
-    pub cell_height: f32,
-    /// Font ascent in pixels (distance from baseline to top of cell).
-    pub ascent: f32,
-    /// Set when the atlas is full and needs clearing on the next frame.
-    pub atlas_needs_clear: bool,
-    /// Reusable buffer for alpha conversion to avoid per-glyph allocation.
-    alpha_buf: Vec<u8>,
-}
+// ─── Per-instance data ───────────────────────────────────────────────
 
 /// Per-instance data for instanced glyph rendering.
 /// `pos`/`size` are in pixel coordinates; the vertex shader converts to NDC.
@@ -409,12 +145,37 @@ pub struct ScissoredRange {
     pub end: usize,
 }
 
-impl GlyphAtlas {
-    /// Create a new GlyphAtlas. Returns `(atlas, primary_font_id)`.
-    /// The caller should use `primary_font_id` to create a `TextShaper` separately.
+// ─── Glyph cache (CPU) ──────────────────────────────────────────────
+
+/// CPU-side glyph cache: rasterization, packing, and caching.
+/// GPU upload/rendering is delegated to backend's `GlyphAtlasGpu`.
+pub struct GlyphCache {
+    // Packing
+    pub(crate) alpha_packer: ShelfPacker,
+    pub(crate) color_packer: ShelfPacker,
+    alpha_pending: Vec<PendingUpload>,
+    color_pending: Vec<PendingUpload>,
+    alpha_pending_clear: bool,
+    color_pending_clear: bool,
+    pub atlas_size: u32,
+    pub max_instances: usize,
+    // Caching
+    cache: HashMap<(char, FontStyle), GlyphEntry>,
+    glyph_id_cache: HashMap<(u32, fontdb::ID, FontStyle), GlyphEntry>,
+    scale_context: ScaleContext,
+    font_chains: HashMap<FontStyle, Vec<fontdb::ID>>,
+    font_size: f32,
+    alpha_buf: Vec<u8>,
+    // Public metrics
+    pub cell_width: f32,
+    pub cell_height: f32,
+    pub ascent: f32,
+    pub atlas_needs_clear: bool,
+}
+
+impl GlyphCache {
+    /// Create a new GlyphCache. Returns `(cache, primary_font_id)`.
     pub fn new(
-        device: &wgpu::Device,
-        format: wgpu::TextureFormat,
         font_system: &mut FontSystem,
         font_size_pt: f32,
         dpi_scale: f64,
@@ -425,7 +186,6 @@ impl GlyphAtlas {
         let max_instances = render_config.max_glyph_instances;
 
         // Convert point size to pixels: pt × (96 × scale) / 72
-        // Matches ghostty/alacritty font sizing convention.
         let font_size = font_size_pt * (96.0 * dpi_scale as f32) / 72.0;
 
         // ── Font setup ──
@@ -449,81 +209,18 @@ impl GlyphAtlas {
         let (cell_width, cell_height, ascent) =
             compute_cell_metrics(font_system, base_chain.first().copied(), font_size);
 
-        // ── Shared bind group layout (texture + sampler) ──
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("glyph_bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-
-        // ── Atlas layers ──
-        let alpha = AtlasLayer::new(
-            device,
-            format,
-            &bind_group_layout,
-            atlas_size,
-            max_instances,
-            wgpu::TextureFormat::R8Unorm,
-            wgpu::FilterMode::Nearest,
-            ALPHA_FRAGMENT,
-            wgpu::BlendState {
-                color: wgpu::BlendComponent {
-                    src_factor: wgpu::BlendFactor::SrcAlpha,
-                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                    operation: wgpu::BlendOperation::Add,
-                },
-                alpha: wgpu::BlendComponent::OVER,
-            },
-            "glyph_atlas",
-        );
-
-        let color = AtlasLayer::new(
-            device,
-            format,
-            &bind_group_layout,
-            atlas_size,
-            max_instances,
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-            wgpu::FilterMode::Linear,
-            COLOR_FRAGMENT,
-            wgpu::BlendState::ALPHA_BLENDING,
-            "color_emoji_atlas",
-        );
-
         let primary_font_id = base_chain.first().copied();
 
         (
-            GlyphAtlas {
-                alpha,
-                color,
-                max_instances,
+            GlyphCache {
+                alpha_packer: ShelfPacker::new(atlas_size),
+                color_packer: ShelfPacker::new(atlas_size),
+                alpha_pending: Vec::new(),
+                color_pending: Vec::new(),
+                alpha_pending_clear: false,
+                color_pending_clear: false,
                 atlas_size,
+                max_instances,
                 cache: HashMap::new(),
                 glyph_id_cache: HashMap::new(),
                 scale_context: ScaleContext::new(),
@@ -540,33 +237,28 @@ impl GlyphAtlas {
     }
 
     /// Ensure a glyph for `ch` with the given `style` is in the atlas.
-    /// Returns the cached entry, rasterizing and uploading if needed.
     pub fn ensure_styled_char(
         &mut self,
         ch: char,
         style: FontStyle,
         font_system: &mut FontSystem,
-        queue: &wgpu::Queue,
     ) -> Option<GlyphEntry> {
         let key = (ch, style);
         if let Some(entry) = self.cache.get(&key) {
             return Some(*entry);
         }
 
-        // Space and control chars: no glyph needed
         if ch == ' ' || ch == '\0' || ch.is_control() {
             self.cache.insert(key, GlyphEntry::EMPTY);
             return Some(GlyphEntry::EMPTY);
         }
 
-        // Find which font in the fallback chain has this glyph
         let font_ids = self
             .font_chains
             .get(&style)
             .or_else(|| self.font_chains.get(&FontStyle::Regular))?;
         let (font_id, glyph_id) = resolve_glyph(font_system, font_ids, ch)?;
 
-        // Rasterize the glyph
         let image = rasterize_glyph(
             &mut self.scale_context,
             font_system,
@@ -583,34 +275,7 @@ impl GlyphAtlas {
             return Some(GlyphEntry::EMPTY);
         }
 
-        // Upload to the appropriate atlas layer (with overflow recovery)
-        let is_color = matches!(image.content, Content::Color);
-        let entry = if is_color {
-            let (ax, ay) = match self.color.packer.allocate(w, h) {
-                Some(pos) => pos,
-                None => {
-                    log::warn!("color atlas full, flagging for clear");
-                    self.atlas_needs_clear = true;
-                    return None;
-                }
-            };
-            self.color.upload(queue, ax, ay, w, h, &image.data);
-            make_glyph_entry(ax, ay, w, h, &image, self.atlas_size, true)
-        } else {
-            // Convert pixel data to single-channel alpha (reusing buffer)
-            to_alpha_into(&image.data, w, h, &mut self.alpha_buf);
-            let (ax, ay) = match self.alpha.packer.allocate(w, h) {
-                Some(pos) => pos,
-                None => {
-                    log::warn!("alpha atlas full, flagging for clear");
-                    self.atlas_needs_clear = true;
-                    return None;
-                }
-            };
-            self.alpha.upload(queue, ax, ay, w, h, &self.alpha_buf);
-            make_glyph_entry(ax, ay, w, h, &image, self.atlas_size, false)
-        };
-
+        let entry = self.upload_rasterized(image)?;
         self.cache.insert(key, entry);
         Some(entry)
     }
@@ -622,7 +287,6 @@ impl GlyphAtlas {
         font_id: fontdb::ID,
         style: FontStyle,
         font_system: &mut FontSystem,
-        queue: &wgpu::Queue,
     ) -> Option<GlyphEntry> {
         let key = (glyph_id, font_id, style);
         if let Some(entry) = self.glyph_id_cache.get(&key) {
@@ -649,32 +313,52 @@ impl GlyphAtlas {
             return Some(GlyphEntry::EMPTY);
         }
 
-        let is_color = matches!(image.content, Content::Color);
-        let entry = if is_color {
-            let (ax, ay) = match self.color.packer.allocate(w, h) {
-                Some(pos) => pos,
-                None => {
-                    self.atlas_needs_clear = true;
-                    return None;
-                }
-            };
-            self.color.upload(queue, ax, ay, w, h, &image.data);
-            make_glyph_entry(ax, ay, w, h, &image, self.atlas_size, true)
-        } else {
-            to_alpha_into(&image.data, w, h, &mut self.alpha_buf);
-            let (ax, ay) = match self.alpha.packer.allocate(w, h) {
-                Some(pos) => pos,
-                None => {
-                    self.atlas_needs_clear = true;
-                    return None;
-                }
-            };
-            self.alpha.upload(queue, ax, ay, w, h, &self.alpha_buf);
-            make_glyph_entry(ax, ay, w, h, &image, self.atlas_size, false)
-        };
-
+        let entry = self.upload_rasterized(image)?;
         self.glyph_id_cache.insert(key, entry);
         Some(entry)
+    }
+
+    /// Allocate atlas space, queue pixel data for upload, return the entry.
+    /// Moves `image.data` instead of cloning to avoid extra allocations.
+    fn upload_rasterized(
+        &mut self,
+        image: swash::scale::image::Image,
+    ) -> Option<GlyphEntry> {
+        let w = image.placement.width;
+        let h = image.placement.height;
+        let is_color = matches!(image.content, Content::Color);
+        if is_color {
+            let (ax, ay) = match self.color_packer.allocate(w, h) {
+                Some(pos) => pos,
+                None => {
+                    log::warn!("color atlas full, flagging for clear");
+                    self.atlas_needs_clear = true;
+                    return None;
+                }
+            };
+            let entry = make_glyph_entry(ax, ay, w, h, &image, self.atlas_size, true);
+            self.color_pending.push(PendingUpload {
+                x: ax, y: ay, w, h,
+                data: image.data, // move, not clone
+            });
+            Some(entry)
+        } else {
+            to_alpha_into(&image.data, w, h, &mut self.alpha_buf);
+            let (ax, ay) = match self.alpha_packer.allocate(w, h) {
+                Some(pos) => pos,
+                None => {
+                    log::warn!("alpha atlas full, flagging for clear");
+                    self.atlas_needs_clear = true;
+                    return None;
+                }
+            };
+            let entry = make_glyph_entry(ax, ay, w, h, &image, self.atlas_size, false);
+            self.alpha_pending.push(PendingUpload {
+                x: ax, y: ay, w, h,
+                data: std::mem::take(&mut self.alpha_buf), // move, not clone
+            });
+            Some(entry)
+        }
     }
 
     /// Ensure a regular-style character is in the atlas.
@@ -682,109 +366,36 @@ impl GlyphAtlas {
         &mut self,
         ch: char,
         font_system: &mut FontSystem,
-        queue: &wgpu::Queue,
     ) -> Option<GlyphEntry> {
-        self.ensure_styled_char(ch, FontStyle::Regular, font_system, queue)
+        self.ensure_styled_char(ch, FontStyle::Regular, font_system)
     }
 
-    /// Render text glyph instances (alpha atlas).
-    /// Viewport size is used by the GPU shader for pixel→NDC conversion.
-    pub fn render(
-        &self,
-        queue: &wgpu::Queue,
-        pass: &mut wgpu::RenderPass<'_>,
-        instances: &[GlyphInstance],
-        viewport_w: f32,
-        viewport_h: f32,
-    ) {
-        self.alpha.render(
-            queue,
-            pass,
-            instances,
-            self.max_instances,
-            viewport_w,
-            viewport_h,
-        );
+    /// Drain pending glyph uploads for the GPU backend to consume.
+    /// Returns `(alpha_uploads, color_uploads, alpha_needs_clear, color_needs_clear)`.
+    pub fn take_pending(
+        &mut self,
+    ) -> (Vec<PendingUpload>, Vec<PendingUpload>, bool, bool) {
+        let alpha_clear = std::mem::take(&mut self.alpha_pending_clear);
+        let color_clear = std::mem::take(&mut self.color_pending_clear);
+        (
+            std::mem::take(&mut self.alpha_pending),
+            std::mem::take(&mut self.color_pending),
+            alpha_clear,
+            color_clear,
+        )
     }
 
-    pub fn render_scissored(
-        &self,
-        queue: &wgpu::Queue,
-        pass: &mut wgpu::RenderPass<'_>,
-        instances: &[GlyphInstance],
-        viewport_w: f32,
-        viewport_h: f32,
-        viewport_w_px: u32,
-        viewport_h_px: u32,
-        batches: &[ScissoredRange],
-        overlay_start: usize,
-    ) {
-        self.alpha.render_scissored(
-            queue,
-            pass,
-            instances,
-            self.max_instances,
-            viewport_w,
-            viewport_h,
-            viewport_w_px,
-            viewport_h_px,
-            batches,
-            overlay_start,
-        );
-    }
-
-    /// Render color emoji instances (RGBA atlas).
-    pub fn render_color(
-        &self,
-        queue: &wgpu::Queue,
-        pass: &mut wgpu::RenderPass<'_>,
-        instances: &[GlyphInstance],
-        viewport_w: f32,
-        viewport_h: f32,
-    ) {
-        self.color.render(
-            queue,
-            pass,
-            instances,
-            self.max_instances,
-            viewport_w,
-            viewport_h,
-        );
-    }
-
-    pub fn render_color_scissored(
-        &self,
-        queue: &wgpu::Queue,
-        pass: &mut wgpu::RenderPass<'_>,
-        instances: &[GlyphInstance],
-        viewport_w: f32,
-        viewport_h: f32,
-        viewport_w_px: u32,
-        viewport_h_px: u32,
-        batches: &[ScissoredRange],
-        overlay_start: usize,
-    ) {
-        self.color.render_scissored(
-            queue,
-            pass,
-            instances,
-            self.max_instances,
-            viewport_w,
-            viewport_h,
-            viewport_w_px,
-            viewport_h_px,
-            batches,
-            overlay_start,
-        );
-    }
-
-    /// Clear the glyph cache and reset both atlas packers.
-    /// Call on font family/size change (e.g. config hot-reload).
-    pub fn clear_cache(&mut self, queue: &wgpu::Queue) {
+    /// Clear the glyph cache and reset both packers.
+    /// No GPU work — the actual texture clear is deferred to next flush.
+    pub fn clear_cache(&mut self) {
         self.cache.clear();
         self.glyph_id_cache.clear();
-        self.alpha.clear(queue, self.atlas_size);
-        self.color.clear(queue, self.atlas_size);
+        self.alpha_packer = ShelfPacker::new(self.atlas_size);
+        self.color_packer = ShelfPacker::new(self.atlas_size);
+        self.alpha_pending.clear();
+        self.color_pending.clear();
+        self.alpha_pending_clear = true;
+        self.color_pending_clear = true;
         log::info!(
             "glyph cache cleared (atlas {}×{})",
             self.atlas_size,
@@ -824,12 +435,10 @@ fn compute_cell_metrics(
     let descent = (metrics.descent * scale).ceil();
     let height = (ascent + descent).ceil();
 
-    // Cell width = advance width of 'M'
     let glyph_id = swash_font.charmap().map('M');
     let advance = swash_font.glyph_metrics(&[]).advance_width(glyph_id) * scale;
     let cw = advance.ceil();
     let ch = height.max(font_size * 1.2);
-    // Clamp ascent to cell_height to prevent out-of-bounds glyph positions
     let safe_ascent = ascent.min(ch);
 
     log::info!(
@@ -856,7 +465,6 @@ fn resolve_glyph(
 }
 
 /// Rasterize a glyph with optional synthetic bold/italic.
-/// Tries color bitmap first (emoji), then falls back to alpha outline.
 fn rasterize_glyph(
     scale_ctx: &mut ScaleContext,
     font_system: &mut FontSystem,
@@ -868,7 +476,6 @@ fn rasterize_glyph(
     let font = font_system.get_font(font_id)?;
     let swash_font = font.as_swash();
 
-    // Check if we need synthetic bold/italic (no native variant available)
     let need_synth_bold = matches!(style, FontStyle::Bold | FontStyle::BoldItalic) && {
         let db = font_system.db();
         db.face(font_id).is_some_and(|f| f.weight.0 < 600)
@@ -885,7 +492,6 @@ fn rasterize_glyph(
         .hint(true)
         .build();
 
-    // Try color bitmap (emoji) first
     let color_image = {
         let mut r = Render::new(&[
             Source::ColorBitmap(StrikeWith::BestFit),
@@ -897,12 +503,11 @@ fn rasterize_glyph(
     };
 
     color_image.or_else(|| {
-        // Fall back to alpha outline with synthetic transformations
         let italic_transform = need_synth_italic.then_some(swash::zeno::Transform {
             xx: 1.0,
             yx: 0.0,
             xy: 0.2125,
-            yy: 1.0, // tan(12°) ≈ 0.2125 oblique skew
+            yy: 1.0,
             x: 0.0,
             y: 0.0,
         });
@@ -922,7 +527,6 @@ fn rasterize_glyph(
 }
 
 /// Convert rasterized pixel data to single-channel alpha into an existing buffer.
-/// Reuses the buffer's allocation to avoid per-glyph heap churn.
 fn to_alpha_into(data: &[u8], w: u32, h: u32, buf: &mut Vec<u8>) {
     let expected_alpha = (w * h) as usize;
     let expected_rgba = (w * h * 4) as usize;
@@ -931,11 +535,9 @@ fn to_alpha_into(data: &[u8], w: u32, h: u32, buf: &mut Vec<u8>) {
     if data.len() == expected_alpha {
         buf.extend_from_slice(data);
     } else if data.len() == expected_rgba {
-        // RGBA → extract alpha channel
         buf.reserve(expected_alpha);
         buf.extend(data.iter().skip(3).step_by(4).copied());
     } else {
-        // Subpixel (3 bytes per pixel) → average RGB to single alpha
         buf.reserve(expected_alpha);
         buf.extend(
             data.chunks(3)
@@ -976,129 +578,9 @@ fn make_glyph_entry(
     }
 }
 
-// ─── Vertex layout ───────────────────────────────────────────────────
-
-fn glyph_instance_layout() -> wgpu::VertexBufferLayout<'static> {
-    wgpu::VertexBufferLayout {
-        array_stride: std::mem::size_of::<GlyphInstance>() as u64,
-        step_mode: wgpu::VertexStepMode::Instance,
-        attributes: &[
-            wgpu::VertexAttribute {
-                offset: 0,
-                shader_location: 0,
-                format: wgpu::VertexFormat::Float32x2,
-            },
-            wgpu::VertexAttribute {
-                offset: 8,
-                shader_location: 1,
-                format: wgpu::VertexFormat::Float32x2,
-            },
-            wgpu::VertexAttribute {
-                offset: 16,
-                shader_location: 2,
-                format: wgpu::VertexFormat::Float32x2,
-            },
-            wgpu::VertexAttribute {
-                offset: 24,
-                shader_location: 3,
-                format: wgpu::VertexFormat::Float32x2,
-            },
-            wgpu::VertexAttribute {
-                offset: 32,
-                shader_location: 4,
-                format: wgpu::VertexFormat::Float32x4,
-            },
-        ],
-    }
-}
-
-// ─── WGSL shaders ────────────────────────────────────────────────────
-//
-// Vertex stage is shared; only the fragment stage differs per layer.
-// They are concatenated at pipeline creation time.
-
-/// Shared vertex shader: maps instanced glyph quads from pixel coordinates.
-/// Pixel→NDC conversion happens on the GPU using the viewport uniform.
-const VERTEX_SHADER: &str = r#"
-struct Viewport {
-    size: vec4<f32>,
-};
-
-@group(0) @binding(2) var<uniform> viewport: Viewport;
-
-struct Instance {
-    @location(0) pos: vec2<f32>,
-    @location(1) size: vec2<f32>,
-    @location(2) uv_pos: vec2<f32>,
-    @location(3) uv_size: vec2<f32>,
-    @location(4) color: vec4<f32>,
-};
-
-struct VsOut {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-    @location(1) color: vec4<f32>,
-};
-
-@vertex
-fn vs_main(@builtin(vertex_index) vi: u32, inst: Instance) -> VsOut {
-    // Triangle strip: 0=TL, 1=TR, 2=BL, 3=BR
-    let x = f32(vi & 1u);
-    let y = f32((vi >> 1u) & 1u);
-
-    var out: VsOut;
-    out.uv = inst.uv_pos + vec2<f32>(x, y) * inst.uv_size;
-    out.color = inst.color;
-    // pos/size are pixel coords; convert to NDC on GPU
-    let px = inst.pos + vec2<f32>(x, y) * inst.size;
-    let ndc = vec2<f32>(
-        px.x / viewport.size.x * 2.0 - 1.0,
-        1.0 - px.y / viewport.size.y * 2.0
-    );
-    out.position = vec4<f32>(ndc, 0.0, 1.0);
-    return out;
-}
-"#;
-
-/// Alpha text fragment: sample R8 alpha, tint with instance color, sRGB→linear.
-const ALPHA_FRAGMENT: &str = r#"
-@group(0) @binding(0) var atlas_tex: texture_2d<f32>;
-@group(0) @binding(1) var atlas_sampler: sampler;
-
-fn srgb_to_linear(c: f32) -> f32 {
-    if c <= 0.04045 {
-        return c / 12.92;
-    }
-    return pow((c + 0.055) / 1.055, 2.4);
-}
-
-@fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let alpha = textureSample(atlas_tex, atlas_sampler, in.uv).r;
-    let r = srgb_to_linear(in.color.r);
-    let g = srgb_to_linear(in.color.g);
-    let b = srgb_to_linear(in.color.b);
-    return vec4<f32>(r, g, b, in.color.a * alpha);
-}
-"#;
-
-/// Color emoji fragment: sample RGBA directly, modulate by instance color for dim/fade.
-const COLOR_FRAGMENT: &str = r#"
-@group(0) @binding(0) var atlas_tex: texture_2d<f32>;
-@group(0) @binding(1) var atlas_sampler: sampler;
-
-@fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let texel = textureSample(atlas_tex, atlas_sampler, in.uv);
-    // Instance color RGB carries the dim factor; alpha carries opacity.
-    return vec4<f32>(texel.rgb * in.color.rgb, texel.a * in.color.a);
-}
-"#;
-
 // ─── Font fallback chains ────────────────────────────────────────────
 
 /// Build font fallback chain using fontconfig (Unix) or simple scan (Windows).
-/// Returns fontdb IDs in priority order: primary font first, then fallbacks.
 fn build_fallback_chain(font_system: &mut FontSystem, family_name: &str) -> Vec<fontdb::ID> {
     let mut font_ids = Vec::new();
 
@@ -1108,7 +590,6 @@ fn build_fallback_chain(font_system: &mut FontSystem, family_name: &str) -> Vec<
         use std::ffi::CString;
 
         if let Some(fc) = Fontconfig::new() {
-            // Step 1: Find primary font by family name match in fontdb
             let db = font_system.db();
             let family_lower = family_name.to_ascii_lowercase();
             for face in db.faces() {
@@ -1124,16 +605,12 @@ fn build_fallback_chain(font_system: &mut FontSystem, family_name: &str) -> Vec<
                 }
             }
 
-            // Step 2: Use fontconfig FcFontSort for locale-aware fallback ordering
             let mut pat = Pattern::new(&fc);
             if let Ok(fam) = CString::new(family_name) {
                 pat.add_string(c"family", &fam);
             }
-            // sort_fonts() internally does config_substitute + default_substitute.
-            // Do NOT call them manually — double-substitute corrupts the pattern.
             let sorted = pat.sort_fonts(false);
 
-            // Build path→ID lookup for fast matching against fontconfig results
             let db = font_system.db();
             let mut path_to_ids: HashMap<(String, u32), fontdb::ID> = HashMap::new();
             for face in db.faces() {
@@ -1155,7 +632,6 @@ fn build_fallback_chain(font_system: &mut FontSystem, family_name: &str) -> Vec<
                 }
             }
 
-            // Add remaining fontdb fonts not covered by fontconfig
             for face in db.faces() {
                 if !font_ids.contains(&face.id) {
                     font_ids.push(face.id);
@@ -1164,7 +640,6 @@ fn build_fallback_chain(font_system: &mut FontSystem, family_name: &str) -> Vec<
         }
     }
 
-    // Fallback: no fontconfig or Windows — scan fontdb directly
     if font_ids.is_empty() {
         let db = font_system.db();
         let mut primary = None;
@@ -1204,8 +679,7 @@ fn build_fallback_chain(font_system: &mut FontSystem, family_name: &str) -> Vec<
     font_ids
 }
 
-/// Build a style-specific fallback chain by filtering for fonts matching the style.
-/// Falls back to the regular chain if no style-specific variant exists.
+/// Build a style-specific fallback chain.
 fn build_style_chain(
     font_system: &mut FontSystem,
     base_chain: &[fontdb::ID],
@@ -1226,7 +700,6 @@ fn build_style_chain(
         .map(|f| f.0.clone())
         .unwrap_or_default();
 
-    // Find fonts in the same family with matching weight/style
     let mut style_ids: Vec<fontdb::ID> = base_chain
         .iter()
         .filter(|&&fid| {
@@ -1241,7 +714,6 @@ fn build_style_chain(
         .collect();
 
     if !style_ids.is_empty() {
-        // Style-specific fonts first, then rest of chain as fallback
         for &fid in base_chain {
             if !style_ids.contains(&fid) {
                 style_ids.push(fid);
@@ -1279,7 +751,6 @@ mod tests {
         for _ in 0..10 {
             assert!(p.allocate(10, 20).is_some());
         }
-        // Next allocation wraps to shelf y=20
         assert_eq!(p.allocate(10, 15), Some((0, 20)));
     }
 
@@ -1324,13 +795,12 @@ mod tests {
     #[test]
     fn to_alpha_passthrough() {
         let data = vec![100, 200, 50, 255];
-        assert_eq!(to_alpha(&data, 2, 2), data); // 4 bytes = 2×2×1 → already alpha
+        assert_eq!(to_alpha(&data, 2, 2), data);
     }
 
     #[test]
     fn to_alpha_from_rgba() {
-        // 1×1 RGBA pixel: R=10, G=20, B=30, A=128
         let data = vec![10, 20, 30, 128];
-        assert_eq!(to_alpha(&data, 1, 1), vec![128]); // extracts alpha channel
+        assert_eq!(to_alpha(&data, 1, 1), vec![128]);
     }
 }

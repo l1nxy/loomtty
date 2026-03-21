@@ -3,10 +3,10 @@ use ciri_config::config::{FocusRingStyle, PaneOpenStyle};
 use ciri_config::theme::ThemeConfig;
 use ciri_layout::geometry::Rect as GeoRect;
 use ciri_protocol::message::*;
-use ciri_render::glyph_cache::{GlyphAtlas, GlyphInstance, ScissoredRange};
+use ciri_render::glyph_cache::{GlyphInstance, ScissoredRange};
 use ciri_render::rect::Rect;
-use ciri_render::renderer::Renderer;
 use ciri_render::terminal;
+use ciri_render::FrameScene;
 use std::time::Instant;
 
 use super::App;
@@ -603,7 +603,7 @@ impl App {
             return;
         };
         let renderer = self.renderer.as_mut().unwrap();
-        let atlas = self.glyph_atlas.as_mut().unwrap();
+        let atlas = self.glyph_cache.as_mut().unwrap();
 
         // Find the tile rect for the search pane
         let Some((_, pane_rect, _)) = tiles.iter().find(|(pid, _, _)| *pid == search.pane_id)
@@ -650,7 +650,6 @@ impl App {
         emit_status_text(
             atlas,
             &mut renderer.font_system,
-            &renderer.queue,
             &bar_text,
             bar_x + padding,
             text_y,
@@ -717,7 +716,7 @@ impl App {
             return;
         }
         let renderer = self.renderer.as_mut().unwrap();
-        let atlas = self.glyph_atlas.as_mut().unwrap();
+        let atlas = self.glyph_cache.as_mut().unwrap();
 
         // Find active pane tile rect and cursor position
         let active_pid = match self.workspaces.active().active_pane_id() {
@@ -773,7 +772,6 @@ impl App {
         emit_status_text(
             atlas,
             &mut renderer.font_system,
-            &renderer.queue,
             text,
             base_x + 2.0,
             base_y + 1.0,
@@ -809,7 +807,7 @@ impl App {
             return;
         }
         let renderer = self.renderer.as_mut().unwrap();
-        let atlas = self.glyph_atlas.as_mut().unwrap();
+        let atlas = self.glyph_cache.as_mut().unwrap();
         let border_w = self.config.appearance.border_width;
         let padding = self.config.appearance.padding;
         let (cw, ch) = (atlas.cell_width, atlas.cell_height);
@@ -893,7 +891,6 @@ impl App {
                 emit_status_text(
                     atlas,
                     &mut renderer.font_system,
-                    &renderer.queue,
                     &label,
                     ix + 4.0 * zoom,
                     iy + 2.0 * zoom,
@@ -906,106 +903,8 @@ impl App {
         }
     }
 
-    pub fn submit_frame(
-        renderer: &mut Renderer,
-        atlas: &mut GlyphAtlas,
-        clear_color: [f32; 4],
-        bg_rects: &[Rect],
-        glyphs: &[GlyphInstance],
-        color_glyphs: &[GlyphInstance],
-        glyph_batches: &[ScissoredRange],
-        color_glyph_batches: &[ScissoredRange],
-        pane_glyph_end: usize,
-        pane_color_glyph_end: usize,
-    ) {
-        let (vw, vh) = renderer.surface_size();
-        let vw_f = vw as f32;
-        let vh_f = vh as f32;
-
-        // Apply any pending surface.configure() (deferred from resize events).
-        renderer.ensure_surface();
-
-        let output = match renderer.surface.get_current_texture() {
-            Ok(t) => t,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Timeout) => {
-                // Reconfigure and skip this frame. Lost/Outdated means the
-                // swapchain is stale; Timeout means the compositor couldn't
-                // deliver an image in time (common during Wayland resize).
-                log::debug!("surface error, reconfiguring");
-                renderer.resize(vw, vh);
-                return;
-            }
-            Err(e) => {
-                log::error!("surface error: {e}");
-                return;
-            }
-        };
-
-        let tex_view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = renderer
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("ciri"),
-            });
-
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("ciri_pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &tex_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: clear_color[0] as f64,
-                            g: clear_color[1] as f64,
-                            b: clear_color[2] as f64,
-                            a: clear_color[3] as f64,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                ..Default::default()
-            });
-
-            // 1. Background rects (cell backgrounds, borders, decorations, scrollbar)
-            renderer
-                .rects
-                .render(&renderer.queue, &mut pass, bg_rects, vw_f, vh_f);
-            // 2. Regular text (alpha atlas)
-            atlas.render_scissored(
-                &renderer.queue,
-                &mut pass,
-                glyphs,
-                vw_f,
-                vh_f,
-                vw,
-                vh,
-                glyph_batches,
-                pane_glyph_end,
-            );
-            // 3. Color emoji (RGBA atlas)
-            atlas.render_color_scissored(
-                &renderer.queue,
-                &mut pass,
-                color_glyphs,
-                vw_f,
-                vh_f,
-                vw,
-                vh,
-                color_glyph_batches,
-                pane_color_glyph_end,
-            );
-        }
-
-        renderer.queue.submit(std::iter::once(encoder.finish()));
-        output.present();
-    }
-
     pub fn render(&mut self) {
-        if self.renderer.is_none() || self.glyph_atlas.is_none() {
+        if self.renderer.is_none() || self.glyph_cache.is_none() || self.glyph_atlas_gpu.is_none() {
             return;
         }
 
@@ -1111,7 +1010,7 @@ impl App {
         }
 
         let renderer = self.renderer.as_mut().unwrap();
-        let atlas = self.glyph_atlas.as_mut().unwrap();
+        let cache = self.glyph_cache.as_mut().unwrap();
         let shaper = self.text_shaper.as_ref().unwrap();
         let (vw, vh) = renderer.surface_size();
         let vw_f = vw as f32;
@@ -1156,10 +1055,9 @@ impl App {
                     cur_line,
                     cur_col,
                     cur_shape,
-                    atlas,
+                    cache,
                     shaper,
                     &mut renderer.font_system,
-                    &renderer.queue,
                     &self.config,
                     &self.cached_color_table,
                 );
@@ -1188,10 +1086,9 @@ impl App {
                             cur_line,
                             cur_col,
                             cur_shape,
-                            atlas,
+                            cache,
                             shaper,
                             &mut renderer.font_system,
-                            &renderer.queue,
                             &self.config,
                             &self.cached_color_table,
                         );
@@ -1246,8 +1143,8 @@ impl App {
                 window.set_ime_cursor_area(
                     winit::dpi::PhysicalPosition::new(cx as f64, cy as f64),
                     winit::dpi::PhysicalSize::new(
-                        atlas.cell_width as f64,
-                        atlas.cell_height as f64,
+                        cache.cell_width as f64,
+                        cache.cell_height as f64,
                     ),
                 );
             }
@@ -1283,20 +1180,27 @@ impl App {
         self.build_ime_preedit(&tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs);
         self.build_image_placements(&tiles, zoom, vw_f, vh_f, &mut bg_rects, &mut glyphs);
 
-        let clear_color = ThemeConfig::parse_color(&self.config.theme.ui_background);
+        let clear_color = if self.overview.active || zoom < zoom_threshold {
+            ThemeConfig::parse_color(&self.config.theme.overview_background)
+        } else {
+            ThemeConfig::parse_color(&self.config.theme.ui_background)
+        };
         let renderer = self.renderer.as_mut().unwrap();
-        let atlas = self.glyph_atlas.as_mut().unwrap();
-        Self::submit_frame(
-            renderer,
-            atlas,
-            clear_color,
-            &bg_rects,
-            &glyphs,
-            &color_glyphs,
-            &glyph_batches,
-            &color_glyph_batches,
-            pane_glyph_end,
-            pane_color_glyph_end,
+        let cache = self.glyph_cache.as_mut().unwrap();
+        let atlas_gpu = self.glyph_atlas_gpu.as_mut().unwrap();
+        renderer.draw_frame(
+            atlas_gpu,
+            cache,
+            FrameScene {
+                clear_color,
+                bg_rects: &bg_rects,
+                glyphs: &glyphs,
+                color_glyphs: &color_glyphs,
+                glyph_batches: &glyph_batches,
+                color_glyph_batches: &color_glyph_batches,
+                pane_glyph_end,
+                pane_color_glyph_end,
+            },
         );
 
         self.render_bufs.bg_rects = bg_rects;
@@ -1305,10 +1209,11 @@ impl App {
         self.render_bufs.glyph_batches = glyph_batches;
         self.render_bufs.color_glyph_batches = color_glyph_batches;
 
-        // Atlas overflow recovery: clear and force rebuild on next frame
-        if atlas.atlas_needs_clear {
-            atlas.clear_cache(&renderer.queue);
-            atlas.atlas_needs_clear = false;
+        // Atlas overflow recovery: clear (CPU-only) and force rebuild on next frame.
+        // The actual texture clear is deferred to next draw_frame's flush_uploads.
+        if cache.atlas_needs_clear {
+            cache.clear_cache();
+            cache.atlas_needs_clear = false;
             self.cached_views.clear();
             self.cached_tile_glyphs.clear();
             for grid in self.pane_grids.values_mut() {

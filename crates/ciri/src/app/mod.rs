@@ -15,9 +15,9 @@ use ciri_layout::geometry::Rect as GeoRect;
 use ciri_layout::geometry::ViewSize;
 use ciri_layout::workspace_set::WorkspaceSet;
 use ciri_protocol::message::*;
-use ciri_render::glyph_cache::{GlyphAtlas, GlyphInstance, ScissoredRange};
+use ciri_gpu::{GlyphAtlasGpu, Renderer};
+use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, ScissoredRange};
 use ciri_render::rect::Rect;
-use ciri_render::renderer::Renderer;
 use ciri_render::shaper::TextShaper;
 use ciri_render::terminal::{ColorTable, TerminalView};
 use crossbeam_channel::{Receiver, Sender};
@@ -164,7 +164,8 @@ pub(crate) struct App {
     pub frame_interval: Duration,
     pub window: Option<Arc<Window>>,
     pub renderer: Option<Renderer>,
-    pub glyph_atlas: Option<GlyphAtlas>,
+    pub glyph_cache: Option<GlyphCache>,
+    pub glyph_atlas_gpu: Option<GlyphAtlasGpu>,
     pub text_shaper: Option<TextShaper>,
     pub dpi_scale: f64,
     pub workspaces: WorkspaceSet,
@@ -240,7 +241,8 @@ impl App {
             frame_interval,
             window: None,
             renderer: None,
-            glyph_atlas: None,
+            glyph_cache: None,
+            glyph_atlas_gpu: None,
             text_shaper: None,
             dpi_scale: 1.0,
             workspaces: WorkspaceSet::new_with_gaps(initial_view, column_gap, column_gap),
@@ -356,20 +358,31 @@ impl App {
         }
     }
 
+    /// Destroy GPU resources (atlas, etc.) before dropping the renderer.
+    pub fn destroy_gpu_resources(&mut self) {
+        if let (Some(atlas_gpu), Some(renderer)) =
+            (self.glyph_atlas_gpu.as_mut(), self.renderer.as_ref())
+        {
+            renderer.destroy_atlas(atlas_gpu);
+        }
+        self.glyph_cache = None;
+        self.glyph_atlas_gpu = None;
+    }
+
     pub fn cell_dimensions(&self) -> (f32, f32) {
-        if let Some(atlas) = &self.glyph_atlas {
-            (atlas.cell_width, atlas.cell_height)
+        if let Some(cache) = &self.glyph_cache {
+            (cache.cell_width, cache.cell_height)
         } else {
             (8.0, 16.0)
         }
     }
 
     pub fn compute_grid_size(&self) -> (u16, u16) {
-        if let Some(atlas) = &self.glyph_atlas {
+        if let Some(cache) = &self.glyph_cache {
             let pad = self.total_inset();
             let vw = self.workspaces.view_size.width - pad;
             let vh = self.workspaces.view_size.height - pad;
-            atlas.grid_size(vw, vh)
+            cache.grid_size(vw, vh)
         } else {
             (80, 24)
         }
@@ -381,9 +394,9 @@ impl App {
 
     pub fn status_bar_height(&self) -> f32 {
         let cell_h = self
-            .glyph_atlas
+            .glyph_cache
             .as_ref()
-            .map(|a| a.cell_height)
+            .map(|c| c.cell_height)
             .unwrap_or(self.config.font.size * 1.2);
         let padding = if let Some(px) = self.config.statusbar.height_padding {
             px

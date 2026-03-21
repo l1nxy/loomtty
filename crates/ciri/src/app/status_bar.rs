@@ -1,5 +1,5 @@
 use ciri_config::theme::ThemeConfig;
-use ciri_render::glyph_cache::{GlyphAtlas, GlyphInstance};
+use ciri_render::glyph_cache::{GlyphCache, GlyphInstance};
 use ciri_render::rect::Rect;
 
 use super::App;
@@ -13,7 +13,7 @@ impl App {
         glyphs: &mut Vec<GlyphInstance>,
     ) {
         let renderer = self.renderer.as_mut().unwrap();
-        let atlas = self.glyph_atlas.as_mut().unwrap();
+        let atlas = self.glyph_cache.as_mut().unwrap();
 
         let ch = atlas.cell_height;
         let padding = if let Some(px) = self.config.statusbar.height_padding {
@@ -163,7 +163,6 @@ impl App {
             emit_status_text(
                 atlas,
                 &mut renderer.font_system,
-                &renderer.queue,
                 text,
                 x,
                 text_y,
@@ -184,7 +183,6 @@ impl App {
             emit_status_text(
                 atlas,
                 &mut renderer.font_system,
-                &renderer.queue,
                 text,
                 rx,
                 text_y,
@@ -275,9 +273,8 @@ pub(crate) fn build_hints_from_bindings(
 }
 
 pub(crate) fn emit_status_text(
-    atlas: &mut GlyphAtlas,
-    font_system: &mut glyphon::FontSystem,
-    queue: &wgpu::Queue,
+    atlas: &mut GlyphCache,
+    font_system: &mut cosmic_text::FontSystem,
     text: &str,
     x_start: f32,
     text_y: f32,
@@ -287,7 +284,7 @@ pub(crate) fn emit_status_text(
     glyphs: &mut Vec<GlyphInstance>,
 ) {
     for (i, ch) in text.chars().enumerate() {
-        if let Some(entry) = atlas.ensure_char(ch, font_system, queue)
+        if let Some(entry) = atlas.ensure_char(ch, font_system)
             && entry.width > 0
             && entry.height > 0
         {

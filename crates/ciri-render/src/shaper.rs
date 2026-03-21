@@ -1,7 +1,7 @@
 //! Text shaping via rustybuzz for ligature and complex text layout support.
 
-use glyphon::FontSystem;
-use glyphon::fontdb;
+use cosmic_text::FontSystem;
+use cosmic_text::fontdb;
 use std::collections::HashMap;
 
 /// Font data cached for text shaping.

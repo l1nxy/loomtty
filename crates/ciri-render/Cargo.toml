@@ -4,9 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-wgpu = { workspace = true }
+cosmic-text = { workspace = true }
 winit = { workspace = true }
-glyphon = { workspace = true }
 alacritty_terminal = { workspace = true }
 ciri-protocol = { workspace = true }
 log = { workspace = true }

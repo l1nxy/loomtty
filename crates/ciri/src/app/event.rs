@@ -1,5 +1,4 @@
 use ciri_layout::geometry::ViewSize;
-use ciri_render::glyph_cache::GlyphAtlas;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
@@ -13,17 +12,24 @@ use crate::connection;
 impl ApplicationHandler for App {
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
         if self.should_exit {
+            self.destroy_gpu_resources();
+            self.renderer = None;
+            self.window = None;
             event_loop.exit();
             return;
         }
 
         // Resize strategy:
         // - preview locally on every resize event
-        // - defer PTY/server resize until the window size settles
+        // - defer PTY/server resize AND swapchain reconfigure until settled
+        // - during live resize, render at old swapchain size (compositor scales)
         const RESIZE_SETTLE: Duration = Duration::from_millis(20);
         if let Some((size, last_event)) = self.pending_resize {
             if last_event.elapsed() >= RESIZE_SETTLE {
                 self.pending_resize = None;
+                if let Some(renderer) = &mut self.renderer {
+                    renderer.apply_surface();
+                }
                 self.apply_resize(size);
             }
         }
@@ -149,7 +155,7 @@ impl ApplicationHandler for App {
                     log::info!("server connection lost, exiting");
                     self.cached_views.clear();
                     self.cached_tile_glyphs.clear();
-                    self.glyph_atlas = None;
+                    self.destroy_gpu_resources();
                     self.renderer = None;
                     self.window = None;
                     event_loop.exit();
@@ -161,7 +167,7 @@ impl ApplicationHandler for App {
             if self.connected && self.pane_grids.is_empty() && self.workspaces.active().is_empty() {
                 self.cached_views.clear();
                 self.cached_tile_glyphs.clear();
-                self.glyph_atlas = None;
+                self.destroy_gpu_resources();
                 self.renderer = None;
                 self.window = None;
                 event_loop.exit();
@@ -194,17 +200,13 @@ impl ApplicationHandler for App {
         );
         window.set_ime_allowed(true);
         let dpi_scale = window.scale_factor();
-        let mut renderer = pollster::block_on(ciri_render::renderer::Renderer::new(
+        let mut renderer = ciri_gpu::Renderer::new(
             window.clone(),
             &self.config.render,
-        ))
+        )
         .expect("renderer init failed");
 
-        let fmt = renderer.surface_format();
-        let (atlas, primary_font_id) = GlyphAtlas::new(
-            &renderer.device,
-            fmt,
-            &mut renderer.font_system,
+        let (cache, atlas_gpu, primary_font_id) = renderer.create_atlas(
             self.config.font.size,
             dpi_scale,
             &self.config.font.family,
@@ -220,8 +222,8 @@ impl ApplicationHandler for App {
             .config
             .statusbar
             .height_padding
-            .unwrap_or(atlas.cell_height * self.config.statusbar.padding_ratio);
-        let bar_h = atlas.cell_height + bar_padding;
+            .unwrap_or(cache.cell_height * self.config.statusbar.padding_ratio);
+        let bar_h = cache.cell_height + bar_padding;
         self.workspaces.resize_view(ViewSize {
             width: w as f32,
             height: h as f32 - bar_h,
@@ -229,9 +231,9 @@ impl ApplicationHandler for App {
 
         log::info!(
             "cell: {:.1}x{:.1} ascent={:.1} (dpi_scale={:.2})",
-            atlas.cell_width,
-            atlas.cell_height,
-            atlas.ascent,
+            cache.cell_width,
+            cache.cell_height,
+            cache.ascent,
             dpi_scale
         );
 
@@ -280,7 +282,8 @@ impl ApplicationHandler for App {
         }
 
         self.dpi_scale = dpi_scale;
-        self.glyph_atlas = Some(atlas);
+        self.glyph_cache = Some(cache);
+        self.glyph_atlas_gpu = Some(atlas_gpu);
         self.text_shaper = Some(shaper);
         self.snap_all_col_widths();
         self.animate_to_active();
@@ -300,7 +303,7 @@ impl ApplicationHandler for App {
                 self.pane_grids.clear();
                 self.cached_views.clear();
                 self.cached_tile_glyphs.clear();
-                self.glyph_atlas = None;
+                self.destroy_gpu_resources();
                 self.renderer = None;
                 self.window = None;
                 event_loop.exit();
@@ -380,11 +383,7 @@ impl ApplicationHandler for App {
                 if (scale_factor - self.dpi_scale).abs() > 0.01 {
                     self.dpi_scale = scale_factor;
                     if let Some(renderer) = &mut self.renderer {
-                        let fmt = renderer.surface_format();
-                        let (atlas, primary_font_id) = GlyphAtlas::new(
-                            &renderer.device,
-                            fmt,
-                            &mut renderer.font_system,
+                        let (cache, atlas_gpu, primary_font_id) = renderer.create_atlas(
                             self.config.font.size,
                             scale_factor,
                             &self.config.font.family,
@@ -397,20 +396,21 @@ impl ApplicationHandler for App {
                         log::info!(
                             "DPI changed: scale={:.2} cell={:.1}x{:.1}",
                             scale_factor,
-                            atlas.cell_width,
-                            atlas.cell_height
+                            cache.cell_width,
+                            cache.cell_height
                         );
                         let bar_h =
-                            atlas.cell_height
+                            cache.cell_height
                                 + self.config.statusbar.height_padding.unwrap_or(
-                                    atlas.cell_height * self.config.statusbar.padding_ratio,
+                                    cache.cell_height * self.config.statusbar.padding_ratio,
                                 );
                         let (w, h) = renderer.surface_size();
                         self.workspaces.resize_view(ViewSize {
                             width: w as f32,
                             height: h as f32 - bar_h,
                         });
-                        self.glyph_atlas = Some(atlas);
+                        self.glyph_cache = Some(cache);
+                        self.glyph_atlas_gpu = Some(atlas_gpu);
                         self.text_shaper = Some(shaper);
                         self.cached_views.clear();
                         self.cached_tile_glyphs.clear();

@@ -157,41 +157,27 @@ impl App {
                 let s = c.as_str();
                 // Ctrl turns letters into control chars (e.g. Ctrl+W -> 0x17).
                 // Fall back to physical key to recover the original letter.
+                // Note: returns &str for keybind matching, so can't reuse
+                // physical_key_to_base_char which returns char.
                 if ctrl && s.len() == 1 && s.as_bytes()[0] < 0x20 {
-                    use winit::keyboard::{KeyCode, PhysicalKey};
-                    match event.physical_key {
-                        PhysicalKey::Code(code) => match code {
-                            KeyCode::Space => "space",
-                            KeyCode::KeyA => "a",
-                            KeyCode::KeyB => "b",
-                            KeyCode::KeyC => "c",
-                            KeyCode::KeyD => "d",
-                            KeyCode::KeyE => "e",
-                            KeyCode::KeyF => "f",
-                            KeyCode::KeyG => "g",
-                            KeyCode::KeyH => "h",
-                            KeyCode::KeyI => "i",
-                            KeyCode::KeyJ => "j",
-                            KeyCode::KeyK => "k",
-                            KeyCode::KeyL => "l",
-                            KeyCode::KeyM => "m",
-                            KeyCode::KeyN => "n",
-                            KeyCode::KeyO => "o",
-                            KeyCode::KeyP => "p",
-                            KeyCode::KeyQ => "q",
-                            KeyCode::KeyR => "r",
-                            KeyCode::KeyS => "s",
-                            KeyCode::KeyT => "t",
-                            KeyCode::KeyU => "u",
-                            KeyCode::KeyV => "v",
-                            KeyCode::KeyW => "w",
-                            KeyCode::KeyX => "x",
-                            KeyCode::KeyY => "y",
-                            KeyCode::KeyZ => "z",
+                    super::input_handler::physical_key_to_base_char(event.physical_key)
+                        .map(|ch| match ch {
+                            ' ' => "space",
+                            'a'..='z' => {
+                                // Map char to static str — valid for single ASCII letters
+                                const LETTERS: [&str; 26] = [
+                                    "a","b","c","d","e","f","g","h","i","j","k","l","m",
+                                    "n","o","p","q","r","s","t","u","v","w","x","y","z",
+                                ];
+                                LETTERS[(ch as u8 - b'a') as usize]
+                            }
+                            '0'..='9' => {
+                                const DIGITS: [&str; 10] = ["0","1","2","3","4","5","6","7","8","9"];
+                                DIGITS[(ch as u8 - b'0') as usize]
+                            }
                             _ => s,
-                        },
-                        _ => s,
-                    }
+                        })
+                        .unwrap_or(s)
                 } else {
                     s
                 }

@@ -14,11 +14,11 @@ use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape, NamedColor};
 use ciri_config::config::CiriConfig;
 use ciri_config::theme::ThemeConfig;
-use glyphon::FontSystem;
+use cosmic_text::FontSystem;
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::glyph_cache::{FontStyle, GlyphAtlas};
+use crate::glyph_cache::{FontStyle, GlyphCache};
 use crate::rect::Rect;
 use crate::shaper::TextShaper;
 use ciri_protocol::message::{
@@ -64,7 +64,7 @@ struct CellMetrics {
 }
 
 impl CellMetrics {
-    fn new(atlas: &GlyphAtlas, config: &CiriConfig) -> Self {
+    fn new(atlas: &GlyphCache, config: &CiriConfig) -> Self {
         CellMetrics {
             cw: atlas.cell_width,
             ch: atlas.cell_height,
@@ -353,9 +353,8 @@ fn render_cell(
     col: usize,
     cell: &CellProps,
     m: &CellMetrics,
-    atlas: &mut GlyphAtlas,
+    atlas: &mut GlyphCache,
     font_system: &mut FontSystem,
-    queue: &wgpu::Queue,
     bg_rects: &mut Vec<Rect>,
     glyphs: &mut Vec<RelativeGlyph>,
     color_glyphs: &mut Vec<RelativeGlyph>,
@@ -393,7 +392,7 @@ fn render_cell(
     }
 
     // Rasterize and cache the glyph, then emit a rendering instance
-    if let Some(entry) = atlas.ensure_styled_char(c, cell.style, font_system, queue) {
+    if let Some(entry) = atlas.ensure_styled_char(c, cell.style, font_system) {
         if entry.width == 0 || entry.height == 0 {
             return;
         }
@@ -614,9 +613,8 @@ fn make_cursor_rects(
 /// Build rendering data from an alacritty `Term` (server-side path).
 pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
     term: &Term<T>,
-    atlas: &mut GlyphAtlas,
+    atlas: &mut GlyphCache,
     font_system: &mut FontSystem,
-    queue: &wgpu::Queue,
     config: &CiriConfig,
 ) -> TerminalView {
     let m = CellMetrics::new(atlas, config);
@@ -658,7 +656,6 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
                     &m,
                     atlas,
                     font_system,
-                    queue,
                     &mut bg_rects,
                     &mut glyphs,
                     &mut color_glyphs,
@@ -699,7 +696,7 @@ struct RowLigatureData {
     /// True for columns that are continuations of a ligature (should skip normal rendering).
     skip_cols: Vec<bool>,
     /// Ligature glyphs to render: (col, glyph_id, font_id, style, fg_color).
-    ligature_glyphs: Vec<(usize, u32, glyphon::fontdb::ID, FontStyle, [f32; 4])>,
+    ligature_glyphs: Vec<(usize, u32, cosmic_text::fontdb::ID, FontStyle, [f32; 4])>,
     /// Pre-shaped grapheme clusters: (col, glyph_id).
     grapheme_glyphs: Vec<(usize, u32)>,
 }
@@ -710,12 +707,11 @@ fn render_single_row(
     row: usize,
     cols: u16,
     lig: Option<&RowLigatureData>,
-    primary_font_id: Option<glyphon::fontdb::ID>,
+    primary_font_id: Option<cosmic_text::fontdb::ID>,
     m: &CellMetrics,
     ct: &ColorTable,
-    atlas: &mut GlyphAtlas,
+    atlas: &mut GlyphCache,
     font_system: &mut FontSystem,
-    queue: &wgpu::Queue,
 ) -> RowRenderData {
     let mut glyphs = Vec::new();
     let mut color_glyphs = Vec::new();
@@ -766,7 +762,7 @@ fn render_single_row(
                 let gid = ld.grapheme_glyphs[gi].1;
                 if let Some(fid) = primary_font_id {
                     if let Some(entry) =
-                        atlas.ensure_glyph_id(gid, fid, props.style, font_system, queue)
+                        atlas.ensure_glyph_id(gid, fid, props.style, font_system)
                     {
                         if entry.width > 0 && entry.height > 0 {
                             let px = col as f32 * m.cw;
@@ -801,7 +797,6 @@ fn render_single_row(
             m,
             atlas,
             font_system,
-            queue,
             &mut glyphs,
             &mut color_glyphs,
         );
@@ -812,7 +807,7 @@ fn render_single_row(
 
     if let Some(ld) = lig {
         for &(col, glyph_id, font_id, style, fg) in &ld.ligature_glyphs {
-            if let Some(entry) = atlas.ensure_glyph_id(glyph_id, font_id, style, font_system, queue)
+            if let Some(entry) = atlas.ensure_glyph_id(glyph_id, font_id, style, font_system)
             {
                 if entry.width == 0 || entry.height == 0 {
                     continue;
@@ -871,10 +866,9 @@ pub fn build_view_from_grid(
     cursor_line: i16,
     cursor_col: u16,
     cursor_shape: u8,
-    atlas: &mut GlyphAtlas,
+    atlas: &mut GlyphCache,
     shaper: &TextShaper,
     font_system: &mut FontSystem,
-    queue: &wgpu::Queue,
     config: &CiriConfig,
     ct: &ColorTable,
 ) -> TerminalView {
@@ -908,7 +902,6 @@ pub fn build_view_from_grid(
             ct,
             atlas,
             font_system,
-            queue,
         ));
     }
 
@@ -948,10 +941,9 @@ pub fn update_view_from_grid(
     cursor_line: i16,
     cursor_col: u16,
     cursor_shape: u8,
-    atlas: &mut GlyphAtlas,
+    atlas: &mut GlyphCache,
     shaper: &TextShaper,
     font_system: &mut FontSystem,
-    queue: &wgpu::Queue,
     config: &CiriConfig,
     ct: &ColorTable,
 ) {
@@ -985,7 +977,6 @@ pub fn update_view_from_grid(
                 ct,
                 atlas,
                 font_system,
-                queue,
             );
         }
     }
@@ -1015,7 +1006,7 @@ fn precompute_row_shaping(
     cols: u16,
     ct: &ColorTable,
     shaper: &TextShaper,
-    fid: glyphon::fontdb::ID,
+    fid: cosmic_text::fontdb::ID,
     face: &rustybuzz::Face,
 ) -> RowLigatureData {
     let cols_usize = cols as usize;
@@ -1207,13 +1198,12 @@ fn emit_glyph(
     row: usize,
     cell: &CellProps,
     m: &CellMetrics,
-    atlas: &mut GlyphAtlas,
+    atlas: &mut GlyphCache,
     font_system: &mut FontSystem,
-    queue: &wgpu::Queue,
     glyphs: &mut Vec<RelativeGlyph>,
     color_glyphs: &mut Vec<RelativeGlyph>,
 ) {
-    if let Some(entry) = atlas.ensure_styled_char(cell.ch, cell.style, font_system, queue) {
+    if let Some(entry) = atlas.ensure_styled_char(cell.ch, cell.style, font_system) {
         if entry.width == 0 || entry.height == 0 {
             return;
         }

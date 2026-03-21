@@ -266,8 +266,6 @@ pub struct RenderConfig {
     pub frame_latency: u32,
     /// Present mode: "fifo" (vsync), "mailbox" (low-latency), "immediate" (no vsync).
     pub present_mode: String,
-    /// GPU backend: "auto", "vulkan", "gl", "metal", "dx12".
-    pub backend: String,
 }
 
 impl Default for RenderConfig {
@@ -279,7 +277,6 @@ impl Default for RenderConfig {
             max_rectangles: 8192,
             frame_latency: 2,
             present_mode: "fifo".to_string(),
-            backend: "auto".to_string(),
         }
     }
 }

@@ -696,54 +696,26 @@ pub(crate) fn key_event_to_kitty_bytes(
     }
 
     // Character keys: encode as CSI <unicode_codepoint> [; modifier] u
+    // Kitty protocol requires the *base* (unshifted) key codepoint.
+    // The modifier value separately carries shift/ctrl/alt/super info.
+    // e.g. Shift+a → CSI 97;2u (base='a'=97, modifier=2=shift)
+    //      Ctrl+a  → CSI 97;5u (base='a'=97, modifier=5=ctrl)
     if let Key::Character(c) = &event.logical_key {
         let text = c.as_str();
-        // For kitty protocol, use the base key character's Unicode codepoint.
-        // With modifiers, the raw character may be a control char, so use
-        // key_without_modifiers to get the base letter.
         if let Some(ch) = text.chars().next() {
-            let codepoint = if ctrl && (ch as u32) < 0x20 {
-                // Recover the original letter from physical key
-                use winit::keyboard::{KeyCode, PhysicalKey};
-                match event.physical_key {
-                    PhysicalKey::Code(code) => {
-                        let base = match code {
-                            KeyCode::KeyA => 'a',
-                            KeyCode::KeyB => 'b',
-                            KeyCode::KeyC => 'c',
-                            KeyCode::KeyD => 'd',
-                            KeyCode::KeyE => 'e',
-                            KeyCode::KeyF => 'f',
-                            KeyCode::KeyG => 'g',
-                            KeyCode::KeyH => 'h',
-                            KeyCode::KeyI => 'i',
-                            KeyCode::KeyJ => 'j',
-                            KeyCode::KeyK => 'k',
-                            KeyCode::KeyL => 'l',
-                            KeyCode::KeyM => 'm',
-                            KeyCode::KeyN => 'n',
-                            KeyCode::KeyO => 'o',
-                            KeyCode::KeyP => 'p',
-                            KeyCode::KeyQ => 'q',
-                            KeyCode::KeyR => 'r',
-                            KeyCode::KeyS => 's',
-                            KeyCode::KeyT => 't',
-                            KeyCode::KeyU => 'u',
-                            KeyCode::KeyV => 'v',
-                            KeyCode::KeyW => 'w',
-                            KeyCode::KeyX => 'x',
-                            KeyCode::KeyY => 'y',
-                            KeyCode::KeyZ => 'z',
-                            _ => ch,
-                        };
-                        base as u32
-                    }
-                    _ => ch as u32,
-                }
-            } else {
-                ch as u32
-            };
-            return csi_u(codepoint);
+            // Kitty spec: plain text keys (no modifiers, or only shift)
+            // should be sent as raw text, not CSI u encoded.
+            let has_non_shift_mods = ctrl || alt || super_key;
+            if !has_non_shift_mods && ch as u32 >= 0x20 {
+                let mut buf = [0u8; 4];
+                let s = ch.encode_utf8(&mut buf);
+                return s.as_bytes().to_vec();
+            }
+
+            let base = physical_key_to_base_char(event.physical_key)
+                .map(|c| c as u32)
+                .unwrap_or(ch as u32);
+            return csi_u(base);
         }
     }
 
@@ -781,4 +753,53 @@ fn open_url(url: &str) -> std::io::Result<()> {
 
     #[allow(unreachable_code)]
     Ok(())
+}
+
+/// Map a physical key code to its base (unshifted, unmodified) character.
+/// Returns `None` for keys that don't have a simple character mapping.
+pub(crate) fn physical_key_to_base_char(key: winit::keyboard::PhysicalKey) -> Option<char> {
+    use winit::keyboard::{KeyCode, PhysicalKey};
+    match key {
+        PhysicalKey::Code(code) => match code {
+            KeyCode::KeyA => Some('a'),
+            KeyCode::KeyB => Some('b'),
+            KeyCode::KeyC => Some('c'),
+            KeyCode::KeyD => Some('d'),
+            KeyCode::KeyE => Some('e'),
+            KeyCode::KeyF => Some('f'),
+            KeyCode::KeyG => Some('g'),
+            KeyCode::KeyH => Some('h'),
+            KeyCode::KeyI => Some('i'),
+            KeyCode::KeyJ => Some('j'),
+            KeyCode::KeyK => Some('k'),
+            KeyCode::KeyL => Some('l'),
+            KeyCode::KeyM => Some('m'),
+            KeyCode::KeyN => Some('n'),
+            KeyCode::KeyO => Some('o'),
+            KeyCode::KeyP => Some('p'),
+            KeyCode::KeyQ => Some('q'),
+            KeyCode::KeyR => Some('r'),
+            KeyCode::KeyS => Some('s'),
+            KeyCode::KeyT => Some('t'),
+            KeyCode::KeyU => Some('u'),
+            KeyCode::KeyV => Some('v'),
+            KeyCode::KeyW => Some('w'),
+            KeyCode::KeyX => Some('x'),
+            KeyCode::KeyY => Some('y'),
+            KeyCode::KeyZ => Some('z'),
+            KeyCode::Digit0 => Some('0'),
+            KeyCode::Digit1 => Some('1'),
+            KeyCode::Digit2 => Some('2'),
+            KeyCode::Digit3 => Some('3'),
+            KeyCode::Digit4 => Some('4'),
+            KeyCode::Digit5 => Some('5'),
+            KeyCode::Digit6 => Some('6'),
+            KeyCode::Digit7 => Some('7'),
+            KeyCode::Digit8 => Some('8'),
+            KeyCode::Digit9 => Some('9'),
+            KeyCode::Space => Some(' '),
+            _ => None,
+        },
+        _ => None,
+    }
 }

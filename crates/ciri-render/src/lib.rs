@@ -1,5 +1,20 @@
 pub mod glyph_cache;
 pub mod rect;
-pub mod renderer;
 pub mod shaper;
 pub mod terminal;
+
+use glyph_cache::{GlyphInstance, ScissoredRange};
+use rect::Rect;
+
+/// All data needed to render a single frame.
+/// Shared across all backends.
+pub struct FrameScene<'a> {
+    pub clear_color: [f32; 4],
+    pub bg_rects: &'a [Rect],
+    pub glyphs: &'a [GlyphInstance],
+    pub color_glyphs: &'a [GlyphInstance],
+    pub glyph_batches: &'a [ScissoredRange],
+    pub color_glyph_batches: &'a [ScissoredRange],
+    pub pane_glyph_end: usize,
+    pub pane_color_glyph_end: usize,
+}

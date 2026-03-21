@@ -2,7 +2,6 @@ use ciri_input::keybind::KeybindMap;
 use ciri_layout::column::ColumnWidth;
 use ciri_layout::workspace::Workspace;
 use ciri_protocol::message::*;
-use ciri_render::glyph_cache::GlyphAtlas;
 
 use super::App;
 use crate::connection::ServerEvent;
@@ -292,11 +291,7 @@ impl App {
                     KeybindMap::from_overview_config(&self.config.keys.overview_bindings);
                 if font_changed {
                     if let Some(renderer) = &mut self.renderer {
-                        let fmt = renderer.surface_format();
-                        let (atlas, primary_font_id) = GlyphAtlas::new(
-                            &renderer.device,
-                            fmt,
-                            &mut renderer.font_system,
+                        let (cache, atlas_gpu, primary_font_id) = renderer.create_atlas(
                             self.config.font.size,
                             self.dpi_scale,
                             &self.config.font.family,
@@ -306,7 +301,8 @@ impl App {
                         if let Some(fid) = primary_font_id {
                             shaper.load_font(fid, &renderer.font_system);
                         }
-                        self.glyph_atlas = Some(atlas);
+                        self.glyph_cache = Some(cache);
+                        self.glyph_atlas_gpu = Some(atlas_gpu);
                         self.text_shaper = Some(shaper);
                     }
                 }

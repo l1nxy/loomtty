@@ -67,4 +67,4 @@ opt-level = 1
 [profile.release]
 debug = false
 strip = true
-lto = true
+lto = false

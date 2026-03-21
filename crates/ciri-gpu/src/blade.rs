@@ -774,17 +774,20 @@ impl Renderer {
                 },
             );
 
-            // 0. Full-screen clear rect (custom background color)
-            let clear_rect = [Rect {
+            // Background rects: clear rect + per-cell rects in one draw call.
+            // Must be a single batch because RectPipeline reuses one shared
+            // instance buffer — a second render() would overwrite the data
+            // before the GPU reads the first draw's instances.
+            let mut all_bg = Vec::with_capacity(1 + scene.bg_rects.len());
+            all_bg.push(Rect {
                 x: 0.0,
                 y: 0.0,
                 w: vw_f,
                 h: vh_f,
                 color: scene.clear_color,
-            }];
-            self.rects.render(&mut pass, &clear_rect, vw_f, vh_f);
-            // 1. Background rects
-            self.rects.render(&mut pass, scene.bg_rects, vw_f, vh_f);
+            });
+            all_bg.extend_from_slice(scene.bg_rects);
+            self.rects.render(&mut pass, &all_bg, vw_f, vh_f);
             // 2. Alpha text glyphs
             atlas_gpu.render_scissored(
                 &mut pass,

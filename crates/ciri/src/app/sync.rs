@@ -290,17 +290,16 @@ impl App {
                 self.overview_keybinds =
                     KeybindMap::from_overview_config(&self.config.keys.overview_bindings);
                 if font_changed {
+                    self.destroy_gpu_resources();
                     if let Some(renderer) = &mut self.renderer {
-                        let (cache, atlas_gpu, primary_font_id) = renderer.create_atlas(
+                        let shaper = ciri_render::shaper::TextShaper::new(&self.config.font.family);
+                        let (cache, atlas_gpu) = renderer.create_atlas(
                             self.config.font.size,
                             self.dpi_scale,
                             &self.config.font.family,
+                            shaper.primary_font_path(),
                             &self.config.render,
                         );
-                        let mut shaper = ciri_render::shaper::TextShaper::new(primary_font_id);
-                        if let Some(fid) = primary_font_id {
-                            shaper.load_font(fid, &renderer.font_system);
-                        }
                         self.glyph_cache = Some(cache);
                         self.glyph_atlas_gpu = Some(atlas_gpu);
                         self.text_shaper = Some(shaper);

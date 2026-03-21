@@ -206,16 +206,14 @@ impl ApplicationHandler for App {
         )
         .expect("renderer init failed");
 
-        let (cache, atlas_gpu, primary_font_id) = renderer.create_atlas(
+        let shaper = ciri_render::shaper::TextShaper::new(&self.config.font.family);
+        let (cache, atlas_gpu) = renderer.create_atlas(
             self.config.font.size,
             dpi_scale,
             &self.config.font.family,
+            shaper.primary_font_path(),
             &self.config.render,
         );
-        let mut shaper = ciri_render::shaper::TextShaper::new(primary_font_id);
-        if let Some(fid) = primary_font_id {
-            shaper.load_font(fid, &renderer.font_system);
-        }
 
         let (w, h) = renderer.surface_size();
         let bar_padding = self
@@ -382,17 +380,18 @@ impl ApplicationHandler for App {
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 if (scale_factor - self.dpi_scale).abs() > 0.01 {
                     self.dpi_scale = scale_factor;
+                    // Destroy old GPU atlas before creating new one
+                    self.destroy_gpu_resources();
+
                     if let Some(renderer) = &mut self.renderer {
-                        let (cache, atlas_gpu, primary_font_id) = renderer.create_atlas(
+                        let shaper = ciri_render::shaper::TextShaper::new(&self.config.font.family);
+                        let (cache, atlas_gpu) = renderer.create_atlas(
                             self.config.font.size,
                             scale_factor,
                             &self.config.font.family,
+                            shaper.primary_font_path(),
                             &self.config.render,
                         );
-                        let mut shaper = ciri_render::shaper::TextShaper::new(primary_font_id);
-                        if let Some(fid) = primary_font_id {
-                            shaper.load_font(fid, &renderer.font_system);
-                        }
                         log::info!(
                             "DPI changed: scale={:.2} cell={:.1}x{:.1}",
                             scale_factor,
@@ -414,6 +413,21 @@ impl ApplicationHandler for App {
                         self.text_shaper = Some(shaper);
                         self.cached_views.clear();
                         self.cached_tile_glyphs.clear();
+                        for grid in self.pane_grids.values_mut() {
+                            grid.dirty = true;
+                        }
+                        // Notify server of new cell dimensions
+                        let (cols, rows) = self.compute_grid_size();
+                        let (cw, ch) = self.cell_dimensions();
+                        let view = &self.workspaces.view_size;
+                        self.send(ClientMessage::Resize {
+                            cols,
+                            rows,
+                            width: view.width as u32,
+                            height: view.height as u32,
+                            cell_width: cw,
+                            cell_height: ch,
+                        });
                     }
                     if let Some(w) = &self.window {
                         w.request_redraw();

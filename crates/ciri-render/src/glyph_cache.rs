@@ -1,17 +1,18 @@
 //! CPU glyph cache — rasterizes and caches terminal text glyphs.
 //!
-//! Two logical atlas layers:
-//! - **Alpha** (`R8`): monochrome text glyphs
-//! - **Color** (`RGBA`): color emoji
+//! Two atlas layers:
+//! - **Text** (`R8Unorm`): grayscale alpha mask via crossfont
+//! - **Color** (`Rgba8Srgb`): color emoji via crossfont
 //!
 //! The GPU upload/rendering is handled by the backend's `GlyphAtlasGpu`.
 
 use ciri_config::config::RenderConfig;
-use cosmic_text::FontSystem;
-use cosmic_text::fontdb;
+use crossfont::{
+    BitmapBuffer, FontDesc, FontKey, GlyphKey, Rasterize, Rasterizer, Size, Slant, Style, Weight,
+};
+use freetype::face::LoadFlag;
+use freetype::Library as FtLibrary;
 use std::collections::HashMap;
-use swash::scale::{Render, ScaleContext, Source, StrikeWith, image::Content};
-use swash::zeno::Format;
 
 // ─── Font style ──────────────────────────────────────────────────────
 
@@ -32,6 +33,27 @@ impl FontStyle {
             (true, false) => Self::Bold,
             (false, true) => Self::Italic,
             (false, false) => Self::Regular,
+        }
+    }
+}
+
+// ─── Font key set ────────────────────────────────────────────────────
+
+/// The 4 crossfont FontKeys for regular/bold/italic/bold_italic.
+struct FontKeySet {
+    regular: FontKey,
+    bold: FontKey,
+    italic: FontKey,
+    bold_italic: FontKey,
+}
+
+impl FontKeySet {
+    fn get(&self, style: FontStyle) -> FontKey {
+        match style {
+            FontStyle::Regular => self.regular,
+            FontStyle::Bold => self.bold,
+            FontStyle::Italic => self.italic,
+            FontStyle::BoldItalic => self.bold_italic,
         }
     }
 }
@@ -149,6 +171,9 @@ pub struct ScissoredRange {
 
 /// CPU-side glyph cache: rasterization, packing, and caching.
 /// GPU upload/rendering is delegated to backend's `GlyphAtlasGpu`.
+///
+/// Uses crossfont for character-based rendering and a thin FreeType path
+/// for glyph-ID rendering (ligatures from text shaping).
 pub struct GlyphCache {
     // Packing
     pub(crate) alpha_packer: ShelfPacker,
@@ -161,11 +186,17 @@ pub struct GlyphCache {
     pub max_instances: usize,
     // Caching
     cache: HashMap<(char, FontStyle), GlyphEntry>,
-    glyph_id_cache: HashMap<(u32, fontdb::ID, FontStyle), GlyphEntry>,
-    scale_context: ScaleContext,
-    font_chains: HashMap<FontStyle, Vec<fontdb::ID>>,
-    font_size: f32,
-    alpha_buf: Vec<u8>,
+    glyph_id_cache: HashMap<(u32, FontStyle), GlyphEntry>,
+    // Crossfont rasterizer (character-based rendering)
+    rasterizer: Rasterizer,
+    font_keys: FontKeySet,
+    font_size: Size,
+    // Thin FreeType path (glyph-ID rendering for shaped glyphs)
+    // Keep library alive — ft_face borrows from it.
+    #[allow(dead_code)]
+    ft_library: FtLibrary,
+    ft_face: Option<freetype::Face>,
+    ft_pixel_size: f32,
     // Public metrics
     pub cell_width: f32,
     pub cell_height: f32,
@@ -174,66 +205,121 @@ pub struct GlyphCache {
 }
 
 impl GlyphCache {
-    /// Create a new GlyphCache. Returns `(cache, primary_font_id)`.
+    /// Create a new self-contained GlyphCache.
+    ///
+    /// `primary_font_path` is the file path + face index for the thin FreeType
+    /// path used by `ensure_glyph_id()`. Obtained from `TextShaper::primary_font_path()`.
     pub fn new(
-        font_system: &mut FontSystem,
         font_size_pt: f32,
         dpi_scale: f64,
         family_name: &str,
+        primary_font_path: Option<(String, u32)>,
         render_config: &RenderConfig,
-    ) -> (Self, Option<fontdb::ID>) {
+    ) -> Self {
         let atlas_size = render_config.atlas_size;
         let max_instances = render_config.max_glyph_instances;
 
-        // Convert point size to pixels: pt × (96 × scale) / 72
-        let font_size = font_size_pt * (96.0 * dpi_scale as f32) / 72.0;
+        // ── Crossfont setup ──
+        let mut rasterizer = Rasterizer::new().expect("crossfont init failed");
+        // Convert point size to pixels: pt × (96 × scale) / 72, then use from_px
+        let pixel_size = font_size_pt * (96.0 * dpi_scale as f32) / 72.0;
+        let font_size = Size::from_px(pixel_size);
 
-        // ── Font setup ──
-        let base_chain = build_fallback_chain(font_system, family_name);
-        let mut font_chains = HashMap::new();
-        font_chains.insert(FontStyle::Regular, base_chain.clone());
-        font_chains.insert(
-            FontStyle::Bold,
-            build_style_chain(font_system, &base_chain, FontStyle::Bold),
+        let regular_desc = FontDesc::new(
+            family_name,
+            Style::Description { slant: Slant::Normal, weight: Weight::Normal },
         );
-        font_chains.insert(
-            FontStyle::Italic,
-            build_style_chain(font_system, &base_chain, FontStyle::Italic),
-        );
-        font_chains.insert(
-            FontStyle::BoldItalic,
-            build_style_chain(font_system, &base_chain, FontStyle::BoldItalic),
-        );
+        let regular_key = rasterizer
+            .load_font(&regular_desc, font_size)
+            .expect("failed to load regular font");
 
-        // ── Cell metrics from primary font ──
-        let (cell_width, cell_height, ascent) =
-            compute_cell_metrics(font_system, base_chain.first().copied(), font_size);
-
-        let primary_font_id = base_chain.first().copied();
-
-        (
-            GlyphCache {
-                alpha_packer: ShelfPacker::new(atlas_size),
-                color_packer: ShelfPacker::new(atlas_size),
-                alpha_pending: Vec::new(),
-                color_pending: Vec::new(),
-                alpha_pending_clear: false,
-                color_pending_clear: false,
-                atlas_size,
-                max_instances,
-                cache: HashMap::new(),
-                glyph_id_cache: HashMap::new(),
-                scale_context: ScaleContext::new(),
-                font_chains,
+        let bold_key = rasterizer
+            .load_font(
+                &FontDesc::new(family_name, Style::Description { slant: Slant::Normal, weight: Weight::Bold }),
                 font_size,
-                cell_width,
-                cell_height,
-                ascent,
-                atlas_needs_clear: false,
-                alpha_buf: Vec::new(),
+            )
+            .unwrap_or(regular_key);
+
+        let italic_key = rasterizer
+            .load_font(
+                &FontDesc::new(family_name, Style::Description { slant: Slant::Italic, weight: Weight::Normal }),
+                font_size,
+            )
+            .unwrap_or(regular_key);
+
+        let bold_italic_key = rasterizer
+            .load_font(
+                &FontDesc::new(family_name, Style::Description { slant: Slant::Italic, weight: Weight::Bold }),
+                font_size,
+            )
+            .unwrap_or(regular_key);
+
+        // ── Metrics from crossfont ──
+        // Force char size initialization by rasterizing a probe glyph first.
+        // crossfont sets FreeType char size lazily in get_glyph(), so metrics()
+        // returns zeros if called before any glyph has been rasterized.
+        let _ = rasterizer.get_glyph(GlyphKey {
+            character: 'M',
+            font_key: regular_key,
+            size: font_size,
+        });
+        let metrics = rasterizer
+            .metrics(regular_key, font_size)
+            .expect("failed to get font metrics");
+        let cell_width = (metrics.average_advance as f32).ceil();
+        let cell_height = (metrics.line_height as f32).ceil();
+        let ascent = (metrics.line_height as f32 + metrics.descent).ceil();
+        let safe_ascent = ascent.min(cell_height);
+
+        log::info!(
+            "font metrics: ascent={safe_ascent:.1} descent={:.1} line_height={:.1} cw={cell_width:.1} ch={cell_height:.1}",
+            metrics.descent,
+            metrics.line_height,
+        );
+
+        // ── Thin FreeType path for glyph-ID rendering ──
+        let ft_library = FtLibrary::init().expect("FreeType init failed");
+        let ft_pixel_size = font_size_pt * (96.0 * dpi_scale as f32) / 72.0;
+        let ft_face = primary_font_path.and_then(|(path, index)| {
+            match ft_library.new_face(&path, index as isize) {
+                Ok(face) => {
+                    log::info!("FreeType face loaded for glyph-ID path: {path}");
+                    Some(face)
+                }
+                Err(e) => {
+                    log::warn!("failed to load FreeType face {path}: {e:?}");
+                    None
+                }
+            }
+        });
+
+        GlyphCache {
+            alpha_packer: ShelfPacker::new(atlas_size),
+            color_packer: ShelfPacker::new(atlas_size),
+            alpha_pending: Vec::new(),
+            color_pending: Vec::new(),
+            alpha_pending_clear: false,
+            color_pending_clear: false,
+            atlas_size,
+            max_instances,
+            cache: HashMap::new(),
+            glyph_id_cache: HashMap::new(),
+            rasterizer,
+            font_keys: FontKeySet {
+                regular: regular_key,
+                bold: bold_key,
+                italic: italic_key,
+                bold_italic: bold_italic_key,
             },
-            primary_font_id,
-        )
+            font_size,
+            ft_library,
+            ft_face,
+            ft_pixel_size,
+            cell_width,
+            cell_height,
+            ascent: safe_ascent,
+            atlas_needs_clear: false,
+        }
     }
 
     /// Ensure a glyph for `ch` with the given `style` is in the atlas.
@@ -241,7 +327,6 @@ impl GlyphCache {
         &mut self,
         ch: char,
         style: FontStyle,
-        font_system: &mut FontSystem,
     ) -> Option<GlyphEntry> {
         let key = (ch, style);
         if let Some(entry) = self.cache.get(&key) {
@@ -253,42 +338,44 @@ impl GlyphCache {
             return Some(GlyphEntry::EMPTY);
         }
 
-        let font_ids = self
-            .font_chains
-            .get(&style)
-            .or_else(|| self.font_chains.get(&FontStyle::Regular))?;
-        let (font_id, glyph_id) = resolve_glyph(font_system, font_ids, ch)?;
+        let font_key = self.font_keys.get(style);
+        let glyph_key = GlyphKey {
+            character: ch,
+            font_key,
+            size: self.font_size,
+        };
 
-        let image = rasterize_glyph(
-            &mut self.scale_context,
-            font_system,
-            font_id,
-            glyph_id,
-            self.font_size,
-            style,
-        )?;
+        let glyph = match self.rasterizer.get_glyph(glyph_key) {
+            Ok(g) => g,
+            Err(crossfont::Error::MissingGlyph(g)) => g,
+            Err(_) => {
+                self.cache.insert(key, GlyphEntry::EMPTY);
+                return Some(GlyphEntry::EMPTY);
+            }
+        };
 
-        let w = image.placement.width;
-        let h = image.placement.height;
+        let w = glyph.width as u32;
+        let h = glyph.height as u32;
         if w == 0 || h == 0 {
             self.cache.insert(key, GlyphEntry::EMPTY);
             return Some(GlyphEntry::EMPTY);
         }
 
-        let entry = self.upload_rasterized(image)?;
+        let rasterized = convert_crossfont_glyph(glyph);
+        let entry = self.upload_rasterized(rasterized)?;
         self.cache.insert(key, entry);
         Some(entry)
     }
 
     /// Ensure a glyph by its ID (from text shaping) is in the atlas.
+    /// Uses the thin FreeType path since crossfont only accepts characters.
     pub fn ensure_glyph_id(
         &mut self,
         glyph_id: u32,
-        font_id: fontdb::ID,
+        _font_id: fontdb::ID,
         style: FontStyle,
-        font_system: &mut FontSystem,
     ) -> Option<GlyphEntry> {
-        let key = (glyph_id, font_id, style);
+        let key = (glyph_id, style);
         if let Some(entry) = self.glyph_id_cache.get(&key) {
             return Some(*entry);
         }
@@ -297,37 +384,89 @@ impl GlyphCache {
             return Some(GlyphEntry::EMPTY);
         }
 
-        let image = rasterize_glyph(
-            &mut self.scale_context,
-            font_system,
-            font_id,
-            glyph_id as u16,
-            self.font_size,
-            style,
-        )?;
+        let glyph = self.rasterize_glyph_id_ft(glyph_id, style)?;
 
-        let w = image.placement.width;
-        let h = image.placement.height;
-        if w == 0 || h == 0 {
+        if glyph.width == 0 || glyph.height == 0 {
             self.glyph_id_cache.insert(key, GlyphEntry::EMPTY);
             return Some(GlyphEntry::EMPTY);
         }
 
-        let entry = self.upload_rasterized(image)?;
+        let entry = self.upload_rasterized(glyph)?;
         self.glyph_id_cache.insert(key, entry);
         Some(entry)
     }
 
+    /// Rasterize a glyph by ID using the thin FreeType path.
+    fn rasterize_glyph_id_ft(&self, glyph_id: u32, style: FontStyle) -> Option<RasterizedGlyph> {
+        let ft_face = self.ft_face.as_ref()?;
+
+        ft_face
+            .set_char_size(0, (self.ft_pixel_size * 64.0) as isize, 72, 72)
+            .ok()?;
+
+        let load_flags = LoadFlag::TARGET_LIGHT;
+        ft_face.load_glyph(glyph_id, load_flags).ok()?;
+        let glyph = ft_face.glyph();
+
+        // Synthetic bold/italic transformations
+        let need_synth_bold = matches!(style, FontStyle::Bold | FontStyle::BoldItalic);
+        let need_synth_italic = matches!(style, FontStyle::Italic | FontStyle::BoldItalic);
+        unsafe {
+            let slot = (*ft_face.raw()).glyph;
+            if (*slot).format == freetype::ffi::FT_GLYPH_FORMAT_OUTLINE {
+                let outline = &mut (*slot).outline;
+                if need_synth_bold {
+                    let font_height = (*(*ft_face.raw()).size).metrics.height as f64;
+                    let amount = (font_height * 64.0 / 2048.0).ceil() as i64;
+                    freetype::ffi::FT_Outline_Embolden(outline, amount);
+                }
+                if need_synth_italic {
+                    let matrix = freetype::ffi::FT_Matrix {
+                        xx: 0x10000,
+                        xy: (0.2125 * 65536.0) as i64,
+                        yx: 0,
+                        yy: 0x10000,
+                    };
+                    freetype::ffi::FT_Outline_Transform(outline, &matrix);
+                }
+            }
+        }
+
+        glyph.render_glyph(freetype::RenderMode::Normal).ok()?;
+
+        let bitmap = glyph.bitmap();
+        let w = bitmap.width() as u32;
+        let h = bitmap.rows() as u32;
+        if w == 0 || h == 0 {
+            return None;
+        }
+
+        let pitch = bitmap.pitch().unsigned_abs() as u32;
+        let raw = bitmap.buffer();
+        let mut data = Vec::with_capacity((w * h) as usize);
+        for row in 0..h {
+            let start = (row * pitch) as usize;
+            let end = start + w as usize;
+            if end <= raw.len() {
+                data.extend_from_slice(&raw[start..end]);
+            }
+        }
+
+        Some(RasterizedGlyph {
+            width: w,
+            height: h,
+            bearing_x: glyph.bitmap_left() as i16,
+            bearing_y: glyph.bitmap_top() as i16,
+            is_color: false,
+            data,
+        })
+    }
+
     /// Allocate atlas space, queue pixel data for upload, return the entry.
-    /// Moves `image.data` instead of cloning to avoid extra allocations.
-    fn upload_rasterized(
-        &mut self,
-        image: swash::scale::image::Image,
-    ) -> Option<GlyphEntry> {
-        let w = image.placement.width;
-        let h = image.placement.height;
-        let is_color = matches!(image.content, Content::Color);
-        if is_color {
+    fn upload_rasterized(&mut self, glyph: RasterizedGlyph) -> Option<GlyphEntry> {
+        let w = glyph.width;
+        let h = glyph.height;
+        if glyph.is_color {
             let (ax, ay) = match self.color_packer.allocate(w, h) {
                 Some(pos) => pos,
                 None => {
@@ -336,14 +475,16 @@ impl GlyphCache {
                     return None;
                 }
             };
-            let entry = make_glyph_entry(ax, ay, w, h, &image, self.atlas_size, true);
+            let entry = make_glyph_entry(
+                ax, ay, w, h, glyph.bearing_x, glyph.bearing_y,
+                self.atlas_size, true,
+            );
             self.color_pending.push(PendingUpload {
                 x: ax, y: ay, w, h,
-                data: image.data, // move, not clone
+                data: glyph.data,
             });
             Some(entry)
         } else {
-            to_alpha_into(&image.data, w, h, &mut self.alpha_buf);
             let (ax, ay) = match self.alpha_packer.allocate(w, h) {
                 Some(pos) => pos,
                 None => {
@@ -352,22 +493,21 @@ impl GlyphCache {
                     return None;
                 }
             };
-            let entry = make_glyph_entry(ax, ay, w, h, &image, self.atlas_size, false);
+            let entry = make_glyph_entry(
+                ax, ay, w, h, glyph.bearing_x, glyph.bearing_y,
+                self.atlas_size, false,
+            );
             self.alpha_pending.push(PendingUpload {
                 x: ax, y: ay, w, h,
-                data: std::mem::take(&mut self.alpha_buf), // move, not clone
+                data: glyph.data,
             });
             Some(entry)
         }
     }
 
     /// Ensure a regular-style character is in the atlas.
-    pub fn ensure_char(
-        &mut self,
-        ch: char,
-        font_system: &mut FontSystem,
-    ) -> Option<GlyphEntry> {
-        self.ensure_styled_char(ch, FontStyle::Regular, font_system)
+    pub fn ensure_char(&mut self, ch: char) -> Option<GlyphEntry> {
+        self.ensure_styled_char(ch, FontStyle::Regular)
     }
 
     /// Drain pending glyph uploads for the GPU backend to consume.
@@ -413,154 +553,61 @@ impl GlyphCache {
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
-/// Compute cell width, height, and ascent from the primary font.
-fn compute_cell_metrics(
-    font_system: &mut FontSystem,
-    primary_id: Option<fontdb::ID>,
-    font_size: f32,
-) -> (f32, f32, f32) {
-    let fallback = (font_size * 0.6, font_size * 1.2, font_size * 1.2 * 0.8);
+/// Convert a crossfont `RasterizedGlyph` to our internal format.
+///
+/// - `BitmapBuffer::Rgb` → single-channel alpha: `(R + G + B) / 3`
+/// - `BitmapBuffer::Rgba` → color emoji: keep as-is
+fn convert_crossfont_glyph(glyph: crossfont::RasterizedGlyph) -> RasterizedGlyph {
+    let w = glyph.width as u32;
+    let h = glyph.height as u32;
 
-    let Some(fid) = primary_id else {
-        return fallback;
-    };
-    let Some(font) = font_system.get_font(fid) else {
-        return fallback;
-    };
-
-    let swash_font = font.as_swash();
-    let metrics = swash_font.metrics(&[]);
-    let scale = font_size / metrics.units_per_em as f32;
-    let ascent = (metrics.ascent * scale).ceil();
-    let descent = (metrics.descent * scale).ceil();
-    let height = (ascent + descent).ceil();
-
-    let glyph_id = swash_font.charmap().map('M');
-    let advance = swash_font.glyph_metrics(&[]).advance_width(glyph_id) * scale;
-    let cw = advance.ceil();
-    let ch = height.max(font_size * 1.2);
-    let safe_ascent = ascent.min(ch);
-
-    log::info!(
-        "font metrics: ascent={ascent:.1} descent={descent:.1} height={height:.1} cw={cw:.1} ch={ch:.1}"
-    );
-    (cw, ch, safe_ascent)
-}
-
-/// Find which font in the fallback chain contains `ch`, returning (font_id, glyph_id).
-fn resolve_glyph(
-    font_system: &mut FontSystem,
-    font_ids: &[fontdb::ID],
-    ch: char,
-) -> Option<(fontdb::ID, u16)> {
-    for &fid in font_ids {
-        if let Some(font) = font_system.get_font(fid) {
-            let gid = font.as_swash().charmap().map(ch);
-            if gid != 0 {
-                return Some((fid, gid));
+    match glyph.buffer {
+        BitmapBuffer::Rgb(rgb_data) => {
+            // Collapse RGB to single-channel alpha: (R + G + B) / 3
+            let alpha_data: Vec<u8> = rgb_data
+                .chunks(3)
+                .map(|rgb| ((rgb[0] as u16 + rgb[1] as u16 + rgb[2] as u16) / 3) as u8)
+                .collect();
+            RasterizedGlyph {
+                width: w,
+                height: h,
+                bearing_x: glyph.left as i16,
+                bearing_y: glyph.top as i16,
+                is_color: false,
+                data: alpha_data,
+            }
+        }
+        BitmapBuffer::Rgba(rgba_data) => {
+            RasterizedGlyph {
+                width: w,
+                height: h,
+                bearing_x: glyph.left as i16,
+                bearing_y: glyph.top as i16,
+                is_color: true,
+                data: rgba_data,
             }
         }
     }
-    None
 }
 
-/// Rasterize a glyph with optional synthetic bold/italic.
-fn rasterize_glyph(
-    scale_ctx: &mut ScaleContext,
-    font_system: &mut FontSystem,
-    font_id: fontdb::ID,
-    glyph_id: u16,
-    font_size: f32,
-    style: FontStyle,
-) -> Option<swash::scale::image::Image> {
-    let font = font_system.get_font(font_id)?;
-    let swash_font = font.as_swash();
-
-    let need_synth_bold = matches!(style, FontStyle::Bold | FontStyle::BoldItalic) && {
-        let db = font_system.db();
-        db.face(font_id).is_some_and(|f| f.weight.0 < 600)
-    };
-    let need_synth_italic = matches!(style, FontStyle::Italic | FontStyle::BoldItalic) && {
-        let db = font_system.db();
-        db.face(font_id)
-            .is_some_and(|f| f.style == fontdb::Style::Normal)
-    };
-
-    let mut scaler = scale_ctx
-        .builder(swash_font)
-        .size(font_size)
-        .hint(true)
-        .build();
-
-    let color_image = {
-        let mut r = Render::new(&[
-            Source::ColorBitmap(StrikeWith::BestFit),
-            Source::ColorOutline(0),
-        ]);
-        r.format(Format::Subpixel)
-            .offset(swash::zeno::Vector::new(0.0, 0.0));
-        r.render(&mut scaler, glyph_id)
-    };
-
-    color_image.or_else(|| {
-        let italic_transform = need_synth_italic.then_some(swash::zeno::Transform {
-            xx: 1.0,
-            yx: 0.0,
-            xy: 0.2125,
-            yy: 1.0,
-            x: 0.0,
-            y: 0.0,
-        });
-        let embolden = if need_synth_bold {
-            0.02 * font_size
-        } else {
-            0.0
-        };
-
-        let mut r = Render::new(&[Source::Outline]);
-        r.format(Format::Alpha)
-            .offset(swash::zeno::Vector::new(0.0, 0.0))
-            .transform(italic_transform)
-            .embolden(embolden);
-        r.render(&mut scaler, glyph_id)
-    })
+/// Backend-agnostic rasterized glyph data.
+struct RasterizedGlyph {
+    width: u32,
+    height: u32,
+    bearing_x: i16,
+    bearing_y: i16,
+    is_color: bool,
+    data: Vec<u8>,
 }
 
-/// Convert rasterized pixel data to single-channel alpha into an existing buffer.
-fn to_alpha_into(data: &[u8], w: u32, h: u32, buf: &mut Vec<u8>) {
-    let expected_alpha = (w * h) as usize;
-    let expected_rgba = (w * h * 4) as usize;
-
-    buf.clear();
-    if data.len() == expected_alpha {
-        buf.extend_from_slice(data);
-    } else if data.len() == expected_rgba {
-        buf.reserve(expected_alpha);
-        buf.extend(data.iter().skip(3).step_by(4).copied());
-    } else {
-        buf.reserve(expected_alpha);
-        buf.extend(
-            data.chunks(3)
-                .map(|rgb| ((rgb[0] as u16 + rgb[1] as u16 + rgb[2] as u16) / 3) as u8),
-        );
-    }
-}
-
-/// Convert rasterized pixel data to single-channel alpha (allocating variant for tests).
-#[cfg(test)]
-fn to_alpha(data: &[u8], w: u32, h: u32) -> Vec<u8> {
-    let mut buf = Vec::new();
-    to_alpha_into(data, w, h, &mut buf);
-    buf
-}
-
-/// Build a `GlyphEntry` from atlas coordinates and image placement.
+/// Build a `GlyphEntry` from atlas coordinates.
 fn make_glyph_entry(
     ax: u32,
     ay: u32,
     w: u32,
     h: u32,
-    image: &swash::scale::image::Image,
+    bearing_x: i16,
+    bearing_y: i16,
     atlas_size: u32,
     is_color: bool,
 ) -> GlyphEntry {
@@ -572,164 +619,10 @@ fn make_glyph_entry(
         v1: (ay + h) as f32 / s,
         width: w as u16,
         height: h as u16,
-        bearing_x: image.placement.left as i16,
-        bearing_y: image.placement.top as i16,
+        bearing_x,
+        bearing_y,
         is_color,
     }
-}
-
-// ─── Font fallback chains ────────────────────────────────────────────
-
-/// Build font fallback chain using fontconfig (Unix) or simple scan (Windows).
-fn build_fallback_chain(font_system: &mut FontSystem, family_name: &str) -> Vec<fontdb::ID> {
-    let mut font_ids = Vec::new();
-
-    #[cfg(unix)]
-    {
-        use fontconfig::{Fontconfig, Pattern};
-        use std::ffi::CString;
-
-        if let Some(fc) = Fontconfig::new() {
-            let db = font_system.db();
-            let family_lower = family_name.to_ascii_lowercase();
-            for face in db.faces() {
-                for family in &face.families {
-                    if family.0.eq_ignore_ascii_case(family_name)
-                        || family.0.to_ascii_lowercase().contains(&family_lower)
-                    {
-                        if !font_ids.contains(&face.id) {
-                            font_ids.push(face.id);
-                        }
-                        break;
-                    }
-                }
-            }
-
-            let mut pat = Pattern::new(&fc);
-            if let Ok(fam) = CString::new(family_name) {
-                pat.add_string(c"family", &fam);
-            }
-            let sorted = pat.sort_fonts(false);
-
-            let db = font_system.db();
-            let mut path_to_ids: HashMap<(String, u32), fontdb::ID> = HashMap::new();
-            for face in db.faces() {
-                if let fontdb::Source::File(ref path) = face.source {
-                    path_to_ids.insert((path.to_string_lossy().to_string(), face.index), face.id);
-                }
-            }
-
-            for fc_font in sorted.iter() {
-                let Some(fc_path_raw) = fc_font.filename() else {
-                    continue;
-                };
-                let fc_path = fc_path_raw.replace("\\", "");
-                let fc_index = fc_font.face_index().unwrap_or(0) as u32;
-                if let Some(&id) = path_to_ids.get(&(fc_path, fc_index))
-                    && !font_ids.contains(&id)
-                {
-                    font_ids.push(id);
-                }
-            }
-
-            for face in db.faces() {
-                if !font_ids.contains(&face.id) {
-                    font_ids.push(face.id);
-                }
-            }
-        }
-    }
-
-    if font_ids.is_empty() {
-        let db = font_system.db();
-        let mut primary = None;
-        let mut first_mono = None;
-        let family_lower = family_name.to_ascii_lowercase();
-        for face in db.faces() {
-            if first_mono.is_none() && face.monospaced {
-                first_mono = Some(face.id);
-            }
-            for family in &face.families {
-                if family.0.eq_ignore_ascii_case(family_name)
-                    || (family_name != "monospace"
-                        && family.0.to_ascii_lowercase().contains(&family_lower))
-                {
-                    primary = Some(face.id);
-                }
-            }
-        }
-        if let Some(id) = primary.or(first_mono) {
-            font_ids.push(id);
-        }
-        for face in db.faces() {
-            if !font_ids.contains(&face.id) {
-                font_ids.push(face.id);
-            }
-        }
-    }
-
-    if let Some(&first) = font_ids.first() {
-        let db = font_system.db();
-        if let Some(face) = db.face(first) {
-            let name = face.families.first().map(|f| f.0.as_str()).unwrap_or("?");
-            log::info!("primary font: {name} (monospaced={})", face.monospaced);
-        }
-    }
-    log::info!("font fallback chain: {} fonts total", font_ids.len());
-    font_ids
-}
-
-/// Build a style-specific fallback chain.
-fn build_style_chain(
-    font_system: &mut FontSystem,
-    base_chain: &[fontdb::ID],
-    style: FontStyle,
-) -> Vec<fontdb::ID> {
-    if matches!(style, FontStyle::Regular) {
-        return base_chain.to_vec();
-    }
-
-    let want_bold = matches!(style, FontStyle::Bold | FontStyle::BoldItalic);
-    let want_italic = matches!(style, FontStyle::Italic | FontStyle::BoldItalic);
-
-    let db = font_system.db();
-    let primary_family = base_chain
-        .first()
-        .and_then(|id| db.face(*id))
-        .and_then(|f| f.families.first())
-        .map(|f| f.0.clone())
-        .unwrap_or_default();
-
-    let mut style_ids: Vec<fontdb::ID> = base_chain
-        .iter()
-        .filter(|&&fid| {
-            db.face(fid).is_some_and(|face| {
-                let is_bold = face.weight.0 >= 600;
-                let is_italic = face.style != fontdb::Style::Normal;
-                let family_match = face.families.iter().any(|f| f.0 == primary_family);
-                family_match && is_bold == want_bold && is_italic == want_italic
-            })
-        })
-        .copied()
-        .collect();
-
-    if !style_ids.is_empty() {
-        for &fid in base_chain {
-            if !style_ids.contains(&fid) {
-                style_ids.push(fid);
-            }
-        }
-        let name = db
-            .face(style_ids[0])
-            .and_then(|f| f.families.first())
-            .map(|f| f.0.as_str())
-            .unwrap_or("?");
-        log::info!("font style {:?}: using {name}", style);
-        return style_ids;
-    }
-
-    log::info!("font style {:?}: no variant found, using regular", style);
-    base_chain.to_vec()
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────
@@ -793,14 +686,35 @@ mod tests {
     }
 
     #[test]
-    fn to_alpha_passthrough() {
-        let data = vec![100, 200, 50, 255];
-        assert_eq!(to_alpha(&data, 2, 2), data);
+    fn rgb_to_alpha_conversion() {
+        // Grayscale (R=G=B): result should equal any channel
+        let glyph = crossfont::RasterizedGlyph {
+            character: 'A',
+            width: 1,
+            height: 1,
+            top: 0,
+            left: 0,
+            advance: (0, 0),
+            buffer: BitmapBuffer::Rgb(vec![128, 128, 128]),
+        };
+        let converted = convert_crossfont_glyph(glyph);
+        assert!(!converted.is_color);
+        assert_eq!(converted.data, vec![128]);
     }
 
     #[test]
-    fn to_alpha_from_rgba() {
-        let data = vec![10, 20, 30, 128];
-        assert_eq!(to_alpha(&data, 1, 1), vec![128]);
+    fn rgba_passthrough() {
+        let glyph = crossfont::RasterizedGlyph {
+            character: '😀',
+            width: 1,
+            height: 1,
+            top: 0,
+            left: 0,
+            advance: (0, 0),
+            buffer: BitmapBuffer::Rgba(vec![255, 0, 0, 128]),
+        };
+        let converted = convert_crossfont_glyph(glyph);
+        assert!(converted.is_color);
+        assert_eq!(converted.data, vec![255, 0, 0, 128]);
     }
 }

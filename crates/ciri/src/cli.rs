@@ -3,19 +3,41 @@ pub enum CliCommand {
     /// Create a new session with random name and connect.
     New,
     /// Connect to a session by name (create if not exists).
-    Run { session_name: String },
+    Run {
+        session_name: String,
+    },
     /// Attach to an existing session (error if not exists).
-    Attach { session_name: String },
+    Attach {
+        session_name: String,
+    },
     List,
-    Kill { session_name: String },
+    Kill {
+        session_name: String,
+    },
     KillServer,
-    Delete { session_name: String },
+    Delete {
+        session_name: String,
+    },
     Help,
 }
 
 /// Reserved subcommand names that cannot be used as positional session names.
 fn is_subcommand(arg: &str) -> bool {
-    matches!(arg, "new" | "list" | "ls" | "kill" | "k" | "kill-server" | "ks" | "delete" | "rm" | "attach" | "a" | "help")
+    matches!(
+        arg,
+        "new"
+            | "list"
+            | "ls"
+            | "kill"
+            | "k"
+            | "kill-server"
+            | "ks"
+            | "delete"
+            | "rm"
+            | "attach"
+            | "a"
+            | "help"
+    )
 }
 
 pub fn parse_args<I>(args: I) -> Result<CliCommand, String>
@@ -39,7 +61,9 @@ where
         [cmd, name] if cmd == "attach" || cmd == "a" => Ok(CliCommand::Attach {
             session_name: name.clone(),
         }),
-        [cmd] if cmd == "attach" || cmd == "a" => Err("attach requires a session name.\nUse `ciri ls` to list sessions.".to_string()),
+        [cmd] if cmd == "attach" || cmd == "a" => {
+            Err("attach requires a session name.\nUse `ciri ls` to list sessions.".to_string())
+        }
         [flag, session_name] if flag == "--session" || flag == "-s" => Ok(CliCommand::Run {
             session_name: session_name.clone(),
         }),
@@ -90,7 +114,9 @@ mod tests {
 
     #[test]
     fn positional_session_name() {
-        assert!(matches!(parse(&["work"]), CliCommand::Run { session_name } if session_name == "work"));
+        assert!(
+            matches!(parse(&["work"]), CliCommand::Run { session_name } if session_name == "work")
+        );
     }
 
     #[test]
@@ -101,13 +127,19 @@ mod tests {
 
     #[test]
     fn attach_with_name() {
-        assert!(matches!(parse(&["attach", "ops"]), CliCommand::Attach { session_name } if session_name == "ops"));
-        assert!(matches!(parse(&["a", "ops"]), CliCommand::Attach { session_name } if session_name == "ops"));
+        assert!(
+            matches!(parse(&["attach", "ops"]), CliCommand::Attach { session_name } if session_name == "ops")
+        );
+        assert!(
+            matches!(parse(&["a", "ops"]), CliCommand::Attach { session_name } if session_name == "ops")
+        );
     }
 
     #[test]
     fn explicit_session_flag() {
-        assert!(matches!(parse(&["--session", "qa"]), CliCommand::Run { session_name } if session_name == "qa"));
+        assert!(
+            matches!(parse(&["--session", "qa"]), CliCommand::Run { session_name } if session_name == "qa")
+        );
     }
 
     #[test]
@@ -123,8 +155,12 @@ mod tests {
 
     #[test]
     fn kill_command() {
-        assert!(matches!(parse(&["kill", "dev"]), CliCommand::Kill { session_name } if session_name == "dev"));
-        assert!(matches!(parse(&["k", "dev"]), CliCommand::Kill { session_name } if session_name == "dev"));
+        assert!(
+            matches!(parse(&["kill", "dev"]), CliCommand::Kill { session_name } if session_name == "dev")
+        );
+        assert!(
+            matches!(parse(&["k", "dev"]), CliCommand::Kill { session_name } if session_name == "dev")
+        );
     }
 
     #[test]
@@ -135,8 +171,12 @@ mod tests {
 
     #[test]
     fn delete_command() {
-        assert!(matches!(parse(&["delete", "old"]), CliCommand::Delete { session_name } if session_name == "old"));
-        assert!(matches!(parse(&["rm", "old"]), CliCommand::Delete { session_name } if session_name == "old"));
+        assert!(
+            matches!(parse(&["delete", "old"]), CliCommand::Delete { session_name } if session_name == "old")
+        );
+        assert!(
+            matches!(parse(&["rm", "old"]), CliCommand::Delete { session_name } if session_name == "old")
+        );
     }
 
     #[test]

@@ -7,8 +7,8 @@ mod grid;
 use anyhow::Result;
 use app::App;
 use ciri_config::config::CiriConfig;
-use cli::CliCommand;
 use ciri_protocol::message::ClientMessage;
+use cli::CliCommand;
 use winit::event_loop::EventLoop;
 
 fn main() -> Result<()> {
@@ -54,8 +54,9 @@ fn main() -> Result<()> {
     // Resolve session name
     let session_name = match cli {
         CliCommand::New => {
-            let existing = ciri_session::restore::list_sessions(&ciri_protocol::transport::state_dir())
-                .unwrap_or_default();
+            let existing =
+                ciri_session::restore::list_sessions(&ciri_protocol::transport::state_dir())
+                    .unwrap_or_default();
             let name = ciri_session::names::unique_name(&existing);
             log::info!("creating new session: {name}");
             name

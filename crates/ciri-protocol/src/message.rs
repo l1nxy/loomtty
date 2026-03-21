@@ -61,9 +61,30 @@ pub const COLOR_RGB: u8 = 1;
 pub const COLOR_INDEXED: u8 = 2;
 
 impl PackedColor {
-    pub const fn named(n: u8) -> Self { PackedColor { tag: COLOR_NAMED, b1: n, b2: 0, b3: 0 } }
-    pub const fn rgb(r: u8, g: u8, b: u8) -> Self { PackedColor { tag: COLOR_RGB, b1: r, b2: g, b3: b } }
-    pub const fn indexed(i: u8) -> Self { PackedColor { tag: COLOR_INDEXED, b1: i, b2: 0, b3: 0 } }
+    pub const fn named(n: u8) -> Self {
+        PackedColor {
+            tag: COLOR_NAMED,
+            b1: n,
+            b2: 0,
+            b3: 0,
+        }
+    }
+    pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
+        PackedColor {
+            tag: COLOR_RGB,
+            b1: r,
+            b2: g,
+            b3: b,
+        }
+    }
+    pub const fn indexed(i: u8) -> Self {
+        PackedColor {
+            tag: COLOR_INDEXED,
+            b1: i,
+            b2: 0,
+            b3: 0,
+        }
+    }
 }
 
 // ─── PackedCell (14 bytes, POD) ─────────────────────────────────────
@@ -149,13 +170,18 @@ pub const FLAG_UNDERLINE_DASHED: u16 = 0b100 << 9;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientMessage {
     /// Keyboard/paste input to forward to a pane's PTY.
-    Input { pane_id: u64, data: Vec<u8> },
+    Input {
+        pane_id: u64,
+        data: Vec<u8>,
+    },
     /// Request to create a new pane (column right of active).
     CreatePane,
     /// Request to split the active column vertically (new row).
     SplitDown,
     /// Close a pane.
-    ClosePane { pane_id: u64 },
+    ClosePane {
+        pane_id: u64,
+    },
     /// Focus navigation.
     FocusLeft,
     FocusRight,
@@ -165,11 +191,23 @@ pub enum ClientMessage {
     MovePaneLeft,
     MovePaneRight,
     /// Resize the viewport.
-    Resize { cols: u16, rows: u16, width: u32, height: u32, cell_width: f32, cell_height: f32 },
+    Resize {
+        cols: u16,
+        rows: u16,
+        width: u32,
+        height: u32,
+        cell_width: f32,
+        cell_height: f32,
+    },
     /// Set column width. If `fixed_px` is Some, use fixed pixel width; otherwise proportion.
-    SetColumnWidth { proportion: f64, fixed_px: Option<f64> },
+    SetColumnWidth {
+        proportion: f64,
+        fixed_px: Option<f64>,
+    },
     /// Adjust the split between the active column and its nearest neighbor.
-    AdjustColumnSplit { delta: f64 },
+    AdjustColumnSplit {
+        delta: f64,
+    },
     /// Make the active column and its nearest neighbor 50/50.
     EqualizeColumnSplit,
     /// Client is attaching (kept for backwards compat, viewport now sent in ClientHello).
@@ -177,11 +215,22 @@ pub enum ClientMessage {
     /// Client is detaching.
     Detach,
     /// Acknowledge received generation.
-    Ack { generation: u64 },
+    Ack {
+        generation: u64,
+    },
     /// Mouse input forwarded to pane (SGR mouse protocol).
-    MouseInput { pane_id: u64, button: u8, col: u16, row: u16, pressed: bool, modifiers: u8 },
+    MouseInput {
+        pane_id: u64,
+        button: u8,
+        col: u16,
+        row: u16,
+        pressed: bool,
+        modifiers: u8,
+    },
     /// Switch to a workspace by index.
-    SwitchWorkspace { workspace_idx: usize },
+    SwitchWorkspace {
+        workspace_idx: usize,
+    },
     /// Consume the right neighbor column's active pane into the current column.
     ConsumeIntoColumn,
     /// Expel the current column's active tile into a new column to the right.
@@ -189,16 +238,28 @@ pub enum ClientMessage {
     /// Request the list of all sessions (running + saved).
     ListSessions,
     /// Kill a session by name.
-    KillSession { session_name: String },
+    KillSession {
+        session_name: String,
+    },
     /// Kill the entire server process.
     KillServer,
     /// Switch this client to a different session (create if needed).
-    SwitchSession { session_name: String },
+    SwitchSession {
+        session_name: String,
+    },
     /// Set absolute weights for two adjacent stacked tiles in a column.
     /// Sent on mouse-up after dragging a tile border.
-    SetTileWeights { column_idx: usize, top_tile_idx: usize, top_weight: f64, bottom_weight: f64 },
+    SetTileWeights {
+        column_idx: usize,
+        top_tile_idx: usize,
+        top_weight: f64,
+        bottom_weight: f64,
+    },
     /// Adjust the split between a specific column pair (identified by left index).
-    AdjustColumnSplitAt { column_idx: usize, delta: f64 },
+    AdjustColumnSplitAt {
+        column_idx: usize,
+        delta: f64,
+    },
 }
 
 /// Control messages from server to client (msgpack encoded, tags 0x10-0x1F).
@@ -212,7 +273,12 @@ pub enum ServerMessage {
     /// Layout changed (focus, column widths, etc.).
     LayoutUpdate { layout: LayoutState },
     /// A pane was created.
-    PaneCreated { pane_id: u64, column_idx: usize, cols: u16, rows: u16 },
+    PaneCreated {
+        pane_id: u64,
+        column_idx: usize,
+        cols: u16,
+        rows: u16,
+    },
     /// A pane was closed.
     PaneClosed { pane_id: u64 },
     /// Server is shutting down.
@@ -373,7 +439,16 @@ impl CellDeltaBorrowed {
         regions: Vec<BorrowedRegionMeta>,
         payload: Vec<u8>,
     ) -> Self {
-        Self { pane_id, generation, cursor_line, cursor_col, cursor_shape, mode_flags, regions, payload }
+        Self {
+            pane_id,
+            generation,
+            cursor_line,
+            cursor_col,
+            cursor_shape,
+            mode_flags,
+            regions,
+            payload,
+        }
     }
 
     /// Zero-copy access to the cells for a given region index.

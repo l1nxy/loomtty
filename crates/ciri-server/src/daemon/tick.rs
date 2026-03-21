@@ -4,7 +4,7 @@ use ciri_protocol::message::*;
 use ciri_protocol::transport;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Notify};
-use tokio::time::{interval, Duration, Instant};
+use tokio::time::{Duration, Instant, interval};
 
 use super::damage::DamageAccumulator;
 use super::server::Server;
@@ -91,7 +91,9 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                     // Build broadcast frames for close + layout update
                     let mut broadcast_frames: Vec<Bytes> = Vec::new();
                     for &id in &dead {
-                        if let Some(f) = codec::frame_server_msg(&ServerMessage::PaneClosed { pane_id: id }) {
+                        if let Some(f) =
+                            codec::frame_server_msg(&ServerMessage::PaneClosed { pane_id: id })
+                        {
                             broadcast_frames.push(Bytes::from(f));
                         }
                     }
@@ -220,7 +222,8 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                                 let (cursor_line, cursor_col, cursor_shape, mode_flags) =
                                     pane.cursor_info();
 
-                                let regions: Vec<(u16, u16, u16)> = damage.line_damage
+                                let regions: Vec<(u16, u16, u16)> = damage
+                                    .line_damage
                                     .iter()
                                     .map(|(&line, &(left, right))| (line, left, right))
                                     .collect();
@@ -235,8 +238,11 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                                     cursor_shape,
                                     mode_flags,
                                     &regions,
-                                    |line, left, right, buf| pane.write_cells_into(line, left, right, buf),
-                                ).is_ok();
+                                    |line, left, right, buf| {
+                                        pane.write_cells_into(line, left, right, buf)
+                                    },
+                                )
+                                .is_ok();
 
                                 if ok {
                                     pending_sends.push(PendingSend {
@@ -373,11 +379,7 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                             }
                             // On failure for FullPaneSync, re-mark full so it retries next tick
                             if let Some((pid, _)) = history_update {
-                                client
-                                    .damage
-                                    .entry(pid)
-                                    .or_default()
-                                    .mark_full();
+                                client.damage.entry(pid).or_default().mark_full();
                             }
                             // Bytes consumed the Vec; cannot recover for pool
                             drop(e);

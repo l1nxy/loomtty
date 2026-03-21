@@ -30,7 +30,12 @@ impl Rect {
         let x1 = (self.x + self.w).min(clip.x + clip.w);
         let y1 = (self.y + self.h).min(clip.y + clip.h);
         if x0 < x1 && y0 < y1 {
-            Some(Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
+            Some(Rect {
+                x: x0,
+                y: y0,
+                w: x1 - x0,
+                h: y1 - y0,
+            })
         } else {
             None
         }

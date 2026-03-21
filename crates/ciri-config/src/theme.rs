@@ -38,8 +38,10 @@ pub struct ThemeConfig {
     pub bright_cyan: String,
     pub bright_white: String,
     // UI colors (overview, status bar, borders, etc.)
-    /// Window clear / overview background color.
+    /// Window clear / normal background color.
     pub ui_background: String,
+    /// Overview mode background color (lighter to distinguish from pane content).
+    pub overview_background: String,
     /// Status bar background.
     pub statusbar_background: String,
     /// Active border color.
@@ -53,7 +55,6 @@ pub struct ThemeConfig {
     /// Broadcast mode indicator color.
     pub mode_broadcast: String,
 }
-
 
 impl ThemeConfig {
     pub fn parse_color(hex: &str) -> [f32; 4] {
@@ -91,12 +92,32 @@ impl ThemeConfig {
             };
         }
         fill!(
-            foreground, background,
-            black, red, green, yellow, blue, magenta, cyan, white,
-            bright_black, bright_red, bright_green, bright_yellow,
-            bright_blue, bright_magenta, bright_cyan, bright_white,
-            ui_background, statusbar_background, border_active, border_inactive, accent,
-            statusbar_dim, mode_broadcast
+            foreground,
+            background,
+            black,
+            red,
+            green,
+            yellow,
+            blue,
+            magenta,
+            cyan,
+            white,
+            bright_black,
+            bright_red,
+            bright_green,
+            bright_yellow,
+            bright_blue,
+            bright_magenta,
+            bright_cyan,
+            bright_white,
+            ui_background,
+            overview_background,
+            statusbar_background,
+            border_active,
+            border_inactive,
+            accent,
+            statusbar_dim,
+            mode_broadcast
         );
     }
 }
@@ -123,6 +144,7 @@ fn one_dark() -> ThemeConfig {
         bright_cyan: "#56B6C2".to_string(),
         bright_white: "#FFFFFF".to_string(),
         ui_background: "#282C34".to_string(),
+        overview_background: "#5C6370".to_string(),
         statusbar_background: "#21252B".to_string(),
         border_active: "#528BFF".to_string(),
         border_inactive: "#3E4452".to_string(),
@@ -154,6 +176,7 @@ fn catppuccin_mocha() -> ThemeConfig {
         bright_cyan: "#94E2D5".to_string(),
         bright_white: "#A6ADC8".to_string(),
         ui_background: "#1E1E2E".to_string(),
+        overview_background: "#585B70".to_string(),
         statusbar_background: "#181825".to_string(),
         border_active: "#89B4FA".to_string(),
         border_inactive: "#313244".to_string(),
@@ -185,6 +208,7 @@ fn tokyo_night() -> ThemeConfig {
         bright_cyan: "#7DCFFF".to_string(),
         bright_white: "#C0CAF5".to_string(),
         ui_background: "#1A1B26".to_string(),
+        overview_background: "#414868".to_string(),
         statusbar_background: "#16161E".to_string(),
         border_active: "#7AA2F7".to_string(),
         border_inactive: "#292E42".to_string(),
@@ -216,6 +240,7 @@ fn dracula() -> ThemeConfig {
         bright_cyan: "#A4FFFF".to_string(),
         bright_white: "#FFFFFF".to_string(),
         ui_background: "#282A36".to_string(),
+        overview_background: "#6272A4".to_string(),
         statusbar_background: "#21222C".to_string(),
         border_active: "#BD93F9".to_string(),
         border_inactive: "#44475A".to_string(),
@@ -247,6 +272,7 @@ fn nord() -> ThemeConfig {
         bright_cyan: "#8FBCBB".to_string(),
         bright_white: "#ECEFF4".to_string(),
         ui_background: "#2E3440".to_string(),
+        overview_background: "#4C566A".to_string(),
         statusbar_background: "#272C36".to_string(),
         border_active: "#88C0D0".to_string(),
         border_inactive: "#4C566A".to_string(),
@@ -278,6 +304,7 @@ fn gruvbox_dark() -> ThemeConfig {
         bright_cyan: "#8EC07C".to_string(),
         bright_white: "#EBDBB2".to_string(),
         ui_background: "#282828".to_string(),
+        overview_background: "#665C54".to_string(),
         statusbar_background: "#1D2021".to_string(),
         border_active: "#FABD2F".to_string(),
         border_inactive: "#504945".to_string(),

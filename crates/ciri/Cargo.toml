@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 ciri-render = { workspace = true }
+ciri-gpu = { workspace = true }
 ciri-protocol = { workspace = true }
 ciri-session = { path = "../ciri-session" }
 ciri-layout = { path = "../ciri-layout" }
@@ -18,13 +19,10 @@ ciri-config = { workspace = true }
 crossbeam-channel = { workspace = true }
 rmp-serde = { workspace = true }
 winit = { workspace = true }
-wgpu = { workspace = true }
-glyphon = { workspace = true }
 tokio = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }
 anyhow = { workspace = true }
 arboard = { workspace = true }
 notify = { workspace = true }
-pollster = "0.4"
 libc = { workspace = true }

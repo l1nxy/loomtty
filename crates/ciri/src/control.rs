@@ -12,7 +12,10 @@ pub fn run_control_command(msg: ClientMessage) -> Result<()> {
     let stream_result = {
         let p = transport::server_socket_path();
         if !p.exists() {
-            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "socket not found"))
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "socket not found",
+            ))
         } else {
             std::os::unix::net::UnixStream::connect(&p)
         }
@@ -73,7 +76,7 @@ pub fn run_control_command(msg: ClientMessage) -> Result<()> {
     hello.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
     hello.extend_from_slice(name_bytes);
     hello.extend_from_slice(&1024u32.to_le_bytes()); // width
-    hello.extend_from_slice(&768u32.to_le_bytes());  // height
+    hello.extend_from_slice(&768u32.to_le_bytes()); // height
     hello.extend_from_slice(&8.0f32.to_bits().to_le_bytes()); // cell_w
     hello.extend_from_slice(&16.0f32.to_bits().to_le_bytes()); // cell_h
     stream.write_all(&hello)?;
@@ -84,8 +87,8 @@ pub fn run_control_command(msg: ClientMessage) -> Result<()> {
     stream.read_exact(&mut server_hello)?;
 
     // Send the control message
-    let payload = rmp_serde::to_vec(&msg)
-        .map_err(|e| anyhow::anyhow!("failed to serialize: {e}"))?;
+    let payload =
+        rmp_serde::to_vec(&msg).map_err(|e| anyhow::anyhow!("failed to serialize: {e}"))?;
     let mut frame = Vec::with_capacity(5 + payload.len());
     frame.push(0x01); // TAG_CLIENT_MSG
     frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
@@ -112,10 +115,16 @@ pub fn run_control_command(msg: ClientMessage) -> Result<()> {
                         if sessions.is_empty() {
                             println!("no sessions");
                         } else {
-                            println!("{:<20} {:<10} {:<6} {}", "NAME", "STATUS", "PANES", "CLIENTS");
+                            println!(
+                                "{:<20} {:<10} {:<6} {}",
+                                "NAME", "STATUS", "PANES", "CLIENTS"
+                            );
                             for s in sessions {
                                 let status = if s.running { "running" } else { "saved" };
-                                println!("{:<20} {:<10} {:<6} {}", s.name, status, s.pane_count, s.client_count);
+                                println!(
+                                    "{:<20} {:<10} {:<6} {}",
+                                    s.name, status, s.pane_count, s.client_count
+                                );
                             }
                         }
                         return Ok(());
@@ -155,7 +164,9 @@ pub fn session_exists_on_server(name: &str) -> bool {
     #[cfg(unix)]
     let stream_result = {
         let p = transport::server_socket_path();
-        if !p.exists() { return false; }
+        if !p.exists() {
+            return false;
+        }
         std::os::unix::net::UnixStream::connect(&p)
     };
     #[cfg(windows)]

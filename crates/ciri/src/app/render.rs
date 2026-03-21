@@ -561,6 +561,199 @@ impl App {
         );
     }
 
+    pub fn build_command_palette(
+        &mut self,
+        vw: f32,
+        vh: f32,
+        bg_rects: &mut Vec<Rect>,
+        glyphs: &mut Vec<GlyphInstance>,
+    ) {
+        let Some(palette) = &self.command_palette else {
+            return;
+        };
+        let renderer = self.renderer.as_mut().unwrap();
+        let atlas = self.glyph_atlas.as_mut().unwrap();
+
+        let cw = atlas.cell_width;
+        let ch = atlas.cell_height;
+        let baseline = ch * self.config.statusbar.text_baseline;
+
+        // Semi-transparent dark backdrop over entire viewport
+        bg_rects.push(Rect {
+            x: 0.0,
+            y: 0.0,
+            w: vw,
+            h: vh,
+            color: [0.0, 0.0, 0.0, 0.5],
+        });
+
+        // Panel dimensions: ~50% width, up to 60% height, centered
+        let panel_w = (vw * 0.5).max(300.0).min(vw - 20.0);
+        let panel_max_h = vh * 0.6;
+        let panel_x = (vw - panel_w) / 2.0;
+        let panel_y = vh * 0.15; // positioned toward the top
+
+        let row_h = ch + 4.0;
+        let input_row_h = ch + 8.0;
+        let visible_rows = ((panel_max_h - input_row_h) / row_h).floor().max(1.0) as usize;
+        let entry_count = palette.filtered.len().min(visible_rows);
+        let panel_h = input_row_h + entry_count as f32 * row_h + 4.0;
+
+        let bg_color = ThemeConfig::parse_color(&self.config.theme.background);
+        let accent = ThemeConfig::parse_color(&self.config.theme.accent);
+        let border_color = ThemeConfig::parse_color(&self.config.theme.border_active);
+
+        // Panel border
+        let bw = 2.0;
+        bg_rects.push(Rect {
+            x: panel_x - bw,
+            y: panel_y - bw,
+            w: panel_w + bw * 2.0,
+            h: panel_h + bw * 2.0,
+            color: border_color,
+        });
+
+        // Panel background
+        bg_rects.push(Rect {
+            x: panel_x,
+            y: panel_y,
+            w: panel_w,
+            h: panel_h,
+            color: bg_color,
+        });
+
+        // Input row background (slightly different shade)
+        bg_rects.push(Rect {
+            x: panel_x,
+            y: panel_y,
+            w: panel_w,
+            h: input_row_h,
+            color: [bg_color[0] + 0.05, bg_color[1] + 0.05, bg_color[2] + 0.05, 1.0],
+        });
+
+        // Input text: "> query"
+        let input_text = format!("> {}", palette.query);
+        let text_color = [1.0, 1.0, 1.0, 1.0];
+        let text_x = panel_x + 8.0;
+        let text_y = panel_y + 4.0;
+        emit_status_text(
+            atlas,
+            &mut renderer.font_system,
+            &renderer.queue,
+            &input_text,
+            text_x,
+            text_y,
+            cw,
+            baseline,
+            text_color,
+            glyphs,
+        );
+
+        // Cursor after query text
+        let cursor_x = text_x + input_text.len() as f32 * cw;
+        bg_rects.push(Rect {
+            x: cursor_x,
+            y: text_y,
+            w: 2.0,
+            h: ch,
+            color: [1.0, 1.0, 1.0, 0.8],
+        });
+
+        // Separator line between input and entries
+        let sep_y = panel_y + input_row_h;
+        bg_rects.push(Rect {
+            x: panel_x,
+            y: sep_y - 1.0,
+            w: panel_w,
+            h: 1.0,
+            color: border_color,
+        });
+
+        // Render filtered entries
+        let dim_color = ThemeConfig::parse_color(&self.config.theme.statusbar_dim);
+        let selected_bg = [accent[0], accent[1], accent[2], 0.25];
+
+        // Ensure selected_idx is visible by computing a scroll window
+        let scroll_offset = if palette.selected_idx >= visible_rows {
+            palette.selected_idx - visible_rows + 1
+        } else {
+            0
+        };
+
+        for (vis_row, filt_idx) in palette.filtered.iter()
+            .skip(scroll_offset)
+            .take(visible_rows)
+            .enumerate()
+        {
+            let entry = &palette.entries[*filt_idx];
+            let row_y = sep_y + vis_row as f32 * row_h;
+            let is_selected = scroll_offset + vis_row == palette.selected_idx;
+
+            // Highlight selected row
+            if is_selected {
+                bg_rects.push(Rect {
+                    x: panel_x,
+                    y: row_y,
+                    w: panel_w,
+                    h: row_h,
+                    color: selected_bg,
+                });
+            }
+
+            let label_color = if is_selected { text_color } else { dim_color };
+
+            // Entry kind prefix
+            let prefix = match &entry.kind {
+                super::PaletteEntryKind::Action(_) => "",
+                super::PaletteEntryKind::SwitchSession(_) => "",
+                super::PaletteEntryKind::KillSession(_) => "",
+            };
+            let label = if prefix.is_empty() {
+                entry.label.clone()
+            } else {
+                format!("{}{}", prefix, entry.label)
+            };
+
+            // Truncate label to panel width
+            let max_chars = ((panel_w - 16.0) / cw).floor().max(1.0) as usize;
+            let display = if label.len() > max_chars {
+                format!("{}...", &label[..max_chars.saturating_sub(3)])
+            } else {
+                label
+            };
+
+            emit_status_text(
+                atlas,
+                &mut renderer.font_system,
+                &renderer.queue,
+                &display,
+                text_x,
+                row_y + 2.0,
+                cw,
+                baseline,
+                label_color,
+                glyphs,
+            );
+        }
+
+        // "No matches" message
+        if palette.filtered.is_empty() && !palette.query.is_empty() {
+            let msg = "No matching commands";
+            emit_status_text(
+                atlas,
+                &mut renderer.font_system,
+                &renderer.queue,
+                msg,
+                text_x,
+                sep_y + 4.0,
+                cw,
+                baseline,
+                dim_color,
+                glyphs,
+            );
+        }
+    }
+
     pub fn build_bell_flash(
         &mut self,
         tiles: &[(u64, GeoRect, bool)],
@@ -1073,6 +1266,7 @@ impl App {
         self.build_bell_flash(&tiles, zoom, vw_f, vh_f, &mut bg_rects);
         self.build_ime_preedit(&tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs);
         self.build_image_placements(&tiles, zoom, vw_f, vh_f, &mut bg_rects, &mut glyphs);
+        self.build_command_palette(vw_f, vh_f, &mut bg_rects, &mut glyphs);
 
         let clear_color = ThemeConfig::parse_color(&self.config.theme.ui_background);
         let renderer = self.renderer.as_mut().unwrap();

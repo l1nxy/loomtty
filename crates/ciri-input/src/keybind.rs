@@ -121,6 +121,9 @@ impl Default for KeybindMap {
         b.insert(KeyCombo::new("o"), Action::ToggleOverview);
         b.insert(KeyCombo::new("tab"), Action::ToggleOverview);
 
+        // Command palette
+        b.insert(KeyCombo::new("p"), Action::ToggleCommandPalette);
+
         KeybindMap { bindings: b }
     }
 }

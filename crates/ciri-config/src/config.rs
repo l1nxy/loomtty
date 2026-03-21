@@ -23,7 +23,6 @@ pub struct CiriConfig {
     pub gesture: GestureConfig,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FontConfig {
@@ -43,9 +42,17 @@ impl Default for FontConfig {
 /// Focus ring style for the active pane border.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum FocusRingStyle { Solid, Glow, Dashed }
+pub enum FocusRingStyle {
+    Solid,
+    Glow,
+    Dashed,
+}
 
-impl Default for FocusRingStyle { fn default() -> Self { Self::Solid } }
+impl Default for FocusRingStyle {
+    fn default() -> Self {
+        Self::Solid
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -59,16 +66,32 @@ pub struct FocusRingConfig {
 
 impl Default for FocusRingConfig {
     fn default() -> Self {
-        FocusRingConfig { style: FocusRingStyle::Solid, glow_radius: 4.0, glow_layers: 3, dash_length: 8.0, gap_length: 4.0 }
+        FocusRingConfig {
+            style: FocusRingStyle::Solid,
+            glow_radius: 4.0,
+            glow_layers: 3,
+            dash_length: 8.0,
+            gap_length: 4.0,
+        }
     }
 }
 
 /// Pane open/close animation style.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum PaneOpenStyle { Fade, SlideUp, SlideDown, SlideLeft, FadeSlideUp }
+pub enum PaneOpenStyle {
+    Fade,
+    SlideUp,
+    SlideDown,
+    SlideLeft,
+    FadeSlideUp,
+}
 
-impl Default for PaneOpenStyle { fn default() -> Self { Self::Fade } }
+impl Default for PaneOpenStyle {
+    fn default() -> Self {
+        Self::Fade
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -85,9 +108,13 @@ pub struct AppearanceConfig {
 impl Default for AppearanceConfig {
     fn default() -> Self {
         AppearanceConfig {
-            padding: 4.0, column_gap: 8.0, border_width: 2.0,
-            active_border_color: String::new(), inactive_border_color: String::new(),
-            inactive_opacity: 0.7, focus_ring: FocusRingConfig::default(),
+            padding: 4.0,
+            column_gap: 8.0,
+            border_width: 2.0,
+            active_border_color: String::new(),
+            inactive_border_color: String::new(),
+            inactive_opacity: 0.7,
+            focus_ring: FocusRingConfig::default(),
         }
     }
 }
@@ -109,10 +136,14 @@ pub struct AnimationConfig {
 impl Default for AnimationConfig {
     fn default() -> Self {
         AnimationConfig {
-            speed: 12.0, enabled: true, epsilon: 0.1,
-            overview_zoom_fit: 0.9, zoom_threshold: 0.99,
+            speed: 12.0,
+            enabled: true,
+            epsilon: 0.1,
+            overview_zoom_fit: 0.9,
+            zoom_threshold: 0.99,
             pane_open_style: PaneOpenStyle::Fade,
-            pane_open_duration_ms: 200, pane_close_duration_ms: 150,
+            pane_open_duration_ms: 200,
+            pane_close_duration_ms: 150,
             focus_transition_speed: 15.0,
         }
     }
@@ -288,9 +319,13 @@ impl Default for LayoutConfig {
             default_column_width: None,
             center_focused_column: CenterStrategy::Always,
             preset_widths: vec![
-                PresetWidth::Proportion { proportion: 1.0 / 3.0 },
+                PresetWidth::Proportion {
+                    proportion: 1.0 / 3.0,
+                },
                 PresetWidth::Proportion { proportion: 0.5 },
-                PresetWidth::Proportion { proportion: 2.0 / 3.0 },
+                PresetWidth::Proportion {
+                    proportion: 2.0 / 3.0,
+                },
                 PresetWidth::Proportion { proportion: 1.0 },
             ],
         }
@@ -348,12 +383,16 @@ pub fn config_path() -> PathBuf {
     #[cfg(unix)]
     {
         if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME")
-            && !config_home.is_empty() {
-                return PathBuf::from(config_home).join("ciri").join("config.toml");
-            }
+            && !config_home.is_empty()
+        {
+            return PathBuf::from(config_home).join("ciri").join("config.toml");
+        }
         // $HOME/.config is the XDG default when XDG_CONFIG_HOME is unset
         let home = std::env::var("HOME").expect("neither XDG_CONFIG_HOME nor HOME is set");
-        PathBuf::from(home).join(".config").join("ciri").join("config.toml")
+        PathBuf::from(home)
+            .join(".config")
+            .join("ciri")
+            .join("config.toml")
     }
     #[cfg(windows)]
     {

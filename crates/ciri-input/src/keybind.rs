@@ -12,10 +12,22 @@ pub struct KeyCombo {
 
 impl KeyCombo {
     pub fn new(key: &str) -> Self {
-        KeyCombo { key: key.to_lowercase(), shift: false, alt: false, ctrl: false, super_key: false }
+        KeyCombo {
+            key: key.to_lowercase(),
+            shift: false,
+            alt: false,
+            ctrl: false,
+            super_key: false,
+        }
     }
     pub fn with_shift(key: &str) -> Self {
-        KeyCombo { key: key.to_lowercase(), shift: true, alt: false, ctrl: false, super_key: false }
+        KeyCombo {
+            key: key.to_lowercase(),
+            shift: true,
+            alt: false,
+            ctrl: false,
+            super_key: false,
+        }
     }
 
     /// Parse a combo string like "ctrl+alt+shift+h" into a KeyCombo.
@@ -75,15 +87,15 @@ impl Default for KeybindMap {
         let mut b = HashMap::new();
 
         // Pane lifecycle
-        b.insert(KeyCombo::new("n"), Action::NewColumnRight);   // new column in this workspace
-        b.insert(KeyCombo::new("d"), Action::NewWorkspaceBelow);  // new workspace below
+        b.insert(KeyCombo::new("n"), Action::NewColumnRight); // new column in this workspace
+        b.insert(KeyCombo::new("d"), Action::NewWorkspaceBelow); // new workspace below
         b.insert(KeyCombo::new("x"), Action::ClosePane);
 
         // Navigation: h/l = within workspace, j/k = between workspaces
         b.insert(KeyCombo::new("h"), Action::FocusLeft);
         b.insert(KeyCombo::new("l"), Action::FocusRight);
-        b.insert(KeyCombo::new("j"), Action::FocusDown);        // next workspace
-        b.insert(KeyCombo::new("k"), Action::FocusUp);          // prev workspace
+        b.insert(KeyCombo::new("j"), Action::FocusDown); // next workspace
+        b.insert(KeyCombo::new("k"), Action::FocusUp); // prev workspace
         b.insert(KeyCombo::new("left"), Action::FocusLeft);
         b.insert(KeyCombo::new("right"), Action::FocusRight);
         b.insert(KeyCombo::new("up"), Action::FocusUp);
@@ -114,7 +126,10 @@ impl Default for KeybindMap {
 
         // Workspace switching by number
         for i in 1u8..=9 {
-            b.insert(KeyCombo::new(&format!("{i}")), Action::SwitchWorkspace((i - 1) as usize));
+            b.insert(
+                KeyCombo::new(&format!("{i}")),
+                Action::SwitchWorkspace((i - 1) as usize),
+            );
         }
 
         // Overview
@@ -159,7 +174,9 @@ impl KeybindMap {
             if let Some(action) = Action::from_name(action_str) {
                 map.bindings.insert(KeyCombo::parse(key_str), action);
             } else {
-                log::warn!("unknown action in keybinding config: {action_str:?} (key: {key_str:?})");
+                log::warn!(
+                    "unknown action in keybinding config: {action_str:?} (key: {key_str:?})"
+                );
             }
         }
         map
@@ -172,7 +189,9 @@ impl KeybindMap {
             if let Some(action) = Action::from_name(action_str) {
                 map.bindings.insert(KeyCombo::parse(key_str), action);
             } else {
-                log::warn!("unknown action in overview keybinding config: {action_str:?} (key: {key_str:?})");
+                log::warn!(
+                    "unknown action in overview keybinding config: {action_str:?} (key: {key_str:?})"
+                );
             }
         }
         map
@@ -185,7 +204,9 @@ impl KeybindMap {
             if let Some(action) = Action::from_name(action_str) {
                 b.insert(KeyCombo::parse(key_str), action);
             } else {
-                log::warn!("unknown action in keybinding config: {action_str:?} (key: {key_str:?})");
+                log::warn!(
+                    "unknown action in keybinding config: {action_str:?} (key: {key_str:?})"
+                );
             }
         }
         KeybindMap { bindings: b }

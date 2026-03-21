@@ -11,19 +11,19 @@ use ciri_anim::animation::ViewOffset;
 use ciri_config::config::CiriConfig;
 use ciri_input::keybind::KeybindMap;
 use ciri_input::leader::InputHandler;
+use ciri_layout::geometry::Rect as GeoRect;
 use ciri_layout::geometry::ViewSize;
 use ciri_layout::workspace_set::WorkspaceSet;
 use ciri_protocol::message::*;
-use ciri_render::glyph_cache::{GlyphAtlas, GlyphInstance};
+use ciri_gpu::{GlyphAtlasGpu, Renderer};
+use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, ScissoredRange};
 use ciri_render::rect::Rect;
-use ciri_render::renderer::Renderer;
 use ciri_render::shaper::TextShaper;
 use ciri_render::terminal::{ColorTable, TerminalView};
 use crossbeam_channel::{Receiver, Sender};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use ciri_layout::geometry::Rect as GeoRect;
 use winit::keyboard::ModifiersState;
 use winit::window::Window;
 
@@ -81,6 +81,8 @@ pub(crate) struct RenderBuffers {
     pub bg_rects: Vec<Rect>,
     pub glyphs: Vec<GlyphInstance>,
     pub color_glyphs: Vec<GlyphInstance>,
+    pub glyph_batches: Vec<ScissoredRange>,
+    pub color_glyph_batches: Vec<ScissoredRange>,
 }
 
 /// Touchpad gesture tracking state.
@@ -162,7 +164,8 @@ pub(crate) struct App {
     pub frame_interval: Duration,
     pub window: Option<Arc<Window>>,
     pub renderer: Option<Renderer>,
-    pub glyph_atlas: Option<GlyphAtlas>,
+    pub glyph_cache: Option<GlyphCache>,
+    pub glyph_atlas_gpu: Option<GlyphAtlasGpu>,
     pub text_shaper: Option<TextShaper>,
     pub dpi_scale: f64,
     pub workspaces: WorkspaceSet,
@@ -204,6 +207,10 @@ pub(crate) struct App {
     pub config_watcher: Option<notify::RecommendedWatcher>,
     pub config_change_rx: Option<crossbeam_channel::Receiver<()>>,
     pub gestures: GestureState,
+    /// Latest pending resize event and its timestamp.
+    /// Local layout preview is immediate; PTY/server resize is committed once
+    /// after the window size settles.
+    pub pending_resize: Option<(winit::dpi::PhysicalSize<u32>, Instant)>,
 }
 
 impl App {
@@ -234,7 +241,8 @@ impl App {
             frame_interval,
             window: None,
             renderer: None,
-            glyph_atlas: None,
+            glyph_cache: None,
+            glyph_atlas_gpu: None,
             text_shaper: None,
             dpi_scale: 1.0,
             workspaces: WorkspaceSet::new_with_gaps(initial_view, column_gap, column_gap),
@@ -263,6 +271,8 @@ impl App {
                 bg_rects: Vec::new(),
                 glyphs: Vec::new(),
                 color_glyphs: Vec::new(),
+                glyph_batches: Vec::new(),
+                color_glyph_batches: Vec::new(),
             },
             ime: ImeState {
                 preedit_active: false,
@@ -310,6 +320,7 @@ impl App {
                 row_active: false,
                 row_start: 0,
             },
+            pending_resize: None,
         }
     }
 
@@ -317,10 +328,15 @@ impl App {
     pub fn preset_widths(&self) -> Vec<ciri_layout::column::ColumnWidth> {
         use ciri_config::config::PresetWidth;
         use ciri_layout::column::ColumnWidth;
-        self.config.layout.preset_widths.iter().map(|pw| match pw {
-            PresetWidth::Proportion { proportion } => ColumnWidth::Proportion(*proportion),
-            PresetWidth::Fixed { fixed } => ColumnWidth::Fixed(*fixed),
-        }).collect()
+        self.config
+            .layout
+            .preset_widths
+            .iter()
+            .map(|pw| match pw {
+                PresetWidth::Proportion { proportion } => ColumnWidth::Proportion(*proportion),
+                PresetWidth::Fixed { fixed } => ColumnWidth::Fixed(*fixed),
+            })
+            .collect()
     }
 
     /// Send a message to the server.
@@ -342,20 +358,31 @@ impl App {
         }
     }
 
+    /// Destroy GPU resources (atlas, etc.) before dropping the renderer.
+    pub fn destroy_gpu_resources(&mut self) {
+        if let (Some(atlas_gpu), Some(renderer)) =
+            (self.glyph_atlas_gpu.as_mut(), self.renderer.as_ref())
+        {
+            renderer.destroy_atlas(atlas_gpu);
+        }
+        self.glyph_cache = None;
+        self.glyph_atlas_gpu = None;
+    }
+
     pub fn cell_dimensions(&self) -> (f32, f32) {
-        if let Some(atlas) = &self.glyph_atlas {
-            (atlas.cell_width, atlas.cell_height)
+        if let Some(cache) = &self.glyph_cache {
+            (cache.cell_width, cache.cell_height)
         } else {
             (8.0, 16.0)
         }
     }
 
     pub fn compute_grid_size(&self) -> (u16, u16) {
-        if let Some(atlas) = &self.glyph_atlas {
+        if let Some(cache) = &self.glyph_cache {
             let pad = self.total_inset();
             let vw = self.workspaces.view_size.width - pad;
             let vh = self.workspaces.view_size.height - pad;
-            atlas.grid_size(vw, vh)
+            cache.grid_size(vw, vh)
         } else {
             (80, 24)
         }
@@ -367,9 +394,9 @@ impl App {
 
     pub fn status_bar_height(&self) -> f32 {
         let cell_h = self
-            .glyph_atlas
+            .glyph_cache
             .as_ref()
-            .map(|a| a.cell_height)
+            .map(|c| c.cell_height)
             .unwrap_or(self.config.font.size * 1.2);
         let padding = if let Some(px) = self.config.statusbar.height_padding {
             px
@@ -383,5 +410,70 @@ impl App {
     pub fn invalidate_pane_cache(&mut self, pane_id: u64) {
         self.cached_views.remove(&pane_id);
         self.cached_tile_glyphs.remove(&pane_id);
+    }
+
+    /// Update client-side viewport/layout state immediately for interactive window resize.
+    /// This keeps the UI visually in sync while deferring the expensive PTY resize.
+    pub fn preview_resize(&mut self, size: winit::dpi::PhysicalSize<u32>) {
+        log::debug!("preview_resize: {}x{}", size.width, size.height);
+        let bar_h = self.status_bar_height();
+        self.workspaces.resize_view(ViewSize {
+            width: size.width as f32,
+            height: size.height as f32 - bar_h,
+        });
+        self.snap_all_col_widths();
+        let center_strategy = match self.config.layout.center_focused_column {
+            ciri_config::config::CenterStrategy::Always => {
+                ciri_layout::workspace::CenterStrategy::Always
+            }
+            ciri_config::config::CenterStrategy::OnOverflow => {
+                ciri_layout::workspace::CenterStrategy::OnOverflow
+            }
+            ciri_config::config::CenterStrategy::Never => {
+                ciri_layout::workspace::CenterStrategy::Never
+            }
+        };
+        let current_vox = self.view_offset_x.value() as f32;
+        let t = self
+            .workspaces
+            .active_mut()
+            .target_offset_for_active_with_strategy(center_strategy, current_vox);
+        self.view_offset_x.jump_to(t as f64);
+    }
+
+    /// Apply a deferred resize. Called once per frame from `new_events` so
+    /// that multiple `WindowEvent::Resized` events within one frame are
+    /// coalesced into a single expensive layout + PTY resize pass.
+    pub fn apply_resize(&mut self, size: winit::dpi::PhysicalSize<u32>) {
+        use ciri_protocol::message::ClientMessage;
+
+        log::debug!("apply_resize: {}x{}", size.width, size.height);
+        if let Some(renderer) = &mut self.renderer {
+            let (surface_w, surface_h) = renderer.surface_size();
+            if surface_w != size.width || surface_h != size.height {
+                renderer.resize(size.width, size.height);
+            }
+        }
+        self.preview_resize(size);
+        for grid in self.pane_grids.values_mut() {
+            grid.dirty = true;
+        }
+        self.cached_views.clear();
+        self.cached_tile_glyphs.clear();
+        let (cols, rows) = self.compute_grid_size();
+        let (cw, ch) = self.cell_dimensions();
+        let view = &self.workspaces.view_size;
+        log::debug!("  sending Resize: {cols}x{rows} cells, {cw:.1}x{ch:.1} cell_px");
+        self.send(ClientMessage::Resize {
+            cols,
+            rows,
+            width: view.width as u32,
+            height: view.height as u32,
+            cell_width: cw,
+            cell_height: ch,
+        });
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
     }
 }

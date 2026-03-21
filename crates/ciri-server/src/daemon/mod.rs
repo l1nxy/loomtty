@@ -88,7 +88,7 @@ pub async fn run_daemon() -> Result<()> {
     tokio::spawn(async move {
         #[cfg(unix)]
         {
-            use tokio::signal::unix::{signal, SignalKind};
+            use tokio::signal::unix::{SignalKind, signal};
             let mut sigterm =
                 signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
             let mut sigint =
@@ -152,7 +152,12 @@ pub async fn run_daemon() -> Result<()> {
             let state = state.clone();
             let client_shutdown = shutdown.clone();
             let (reader, writer) = tokio::io::split(connected);
-            tokio::spawn(connection::handle_client(reader, writer, state, client_shutdown));
+            tokio::spawn(connection::handle_client(
+                reader,
+                writer,
+                state,
+                client_shutdown,
+            ));
         }
     }
 

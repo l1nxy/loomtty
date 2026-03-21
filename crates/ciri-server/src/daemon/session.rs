@@ -52,11 +52,7 @@ impl Session {
     }
 
     /// Mark a pane as fully damaged for all clients in this session.
-    fn mark_full_damage(
-        clients: &mut HashMap<u64, ClientState>,
-        session_name: &str,
-        pane_id: u64,
-    ) {
+    fn mark_full_damage(clients: &mut HashMap<u64, ClientState>, session_name: &str, pane_id: u64) {
         for client in clients.values_mut() {
             if client.session_name == session_name {
                 client.damage.entry(pane_id).or_default().mark_full();
@@ -163,7 +159,11 @@ impl Session {
         // Cap grid dimensions to prevent OOM from extreme viewport sizes or tiny cell dims
         use ciri_protocol::message::MAX_GRID_CELLS;
         while cols as usize * rows as usize > MAX_GRID_CELLS {
-            if cols > rows { cols /= 2; } else { rows /= 2; }
+            if cols > rows {
+                cols /= 2;
+            } else {
+                rows /= 2;
+            }
         }
         (cols, rows)
     }
@@ -177,15 +177,15 @@ impl Session {
     }
 
     /// Resize ALL panes from the full layout tree.
-    pub(crate) fn resize_all_panes(&mut self, clients: &mut HashMap<u64, ClientState>) {
+    pub(crate) fn resize_all_panes(&mut self, clients: &mut HashMap<u64, ClientState>) -> bool {
         let (vp_w, vp_h, cw, ch) = Self::effective_dims_from(clients, &self.session_name);
-        self.workspaces
-            .resize_view(ViewSize {
-                width: vp_w,
-                height: vp_h,
-            });
+        self.workspaces.resize_view(ViewSize {
+            width: vp_w,
+            height: vp_h,
+        });
         let vw = self.workspaces.view_size.width;
         let vh = self.workspaces.view_size.height;
+        let mut changed = false;
         log::debug!(
             "resize_all_panes: viewport={vw}x{vh} cell={cw}x{ch} inset={}",
             self.pane_inset
@@ -201,14 +201,20 @@ impl Session {
                         pane_id
                     );
                     if let Some(pane) = self.panes.get_mut(pane_id) {
-                        pane.resize(cols, rows);
-                        let g = self.generation.entry(*pane_id).or_insert(0);
-                        *g += 1;
-                        Self::mark_full_damage(clients, &self.session_name, *pane_id);
+                        let old_cols = pane.grid_cols();
+                        let old_rows = pane.grid_rows();
+                        if old_cols != cols || old_rows != rows {
+                            pane.resize(cols, rows);
+                            let g = self.generation.entry(*pane_id).or_insert(0);
+                            *g += 1;
+                            Self::mark_full_damage(clients, &self.session_name, *pane_id);
+                            changed = true;
+                        }
                     }
                 }
             }
         }
+        changed
     }
 
     pub(crate) fn close_pane(&mut self, pane_id: u64, clients: &mut HashMap<u64, ClientState>) {
@@ -321,12 +327,10 @@ impl Session {
 
     pub(crate) fn autosave_due_at(&self, now: Instant) -> bool {
         self.session_dirty
-            && self
-                .last_session_change
-                .is_some_and(|changed_at| {
-                    now.duration_since(changed_at)
-                        >= Duration::from_millis(SESSION_AUTOSAVE_DEBOUNCE_MS)
-                })
+            && self.last_session_change.is_some_and(|changed_at| {
+                now.duration_since(changed_at)
+                    >= Duration::from_millis(SESSION_AUTOSAVE_DEBOUNCE_MS)
+            })
     }
 
     pub(crate) fn autosave_if_due(&mut self, now: Instant) {
@@ -341,10 +345,7 @@ impl Session {
             }
             Err(e) => {
                 self.last_session_change = Some(now);
-                log::warn!(
-                    "failed to autosave session '{}': {e}",
-                    self.session_name
-                );
+                log::warn!("failed to autosave session '{}': {e}", self.session_name);
             }
         }
     }
@@ -394,10 +395,7 @@ impl Session {
 
                 for client in clients.values_mut() {
                     if client.session_name == self.session_name {
-                        let acc = client
-                            .damage
-                            .entry(pane_id)
-                            .or_default();
+                        let acc = client.damage.entry(pane_id).or_default();
                         acc.merge_ranges(&ranges);
                         acc.cursor_dirty = true;
                     }

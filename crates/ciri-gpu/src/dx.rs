@@ -8,7 +8,6 @@ use ciri_config::config::RenderConfig;
 use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, PendingUpload, ScissoredRange};
 use ciri_render::rect::Rect;
 use ciri_render::FrameScene;
-use cosmic_text::FontSystem;
 use std::sync::Arc;
 use winit::window::Window;
 
@@ -636,7 +635,6 @@ pub struct Renderer {
     rects: DxRectPipeline,
     width: u32,
     height: u32,
-    pub font_system: FontSystem,
 }
 
 impl Renderer {
@@ -733,7 +731,6 @@ impl Renderer {
             rects,
             width: size.width.max(1),
             height: size.height.max(1),
-            font_system: FontSystem::new(),
         })
     }
 
@@ -771,13 +768,14 @@ impl Renderer {
         font_size_pt: f32,
         dpi_scale: f64,
         family_name: &str,
+        primary_font_path: Option<(String, u32)>,
         render_config: &RenderConfig,
-    ) -> (GlyphCache, GlyphAtlasGpu, Option<cosmic_text::fontdb::ID>) {
-        let (cache, primary_font_id) = GlyphCache::new(
-            &mut self.font_system,
+    ) -> (GlyphCache, GlyphAtlasGpu) {
+        let cache = GlyphCache::new(
             font_size_pt,
             dpi_scale,
             family_name,
+            primary_font_path,
             render_config,
         );
 
@@ -809,7 +807,7 @@ impl Renderer {
             .expect("color atlas creation failed")
         };
 
-        (cache, GlyphAtlasGpu { alpha, color }, primary_font_id)
+        (cache, GlyphAtlasGpu { alpha, color })
     }
 
     pub fn destroy_atlas(&self, _atlas_gpu: &mut GlyphAtlasGpu) {

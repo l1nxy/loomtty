@@ -1,7 +1,6 @@
 //! Text shaping via rustybuzz for ligature and complex text layout support.
 
-use cosmic_text::FontSystem;
-use cosmic_text::fontdb;
+use fontdb;
 use std::collections::HashMap;
 
 /// Font data cached for text shaping.
@@ -24,30 +23,60 @@ pub struct Ligature {
 }
 
 /// Text shaper using rustybuzz (Rust port of HarfBuzz).
+///
+/// Owns a standalone `fontdb::Database` for font discovery and raw font byte
+/// access. This replaces the previous `cosmic_text::FontSystem` dependency.
 pub struct TextShaper {
+    db: fontdb::Database,
     fonts: HashMap<fontdb::ID, FontData>,
     primary_font_id: Option<fontdb::ID>,
 }
 
 impl TextShaper {
-    pub fn new(primary_font_id: Option<fontdb::ID>) -> Self {
-        TextShaper {
+    /// Create a new TextShaper that discovers system fonts via fontdb.
+    ///
+    /// Finds the primary font matching `family_name` and preloads its data
+    /// for shaping. Falls back to the first monospaced font if no match.
+    pub fn new(family_name: &str) -> Self {
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+
+        let primary_font_id = find_primary_font(&db, family_name);
+
+        let mut shaper = TextShaper {
+            db,
             fonts: HashMap::new(),
             primary_font_id,
+        };
+
+        // Preload primary font data for shaping
+        if let Some(fid) = primary_font_id {
+            shaper.load_font(fid);
         }
+
+        shaper
     }
 
     pub fn primary_font_id(&self) -> Option<fontdb::ID> {
         self.primary_font_id
     }
 
+    /// Return the file path and face index of the primary font, for FreeType loading.
+    pub fn primary_font_path(&self) -> Option<(String, u32)> {
+        let fid = self.primary_font_id?;
+        let face = self.db.face(fid)?;
+        match &face.source {
+            fontdb::Source::File(path) => Some((path.to_string_lossy().to_string(), face.index)),
+            _ => None,
+        }
+    }
+
     /// Load font data for a given font ID. No-op if already loaded.
-    pub fn load_font(&mut self, font_id: fontdb::ID, font_system: &FontSystem) {
+    pub fn load_font(&mut self, font_id: fontdb::ID) {
         if self.fonts.contains_key(&font_id) {
             return;
         }
-        let db = font_system.db();
-        let Some(face_info) = db.face(font_id) else {
+        let Some(face_info) = self.db.face(font_id) else {
             return;
         };
         let face_index = face_info.index;
@@ -165,26 +194,70 @@ impl TextShaper {
     }
 }
 
+/// Find the primary font ID for the given family name.
+fn find_primary_font(db: &fontdb::Database, family_name: &str) -> Option<fontdb::ID> {
+    let family_lower = family_name.to_ascii_lowercase();
+
+    // Exact match first
+    for face in db.faces() {
+        if face.style != fontdb::Style::Normal {
+            continue;
+        }
+        for family in &face.families {
+            if family.0.eq_ignore_ascii_case(family_name) {
+                log::info!("primary font: {} (monospaced={})", family.0, face.monospaced);
+                return Some(face.id);
+            }
+        }
+    }
+
+    // Substring match
+    for face in db.faces() {
+        if face.style != fontdb::Style::Normal {
+            continue;
+        }
+        for family in &face.families {
+            if family.0.to_ascii_lowercase().contains(&family_lower) {
+                log::info!("primary font (substring): {} (monospaced={})", family.0, face.monospaced);
+                return Some(face.id);
+            }
+        }
+    }
+
+    // First monospaced font
+    for face in db.faces() {
+        if face.monospaced && face.style == fontdb::Style::Normal {
+            let name = face.families.first().map(|f| f.0.as_str()).unwrap_or("?");
+            log::info!("primary font (monospace fallback): {}", name);
+            return Some(face.id);
+        }
+    }
+
+    log::warn!("no suitable font found for '{}'", family_name);
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn shaper_new_empty() {
-        let shaper = TextShaper::new(None);
-        assert!(!shaper.has_font(fontdb::ID::dummy()));
+        let shaper = TextShaper::new("NonexistentFontFamily12345");
+        // May or may not find a font depending on system, but shouldn't panic
+        let _ = shaper.primary_font_id();
     }
 
     #[test]
     fn detect_ligatures_no_font() {
-        let shaper = TextShaper::new(None);
+        let shaper = TextShaper::new("NonexistentFontFamily12345");
         let ligs = shaper.detect_ligatures("hello", fontdb::ID::dummy());
         assert!(ligs.is_empty());
     }
 
     #[test]
     fn shape_grapheme_no_font() {
-        let shaper = TextShaper::new(None);
+        let shaper = TextShaper::new("NonexistentFontFamily12345");
         assert!(shaper.shape_grapheme("a", fontdb::ID::dummy()).is_none());
     }
 }

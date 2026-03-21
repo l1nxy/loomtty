@@ -14,8 +14,6 @@ use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape, NamedColor};
 use ciri_config::config::CiriConfig;
 use ciri_config::theme::ThemeConfig;
-use cosmic_text::FontSystem;
-
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::glyph_cache::{FontStyle, GlyphCache};
@@ -354,7 +352,6 @@ fn render_cell(
     cell: &CellProps,
     m: &CellMetrics,
     atlas: &mut GlyphCache,
-    font_system: &mut FontSystem,
     bg_rects: &mut Vec<Rect>,
     glyphs: &mut Vec<RelativeGlyph>,
     color_glyphs: &mut Vec<RelativeGlyph>,
@@ -392,7 +389,7 @@ fn render_cell(
     }
 
     // Rasterize and cache the glyph, then emit a rendering instance
-    if let Some(entry) = atlas.ensure_styled_char(c, cell.style, font_system) {
+    if let Some(entry) = atlas.ensure_styled_char(c, cell.style) {
         if entry.width == 0 || entry.height == 0 {
             return;
         }
@@ -614,7 +611,6 @@ fn make_cursor_rects(
 pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
     term: &Term<T>,
     atlas: &mut GlyphCache,
-    font_system: &mut FontSystem,
     config: &CiriConfig,
 ) -> TerminalView {
     let m = CellMetrics::new(atlas, config);
@@ -655,7 +651,6 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
                     &props,
                     &m,
                     atlas,
-                    font_system,
                     &mut bg_rects,
                     &mut glyphs,
                     &mut color_glyphs,
@@ -696,7 +691,7 @@ struct RowLigatureData {
     /// True for columns that are continuations of a ligature (should skip normal rendering).
     skip_cols: Vec<bool>,
     /// Ligature glyphs to render: (col, glyph_id, font_id, style, fg_color).
-    ligature_glyphs: Vec<(usize, u32, cosmic_text::fontdb::ID, FontStyle, [f32; 4])>,
+    ligature_glyphs: Vec<(usize, u32, fontdb::ID, FontStyle, [f32; 4])>,
     /// Pre-shaped grapheme clusters: (col, glyph_id).
     grapheme_glyphs: Vec<(usize, u32)>,
 }
@@ -707,11 +702,10 @@ fn render_single_row(
     row: usize,
     cols: u16,
     lig: Option<&RowLigatureData>,
-    primary_font_id: Option<cosmic_text::fontdb::ID>,
+    primary_font_id: Option<fontdb::ID>,
     m: &CellMetrics,
     ct: &ColorTable,
     atlas: &mut GlyphCache,
-    font_system: &mut FontSystem,
 ) -> RowRenderData {
     let mut glyphs = Vec::new();
     let mut color_glyphs = Vec::new();
@@ -762,7 +756,7 @@ fn render_single_row(
                 let gid = ld.grapheme_glyphs[gi].1;
                 if let Some(fid) = primary_font_id {
                     if let Some(entry) =
-                        atlas.ensure_glyph_id(gid, fid, props.style, font_system)
+                        atlas.ensure_glyph_id(gid, fid, props.style)
                     {
                         if entry.width > 0 && entry.height > 0 {
                             let px = col as f32 * m.cw;
@@ -796,7 +790,6 @@ fn render_single_row(
             &props,
             m,
             atlas,
-            font_system,
             &mut glyphs,
             &mut color_glyphs,
         );
@@ -807,8 +800,7 @@ fn render_single_row(
 
     if let Some(ld) = lig {
         for &(col, glyph_id, font_id, style, fg) in &ld.ligature_glyphs {
-            if let Some(entry) = atlas.ensure_glyph_id(glyph_id, font_id, style, font_system)
-            {
+            if let Some(entry) = atlas.ensure_glyph_id(glyph_id, font_id, style) {
                 if entry.width == 0 || entry.height == 0 {
                     continue;
                 }
@@ -868,7 +860,6 @@ pub fn build_view_from_grid(
     cursor_shape: u8,
     atlas: &mut GlyphCache,
     shaper: &TextShaper,
-    font_system: &mut FontSystem,
     config: &CiriConfig,
     ct: &ColorTable,
 ) -> TerminalView {
@@ -901,7 +892,6 @@ pub fn build_view_from_grid(
             &m,
             ct,
             atlas,
-            font_system,
         ));
     }
 
@@ -943,7 +933,6 @@ pub fn update_view_from_grid(
     cursor_shape: u8,
     atlas: &mut GlyphCache,
     shaper: &TextShaper,
-    font_system: &mut FontSystem,
     config: &CiriConfig,
     ct: &ColorTable,
 ) {
@@ -976,7 +965,6 @@ pub fn update_view_from_grid(
                 &m,
                 ct,
                 atlas,
-                font_system,
             );
         }
     }
@@ -1006,7 +994,7 @@ fn precompute_row_shaping(
     cols: u16,
     ct: &ColorTable,
     shaper: &TextShaper,
-    fid: cosmic_text::fontdb::ID,
+    fid: fontdb::ID,
     face: &rustybuzz::Face,
 ) -> RowLigatureData {
     let cols_usize = cols as usize;
@@ -1199,11 +1187,10 @@ fn emit_glyph(
     cell: &CellProps,
     m: &CellMetrics,
     atlas: &mut GlyphCache,
-    font_system: &mut FontSystem,
     glyphs: &mut Vec<RelativeGlyph>,
     color_glyphs: &mut Vec<RelativeGlyph>,
 ) {
-    if let Some(entry) = atlas.ensure_styled_char(cell.ch, cell.style, font_system) {
+    if let Some(entry) = atlas.ensure_styled_char(cell.ch, cell.style) {
         if entry.width == 0 || entry.height == 0 {
             return;
         }

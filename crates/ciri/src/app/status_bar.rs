@@ -12,7 +12,6 @@ impl App {
         bg_rects: &mut Vec<Rect>,
         glyphs: &mut Vec<GlyphInstance>,
     ) {
-        let renderer = self.renderer.as_mut().unwrap();
         let atlas = self.glyph_cache.as_mut().unwrap();
 
         let ch = atlas.cell_height;
@@ -162,7 +161,7 @@ impl App {
             }
             emit_status_text(
                 atlas,
-                &mut renderer.font_system,
+    
                 text,
                 x,
                 text_y,
@@ -182,7 +181,7 @@ impl App {
         for (text, color) in &right_segments {
             emit_status_text(
                 atlas,
-                &mut renderer.font_system,
+    
                 text,
                 rx,
                 text_y,
@@ -274,7 +273,6 @@ pub(crate) fn build_hints_from_bindings(
 
 pub(crate) fn emit_status_text(
     atlas: &mut GlyphCache,
-    font_system: &mut cosmic_text::FontSystem,
     text: &str,
     x_start: f32,
     text_y: f32,
@@ -284,7 +282,7 @@ pub(crate) fn emit_status_text(
     glyphs: &mut Vec<GlyphInstance>,
 ) {
     for (i, ch) in text.chars().enumerate() {
-        if let Some(entry) = atlas.ensure_char(ch, font_system)
+        if let Some(entry) = atlas.ensure_char(ch)
             && entry.width > 0
             && entry.height > 0
         {

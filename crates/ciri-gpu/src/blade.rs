@@ -10,7 +10,6 @@ use anyhow::Result;
 use blade_graphics as gpu;
 use blade_graphics::ShaderData;
 use ciri_config::config::RenderConfig;
-use cosmic_text::FontSystem;
 use std::ptr;
 use std::sync::Arc;
 use winit::window::Window;
@@ -606,8 +605,6 @@ pub struct Renderer {
     surface_config: gpu::SurfaceConfig,
     surface_format: gpu::TextureFormat,
     surface_dirty: bool,
-    /// Font system for glyph discovery and rasterization (CPU only).
-    pub font_system: FontSystem,
 }
 
 impl Renderer {
@@ -647,7 +644,7 @@ impl Renderer {
             },
             usage: gpu::TextureUsage::TARGET,
             display_sync,
-            color_space: gpu::ColorSpace::Linear,
+            color_space: gpu::ColorSpace::Srgb,
             transparent: false,
             allow_exclusive_full_screen: false,
         };
@@ -674,7 +671,6 @@ impl Renderer {
             surface_config,
             surface_format,
             surface_dirty: false,
-            font_system: FontSystem::new(),
         })
     }
 
@@ -710,19 +706,19 @@ impl Renderer {
     // ─── Atlas init ──────────────────────────────────────────────────
 
     /// Create a new GlyphCache + GlyphAtlasGpu bound to this renderer's GPU context.
-    /// Returns `(cache, atlas_gpu, primary_font_id)`.
     pub fn create_atlas(
         &mut self,
         font_size_pt: f32,
         dpi_scale: f64,
         family_name: &str,
+        primary_font_path: Option<(String, u32)>,
         render_config: &RenderConfig,
-    ) -> (GlyphCache, GlyphAtlasGpu, Option<cosmic_text::fontdb::ID>) {
-        let (cache, primary_font_id) = GlyphCache::new(
-            &mut self.font_system,
+    ) -> (GlyphCache, GlyphAtlasGpu) {
+        let cache = GlyphCache::new(
             font_size_pt,
             dpi_scale,
             family_name,
+            primary_font_path,
             render_config,
         );
 
@@ -738,7 +734,7 @@ impl Renderer {
         atlas_gpu.init_textures(&mut self.encoder);
         self.context.submit(&mut self.encoder);
 
-        (cache, atlas_gpu, primary_font_id)
+        (cache, atlas_gpu)
     }
 
     /// Destroy a GlyphAtlasGpu's GPU resources.
@@ -876,13 +872,6 @@ struct VertexOutput {
     @location(0) color: vec4<f32>,
 };
 
-fn srgb_to_linear(c: f32) -> f32 {
-    if c <= 0.04045 {
-        return c / 12.92;
-    }
-    return pow((c + 0.055) / 1.055, 2.4);
-}
-
 @vertex
 fn vs_main(@builtin(vertex_index) vi: u32, inst: RectInstance) -> VertexOutput {
     let x = f32(vi & 1u);
@@ -903,9 +892,9 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: RectInstance) -> VertexOutput {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(
-        srgb_to_linear(in.color.r),
-        srgb_to_linear(in.color.g),
-        srgb_to_linear(in.color.b),
+        in.color.r,
+        in.color.g,
+        in.color.b,
         in.color.a
     );
 }
@@ -954,20 +943,10 @@ const ALPHA_FRAGMENT: &str = r#"
 var atlas_tex: texture_2d<f32>;
 var atlas_sampler: sampler;
 
-fn srgb_to_linear(c: f32) -> f32 {
-    if c <= 0.04045 {
-        return c / 12.92;
-    }
-    return pow((c + 0.055) / 1.055, 2.4);
-}
-
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let alpha = textureSample(atlas_tex, atlas_sampler, in.uv).r;
-    let r = srgb_to_linear(in.color.r);
-    let g = srgb_to_linear(in.color.g);
-    let b = srgb_to_linear(in.color.b);
-    return vec4<f32>(r, g, b, in.color.a * alpha);
+    let a = textureSample(atlas_tex, atlas_sampler, in.uv).r;
+    return vec4<f32>(in.color.rgb, in.color.a * a);
 }
 "#;
 

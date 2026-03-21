@@ -602,7 +602,6 @@ impl App {
         let Some(search) = &self.search_state else {
             return;
         };
-        let renderer = self.renderer.as_mut().unwrap();
         let atlas = self.glyph_cache.as_mut().unwrap();
 
         // Find the tile rect for the search pane
@@ -649,7 +648,7 @@ impl App {
 
         emit_status_text(
             atlas,
-            &mut renderer.font_system,
+
             &bar_text,
             bar_x + padding,
             text_y,
@@ -715,7 +714,6 @@ impl App {
         if !self.ime.preedit_active || self.ime.preedit_text.is_empty() {
             return;
         }
-        let renderer = self.renderer.as_mut().unwrap();
         let atlas = self.glyph_cache.as_mut().unwrap();
 
         // Find active pane tile rect and cursor position
@@ -771,7 +769,7 @@ impl App {
         let text_color = [1.0, 1.0, 1.0, 1.0];
         emit_status_text(
             atlas,
-            &mut renderer.font_system,
+
             text,
             base_x + 2.0,
             base_y + 1.0,
@@ -806,7 +804,6 @@ impl App {
         if self.image_placements.is_empty() {
             return;
         }
-        let renderer = self.renderer.as_mut().unwrap();
         let atlas = self.glyph_cache.as_mut().unwrap();
         let border_w = self.config.appearance.border_width;
         let padding = self.config.appearance.padding;
@@ -890,7 +887,7 @@ impl App {
                 let baseline = ch * self.config.statusbar.text_baseline;
                 emit_status_text(
                     atlas,
-                    &mut renderer.font_system,
+        
                     &label,
                     ix + 4.0 * zoom,
                     iy + 2.0 * zoom,
@@ -1057,7 +1054,7 @@ impl App {
                     cur_shape,
                     cache,
                     shaper,
-                    &mut renderer.font_system,
+        
                     &self.config,
                     &self.cached_color_table,
                 );
@@ -1088,7 +1085,7 @@ impl App {
                             cur_shape,
                             cache,
                             shaper,
-                            &mut renderer.font_system,
+                
                             &self.config,
                             &self.cached_color_table,
                         );

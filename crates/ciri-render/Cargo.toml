@@ -4,7 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-cosmic-text = { workspace = true }
+crossfont = { workspace = true }
+fontdb = { workspace = true }
 winit = { workspace = true }
 alacritty_terminal = { workspace = true }
 ciri-protocol = { workspace = true }
@@ -12,10 +13,7 @@ log = { workspace = true }
 anyhow = { workspace = true }
 bytemuck = { version = "1", features = ["derive"] }
 bytemuck_derive = "1"
-swash = "0.1"
+freetype-rs = { workspace = true }
 ciri-config = { path = "../ciri-config" }
 rustybuzz = { workspace = true }
 unicode-segmentation = { workspace = true }
-
-[target.'cfg(unix)'.dependencies]
-fontconfig = "0.10"

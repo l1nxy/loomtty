@@ -3,6 +3,7 @@ pub(crate) mod ime;
 pub(crate) mod input_handler;
 pub(crate) mod keyboard;
 pub(crate) mod mouse;
+pub(crate) mod paste_guard;
 pub(crate) mod render;
 pub(crate) mod status_bar;
 pub(crate) mod sync;
@@ -87,6 +88,13 @@ pub(crate) struct ClientImagePlacement {
     pub pixel_height: u32,
 }
 
+/// Pending paste that needs user confirmation.
+#[derive(Debug, Clone)]
+pub(crate) struct PendingPaste {
+    pub warning: paste_guard::PasteWarning,
+    pub preview: String, // first N chars for display
+}
+
 /// Auto-reconnection state.
 pub(crate) struct ReconnectState {
     pub attempt: u32,
@@ -145,6 +153,7 @@ pub(crate) struct App {
     pub mouse_left_held: bool,
     pub reconnect_state: Option<ReconnectState>,
     pub search_state: Option<SearchState>,
+    pub pending_paste: Option<PendingPaste>,
     pub broadcast_mode: bool,
     /// Pane open fade-in: pane_id -> opacity (0.0 to 1.0, animated)
     pub pane_open_opacity: HashMap<u64, f32>,
@@ -241,6 +250,7 @@ impl App {
             mouse_left_held: false,
             reconnect_state: None,
             search_state: None,
+            pending_paste: None,
             broadcast_mode: false,
             pane_open_opacity: HashMap::new(),
             closing_panes: Vec::new(),

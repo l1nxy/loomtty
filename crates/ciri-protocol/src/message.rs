@@ -183,6 +183,31 @@ impl GraphemeExtras {
     }
 }
 
+/// Sparse hyperlink data: maps cell indices to link IDs, plus a link ID → URI table.
+///
+/// Sent alongside cell data in FullPaneSync. Typically empty — most frames have
+/// no explicit hyperlinks. Uses the same sparse pattern as GraphemeExtras.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct HyperlinkExtras {
+    /// Cell index → link ID mapping (sparse).
+    pub cell_links: Vec<(u32, u16)>,
+    /// Link ID → URI mapping.
+    pub link_map: Vec<(u16, String)>,
+}
+
+impl HyperlinkExtras {
+    pub fn new() -> Self {
+        Self {
+            cell_links: Vec::new(),
+            link_map: Vec::new(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.cell_links.is_empty()
+    }
+}
+
 // ─── Cell flag constants (mirrors alacritty CellFlags) ──────────────
 
 pub const FLAG_WIDE_CHAR: u16 = 1 << 0;
@@ -208,6 +233,8 @@ pub const FLAG_UNDERLINE_DASHED: u16 = 0b100 << 9;
 /// Line wrapping marker: set on the last cell of a row whose content continues
 /// on the next row (soft wrap). Used by the client for scrollback reflow.
 pub const FLAG_WRAPLINE: u16 = 1 << 12;
+/// Cell is part of an OSC 8 hyperlink. The link ID is in HyperlinkExtras.
+pub const FLAG_HYPERLINK: u16 = 1 << 13;
 
 // ─── Wire messages ──────────────────────────────────────────────────
 
@@ -304,6 +331,10 @@ pub enum ClientMessage {
     AdjustColumnSplitAt {
         column_idx: usize,
         delta: f64,
+    },
+    /// Window focus changed (for DECSET 1004 focus event reporting).
+    FocusChange {
+        focused: bool,
     },
 }
 
@@ -443,6 +474,9 @@ pub struct FullPaneSync {
     /// Sparse grapheme overflow for multi-codepoint clusters (emoji, etc.).
     /// Empty for >99.9% of frames.
     pub grapheme_extras: GraphemeExtras,
+    /// Sparse hyperlink data from OSC 8 sequences.
+    /// Empty unless the terminal application uses explicit hyperlinks.
+    pub hyperlink_extras: HyperlinkExtras,
 }
 
 // ─── Zero-copy borrowed CellDelta ───────────────────────────────────
@@ -524,6 +558,10 @@ pub const MODE_SHELL_INTEGRATION: u8 = 0x04;
 pub const MODE_KITTY_KEYBOARD: u8 = 0x08;
 /// Bracketed paste mode (DECSET 2004) is active.
 pub const MODE_BRACKETED_PASTE: u8 = 0x10;
+/// Focus event reporting (DECSET 1004) is active.
+pub const MODE_FOCUS_EVENT: u8 = 0x20;
+/// Synchronized output (DEC 2026) is active — terminal buffers updates.
+pub const MODE_SYNCHRONIZED_OUTPUT: u8 = 0x40;
 
 // ─── Cursor shape encoding ──────────────────────────────────────────
 

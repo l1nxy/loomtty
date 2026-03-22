@@ -60,10 +60,18 @@ impl ThemeConfig {
     pub fn parse_color(hex: &str) -> [f32; 4] {
         let hex = hex.trim_start_matches('#');
         if hex.len() == 6 {
-            let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0);
-            let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0);
-            let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0);
-            [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]
+            let r = u8::from_str_radix(&hex[0..2], 16);
+            let g = u8::from_str_radix(&hex[2..4], 16);
+            let b = u8::from_str_radix(&hex[4..6], 16);
+            match (r, g, b) {
+                (Ok(r), Ok(g), Ok(b)) => {
+                    [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]
+                }
+                _ => {
+                    log::warn!("invalid hex digits in color #{hex}, falling back to light gray");
+                    [0.9, 0.9, 0.9, 1.0]
+                }
+            }
         } else {
             log::warn!("invalid hex color: {:?}, falling back to light gray", hex);
             [0.9, 0.9, 0.9, 1.0]

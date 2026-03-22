@@ -470,6 +470,7 @@ name = "ciri-config"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "libc",
  "log",
  "serde",
  "toml",

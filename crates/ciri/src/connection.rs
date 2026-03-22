@@ -12,6 +12,90 @@ pub enum ServerEvent {
     Disconnected,
 }
 
+/// Run the protocol IO loop over any AsyncRead + AsyncWrite pair.
+/// Performs handshake, spawns writer task, runs reader loop.
+async fn run_protocol_io<R, W>(
+    reader: R,
+    writer: W,
+    viewport: &codec::ClientHello,
+    msg_rx: crossbeam_channel::Receiver<ClientMessage>,
+    event_tx: crossbeam_channel::Sender<ServerEvent>,
+) where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+    W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let mut reader = tokio::io::BufReader::new(reader);
+    let mut writer = tokio::io::BufWriter::new(writer);
+
+    // Send ClientHello (version + viewport), read ServerHello
+    if let Err(e) = codec::write_client_hello(&mut writer, viewport).await {
+        log::error!("hello write failed: {e}");
+        let _ = event_tx.send(ServerEvent::Disconnected);
+        return;
+    }
+    match codec::read_server_hello(&mut reader).await {
+        Ok(codec::VersionCompat::Exact(v)) => {
+            log::info!("server handshake ok (v{v})");
+        }
+        Ok(codec::VersionCompat::PatchMismatch { peer, local }) => {
+            log::warn!("server version {peer} differs from client {local} (patch mismatch)");
+        }
+        Ok(codec::VersionCompat::MinorMismatch { peer, local }) => {
+            log::warn!("server version {peer} differs from client {local} (minor mismatch, may be unstable)");
+        }
+        Err(e) => {
+            log::error!("server rejected connection: {e}");
+            let _ = event_tx.send(ServerEvent::Disconnected);
+            return;
+        }
+    }
+
+    // Spawn writer task
+    let writer_msg_rx = msg_rx;
+    let write_handle = tokio::spawn(async move {
+        loop {
+            // Use blocking recv in a spawned blocking task to avoid busy-waiting
+            let msg = match tokio::task::block_in_place(|| writer_msg_rx.recv()) {
+                Ok(m) => m,
+                Err(_) => break, // sender dropped
+            };
+            if let Err(e) = codec::encode_client_msg(&mut writer, &msg).await {
+                log::warn!("write error: {e}");
+                break;
+            }
+            use tokio::io::AsyncWriteExt;
+            if writer.flush().await.is_err() { break; }
+        }
+    });
+
+    // Reader loop
+    loop {
+        match codec::read_frame(&mut reader).await {
+            Ok(codec::Frame::ServerMsg(msg)) => {
+                if event_tx.send(ServerEvent::Control(msg)).is_err() { break; }
+            }
+            Ok(codec::Frame::CellDelta(delta)) => {
+                if event_tx.send(ServerEvent::CellDelta(delta)).is_err() { break; }
+            }
+            Ok(codec::Frame::FullPaneSync(sync)) => {
+                if event_tx.send(ServerEvent::FullPaneSync(sync)).is_err() { break; }
+            }
+            Ok(codec::Frame::ClientMsg(_)) => {
+                // Shouldn't receive client messages from server
+            }
+            Err(e) => {
+                if e.kind() != io::ErrorKind::UnexpectedEof {
+                    log::warn!("server read error: {e}");
+                }
+                let _ = event_tx.send(ServerEvent::Disconnected);
+                break;
+            }
+        }
+    }
+
+    write_handle.abort();
+}
+
 /// Connect to a running server session, or spawn a new one.
 /// Returns channels for bidirectional communication.
 pub fn connect_or_spawn(
@@ -91,76 +175,62 @@ pub fn connect_or_spawn(
                 };
 
                 let (reader, writer) = stream.into_split();
-                let mut reader = tokio::io::BufReader::new(reader);
-                let mut writer = tokio::io::BufWriter::new(writer);
+                run_protocol_io(reader, writer, &viewport, msg_rx, event_tx).await;
+            });
+        })?;
 
-                // Send ClientHello (version + viewport), read ServerHello
-                if let Err(e) = codec::write_client_hello(&mut writer, &viewport).await {
-                    log::error!("hello write failed: {e}");
-                    let _ = event_tx.send(ServerEvent::Disconnected);
-                    return;
-                }
-                match codec::read_server_hello(&mut reader).await {
-                    Ok(codec::VersionCompat::Exact(v)) => {
-                        log::info!("server handshake ok (v{v})");
-                    }
-                    Ok(codec::VersionCompat::PatchMismatch { peer, local }) => {
-                        log::warn!("server version {peer} differs from client {local} (patch mismatch)");
-                    }
-                    Ok(codec::VersionCompat::MinorMismatch { peer, local }) => {
-                        log::warn!("server version {peer} differs from client {local} (minor mismatch, may be unstable)");
-                    }
+    Ok((msg_tx, event_rx))
+}
+
+/// Connect to a remote ciri-server via SSH stdio proxy tunnel.
+pub fn connect_remote(
+    host: &str,
+    remote_port: u16,
+    ssh_port: u16,
+    viewport: codec::ClientHello,
+) -> io::Result<(Sender<ClientMessage>, Receiver<ServerEvent>)> {
+    let (msg_tx, msg_rx) = crossbeam_channel::bounded::<ClientMessage>(256);
+    let (event_tx, event_rx) = crossbeam_channel::bounded::<ServerEvent>(256);
+
+    let host = host.to_string();
+
+    std::thread::Builder::new()
+        .name("remote-io".into())
+        .spawn(move || {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("tokio runtime");
+            rt.block_on(async move {
+                // Spawn SSH process with -W for stdio proxy
+                let mut child = match tokio::process::Command::new("ssh")
+                    .args(["-p", &ssh_port.to_string()])
+                    .args(["-W", &format!("localhost:{remote_port}")])
+                    .arg(&host)
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                {
+                    Ok(child) => child,
                     Err(e) => {
-                        log::error!("server rejected connection: {e}");
+                        log::error!("failed to spawn ssh: {e}");
                         let _ = event_tx.send(ServerEvent::Disconnected);
                         return;
                     }
-                }
+                };
 
-                // Spawn writer task
-                let writer_msg_rx = msg_rx;
-                let write_handle = tokio::spawn(async move {
-                    loop {
-                        // Use blocking recv in a spawned blocking task to avoid busy-waiting
-                        let msg = match tokio::task::block_in_place(|| writer_msg_rx.recv()) {
-                            Ok(m) => m,
-                            Err(_) => break, // sender dropped
-                        };
-                        if let Err(e) = codec::encode_client_msg(&mut writer, &msg).await {
-                            log::warn!("write error: {e}");
-                            break;
-                        }
-                        use tokio::io::AsyncWriteExt;
-                        if writer.flush().await.is_err() { break; }
-                    }
-                });
+                let stdin = child.stdin.take().expect("stdin");
+                let stdout = child.stdout.take().expect("stdout");
 
-                // Reader loop
-                loop {
-                    match codec::read_frame(&mut reader).await {
-                        Ok(codec::Frame::ServerMsg(msg)) => {
-                            if event_tx.send(ServerEvent::Control(msg)).is_err() { break; }
-                        }
-                        Ok(codec::Frame::CellDelta(delta)) => {
-                            if event_tx.send(ServerEvent::CellDelta(delta)).is_err() { break; }
-                        }
-                        Ok(codec::Frame::FullPaneSync(sync)) => {
-                            if event_tx.send(ServerEvent::FullPaneSync(sync)).is_err() { break; }
-                        }
-                        Ok(codec::Frame::ClientMsg(_)) => {
-                            // Shouldn't receive client messages from server
-                        }
-                        Err(e) => {
-                            if e.kind() != io::ErrorKind::UnexpectedEof {
-                                log::warn!("server read error: {e}");
-                            }
-                            let _ = event_tx.send(ServerEvent::Disconnected);
-                            break;
-                        }
-                    }
-                }
+                // Run protocol over SSH tunnel
+                // stdout = data from remote server (reader)
+                // stdin  = data to remote server (writer)
+                run_protocol_io(stdout, stdin, &viewport, msg_rx, event_tx).await;
 
-                write_handle.abort();
+                // Clean up SSH process
+                let _ = child.kill().await;
             });
         })?;
 

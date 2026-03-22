@@ -21,6 +21,7 @@ pub struct CiriConfig {
     pub render: RenderConfig,
     pub layout: LayoutConfig,
     pub gesture: GestureConfig,
+    pub remote: RemoteConfig,
 }
 
 
@@ -294,6 +295,24 @@ impl Default for GestureConfig {
             horizontal_swipe_threshold: 50.0,
             smooth_scroll: true,
             scroll_pixels_per_line: 20.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RemoteConfig {
+    /// Enable TCP listener for remote connections (default: false).
+    pub enabled: bool,
+    /// TCP port to listen on, bound to 127.0.0.1 only (default: 7890).
+    pub port: u16,
+}
+
+impl Default for RemoteConfig {
+    fn default() -> Self {
+        RemoteConfig {
+            enabled: false,
+            port: 7890,
         }
     }
 }

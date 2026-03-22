@@ -319,6 +319,7 @@ impl ApplicationHandler for App {
                     return;
                 }
                 log::debug!("window resized: {}x{}", size.width, size.height);
+                self.context_menu.visible = false;
                 // Keep local viewport/layout state in sync immediately so the
                 // user sees a smooth local preview while dragging.
                 self.preview_resize(size);
@@ -445,14 +446,14 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::Focused(focused) => {
+                self.window_focused = focused;
                 self.send(ClientMessage::FocusChange { focused });
+                if !focused {
+                    self.context_menu.visible = false;
+                }
             }
 
             WindowEvent::RedrawRequested => self.render(),
-
-            WindowEvent::Focused(focused) => {
-                self.window_focused = focused;
-            }
 
             _ => {}
         }

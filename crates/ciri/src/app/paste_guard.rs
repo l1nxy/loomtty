@@ -32,8 +32,10 @@ pub fn check_paste_safety(text: &str) -> Option<PasteWarning> {
     ];
 
     let lower = trimmed.to_lowercase();
+    // Normalize whitespace so patterns like "curl  |  bash" are still caught
+    let normalized = lower.split_whitespace().collect::<Vec<_>>().join(" ");
     for pattern in &dangerous_patterns {
-        if lower.contains(pattern) {
+        if normalized.contains(pattern) {
             return Some(PasteWarning {
                 reason: format!("Contains potentially dangerous command: {}", pattern),
                 text: text.to_string(),

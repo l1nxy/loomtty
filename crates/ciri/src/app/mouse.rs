@@ -153,6 +153,8 @@ impl App {
                 if self.config.input.focus_follows_mouse
                     && !self.mouse_left_held
                     && self.search_state.is_none()
+                    && self.command_palette.is_none()
+                    && !self.context_menu.visible
                 {
                     let vox = self.view_offset_x.value() as f32;
                     let tiles = self.workspaces.active().visible_tiles(vox);
@@ -179,6 +181,9 @@ impl App {
                                 self.send_lossy(ClientMessage::FocusPane { pane_id });
                             }
                         }
+                    } else {
+                        // Clear debounce state when mouse is over dead space
+                        self.last_focus_follows_mouse = None;
                     }
                 }
 
@@ -659,12 +664,42 @@ impl App {
                         super::ContextMenuAction::Paste => {
                             if let Some(cb) = &mut self.clipboard {
                                 if let Ok(text) = cb.get_text() {
-                                    if let Some(pid) =
+                                    if let Some(warning) =
+                                        super::paste_guard::check_paste_safety(&text)
+                                    {
+                                        let preview = if text.len() > 200 {
+                                            format!(
+                                                "{}...",
+                                                &text[..text.floor_char_boundary(200)]
+                                            )
+                                        } else {
+                                            text.clone()
+                                        };
+                                        let preview =
+                                            preview.replace('\n', " \\n ").replace('\r', "");
+                                        self.pending_paste = Some(super::PendingPaste {
+                                            warning,
+                                            preview,
+                                        });
+                                    } else if let Some(pid) =
                                         self.workspaces.active_mut().active_pane_id()
                                     {
+                                        let bracketed = self.pane_grids.get(&pid).is_some_and(|g| {
+                                            g.mode_flags & ciri_protocol::message::MODE_BRACKETED_PASTE != 0
+                                        });
+                                        let mut data = Vec::with_capacity(
+                                            text.len() + if bracketed { 12 } else { 0 },
+                                        );
+                                        if bracketed {
+                                            data.extend_from_slice(b"\x1b[200~");
+                                        }
+                                        data.extend_from_slice(text.as_bytes());
+                                        if bracketed {
+                                            data.extend_from_slice(b"\x1b[201~");
+                                        }
                                         self.send(ClientMessage::Input {
                                             pane_id: pid,
-                                            data: text.into_bytes(),
+                                            data,
                                         });
                                     }
                                 }
@@ -974,6 +1009,7 @@ impl App {
                     // In normal mode: pinch in (delta < 0) enters overview
                     if zoom_delta < -0.02 {
                         self.overview.active = true;
+                        self.context_menu.visible = false;
                         self.refresh_overview_zoom();
                         self.view_offset_x.animate_to(0.0, omega);
                         self.view_offset_y.animate_to(0.0, omega);

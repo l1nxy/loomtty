@@ -631,11 +631,13 @@ impl Server {
                     if session.focus_pane(pane_id) {
                         session.mark_session_dirty();
                         responses.push(ServerResponse::BroadcastToSession(
-                            session_name,
+                            session_name.clone(),
                             ServerMessage::LayoutUpdate {
                                 layout: session.layout_state(),
                             },
                         ));
+                    } else {
+                        log::debug!("focus_pane: pane {} not found in session '{}'", pane_id, session_name);
                     }
                 }
             }

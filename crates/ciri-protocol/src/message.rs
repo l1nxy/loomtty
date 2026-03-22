@@ -193,6 +193,12 @@ pub enum ClientMessage {
     SetTileWeights { column_idx: usize, top_tile_idx: usize, top_weight: f64, bottom_weight: f64 },
     /// Adjust the split between a specific column pair (identified by left index).
     AdjustColumnSplitAt { column_idx: usize, delta: f64 },
+    /// Apply a layout template to create/recreate a session.
+    ApplyTemplate { template_name: String, session_name: String },
+    /// List available templates.
+    ListTemplates,
+    /// Save current session layout as a template.
+    SaveTemplate { template_name: String, session_name: String },
 }
 
 /// Control messages from server to client (msgpack encoded, tags 0x10-0x1F).
@@ -236,6 +242,12 @@ pub enum ServerMessage {
         format: String,
         data: Vec<u8>,
     },
+    /// Template was applied successfully.
+    TemplateApplied { session_name: String },
+    /// List of available templates.
+    TemplateList { templates: Vec<TemplateInfo> },
+    /// Template was saved successfully.
+    TemplateSaved { template_name: String },
 }
 
 /// Session info returned in SessionList.
@@ -248,6 +260,15 @@ pub struct SessionInfo {
     pub pane_count: usize,
     /// Number of attached clients.
     pub client_count: usize,
+}
+
+/// Template info returned in TemplateList.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateInfo {
+    pub name: String,
+    pub description: Option<String>,
+    pub workspace_count: usize,
+    pub total_panes: usize,
 }
 
 /// Serializable layout state (2D: workspaces × columns).

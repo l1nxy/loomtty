@@ -121,6 +121,26 @@ pub fn run_control_command(msg: ClientMessage) -> Result<()> {
                         println!("server shutting down");
                         return Ok(());
                     }
+                    ServerMessage::TemplateList { templates } => {
+                        if templates.is_empty() {
+                            println!("no templates");
+                        } else {
+                            println!("{:<20} {:<12} {:<6} {}", "NAME", "WORKSPACES", "PANES", "DESCRIPTION");
+                            for t in templates {
+                                let desc = t.description.as_deref().unwrap_or("");
+                                println!("{:<20} {:<12} {:<6} {}", t.name, t.workspace_count, t.total_panes, desc);
+                            }
+                        }
+                        return Ok(());
+                    }
+                    ServerMessage::TemplateSaved { template_name } => {
+                        println!("saved template '{template_name}'");
+                        return Ok(());
+                    }
+                    ServerMessage::TemplateApplied { session_name } => {
+                        println!("applied template to session '{session_name}'");
+                        return Ok(());
+                    }
                     ServerMessage::Error { message } => {
                         eprintln!("error: {message}");
                         std::process::exit(1);

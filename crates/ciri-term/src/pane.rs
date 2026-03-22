@@ -115,7 +115,19 @@ pub struct Pane {
 
 impl Pane {
     pub fn new(id: PaneId, cols: u16, rows: u16, shell: &str) -> Result<Self> {
-        let pty = Pty::spawn(cols, rows, shell)?;
+        Self::new_with_opts(id, cols, rows, shell, None, None)
+    }
+
+    /// Create a new pane with optional command and working directory.
+    pub fn new_with_opts(
+        id: PaneId,
+        cols: u16,
+        rows: u16,
+        shell: &str,
+        command: Option<&str>,
+        cwd: Option<&std::path::Path>,
+    ) -> Result<Self> {
+        let pty = Pty::spawn_with_opts(cols, rows, shell, command, cwd)?;
 
         let size = TermSize { cols: cols as usize, rows: rows as usize };
         let mut config = TermConfig::default();

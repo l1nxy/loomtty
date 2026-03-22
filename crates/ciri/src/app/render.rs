@@ -747,6 +747,111 @@ impl App {
         }
     }
 
+    pub fn build_context_menu(
+        &mut self,
+        vw: f32,
+        vh: f32,
+        bg_rects: &mut Vec<Rect>,
+        glyphs: &mut Vec<GlyphInstance>,
+    ) {
+        if !self.context_menu.visible {
+            return;
+        }
+
+        let renderer = self.renderer.as_mut().unwrap();
+        let atlas = self.glyph_atlas.as_mut().unwrap();
+
+        let (_, ch) = (atlas.cell_width, atlas.cell_height);
+        let cw = atlas.cell_width;
+        let item_height = ch * 1.5;
+        let padding = 8.0;
+        let menu_width = 200.0;
+        let menu_height =
+            self.context_menu.items.len() as f32 * item_height + padding * 2.0;
+
+        // Clamp to screen bounds
+        let mx = self.context_menu.x.min(vw - menu_width);
+        let my = self.context_menu.y.min(vh - menu_height);
+
+        // Shadow (slightly offset, more transparent)
+        let shadow_offset = 3.0;
+        bg_rects.push(Rect {
+            x: mx + shadow_offset,
+            y: my + shadow_offset,
+            w: menu_width,
+            h: menu_height,
+            color: [0.0, 0.0, 0.0, 0.4],
+        });
+
+        // Menu background
+        let menu_bg = ThemeConfig::parse_color(&self.config.theme.background);
+        let bg_color = [
+            menu_bg[0] * 0.9,
+            menu_bg[1] * 0.9,
+            menu_bg[2] * 0.9,
+            0.97,
+        ];
+        bg_rects.push(Rect {
+            x: mx,
+            y: my,
+            w: menu_width,
+            h: menu_height,
+            color: bg_color,
+        });
+
+        // Border
+        let border_color = ThemeConfig::parse_color(&self.config.theme.border_active);
+        let bw = 1.0;
+        // Top
+        bg_rects.push(Rect { x: mx, y: my, w: menu_width, h: bw, color: border_color });
+        // Bottom
+        bg_rects.push(Rect { x: mx, y: my + menu_height - bw, w: menu_width, h: bw, color: border_color });
+        // Left
+        bg_rects.push(Rect { x: mx, y: my, w: bw, h: menu_height, color: border_color });
+        // Right
+        bg_rects.push(Rect { x: mx + menu_width - bw, y: my, w: bw, h: menu_height, color: border_color });
+
+        let accent = ThemeConfig::parse_color(&self.config.theme.accent);
+        let fg_color = [1.0f32, 1.0, 1.0, 1.0];
+        let dim_color = [0.5f32, 0.5, 0.5, 0.6];
+        let baseline = ch * self.config.statusbar.text_baseline;
+
+        for (i, item) in self.context_menu.items.iter().enumerate() {
+            let iy = my + padding + i as f32 * item_height;
+
+            // Hover highlight
+            if Some(i) == self.context_menu.hovered_index && item.enabled {
+                let hover_color = [accent[0], accent[1], accent[2], 0.25];
+                bg_rects.push(Rect {
+                    x: mx + bw,
+                    y: iy,
+                    w: menu_width - bw * 2.0,
+                    h: item_height,
+                    color: hover_color,
+                });
+            }
+
+            // Text color: dim for disabled items, normal for enabled
+            let color = if item.enabled { fg_color } else { dim_color };
+            let text_y = iy + (item_height - ch) * 0.5;
+
+            emit_status_text(
+                atlas,
+                &mut renderer.text.font_system,
+                &renderer.queue,
+                &item.label,
+                mx + padding,
+                text_y,
+                cw,
+                baseline,
+                color,
+                vw,
+                vh,
+                glyphs,
+            );
+        }
+    }
+
     pub fn submit_frame(
         renderer: &mut Renderer,
         atlas: &mut GlyphAtlas,
@@ -953,6 +1058,7 @@ impl App {
         self.build_bell_flash(&tiles, zoom, vw_f, vh_f, &mut bg_rects);
         self.build_ime_preedit(&tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs);
         self.build_image_placements(&tiles, zoom, vw_f, vh_f, &mut bg_rects, &mut glyphs);
+        self.build_context_menu(vw_f, vh_f, &mut bg_rects, &mut glyphs);
 
         let clear_color = ThemeConfig::parse_color(&self.config.theme.ui_background);
         let renderer = self.renderer.as_mut().unwrap();

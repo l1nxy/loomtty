@@ -3,6 +3,7 @@ pub(crate) mod ime;
 pub(crate) mod input_handler;
 pub(crate) mod keyboard;
 pub(crate) mod mouse;
+pub(crate) mod notification;
 pub(crate) mod render;
 pub(crate) mod status_bar;
 pub(crate) mod sync;
@@ -154,6 +155,8 @@ pub(crate) struct App {
     pub bell_flash: Option<(u64, Instant)>,
     /// Inline image placements per pane.
     pub image_placements: HashMap<u64, Vec<ClientImagePlacement>>,
+    /// Whether the window currently has input focus.
+    pub window_focused: bool,
     pub should_exit: bool,
     #[allow(dead_code)]
     pub config_watcher: Option<notify::RecommendedWatcher>,
@@ -246,6 +249,7 @@ impl App {
             closing_panes: Vec::new(),
             bell_flash: None,
             image_placements: HashMap::new(),
+            window_focused: true,
             should_exit: false,
             config_watcher: None,
             config_change_rx: None,

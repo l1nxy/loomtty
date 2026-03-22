@@ -28,3 +28,6 @@ arboard = { workspace = true }
 notify = { workspace = true }
 pollster = "0.4"
 libc = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+notify-rust = "4"

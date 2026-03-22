@@ -29,6 +29,37 @@ use winit::window::Window;
 use crate::connection::ServerEvent;
 use crate::grid::ClientPaneGrid;
 
+/// A context menu item.
+#[derive(Debug, Clone)]
+pub(crate) struct ContextMenuItem {
+    pub label: String,
+    pub action: ContextMenuAction,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum ContextMenuAction {
+    Copy,
+    Paste,
+    SelectAll,
+    Search,
+    OpenLink(String),
+    CopyLink(String),
+    SplitRight,
+    SplitDown,
+    ClosePane,
+}
+
+/// Context menu state.
+#[derive(Debug, Default)]
+pub(crate) struct ContextMenu {
+    pub visible: bool,
+    pub x: f32,
+    pub y: f32,
+    pub items: Vec<ContextMenuItem>,
+    pub hovered_index: Option<usize>,
+}
+
 /// Text selection state with absolute buffer coordinates.
 pub(crate) struct Selection {
     pub pane_id: u64,
@@ -166,6 +197,8 @@ pub(crate) struct App {
     pub gesture_row_active: bool,
     /// The workspace row index when the vertical gesture started.
     pub gesture_row_start: usize,
+    /// Right-click context menu state.
+    pub context_menu: ContextMenu,
 }
 
 impl App {
@@ -253,6 +286,7 @@ impl App {
             gesture_row_offset: ViewOffset::new(),
             gesture_row_active: false,
             gesture_row_start: 0,
+            context_menu: ContextMenu::default(),
         }
     }
 

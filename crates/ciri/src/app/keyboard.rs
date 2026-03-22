@@ -21,6 +21,15 @@ impl App {
             return;
         }
 
+        // Dismiss context menu on any key press
+        if self.context_menu.visible {
+            self.context_menu.visible = false;
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+            return;
+        }
+
         self.cursor_blink_visible = true;
         self.cursor_blink_timer = std::time::Instant::now();
 

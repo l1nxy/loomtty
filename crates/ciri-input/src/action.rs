@@ -51,6 +51,8 @@ pub enum Action {
     ScrollBottom,
     /// Detach from session (close client, server keeps running).
     Detach,
+    /// Toggle the command palette overlay.
+    ToggleCommandPalette,
 }
 
 impl Action {
@@ -119,6 +121,7 @@ impl Action {
             "scroll_top" => Some(Action::ScrollTop),
             "scroll_bottom" => Some(Action::ScrollBottom),
             "detach" => Some(Action::Detach),
+            "toggle_command_palette" => Some(Action::ToggleCommandPalette),
             _ => {
                 // Handle switch_workspace_N
                 if let Some(rest) = s.strip_prefix("switch_workspace_")
@@ -129,5 +132,40 @@ impl Action {
                 None
             }
         }
+    }
+
+    /// Return all actions with human-readable labels for the command palette.
+    /// Excludes internal-only actions (SendLeaderKey, ExitOverview).
+    pub fn all_with_labels() -> Vec<(Action, &'static str)> {
+        vec![
+            (Action::NewColumnRight, "New Column Right"),
+            (Action::NewWorkspaceBelow, "New Workspace Below"),
+            (Action::ClosePane, "Close Pane"),
+            (Action::FocusLeft, "Focus Left"),
+            (Action::FocusRight, "Focus Right"),
+            (Action::FocusUp, "Focus Up"),
+            (Action::FocusDown, "Focus Down"),
+            (Action::MovePaneLeft, "Move Pane Left"),
+            (Action::MovePaneRight, "Move Pane Right"),
+            (Action::CyclePresetWidth, "Cycle Column Width"),
+            (Action::CyclePresetWidthReverse, "Cycle Column Width (Reverse)"),
+            (Action::ColumnWidthOneThird, "Column Width 1/3"),
+            (Action::ColumnWidthHalf, "Column Width 1/2"),
+            (Action::ColumnWidthTwoThirds, "Column Width 2/3"),
+            (Action::ColumnWidthFull, "Column Width Full"),
+            (Action::ColumnWidthIncrease, "Increase Column Width"),
+            (Action::ColumnWidthDecrease, "Decrease Column Width"),
+            (Action::EqualizeAdjacentColumns, "Equalize Adjacent Columns"),
+            (Action::ConsumeIntoColumn, "Consume Into Column"),
+            (Action::ExpelFromColumn, "Expel From Column"),
+            (Action::ToggleBroadcast, "Toggle Broadcast"),
+            (Action::ToggleOverview, "Toggle Overview"),
+            (Action::ScrollPageUp, "Scroll Page Up"),
+            (Action::ScrollPageDown, "Scroll Page Down"),
+            (Action::ScrollTop, "Scroll to Top"),
+            (Action::ScrollBottom, "Scroll to Bottom"),
+            (Action::Detach, "Detach"),
+            (Action::ToggleCommandPalette, "Toggle Command Palette"),
+        ]
     }
 }

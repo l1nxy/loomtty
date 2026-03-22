@@ -7,7 +7,6 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{WindowAttributes, WindowId};
 
 use super::App;
-use crate::connection;
 
 impl ApplicationHandler for App {
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
@@ -133,7 +132,7 @@ impl ApplicationHandler for App {
                     if let Some(state) = &mut self.reconnect_state {
                         state.attempt += 1;
                     }
-                    match connection::connect_or_spawn(&self.session_name, viewport) {
+                    match self.connect(viewport) {
                         Ok((tx, rx)) => {
                             log::info!("reconnected to session '{}'", self.session_name);
                             self.server_tx = Some(tx);
@@ -249,7 +248,7 @@ impl ApplicationHandler for App {
             cell_height: ch,
         };
         log::info!("connecting to session '{}'", self.session_name);
-        match connection::connect_or_spawn(&self.session_name, viewport) {
+        match self.connect(viewport) {
             Ok((tx, rx)) => {
                 self.server_tx = Some(tx);
                 self.server_rx = Some(rx);

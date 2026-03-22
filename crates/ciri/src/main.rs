@@ -107,6 +107,35 @@ fn main() -> Result<()> {
         _ => {}
     }
 
+    // Handle remote connection separately (no local server spawn)
+    if let CliCommand::Remote { host, session_name, port, ssh_port } = cli {
+        let session_name = session_name.unwrap_or_else(|| {
+            let existing = ciri_session::restore::list_sessions(&ciri_protocol::transport::state_dir())
+                .unwrap_or_default();
+            ciri_session::names::unique_name(&existing)
+        });
+
+        let config = CiriConfig::load().unwrap_or_default();
+        log::info!(
+            "config: font={} size={}, remote={}:{}, session={}",
+            config.font.family,
+            config.font.size,
+            host,
+            port,
+            session_name
+        );
+
+        let event_loop = EventLoop::new()?;
+        let mut app = App::new(config, session_name);
+        app.remote_config = Some(app::RemoteConnectionConfig {
+            host,
+            port,
+            ssh_port,
+        });
+        event_loop.run_app(&mut app)?;
+        return Ok(());
+    }
+
     // Resolve session name
     let session_name = match cli {
         CliCommand::New => {

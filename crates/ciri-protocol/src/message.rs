@@ -193,6 +193,8 @@ pub enum ClientMessage {
     SetTileWeights { column_idx: usize, top_tile_idx: usize, top_weight: f64, bottom_weight: f64 },
     /// Adjust the split between a specific column pair (identified by left index).
     AdjustColumnSplitAt { column_idx: usize, delta: f64 },
+    /// Focus a specific pane by ID (used for focus-follows-mouse).
+    FocusPane { pane_id: u64 },
 }
 
 /// Control messages from server to client (msgpack encoded, tags 0x10-0x1F).

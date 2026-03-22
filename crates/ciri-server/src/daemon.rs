@@ -967,6 +967,36 @@ impl Server {
                     }
                 }
             }
+            ClientMessage::FocusPane { pane_id } => {
+                if let Some(session) = self.sessions.get_mut(&session_name) {
+                    // First pass: find the indices without holding an immutable borrow
+                    let mut target = None;
+                    for ws_idx in 0..session.workspaces.workspaces.len() {
+                        let ws = &session.workspaces.workspaces[ws_idx];
+                        for col_idx in 0..ws.columns.len() {
+                            let col = &ws.columns[col_idx];
+                            for tile_idx in 0..col.tiles.len() {
+                                if col.tiles[tile_idx].pane_id == pane_id {
+                                    target = Some((ws_idx, col_idx, tile_idx));
+                                    break;
+                                }
+                            }
+                            if target.is_some() { break; }
+                        }
+                        if target.is_some() { break; }
+                    }
+                    // Second pass: apply the focus change
+                    if let Some((ws_idx, col_idx, tile_idx)) = target {
+                        session.workspaces.active_workspace_idx = ws_idx;
+                        session.workspaces.workspaces[ws_idx].active_column_idx = col_idx;
+                        session.workspaces.workspaces[ws_idx].columns[col_idx].active_tile_idx = tile_idx;
+                        session.mark_session_dirty();
+                        responses.push(ServerResponse::BroadcastToSession(session_name, ServerMessage::LayoutUpdate {
+                            layout: session.layout_state(),
+                        }));
+                    }
+                }
+            }
         }
 
         responses

@@ -350,7 +350,10 @@ impl App {
 
         let had_left_hold = self.mouse_left_held;
         self.mouse_left_held = false;
-        self.drag.scrollbar_dragging = None;
+        if self.drag.scrollbar_dragging.is_some() {
+            self.drag.scrollbar_dragging = None;
+            return;
+        }
         if let Some((col_idx, top_tile_idx)) = self.drag.tile_dragging {
             // Send the final absolute tile weights to the server so PTYs are
             // resized and the layout is persisted. Read from local preview state

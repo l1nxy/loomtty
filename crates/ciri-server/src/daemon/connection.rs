@@ -201,6 +201,11 @@ pub(crate) async fn handle_client<R, W>(
     for frame in initial_frames {
         let _ = tx.send(Bytes::from(frame)).await;
     }
+    // Drop original sender — only the clone in ClientState should keep the
+    // channel alive.  When the tick loop removes this client from s.clients,
+    // the last sender is dropped, rx.recv() returns None, the writer exits,
+    // and the socket closes so the client-side reader detects EOF.
+    drop(tx);
 
     // Spawn writer task
     let write_handle = tokio::spawn(async move {

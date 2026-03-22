@@ -212,6 +212,10 @@ impl ApplicationHandler for App {
             dpi_scale,
             &self.config.font.family,
             shaper.primary_font_path(),
+            shaper.emoji_font_path(),
+            shaper.emoji_font_id(),
+            shaper.cjk_font_path(),
+            shaper.cjk_font_id(),
             &self.config.render,
         );
 
@@ -390,6 +394,10 @@ impl ApplicationHandler for App {
                             scale_factor,
                             &self.config.font.family,
                             shaper.primary_font_path(),
+                            shaper.emoji_font_path(),
+                            shaper.emoji_font_id(),
+                            shaper.cjk_font_path(),
+                            shaper.cjk_font_id(),
                             &self.config.render,
                         );
                         log::info!(

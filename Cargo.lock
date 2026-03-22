@@ -485,6 +485,7 @@ dependencies = [
  "bytemuck",
  "ciri-config",
  "ciri-render",
+ "fontdb",
  "glow",
  "glutin",
  "glutin-winit",

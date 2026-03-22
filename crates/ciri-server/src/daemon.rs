@@ -117,10 +117,19 @@ impl Session {
         }
     }
 
+    /// Get the CWD of the active pane (from OSC 7), if available.
+    fn active_pane_cwd(&self) -> Option<String> {
+        let pane_id = self.workspaces.active().active_pane_id()?;
+        let pane = self.panes.get(&pane_id)?;
+        pane.cwd().map(|s| s.to_string())
+    }
+
     /// Create a new pane in the active workspace's active position (column right).
     fn create_pane(&mut self, next_pane_id: &mut u64, clients: &mut HashMap<u64, ClientState>) -> Result<u64> {
         let id = *next_pane_id;
         *next_pane_id += 1;
+        // Inherit CWD from the active pane (if available via OSC 7)
+        let cwd = self.active_pane_cwd();
         // Compute initial size from the column's actual width (not full viewport)
         let vw = self.workspaces.view_size.width;
         let vh = self.workspaces.view_size.height;
@@ -134,7 +143,7 @@ impl Session {
         let (cw, ch) = Self::effective_cell_dims_from(clients, &self.session_name);
         let (cols, rows) = self.pane_grid_size_with_cells(pane_w, vh, cw, ch);
         log::info!("create_pane {id}: viewport={vw}x{vh} col_px={pane_w:.1} cell={cw}x{ch} inset={} → {cols}x{rows}", self.pane_inset);
-        let pane = Pane::new(id, cols, rows, &self.default_shell)?;
+        let pane = Pane::new_with_cwd(id, cols, rows, &self.default_shell, cwd.as_deref().map(std::path::Path::new))?;
         self.panes.insert(id, pane);
         self.generation.insert(id, 0);
         self.workspaces.active_mut().add_column_right(id, self.default_column_width);
@@ -151,11 +160,13 @@ impl Session {
     fn create_pane_in_new_workspace(&mut self, next_pane_id: &mut u64, clients: &mut HashMap<u64, ClientState>) -> Result<u64> {
         let id = *next_pane_id;
         *next_pane_id += 1;
+        // Inherit CWD from the active pane (if available via OSC 7)
+        let cwd = self.active_pane_cwd();
         let vw = self.workspaces.view_size.width;
         let vh = self.workspaces.view_size.height;
         let (cw, ch) = Self::effective_cell_dims_from(clients, &self.session_name);
         let (cols, rows) = self.pane_grid_size_with_cells(vw, vh, cw, ch);
-        let pane = Pane::new(id, cols, rows, &self.default_shell)?;
+        let pane = Pane::new_with_cwd(id, cols, rows, &self.default_shell, cwd.as_deref().map(std::path::Path::new))?;
         self.panes.insert(id, pane);
         self.generation.insert(id, 0);
         self.workspaces.add_workspace_below(id);
@@ -1024,6 +1035,19 @@ async fn cleanup_client(state: &Arc<Mutex<Server>>, client_id: u64) {
 pub async fn run_daemon() -> Result<()> {
     let config = ciri_config::config::CiriConfig::load().unwrap_or_default();
     let shell = config.terminal.shell.clone();
+
+    // Write shell integration scripts and set env var for child processes.
+    // SAFETY: This runs at startup before any other threads are spawned,
+    // so modifying the process environment is safe.
+    match crate::shell_integration::ensure_integration_dir() {
+        Ok(dir) => {
+            unsafe { std::env::set_var("CIRI_SHELL_INTEGRATION_DIR", &dir) };
+            log::info!("shell integration scripts at {}", dir.display());
+        }
+        Err(e) => {
+            log::warn!("failed to write shell integration scripts: {e}");
+        }
+    }
 
     let sock_path = transport::server_socket_path();
     if let Some(parent) = sock_path.parent() {

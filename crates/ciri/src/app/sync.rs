@@ -100,7 +100,28 @@ impl App {
                 ServerEvent::Control(ServerMessage::Bell { pane_id }) => {
                     log::debug!("bell from pane {pane_id}");
                     self.bell_flash = Some((pane_id, std::time::Instant::now()));
+
+                    // Window urgency hint
+                    if self.config.terminal.bell_urgency && !self.window_focused {
+                        if let Some(ref window) = self.window {
+                            window.request_user_attention(Some(winit::window::UserAttentionType::Informational));
+                        }
+                    }
+
+                    // Bell audio
+                    self.play_bell_audio();
+
                     needs_redraw = true;
+                }
+                ServerEvent::Control(ServerMessage::CommandCompleted { pane_id, duration_secs, exit_code }) => {
+                    let threshold = self.config.terminal.notify_command_threshold_secs;
+                    if threshold > 0 && duration_secs >= threshold && !self.window_focused {
+                        self.send_desktop_notification(
+                            "Command completed",
+                            &format!("Pane {} finished after {}s (exit: {})",
+                                pane_id, duration_secs, exit_code.unwrap_or(0)),
+                        );
+                    }
                 }
                 ServerEvent::Control(ServerMessage::ImagePlacement {
                     pane_id, image_id, col, row,

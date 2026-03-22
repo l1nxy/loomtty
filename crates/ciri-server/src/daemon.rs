@@ -347,6 +347,15 @@ impl Session {
                 clipboard_msgs.push(ServerMessage::Bell { pane_id });
             }
 
+            // Drain command completion events (OSC 133;D)
+            if let Some(duration) = pane.drain_command_completion() {
+                clipboard_msgs.push(ServerMessage::CommandCompleted {
+                    pane_id,
+                    duration_secs: duration.as_secs(),
+                    exit_code: pane.last_exit_code(),
+                });
+            }
+
             // Drain image placements (Kitty/Sixel)
             for img in pane.drain_images() {
                 clipboard_msgs.push(ServerMessage::ImagePlacement {

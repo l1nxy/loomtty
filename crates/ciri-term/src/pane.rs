@@ -70,6 +70,8 @@ pub struct ShellState {
     pub prompt_line: Option<i32>,
     /// Line where command output started.
     pub output_line: Option<i32>,
+    /// Timestamp when the last command started (OSC 133;C).
+    pub command_start: Option<std::time::Instant>,
 }
 
 struct TermSize {
@@ -111,6 +113,8 @@ pub struct Pane {
     /// Partial APC frame buffer: holds bytes from an unterminated `ESC _ G ...`
     /// sequence that was split across PTY reads.
     kitty_apc_partial: Vec<u8>,
+    /// Duration of the last completed command (set on OSC 133;D, drained by server).
+    last_command_duration: Option<std::time::Duration>,
 }
 
 impl Pane {
@@ -141,12 +145,14 @@ impl Pane {
                 last_exit_code: None,
                 prompt_line: None,
                 output_line: None,
+                command_start: None,
             },
             image_placements: Vec::new(),
             next_image_id: 1,
             kitty_image_buf: Vec::new(),
             kitty_image_meta: None,
             kitty_apc_partial: Vec::new(),
+            last_command_duration: None,
         })
     }
 
@@ -243,6 +249,11 @@ impl Pane {
     /// Check and clear the bell pending flag.
     pub fn drain_bell(&mut self) -> bool {
         std::mem::take(&mut self.bell_pending)
+    }
+
+    /// Drain the last completed command duration (from OSC 133;D).
+    pub fn drain_command_completion(&mut self) -> Option<std::time::Duration> {
+        self.last_command_duration.take()
     }
 
     /// Get the current shell semantic zone (from OSC 133).
@@ -547,12 +558,17 @@ impl Pane {
                     b'C' => {
                         self.shell_state.zone = SemanticZone::Output;
                         self.shell_state.output_line = Some(0);
+                        self.shell_state.command_start = Some(std::time::Instant::now());
                         log::debug!("OSC 133;C command output");
                     }
                     b'D' => {
                         self.shell_state.zone = SemanticZone::Prompt;
                         let exit_code = params.trim().parse::<i32>().ok();
                         self.shell_state.last_exit_code = exit_code;
+                        if let Some(start) = self.shell_state.command_start.take() {
+                            let elapsed = start.elapsed();
+                            self.last_command_duration = Some(elapsed);
+                        }
                         log::debug!("OSC 133;D command done, exit={exit_code:?}");
                     }
                     _ => {

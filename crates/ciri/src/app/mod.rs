@@ -166,6 +166,15 @@ pub(crate) struct App {
     pub gesture_row_active: bool,
     /// The workspace row index when the vertical gesture started.
     pub gesture_row_start: usize,
+    /// Remote connection parameters, if connecting via SSH tunnel.
+    pub remote_config: Option<RemoteConnectionConfig>,
+}
+
+/// Parameters for a remote SSH tunnel connection.
+pub(crate) struct RemoteConnectionConfig {
+    pub host: String,
+    pub port: u16,
+    pub ssh_port: u16,
 }
 
 impl App {
@@ -253,6 +262,16 @@ impl App {
             gesture_row_offset: ViewOffset::new(),
             gesture_row_active: false,
             gesture_row_start: 0,
+            remote_config: None,
+        }
+    }
+
+    /// Connect to the server, either locally or via remote SSH tunnel.
+    pub fn connect(&self, viewport: ciri_protocol::codec::ClientHello) -> std::io::Result<(Sender<ClientMessage>, Receiver<ServerEvent>)> {
+        if let Some(ref rc) = self.remote_config {
+            crate::connection::connect_remote(&rc.host, rc.port, rc.ssh_port, viewport)
+        } else {
+            crate::connection::connect_or_spawn(&self.session_name, viewport)
         }
     }
 

@@ -21,6 +21,19 @@ pub async fn run_daemon() -> Result<()> {
     let config = ciri_config::config::CiriConfig::load().unwrap_or_default();
     let shell = config.terminal.shell.clone();
 
+    // Write shell integration scripts and set env var for child processes.
+    // SAFETY: This runs at startup before any other threads are spawned,
+    // so modifying the process environment is safe.
+    match crate::shell_integration::ensure_integration_dir() {
+        Ok(dir) => {
+            unsafe { std::env::set_var("CIRI_SHELL_INTEGRATION_DIR", &dir) };
+            log::info!("shell integration scripts at {}", dir.display());
+        }
+        Err(e) => {
+            log::warn!("failed to write shell integration scripts: {e}");
+        }
+    }
+
     let sock_path = transport::server_socket_path();
     if let Some(parent) = sock_path.parent() {
         std::fs::create_dir_all(parent)?;

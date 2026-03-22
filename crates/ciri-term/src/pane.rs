@@ -14,6 +14,7 @@ use crate::dec_mode_parser::DecModeParser;
 use crate::event::PtyEventListener;
 use crate::kitty_graphics::KittyGraphicsParser;
 use crate::osc8_parser::Osc8Parser;
+use crate::osc7_parser::Osc7Parser;
 use crate::pty::Pty;
 use crate::shell_integration::Osc133Parser;
 use crate::sixel::SixelParser;
@@ -129,11 +130,18 @@ pub struct Pane {
     sixel_parser: SixelParser,
     /// OSC 8 hyperlink parser.
     osc8_parser: Osc8Parser,
+    /// OSC 7 working directory parser.
+    osc7_parser: Osc7Parser,
 }
 
 impl Pane {
     pub fn new(id: PaneId, cols: u16, rows: u16, shell: &str) -> Result<Self> {
         Self::new_with_opts(id, cols, rows, shell, None, None)
+    }
+
+    /// Create a new pane with CWD override (convenience for OSC 7 CWD inheritance).
+    pub fn new_with_cwd(id: PaneId, cols: u16, rows: u16, shell: &str, cwd: Option<&std::path::Path>) -> Result<Self> {
+        Self::new_with_opts(id, cols, rows, shell, None, cwd)
     }
 
     /// Create a new pane with optional command and working directory.
@@ -182,6 +190,7 @@ impl Pane {
             dec_mode_parser: DecModeParser::new(),
             sixel_parser: SixelParser::new(),
             osc8_parser: Osc8Parser::new(),
+            osc7_parser: Osc7Parser::new(),
         })
     }
 
@@ -196,12 +205,14 @@ impl Pane {
         // Drain all available output from the background reader thread
         let chunks = self.pty.drain_output();
         if !chunks.is_empty() {
-            // Scan for OSC 133 shell integration, DEC private mode, and OSC 8
-            // hyperlink sequences before VT parsing (alacritty_terminal ignores these).
+            // Scan for OSC 133 shell integration, DEC private mode, OSC 8
+            // hyperlink, and OSC 7 CWD sequences before VT parsing
+            // (alacritty_terminal ignores these).
             for chunk in &chunks {
                 self.osc133_parser.scan(chunk, &mut self.shell_state);
                 self.dec_mode_parser.scan(chunk);
                 self.osc8_parser.scan(chunk);
+                self.osc7_parser.scan(chunk);
             }
 
             // VT-parse each chunk individually, recording the cursor position
@@ -312,6 +323,11 @@ impl Pane {
     /// Get the last command exit code (from OSC 133;D).
     pub fn last_exit_code(&self) -> Option<i32> {
         self.shell_state.last_exit_code
+    }
+
+    /// Get the current working directory (from OSC 7).
+    pub fn cwd(&self) -> Option<&str> {
+        self.osc7_parser.cwd()
     }
 
     pub fn write_to_pty(&mut self, data: &[u8]) {

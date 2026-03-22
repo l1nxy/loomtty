@@ -431,11 +431,11 @@ impl Pane {
     }
 
     /// Create a full pane snapshot for StateSync / reattach.
+    /// Sends all available scrollback — the client trims to its own `max_scrollback`.
     pub fn snapshot(&self, generation: u64) -> FullPaneSync {
         let term = &self.term;
         let history_size = term.grid().history_size();
-        let max_scrollback = 1000.min(history_size);
-        self.build_snapshot(term, generation, max_scrollback)
+        self.build_snapshot(term, generation, history_size)
     }
 
     /// Shared snapshot builder: reads viewport cells, scrollback, cursor, and mode flags.

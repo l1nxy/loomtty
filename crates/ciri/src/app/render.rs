@@ -669,8 +669,7 @@ impl App {
         let Some(palette) = &self.command_palette else {
             return;
         };
-        let renderer = self.renderer.as_mut().unwrap();
-        let atlas = self.glyph_atlas.as_mut().unwrap();
+        let atlas = self.glyph_cache.as_mut().unwrap();
 
         let cw = atlas.cell_width;
         let ch = atlas.cell_height;
@@ -736,8 +735,6 @@ impl App {
         let text_y = panel_y + 4.0;
         emit_status_text(
             atlas,
-            &mut renderer.font_system,
-            &renderer.queue,
             &input_text,
             text_x,
             text_y,
@@ -822,8 +819,6 @@ impl App {
 
             emit_status_text(
                 atlas,
-                &mut renderer.font_system,
-                &renderer.queue,
                 &display,
                 text_x,
                 row_y + 2.0,
@@ -839,8 +834,6 @@ impl App {
             let msg = "No matching commands";
             emit_status_text(
                 atlas,
-                &mut renderer.font_system,
-                &renderer.queue,
                 msg,
                 text_x,
                 sep_y + 4.0,
@@ -1253,6 +1246,9 @@ impl App {
                 );
                 grid.clear_dirty();
                 self.cached_views.insert(*pane_id, view);
+                // Invalidate tile glyph cache — generation counter alone is
+                // unreliable for full rebuilds (resets to 1 on insert).
+                self.cached_tile_glyphs.remove(pane_id);
             } else if has_dirty_rows && !needs_full {
                 // Incremental update path — only re-render dirty rows
                 if let Some(grid) = self.pane_grids.get_mut(pane_id) {
@@ -1290,16 +1286,37 @@ impl App {
             if let Some(grid) = self.pane_grids.get(pane_id)
                 && let Some(view) = self.cached_views.get_mut(pane_id)
             {
-                let inset =
-                    (self.config.appearance.border_width + self.config.appearance.padding) * 2.0;
+                let border_w = self.config.appearance.border_width;
+                let padding = self.config.appearance.padding;
+                let inset = (border_w + padding) * 2.0;
                 let pw = tile_rect.w - inset;
                 let ph = tile_rect.h - inset;
+                // Determine scrollbar visual state (Pressed > Hovered > Idle)
+                let sb_state = if self.drag.scrollbar_dragging.as_ref().is_some_and(|info| info.pane_id == *pane_id) {
+                    terminal::ScrollbarState::Pressed
+                } else if let Some((mx, my)) = self.last_mouse_pos
+                    && tile_rect.contains(mx, my)
+                    && let Some(sb) = &view.scrollbar_rect
+                {
+                    let ix = tile_rect.x + border_w + padding;
+                    let iy = tile_rect.y + border_w + padding;
+                    let sx = ix + sb.x;
+                    let sy = iy + sb.y;
+                    if mx >= sx && mx <= sx + sb.w && my >= sy && my <= sy + sb.h {
+                        terminal::ScrollbarState::Hovered
+                    } else {
+                        terminal::ScrollbarState::Idle
+                    }
+                } else {
+                    terminal::ScrollbarState::Idle
+                };
                 let sb_key = (
                     grid.scroll_offset,
                     grid.total_lines(),
                     grid.rows,
                     pw.to_bits(),
                     ph.to_bits(),
+                    sb_state as u8,
                 );
                 if view.scrollbar_key != Some(sb_key) {
                     view.scrollbar_rect = terminal::build_scrollbar(
@@ -1308,6 +1325,7 @@ impl App {
                         grid.rows,
                         pw,
                         ph,
+                        sb_state,
                         &self.config,
                     );
                     view.scrollbar_key = Some(sb_key);
@@ -1418,6 +1436,7 @@ impl App {
             w.request_redraw();
         }
     }
+
 }
 
 /// Emit a dashed border (4 edges) as rect segments.

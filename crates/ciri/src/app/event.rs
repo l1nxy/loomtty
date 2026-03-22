@@ -214,6 +214,8 @@ impl ApplicationHandler for App {
             shaper.primary_font_path(),
             shaper.emoji_font_path(),
             shaper.emoji_font_id(),
+            shaper.cjk_font_path(),
+            shaper.cjk_font_id(),
             &self.config.render,
         );
 
@@ -394,6 +396,8 @@ impl ApplicationHandler for App {
                             shaper.primary_font_path(),
                             shaper.emoji_font_path(),
                             shaper.emoji_font_id(),
+                            shaper.cjk_font_path(),
+                            shaper.cjk_font_id(),
                             &self.config.render,
                         );
                         log::info!(

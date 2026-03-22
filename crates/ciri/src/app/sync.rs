@@ -321,6 +321,8 @@ impl App {
                             shaper.primary_font_path(),
                             shaper.emoji_font_path(),
                             shaper.emoji_font_id(),
+                            shaper.cjk_font_path(),
+                            shaper.cjk_font_id(),
                             &self.config.render,
                         );
                         self.glyph_cache = Some(cache);

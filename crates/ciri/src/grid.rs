@@ -327,6 +327,16 @@ impl ClientPaneGrid {
         scrolled
     }
 
+    /// Set scroll offset directly (clamped to valid range). Used by scrollbar drag.
+    pub fn set_scroll_offset(&mut self, offset: usize) {
+        let max = self.max_scroll_offset();
+        let new = offset.min(max);
+        if new != self.scroll_offset {
+            self.scroll_offset = new;
+            self.dirty = true;
+        }
+    }
+
     /// Jump to the live viewport (bottom).
     pub fn scroll_to_bottom(&mut self) {
         if self.scroll_offset > 0 {

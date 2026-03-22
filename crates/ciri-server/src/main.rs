@@ -2,6 +2,7 @@ use anyhow::Result;
 
 mod daemon;
 mod session;
+mod shell_integration;
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(

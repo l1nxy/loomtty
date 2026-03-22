@@ -11,6 +11,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
 use crate::event::PtyEventListener;
+use crate::osc7_parser::Osc7Parser;
 use crate::pty::Pty;
 
 pub type PaneId = u64;
@@ -100,6 +101,8 @@ pub struct Pane {
     bell_pending: bool,
     /// Shell integration state (OSC 133).
     pub shell_state: ShellState,
+    /// OSC 7 working directory parser.
+    osc7_parser: Osc7Parser,
     /// Inline image placements (Kitty graphics / Sixel).
     pub image_placements: Vec<ImagePlacement>,
     /// Next image ID counter.
@@ -115,7 +118,11 @@ pub struct Pane {
 
 impl Pane {
     pub fn new(id: PaneId, cols: u16, rows: u16, shell: &str) -> Result<Self> {
-        let pty = Pty::spawn(cols, rows, shell)?;
+        Self::new_with_cwd(id, cols, rows, shell, None)
+    }
+
+    pub fn new_with_cwd(id: PaneId, cols: u16, rows: u16, shell: &str, cwd: Option<&std::path::Path>) -> Result<Self> {
+        let pty = Pty::spawn_with_cwd(cols, rows, shell, cwd)?;
 
         let size = TermSize { cols: cols as usize, rows: rows as usize };
         let mut config = TermConfig::default();
@@ -142,6 +149,7 @@ impl Pane {
                 prompt_line: None,
                 output_line: None,
             },
+            osc7_parser: Osc7Parser::new(),
             image_placements: Vec::new(),
             next_image_id: 1,
             kitty_image_buf: Vec::new(),
@@ -163,8 +171,10 @@ impl Pane {
         if !chunks.is_empty() {
             // Scan for OSC 133 shell integration sequences before VT parsing
             // (alacritty_terminal ignores these).
+            // Also scan for OSC 7 working directory reports.
             for chunk in &chunks {
                 self.scan_osc133(chunk);
+                self.osc7_parser.scan(chunk);
             }
 
             // VT-parse all chunks first so the cursor reflects any preceding
@@ -253,6 +263,11 @@ impl Pane {
     /// Get the last command exit code (from OSC 133;D).
     pub fn last_exit_code(&self) -> Option<i32> {
         self.shell_state.last_exit_code
+    }
+
+    /// Get the current working directory (from OSC 7).
+    pub fn cwd(&self) -> Option<&str> {
+        self.osc7_parser.cwd()
     }
 
     pub fn write_to_pty(&mut self, data: &[u8]) {

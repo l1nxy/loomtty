@@ -42,18 +42,22 @@ fn get_pw_shell() -> Option<String> {
 
 impl Pty {
     pub fn spawn(cols: u16, rows: u16, shell: &str) -> Result<Self> {
+        Self::spawn_with_cwd(cols, rows, shell, None)
+    }
+
+    pub fn spawn_with_cwd(cols: u16, rows: u16, shell: &str, cwd: Option<&std::path::Path>) -> Result<Self> {
         let pty_system = native_pty_system();
 
         let pair = pty_system
             .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
             .context("openpty failed")?;
 
-        let mut cmd = if !shell.is_empty() {
-            CommandBuilder::new(shell)
+        let shell_path = if !shell.is_empty() {
+            shell.to_string()
         } else if cfg!(windows) {
-            CommandBuilder::new("cmd.exe")
+            "cmd.exe".to_string()
         } else {
-            let default = std::env::var("SHELL")
+            std::env::var("SHELL")
                 .ok()
                 .filter(|s| !s.is_empty())
                 .or_else(|| {
@@ -62,14 +66,39 @@ impl Pty {
                     #[cfg(not(unix))]
                     { None }
                 })
-                .unwrap_or_else(|| "/bin/sh".to_string());
-            CommandBuilder::new(default)
+                .unwrap_or_else(|| "/bin/sh".to_string())
         };
+
+        let mut cmd = CommandBuilder::new(&shell_path);
 
         // Ensure child knows its terminal type.
         cmd.env("TERM", "xterm-256color");
         if std::env::var_os("COLORTERM").is_none() {
             cmd.env("COLORTERM", "truecolor");
+        }
+
+        // Set TERM_PROGRAM so shells can detect they are inside Ciri.
+        cmd.env("TERM_PROGRAM", "ciri");
+        cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+
+        // Shell integration: set env vars so shells auto-source integration scripts.
+        if let Ok(integration_dir) = std::env::var("CIRI_SHELL_INTEGRATION_DIR") {
+            cmd.env("CIRI_SHELL_INTEGRATION_DIR", &integration_dir);
+
+            // Bash: BASH_ENV is sourced by interactive and non-interactive bash.
+            let bash_script = format!("{}/ciri.bash", integration_dir);
+            cmd.env("BASH_ENV", &bash_script);
+
+            // Fish: XDG_DATA_DIRS-based vendor_conf.d is complex; rely on
+            // CIRI_SHELL_INTEGRATION_DIR env var + TERM_PROGRAM detection
+            // for manual sourcing or use the fish integration event.
+        }
+
+        // Set working directory if provided.
+        if let Some(dir) = cwd {
+            if dir.is_dir() {
+                cmd.cwd(dir);
+            }
         }
 
         // pair.master is the PTY master fd

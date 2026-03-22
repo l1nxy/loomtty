@@ -4,6 +4,7 @@ pub(crate) mod input_handler;
 pub(crate) mod keyboard;
 pub(crate) mod mouse;
 pub(crate) mod paste_guard;
+pub(crate) mod notification;
 pub(crate) mod render;
 pub(crate) mod status_bar;
 pub(crate) mod sync;
@@ -243,6 +244,8 @@ pub(crate) struct App {
     pub cached_color_table: ColorTable,
     /// Per-pane cached glyph instances to skip redundant transformation in build_tiles.
     pub cached_tile_glyphs: HashMap<u64, CachedTileGlyphs>,
+    /// Whether the window currently has input focus.
+    pub window_focused: bool,
     pub should_exit: bool,
     #[allow(dead_code)]
     pub config_watcher: Option<notify::RecommendedWatcher>,
@@ -366,6 +369,7 @@ impl App {
             image_placements: HashMap::new(),
             cached_color_table,
             cached_tile_glyphs: HashMap::new(),
+            window_focused: true,
             should_exit: false,
             config_watcher: None,
             config_change_rx: None,

@@ -69,6 +69,8 @@ pub struct ShellState {
     pub prompt_line: Option<i32>,
     /// Line where command output started.
     pub output_line: Option<i32>,
+    /// Timestamp when the last command started (OSC 133;C).
+    pub command_start: Option<std::time::Instant>,
 }
 
 struct TermSize {
@@ -132,6 +134,8 @@ pub struct Pane {
     osc8_parser: Osc8Parser,
     /// OSC 7 working directory parser.
     osc7_parser: Osc7Parser,
+    /// Duration of the last completed command (set on OSC 133;D, drained by server).
+    last_command_duration: Option<std::time::Duration>,
 }
 
 impl Pane {
@@ -182,6 +186,7 @@ impl Pane {
                 last_exit_code: None,
                 prompt_line: None,
                 output_line: None,
+                command_start: None,
             },
             active_images: Vec::new(),
             pending_images: Vec::new(),
@@ -191,6 +196,7 @@ impl Pane {
             sixel_parser: SixelParser::new(),
             osc8_parser: Osc8Parser::new(),
             osc7_parser: Osc7Parser::new(),
+            last_command_duration: None,
         })
     }
 
@@ -209,7 +215,7 @@ impl Pane {
             // hyperlink, and OSC 7 CWD sequences before VT parsing
             // (alacritty_terminal ignores these).
             for chunk in &chunks {
-                self.osc133_parser.scan(chunk, &mut self.shell_state);
+                self.osc133_parser.scan(chunk, &mut self.shell_state, &mut self.last_command_duration);
                 self.dec_mode_parser.scan(chunk);
                 self.osc8_parser.scan(chunk);
                 self.osc7_parser.scan(chunk);
@@ -313,6 +319,11 @@ impl Pane {
     /// Check and clear the bell pending flag.
     pub fn drain_bell(&mut self) -> bool {
         std::mem::take(&mut self.bell_pending)
+    }
+
+    /// Drain the last completed command duration (from OSC 133;D).
+    pub fn drain_command_completion(&mut self) -> Option<std::time::Duration> {
+        self.last_command_duration.take()
     }
 
     /// Get the current shell semantic zone (from OSC 133).

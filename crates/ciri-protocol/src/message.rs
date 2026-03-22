@@ -336,6 +336,22 @@ pub enum ClientMessage {
     FocusChange {
         focused: bool,
     },
+    /// IPC: Send keystrokes to a specific pane in a named session.
+    SendKeys { session_name: String, pane_id: u64, keys: Vec<u8> },
+    /// IPC: Run a command in a new pane in the named session.
+    RunCommand { session_name: String, command: String, cwd: Option<String> },
+    /// IPC: Get detailed info about a session.
+    GetSessionInfo { session_name: String },
+    /// IPC: List all panes in a session.
+    ListPanes { session_name: String },
+    /// IPC: Focus a specific pane by ID.
+    FocusPaneById { session_name: String, pane_id: u64 },
+    /// IPC: Close a specific pane by ID.
+    ClosePaneById { session_name: String, pane_id: u64 },
+    /// IPC: Create a new pane in the named session.
+    CreatePaneIn { session_name: String },
+    /// IPC: Get the full layout state of a session.
+    GetLayout { session_name: String },
 }
 
 /// Control messages from server to client (msgpack encoded, tags 0x10-0x1F).
@@ -384,6 +400,14 @@ pub enum ServerMessage {
         format: String,
         data: Vec<u8>,
     },
+    /// IPC response: session detail info.
+    SessionInfoReply { info: SessionDetailInfo },
+    /// IPC response: list of panes.
+    PaneListReply { panes: Vec<PaneDetailInfo> },
+    /// IPC response: command result.
+    CommandResult { success: bool, message: String, pane_id: Option<u64> },
+    /// IPC response: full layout state.
+    LayoutReply { layout: LayoutState, session_name: String },
 }
 
 /// Session info returned in SessionList.
@@ -396,6 +420,31 @@ pub struct SessionInfo {
     pub pane_count: usize,
     /// Number of attached clients.
     pub client_count: usize,
+}
+
+/// Detailed session info returned by GetSessionInfo IPC command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionDetailInfo {
+    pub name: String,
+    pub running: bool,
+    pub pane_count: usize,
+    pub client_count: usize,
+    pub workspace_count: usize,
+    pub active_workspace: usize,
+}
+
+/// Detailed pane info returned by ListPanes IPC command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaneDetailInfo {
+    pub pane_id: u64,
+    pub cols: u16,
+    pub rows: u16,
+    pub title: String,
+    pub cwd: Option<String>,
+    pub is_active: bool,
+    pub workspace_idx: usize,
+    pub column_idx: usize,
+    pub tile_idx: usize,
 }
 
 /// Serializable layout state (2D: workspaces × columns).

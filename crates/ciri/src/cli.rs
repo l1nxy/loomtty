@@ -19,6 +19,20 @@ pub enum CliCommand {
         session_name: String,
     },
     Help,
+    /// IPC messaging commands for external scripting.
+    Msg { subcommand: MsgSubcommand, json: bool },
+}
+
+#[derive(Debug)]
+pub enum MsgSubcommand {
+    SendKeys { session_name: String, pane_id: u64, keys: String },
+    ListPanes { session_name: String },
+    Info { session_name: String },
+    FocusPane { session_name: String, pane_id: u64 },
+    ClosePane { session_name: String, pane_id: u64 },
+    CreatePane { session_name: String },
+    GetLayout { session_name: String },
+    RunCommand { session_name: String, command: String },
 }
 
 /// Reserved subcommand names that cannot be used as positional session names.
@@ -37,6 +51,7 @@ fn is_subcommand(arg: &str) -> bool {
             | "attach"
             | "a"
             | "help"
+            | "msg"
     )
 }
 
@@ -46,6 +61,11 @@ where
 {
     let args: Vec<String> = args.into_iter().collect();
     let usage = usage();
+
+    // Handle "msg" subcommand separately since it has variable-length arguments
+    if args.first().map(|s| s.as_str()) == Some("msg") {
+        return parse_msg_args(&args[1..]);
+    }
 
     match args.as_slice() {
         [] => Ok(CliCommand::New),
@@ -75,6 +95,120 @@ where
     }
 }
 
+fn parse_msg_args(args: &[String]) -> Result<CliCommand, String> {
+    let msg_usage = msg_usage();
+
+    if args.is_empty() {
+        return Err(msg_usage);
+    }
+
+    // Check for --json flag anywhere in the args
+    let json = args.iter().any(|a| a == "--json");
+    let args: Vec<&String> = args.iter().filter(|a| a.as_str() != "--json").collect();
+
+    if args.is_empty() {
+        return Err(msg_usage);
+    }
+
+    let subcmd = args[0].as_str();
+    match subcmd {
+        "send-keys" => {
+            if args.len() < 4 {
+                return Err(format!("Usage: ciri msg send-keys <session> <pane_id> <keys>\n\n{msg_usage}"));
+            }
+            let session_name = args[1].clone();
+            let pane_id: u64 = args[2].parse().map_err(|_| format!("invalid pane_id: {}", args[2]))?;
+            let keys = args[3].clone();
+            Ok(CliCommand::Msg {
+                subcommand: MsgSubcommand::SendKeys { session_name, pane_id, keys },
+                json,
+            })
+        }
+        "list-panes" => {
+            if args.len() < 2 {
+                return Err(format!("Usage: ciri msg list-panes <session>\n\n{msg_usage}"));
+            }
+            Ok(CliCommand::Msg {
+                subcommand: MsgSubcommand::ListPanes { session_name: args[1].clone() },
+                json,
+            })
+        }
+        "info" => {
+            if args.len() < 2 {
+                return Err(format!("Usage: ciri msg info <session>\n\n{msg_usage}"));
+            }
+            Ok(CliCommand::Msg {
+                subcommand: MsgSubcommand::Info { session_name: args[1].clone() },
+                json,
+            })
+        }
+        "focus-pane" => {
+            if args.len() < 3 {
+                return Err(format!("Usage: ciri msg focus-pane <session> <pane_id>\n\n{msg_usage}"));
+            }
+            let pane_id: u64 = args[2].parse().map_err(|_| format!("invalid pane_id: {}", args[2]))?;
+            Ok(CliCommand::Msg {
+                subcommand: MsgSubcommand::FocusPane { session_name: args[1].clone(), pane_id },
+                json,
+            })
+        }
+        "close-pane" => {
+            if args.len() < 3 {
+                return Err(format!("Usage: ciri msg close-pane <session> <pane_id>\n\n{msg_usage}"));
+            }
+            let pane_id: u64 = args[2].parse().map_err(|_| format!("invalid pane_id: {}", args[2]))?;
+            Ok(CliCommand::Msg {
+                subcommand: MsgSubcommand::ClosePane { session_name: args[1].clone(), pane_id },
+                json,
+            })
+        }
+        "create-pane" => {
+            if args.len() < 2 {
+                return Err(format!("Usage: ciri msg create-pane <session>\n\n{msg_usage}"));
+            }
+            Ok(CliCommand::Msg {
+                subcommand: MsgSubcommand::CreatePane { session_name: args[1].clone() },
+                json,
+            })
+        }
+        "get-layout" => {
+            if args.len() < 2 {
+                return Err(format!("Usage: ciri msg get-layout <session>\n\n{msg_usage}"));
+            }
+            Ok(CliCommand::Msg {
+                subcommand: MsgSubcommand::GetLayout { session_name: args[1].clone() },
+                json,
+            })
+        }
+        "run-command" => {
+            if args.len() < 3 {
+                return Err(format!("Usage: ciri msg run-command <session> <command>\n\n{msg_usage}"));
+            }
+            Ok(CliCommand::Msg {
+                subcommand: MsgSubcommand::RunCommand { session_name: args[1].clone(), command: args[2].clone() },
+                json,
+            })
+        }
+        _ => Err(format!("unknown msg subcommand: {subcmd}\n\n{msg_usage}")),
+    }
+}
+
+fn msg_usage() -> String {
+    "\
+Usage: ciri msg <subcommand> [options]
+
+Subcommands:
+  send-keys <session> <pane_id> <keys>   Send keystrokes to a pane
+  list-panes <session> [--json]           List all panes in a session
+  info <session> [--json]                 Get session info
+  focus-pane <session> <pane_id>          Focus a pane by ID
+  close-pane <session> <pane_id>          Close a pane by ID
+  create-pane <session> [--json]          Create a new pane
+  get-layout <session> [--json]           Get the full layout state
+  run-command <session> <command>          Run a command in a new pane"
+        .to_string()
+}
+
 pub fn usage() -> String {
     "\
 Usage:
@@ -86,6 +220,7 @@ Usage:
   ciri kill|k <name>            Kill a session
   ciri kill-server|ks           Kill the server
   ciri delete|rm <name>         Delete saved session
+  ciri msg <subcommand>         IPC commands for scripting (see ciri msg --help)
   ciri --help|-h                Show this help"
         .to_string()
 }

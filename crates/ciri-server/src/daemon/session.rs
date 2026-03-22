@@ -233,6 +233,32 @@ impl Session {
         }
     }
 
+    /// Find the workspace/column/tile indices for a given pane ID.
+    pub(crate) fn find_pane_location(&self, pane_id: u64) -> Option<(usize, usize, usize)> {
+        for (ws_idx, ws) in self.workspaces.workspaces.iter().enumerate() {
+            for (col_idx, col) in ws.columns.iter().enumerate() {
+                for (tile_idx, tile) in col.tiles.iter().enumerate() {
+                    if tile.pane_id == pane_id {
+                        return Some((ws_idx, col_idx, tile_idx));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Focus a specific pane by ID, updating all active indices.
+    pub(crate) fn focus_pane(&mut self, pane_id: u64) -> bool {
+        if let Some((ws_idx, col_idx, tile_idx)) = self.find_pane_location(pane_id) {
+            self.workspaces.active_workspace_idx = ws_idx;
+            self.workspaces.workspaces[ws_idx].active_column_idx = col_idx;
+            self.workspaces.workspaces[ws_idx].columns[col_idx].active_tile_idx = tile_idx;
+            true
+        } else {
+            false
+        }
+    }
+
     pub(crate) fn layout_state(&self) -> LayoutState {
         let state = LayoutState {
             workspaces: self

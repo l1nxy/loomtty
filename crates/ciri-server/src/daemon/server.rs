@@ -629,6 +629,197 @@ impl Server {
             ClientMessage::KillServer => {
                 responses.push(ServerResponse::ShutdownServer);
             }
+            // ─── IPC commands (from __control__ clients) ────────────────
+            ClientMessage::SendKeys { session_name: target, pane_id, keys } => {
+                if let Some(session) = self.sessions.get_mut(&target) {
+                    if let Some(pane) = session.panes.get_mut(&pane_id) {
+                        pane.write_to_pty(&keys);
+                        responses.push(ServerResponse::SendToClient(client_id, ServerMessage::CommandResult {
+                            success: true, message: "ok".to_string(), pane_id: Some(pane_id),
+                        }));
+                    } else {
+                        responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                            message: format!("pane {} not found in session '{}'", pane_id, target),
+                        }));
+                    }
+                } else {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("session '{}' not found", target),
+                    }));
+                }
+            }
+            ClientMessage::GetSessionInfo { session_name: target } => {
+                if let Some(session) = self.sessions.get(&target) {
+                    let client_count = self.clients.values()
+                        .filter(|c| c.session_name == target)
+                        .count();
+                    let info = SessionDetailInfo {
+                        name: target.clone(),
+                        running: true,
+                        pane_count: session.panes.len(),
+                        client_count,
+                        workspace_count: session.workspaces.workspaces.len(),
+                        active_workspace: session.workspaces.active_workspace_idx,
+                    };
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::SessionInfoReply { info }));
+                } else {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("session '{}' not found", target),
+                    }));
+                }
+            }
+            ClientMessage::ListPanes { session_name: target } => {
+                if let Some(session) = self.sessions.get(&target) {
+                    let mut panes = Vec::new();
+                    let active_ws = session.workspaces.active_workspace_idx;
+                    for (ws_idx, ws) in session.workspaces.workspaces.iter().enumerate() {
+                        let active_col = ws.active_column_idx;
+                        for (col_idx, col) in ws.columns.iter().enumerate() {
+                            let active_tile = col.active_tile_idx;
+                            for (tile_idx, tile) in col.tiles.iter().enumerate() {
+                                let is_active = ws_idx == active_ws && col_idx == active_col && tile_idx == active_tile;
+                                let (cols, rows) = session.panes.get(&tile.pane_id)
+                                    .map(|p| (p.grid_cols(), p.grid_rows()))
+                                    .unwrap_or((0, 0));
+                                let title = session.panes.get(&tile.pane_id)
+                                    .map(|p| p.title.clone())
+                                    .unwrap_or_default();
+                                panes.push(PaneDetailInfo {
+                                    pane_id: tile.pane_id,
+                                    cols,
+                                    rows,
+                                    title,
+                                    cwd: None,
+                                    is_active,
+                                    workspace_idx: ws_idx,
+                                    column_idx: col_idx,
+                                    tile_idx,
+                                });
+                            }
+                        }
+                    }
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::PaneListReply { panes }));
+                } else {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("session '{}' not found", target),
+                    }));
+                }
+            }
+            ClientMessage::FocusPaneById { session_name: target, pane_id } => {
+                if let Some(session) = self.sessions.get_mut(&target) {
+                    if session.focus_pane(pane_id) {
+                        session.mark_session_dirty();
+                        let layout = session.layout_state();
+                        responses.push(ServerResponse::BroadcastToSession(target.clone(), ServerMessage::LayoutUpdate { layout }));
+                        responses.push(ServerResponse::SendToClient(client_id, ServerMessage::CommandResult {
+                            success: true, message: "ok".to_string(), pane_id: Some(pane_id),
+                        }));
+                    } else {
+                        responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                            message: format!("pane {} not found in session '{}'", pane_id, target),
+                        }));
+                    }
+                } else {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("session '{}' not found", target),
+                    }));
+                }
+            }
+            ClientMessage::ClosePaneById { session_name: target, pane_id } => {
+                if let Some(mut session) = self.sessions.remove(&target) {
+                    if session.panes.contains_key(&pane_id) {
+                        session.close_pane(pane_id, &mut self.clients);
+                        session.resize_all_panes(&mut self.clients);
+                        session.mark_session_dirty();
+                        responses.push(ServerResponse::BroadcastToSession(target.clone(), ServerMessage::PaneClosed { pane_id }));
+                        let layout = session.layout_state();
+                        responses.push(ServerResponse::BroadcastToSession(target.clone(), ServerMessage::LayoutUpdate { layout }));
+                        responses.push(ServerResponse::SendToClient(client_id, ServerMessage::CommandResult {
+                            success: true, message: "ok".to_string(), pane_id: Some(pane_id),
+                        }));
+                    } else {
+                        responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                            message: format!("pane {} not found in session '{}'", pane_id, target),
+                        }));
+                    }
+                    self.sessions.insert(target, session);
+                } else {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("session '{}' not found", target),
+                    }));
+                }
+            }
+            ClientMessage::CreatePaneIn { session_name: target } => {
+                if let Some(mut session) = self.sessions.remove(&target) {
+                    match session.create_pane(&mut self.next_pane_id, &mut self.clients) {
+                        Ok(id) => {
+                            session.resize_all_panes(&mut self.clients);
+                            session.mark_session_dirty();
+                            let (cols, rows) = session.pane_grid_dims(id);
+                            responses.push(ServerResponse::BroadcastToSession(target.clone(), ServerMessage::PaneCreated {
+                                pane_id: id, column_idx: session.workspaces.active().active_column_idx, cols, rows,
+                            }));
+                            let layout = session.layout_state();
+                            responses.push(ServerResponse::BroadcastToSession(target.clone(), ServerMessage::LayoutUpdate { layout }));
+                            responses.push(ServerResponse::SendToClient(client_id, ServerMessage::CommandResult {
+                                success: true, message: "ok".to_string(), pane_id: Some(id),
+                            }));
+                        }
+                        Err(e) => {
+                            responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                                message: format!("failed to create pane: {e}"),
+                            }));
+                        }
+                    }
+                    self.sessions.insert(target, session);
+                } else {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("session '{}' not found", target),
+                    }));
+                }
+            }
+            ClientMessage::RunCommand { session_name: target, command: _, cwd: _ } => {
+                // For now, just create a regular pane (same as CreatePaneIn).
+                if let Some(mut session) = self.sessions.remove(&target) {
+                    match session.create_pane(&mut self.next_pane_id, &mut self.clients) {
+                        Ok(id) => {
+                            session.resize_all_panes(&mut self.clients);
+                            session.mark_session_dirty();
+                            let (cols, rows) = session.pane_grid_dims(id);
+                            responses.push(ServerResponse::BroadcastToSession(target.clone(), ServerMessage::PaneCreated {
+                                pane_id: id, column_idx: session.workspaces.active().active_column_idx, cols, rows,
+                            }));
+                            let layout = session.layout_state();
+                            responses.push(ServerResponse::BroadcastToSession(target.clone(), ServerMessage::LayoutUpdate { layout }));
+                            responses.push(ServerResponse::SendToClient(client_id, ServerMessage::CommandResult {
+                                success: true, message: "ok".to_string(), pane_id: Some(id),
+                            }));
+                        }
+                        Err(e) => {
+                            responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                                message: format!("failed to create pane: {e}"),
+                            }));
+                        }
+                    }
+                    self.sessions.insert(target, session);
+                } else {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("session '{}' not found", target),
+                    }));
+                }
+            }
+            ClientMessage::GetLayout { session_name: target } => {
+                if let Some(session) = self.sessions.get(&target) {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::LayoutReply {
+                        layout: session.layout_state(),
+                        session_name: target,
+                    }));
+                } else {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("session '{}' not found", target),
+                    }));
+                }
+            }
             ClientMessage::SwitchSession {
                 session_name: target,
             } => {

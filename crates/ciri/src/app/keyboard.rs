@@ -60,6 +60,31 @@ impl App {
             }
         }
 
+        // Paste confirmation modal: intercept all input
+        if self.pending_paste.is_some() {
+            let confirm = matches!(&event.logical_key, Key::Named(NamedKey::Enter))
+                || matches!(&event.logical_key, Key::Character(c) if c.as_str() == "y" || c.as_str() == "Y");
+            let cancel = matches!(&event.logical_key, Key::Named(NamedKey::Escape))
+                || matches!(&event.logical_key, Key::Character(c) if c.as_str() == "n" || c.as_str() == "N");
+            if confirm {
+                let text = self.pending_paste.as_ref().unwrap().warning.text.clone();
+                self.pending_paste = None;
+                if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
+                    self.send(ClientMessage::Input {
+                        pane_id: pid,
+                        data: text.into_bytes(),
+                    });
+                }
+            } else if cancel {
+                self.pending_paste = None;
+            }
+            // Ignore other keys while confirmation is shown
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+            return;
+        }
+
         // Search mode: intercept all input
         if self.search_state.is_some() {
             self.handle_search_key(event, ctrl, shift);
@@ -82,7 +107,27 @@ impl App {
                             Err(e) => log::warn!("clipboard read failed: {e}"),
                             Ok(text) => {
                                 log::info!("clipboard text: {} bytes", text.len());
-                                if let Some(pid) =
+                                if let Some(warning) =
+                                    super::paste_guard::check_paste_safety(&text)
+                                {
+                                    // Show confirmation overlay
+                                    let preview = if text.len() > 200 {
+                                        format!(
+                                            "{}...",
+                                            &text[..text.floor_char_boundary(200)]
+                                        )
+                                    } else {
+                                        text.clone()
+                                    };
+                                    // Replace newlines with visible markers for display
+                                    let preview =
+                                        preview.replace('\n', " \\n ").replace('\r', "");
+                                    self.pending_paste = Some(super::PendingPaste {
+                                        warning,
+                                        preview,
+                                    });
+                                    log::info!("paste guard: showing confirmation");
+                                } else if let Some(pid) =
                                     self.workspaces.active_mut().active_pane_id()
                                 {
                                     self.send(ClientMessage::Input {
@@ -124,7 +169,8 @@ impl App {
                 NamedKey::Control | NamedKey::Shift | NamedKey::Alt | NamedKey::Super
             )
         );
-        if !is_modifier_only {
+        // Clear selection on typing (already the default behavior, now config-gated)
+        if !is_modifier_only && self.config.terminal.clear_selection_on_type {
             self.selection = None;
         }
 

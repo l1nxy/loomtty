@@ -128,6 +128,10 @@ pub struct TerminalConfig {
     pub shell: String,
     /// Maximum scrollback lines per pane. 0 = no scrollback.
     pub scrollback_lines: usize,
+    /// Automatically copy selected text to clipboard on mouse release.
+    pub copy_on_select: bool,
+    /// Clear text selection when typing.
+    pub clear_selection_on_type: bool,
 }
 
 impl Default for TerminalConfig {
@@ -141,6 +145,8 @@ impl Default for TerminalConfig {
             cursor_blink_interval_ms: 500,
             shell: String::new(),
             scrollback_lines: 10000,
+            copy_on_select: false,
+            clear_selection_on_type: true,
         }
     }
 }

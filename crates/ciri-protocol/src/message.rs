@@ -336,6 +336,8 @@ pub enum ClientMessage {
     FocusChange {
         focused: bool,
     },
+    /// Focus a specific pane by ID (used for focus-follows-mouse).
+    FocusPane { pane_id: u64 },
     /// IPC: Send keystrokes to a specific pane in a named session.
     SendKeys { session_name: String, pane_id: u64, keys: Vec<u8> },
     /// IPC: Run a command in a new pane in the named session.

@@ -254,6 +254,8 @@ pub(crate) struct App {
     pub pending_resize: Option<(winit::dpi::PhysicalSize<u32>, Instant)>,
     /// Remote connection parameters, if connecting via SSH tunnel.
     pub remote_config: Option<RemoteConnectionConfig>,
+    /// Last pane focused by focus-follows-mouse and the time it was set (for debouncing).
+    pub last_focus_follows_mouse: Option<(u64, Instant)>,
 }
 
 /// Parameters for a remote SSH tunnel connection.
@@ -375,6 +377,7 @@ impl App {
             },
             pending_resize: None,
             remote_config: None,
+            last_focus_follows_mouse: None,
         }
     }
 

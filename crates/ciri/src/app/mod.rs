@@ -34,6 +34,37 @@ use ciri_input::action::Action;
 use crate::connection::ServerEvent;
 use crate::grid::ClientPaneGrid;
 
+/// A context menu item.
+#[derive(Debug, Clone)]
+pub(crate) struct ContextMenuItem {
+    pub label: String,
+    pub action: ContextMenuAction,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum ContextMenuAction {
+    Copy,
+    Paste,
+    SelectAll,
+    Search,
+    OpenLink(String),
+    CopyLink(String),
+    SplitRight,
+    SplitDown,
+    ClosePane,
+}
+
+/// Context menu state.
+#[derive(Debug, Default)]
+pub(crate) struct ContextMenu {
+    pub visible: bool,
+    pub x: f32,
+    pub y: f32,
+    pub items: Vec<ContextMenuItem>,
+    pub hovered_index: Option<usize>,
+}
+
 /// Text selection state with absolute buffer coordinates.
 pub(crate) struct Selection {
     pub pane_id: u64,
@@ -259,6 +290,8 @@ pub(crate) struct App {
     pub remote_config: Option<RemoteConnectionConfig>,
     /// Last pane focused by focus-follows-mouse and the time it was set (for debouncing).
     pub last_focus_follows_mouse: Option<(u64, Instant)>,
+    /// Right-click context menu state.
+    pub context_menu: ContextMenu,
 }
 
 /// Parameters for a remote SSH tunnel connection.
@@ -382,6 +415,7 @@ impl App {
             pending_resize: None,
             remote_config: None,
             last_focus_follows_mouse: None,
+            context_menu: ContextMenu::default(),
         }
     }
 

@@ -60,6 +60,13 @@ impl Session {
         }
     }
 
+    /// Get the CWD of the active pane (from OSC 7), if available.
+    pub(crate) fn active_pane_cwd(&self) -> Option<String> {
+        let pane_id = self.workspaces.active().active_pane_id()?;
+        let pane = self.panes.get(&pane_id)?;
+        pane.cwd().map(|s| s.to_string())
+    }
+
     /// Create a new pane in the active workspace's active position (column right).
     pub(crate) fn create_pane(
         &mut self,
@@ -88,7 +95,9 @@ impl Session {
             "create_pane {id}: viewport={vw}x{vh} col_px={pane_w:.1} cell={cw}x{ch} inset={} → {cols}x{rows}",
             self.pane_inset
         );
-        let pane = Pane::new(id, cols, rows, &self.default_shell)?;
+        // Inherit CWD from the active pane (if available via OSC 7)
+        let cwd = self.active_pane_cwd();
+        let pane = Pane::new_with_cwd(id, cols, rows, &self.default_shell, cwd.as_deref().map(std::path::Path::new))?;
         self.panes.insert(id, pane);
         self.generation.insert(id, 0);
         self.workspaces
@@ -106,11 +115,13 @@ impl Session {
     ) -> Result<u64> {
         let id = *next_pane_id;
         *next_pane_id += 1;
+        // Inherit CWD from the active pane (if available via OSC 7)
+        let cwd = self.active_pane_cwd();
         let vw = self.workspaces.view_size.width;
         let vh = self.workspaces.view_size.height;
         let (_, _, cw, ch) = Self::effective_dims_from(clients, &self.session_name);
         let (cols, rows) = self.pane_grid_size_with_cells(vw, vh, cw, ch);
-        let pane = Pane::new(id, cols, rows, &self.default_shell)?;
+        let pane = Pane::new_with_cwd(id, cols, rows, &self.default_shell, cwd.as_deref().map(std::path::Path::new))?;
         self.panes.insert(id, pane);
         self.generation.insert(id, 0);
         self.workspaces.add_workspace_below(id);

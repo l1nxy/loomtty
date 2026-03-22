@@ -431,11 +431,11 @@ impl Pane {
     }
 
     /// Create a full pane snapshot for StateSync / reattach.
+    /// Sends all available scrollback — the client trims to its own `max_scrollback`.
     pub fn snapshot(&self, generation: u64) -> FullPaneSync {
         let term = &self.term;
         let history_size = term.grid().history_size();
-        let max_scrollback = 1000.min(history_size);
-        self.build_snapshot(term, generation, max_scrollback)
+        self.build_snapshot(term, generation, history_size)
     }
 
     /// Shared snapshot builder: reads viewport cells, scrollback, cursor, and mode flags.
@@ -537,16 +537,20 @@ impl Pane {
         &self.active_images
     }
 
-    /// Write packed cells for a line range directly into a byte buffer (zero-copy encoding).
-    /// Avoids intermediate Vec<PackedCell> allocation — cells go directly from grid → bytes.
-    pub fn write_cells_into(&self, line: u16, left: u16, right: u16, buf: &mut Vec<u8>) {
+    /// Push packed cells for a line range into a state-machine encoder.
+    /// Cells go from grid → PackedCell → StateEncoder opcode stream.
+    pub fn write_cells_into_sm(
+        &self,
+        line: u16,
+        left: u16,
+        right: u16,
+        encoder: &mut ciri_protocol::codec::StateEncoder,
+    ) {
         let grid = self.term.grid();
         for col in left..=right {
             let point = Point::new(Line(line as i32), Column(col as usize));
             let packed = pack_cell(&grid[point]);
-            buf.extend_from_slice(ciri_protocol::codec::cells_to_bytes(std::slice::from_ref(
-                &packed,
-            )));
+            encoder.push_cell(&packed);
         }
     }
 }
@@ -591,6 +595,9 @@ pub fn pack_cell(cell: &alacritty_terminal::term::cell::Cell) -> PackedCell {
     }
     if cell.flags.contains(CellFlags::HIDDEN) {
         flags |= FLAG_HIDDEN;
+    }
+    if cell.flags.contains(CellFlags::WRAPLINE) {
+        flags |= FLAG_WRAPLINE;
     }
     let mut packed = PackedCell {
         ch_bytes: [0; 4],

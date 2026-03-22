@@ -12,19 +12,29 @@ use ciri_layout::tile::Tile;
 
 impl App {
     /// Process all pending server events. Returns true if a redraw is needed.
+    ///
+    /// Drains up to `BATCH` events at a time, repeating until the channel is
+    /// empty or `MAX_DRAIN` time has elapsed.  This avoids rendering
+    /// intermediate states when a large backlog has accumulated (e.g. after
+    /// the window was in the background), while still bounding the time spent
+    /// here so the UI thread stays responsive.
     pub fn process_server_events(&mut self) -> bool {
-        let Some(rx) = self.server_rx.as_ref() else {
+        let Some(rx) = self.server_rx.take() else {
             return false;
         };
-        let budget = 200;
-        let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok())
-            .take(budget)
-            .collect();
-        let hit_budget = events.len() >= budget;
-        if events.is_empty() {
-            return false;
-        }
+        const BATCH: usize = 200;
+        const MAX_DRAIN: std::time::Duration = std::time::Duration::from_millis(50);
+        let drain_start = std::time::Instant::now();
         let mut needs_redraw = false;
+
+        loop {
+        let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok())
+            .take(BATCH)
+            .collect();
+        let hit_budget = events.len() >= BATCH;
+        if events.is_empty() {
+            break;
+        }
 
         for event in events {
             match event {
@@ -231,10 +241,15 @@ impl App {
                 }
             }
         }
-        // If we hit the budget, there may be more events — ensure we get another tick
-        if hit_budget {
-            needs_redraw = true;
+        // If we consumed a full batch and still have time, loop to drain more
+        // before rendering — this avoids showing intermediate states after a
+        // backlog (e.g. returning from background).
+        if !hit_budget || drain_start.elapsed() >= MAX_DRAIN {
+            break;
         }
+        } // end loop
+
+        self.server_rx = Some(rx);
         needs_redraw
     }
 
@@ -319,6 +334,10 @@ impl App {
                             self.dpi_scale,
                             &self.config.font.family,
                             shaper.primary_font_path(),
+                            shaper.emoji_font_path(),
+                            shaper.emoji_font_id(),
+                            shaper.cjk_font_path(),
+                            shaper.cjk_font_id(),
                             &self.config.render,
                         );
                         self.glyph_cache = Some(cache);

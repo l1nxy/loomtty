@@ -205,6 +205,9 @@ pub const FLAG_UNDERLINE_DOUBLE: u16 = 0b001 << 9;
 pub const FLAG_UNDERLINE_CURLY: u16 = 0b010 << 9;
 pub const FLAG_UNDERLINE_DOTTED: u16 = 0b011 << 9;
 pub const FLAG_UNDERLINE_DASHED: u16 = 0b100 << 9;
+/// Line wrapping marker: set on the last cell of a row whose content continues
+/// on the next row (soft wrap). Used by the client for scrollback reflow.
+pub const FLAG_WRAPLINE: u16 = 1 << 12;
 
 // ─── Wire messages ──────────────────────────────────────────────────
 
@@ -444,21 +447,21 @@ pub struct FullPaneSync {
 
 // ─── Zero-copy borrowed CellDelta ───────────────────────────────────
 
-/// Metadata for a single borrowed damage region (offsets into the payload).
+/// Metadata for a single borrowed damage region (SM-encoded, offsets into the payload).
 #[derive(Debug, Clone)]
 pub struct BorrowedRegionMeta {
     pub line: u16,
     pub left: u16,
     pub right: u16,
-    /// Byte offset into `CellDeltaBorrowed::payload` where cell data starts.
-    pub cells_offset: usize,
-    /// Number of cells in this region.
-    pub cell_count: usize,
+    /// Byte offset into `CellDeltaBorrowed::payload` where SM opcode data starts.
+    pub sm_offset: usize,
+    /// Length of the SM opcode stream for this region.
+    pub sm_len: usize,
 }
 
-/// Zero-copy variant of `CellDelta`. Owns the raw payload `Vec<u8>` and stores
-/// parsed region metadata (offsets), but borrows the cell data in-place via
-/// `bytemuck::cast_slice` instead of copying into per-region `Vec<PackedCell>`.
+/// Borrowed variant of `CellDelta`. Owns the raw payload `Vec<u8>` and stores
+/// parsed region metadata (offsets into SM opcode streams). Cell data is decoded
+/// on demand via `decode_sm_cells` rather than zero-copy cast.
 #[derive(Debug)]
 pub struct CellDeltaBorrowed {
     pub pane_id: u64,
@@ -467,8 +470,9 @@ pub struct CellDeltaBorrowed {
     pub cursor_col: u16,
     pub cursor_shape: u8,
     pub mode_flags: u8,
+    pub cols: u16,
     pub regions: Vec<BorrowedRegionMeta>,
-    /// Raw payload bytes — cell data is read directly from here.
+    /// Raw payload bytes — SM opcode streams are read from here.
     payload: Vec<u8>,
 }
 
@@ -481,6 +485,7 @@ impl CellDeltaBorrowed {
         cursor_col: u16,
         cursor_shape: u8,
         mode_flags: u8,
+        cols: u16,
         regions: Vec<BorrowedRegionMeta>,
         payload: Vec<u8>,
     ) -> Self {
@@ -491,19 +496,19 @@ impl CellDeltaBorrowed {
             cursor_col,
             cursor_shape,
             mode_flags,
+            cols,
             regions,
             payload,
         }
     }
 
-    /// Zero-copy access to the cells for a given region index.
+    /// Access the raw SM opcode stream for a given region index.
     /// Returns an empty slice if `region_idx` is out of bounds.
-    pub fn cells(&self, region_idx: usize) -> &[PackedCell] {
+    pub fn sm_data(&self, region_idx: usize) -> &[u8] {
         let Some(meta) = self.regions.get(region_idx) else {
             return &[];
         };
-        let end = meta.cells_offset + meta.cell_count * PACKED_CELL_SIZE;
-        bytemuck::cast_slice(&self.payload[meta.cells_offset..end])
+        &self.payload[meta.sm_offset..meta.sm_offset + meta.sm_len]
     }
 }
 

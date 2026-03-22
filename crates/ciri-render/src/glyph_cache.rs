@@ -69,8 +69,8 @@ pub struct GlyphEntry {
     pub v1: f32,
     pub width: u16,
     pub height: u16,
-    pub bearing_x: i16,
-    pub bearing_y: i16,
+    pub bearing_x: f32,
+    pub bearing_y: f32,
     /// True if this glyph was rasterized as RGBA color (emoji).
     pub is_color: bool,
 }
@@ -83,10 +83,18 @@ impl GlyphEntry {
         v1: 0.0,
         width: 0,
         height: 0,
-        bearing_x: 0,
-        bearing_y: 0,
+        bearing_x: 0.0,
+        bearing_y: 0.0,
         is_color: false,
     };
+}
+
+/// Font class for glyph-ID cache key discrimination.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum FontClass {
+    Primary,
+    Emoji,
+    Cjk,
 }
 
 // ─── Shelf-based atlas packer ────────────────────────────────────────
@@ -186,7 +194,7 @@ pub struct GlyphCache {
     pub max_instances: usize,
     // Caching
     cache: HashMap<(char, FontStyle), GlyphEntry>,
-    glyph_id_cache: HashMap<(u32, FontStyle), GlyphEntry>,
+    glyph_id_cache: HashMap<(u32, FontClass, FontStyle, bool), GlyphEntry>,
     // Crossfont rasterizer (character-based rendering)
     rasterizer: Rasterizer,
     font_keys: FontKeySet,
@@ -196,7 +204,12 @@ pub struct GlyphCache {
     #[allow(dead_code)]
     ft_library: FtLibrary,
     ft_face: Option<freetype::Face>,
+    emoji_ft_face: Option<freetype::Face>,
+    emoji_font_id: Option<fontdb::ID>,
+    cjk_ft_face: Option<freetype::Face>,
+    cjk_font_id: Option<fontdb::ID>,
     ft_pixel_size: f32,
+    cjk_pixel_size: f32,
     // Public metrics
     pub cell_width: f32,
     pub cell_height: f32,
@@ -214,6 +227,10 @@ impl GlyphCache {
         dpi_scale: f64,
         family_name: &str,
         primary_font_path: Option<(String, u32)>,
+        emoji_font_path: Option<(String, u32)>,
+        emoji_font_id: Option<fontdb::ID>,
+        cjk_font_path: Option<(String, u32)>,
+        cjk_font_id: Option<fontdb::ID>,
         render_config: &RenderConfig,
     ) -> Self {
         let atlas_size = render_config.atlas_size;
@@ -299,6 +316,62 @@ impl GlyphCache {
                 }
             }
         });
+        let emoji_ft_face = emoji_font_path.and_then(|(path, index)| {
+            match ft_library.new_face(&path, index as isize) {
+                Ok(face) => {
+                    log::info!("FreeType emoji face loaded: {path}");
+                    Some(face)
+                }
+                Err(e) => {
+                    log::warn!("failed to load emoji FreeType face {path}: {e:?}");
+                    None
+                }
+            }
+        });
+        let cjk_ft_face = cjk_font_path.and_then(|(path, index)| {
+            match ft_library.new_face(&path, index as isize) {
+                Ok(face) => {
+                    log::info!("FreeType CJK face loaded: {path}");
+                    Some(face)
+                }
+                Err(e) => {
+                    log::warn!("failed to load CJK FreeType face {path}: {e:?}");
+                    None
+                }
+            }
+        });
+
+        // ── ic_width measurement for CJK size normalization ──
+        // In a terminal, CJK characters always occupy 2 cells, so the target
+        // advance should be 2 × cell_width.  If the primary font has '水' but
+        // reports an advance ≤ 1.5 × cell_width it is treating the character as
+        // single-width (common in Nerd-Font-patched fonts) — discard that value.
+        let primary_ic_width = ft_face.as_ref().and_then(|face| {
+            face.set_char_size(0, (ft_pixel_size * 64.0) as isize, 72, 72).ok()?;
+            face.load_char('水' as usize, LoadFlag::DEFAULT).ok()?;
+            let ic = face.glyph().advance().x as f32 / 64.0;
+            if ic > cell_width * 1.5 { Some(ic) } else { None }
+        });
+        let cjk_ic_width = cjk_ft_face.as_ref().and_then(|face| {
+            face.set_char_size(0, (ft_pixel_size * 64.0) as isize, 72, 72).ok()?;
+            face.load_char('水' as usize, LoadFlag::DEFAULT).ok()?;
+            Some(face.glyph().advance().x as f32 / 64.0)
+        });
+        let target_ic = primary_ic_width.unwrap_or(cell_width * 2.0);
+        let cjk_scale = match cjk_ic_width {
+            Some(cic) if cic > 0.0 => target_ic / cic,
+            _ => 1.0,
+        };
+        let cjk_pixel_size = ft_pixel_size * cjk_scale;
+        if (cjk_scale - 1.0).abs() > 0.01 {
+            log::info!(
+                "CJK ic_width normalization: primary={:.1} cjk={:.1} scale={:.3} cjk_px={:.1}",
+                target_ic,
+                cjk_ic_width.unwrap_or(0.0),
+                cjk_scale,
+                cjk_pixel_size,
+            );
+        }
 
         GlyphCache {
             alpha_packer: ShelfPacker::new(atlas_size),
@@ -321,7 +394,12 @@ impl GlyphCache {
             font_size,
             ft_library,
             ft_face,
+            emoji_ft_face,
+            emoji_font_id,
+            cjk_ft_face,
+            cjk_font_id,
             ft_pixel_size,
+            cjk_pixel_size,
             cell_width,
             cell_height,
             ascent: safe_ascent,
@@ -376,13 +454,23 @@ impl GlyphCache {
 
     /// Ensure a glyph by its ID (from text shaping) is in the atlas.
     /// Uses the thin FreeType path since crossfont only accepts characters.
+    /// `font_id` selects between primary, CJK, and emoji font faces.
+    /// `wide` indicates the glyph will be constrained to a double-width cell (disables hinting).
     pub fn ensure_glyph_id(
         &mut self,
         glyph_id: u32,
-        _font_id: fontdb::ID,
+        font_id: fontdb::ID,
         style: FontStyle,
+        wide: bool,
     ) -> Option<GlyphEntry> {
-        let key = (glyph_id, style);
+        let font_class = if Some(font_id) == self.emoji_font_id {
+            FontClass::Emoji
+        } else if Some(font_id) == self.cjk_font_id {
+            FontClass::Cjk
+        } else {
+            FontClass::Primary
+        };
+        let key = (glyph_id, font_class, style, wide);
         if let Some(entry) = self.glyph_id_cache.get(&key) {
             return Some(*entry);
         }
@@ -391,7 +479,13 @@ impl GlyphCache {
             return Some(GlyphEntry::EMPTY);
         }
 
-        let glyph = self.rasterize_glyph_id_ft(glyph_id, style)?;
+        let (ft_face, pixel_size) = match font_class {
+            FontClass::Emoji => (self.emoji_ft_face.as_ref(), self.ft_pixel_size),
+            FontClass::Cjk => (self.cjk_ft_face.as_ref(), self.cjk_pixel_size),
+            FontClass::Primary => (self.ft_face.as_ref(), self.ft_pixel_size),
+        };
+        let constrained = wide || font_class == FontClass::Cjk;
+        let glyph = self.rasterize_glyph_id_ft(ft_face, glyph_id, style, pixel_size, constrained)?;
 
         if glyph.width == 0 || glyph.height == 0 {
             self.glyph_id_cache.insert(key, GlyphEntry::EMPTY);
@@ -405,11 +499,20 @@ impl GlyphCache {
 
     /// Rasterize a glyph by ID using the thin FreeType path.
     /// Tries color bitmap first (for emoji), then falls back to grayscale outline.
-    fn rasterize_glyph_id_ft(&self, glyph_id: u32, style: FontStyle) -> Option<RasterizedGlyph> {
-        let ft_face = self.ft_face.as_ref()?;
+    /// `pixel_size` controls the rendering size (may differ for CJK scaled fonts).
+    /// `constrained` disables hinting for glyphs that will be scaled/repositioned.
+    fn rasterize_glyph_id_ft(
+        &self,
+        ft_face: Option<&freetype::Face>,
+        glyph_id: u32,
+        style: FontStyle,
+        pixel_size: f32,
+        constrained: bool,
+    ) -> Option<RasterizedGlyph> {
+        let ft_face = ft_face?;
 
         ft_face
-            .set_char_size(0, (self.ft_pixel_size * 64.0) as isize, 72, 72)
+            .set_char_size(0, (pixel_size * 64.0) as isize, 72, 72)
             .ok()?;
 
         // Try color bitmap first (CBDT/sbix emoji)
@@ -446,8 +549,8 @@ impl GlyphCache {
                     return Some(RasterizedGlyph {
                         width: new_w,
                         height: target_h,
-                        bearing_x: (glyph.bitmap_left() as f32 * scale).round() as i16,
-                        bearing_y: (glyph.bitmap_top() as f32 * scale).round() as i16,
+                        bearing_x: glyph.bitmap_left() as f32 * scale,
+                        bearing_y: glyph.bitmap_top() as f32 * scale,
                         is_color: true,
                         data: scaled,
                     });
@@ -455,16 +558,20 @@ impl GlyphCache {
                 return Some(RasterizedGlyph {
                     width: w,
                     height: h,
-                    bearing_x: glyph.bitmap_left() as i16,
-                    bearing_y: glyph.bitmap_top() as i16,
+                    bearing_x: glyph.bitmap_left() as f32,
+                    bearing_y: glyph.bitmap_top() as f32,
                     is_color: true,
                     data,
                 });
             }
         }
 
-        // Grayscale outline path
-        let load_flags = LoadFlag::TARGET_LIGHT;
+        // Grayscale outline path — disable hinting for constrained (scaled) glyphs
+        let load_flags = if constrained {
+            LoadFlag::NO_HINTING
+        } else {
+            LoadFlag::TARGET_LIGHT
+        };
         ft_face.load_glyph(glyph_id, load_flags).ok()?;
         let glyph = ft_face.glyph();
 
@@ -515,8 +622,8 @@ impl GlyphCache {
         Some(RasterizedGlyph {
             width: w,
             height: h,
-            bearing_x: glyph.bitmap_left() as i16,
-            bearing_y: glyph.bitmap_top() as i16,
+            bearing_x: glyph.bitmap_left() as f32,
+            bearing_y: glyph.bitmap_top() as f32,
             is_color: false,
             data,
         })
@@ -648,8 +755,8 @@ fn convert_crossfont_glyph(glyph: crossfont::RasterizedGlyph) -> RasterizedGlyph
             RasterizedGlyph {
                 width: w,
                 height: h,
-                bearing_x: glyph.left as i16,
-                bearing_y: glyph.top as i16,
+                bearing_x: glyph.left as f32,
+                bearing_y: glyph.top as f32,
                 is_color: false,
                 data: alpha_data,
             }
@@ -658,8 +765,8 @@ fn convert_crossfont_glyph(glyph: crossfont::RasterizedGlyph) -> RasterizedGlyph
             RasterizedGlyph {
                 width: w,
                 height: h,
-                bearing_x: glyph.left as i16,
-                bearing_y: glyph.top as i16,
+                bearing_x: glyph.left as f32,
+                bearing_y: glyph.top as f32,
                 is_color: true,
                 data: rgba_data,
             }
@@ -671,8 +778,8 @@ fn convert_crossfont_glyph(glyph: crossfont::RasterizedGlyph) -> RasterizedGlyph
 struct RasterizedGlyph {
     width: u32,
     height: u32,
-    bearing_x: i16,
-    bearing_y: i16,
+    bearing_x: f32,
+    bearing_y: f32,
     is_color: bool,
     data: Vec<u8>,
 }
@@ -683,8 +790,8 @@ fn make_glyph_entry(
     ay: u32,
     w: u32,
     h: u32,
-    bearing_x: i16,
-    bearing_y: i16,
+    bearing_x: f32,
+    bearing_y: f32,
     atlas_size: u32,
     is_color: bool,
 ) -> GlyphEntry {

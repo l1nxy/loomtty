@@ -228,6 +228,7 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                                     .map(|(&line, &(left, right))| (line, left, right))
                                     .collect();
 
+                                let cols = pane.grid_cols();
                                 let mut buf = frame_pool.pop().unwrap_or_default();
                                 let ok = codec::encode_cell_delta_streaming_framed(
                                     &mut buf,
@@ -237,9 +238,10 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                                     cursor_col,
                                     cursor_shape,
                                     mode_flags,
+                                    cols,
                                     &regions,
-                                    |line, left, right, buf| {
-                                        pane.write_cells_into(line, left, right, buf)
+                                    |line, left, right, enc| {
+                                        pane.write_cells_into_sm(line, left, right, enc)
                                     },
                                 )
                                 .is_ok();

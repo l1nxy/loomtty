@@ -16,7 +16,7 @@ use ciri_config::config::CiriConfig;
 use ciri_config::theme::ThemeConfig;
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::glyph_cache::{FontStyle, GlyphCache};
+use crate::glyph_cache::{FontStyle, GlyphCache, GlyphEntry};
 use crate::rect::Rect;
 use crate::shaper::TextShaper;
 use ciri_protocol::message::{
@@ -192,7 +192,7 @@ pub struct TerminalView {
     pub scrollbar_rect: Option<Rect>,
     /// Cached scrollbar key: (scroll_offset, total_lines, rows, pane_w_bits, pane_h_bits).
     /// Avoids redundant scrollbar recomputation when parameters haven't changed.
-    pub scrollbar_key: Option<(usize, usize, u16, u32, u32)>,
+    pub scrollbar_key: Option<(usize, usize, u16, u32, u32, u8)>,
     /// Per-row cached rendering data for incremental rebuilds.
     row_data: Vec<RowRenderData>,
     /// Per-row cached shaping data for incremental rebuilds.
@@ -393,16 +393,10 @@ fn render_cell(
         if entry.width == 0 || entry.height == 0 {
             return;
         }
-        let glyph = RelativeGlyph {
-            px: (px + entry.bearing_x as f32).round(),
-            py: (py + m.baseline - entry.bearing_y as f32).round(),
-            glyph_w: entry.width as f32,
-            glyph_h: entry.height as f32,
-            u0: entry.u0,
-            v0: entry.v0,
-            u1: entry.u1,
-            v1: entry.v1,
-            color: cell.fg,
+        let glyph = if cell.is_wide && entry.is_color {
+            constrain_wide_glyph(&entry, px, py, m, cell.fg)
+        } else {
+            make_relative_glyph(&entry, px, py, m.baseline, cell.fg)
         };
         if entry.is_color {
             color_glyphs.push(glyph);
@@ -692,8 +686,10 @@ struct RowLigatureData {
     skip_cols: Vec<bool>,
     /// Ligature glyphs to render: (col, glyph_id, font_id, style, fg_color).
     ligature_glyphs: Vec<(usize, u32, fontdb::ID, FontStyle, [f32; 4])>,
-    /// Pre-shaped grapheme clusters: (col, glyph_id).
-    grapheme_glyphs: Vec<(usize, u32)>,
+    /// Pre-shaped grapheme clusters: (col, glyph_id, font_id).
+    grapheme_glyphs: Vec<(usize, u32, fontdb::ID)>,
+    /// Per-char shaped glyph IDs for all-through-shaping path: (col, glyph_id, font_id, is_wide).
+    char_glyphs: Vec<(usize, u32, fontdb::ID, bool)>,
 }
 
 /// Render a single row of cells into per-row buffers.
@@ -702,7 +698,7 @@ fn render_single_row(
     row: usize,
     cols: u16,
     lig: Option<&RowLigatureData>,
-    primary_font_id: Option<fontdb::ID>,
+    _primary_font_id: Option<fontdb::ID>,
     m: &CellMetrics,
     ct: &ColorTable,
     atlas: &mut GlyphCache,
@@ -752,38 +748,62 @@ fn render_single_row(
         }
 
         if let Some(ld) = lig {
-            if let Ok(gi) = ld.grapheme_glyphs.binary_search_by_key(&col, |(c, _)| *c) {
+            if let Ok(gi) = ld.grapheme_glyphs.binary_search_by_key(&col, |(c, _, _)| *c) {
                 let gid = ld.grapheme_glyphs[gi].1;
-                if let Some(fid) = primary_font_id {
-                    if let Some(entry) =
-                        atlas.ensure_glyph_id(gid, fid, props.style)
-                    {
-                        if entry.width > 0 && entry.height > 0 {
-                            let px = col as f32 * m.cw;
-                            let py = row as f32 * m.ch;
-                            let g = RelativeGlyph {
-                                px: (px + entry.bearing_x as f32).round(),
-                                py: (py + m.baseline - entry.bearing_y as f32).round(),
-                                glyph_w: entry.width as f32,
-                                glyph_h: entry.height as f32,
-                                u0: entry.u0,
-                                v0: entry.v0,
-                                u1: entry.u1,
-                                v1: entry.v1,
-                                color: props.fg,
-                            };
-                            if entry.is_color {
-                                color_glyphs.push(g);
-                            } else {
-                                glyphs.push(g);
-                            }
+                let glyph_font_id = ld.grapheme_glyphs[gi].2;
+                let mut rendered = false;
+                if let Some(entry) =
+                    atlas.ensure_glyph_id(gid, glyph_font_id, props.style, props.is_wide)
+                {
+                    if entry.width > 0 && entry.height > 0 {
+                        let px = col as f32 * m.cw;
+                        let py = row as f32 * m.ch;
+                        let g = if props.is_wide && entry.is_color {
+                            constrain_wide_glyph(&entry, px, py, m, props.fg)
+                        } else {
+                            make_relative_glyph(&entry, px, py, m.baseline, props.fg)
+                        };
+                        if entry.is_color {
+                            color_glyphs.push(g);
+                        } else {
+                            glyphs.push(g);
                         }
+                        rendered = true;
                     }
                 }
-                continue;
+                if rendered {
+                    continue;
+                }
+                // Rasterization failed — fall through to emit_glyph
+                // so the base character is still visible.
             }
         }
 
+        // Try single-char shaping path (glyph-ID based, all-through-shaping)
+        if let Some(ld) = lig {
+            if let Ok(ci) = ld.char_glyphs.binary_search_by_key(&col, |(c, _, _, _)| *c) {
+                let (_, gid, font_id, is_wide) = ld.char_glyphs[ci];
+                if let Some(entry) = atlas.ensure_glyph_id(gid, font_id, props.style, is_wide) {
+                    if entry.width > 0 && entry.height > 0 {
+                        let px = col as f32 * m.cw;
+                        let py = row as f32 * m.ch;
+                        let g = if is_wide && entry.is_color {
+                            constrain_wide_glyph(&entry, px, py, m, props.fg)
+                        } else {
+                            make_relative_glyph(&entry, px, py, m.baseline, props.fg)
+                        };
+                        if entry.is_color {
+                            color_glyphs.push(g);
+                        } else {
+                            glyphs.push(g);
+                        }
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Fallback: crossfont character-based path
         emit_glyph(
             col,
             row,
@@ -800,23 +820,13 @@ fn render_single_row(
 
     if let Some(ld) = lig {
         for &(col, glyph_id, font_id, style, fg) in &ld.ligature_glyphs {
-            if let Some(entry) = atlas.ensure_glyph_id(glyph_id, font_id, style) {
+            if let Some(entry) = atlas.ensure_glyph_id(glyph_id, font_id, style, false) {
                 if entry.width == 0 || entry.height == 0 {
                     continue;
                 }
                 let px = col as f32 * m.cw;
                 let py = row as f32 * m.ch;
-                let g = RelativeGlyph {
-                    px: (px + entry.bearing_x as f32).round(),
-                    py: (py + m.baseline - entry.bearing_y as f32).round(),
-                    glyph_w: entry.width as f32,
-                    glyph_h: entry.height as f32,
-                    u0: entry.u0,
-                    v0: entry.v0,
-                    u1: entry.u1,
-                    v1: entry.v1,
-                    color: fg,
-                };
+                let g = make_relative_glyph(&entry, px, py, m.baseline, fg);
                 if entry.is_color {
                     color_glyphs.push(g);
                 } else {
@@ -1095,32 +1105,89 @@ fn precompute_row_shaping(
 
         // Check if the grapheme extras map has multi-codepoint data for this cell
         // (e.g. flag emoji with zerowidth combiners sent by the server)
-        let cluster_str = if let Some(full_grapheme) = grapheme_map.get(&(idx as u32)) {
-            full_grapheme.clone()
-        } else {
-            // Look ahead for combining/modifier characters in adjacent cells
-            let mut s = String::from(props.ch);
-            let mut look = col + if props.is_wide { 2 } else { 1 };
-            while look < cols_usize {
-                let li = row * cols_usize + look;
-                if li >= cells.len() {
-                    break;
+        let (cluster_str, consumed_cols) =
+            if let Some(full_grapheme) = grapheme_map.get(&(idx as u32)) {
+                // Server sent the full grapheme — use it directly.
+                // Wide char spacers are already skipped by render_single_row.
+                (full_grapheme.clone(), 0usize)
+            } else if is_regional_indicator(props.ch) {
+                // Regional Indicator: pair with the next cell if it's also an RI
+                let mut s = String::from(props.ch);
+                let next_col = col + 1;
+                if next_col < cols_usize {
+                    let li = row * cols_usize + next_col;
+                    if li < cells.len() {
+                        let next_ch = cells[li].ch();
+                        if is_regional_indicator(next_ch) {
+                            s.push(next_ch);
+                        }
+                    }
                 }
-                let next_ch = cells[li].ch();
-                if is_combining_or_modifier(next_ch) {
-                    s.push(next_ch);
-                    look += 1;
-                } else {
-                    break;
+                let consumed = s.chars().count() - 1; // cells consumed after base
+                (s, consumed)
+            } else {
+                // Look ahead for combining/modifier characters in adjacent cells
+                let mut s = String::from(props.ch);
+                let mut look = col + if props.is_wide { 2 } else { 1 };
+                let mut consumed = 0usize;
+                while look < cols_usize {
+                    let li = row * cols_usize + look;
+                    if li >= cells.len() {
+                        break;
+                    }
+                    let next_ch = cells[li].ch();
+                    if is_combining_or_modifier(next_ch) {
+                        s.push(next_ch);
+                        consumed += 1;
+                        look += 1;
+                    } else {
+                        break;
+                    }
                 }
-            }
-            s
-        };
+                (s, consumed)
+            };
 
         if cluster_str.graphemes(true).count() == 1 && cluster_str.chars().count() > 1 {
-            if let Some(gid) = shaper.shape_grapheme_with_face(&cluster_str, face) {
-                grapheme_glyphs.push((col, gid));
+            if let Some((gid, fid)) = shaper.shape_grapheme_with_fallback(&cluster_str, face) {
+                grapheme_glyphs.push((col, gid, fid));
+                // Mark consumed cells so they aren't rendered independently
+                let start = col + if props.is_wide { 2 } else { 1 };
+                for k in 0..consumed_cols {
+                    let c = start + k;
+                    if c < cols_usize {
+                        skip_cols[c] = true;
+                    }
+                }
             }
+        }
+    }
+
+    // ── Single-char shaping for all remaining characters ──
+    let mut char_glyphs = Vec::new();
+    for col in 0..cols_usize {
+        if skip_cols[col] {
+            continue;
+        }
+        // Skip columns already handled by grapheme shaping
+        if grapheme_glyphs.binary_search_by_key(&col, |(c, _, _)| *c).is_ok() {
+            continue;
+        }
+        // Skip columns handled by ligatures
+        if ligature_glyphs.iter().any(|(c, _, _, _, _)| *c == col) {
+            continue;
+        }
+        let idx = row * cols_usize + col;
+        if idx >= cells.len() {
+            break;
+        }
+        let Some(props) = CellProps::from_packed_cell_fast(&cells[idx], ct) else {
+            continue;
+        };
+        if props.is_hidden || props.ch == ' ' || props.ch == '\0' || props.ch.is_control() {
+            continue;
+        }
+        if let Some((gid, fid)) = shaper.shape_char_with_fallback(props.ch, face) {
+            char_glyphs.push((col, gid, fid, props.is_wide));
         }
     }
 
@@ -1128,6 +1195,7 @@ fn precompute_row_shaping(
         skip_cols,
         ligature_glyphs,
         grapheme_glyphs,
+        char_glyphs,
     }
 }
 
@@ -1206,16 +1274,11 @@ fn emit_glyph(
         }
         let px = col as f32 * m.cw;
         let py = row as f32 * m.ch;
-        let g = RelativeGlyph {
-            px: (px + entry.bearing_x as f32).round(),
-            py: (py + m.baseline - entry.bearing_y as f32).round(),
-            glyph_w: entry.width as f32,
-            glyph_h: entry.height as f32,
-            u0: entry.u0,
-            v0: entry.v0,
-            u1: entry.u1,
-            v1: entry.v1,
-            color: cell.fg,
+        // Only constrain color emoji in wide cells; text glyphs use bearing positioning
+        let g = if cell.is_wide && entry.is_color {
+            constrain_wide_glyph(&entry, px, py, m, cell.fg)
+        } else {
+            make_relative_glyph(&entry, px, py, m.baseline, cell.fg)
         };
         if entry.is_color {
             color_glyphs.push(g);
@@ -1225,7 +1288,64 @@ fn emit_glyph(
     }
 }
 
+/// Create a `RelativeGlyph` positioned by bearing offsets.
+#[inline]
+fn make_relative_glyph(
+    entry: &GlyphEntry,
+    px: f32,
+    py: f32,
+    baseline: f32,
+    color: [f32; 4],
+) -> RelativeGlyph {
+    RelativeGlyph {
+        px: (px + entry.bearing_x).round(),
+        py: (py + baseline - entry.bearing_y).round(),
+        glyph_w: entry.width as f32,
+        glyph_h: entry.height as f32,
+        u0: entry.u0,
+        v0: entry.v0,
+        u1: entry.u1,
+        v1: entry.v1,
+        color,
+    }
+}
+
+/// Fit a glyph into a double-width cell, preserving aspect ratio, centered.
+#[inline]
+fn constrain_wide_glyph(
+    entry: &GlyphEntry,
+    px: f32,
+    py: f32,
+    m: &CellMetrics,
+    color: [f32; 4],
+) -> RelativeGlyph {
+    let gw = entry.width as f32;
+    let gh = entry.height as f32;
+    let target_w = m.cw * 2.0;
+    let target_h = m.ch;
+    // Fit within target, preserving aspect ratio
+    let scale = (target_w / gw).min(target_h / gh);
+    let final_w = gw * scale;
+    let final_h = gh * scale;
+    // Center within the double-width cell
+    let offset_x = (target_w - final_w) * 0.5;
+    let offset_y = (target_h - final_h) * 0.5;
+    RelativeGlyph {
+        px: (px + offset_x).round(),
+        py: (py + offset_y).round(),
+        glyph_w: final_w,
+        glyph_h: final_h,
+        u0: entry.u0,
+        v0: entry.v0,
+        u1: entry.u1,
+        v1: entry.v1,
+        color,
+    }
+}
+
 /// Check if a character is a Unicode combining character, ZWJ, or variation selector.
+/// Regional Indicator Symbols are NOT included — they are base characters that pair
+/// only with other regional indicators (handled separately in grapheme detection).
 fn is_combining_or_modifier(c: char) -> bool {
     matches!(c,
         '\u{200D}'          // Zero Width Joiner
@@ -1237,8 +1357,13 @@ fn is_combining_or_modifier(c: char) -> bool {
         | '\u{FE20}'..='\u{FE2F}'   // Combining Half Marks
         | '\u{E0100}'..='\u{E01EF}' // Variation Selectors Supplement
         | '\u{1F3FB}'..='\u{1F3FF}' // Emoji skin tone modifiers
-        | '\u{1F1E0}'..='\u{1F1FF}' // Regional Indicator Symbols
     )
+}
+
+/// Regional Indicator Symbols: U+1F1E6 ('🇦') to U+1F1FF ('🇿').
+/// Two adjacent RIs form a single flag emoji grapheme cluster.
+fn is_regional_indicator(c: char) -> bool {
+    ('\u{1F1E6}'..='\u{1F1FF}').contains(&c)
 }
 
 /// Visual scrollbar width in pixels.
@@ -1248,12 +1373,21 @@ pub const SCROLLBAR_MARGIN: f32 = 2.0;
 
 /// Build a scrollbar rect for a pane with scrollback.
 /// Returns `None` if scrollback is empty (nothing to scroll).
+/// Visual state of the scrollbar thumb.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ScrollbarState {
+    Idle,
+    Hovered,
+    Pressed,
+}
+
 pub fn build_scrollbar(
     scroll_offset: usize,
     total_lines: usize,
     visible_rows: u16,
     pane_width: f32,
     pane_height: f32,
+    state: ScrollbarState,
     config: &CiriConfig,
 ) -> Option<Rect> {
     let visible = visible_rows as usize;
@@ -1276,18 +1410,17 @@ pub fn build_scrollbar(
         1.0
     };
 
-    let scrollbar_color = ThemeConfig::parse_color(&config.theme.bright_black);
+    let (base_color, alpha) = match state {
+        ScrollbarState::Idle => (ThemeConfig::parse_color(&config.theme.bright_black), 0.4),
+        ScrollbarState::Hovered => (ThemeConfig::parse_color(&config.theme.foreground), 0.45),
+        ScrollbarState::Pressed => (ThemeConfig::parse_color(&config.theme.foreground), 0.6),
+    };
     Some(Rect {
         x: pane_width - scrollbar_width - scrollbar_margin,
         y: position_ratio * (pane_height - thumb_height),
         w: scrollbar_width,
         h: thumb_height,
-        color: [
-            scrollbar_color[0],
-            scrollbar_color[1],
-            scrollbar_color[2],
-            0.4,
-        ],
+        color: [base_color[0], base_color[1], base_color[2], alpha],
     })
 }
 

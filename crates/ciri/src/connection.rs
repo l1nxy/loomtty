@@ -76,7 +76,10 @@ pub fn connect_or_spawn(
     }
 
     let (msg_tx, msg_rx) = crossbeam_channel::bounded::<ClientMessage>(256);
-    let (event_tx, event_rx) = crossbeam_channel::bounded::<ServerEvent>(256);
+    // Unbounded: reader must never block on send, otherwise it can't detect
+    // socket EOF and the TUI freezes.  Memory is bounded in practice because
+    // the main thread drains ~12 000 events/sec (budget=200 × 60 fps).
+    let (event_tx, event_rx) = crossbeam_channel::unbounded::<ServerEvent>();
 
     let _session = session_name.to_string();
     std::thread::Builder::new()

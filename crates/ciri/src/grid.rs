@@ -2,6 +2,27 @@ use ciri_protocol::message::*;
 use std::borrow::Cow;
 use std::collections::VecDeque;
 
+/// A single scrollback row with wrap metadata for reflow on resize.
+#[derive(Clone)]
+pub struct ScrollbackRow {
+    pub cells: Vec<PackedCell>,
+    /// True if this row's content continues on the next row (soft wrap).
+    pub wrapped: bool,
+}
+
+impl ScrollbackRow {
+    /// Build from a slice of cells, extracting the wrap flag from the last cell.
+    fn from_cells(cells: &[PackedCell]) -> Self {
+        let wrapped = cells
+            .last()
+            .map_or(false, |c| c.flags_u16() & FLAG_WRAPLINE != 0);
+        ScrollbackRow {
+            cells: cells.to_vec(),
+            wrapped,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkMatch {
     pub url: String,
@@ -27,8 +48,8 @@ struct RowChar {
 pub struct ClientPaneGrid {
     pub cols: u16,
     pub rows: u16,
-    /// History rows (oldest first). Each entry is one row of PackedCells.
-    scrollback: VecDeque<Vec<PackedCell>>,
+    /// History rows (oldest first), each with a wrap flag for reflow.
+    scrollback: VecDeque<ScrollbackRow>,
     /// Flat contiguous viewport buffer: rows * cols PackedCells.
     pub viewport: Vec<PackedCell>,
     max_scrollback: usize,
@@ -90,7 +111,7 @@ impl ClientPaneGrid {
     fn row(&self, buf_row: usize) -> &[PackedCell] {
         let sb_len = self.scrollback.len();
         if buf_row < sb_len {
-            &self.scrollback[buf_row]
+            &self.scrollback[buf_row].cells
         } else {
             let vp_line = buf_row - sb_len;
             let cols = self.cols as usize;
@@ -168,10 +189,12 @@ impl ClientPaneGrid {
         let new_cols = sync.cols as usize;
         let new_rows = sync.rows as usize;
 
-        // If dimensions changed, resize viewport but preserve scrollback.
-        // Old scrollback rows may have a different column count; visible_cells()
-        // handles padding/truncation so they remain viewable.
-        if sync.cols != self.cols || sync.rows != self.rows {
+        // If dimensions changed, reflow scrollback and resize viewport.
+        let cols_changed = sync.cols != self.cols;
+        if cols_changed || sync.rows != self.rows {
+            if cols_changed {
+                self.reflow_scrollback(new_cols);
+            }
             self.cols = sync.cols;
             self.rows = sync.rows;
             self.viewport = vec![PackedCell::default(); new_cols * new_rows];
@@ -189,7 +212,7 @@ impl ClientPaneGrid {
                 continue;
             }
             self.scrollback
-                .push_back(sync.scrollback[start..end].to_vec());
+                .push_back(ScrollbackRow::from_cells(&sync.scrollback[start..end]));
         }
 
         // Step 2: Memcpy cells directly into viewport flat buffer
@@ -257,9 +280,8 @@ impl ClientPaneGrid {
         self.dirty = true;
     }
 
-    /// Apply incremental CellDeltaBorrowed (zero-copy variant): patch the live
-    /// viewport directly using flat buffer indexing with bytemuck-cast cell slices.
-    /// Only marks individual dirty rows instead of the entire pane.
+    /// Apply incremental CellDeltaBorrowed (SM-decoded): decode opcode streams
+    /// directly into the viewport flat buffer. Only marks individual dirty rows.
     pub fn apply_delta_borrowed(&mut self, delta: &CellDeltaBorrowed) {
         // Track if cursor moved (old and new cursor rows need redraw)
         let old_cursor_line = self.cursor_line;
@@ -279,15 +301,21 @@ impl ClientPaneGrid {
             if line >= nrows {
                 continue;
             }
-            let cells = delta.cells(i);
             let col_start = region.left as usize;
-            let col_end = (col_start + cells.len()).min(cols);
+            let cell_count = (region.right - region.left + 1) as usize;
+            let col_end = (col_start + cell_count).min(cols);
             let copy_len = col_end.saturating_sub(col_start);
             if copy_len > 0 {
                 let dst_start = line * cols + col_start;
-                let dst_end = line * cols + col_end;
-                self.viewport[dst_start..dst_end].copy_from_slice(&cells[..copy_len]);
-                self.mark_row_dirty(line);
+                let dst_end = dst_start + copy_len;
+                let sm_data = delta.sm_data(i);
+                match ciri_protocol::codec::decode_sm_cells(
+                    sm_data,
+                    &mut self.viewport[dst_start..dst_end],
+                ) {
+                    Ok(_) => self.mark_row_dirty(line),
+                    Err(e) => log::warn!("SM decode error for region {i}: {e}"),
+                }
             }
         }
         // Mark old and new cursor rows dirty for cursor movement
@@ -322,12 +350,99 @@ impl ClientPaneGrid {
         scrolled
     }
 
+    /// Set scroll offset directly (clamped to valid range). Used by scrollbar drag.
+    pub fn set_scroll_offset(&mut self, offset: usize) {
+        let max = self.max_scroll_offset();
+        let new = offset.min(max);
+        if new != self.scroll_offset {
+            self.scroll_offset = new;
+            self.dirty = true;
+        }
+    }
+
     /// Jump to the live viewport (bottom).
     pub fn scroll_to_bottom(&mut self) {
         if self.scroll_offset > 0 {
             self.scroll_offset = 0;
             self.dirty = true;
         }
+    }
+
+    /// Reflow scrollback history to a new column width.
+    ///
+    /// Joins consecutive wrapped rows into logical lines, then re-splits them
+    /// at `new_cols`. This is the standard terminal reflow algorithm used by
+    /// alacritty, ghostty, kitty, etc.
+    fn reflow_scrollback(&mut self, new_cols: usize) {
+        if self.scrollback.is_empty() || new_cols == 0 {
+            return;
+        }
+        let old_len = self.scrollback.len();
+        let wrapped_count = self.scrollback.iter().filter(|r| r.wrapped).count();
+        log::debug!(
+            "reflow_scrollback: {} rows, {} wrapped, old_cols={} → new_cols={}",
+            old_len,
+            wrapped_count,
+            self.cols,
+            new_cols
+        );
+
+        // Phase 1: join wrapped rows into logical lines
+        let mut logical_lines: Vec<Vec<PackedCell>> = Vec::new();
+        let mut current_line: Vec<PackedCell> = Vec::new();
+
+        for row in self.scrollback.drain(..) {
+            // Strip trailing default cells (blank padding) before joining
+            let mut cells = row.cells;
+            if row.wrapped {
+                // For wrapped rows, keep all cells (they filled the full width)
+                current_line.append(&mut cells);
+            } else {
+                // End of logical line: trim trailing blank cells before joining
+                let blank = PackedCell::default();
+                while cells.last() == Some(&blank) {
+                    cells.pop();
+                }
+                current_line.append(&mut cells);
+                logical_lines.push(std::mem::take(&mut current_line));
+            }
+        }
+        // Flush any remaining (last row was wrapped — shouldn't normally happen
+        // but handle gracefully)
+        if !current_line.is_empty() {
+            logical_lines.push(current_line);
+        }
+
+        // Phase 2: re-split logical lines at new_cols
+        let n_logical = logical_lines.len();
+        for logical in logical_lines {
+            if logical.is_empty() {
+                // Preserve empty lines
+                self.scrollback.push_back(ScrollbackRow {
+                    cells: vec![PackedCell::default(); new_cols],
+                    wrapped: false,
+                });
+                continue;
+            }
+
+            let chunks = logical.chunks(new_cols);
+            let n_chunks = chunks.len();
+            for (i, chunk) in chunks.enumerate() {
+                let is_last = i == n_chunks - 1;
+                let mut cells = chunk.to_vec();
+                // Pad to new_cols
+                cells.resize(new_cols, PackedCell::default());
+                self.scrollback.push_back(ScrollbackRow {
+                    cells,
+                    wrapped: !is_last,
+                });
+            }
+        }
+        log::debug!(
+            "reflow_scrollback: {} logical lines → {} physical rows",
+            n_logical,
+            self.scrollback.len()
+        );
     }
 
     /// Get the cells for the current viewport (respecting scroll_offset).
@@ -966,8 +1081,8 @@ mod tests {
         // Should keep only the last 3 scrollback rows
         assert_eq!(grid.scrollback.len(), 3);
         // Oldest surviving = '7', then '8', then '9'
-        assert_eq!(grid.scrollback[0][0].ch(), '7');
-        assert_eq!(grid.scrollback[2][0].ch(), '9');
+        assert_eq!(grid.scrollback[0].cells[0].ch(), '7');
+        assert_eq!(grid.scrollback[2].cells[0].ch(), '9');
     }
 
     #[test]
@@ -1294,5 +1409,156 @@ mod tests {
         assert_eq!(grid.viewport[7].ch(), 'H');
         assert_eq!(grid.total_lines(), 3); // 1 scrollback + 2 viewport
         assert_eq!(grid.max_scroll_offset(), 1);
+    }
+
+    // ─── reflow tests ──────────────────────────────────────────────────
+
+    /// Helper: make a PackedCell with a char and optional WRAPLINE flag.
+    fn cell_with(ch: char, wrap: bool) -> PackedCell {
+        let mut c = PackedCell::with_ch(ch);
+        if wrap {
+            let f = c.flags_u16() | FLAG_WRAPLINE;
+            c.flags = f.to_le_bytes();
+        }
+        c
+    }
+
+    #[test]
+    fn reflow_widen_joins_wrapped_rows() {
+        // Start with 4-col grid, scrollback has a 8-char logical line wrapped
+        // across 2 rows: "ABCD" (wrapped) + "EF  " (not wrapped)
+        let mut grid = ClientPaneGrid::new(4, 1, 100);
+        grid.scrollback.push_back(ScrollbackRow {
+            cells: vec![
+                PackedCell::with_ch('A'),
+                PackedCell::with_ch('B'),
+                PackedCell::with_ch('C'),
+                cell_with('D', true), // last cell has WRAPLINE
+            ],
+            wrapped: true,
+        });
+        grid.scrollback.push_back(ScrollbackRow {
+            cells: vec![
+                PackedCell::with_ch('E'),
+                PackedCell::with_ch('F'),
+                PackedCell::default(),
+                PackedCell::default(),
+            ],
+            wrapped: false,
+        });
+
+        // Resize to 8 cols via a sync
+        let sync = FullPaneSync {
+            pane_id: 1,
+            generation: 1,
+            cols: 8,
+            rows: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+            title: String::new(),
+            scrollback: vec![],
+            scrollback_rows: 0,
+            cells: vec![PackedCell::default(); 8],
+            grapheme_extras: GraphemeExtras::new(),
+        };
+        grid.apply_full_sync(&sync);
+
+        // Should reflow to 1 row: "ABCDEF  " (not wrapped)
+        assert_eq!(grid.scrollback.len(), 1);
+        assert!(!grid.scrollback[0].wrapped);
+        assert_eq!(grid.scrollback[0].cells[0].ch(), 'A');
+        assert_eq!(grid.scrollback[0].cells[5].ch(), 'F');
+    }
+
+    #[test]
+    fn reflow_narrow_splits_long_line() {
+        // Start with 6-col grid, scrollback has "ABCDEF" (not wrapped)
+        let mut grid = ClientPaneGrid::new(6, 1, 100);
+        grid.scrollback.push_back(ScrollbackRow {
+            cells: vec![
+                PackedCell::with_ch('A'),
+                PackedCell::with_ch('B'),
+                PackedCell::with_ch('C'),
+                PackedCell::with_ch('D'),
+                PackedCell::with_ch('E'),
+                PackedCell::with_ch('F'),
+            ],
+            wrapped: false,
+        });
+
+        // Resize to 3 cols
+        let sync = FullPaneSync {
+            pane_id: 1,
+            generation: 1,
+            cols: 3,
+            rows: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+            title: String::new(),
+            scrollback: vec![],
+            scrollback_rows: 0,
+            cells: vec![PackedCell::default(); 3],
+            grapheme_extras: GraphemeExtras::new(),
+        };
+        grid.apply_full_sync(&sync);
+
+        // Should reflow to 2 rows: "ABC" (wrapped) + "DEF" (not wrapped)
+        assert_eq!(grid.scrollback.len(), 2);
+        assert!(grid.scrollback[0].wrapped);
+        assert!(!grid.scrollback[1].wrapped);
+        assert_eq!(grid.scrollback[0].cells[0].ch(), 'A');
+        assert_eq!(grid.scrollback[0].cells[2].ch(), 'C');
+        assert_eq!(grid.scrollback[1].cells[0].ch(), 'D');
+        assert_eq!(grid.scrollback[1].cells[2].ch(), 'F');
+    }
+
+    #[test]
+    fn reflow_preserves_unwrapped_lines() {
+        // Two separate logical lines that don't wrap
+        let mut grid = ClientPaneGrid::new(4, 1, 100);
+        grid.scrollback.push_back(ScrollbackRow {
+            cells: vec![
+                PackedCell::with_ch('A'),
+                PackedCell::with_ch('B'),
+                PackedCell::default(),
+                PackedCell::default(),
+            ],
+            wrapped: false,
+        });
+        grid.scrollback.push_back(ScrollbackRow {
+            cells: vec![
+                PackedCell::with_ch('X'),
+                PackedCell::with_ch('Y'),
+                PackedCell::default(),
+                PackedCell::default(),
+            ],
+            wrapped: false,
+        });
+
+        // Resize to 8 cols — should stay as 2 separate rows (not joined)
+        let sync = FullPaneSync {
+            pane_id: 1,
+            generation: 1,
+            cols: 8,
+            rows: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+            title: String::new(),
+            scrollback: vec![],
+            scrollback_rows: 0,
+            cells: vec![PackedCell::default(); 8],
+            grapheme_extras: GraphemeExtras::new(),
+        };
+        grid.apply_full_sync(&sync);
+
+        assert_eq!(grid.scrollback.len(), 2);
+        assert_eq!(grid.scrollback[0].cells[0].ch(), 'A');
+        assert_eq!(grid.scrollback[1].cells[0].ch(), 'X');
     }
 }

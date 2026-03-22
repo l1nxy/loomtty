@@ -222,7 +222,6 @@ impl App {
                 InputResult::Action(action) => self.handle_action(action),
                 InputResult::Consumed => {}
                 InputResult::PassThrough => {
-                    self.scroll_active_to_bottom();
                     // Use Kitty keyboard encoding if the active pane has it enabled
                     let use_kitty = self
                         .workspaces
@@ -235,7 +234,10 @@ impl App {
                     } else {
                         key_event_to_pty_bytes(event, ctrl)
                     };
+                    // Only scroll to bottom when there's actual input to send,
+                    // so bare modifier keys (Ctrl, Shift, …) don't reset scroll.
                     if !bytes.is_empty() {
+                        self.scroll_active_to_bottom();
                         if self.broadcast_mode {
                             // Send to visible panes only — off-screen panes should
                             // not receive destructive commands unexpectedly.

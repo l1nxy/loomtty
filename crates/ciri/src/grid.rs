@@ -257,9 +257,8 @@ impl ClientPaneGrid {
         self.dirty = true;
     }
 
-    /// Apply incremental CellDeltaBorrowed (zero-copy variant): patch the live
-    /// viewport directly using flat buffer indexing with bytemuck-cast cell slices.
-    /// Only marks individual dirty rows instead of the entire pane.
+    /// Apply incremental CellDeltaBorrowed (SM-decoded): decode opcode streams
+    /// directly into the viewport flat buffer. Only marks individual dirty rows.
     pub fn apply_delta_borrowed(&mut self, delta: &CellDeltaBorrowed) {
         // Track if cursor moved (old and new cursor rows need redraw)
         let old_cursor_line = self.cursor_line;
@@ -279,15 +278,21 @@ impl ClientPaneGrid {
             if line >= nrows {
                 continue;
             }
-            let cells = delta.cells(i);
             let col_start = region.left as usize;
-            let col_end = (col_start + cells.len()).min(cols);
+            let cell_count = (region.right - region.left + 1) as usize;
+            let col_end = (col_start + cell_count).min(cols);
             let copy_len = col_end.saturating_sub(col_start);
             if copy_len > 0 {
                 let dst_start = line * cols + col_start;
-                let dst_end = line * cols + col_end;
-                self.viewport[dst_start..dst_end].copy_from_slice(&cells[..copy_len]);
-                self.mark_row_dirty(line);
+                let dst_end = dst_start + copy_len;
+                let sm_data = delta.sm_data(i);
+                match ciri_protocol::codec::decode_sm_cells(
+                    sm_data,
+                    &mut self.viewport[dst_start..dst_end],
+                ) {
+                    Ok(_) => self.mark_row_dirty(line),
+                    Err(e) => log::warn!("SM decode error for region {i}: {e}"),
+                }
             }
         }
         // Mark old and new cursor rows dirty for cursor movement

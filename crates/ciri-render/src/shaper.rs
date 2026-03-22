@@ -30,6 +30,7 @@ pub struct TextShaper {
     db: fontdb::Database,
     fonts: HashMap<fontdb::ID, FontData>,
     primary_font_id: Option<fontdb::ID>,
+    emoji_font_id: Option<fontdb::ID>,
 }
 
 impl TextShaper {
@@ -42,16 +43,24 @@ impl TextShaper {
         db.load_system_fonts();
 
         let primary_font_id = find_primary_font(&db, family_name);
+        let emoji_font_id = find_emoji_font(&db);
 
         let mut shaper = TextShaper {
             db,
             fonts: HashMap::new(),
             primary_font_id,
+            emoji_font_id,
         };
 
         // Preload primary font data for shaping
         if let Some(fid) = primary_font_id {
             shaper.load_font(fid);
+        }
+        // Preload emoji font data for fallback shaping
+        if let Some(eid) = emoji_font_id {
+            if Some(eid) != primary_font_id {
+                shaper.load_font(eid);
+            }
         }
 
         shaper
@@ -61,9 +70,21 @@ impl TextShaper {
         self.primary_font_id
     }
 
+    pub fn emoji_font_id(&self) -> Option<fontdb::ID> {
+        self.emoji_font_id
+    }
+
     /// Return the file path and face index of the primary font, for FreeType loading.
     pub fn primary_font_path(&self) -> Option<(String, u32)> {
-        let fid = self.primary_font_id?;
+        self.font_path(self.primary_font_id?)
+    }
+
+    /// Return the file path and face index of the emoji font, for FreeType loading.
+    pub fn emoji_font_path(&self) -> Option<(String, u32)> {
+        self.font_path(self.emoji_font_id?)
+    }
+
+    fn font_path(&self, fid: fontdb::ID) -> Option<(String, u32)> {
         let face = self.db.face(fid)?;
         match &face.source {
             fontdb::Source::File(path) => Some((path.to_string_lossy().to_string(), face.index)),
@@ -164,14 +185,43 @@ impl TextShaper {
         ligatures
     }
 
+    /// Shape a grapheme cluster, trying the primary font first, then the emoji font.
+    /// Returns `(glyph_id, font_id)` on success.
+    pub fn shape_grapheme_with_fallback(
+        &self,
+        cluster: &str,
+        primary_face: &rustybuzz::Face,
+    ) -> Option<(u32, fontdb::ID)> {
+        // Try primary font first
+        if let Some(gid) = self.shape_grapheme_with_face(cluster, primary_face) {
+            return Some((gid, self.primary_font_id?));
+        }
+        // Try emoji font as fallback
+        let eid = self.emoji_font_id?;
+        let emoji_face = self.create_face(eid)?;
+        let gid = self.shape_grapheme_with_face(cluster, &emoji_face)?;
+        Some((gid, eid))
+    }
+
     /// Shape a grapheme cluster using a pre-created face.
+    ///
+    /// Returns `None` if the font doesn't actually combine the cluster into
+    /// fewer glyphs than input characters (i.e., no GSUB substitution happened).
     pub fn shape_grapheme_with_face(&self, cluster: &str, face: &rustybuzz::Face) -> Option<u32> {
         let mut buffer = rustybuzz::UnicodeBuffer::new();
         buffer.push_str(cluster);
 
         let output = rustybuzz::shape(face, &[], buffer);
-        output
-            .glyph_infos()
+        let infos = output.glyph_infos();
+
+        // If shaping produced as many glyphs as input chars, the font didn't
+        // actually combine them — it just mapped each char individually.
+        let input_chars = cluster.chars().count();
+        if input_chars > 1 && infos.len() >= input_chars {
+            return None;
+        }
+
+        infos
             .iter()
             .find(|gi| gi.glyph_id != 0)
             .map(|gi| gi.glyph_id)
@@ -234,6 +284,41 @@ fn find_primary_font(db: &fontdb::Database, family_name: &str) -> Option<fontdb:
     }
 
     log::warn!("no suitable font found for '{}'", family_name);
+    None
+}
+
+/// Find a color emoji font from system fonts.
+fn find_emoji_font(db: &fontdb::Database) -> Option<fontdb::ID> {
+    // Prioritized list of known emoji font families
+    let known = [
+        "Noto Color Emoji",
+        "Apple Color Emoji",
+        "Segoe UI Emoji",
+        "Twemoji",
+        "Twitter Color Emoji",
+        "EmojiOne Color",
+        "JoyPixels",
+    ];
+    for name in &known {
+        for face in db.faces() {
+            for fam in &face.families {
+                if fam.0.eq_ignore_ascii_case(name) {
+                    log::info!("emoji font: {}", fam.0);
+                    return Some(face.id);
+                }
+            }
+        }
+    }
+    // Fallback: any font with "emoji" in the family name
+    for face in db.faces() {
+        for fam in &face.families {
+            if fam.0.to_ascii_lowercase().contains("emoji") {
+                log::info!("emoji font (fallback match): {}", fam.0);
+                return Some(face.id);
+            }
+        }
+    }
+    log::info!("no emoji font found on system");
     None
 }
 

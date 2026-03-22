@@ -537,16 +537,20 @@ impl Pane {
         &self.active_images
     }
 
-    /// Write packed cells for a line range directly into a byte buffer (zero-copy encoding).
-    /// Avoids intermediate Vec<PackedCell> allocation — cells go directly from grid → bytes.
-    pub fn write_cells_into(&self, line: u16, left: u16, right: u16, buf: &mut Vec<u8>) {
+    /// Push packed cells for a line range into a state-machine encoder.
+    /// Cells go from grid → PackedCell → StateEncoder opcode stream.
+    pub fn write_cells_into_sm(
+        &self,
+        line: u16,
+        left: u16,
+        right: u16,
+        encoder: &mut ciri_protocol::codec::StateEncoder,
+    ) {
         let grid = self.term.grid();
         for col in left..=right {
             let point = Point::new(Line(line as i32), Column(col as usize));
             let packed = pack_cell(&grid[point]);
-            buf.extend_from_slice(ciri_protocol::codec::cells_to_bytes(std::slice::from_ref(
-                &packed,
-            )));
+            encoder.push_cell(&packed);
         }
     }
 }

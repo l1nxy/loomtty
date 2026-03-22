@@ -769,6 +769,8 @@ impl Renderer {
         dpi_scale: f64,
         family_name: &str,
         primary_font_path: Option<(String, u32)>,
+        emoji_font_path: Option<(String, u32)>,
+        emoji_font_id: Option<fontdb::ID>,
         render_config: &RenderConfig,
     ) -> (GlyphCache, GlyphAtlasGpu) {
         let cache = GlyphCache::new(
@@ -776,6 +778,8 @@ impl Renderer {
             dpi_scale,
             family_name,
             primary_font_path,
+            emoji_font_path,
+            emoji_font_id,
             render_config,
         );
 

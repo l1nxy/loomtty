@@ -394,6 +394,7 @@ dependencies = [
  "notify",
  "pollster",
  "rmp-serde",
+ "serde_json",
  "tokio",
  "wgpu",
  "winit",

@@ -155,19 +155,21 @@ impl Renderer {
         dpi_scale: f64,
         family_name: &str,
         primary_font_path: Option<(String, u32)>,
+        emoji_font_path: Option<(String, u32)>,
+        emoji_font_id: Option<fontdb::ID>,
         render_config: &RenderConfig,
     ) -> (GlyphCache, GlyphAtlasGpu) {
         match self {
             #[cfg(feature = "blade")]
             Renderer::Blade(r) => {
                 let (cache, atlas) =
-                    r.create_atlas(font_size_pt, dpi_scale, family_name, primary_font_path, render_config);
+                    r.create_atlas(font_size_pt, dpi_scale, family_name, primary_font_path, emoji_font_path, emoji_font_id, render_config);
                 (cache, GlyphAtlasGpu::Blade(atlas))
             }
             #[cfg(feature = "gl")]
             Renderer::Gl(r) => {
                 let (cache, atlas) =
-                    r.create_atlas(font_size_pt, dpi_scale, family_name, primary_font_path, render_config);
+                    r.create_atlas(font_size_pt, dpi_scale, family_name, primary_font_path, emoji_font_path, emoji_font_id, render_config);
                 (cache, GlyphAtlasGpu::Gl(atlas))
             }
         }

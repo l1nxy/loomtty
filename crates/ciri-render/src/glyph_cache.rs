@@ -186,7 +186,7 @@ pub struct GlyphCache {
     pub max_instances: usize,
     // Caching
     cache: HashMap<(char, FontStyle), GlyphEntry>,
-    glyph_id_cache: HashMap<(u32, FontStyle), GlyphEntry>,
+    glyph_id_cache: HashMap<(u32, bool, FontStyle), GlyphEntry>,
     // Crossfont rasterizer (character-based rendering)
     rasterizer: Rasterizer,
     font_keys: FontKeySet,
@@ -196,6 +196,8 @@ pub struct GlyphCache {
     #[allow(dead_code)]
     ft_library: FtLibrary,
     ft_face: Option<freetype::Face>,
+    emoji_ft_face: Option<freetype::Face>,
+    emoji_font_id: Option<fontdb::ID>,
     ft_pixel_size: f32,
     // Public metrics
     pub cell_width: f32,
@@ -214,6 +216,8 @@ impl GlyphCache {
         dpi_scale: f64,
         family_name: &str,
         primary_font_path: Option<(String, u32)>,
+        emoji_font_path: Option<(String, u32)>,
+        emoji_font_id: Option<fontdb::ID>,
         render_config: &RenderConfig,
     ) -> Self {
         let atlas_size = render_config.atlas_size;
@@ -299,6 +303,18 @@ impl GlyphCache {
                 }
             }
         });
+        let emoji_ft_face = emoji_font_path.and_then(|(path, index)| {
+            match ft_library.new_face(&path, index as isize) {
+                Ok(face) => {
+                    log::info!("FreeType emoji face loaded: {path}");
+                    Some(face)
+                }
+                Err(e) => {
+                    log::warn!("failed to load emoji FreeType face {path}: {e:?}");
+                    None
+                }
+            }
+        });
 
         GlyphCache {
             alpha_packer: ShelfPacker::new(atlas_size),
@@ -321,6 +337,8 @@ impl GlyphCache {
             font_size,
             ft_library,
             ft_face,
+            emoji_ft_face,
+            emoji_font_id,
             ft_pixel_size,
             cell_width,
             cell_height,
@@ -376,13 +394,15 @@ impl GlyphCache {
 
     /// Ensure a glyph by its ID (from text shaping) is in the atlas.
     /// Uses the thin FreeType path since crossfont only accepts characters.
+    /// `font_id` selects between primary and emoji font faces.
     pub fn ensure_glyph_id(
         &mut self,
         glyph_id: u32,
-        _font_id: fontdb::ID,
+        font_id: fontdb::ID,
         style: FontStyle,
     ) -> Option<GlyphEntry> {
-        let key = (glyph_id, style);
+        let is_emoji = Some(font_id) == self.emoji_font_id;
+        let key = (glyph_id, is_emoji, style);
         if let Some(entry) = self.glyph_id_cache.get(&key) {
             return Some(*entry);
         }
@@ -391,7 +411,12 @@ impl GlyphCache {
             return Some(GlyphEntry::EMPTY);
         }
 
-        let glyph = self.rasterize_glyph_id_ft(glyph_id, style)?;
+        let ft_face = if is_emoji {
+            self.emoji_ft_face.as_ref()
+        } else {
+            self.ft_face.as_ref()
+        };
+        let glyph = self.rasterize_glyph_id_ft(ft_face, glyph_id, style)?;
 
         if glyph.width == 0 || glyph.height == 0 {
             self.glyph_id_cache.insert(key, GlyphEntry::EMPTY);
@@ -405,8 +430,13 @@ impl GlyphCache {
 
     /// Rasterize a glyph by ID using the thin FreeType path.
     /// Tries color bitmap first (for emoji), then falls back to grayscale outline.
-    fn rasterize_glyph_id_ft(&self, glyph_id: u32, style: FontStyle) -> Option<RasterizedGlyph> {
-        let ft_face = self.ft_face.as_ref()?;
+    fn rasterize_glyph_id_ft(
+        &self,
+        ft_face: Option<&freetype::Face>,
+        glyph_id: u32,
+        style: FontStyle,
+    ) -> Option<RasterizedGlyph> {
+        let ft_face = ft_face?;
 
         ft_face
             .set_char_size(0, (self.ft_pixel_size * 64.0) as isize, 72, 72)

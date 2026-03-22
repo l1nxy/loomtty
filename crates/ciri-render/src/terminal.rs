@@ -692,8 +692,8 @@ struct RowLigatureData {
     skip_cols: Vec<bool>,
     /// Ligature glyphs to render: (col, glyph_id, font_id, style, fg_color).
     ligature_glyphs: Vec<(usize, u32, fontdb::ID, FontStyle, [f32; 4])>,
-    /// Pre-shaped grapheme clusters: (col, glyph_id).
-    grapheme_glyphs: Vec<(usize, u32)>,
+    /// Pre-shaped grapheme clusters: (col, glyph_id, font_id).
+    grapheme_glyphs: Vec<(usize, u32, fontdb::ID)>,
 }
 
 /// Render a single row of cells into per-row buffers.
@@ -702,7 +702,7 @@ fn render_single_row(
     row: usize,
     cols: u16,
     lig: Option<&RowLigatureData>,
-    primary_font_id: Option<fontdb::ID>,
+    _primary_font_id: Option<fontdb::ID>,
     m: &CellMetrics,
     ct: &ColorTable,
     atlas: &mut GlyphCache,
@@ -752,35 +752,40 @@ fn render_single_row(
         }
 
         if let Some(ld) = lig {
-            if let Ok(gi) = ld.grapheme_glyphs.binary_search_by_key(&col, |(c, _)| *c) {
+            if let Ok(gi) = ld.grapheme_glyphs.binary_search_by_key(&col, |(c, _, _)| *c) {
                 let gid = ld.grapheme_glyphs[gi].1;
-                if let Some(fid) = primary_font_id {
-                    if let Some(entry) =
-                        atlas.ensure_glyph_id(gid, fid, props.style)
-                    {
-                        if entry.width > 0 && entry.height > 0 {
-                            let px = col as f32 * m.cw;
-                            let py = row as f32 * m.ch;
-                            let g = RelativeGlyph {
-                                px: (px + entry.bearing_x as f32).round(),
-                                py: (py + m.baseline - entry.bearing_y as f32).round(),
-                                glyph_w: entry.width as f32,
-                                glyph_h: entry.height as f32,
-                                u0: entry.u0,
-                                v0: entry.v0,
-                                u1: entry.u1,
-                                v1: entry.v1,
-                                color: props.fg,
-                            };
-                            if entry.is_color {
-                                color_glyphs.push(g);
-                            } else {
-                                glyphs.push(g);
-                            }
+                let glyph_font_id = ld.grapheme_glyphs[gi].2;
+                let mut rendered = false;
+                if let Some(entry) =
+                    atlas.ensure_glyph_id(gid, glyph_font_id, props.style)
+                {
+                    if entry.width > 0 && entry.height > 0 {
+                        let px = col as f32 * m.cw;
+                        let py = row as f32 * m.ch;
+                        let g = RelativeGlyph {
+                            px: (px + entry.bearing_x as f32).round(),
+                            py: (py + m.baseline - entry.bearing_y as f32).round(),
+                            glyph_w: entry.width as f32,
+                            glyph_h: entry.height as f32,
+                            u0: entry.u0,
+                            v0: entry.v0,
+                            u1: entry.u1,
+                            v1: entry.v1,
+                            color: props.fg,
+                        };
+                        if entry.is_color {
+                            color_glyphs.push(g);
+                        } else {
+                            glyphs.push(g);
                         }
+                        rendered = true;
                     }
                 }
-                continue;
+                if rendered {
+                    continue;
+                }
+                // Rasterization failed — fall through to emit_glyph
+                // so the base character is still visible.
             }
         }
 
@@ -1095,31 +1100,59 @@ fn precompute_row_shaping(
 
         // Check if the grapheme extras map has multi-codepoint data for this cell
         // (e.g. flag emoji with zerowidth combiners sent by the server)
-        let cluster_str = if let Some(full_grapheme) = grapheme_map.get(&(idx as u32)) {
-            full_grapheme.clone()
-        } else {
-            // Look ahead for combining/modifier characters in adjacent cells
-            let mut s = String::from(props.ch);
-            let mut look = col + if props.is_wide { 2 } else { 1 };
-            while look < cols_usize {
-                let li = row * cols_usize + look;
-                if li >= cells.len() {
-                    break;
+        let (cluster_str, consumed_cols) =
+            if let Some(full_grapheme) = grapheme_map.get(&(idx as u32)) {
+                // Server sent the full grapheme — use it directly.
+                // Wide char spacers are already skipped by render_single_row.
+                (full_grapheme.clone(), 0usize)
+            } else if is_regional_indicator(props.ch) {
+                // Regional Indicator: pair with the next cell if it's also an RI
+                let mut s = String::from(props.ch);
+                let next_col = col + 1;
+                if next_col < cols_usize {
+                    let li = row * cols_usize + next_col;
+                    if li < cells.len() {
+                        let next_ch = cells[li].ch();
+                        if is_regional_indicator(next_ch) {
+                            s.push(next_ch);
+                        }
+                    }
                 }
-                let next_ch = cells[li].ch();
-                if is_combining_or_modifier(next_ch) {
-                    s.push(next_ch);
-                    look += 1;
-                } else {
-                    break;
+                let consumed = s.chars().count() - 1; // cells consumed after base
+                (s, consumed)
+            } else {
+                // Look ahead for combining/modifier characters in adjacent cells
+                let mut s = String::from(props.ch);
+                let mut look = col + if props.is_wide { 2 } else { 1 };
+                let mut consumed = 0usize;
+                while look < cols_usize {
+                    let li = row * cols_usize + look;
+                    if li >= cells.len() {
+                        break;
+                    }
+                    let next_ch = cells[li].ch();
+                    if is_combining_or_modifier(next_ch) {
+                        s.push(next_ch);
+                        consumed += 1;
+                        look += 1;
+                    } else {
+                        break;
+                    }
                 }
-            }
-            s
-        };
+                (s, consumed)
+            };
 
         if cluster_str.graphemes(true).count() == 1 && cluster_str.chars().count() > 1 {
-            if let Some(gid) = shaper.shape_grapheme_with_face(&cluster_str, face) {
-                grapheme_glyphs.push((col, gid));
+            if let Some((gid, fid)) = shaper.shape_grapheme_with_fallback(&cluster_str, face) {
+                grapheme_glyphs.push((col, gid, fid));
+                // Mark consumed cells so they aren't rendered independently
+                let start = col + if props.is_wide { 2 } else { 1 };
+                for k in 0..consumed_cols {
+                    let c = start + k;
+                    if c < cols_usize {
+                        skip_cols[c] = true;
+                    }
+                }
             }
         }
     }
@@ -1226,6 +1259,8 @@ fn emit_glyph(
 }
 
 /// Check if a character is a Unicode combining character, ZWJ, or variation selector.
+/// Regional Indicator Symbols are NOT included — they are base characters that pair
+/// only with other regional indicators (handled separately in grapheme detection).
 fn is_combining_or_modifier(c: char) -> bool {
     matches!(c,
         '\u{200D}'          // Zero Width Joiner
@@ -1237,8 +1272,13 @@ fn is_combining_or_modifier(c: char) -> bool {
         | '\u{FE20}'..='\u{FE2F}'   // Combining Half Marks
         | '\u{E0100}'..='\u{E01EF}' // Variation Selectors Supplement
         | '\u{1F3FB}'..='\u{1F3FF}' // Emoji skin tone modifiers
-        | '\u{1F1E0}'..='\u{1F1FF}' // Regional Indicator Symbols
     )
+}
+
+/// Regional Indicator Symbols: U+1F1E6 ('🇦') to U+1F1FF ('🇿').
+/// Two adjacent RIs form a single flag emoji grapheme cluster.
+fn is_regional_indicator(c: char) -> bool {
+    ('\u{1F1E6}'..='\u{1F1FF}').contains(&c)
 }
 
 /// Visual scrollbar width in pixels.

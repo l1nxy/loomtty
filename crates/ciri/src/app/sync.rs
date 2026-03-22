@@ -319,6 +319,8 @@ impl App {
                             self.dpi_scale,
                             &self.config.font.family,
                             shaper.primary_font_path(),
+                            shaper.emoji_font_path(),
+                            shaper.emoji_font_id(),
                             &self.config.render,
                         );
                         self.glyph_cache = Some(cache);

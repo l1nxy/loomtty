@@ -395,6 +395,12 @@ pub enum ServerMessage {
     Error { message: String },
     /// Bell notification from a pane (BEL / \x07).
     Bell { pane_id: u64 },
+    /// A shell command completed (requires shell integration / OSC 133).
+    CommandCompleted {
+        pane_id: u64,
+        duration_secs: u64,
+        exit_code: Option<i32>,
+    },
     /// Inline image placement from Kitty/Sixel protocol.
     ImagePlacement {
         pane_id: u64,

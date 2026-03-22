@@ -16,7 +16,9 @@ impl Osc133Parser {
     }
 
     /// Scan data for OSC 133 sequences, updating shell_state.
-    pub fn scan(&mut self, data: &[u8], shell_state: &mut ShellState) {
+    /// If a command completion (OSC 133;D) is detected, `last_command_duration` is set
+    /// with the elapsed time since the command started (OSC 133;C).
+    pub fn scan(&mut self, data: &[u8], shell_state: &mut ShellState, last_command_duration: &mut Option<std::time::Duration>) {
         // If we have a partial OSC from a previous read, prepend it
         let working_data;
         let data = if !self.partial.is_empty() {
@@ -104,12 +106,16 @@ impl Osc133Parser {
                     b'C' => {
                         shell_state.zone = SemanticZone::Output;
                         shell_state.output_line = Some(0);
+                        shell_state.command_start = Some(std::time::Instant::now());
                         log::debug!("OSC 133;C command output");
                     }
                     b'D' => {
                         shell_state.zone = SemanticZone::Prompt;
                         let exit_code = params.trim().parse::<i32>().ok();
                         shell_state.last_exit_code = exit_code;
+                        if let Some(start) = shell_state.command_start.take() {
+                            *last_command_duration = Some(start.elapsed());
+                        }
                         log::debug!("OSC 133;D command done, exit={exit_code:?}");
                     }
                     _ => {

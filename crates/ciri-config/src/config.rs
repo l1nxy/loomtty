@@ -189,6 +189,13 @@ pub struct TerminalConfig {
     pub copy_on_select: bool,
     /// Clear text selection when typing.
     pub clear_selection_on_type: bool,
+    /// Send desktop notification when a command takes longer than this many seconds.
+    /// Requires shell integration (OSC 133). 0 = disabled.
+    pub notify_command_threshold_secs: u64,
+    /// Audio file path for bell notification. Empty = no audio.
+    pub bell_audio: String,
+    /// Request window attention on bell (urgency hint).
+    pub bell_urgency: bool,
 }
 
 impl Default for TerminalConfig {
@@ -204,6 +211,9 @@ impl Default for TerminalConfig {
             scrollback_lines: 10000,
             copy_on_select: false,
             clear_selection_on_type: true,
+            notify_command_threshold_secs: 0,
+            bell_audio: String::new(),
+            bell_urgency: true,
         }
     }
 }

@@ -448,6 +448,10 @@ impl ApplicationHandler for App {
 
             WindowEvent::RedrawRequested => self.render(),
 
+            WindowEvent::Focused(focused) => {
+                self.window_focused = focused;
+            }
+
             _ => {}
         }
     }

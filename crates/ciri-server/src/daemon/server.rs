@@ -626,6 +626,19 @@ impl Server {
                     }
                 }
             }
+            ClientMessage::FocusPane { pane_id } => {
+                if let Some(session) = self.sessions.get_mut(&session_name) {
+                    if session.focus_pane(pane_id) {
+                        session.mark_session_dirty();
+                        responses.push(ServerResponse::BroadcastToSession(
+                            session_name,
+                            ServerMessage::LayoutUpdate {
+                                layout: session.layout_state(),
+                            },
+                        ));
+                    }
+                }
+            }
             ClientMessage::KillServer => {
                 responses.push(ServerResponse::ShutdownServer);
             }

@@ -245,6 +245,8 @@ pub struct InputConfig {
     /// Input mode: "prefix" (tmux-style, one action per leader press)
     /// or "sticky" (zellij-style, stay in leader until Esc).
     pub mode: String,
+    /// Enable focus-follows-mouse: hovering over a pane focuses it.
+    pub focus_follows_mouse: bool,
 }
 
 impl Default for InputConfig {
@@ -254,6 +256,7 @@ impl Default for InputConfig {
             double_tap_window_ms: 300,
             scroll_multiplier: 50.0,
             mode: "prefix".to_string(),
+            focus_follows_mouse: false,
         }
     }
 }

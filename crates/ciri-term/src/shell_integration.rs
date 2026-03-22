@@ -97,6 +97,7 @@ impl Osc133Parser {
                     b'A' => {
                         shell_state.zone = SemanticZone::Prompt;
                         shell_state.prompt_line = Some(0); // exact line resolved at snapshot time
+                        shell_state.command_start = None;
                         log::debug!("OSC 133;A prompt start");
                     }
                     b'B' => {

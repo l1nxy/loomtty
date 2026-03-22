@@ -114,7 +114,9 @@ impl Pty {
         if let Ok(integration_dir) = std::env::var("CIRI_SHELL_INTEGRATION_DIR") {
             cmd.env("CIRI_SHELL_INTEGRATION_DIR", &integration_dir);
 
-            // Bash: BASH_ENV is sourced by interactive and non-interactive bash.
+            // Bash: BASH_ENV is only sourced by non-interactive bash (scripts,
+            // subshells). For interactive shells, users should add to .bashrc:
+            //   [[ -n "$CIRI_SHELL_INTEGRATION_DIR" ]] && source "$CIRI_SHELL_INTEGRATION_DIR/ciri.bash"
             let bash_script = format!("{}/ciri.bash", integration_dir);
             cmd.env("BASH_ENV", &bash_script);
 

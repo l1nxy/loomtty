@@ -121,6 +121,7 @@ impl App {
                 self.overview.active = !self.overview.active;
                 let omega = self.config.animation.speed;
                 if self.overview.active {
+                    self.context_menu.visible = false;
                     self.refresh_overview_zoom();
                     self.view_offset_x.animate_to(0.0, omega);
                     self.view_offset_y.animate_to(0.0, omega);

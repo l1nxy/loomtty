@@ -66,9 +66,11 @@ impl Osc7Parser {
 }
 
 /// Decode percent-encoded (%XX) sequences in a URI path.
+/// Decodes to raw bytes first, then converts to UTF-8 so that multi-byte
+/// characters (e.g. CJK paths) are reconstructed correctly.
 fn percent_decode(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
     let bytes = s.as_bytes();
+    let mut decoded_bytes = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
@@ -76,15 +78,15 @@ fn percent_decode(s: &str) -> String {
                 std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""),
                 16,
             ) {
-                result.push(byte as char);
+                decoded_bytes.push(byte);
                 i += 3;
                 continue;
             }
         }
-        result.push(bytes[i] as char);
+        decoded_bytes.push(bytes[i]);
         i += 1;
     }
-    result
+    String::from_utf8(decoded_bytes).unwrap_or_else(|_| s.to_string())
 }
 
 #[cfg(test)]

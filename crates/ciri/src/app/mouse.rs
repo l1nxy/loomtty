@@ -411,9 +411,9 @@ impl App {
                 sel.end,
                 sel.active
             );
-            if sel.active && sel.start != sel.end {
+            if sel.active && sel.start != sel.end && self.config.terminal.copy_on_select {
                 if let Some(text) = self.extract_selected_text() {
-                    log::info!("auto-copy selection: {} bytes", text.len());
+                    log::info!("copy-on-select: {} bytes", text.len());
                     if let Some(cb) = &mut self.clipboard {
                         let _ = cb.set_text(&text);
                     }

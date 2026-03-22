@@ -32,13 +32,43 @@ fn main() -> Result<()> {
             return Ok(());
         }
         CliCommand::List => {
-            return control::run_control_command(ClientMessage::ListSessions);
+            return control::run_control_command(ClientMessage::ListSessions, false);
         }
         CliCommand::Kill { session_name } => {
-            return control::run_control_command(ClientMessage::KillSession { session_name });
+            return control::run_control_command(ClientMessage::KillSession { session_name }, false);
         }
         CliCommand::KillServer => {
-            return control::run_control_command(ClientMessage::KillServer);
+            return control::run_control_command(ClientMessage::KillServer, false);
+        }
+        CliCommand::Msg { subcommand, json } => {
+            use cli::MsgSubcommand;
+            let msg = match subcommand {
+                MsgSubcommand::SendKeys { session_name, pane_id, keys } => {
+                    ClientMessage::SendKeys { session_name, pane_id, keys: keys.into_bytes() }
+                }
+                MsgSubcommand::ListPanes { session_name } => {
+                    ClientMessage::ListPanes { session_name }
+                }
+                MsgSubcommand::Info { session_name } => {
+                    ClientMessage::GetSessionInfo { session_name }
+                }
+                MsgSubcommand::FocusPane { session_name, pane_id } => {
+                    ClientMessage::FocusPaneById { session_name, pane_id }
+                }
+                MsgSubcommand::ClosePane { session_name, pane_id } => {
+                    ClientMessage::ClosePaneById { session_name, pane_id }
+                }
+                MsgSubcommand::CreatePane { session_name } => {
+                    ClientMessage::CreatePaneIn { session_name }
+                }
+                MsgSubcommand::GetLayout { session_name } => {
+                    ClientMessage::GetLayout { session_name }
+                }
+                MsgSubcommand::RunCommand { session_name, command } => {
+                    ClientMessage::RunCommand { session_name, command, cwd: None }
+                }
+            };
+            return control::run_control_command(msg, json);
         }
         CliCommand::Delete { session_name } => {
             let dir = ciri_protocol::transport::state_dir();

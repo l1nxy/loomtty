@@ -443,6 +443,10 @@ impl ApplicationHandler for App {
                 }
             }
 
+            WindowEvent::Focused(focused) => {
+                self.send(ClientMessage::FocusChange { focused });
+            }
+
             WindowEvent::RedrawRequested => self.render(),
 
             _ => {}

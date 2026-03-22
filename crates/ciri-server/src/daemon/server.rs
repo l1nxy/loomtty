@@ -616,6 +616,16 @@ impl Server {
                     ));
                 }
             }
+            ClientMessage::FocusChange { focused } => {
+                if let Some(session) = self.sessions.get_mut(&session_name) {
+                    // Send focus event to the active pane (if it has DECSET 1004 enabled)
+                    if let Some(pane_id) = session.workspaces.active().active_pane_id() {
+                        if let Some(pane) = session.panes.get_mut(&pane_id) {
+                            pane.write_focus_event(focused);
+                        }
+                    }
+                }
+            }
             ClientMessage::KillServer => {
                 responses.push(ServerResponse::ShutdownServer);
             }

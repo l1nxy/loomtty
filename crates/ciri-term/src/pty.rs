@@ -42,13 +42,32 @@ fn get_pw_shell() -> Option<String> {
 
 impl Pty {
     pub fn spawn(cols: u16, rows: u16, shell: &str) -> Result<Self> {
+        Self::spawn_with_opts(cols, rows, shell, None, None)
+    }
+
+    /// Spawn a PTY with optional command override and working directory.
+    pub fn spawn_with_opts(
+        cols: u16,
+        rows: u16,
+        shell: &str,
+        command: Option<&str>,
+        cwd: Option<&std::path::Path>,
+    ) -> Result<Self> {
         let pty_system = native_pty_system();
 
         let pair = pty_system
             .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
             .context("openpty failed")?;
 
-        let mut cmd = if !shell.is_empty() {
+        // Determine the program to run:
+        // 1. If command is provided and non-empty, use it
+        // 2. Otherwise fall back to shell / $SHELL / getpwuid
+        let mut cmd = if let Some(c) = command.filter(|c| !c.is_empty()) {
+            let mut builder = CommandBuilder::new("sh");
+            builder.arg("-c");
+            builder.arg(c);
+            builder
+        } else if !shell.is_empty() {
             CommandBuilder::new(shell)
         } else if cfg!(windows) {
             CommandBuilder::new("cmd.exe")
@@ -65,6 +84,11 @@ impl Pty {
                 .unwrap_or_else(|| "/bin/sh".to_string());
             CommandBuilder::new(default)
         };
+
+        // Set working directory if provided
+        if let Some(dir) = cwd.filter(|d| !d.as_os_str().is_empty()) {
+            cmd.cwd(dir);
+        }
 
         // Ensure child knows its terminal type.
         cmd.env("TERM", "xterm-256color");

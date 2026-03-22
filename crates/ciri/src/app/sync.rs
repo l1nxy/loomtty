@@ -149,11 +149,32 @@ impl App {
                     });
                     needs_redraw = true;
                 }
-                ServerEvent::Control(ServerMessage::SessionList { .. })
-                | ServerEvent::Control(ServerMessage::SessionSwitched { .. })
+                ServerEvent::Control(ServerMessage::SessionList { sessions }) => {
+                    if let Some(palette) = &mut self.command_palette {
+                        // Remove old session entries, keep actions
+                        palette.entries.retain(|e| matches!(e.kind, super::PaletteEntryKind::Action(_)));
+                        // Add session entries
+                        for s in &sessions {
+                            palette.entries.push(super::PaletteEntry {
+                                label: format!("Switch to: {}", s.name),
+                                kind: super::PaletteEntryKind::SwitchSession(s.name.clone()),
+                            });
+                            if s.running {
+                                palette.entries.push(super::PaletteEntry {
+                                    label: format!("Kill: {}", s.name),
+                                    kind: super::PaletteEntryKind::KillSession(s.name.clone()),
+                                });
+                            }
+                        }
+                        // Re-filter with current query
+                        self.filter_palette();
+                    }
+                    needs_redraw = true;
+                }
+                ServerEvent::Control(ServerMessage::SessionSwitched { .. })
                 | ServerEvent::Control(ServerMessage::SessionKilled { .. })
                 | ServerEvent::Control(ServerMessage::Error { .. }) => {
-                    // Session management responses — not yet handled by GUI client
+                    // Session management responses — handled elsewhere
                 }
                 ServerEvent::FullPaneSync(sync) => {
                     let grid = self.pane_grids.entry(sync.pane_id).or_insert_with(|| {

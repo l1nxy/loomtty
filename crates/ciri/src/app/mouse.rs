@@ -48,6 +48,34 @@ impl App {
                 self.overview.drag_last_pos = Some((mx, my));
             }
         } else {
+            // Scrollbar dragging takes priority over all other mouse interactions
+            if let Some(ref info) = self.drag.scrollbar_dragging {
+                let pane_id = info.pane_id;
+                let inner_y = info.pane_inner_y;
+                let inner_h = info.pane_inner_h;
+                let total_lines = info.total_lines;
+                let visible_rows = info.visible_rows as usize;
+                if total_lines > visible_rows {
+                    let max_offset = total_lines - visible_rows;
+                    let ratio = ((my - inner_y) / inner_h).clamp(0.0, 1.0);
+                    // ratio 0.0 = top of pane = max scroll (furthest into history)
+                    // ratio 1.0 = bottom of pane = offset 0 (live viewport)
+                    let new_offset = ((1.0 - ratio) * max_offset as f32).round() as usize;
+                    let new_offset = new_offset.min(max_offset);
+                    if let Some(grid) = self.pane_grids.get_mut(&pane_id) {
+                        if grid.scroll_offset != new_offset {
+                            grid.scroll_offset = new_offset;
+                            grid.dirty = true;
+                            self.invalidate_pane_cache(pane_id);
+                            if let Some(w) = &self.window {
+                                w.request_redraw();
+                            }
+                        }
+                    }
+                }
+                return;
+            }
+
             if let Some((col_idx, top_tile_idx)) = self.drag.tile_dragging {
                 let delta_y = my - self.drag.tile_start_y;
                 self.workspaces
@@ -205,6 +233,39 @@ impl App {
                 }
             }
 
+            // Check for scrollbar click/drag
+            if !started_drag {
+                if let Some(hit) = self.hit_test_scrollbar(mx, my) {
+                    if hit.on_thumb {
+                        // Start dragging the scrollbar thumb
+                        self.drag.scrollbar_dragging = Some(super::ScrollbarDragInfo {
+                            pane_id: hit.pane_id,
+                            pane_inner_y: hit.inner_y,
+                            pane_inner_h: hit.inner_h,
+                            total_lines: hit.total_lines,
+                            visible_rows: hit.visible_rows,
+                        });
+                    } else {
+                        // Clicked on the track (not thumb) — page up or page down
+                        let page = hit.visible_rows as usize;
+                        if let Some(sb) = &hit.scrollbar_rect {
+                            let thumb_screen_y = hit.inner_y + sb.y;
+                            if my < thumb_screen_y {
+                                // Clicked above thumb → page up (into history)
+                                self.scroll_pane_up(hit.pane_id, page);
+                            } else {
+                                // Clicked below thumb → page down (toward live)
+                                self.scroll_pane_down(hit.pane_id, page);
+                            }
+                        }
+                    }
+                    started_drag = true;
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                }
+            }
+
             if !started_drag {
                 let shift = self.modifiers.shift_key();
                 if let Some((pane_id, col, buf_row)) = self.pixel_to_cell(mx, my) {
@@ -289,6 +350,7 @@ impl App {
 
         let had_left_hold = self.mouse_left_held;
         self.mouse_left_held = false;
+        self.drag.scrollbar_dragging = None;
         if let Some((col_idx, top_tile_idx)) = self.drag.tile_dragging {
             // Send the final absolute tile weights to the server so PTYs are
             // resized and the layout is persisted. Read from local preview state
@@ -633,4 +695,88 @@ impl App {
             w.request_redraw();
         }
     }
+
+    /// Result of a scrollbar hit-test.
+    fn hit_test_scrollbar(&self, mx: f32, my: f32) -> Option<ScrollbarHit> {
+        let border_w = self.config.appearance.border_width;
+        let padding = self.config.appearance.padding;
+        let vox = self.view_offset_x.value() as f32;
+        let tiles = self.workspaces.active().visible_tiles(vox);
+        // Wider hit area (8px from right edge) for comfortable clicking
+        let hit_zone_width = 8.0f32;
+
+        for (pane_id, rect, _) in &tiles {
+            if !rect.contains(mx, my) {
+                continue;
+            }
+            let inner_x = rect.x + border_w + padding;
+            let inner_y = rect.y + border_w + padding;
+            let inset = (border_w + padding) * 2.0;
+            let inner_w = rect.w - inset;
+            let inner_h = rect.h - inset;
+
+            // Check if click is in the scrollbar hit zone (right edge of pane)
+            let scrollbar_hit_left = inner_x + inner_w - hit_zone_width;
+            if mx < scrollbar_hit_left {
+                continue;
+            }
+
+            let grid = self.pane_grids.get(pane_id)?;
+            let total_lines = grid.total_lines();
+            let visible_rows = grid.rows;
+            if total_lines <= visible_rows as usize {
+                // No scrollbar when content fits
+                return None;
+            }
+
+            // Get the cached scrollbar rect (relative to pane inner origin)
+            let view = self.cached_views.get(pane_id)?;
+            let sb = view.scrollbar_rect.as_ref()?;
+
+            // The scrollbar rect is relative to pane inner origin.
+            // Convert thumb Y to screen coords for comparison.
+            let thumb_screen_y = inner_y + sb.y;
+            let thumb_screen_bottom = thumb_screen_y + sb.h;
+
+            let on_thumb = my >= thumb_screen_y && my <= thumb_screen_bottom;
+
+            return Some(ScrollbarHit {
+                pane_id: *pane_id,
+                inner_y,
+                inner_h,
+                total_lines,
+                visible_rows,
+                on_thumb,
+                scrollbar_rect: Some(sb.clone()),
+            });
+        }
+        None
+    }
+
+    /// Scroll a specific pane up (into history) by `lines`.
+    fn scroll_pane_up(&mut self, pane_id: u64, lines: usize) {
+        if let Some(grid) = self.pane_grids.get_mut(&pane_id) {
+            grid.scroll_up(lines);
+            self.invalidate_pane_cache(pane_id);
+        }
+    }
+
+    /// Scroll a specific pane down (toward live) by `lines`.
+    fn scroll_pane_down(&mut self, pane_id: u64, lines: usize) {
+        if let Some(grid) = self.pane_grids.get_mut(&pane_id) {
+            grid.scroll_down(lines);
+            self.invalidate_pane_cache(pane_id);
+        }
+    }
+}
+
+/// Scrollbar hit-test result.
+struct ScrollbarHit {
+    pane_id: u64,
+    inner_y: f32,
+    inner_h: f32,
+    total_lines: usize,
+    visible_rows: u16,
+    on_thumb: bool,
+    scrollbar_rect: Option<ciri_render::rect::Rect>,
 }

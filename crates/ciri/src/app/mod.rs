@@ -166,6 +166,8 @@ pub(crate) struct App {
     pub gesture_row_active: bool,
     /// The workspace row index when the vertical gesture started.
     pub gesture_row_start: usize,
+    /// Last pane focused by focus-follows-mouse and the time it was set (for debouncing).
+    pub last_focus_follows_mouse: Option<(u64, Instant)>,
 }
 
 impl App {
@@ -253,6 +255,7 @@ impl App {
             gesture_row_offset: ViewOffset::new(),
             gesture_row_active: false,
             gesture_row_start: 0,
+            last_focus_follows_mouse: None,
         }
     }
 

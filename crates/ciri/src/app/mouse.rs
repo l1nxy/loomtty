@@ -105,6 +105,39 @@ impl App {
                     w.request_redraw();
                 }
 
+                // Focus-follows-mouse: switch focus when hovering over a different pane
+                if self.config.input.focus_follows_mouse
+                    && !self.mouse_left_held
+                    && self.search_state.is_none()
+                {
+                    let vox = self.view_offset_x.value() as f32;
+                    let tiles = self.workspaces.active().visible_tiles(vox);
+                    let mut hover_pane = None;
+                    for (pane_id, rect, _) in &tiles {
+                        if rect.contains(mx, my) {
+                            hover_pane = Some(*pane_id);
+                            break;
+                        }
+                    }
+                    if let Some(pane_id) = hover_pane {
+                        let current_active = self.workspaces.active().active_pane_id();
+                        if current_active != Some(pane_id) {
+                            let now = Instant::now();
+                            let should_switch = match self.last_focus_follows_mouse {
+                                Some((last_id, last_time)) => {
+                                    pane_id != last_id
+                                        || now.duration_since(last_time).as_millis() > 50
+                                }
+                                None => true,
+                            };
+                            if should_switch {
+                                self.last_focus_follows_mouse = Some((pane_id, now));
+                                self.send_lossy(ClientMessage::FocusPane { pane_id });
+                            }
+                        }
+                    }
+                }
+
                 if self.mouse_left_held {
                     let sel_active = self.selection.as_ref().is_some_and(|s| s.active);
                     if sel_active {

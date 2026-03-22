@@ -78,6 +78,32 @@ fn main() -> Result<()> {
             }
             return Ok(());
         }
+        CliCommand::Template { subcommand } => {
+            use cli::TemplateSubcommand;
+            match subcommand {
+                TemplateSubcommand::List => {
+                    return control::run_control_command(ClientMessage::ListTemplates, false);
+                }
+                TemplateSubcommand::Apply { template_name, session_name } => {
+                    let session = session_name.unwrap_or_else(|| {
+                        let existing = ciri_session::restore::list_sessions(
+                            &ciri_protocol::transport::state_dir(),
+                        ).unwrap_or_default();
+                        ciri_session::names::unique_name(&existing)
+                    });
+                    return control::run_control_command(ClientMessage::ApplyTemplate {
+                        template_name,
+                        session_name: session,
+                    }, false);
+                }
+                TemplateSubcommand::Save { template_name, session_name } => {
+                    return control::run_control_command(ClientMessage::SaveTemplate {
+                        template_name,
+                        session_name,
+                    }, false);
+                }
+            }
+        }
         _ => {}
     }
 

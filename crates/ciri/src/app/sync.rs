@@ -183,8 +183,11 @@ impl App {
                 }
                 ServerEvent::Control(ServerMessage::SessionSwitched { .. })
                 | ServerEvent::Control(ServerMessage::SessionKilled { .. })
+                | ServerEvent::Control(ServerMessage::TemplateApplied { .. })
+                | ServerEvent::Control(ServerMessage::TemplateList { .. })
+                | ServerEvent::Control(ServerMessage::TemplateSaved { .. })
                 | ServerEvent::Control(ServerMessage::Error { .. }) => {
-                    // Session management responses — handled elsewhere
+                    // Session/template management and IPC responses — not yet handled by GUI client
                 }
                 ServerEvent::FullPaneSync(sync) => {
                     let grid = self.pane_grids.entry(sync.pane_id).or_insert_with(|| {

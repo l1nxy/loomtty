@@ -21,6 +21,8 @@ pub enum CliCommand {
     Help,
     /// IPC messaging commands for external scripting.
     Msg { subcommand: MsgSubcommand, json: bool },
+    /// Template management subcommands.
+    Template { subcommand: TemplateSubcommand },
 }
 
 #[derive(Debug)]
@@ -33,6 +35,13 @@ pub enum MsgSubcommand {
     CreatePane { session_name: String },
     GetLayout { session_name: String },
     RunCommand { session_name: String, command: String },
+}
+
+#[derive(Debug)]
+pub enum TemplateSubcommand {
+    List,
+    Apply { template_name: String, session_name: Option<String> },
+    Save { template_name: String, session_name: String },
 }
 
 /// Reserved subcommand names that cannot be used as positional session names.
@@ -52,6 +61,8 @@ fn is_subcommand(arg: &str) -> bool {
             | "a"
             | "help"
             | "msg"
+            | "template"
+            | "tpl"
     )
 }
 
@@ -65,6 +76,13 @@ where
     // Handle "msg" subcommand separately since it has variable-length arguments
     if args.first().map(|s| s.as_str()) == Some("msg") {
         return parse_msg_args(&args[1..]);
+    }
+
+    // Check for template subcommand (variable-length args)
+    if let Some(first) = args.first() {
+        if first == "template" || first == "tpl" {
+            return parse_template_args(&args[1..]);
+        }
     }
 
     match args.as_slice() {
@@ -212,17 +230,53 @@ Subcommands:
 pub fn usage() -> String {
     "\
 Usage:
-  ciri                          Create new session and connect
-  ciri new                      Create new session and connect
-  ciri <name>                   Connect to session (create if needed)
-  ciri attach|a <name>          Attach to existing session (must exist)
-  ciri list|ls                  List all sessions
-  ciri kill|k <name>            Kill a session
-  ciri kill-server|ks           Kill the server
-  ciri delete|rm <name>         Delete saved session
-  ciri msg <subcommand>         IPC commands for scripting (see ciri msg --help)
-  ciri --help|-h                Show this help"
+  ciri                                  Create new session and connect
+  ciri new                              Create new session and connect
+  ciri <name>                           Connect to session (create if needed)
+  ciri attach|a <name>                  Attach to existing session (must exist)
+  ciri list|ls                          List all sessions
+  ciri kill|k <name>                    Kill a session
+  ciri kill-server|ks                   Kill the server
+  ciri delete|rm <name>                 Delete saved session
+  ciri msg <subcommand>                 IPC commands for scripting (see ciri msg --help)
+  ciri template|tpl list                List layout templates
+  ciri template|tpl apply <name> [session]  Apply a template
+  ciri template|tpl save <name> <session>   Save session layout as template
+  ciri --help|-h                        Show this help"
         .to_string()
+}
+
+fn parse_template_args(args: &[String]) -> Result<CliCommand, String> {
+    match args {
+        [] => Ok(CliCommand::Template {
+            subcommand: TemplateSubcommand::List,
+        }),
+        [a] if a == "list" || a == "ls" => Ok(CliCommand::Template {
+            subcommand: TemplateSubcommand::List,
+        }),
+        [sub, name] if sub == "apply" => Ok(CliCommand::Template {
+            subcommand: TemplateSubcommand::Apply {
+                template_name: name.clone(),
+                session_name: None,
+            },
+        }),
+        [sub, name, session] if sub == "apply" => Ok(CliCommand::Template {
+            subcommand: TemplateSubcommand::Apply {
+                template_name: name.clone(),
+                session_name: Some(session.clone()),
+            },
+        }),
+        [sub, name, session] if sub == "save" => Ok(CliCommand::Template {
+            subcommand: TemplateSubcommand::Save {
+                template_name: name.clone(),
+                session_name: session.clone(),
+            },
+        }),
+        [sub] if sub == "apply" => Err("template apply requires a template name.\nUsage: ciri template apply <name> [session]".to_string()),
+        [sub] if sub == "save" => Err("template save requires a template name and session name.\nUsage: ciri template save <name> <session>".to_string()),
+        [sub, _name] if sub == "save" => Err("template save requires a session name.\nUsage: ciri template save <name> <session>".to_string()),
+        _ => Err(usage()),
+    }
 }
 
 fn is_help_flag(arg: &str) -> bool {

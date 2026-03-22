@@ -352,6 +352,12 @@ pub enum ClientMessage {
     CreatePaneIn { session_name: String },
     /// IPC: Get the full layout state of a session.
     GetLayout { session_name: String },
+    /// Apply a layout template to create/recreate a session.
+    ApplyTemplate { template_name: String, session_name: String },
+    /// List available templates.
+    ListTemplates,
+    /// Save current session layout as a template.
+    SaveTemplate { template_name: String, session_name: String },
 }
 
 /// Control messages from server to client (msgpack encoded, tags 0x10-0x1F).
@@ -408,6 +414,12 @@ pub enum ServerMessage {
     CommandResult { success: bool, message: String, pane_id: Option<u64> },
     /// IPC response: full layout state.
     LayoutReply { layout: LayoutState, session_name: String },
+    /// Template was applied successfully.
+    TemplateApplied { session_name: String },
+    /// List of available templates.
+    TemplateList { templates: Vec<TemplateInfo> },
+    /// Template was saved successfully.
+    TemplateSaved { template_name: String },
 }
 
 /// Session info returned in SessionList.
@@ -445,6 +457,15 @@ pub struct PaneDetailInfo {
     pub workspace_idx: usize,
     pub column_idx: usize,
     pub tile_idx: usize,
+}
+
+/// Template info returned in TemplateList.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateInfo {
+    pub name: String,
+    pub description: Option<String>,
+    pub workspace_count: usize,
+    pub total_panes: usize,
 }
 
 /// Serializable layout state (2D: workspaces × columns).

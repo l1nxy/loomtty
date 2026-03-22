@@ -596,6 +596,9 @@ pub fn pack_cell(cell: &alacritty_terminal::term::cell::Cell) -> PackedCell {
     if cell.flags.contains(CellFlags::HIDDEN) {
         flags |= FLAG_HIDDEN;
     }
+    if cell.flags.contains(CellFlags::WRAPLINE) {
+        flags |= FLAG_WRAPLINE;
+    }
     let mut packed = PackedCell {
         ch_bytes: [0; 4],
         fg,

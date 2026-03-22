@@ -205,6 +205,9 @@ pub const FLAG_UNDERLINE_DOUBLE: u16 = 0b001 << 9;
 pub const FLAG_UNDERLINE_CURLY: u16 = 0b010 << 9;
 pub const FLAG_UNDERLINE_DOTTED: u16 = 0b011 << 9;
 pub const FLAG_UNDERLINE_DASHED: u16 = 0b100 << 9;
+/// Line wrapping marker: set on the last cell of a row whose content continues
+/// on the next row (soft wrap). Used by the client for scrollback reflow.
+pub const FLAG_WRAPLINE: u16 = 1 << 12;
 
 // ─── Wire messages ──────────────────────────────────────────────────
 

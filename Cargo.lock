@@ -454,6 +454,7 @@ dependencies = [
  "log",
  "notify",
  "rmp-serde",
+ "serde_json",
  "tokio",
  "winit",
 ]

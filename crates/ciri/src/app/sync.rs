@@ -218,6 +218,11 @@ impl App {
                         needs_redraw = true;
                     }
                 }
+                // IPC-only responses — not relevant for the GUI client
+                ServerEvent::Control(ServerMessage::SessionInfoReply { .. })
+                | ServerEvent::Control(ServerMessage::PaneListReply { .. })
+                | ServerEvent::Control(ServerMessage::CommandResult { .. })
+                | ServerEvent::Control(ServerMessage::LayoutReply { .. }) => {}
                 ServerEvent::Disconnected => {
                     log::warn!("disconnected from server");
                     self.connected = false;

@@ -5,18 +5,37 @@ pub const DEFAULT_REMOTE_PORT: u16 = 7890;
 
 /// XDG_RUNTIME_DIR with proper fallback.
 pub fn runtime_dir() -> PathBuf {
-    if let Some(dir) = dirs::runtime_dir() {
-        return dir;
+    if let Some(rd) = dirs::runtime_dir() {
+        return rd;
     }
-    // Fallback: cache dir (~/Library/Caches on macOS, ~/.cache on Linux,
-    // LOCALAPPDATA on Windows)
-    if let Some(dir) = dirs::cache_dir() {
-        return dir;
+
+    // macOS: preserve old behavior (~/.cache) for backward compat
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(home) = dirs::home_dir() {
+            let legacy = home.join(".cache");
+            if legacy.exists() {
+                return legacy;
+            }
+        }
     }
-    PathBuf::from(if cfg!(windows) {
-        r"C:\Users\Default\AppData\Local"
-    } else {
-        "/tmp"
+
+    // Linux: probe /run/user/<uid> when XDG_RUNTIME_DIR is unset
+    #[cfg(target_os = "linux")]
+    {
+        let uid = unsafe { libc::getuid() };
+        let probe = PathBuf::from(format!("/run/user/{}", uid));
+        if probe.exists() {
+            return probe;
+        }
+    }
+
+    dirs::cache_dir().unwrap_or_else(|| {
+        if cfg!(windows) {
+            PathBuf::from(r"C:\Users\Default\AppData\Local")
+        } else {
+            PathBuf::from("/tmp")
+        }
     })
 }
 
@@ -49,15 +68,29 @@ pub fn server_pipe_name() -> String {
 
 /// Get the directory for session state files.
 pub fn state_dir() -> PathBuf {
-    // dirs::state_dir() handles XDG_STATE_HOME on Linux, returns None on
-    // macOS/Windows where the concept doesn't exist.
-    if let Some(dir) = dirs::state_dir() {
-        return dir.join("ciri").join("sessions");
+    if let Some(sd) = dirs::state_dir() {
+        return sd.join("ciri").join("sessions");
     }
-    // Fallback: use data_local_dir (LOCALAPPDATA on Windows,
-    // ~/Library/Application Support on macOS)
-    if let Some(dir) = dirs::data_local_dir() {
-        return dir.join("ciri").join("sessions");
+
+    // macOS: preserve old behavior (~/.local/state) for backward compat
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(home) = dirs::home_dir() {
+            let legacy = home.join(".local").join("state");
+            if legacy.exists() {
+                return legacy.join("ciri").join("sessions");
+            }
+        }
     }
-    runtime_dir().join("ciri").join("sessions")
+
+    dirs::data_local_dir()
+        .unwrap_or_else(|| {
+            if cfg!(windows) {
+                PathBuf::from(r"C:\Users\Default\AppData\Roaming")
+            } else {
+                PathBuf::from("/tmp")
+            }
+        })
+        .join("ciri")
+        .join("sessions")
 }

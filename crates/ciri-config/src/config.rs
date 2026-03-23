@@ -473,11 +473,22 @@ impl CiriConfig {
 }
 
 pub fn config_path() -> PathBuf {
+    // Check legacy XDG-style path on macOS for backward compat
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(home) = dirs::home_dir() {
+            let legacy = home.join(".config").join("ciri").join("config.toml");
+            if legacy.exists() {
+                return legacy;
+            }
+        }
+    }
+
     // dirs::config_dir() handles XDG_CONFIG_HOME on Linux, ~/Library/Application
     // Support on macOS, and FOLDERID_RoamingAppData on Windows.
-    match dirs::config_dir() {
-        Some(dir) => dir.join("ciri").join("config.toml"),
-        None => {
+    dirs::config_dir()
+        .map(|d| d.join("ciri").join("config.toml"))
+        .unwrap_or_else(|| {
             log::warn!("cannot determine config directory, using fallback");
             PathBuf::from(if cfg!(windows) {
                 r"C:\Users\Default\AppData\Roaming"
@@ -486,6 +497,5 @@ pub fn config_path() -> PathBuf {
             })
             .join("ciri")
             .join("config.toml")
-        }
-    }
+        })
 }

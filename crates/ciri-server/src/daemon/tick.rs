@@ -88,6 +88,8 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                 let dead = session.cleanup_exited_panes(&mut s.clients);
                 if !dead.is_empty() {
                     session.mark_session_dirty();
+                    // Resize remaining panes to fill the freed space
+                    session.resize_all_panes(&mut s.clients);
                     // Build broadcast frames for close + layout update
                     let mut broadcast_frames: Vec<Bytes> = Vec::new();
                     for &id in &dead {

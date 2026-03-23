@@ -246,14 +246,7 @@ impl ApplicationHandler for App {
             cell_width: cache.cell_width,
             cell_height: cache.cell_height,
         };
-        log::info!(
-            "connecting to session '{}' (viewport={}x{} cell={:.1}x{:.1})",
-            self.session_name,
-            view.width as u32,
-            view.height as u32,
-            cache.cell_width,
-            cache.cell_height
-        );
+        log::info!("connecting to session '{}'", self.session_name);
         match self.connect(viewport) {
             Ok((tx, rx)) => {
                 self.server_tx = Some(tx);

@@ -175,16 +175,17 @@ impl GlAtlasLayer {
         gl.bind_texture(glow::TEXTURE_2D, None);
     }
 
-    unsafe fn render_scissored(
+    /// Upload glyph instances and render scissored pane batches only.
+    /// Data remains in the VBO for a subsequent `render_overlay` call.
+    unsafe fn render_pane_glyphs(
         &self,
         gl: &glow::Context,
         instances: &[GlyphInstance],
         viewport_w: f32,
         viewport_h: f32,
-        viewport_w_px: u32,
+        _viewport_w_px: u32,
         viewport_h_px: u32,
         batches: &[ScissoredRange],
-        overlay_start: usize,
     ) {
         if instances.is_empty() {
             return;
@@ -215,7 +216,6 @@ impl GlAtlasLayer {
             let sy = viewport_h_px.saturating_sub(batch.y + batch.h);
             gl.scissor(batch.x as i32, sy as i32, batch.w as i32, batch.h as i32);
 
-            // Re-bind VAO with offset into the instance buffer
             let base_offset = start * std::mem::size_of::<GlyphInstance>();
             setup_glyph_vertex_attribs_offset(gl, base_offset as i32);
 
@@ -227,24 +227,56 @@ impl GlAtlasLayer {
             );
         }
 
-        // Overlay (status bar, etc.) — no scissor clipping
-        let overlay_start = overlay_start.min(count);
-        if overlay_start < count {
-            gl.scissor(
-                0,
-                0,
-                viewport_w_px.max(1) as i32,
-                viewport_h_px.max(1) as i32,
-            );
-            let base_offset = overlay_start * std::mem::size_of::<GlyphInstance>();
-            setup_glyph_vertex_attribs_offset(gl, base_offset as i32);
-            gl.draw_arrays_instanced(
-                glow::TRIANGLE_STRIP,
-                0,
-                4,
-                (count - overlay_start) as i32,
-            );
+        gl.disable(glow::SCISSOR_TEST);
+        gl.bind_vertex_array(None);
+        gl.use_program(None);
+    }
+
+    /// Render overlay glyphs (data already uploaded by `render_pane_glyphs`).
+    unsafe fn render_overlay_glyphs(
+        &self,
+        gl: &glow::Context,
+        instances: &[GlyphInstance],
+        overlay_start: usize,
+        viewport_w: f32,
+        viewport_h: f32,
+        viewport_w_px: u32,
+        viewport_h_px: u32,
+    ) {
+        if instances.is_empty() {
+            return;
         }
+        let count = instances.len().min(self.max_instances);
+        let overlay_start = overlay_start.min(count);
+        if overlay_start >= count {
+            return;
+        }
+
+        gl.use_program(Some(self.program));
+        gl.uniform_2_f32(Some(&self.loc_viewport), viewport_w, viewport_h);
+
+        gl.active_texture(glow::TEXTURE0);
+        gl.bind_texture(glow::TEXTURE_2D, Some(self.texture));
+        gl.uniform_1_i32(Some(&self.loc_atlas), 0);
+
+        gl.bind_vertex_array(Some(self.vao));
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instance_vbo));
+
+        gl.enable(glow::SCISSOR_TEST);
+        gl.scissor(
+            0,
+            0,
+            viewport_w_px.max(1) as i32,
+            viewport_h_px.max(1) as i32,
+        );
+        let base_offset = overlay_start * std::mem::size_of::<GlyphInstance>();
+        setup_glyph_vertex_attribs_offset(gl, base_offset as i32);
+        gl.draw_arrays_instanced(
+            glow::TRIANGLE_STRIP,
+            0,
+            4,
+            (count - overlay_start) as i32,
+        );
 
         gl.disable(glow::SCISSOR_TEST);
         gl.bind_vertex_array(None);
@@ -312,7 +344,8 @@ impl GlRectPipeline {
         }
     }
 
-    unsafe fn render(
+    /// Upload all rect instance data to the GPU buffer.
+    unsafe fn upload(
         &self,
         gl: &glow::Context,
         rects: &[Rect],
@@ -323,14 +356,42 @@ impl GlRectPipeline {
             return;
         }
         let count = rects.len().min(self.max_rects);
-
-        gl.use_program(Some(self.program));
-        gl.uniform_2_f32(Some(&self.loc_viewport), viewport_w, viewport_h);
-
-        gl.bind_vertex_array(Some(self.vao));
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instance_vbo));
         let data = bytemuck::cast_slice(&rects[..count]);
         gl.buffer_sub_data_u8_slice(glow::ARRAY_BUFFER, 0, data);
+        gl.bind_buffer(glow::ARRAY_BUFFER, None);
+        // Store viewport for draw_range calls
+        let _ = (viewport_w, viewport_h);
+    }
+
+    /// Draw a range of previously uploaded rects.
+    unsafe fn draw_range(
+        &self,
+        gl: &glow::Context,
+        start: usize,
+        count: usize,
+        viewport_w: f32,
+        viewport_h: f32,
+    ) {
+        if count == 0 {
+            return;
+        }
+        gl.use_program(Some(self.program));
+        gl.uniform_2_f32(Some(&self.loc_viewport), viewport_w, viewport_h);
+        gl.bind_vertex_array(Some(self.vao));
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instance_vbo));
+
+        let stride = std::mem::size_of::<Rect>() as i32;
+        let base = (start * std::mem::size_of::<Rect>()) as i32;
+        gl.enable_vertex_attrib_array(0);
+        gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, stride, base);
+        gl.vertex_attrib_divisor(0, 1);
+        gl.enable_vertex_attrib_array(1);
+        gl.vertex_attrib_pointer_f32(1, 2, glow::FLOAT, false, stride, base + 8);
+        gl.vertex_attrib_divisor(1, 1);
+        gl.enable_vertex_attrib_array(2);
+        gl.vertex_attrib_pointer_f32(2, 4, glow::FLOAT, false, stride, base + 16);
+        gl.vertex_attrib_divisor(2, 1);
 
         gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, count as i32);
 
@@ -576,9 +637,7 @@ impl Renderer {
             self.gl.clear_color(0.0, 0.0, 0.0, 1.0);
             self.gl.clear(glow::COLOR_BUFFER_BIT);
 
-            // Background rects: clear rect + per-cell rects in one draw call.
-            // Must be a single batch because the rect pipeline reuses one
-            // buffer — a second render() overwrites before the first draws.
+            // 1. Upload all background rects (clear + pane + overlay) once.
             let mut all_bg = Vec::with_capacity(1 + scene.bg_rects.len());
             all_bg.push(Rect {
                 x: 0.0,
@@ -588,10 +647,16 @@ impl Renderer {
                 color: scene.clear_color,
             });
             all_bg.extend_from_slice(scene.bg_rects);
-            self.rects.render(&self.gl, &all_bg, vw, vh);
+            let overlay_bg_idx = 1 + scene.overlay_bg_start; // +1 for clear rect
+            let total_bg = all_bg.len().min(self.rects.max_rects);
+            self.rects.upload(&self.gl, &all_bg, vw, vh);
 
-            // 2. Alpha text glyphs (scissored)
-            atlas_gpu.alpha.render_scissored(
+            // 2. Draw pane background rects.
+            let pane_bg_count = overlay_bg_idx.min(total_bg);
+            self.rects.draw_range(&self.gl, 0, pane_bg_count, vw, vh);
+
+            // 3. Pane alpha glyphs (scissored) — upload + draw batches.
+            atlas_gpu.alpha.render_pane_glyphs(
                 &self.gl,
                 scene.glyphs,
                 vw,
@@ -599,11 +664,10 @@ impl Renderer {
                 self.width,
                 self.height,
                 scene.glyph_batches,
-                scene.pane_glyph_end,
             );
 
-            // 3. Color emoji (scissored)
-            atlas_gpu.color.render_scissored(
+            // 4. Pane color emoji (scissored).
+            atlas_gpu.color.render_pane_glyphs(
                 &self.gl,
                 scene.color_glyphs,
                 vw,
@@ -611,7 +675,35 @@ impl Renderer {
                 self.width,
                 self.height,
                 scene.color_glyph_batches,
+            );
+
+            // 5. Overlay background rects (rendered after pane glyphs so they
+            //    occlude terminal text underneath popups like the context menu).
+            let overlay_bg_count = total_bg.saturating_sub(overlay_bg_idx);
+            if overlay_bg_count > 0 {
+                self.rects.draw_range(&self.gl, overlay_bg_idx, overlay_bg_count, vw, vh);
+            }
+
+            // 6. Overlay alpha glyphs (status bar, context menu text, etc.).
+            atlas_gpu.alpha.render_overlay_glyphs(
+                &self.gl,
+                scene.glyphs,
+                scene.pane_glyph_end,
+                vw,
+                vh,
+                self.width,
+                self.height,
+            );
+
+            // 7. Overlay color emoji.
+            atlas_gpu.color.render_overlay_glyphs(
+                &self.gl,
+                scene.color_glyphs,
                 scene.pane_color_glyph_end,
+                vw,
+                vh,
+                self.width,
+                self.height,
             );
         }
 

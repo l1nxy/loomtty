@@ -196,6 +196,9 @@ pub struct TerminalConfig {
     pub bell_audio: String,
     /// Request window attention on bell (urgency hint).
     pub bell_urgency: bool,
+    /// Show a confirmation dialog when pasted content exceeds this many bytes.
+    /// 0 = disabled.
+    pub paste_warn_threshold: usize,
 }
 
 impl Default for TerminalConfig {
@@ -214,6 +217,7 @@ impl Default for TerminalConfig {
             notify_command_threshold_secs: 0,
             bell_audio: String::new(),
             bell_urgency: true,
+            paste_warn_threshold: 5000,
         }
     }
 }

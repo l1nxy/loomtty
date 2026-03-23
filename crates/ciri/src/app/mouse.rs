@@ -11,6 +11,19 @@ impl App {
         let my = position.y as f32;
         self.last_mouse_pos = Some((mx, my));
 
+        // Paste confirmation dialog hover tracking
+        if self.pending_paste.is_some() {
+            let prev = self.pending_paste.as_ref().unwrap().hovered_button;
+            let hit = self.paste_dialog_hit_test(mx, my);
+            if hit != prev {
+                self.pending_paste.as_mut().unwrap().hovered_button = hit;
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+            }
+            return;
+        }
+
         // Update context menu hover state
         if self.context_menu.visible {
             let prev = self.context_menu.hovered_index;
@@ -217,6 +230,26 @@ impl App {
     pub(crate) fn handle_mouse_pressed(&mut self, button: MouseButton, mx: f32, my: f32) {
         match button {
             MouseButton::Left => {
+                // Paste confirmation dialog: handle button clicks
+                if self.pending_paste.is_some() {
+                    match self.paste_dialog_hit_test(mx, my) {
+                        Some(super::PasteButton::Paste) => {
+                            self.confirm_pending_paste();
+                        }
+                        Some(super::PasteButton::Cancel) => {
+                            self.pending_paste = None;
+                        }
+                        None => {
+                            // Click outside dialog dismisses it
+                            self.pending_paste = None;
+                        }
+                    }
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                    return;
+                }
+
                 // If context menu is visible, handle click on it first
                 if self.context_menu.visible {
                     if self.context_menu_hit_test(mx, my).is_some() {
@@ -608,6 +641,65 @@ impl App {
         }
     }
 
+    /// Compute paste dialog button rectangles: (paste_rect, cancel_rect).
+    /// Each rect is (x, y, w, h). Layout must match `build_paste_confirmation`.
+    fn paste_dialog_button_rects(&self) -> ((f32, f32, f32, f32), (f32, f32, f32, f32)) {
+        let (vw, vh) = self
+            .renderer
+            .as_ref()
+            .map(|r| {
+                let (w, h) = r.surface_size();
+                (w as f32, h as f32)
+            })
+            .unwrap_or((800.0, 600.0));
+        let (_, ch) = self.cell_dimensions();
+        let dialog_w = vw * 0.6;
+        let dialog_h = vh * 0.4;
+        let dx = (vw - dialog_w) / 2.0;
+        let dy = (vh - dialog_h) / 2.0;
+        let btn_w = 100.0;
+        let btn_h = ch + 12.0;
+        let btn_y = dy + dialog_h - 16.0 - btn_h;
+        let paste_x = dx + dialog_w / 2.0 - btn_w - 16.0;
+        let cancel_x = dx + dialog_w / 2.0 + 16.0;
+        ((paste_x, btn_y, btn_w, btn_h), (cancel_x, btn_y, btn_w, btn_h))
+    }
+
+    /// Hit-test the paste confirmation dialog buttons.
+    fn paste_dialog_hit_test(&self, x: f32, y: f32) -> Option<super::PasteButton> {
+        if self.pending_paste.is_none() {
+            return None;
+        }
+        let (paste_r, cancel_r) = self.paste_dialog_button_rects();
+        if x >= paste_r.0 && x <= paste_r.0 + paste_r.2 && y >= paste_r.1 && y <= paste_r.1 + paste_r.3 {
+            return Some(super::PasteButton::Paste);
+        }
+        if x >= cancel_r.0 && x <= cancel_r.0 + cancel_r.2 && y >= cancel_r.1 && y <= cancel_r.1 + cancel_r.3 {
+            return Some(super::PasteButton::Cancel);
+        }
+        None
+    }
+
+    /// Execute the pending paste (send text to active pane).
+    fn confirm_pending_paste(&mut self) {
+        let text = self.pending_paste.as_ref().unwrap().info.text.clone();
+        self.pending_paste = None;
+        if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
+            let bracketed = self.pane_grids.get(&pid).is_some_and(|g| {
+                g.mode_flags & ciri_protocol::message::MODE_BRACKETED_PASTE != 0
+            });
+            let mut data = Vec::with_capacity(text.len() + if bracketed { 12 } else { 0 });
+            if bracketed {
+                data.extend_from_slice(b"\x1b[200~");
+            }
+            data.extend_from_slice(text.as_bytes());
+            if bracketed {
+                data.extend_from_slice(b"\x1b[201~");
+            }
+            self.send(ClientMessage::Input { pane_id: pid, data });
+        }
+    }
+
     /// Hit-test the context menu, returning the item index if the cursor is over one.
     pub(crate) fn context_menu_hit_test(&self, x: f32, y: f32) -> Option<usize> {
         if !self.context_menu.visible {
@@ -664,8 +756,9 @@ impl App {
                         super::ContextMenuAction::Paste => {
                             if let Some(cb) = &mut self.clipboard {
                                 if let Ok(text) = cb.get_text() {
-                                    if let Some(warning) =
-                                        super::paste_guard::check_paste_safety(&text)
+                                    let threshold = self.config.terminal.paste_warn_threshold;
+                                    if let Some(info) =
+                                        super::paste_guard::check_paste_size(&text, threshold)
                                     {
                                         let preview = if text.len() > 200 {
                                             format!(
@@ -678,8 +771,9 @@ impl App {
                                         let preview =
                                             preview.replace('\n', " \\n ").replace('\r', "");
                                         self.pending_paste = Some(super::PendingPaste {
-                                            warning,
+                                            info,
                                             preview,
+                                            hovered_button: None,
                                         });
                                     } else if let Some(pid) =
                                         self.workspaces.active_mut().active_pane_id()

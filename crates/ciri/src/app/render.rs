@@ -175,6 +175,7 @@ impl App {
         let inactive_opacity = self.config.appearance.inactive_opacity;
         let bg_color = ThemeConfig::parse_color(&self.config.theme.background);
         let link_color = ThemeConfig::parse_color(&self.config.theme.accent);
+        let accent = ThemeConfig::parse_color(&self.config.theme.accent);
         let cache_tile_glyphs = self.pending_resize.is_none();
 
         for (pane_id, tile_rect, is_active) in tiles {
@@ -264,6 +265,50 @@ impl App {
                 h: tr.h - border_w * zoom * 2.0,
                 color: bg_color,
             });
+            if self.overview.active
+                && self
+                    .overview
+                    .hovered_pane
+                    .is_some_and(|(_, hovered_pane_id)| hovered_pane_id == *pane_id)
+            {
+                bg_rects.push(Rect {
+                    x: tr.x + border_w * zoom,
+                    y: tr.y + border_w * zoom,
+                    w: tr.w - border_w * zoom * 2.0,
+                    h: tr.h - border_w * zoom * 2.0,
+                    color: [accent[0], accent[1], accent[2], 0.10],
+                });
+
+                let hover_border_w = (border_w * zoom).max(1.0);
+                bg_rects.push(Rect {
+                    x: tr.x,
+                    y: tr.y,
+                    w: tr.w,
+                    h: hover_border_w,
+                    color: [accent[0], accent[1], accent[2], 0.55],
+                });
+                bg_rects.push(Rect {
+                    x: tr.x,
+                    y: tr.y + tr.h - hover_border_w,
+                    w: tr.w,
+                    h: hover_border_w,
+                    color: [accent[0], accent[1], accent[2], 0.55],
+                });
+                bg_rects.push(Rect {
+                    x: tr.x,
+                    y: tr.y,
+                    w: hover_border_w,
+                    h: tr.h,
+                    color: [accent[0], accent[1], accent[2], 0.55],
+                });
+                bg_rects.push(Rect {
+                    x: tr.x + tr.w - hover_border_w,
+                    y: tr.y,
+                    w: hover_border_w,
+                    h: tr.h,
+                    color: [accent[0], accent[1], accent[2], 0.55],
+                });
+            }
 
             let Some(view) = self.cached_views.get(pane_id) else {
                 continue;
@@ -1566,6 +1611,18 @@ impl App {
             }
         }
 
+        let content_y = self.status_bar_height();
+        let offset_tiles: Vec<(u64, GeoRect, bool)> = tiles
+            .iter()
+            .map(|(pane_id, rect, is_active)| {
+                (
+                    *pane_id,
+                    GeoRect::new(rect.x, rect.y + content_y, rect.w, rect.h),
+                    *is_active,
+                )
+            })
+            .collect();
+
         let mut bg_rects = std::mem::take(&mut self.render_bufs.bg_rects);
         let mut glyphs = std::mem::take(&mut self.render_bufs.glyphs);
         let mut color_glyphs = std::mem::take(&mut self.render_bufs.color_glyphs);
@@ -1578,7 +1635,7 @@ impl App {
         color_glyph_batches.clear();
 
         self.build_tiles(
-            &tiles,
+            &offset_tiles,
             zoom,
             vw_f,
             vh_f,
@@ -1592,10 +1649,10 @@ impl App {
         let pane_color_glyph_end = color_glyphs.len();
         let overlay_bg_start = bg_rects.len();
         self.build_status_bar(vw_f, vh_f, &mut bg_rects, &mut glyphs);
-        self.build_search_bar(&tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs);
-        self.build_bell_flash(&tiles, zoom, vw_f, vh_f, &mut bg_rects);
-        self.build_ime_preedit(&tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs);
-        self.build_image_placements(&tiles, zoom, vw_f, vh_f, &mut bg_rects, &mut glyphs);
+        self.build_search_bar(&offset_tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs);
+        self.build_bell_flash(&offset_tiles, zoom, vw_f, vh_f, &mut bg_rects);
+        self.build_ime_preedit(&offset_tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs);
+        self.build_image_placements(&offset_tiles, zoom, vw_f, vh_f, &mut bg_rects, &mut glyphs);
         self.build_command_palette(vw_f, vh_f, &mut bg_rects, &mut glyphs);
         self.build_paste_confirmation(vw_f, vh_f, &mut bg_rects, &mut glyphs);
         self.build_context_menu(vw_f, vh_f, &mut bg_rects, &mut glyphs);

@@ -61,6 +61,7 @@ pub(crate) struct ContextMenu {
     pub visible: bool,
     pub x: f32,
     pub y: f32,
+    pub target_pane_id: Option<u64>,
     pub items: Vec<ContextMenuItem>,
     pub hovered_index: Option<usize>,
 }
@@ -117,6 +118,7 @@ pub(crate) struct CommandPaletteState {
     pub entries: Vec<PaletteEntry>,
     pub filtered: Vec<usize>, // indices into entries
     pub selected_idx: usize,
+    pub sessions_only: bool,
 }
 
 pub(crate) struct PaletteEntry {
@@ -173,6 +175,7 @@ pub(crate) struct OverviewState {
     pub zoom: ViewOffset,
     pub dragging: bool,
     pub drag_last_pos: Option<(f32, f32)>,
+    pub hovered_pane: Option<(usize, u64)>,
 }
 
 /// Per-pane animation state (open/close/focus/bell).
@@ -266,6 +269,8 @@ pub(crate) struct App {
     pub connected: bool,
     pub cursor_blink_visible: bool,
     pub cursor_blink_timer: Instant,
+    pub pane_tab_scroll: f32,
+    pub workspace_last_pane_ids: HashMap<usize, u64>,
     pub clipboard: Option<arboard::Clipboard>,
     pub selection: Option<Selection>,
     pub last_left_click: Option<LastLeftClick>,
@@ -356,6 +361,7 @@ impl App {
                 active: false,
                 dragging: false,
                 drag_last_pos: None,
+                hovered_pane: None,
                 zoom: {
                     let mut v = ViewOffset::new();
                     v.jump_to(1.0);
@@ -388,6 +394,8 @@ impl App {
             connected: false,
             cursor_blink_visible: true,
             cursor_blink_timer: Instant::now(),
+            pane_tab_scroll: 0.0,
+            workspace_last_pane_ids: HashMap::new(),
             clipboard: arboard::Clipboard::new().ok(),
             selection: None,
             last_left_click: None,
@@ -515,6 +523,33 @@ impl App {
             cell_h * self.config.statusbar.padding_ratio
         };
         cell_h + padding
+    }
+
+    pub fn remember_workspace_pane(&mut self, workspace_idx: usize, pane_id: u64) {
+        self.workspace_last_pane_ids.insert(workspace_idx, pane_id);
+    }
+
+    pub fn focus_workspace_pane_local(&mut self, workspace_idx: usize, pane_id: u64) -> bool {
+        let Some(ws) = self.workspaces.workspaces.get_mut(workspace_idx) else {
+            return false;
+        };
+        for (col_idx, col) in ws.columns.iter_mut().enumerate() {
+            if let Some(tile_idx) = col.tiles.iter().position(|t| t.pane_id == pane_id) {
+                ws.active_column_idx = col_idx;
+                col.active_tile_idx = tile_idx;
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn sync_workspace_pane_memory(&mut self) {
+        self.workspace_last_pane_ids.clear();
+        for (ws_idx, ws) in self.workspaces.workspaces.iter().enumerate() {
+            if let Some(pane_id) = ws.active_pane_id() {
+                self.workspace_last_pane_ids.insert(ws_idx, pane_id);
+            }
+        }
     }
 
     /// Invalidate all cached rendering state for a pane (view + glyph cache).

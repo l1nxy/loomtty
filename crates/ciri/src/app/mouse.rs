@@ -36,24 +36,37 @@ impl App {
             return;
         }
 
+        if self.hit_test_top_bar(mx, my) {
+            if let Some(w) = &self.window {
+                if self.hit_test_session_name(mx, my)
+                    || self.hit_test_mode_pill(mx, my)
+                    || self.hit_test_leader_hint(mx, my)
+                    || self.hit_test_pane_tab(mx, my).is_some()
+                {
+                    w.set_cursor(winit::window::CursorIcon::Pointer);
+                } else {
+                    w.set_cursor(winit::window::CursorIcon::Default);
+                }
+            }
+            return;
+        }
+
         if self.overview.active {
             let hover_changed = self.clear_hovered_link();
-            if let Some((ws_idx, pane_id)) = self.hit_test_overview(mx, my) {
-                if ws_idx < self.workspaces.workspaces.len() {
-                    self.workspaces.active_workspace_idx = ws_idx;
-                    let ws = self.workspaces.active_mut();
-                    for (col_idx, col) in ws.columns.iter().enumerate() {
-                        if col.contains_pane(pane_id) {
-                            ws.active_column_idx = col_idx;
-                            break;
-                        }
-                    }
-                }
-                if let Some(w) = &self.window {
-                    w.request_redraw();
+            let prev_hover = self.overview.hovered_pane;
+            self.overview.hovered_pane = self.hit_test_overview(mx, my);
+            let overview_hover_changed = self.overview.hovered_pane != prev_hover;
+            if let Some(w) = &self.window {
+                if self.overview.hovered_pane.is_some() {
+                    w.set_cursor(winit::window::CursorIcon::Pointer);
+                } else {
+                    w.set_cursor(winit::window::CursorIcon::Default);
                 }
             }
             if hover_changed && let Some(w) = &self.window {
+                w.request_redraw();
+            }
+            if overview_hover_changed && let Some(w) = &self.window {
                 w.request_redraw();
             }
 
@@ -191,6 +204,10 @@ impl App {
                             };
                             if should_switch {
                                 self.last_focus_follows_mouse = Some((pane_id, now));
+                                self.remember_workspace_pane(
+                                    self.workspaces.active_workspace_idx,
+                                    pane_id,
+                                );
                                 self.send_lossy(ClientMessage::FocusPane { pane_id });
                             }
                         }
@@ -278,6 +295,79 @@ impl App {
     }
 
     fn handle_left_mouse_pressed(&mut self, mx: f32, my: f32) {
+        if self.hit_test_top_bar(mx, my) {
+            if self.hit_test_session_name(mx, my) {
+                self.open_session_palette();
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+                return;
+            }
+            if self.hit_test_mode_pill(mx, my) {
+                self.handle_action(ciri_input::action::Action::ToggleOverview);
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+                return;
+            }
+            if self.hit_test_leader_hint(mx, my) {
+                let workspace_count = self.workspaces.workspaces.len();
+                if workspace_count > 0 {
+                    let next_idx = (self.workspaces.active_workspace_idx + 1) % workspace_count;
+                    self.workspaces.active_workspace_idx = next_idx;
+                    if let Some(&pane_id) = self.workspace_last_pane_ids.get(&next_idx) {
+                        if self.focus_workspace_pane_local(next_idx, pane_id) {
+                            self.send(ClientMessage::FocusPane { pane_id });
+                        }
+                    }
+                    self.animate_to_active();
+                    self.send(ClientMessage::SwitchWorkspace {
+                        workspace_idx: next_idx,
+                    });
+                }
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+                return;
+            }
+            if let Some(pane_id) = self.hit_test_pane_tab(mx, my) {
+                let mut target: Option<(usize, usize, usize)> = None;
+                for (ws_idx, ws) in self.workspaces.workspaces.iter().enumerate() {
+                    for (col_idx, col) in ws.columns.iter().enumerate() {
+                        if col.contains_pane(pane_id) {
+                            let tile_idx = col
+                                .tiles
+                                .iter()
+                                .position(|t| t.pane_id == pane_id)
+                                .unwrap_or(0);
+                            target = Some((ws_idx, col_idx, tile_idx));
+                            break;
+                        }
+                    }
+                    if target.is_some() {
+                        break;
+                    }
+                }
+                if let Some((ws_idx, col_idx, tile_idx)) = target {
+                    self.workspaces.active_workspace_idx = ws_idx;
+                    let ws = self.workspaces.active_mut();
+                    ws.active_column_idx = col_idx;
+                    if col_idx < ws.columns.len() {
+                        ws.columns[col_idx].active_tile_idx =
+                            tile_idx.min(ws.columns[col_idx].tiles.len().saturating_sub(1));
+                    }
+                    self.remember_workspace_pane(ws_idx, pane_id);
+                    self.send(ClientMessage::FocusPane { pane_id });
+                    self.animate_to_active();
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                    return;
+                }
+            }
+            return;
+        }
+
         if self.overview.active {
             if let Some((ws_idx, pane_id)) = self.hit_test_overview(mx, my) {
                 if ws_idx < self.workspaces.workspaces.len() {
@@ -286,10 +376,18 @@ impl App {
                     for (col_idx, col) in ws.columns.iter().enumerate() {
                         if col.contains_pane(pane_id) {
                             ws.active_column_idx = col_idx;
+                            if let Some(tile_idx) =
+                                col.tiles.iter().position(|t| t.pane_id == pane_id)
+                            {
+                                ws.columns[col_idx].active_tile_idx = tile_idx;
+                            }
                             break;
                         }
                     }
                 }
+                self.remember_workspace_pane(ws_idx, pane_id);
+                self.send(ClientMessage::FocusPane { pane_id });
+                self.overview.hovered_pane = None;
                 self.overview.active = false;
                 self.overview
                     .zoom
@@ -309,6 +407,9 @@ impl App {
                 if (mx - col_x).abs() < 4.0 {
                     let left_col_idx = i - 1;
                     let left_col_width = ws.columns[left_col_idx].effective_width(vw);
+                    let pane_id = ws.columns[left_col_idx].active_pane_id();
+                    self.remember_workspace_pane(self.workspaces.active_workspace_idx, pane_id);
+                    self.send(ClientMessage::FocusPane { pane_id });
                     self.drag.col_dragging = Some(left_col_idx);
                     self.drag.col_start_x = mx;
                     self.drag.col_start_width = left_col_width;
@@ -325,6 +426,13 @@ impl App {
                     .active()
                     .hit_test_tile_border(self.view_offset_x.value() as f32, mx, my, 4.0)
                 {
+                    if let Some(col) = self.workspaces.active().columns.get(col_idx)
+                        && let Some(tile) = col.tiles.get(top_tile_idx)
+                    {
+                        let pane_id = tile.pane_id;
+                        self.remember_workspace_pane(self.workspaces.active_workspace_idx, pane_id);
+                        self.send(ClientMessage::FocusPane { pane_id });
+                    }
                     self.drag.tile_dragging = Some((col_idx, top_tile_idx));
                     self.drag.tile_start_y = my;
                     started_drag = true;
@@ -398,6 +506,8 @@ impl App {
                             break;
                         }
                     }
+                    self.remember_workspace_pane(self.workspaces.active_workspace_idx, pane_id);
+                    self.send(ClientMessage::FocusPane { pane_id });
                     self.animate_to_active();
                     self.remember_left_click(pane_id, col, buf_row, click_now);
 
@@ -632,6 +742,7 @@ impl App {
             visible: true,
             x: mx,
             y: my,
+            target_pane_id: self.pixel_to_cell(mx, my).map(|(pane_id, _, _)| pane_id),
             items,
             hovered_index: None,
         };
@@ -742,9 +853,14 @@ impl App {
 
     /// Execute the action of the currently hovered context menu item.
     fn handle_context_menu_click(&mut self) {
+        let target_pane_id = self.context_menu.target_pane_id;
         if let Some(idx) = self.context_menu.hovered_index {
             if let Some(item) = self.context_menu.items.get(idx).cloned() {
                 if item.enabled {
+                    if let Some(pane_id) = target_pane_id {
+                        self.send(ClientMessage::FocusPane { pane_id });
+                        self.remember_workspace_pane(self.workspaces.active_workspace_idx, pane_id);
+                    }
                     match &item.action {
                         super::ContextMenuAction::Copy => {
                             if let Some(text) = self.extract_selected_text() {
@@ -801,7 +917,7 @@ impl App {
                         }
                         super::ContextMenuAction::SelectAll => {
                             // Select all visible text in the active pane
-                            if let Some(pid) = self.workspaces.active().active_pane_id() {
+                            if let Some(pid) = target_pane_id.or(self.workspaces.active().active_pane_id()) {
                                 if let Some(grid) = self.pane_grids.get(&pid) {
                                     let total = grid.total_lines();
                                     let cols = grid.cols;
@@ -815,7 +931,9 @@ impl App {
                             }
                         }
                         super::ContextMenuAction::Search => {
-                            if let Some(pane_id) = self.workspaces.active().active_pane_id() {
+                            if let Some(pane_id) =
+                                target_pane_id.or(self.workspaces.active().active_pane_id())
+                            {
                                 let scroll_offset = self
                                     .pane_grids
                                     .get(&pane_id)
@@ -846,7 +964,7 @@ impl App {
                         }
                         super::ContextMenuAction::ClosePane => {
                             if let Some(pane_id) =
-                                self.workspaces.active_mut().active_pane_id()
+                                target_pane_id.or(self.workspaces.active_mut().active_pane_id())
                             {
                                 self.send(ClientMessage::ClosePane { pane_id });
                             }
@@ -862,6 +980,21 @@ impl App {
         // Dismiss context menu on scroll
         if self.context_menu.visible {
             self.context_menu.visible = false;
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+            return;
+        }
+
+        if let Some((mx, my)) = self.last_mouse_pos
+            && self.hit_test_top_bar(mx, my)
+        {
+            let delta_px = match delta {
+                MouseScrollDelta::LineDelta(_, y) => -(y as f32) * self.cell_dimensions().0 * 3.0,
+                MouseScrollDelta::PixelDelta(pos) => -(pos.y as f32),
+            };
+            let max_scroll = self.pane_tab_scroll_max();
+            self.pane_tab_scroll = (self.pane_tab_scroll + delta_px).clamp(0.0, max_scroll);
             if let Some(w) = &self.window {
                 w.request_redraw();
             }
@@ -1093,6 +1226,7 @@ impl App {
                     let cur_zoom = self.overview.zoom.value();
                     let new_zoom = (cur_zoom + zoom_delta).clamp(0.05, 1.0);
                     if new_zoom >= self.config.animation.zoom_threshold as f64 {
+                        self.overview.hovered_pane = None;
                         self.overview.active = false;
                         self.overview.zoom.animate_to(1.0, omega);
                         self.animate_to_active();
@@ -1103,6 +1237,7 @@ impl App {
                     // In normal mode: pinch in (delta < 0) enters overview
                     if zoom_delta < -0.02 {
                         self.overview.active = true;
+                        self.overview.hovered_pane = None;
                         self.context_menu.visible = false;
                         self.refresh_overview_zoom();
                         self.view_offset_x.animate_to(0.0, omega);
@@ -1115,6 +1250,7 @@ impl App {
                 if self.overview.active
                     && self.overview.zoom.value() > self.config.animation.zoom_threshold as f64
                 {
+                    self.overview.hovered_pane = None;
                     self.overview.active = false;
                     self.overview.zoom.animate_to(1.0, omega);
                     self.animate_to_active();
@@ -1132,6 +1268,10 @@ impl App {
         let padding = self.config.appearance.padding;
         let vox = self.view_offset_x.value() as f32;
         let tiles = self.workspaces.active().visible_tiles(vox);
+        let my = my - self.status_bar_height();
+        if my < 0.0 {
+            return None;
+        }
         // Wider hit area (8px from right edge) for comfortable clicking
         let hit_zone_width = 8.0f32;
 

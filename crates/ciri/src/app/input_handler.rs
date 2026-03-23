@@ -109,6 +109,7 @@ impl App {
             }
             Action::ExitOverview => {
                 self.overview.active = false;
+                self.overview.hovered_pane = None;
                 self.overview
                     .zoom
                     .animate_to(1.0, self.config.animation.speed);
@@ -122,10 +123,12 @@ impl App {
                 let omega = self.config.animation.speed;
                 if self.overview.active {
                     self.context_menu.visible = false;
+                    self.overview.hovered_pane = None;
                     self.refresh_overview_zoom();
                     self.view_offset_x.animate_to(0.0, omega);
                     self.view_offset_y.animate_to(0.0, omega);
                 } else {
+                    self.overview.hovered_pane = None;
                     self.overview.zoom.animate_to(1.0, omega);
                     self.animate_to_active();
                 }
@@ -182,6 +185,10 @@ impl App {
     }
 
     pub fn hit_test_overview(&self, mx: f32, my: f32) -> Option<(usize, u64)> {
+        let my = my - self.status_bar_height();
+        if my < 0.0 {
+            return None;
+        }
         let zoom = self.overview.zoom.value() as f32;
         let zoom_threshold = self.config.animation.zoom_threshold;
         let vox = self.view_offset_x.value() as f32;
@@ -233,6 +240,10 @@ impl App {
         if cw <= 0.0 || ch <= 0.0 {
             return None;
         }
+        let my = my - self.status_bar_height();
+        if my < 0.0 {
+            return None;
+        }
         let border_w = self.config.appearance.border_width;
         let padding = self.config.appearance.padding;
         let vox = self.view_offset_x.value() as f32;
@@ -258,6 +269,10 @@ impl App {
     pub fn pixel_to_viewport_cell(&self, mx: f32, my: f32) -> Option<(u64, u16, u16)> {
         let (cw, ch) = self.cell_dimensions();
         if cw <= 0.0 || ch <= 0.0 {
+            return None;
+        }
+        let my = my - self.status_bar_height();
+        if my < 0.0 {
             return None;
         }
         let border_w = self.config.appearance.border_width;
@@ -532,8 +547,20 @@ impl App {
             entries,
             filtered,
             selected_idx: 0,
+            sessions_only: false,
         });
         // Request session list so we can add session entries
+        self.send(ClientMessage::ListSessions { all: true });
+    }
+
+    pub fn open_session_palette(&mut self) {
+        self.command_palette = Some(super::CommandPaletteState {
+            query: String::new(),
+            entries: Vec::new(),
+            filtered: Vec::new(),
+            selected_idx: 0,
+            sessions_only: true,
+        });
         self.send(ClientMessage::ListSessions { all: true });
     }
 

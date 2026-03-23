@@ -8,6 +8,7 @@ alacritty_terminal = { workspace = true }
 ciri-protocol = { workspace = true }
 portable-pty = "0.8"
 base64 = { workspace = true }
+colorsys = { workspace = true }
 log = { workspace = true }
 anyhow = { workspace = true }
 

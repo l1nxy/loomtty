@@ -1,8 +1,27 @@
 /// OSC 7 working directory parser.
 /// Parses: ESC ] 7 ; file://hostname/path ST
-#[derive(Debug, Default)]
+use percent_encoding::percent_decode_str;
+use winnow::prelude::*;
+use winnow::token::{literal, take_until};
+
+use crate::esc_scanner;
+
+const MAX_OSC7_PARTIAL_SIZE: usize = 4096;
+
+#[derive(Debug)]
 pub struct Osc7Parser {
     current_cwd: Option<String>,
+    /// Partial OSC sequence from a previous read.
+    partial: Vec<u8>,
+}
+
+impl Default for Osc7Parser {
+    fn default() -> Self {
+        Self {
+            current_cwd: None,
+            partial: Vec::new(),
+        }
+    }
 }
 
 impl Osc7Parser {
@@ -12,49 +31,44 @@ impl Osc7Parser {
 
     /// Scan raw PTY output for OSC 7 sequences.
     pub fn scan(&mut self, data: &[u8]) {
-        let mut i = 0;
-        while i < data.len() {
-            // Look for ESC ] 7 ;
-            if i + 3 < data.len()
-                && data[i] == 0x1b
-                && data[i + 1] == b']'
-                && data[i + 2] == b'7'
-                && data[i + 3] == b';'
-            {
-                i += 4;
-                let start = i;
-                // Find ST (BEL or ESC \)
-                while i < data.len() {
-                    if data[i] == 0x07 {
-                        // BEL terminator
-                        self.parse_uri(&data[start..i]);
-                        i += 1;
-                        break;
-                    }
-                    if i + 1 < data.len() && data[i] == 0x1b && data[i + 1] == b'\\' {
-                        // ESC \ terminator
-                        self.parse_uri(&data[start..i]);
-                        i += 2;
-                        break;
-                    }
-                    i += 1;
-                }
+        // If we have a partial OSC from a previous read, prepend it
+        let working_data;
+        let data = if !self.partial.is_empty() {
+            self.partial.extend_from_slice(data);
+            working_data = std::mem::take(&mut self.partial);
+            &working_data[..]
+        } else {
+            data
+        };
+
+        let result = esc_scanner::scan_osc(data, b"7");
+        for (_offset, payload) in &result.sequences {
+            self.parse_uri(payload);
+        }
+
+        // Buffer partial data for next read.
+        if let Some(partial_start) = result.partial_start {
+            let partial = &data[partial_start..];
+            if partial.len() > MAX_OSC7_PARTIAL_SIZE {
+                log::warn!(
+                    "OSC 7 partial buffer exceeded {}B limit, discarding",
+                    MAX_OSC7_PARTIAL_SIZE
+                );
+                self.partial.clear();
             } else {
-                i += 1;
+                self.partial = partial.to_vec();
             }
         }
     }
 
     fn parse_uri(&mut self, uri_bytes: &[u8]) {
         if let Ok(uri) = std::str::from_utf8(uri_bytes) {
-            // file://hostname/path
-            if let Some(path) = uri.strip_prefix("file://") {
-                // Skip hostname — find the first '/' after the hostname
-                if let Some(slash_pos) = path.find('/') {
-                    let path = &path[slash_pos..];
-                    let decoded = percent_decode(path);
-                    self.current_cwd = Some(decoded);
-                }
+            if let Some(path) = parse_file_uri.parse(uri).ok() {
+                let decoded = percent_decode_str(path)
+                    .decode_utf8()
+                    .map(|c| c.into_owned())
+                    .unwrap_or_else(|_| path.to_string());
+                self.current_cwd = Some(decoded);
             }
         }
     }
@@ -65,28 +79,15 @@ impl Osc7Parser {
     }
 }
 
-/// Decode percent-encoded (%XX) sequences in a URI path.
-/// Decodes to raw bytes first, then converts to UTF-8 so that multi-byte
-/// characters (e.g. CJK paths) are reconstructed correctly.
-fn percent_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut decoded_bytes = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(
-                std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""),
-                16,
-            ) {
-                decoded_bytes.push(byte);
-                i += 3;
-                continue;
-            }
-        }
-        decoded_bytes.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8(decoded_bytes).unwrap_or_else(|_| s.to_string())
+/// Parse `file://hostname/path` and return the `/path` portion (including leading slash).
+fn parse_file_uri<'a>(input: &mut &'a str) -> ModalResult<&'a str> {
+    literal("file://").parse_next(input)?;
+    // hostname: everything up to the first '/'
+    let _hostname = take_until(0.., "/").parse_next(input)?;
+    // The rest is the path (including leading '/')
+    let path = *input;
+    *input = "";
+    Ok(path)
 }
 
 #[cfg(test)]

@@ -55,96 +55,46 @@ impl SixelParser {
         };
 
         let mut placements = Vec::new();
-        let mut i = 0;
 
-        while i + 2 < data.len() {
-            // Look for DCS start: ESC P (0x1b 0x50)
-            if data[i] == 0x1b && data[i + 1] == b'P' {
-                let dcs_start = i;
-                i += 2;
+        let scan = crate::esc_scanner::scan_dcs(data);
 
-                // Skip parameters (digits and semicolons) until 'q'
-                while i < data.len() && (data[i].is_ascii_digit() || data[i] == b';') {
-                    i += 1;
-                }
+        for (_offset, payload) in &scan.sequences {
+            // Decode Sixel data to RGBA pixels
+            if let Some(image) = decode_sixel(payload) {
+                let id = self.next_image_id;
+                self.next_image_id += 1;
 
-                // Must find the 'q' introducer
-                if i >= data.len() {
-                    // Incomplete — buffer for next read
-                    self.buffer_partial(&data[dcs_start..]);
-                    return SixelScanResult { placements };
-                }
+                // Estimate cell dimensions (6 pixels per sixel row)
+                // These are rough — the client will position based on cell grid
+                let width_cells = (image.width as u16 / 8).max(1);
+                let height_cells = (image.height as u16 / 16).max(1);
 
-                if data[i] != b'q' {
-                    // Not a Sixel sequence, skip
-                    continue;
-                }
-                i += 1; // skip 'q'
+                log::info!(
+                    "sixel image #{id}: {}x{} pixels, {width_cells}x{height_cells} cells, {} bytes",
+                    image.width,
+                    image.height,
+                    image.data.len()
+                );
 
-                // Find the string terminator (ST = ESC \ or 0x9C)
-                let sixel_start = i;
-                let mut found_st = false;
-                while i < data.len() {
-                    if data[i] == 0x9C {
-                        found_st = true;
-                        break;
-                    }
-                    if data[i] == 0x1b && i + 1 < data.len() && data[i + 1] == b'\\' {
-                        found_st = true;
-                        break;
-                    }
-                    i += 1;
-                }
-
-                if !found_st {
-                    // Incomplete sequence — buffer for next read
-                    self.buffer_partial(&data[dcs_start..]);
-                    return SixelScanResult { placements };
-                }
-
-                let sixel_data = &data[sixel_start..i];
-
-                // Advance past ST
-                if data[i] == 0x9C {
-                    i += 1;
-                } else {
-                    i += 2; // ESC \
-                }
-
-                // Decode Sixel data to RGBA pixels
-                if let Some(image) = decode_sixel(sixel_data) {
-                    let id = self.next_image_id;
-                    self.next_image_id += 1;
-
-                    // Estimate cell dimensions (6 pixels per sixel row)
-                    // These are rough — the client will position based on cell grid
-                    let width_cells = (image.width as u16 / 8).max(1);
-                    let height_cells = (image.height as u16 / 16).max(1);
-
-                    log::info!(
-                        "sixel image #{id}: {}x{} pixels, {width_cells}x{height_cells} cells, {} bytes",
-                        image.width,
-                        image.height,
-                        image.data.len()
-                    );
-
-                    let placement = ImagePlacement {
-                        id,
-                        row: cursor_row,
-                        col: cursor_col,
-                        width_cells,
-                        height_cells,
-                        pixel_width: image.width,
-                        pixel_height: image.height,
-                        format: "rgba".to_string(),
-                        data: Arc::new(image.data),
-                    };
-                    active_images.push(placement.clone());
-                    placements.push(placement);
-                }
-            } else {
-                i += 1;
+                let placement = ImagePlacement {
+                    id,
+                    row: cursor_row,
+                    col: cursor_col,
+                    width_cells,
+                    height_cells,
+                    pixel_width: image.width,
+                    pixel_height: image.height,
+                    format: "rgba".to_string(),
+                    data: Arc::new(image.data),
+                };
+                active_images.push(placement.clone());
+                placements.push(placement);
             }
+        }
+
+        // Buffer any incomplete trailing sequence
+        if let Some(partial_start) = scan.partial_start {
+            self.buffer_partial(&data[partial_start..]);
         }
 
         SixelScanResult { placements }

@@ -4,10 +4,10 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["blade", "gl"]
+default = ["blade", "gl", "dx"]
 blade = ["dep:blade-graphics", "dep:blade-macros"]
 gl = ["dep:glow", "dep:glutin", "dep:glutin-winit", "dep:raw-window-handle"]
-dx = ["dep:windows"]
+dx = ["dep:windows", "dep:raw-window-handle"]
 
 [dependencies]
 ciri-render = { workspace = true }

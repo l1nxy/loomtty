@@ -217,8 +217,15 @@ pub(crate) struct ClientImagePlacement {
 /// Pending paste that needs user confirmation.
 #[derive(Debug, Clone)]
 pub(crate) struct PendingPaste {
-    pub warning: paste_guard::PasteWarning,
-    pub preview: String, // first N chars for display
+    pub info: paste_guard::PasteInfo,
+    pub preview: String,
+    pub hovered_button: Option<PasteButton>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PasteButton {
+    Paste,
+    Cancel,
 }
 
 /// Auto-reconnection state.

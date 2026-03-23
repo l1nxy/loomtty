@@ -1202,7 +1202,7 @@ impl App {
         let ch = atlas.cell_height;
         let baseline = ch * self.config.statusbar.text_baseline;
 
-        // Dialog dimensions: 60% width, dynamic height
+        // Dialog dimensions: 60% width, 40% height, centered
         let dialog_w = vw * 0.6;
         let dialog_h = vh * 0.4;
         let dx = (vw - dialog_w) / 2.0;
@@ -1210,60 +1210,43 @@ impl App {
 
         // Semi-transparent full-screen overlay
         bg_rects.push(Rect {
-            x: 0.0,
-            y: 0.0,
-            w: vw,
-            h: vh,
+            x: 0.0, y: 0.0, w: vw, h: vh,
             color: [0.0, 0.0, 0.0, 0.5],
         });
 
         // Dialog background
         bg_rects.push(Rect {
-            x: dx,
-            y: dy,
-            w: dialog_w,
-            h: dialog_h,
-            color: [0.12, 0.12, 0.15, 0.97],
+            x: dx, y: dy, w: dialog_w, h: dialog_h,
+            color: [0.12, 0.12, 0.15, 1.0],
         });
 
-        // Warning border (orange/amber)
-        let border = 2.0;
-        let warning_color = [1.0, 0.6, 0.0, 1.0];
-        // Top
-        bg_rects.push(Rect { x: dx, y: dy, w: dialog_w, h: border, color: warning_color });
-        // Bottom
-        bg_rects.push(Rect { x: dx, y: dy + dialog_h - border, w: dialog_w, h: border, color: warning_color });
-        // Left
-        bg_rects.push(Rect { x: dx, y: dy, w: border, h: dialog_h, color: warning_color });
-        // Right
-        bg_rects.push(Rect { x: dx + dialog_w - border, y: dy, w: border, h: dialog_h, color: warning_color });
+        // Border
+        let border = 1.0;
+        let border_color = ThemeConfig::parse_color(&self.config.theme.border_active);
+        bg_rects.push(Rect { x: dx, y: dy, w: dialog_w, h: border, color: border_color });
+        bg_rects.push(Rect { x: dx, y: dy + dialog_h - border, w: dialog_w, h: border, color: border_color });
+        bg_rects.push(Rect { x: dx, y: dy, w: border, h: dialog_h, color: border_color });
+        bg_rects.push(Rect { x: dx + dialog_w - border, y: dy, w: border, h: dialog_h, color: border_color });
 
         let text_x = dx + 16.0;
         let mut text_y = dy + 16.0;
 
         // Title
-        let title = "Paste Warning";
-        emit_status_text(
-            atlas, title, text_x, text_y, cw, baseline, warning_color, glyphs,
-        );
-        text_y += ch + 12.0;
-
-        // Reason
-        let reason = pending.warning.reason.clone();
         let fg_color = [0.9, 0.9, 0.9, 1.0];
-        emit_status_text(
-            atlas, &reason, text_x, text_y, cw, baseline, fg_color, glyphs,
+        let size_str = super::paste_guard::format_size(pending.info.size);
+        let title = format!(
+            "Are you sure you want to paste {} ({} lines)?",
+            size_str, pending.info.line_count
         );
-        text_y += ch + 8.0;
+        emit_status_text(atlas, &title, text_x, text_y, cw, baseline, fg_color, glyphs);
+        text_y += ch + 12.0;
 
         // Preview label
         let dim_color = [0.6, 0.6, 0.6, 1.0];
-        emit_status_text(
-            atlas, "Preview:", text_x, text_y, cw, baseline, dim_color, glyphs,
-        );
+        emit_status_text(atlas, "Preview:", text_x, text_y, cw, baseline, dim_color, glyphs);
         text_y += ch + 4.0;
 
-        // Preview content (truncated to fit dialog width)
+        // Preview content
         let max_chars = ((dialog_w - 32.0) / cw) as usize;
         let preview = &pending.preview;
         let preview_display = if preview.len() > max_chars {
@@ -1272,26 +1255,43 @@ impl App {
             preview.clone()
         };
 
-        // Preview background
         bg_rects.push(Rect {
-            x: text_x - 4.0,
-            y: text_y - 2.0,
-            w: dialog_w - 24.0,
-            h: ch + 4.0,
+            x: text_x - 4.0, y: text_y - 2.0,
+            w: dialog_w - 24.0, h: ch + 4.0,
             color: [0.08, 0.08, 0.1, 1.0],
         });
+        emit_status_text(atlas, &preview_display, text_x, text_y, cw, baseline, dim_color, glyphs);
 
-        emit_status_text(
-            atlas, &preview_display, text_x, text_y, cw, baseline, dim_color, glyphs,
-        );
+        // Buttons — layout must match paste_dialog_button_rects() in mouse.rs
+        let accent = ThemeConfig::parse_color(&self.config.theme.accent);
+        let btn_w = 100.0;
+        let btn_h = ch + 12.0;
+        let btn_y = dy + dialog_h - 16.0 - btn_h;
+        let paste_x = dx + dialog_w / 2.0 - btn_w - 16.0;
+        let cancel_x = dx + dialog_w / 2.0 + 16.0;
+        let hovered = pending.hovered_button;
 
-        // Action hints at bottom of dialog
-        let actions_text = "[Enter/y] Paste   [Esc/n] Cancel";
-        let accent_color = [0.4, 0.7, 1.0, 1.0];
-        let actions_y = dy + dialog_h - 16.0 - ch;
-        emit_status_text(
-            atlas, actions_text, text_x, actions_y, cw, baseline, accent_color, glyphs,
-        );
+        // Paste button
+        let paste_bg = if hovered == Some(super::PasteButton::Paste) {
+            [accent[0], accent[1], accent[2], 0.8]
+        } else {
+            [accent[0], accent[1], accent[2], 0.5]
+        };
+        bg_rects.push(Rect { x: paste_x, y: btn_y, w: btn_w, h: btn_h, color: paste_bg });
+        let label_x = paste_x + (btn_w - cw * 5.0) / 2.0;
+        let label_y = btn_y + (btn_h - ch) / 2.0;
+        emit_status_text(atlas, "Paste", label_x, label_y, cw, baseline, [1.0, 1.0, 1.0, 1.0], glyphs);
+
+        // Cancel button
+        let cancel_bg = if hovered == Some(super::PasteButton::Cancel) {
+            [0.4, 0.4, 0.4, 0.8]
+        } else {
+            [0.3, 0.3, 0.3, 0.5]
+        };
+        bg_rects.push(Rect { x: cancel_x, y: btn_y, w: btn_w, h: btn_h, color: cancel_bg });
+        let label_x = cancel_x + (btn_w - cw * 6.0) / 2.0;
+        let label_y = btn_y + (btn_h - ch) / 2.0;
+        emit_status_text(atlas, "Cancel", label_x, label_y, cw, baseline, [0.9, 0.9, 0.9, 1.0], glyphs);
     }
 
     pub fn render(&mut self) {

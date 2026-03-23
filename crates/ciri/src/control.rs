@@ -1,6 +1,32 @@
 use anyhow::Result;
 use ciri_protocol::message::*;
 
+/// Build a serialized ClientHello for control connections.
+fn build_control_hello() -> Vec<u8> {
+    let magic = b"CIRI";
+    let version = {
+        let v = env!("CARGO_PKG_VERSION");
+        let parts: Vec<&str> = v.split('.').collect();
+        let major: u8 = parts[0].parse().unwrap();
+        let minor: u8 = parts[1].parse().unwrap();
+        let patch: u16 = parts[2].parse().unwrap();
+        (major as u32) << 24 | (minor as u32) << 16 | patch as u32
+    };
+    let session_name = "__control__";
+    let name_bytes = session_name.as_bytes();
+    let mut hello = Vec::with_capacity(27 + name_bytes.len());
+    hello.extend_from_slice(magic);
+    hello.extend_from_slice(&version.to_le_bytes());
+    hello.push(ciri_protocol::codec::WIRE_PROTOCOL_VERSION);
+    hello.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+    hello.extend_from_slice(name_bytes);
+    hello.extend_from_slice(&1024u32.to_le_bytes()); // width
+    hello.extend_from_slice(&768u32.to_le_bytes()); // height
+    hello.extend_from_slice(&8.0f32.to_bits().to_le_bytes()); // cell_w
+    hello.extend_from_slice(&16.0f32.to_bits().to_le_bytes()); // cell_h
+    hello
+}
+
 /// Send a control command to the server and print the response.
 pub fn run_control_command(msg: ClientMessage, json: bool) -> Result<()> {
     use ciri_protocol::transport;
@@ -58,27 +84,7 @@ pub fn run_control_command(msg: ClientMessage, json: bool) -> Result<()> {
     }
 
     // Send a minimal ClientHello
-    let magic = b"CIRI";
-    let version = {
-        let v = env!("CARGO_PKG_VERSION");
-        let parts: Vec<&str> = v.split('.').collect();
-        let major: u8 = parts[0].parse().unwrap();
-        let minor: u8 = parts[1].parse().unwrap();
-        let patch: u16 = parts[2].parse().unwrap();
-        (major as u32) << 24 | (minor as u32) << 16 | patch as u32
-    };
-    let session_name = "__control__";
-    let name_bytes = session_name.as_bytes();
-    let mut hello = Vec::with_capacity(27 + name_bytes.len());
-    hello.extend_from_slice(magic);
-    hello.extend_from_slice(&version.to_le_bytes());
-    hello.push(ciri_protocol::codec::WIRE_PROTOCOL_VERSION);
-    hello.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
-    hello.extend_from_slice(name_bytes);
-    hello.extend_from_slice(&1024u32.to_le_bytes()); // width
-    hello.extend_from_slice(&768u32.to_le_bytes()); // height
-    hello.extend_from_slice(&8.0f32.to_bits().to_le_bytes()); // cell_w
-    hello.extend_from_slice(&16.0f32.to_bits().to_le_bytes()); // cell_h
+    let hello = build_control_hello();
     stream.write_all(&hello)?;
     stream.flush()?;
 
@@ -273,26 +279,7 @@ pub fn session_exists_on_server(name: &str) -> bool {
     }
 
     // Send ClientHello for __control__ session
-    let magic = b"CIRI";
-    let version = {
-        let v = env!("CARGO_PKG_VERSION");
-        let parts: Vec<&str> = v.split('.').collect();
-        let major: u8 = parts[0].parse().unwrap();
-        let minor: u8 = parts[1].parse().unwrap();
-        let patch: u16 = parts[2].parse().unwrap();
-        (major as u32) << 24 | (minor as u32) << 16 | patch as u32
-    };
-    let session_name_bytes = b"__control__";
-    let mut hello = Vec::with_capacity(27 + session_name_bytes.len());
-    hello.extend_from_slice(magic);
-    hello.extend_from_slice(&version.to_le_bytes());
-    hello.push(ciri_protocol::codec::WIRE_PROTOCOL_VERSION);
-    hello.extend_from_slice(&(session_name_bytes.len() as u16).to_le_bytes());
-    hello.extend_from_slice(session_name_bytes);
-    hello.extend_from_slice(&1024u32.to_le_bytes());
-    hello.extend_from_slice(&768u32.to_le_bytes());
-    hello.extend_from_slice(&8.0f32.to_bits().to_le_bytes());
-    hello.extend_from_slice(&16.0f32.to_bits().to_le_bytes());
+    let hello = build_control_hello();
     if stream.write_all(&hello).is_err() || stream.flush().is_err() {
         return false;
     }

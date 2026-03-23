@@ -219,6 +219,16 @@ impl Session {
                             let g = self.generation.entry(*pane_id).or_insert(0);
                             *g += 1;
                             Self::mark_full_damage(clients, &self.session_name, *pane_id);
+                            // Reset history_sent so the next FullPaneSync sends
+                            // ALL scrollback.  The server-side terminal emulator
+                            // reflows scrollback on resize (merging/splitting
+                            // wrapped lines), so the client's incremental view
+                            // is stale and must be replaced entirely.
+                            for client in clients.values_mut() {
+                                if client.session_name == self.session_name {
+                                    client.history_sent.insert(*pane_id, 0);
+                                }
+                            }
                             changed = true;
                         }
                     }

@@ -2,11 +2,37 @@
 ///
 /// Detects modes that alacritty_terminal doesn't expose (e.g. 1004, 2026).
 /// Designed for use in the PTY output scanning pipeline alongside Osc133Parser.
+use winnow::combinator::separated;
+use winnow::prelude::*;
+use winnow::token::take_while;
+
+use crate::esc_scanner::scan_csi_dec;
+
 pub(crate) struct DecModeParser {
     /// Tracking state for focus event reporting (DECSET 1004).
     pub focus_event_mode: bool,
     /// Tracking state for synchronized output (DEC 2026).
     pub sync_output_mode: bool,
+}
+
+/// Parse a single decimal number from ASCII digits.
+fn parse_mode_number(input: &mut &[u8]) -> ModalResult<u32> {
+    let digits = take_while(1.., |b: u8| b.is_ascii_digit()).parse_next(input)?;
+    let mut n: u32 = 0;
+    for &b in digits {
+        n = n
+            .checked_mul(10)
+            .and_then(|n| n.checked_add((b - b'0') as u32))
+            .ok_or_else(|| {
+                winnow::error::ErrMode::Backtrack(winnow::error::ContextError::new())
+            })?;
+    }
+    Ok(n)
+}
+
+/// Parse a semicolon-separated list of mode numbers from a payload slice.
+fn parse_mode_numbers(input: &mut &[u8]) -> ModalResult<Vec<u32>> {
+    separated(1.., parse_mode_number, b";").parse_next(input)
 }
 
 impl DecModeParser {
@@ -23,60 +49,36 @@ impl DecModeParser {
     /// - Mode 1004: Focus event reporting
     /// - Mode 2026: Synchronized output
     pub fn scan(&mut self, data: &[u8]) {
-        // Look for ESC [ ? ... h/l sequences
-        // Format: 0x1b 0x5b 0x3f <digits> 0x68(h) or 0x6c(l)
-        let len = data.len();
-        let mut i = 0;
-        while i + 3 < len {
-            // Match ESC [
-            if data[i] == 0x1b && data[i + 1] == b'[' && data[i + 2] == b'?' {
-                i += 3;
-                // Parse mode numbers (may be semicolon-separated, e.g. CSI ? 1004;2026 h)
-                let start = i;
-                while i < len && (data[i].is_ascii_digit() || data[i] == b';') {
-                    i += 1;
-                }
-                if i < len && (data[i] == b'h' || data[i] == b'l') {
-                    let set = data[i] == b'h';
-                    // Parse each mode number from the parameter string
-                    let params = &data[start..i];
-                    for param in params.split(|&b| b == b';') {
-                        if let Some(mode) = parse_decimal(param) {
-                            match mode {
-                                1004 => {
-                                    self.focus_event_mode = set;
-                                    log::debug!("DECSET 1004 focus events: {}", set);
-                                }
-                                2026 => {
-                                    self.sync_output_mode = set;
-                                    log::debug!("DEC 2026 sync output: {}", set);
-                                }
-                                _ => {}
-                            }
+        let result = scan_csi_dec(data);
+
+        for (_offset, payload) in &result.sequences {
+            if payload.is_empty() {
+                continue;
+            }
+
+            // Last byte is 'h' or 'l', everything before is the params.
+            let (&terminator, params) = payload.split_last().unwrap();
+            let set = terminator == b'h';
+
+            // Parse mode numbers from the params using winnow.
+            let mut input = params;
+            if let Ok(modes) = parse_mode_numbers.parse_next(&mut input) {
+                for mode in modes {
+                    match mode {
+                        1004 => {
+                            self.focus_event_mode = set;
+                            log::debug!("DECSET 1004 focus events: {}", set);
                         }
+                        2026 => {
+                            self.sync_output_mode = set;
+                            log::debug!("DEC 2026 sync output: {}", set);
+                        }
+                        _ => {}
                     }
-                    i += 1;
                 }
-            } else {
-                i += 1;
             }
         }
     }
-}
-
-/// Parse an ASCII decimal number from a byte slice.
-fn parse_decimal(bytes: &[u8]) -> Option<u32> {
-    if bytes.is_empty() {
-        return None;
-    }
-    let mut n: u32 = 0;
-    for &b in bytes {
-        if !b.is_ascii_digit() {
-            return None;
-        }
-        n = n.checked_mul(10)?.checked_add((b - b'0') as u32)?;
-    }
-    Some(n)
 }
 
 #[cfg(test)]

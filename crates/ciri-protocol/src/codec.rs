@@ -16,6 +16,7 @@
 // for hot-path). Re-evaluate only if a new variable-length hot-path message is added.
 // ─────────────────────────────────────────────────────────────────────
 
+use bytes::Buf;
 use crate::message::*;
 use std::io;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -178,23 +179,13 @@ pub async fn read_client_hello<R: AsyncRead + Unpin>(
     reader.read_exact(&mut rest).await?;
     let session_name = String::from_utf8(rest[..name_len].to_vec())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid session name utf8"))?;
-    let off = name_len;
+    let mut cursor = &rest[name_len..] as &[u8];
     let hello = ClientHello {
         session_name,
-        width: u32::from_le_bytes([rest[off], rest[off + 1], rest[off + 2], rest[off + 3]]),
-        height: u32::from_le_bytes([rest[off + 4], rest[off + 5], rest[off + 6], rest[off + 7]]),
-        cell_width: f32::from_bits(u32::from_le_bytes([
-            rest[off + 8],
-            rest[off + 9],
-            rest[off + 10],
-            rest[off + 11],
-        ])),
-        cell_height: f32::from_bits(u32::from_le_bytes([
-            rest[off + 12],
-            rest[off + 13],
-            rest[off + 14],
-            rest[off + 15],
-        ])),
+        width: cursor.get_u32_le(),
+        height: cursor.get_u32_le(),
+        cell_width: cursor.get_f32_le(),
+        cell_height: cursor.get_f32_le(),
     };
     // Validate viewport values
     if !hello.cell_width.is_finite() || hello.cell_width <= 0.0 || hello.cell_width > 200.0 {

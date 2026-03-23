@@ -752,7 +752,9 @@ dependencies = [
  "ciri-protocol",
  "libc",
  "log",
+ "percent-encoding",
  "portable-pty",
+ "winnow",
 ]
 
 [[package]]

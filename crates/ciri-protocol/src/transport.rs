@@ -3,62 +3,40 @@ use std::path::PathBuf;
 /// Default TCP port for remote connections.
 pub const DEFAULT_REMOTE_PORT: u16 = 7890;
 
-/// Resolve the user's home directory.
-/// Prefers $HOME, falls back to getpwuid_r on Unix.
-#[cfg(unix)]
-fn home_dir() -> Option<PathBuf> {
-    if let Ok(home) = std::env::var("HOME")
-        && !home.is_empty()
-    {
-        return Some(PathBuf::from(home));
+/// XDG_RUNTIME_DIR with proper fallback.
+pub fn runtime_dir() -> PathBuf {
+    if let Some(rd) = dirs::runtime_dir() {
+        return rd;
     }
-    let uid = unsafe { libc::getuid() };
-    let mut buf = vec![0u8; 4096];
-    let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
-    let mut result = std::ptr::null_mut();
-    let ret = unsafe {
-        libc::getpwuid_r(
-            uid,
-            &mut pwd,
-            buf.as_mut_ptr() as *mut libc::c_char,
-            buf.len(),
-            &mut result,
-        )
-    };
-    if ret == 0 && !result.is_null() {
-        let dir = unsafe { std::ffi::CStr::from_ptr(pwd.pw_dir) };
-        if let Ok(s) = dir.to_str() {
-            return Some(PathBuf::from(s));
+
+    // macOS: preserve old behavior (~/.cache) for backward compat
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(home) = dirs::home_dir() {
+            let legacy = home.join(".cache");
+            if legacy.exists() {
+                return legacy;
+            }
         }
     }
-    None
-}
 
-/// XDG_RUNTIME_DIR with proper fallback.
-#[cfg(unix)]
-pub fn runtime_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
-        return PathBuf::from(dir);
+    // Linux: probe /run/user/<uid> when XDG_RUNTIME_DIR is unset
+    #[cfg(target_os = "linux")]
+    {
+        let uid = unsafe { libc::getuid() };
+        let probe = PathBuf::from(format!("/run/user/{}", uid));
+        if probe.exists() {
+            return probe;
+        }
     }
-    // Fallback: /run/user/<uid> (systemd convention)
-    let uid = unsafe { libc::getuid() };
-    let candidate = PathBuf::from(format!("/run/user/{uid}"));
-    if candidate.is_dir() {
-        return candidate;
-    }
-    // Last resort: ~/.cache as a per-user writable directory
-    if let Some(home) = home_dir() {
-        return home.join(".cache");
-    }
-    PathBuf::from("/tmp")
-}
 
-/// Runtime dir on Windows — uses LOCALAPPDATA.
-#[cfg(windows)]
-pub fn runtime_dir() -> PathBuf {
-    let appdata = std::env::var("LOCALAPPDATA")
-        .unwrap_or_else(|_| r"C:\Users\Default\AppData\Local".to_string());
-    PathBuf::from(appdata)
+    dirs::cache_dir().unwrap_or_else(|| {
+        if cfg!(windows) {
+            PathBuf::from(r"C:\Users\Default\AppData\Local")
+        } else {
+            PathBuf::from("/tmp")
+        }
+    })
 }
 
 /// Derive a localhost TCP port from a session name (for Windows IPC).
@@ -90,22 +68,29 @@ pub fn server_pipe_name() -> String {
 
 /// Get the directory for session state files.
 pub fn state_dir() -> PathBuf {
-    #[cfg(unix)]
+    if let Some(sd) = dirs::state_dir() {
+        return sd.join("ciri").join("sessions");
+    }
+
+    // macOS: preserve old behavior (~/.local/state) for backward compat
+    #[cfg(target_os = "macos")]
     {
-        let state_home = std::env::var("XDG_STATE_HOME")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .map(PathBuf::from)
-            .or_else(|| home_dir().map(|h| h.join(".local/state")));
-        match state_home {
-            Some(p) => p.join("ciri").join("sessions"),
-            None => runtime_dir().join("ciri").join("sessions"),
+        if let Some(home) = dirs::home_dir() {
+            let legacy = home.join(".local").join("state");
+            if legacy.exists() {
+                return legacy.join("ciri").join("sessions");
+            }
         }
     }
-    #[cfg(windows)]
-    {
-        let appdata = std::env::var("LOCALAPPDATA")
-            .unwrap_or_else(|_| r"C:\Users\Default\AppData\Local".to_string());
-        PathBuf::from(appdata).join("ciri").join("sessions")
-    }
+
+    dirs::data_local_dir()
+        .unwrap_or_else(|| {
+            if cfg!(windows) {
+                PathBuf::from(r"C:\Users\Default\AppData\Roaming")
+            } else {
+                PathBuf::from("/tmp")
+            }
+        })
+        .join("ciri")
+        .join("sessions")
 }

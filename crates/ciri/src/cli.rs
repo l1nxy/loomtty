@@ -27,6 +27,9 @@ pub enum Command {
     /// Create a new session and connect
     New,
 
+    /// Interactive setup wizard — generate config file
+    Init,
+
     /// Attach to an existing session (error if not exists)
     #[command(visible_alias = "a")]
     Attach {
@@ -152,10 +155,11 @@ pub fn resolve(cli: Cli) -> CliCommand {
             if let Some(name) = cli.session_name {
                 CliCommand::Run { session_name: name }
             } else {
-                CliCommand::New
+                CliCommand::Default
             }
         }
         Some(Command::New) => CliCommand::New,
+        Some(Command::Init) => CliCommand::Init,
         Some(Command::Attach { session_name }) => CliCommand::Attach { session_name },
         Some(Command::List { all }) => CliCommand::List { all },
         Some(Command::Kill { session_name }) => CliCommand::Kill { session_name },
@@ -204,7 +208,10 @@ pub fn resolve(cli: Cli) -> CliCommand {
 
 #[derive(Debug)]
 pub enum CliCommand {
+    /// No subcommand given: auto-attach to existing session or create new.
+    Default,
     New,
+    Init,
     Run { session_name: String },
     Attach { session_name: String },
     List { all: bool },
@@ -247,8 +254,8 @@ mod tests {
     }
 
     #[test]
-    fn no_args_creates_new() {
-        assert!(matches!(parse(&[]), CliCommand::New));
+    fn no_args_creates_default() {
+        assert!(matches!(parse(&[]), CliCommand::Default));
     }
 
     #[test]

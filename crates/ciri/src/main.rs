@@ -32,13 +32,43 @@ fn main() -> Result<()> {
             return Ok(());
         }
         CliCommand::List => {
-            return control::run_control_command(ClientMessage::ListSessions);
+            return control::run_control_command(ClientMessage::ListSessions, false);
         }
         CliCommand::Kill { session_name } => {
-            return control::run_control_command(ClientMessage::KillSession { session_name });
+            return control::run_control_command(ClientMessage::KillSession { session_name }, false);
         }
         CliCommand::KillServer => {
-            return control::run_control_command(ClientMessage::KillServer);
+            return control::run_control_command(ClientMessage::KillServer, false);
+        }
+        CliCommand::Msg { subcommand, json } => {
+            use cli::MsgSubcommand;
+            let msg = match subcommand {
+                MsgSubcommand::SendKeys { session_name, pane_id, keys } => {
+                    ClientMessage::SendKeys { session_name, pane_id, keys: keys.into_bytes() }
+                }
+                MsgSubcommand::ListPanes { session_name } => {
+                    ClientMessage::ListPanes { session_name }
+                }
+                MsgSubcommand::Info { session_name } => {
+                    ClientMessage::GetSessionInfo { session_name }
+                }
+                MsgSubcommand::FocusPane { session_name, pane_id } => {
+                    ClientMessage::FocusPaneById { session_name, pane_id }
+                }
+                MsgSubcommand::ClosePane { session_name, pane_id } => {
+                    ClientMessage::ClosePaneById { session_name, pane_id }
+                }
+                MsgSubcommand::CreatePane { session_name } => {
+                    ClientMessage::CreatePaneIn { session_name }
+                }
+                MsgSubcommand::GetLayout { session_name } => {
+                    ClientMessage::GetLayout { session_name }
+                }
+                MsgSubcommand::RunCommand { session_name, command } => {
+                    ClientMessage::RunCommand { session_name, command, cwd: None }
+                }
+            };
+            return control::run_control_command(msg, json);
         }
         CliCommand::Delete { session_name } => {
             let dir = ciri_protocol::transport::state_dir();
@@ -48,7 +78,62 @@ fn main() -> Result<()> {
             }
             return Ok(());
         }
+        CliCommand::Template { subcommand } => {
+            use cli::TemplateSubcommand;
+            match subcommand {
+                TemplateSubcommand::List => {
+                    return control::run_control_command(ClientMessage::ListTemplates, false);
+                }
+                TemplateSubcommand::Apply { template_name, session_name } => {
+                    let session = session_name.unwrap_or_else(|| {
+                        let existing = ciri_session::restore::list_sessions(
+                            &ciri_protocol::transport::state_dir(),
+                        ).unwrap_or_default();
+                        ciri_session::names::unique_name(&existing)
+                    });
+                    return control::run_control_command(ClientMessage::ApplyTemplate {
+                        template_name,
+                        session_name: session,
+                    }, false);
+                }
+                TemplateSubcommand::Save { template_name, session_name } => {
+                    return control::run_control_command(ClientMessage::SaveTemplate {
+                        template_name,
+                        session_name,
+                    }, false);
+                }
+            }
+        }
         _ => {}
+    }
+
+    // Handle remote connection separately (no local server spawn)
+    if let CliCommand::Remote { host, session_name, port, ssh_port } = cli {
+        let session_name = session_name.unwrap_or_else(|| {
+            let existing = ciri_session::restore::list_sessions(&ciri_protocol::transport::state_dir())
+                .unwrap_or_default();
+            ciri_session::names::unique_name(&existing)
+        });
+
+        let config = CiriConfig::load().unwrap_or_default();
+        log::info!(
+            "config: font={} size={}, remote={}:{}, session={}",
+            config.font.family,
+            config.font.size,
+            host,
+            port,
+            session_name
+        );
+
+        let event_loop = EventLoop::new()?;
+        let mut app = App::new(config, session_name);
+        app.remote_config = Some(app::RemoteConnectionConfig {
+            host,
+            port,
+            ssh_port,
+        });
+        event_loop.run_app(&mut app)?;
+        return Ok(());
     }
 
     // Resolve session name

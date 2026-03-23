@@ -21,6 +21,7 @@ pub struct CiriConfig {
     pub render: RenderConfig,
     pub layout: LayoutConfig,
     pub gesture: GestureConfig,
+    pub remote: RemoteConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -184,6 +185,17 @@ pub struct TerminalConfig {
     pub shell: String,
     /// Maximum scrollback lines per pane. 0 = no scrollback.
     pub scrollback_lines: usize,
+    /// Automatically copy selected text to clipboard on mouse release.
+    pub copy_on_select: bool,
+    /// Clear text selection when typing.
+    pub clear_selection_on_type: bool,
+    /// Send desktop notification when a command takes longer than this many seconds.
+    /// Requires shell integration (OSC 133). 0 = disabled.
+    pub notify_command_threshold_secs: u64,
+    /// Audio file path for bell notification. Empty = no audio.
+    pub bell_audio: String,
+    /// Request window attention on bell (urgency hint).
+    pub bell_urgency: bool,
 }
 
 impl Default for TerminalConfig {
@@ -197,6 +209,11 @@ impl Default for TerminalConfig {
             cursor_blink_interval_ms: 500,
             shell: String::new(),
             scrollback_lines: 10000,
+            copy_on_select: false,
+            clear_selection_on_type: true,
+            notify_command_threshold_secs: 0,
+            bell_audio: String::new(),
+            bell_urgency: true,
         }
     }
 }
@@ -238,6 +255,8 @@ pub struct InputConfig {
     /// Input mode: "prefix" (tmux-style, one action per leader press)
     /// or "sticky" (zellij-style, stay in leader until Esc).
     pub mode: String,
+    /// Enable focus-follows-mouse: hovering over a pane focuses it.
+    pub focus_follows_mouse: bool,
 }
 
 impl Default for InputConfig {
@@ -247,6 +266,7 @@ impl Default for InputConfig {
             double_tap_window_ms: 300,
             scroll_multiplier: 50.0,
             mode: "prefix".to_string(),
+            focus_follows_mouse: false,
         }
     }
 }
@@ -368,6 +388,24 @@ impl Default for GestureConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RemoteConfig {
+    /// Enable TCP listener for remote connections (default: false).
+    pub enabled: bool,
+    /// TCP port to listen on, bound to 127.0.0.1 only (default: 7890).
+    pub port: u16,
+}
+
+impl Default for RemoteConfig {
+    fn default() -> Self {
+        RemoteConfig {
+            enabled: false,
+            port: 7890,
+        }
+    }
+}
+
 impl CiriConfig {
     pub fn load() -> Result<Self> {
         let path = config_path();
@@ -378,8 +416,85 @@ impl CiriConfig {
             CiriConfig::default()
         };
         config.theme.resolve_preset();
+        config.validate();
         Ok(config)
     }
+
+    pub fn validate(&mut self) {
+        if self.animation.speed <= 0.0 {
+            log::warn!("animation.speed <= 0.0, resetting to 12.0");
+            self.animation.speed = 12.0;
+        }
+        if self.animation.epsilon <= 0.0 {
+            log::warn!("animation.epsilon <= 0.0, resetting to 0.1");
+            self.animation.epsilon = 0.1;
+        }
+        if self.animation.focus_transition_speed <= 0.0 {
+            log::warn!("animation.focus_transition_speed <= 0.0, resetting to 15.0");
+            self.animation.focus_transition_speed = 15.0;
+        }
+        if self.animation.pane_open_duration_ms == 0 {
+            log::warn!("animation.pane_open_duration_ms == 0, resetting to 200");
+            self.animation.pane_open_duration_ms = 200;
+        }
+        if self.animation.pane_close_duration_ms == 0 {
+            log::warn!("animation.pane_close_duration_ms == 0, resetting to 150");
+            self.animation.pane_close_duration_ms = 150;
+        }
+        if self.appearance.border_width < 0.0 {
+            log::warn!("appearance.border_width < 0.0, resetting to 0.0");
+            self.appearance.border_width = 0.0;
+        }
+        if self.appearance.inactive_opacity < 0.0 || self.appearance.inactive_opacity > 1.0 {
+            log::warn!(
+                "appearance.inactive_opacity out of range, clamping to [0.0, 1.0]"
+            );
+            self.appearance.inactive_opacity = self.appearance.inactive_opacity.clamp(0.0, 1.0);
+        }
+        if self.font.size <= 0.0 {
+            log::warn!("font.size <= 0.0, resetting to 14.0");
+            self.font.size = 14.0;
+        }
+        if self.terminal.cursor_opacity < 0.0 || self.terminal.cursor_opacity > 1.0 {
+            log::warn!(
+                "terminal.cursor_opacity out of range, clamping to [0.0, 1.0]"
+            );
+            self.terminal.cursor_opacity = self.terminal.cursor_opacity.clamp(0.0, 1.0);
+        }
+        if self.render.frame_interval_ms == 0 {
+            log::warn!("render.frame_interval_ms == 0, resetting to 16");
+            self.render.frame_interval_ms = 16;
+        }
+    }
+}
+
+#[cfg(unix)]
+fn home_dir() -> Option<PathBuf> {
+    if let Ok(home) = std::env::var("HOME")
+        && !home.is_empty()
+    {
+        return Some(PathBuf::from(home));
+    }
+    let uid = unsafe { libc::getuid() };
+    let mut buf = vec![0u8; 4096];
+    let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut result = std::ptr::null_mut();
+    let ret = unsafe {
+        libc::getpwuid_r(
+            uid,
+            &mut pwd,
+            buf.as_mut_ptr() as *mut libc::c_char,
+            buf.len(),
+            &mut result,
+        )
+    };
+    if ret == 0 && !result.is_null() {
+        let dir = unsafe { std::ffi::CStr::from_ptr(pwd.pw_dir) };
+        if let Ok(s) = dir.to_str() {
+            return Some(PathBuf::from(s));
+        }
+    }
+    None
 }
 
 pub fn config_path() -> PathBuf {
@@ -391,11 +506,13 @@ pub fn config_path() -> PathBuf {
             return PathBuf::from(config_home).join("ciri").join("config.toml");
         }
         // $HOME/.config is the XDG default when XDG_CONFIG_HOME is unset
-        let home = std::env::var("HOME").expect("neither XDG_CONFIG_HOME nor HOME is set");
-        PathBuf::from(home)
-            .join(".config")
-            .join("ciri")
-            .join("config.toml")
+        match home_dir() {
+            Some(home) => home.join(".config").join("ciri").join("config.toml"),
+            None => {
+                log::warn!("cannot determine home directory, using /tmp/ciri as config base");
+                PathBuf::from("/tmp").join(".config").join("ciri").join("config.toml")
+            }
+        }
     }
     #[cfg(windows)]
     {

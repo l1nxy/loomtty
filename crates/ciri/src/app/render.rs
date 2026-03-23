@@ -1086,6 +1086,214 @@ impl App {
         }
     }
 
+    pub fn build_context_menu(
+        &mut self,
+        vw: f32,
+        vh: f32,
+        bg_rects: &mut Vec<Rect>,
+        glyphs: &mut Vec<GlyphInstance>,
+    ) {
+        if !self.context_menu.visible {
+            return;
+        }
+
+        let atlas = self.glyph_cache.as_mut().unwrap();
+
+        let (_, ch) = (atlas.cell_width, atlas.cell_height);
+        let cw = atlas.cell_width;
+        let item_height = ch * 1.5;
+        let padding = 8.0;
+        let menu_width = 200.0;
+        let menu_height =
+            self.context_menu.items.len() as f32 * item_height + padding * 2.0;
+
+        // Clamp to screen bounds
+        let mx = self.context_menu.x.min(vw - menu_width);
+        let my = self.context_menu.y.min(vh - menu_height);
+
+        // Shadow (slightly offset, more transparent)
+        let shadow_offset = 3.0;
+        bg_rects.push(Rect {
+            x: mx + shadow_offset,
+            y: my + shadow_offset,
+            w: menu_width,
+            h: menu_height,
+            color: [0.0, 0.0, 0.0, 0.4],
+        });
+
+        // Menu background
+        let menu_bg = ThemeConfig::parse_color(&self.config.theme.background);
+        let bg_color = [
+            menu_bg[0] * 0.9,
+            menu_bg[1] * 0.9,
+            menu_bg[2] * 0.9,
+            0.97,
+        ];
+        bg_rects.push(Rect {
+            x: mx,
+            y: my,
+            w: menu_width,
+            h: menu_height,
+            color: bg_color,
+        });
+
+        // Border
+        let border_color = ThemeConfig::parse_color(&self.config.theme.border_active);
+        let bw = 1.0;
+        // Top
+        bg_rects.push(Rect { x: mx, y: my, w: menu_width, h: bw, color: border_color });
+        // Bottom
+        bg_rects.push(Rect { x: mx, y: my + menu_height - bw, w: menu_width, h: bw, color: border_color });
+        // Left
+        bg_rects.push(Rect { x: mx, y: my, w: bw, h: menu_height, color: border_color });
+        // Right
+        bg_rects.push(Rect { x: mx + menu_width - bw, y: my, w: bw, h: menu_height, color: border_color });
+
+        let accent = ThemeConfig::parse_color(&self.config.theme.accent);
+        let fg_color = [1.0f32, 1.0, 1.0, 1.0];
+        let dim_color = [0.5f32, 0.5, 0.5, 0.6];
+        let baseline = ch * self.config.statusbar.text_baseline;
+
+        for (i, item) in self.context_menu.items.iter().enumerate() {
+            let iy = my + padding + i as f32 * item_height;
+
+            // Hover highlight
+            if Some(i) == self.context_menu.hovered_index && item.enabled {
+                let hover_color = [accent[0], accent[1], accent[2], 0.25];
+                bg_rects.push(Rect {
+                    x: mx + bw,
+                    y: iy,
+                    w: menu_width - bw * 2.0,
+                    h: item_height,
+                    color: hover_color,
+                });
+            }
+
+            // Text color: dim for disabled items, normal for enabled
+            let color = if item.enabled { fg_color } else { dim_color };
+            let text_y = iy + (item_height - ch) * 0.5;
+
+            emit_status_text(
+                atlas,
+                &item.label,
+                mx + padding,
+                text_y,
+                cw,
+                baseline,
+                color,
+                glyphs,
+            );
+        }
+    }
+
+    pub fn build_paste_confirmation(
+        &mut self,
+        vw: f32,
+        vh: f32,
+        bg_rects: &mut Vec<Rect>,
+        glyphs: &mut Vec<GlyphInstance>,
+    ) {
+        let Some(ref pending) = self.pending_paste else {
+            return;
+        };
+        let atlas = self.glyph_cache.as_mut().unwrap();
+
+        let cw = atlas.cell_width;
+        let ch = atlas.cell_height;
+        let baseline = ch * self.config.statusbar.text_baseline;
+
+        // Dialog dimensions: 60% width, dynamic height
+        let dialog_w = vw * 0.6;
+        let dialog_h = vh * 0.4;
+        let dx = (vw - dialog_w) / 2.0;
+        let dy = (vh - dialog_h) / 2.0;
+
+        // Semi-transparent full-screen overlay
+        bg_rects.push(Rect {
+            x: 0.0,
+            y: 0.0,
+            w: vw,
+            h: vh,
+            color: [0.0, 0.0, 0.0, 0.5],
+        });
+
+        // Dialog background
+        bg_rects.push(Rect {
+            x: dx,
+            y: dy,
+            w: dialog_w,
+            h: dialog_h,
+            color: [0.12, 0.12, 0.15, 0.97],
+        });
+
+        // Warning border (orange/amber)
+        let border = 2.0;
+        let warning_color = [1.0, 0.6, 0.0, 1.0];
+        // Top
+        bg_rects.push(Rect { x: dx, y: dy, w: dialog_w, h: border, color: warning_color });
+        // Bottom
+        bg_rects.push(Rect { x: dx, y: dy + dialog_h - border, w: dialog_w, h: border, color: warning_color });
+        // Left
+        bg_rects.push(Rect { x: dx, y: dy, w: border, h: dialog_h, color: warning_color });
+        // Right
+        bg_rects.push(Rect { x: dx + dialog_w - border, y: dy, w: border, h: dialog_h, color: warning_color });
+
+        let text_x = dx + 16.0;
+        let mut text_y = dy + 16.0;
+
+        // Title
+        let title = "Paste Warning";
+        emit_status_text(
+            atlas, title, text_x, text_y, cw, baseline, warning_color, glyphs,
+        );
+        text_y += ch + 12.0;
+
+        // Reason
+        let reason = pending.warning.reason.clone();
+        let fg_color = [0.9, 0.9, 0.9, 1.0];
+        emit_status_text(
+            atlas, &reason, text_x, text_y, cw, baseline, fg_color, glyphs,
+        );
+        text_y += ch + 8.0;
+
+        // Preview label
+        let dim_color = [0.6, 0.6, 0.6, 1.0];
+        emit_status_text(
+            atlas, "Preview:", text_x, text_y, cw, baseline, dim_color, glyphs,
+        );
+        text_y += ch + 4.0;
+
+        // Preview content (truncated to fit dialog width)
+        let max_chars = ((dialog_w - 32.0) / cw) as usize;
+        let preview = &pending.preview;
+        let preview_display = if preview.len() > max_chars {
+            format!("{}...", &preview[..preview.floor_char_boundary(max_chars.saturating_sub(3))])
+        } else {
+            preview.clone()
+        };
+
+        // Preview background
+        bg_rects.push(Rect {
+            x: text_x - 4.0,
+            y: text_y - 2.0,
+            w: dialog_w - 24.0,
+            h: ch + 4.0,
+            color: [0.08, 0.08, 0.1, 1.0],
+        });
+
+        emit_status_text(
+            atlas, &preview_display, text_x, text_y, cw, baseline, dim_color, glyphs,
+        );
+
+        // Action hints at bottom of dialog
+        let actions_text = "[Enter/y] Paste   [Esc/n] Cancel";
+        let accent_color = [0.4, 0.7, 1.0, 1.0];
+        let actions_y = dy + dialog_h - 16.0 - ch;
+        emit_status_text(
+            atlas, actions_text, text_x, actions_y, cw, baseline, accent_color, glyphs,
+        );
+    }
+
     pub fn render(&mut self) {
         if self.renderer.is_none() || self.glyph_cache.is_none() || self.glyph_atlas_gpu.is_none() {
             return;
@@ -1388,6 +1596,8 @@ impl App {
         self.build_ime_preedit(&tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs);
         self.build_image_placements(&tiles, zoom, vw_f, vh_f, &mut bg_rects, &mut glyphs);
         self.build_command_palette(vw_f, vh_f, &mut bg_rects, &mut glyphs);
+        self.build_paste_confirmation(vw_f, vh_f, &mut bg_rects, &mut glyphs);
+        self.build_context_menu(vw_f, vh_f, &mut bg_rects, &mut glyphs);
 
         let clear_color = if self.overview.active || zoom < zoom_threshold {
             ThemeConfig::parse_color(&self.config.theme.overview_background)

@@ -3,6 +3,8 @@ pub(crate) mod ime;
 pub(crate) mod input_handler;
 pub(crate) mod keyboard;
 pub(crate) mod mouse;
+pub(crate) mod paste_guard;
+pub(crate) mod notification;
 pub(crate) mod render;
 pub(crate) mod status_bar;
 pub(crate) mod sync;
@@ -31,6 +33,37 @@ use ciri_input::action::Action;
 
 use crate::connection::ServerEvent;
 use crate::grid::ClientPaneGrid;
+
+/// A context menu item.
+#[derive(Debug, Clone)]
+pub(crate) struct ContextMenuItem {
+    pub label: String,
+    pub action: ContextMenuAction,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum ContextMenuAction {
+    Copy,
+    Paste,
+    SelectAll,
+    Search,
+    OpenLink(String),
+    CopyLink(String),
+    SplitRight,
+    SplitDown,
+    ClosePane,
+}
+
+/// Context menu state.
+#[derive(Debug, Default)]
+pub(crate) struct ContextMenu {
+    pub visible: bool,
+    pub x: f32,
+    pub y: f32,
+    pub items: Vec<ContextMenuItem>,
+    pub hovered_index: Option<usize>,
+}
 
 /// Text selection state with absolute buffer coordinates.
 pub(crate) struct Selection {
@@ -181,6 +214,13 @@ pub(crate) struct ClientImagePlacement {
     pub pixel_height: u32,
 }
 
+/// Pending paste that needs user confirmation.
+#[derive(Debug, Clone)]
+pub(crate) struct PendingPaste {
+    pub warning: paste_guard::PasteWarning,
+    pub preview: String, // first N chars for display
+}
+
 /// Auto-reconnection state.
 pub(crate) struct ReconnectState {
     pub attempt: u32,
@@ -227,6 +267,7 @@ pub(crate) struct App {
     pub reconnect_state: Option<ReconnectState>,
     pub search_state: Option<SearchState>,
     pub command_palette: Option<CommandPaletteState>,
+    pub pending_paste: Option<PendingPaste>,
     pub broadcast_mode: bool,
     pub pane_anims: PaneAnimations,
     /// Inline image placements per pane.
@@ -234,6 +275,8 @@ pub(crate) struct App {
     pub cached_color_table: ColorTable,
     /// Per-pane cached glyph instances to skip redundant transformation in build_tiles.
     pub cached_tile_glyphs: HashMap<u64, CachedTileGlyphs>,
+    /// Whether the window currently has input focus.
+    pub window_focused: bool,
     pub should_exit: bool,
     #[allow(dead_code)]
     pub config_watcher: Option<notify::RecommendedWatcher>,
@@ -243,6 +286,19 @@ pub(crate) struct App {
     /// Local layout preview is immediate; PTY/server resize is committed once
     /// after the window size settles.
     pub pending_resize: Option<(winit::dpi::PhysicalSize<u32>, Instant)>,
+    /// Remote connection parameters, if connecting via SSH tunnel.
+    pub remote_config: Option<RemoteConnectionConfig>,
+    /// Last pane focused by focus-follows-mouse and the time it was set (for debouncing).
+    pub last_focus_follows_mouse: Option<(u64, Instant)>,
+    /// Right-click context menu state.
+    pub context_menu: ContextMenu,
+}
+
+/// Parameters for a remote SSH tunnel connection.
+pub(crate) struct RemoteConnectionConfig {
+    pub host: String,
+    pub port: u16,
+    pub ssh_port: u16,
 }
 
 impl App {
@@ -333,6 +389,7 @@ impl App {
             reconnect_state: None,
             search_state: None,
             command_palette: None,
+            pending_paste: None,
             broadcast_mode: false,
             pane_anims: PaneAnimations {
                 open_opacity: HashMap::new(),
@@ -345,6 +402,7 @@ impl App {
             image_placements: HashMap::new(),
             cached_color_table,
             cached_tile_glyphs: HashMap::new(),
+            window_focused: true,
             should_exit: false,
             config_watcher: None,
             config_change_rx: None,
@@ -355,6 +413,18 @@ impl App {
                 row_start: 0,
             },
             pending_resize: None,
+            remote_config: None,
+            last_focus_follows_mouse: None,
+            context_menu: ContextMenu::default(),
+        }
+    }
+
+    /// Connect to the server, either locally or via remote SSH tunnel.
+    pub fn connect(&self, viewport: ciri_protocol::codec::ClientHello) -> std::io::Result<(Sender<ClientMessage>, Receiver<ServerEvent>)> {
+        if let Some(ref rc) = self.remote_config {
+            crate::connection::connect_remote(&rc.host, rc.port, rc.ssh_port, viewport)
+        } else {
+            crate::connection::connect_or_spawn(&self.session_name, viewport)
         }
     }
 

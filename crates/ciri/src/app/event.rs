@@ -7,7 +7,6 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{WindowAttributes, WindowId};
 
 use super::App;
-use crate::connection;
 
 impl ApplicationHandler for App {
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
@@ -133,7 +132,7 @@ impl ApplicationHandler for App {
                     if let Some(state) = &mut self.reconnect_state {
                         state.attempt += 1;
                     }
-                    match connection::connect_or_spawn(&self.session_name, viewport) {
+                    match self.connect(viewport) {
                         Ok((tx, rx)) => {
                             log::info!("reconnected to session '{}'", self.session_name);
                             self.server_tx = Some(tx);
@@ -249,7 +248,7 @@ impl ApplicationHandler for App {
             cell_height: ch,
         };
         log::info!("connecting to session '{}'", self.session_name);
-        match connection::connect_or_spawn(&self.session_name, viewport) {
+        match self.connect(viewport) {
             Ok((tx, rx)) => {
                 self.server_tx = Some(tx);
                 self.server_rx = Some(rx);
@@ -320,6 +319,7 @@ impl ApplicationHandler for App {
                     return;
                 }
                 log::debug!("window resized: {}x{}", size.width, size.height);
+                self.context_menu.visible = false;
                 // Keep local viewport/layout state in sync immediately so the
                 // user sees a smooth local preview while dragging.
                 self.preview_resize(size);
@@ -366,7 +366,9 @@ impl ApplicationHandler for App {
                 button: winit::event::MouseButton::Right,
                 ..
             } => {
-                self.handle_mouse_pressed(winit::event::MouseButton::Right, 0.0, 0.0);
+                if let Some((mx, my)) = self.last_mouse_pos {
+                    self.handle_mouse_pressed(winit::event::MouseButton::Right, mx, my);
+                }
             }
 
             WindowEvent::MouseWheel { delta, phase, .. } => {
@@ -440,6 +442,14 @@ impl ApplicationHandler for App {
                     if let Some(w) = &self.window {
                         w.request_redraw();
                     }
+                }
+            }
+
+            WindowEvent::Focused(focused) => {
+                self.window_focused = focused;
+                self.send(ClientMessage::FocusChange { focused });
+                if !focused {
+                    self.context_menu.visible = false;
                 }
             }
 

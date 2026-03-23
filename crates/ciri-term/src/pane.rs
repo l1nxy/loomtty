@@ -10,10 +10,14 @@ use ciri_protocol::message::*;
 use std::sync::Arc;
 use std::sync::mpsc;
 
+use crate::dec_mode_parser::DecModeParser;
 use crate::event::PtyEventListener;
 use crate::kitty_graphics::KittyGraphicsParser;
+use crate::osc8_parser::Osc8Parser;
+use crate::osc7_parser::Osc7Parser;
 use crate::pty::Pty;
 use crate::shell_integration::Osc133Parser;
+use crate::sixel::SixelParser;
 
 pub type PaneId = u64;
 
@@ -65,6 +69,8 @@ pub struct ShellState {
     pub prompt_line: Option<i32>,
     /// Line where command output started.
     pub output_line: Option<i32>,
+    /// Timestamp when the last command started (OSC 133;C).
+    pub command_start: Option<std::time::Instant>,
 }
 
 struct TermSize {
@@ -120,11 +126,38 @@ pub struct Pane {
     kitty_parser: KittyGraphicsParser,
     /// OSC 133 shell integration parser.
     osc133_parser: Osc133Parser,
+    /// DEC private mode parser (focus events 1004, sync output 2026).
+    dec_mode_parser: DecModeParser,
+    /// Sixel image protocol parser.
+    sixel_parser: SixelParser,
+    /// OSC 8 hyperlink parser.
+    osc8_parser: Osc8Parser,
+    /// OSC 7 working directory parser.
+    osc7_parser: Osc7Parser,
+    /// Duration of the last completed command (set on OSC 133;D, drained by server).
+    last_command_duration: Option<std::time::Duration>,
 }
 
 impl Pane {
     pub fn new(id: PaneId, cols: u16, rows: u16, shell: &str) -> Result<Self> {
-        let pty = Pty::spawn(cols, rows, shell)?;
+        Self::new_with_opts(id, cols, rows, shell, None, None)
+    }
+
+    /// Create a new pane with CWD override (convenience for OSC 7 CWD inheritance).
+    pub fn new_with_cwd(id: PaneId, cols: u16, rows: u16, shell: &str, cwd: Option<&std::path::Path>) -> Result<Self> {
+        Self::new_with_opts(id, cols, rows, shell, None, cwd)
+    }
+
+    /// Create a new pane with optional command and working directory.
+    pub fn new_with_opts(
+        id: PaneId,
+        cols: u16,
+        rows: u16,
+        shell: &str,
+        command: Option<&str>,
+        cwd: Option<&std::path::Path>,
+    ) -> Result<Self> {
+        let pty = Pty::spawn_with_opts(cols, rows, shell, command, cwd)?;
 
         let size = TermSize {
             cols: cols as usize,
@@ -153,11 +186,17 @@ impl Pane {
                 last_exit_code: None,
                 prompt_line: None,
                 output_line: None,
+                command_start: None,
             },
             active_images: Vec::new(),
             pending_images: Vec::new(),
             kitty_parser: KittyGraphicsParser::new(),
             osc133_parser: Osc133Parser::new(),
+            dec_mode_parser: DecModeParser::new(),
+            sixel_parser: SixelParser::new(),
+            osc8_parser: Osc8Parser::new(),
+            osc7_parser: Osc7Parser::new(),
+            last_command_duration: None,
         })
     }
 
@@ -172,10 +211,14 @@ impl Pane {
         // Drain all available output from the background reader thread
         let chunks = self.pty.drain_output();
         if !chunks.is_empty() {
-            // Scan for OSC 133 shell integration sequences before VT parsing
+            // Scan for OSC 133 shell integration, DEC private mode, OSC 8
+            // hyperlink, and OSC 7 CWD sequences before VT parsing
             // (alacritty_terminal ignores these).
             for chunk in &chunks {
-                self.osc133_parser.scan(chunk, &mut self.shell_state);
+                self.osc133_parser.scan(chunk, &mut self.shell_state, &mut self.last_command_duration);
+                self.dec_mode_parser.scan(chunk);
+                self.osc8_parser.scan(chunk);
+                self.osc7_parser.scan(chunk);
             }
 
             // VT-parse each chunk individually, recording the cursor position
@@ -201,6 +244,15 @@ impl Pane {
                     self.pending_images.clear();
                 }
                 self.pending_images.extend(result.placements);
+
+                // Scan for Sixel graphics sequences (DCS q ... ST).
+                let sixel_result = self.sixel_parser.scan(
+                    chunk,
+                    *cursor_col,
+                    *cursor_row,
+                    &mut self.active_images,
+                );
+                self.pending_images.extend(sixel_result.placements);
             }
 
             // Cap active images to prevent unbounded growth
@@ -269,6 +321,11 @@ impl Pane {
         std::mem::take(&mut self.bell_pending)
     }
 
+    /// Drain the last completed command duration (from OSC 133;D).
+    pub fn drain_command_completion(&mut self) -> Option<std::time::Duration> {
+        self.last_command_duration.take()
+    }
+
     /// Get the current shell semantic zone (from OSC 133).
     pub fn shell_zone(&self) -> SemanticZone {
         self.shell_state.zone
@@ -277,6 +334,11 @@ impl Pane {
     /// Get the last command exit code (from OSC 133;D).
     pub fn last_exit_code(&self) -> Option<i32> {
         self.shell_state.last_exit_code
+    }
+
+    /// Get the current working directory (from OSC 7).
+    pub fn cwd(&self) -> Option<&str> {
+        self.osc7_parser.cwd()
     }
 
     pub fn write_to_pty(&mut self, data: &[u8]) {
@@ -481,6 +543,19 @@ impl Pane {
             }
         }
 
+        // Collect hyperlink data from OSC 8 parser
+        let hyperlink_extras = {
+            let link_map = self.osc8_parser.link_map();
+            if link_map.is_empty() {
+                ciri_protocol::message::HyperlinkExtras::new()
+            } else {
+                ciri_protocol::message::HyperlinkExtras {
+                    cell_links: Vec::new(), // Per-cell mapping requires terminal-level tracking
+                    link_map: link_map.to_vec(),
+                }
+            }
+        };
+
         FullPaneSync {
             pane_id: self.id,
             generation,
@@ -495,6 +570,7 @@ impl Pane {
             scrollback_rows: scrollback_lines as u16,
             cells,
             grapheme_extras,
+            hyperlink_extras,
         }
     }
 
@@ -523,7 +599,32 @@ impl Pane {
         if mode.contains(TermMode::BRACKETED_PASTE) {
             flags |= MODE_BRACKETED_PASTE;
         }
+        if self.dec_mode_parser.focus_event_mode {
+            flags |= MODE_FOCUS_EVENT;
+        }
+        if self.dec_mode_parser.sync_output_mode {
+            flags |= MODE_SYNCHRONIZED_OUTPUT;
+        }
         flags
+    }
+
+    /// Write a focus event escape sequence to the PTY (CSI I / CSI O).
+    /// Only call this when the pane has DECSET 1004 enabled.
+    pub fn write_focus_event(&mut self, focused: bool) {
+        if self.dec_mode_parser.focus_event_mode {
+            let seq = if focused { b"\x1b[I" } else { b"\x1b[O" };
+            self.write_to_pty(seq);
+        }
+    }
+
+    /// Whether this pane has focus event reporting (DECSET 1004) enabled.
+    pub fn has_focus_event_mode(&self) -> bool {
+        self.dec_mode_parser.focus_event_mode
+    }
+
+    /// Whether this pane has synchronized output (DEC 2026) enabled.
+    pub fn is_sync_output(&self) -> bool {
+        self.dec_mode_parser.sync_output_mode
     }
 
     /// Drain new image placements since last call (for broadcasting to clients).

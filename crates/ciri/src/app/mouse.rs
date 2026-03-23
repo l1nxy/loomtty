@@ -11,6 +11,18 @@ impl App {
         let my = position.y as f32;
         self.last_mouse_pos = Some((mx, my));
 
+        // Update context menu hover state
+        if self.context_menu.visible {
+            let prev = self.context_menu.hovered_index;
+            self.context_menu.hovered_index = self.context_menu_hit_test(mx, my);
+            if self.context_menu.hovered_index != prev {
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+            }
+            return;
+        }
+
         if self.overview.active {
             let hover_changed = self.clear_hovered_link();
             if let Some((ws_idx, pane_id)) = self.hit_test_overview(mx, my) {
@@ -137,6 +149,44 @@ impl App {
                     w.request_redraw();
                 }
 
+                // Focus-follows-mouse: switch focus when hovering over a different pane
+                if self.config.input.focus_follows_mouse
+                    && !self.mouse_left_held
+                    && self.search_state.is_none()
+                    && self.command_palette.is_none()
+                    && !self.context_menu.visible
+                {
+                    let vox = self.view_offset_x.value() as f32;
+                    let tiles = self.workspaces.active().visible_tiles(vox);
+                    let mut hover_pane = None;
+                    for (pane_id, rect, _) in &tiles {
+                        if rect.contains(mx, my) {
+                            hover_pane = Some(*pane_id);
+                            break;
+                        }
+                    }
+                    if let Some(pane_id) = hover_pane {
+                        let current_active = self.workspaces.active().active_pane_id();
+                        if current_active != Some(pane_id) {
+                            let now = Instant::now();
+                            let should_switch = match self.last_focus_follows_mouse {
+                                Some((last_id, last_time)) => {
+                                    pane_id != last_id
+                                        || now.duration_since(last_time).as_millis() > 50
+                                }
+                                None => true,
+                            };
+                            if should_switch {
+                                self.last_focus_follows_mouse = Some((pane_id, now));
+                                self.send_lossy(ClientMessage::FocusPane { pane_id });
+                            }
+                        }
+                    } else {
+                        // Clear debounce state when mouse is over dead space
+                        self.last_focus_follows_mouse = None;
+                    }
+                }
+
                 if self.mouse_left_held {
                     let sel_active = self.selection.as_ref().is_some_and(|s| s.active);
                     if sel_active {
@@ -166,8 +216,23 @@ impl App {
 
     pub(crate) fn handle_mouse_pressed(&mut self, button: MouseButton, mx: f32, my: f32) {
         match button {
-            MouseButton::Left => self.handle_left_mouse_pressed(mx, my),
-            MouseButton::Right => self.handle_right_mouse_pressed(),
+            MouseButton::Left => {
+                // If context menu is visible, handle click on it first
+                if self.context_menu.visible {
+                    if self.context_menu_hit_test(mx, my).is_some() {
+                        self.handle_context_menu_click();
+                    } else {
+                        // Click outside menu dismisses it
+                        self.context_menu.visible = false;
+                    }
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                    return;
+                }
+                self.handle_left_mouse_pressed(mx, my);
+            }
+            MouseButton::Right => self.handle_right_mouse_pressed(mx, my),
             _ => {}
         }
     }
@@ -411,9 +476,9 @@ impl App {
                 sel.end,
                 sel.active
             );
-            if sel.active && sel.start != sel.end {
+            if sel.active && sel.start != sel.end && self.config.terminal.copy_on_select {
                 if let Some(text) = self.extract_selected_text() {
-                    log::info!("auto-copy selection: {} bytes", text.len());
+                    log::info!("copy-on-select: {} bytes", text.len());
                     if let Some(cb) = &mut self.clipboard {
                         let _ = cb.set_text(&text);
                     }
@@ -425,23 +490,290 @@ impl App {
         }
     }
 
-    fn handle_right_mouse_pressed(&mut self) {
-        // Right-click = copy selection to clipboard (Ghostty-style)
-        if let Some(text) = self.extract_selected_text() {
-            if !text.is_empty() {
-                if let Some(cb) = &mut self.clipboard {
-                    let _ = cb.set_text(&text);
-                    log::debug!("right-click copy: {} bytes", text.len());
+    fn handle_right_mouse_pressed(&mut self, mx: f32, my: f32) {
+        use super::{ContextMenu, ContextMenuAction, ContextMenuItem};
+
+        // If context menu is already visible, dismiss it on another right-click
+        if self.context_menu.visible {
+            self.context_menu.visible = false;
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+            return;
+        }
+
+        // Check if the pane under cursor has mouse reporting enabled;
+        // if so, forward the right-click instead of showing the context menu.
+        if let Some((pane_id, _, _)) = self.pixel_to_viewport_cell(mx, my) {
+            if let Some(grid) = self.pane_grids.get(&pane_id) {
+                if grid.mode_flags & ciri_protocol::message::MODE_MOUSE_REPORT != 0 {
+                    self.send_lossy(ClientMessage::MouseInput {
+                        pane_id,
+                        button: 2,
+                        col: 0,
+                        row: 0,
+                        pressed: true,
+                        modifiers: 0,
+                    });
+                    return;
                 }
             }
         }
-        self.selection = None;
+
+        // Build context menu items
+        let mut items = Vec::new();
+
+        let has_selection = self
+            .selection
+            .as_ref()
+            .is_some_and(|s| s.start != s.end);
+
+        items.push(ContextMenuItem {
+            label: "Copy".to_string(),
+            action: ContextMenuAction::Copy,
+            enabled: has_selection,
+        });
+
+        items.push(ContextMenuItem {
+            label: "Paste".to_string(),
+            action: ContextMenuAction::Paste,
+            enabled: true,
+        });
+
+        items.push(ContextMenuItem {
+            label: "Select All".to_string(),
+            action: ContextMenuAction::SelectAll,
+            enabled: true,
+        });
+
+        items.push(ContextMenuItem {
+            label: "Search".to_string(),
+            action: ContextMenuAction::Search,
+            enabled: true,
+        });
+
+        // Check if there is a link under cursor
+        if let Some((pane_id, col, buf_row)) = self.pixel_to_cell(mx, my) {
+            if let Some(grid) = self.pane_grids.get(&pane_id) {
+                if let Some(link) = grid.link_at(col, buf_row) {
+                    items.push(ContextMenuItem {
+                        label: "Open Link".to_string(),
+                        action: ContextMenuAction::OpenLink(link.url.clone()),
+                        enabled: true,
+                    });
+                    items.push(ContextMenuItem {
+                        label: "Copy Link".to_string(),
+                        action: ContextMenuAction::CopyLink(link.url),
+                        enabled: true,
+                    });
+                }
+            }
+        }
+
+        // Separator
+        items.push(ContextMenuItem {
+            label: "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}".to_string(),
+            action: ContextMenuAction::Copy, // dummy, not clickable
+            enabled: false,
+        });
+
+        items.push(ContextMenuItem {
+            label: "Split Right".to_string(),
+            action: ContextMenuAction::SplitRight,
+            enabled: true,
+        });
+
+        items.push(ContextMenuItem {
+            label: "Split Down".to_string(),
+            action: ContextMenuAction::SplitDown,
+            enabled: true,
+        });
+
+        items.push(ContextMenuItem {
+            label: "Close Pane".to_string(),
+            action: ContextMenuAction::ClosePane,
+            enabled: true,
+        });
+
+        self.context_menu = ContextMenu {
+            visible: true,
+            x: mx,
+            y: my,
+            items,
+            hovered_index: None,
+        };
+
         if let Some(w) = &self.window {
             w.request_redraw();
         }
     }
 
+    /// Hit-test the context menu, returning the item index if the cursor is over one.
+    pub(crate) fn context_menu_hit_test(&self, x: f32, y: f32) -> Option<usize> {
+        if !self.context_menu.visible {
+            return None;
+        }
+        let (_, ch) = self.cell_dimensions();
+        let item_height = ch * 1.5;
+        let padding = 8.0;
+        let menu_width = 200.0;
+
+        // Clamp menu position to viewport
+        let (vw, vh) = self
+            .renderer
+            .as_ref()
+            .map(|r| {
+                let (w, h) = r.surface_size();
+                (w as f32, h as f32)
+            })
+            .unwrap_or((800.0, 600.0));
+        let menu_height = self.context_menu.items.len() as f32 * item_height + padding * 2.0;
+        let mx = self.context_menu.x.min(vw - menu_width);
+        let my = self.context_menu.y.min(vh - menu_height);
+
+        if x < mx || x > mx + menu_width {
+            return None;
+        }
+
+        let relative_y = y - my - padding;
+        if relative_y < 0.0 {
+            return None;
+        }
+
+        let index = (relative_y / item_height) as usize;
+        if index < self.context_menu.items.len() {
+            Some(index)
+        } else {
+            None
+        }
+    }
+
+    /// Execute the action of the currently hovered context menu item.
+    fn handle_context_menu_click(&mut self) {
+        if let Some(idx) = self.context_menu.hovered_index {
+            if let Some(item) = self.context_menu.items.get(idx).cloned() {
+                if item.enabled {
+                    match &item.action {
+                        super::ContextMenuAction::Copy => {
+                            if let Some(text) = self.extract_selected_text() {
+                                if let Some(cb) = &mut self.clipboard {
+                                    let _ = cb.set_text(&text);
+                                }
+                            }
+                        }
+                        super::ContextMenuAction::Paste => {
+                            if let Some(cb) = &mut self.clipboard {
+                                if let Ok(text) = cb.get_text() {
+                                    if let Some(warning) =
+                                        super::paste_guard::check_paste_safety(&text)
+                                    {
+                                        let preview = if text.len() > 200 {
+                                            format!(
+                                                "{}...",
+                                                &text[..text.floor_char_boundary(200)]
+                                            )
+                                        } else {
+                                            text.clone()
+                                        };
+                                        let preview =
+                                            preview.replace('\n', " \\n ").replace('\r', "");
+                                        self.pending_paste = Some(super::PendingPaste {
+                                            warning,
+                                            preview,
+                                        });
+                                    } else if let Some(pid) =
+                                        self.workspaces.active_mut().active_pane_id()
+                                    {
+                                        let bracketed = self.pane_grids.get(&pid).is_some_and(|g| {
+                                            g.mode_flags & ciri_protocol::message::MODE_BRACKETED_PASTE != 0
+                                        });
+                                        let mut data = Vec::with_capacity(
+                                            text.len() + if bracketed { 12 } else { 0 },
+                                        );
+                                        if bracketed {
+                                            data.extend_from_slice(b"\x1b[200~");
+                                        }
+                                        data.extend_from_slice(text.as_bytes());
+                                        if bracketed {
+                                            data.extend_from_slice(b"\x1b[201~");
+                                        }
+                                        self.send(ClientMessage::Input {
+                                            pane_id: pid,
+                                            data,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                        super::ContextMenuAction::SelectAll => {
+                            // Select all visible text in the active pane
+                            if let Some(pid) = self.workspaces.active().active_pane_id() {
+                                if let Some(grid) = self.pane_grids.get(&pid) {
+                                    let total = grid.total_lines();
+                                    let cols = grid.cols;
+                                    self.selection = Some(super::Selection {
+                                        pane_id: pid,
+                                        start: (0, 0),
+                                        end: (cols.saturating_sub(1), total.saturating_sub(1)),
+                                        active: false,
+                                    });
+                                }
+                            }
+                        }
+                        super::ContextMenuAction::Search => {
+                            if let Some(pane_id) = self.workspaces.active().active_pane_id() {
+                                let scroll_offset = self
+                                    .pane_grids
+                                    .get(&pane_id)
+                                    .map(|g| g.scroll_offset)
+                                    .unwrap_or(0);
+                                self.search_state = Some(super::SearchState {
+                                    query: String::new(),
+                                    matches: Vec::new(),
+                                    current_match_idx: 0,
+                                    pane_id,
+                                    original_scroll_offset: scroll_offset,
+                                });
+                            }
+                        }
+                        super::ContextMenuAction::OpenLink(url) => {
+                            self.open_url(url);
+                        }
+                        super::ContextMenuAction::CopyLink(url) => {
+                            if let Some(cb) = &mut self.clipboard {
+                                let _ = cb.set_text(url);
+                            }
+                        }
+                        super::ContextMenuAction::SplitRight => {
+                            self.send(ClientMessage::CreatePane);
+                        }
+                        super::ContextMenuAction::SplitDown => {
+                            self.send(ClientMessage::SplitDown);
+                        }
+                        super::ContextMenuAction::ClosePane => {
+                            if let Some(pane_id) =
+                                self.workspaces.active_mut().active_pane_id()
+                            {
+                                self.send(ClientMessage::ClosePane { pane_id });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.context_menu.visible = false;
+    }
+
     pub(crate) fn handle_mouse_wheel(&mut self, delta: MouseScrollDelta, phase: TouchPhase) {
+        // Dismiss context menu on scroll
+        if self.context_menu.visible {
+            self.context_menu.visible = false;
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+            return;
+        }
+
         if self.overview.active {
             // Overview mode: vertical scroll controls zoom level
             let dy = match delta {
@@ -677,6 +1009,7 @@ impl App {
                     // In normal mode: pinch in (delta < 0) enters overview
                     if zoom_delta < -0.02 {
                         self.overview.active = true;
+                        self.context_menu.visible = false;
                         self.refresh_overview_zoom();
                         self.view_offset_x.animate_to(0.0, omega);
                         self.view_offset_y.animate_to(0.0, omega);

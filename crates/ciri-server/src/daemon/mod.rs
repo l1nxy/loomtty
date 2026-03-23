@@ -21,6 +21,19 @@ pub async fn run_daemon() -> Result<()> {
     let config = ciri_config::config::CiriConfig::load().unwrap_or_default();
     let shell = config.terminal.shell.clone();
 
+    // Write shell integration scripts and set env var for child processes.
+    // SAFETY: This runs at startup before any other threads are spawned,
+    // so modifying the process environment is safe.
+    match crate::shell_integration::ensure_integration_dir() {
+        Ok(dir) => {
+            unsafe { std::env::set_var("CIRI_SHELL_INTEGRATION_DIR", &dir) };
+            log::info!("shell integration scripts at {}", dir.display());
+        }
+        Err(e) => {
+            log::warn!("failed to write shell integration scripts: {e}");
+        }
+    }
+
     let sock_path = transport::server_socket_path();
     if let Some(parent) = sock_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -113,6 +126,16 @@ pub async fn run_daemon() -> Result<()> {
         }
     });
 
+    // Optionally bind TCP listener for remote connections
+    let tcp_listener = if config.remote.enabled {
+        let addr = format!("127.0.0.1:{}", config.remote.port);
+        let tcp = tokio::net::TcpListener::bind(&addr).await?;
+        log::info!("ciri-server TCP listener on {addr} (remote enabled)");
+        Some(tcp)
+    } else {
+        None
+    };
+
     // Accept connections, with graceful shutdown via select!
     loop {
         #[cfg(unix)]
@@ -120,6 +143,14 @@ pub async fn run_daemon() -> Result<()> {
             tokio::select! {
                 result = listener.accept() => {
                     let (stream, _) = result?;
+                    let state = state.clone();
+                    let client_shutdown = shutdown.clone();
+                    let (reader, writer) = stream.into_split();
+                    tokio::spawn(connection::handle_client(reader, writer, state, client_shutdown));
+                }
+                result = tcp_accept(&tcp_listener) => {
+                    let (stream, addr) = result?;
+                    log::info!("TCP client connected from {addr}");
                     let state = state.clone();
                     let client_shutdown = shutdown.clone();
                     let (reader, writer) = stream.into_split();
@@ -140,6 +171,15 @@ pub async fn run_daemon() -> Result<()> {
                         log::error!("named pipe accept error: {e}");
                         continue;
                     }
+                }
+                result = tcp_accept(&tcp_listener) => {
+                    let (stream, addr) = result?;
+                    log::info!("TCP client connected from {addr}");
+                    let state = state.clone();
+                    let client_shutdown = shutdown.clone();
+                    let (reader, writer) = stream.into_split();
+                    tokio::spawn(connection::handle_client(reader, writer, state, client_shutdown));
+                    continue;
                 }
                 _ = shutdown.notified() => {
                     log::info!("accept loop shutting down");
@@ -162,4 +202,12 @@ pub async fn run_daemon() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Accept from an optional TCP listener, or pend forever if None.
+async fn tcp_accept(listener: &Option<tokio::net::TcpListener>) -> std::io::Result<(tokio::net::TcpStream, std::net::SocketAddr)> {
+    match listener {
+        Some(l) => l.accept().await,
+        None => std::future::pending().await,
+    }
 }

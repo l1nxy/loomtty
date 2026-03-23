@@ -616,8 +616,454 @@ impl Server {
                     ));
                 }
             }
+            ClientMessage::FocusChange { focused } => {
+                if let Some(session) = self.sessions.get_mut(&session_name) {
+                    // Send focus event to the active pane (if it has DECSET 1004 enabled)
+                    if let Some(pane_id) = session.workspaces.active().active_pane_id() {
+                        if let Some(pane) = session.panes.get_mut(&pane_id) {
+                            pane.write_focus_event(focused);
+                        }
+                    }
+                }
+            }
+            ClientMessage::FocusPane { pane_id } => {
+                if let Some(session) = self.sessions.get_mut(&session_name) {
+                    if session.focus_pane(pane_id) {
+                        session.mark_session_dirty();
+                        responses.push(ServerResponse::BroadcastToSession(
+                            session_name.clone(),
+                            ServerMessage::LayoutUpdate {
+                                layout: session.layout_state(),
+                            },
+                        ));
+                    } else {
+                        log::debug!("focus_pane: pane {} not found in session '{}'", pane_id, session_name);
+                    }
+                }
+            }
             ClientMessage::KillServer => {
                 responses.push(ServerResponse::ShutdownServer);
+            }
+            // ─── IPC commands (from __control__ clients) ────────────────
+            ClientMessage::SendKeys { session_name: target, pane_id, keys } => {
+                if let Some(session) = self.sessions.get_mut(&target) {
+                    if let Some(pane) = session.panes.get_mut(&pane_id) {
+                        pane.write_to_pty(&keys);
+                        responses.push(ServerResponse::SendToClient(client_id, ServerMessage::CommandResult {
+                            success: true, message: "ok".to_string(), pane_id: Some(pane_id),
+                        }));
+                    } else {
+                        responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                            message: format!("pane {} not found in session '{}'", pane_id, target),
+                        }));
+                    }
+                } else {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("session '{}' not found", target),
+                    }));
+                }
+            }
+            ClientMessage::GetSessionInfo { session_name: target } => {
+                if let Some(session) = self.sessions.get(&target) {
+                    let client_count = self.clients.values()
+                        .filter(|c| c.session_name == target)
+                        .count();
+                    let info = SessionDetailInfo {
+                        name: target.clone(),
+                        running: true,
+                        pane_count: session.panes.len(),
+                        client_count,
+                        workspace_count: session.workspaces.workspaces.len(),
+                        active_workspace: session.workspaces.active_workspace_idx,
+                    };
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::SessionInfoReply { info }));
+                } else {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("session '{}' not found", target),
+                    }));
+                }
+            }
+            ClientMessage::ListPanes { session_name: target } => {
+                if let Some(session) = self.sessions.get(&target) {
+                    let mut panes = Vec::new();
+                    let active_ws = session.workspaces.active_workspace_idx;
+                    for (ws_idx, ws) in session.workspaces.workspaces.iter().enumerate() {
+                        let active_col = ws.active_column_idx;
+                        for (col_idx, col) in ws.columns.iter().enumerate() {
+                            let active_tile = col.active_tile_idx;
+                            for (tile_idx, tile) in col.tiles.iter().enumerate() {
+                                let is_active = ws_idx == active_ws && col_idx == active_col && tile_idx == active_tile;
+                                let (cols, rows) = session.panes.get(&tile.pane_id)
+                                    .map(|p| (p.grid_cols(), p.grid_rows()))
+                                    .unwrap_or((0, 0));
+                                let title = session.panes.get(&tile.pane_id)
+                                    .map(|p| p.title.clone())
+                                    .unwrap_or_default();
+                                panes.push(PaneDetailInfo {
+                                    pane_id: tile.pane_id,
+                                    cols,
+                                    rows,
+                                    title,
+                                    cwd: None,
+                                    is_active,
+                                    workspace_idx: ws_idx,
+                                    column_idx: col_idx,
+                                    tile_idx,
+                                });
+                            }
+                        }
+                    }
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::PaneListReply { panes }));
+                } else {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("session '{}' not found", target),
+                    }));
+                }
+            }
+            ClientMessage::FocusPaneById { session_name: target, pane_id } => {
+                if let Some(session) = self.sessions.get_mut(&target) {
+                    if session.focus_pane(pane_id) {
+                        session.mark_session_dirty();
+                        let layout = session.layout_state();
+                        responses.push(ServerResponse::BroadcastToSession(target.clone(), ServerMessage::LayoutUpdate { layout }));
+                        responses.push(ServerResponse::SendToClient(client_id, ServerMessage::CommandResult {
+                            success: true, message: "ok".to_string(), pane_id: Some(pane_id),
+                        }));
+                    } else {
+                        responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                            message: format!("pane {} not found in session '{}'", pane_id, target),
+                        }));
+                    }
+                } else {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("session '{}' not found", target),
+                    }));
+                }
+            }
+            ClientMessage::ClosePaneById { session_name: target, pane_id } => {
+                if let Some(mut session) = self.sessions.remove(&target) {
+                    if session.panes.contains_key(&pane_id) {
+                        session.close_pane(pane_id, &mut self.clients);
+                        session.resize_all_panes(&mut self.clients);
+                        session.mark_session_dirty();
+                        responses.push(ServerResponse::BroadcastToSession(target.clone(), ServerMessage::PaneClosed { pane_id }));
+                        let layout = session.layout_state();
+                        responses.push(ServerResponse::BroadcastToSession(target.clone(), ServerMessage::LayoutUpdate { layout }));
+                        responses.push(ServerResponse::SendToClient(client_id, ServerMessage::CommandResult {
+                            success: true, message: "ok".to_string(), pane_id: Some(pane_id),
+                        }));
+                    } else {
+                        responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                            message: format!("pane {} not found in session '{}'", pane_id, target),
+                        }));
+                    }
+                    self.sessions.insert(target, session);
+                } else {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("session '{}' not found", target),
+                    }));
+                }
+            }
+            ClientMessage::CreatePaneIn { session_name: target } => {
+                if let Some(mut session) = self.sessions.remove(&target) {
+                    match session.create_pane(&mut self.next_pane_id, &mut self.clients) {
+                        Ok(id) => {
+                            session.resize_all_panes(&mut self.clients);
+                            session.mark_session_dirty();
+                            let (cols, rows) = session.pane_grid_dims(id);
+                            responses.push(ServerResponse::BroadcastToSession(target.clone(), ServerMessage::PaneCreated {
+                                pane_id: id, column_idx: session.workspaces.active().active_column_idx, cols, rows,
+                            }));
+                            let layout = session.layout_state();
+                            responses.push(ServerResponse::BroadcastToSession(target.clone(), ServerMessage::LayoutUpdate { layout }));
+                            responses.push(ServerResponse::SendToClient(client_id, ServerMessage::CommandResult {
+                                success: true, message: "ok".to_string(), pane_id: Some(id),
+                            }));
+                        }
+                        Err(e) => {
+                            responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                                message: format!("failed to create pane: {e}"),
+                            }));
+                        }
+                    }
+                    self.sessions.insert(target, session);
+                } else {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("session '{}' not found", target),
+                    }));
+                }
+            }
+            ClientMessage::RunCommand { session_name: target, command: _, cwd: _ } => {
+                // For now, just create a regular pane (same as CreatePaneIn).
+                if let Some(mut session) = self.sessions.remove(&target) {
+                    match session.create_pane(&mut self.next_pane_id, &mut self.clients) {
+                        Ok(id) => {
+                            session.resize_all_panes(&mut self.clients);
+                            session.mark_session_dirty();
+                            let (cols, rows) = session.pane_grid_dims(id);
+                            responses.push(ServerResponse::BroadcastToSession(target.clone(), ServerMessage::PaneCreated {
+                                pane_id: id, column_idx: session.workspaces.active().active_column_idx, cols, rows,
+                            }));
+                            let layout = session.layout_state();
+                            responses.push(ServerResponse::BroadcastToSession(target.clone(), ServerMessage::LayoutUpdate { layout }));
+                            responses.push(ServerResponse::SendToClient(client_id, ServerMessage::CommandResult {
+                                success: true, message: "ok".to_string(), pane_id: Some(id),
+                            }));
+                        }
+                        Err(e) => {
+                            responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                                message: format!("failed to create pane: {e}"),
+                            }));
+                        }
+                    }
+                    self.sessions.insert(target, session);
+                } else {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("session '{}' not found", target),
+                    }));
+                }
+            }
+            ClientMessage::GetLayout { session_name: target } => {
+                if let Some(session) = self.sessions.get(&target) {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::LayoutReply {
+                        layout: session.layout_state(),
+                        session_name: target,
+                    }));
+                } else {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("session '{}' not found", target),
+                    }));
+                }
+            }
+            // ─── Template commands ────────────────────────────────────
+            ClientMessage::ListTemplates => {
+                use ciri_session::template;
+                let mut templates = Vec::new();
+                match template::list_templates() {
+                    Ok(names) => {
+                        for name in names {
+                            match template::load_template(&name) {
+                                Ok(tpl) => {
+                                    let total_panes: usize = tpl.workspaces.iter()
+                                        .map(|ws| ws.columns.iter().map(|c| c.tiles.len()).sum::<usize>())
+                                        .sum();
+                                    templates.push(TemplateInfo {
+                                        name,
+                                        description: tpl.description,
+                                        workspace_count: tpl.workspaces.len(),
+                                        total_panes,
+                                    });
+                                }
+                                Err(e) => {
+                                    log::warn!("failed to load template '{name}': {e}");
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("failed to list templates: {e}");
+                    }
+                }
+                responses.push(ServerResponse::SendToClient(client_id, ServerMessage::TemplateList { templates }));
+            }
+            ClientMessage::SaveTemplate { template_name, session_name: target_session } => {
+                use ciri_session::template::{self, LayoutTemplate, TemplateWorkspace, TemplateColumn, TemplateTile, TemplateWidth};
+                let source_session = if target_session.is_empty() { &session_name } else { &target_session };
+                if let Some(session) = self.sessions.get(source_session) {
+                    let layout = session.layout_state();
+                    let tpl = LayoutTemplate {
+                        description: Some(format!("Saved from session '{}'", source_session)),
+                        workspaces: layout.workspaces.iter().map(|ws| TemplateWorkspace {
+                            columns: ws.columns.iter().map(|col| TemplateColumn {
+                                tiles: col.tiles.iter().map(|tile| TemplateTile {
+                                    command: String::new(),
+                                    cwd: String::new(),
+                                    weight: tile.weight as f64,
+                                }).collect(),
+                                width: Some(TemplateWidth::Proportion { proportion: col.width_proportion }),
+                            }).collect(),
+                            active_column: ws.active_column_idx,
+                        }).collect(),
+                    };
+                    match template::save_template(&template_name, &tpl) {
+                        Ok(()) => {
+                            log::info!("saved template '{}' from session '{}'", template_name, source_session);
+                            responses.push(ServerResponse::SendToClient(client_id, ServerMessage::TemplateSaved { template_name }));
+                        }
+                        Err(e) => {
+                            responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                                message: format!("failed to save template: {e}"),
+                            }));
+                        }
+                    }
+                } else {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("session '{}' not found", source_session),
+                    }));
+                }
+            }
+            ClientMessage::ApplyTemplate { template_name, session_name: target_session } => {
+                use ciri_session::template::{self, TemplateWidth};
+                match template::load_template(&template_name) {
+                    Ok(tpl) => {
+                        let target = if target_session.is_empty() {
+                            session_name.clone()
+                        } else {
+                            target_session
+                        };
+
+                        // Remove existing session if present (kill all its panes)
+                        if let Some(old) = self.sessions.remove(&target) {
+                            // Notify other clients on this session
+                            for client in self.clients.values() {
+                                if client.session_name == target && client.id != client_id {
+                                    self.send_to_client(client.id, &ServerMessage::ServerShutdown);
+                                }
+                            }
+                            drop(old);
+                        }
+
+                        // Create new session
+                        self.had_session = true;
+                        let mut session = Session::new(&target, &self.default_shell, self.column_gap);
+                        session.default_column_width = self.default_column_width;
+                        session.pane_inset = self.pane_inset;
+
+                        let vw = session.workspaces.view_size.width;
+                        let vh = session.workspaces.view_size.height;
+                        let (_viewport_w, _viewport_h, cw, ch) = Session::effective_dims_from(&self.clients, &target);
+
+                        // Clear the default workspace
+                        session.workspaces.workspaces.clear();
+
+                        for tpl_ws in &tpl.workspaces {
+                            let mut ws = ciri_layout::workspace::Workspace::new_with_gap(
+                                session.workspaces.view_size,
+                                session.workspaces.column_gap,
+                            );
+
+                            for tpl_col in &tpl_ws.columns {
+                                let col_proportion = match &tpl_col.width {
+                                    Some(TemplateWidth::Proportion { proportion }) => *proportion,
+                                    Some(TemplateWidth::Fixed { fixed }) => *fixed / vw as f64,
+                                    None => 0.5,
+                                };
+                                let col_w = (vw as f64 * col_proportion) as f32;
+
+                                let mut col_opt: Option<ciri_layout::column::Column> = None;
+                                for tpl_tile in &tpl_col.tiles {
+                                    let id = self.next_pane_id;
+                                    self.next_pane_id += 1;
+                                    let tile_h = vh / tpl_col.tiles.len() as f32;
+                                    let (cols, rows) = session.pane_grid_size_with_cells(col_w, tile_h, cw, ch);
+
+                                    let cmd = if tpl_tile.command.is_empty() { None } else { Some(tpl_tile.command.as_str()) };
+                                    let cwd = if tpl_tile.cwd.is_empty() {
+                                        None
+                                    } else {
+                                        Some(std::path::Path::new(&tpl_tile.cwd))
+                                    };
+
+                                    match Pane::new_with_opts(id, cols, rows, &session.default_shell, cmd, cwd) {
+                                        Ok(pane) => {
+                                            session.panes.insert(id, pane);
+                                            session.generation.insert(id, 0);
+                                            if let Some(col) = &mut col_opt {
+                                                let mut tile = ciri_layout::tile::Tile::new(id);
+                                                tile.height = ciri_layout::tile::TileHeight::Auto { weight: tpl_tile.weight };
+                                                col.tiles.push(tile);
+                                            } else {
+                                                let mut col = ciri_layout::column::Column::new(id);
+                                                col.width = ColumnWidth::Proportion(col_proportion);
+                                                if let Some(first_tile) = col.tiles.first_mut() {
+                                                    first_tile.height = ciri_layout::tile::TileHeight::Auto { weight: tpl_tile.weight };
+                                                }
+                                                col_opt = Some(col);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            log::error!("failed to create pane from template: {e}");
+                                        }
+                                    }
+                                }
+                                if let Some(col) = col_opt {
+                                    ws.columns.push(col);
+                                }
+                            }
+
+                            ws.active_column_idx = tpl_ws.active_column.min(ws.columns.len().saturating_sub(1));
+                            session.workspaces.workspaces.push(ws);
+                        }
+
+                        // Ensure at least one workspace with one pane
+                        if session.panes.is_empty() {
+                            let vs = session.workspaces.view_size;
+                            let cg = session.workspaces.column_gap;
+                            session.workspaces.workspaces.clear();
+                            session.workspaces.workspaces.push(
+                                ciri_layout::workspace::Workspace::new_with_gap(vs, cg),
+                            );
+                            if let Err(e) = session.create_pane(&mut self.next_pane_id, &mut self.clients) {
+                                log::error!("failed to create fallback pane: {e}");
+                            }
+                        }
+
+                        session.workspaces.active_workspace_idx = 0;
+
+                        // Update client's session affinity
+                        if let Some(client) = self.clients.get_mut(&client_id) {
+                            client.session_name = target.clone();
+                            client.damage.clear();
+                            client.history_sent.clear();
+                        }
+
+                        // Resize all panes
+                        session.resize_all_panes(&mut self.clients);
+
+                        // Mark all panes for full sync
+                        let pane_keys: Vec<u64> = session.panes.keys().copied().collect();
+                        if let Some(client) = self.clients.get_mut(&client_id) {
+                            for pane_id in &pane_keys {
+                                let mut acc = DamageAccumulator::default();
+                                acc.mark_full();
+                                client.damage.insert(*pane_id, acc);
+                            }
+                        }
+
+                        // Build state sync
+                        let (sync_msg, pane_syncs) = session.build_state_sync();
+
+                        // Record history
+                        let pane_histories: Vec<(u64, usize)> = session.panes.iter()
+                            .map(|(&pid, pane)| (pid, pane.history_size()))
+                            .collect();
+                        if let Some(client) = self.clients.get_mut(&client_id) {
+                            for (pane_id, history) in pane_histories {
+                                client.history_sent.insert(pane_id, history);
+                            }
+                            for acc in client.damage.values_mut() {
+                                *acc = DamageAccumulator::default();
+                            }
+                        }
+
+                        session.mark_session_dirty();
+                        self.sessions.insert(target.clone(), session);
+
+                        // Send responses
+                        responses.push(ServerResponse::SendToClient(client_id, ServerMessage::TemplateApplied {
+                            session_name: target.clone(),
+                        }));
+                        responses.push(ServerResponse::SendToClient(client_id, sync_msg));
+                        for sync in pane_syncs {
+                            responses.push(ServerResponse::SendFullPaneSync(client_id, sync));
+                        }
+                    }
+                    Err(e) => {
+                        responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                            message: format!("failed to load template '{}': {}", template_name, e),
+                        }));
+                    }
+                }
             }
             ClientMessage::SwitchSession {
                 session_name: target,

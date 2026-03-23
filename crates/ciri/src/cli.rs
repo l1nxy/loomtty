@@ -18,7 +18,37 @@ pub enum CliCommand {
     Delete {
         session_name: String,
     },
+    /// Connect to a remote ciri-server via SSH tunnel.
+    Remote {
+        host: String,
+        session_name: Option<String>,
+        port: u16,
+        ssh_port: u16,
+    },
     Help,
+    /// IPC messaging commands for external scripting.
+    Msg { subcommand: MsgSubcommand, json: bool },
+    /// Template management subcommands.
+    Template { subcommand: TemplateSubcommand },
+}
+
+#[derive(Debug)]
+pub enum MsgSubcommand {
+    SendKeys { session_name: String, pane_id: u64, keys: String },
+    ListPanes { session_name: String },
+    Info { session_name: String },
+    FocusPane { session_name: String, pane_id: u64 },
+    ClosePane { session_name: String, pane_id: u64 },
+    CreatePane { session_name: String },
+    GetLayout { session_name: String },
+    RunCommand { session_name: String, command: String },
+}
+
+#[derive(Debug)]
+pub enum TemplateSubcommand {
+    List,
+    Apply { template_name: String, session_name: Option<String> },
+    Save { template_name: String, session_name: String },
 }
 
 /// Reserved subcommand names that cannot be used as positional session names.
@@ -37,6 +67,10 @@ fn is_subcommand(arg: &str) -> bool {
             | "attach"
             | "a"
             | "help"
+            | "msg"
+            | "template"
+            | "tpl"
+            | "remote"
     )
 }
 
@@ -46,6 +80,23 @@ where
 {
     let args: Vec<String> = args.into_iter().collect();
     let usage = usage();
+
+    // Handle "msg" subcommand separately since it has variable-length arguments
+    if args.first().map(|s| s.as_str()) == Some("msg") {
+        return parse_msg_args(&args[1..]);
+    }
+
+    // Check for template subcommand (variable-length args)
+    if let Some(first) = args.first() {
+        if first == "template" || first == "tpl" {
+            return parse_template_args(&args[1..]);
+        }
+    }
+
+    // Handle "remote" subcommand with flags
+    if args.first().map(|s| s.as_str()) == Some("remote") {
+        return parse_remote_args(&args[1..]);
+    }
 
     match args.as_slice() {
         [] => Ok(CliCommand::New),
@@ -75,19 +126,221 @@ where
     }
 }
 
+fn parse_msg_args(args: &[String]) -> Result<CliCommand, String> {
+    let msg_usage = msg_usage();
+
+    if args.is_empty() {
+        return Err(msg_usage);
+    }
+
+    // Check for --json flag anywhere in the args
+    let json = args.iter().any(|a| a == "--json");
+    let args: Vec<&String> = args.iter().filter(|a| a.as_str() != "--json").collect();
+
+    if args.is_empty() {
+        return Err(msg_usage);
+    }
+
+    let subcmd = args[0].as_str();
+    match subcmd {
+        "send-keys" => {
+            if args.len() < 4 {
+                return Err(format!("Usage: ciri msg send-keys <session> <pane_id> <keys>\n\n{msg_usage}"));
+            }
+            let session_name = args[1].clone();
+            let pane_id: u64 = args[2].parse().map_err(|_| format!("invalid pane_id: {}", args[2]))?;
+            let keys = args[3].clone();
+            Ok(CliCommand::Msg {
+                subcommand: MsgSubcommand::SendKeys { session_name, pane_id, keys },
+                json,
+            })
+        }
+        "list-panes" => {
+            if args.len() < 2 {
+                return Err(format!("Usage: ciri msg list-panes <session>\n\n{msg_usage}"));
+            }
+            Ok(CliCommand::Msg {
+                subcommand: MsgSubcommand::ListPanes { session_name: args[1].clone() },
+                json,
+            })
+        }
+        "info" => {
+            if args.len() < 2 {
+                return Err(format!("Usage: ciri msg info <session>\n\n{msg_usage}"));
+            }
+            Ok(CliCommand::Msg {
+                subcommand: MsgSubcommand::Info { session_name: args[1].clone() },
+                json,
+            })
+        }
+        "focus-pane" => {
+            if args.len() < 3 {
+                return Err(format!("Usage: ciri msg focus-pane <session> <pane_id>\n\n{msg_usage}"));
+            }
+            let pane_id: u64 = args[2].parse().map_err(|_| format!("invalid pane_id: {}", args[2]))?;
+            Ok(CliCommand::Msg {
+                subcommand: MsgSubcommand::FocusPane { session_name: args[1].clone(), pane_id },
+                json,
+            })
+        }
+        "close-pane" => {
+            if args.len() < 3 {
+                return Err(format!("Usage: ciri msg close-pane <session> <pane_id>\n\n{msg_usage}"));
+            }
+            let pane_id: u64 = args[2].parse().map_err(|_| format!("invalid pane_id: {}", args[2]))?;
+            Ok(CliCommand::Msg {
+                subcommand: MsgSubcommand::ClosePane { session_name: args[1].clone(), pane_id },
+                json,
+            })
+        }
+        "create-pane" => {
+            if args.len() < 2 {
+                return Err(format!("Usage: ciri msg create-pane <session>\n\n{msg_usage}"));
+            }
+            Ok(CliCommand::Msg {
+                subcommand: MsgSubcommand::CreatePane { session_name: args[1].clone() },
+                json,
+            })
+        }
+        "get-layout" => {
+            if args.len() < 2 {
+                return Err(format!("Usage: ciri msg get-layout <session>\n\n{msg_usage}"));
+            }
+            Ok(CliCommand::Msg {
+                subcommand: MsgSubcommand::GetLayout { session_name: args[1].clone() },
+                json,
+            })
+        }
+        "run-command" => {
+            if args.len() < 3 {
+                return Err(format!("Usage: ciri msg run-command <session> <command>\n\n{msg_usage}"));
+            }
+            Ok(CliCommand::Msg {
+                subcommand: MsgSubcommand::RunCommand { session_name: args[1].clone(), command: args[2].clone() },
+                json,
+            })
+        }
+        _ => Err(format!("unknown msg subcommand: {subcmd}\n\n{msg_usage}")),
+    }
+}
+
+fn msg_usage() -> String {
+    "\
+Usage: ciri msg <subcommand> [options]
+
+Subcommands:
+  send-keys <session> <pane_id> <keys>   Send keystrokes to a pane
+  list-panes <session> [--json]           List all panes in a session
+  info <session> [--json]                 Get session info
+  focus-pane <session> <pane_id>          Focus a pane by ID
+  close-pane <session> <pane_id>          Close a pane by ID
+  create-pane <session> [--json]          Create a new pane
+  get-layout <session> [--json]           Get the full layout state
+  run-command <session> <command>          Run a command in a new pane"
+        .to_string()
+}
+
+/// Parse arguments for `ciri remote <user@host> [session_name] [--port PORT] [--ssh-port PORT]`.
+fn parse_remote_args(args: &[String]) -> Result<CliCommand, String> {
+    if args.is_empty() {
+        return Err("remote requires a host argument.\nUsage: ciri remote <user@host> [session] [--port PORT] [--ssh-port PORT]".to_string());
+    }
+
+    let mut host: Option<String> = None;
+    let mut session_name: Option<String> = None;
+    let mut port: u16 = ciri_protocol::transport::DEFAULT_REMOTE_PORT;
+    let mut ssh_port: u16 = 22;
+
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "--port" {
+            i += 1;
+            if i >= args.len() {
+                return Err("--port requires a value".to_string());
+            }
+            port = args[i].parse::<u16>().map_err(|_| format!("invalid port: {}", args[i]))?;
+        } else if arg == "--ssh-port" {
+            i += 1;
+            if i >= args.len() {
+                return Err("--ssh-port requires a value".to_string());
+            }
+            ssh_port = args[i].parse::<u16>().map_err(|_| format!("invalid ssh-port: {}", args[i]))?;
+        } else if arg.starts_with('-') {
+            return Err(format!("unknown flag: {arg}"));
+        } else if host.is_none() {
+            host = Some(arg.clone());
+        } else if session_name.is_none() {
+            session_name = Some(arg.clone());
+        } else {
+            return Err(format!("unexpected argument: {arg}"));
+        }
+        i += 1;
+    }
+
+    let host = host.ok_or_else(|| "remote requires a host argument".to_string())?;
+
+    Ok(CliCommand::Remote {
+        host,
+        session_name,
+        port,
+        ssh_port,
+    })
+}
+
 pub fn usage() -> String {
     "\
 Usage:
-  ciri                          Create new session and connect
-  ciri new                      Create new session and connect
-  ciri <name>                   Connect to session (create if needed)
-  ciri attach|a <name>          Attach to existing session (must exist)
-  ciri list|ls                  List all sessions
-  ciri kill|k <name>            Kill a session
-  ciri kill-server|ks           Kill the server
-  ciri delete|rm <name>         Delete saved session
-  ciri --help|-h                Show this help"
+  ciri                                  Create new session and connect
+  ciri new                              Create new session and connect
+  ciri <name>                           Connect to session (create if needed)
+  ciri attach|a <name>                  Attach to existing session (must exist)
+  ciri list|ls                          List all sessions
+  ciri kill|k <name>                    Kill a session
+  ciri kill-server|ks                   Kill the server
+  ciri delete|rm <name>                 Delete saved session
+  ciri msg <subcommand>                 IPC commands for scripting (see ciri msg --help)
+  ciri template|tpl list                List layout templates
+  ciri template|tpl apply <name> [session]  Apply a template
+  ciri template|tpl save <name> <session>   Save session layout as template
+  ciri remote <host> [session]          Connect to remote server via SSH tunnel
+        [--port PORT]                   Remote TCP port (default: 7890)
+        [--ssh-port PORT]               SSH port (default: 22)
+  ciri --help|-h                        Show this help"
         .to_string()
+}
+
+fn parse_template_args(args: &[String]) -> Result<CliCommand, String> {
+    match args {
+        [] => Ok(CliCommand::Template {
+            subcommand: TemplateSubcommand::List,
+        }),
+        [a] if a == "list" || a == "ls" => Ok(CliCommand::Template {
+            subcommand: TemplateSubcommand::List,
+        }),
+        [sub, name] if sub == "apply" => Ok(CliCommand::Template {
+            subcommand: TemplateSubcommand::Apply {
+                template_name: name.clone(),
+                session_name: None,
+            },
+        }),
+        [sub, name, session] if sub == "apply" => Ok(CliCommand::Template {
+            subcommand: TemplateSubcommand::Apply {
+                template_name: name.clone(),
+                session_name: Some(session.clone()),
+            },
+        }),
+        [sub, name, session] if sub == "save" => Ok(CliCommand::Template {
+            subcommand: TemplateSubcommand::Save {
+                template_name: name.clone(),
+                session_name: session.clone(),
+            },
+        }),
+        [sub] if sub == "apply" => Err("template apply requires a template name.\nUsage: ciri template apply <name> [session]".to_string()),
+        [sub] if sub == "save" => Err("template save requires a template name and session name.\nUsage: ciri template save <name> <session>".to_string()),
+        [sub, _name] if sub == "save" => Err("template save requires a session name.\nUsage: ciri template save <name> <session>".to_string()),
+        _ => Err(usage()),
+    }
 }
 
 fn is_help_flag(arg: &str) -> bool {

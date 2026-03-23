@@ -430,48 +430,12 @@ fn put_sixel(
 }
 
 /// Convert HLS (Hue 0-360, Lightness 0-100, Saturation 0-100) to RGB (0-255).
+/// Sixel uses HLS parameter order; colorsys expects HSL, so we swap L and S.
 fn hls_to_rgb(h: u32, l: u32, s: u32) -> (u8, u8, u8) {
-    let h = (h % 360) as f64;
-    let l = (l.min(100) as f64) / 100.0;
-    let s = (s.min(100) as f64) / 100.0;
-
-    if s == 0.0 {
-        let v = (l * 255.0) as u8;
-        return (v, v, v);
-    }
-
-    let q = if l < 0.5 {
-        l * (1.0 + s)
-    } else {
-        l + s - l * s
-    };
-    let p = 2.0 * l - q;
-    let h_norm = h / 360.0;
-
-    let r = hue_to_rgb(p, q, h_norm + 1.0 / 3.0);
-    let g = hue_to_rgb(p, q, h_norm);
-    let b = hue_to_rgb(p, q, h_norm - 1.0 / 3.0);
-
-    ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
-}
-
-fn hue_to_rgb(p: f64, q: f64, mut t: f64) -> f64 {
-    if t < 0.0 {
-        t += 1.0;
-    }
-    if t > 1.0 {
-        t -= 1.0;
-    }
-    if t < 1.0 / 6.0 {
-        return p + (q - p) * 6.0 * t;
-    }
-    if t < 0.5 {
-        return q;
-    }
-    if t < 2.0 / 3.0 {
-        return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
-    }
-    p
+    use colorsys::{Hsl, Rgb};
+    let hsl = Hsl::new((h % 360) as f64, s.min(100) as f64, l.min(100) as f64, None);
+    let rgb = Rgb::from(hsl);
+    (rgb.red() as u8, rgb.green() as u8, rgb.blue() as u8)
 }
 
 /// Initialize the default VT340-compatible 16-color palette.

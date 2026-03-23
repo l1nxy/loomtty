@@ -197,7 +197,7 @@ impl Session {
         let vw = self.workspaces.view_size.width;
         let vh = self.workspaces.view_size.height;
         let mut changed = false;
-        log::debug!(
+        log::info!(
             "resize_all_panes: viewport={vw}x{vh} cell={cw}x{ch} inset={}",
             self.pane_inset
         );
@@ -207,13 +207,13 @@ impl Session {
                 let tile_rects = col.tile_rects(col_w, vh);
                 for (pane_id, _y, tile_h) in &tile_rects {
                     let (cols, rows) = self.pane_grid_size_with_cells(col_w, *tile_h, cw, ch);
-                    log::debug!(
-                        "  pane {}: col_w={col_w:.1}px tile_h={tile_h:.1}px → {cols}x{rows} chars",
-                        pane_id
-                    );
                     if let Some(pane) = self.panes.get_mut(pane_id) {
                         let old_cols = pane.grid_cols();
                         let old_rows = pane.grid_rows();
+                        log::info!(
+                            "  pane {}: col_w={col_w:.1}px tile_h={tile_h:.1}px → {cols}x{rows} (was {old_cols}x{old_rows})",
+                            pane_id
+                        );
                         if old_cols != cols || old_rows != rows {
                             pane.resize(cols, rows);
                             let g = self.generation.entry(*pane_id).or_insert(0);

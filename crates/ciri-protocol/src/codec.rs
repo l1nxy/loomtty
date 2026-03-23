@@ -972,6 +972,21 @@ pub fn encode_full_pane_sync_framed(buf: &mut Vec<u8>, sync: &FullPaneSync) -> i
         buf.push(bytes.len().min(255) as u8);
         buf.extend_from_slice(&bytes[..bytes.len().min(255)]);
     }
+    // Hyperlink extras (OSC 8)
+    let hl = &sync.hyperlink_extras;
+    buf.extend_from_slice(&(hl.cell_links.len() as u16).to_le_bytes());
+    for &(cell_idx, link_id) in &hl.cell_links {
+        buf.extend_from_slice(&cell_idx.to_le_bytes());
+        buf.extend_from_slice(&link_id.to_le_bytes());
+    }
+    buf.extend_from_slice(&(hl.link_map.len() as u16).to_le_bytes());
+    for (link_id, uri) in &hl.link_map {
+        buf.extend_from_slice(&link_id.to_le_bytes());
+        let uri_bytes = uri.as_bytes();
+        let len = uri_bytes.len().min(u16::MAX as usize);
+        buf.extend_from_slice(&(len as u16).to_le_bytes());
+        buf.extend_from_slice(&uri_bytes[..len]);
+    }
     // Patch the length field
     let payload_len = (buf.len() - payload_start) as u32;
     buf[1..5].copy_from_slice(&payload_len.to_le_bytes());
@@ -1081,6 +1096,42 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
         }
     }
 
+    // Hyperlink extras (optional, backward-compatible)
+    let mut hyperlink_extras = HyperlinkExtras::new();
+    if offset + 2 <= payload.len() {
+        let cell_links_count = read_u16_le(payload, offset)? as usize;
+        offset += 2;
+        for _ in 0..cell_links_count {
+            if offset + 6 > payload.len() {
+                break;
+            }
+            let cell_idx = read_u32_le(payload, offset)?;
+            offset += 4;
+            let link_id = read_u16_le(payload, offset)?;
+            offset += 2;
+            hyperlink_extras.cell_links.push((cell_idx, link_id));
+        }
+        if offset + 2 <= payload.len() {
+            let link_map_count = read_u16_le(payload, offset)? as usize;
+            offset += 2;
+            for _ in 0..link_map_count {
+                if offset + 4 > payload.len() {
+                    break;
+                }
+                let link_id = read_u16_le(payload, offset)?;
+                offset += 2;
+                let uri_len = read_u16_le(payload, offset)? as usize;
+                offset += 2;
+                if offset + uri_len > payload.len() {
+                    break;
+                }
+                let uri = String::from_utf8_lossy(&payload[offset..offset + uri_len]).to_string();
+                offset += uri_len;
+                hyperlink_extras.link_map.push((link_id, uri));
+            }
+        }
+    }
+
     Ok(FullPaneSync {
         pane_id,
         generation,
@@ -1095,6 +1146,7 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
         scrollback_rows,
         cells,
         grapheme_extras,
+        hyperlink_extras,
     })
 }
 
@@ -1442,6 +1494,7 @@ mod tests {
             scrollback_rows: 0,
             cells,
             grapheme_extras: GraphemeExtras::new(),
+            hyperlink_extras: HyperlinkExtras::new(),
         };
         let payload = encode_full_pane_sync_payload(&sync).unwrap();
         // SM should compress blank cells significantly
@@ -1479,6 +1532,7 @@ mod tests {
             scrollback_rows: 3,
             cells,
             grapheme_extras: GraphemeExtras::new(),
+            hyperlink_extras: HyperlinkExtras::new(),
         };
         let payload = encode_full_pane_sync_payload(&sync).unwrap();
         let decoded = decode_full_pane_sync(&payload).unwrap();

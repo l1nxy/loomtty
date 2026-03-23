@@ -154,6 +154,8 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                     // Don't re-insert this session (already removed above)
                 } else {
                     // Collect damage snapshots for clients of this session.
+                    // Skip panes with synchronized output (DEC 2026) active —
+                    // damage accumulates and is sent when sync mode is turned off.
                     let mut pending: Vec<(u64, u64, DamageAccumulator)> = Vec::new();
                     for (&cid, client) in s.clients.iter_mut() {
                         if client.session_name != *session_name {
@@ -161,6 +163,12 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                         }
                         for (&pane_id, acc) in client.damage.iter_mut() {
                             if !acc.is_empty() {
+                                // DEC 2026: defer sending while pane is in sync mode
+                                if let Some(pane) = session.panes.get(&pane_id) {
+                                    if pane.is_sync_output() {
+                                        continue;
+                                    }
+                                }
                                 pending.push((cid, pane_id, acc.take()));
                             }
                         }

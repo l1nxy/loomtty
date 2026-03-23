@@ -183,6 +183,31 @@ impl GraphemeExtras {
     }
 }
 
+/// Sparse hyperlink data: maps cell indices to link IDs, plus a link ID → URI table.
+///
+/// Sent alongside cell data in FullPaneSync. Typically empty — most frames have
+/// no explicit hyperlinks. Uses the same sparse pattern as GraphemeExtras.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct HyperlinkExtras {
+    /// Cell index → link ID mapping (sparse).
+    pub cell_links: Vec<(u32, u16)>,
+    /// Link ID → URI mapping.
+    pub link_map: Vec<(u16, String)>,
+}
+
+impl HyperlinkExtras {
+    pub fn new() -> Self {
+        Self {
+            cell_links: Vec::new(),
+            link_map: Vec::new(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.cell_links.is_empty()
+    }
+}
+
 // ─── Cell flag constants (mirrors alacritty CellFlags) ──────────────
 
 pub const FLAG_WIDE_CHAR: u16 = 1 << 0;
@@ -208,6 +233,8 @@ pub const FLAG_UNDERLINE_DASHED: u16 = 0b100 << 9;
 /// Line wrapping marker: set on the last cell of a row whose content continues
 /// on the next row (soft wrap). Used by the client for scrollback reflow.
 pub const FLAG_WRAPLINE: u16 = 1 << 12;
+/// Cell is part of an OSC 8 hyperlink. The link ID is in HyperlinkExtras.
+pub const FLAG_HYPERLINK: u16 = 1 << 13;
 
 // ─── Wire messages ──────────────────────────────────────────────────
 
@@ -305,6 +332,34 @@ pub enum ClientMessage {
         column_idx: usize,
         delta: f64,
     },
+    /// Window focus changed (for DECSET 1004 focus event reporting).
+    FocusChange {
+        focused: bool,
+    },
+    /// Focus a specific pane by ID (used for focus-follows-mouse).
+    FocusPane { pane_id: u64 },
+    /// IPC: Send keystrokes to a specific pane in a named session.
+    SendKeys { session_name: String, pane_id: u64, keys: Vec<u8> },
+    /// IPC: Run a command in a new pane in the named session.
+    RunCommand { session_name: String, command: String, cwd: Option<String> },
+    /// IPC: Get detailed info about a session.
+    GetSessionInfo { session_name: String },
+    /// IPC: List all panes in a session.
+    ListPanes { session_name: String },
+    /// IPC: Focus a specific pane by ID.
+    FocusPaneById { session_name: String, pane_id: u64 },
+    /// IPC: Close a specific pane by ID.
+    ClosePaneById { session_name: String, pane_id: u64 },
+    /// IPC: Create a new pane in the named session.
+    CreatePaneIn { session_name: String },
+    /// IPC: Get the full layout state of a session.
+    GetLayout { session_name: String },
+    /// Apply a layout template to create/recreate a session.
+    ApplyTemplate { template_name: String, session_name: String },
+    /// List available templates.
+    ListTemplates,
+    /// Save current session layout as a template.
+    SaveTemplate { template_name: String, session_name: String },
 }
 
 /// Control messages from server to client (msgpack encoded, tags 0x10-0x1F).
@@ -340,6 +395,12 @@ pub enum ServerMessage {
     Error { message: String },
     /// Bell notification from a pane (BEL / \x07).
     Bell { pane_id: u64 },
+    /// A shell command completed (requires shell integration / OSC 133).
+    CommandCompleted {
+        pane_id: u64,
+        duration_secs: u64,
+        exit_code: Option<i32>,
+    },
     /// Inline image placement from Kitty/Sixel protocol.
     ImagePlacement {
         pane_id: u64,
@@ -353,6 +414,20 @@ pub enum ServerMessage {
         format: String,
         data: Vec<u8>,
     },
+    /// IPC response: session detail info.
+    SessionInfoReply { info: SessionDetailInfo },
+    /// IPC response: list of panes.
+    PaneListReply { panes: Vec<PaneDetailInfo> },
+    /// IPC response: command result.
+    CommandResult { success: bool, message: String, pane_id: Option<u64> },
+    /// IPC response: full layout state.
+    LayoutReply { layout: LayoutState, session_name: String },
+    /// Template was applied successfully.
+    TemplateApplied { session_name: String },
+    /// List of available templates.
+    TemplateList { templates: Vec<TemplateInfo> },
+    /// Template was saved successfully.
+    TemplateSaved { template_name: String },
 }
 
 /// Session info returned in SessionList.
@@ -365,6 +440,40 @@ pub struct SessionInfo {
     pub pane_count: usize,
     /// Number of attached clients.
     pub client_count: usize,
+}
+
+/// Detailed session info returned by GetSessionInfo IPC command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionDetailInfo {
+    pub name: String,
+    pub running: bool,
+    pub pane_count: usize,
+    pub client_count: usize,
+    pub workspace_count: usize,
+    pub active_workspace: usize,
+}
+
+/// Detailed pane info returned by ListPanes IPC command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaneDetailInfo {
+    pub pane_id: u64,
+    pub cols: u16,
+    pub rows: u16,
+    pub title: String,
+    pub cwd: Option<String>,
+    pub is_active: bool,
+    pub workspace_idx: usize,
+    pub column_idx: usize,
+    pub tile_idx: usize,
+}
+
+/// Template info returned in TemplateList.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateInfo {
+    pub name: String,
+    pub description: Option<String>,
+    pub workspace_count: usize,
+    pub total_panes: usize,
 }
 
 /// Serializable layout state (2D: workspaces × columns).
@@ -443,6 +552,9 @@ pub struct FullPaneSync {
     /// Sparse grapheme overflow for multi-codepoint clusters (emoji, etc.).
     /// Empty for >99.9% of frames.
     pub grapheme_extras: GraphemeExtras,
+    /// Sparse hyperlink data from OSC 8 sequences.
+    /// Empty unless the terminal application uses explicit hyperlinks.
+    pub hyperlink_extras: HyperlinkExtras,
 }
 
 // ─── Zero-copy borrowed CellDelta ───────────────────────────────────
@@ -524,6 +636,10 @@ pub const MODE_SHELL_INTEGRATION: u8 = 0x04;
 pub const MODE_KITTY_KEYBOARD: u8 = 0x08;
 /// Bracketed paste mode (DECSET 2004) is active.
 pub const MODE_BRACKETED_PASTE: u8 = 0x10;
+/// Focus event reporting (DECSET 1004) is active.
+pub const MODE_FOCUS_EVENT: u8 = 0x20;
+/// Synchronized output (DEC 2026) is active — terminal buffers updates.
+pub const MODE_SYNCHRONIZED_OUTPUT: u8 = 0x40;
 
 // ─── Cursor shape encoding ──────────────────────────────────────────
 

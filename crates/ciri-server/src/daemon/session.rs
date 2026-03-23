@@ -60,6 +60,13 @@ impl Session {
         }
     }
 
+    /// Get the CWD of the active pane (from OSC 7), if available.
+    pub(crate) fn active_pane_cwd(&self) -> Option<String> {
+        let pane_id = self.workspaces.active().active_pane_id()?;
+        let pane = self.panes.get(&pane_id)?;
+        pane.cwd().map(|s| s.to_string())
+    }
+
     /// Create a new pane in the active workspace's active position (column right).
     pub(crate) fn create_pane(
         &mut self,
@@ -88,7 +95,9 @@ impl Session {
             "create_pane {id}: viewport={vw}x{vh} col_px={pane_w:.1} cell={cw}x{ch} inset={} → {cols}x{rows}",
             self.pane_inset
         );
-        let pane = Pane::new(id, cols, rows, &self.default_shell)?;
+        // Inherit CWD from the active pane (if available via OSC 7)
+        let cwd = self.active_pane_cwd();
+        let pane = Pane::new_with_cwd(id, cols, rows, &self.default_shell, cwd.as_deref().map(std::path::Path::new))?;
         self.panes.insert(id, pane);
         self.generation.insert(id, 0);
         self.workspaces
@@ -106,11 +115,13 @@ impl Session {
     ) -> Result<u64> {
         let id = *next_pane_id;
         *next_pane_id += 1;
+        // Inherit CWD from the active pane (if available via OSC 7)
+        let cwd = self.active_pane_cwd();
         let vw = self.workspaces.view_size.width;
         let vh = self.workspaces.view_size.height;
         let (_, _, cw, ch) = Self::effective_dims_from(clients, &self.session_name);
         let (cols, rows) = self.pane_grid_size_with_cells(vw, vh, cw, ch);
-        let pane = Pane::new(id, cols, rows, &self.default_shell)?;
+        let pane = Pane::new_with_cwd(id, cols, rows, &self.default_shell, cwd.as_deref().map(std::path::Path::new))?;
         self.panes.insert(id, pane);
         self.generation.insert(id, 0);
         self.workspaces.add_workspace_below(id);
@@ -230,6 +241,32 @@ impl Session {
                 client.damage.remove(&pane_id);
                 client.history_sent.remove(&pane_id);
             }
+        }
+    }
+
+    /// Find the workspace/column/tile indices for a given pane ID.
+    pub(crate) fn find_pane_location(&self, pane_id: u64) -> Option<(usize, usize, usize)> {
+        for (ws_idx, ws) in self.workspaces.workspaces.iter().enumerate() {
+            for (col_idx, col) in ws.columns.iter().enumerate() {
+                for (tile_idx, tile) in col.tiles.iter().enumerate() {
+                    if tile.pane_id == pane_id {
+                        return Some((ws_idx, col_idx, tile_idx));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Focus a specific pane by ID, updating all active indices.
+    pub(crate) fn focus_pane(&mut self, pane_id: u64) -> bool {
+        if let Some((ws_idx, col_idx, tile_idx)) = self.find_pane_location(pane_id) {
+            self.workspaces.active_workspace_idx = ws_idx;
+            self.workspaces.workspaces[ws_idx].active_column_idx = col_idx;
+            self.workspaces.workspaces[ws_idx].columns[col_idx].active_tile_idx = tile_idx;
+            true
+        } else {
+            false
         }
     }
 
@@ -370,6 +407,15 @@ impl Session {
             // Drain bell events
             if pane.drain_bell() {
                 clipboard_msgs.push(ServerMessage::Bell { pane_id });
+            }
+
+            // Drain command completion events (OSC 133;D)
+            if let Some(duration) = pane.drain_command_completion() {
+                clipboard_msgs.push(ServerMessage::CommandCompleted {
+                    pane_id,
+                    duration_secs: duration.as_secs(),
+                    exit_code: pane.last_exit_code(),
+                });
             }
 
             // Drain image placements (Kitty/Sixel)

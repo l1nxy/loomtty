@@ -1,5 +1,8 @@
 use std::path::PathBuf;
 
+/// Default TCP port for remote connections.
+pub const DEFAULT_REMOTE_PORT: u16 = 7890;
+
 /// Resolve the user's home directory.
 /// Prefers $HOME, falls back to getpwuid_r on Unix.
 #[cfg(unix)]

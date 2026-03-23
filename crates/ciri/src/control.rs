@@ -2,7 +2,7 @@ use anyhow::Result;
 use ciri_protocol::message::*;
 
 /// Send a control command to the server and print the response.
-pub fn run_control_command(msg: ClientMessage) -> Result<()> {
+pub fn run_control_command(msg: ClientMessage, json: bool) -> Result<()> {
     use ciri_protocol::transport;
     use std::io::{Read, Write};
 
@@ -137,9 +137,92 @@ pub fn run_control_command(msg: ClientMessage) -> Result<()> {
                         println!("server shutting down");
                         return Ok(());
                     }
+                    ServerMessage::TemplateList { templates } => {
+                        if templates.is_empty() {
+                            println!("no templates");
+                        } else {
+                            println!("{:<20} {:<12} {:<6} {}", "NAME", "WORKSPACES", "PANES", "DESCRIPTION");
+                            for t in templates {
+                                let desc = t.description.as_deref().unwrap_or("");
+                                println!("{:<20} {:<12} {:<6} {}", t.name, t.workspace_count, t.total_panes, desc);
+                            }
+                        }
+                        return Ok(());
+                    }
+                    ServerMessage::TemplateSaved { template_name } => {
+                        println!("saved template '{template_name}'");
+                        return Ok(());
+                    }
+                    ServerMessage::TemplateApplied { session_name } => {
+                        println!("applied template to session '{session_name}'");
+                        return Ok(());
+                    }
                     ServerMessage::Error { message } => {
                         eprintln!("error: {message}");
                         std::process::exit(1);
+                    }
+                    ServerMessage::SessionInfoReply { info } => {
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&info).unwrap_or_default());
+                        } else {
+                            println!("Session: {}", info.name);
+                            println!("  Status:           {}", if info.running { "running" } else { "stopped" });
+                            println!("  Panes:            {}", info.pane_count);
+                            println!("  Clients:          {}", info.client_count);
+                            println!("  Workspaces:       {}", info.workspace_count);
+                            println!("  Active workspace: {}", info.active_workspace);
+                        }
+                        return Ok(());
+                    }
+                    ServerMessage::PaneListReply { panes } => {
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&panes).unwrap_or_default());
+                        } else if panes.is_empty() {
+                            println!("no panes");
+                        } else {
+                            println!("{:<8} {:<10} {:<30} {:<6} {:<4} {:<4} {:<4}", "ID", "SIZE", "TITLE", "ACTIVE", "WS", "COL", "TILE");
+                            for p in panes {
+                                println!("{:<8} {}x{:<7} {:<30} {:<6} {:<4} {:<4} {:<4}",
+                                    p.pane_id,
+                                    p.cols, p.rows,
+                                    if p.title.len() > 30 { p.title[..27].to_string() + "..." } else { p.title.clone() },
+                                    if p.is_active { "*" } else { "" },
+                                    p.workspace_idx,
+                                    p.column_idx,
+                                    p.tile_idx,
+                                );
+                            }
+                        }
+                        return Ok(());
+                    }
+                    ServerMessage::CommandResult { success, message, pane_id } => {
+                        if json {
+                            let obj = serde_json::json!({
+                                "success": success,
+                                "message": message,
+                                "pane_id": pane_id,
+                            });
+                            println!("{}", serde_json::to_string_pretty(&obj).unwrap_or_default());
+                        } else if success {
+                            if let Some(id) = pane_id {
+                                println!("{message} (pane {id})");
+                            } else {
+                                println!("{message}");
+                            }
+                        } else {
+                            eprintln!("error: {message}");
+                            std::process::exit(1);
+                        }
+                        return Ok(());
+                    }
+                    ServerMessage::LayoutReply { layout, session_name } => {
+                        // Layout is always returned as JSON
+                        let obj = serde_json::json!({
+                            "session_name": session_name,
+                            "layout": layout,
+                        });
+                        println!("{}", serde_json::to_string_pretty(&obj).unwrap_or_default());
+                        return Ok(());
                     }
                     _ => {
                         // Skip other messages (StateSync etc from initial connect)

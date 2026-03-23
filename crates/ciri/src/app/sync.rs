@@ -131,7 +131,28 @@ impl App {
                 ServerEvent::Control(ServerMessage::Bell { pane_id }) => {
                     log::debug!("bell from pane {pane_id}");
                     self.pane_anims.bell_flash = Some((pane_id, std::time::Instant::now()));
+
+                    // Window urgency hint
+                    if self.config.terminal.bell_urgency && !self.window_focused {
+                        if let Some(ref window) = self.window {
+                            window.request_user_attention(Some(winit::window::UserAttentionType::Informational));
+                        }
+                    }
+
+                    // Bell audio
+                    self.play_bell_audio();
+
                     needs_redraw = true;
+                }
+                ServerEvent::Control(ServerMessage::CommandCompleted { pane_id, duration_secs, exit_code }) => {
+                    let threshold = self.config.terminal.notify_command_threshold_secs;
+                    if threshold > 0 && duration_secs >= threshold && !self.window_focused {
+                        self.send_desktop_notification(
+                            "Command completed",
+                            &format!("Pane {} finished after {}s (exit: {})",
+                                pane_id, duration_secs, exit_code.unwrap_or(0)),
+                        );
+                    }
                 }
                 ServerEvent::Control(ServerMessage::ImagePlacement {
                     pane_id,
@@ -183,8 +204,11 @@ impl App {
                 }
                 ServerEvent::Control(ServerMessage::SessionSwitched { .. })
                 | ServerEvent::Control(ServerMessage::SessionKilled { .. })
+                | ServerEvent::Control(ServerMessage::TemplateApplied { .. })
+                | ServerEvent::Control(ServerMessage::TemplateList { .. })
+                | ServerEvent::Control(ServerMessage::TemplateSaved { .. })
                 | ServerEvent::Control(ServerMessage::Error { .. }) => {
-                    // Session management responses — handled elsewhere
+                    // Session/template management and IPC responses — not yet handled by GUI client
                 }
                 ServerEvent::FullPaneSync(sync) => {
                     let grid = self.pane_grids.entry(sync.pane_id).or_insert_with(|| {
@@ -218,6 +242,11 @@ impl App {
                         needs_redraw = true;
                     }
                 }
+                // IPC-only responses — not relevant for the GUI client
+                ServerEvent::Control(ServerMessage::SessionInfoReply { .. })
+                | ServerEvent::Control(ServerMessage::PaneListReply { .. })
+                | ServerEvent::Control(ServerMessage::CommandResult { .. })
+                | ServerEvent::Control(ServerMessage::LayoutReply { .. }) => {}
                 ServerEvent::Disconnected => {
                     log::warn!("disconnected from server");
                     self.connected = false;

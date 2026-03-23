@@ -48,6 +48,17 @@ fn get_pw_shell() -> Option<String> {
 
 impl Pty {
     pub fn spawn(cols: u16, rows: u16, shell: &str) -> Result<Self> {
+        Self::spawn_with_opts(cols, rows, shell, None, None)
+    }
+
+    /// Spawn a PTY with optional command override and working directory.
+    pub fn spawn_with_opts(
+        cols: u16,
+        rows: u16,
+        shell: &str,
+        command: Option<&str>,
+        cwd: Option<&std::path::Path>,
+    ) -> Result<Self> {
         let pty_system = native_pty_system();
 
         let pair = pty_system
@@ -59,12 +70,20 @@ impl Pty {
             })
             .context("openpty failed")?;
 
-        let mut cmd = if !shell.is_empty() {
+        // Determine the program to run:
+        // 1. If command is provided and non-empty, use it
+        // 2. Otherwise fall back to shell / $SHELL / getpwuid
+        let mut cmd = if let Some(c) = command.filter(|c| !c.is_empty()) {
+            let mut builder = CommandBuilder::new("sh");
+            builder.arg("-c");
+            builder.arg(c);
+            builder
+        } else if !shell.is_empty() {
             CommandBuilder::new(shell)
         } else if cfg!(windows) {
             CommandBuilder::new("cmd.exe")
         } else {
-            let default = std::env::var("SHELL")
+            let shell_path = std::env::var("SHELL")
                 .ok()
                 .filter(|s| !s.is_empty())
                 .or_else(|| {
@@ -78,13 +97,39 @@ impl Pty {
                     }
                 })
                 .unwrap_or_else(|| "/bin/sh".to_string());
-            CommandBuilder::new(default)
+            CommandBuilder::new(shell_path)
         };
 
         // Ensure child knows its terminal type.
         cmd.env("TERM", "xterm-256color");
         if std::env::var_os("COLORTERM").is_none() {
             cmd.env("COLORTERM", "truecolor");
+        }
+
+        // Set TERM_PROGRAM so shells can detect they are inside Ciri.
+        cmd.env("TERM_PROGRAM", "ciri");
+        cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+
+        // Shell integration: set env vars so shells auto-source integration scripts.
+        if let Ok(integration_dir) = std::env::var("CIRI_SHELL_INTEGRATION_DIR") {
+            cmd.env("CIRI_SHELL_INTEGRATION_DIR", &integration_dir);
+
+            // Bash: BASH_ENV is only sourced by non-interactive bash (scripts,
+            // subshells). For interactive shells, users should add to .bashrc:
+            //   [[ -n "$CIRI_SHELL_INTEGRATION_DIR" ]] && source "$CIRI_SHELL_INTEGRATION_DIR/ciri.bash"
+            let bash_script = format!("{}/ciri.bash", integration_dir);
+            cmd.env("BASH_ENV", &bash_script);
+
+            // Fish: XDG_DATA_DIRS-based vendor_conf.d is complex; rely on
+            // CIRI_SHELL_INTEGRATION_DIR env var + TERM_PROGRAM detection
+            // for manual sourcing or use the fish integration event.
+        }
+
+        // Set working directory if provided.
+        if let Some(dir) = cwd {
+            if dir.is_dir() {
+                cmd.cwd(dir);
+            }
         }
 
         // pair.master is the PTY master fd
@@ -136,6 +181,11 @@ impl Pty {
             output_rx,
             reader_done,
         })
+    }
+
+    /// Spawn with just a CWD override (convenience for OSC 7 CWD inheritance).
+    pub fn spawn_with_cwd(cols: u16, rows: u16, shell: &str, cwd: Option<&std::path::Path>) -> Result<Self> {
+        Self::spawn_with_opts(cols, rows, shell, None, cwd)
     }
 
     /// Drain all available output from the reader thread (non-blocking).

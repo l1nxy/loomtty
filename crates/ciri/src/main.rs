@@ -3,6 +3,7 @@ mod cli;
 mod connection;
 mod control;
 mod grid;
+mod init;
 
 use anyhow::Result;
 use app::App;
@@ -22,6 +23,9 @@ fn main() -> Result<()> {
 
     // Handle non-GUI commands first
     match cli {
+        CliCommand::Init => {
+            return init::run_init();
+        }
         CliCommand::List { all } => {
             return control::run_control_command(ClientMessage::ListSessions { all }, false);
         }
@@ -179,6 +183,9 @@ fn main() -> Result<()> {
         _ => unreachable!(),
     };
 
+    if !ciri_config::config::config_path().exists() {
+        eprintln!("warning: No config file found. Run `ciri init` to set up your configuration.");
+    }
     let config = CiriConfig::load().unwrap_or_default();
     log::info!(
         "config: font={} size={}, session={}",

@@ -472,56 +472,20 @@ impl CiriConfig {
     }
 }
 
-#[cfg(unix)]
-fn home_dir() -> Option<PathBuf> {
-    if let Ok(home) = std::env::var("HOME")
-        && !home.is_empty()
-    {
-        return Some(PathBuf::from(home));
-    }
-    let uid = unsafe { libc::getuid() };
-    let mut buf = vec![0u8; 4096];
-    let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
-    let mut result = std::ptr::null_mut();
-    let ret = unsafe {
-        libc::getpwuid_r(
-            uid,
-            &mut pwd,
-            buf.as_mut_ptr() as *mut libc::c_char,
-            buf.len(),
-            &mut result,
-        )
-    };
-    if ret == 0 && !result.is_null() {
-        let dir = unsafe { std::ffi::CStr::from_ptr(pwd.pw_dir) };
-        if let Ok(s) = dir.to_str() {
-            return Some(PathBuf::from(s));
-        }
-    }
-    None
-}
-
 pub fn config_path() -> PathBuf {
-    #[cfg(unix)]
-    {
-        if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME")
-            && !config_home.is_empty()
-        {
-            return PathBuf::from(config_home).join("ciri").join("config.toml");
+    // dirs::config_dir() handles XDG_CONFIG_HOME on Linux, ~/Library/Application
+    // Support on macOS, and FOLDERID_RoamingAppData on Windows.
+    match dirs::config_dir() {
+        Some(dir) => dir.join("ciri").join("config.toml"),
+        None => {
+            log::warn!("cannot determine config directory, using fallback");
+            PathBuf::from(if cfg!(windows) {
+                r"C:\Users\Default\AppData\Roaming"
+            } else {
+                "/tmp/.config"
+            })
+            .join("ciri")
+            .join("config.toml")
         }
-        // $HOME/.config is the XDG default when XDG_CONFIG_HOME is unset
-        match home_dir() {
-            Some(home) => home.join(".config").join("ciri").join("config.toml"),
-            None => {
-                log::warn!("cannot determine home directory, using /tmp/ciri as config base");
-                PathBuf::from("/tmp").join(".config").join("ciri").join("config.toml")
-            }
-        }
-    }
-    #[cfg(windows)]
-    {
-        let appdata = std::env::var("APPDATA")
-            .unwrap_or_else(|_| r"C:\Users\Default\AppData\Roaming".to_string());
-        PathBuf::from(appdata).join("ciri").join("config.toml")
     }
 }

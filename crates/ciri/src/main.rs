@@ -6,6 +6,7 @@ mod grid;
 
 use anyhow::Result;
 use app::App;
+use clap::Parser;
 use ciri_config::config::CiriConfig;
 use ciri_protocol::message::ClientMessage;
 use cli::CliCommand;
@@ -17,22 +18,12 @@ fn main() -> Result<()> {
     )
     .init();
 
-    let cli = match cli::parse_args(std::env::args().skip(1)) {
-        Ok(cli) => cli,
-        Err(msg) => {
-            eprintln!("{msg}");
-            std::process::exit(2);
-        }
-    };
+    let cli = cli::resolve(cli::Cli::parse());
 
     // Handle non-GUI commands first
     match cli {
-        CliCommand::Help => {
-            println!("{}", cli::usage());
-            return Ok(());
-        }
-        CliCommand::List => {
-            return control::run_control_command(ClientMessage::ListSessions, false);
+        CliCommand::List { all } => {
+            return control::run_control_command(ClientMessage::ListSessions { all }, false);
         }
         CliCommand::Kill { session_name } => {
             return control::run_control_command(ClientMessage::KillSession { session_name }, false);
@@ -139,12 +130,19 @@ fn main() -> Result<()> {
     // Resolve session name
     let session_name = match cli {
         CliCommand::New => {
-            let existing =
-                ciri_session::restore::list_sessions(&ciri_protocol::transport::state_dir())
-                    .unwrap_or_default();
-            let name = ciri_session::names::unique_name(&existing);
-            log::info!("creating new session: {name}");
-            name
+            // If there are active sessions on the server, attach to the most recent one.
+            let active = control::query_active_sessions();
+            if let Some(name) = active.first() {
+                log::info!("attaching to most recent session: {name}");
+                name.clone()
+            } else {
+                let existing =
+                    ciri_session::restore::list_sessions(&ciri_protocol::transport::state_dir())
+                        .unwrap_or_default();
+                let name = ciri_session::names::unique_name(&existing);
+                log::info!("creating new session: {name}");
+                name
+            }
         }
         CliCommand::Run { session_name } => {
             if let Err(e) = ciri_session::names::validate_name(&session_name) {

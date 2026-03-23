@@ -10,3 +10,6 @@ bytemuck = { workspace = true }
 bytes = { workspace = true }
 dirs = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "net"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }

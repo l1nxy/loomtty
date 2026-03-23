@@ -688,6 +688,7 @@ dependencies = [
  "bytemuck",
  "bytes",
  "dirs",
+ "libc",
  "rmp-serde",
  "serde",
  "tokio",

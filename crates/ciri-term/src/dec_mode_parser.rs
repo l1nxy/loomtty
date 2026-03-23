@@ -20,7 +20,12 @@ fn parse_mode_number(input: &mut &[u8]) -> ModalResult<u32> {
     let digits = take_while(1.., |b: u8| b.is_ascii_digit()).parse_next(input)?;
     let mut n: u32 = 0;
     for &b in digits {
-        n = n * 10 + (b - b'0') as u32;
+        n = n
+            .checked_mul(10)
+            .and_then(|n| n.checked_add((b - b'0') as u32))
+            .ok_or_else(|| {
+                winnow::error::ErrMode::Backtrack(winnow::error::ContextError::new())
+            })?;
     }
     Ok(n)
 }

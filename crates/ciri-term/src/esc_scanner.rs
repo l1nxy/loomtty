@@ -37,6 +37,10 @@ pub(crate) struct ScanResult<'a> {
 fn find_st(data: &[u8], start: usize) -> Option<(usize, usize)> {
     let mut i = start;
     while i < data.len() {
+        // C1 ST (0x9C) — single-byte string terminator.
+        if data[i] == 0x9C {
+            return Some((i, i + 1));
+        }
         if data[i] == 0x07 {
             return Some((i, i + 1));
         }
@@ -85,15 +89,11 @@ fn match_osc_intro(data: &[u8], esc_pos: usize, osc_number_bytes: &[u8]) -> Opti
 
 /// Parse DEC private mode params: digits and semicolons followed by `h` or `l`.
 fn dec_params_and_terminator<'a>(input: &mut &'a [u8]) -> ModalResult<&'a [u8]> {
-    let params = take_while(1.., |b: u8| b.is_ascii_digit() || b == b';').parse_next(input)?;
-    let term = alt((literal(b"h".as_slice()), literal(b"l".as_slice()))).parse_next(input)?;
-    // Combine params + terminator by computing the slice from original data.
-    // Since winnow consumed them contiguously, we can reconstruct:
-    let start = params.as_ptr();
-    let len = params.len() + term.len();
-    // SAFETY: params and term were adjacent slices from the same input buffer.
-    let combined = unsafe { std::slice::from_raw_parts(start, len) };
-    Ok(combined)
+    let before = *input;
+    let _params = take_while(1.., |b: u8| b.is_ascii_digit() || b == b';').parse_next(input)?;
+    let _term = alt((literal(b"h".as_slice()), literal(b"l".as_slice()))).parse_next(input)?;
+    let consumed_len = before.len() - input.len();
+    Ok(&before[..consumed_len])
 }
 
 /// Parse DCS params: digits/semicolons then `q`.

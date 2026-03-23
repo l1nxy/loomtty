@@ -6,9 +6,22 @@ use winnow::token::{literal, take_until};
 
 use crate::esc_scanner;
 
-#[derive(Debug, Default)]
+const MAX_OSC7_PARTIAL_SIZE: usize = 4096;
+
+#[derive(Debug)]
 pub struct Osc7Parser {
     current_cwd: Option<String>,
+    /// Partial OSC sequence from a previous read.
+    partial: Vec<u8>,
+}
+
+impl Default for Osc7Parser {
+    fn default() -> Self {
+        Self {
+            current_cwd: None,
+            partial: Vec::new(),
+        }
+    }
 }
 
 impl Osc7Parser {
@@ -18,9 +31,33 @@ impl Osc7Parser {
 
     /// Scan raw PTY output for OSC 7 sequences.
     pub fn scan(&mut self, data: &[u8]) {
+        // If we have a partial OSC from a previous read, prepend it
+        let working_data;
+        let data = if !self.partial.is_empty() {
+            self.partial.extend_from_slice(data);
+            working_data = std::mem::take(&mut self.partial);
+            &working_data[..]
+        } else {
+            data
+        };
+
         let result = esc_scanner::scan_osc(data, b"7");
         for (_offset, payload) in &result.sequences {
             self.parse_uri(payload);
+        }
+
+        // Buffer partial data for next read.
+        if let Some(partial_start) = result.partial_start {
+            let partial = &data[partial_start..];
+            if partial.len() > MAX_OSC7_PARTIAL_SIZE {
+                log::warn!(
+                    "OSC 7 partial buffer exceeded {}B limit, discarding",
+                    MAX_OSC7_PARTIAL_SIZE
+                );
+                self.partial.clear();
+            } else {
+                self.partial = partial.to_vec();
+            }
         }
     }
 
@@ -46,7 +83,7 @@ impl Osc7Parser {
 fn parse_file_uri<'a>(input: &mut &'a str) -> ModalResult<&'a str> {
     literal("file://").parse_next(input)?;
     // hostname: everything up to the first '/'
-    let _hostname = take_until(1.., "/").parse_next(input)?;
+    let _hostname = take_until(0.., "/").parse_next(input)?;
     // The rest is the path (including leading '/')
     let path = *input;
     *input = "";

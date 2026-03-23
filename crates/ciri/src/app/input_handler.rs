@@ -534,7 +534,7 @@ impl App {
             selected_idx: 0,
         });
         // Request session list so we can add session entries
-        self.send(ClientMessage::ListSessions);
+        self.send(ClientMessage::ListSessions { all: true });
     }
 
     pub fn handle_command_palette_key(

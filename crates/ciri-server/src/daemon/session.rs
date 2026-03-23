@@ -27,6 +27,8 @@ pub(crate) struct Session {
     pub(crate) pane_inset: f32,
     pub(crate) session_dirty: bool,
     pub(crate) last_session_change: Option<Instant>,
+    /// Updated each time a client attaches to this session.
+    pub(crate) last_attached: Instant,
 }
 
 impl Session {
@@ -48,6 +50,7 @@ impl Session {
             pane_inset: 12.0, // (4.0 padding + 2.0 border) * 2 = 12.0 default
             session_dirty: false,
             last_session_change: None,
+            last_attached: Instant::now(),
         }
     }
 

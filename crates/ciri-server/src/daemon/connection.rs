@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::{Mutex, mpsc};
+use tokio::time::Instant;
 
 use super::client::ClientState;
 use super::damage::DamageAccumulator;
@@ -128,7 +129,8 @@ pub(crate) async fn handle_client<R, W>(
 
         // Skip session creation for control clients (CLI commands)
         if !is_control {
-            s.get_or_create_session(&requested_session);
+            let session = s.get_or_create_session(&requested_session);
+            session.last_attached = Instant::now();
         }
 
         // Temporarily remove session to avoid borrow conflicts

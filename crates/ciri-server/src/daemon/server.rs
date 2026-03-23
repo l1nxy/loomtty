@@ -540,40 +540,62 @@ impl Server {
                     }
                 }
             }
-            ClientMessage::ListSessions => {
-                // Collect running sessions
-                let mut session_map: HashMap<String, SessionInfo> = HashMap::new();
-                for (name, sess) in &self.sessions {
-                    let client_count = self
-                        .clients
-                        .values()
-                        .filter(|c| c.session_name == *name)
-                        .count();
-                    session_map.insert(
-                        name.clone(),
-                        SessionInfo {
+            ClientMessage::ListSessions { all } => {
+                // Collect running sessions, sorted by last_attached (most recent first)
+                let mut sessions: Vec<SessionInfo> = self
+                    .sessions
+                    .iter()
+                    .map(|(name, sess)| {
+                        let client_count = self
+                            .clients
+                            .values()
+                            .filter(|c| c.session_name == *name)
+                            .count();
+                        (sess.last_attached, SessionInfo {
                             name: name.clone(),
                             running: true,
                             pane_count: sess.panes.len(),
                             client_count,
-                        },
-                    );
-                }
-                // Merge with saved sessions
-                if let Ok(saved_names) =
-                    ciri_session::restore::list_sessions(&transport::state_dir())
+                        })
+                    })
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .map(|(_ts, info)| info)
+                    .collect();
+                // Sort running sessions by last_attached descending
                 {
-                    for name in saved_names {
-                        session_map.entry(name.clone()).or_insert(SessionInfo {
-                            name,
-                            running: false,
-                            pane_count: 0,
-                            client_count: 0,
-                        });
+                    let mut with_ts: Vec<_> = self
+                        .sessions
+                        .iter()
+                        .map(|(name, sess)| (name.clone(), sess.last_attached))
+                        .collect();
+                    with_ts.sort_by(|a, b| b.1.cmp(&a.1));
+                    let order: HashMap<String, usize> = with_ts
+                        .iter()
+                        .enumerate()
+                        .map(|(i, (n, _))| (n.clone(), i))
+                        .collect();
+                    sessions.sort_by_key(|s| order.get(&s.name).copied().unwrap_or(usize::MAX));
+                }
+                // Optionally merge saved sessions
+                if all {
+                    let running_names: std::collections::HashSet<String> =
+                        sessions.iter().map(|s| s.name.clone()).collect();
+                    if let Ok(saved_names) =
+                        ciri_session::restore::list_sessions(&transport::state_dir())
+                    {
+                        for name in saved_names {
+                            if !running_names.contains(&name) {
+                                sessions.push(SessionInfo {
+                                    name,
+                                    running: false,
+                                    pane_count: 0,
+                                    client_count: 0,
+                                });
+                            }
+                        }
                     }
                 }
-                let mut sessions: Vec<SessionInfo> = session_map.into_values().collect();
-                sessions.sort_by(|a, b| a.name.cmp(&b.name));
                 responses.push(ServerResponse::SendToClient(
                     client_id,
                     ServerMessage::SessionList { sessions },

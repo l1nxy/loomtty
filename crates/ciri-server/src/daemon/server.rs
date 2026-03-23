@@ -545,6 +545,7 @@ impl Server {
                 let mut sessions: Vec<SessionInfo> = self
                     .sessions
                     .iter()
+                    .filter(|(name, _)| !name.starts_with("__"))
                     .map(|(name, sess)| {
                         let client_count = self
                             .clients

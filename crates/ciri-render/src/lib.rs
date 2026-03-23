@@ -17,4 +17,7 @@ pub struct FrameScene<'a> {
     pub color_glyph_batches: &'a [ScissoredRange],
     pub pane_glyph_end: usize,
     pub pane_color_glyph_end: usize,
+    /// Index into `bg_rects` where overlay rects begin.
+    /// Overlay rects are rendered after pane glyphs so they occlude terminal text.
+    pub overlay_bg_start: usize,
 }

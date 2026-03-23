@@ -396,16 +396,16 @@ impl DxAtlasLayer {
         }
     }
 
-    unsafe fn render_scissored(
+    /// Upload glyph instances and render scissored pane batches only.
+    unsafe fn render_pane_glyphs(
         &self,
         ctx: &ID3D11DeviceContext,
         instances: &[GlyphInstance],
         viewport_w: f32,
         viewport_h: f32,
-        viewport_w_px: u32,
-        viewport_h_px: u32,
+        _viewport_w_px: u32,
+        _viewport_h_px: u32,
         batches: &[ScissoredRange],
-        overlay_start: usize,
     ) {
         if instances.is_empty() {
             return;
@@ -464,27 +464,52 @@ impl DxAtlasLayer {
             );
             ctx.DrawInstanced(4, (end - start) as u32, 0, 0);
         }
+    }
 
-        // Overlay (no scissor)
-        let overlay_start = overlay_start.min(count);
-        if overlay_start < count {
-            let rect = RECT {
-                left: 0,
-                top: 0,
-                right: viewport_w_px as i32,
-                bottom: viewport_h_px as i32,
-            };
-            ctx.RSSetScissorRects(Some(&[rect]));
-            let offset = (overlay_start * std::mem::size_of::<GlyphInstance>()) as u32;
-            ctx.IASetVertexBuffers(
-                0,
-                1,
-                Some(&Some(self.instance_buffer.clone())),
-                Some(&stride),
-                Some(&offset),
-            );
-            ctx.DrawInstanced(4, (count - overlay_start) as u32, 0, 0);
+    /// Render overlay glyphs (data already uploaded by `render_pane_glyphs`).
+    unsafe fn render_overlay_glyphs(
+        &self,
+        ctx: &ID3D11DeviceContext,
+        instances: &[GlyphInstance],
+        overlay_start: usize,
+        viewport_w_px: u32,
+        viewport_h_px: u32,
+    ) {
+        if instances.is_empty() {
+            return;
         }
+        let count = instances.len().min(self.max_instances);
+        let overlay_start = overlay_start.min(count);
+        if overlay_start >= count {
+            return;
+        }
+
+        // Re-bind pipeline state (rect pipeline may have run between calls)
+        ctx.IASetInputLayout(Some(&self.input_layout));
+        ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+        let stride = std::mem::size_of::<GlyphInstance>() as u32;
+        ctx.VSSetShader(Some(&self.vs), None);
+        ctx.PSSetShader(Some(&self.ps), None);
+        ctx.VSSetConstantBuffers(0, Some(&[Some(self.cbuffer.clone())]));
+        ctx.PSSetShaderResources(0, Some(&[Some(self.srv.clone())]));
+        ctx.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
+
+        let rect = RECT {
+            left: 0,
+            top: 0,
+            right: viewport_w_px as i32,
+            bottom: viewport_h_px as i32,
+        };
+        ctx.RSSetScissorRects(Some(&[rect]));
+        let offset = (overlay_start * std::mem::size_of::<GlyphInstance>()) as u32;
+        ctx.IASetVertexBuffers(
+            0,
+            1,
+            Some(&Some(self.instance_buffer.clone())),
+            Some(&stride),
+            Some(&offset),
+        );
+        ctx.DrawInstanced(4, (count - overlay_start) as u32, 0, 0);
     }
 }
 
@@ -580,7 +605,8 @@ impl DxRectPipeline {
         })
     }
 
-    unsafe fn render(
+    /// Upload all rect instance data to the GPU buffer.
+    unsafe fn upload(
         &self,
         ctx: &ID3D11DeviceContext,
         rects: &[Rect],
@@ -609,7 +635,18 @@ impl DxRectPipeline {
         ctx.Map(&self.instance_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped)).unwrap();
         std::ptr::copy_nonoverlapping(data.as_ptr(), mapped.pData as *mut u8, data.len());
         ctx.Unmap(&self.instance_buffer, 0);
+    }
 
+    /// Draw a range of previously uploaded rects.
+    unsafe fn draw_range(
+        &self,
+        ctx: &ID3D11DeviceContext,
+        start: usize,
+        count: usize,
+    ) {
+        if count == 0 {
+            return;
+        }
         ctx.IASetInputLayout(Some(&self.input_layout));
         ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
         let stride = std::mem::size_of::<Rect>() as u32;
@@ -624,7 +661,7 @@ impl DxRectPipeline {
         ctx.VSSetShader(Some(&self.vs), None);
         ctx.PSSetShader(Some(&self.ps), None);
         ctx.VSSetConstantBuffers(0, Some(&[Some(self.cbuffer.clone())]));
-        ctx.DrawInstanced(4, count as u32, 0, 0);
+        ctx.DrawInstanced(4, count as u32, 0, start as u32);
     }
 }
 
@@ -890,9 +927,7 @@ impl Renderer {
             };
             self.ctx.RSSetScissorRects(Some(&[full_rect]));
 
-            // Background rects: clear rect + per-cell rects in one draw call.
-            // Must be a single batch because the rect pipeline reuses one
-            // buffer — a second render() overwrites before the first draws.
+            // 1. Upload all background rects (clear + pane + overlay) once.
             let mut all_bg = Vec::with_capacity(1 + scene.bg_rects.len());
             all_bg.push(Rect {
                 x: 0.0,
@@ -902,10 +937,16 @@ impl Renderer {
                 color: scene.clear_color,
             });
             all_bg.extend_from_slice(scene.bg_rects);
-            self.rects.render(&self.ctx, &all_bg, vw, vh);
+            let overlay_bg_idx = 1 + scene.overlay_bg_start;
+            let total_bg = all_bg.len().min(self.rects.max_rects);
+            self.rects.upload(&self.ctx, &all_bg, vw, vh);
 
-            // 2. Alpha text glyphs
-            atlas_gpu.alpha.render_scissored(
+            // 2. Draw pane background rects.
+            let pane_bg_count = overlay_bg_idx.min(total_bg);
+            self.rects.draw_range(&self.ctx, 0, pane_bg_count);
+
+            // 3. Pane alpha glyphs (scissored) — upload + draw batches.
+            atlas_gpu.alpha.render_pane_glyphs(
                 &self.ctx,
                 scene.glyphs,
                 vw,
@@ -913,11 +954,10 @@ impl Renderer {
                 self.width,
                 self.height,
                 scene.glyph_batches,
-                scene.pane_glyph_end,
             );
 
-            // 3. Color emoji
-            atlas_gpu.color.render_scissored(
+            // 4. Pane color emoji (scissored).
+            atlas_gpu.color.render_pane_glyphs(
                 &self.ctx,
                 scene.color_glyphs,
                 vw,
@@ -925,7 +965,31 @@ impl Renderer {
                 self.width,
                 self.height,
                 scene.color_glyph_batches,
+            );
+
+            // 5. Overlay background rects.
+            let overlay_bg_count = total_bg.saturating_sub(overlay_bg_idx);
+            if overlay_bg_count > 0 {
+                self.ctx.RSSetScissorRects(Some(&[full_rect]));
+                self.rects.draw_range(&self.ctx, overlay_bg_idx, overlay_bg_count);
+            }
+
+            // 6. Overlay alpha glyphs.
+            atlas_gpu.alpha.render_overlay_glyphs(
+                &self.ctx,
+                scene.glyphs,
+                scene.pane_glyph_end,
+                self.width,
+                self.height,
+            );
+
+            // 7. Overlay color emoji.
+            atlas_gpu.color.render_overlay_glyphs(
+                &self.ctx,
+                scene.color_glyphs,
                 scene.pane_color_glyph_end,
+                self.width,
+                self.height,
             );
 
             // Present

@@ -1127,7 +1127,7 @@ impl App {
             menu_bg[0] * 0.9,
             menu_bg[1] * 0.9,
             menu_bg[2] * 0.9,
-            0.97,
+            1.0,
         ];
         bg_rects.push(Rect {
             x: mx,
@@ -1590,6 +1590,7 @@ impl App {
         );
         let pane_glyph_end = glyphs.len();
         let pane_color_glyph_end = color_glyphs.len();
+        let overlay_bg_start = bg_rects.len();
         self.build_status_bar(vw_f, vh_f, &mut bg_rects, &mut glyphs);
         self.build_search_bar(&tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs);
         self.build_bell_flash(&tiles, zoom, vw_f, vh_f, &mut bg_rects);
@@ -1619,6 +1620,7 @@ impl App {
                 color_glyph_batches: &color_glyph_batches,
                 pane_glyph_end,
                 pane_color_glyph_end,
+                overlay_bg_start,
             },
         );
 

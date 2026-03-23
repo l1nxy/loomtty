@@ -101,9 +101,9 @@ impl RectPipeline {
         }
     }
 
-    fn render(
+    /// Upload all rect instance data to the GPU buffer.
+    fn upload(
         &self,
-        pass: &mut gpu::RenderCommandEncoder,
         rects: &[Rect],
         viewport_w: f32,
         viewport_h: f32,
@@ -111,7 +111,6 @@ impl RectPipeline {
         if rects.is_empty() {
             return;
         }
-
         let count = rects.len().min(self.max_rects);
 
         let viewport = [viewport_w, viewport_h, 0.0f32, 0.0f32];
@@ -127,7 +126,18 @@ impl RectPipeline {
         unsafe {
             ptr::copy_nonoverlapping(data.as_ptr(), self.instance_buffer.data(), data.len());
         }
+    }
 
+    /// Draw a range of previously uploaded rects.
+    fn draw_range(
+        &self,
+        pass: &mut gpu::RenderCommandEncoder,
+        start: usize,
+        count: usize,
+    ) {
+        if count == 0 {
+            return;
+        }
         let mut pe = pass.with(&self.pipeline);
         pe.bind(
             0,
@@ -136,7 +146,7 @@ impl RectPipeline {
             },
         );
         pe.bind_vertex(0, self.instance_buffer.at(0));
-        pe.draw(0, 4, 0, count as u32);
+        pe.draw(0, 4, start as u32, count as u32);
     }
 
     fn destroy(&mut self, context: &gpu::Context) {
@@ -373,17 +383,15 @@ impl AtlasLayer {
         }
     }
 
-    fn render_scissored(
+    /// Upload glyph instances and render scissored pane batches only.
+    fn render_pane_glyphs(
         &self,
         pass: &mut gpu::RenderCommandEncoder,
         instances: &[GlyphInstance],
         max_instances: usize,
         viewport_w: f32,
         viewport_h: f32,
-        viewport_w_px: u32,
-        viewport_h_px: u32,
         batches: &[ScissoredRange],
-        overlay_start: usize,
     ) {
         if instances.is_empty() {
             return;
@@ -426,27 +434,44 @@ impl AtlasLayer {
             });
             pe.draw(0, 4, start as u32, (end - start) as u32);
         }
+    }
 
-        let overlay_start = overlay_start.min(count);
-        if overlay_start < count {
-            let mut pe = pass.with(&self.pipeline);
-            pe.bind(
-                0,
-                &GlyphShaderData {
-                    atlas_tex: self.texture_view,
-                    atlas_sampler: self.sampler,
-                    viewport: self.uniform_buffer.at(0),
-                },
-            );
-            pe.bind_vertex(0, self.instance_buffer.at(0));
-            pe.set_scissor_rect(&gpu::ScissorRect {
-                x: 0,
-                y: 0,
-                w: viewport_w_px.max(1),
-                h: viewport_h_px.max(1),
-            });
-            pe.draw(0, 4, overlay_start as u32, (count - overlay_start) as u32);
+    /// Render overlay glyphs (data already uploaded by `render_pane_glyphs`).
+    fn render_overlay_glyphs(
+        &self,
+        pass: &mut gpu::RenderCommandEncoder,
+        instances: &[GlyphInstance],
+        max_instances: usize,
+        overlay_start: usize,
+        viewport_w_px: u32,
+        viewport_h_px: u32,
+    ) {
+        if instances.is_empty() {
+            return;
         }
+        let count = instances.len().min(max_instances);
+        let overlay_start = overlay_start.min(count);
+        if overlay_start >= count {
+            return;
+        }
+
+        let mut pe = pass.with(&self.pipeline);
+        pe.bind(
+            0,
+            &GlyphShaderData {
+                atlas_tex: self.texture_view,
+                atlas_sampler: self.sampler,
+                viewport: self.uniform_buffer.at(0),
+            },
+        );
+        pe.bind_vertex(0, self.instance_buffer.at(0));
+        pe.set_scissor_rect(&gpu::ScissorRect {
+            x: 0,
+            y: 0,
+            w: viewport_w_px.max(1),
+            h: viewport_h_px.max(1),
+        });
+        pe.draw(0, 4, overlay_start as u32, (count - overlay_start) as u32);
     }
 
     fn destroy(&mut self, context: &gpu::Context) {
@@ -539,53 +564,79 @@ impl GlyphAtlasGpu {
         encoder.init_texture(self.color.texture);
     }
 
-    /// Render alpha text glyphs with scissor rects.
-    pub fn render_scissored(
+    /// Upload + render pane alpha glyphs (scissored batches only).
+    pub fn render_pane_glyphs(
         &self,
         pass: &mut gpu::RenderCommandEncoder,
         instances: &[GlyphInstance],
         viewport_w: f32,
         viewport_h: f32,
-        viewport_w_px: u32,
-        viewport_h_px: u32,
         batches: &[ScissoredRange],
-        overlay_start: usize,
     ) {
-        self.alpha.render_scissored(
+        self.alpha.render_pane_glyphs(
             pass,
             instances,
             self.max_instances,
             viewport_w,
             viewport_h,
-            viewport_w_px,
-            viewport_h_px,
             batches,
-            overlay_start,
         );
     }
 
-    /// Render color emoji with scissor rects.
-    pub fn render_color_scissored(
+    /// Upload + render pane color emoji (scissored batches only).
+    pub fn render_pane_color_glyphs(
         &self,
         pass: &mut gpu::RenderCommandEncoder,
         instances: &[GlyphInstance],
         viewport_w: f32,
         viewport_h: f32,
-        viewport_w_px: u32,
-        viewport_h_px: u32,
         batches: &[ScissoredRange],
-        overlay_start: usize,
     ) {
-        self.color.render_scissored(
+        self.color.render_pane_glyphs(
             pass,
             instances,
             self.max_instances,
             viewport_w,
             viewport_h,
+            batches,
+        );
+    }
+
+    /// Render overlay alpha glyphs (data already uploaded).
+    pub fn render_overlay_glyphs(
+        &self,
+        pass: &mut gpu::RenderCommandEncoder,
+        instances: &[GlyphInstance],
+        overlay_start: usize,
+        viewport_w_px: u32,
+        viewport_h_px: u32,
+    ) {
+        self.alpha.render_overlay_glyphs(
+            pass,
+            instances,
+            self.max_instances,
+            overlay_start,
             viewport_w_px,
             viewport_h_px,
-            batches,
+        );
+    }
+
+    /// Render overlay color emoji (data already uploaded).
+    pub fn render_overlay_color_glyphs(
+        &self,
+        pass: &mut gpu::RenderCommandEncoder,
+        instances: &[GlyphInstance],
+        overlay_start: usize,
+        viewport_w_px: u32,
+        viewport_h_px: u32,
+    ) {
+        self.color.render_overlay_glyphs(
+            pass,
+            instances,
+            self.max_instances,
             overlay_start,
+            viewport_w_px,
+            viewport_h_px,
         );
     }
 
@@ -824,10 +875,7 @@ impl Renderer {
                 },
             );
 
-            // Background rects: clear rect + per-cell rects in one draw call.
-            // Must be a single batch because RectPipeline reuses one shared
-            // instance buffer — a second render() would overwrite the data
-            // before the GPU reads the first draw's instances.
+            // 1. Upload all background rects (clear + pane + overlay) once.
             let mut all_bg = Vec::with_capacity(1 + scene.bg_rects.len());
             all_bg.push(Rect {
                 x: 0.0,
@@ -837,28 +885,55 @@ impl Renderer {
                 color: scene.clear_color,
             });
             all_bg.extend_from_slice(scene.bg_rects);
-            self.rects.render(&mut pass, &all_bg, vw_f, vh_f);
-            // 2. Alpha text glyphs
-            atlas_gpu.render_scissored(
+            let overlay_bg_idx = 1 + scene.overlay_bg_start;
+            let total_bg = all_bg.len().min(self.rects.max_rects);
+            self.rects.upload(&all_bg, vw_f, vh_f);
+
+            // 2. Draw pane background rects.
+            let pane_bg_count = overlay_bg_idx.min(total_bg);
+            self.rects.draw_range(&mut pass, 0, pane_bg_count);
+
+            // 3. Pane alpha glyphs (scissored) — upload + draw batches.
+            atlas_gpu.render_pane_glyphs(
                 &mut pass,
                 scene.glyphs,
                 vw_f,
                 vh_f,
-                vw,
-                vh,
                 scene.glyph_batches,
-                scene.pane_glyph_end,
             );
-            // 3. Color emoji
-            atlas_gpu.render_color_scissored(
+
+            // 4. Pane color emoji (scissored).
+            atlas_gpu.render_pane_color_glyphs(
                 &mut pass,
                 scene.color_glyphs,
                 vw_f,
                 vh_f,
+                scene.color_glyph_batches,
+            );
+
+            // 5. Overlay background rects (rendered after pane glyphs so they
+            //    occlude terminal text underneath popups like the context menu).
+            let overlay_bg_count = total_bg.saturating_sub(overlay_bg_idx);
+            if overlay_bg_count > 0 {
+                self.rects.draw_range(&mut pass, overlay_bg_idx, overlay_bg_count);
+            }
+
+            // 6. Overlay alpha glyphs.
+            atlas_gpu.render_overlay_glyphs(
+                &mut pass,
+                scene.glyphs,
+                scene.pane_glyph_end,
                 vw,
                 vh,
-                scene.color_glyph_batches,
+            );
+
+            // 7. Overlay color emoji.
+            atlas_gpu.render_overlay_color_glyphs(
+                &mut pass,
+                scene.color_glyphs,
                 scene.pane_color_glyph_end,
+                vw,
+                vh,
             );
         }
 

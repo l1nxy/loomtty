@@ -3,6 +3,7 @@ mod cli;
 mod connection;
 mod control;
 mod grid;
+mod init;
 
 use anyhow::Result;
 use app::App;
@@ -22,6 +23,9 @@ fn main() -> Result<()> {
 
     // Handle non-GUI commands first
     match cli {
+        CliCommand::Init => {
+            return init::run_init();
+        }
         CliCommand::List { all } => {
             return control::run_control_command(ClientMessage::ListSessions { all }, false);
         }
@@ -129,8 +133,23 @@ fn main() -> Result<()> {
 
     // Resolve session name
     let session_name = match cli {
+        CliCommand::Default => {
+            // No subcommand: auto-attach to most recent active session, or create new.
+            let active = control::query_active_sessions();
+            if let Some(name) = active.first() {
+                log::info!("attaching to most recent session: {name}");
+                name.clone()
+            } else {
+                let existing =
+                    ciri_session::restore::list_sessions(&ciri_protocol::transport::state_dir())
+                        .unwrap_or_default();
+                let name = ciri_session::names::unique_name(&existing);
+                log::info!("creating new session: {name}");
+                name
+            }
+        }
         CliCommand::New => {
-            // Always create a new session (never auto-attach to existing ones).
+            // Explicit `ciri new`: always create a new session.
             let existing =
                 ciri_session::restore::list_sessions(&ciri_protocol::transport::state_dir())
                     .unwrap_or_default();
@@ -173,6 +192,9 @@ fn main() -> Result<()> {
         _ => unreachable!(),
     };
 
+    if !ciri_config::config::config_path().exists() {
+        eprintln!("warning: No config file found. Run `ciri init` to set up your configuration.");
+    }
     let config = CiriConfig::load().unwrap_or_default();
     log::info!(
         "config: font={} size={}, session={}",

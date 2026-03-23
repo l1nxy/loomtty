@@ -7,6 +7,14 @@
 /// Where ST is either BEL (0x07) or `ESC \` (0x1b 0x5c).
 ///
 /// Tracks current hyperlink state and assigns link IDs.
+///
+/// Uses `crate::esc_scanner::scan_osc` for sequence detection and winnow for
+/// payload parsing.
+use winnow::token::{rest, take_till};
+use winnow::Parser;
+
+use crate::esc_scanner;
+
 pub(crate) struct Osc8Parser {
     /// Currently active hyperlink URI (None if not in a hyperlink).
     current_uri: Option<String>,
@@ -21,6 +29,21 @@ pub(crate) struct Osc8Parser {
 }
 
 const MAX_OSC8_PARTIAL_SIZE: usize = 8192;
+
+/// Parse an OSC 8 payload into (params, uri).
+///
+/// The payload (as returned by `scan_osc`) is everything between `8;` and ST.
+/// For a start hyperlink `ESC ] 8 ; id=foo ; https://example.com ST`, the
+/// payload is `id=foo;https://example.com`.
+/// For an end hyperlink `ESC ] 8 ; ; ST`, the payload is `;`.
+///
+/// We split at the first `;` to get params (before) and URI (after).
+fn parse_payload<'a>(input: &mut &'a [u8]) -> winnow::error::ModalResult<(&'a [u8], &'a [u8])> {
+    let params = take_till(0.., |b: u8| b == b';').parse_next(input)?;
+    let _ = winnow::token::literal(b";".as_slice()).parse_next(input)?;
+    let uri = rest.parse_next(input)?;
+    Ok((params, uri))
+}
 
 impl Osc8Parser {
     pub fn new() -> Self {
@@ -59,50 +82,13 @@ impl Osc8Parser {
             data
         };
 
-        let mut i = 0;
-        while i < data.len() {
-            // Look for ESC ] 8 ; (OSC 8 start)
-            if data[i] == 0x1b && i + 4 < data.len() && data[i + 1] == b']' && data[i + 2] == b'8' && data[i + 3] == b';' {
-                let osc_start = i;
-                i += 4; // skip "ESC ] 8 ;"
+        let result = esc_scanner::scan_osc(data, b"8");
 
-                // Find the second ';' that separates params from URI
-                let params_start = i;
-                while i < data.len() && data[i] != b';' && data[i] != 0x07 && !(data[i] == 0x1b && i + 1 < data.len() && data[i + 1] == b'\\') {
-                    i += 1;
-                }
-
-                if i >= data.len() {
-                    // Incomplete — buffer for next read
-                    self.buffer_partial(&data[osc_start..]);
-                    return;
-                }
-
-                if data[i] == b';' {
-                    // We have params;URI — now find URI and ST
-                    let _params = &data[params_start..i];
-                    i += 1; // skip ';'
-                    let uri_start = i;
-
-                    // Find ST (BEL or ESC \)
-                    while i < data.len() && data[i] != 0x07 && !(data[i] == 0x1b && i + 1 < data.len() && data[i + 1] == b'\\') {
-                        i += 1;
-                    }
-
-                    if i >= data.len() {
-                        self.buffer_partial(&data[osc_start..]);
-                        return;
-                    }
-
-                    let uri = std::str::from_utf8(&data[uri_start..i]).unwrap_or("").to_string();
-
-                    // Skip ST
-                    if data[i] == 0x07 {
-                        i += 1;
-                    } else {
-                        i += 2; // ESC \
-                    }
-
+        for (_offset, payload) in &result.sequences {
+            let mut input = *payload;
+            match parse_payload.parse_next(&mut input) {
+                Ok((_params, uri_bytes)) => {
+                    let uri = std::str::from_utf8(uri_bytes).unwrap_or("").to_string();
                     if uri.is_empty() {
                         // End hyperlink: ESC ] 8 ; ; ST
                         self.current_uri = None;
@@ -120,24 +106,18 @@ impl Osc8Parser {
                         self.current_link_id = Some(link_id);
                         log::debug!("OSC 8: hyperlink start id={link_id} uri={uri}");
                     }
-                } else {
-                    // Malformed — ST without second ';'. Treat as end hyperlink.
+                }
+                Err(_) => {
+                    // Malformed payload — treat as end hyperlink.
                     self.current_uri = None;
                     self.current_link_id = None;
-                    if data[i] == 0x07 {
-                        i += 1;
-                    } else {
-                        i += 2;
-                    }
                 }
-            } else {
-                // Check for potential partial match at end
-                if data[i] == 0x1b && i + 4 >= data.len() {
-                    self.buffer_partial(&data[i..]);
-                    return;
-                }
-                i += 1;
             }
+        }
+
+        // Buffer partial data for next read.
+        if let Some(partial_start) = result.partial_start {
+            self.buffer_partial(&data[partial_start..]);
         }
     }
 

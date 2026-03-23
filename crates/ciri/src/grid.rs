@@ -192,12 +192,12 @@ impl ClientPaneGrid {
         let new_cols = sync.cols as usize;
         let new_rows = sync.rows as usize;
 
-        // If dimensions changed, reflow scrollback and resize viewport.
-        let cols_changed = sync.cols != self.cols;
-        if cols_changed || sync.rows != self.rows {
-            if cols_changed {
-                self.reflow_scrollback(new_cols);
-            }
+        // If dimensions changed, reset viewport and clear scrollback.
+        // The server reflows scrollback on resize and sends all of it in
+        // the FullPaneSync, so the client should not keep its own stale
+        // copy.
+        if sync.cols != self.cols || sync.rows != self.rows {
+            self.scrollback.clear();
             self.cols = sync.cols;
             self.rows = sync.rows;
             self.viewport = vec![PackedCell::default(); new_cols * new_rows];

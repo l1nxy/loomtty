@@ -238,14 +238,13 @@ impl ApplicationHandler for App {
             dpi_scale
         );
 
-        let (cw, ch) = self.cell_dimensions();
         let view = &self.workspaces.view_size;
         let viewport = ciri_protocol::codec::ClientHello {
             session_name: self.session_name.clone(),
             width: view.width as u32,
             height: view.height as u32,
-            cell_width: cw,
-            cell_height: ch,
+            cell_width: cache.cell_width,
+            cell_height: cache.cell_height,
         };
         log::info!("connecting to session '{}'", self.session_name);
         match self.connect(viewport) {

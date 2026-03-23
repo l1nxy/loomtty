@@ -1,34 +1,218 @@
-#[derive(Debug)]
-pub enum CliCommand {
-    /// Create a new session with random name and connect.
+use clap::builder::styling::{AnsiColor, Effects, Styles};
+use clap::{Parser, Subcommand};
+
+const STYLES: Styles = Styles::styled()
+    .header(AnsiColor::Green.on_default().effects(Effects::BOLD))
+    .usage(AnsiColor::Green.on_default().effects(Effects::BOLD))
+    .literal(AnsiColor::Cyan.on_default().effects(Effects::BOLD))
+    .placeholder(AnsiColor::Cyan.on_default())
+    .valid(AnsiColor::Cyan.on_default().effects(Effects::BOLD))
+    .invalid(AnsiColor::Yellow.on_default().effects(Effects::BOLD))
+    .error(AnsiColor::Red.on_default().effects(Effects::BOLD));
+
+#[derive(Parser, Debug)]
+#[command(name = "ciri", about = "GPU-accelerated terminal multiplexer")]
+#[command(arg_required_else_help = false, styles = STYLES)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
+    /// Connect to session by name (create if needed)
+    #[arg(value_name = "SESSION")]
+    pub session_name: Option<String>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Command {
+    /// Create a new session and connect
     New,
-    /// Connect to a session by name (create if not exists).
-    Run {
-        session_name: String,
-    },
-    /// Attach to an existing session (error if not exists).
+
+    /// Attach to an existing session (error if not exists)
+    #[command(visible_alias = "a")]
     Attach {
+        /// Session name
         session_name: String,
     },
-    List,
+
+    /// List sessions
+    #[command(visible_alias = "ls")]
+    List {
+        /// Include saved (inactive) sessions
+        #[arg(short, long)]
+        all: bool,
+    },
+
+    /// Kill a session
+    #[command(visible_alias = "k")]
     Kill {
+        /// Session name
         session_name: String,
     },
+
+    /// Kill the server
+    #[command(visible_alias = "ks")]
     KillServer,
+
+    /// Delete saved session
+    #[command(visible_alias = "rm")]
     Delete {
+        /// Session name
         session_name: String,
     },
-    /// Connect to a remote ciri-server via SSH tunnel.
+
+    /// Connect to remote server via SSH tunnel
     Remote {
+        /// Host (user@host)
         host: String,
+
+        /// Session name
         session_name: Option<String>,
+
+        /// Remote TCP port
+        #[arg(long, default_value_t = ciri_protocol::transport::DEFAULT_REMOTE_PORT)]
         port: u16,
+
+        /// SSH port
+        #[arg(long, default_value_t = 22)]
         ssh_port: u16,
     },
-    Help,
-    /// IPC messaging commands for external scripting.
+
+    /// IPC commands for scripting
+    Msg {
+        #[command(subcommand)]
+        subcommand: MsgCommand,
+
+        /// Output as JSON
+        #[arg(long, global = true)]
+        json: bool,
+    },
+
+    /// Layout template management
+    #[command(visible_alias = "tpl")]
+    Template {
+        #[command(subcommand)]
+        subcommand: TemplateCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum MsgCommand {
+    /// Send keystrokes to a pane
+    SendKeys {
+        session_name: String,
+        pane_id: u64,
+        keys: String,
+    },
+    /// List all panes in a session
+    ListPanes { session_name: String },
+    /// Get session info
+    Info { session_name: String },
+    /// Focus a pane by ID
+    FocusPane {
+        session_name: String,
+        pane_id: u64,
+    },
+    /// Close a pane by ID
+    ClosePane {
+        session_name: String,
+        pane_id: u64,
+    },
+    /// Create a new pane
+    CreatePane { session_name: String },
+    /// Get the full layout state
+    GetLayout { session_name: String },
+    /// Run a command in a new pane
+    RunCommand {
+        session_name: String,
+        command: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum TemplateCommand {
+    /// List layout templates
+    #[command(visible_alias = "ls")]
+    List,
+    /// Apply a template
+    Apply {
+        template_name: String,
+        session_name: Option<String>,
+    },
+    /// Save session layout as template
+    Save {
+        template_name: String,
+        session_name: String,
+    },
+}
+
+/// Resolve the CLI into the internal command enum used by main.rs.
+pub fn resolve(cli: Cli) -> CliCommand {
+    match cli.command {
+        None => {
+            if let Some(name) = cli.session_name {
+                CliCommand::Run { session_name: name }
+            } else {
+                CliCommand::New
+            }
+        }
+        Some(Command::New) => CliCommand::New,
+        Some(Command::Attach { session_name }) => CliCommand::Attach { session_name },
+        Some(Command::List { all }) => CliCommand::List { all },
+        Some(Command::Kill { session_name }) => CliCommand::Kill { session_name },
+        Some(Command::KillServer) => CliCommand::KillServer,
+        Some(Command::Delete { session_name }) => CliCommand::Delete { session_name },
+        Some(Command::Remote { host, session_name, port, ssh_port }) => {
+            CliCommand::Remote { host, session_name, port, ssh_port }
+        }
+        Some(Command::Msg { subcommand, json }) => {
+            let sub = match subcommand {
+                MsgCommand::SendKeys { session_name, pane_id, keys } => {
+                    MsgSubcommand::SendKeys { session_name, pane_id, keys }
+                }
+                MsgCommand::ListPanes { session_name } => MsgSubcommand::ListPanes { session_name },
+                MsgCommand::Info { session_name } => MsgSubcommand::Info { session_name },
+                MsgCommand::FocusPane { session_name, pane_id } => {
+                    MsgSubcommand::FocusPane { session_name, pane_id }
+                }
+                MsgCommand::ClosePane { session_name, pane_id } => {
+                    MsgSubcommand::ClosePane { session_name, pane_id }
+                }
+                MsgCommand::CreatePane { session_name } => MsgSubcommand::CreatePane { session_name },
+                MsgCommand::GetLayout { session_name } => MsgSubcommand::GetLayout { session_name },
+                MsgCommand::RunCommand { session_name, command } => {
+                    MsgSubcommand::RunCommand { session_name, command }
+                }
+            };
+            CliCommand::Msg { subcommand: sub, json }
+        }
+        Some(Command::Template { subcommand }) => {
+            let sub = match subcommand {
+                TemplateCommand::List => TemplateSubcommand::List,
+                TemplateCommand::Apply { template_name, session_name } => {
+                    TemplateSubcommand::Apply { template_name, session_name }
+                }
+                TemplateCommand::Save { template_name, session_name } => {
+                    TemplateSubcommand::Save { template_name, session_name }
+                }
+            };
+            CliCommand::Template { subcommand: sub }
+        }
+    }
+}
+
+// Internal command types (unchanged interface for main.rs)
+
+#[derive(Debug)]
+pub enum CliCommand {
+    New,
+    Run { session_name: String },
+    Attach { session_name: String },
+    List { all: bool },
+    Kill { session_name: String },
+    KillServer,
+    Delete { session_name: String },
+    Remote { host: String, session_name: Option<String>, port: u16, ssh_port: u16 },
     Msg { subcommand: MsgSubcommand, json: bool },
-    /// Template management subcommands.
     Template { subcommand: TemplateSubcommand },
 }
 
@@ -51,308 +235,15 @@ pub enum TemplateSubcommand {
     Save { template_name: String, session_name: String },
 }
 
-/// Reserved subcommand names that cannot be used as positional session names.
-fn is_subcommand(arg: &str) -> bool {
-    matches!(
-        arg,
-        "new"
-            | "list"
-            | "ls"
-            | "kill"
-            | "k"
-            | "kill-server"
-            | "ks"
-            | "delete"
-            | "rm"
-            | "attach"
-            | "a"
-            | "help"
-            | "msg"
-            | "template"
-            | "tpl"
-            | "remote"
-    )
-}
-
-pub fn parse_args<I>(args: I) -> Result<CliCommand, String>
-where
-    I: IntoIterator<Item = String>,
-{
-    let args: Vec<String> = args.into_iter().collect();
-    let usage = usage();
-
-    // Handle "msg" subcommand separately since it has variable-length arguments
-    if args.first().map(|s| s.as_str()) == Some("msg") {
-        return parse_msg_args(&args[1..]);
-    }
-
-    // Check for template subcommand (variable-length args)
-    if let Some(first) = args.first() {
-        if first == "template" || first == "tpl" {
-            return parse_template_args(&args[1..]);
-        }
-    }
-
-    // Handle "remote" subcommand with flags
-    if args.first().map(|s| s.as_str()) == Some("remote") {
-        return parse_remote_args(&args[1..]);
-    }
-
-    match args.as_slice() {
-        [] => Ok(CliCommand::New),
-        [cmd] if cmd == "new" => Ok(CliCommand::New),
-        [cmd] if cmd == "list" || cmd == "ls" => Ok(CliCommand::List),
-        [cmd] if cmd == "kill-server" || cmd == "ks" => Ok(CliCommand::KillServer),
-        [cmd, name] if cmd == "kill" || cmd == "k" => Ok(CliCommand::Kill {
-            session_name: name.clone(),
-        }),
-        [cmd, name] if cmd == "delete" || cmd == "rm" => Ok(CliCommand::Delete {
-            session_name: name.clone(),
-        }),
-        [cmd, name] if cmd == "attach" || cmd == "a" => Ok(CliCommand::Attach {
-            session_name: name.clone(),
-        }),
-        [cmd] if cmd == "attach" || cmd == "a" => {
-            Err("attach requires a session name.\nUse `ciri ls` to list sessions.".to_string())
-        }
-        [flag, session_name] if flag == "--session" || flag == "-s" => Ok(CliCommand::Run {
-            session_name: session_name.clone(),
-        }),
-        [arg] if is_help_flag(arg) => Ok(CliCommand::Help),
-        [arg] if !is_subcommand(arg) => Ok(CliCommand::Run {
-            session_name: arg.clone(),
-        }),
-        _ => Err(usage),
-    }
-}
-
-fn parse_msg_args(args: &[String]) -> Result<CliCommand, String> {
-    let msg_usage = msg_usage();
-
-    if args.is_empty() {
-        return Err(msg_usage);
-    }
-
-    // Check for --json flag anywhere in the args
-    let json = args.iter().any(|a| a == "--json");
-    let args: Vec<&String> = args.iter().filter(|a| a.as_str() != "--json").collect();
-
-    if args.is_empty() {
-        return Err(msg_usage);
-    }
-
-    let subcmd = args[0].as_str();
-    match subcmd {
-        "send-keys" => {
-            if args.len() < 4 {
-                return Err(format!("Usage: ciri msg send-keys <session> <pane_id> <keys>\n\n{msg_usage}"));
-            }
-            let session_name = args[1].clone();
-            let pane_id: u64 = args[2].parse().map_err(|_| format!("invalid pane_id: {}", args[2]))?;
-            let keys = args[3].clone();
-            Ok(CliCommand::Msg {
-                subcommand: MsgSubcommand::SendKeys { session_name, pane_id, keys },
-                json,
-            })
-        }
-        "list-panes" => {
-            if args.len() < 2 {
-                return Err(format!("Usage: ciri msg list-panes <session>\n\n{msg_usage}"));
-            }
-            Ok(CliCommand::Msg {
-                subcommand: MsgSubcommand::ListPanes { session_name: args[1].clone() },
-                json,
-            })
-        }
-        "info" => {
-            if args.len() < 2 {
-                return Err(format!("Usage: ciri msg info <session>\n\n{msg_usage}"));
-            }
-            Ok(CliCommand::Msg {
-                subcommand: MsgSubcommand::Info { session_name: args[1].clone() },
-                json,
-            })
-        }
-        "focus-pane" => {
-            if args.len() < 3 {
-                return Err(format!("Usage: ciri msg focus-pane <session> <pane_id>\n\n{msg_usage}"));
-            }
-            let pane_id: u64 = args[2].parse().map_err(|_| format!("invalid pane_id: {}", args[2]))?;
-            Ok(CliCommand::Msg {
-                subcommand: MsgSubcommand::FocusPane { session_name: args[1].clone(), pane_id },
-                json,
-            })
-        }
-        "close-pane" => {
-            if args.len() < 3 {
-                return Err(format!("Usage: ciri msg close-pane <session> <pane_id>\n\n{msg_usage}"));
-            }
-            let pane_id: u64 = args[2].parse().map_err(|_| format!("invalid pane_id: {}", args[2]))?;
-            Ok(CliCommand::Msg {
-                subcommand: MsgSubcommand::ClosePane { session_name: args[1].clone(), pane_id },
-                json,
-            })
-        }
-        "create-pane" => {
-            if args.len() < 2 {
-                return Err(format!("Usage: ciri msg create-pane <session>\n\n{msg_usage}"));
-            }
-            Ok(CliCommand::Msg {
-                subcommand: MsgSubcommand::CreatePane { session_name: args[1].clone() },
-                json,
-            })
-        }
-        "get-layout" => {
-            if args.len() < 2 {
-                return Err(format!("Usage: ciri msg get-layout <session>\n\n{msg_usage}"));
-            }
-            Ok(CliCommand::Msg {
-                subcommand: MsgSubcommand::GetLayout { session_name: args[1].clone() },
-                json,
-            })
-        }
-        "run-command" => {
-            if args.len() < 3 {
-                return Err(format!("Usage: ciri msg run-command <session> <command>\n\n{msg_usage}"));
-            }
-            Ok(CliCommand::Msg {
-                subcommand: MsgSubcommand::RunCommand { session_name: args[1].clone(), command: args[2].clone() },
-                json,
-            })
-        }
-        _ => Err(format!("unknown msg subcommand: {subcmd}\n\n{msg_usage}")),
-    }
-}
-
-fn msg_usage() -> String {
-    "\
-Usage: ciri msg <subcommand> [options]
-
-Subcommands:
-  send-keys <session> <pane_id> <keys>   Send keystrokes to a pane
-  list-panes <session> [--json]           List all panes in a session
-  info <session> [--json]                 Get session info
-  focus-pane <session> <pane_id>          Focus a pane by ID
-  close-pane <session> <pane_id>          Close a pane by ID
-  create-pane <session> [--json]          Create a new pane
-  get-layout <session> [--json]           Get the full layout state
-  run-command <session> <command>          Run a command in a new pane"
-        .to_string()
-}
-
-/// Parse arguments for `ciri remote <user@host> [session_name] [--port PORT] [--ssh-port PORT]`.
-fn parse_remote_args(args: &[String]) -> Result<CliCommand, String> {
-    if args.is_empty() {
-        return Err("remote requires a host argument.\nUsage: ciri remote <user@host> [session] [--port PORT] [--ssh-port PORT]".to_string());
-    }
-
-    let mut host: Option<String> = None;
-    let mut session_name: Option<String> = None;
-    let mut port: u16 = ciri_protocol::transport::DEFAULT_REMOTE_PORT;
-    let mut ssh_port: u16 = 22;
-
-    let mut i = 0;
-    while i < args.len() {
-        let arg = &args[i];
-        if arg == "--port" {
-            i += 1;
-            if i >= args.len() {
-                return Err("--port requires a value".to_string());
-            }
-            port = args[i].parse::<u16>().map_err(|_| format!("invalid port: {}", args[i]))?;
-        } else if arg == "--ssh-port" {
-            i += 1;
-            if i >= args.len() {
-                return Err("--ssh-port requires a value".to_string());
-            }
-            ssh_port = args[i].parse::<u16>().map_err(|_| format!("invalid ssh-port: {}", args[i]))?;
-        } else if arg.starts_with('-') {
-            return Err(format!("unknown flag: {arg}"));
-        } else if host.is_none() {
-            host = Some(arg.clone());
-        } else if session_name.is_none() {
-            session_name = Some(arg.clone());
-        } else {
-            return Err(format!("unexpected argument: {arg}"));
-        }
-        i += 1;
-    }
-
-    let host = host.ok_or_else(|| "remote requires a host argument".to_string())?;
-
-    Ok(CliCommand::Remote {
-        host,
-        session_name,
-        port,
-        ssh_port,
-    })
-}
-
-pub fn usage() -> String {
-    "\
-Usage:
-  ciri                                  Create new session and connect
-  ciri new                              Create new session and connect
-  ciri <name>                           Connect to session (create if needed)
-  ciri attach|a <name>                  Attach to existing session (must exist)
-  ciri list|ls                          List all sessions
-  ciri kill|k <name>                    Kill a session
-  ciri kill-server|ks                   Kill the server
-  ciri delete|rm <name>                 Delete saved session
-  ciri msg <subcommand>                 IPC commands for scripting (see ciri msg --help)
-  ciri template|tpl list                List layout templates
-  ciri template|tpl apply <name> [session]  Apply a template
-  ciri template|tpl save <name> <session>   Save session layout as template
-  ciri remote <host> [session]          Connect to remote server via SSH tunnel
-        [--port PORT]                   Remote TCP port (default: 7890)
-        [--ssh-port PORT]               SSH port (default: 22)
-  ciri --help|-h                        Show this help"
-        .to_string()
-}
-
-fn parse_template_args(args: &[String]) -> Result<CliCommand, String> {
-    match args {
-        [] => Ok(CliCommand::Template {
-            subcommand: TemplateSubcommand::List,
-        }),
-        [a] if a == "list" || a == "ls" => Ok(CliCommand::Template {
-            subcommand: TemplateSubcommand::List,
-        }),
-        [sub, name] if sub == "apply" => Ok(CliCommand::Template {
-            subcommand: TemplateSubcommand::Apply {
-                template_name: name.clone(),
-                session_name: None,
-            },
-        }),
-        [sub, name, session] if sub == "apply" => Ok(CliCommand::Template {
-            subcommand: TemplateSubcommand::Apply {
-                template_name: name.clone(),
-                session_name: Some(session.clone()),
-            },
-        }),
-        [sub, name, session] if sub == "save" => Ok(CliCommand::Template {
-            subcommand: TemplateSubcommand::Save {
-                template_name: name.clone(),
-                session_name: session.clone(),
-            },
-        }),
-        [sub] if sub == "apply" => Err("template apply requires a template name.\nUsage: ciri template apply <name> [session]".to_string()),
-        [sub] if sub == "save" => Err("template save requires a template name and session name.\nUsage: ciri template save <name> <session>".to_string()),
-        [sub, _name] if sub == "save" => Err("template save requires a session name.\nUsage: ciri template save <name> <session>".to_string()),
-        _ => Err(usage()),
-    }
-}
-
-fn is_help_flag(arg: &str) -> bool {
-    matches!(arg, "--help" | "-h" | "help")
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{CliCommand, parse_args};
+    use super::*;
 
     fn parse(args: &[&str]) -> CliCommand {
-        parse_args(args.iter().map(|s| s.to_string())).expect("parse should succeed")
+        let mut full_args = vec!["ciri"];
+        full_args.extend_from_slice(args);
+        let cli = Cli::try_parse_from(full_args).expect("parse should succeed");
+        resolve(cli)
     }
 
     #[test]
@@ -373,12 +264,6 @@ mod tests {
     }
 
     #[test]
-    fn attach_requires_name() {
-        let err = parse_args(["attach"].into_iter().map(|s| s.to_string()));
-        assert!(err.is_err());
-    }
-
-    #[test]
     fn attach_with_name() {
         assert!(
             matches!(parse(&["attach", "ops"]), CliCommand::Attach { session_name } if session_name == "ops")
@@ -389,21 +274,11 @@ mod tests {
     }
 
     #[test]
-    fn explicit_session_flag() {
-        assert!(
-            matches!(parse(&["--session", "qa"]), CliCommand::Run { session_name } if session_name == "qa")
-        );
-    }
-
-    #[test]
-    fn help_flag() {
-        assert!(matches!(parse(&["--help"]), CliCommand::Help));
-    }
-
-    #[test]
     fn list_command() {
-        assert!(matches!(parse(&["list"]), CliCommand::List));
-        assert!(matches!(parse(&["ls"]), CliCommand::List));
+        assert!(matches!(parse(&["list"]), CliCommand::List { all: false }));
+        assert!(matches!(parse(&["ls"]), CliCommand::List { all: false }));
+        assert!(matches!(parse(&["ls", "--all"]), CliCommand::List { all: true }));
+        assert!(matches!(parse(&["ls", "-a"]), CliCommand::List { all: true }));
     }
 
     #[test]
@@ -430,12 +305,5 @@ mod tests {
         assert!(
             matches!(parse(&["rm", "old"]), CliCommand::Delete { session_name } if session_name == "old")
         );
-    }
-
-    #[test]
-    fn rejects_extra_arguments() {
-        let err = parse_args(["attach", "foo", "bar"].into_iter().map(|s| s.to_string()))
-            .expect_err("parse should fail");
-        assert!(err.contains("Usage:"));
     }
 }

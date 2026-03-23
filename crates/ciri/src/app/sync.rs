@@ -182,28 +182,42 @@ impl App {
                 }
                 ServerEvent::Control(ServerMessage::SessionList { sessions }) => {
                     if let Some(palette) = &mut self.command_palette {
-                        // Remove old session entries, keep actions
-                        palette.entries.retain(|e| matches!(e.kind, super::PaletteEntryKind::Action(_)));
-                        // Add session entries
+                        if palette.sessions_only {
+                            palette.entries.clear();
+                        } else {
+                            // Remove old session entries, keep actions.
+                            palette
+                                .entries
+                                .retain(|e| matches!(e.kind, super::PaletteEntryKind::Action(_)));
+                        }
                         for s in &sessions {
                             palette.entries.push(super::PaletteEntry {
                                 label: format!("Switch to: {}", s.name),
                                 kind: super::PaletteEntryKind::SwitchSession(s.name.clone()),
                             });
-                            if s.running {
+                            if !palette.sessions_only && s.running {
                                 palette.entries.push(super::PaletteEntry {
                                     label: format!("Kill: {}", s.name),
                                     kind: super::PaletteEntryKind::KillSession(s.name.clone()),
                                 });
                             }
                         }
-                        // Re-filter with current query
                         self.filter_palette();
                     }
                     needs_redraw = true;
                 }
-                ServerEvent::Control(ServerMessage::SessionSwitched { .. })
-                | ServerEvent::Control(ServerMessage::SessionKilled { .. })
+                ServerEvent::Control(ServerMessage::SessionSwitched { session_name }) => {
+                    self.session_name = session_name;
+                    self.command_palette = None;
+                    if let Some(window) = &self.window {
+                        window.set_title(&format!(
+                            "{} [{}]",
+                            self.config.window.title, self.session_name
+                        ));
+                    }
+                    needs_redraw = true;
+                }
+                ServerEvent::Control(ServerMessage::SessionKilled { .. })
                 | ServerEvent::Control(ServerMessage::TemplateApplied { .. })
                 | ServerEvent::Control(ServerMessage::TemplateList { .. })
                 | ServerEvent::Control(ServerMessage::TemplateSaved { .. })
@@ -339,6 +353,7 @@ impl App {
         self.workspaces.active_workspace_idx = layout
             .active_workspace_idx
             .min(self.workspaces.workspaces.len().saturating_sub(1));
+        self.sync_workspace_pane_memory();
 
         self.snap_all_col_widths();
         self.animate_to_active();

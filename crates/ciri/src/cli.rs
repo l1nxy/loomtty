@@ -155,7 +155,7 @@ pub fn resolve(cli: Cli) -> CliCommand {
             if let Some(name) = cli.session_name {
                 CliCommand::Run { session_name: name }
             } else {
-                CliCommand::New
+                CliCommand::Default
             }
         }
         Some(Command::New) => CliCommand::New,
@@ -208,6 +208,8 @@ pub fn resolve(cli: Cli) -> CliCommand {
 
 #[derive(Debug)]
 pub enum CliCommand {
+    /// No subcommand given: auto-attach to existing session or create new.
+    Default,
     New,
     Init,
     Run { session_name: String },
@@ -252,8 +254,8 @@ mod tests {
     }
 
     #[test]
-    fn no_args_creates_new() {
-        assert!(matches!(parse(&[]), CliCommand::New));
+    fn no_args_creates_default() {
+        assert!(matches!(parse(&[]), CliCommand::Default));
     }
 
     #[test]

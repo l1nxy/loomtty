@@ -307,8 +307,8 @@ pub enum ClientMessage {
     ConsumeIntoColumn,
     /// Expel the current column's active tile into a new column to the right.
     ExpelFromColumn,
-    /// Request the list of all sessions (running + saved).
-    ListSessions,
+    /// Request the list of sessions. If `all` is true, include saved (inactive) sessions.
+    ListSessions { all: bool },
     /// Kill a session by name.
     KillSession {
         session_name: String,

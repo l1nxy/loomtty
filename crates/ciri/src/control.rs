@@ -32,7 +32,7 @@ pub fn run_control_command(msg: ClientMessage, json: bool) -> Result<()> {
         Ok(s) => s,
         Err(_) => {
             // Server is not running
-            if matches!(msg, ClientMessage::ListSessions) {
+            if matches!(msg, ClientMessage::ListSessions { .. }) {
                 let dir = transport::state_dir();
                 let saved = ciri_session::restore::list_sessions(&dir).unwrap_or_default();
                 if saved.is_empty() {
@@ -304,7 +304,7 @@ pub fn session_exists_on_server(name: &str) -> bool {
     }
 
     // Send ListSessions
-    let msg = ClientMessage::ListSessions;
+    let msg = ClientMessage::ListSessions { all: true };
     let payload = match rmp_serde::to_vec(&msg) {
         Ok(p) => p,
         Err(_) => return false,
@@ -336,4 +336,93 @@ pub fn session_exists_on_server(name: &str) -> bool {
         }
     }
     false
+}
+
+/// Query the server for active (running) sessions, sorted by most recently used first.
+/// Returns an empty Vec if the server is unreachable.
+pub fn query_active_sessions() -> Vec<String> {
+    use ciri_protocol::transport;
+    use std::io::{Read, Write};
+
+    #[cfg(unix)]
+    let stream_result = {
+        let p = transport::server_socket_path();
+        if !p.exists() { return Vec::new(); }
+        std::os::unix::net::UnixStream::connect(&p)
+    };
+    #[cfg(windows)]
+    let stream_result = {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(transport::server_pipe_name())
+    };
+
+    let mut stream = match stream_result {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+
+    #[cfg(unix)]
+    {
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+        let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(2)));
+    }
+
+    let magic = b"CIRI";
+    let version = {
+        let v = env!("CARGO_PKG_VERSION");
+        let parts: Vec<&str> = v.split('.').collect();
+        let major: u8 = parts[0].parse().unwrap();
+        let minor: u8 = parts[1].parse().unwrap();
+        let patch: u16 = parts[2].parse().unwrap();
+        (major as u32) << 24 | (minor as u32) << 16 | patch as u32
+    };
+    let session_name_bytes = b"__control__";
+    let mut hello = Vec::with_capacity(27 + session_name_bytes.len());
+    hello.extend_from_slice(magic);
+    hello.extend_from_slice(&version.to_le_bytes());
+    hello.push(ciri_protocol::codec::WIRE_PROTOCOL_VERSION);
+    hello.extend_from_slice(&(session_name_bytes.len() as u16).to_le_bytes());
+    hello.extend_from_slice(session_name_bytes);
+    hello.extend_from_slice(&1024u32.to_le_bytes());
+    hello.extend_from_slice(&768u32.to_le_bytes());
+    hello.extend_from_slice(&8.0f32.to_bits().to_le_bytes());
+    hello.extend_from_slice(&16.0f32.to_bits().to_le_bytes());
+    if stream.write_all(&hello).is_err() || stream.flush().is_err() {
+        return Vec::new();
+    }
+
+    let mut server_hello = [0u8; 8];
+    if stream.read_exact(&mut server_hello).is_err() {
+        return Vec::new();
+    }
+
+    let msg = ClientMessage::ListSessions { all: false };
+    let payload = match rmp_serde::to_vec(&msg) {
+        Ok(p) => p,
+        Err(_) => return Vec::new(),
+    };
+    let mut frame = Vec::with_capacity(5 + payload.len());
+    frame.push(0x01);
+    frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    frame.extend_from_slice(&payload);
+    if stream.write_all(&frame).is_err() || stream.flush().is_err() {
+        return Vec::new();
+    }
+
+    for _ in 0..20 {
+        let mut header = [0u8; 5];
+        if stream.read_exact(&mut header).is_err() { break; }
+        let tag = header[0];
+        let len = u32::from_le_bytes([header[1], header[2], header[3], header[4]]) as usize;
+        let mut payload = vec![0u8; len];
+        if stream.read_exact(&mut payload).is_err() { break; }
+        if tag == 0x10 {
+            if let Ok(ServerMessage::SessionList { sessions }) = rmp_serde::from_slice(&payload) {
+                return sessions.into_iter().filter(|s| s.running).map(|s| s.name).collect();
+            }
+        }
+    }
+    Vec::new()
 }

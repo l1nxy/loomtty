@@ -30,6 +30,8 @@ pub enum GlyphAtlasGpu {
     Blade(blade::GlyphAtlasGpu),
     #[cfg(feature = "gl")]
     Gl(gl::GlyphAtlasGpu),
+    #[cfg(all(feature = "dx", windows))]
+    Dx(dx::GlyphAtlasGpu),
 }
 
 /// Runtime-selected GPU renderer.
@@ -38,6 +40,8 @@ pub enum Renderer {
     Blade(blade::Renderer),
     #[cfg(feature = "gl")]
     Gl(gl::Renderer),
+    #[cfg(all(feature = "dx", windows))]
+    Dx(dx::Renderer),
 }
 
 impl Renderer {
@@ -70,6 +74,21 @@ impl Renderer {
 
         // Try requested backend
         match resolved {
+            #[cfg(all(feature = "dx", windows))]
+            "dx" => {
+                match dx::Renderer::new(window.clone(), render_config) {
+                    Ok(r) => {
+                        log::info!("using DX11 (Direct3D 11) backend");
+                        return Ok(Renderer::Dx(r));
+                    }
+                    Err(e) => {
+                        log::warn!("DX11 backend failed: {e:#}");
+                        if backend != "auto" && !backend.is_empty() {
+                            return Err(e);
+                        }
+                    }
+                }
+            }
             #[cfg(feature = "blade")]
             "blade" => {
                 match blade::Renderer::new(window.clone(), render_config) {
@@ -108,6 +127,11 @@ impl Renderer {
         }
 
         // Auto fallback: try all compiled backends
+        #[cfg(all(feature = "dx", windows))]
+        if let Ok(r) = dx::Renderer::new(window.clone(), render_config) {
+            log::info!("fallback: using DX11 backend");
+            return Ok(Renderer::Dx(r));
+        }
         #[cfg(feature = "gl")]
         if let Ok(r) = gl::Renderer::new(window.clone(), render_config) {
             log::info!("fallback: using GL backend");
@@ -128,6 +152,8 @@ impl Renderer {
             Renderer::Blade(r) => r.resize(width, height),
             #[cfg(feature = "gl")]
             Renderer::Gl(r) => r.resize(width, height),
+            #[cfg(all(feature = "dx", windows))]
+            Renderer::Dx(r) => r.resize(width, height),
         }
     }
 
@@ -137,6 +163,8 @@ impl Renderer {
             Renderer::Blade(r) => r.apply_surface(),
             #[cfg(feature = "gl")]
             Renderer::Gl(r) => r.apply_surface(),
+            #[cfg(all(feature = "dx", windows))]
+            Renderer::Dx(r) => r.apply_surface(),
         }
     }
 
@@ -146,6 +174,8 @@ impl Renderer {
             Renderer::Blade(r) => r.surface_size(),
             #[cfg(feature = "gl")]
             Renderer::Gl(r) => r.surface_size(),
+            #[cfg(all(feature = "dx", windows))]
+            Renderer::Dx(r) => r.surface_size(),
         }
     }
 
@@ -174,6 +204,12 @@ impl Renderer {
                     r.create_atlas(font_size_pt, dpi_scale, family_name, primary_font_path, emoji_font_path, emoji_font_id, cjk_font_path, cjk_font_id, render_config);
                 (cache, GlyphAtlasGpu::Gl(atlas))
             }
+            #[cfg(all(feature = "dx", windows))]
+            Renderer::Dx(r) => {
+                let (cache, atlas) =
+                    r.create_atlas(font_size_pt, dpi_scale, family_name, primary_font_path, emoji_font_path, emoji_font_id, cjk_font_path, cjk_font_id, render_config);
+                (cache, GlyphAtlasGpu::Dx(atlas))
+            }
         }
     }
 
@@ -183,6 +219,8 @@ impl Renderer {
             (Renderer::Blade(r), GlyphAtlasGpu::Blade(a)) => r.destroy_atlas(a),
             #[cfg(feature = "gl")]
             (Renderer::Gl(r), GlyphAtlasGpu::Gl(a)) => r.destroy_atlas(a),
+            #[cfg(all(feature = "dx", windows))]
+            (Renderer::Dx(r), GlyphAtlasGpu::Dx(a)) => r.destroy_atlas(a),
             _ => log::error!("renderer/atlas backend mismatch in destroy_atlas"),
         }
     }
@@ -198,6 +236,8 @@ impl Renderer {
             (Renderer::Blade(r), GlyphAtlasGpu::Blade(a)) => r.draw_frame(a, cache, scene),
             #[cfg(feature = "gl")]
             (Renderer::Gl(r), GlyphAtlasGpu::Gl(a)) => r.draw_frame(a, cache, scene),
+            #[cfg(all(feature = "dx", windows))]
+            (Renderer::Dx(r), GlyphAtlasGpu::Dx(a)) => r.draw_frame(a, cache, scene),
             _ => log::error!("renderer/atlas backend mismatch in draw_frame"),
         }
     }

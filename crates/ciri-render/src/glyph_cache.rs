@@ -584,15 +584,15 @@ impl GlyphCache {
                 let outline = &mut (*slot).outline;
                 if need_synth_bold {
                     let font_height = (*(*ft_face.raw()).size).metrics.height as f64;
-                    let amount = (font_height * 64.0 / 2048.0).ceil() as i64;
+                    let amount = (font_height * 64.0 / 2048.0).ceil() as freetype::ffi::FT_Pos;
                     freetype::ffi::FT_Outline_Embolden(outline, amount);
                 }
                 if need_synth_italic {
                     let matrix = freetype::ffi::FT_Matrix {
-                        xx: 0x10000,
-                        xy: (0.2125 * 65536.0) as i64,
-                        yx: 0,
-                        yy: 0x10000,
+                        xx: 0x10000 as freetype::ffi::FT_Fixed,
+                        xy: (0.2125 * 65536.0) as freetype::ffi::FT_Fixed,
+                        yx: 0 as freetype::ffi::FT_Fixed,
+                        yy: 0x10000 as freetype::ffi::FT_Fixed,
                     };
                     freetype::ffi::FT_Outline_Transform(outline, &matrix);
                 }

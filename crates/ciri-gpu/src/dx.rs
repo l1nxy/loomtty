@@ -16,6 +16,7 @@ use windows::core::*;
 use windows::Win32::Graphics::Direct3D::Fxc::*;
 use windows::Win32::Graphics::Direct3D::*;
 use windows::Win32::Graphics::Direct3D11::*;
+use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Dxgi::*;
 
@@ -39,10 +40,6 @@ struct PSInput {
     float4 color    : COLOR;
 };
 
-float srgb_to_linear(float c) {
-    return (c <= 0.04045) ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);
-}
-
 PSInput vs_main(VSInput input) {
     float x = float(input.vid & 1);
     float y = float((input.vid >> 1) & 1);
@@ -55,12 +52,7 @@ PSInput vs_main(VSInput input) {
 
     PSInput output;
     output.position = float4(ndc, 0.0, 1.0);
-    output.color = float4(
-        srgb_to_linear(input.color.r),
-        srgb_to_linear(input.color.g),
-        srgb_to_linear(input.color.b),
-        input.color.a
-    );
+    output.color = input.color;
     return output;
 }
 
@@ -121,16 +113,9 @@ struct PSInput {
     float4 color    : COLOR;
 };
 
-float srgb_to_linear(float c) {
-    return (c <= 0.04045) ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);
-}
-
 float4 ps_main(PSInput input) : SV_TARGET {
     float alpha = atlas_tex.Sample(atlas_sampler, input.uv).r;
-    float r = srgb_to_linear(input.color.r);
-    float g = srgb_to_linear(input.color.g);
-    float b = srgb_to_linear(input.color.b);
-    return float4(r, g, b, input.color.a * alpha);
+    return float4(input.color.rgb, input.color.a * alpha);
 }
 "#;
 
@@ -224,7 +209,9 @@ impl DxAtlasLayer {
             CPUAccessFlags: 0,
             MiscFlags: 0,
         };
-        let texture = device.CreateTexture2D(&tex_desc, None)?;
+        let mut texture = None;
+        device.CreateTexture2D(&tex_desc, None, Some(&mut texture))?;
+        let texture = texture.unwrap();
 
         let srv_desc = D3D11_SHADER_RESOURCE_VIEW_DESC {
             Format: tex_format,
@@ -236,7 +223,10 @@ impl DxAtlasLayer {
                 },
             },
         };
-        let srv = device.CreateShaderResourceView(&texture, Some(&srv_desc))?;
+        let resource: ID3D11Resource = texture.cast()?;
+        let mut srv = None;
+        device.CreateShaderResourceView(&resource, Some(&srv_desc), Some(&mut srv))?;
+        let srv = srv.unwrap();
 
         let sampler_desc = D3D11_SAMPLER_DESC {
             Filter: filter,
@@ -248,18 +238,24 @@ impl DxAtlasLayer {
             MaxLOD: f32::MAX,
             ..Default::default()
         };
-        let sampler = device.CreateSamplerState(&sampler_desc)?;
+        let mut sampler = None;
+        device.CreateSamplerState(&sampler_desc, Some(&mut sampler))?;
+        let sampler = sampler.unwrap();
 
         // Shaders
         let vs_blob = compile_shader(vs_hlsl, "vs_main", "vs_5_0")?;
         let vs_code =
             std::slice::from_raw_parts(vs_blob.GetBufferPointer() as *const u8, vs_blob.GetBufferSize());
-        let vs = device.CreateVertexShader(vs_code, None)?;
+        let mut vs = None;
+        device.CreateVertexShader(vs_code, None, Some(&mut vs))?;
+        let vs = vs.unwrap();
 
         let ps_blob = compile_shader(ps_hlsl, "ps_main", "ps_5_0")?;
         let ps_code =
             std::slice::from_raw_parts(ps_blob.GetBufferPointer() as *const u8, ps_blob.GetBufferSize());
-        let ps = device.CreatePixelShader(ps_code, None)?;
+        let mut ps = None;
+        device.CreatePixelShader(ps_code, None, Some(&mut ps))?;
+        let ps = ps.unwrap();
 
         // Input layout for glyph instances
         let layout_desc = [
@@ -309,7 +305,9 @@ impl DxAtlasLayer {
                 InstanceDataStepRate: 1,
             },
         ];
-        let input_layout = device.CreateInputLayout(&layout_desc, vs_code)?;
+        let mut input_layout = None;
+        device.CreateInputLayout(&layout_desc, vs_code, Some(&mut input_layout))?;
+        let input_layout = input_layout.unwrap();
 
         // Instance buffer
         let buf_desc = D3D11_BUFFER_DESC {
@@ -319,7 +317,9 @@ impl DxAtlasLayer {
             CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
             ..Default::default()
         };
-        let instance_buffer = device.CreateBuffer(&buf_desc, None)?;
+        let mut instance_buffer = None;
+        device.CreateBuffer(&buf_desc, None, Some(&mut instance_buffer))?;
+        let instance_buffer = instance_buffer.unwrap();
 
         // Constant buffer (viewport)
         let cb_desc = D3D11_BUFFER_DESC {
@@ -329,7 +329,9 @@ impl DxAtlasLayer {
             CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
             ..Default::default()
         };
-        let cbuffer = device.CreateBuffer(&cb_desc, None)?;
+        let mut cbuffer = None;
+        device.CreateBuffer(&cb_desc, None, Some(&mut cbuffer))?;
+        let cbuffer = cbuffer.unwrap();
 
         Ok(DxAtlasLayer {
             texture,
@@ -412,7 +414,8 @@ impl DxAtlasLayer {
 
         // Update viewport cbuffer
         let viewport = [viewport_w, viewport_h, 0.0f32, 0.0f32];
-        let mapped = ctx.Map(&self.cbuffer, 0, D3D11_MAP_WRITE_DISCARD, 0).unwrap();
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        ctx.Map(&self.cbuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped)).unwrap();
         std::ptr::copy_nonoverlapping(
             viewport.as_ptr() as *const u8,
             mapped.pData as *mut u8,
@@ -422,9 +425,8 @@ impl DxAtlasLayer {
 
         // Update instance buffer
         let data = bytemuck::cast_slice(&instances[..count]);
-        let mapped = ctx
-            .Map(&self.instance_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0)
-            .unwrap();
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        ctx.Map(&self.instance_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped)).unwrap();
         std::ptr::copy_nonoverlapping(data.as_ptr(), mapped.pData as *mut u8, data.len());
         ctx.Unmap(&self.instance_buffer, 0);
 
@@ -502,12 +504,16 @@ impl DxRectPipeline {
         let vs_blob = compile_shader(RECT_HLSL, "vs_main", "vs_5_0")?;
         let vs_code =
             std::slice::from_raw_parts(vs_blob.GetBufferPointer() as *const u8, vs_blob.GetBufferSize());
-        let vs = device.CreateVertexShader(vs_code, None)?;
+        let mut vs = None;
+        device.CreateVertexShader(vs_code, None, Some(&mut vs))?;
+        let vs = vs.unwrap();
 
         let ps_blob = compile_shader(RECT_HLSL, "ps_main", "ps_5_0")?;
         let ps_code =
             std::slice::from_raw_parts(ps_blob.GetBufferPointer() as *const u8, ps_blob.GetBufferSize());
-        let ps = device.CreatePixelShader(ps_code, None)?;
+        let mut ps = None;
+        device.CreatePixelShader(ps_code, None, Some(&mut ps))?;
+        let ps = ps.unwrap();
 
         let layout_desc = [
             D3D11_INPUT_ELEMENT_DESC {
@@ -538,7 +544,9 @@ impl DxRectPipeline {
                 InstanceDataStepRate: 1,
             },
         ];
-        let input_layout = device.CreateInputLayout(&layout_desc, vs_code)?;
+        let mut input_layout = None;
+        device.CreateInputLayout(&layout_desc, vs_code, Some(&mut input_layout))?;
+        let input_layout = input_layout.unwrap();
 
         let buf_desc = D3D11_BUFFER_DESC {
             ByteWidth: (max_rects * std::mem::size_of::<Rect>()) as u32,
@@ -547,7 +555,9 @@ impl DxRectPipeline {
             CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
             ..Default::default()
         };
-        let instance_buffer = device.CreateBuffer(&buf_desc, None)?;
+        let mut instance_buffer = None;
+        device.CreateBuffer(&buf_desc, None, Some(&mut instance_buffer))?;
+        let instance_buffer = instance_buffer.unwrap();
 
         let cb_desc = D3D11_BUFFER_DESC {
             ByteWidth: 16,
@@ -556,7 +566,9 @@ impl DxRectPipeline {
             CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
             ..Default::default()
         };
-        let cbuffer = device.CreateBuffer(&cb_desc, None)?;
+        let mut cbuffer = None;
+        device.CreateBuffer(&cb_desc, None, Some(&mut cbuffer))?;
+        let cbuffer = cbuffer.unwrap();
 
         Ok(DxRectPipeline {
             vs,
@@ -582,7 +594,8 @@ impl DxRectPipeline {
 
         // Viewport cbuffer
         let viewport = [viewport_w, viewport_h, 0.0f32, 0.0f32];
-        let mapped = ctx.Map(&self.cbuffer, 0, D3D11_MAP_WRITE_DISCARD, 0).unwrap();
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        ctx.Map(&self.cbuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped)).unwrap();
         std::ptr::copy_nonoverlapping(
             viewport.as_ptr() as *const u8,
             mapped.pData as *mut u8,
@@ -592,9 +605,8 @@ impl DxRectPipeline {
 
         // Instance data
         let data = bytemuck::cast_slice(&rects[..count]);
-        let mapped = ctx
-            .Map(&self.instance_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0)
-            .unwrap();
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        ctx.Map(&self.instance_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped)).unwrap();
         std::ptr::copy_nonoverlapping(data.as_ptr(), mapped.pData as *mut u8, data.len());
         ctx.Unmap(&self.instance_buffer, 0);
 
@@ -662,7 +674,7 @@ impl Renderer {
             },
             BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
             BufferCount: 2,
-            OutputWindow: std::mem::transmute(hwnd),
+            OutputWindow: unsafe { std::mem::transmute(hwnd) },
             Windowed: true.into(),
             SwapEffect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
             Flags: 0,
@@ -701,7 +713,11 @@ impl Renderer {
             ScissorEnable: true.into(),
             ..Default::default()
         };
-        let rasterizer = unsafe { device.CreateRasterizerState(&raster_desc)? };
+        let rasterizer = unsafe {
+            let mut rasterizer = None;
+            device.CreateRasterizerState(&raster_desc, Some(&mut rasterizer))?;
+            rasterizer.unwrap()
+        };
 
         // Blend state (alpha blending)
         let mut blend_desc = D3D11_BLEND_DESC::default();
@@ -715,7 +731,11 @@ impl Renderer {
             BlendOpAlpha: D3D11_BLEND_OP_ADD,
             RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8,
         };
-        let blend = unsafe { device.CreateBlendState(&blend_desc)? };
+        let blend = unsafe {
+            let mut blend = None;
+            device.CreateBlendState(&blend_desc, Some(&mut blend))?;
+            blend.unwrap()
+        };
 
         let rects = unsafe { DxRectPipeline::new(&device, render_config.max_rectangles)? };
 
@@ -741,17 +761,19 @@ impl Renderer {
         self.width = width;
         self.height = height;
 
-        // Release old RTV before resizing
-        drop(std::mem::replace(
-            &mut self.rtv,
-            unsafe { std::mem::zeroed() },
-        ));
-
         unsafe {
+            // Drop the old RTV before resizing the swap chain.
+            std::ptr::drop_in_place(&mut self.rtv);
+
             self.swap_chain
-                .ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0)
+                .ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, DXGI_SWAP_CHAIN_FLAG(0))
                 .expect("ResizeBuffers failed");
-            self.rtv = create_rtv(&self.device, &self.swap_chain).expect("create_rtv failed");
+
+            // Write the new RTV without dropping the (now-invalid) old value.
+            std::ptr::write(
+                &mut self.rtv,
+                create_rtv(&self.device, &self.swap_chain).expect("create_rtv failed"),
+            );
         }
     }
 
@@ -857,7 +879,7 @@ impl Renderer {
 
             // Clear
             self.ctx
-                .ClearRenderTargetView(&self.rtv, &[0.0, 0.0, 0.0, 1.0]);
+                .ClearRenderTargetView(&self.rtv, &scene.clear_color);
 
             // Full-screen scissor for rects
             let full_rect = RECT {
@@ -907,7 +929,7 @@ impl Renderer {
             );
 
             // Present
-            self.swap_chain.Present(1, DXGI_PRESENT(0)).ok();
+            let _ = self.swap_chain.Present(1, DXGI_PRESENT(0)).ok();
         }
     }
 }
@@ -917,15 +939,8 @@ unsafe fn create_rtv(
     swap_chain: &IDXGISwapChain,
 ) -> Result<ID3D11RenderTargetView> {
     let back_buffer: ID3D11Texture2D = swap_chain.GetBuffer(0)?;
-    let rtv = device.CreateRenderTargetView(&back_buffer, None)?;
-    Ok(rtv)
-}
-
-// Windows RECT type for scissor
-#[repr(C)]
-struct RECT {
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
+    let resource: ID3D11Resource = back_buffer.cast()?;
+    let mut rtv = None;
+    device.CreateRenderTargetView(&resource, None, Some(&mut rtv))?;
+    Ok(rtv.unwrap())
 }

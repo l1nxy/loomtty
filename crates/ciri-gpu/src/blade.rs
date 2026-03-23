@@ -604,6 +604,10 @@ pub struct Renderer {
     rects: RectPipeline,
     surface_config: gpu::SurfaceConfig,
     surface_format: gpu::TextureFormat,
+    window: Arc<Window>,
+    /// Previous frame's sync point — waited on before writing to shared
+    /// instance buffers so the GPU is done reading them.
+    last_sync: Option<gpu::SyncPoint>,
     /// Pending resize dimensions, applied on next `apply_surface()`.
     /// `surface_size()` returns committed (current swapchain) dimensions,
     /// not these pending values, so rendering stays consistent during
@@ -612,8 +616,21 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    /// Clamp dimensions to the current monitor's physical size to avoid
+    /// exceeding Vulkan surface capabilities (which are typically capped
+    /// at the monitor's native resolution on Windows).
+    fn clamp_to_monitor(window: &Window, w: u32, h: u32) -> (u32, u32) {
+        if let Some(monitor) = window.current_monitor() {
+            let max = monitor.size();
+            (w.min(max.width), h.min(max.height))
+        } else {
+            (w, h)
+        }
+    }
+
     pub fn new(window: Arc<Window>, render_config: &RenderConfig) -> Result<Self> {
         let size = window.inner_size();
+        let (clamped_w, clamped_h) = Self::clamp_to_monitor(&window, size.width, size.height);
 
         let context = unsafe {
             gpu::Context::init(gpu::ContextDesc {
@@ -642,8 +659,8 @@ impl Renderer {
 
         let surface_config = gpu::SurfaceConfig {
             size: gpu::Extent {
-                width: size.width.max(1),
-                height: size.height.max(1),
+                width: clamped_w.max(1),
+                height: clamped_h.max(1),
                 depth: 1,
             },
             usage: gpu::TextureUsage::TARGET,
@@ -674,6 +691,8 @@ impl Renderer {
             rects,
             surface_config,
             surface_format,
+            window,
+            last_sync: None,
             pending_size: None,
         })
     }
@@ -687,11 +706,23 @@ impl Renderer {
     }
 
     pub fn apply_surface(&mut self) {
-        if let Some((w, h)) = self.pending_size.take() {
-            self.surface_config.size.width = w;
-            self.surface_config.size.height = h;
-            self.context
-                .reconfigure_surface(&mut self.surface, self.surface_config);
+        if self.pending_size.take().is_some() {
+            // Query the window's actual current size rather than using the
+            // cached resize-event value.  On Windows the Vulkan surface
+            // capabilities are derived from GetClientRect, so the swapchain
+            // extent must match the real HWND client area — which can differ
+            // from what winit reported in the Resized event (e.g. DPI
+            // virtualisation, compositor clamping, or a stale event).
+            let size = self.window.inner_size();
+            let (w, h) = Self::clamp_to_monitor(&self.window, size.width, size.height);
+            let w = w.max(1);
+            let h = h.max(1);
+            if w != self.surface_config.size.width || h != self.surface_config.size.height {
+                self.surface_config.size.width = w;
+                self.surface_config.size.height = h;
+                self.context
+                    .reconfigure_surface(&mut self.surface, self.surface_config);
+            }
         }
     }
 
@@ -761,6 +792,14 @@ impl Renderer {
         cache: &mut GlyphCache,
         scene: FrameScene,
     ) {
+        // Wait for the previous frame to finish before writing to shared
+        // instance buffers.  Without this the GPU may still be reading
+        // from the buffers we are about to overwrite, which causes
+        // ERROR_DEVICE_LOST on Windows / NVIDIA Vulkan.
+        if let Some(ref sp) = self.last_sync {
+            self.context.wait_for(sp, 5000);
+        }
+
         let (vw, vh) = self.surface_size();
         let vw_f = vw as f32;
         let vh_f = vh as f32;
@@ -824,7 +863,8 @@ impl Renderer {
         }
 
         self.encoder.present(frame);
-        self.context.submit(&mut self.encoder);
+        let sp = self.context.submit(&mut self.encoder);
+        self.last_sync = Some(sp);
     }
 }
 

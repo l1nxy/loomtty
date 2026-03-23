@@ -189,13 +189,38 @@ impl Server {
 
     /// Temporarily remove a session from the map, call `f` with it and `&mut self.clients`,
     /// then re-insert it. This works around the borrow checker while guaranteeing reinsertion.
+    /// Uses a drop guard to ensure re-insertion even if `f` panics.
     fn with_session<F, R>(&mut self, name: &str, f: F) -> Option<R>
     where
         F: FnOnce(&mut Session, &mut HashMap<u64, ClientState>) -> R,
     {
         let mut session = self.sessions.remove(name)?;
-        let result = f(&mut session, &mut self.clients);
-        self.sessions.insert(name.to_string(), session);
+
+        // Drop guard ensures the session is re-inserted even if `f` panics.
+        struct ReinsertGuard<'a> {
+            sessions: &'a mut HashMap<String, Session>,
+            name: String,
+            session: Option<Session>,
+        }
+        impl<'a> Drop for ReinsertGuard<'a> {
+            fn drop(&mut self) {
+                if let Some(session) = self.session.take() {
+                    self.sessions.insert(self.name.clone(), session);
+                }
+            }
+        }
+
+        let mut guard = ReinsertGuard {
+            sessions: &mut self.sessions,
+            name: name.to_string(),
+            session: Some(session),
+        };
+        let result = f(guard.session.as_mut().unwrap(), &mut self.clients);
+        // Normal path: take session out and reinsert, then forget the guard
+        // so its Drop doesn't run a second time.
+        let session = guard.session.take().unwrap();
+        guard.sessions.insert(guard.name.clone(), session);
+        std::mem::forget(guard);
         Some(result)
     }
 
@@ -669,6 +694,12 @@ impl Server {
             }
             // ─── IPC commands (from __control__ clients) ────────────────
             ClientMessage::SendKeys { session_name: target, pane_id, keys } => {
+                if ciri_session::names::validate_name(&target).is_err() {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("invalid session name: {target:?}"),
+                    }));
+                    return responses;
+                }
                 if let Some(session) = self.sessions.get_mut(&target) {
                     if let Some(pane) = session.panes.get_mut(&pane_id) {
                         pane.write_to_pty(&keys);
@@ -687,6 +718,12 @@ impl Server {
                 }
             }
             ClientMessage::GetSessionInfo { session_name: target } => {
+                if ciri_session::names::validate_name(&target).is_err() {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("invalid session name: {target:?}"),
+                    }));
+                    return responses;
+                }
                 if let Some(session) = self.sessions.get(&target) {
                     let client_count = self.clients.values()
                         .filter(|c| c.session_name == target)
@@ -707,6 +744,12 @@ impl Server {
                 }
             }
             ClientMessage::ListPanes { session_name: target } => {
+                if ciri_session::names::validate_name(&target).is_err() {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("invalid session name: {target:?}"),
+                    }));
+                    return responses;
+                }
                 if let Some(session) = self.sessions.get(&target) {
                     let mut panes = Vec::new();
                     let active_ws = session.workspaces.active_workspace_idx;
@@ -744,6 +787,12 @@ impl Server {
                 }
             }
             ClientMessage::FocusPaneById { session_name: target, pane_id } => {
+                if ciri_session::names::validate_name(&target).is_err() {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("invalid session name: {target:?}"),
+                    }));
+                    return responses;
+                }
                 if let Some(session) = self.sessions.get_mut(&target) {
                     if session.focus_pane(pane_id) {
                         session.mark_session_dirty();
@@ -764,6 +813,12 @@ impl Server {
                 }
             }
             ClientMessage::ClosePaneById { session_name: target, pane_id } => {
+                if ciri_session::names::validate_name(&target).is_err() {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("invalid session name: {target:?}"),
+                    }));
+                    return responses;
+                }
                 if let Some(mut session) = self.sessions.remove(&target) {
                     if session.panes.contains_key(&pane_id) {
                         session.close_pane(pane_id, &mut self.clients);
@@ -788,6 +843,12 @@ impl Server {
                 }
             }
             ClientMessage::CreatePaneIn { session_name: target } => {
+                if ciri_session::names::validate_name(&target).is_err() {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("invalid session name: {target:?}"),
+                    }));
+                    return responses;
+                }
                 if let Some(mut session) = self.sessions.remove(&target) {
                     match session.create_pane(&mut self.next_pane_id, &mut self.clients) {
                         Ok(id) => {
@@ -816,10 +877,16 @@ impl Server {
                     }));
                 }
             }
-            ClientMessage::RunCommand { session_name: target, command: _, cwd: _ } => {
-                // For now, just create a regular pane (same as CreatePaneIn).
+            ClientMessage::RunCommand { session_name: target, command, cwd } => {
+                if ciri_session::names::validate_name(&target).is_err() {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("invalid session name: {target:?}"),
+                    }));
+                    return responses;
+                }
                 if let Some(mut session) = self.sessions.remove(&target) {
-                    match session.create_pane(&mut self.next_pane_id, &mut self.clients) {
+                    let cwd_path = cwd.as_deref().map(std::path::Path::new);
+                    match session.create_pane_with_opts(&mut self.next_pane_id, &mut self.clients, Some(&command), cwd_path) {
                         Ok(id) => {
                             session.resize_all_panes(&mut self.clients);
                             session.mark_session_dirty();
@@ -847,6 +914,12 @@ impl Server {
                 }
             }
             ClientMessage::GetLayout { session_name: target } => {
+                if ciri_session::names::validate_name(&target).is_err() {
+                    responses.push(ServerResponse::SendToClient(client_id, ServerMessage::Error {
+                        message: format!("invalid session name: {target:?}"),
+                    }));
+                    return responses;
+                }
                 if let Some(session) = self.sessions.get(&target) {
                     responses.push(ServerResponse::SendToClient(client_id, ServerMessage::LayoutReply {
                         layout: session.layout_state(),

@@ -1,6 +1,9 @@
 use anyhow::Result;
 use ciri_protocol::message::*;
 
+/// Maximum frame payload size (16 MiB), matching the async codec limit.
+const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
+
 /// Send a control command to the server and print the response.
 pub fn run_control_command(msg: ClientMessage, json: bool) -> Result<()> {
     use ciri_protocol::transport;
@@ -104,6 +107,9 @@ pub fn run_control_command(msg: ClientMessage, json: bool) -> Result<()> {
         }
         let tag = header[0];
         let len = u32::from_le_bytes([header[1], header[2], header[3], header[4]]) as usize;
+        if len > MAX_FRAME_SIZE {
+            return Err(anyhow::anyhow!("frame too large ({len} bytes, max {MAX_FRAME_SIZE})"));
+        }
         let mut payload = vec![0u8; len];
         stream.read_exact(&mut payload)?;
 
@@ -325,6 +331,9 @@ pub fn session_exists_on_server(name: &str) -> bool {
         }
         let tag = header[0];
         let len = u32::from_le_bytes([header[1], header[2], header[3], header[4]]) as usize;
+        if len > MAX_FRAME_SIZE {
+            break;
+        }
         let mut payload = vec![0u8; len];
         if stream.read_exact(&mut payload).is_err() {
             break;
@@ -416,6 +425,7 @@ pub fn query_active_sessions() -> Vec<String> {
         if stream.read_exact(&mut header).is_err() { break; }
         let tag = header[0];
         let len = u32::from_le_bytes([header[1], header[2], header[3], header[4]]) as usize;
+        if len > MAX_FRAME_SIZE { break; }
         let mut payload = vec![0u8; len];
         if stream.read_exact(&mut payload).is_err() { break; }
         if tag == 0x10 {

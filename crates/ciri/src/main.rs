@@ -130,19 +130,13 @@ fn main() -> Result<()> {
     // Resolve session name
     let session_name = match cli {
         CliCommand::New => {
-            // If there are active sessions on the server, attach to the most recent one.
-            let active = control::query_active_sessions();
-            if let Some(name) = active.first() {
-                log::info!("attaching to most recent session: {name}");
-                name.clone()
-            } else {
-                let existing =
-                    ciri_session::restore::list_sessions(&ciri_protocol::transport::state_dir())
-                        .unwrap_or_default();
-                let name = ciri_session::names::unique_name(&existing);
-                log::info!("creating new session: {name}");
-                name
-            }
+            // Always create a new session (never auto-attach to existing ones).
+            let existing =
+                ciri_session::restore::list_sessions(&ciri_protocol::transport::state_dir())
+                    .unwrap_or_default();
+            let name = ciri_session::names::unique_name(&existing);
+            log::info!("creating new session: {name}");
+            name
         }
         CliCommand::Run { session_name } => {
             if let Err(e) = ciri_session::names::validate_name(&session_name) {

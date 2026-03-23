@@ -76,6 +76,17 @@ impl Session {
         next_pane_id: &mut u64,
         clients: &mut HashMap<u64, ClientState>,
     ) -> Result<u64> {
+        self.create_pane_with_opts(next_pane_id, clients, None, None)
+    }
+
+    /// Create a new pane with an optional command and/or working directory.
+    pub(crate) fn create_pane_with_opts(
+        &mut self,
+        next_pane_id: &mut u64,
+        clients: &mut HashMap<u64, ClientState>,
+        command: Option<&str>,
+        cwd: Option<&std::path::Path>,
+    ) -> Result<u64> {
         let id = *next_pane_id;
         *next_pane_id += 1;
         // Compute initial size from the column's actual width (not full viewport)
@@ -98,9 +109,10 @@ impl Session {
             "create_pane {id}: viewport={vw}x{vh} col_px={pane_w:.1} cell={cw}x{ch} inset={} → {cols}x{rows}",
             self.pane_inset
         );
-        // Inherit CWD from the active pane (if available via OSC 7)
-        let cwd = self.active_pane_cwd();
-        let pane = Pane::new_with_cwd(id, cols, rows, &self.default_shell, cwd.as_deref().map(std::path::Path::new))?;
+        // Use provided CWD, or fall back to inheriting from the active pane (OSC 7)
+        let inherited_cwd = if cwd.is_none() { self.active_pane_cwd() } else { None };
+        let effective_cwd = cwd.or_else(|| inherited_cwd.as_deref().map(std::path::Path::new));
+        let pane = Pane::new_with_opts(id, cols, rows, &self.default_shell, command, effective_cwd)?;
         self.panes.insert(id, pane);
         self.generation.insert(id, 0);
         self.workspaces

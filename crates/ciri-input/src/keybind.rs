@@ -124,7 +124,11 @@ fn parse_modifier_prefix(input: &str) -> Option<(Modifier, &str)> {
         ("ctrl+", Modifier::Ctrl),
         ("super+", Modifier::Super),
     ] {
-        if let Some(rest) = input.strip_prefix(prefix) {
+        if input
+            .get(..prefix.len())
+            .is_some_and(|candidate| candidate.eq_ignore_ascii_case(prefix))
+        {
+            let rest = &input[prefix.len()..];
             return Some((modifier, rest));
         }
     }
@@ -275,7 +279,10 @@ mod tests {
     fn default_bindings_cover_modes_navigation_and_workspace_switching() {
         let map = KeybindMap::default();
 
-        assert_eq!(map.lookup(&KeyCombo::new("n")), Some(Action::NewColumnRight));
+        assert_eq!(
+            map.lookup(&KeyCombo::new("n")),
+            Some(Action::NewColumnRight)
+        );
         assert_eq!(
             map.lookup(&KeyCombo::new("r")),
             Some(Action::EnterMode("resize".into()))
@@ -298,7 +305,10 @@ mod tests {
         let map = KeybindMap::from_overview_config(&bindings);
 
         assert_eq!(map.lookup(&KeyCombo::new("tab")), Some(Action::ClosePane));
-        assert_eq!(map.lookup(&KeyCombo::new("escape")), Some(Action::ExitOverview));
+        assert_eq!(
+            map.lookup(&KeyCombo::new("escape")),
+            Some(Action::ExitOverview)
+        );
     }
 
     #[test]
@@ -314,5 +324,25 @@ mod tests {
             Some(Action::EnterMode("resize".into()))
         );
         assert_eq!(map.lookup(&KeyCombo::parse("ctrl+x")), None);
+    }
+
+    #[test]
+    fn mixed_case_config_bindings_match_lowercase_modifier_prefixes() {
+        let mut bindings = HashMap::new();
+        bindings.insert("Ctrl+r".to_string(), "enter_mode:resize".to_string());
+        bindings.insert("Alt+h".to_string(), "focus_left".to_string());
+        bindings.insert("Super+1".to_string(), "switch_workspace_1".to_string());
+
+        let map = KeybindMap::from_config_only(&bindings);
+
+        assert_eq!(
+            map.lookup(&KeyCombo::parse("ctrl+r")),
+            Some(Action::EnterMode("resize".into()))
+        );
+        assert_eq!(map.lookup(&KeyCombo::parse("alt+h")), Some(Action::FocusLeft));
+        assert_eq!(
+            map.lookup(&KeyCombo::parse("super+1")),
+            Some(Action::SwitchWorkspace(1))
+        );
     }
 }

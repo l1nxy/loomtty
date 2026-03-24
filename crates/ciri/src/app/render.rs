@@ -310,6 +310,37 @@ impl App {
                     h: tr.h,
                     color: [accent[0], accent[1], accent[2], 0.65],
                 });
+
+                // Close button (X) at top-right corner
+                let btn_size = (20.0 * zoom).max(14.0);
+                let margin = (4.0 * zoom).max(2.0);
+                let bx = tr.x + tr.w - btn_size - margin;
+                let by = tr.y + margin;
+                // Button background
+                bg_rects.push(Rect {
+                    x: bx,
+                    y: by,
+                    w: btn_size,
+                    h: btn_size,
+                    color: [0.8, 0.2, 0.2, 0.85],
+                });
+                // X glyph
+                if let Some(atlas) = self.glyph_cache.as_mut() {
+                    let x_char = 'x';
+                    if let Some(entry) = atlas.ensure_char(x_char) {
+                        if entry.width > 0 && entry.height > 0 {
+                            let gx = bx + (btn_size - entry.width as f32) * 0.5 + entry.bearing_x as f32;
+                            let gy = by + (btn_size + entry.height as f32) * 0.5 - entry.bearing_y as f32;
+                            glyphs.push(ciri_render::glyph_cache::GlyphInstance {
+                                pos: [gx, gy],
+                                size: [entry.width as f32, entry.height as f32],
+                                uv_pos: [entry.u0, entry.v0],
+                                uv_size: [entry.u1 - entry.u0, entry.v1 - entry.v0],
+                                color: [1.0, 1.0, 1.0, 1.0],
+                            });
+                        }
+                    }
+                }
             }
 
             let Some(view) = self.cached_views.get(pane_id) else {

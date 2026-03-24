@@ -169,8 +169,8 @@ pub(crate) enum PaletteEntryKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TopBarHoverRegion {
     Session,
+    Workspace,
     Mode,
-    LeaderHint,
 }
 
 /// Reusable render buffers (cleared each frame).
@@ -202,6 +202,7 @@ pub(crate) struct ScrollbarDragInfo {
 /// Column/tile border drag resize state.
 pub(crate) struct ResizeDragState {
     pub col_dragging: Option<usize>,
+    pub col_right_idx: Option<usize>,
     pub col_start_x: f32,
     pub col_start_width: f32,
     pub col_delta: f64,
@@ -211,6 +212,12 @@ pub(crate) struct ResizeDragState {
 }
 
 /// Overview zoom mode state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OverviewActionHover {
+    Close,
+    Focus,
+}
+
 pub(crate) struct OverviewState {
     pub active: bool,
     pub zoom: ViewOffset,
@@ -218,6 +225,7 @@ pub(crate) struct OverviewState {
     pub drag_last_pos: Option<(f32, f32)>,
     pub hovered_pane: Option<(usize, u64)>,
 }
+
 
 /// Per-pane animation state (open/close/focus/bell).
 pub(crate) struct PaneAnimations {
@@ -303,6 +311,7 @@ pub(crate) struct App {
     pub cached_views: HashMap<u64, TerminalView>,
     pub last_mouse_pos: Option<(f32, f32)>,
     pub overview: OverviewState,
+    pub overview_action_hover: Option<OverviewActionHover>,
     pub render_bufs: RenderBuffers,
     pub ime: ImeState,
     pub overview_keybinds: KeybindMap,
@@ -341,6 +350,8 @@ pub(crate) struct App {
     /// Local layout preview is immediate; PTY/server resize is committed once
     /// after the window size settles.
     pub pending_resize: Option<(winit::dpi::PhysicalSize<u32>, Instant)>,
+    /// Deferred DPI change — applied when resize settles to avoid atlas churn.
+    pub pending_dpi: Option<f64>,
     /// Remote connection parameters, if connecting via SSH tunnel.
     pub remote_config: Option<RemoteConnectionConfig>,
     /// Last pane focused by focus-follows-mouse and the time it was set (for debouncing).
@@ -385,6 +396,45 @@ impl App {
             "sticky" => ciri_input::leader::InputMode::Sticky,
             _ => ciri_input::leader::InputMode::Prefix,
         };
+        for (name, bindings) in &config.keys.modes {
+            input
+                .mode_keybinds
+                .insert(name.clone(), KeybindMap::from_config_only(bindings));
+        }
+        input.direct_keybinds = KeybindMap::from_config_only(&config.keys.direct_bindings);
+
+        // Zellij-style: when leader is a bare modifier (e.g. "alt") in sticky mode,
+        // promote all leader bindings to direct bindings with the modifier prefix.
+        // This way Alt+h fires FocusLeft directly from Idle — no LEADER state needed.
+        if input.input_mode == ciri_input::leader::InputMode::Sticky
+            && input.leader_key.key.is_empty()
+        {
+            for (combo, action) in &input.keybinds.bindings {
+                let mut direct_combo = combo.clone();
+                if input.leader_key.alt {
+                    direct_combo.alt = true;
+                }
+                if input.leader_key.ctrl {
+                    direct_combo.ctrl = true;
+                }
+                if input.leader_key.super_key {
+                    direct_combo.super_key = true;
+                }
+                // Don't overwrite explicit direct_bindings from config
+                input
+                    .direct_keybinds
+                    .bindings
+                    .entry(direct_combo)
+                    .or_insert_with(|| action.clone());
+            }
+            // Disable the leader key so bare Alt press is ignored
+            input.leader_key = ciri_input::leader::LeaderKey {
+                key: "__disabled__".to_string(),
+                ctrl: false,
+                alt: false,
+                super_key: false,
+            };
+        }
         let overview_keybinds = KeybindMap::from_overview_config(&config.keys.overview_bindings);
         let column_gap = config.appearance.column_gap;
 
@@ -422,6 +472,7 @@ impl App {
                     v
                 },
             },
+            overview_action_hover: None,
             render_bufs: RenderBuffers {
                 bg_rects: Vec::new(),
                 glyphs: Vec::new(),
@@ -438,6 +489,7 @@ impl App {
             overview_keybinds,
             drag: ResizeDragState {
                 col_dragging: None,
+                col_right_idx: None,
                 col_start_x: 0.0,
                 col_start_width: 0.0,
                 col_delta: 0.0,
@@ -484,6 +536,7 @@ impl App {
                 row_start: 0,
             },
             pending_resize: None,
+            pending_dpi: None,
             remote_config: None,
             last_focus_follows_mouse: None,
             context_menu: ContextMenu::default(),
@@ -662,10 +715,28 @@ impl App {
         cell_h + padding
     }
 
+    /// Height of the bottom hints bar (same size as the status bar).
+    pub fn hints_bar_height(&self) -> f32 {
+        self.status_bar_height()
+    }
+
+    /// Total vertical space occupied by chrome (status bar + hints bar).
+    pub fn total_chrome_height(&self) -> f32 {
+        self.status_bar_height() + self.hints_bar_height()
+    }
+
     pub fn status_bar_y(&self, window_height: f32) -> f32 {
         match self.config.statusbar.position {
             StatusBarPosition::Top => 0.0,
             StatusBarPosition::Bottom => window_height - self.status_bar_height(),
+        }
+    }
+
+    /// Y position of the bottom hints bar.
+    pub fn hints_bar_y(&self, window_height: f32) -> f32 {
+        match self.config.statusbar.position {
+            StatusBarPosition::Top => window_height - self.hints_bar_height(),
+            StatusBarPosition::Bottom => window_height - self.status_bar_height() - self.hints_bar_height(),
         }
     }
 
@@ -735,10 +806,10 @@ impl App {
     /// This keeps the UI visually in sync while deferring the expensive PTY resize.
     pub fn preview_resize(&mut self, size: winit::dpi::PhysicalSize<u32>) {
         log::debug!("preview_resize: {}x{}", size.width, size.height);
-        let bar_h = self.status_bar_height();
+        let chrome_h = self.total_chrome_height();
         self.workspaces.resize_view(ViewSize {
             width: size.width as f32,
-            height: size.height as f32 - bar_h,
+            height: size.height as f32 - chrome_h,
         });
         self.snap_all_col_widths();
         let center_strategy = match self.config.layout.center_focused_column {

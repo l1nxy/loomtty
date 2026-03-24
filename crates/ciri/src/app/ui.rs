@@ -157,7 +157,6 @@ struct OverviewActionBarData {
     pane_w: f32,
     bar_y: f32,
     bar_h: f32,
-    pad: f32,
     close_x: f32,
     close_w: f32,
     focus_x: f32,
@@ -338,18 +337,20 @@ impl App {
             } else {
                 *tile_rect
             };
+            // Need at least enough width for both labels
+            let min_w = cx.cell_w * 14.0; // ~7 chars per button minimum
+            if tr.w < min_w {
+                return None;
+            }
             let bar_h = (cx.cell_h * 2.0).max(28.0);
             let bar_y = tr.y + tr.h - bar_h;
-            let pad = cx.cell_w * 2.0;
-            let close_label = "\u{2715} Close";
-            let close_w = close_label.chars().count() as f32 * cx.cell_w + pad * 2.0;
-            let focus_label = "Focus";
-            let focus_w = focus_label.chars().count() as f32 * cx.cell_w + pad * 2.0;
+            // 50/50 split
+            let half_w = tr.w / 2.0;
             return Some(OverviewActionBarData {
                 pane_x: tr.x, pane_w: tr.w,
-                bar_y, bar_h, pad,
-                close_x: tr.x, close_w,
-                focus_x: tr.x + close_w, focus_w,
+                bar_y, bar_h,
+                close_x: tr.x, close_w: half_w,
+                focus_x: tr.x + half_w, focus_w: half_w,
             });
         }
         None
@@ -369,28 +370,40 @@ impl App {
             x: d.pane_x, y: d.bar_y, w: d.pane_w, h: d.bar_h,
             color: [0.0, 0.0, 0.0, 0.8],
         });
+        // Divider
+        scene.bg_rects.push(Rect {
+            x: d.focus_x, y: d.bar_y + 2.0, w: 1.0, h: d.bar_h - 4.0,
+            color: [1.0, 1.0, 1.0, 0.15],
+        });
 
-        // Close button
+        let close_label = "\u{2715} Close";
+        let focus_label = "Focus";
+        let close_text_w = close_label.chars().count() as f32 * cx.cell_w;
+        let focus_text_w = focus_label.chars().count() as f32 * cx.cell_w;
+
+        // Close button — center text in left half
         if hover == Some(super::OverviewActionHover::Close) {
             scene.bg_rects.push(Rect {
                 x: d.close_x, y: d.bar_y, w: d.close_w, h: d.bar_h,
                 color: [0.9, 0.2, 0.2, 0.5],
             });
         }
+        let close_text_x = d.close_x + (d.close_w - close_text_w) * 0.5;
         emit_status_text(
-            scene.atlas, "\u{2715} Close", d.close_x + d.pad, text_y,
+            scene.atlas, close_label, close_text_x, text_y,
             cx.cell_w, cx.baseline, [1.0, 0.6, 0.6, 1.0], scene.glyphs,
         );
 
-        // Focus button
+        // Focus button — center text in right half
         if hover == Some(super::OverviewActionHover::Focus) {
             scene.bg_rects.push(Rect {
                 x: d.focus_x, y: d.bar_y, w: d.focus_w, h: d.bar_h,
                 color: [accent[0], accent[1], accent[2], 0.35],
             });
         }
+        let focus_text_x = d.focus_x + (d.focus_w - focus_text_w) * 0.5;
         emit_status_text(
-            scene.atlas, "Focus", d.focus_x + d.pad, text_y,
+            scene.atlas, focus_label, focus_text_x, text_y,
             cx.cell_w, cx.baseline, [1.0, 1.0, 1.0, 0.9], scene.glyphs,
         );
     }
@@ -1658,22 +1671,17 @@ impl OverviewComponent {
             } else {
                 *tile_rect
             };
-            let cw = cell_w;
+            let min_w = cell_w * 14.0;
+            if tr.w < min_w {
+                return None;
+            }
             let bar_h = (cell_h * 2.0).max(28.0);
             let bar_y = tr.y + tr.h - bar_h;
-            let pad = cw * 2.0;
-
-            let close_chars = "\u{2715} Close".chars().count();
-            let close_w = close_chars as f32 * cw + pad * 2.0;
-            let close_x = tr.x;
-
-            let focus_chars = "Focus".chars().count();
-            let focus_w = focus_chars as f32 * cw + pad * 2.0;
-            let focus_x = close_x + close_w;
+            let half_w = tr.w / 2.0;
 
             return Some(OverviewActionBar {
-                close_x, close_w,
-                focus_x, focus_w,
+                close_x: tr.x, close_w: half_w,
+                focus_x: tr.x + half_w, focus_w: half_w,
                 bar_y, bar_h,
                 pane_x: tr.x, pane_w: tr.w,
             });

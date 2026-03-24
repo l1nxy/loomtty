@@ -28,14 +28,12 @@ pub(crate) struct TopBarLayout {
 
 impl App {
     pub(crate) fn hit_test_top_bar(&self, mx: f32, my: f32) -> bool {
-        let Some(atlas) = self.glyph_cache.as_ref() else {
-            return false;
-        };
+        let (cell_w, cell_h) = self.cell_dimensions();
         let layout = self.top_bar_layout(
             self.workspaces.view_size.width,
             self.workspaces.view_size.height + self.total_chrome_height(),
-            atlas.cell_width,
-            atlas.cell_height,
+            cell_w,
+            cell_h,
         );
         mx >= 0.0 && my >= layout.bar_y && my <= layout.bar_y + layout.bar_height
     }

@@ -202,6 +202,7 @@ pub(crate) struct ScrollbarDragInfo {
 /// Column/tile border drag resize state.
 pub(crate) struct ResizeDragState {
     pub col_dragging: Option<usize>,
+    pub col_right_idx: Option<usize>,
     pub col_start_x: f32,
     pub col_start_width: f32,
     pub col_delta: f64,
@@ -488,6 +489,7 @@ impl App {
             overview_keybinds,
             drag: ResizeDragState {
                 col_dragging: None,
+                col_right_idx: None,
                 col_start_x: 0.0,
                 col_start_width: 0.0,
                 col_delta: 0.0,

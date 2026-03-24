@@ -395,6 +395,24 @@ impl Workspace {
         self.columns[neighbor_idx].preset_width_idx = None;
     }
 
+    /// Resize a specific pair of adjacent columns by index.
+    pub fn resize_column_pair(&mut self, left_idx: usize, right_idx: usize, delta: f64) {
+        if left_idx >= self.columns.len() || right_idx >= self.columns.len() {
+            return;
+        }
+        let vw = self.view_size.width;
+        let left_w = self.columns[left_idx].proportion(vw);
+        let right_w = self.columns[right_idx].proportion(vw);
+        let total = left_w + right_w;
+        let min_w = MIN_COLUMN_PROPORTION.min(total / 2.0);
+        let new_left = (left_w + delta).clamp(min_w, total - min_w);
+        let new_right = total - new_left;
+        self.columns[left_idx].width = ColumnWidth::Proportion(new_left);
+        self.columns[left_idx].preset_width_idx = None;
+        self.columns[right_idx].width = ColumnWidth::Proportion(new_right);
+        self.columns[right_idx].preset_width_idx = None;
+    }
+
     /// Set a specific column's width by index (not just the active one).
     pub fn set_column_width_by_index(&mut self, idx: usize, width: ColumnWidth) {
         if let Some(col) = self.columns.get_mut(idx) {

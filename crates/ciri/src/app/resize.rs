@@ -57,7 +57,10 @@ impl App {
     }
 
     pub(crate) fn apply_column_resize_drag(&mut self, mx: f32) -> bool {
-        let Some(drag_col) = self.drag.col_dragging else {
+        let Some(left_idx) = self.drag.col_dragging else {
+            return false;
+        };
+        let Some(right_idx) = self.drag.col_right_idx else {
             return false;
         };
         let delta_px = mx - self.drag.col_start_x;
@@ -65,12 +68,9 @@ impl App {
         if vw > 0.0 {
             let delta_proportion = delta_px as f64 / vw as f64;
             let ws = self.workspaces.active_mut();
-            let saved_idx = ws.active_column_idx;
-            ws.active_column_idx = drag_col;
-            let before = ws.columns[drag_col].proportion(vw);
-            ws.resize_active_with_neighbor(delta_proportion);
-            let after = ws.columns[drag_col].proportion(vw);
-            ws.active_column_idx = saved_idx;
+            let before = ws.columns[left_idx].proportion(vw);
+            ws.resize_column_pair(left_idx, right_idx, delta_proportion);
+            let after = ws.columns[left_idx].proportion(vw);
             self.drag.col_delta += after - before;
             self.drag.col_start_x = mx;
         }
@@ -108,11 +108,13 @@ impl App {
             let col_x = ws.column_x(i) - vox;
             if (mx - col_x).abs() < 4.0 {
                 let left_col_idx = i - 1;
+                let right_col_idx = i;
                 let left_col_width = ws.columns[left_col_idx].effective_width(vw);
                 let pane_id = ws.columns[left_col_idx].active_pane_id();
                 self.remember_workspace_pane(self.workspaces.active_workspace_idx, pane_id);
                 self.send(ciri_protocol::message::ClientMessage::FocusPane { pane_id });
                 self.drag.col_dragging = Some(left_col_idx);
+                self.drag.col_right_idx = Some(right_col_idx);
                 self.drag.col_start_x = mx;
                 self.drag.col_start_width = left_col_width;
                 self.drag.col_delta = 0.0;

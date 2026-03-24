@@ -53,14 +53,7 @@ fn default_weight() -> f64 {
 
 /// Get the templates directory path.
 pub fn templates_dir() -> PathBuf {
-    // Follow XDG convention
-    let config_dir = std::env::var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-            PathBuf::from(home).join(".config")
-        });
-    config_dir.join("ciri").join("templates")
+    config_dir().join("ciri").join("templates")
 }
 
 /// List all available templates (name without .toml extension).
@@ -69,59 +62,98 @@ pub fn list_templates() -> Result<Vec<String>> {
     if !dir.exists() {
         return Ok(Vec::new());
     }
-    let mut names = Vec::new();
-    for entry in std::fs::read_dir(&dir).context("failed to read templates directory")? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("toml") {
-            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                names.push(stem.to_string());
-            }
-        }
-    }
+
+    let mut names = std::fs::read_dir(&dir)
+        .context("failed to read templates directory")?
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| template_name_from_path(entry.path()))
+        .collect::<Vec<_>>();
     names.sort();
     Ok(names)
 }
 
 /// Load a template by name.
 pub fn load_template(name: &str) -> Result<LayoutTemplate> {
-    // Validate name (prevent path traversal)
-    if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
-        anyhow::bail!("invalid template name: {name:?}");
-    }
-    let path = templates_dir().join(format!("{name}.toml"));
+    validate_template_name(name)?;
+    let path = template_path(name);
     let content = std::fs::read_to_string(&path)
         .with_context(|| format!("failed to read template '{name}' at {}", path.display()))?;
-    let template: LayoutTemplate = toml::from_str(&content)
-        .with_context(|| format!("failed to parse template '{name}'"))?;
-    // Validate: at least one workspace with at least one column with at least one tile
-    if template.workspaces.is_empty() {
-        anyhow::bail!("template '{name}' has no workspaces");
-    }
-    for (i, ws) in template.workspaces.iter().enumerate() {
-        if ws.columns.is_empty() {
-            anyhow::bail!("template '{name}' workspace {i} has no columns");
-        }
-        for (j, col) in ws.columns.iter().enumerate() {
-            if col.tiles.is_empty() {
-                anyhow::bail!("template '{name}' workspace {i} column {j} has no tiles");
-            }
-        }
-    }
+    let template: LayoutTemplate =
+        toml::from_str(&content).with_context(|| format!("failed to parse template '{name}'"))?;
+    validate_template_shape(name, &template)?;
     Ok(template)
 }
 
 /// Save a template to disk.
 pub fn save_template(name: &str, template: &LayoutTemplate) -> Result<()> {
-    if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
-        anyhow::bail!("invalid template name: {name:?}");
-    }
-    let dir = templates_dir();
-    std::fs::create_dir_all(&dir).context("failed to create templates directory")?;
-    let path = dir.join(format!("{name}.toml"));
+    validate_template_name(name)?;
+    validate_template_shape(name, template)?;
+    let path = template_path(name);
+    let parent = path.parent().context("template path missing parent")?;
+    std::fs::create_dir_all(parent).context("failed to create templates directory")?;
     let content = toml::to_string_pretty(template).context("failed to serialize template")?;
     std::fs::write(&path, content)
         .with_context(|| format!("failed to write template to {}", path.display()))?;
+    Ok(())
+}
+
+fn config_dir() -> PathBuf {
+    std::env::var("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| fallback_config_dir())
+}
+
+fn fallback_config_dir() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    PathBuf::from(home).join(".config")
+}
+
+fn template_path(name: &str) -> PathBuf {
+    templates_dir().join(format!("{name}.toml"))
+}
+
+fn template_name_from_path(path: PathBuf) -> Option<String> {
+    (path.extension().and_then(|e| e.to_str()) == Some("toml"))
+        .then(|| path.file_stem().and_then(|s| s.to_str()))
+        .flatten()
+        .map(str::to_string)
+}
+
+fn validate_template_name(name: &str) -> Result<()> {
+    crate::is_plain_name(name)
+        .then_some(())
+        .ok_or_else(|| anyhow::anyhow!("invalid template name: {name:?}"))
+}
+
+fn validate_template_shape(name: &str, template: &LayoutTemplate) -> Result<()> {
+    if template.workspaces.is_empty() {
+        anyhow::bail!("template '{name}' has no workspaces");
+    }
+
+    for (workspace_idx, workspace) in template.workspaces.iter().enumerate() {
+        validate_workspace(name, workspace_idx, workspace)?;
+    }
+
+    Ok(())
+}
+
+fn validate_workspace(
+    name: &str,
+    workspace_idx: usize,
+    workspace: &TemplateWorkspace,
+) -> Result<()> {
+    if workspace.columns.is_empty() {
+        anyhow::bail!("template '{name}' workspace {workspace_idx} has no columns");
+    }
+
+    for (column_idx, column) in workspace.columns.iter().enumerate() {
+        if column.tiles.is_empty() {
+            anyhow::bail!(
+                "template '{name}' workspace {workspace_idx} column {column_idx} has no tiles"
+            );
+        }
+    }
+
     Ok(())
 }
 
@@ -175,5 +207,47 @@ mod tests {
         assert!(load_template("").is_err());
         assert!(load_template("../etc/passwd").is_err());
         assert!(load_template("foo/bar").is_err());
+    }
+
+    #[test]
+    fn rejects_templates_without_workspaces() {
+        let template = LayoutTemplate {
+            description: None,
+            workspaces: Vec::new(),
+        };
+
+        let err = save_template("empty", &template).unwrap_err();
+        assert!(err.to_string().contains("has no workspaces"));
+    }
+
+    #[test]
+    fn rejects_templates_without_columns() {
+        let template = LayoutTemplate {
+            description: None,
+            workspaces: vec![TemplateWorkspace {
+                columns: Vec::new(),
+                active_column: 0,
+            }],
+        };
+
+        let err = save_template("empty-columns", &template).unwrap_err();
+        assert!(err.to_string().contains("workspace 0 has no columns"));
+    }
+
+    #[test]
+    fn rejects_templates_without_tiles() {
+        let template = LayoutTemplate {
+            description: None,
+            workspaces: vec![TemplateWorkspace {
+                columns: vec![TemplateColumn {
+                    tiles: Vec::new(),
+                    width: None,
+                }],
+                active_column: 0,
+            }],
+        };
+
+        let err = save_template("empty-tiles", &template).unwrap_err();
+        assert!(err.to_string().contains("column 0 has no tiles"));
     }
 }

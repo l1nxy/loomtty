@@ -466,6 +466,13 @@ impl StateEncoder {
         if let Some(run_ch) = self.run_ch {
             if run_ch == ch {
                 self.run_count += 1;
+                // Flush before u16 overflow (max repeat count is 65535)
+                if self.run_count == u16::MAX {
+                    self.flush_char_buf();
+                    self.emit_repeat(self.run_count, &run_ch);
+                    self.run_ch = Some(ch);
+                    self.run_count = 0;
+                }
                 return;
             }
             // Different char — flush current run
@@ -1583,5 +1590,18 @@ mod tests {
             }
             _ => panic!("wrong frame type"),
         }
+    }
+
+    #[test]
+    fn sm_repeat_exceeding_u16_max() {
+        // 70000 identical cells — exceeds u16::MAX (65535), must not overflow
+        let count = 70_000usize;
+        let cell = PackedCell::with_ch(' ');
+        let cells: Vec<PackedCell> = vec![cell; count];
+        let encoded = sm_encode_cells(&cells);
+        let mut decoded = vec![PackedCell::default(); count];
+        let n = decode_sm_cells(&encoded, &mut decoded).unwrap();
+        assert_eq!(n, count);
+        assert_eq!(decoded, cells);
     }
 }

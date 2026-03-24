@@ -81,7 +81,12 @@ impl ThemeConfig {
     /// Resolve preset: fills empty fields from the preset, preserving user overrides.
     /// Fields default to "" (empty), so any non-empty value was explicitly set by the user.
     pub fn resolve_preset(&mut self) {
-        let base = match self.preset.as_str() {
+        let base = self.preset_theme();
+        self.apply_missing_fields(base);
+    }
+
+    fn preset_theme(&self) -> ThemeConfig {
+        match self.preset.as_str() {
             "catppuccin_mocha" => catppuccin_mocha(),
             "tokyo_night" => tokyo_night(),
             "dracula" => dracula(),
@@ -92,41 +97,42 @@ impl ThemeConfig {
                 log::warn!("unknown theme preset '{}', using one_dark", self.preset);
                 one_dark()
             }
-        };
-        // Fill empty fields from preset; user-set fields are preserved.
-        macro_rules! fill {
-            ($($field:ident),*) => {
-                $(if self.$field.is_empty() { self.$field = base.$field; })*
-            };
         }
-        fill!(
-            foreground,
-            background,
-            black,
-            red,
-            green,
-            yellow,
-            blue,
-            magenta,
-            cyan,
-            white,
-            bright_black,
-            bright_red,
-            bright_green,
-            bright_yellow,
-            bright_blue,
-            bright_magenta,
-            bright_cyan,
-            bright_white,
-            ui_background,
-            overview_background,
-            statusbar_background,
-            border_active,
-            border_inactive,
-            accent,
-            statusbar_dim,
-            mode_broadcast
-        );
+    }
+
+    fn apply_missing_fields(&mut self, base: ThemeConfig) {
+        apply_if_empty(&mut self.foreground, base.foreground);
+        apply_if_empty(&mut self.background, base.background);
+        apply_if_empty(&mut self.black, base.black);
+        apply_if_empty(&mut self.red, base.red);
+        apply_if_empty(&mut self.green, base.green);
+        apply_if_empty(&mut self.yellow, base.yellow);
+        apply_if_empty(&mut self.blue, base.blue);
+        apply_if_empty(&mut self.magenta, base.magenta);
+        apply_if_empty(&mut self.cyan, base.cyan);
+        apply_if_empty(&mut self.white, base.white);
+        apply_if_empty(&mut self.bright_black, base.bright_black);
+        apply_if_empty(&mut self.bright_red, base.bright_red);
+        apply_if_empty(&mut self.bright_green, base.bright_green);
+        apply_if_empty(&mut self.bright_yellow, base.bright_yellow);
+        apply_if_empty(&mut self.bright_blue, base.bright_blue);
+        apply_if_empty(&mut self.bright_magenta, base.bright_magenta);
+        apply_if_empty(&mut self.bright_cyan, base.bright_cyan);
+        apply_if_empty(&mut self.bright_white, base.bright_white);
+        apply_if_empty(&mut self.ui_background, base.ui_background);
+        apply_if_empty(&mut self.overview_background, base.overview_background);
+        apply_if_empty(&mut self.statusbar_background, base.statusbar_background);
+        apply_if_empty(&mut self.border_active, base.border_active);
+        apply_if_empty(&mut self.border_inactive, base.border_inactive);
+        apply_if_empty(&mut self.accent, base.accent);
+        apply_if_empty(&mut self.statusbar_dim, base.statusbar_dim);
+        apply_if_empty(&mut self.mode_broadcast, base.mode_broadcast);
+    }
+}
+
+fn apply_if_empty(slot: &mut String, fallback: String) {
+    if slot.is_empty() {
+        *slot = fallback;
     }
 }
 
@@ -319,5 +325,52 @@ fn gruvbox_dark() -> ThemeConfig {
         accent: "#B8BB26".to_string(),
         statusbar_dim: "#928374".to_string(),
         mode_broadcast: "#FABD2F".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_preset_keeps_overrides_and_fills_missing_values() {
+        let mut theme = ThemeConfig {
+            preset: "dracula".to_string(),
+            accent: "#123456".to_string(),
+            ..ThemeConfig::default()
+        };
+
+        theme.resolve_preset();
+
+        assert_eq!(theme.accent, "#123456");
+        assert_eq!(theme.background, "#282A36");
+        assert_eq!(theme.border_active, "#BD93F9");
+    }
+
+    #[test]
+    fn resolve_preset_unknown_name_falls_back_to_one_dark() {
+        let mut theme = ThemeConfig {
+            preset: "unknown".to_string(),
+            ..ThemeConfig::default()
+        };
+
+        theme.resolve_preset();
+
+        assert_eq!(theme.background, "#282C34");
+        assert_eq!(theme.accent, "#98C379");
+    }
+
+    #[test]
+    fn parse_color_returns_light_gray_for_invalid_input() {
+        assert_eq!(ThemeConfig::parse_color("oops"), [0.9, 0.9, 0.9, 1.0]);
+        assert_eq!(ThemeConfig::parse_color("#GG0000"), [0.9, 0.9, 0.9, 1.0]);
+    }
+
+    #[test]
+    fn parse_color_accepts_hashless_hex() {
+        assert_eq!(
+            ThemeConfig::parse_color("112233"),
+            [17.0 / 255.0, 34.0 / 255.0, 51.0 / 255.0, 1.0]
+        );
     }
 }

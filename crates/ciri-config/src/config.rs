@@ -41,18 +41,13 @@ impl Default for FontConfig {
 }
 
 /// Focus ring style for the active pane border.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum FocusRingStyle {
+    #[default]
     Solid,
     Glow,
     Dashed,
-}
-
-impl Default for FocusRingStyle {
-    fn default() -> Self {
-        Self::Solid
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,20 +73,15 @@ impl Default for FocusRingConfig {
 }
 
 /// Pane open/close animation style.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum PaneOpenStyle {
+    #[default]
     Fade,
     SlideUp,
     SlideDown,
     SlideLeft,
     FadeSlideUp,
-}
-
-impl Default for PaneOpenStyle {
-    fn default() -> Self {
-        Self::Fade
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -423,62 +413,97 @@ impl Default for RemoteConfig {
 impl CiriConfig {
     pub fn load() -> Result<Self> {
         let path = config_path();
-        let mut config = if path.exists() {
-            let content = std::fs::read_to_string(&path)?;
-            toml::from_str(&content)?
-        } else {
-            CiriConfig::default()
-        };
-        config.theme.resolve_preset();
-        config.validate();
+        let mut config = load_from_path(&path)?;
+        config.apply_runtime_adjustments();
         Ok(config)
     }
 
     pub fn validate(&mut self) {
-        if self.animation.speed <= 0.0 {
-            log::warn!("animation.speed <= 0.0, resetting to 12.0");
-            self.animation.speed = 12.0;
-        }
-        if self.animation.epsilon <= 0.0 {
-            log::warn!("animation.epsilon <= 0.0, resetting to 0.1");
-            self.animation.epsilon = 0.1;
-        }
-        if self.animation.focus_transition_speed <= 0.0 {
-            log::warn!("animation.focus_transition_speed <= 0.0, resetting to 15.0");
-            self.animation.focus_transition_speed = 15.0;
-        }
-        if self.animation.pane_open_duration_ms == 0 {
-            log::warn!("animation.pane_open_duration_ms == 0, resetting to 200");
-            self.animation.pane_open_duration_ms = 200;
-        }
-        if self.animation.pane_close_duration_ms == 0 {
-            log::warn!("animation.pane_close_duration_ms == 0, resetting to 150");
-            self.animation.pane_close_duration_ms = 150;
-        }
-        if self.appearance.border_width < 0.0 {
-            log::warn!("appearance.border_width < 0.0, resetting to 0.0");
-            self.appearance.border_width = 0.0;
-        }
-        if self.appearance.inactive_opacity < 0.0 || self.appearance.inactive_opacity > 1.0 {
-            log::warn!(
-                "appearance.inactive_opacity out of range, clamping to [0.0, 1.0]"
-            );
-            self.appearance.inactive_opacity = self.appearance.inactive_opacity.clamp(0.0, 1.0);
-        }
-        if self.font.size <= 0.0 {
-            log::warn!("font.size <= 0.0, resetting to 14.0");
-            self.font.size = 14.0;
-        }
-        if self.terminal.cursor_opacity < 0.0 || self.terminal.cursor_opacity > 1.0 {
-            log::warn!(
-                "terminal.cursor_opacity out of range, clamping to [0.0, 1.0]"
-            );
-            self.terminal.cursor_opacity = self.terminal.cursor_opacity.clamp(0.0, 1.0);
-        }
-        if self.render.frame_interval_ms == 0 {
-            log::warn!("render.frame_interval_ms == 0, resetting to 16");
-            self.render.frame_interval_ms = 16;
-        }
+        clamp_positive_f64(&mut self.animation.speed, 12.0, "animation.speed");
+        clamp_positive_f64(&mut self.animation.epsilon, 0.1, "animation.epsilon");
+        clamp_positive_f64(
+            &mut self.animation.focus_transition_speed,
+            15.0,
+            "animation.focus_transition_speed",
+        );
+        clamp_nonzero_u64(
+            &mut self.animation.pane_open_duration_ms,
+            200,
+            "animation.pane_open_duration_ms",
+        );
+        clamp_nonzero_u64(
+            &mut self.animation.pane_close_duration_ms,
+            150,
+            "animation.pane_close_duration_ms",
+        );
+        clamp_min_f32(
+            &mut self.appearance.border_width,
+            0.0,
+            "appearance.border_width",
+        );
+        clamp_unit_f32(
+            &mut self.appearance.inactive_opacity,
+            "appearance.inactive_opacity",
+        );
+        clamp_positive_f32(&mut self.font.size, 14.0, "font.size");
+        clamp_unit_f32(
+            &mut self.terminal.cursor_opacity,
+            "terminal.cursor_opacity",
+        );
+        clamp_nonzero_u64(
+            &mut self.render.frame_interval_ms,
+            16,
+            "render.frame_interval_ms",
+        );
+    }
+
+    fn apply_runtime_adjustments(&mut self) {
+        self.theme.resolve_preset();
+        self.validate();
+    }
+}
+
+fn load_from_path(path: &PathBuf) -> Result<CiriConfig> {
+    if path.exists() {
+        let content = std::fs::read_to_string(path)?;
+        Ok(toml::from_str(&content)?)
+    } else {
+        Ok(CiriConfig::default())
+    }
+}
+
+fn clamp_positive_f64(value: &mut f64, fallback: f64, name: &str) {
+    if *value <= 0.0 {
+        log::warn!("{name} <= 0.0, resetting to {fallback}");
+        *value = fallback;
+    }
+}
+
+fn clamp_positive_f32(value: &mut f32, fallback: f32, name: &str) {
+    if *value <= 0.0 {
+        log::warn!("{name} <= 0.0, resetting to {fallback}");
+        *value = fallback;
+    }
+}
+
+fn clamp_nonzero_u64(value: &mut u64, fallback: u64, name: &str) {
+    if *value == 0 {
+        log::warn!("{name} == 0, resetting to {fallback}");
+        *value = fallback;
+    }
+}
+
+fn clamp_min_f32(value: &mut f32, min: f32, name: &str) {
+    if *value < min {
+        log::warn!("{name} < {min}, resetting to {min}");
+        *value = min;
+    }
+}
+
+fn clamp_unit_f32(value: &mut f32, name: &str) {
+    if *value < 0.0 || *value > 1.0 {
+        log::warn!("{name} out of range, clamping to [0.0, 1.0]");
+        *value = value.clamp(0.0, 1.0);
     }
 }
 
@@ -508,4 +533,91 @@ pub fn config_path() -> PathBuf {
             .join("ciri")
             .join("config.toml")
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn load_returns_defaults_when_config_is_missing() {
+        let path = temp_config_path("missing");
+
+        let config = load_from_path(&path).unwrap();
+
+        assert_eq!(config.font.family, CiriConfig::default().font.family);
+        assert_eq!(config.render.backend, CiriConfig::default().render.backend);
+    }
+
+    #[test]
+    fn load_applies_overrides_and_theme_preset_resolution() {
+        let path = temp_config_path("override");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r##"
+                [font]
+                family = "Iosevka"
+                size = 17.5
+
+                [theme]
+                preset = "nord"
+                accent = "#123456"
+
+                [render]
+                backend = "gl"
+            "##,
+        )
+        .unwrap();
+
+        let mut config = load_from_path(&path).unwrap();
+        config.apply_runtime_adjustments();
+
+        assert_eq!(config.font.family, "Iosevka");
+        assert_eq!(config.font.size, 17.5);
+        assert_eq!(config.render.backend, "gl");
+        assert_eq!(config.theme.preset, "nord");
+        assert_eq!(config.theme.accent, "#123456");
+        assert_eq!(config.theme.background, "#2E3440");
+    }
+
+    #[test]
+    fn validate_corrects_invalid_runtime_values() {
+        let mut config = CiriConfig::default();
+        config.animation.speed = 0.0;
+        config.animation.epsilon = -1.0;
+        config.animation.focus_transition_speed = 0.0;
+        config.animation.pane_open_duration_ms = 0;
+        config.animation.pane_close_duration_ms = 0;
+        config.appearance.border_width = -2.0;
+        config.appearance.inactive_opacity = 1.5;
+        config.font.size = 0.0;
+        config.terminal.cursor_opacity = -0.25;
+        config.render.frame_interval_ms = 0;
+
+        config.validate();
+
+        assert_eq!(config.animation.speed, 12.0);
+        assert_eq!(config.animation.epsilon, 0.1);
+        assert_eq!(config.animation.focus_transition_speed, 15.0);
+        assert_eq!(config.animation.pane_open_duration_ms, 200);
+        assert_eq!(config.animation.pane_close_duration_ms, 150);
+        assert_eq!(config.appearance.border_width, 0.0);
+        assert_eq!(config.appearance.inactive_opacity, 1.0);
+        assert_eq!(config.font.size, 14.0);
+        assert_eq!(config.terminal.cursor_opacity, 0.0);
+        assert_eq!(config.render.frame_interval_ms, 16);
+    }
+
+    fn temp_config_path(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir()
+            .join("ciri-config-tests")
+            .join(format!("{label}-{nanos}.toml"))
+    }
 }

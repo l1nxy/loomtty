@@ -208,6 +208,7 @@ impl App {
                 }
                 ServerEvent::Control(ServerMessage::SessionSwitched { session_name }) => {
                     self.session_name = session_name;
+                    self.write_last_session();
                     self.command_palette = None;
                     if let Some(window) = &self.window {
                         window.set_title(&format!(

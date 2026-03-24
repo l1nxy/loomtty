@@ -1,5 +1,4 @@
 use ciri_input::action::Action;
-use ciri_layout::geometry::Rect as GeoRect;
 use ciri_protocol::message::*;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -107,32 +106,11 @@ impl App {
             Action::ExpelFromColumn => {
                 self.send(ClientMessage::ExpelFromColumn);
             }
-            Action::ExitOverview => {
-                self.overview.active = false;
-                self.overview.hovered_pane = None;
-                self.overview
-                    .zoom
-                    .animate_to(1.0, self.config.animation.speed);
-                self.animate_to_active();
-            }
+            Action::ExitOverview => self.exit_overview(),
             Action::SwitchWorkspace(idx) => {
                 self.send(ClientMessage::SwitchWorkspace { workspace_idx: idx });
             }
-            Action::ToggleOverview => {
-                self.overview.active = !self.overview.active;
-                let omega = self.config.animation.speed;
-                if self.overview.active {
-                    self.context_menu.visible = false;
-                    self.overview.hovered_pane = None;
-                    self.refresh_overview_zoom();
-                    self.view_offset_x.animate_to(0.0, omega);
-                    self.view_offset_y.animate_to(0.0, omega);
-                } else {
-                    self.overview.hovered_pane = None;
-                    self.overview.zoom.animate_to(1.0, omega);
-                    self.animate_to_active();
-                }
-            }
+            Action::ToggleOverview => self.toggle_overview(),
             Action::SendLeaderKey => {
                 if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
                     self.send(ClientMessage::Input {
@@ -184,66 +162,13 @@ impl App {
         }
     }
 
-    pub fn hit_test_overview(&self, mx: f32, my: f32) -> Option<(usize, u64)> {
-        let my = my - self.status_bar_height();
-        if my < 0.0 {
-            return None;
-        }
-        let zoom = self.overview.zoom.value() as f32;
-        let zoom_threshold = self.config.animation.zoom_threshold;
-        let vox = self.view_offset_x.value() as f32;
-        let voy = self.view_offset_y.value() as f32;
-        let tiles = if self.overview.active || zoom < zoom_threshold {
-            self.workspaces.all_tiles_2d(vox, voy)
-        } else {
-            self.workspaces.visible_tiles_2d(vox, voy)
-        };
-        let (vw, vh) = self
-            .renderer
-            .as_ref()
-            .map(|r| {
-                let (w, h) = r.surface_size();
-                (w as f32, h as f32)
-            })
-            .unwrap_or((
-                self.config.window.width as f32,
-                self.config.window.height as f32,
-            ));
-        let cx = vw / 2.0;
-        let cy = vh / 2.0;
-
-        for (pane_id, tile_rect, _) in &tiles {
-            let tr = if zoom < zoom_threshold {
-                GeoRect::new(
-                    cx + (tile_rect.x - cx) * zoom,
-                    cy + (tile_rect.y - cy) * zoom,
-                    tile_rect.w * zoom,
-                    tile_rect.h * zoom,
-                )
-            } else {
-                *tile_rect
-            };
-            if tr.contains(mx, my) {
-                for (ws_idx, ws) in self.workspaces.workspaces.iter().enumerate() {
-                    if ws.columns.iter().any(|c| c.contains_pane(*pane_id)) {
-                        return Some((ws_idx, *pane_id));
-                    }
-                }
-            }
-        }
-        None
-    }
-
     /// Convert pixel coordinates to (pane_id, col, buffer_row) using absolute buffer indices.
     pub fn pixel_to_cell(&self, mx: f32, my: f32) -> Option<(u64, u16, usize)> {
         let (cw, ch) = self.cell_dimensions();
         if cw <= 0.0 || ch <= 0.0 {
             return None;
         }
-        let my = my - self.status_bar_height();
-        if my < 0.0 {
-            return None;
-        }
+        let my = self.content_y_from_screen(my)?;
         let border_w = self.config.appearance.border_width;
         let padding = self.config.appearance.padding;
         let vox = self.view_offset_x.value() as f32;
@@ -271,10 +196,7 @@ impl App {
         if cw <= 0.0 || ch <= 0.0 {
             return None;
         }
-        let my = my - self.status_bar_height();
-        if my < 0.0 {
-            return None;
-        }
+        let my = self.content_y_from_screen(my)?;
         let border_w = self.config.appearance.border_width;
         let padding = self.config.appearance.padding;
         let vox = self.view_offset_x.value() as f32;
@@ -533,146 +455,6 @@ impl App {
         }
     }
 
-    pub fn open_command_palette(&mut self) {
-        let entries: Vec<super::PaletteEntry> = Action::all_with_labels()
-            .into_iter()
-            .map(|(action, label)| super::PaletteEntry {
-                label: label.to_string(),
-                kind: super::PaletteEntryKind::Action(action),
-            })
-            .collect();
-        let filtered: Vec<usize> = (0..entries.len()).collect();
-        self.command_palette = Some(super::CommandPaletteState {
-            query: String::new(),
-            entries,
-            filtered,
-            selected_idx: 0,
-            sessions_only: false,
-        });
-        // Request session list so we can add session entries
-        self.send(ClientMessage::ListSessions { all: true });
-    }
-
-    pub fn open_session_palette(&mut self) {
-        self.command_palette = Some(super::CommandPaletteState {
-            query: String::new(),
-            entries: Vec::new(),
-            filtered: Vec::new(),
-            selected_idx: 0,
-            sessions_only: true,
-        });
-        self.send(ClientMessage::ListSessions { all: true });
-    }
-
-    pub fn handle_command_palette_key(
-        &mut self,
-        event: &winit::event::KeyEvent,
-        ctrl: bool,
-        _shift: bool,
-        _alt: bool,
-    ) {
-        let Some(palette) = &mut self.command_palette else {
-            return;
-        };
-
-        match &event.logical_key {
-            Key::Named(NamedKey::Escape) => {
-                self.command_palette = None;
-            }
-            Key::Named(NamedKey::ArrowUp) => {
-                if !palette.filtered.is_empty() {
-                    palette.selected_idx = if palette.selected_idx == 0 {
-                        palette.filtered.len() - 1
-                    } else {
-                        palette.selected_idx - 1
-                    };
-                }
-            }
-            Key::Named(NamedKey::ArrowDown) => {
-                if !palette.filtered.is_empty() {
-                    palette.selected_idx = (palette.selected_idx + 1) % palette.filtered.len();
-                }
-            }
-            Key::Named(NamedKey::Enter) => {
-                if let Some(&entry_idx) = palette.filtered.get(palette.selected_idx) {
-                    self.execute_palette_entry(entry_idx);
-                }
-                self.command_palette = None;
-            }
-            Key::Named(NamedKey::Backspace) => {
-                palette.query.pop();
-                self.filter_palette();
-            }
-            Key::Character(c) if !ctrl => {
-                let s: &str = c.as_str();
-                let Some(palette) = &mut self.command_palette else {
-                    return;
-                };
-                palette.query.push_str(s);
-                self.filter_palette();
-            }
-            _ => {}
-        }
-    }
-
-    fn execute_palette_entry(&mut self, entry_idx: usize) {
-        let Some(palette) = &self.command_palette else {
-            return;
-        };
-        let Some(entry) = palette.entries.get(entry_idx) else {
-            return;
-        };
-        match &entry.kind {
-            super::PaletteEntryKind::Action(action) => {
-                let action = *action;
-                self.handle_action(action);
-            }
-            super::PaletteEntryKind::SwitchSession(name) => {
-                let name = name.clone();
-                self.send(ClientMessage::SwitchSession { session_name: name });
-            }
-            super::PaletteEntryKind::KillSession(name) => {
-                let name = name.clone();
-                self.send(ClientMessage::KillSession { session_name: name });
-            }
-        }
-    }
-
-    pub fn filter_palette(&mut self) {
-        let Some(palette) = &mut self.command_palette else {
-            return;
-        };
-        let needle = palette.query.to_lowercase();
-        palette.filtered = palette
-            .entries
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| {
-                if needle.is_empty() {
-                    true
-                } else {
-                    fuzzy_match(&e.label.to_lowercase(), &needle)
-                }
-            })
-            .map(|(i, _)| i)
-            .collect();
-        palette.selected_idx = 0;
-    }
-}
-
-fn fuzzy_match(haystack: &str, needle: &str) -> bool {
-    let mut it = needle.chars();
-    let mut current = it.next();
-    for h in haystack.chars() {
-        if let Some(n) = current {
-            if h == n {
-                current = it.next();
-            }
-        } else {
-            return true;
-        }
-    }
-    current.is_none()
 }
 
 pub(crate) fn key_event_to_pty_bytes(event: &winit::event::KeyEvent, ctrl: bool) -> Vec<u8> {

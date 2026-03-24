@@ -225,6 +225,7 @@ impl Default for TerminalConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StatusBarConfig {
+    pub position: StatusBarPosition,
     /// Vertical padding as a proportion of cell height (applied above and below text).
     pub padding_ratio: f32,
     /// Text baseline factor (0.0-1.0) relative to cell height.
@@ -236,9 +237,18 @@ pub struct StatusBarConfig {
     pub height_padding: Option<f32>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum StatusBarPosition {
+    #[default]
+    Top,
+    Bottom,
+}
+
 impl Default for StatusBarConfig {
     fn default() -> Self {
         StatusBarConfig {
+            position: StatusBarPosition::Top,
             padding_ratio: 0.25,
             text_baseline: 0.8,
             leader_indicator_ratio: 0.1,

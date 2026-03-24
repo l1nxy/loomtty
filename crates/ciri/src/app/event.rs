@@ -34,6 +34,42 @@ impl ApplicationHandler for App {
         if let Some((size, last_event)) = self.pending_resize {
             if last_event.elapsed() >= RESIZE_SETTLE {
                 self.pending_resize = None;
+
+                // Apply deferred DPI change first (if any)
+                if let Some(new_dpi) = self.pending_dpi.take() {
+                    self.dpi_scale = new_dpi;
+                    self.destroy_gpu_resources();
+                    if let Some(renderer) = &mut self.renderer {
+                        let shaper =
+                            ciri_render::shaper::TextShaper::new(&self.config.font.family);
+                        let (cache, atlas_gpu) = renderer.create_atlas(
+                            self.config.font.size,
+                            new_dpi,
+                            &self.config.font.family,
+                            shaper.primary_font_path(),
+                            shaper.emoji_font_path(),
+                            shaper.emoji_font_id(),
+                            shaper.cjk_font_path(),
+                            shaper.cjk_font_id(),
+                            &self.config.render,
+                        );
+                        log::info!(
+                            "DPI changed: scale={:.2} cell={:.1}x{:.1}",
+                            new_dpi,
+                            cache.cell_width,
+                            cache.cell_height
+                        );
+                        self.glyph_cache = Some(cache);
+                        self.glyph_atlas_gpu = Some(atlas_gpu);
+                        self.text_shaper = Some(shaper);
+                        self.cached_views.clear();
+                        self.cached_tile_glyphs.clear();
+                        for grid in self.pane_grids.values_mut() {
+                            grid.dirty = true;
+                        }
+                    }
+                }
+
                 if let Some(renderer) = &mut self.renderer {
                     renderer.apply_surface();
                 }
@@ -235,9 +271,10 @@ impl ApplicationHandler for App {
             .height_padding
             .unwrap_or(cache.cell_height * self.config.statusbar.padding_ratio);
         let bar_h = cache.cell_height + bar_padding;
+        let chrome_h = bar_h * 2.0; // status bar + hints bar
         self.workspaces.resize_view(ViewSize {
             width: w as f32,
-            height: h as f32 - bar_h,
+            height: h as f32 - chrome_h,
         });
 
         log::info!(
@@ -394,63 +431,10 @@ impl ApplicationHandler for App {
 
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 if (scale_factor - self.dpi_scale).abs() > 0.01 {
-                    self.dpi_scale = scale_factor;
-                    // Destroy old GPU atlas before creating new one
-                    self.destroy_gpu_resources();
-
-                    if let Some(renderer) = &mut self.renderer {
-                        let shaper = ciri_render::shaper::TextShaper::new(&self.config.font.family);
-                        let (cache, atlas_gpu) = renderer.create_atlas(
-                            self.config.font.size,
-                            scale_factor,
-                            &self.config.font.family,
-                            shaper.primary_font_path(),
-                            shaper.emoji_font_path(),
-                            shaper.emoji_font_id(),
-                            shaper.cjk_font_path(),
-                            shaper.cjk_font_id(),
-                            &self.config.render,
-                        );
-                        log::info!(
-                            "DPI changed: scale={:.2} cell={:.1}x{:.1}",
-                            scale_factor,
-                            cache.cell_width,
-                            cache.cell_height
-                        );
-                        let bar_h =
-                            cache.cell_height
-                                + self.config.statusbar.height_padding.unwrap_or(
-                                    cache.cell_height * self.config.statusbar.padding_ratio,
-                                );
-                        let (w, h) = renderer.surface_size();
-                        self.workspaces.resize_view(ViewSize {
-                            width: w as f32,
-                            height: h as f32 - bar_h,
-                        });
-                        self.glyph_cache = Some(cache);
-                        self.glyph_atlas_gpu = Some(atlas_gpu);
-                        self.text_shaper = Some(shaper);
-                        self.cached_views.clear();
-                        self.cached_tile_glyphs.clear();
-                        for grid in self.pane_grids.values_mut() {
-                            grid.dirty = true;
-                        }
-                        // Notify server of new cell dimensions
-                        let (cols, rows) = self.compute_grid_size();
-                        let (cw, ch) = self.cell_dimensions();
-                        let view = &self.workspaces.view_size;
-                        self.send(ClientMessage::Resize {
-                            cols,
-                            rows,
-                            width: view.width as u32,
-                            height: view.height as u32,
-                            cell_width: cw,
-                            cell_height: ch,
-                        });
-                    }
-                    if let Some(w) = &self.window {
-                        w.request_redraw();
-                    }
+                    // Defer DPI change — will be applied when resize settles.
+                    // This avoids rebuilding the atlas repeatedly while the
+                    // window is being dragged across monitors with different DPI.
+                    self.pending_dpi = Some(scale_factor);
                 }
             }
 
@@ -459,6 +443,20 @@ impl ApplicationHandler for App {
                 self.send(ClientMessage::FocusChange { focused });
                 if !focused {
                     self.context_menu.visible = false;
+                }
+            }
+
+            WindowEvent::DroppedFile(path) => {
+                let path_str = path.to_string_lossy();
+                let quoted = if path_str.contains(|c: char| c.is_whitespace() || "\"'\\$`!#&|;(){}[]<>?*~".contains(c)) {
+                    format!("'{}'", path_str.replace('\'', "'\\''"))
+                } else {
+                    path_str.into_owned()
+                };
+                let text = format!("{quoted} ");
+                self.send_paste_to_active_pane(text.as_bytes());
+                if let Some(w) = &self.window {
+                    w.request_redraw();
                 }
             }
 

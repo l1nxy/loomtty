@@ -105,21 +105,15 @@ impl Default for KeybindMap {
         b.insert(KeyCombo::with_shift("h"), Action::MovePaneLeft);
         b.insert(KeyCombo::with_shift("l"), Action::MovePaneRight);
 
-        // Column width: cycle through presets
-        b.insert(KeyCombo::new("r"), Action::CyclePresetWidth);
-        b.insert(KeyCombo::with_shift("r"), Action::CyclePresetWidthReverse);
+        // Modes
+        b.insert(KeyCombo::new("r"), Action::EnterMode("resize".into()));
+        b.insert(KeyCombo::new("s"), Action::EnterMode("scroll".into()));
+        b.insert(KeyCombo::new("m"), Action::EnterMode("move".into()));
         b.insert(KeyCombo::new("f"), Action::ColumnWidthFull);
-
-        // Incremental resize against the nearest split
-        b.insert(KeyCombo::new("["), Action::ColumnWidthDecrease);
-        b.insert(KeyCombo::new("]"), Action::ColumnWidthIncrease);
-
-        // Equalize active column with its right neighbor
-        b.insert(KeyCombo::new("="), Action::EqualizeAdjacentColumns);
 
         // Consume/Expel tiles within columns
         b.insert(KeyCombo::new("c"), Action::ConsumeIntoColumn);
-        b.insert(KeyCombo::new("v"), Action::ExpelFromColumn);
+        b.insert(KeyCombo::new("e"), Action::ExpelFromColumn);
 
         // Broadcast mode
         b.insert(KeyCombo::new("b"), Action::ToggleBroadcast);
@@ -139,13 +133,17 @@ impl Default for KeybindMap {
         // Command palette
         b.insert(KeyCombo::new("p"), Action::ToggleCommandPalette);
 
+        // Lock / Detach
+        b.insert(KeyCombo::new("g"), Action::ToggleLock);
+        b.insert(KeyCombo::new("q"), Action::Detach);
+
         KeybindMap { bindings: b }
     }
 }
 
 impl KeybindMap {
     pub fn lookup(&self, combo: &KeyCombo) -> Option<Action> {
-        self.bindings.get(combo).copied()
+        self.bindings.get(combo).cloned()
     }
 
     /// Default overview-mode keybindings.

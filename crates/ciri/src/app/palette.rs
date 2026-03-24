@@ -109,7 +109,7 @@ impl App {
         };
         match &entry.kind {
             PaletteEntryKind::Action(action) => {
-                let action = *action;
+                let action = action.clone();
                 self.handle_action(action);
             }
             PaletteEntryKind::SwitchSession(name) => {

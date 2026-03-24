@@ -1,9 +1,8 @@
 use ciri_config::theme::ThemeConfig;
 
-use super::status_bar::{build_hints_from_bindings, find_key_for_action};
 use super::App;
 
-const PANE_TAB_WIDTH_CHARS: usize = 14;
+const PANE_TAB_WIDTH_CHARS: usize = 20;
 
 #[derive(Debug, Clone)]
 pub(crate) struct PaneTabLayout {
@@ -20,8 +19,8 @@ pub(crate) struct TopBarLayout {
     pub bar_height: f32,
     pub session_x: f32,
     pub session_w: f32,
-    pub hints_x: f32,
-    pub hints_w: f32,
+    pub workspace_x: f32,
+    pub workspace_w: f32,
     pub mode_x: f32,
     pub mode_w: f32,
     pub tabs_area_px: f32,
@@ -34,7 +33,7 @@ impl App {
         };
         let layout = self.top_bar_layout(
             self.workspaces.view_size.width,
-            self.workspaces.view_size.height + self.status_bar_height(),
+            self.workspaces.view_size.height + self.total_chrome_height(),
             atlas.cell_width,
             atlas.cell_height,
         );
@@ -83,7 +82,7 @@ impl App {
         let tab_area_px = self
             .top_bar_layout(
                 self.workspaces.view_size.width,
-                self.workspaces.view_size.height + self.status_bar_height(),
+                self.workspaces.view_size.height + self.total_chrome_height(),
                 cw,
                 ch,
             )
@@ -96,7 +95,8 @@ impl App {
 
     pub(crate) fn pane_tab_layouts(&self, cw: f32, tabs_area_px: f32) -> Vec<PaneTabLayout> {
         let tab_w = PANE_TAB_WIDTH_CHARS as f32 * cw;
-        let tabs_start_x = format!(" {}  ", self.session_name).len() as f32 * cw;
+        let session_w = format!(" {}  ", self.session_name).chars().count() as f32 * cw;
+        let tabs_start_x = session_w;
         let tabs_end_x = tabs_start_x + tabs_area_px;
         let mut x = tabs_start_x - self.pane_tab_scroll;
         let mut layouts = Vec::new();
@@ -164,84 +164,33 @@ impl App {
         format!("{:<width$}", label, width = PANE_TAB_WIDTH_CHARS)
     }
 
-    pub(crate) fn current_mode_label(&self) -> (&'static str, [f32; 4]) {
-        let accent = ThemeConfig::parse_color(&self.config.theme.accent);
-        let broadcast_color = ThemeConfig::parse_color(&self.config.theme.mode_broadcast);
-        let dim = ThemeConfig::parse_color(&self.config.theme.statusbar_dim);
-        if self.broadcast_mode {
-            (" BROADCAST ", broadcast_color)
-        } else if self.overview.active {
-            (" OVERVIEW ", accent)
-        } else if self.input.is_awaiting_action() {
-            (" LEADER ", accent)
+    pub(crate) fn workspace_indicator_label(&self) -> String {
+        let idx = self.workspaces.active_workspace_idx + 1;
+        let total = self.workspaces.workspaces.len();
+        if total <= 1 {
+            String::new()
         } else {
-            (" NORMAL ", dim)
+            format!("[{}/{}] ", idx, total)
         }
     }
 
-    pub(crate) fn statusbar_hints(&self) -> String {
-        if self.broadcast_mode {
-            let key = find_key_for_action(&self.config.keys.bindings, "toggle_broadcast");
-            format!(
-                "{}:exit broadcast  leader:{}",
-                key,
-                self.config.keys.leader.to_uppercase()
-            )
+    pub(crate) fn current_mode_label(&self) -> (String, [f32; 4]) {
+        let accent = ThemeConfig::parse_color(&self.config.theme.accent);
+        let broadcast_color = ThemeConfig::parse_color(&self.config.theme.mode_broadcast);
+        let dim = ThemeConfig::parse_color(&self.config.theme.statusbar_dim);
+        let warn_color = ThemeConfig::parse_color(&self.config.theme.mode_broadcast);
+        if self.input.is_locked() {
+            (" LOCKED ".into(), warn_color)
+        } else if self.broadcast_mode {
+            (" BROADCAST ".into(), broadcast_color)
         } else if self.overview.active {
-            build_hints_from_bindings(
-                &self.config.keys.overview_bindings,
-                &[
-                    ("focus_left", "\u{2190}"),
-                    ("focus_right", "\u{2192}"),
-                    ("focus_up", "\u{2191}"),
-                    ("focus_down", "\u{2193}"),
-                    ("close_pane", "close"),
-                    ("new_column_right", "new"),
-                    ("exit_overview", "exit"),
-                ],
-            )
+            (" OVERVIEW ".into(), accent)
+        } else if let Some(name) = self.input.current_mode_name() {
+            (format!(" {} ", name.to_uppercase()), accent)
         } else if self.input.is_awaiting_action() {
-            let is_sticky = self.config.input.mode == "sticky";
-            let bindings = &self.config.keys.bindings;
-            let core = build_hints_from_bindings(
-                bindings,
-                &[
-                    ("new_column_right", "new"),
-                    ("close_pane", "close"),
-                    ("focus_left", "\u{2190}"),
-                    ("focus_right", "\u{2192}"),
-                    ("focus_up", "\u{2191}"),
-                    ("focus_down", "\u{2193}"),
-                    ("cycle_preset_width", "width"),
-                    ("toggle_overview", "overview"),
-                    ("detach", "detach"),
-                ],
-            );
-            let extended = build_hints_from_bindings(
-                bindings,
-                &[
-                    ("new_row_below", "split"),
-                    ("move_pane_left", "mv\u{2190}"),
-                    ("move_pane_right", "mv\u{2192}"),
-                    ("column_width_decrease", "w-"),
-                    ("column_width_increase", "w+"),
-                    ("column_width_full", "full"),
-                    ("consume_into_column", "stack"),
-                    ("expel_from_column", "unstack"),
-                    ("toggle_broadcast", "broadcast"),
-                ],
-            );
-            let mut h = if extended.is_empty() {
-                core.clone()
-            } else {
-                format!("{}  {}", core, extended)
-            };
-            if is_sticky {
-                h.push_str("  esc:exit");
-            }
-            h
+            (" LEADER ".into(), accent)
         } else {
-            format!("leader:{}", self.config.keys.leader.to_uppercase())
+            (" NORMAL ".into(), dim)
         }
     }
 
@@ -253,20 +202,23 @@ impl App {
         };
         let bar_height = ch + padding;
         let bar_y = self.status_bar_y(vh);
-        let session_w = format!(" {}  ", self.session_name).len() as f32 * cw;
-        let hints_w = self.statusbar_hints().len() as f32 * cw;
-        let mode_w = self.current_mode_label().0.len() as f32 * cw;
-        let mode_x = (vw - mode_w).max(0.0);
-        let hints_x = (mode_x - 2.0 * cw - hints_w).max(session_w);
-        let tabs_area_px = (hints_x - session_w).max(0.0);
+        let session_w = format!(" {}  ", self.session_name).chars().count() as f32 * cw;
+        let ws_label = self.workspace_indicator_label();
+        let workspace_w = ws_label.chars().count() as f32 * cw;
+        let mode_w = self.current_mode_label().0.chars().count() as f32 * cw;
+        // Right side: workspace + gap + mode
+        let right_w = workspace_w + mode_w;
+        let mode_x = vw - mode_w;
+        let workspace_x = mode_x - workspace_w;
+        let tabs_area_px = (workspace_x - cw - session_w).max(0.0);
 
         TopBarLayout {
             bar_y,
             bar_height,
             session_x: 0.0,
             session_w,
-            hints_x,
-            hints_w,
+            workspace_x,
+            workspace_w,
             mode_x,
             mode_w,
             tabs_area_px,

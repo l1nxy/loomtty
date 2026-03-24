@@ -42,13 +42,10 @@ impl ViewOffset {
     /// Start animating to a target position.
     /// `omega`: angular frequency (8-15 recommended for smooth UI).
     pub fn animate_to(&mut self, target: f64, omega: f64) {
-        let current = self.value();
+        let (position, velocity) = self.motion_state();
         let mut spring = Spring::with_omega(omega);
-        spring.position = current;
-        spring.velocity = match self {
-            ViewOffset::Animating(s) => s.velocity,
-            _ => 0.0,
-        };
+        spring.position = position;
+        spring.velocity = velocity;
         spring.set_target(target);
         *self = ViewOffset::Animating(spring);
     }
@@ -64,8 +61,7 @@ impl ViewOffset {
             ViewOffset::Animating(spring) => {
                 spring.advance(dt);
                 spring.settle();
-                if spring.is_at_rest() {
-                    let final_pos = spring.position;
+                if let Some(final_pos) = Self::resting_position(spring) {
                     *self = ViewOffset::Static(final_pos);
                     false
                 } else {
@@ -107,6 +103,21 @@ impl ViewOffset {
     /// End gesture and snap to nearest target.
     pub fn end_gesture(&mut self, target: f64, stiffness: f64) {
         self.animate_to(target, stiffness);
+    }
+
+    fn motion_state(&self) -> (f64, f64) {
+        match self {
+            ViewOffset::Animating(spring) => (spring.position, spring.velocity),
+            ViewOffset::Static(value) | ViewOffset::Gesture(value) => (*value, 0.0),
+        }
+    }
+
+    fn resting_position(spring: &Spring) -> Option<f64> {
+        if spring.is_at_rest() {
+            Some(spring.position)
+        } else {
+            None
+        }
     }
 }
 
@@ -162,5 +173,49 @@ mod tests {
         // Re-target while in flight
         v.animate_to(200.0, 12.0);
         assert!(v.is_animating());
+    }
+
+    #[test]
+    fn begin_gesture_uses_current_animation_position() {
+        let mut v = ViewOffset::new();
+        v.animate_to(100.0, 12.0);
+        v.advance(0.05);
+
+        let in_flight = v.value();
+        v.begin_gesture();
+
+        assert!(v.is_gesture());
+        assert_eq!(v.value(), in_flight);
+        assert_eq!(v.target(), in_flight);
+    }
+
+    #[test]
+    fn update_gesture_unclamped_allows_negative_offsets() {
+        let mut v = ViewOffset::new();
+        v.begin_gesture();
+        v.update_gesture_unclamped(10.0);
+
+        assert!(v.is_gesture());
+        assert_eq!(v.value(), -10.0);
+    }
+
+    #[test]
+    fn end_gesture_resumes_spring_toward_target() {
+        let mut v = ViewOffset::new();
+        v.jump_to(100.0);
+        v.begin_gesture();
+        v.update_gesture(-20.0);
+
+        v.end_gesture(100.0, 12.0);
+
+        assert!(v.is_animating());
+        assert_eq!(v.target(), 100.0);
+
+        for _ in 0..300 {
+            v.advance(1.0 / 60.0);
+        }
+
+        assert!(!v.is_animating());
+        assert!((v.value() - 100.0).abs() < 1.0);
     }
 }

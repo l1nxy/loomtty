@@ -91,7 +91,10 @@ mod tests {
         fs::set_permissions(&blocked_dir, fs::Permissions::from_mode(0o0)).unwrap();
 
         let err = list_sessions(&blocked_dir).unwrap_err();
-        assert_eq!(err.downcast_ref::<std::io::Error>().unwrap().kind(), ErrorKind::PermissionDenied);
+        assert_eq!(
+            err.downcast_ref::<std::io::Error>().unwrap().kind(),
+            ErrorKind::PermissionDenied
+        );
 
         fs::set_permissions(&blocked_dir, fs::Permissions::from_mode(0o700)).unwrap();
     }

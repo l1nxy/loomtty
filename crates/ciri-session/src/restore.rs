@@ -21,10 +21,13 @@ pub fn list_sessions(dir: &Path) -> Result<Vec<String>> {
         return Ok(Vec::new());
     }
 
-    let mut sessions = fs::read_dir(dir)?
-        .filter_map(Result::ok)
-        .filter_map(|entry| session_name_from_path(&entry.path()))
-        .collect::<Vec<_>>();
+    let mut sessions = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        if let Some(name) = session_name_from_path(&entry.path()) {
+            sessions.push(name);
+        }
+    }
     sessions.sort();
     Ok(sessions)
 }
@@ -50,6 +53,8 @@ mod tests {
     use super::*;
     use crate::save::save_session;
     use crate::state::{SavedColumn, SavedTile, SavedWorkspace, SessionState};
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -61,7 +66,10 @@ mod tests {
         save_session(&beta, &dir).unwrap();
         save_session(&alpha, &dir).unwrap();
 
-        assert_eq!(restore_session("alpha", &dir).unwrap().unwrap().name, "alpha");
+        assert_eq!(
+            restore_session("alpha", &dir).unwrap().unwrap().name,
+            "alpha"
+        );
         assert_eq!(list_sessions(&dir).unwrap(), vec!["alpha", "beta"]);
 
         delete_session("alpha", &dir).unwrap();
@@ -69,6 +77,23 @@ mod tests {
         assert_eq!(list_sessions(&dir).unwrap(), vec!["beta"]);
 
         delete_session("missing", &dir).unwrap();
+    }
+
+    #[test]
+    fn list_sessions_propagates_directory_entry_errors() {
+        let dir = unique_test_dir("session-entry-errors");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("alpha.json"), "{}").unwrap();
+
+        let blocked_dir = dir.join("blocked");
+        fs::create_dir(&blocked_dir).unwrap();
+        fs::write(blocked_dir.join("beta.json"), "{}").unwrap();
+        fs::set_permissions(&blocked_dir, fs::Permissions::from_mode(0o0)).unwrap();
+
+        let err = list_sessions(&blocked_dir).unwrap_err();
+        assert_eq!(err.downcast_ref::<std::io::Error>().unwrap().kind(), ErrorKind::PermissionDenied);
+
+        fs::set_permissions(&blocked_dir, fs::Permissions::from_mode(0o700)).unwrap();
     }
 
     fn sample_session(name: &str) -> SessionState {

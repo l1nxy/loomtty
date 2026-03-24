@@ -63,11 +63,13 @@ pub fn list_templates() -> Result<Vec<String>> {
         return Ok(Vec::new());
     }
 
-    let mut names = std::fs::read_dir(&dir)
-        .context("failed to read templates directory")?
-        .filter_map(|entry| entry.ok())
-        .filter_map(|entry| template_name_from_path(entry.path()))
-        .collect::<Vec<_>>();
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(&dir).context("failed to read templates directory")? {
+        let entry = entry?;
+        if let Some(name) = template_name_from_path(entry.path()) {
+            names.push(name);
+        }
+    }
     names.sort();
     Ok(names)
 }
@@ -87,7 +89,6 @@ pub fn load_template(name: &str) -> Result<LayoutTemplate> {
 /// Save a template to disk.
 pub fn save_template(name: &str, template: &LayoutTemplate) -> Result<()> {
     validate_template_name(name)?;
-    validate_template_shape(name, template)?;
     let path = template_path(name);
     let parent = path.parent().context("template path missing parent")?;
     std::fs::create_dir_all(parent).context("failed to create templates directory")?;
@@ -160,6 +161,8 @@ fn validate_workspace(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn roundtrip_template() {
@@ -210,18 +213,48 @@ mod tests {
     }
 
     #[test]
-    fn rejects_templates_without_workspaces() {
+    fn save_template_allows_invalid_shape_until_load_time() {
         let template = LayoutTemplate {
             description: None,
             workspaces: Vec::new(),
         };
 
-        let err = save_template("empty", &template).unwrap_err();
+        save_template("empty", &template).unwrap();
+
+        let err = load_template("empty").unwrap_err();
         assert!(err.to_string().contains("has no workspaces"));
     }
 
     #[test]
-    fn rejects_templates_without_columns() {
+    fn list_templates_propagates_directory_entry_errors() {
+        let config_home = unique_config_home("template-entry-errors");
+        let templates = config_home.join("ciri").join("templates");
+        fs::create_dir_all(&templates).unwrap();
+        fs::write(templates.join("alpha.toml"), "").unwrap();
+        fs::set_permissions(&templates, fs::Permissions::from_mode(0o0)).unwrap();
+
+        let previous = std::env::var_os("XDG_CONFIG_HOME");
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", &config_home);
+        }
+
+        let err = list_templates().unwrap_err();
+        assert_eq!(
+            err.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+
+        unsafe {
+            match previous {
+                Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+                None => std::env::remove_var("XDG_CONFIG_HOME"),
+            }
+        }
+        fs::set_permissions(&templates, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    #[test]
+    fn load_template_rejects_templates_without_columns() {
         let template = LayoutTemplate {
             description: None,
             workspaces: vec![TemplateWorkspace {
@@ -230,12 +263,13 @@ mod tests {
             }],
         };
 
-        let err = save_template("empty-columns", &template).unwrap_err();
+        save_template("empty-columns", &template).unwrap();
+        let err = load_template("empty-columns").unwrap_err();
         assert!(err.to_string().contains("workspace 0 has no columns"));
     }
 
     #[test]
-    fn rejects_templates_without_tiles() {
+    fn load_template_rejects_templates_without_tiles() {
         let template = LayoutTemplate {
             description: None,
             workspaces: vec![TemplateWorkspace {
@@ -247,7 +281,21 @@ mod tests {
             }],
         };
 
-        let err = save_template("empty-tiles", &template).unwrap_err();
+        save_template("empty-tiles", &template).unwrap();
+        let err = load_template("empty-tiles").unwrap_err();
         assert!(err.to_string().contains("column 0 has no tiles"));
+    }
+
+    fn unique_config_home(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("ciri-session-{label}-{}", unique_suffix()))
+    }
+
+    fn unique_suffix() -> u128 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     }
 }

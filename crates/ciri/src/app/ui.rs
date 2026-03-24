@@ -82,6 +82,7 @@ pub(crate) enum UiPasteDialogHit {
 pub(crate) enum UiOverviewHit {
     Pane(usize, u64),
     ClosePane(u64),
+    FocusPane(usize, u64),
     Background,
     None,
 }
@@ -149,6 +150,18 @@ struct PasteDialogComponent {
 
 struct OverviewComponent {
     hovered_pane: Option<(usize, u64)>,
+}
+
+struct OverviewActionBarData {
+    pane_x: f32,
+    pane_w: f32,
+    bar_y: f32,
+    bar_h: f32,
+    pad: f32,
+    close_x: f32,
+    close_w: f32,
+    focus_x: f32,
+    focus_w: f32,
 }
 
 struct HintsBarComponent {
@@ -270,6 +283,12 @@ impl App {
         let context_menu = ContextMenuComponent::capture(self, &cx);
         let paste_dialog = PasteDialogComponent::capture(self, &cx);
         let infobox = InfoBoxComponent::capture(self, &cx);
+        let overview_bar = if self.overview.active && self.overview.hovered_pane.is_some() {
+            self.overview_action_bar_data(&cx)
+        } else {
+            None
+        };
+        let overview_hover = self.overview_action_hover;
 
         let atlas = self.glyph_cache.as_mut().unwrap();
         let mut scene = UiScene {
@@ -280,6 +299,9 @@ impl App {
 
         top_bar.paint(&cx, &mut scene);
         hints_bar.paint(&cx, &mut scene);
+        if let Some(d) = &overview_bar {
+            Self::paint_overview_action_bar_from_data(d, overview_hover, &cx, &mut scene);
+        }
         if let Some(component) = infobox {
             component.paint(&cx, &mut scene);
         }
@@ -292,6 +314,85 @@ impl App {
         if let Some(component) = context_menu {
             component.paint(&cx, &mut scene);
         }
+    }
+
+    fn overview_action_bar_data(&self, cx: &UiContext<'_>) -> Option<OverviewActionBarData> {
+        let (_, hovered_id) = self.overview.hovered_pane?;
+        let zoom = self.overview.zoom.value() as f32;
+        let vox = self.view_offset_x.value() as f32;
+        let voy = self.view_offset_y.value() as f32;
+        let tiles = self.workspaces.all_tiles_2d(vox, voy);
+        let (vw, vh) = self.command_palette_viewport_size();
+        let center_x = vw / 2.0;
+        let center_y = vh / 2.0;
+        let zoom_threshold = self.config.animation.zoom_threshold;
+        for (pane_id, tile_rect, _) in &tiles {
+            if *pane_id != hovered_id { continue; }
+            let tr = if zoom < zoom_threshold {
+                ciri_layout::geometry::Rect::new(
+                    center_x + (tile_rect.x - center_x) * zoom,
+                    center_y + (tile_rect.y - center_y) * zoom,
+                    tile_rect.w * zoom,
+                    tile_rect.h * zoom,
+                )
+            } else {
+                *tile_rect
+            };
+            let bar_h = (cx.cell_h * 2.0).max(28.0);
+            let bar_y = tr.y + tr.h - bar_h;
+            let pad = cx.cell_w * 2.0;
+            let close_label = "\u{2715} Close";
+            let close_w = close_label.chars().count() as f32 * cx.cell_w + pad * 2.0;
+            let focus_label = "Focus";
+            let focus_w = focus_label.chars().count() as f32 * cx.cell_w + pad * 2.0;
+            return Some(OverviewActionBarData {
+                pane_x: tr.x, pane_w: tr.w,
+                bar_y, bar_h, pad,
+                close_x: tr.x, close_w,
+                focus_x: tr.x + close_w, focus_w,
+            });
+        }
+        None
+    }
+
+    fn paint_overview_action_bar_from_data(
+        d: &OverviewActionBarData,
+        hover: Option<super::OverviewActionHover>,
+        cx: &UiContext<'_>,
+        scene: &mut UiScene<'_>,
+    ) {
+        let accent = ciri_config::theme::ThemeConfig::parse_color(&cx.config.theme.accent);
+        let text_y = d.bar_y + (d.bar_h - cx.cell_h) * 0.5;
+
+        // Bar background
+        scene.bg_rects.push(Rect {
+            x: d.pane_x, y: d.bar_y, w: d.pane_w, h: d.bar_h,
+            color: [0.0, 0.0, 0.0, 0.8],
+        });
+
+        // Close button
+        if hover == Some(super::OverviewActionHover::Close) {
+            scene.bg_rects.push(Rect {
+                x: d.close_x, y: d.bar_y, w: d.close_w, h: d.bar_h,
+                color: [0.9, 0.2, 0.2, 0.5],
+            });
+        }
+        emit_status_text(
+            scene.atlas, "\u{2715} Close", d.close_x + d.pad, text_y,
+            cx.cell_w, cx.baseline, [1.0, 0.6, 0.6, 1.0], scene.glyphs,
+        );
+
+        // Focus button
+        if hover == Some(super::OverviewActionHover::Focus) {
+            scene.bg_rects.push(Rect {
+                x: d.focus_x, y: d.bar_y, w: d.focus_w, h: d.bar_h,
+                color: [accent[0], accent[1], accent[2], 0.35],
+            });
+        }
+        emit_status_text(
+            scene.atlas, "Focus", d.focus_x + d.pad, text_y,
+            cx.cell_w, cx.baseline, [1.0, 1.0, 1.0, 0.9], scene.glyphs,
+        );
     }
 
     fn ui_context(&self) -> UiContext<'_> {
@@ -425,11 +526,19 @@ impl App {
         }
     }
 
-    pub(crate) fn ui_overview_hover(&self, mx: f32, my: f32) -> Option<(usize, u64)> {
+    pub(crate) fn ui_overview_hover(&mut self, mx: f32, my: f32) -> Option<(usize, u64)> {
         let cx = self.ui_context();
         let component = OverviewComponent::capture(self, &cx);
-        match component.hit_test(self, mx, my) {
-            UiOverviewHit::Pane(ws_idx, pane_id) => Some((ws_idx, pane_id)),
+        // Also update action hover state for the action bar highlight
+        let hit = component.hit_test(self, mx, my);
+        self.overview_action_hover = match &hit {
+            UiOverviewHit::ClosePane(_) => Some(super::OverviewActionHover::Close),
+            UiOverviewHit::FocusPane(_, _) => Some(super::OverviewActionHover::Focus),
+            _ => None,
+        };
+        match hit {
+            UiOverviewHit::Pane(ws_idx, pane_id)
+            | UiOverviewHit::FocusPane(ws_idx, pane_id) => Some((ws_idx, pane_id)),
             UiOverviewHit::ClosePane(_) => self.overview.hovered_pane,
             UiOverviewHit::Background | UiOverviewHit::None => None,
         }
@@ -440,6 +549,7 @@ impl App {
         let component = OverviewComponent::capture(self, &cx);
         match component.hit_test(self, mx, my) {
             UiOverviewHit::Pane(ws_idx, pane_id) => Some(UiAction::FocusOverviewPane(ws_idx, pane_id)),
+            UiOverviewHit::FocusPane(ws_idx, pane_id) => Some(UiAction::FocusOverviewPane(ws_idx, pane_id)),
             UiOverviewHit::ClosePane(pane_id) => Some(UiAction::CloseOverviewPane(pane_id)),
             UiOverviewHit::Background => Some(UiAction::StartOverviewDrag),
             UiOverviewHit::None => None,
@@ -1472,6 +1582,18 @@ impl PasteDialogComponent {
     }
 }
 
+/// Action bar button rects: (close_x, close_w, focus_x, focus_w, bar_y, bar_h)
+struct OverviewActionBar {
+    close_x: f32,
+    close_w: f32,
+    focus_x: f32,
+    focus_w: f32,
+    bar_y: f32,
+    bar_h: f32,
+    pane_x: f32,
+    pane_w: f32,
+}
+
 impl OverviewComponent {
     fn capture(app: &App, _cx: &UiContext<'_>) -> Self {
         Self {
@@ -1483,11 +1605,22 @@ impl OverviewComponent {
         if !app.overview.active {
             return UiOverviewHit::None;
         }
-        // Check close button on hovered pane first
-        if let Some((_, hovered_id)) = self.hovered_pane {
-            if let Some(btn) = self.close_button_rect(app) {
-                if mx >= btn.0 && mx <= btn.0 + btn.2 && my >= btn.1 && my <= btn.1 + btn.3 {
-                    return UiOverviewHit::ClosePane(hovered_id);
+        // Check action bar on hovered pane first
+        if let Some((ws_idx, hovered_id)) = self.hovered_pane {
+            if let Some(bar) = self.action_bar_layout(app) {
+                if mx >= bar.pane_x
+                    && mx <= bar.pane_x + bar.pane_w
+                    && my >= bar.bar_y
+                    && my <= bar.bar_y + bar.bar_h
+                {
+                    if mx >= bar.close_x && mx < bar.close_x + bar.close_w {
+                        return UiOverviewHit::ClosePane(hovered_id);
+                    }
+                    if mx >= bar.focus_x && mx < bar.focus_x + bar.focus_w {
+                        return UiOverviewHit::FocusPane(ws_idx, hovered_id);
+                    }
+                    // Clicked on bar but not a button — don't fall through to pane click
+                    return UiOverviewHit::Background;
                 }
             }
         }
@@ -1498,17 +1631,18 @@ impl OverviewComponent {
         }
     }
 
-    /// Returns (x, y, w, h) of the close button for the hovered pane, if any.
-    fn close_button_rect(&self, app: &App) -> Option<(f32, f32, f32, f32)> {
+    fn action_bar_layout(&self, app: &App) -> Option<OverviewActionBar> {
         let (_, hovered_id) = self.hovered_pane?;
         let zoom = app.overview.zoom.value() as f32;
         let vox = app.view_offset_x.value() as f32;
         let voy = app.view_offset_y.value() as f32;
         let tiles = app.workspaces.all_tiles_2d(vox, voy);
         let (vw, vh) = app.command_palette_viewport_size();
-        let cx = vw / 2.0;
-        let cy = vh / 2.0;
+        let center_x = vw / 2.0;
+        let center_y = vh / 2.0;
         let zoom_threshold = app.config.animation.zoom_threshold;
+        let cell_w = app.glyph_cache.as_ref().map(|c| c.cell_width).unwrap_or(8.0);
+        let cell_h = app.glyph_cache.as_ref().map(|c| c.cell_height).unwrap_or(16.0);
 
         for (pane_id, tile_rect, _) in &tiles {
             if *pane_id != hovered_id {
@@ -1516,22 +1650,33 @@ impl OverviewComponent {
             }
             let tr = if zoom < zoom_threshold {
                 ciri_layout::geometry::Rect::new(
-                    cx + (tile_rect.x - cx) * zoom,
-                    cy + (tile_rect.y - cy) * zoom,
+                    center_x + (tile_rect.x - center_x) * zoom,
+                    center_y + (tile_rect.y - center_y) * zoom,
                     tile_rect.w * zoom,
                     tile_rect.h * zoom,
                 )
             } else {
                 *tile_rect
             };
-            let btn_size = (20.0 * zoom).max(14.0);
-            let margin = (4.0 * zoom).max(2.0);
-            return Some((
-                tr.x + tr.w - btn_size - margin,
-                tr.y + margin,
-                btn_size,
-                btn_size,
-            ));
+            let cw = cell_w;
+            let bar_h = (cell_h * 2.0).max(28.0);
+            let bar_y = tr.y + tr.h - bar_h;
+            let pad = cw * 2.0;
+
+            let close_chars = "\u{2715} Close".chars().count();
+            let close_w = close_chars as f32 * cw + pad * 2.0;
+            let close_x = tr.x;
+
+            let focus_chars = "Focus".chars().count();
+            let focus_w = focus_chars as f32 * cw + pad * 2.0;
+            let focus_x = close_x + close_w;
+
+            return Some(OverviewActionBar {
+                close_x, close_w,
+                focus_x, focus_w,
+                bar_y, bar_h,
+                pane_x: tr.x, pane_w: tr.w,
+            });
         }
         None
     }

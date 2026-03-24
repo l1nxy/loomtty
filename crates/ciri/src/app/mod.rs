@@ -211,6 +211,12 @@ pub(crate) struct ResizeDragState {
 }
 
 /// Overview zoom mode state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OverviewActionHover {
+    Close,
+    Focus,
+}
+
 pub(crate) struct OverviewState {
     pub active: bool,
     pub zoom: ViewOffset,
@@ -218,6 +224,7 @@ pub(crate) struct OverviewState {
     pub drag_last_pos: Option<(f32, f32)>,
     pub hovered_pane: Option<(usize, u64)>,
 }
+
 
 /// Per-pane animation state (open/close/focus/bell).
 pub(crate) struct PaneAnimations {
@@ -303,6 +310,7 @@ pub(crate) struct App {
     pub cached_views: HashMap<u64, TerminalView>,
     pub last_mouse_pos: Option<(f32, f32)>,
     pub overview: OverviewState,
+    pub overview_action_hover: Option<OverviewActionHover>,
     pub render_bufs: RenderBuffers,
     pub ime: ImeState,
     pub overview_keybinds: KeybindMap,
@@ -463,6 +471,7 @@ impl App {
                     v
                 },
             },
+            overview_action_hover: None,
             render_bufs: RenderBuffers {
                 bg_rects: Vec::new(),
                 glyphs: Vec::new(),

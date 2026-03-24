@@ -29,6 +29,10 @@ serde_json = "1"
 arboard = { workspace = true }
 notify = { workspace = true }
 libc = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(unix)'.dependencies]
 notify-rust = "4"
+
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1"

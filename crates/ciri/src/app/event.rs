@@ -4,9 +4,17 @@ use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
-use winit::window::{WindowAttributes, WindowId};
+use winit::window::{Icon, WindowAttributes, WindowId};
 
 use super::App;
+
+fn load_window_icon() -> Option<Icon> {
+    let png_bytes = include_bytes!("../../../../assets/icons/icon.png");
+    let img = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png).ok()?;
+    let rgba = img.into_rgba8();
+    let (w, h) = (rgba.width(), rgba.height());
+    Icon::from_rgba(rgba.into_raw(), w, h).ok()
+}
 
 impl ApplicationHandler for App {
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
@@ -185,8 +193,10 @@ impl ApplicationHandler for App {
         }
 
         let window_title = format!("{} [{}]", self.config.window.title, self.session_name);
+        let window_icon = load_window_icon();
         let attrs = WindowAttributes::default()
             .with_title(window_title)
+            .with_window_icon(window_icon)
             .with_inner_size(winit::dpi::LogicalSize::new(
                 self.config.window.width,
                 self.config.window.height,

@@ -698,7 +698,7 @@ fn render_single_row(
     row: usize,
     cols: u16,
     lig: Option<&RowLigatureData>,
-    _primary_font_id: Option<fontdb::ID>,
+    cjk_font_id: Option<fontdb::ID>,
     m: &CellMetrics,
     ct: &ColorTable,
     atlas: &mut GlyphCache,
@@ -758,8 +758,13 @@ fn render_single_row(
                     if entry.width > 0 && entry.height > 0 {
                         let px = col as f32 * m.cw;
                         let py = row as f32 * m.ch;
+                        let is_cjk_text_wide = props.is_wide
+                            && !entry.is_color
+                            && Some(glyph_font_id) == cjk_font_id;
                         let g = if props.is_wide && entry.is_color {
                             constrain_wide_glyph(&entry, px, py, m, props.fg)
+                        } else if is_cjk_text_wide {
+                            constrain_wide_text_glyph(&entry, px, py, m, props.fg)
                         } else {
                             make_relative_glyph(&entry, px, py, m.baseline, props.fg)
                         };
@@ -787,8 +792,12 @@ fn render_single_row(
                     if entry.width > 0 && entry.height > 0 {
                         let px = col as f32 * m.cw;
                         let py = row as f32 * m.ch;
+                        let is_cjk_text_wide =
+                            is_wide && !entry.is_color && Some(font_id) == cjk_font_id;
                         let g = if is_wide && entry.is_color {
                             constrain_wide_glyph(&entry, px, py, m, props.fg)
+                        } else if is_cjk_text_wide {
+                            constrain_wide_text_glyph(&entry, px, py, m, props.fg)
                         } else {
                             make_relative_glyph(&entry, px, py, m.baseline, props.fg)
                         };
@@ -876,6 +885,7 @@ pub fn build_view_from_grid(
 ) -> TerminalView {
     let m = CellMetrics::new(atlas, config);
     let primary_font_id = shaper.primary_font_id();
+    let cjk_font_id = shaper.cjk_font_id();
 
     // ─── Phase 1: Pre-compute all shaping data (immutable shaper access) ───
     let row_lig_data: Vec<RowLigatureData> = if let Some(fid) = primary_font_id {
@@ -899,7 +909,7 @@ pub fn build_view_from_grid(
             row,
             cols,
             lig,
-            primary_font_id,
+            cjk_font_id,
             &m,
             ct,
             atlas,
@@ -950,6 +960,7 @@ pub fn update_view_from_grid(
 ) {
     let m = CellMetrics::new(atlas, config);
     let primary_font_id = shaper.primary_font_id();
+    let cjk_font_id = shaper.cjk_font_id();
     let nrows = rows as usize;
 
     // Re-shape only dirty rows (immutable shaper access)
@@ -973,7 +984,7 @@ pub fn update_view_from_grid(
                 row,
                 cols,
                 lig,
-                primary_font_id,
+                cjk_font_id,
                 &m,
                 ct,
                 atlas,
@@ -1335,6 +1346,33 @@ fn constrain_wide_glyph(
         py: (py + offset_y).round(),
         glyph_w: final_w,
         glyph_h: final_h,
+        u0: entry.u0,
+        v0: entry.v0,
+        u1: entry.u1,
+        v1: entry.v1,
+        color,
+    }
+}
+
+/// Place a wide text glyph inside a double-width cell without enlarging height.
+/// Keeps baseline-aligned vertical metrics and only constrains horizontal width.
+#[inline]
+fn constrain_wide_text_glyph(
+    entry: &GlyphEntry,
+    px: f32,
+    py: f32,
+    m: &CellMetrics,
+    color: [f32; 4],
+) -> RelativeGlyph {
+    let gw = entry.width as f32;
+    let target_w = m.cw * 2.0;
+    let final_w = gw.min(target_w);
+    let offset_x = (target_w - final_w) * 0.5;
+    RelativeGlyph {
+        px: (px + offset_x).round(),
+        py: (py + m.baseline - entry.bearing_y).round(),
+        glyph_w: final_w,
+        glyph_h: entry.height as f32,
         u0: entry.u0,
         v0: entry.v0,
         u1: entry.u1,

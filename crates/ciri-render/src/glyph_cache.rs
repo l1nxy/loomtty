@@ -209,7 +209,6 @@ pub struct GlyphCache {
     cjk_ft_face: Option<freetype::Face>,
     cjk_font_id: Option<fontdb::ID>,
     ft_pixel_size: f32,
-    cjk_pixel_size: f32,
     // Public metrics
     pub cell_width: f32,
     pub cell_height: f32,
@@ -341,37 +340,8 @@ impl GlyphCache {
             }
         });
 
-        // ── ic_width measurement for CJK size normalization ──
-        // In a terminal, CJK characters always occupy 2 cells, so the target
-        // advance should be 2 × cell_width.  If the primary font has '水' but
-        // reports an advance ≤ 1.5 × cell_width it is treating the character as
-        // single-width (common in Nerd-Font-patched fonts) — discard that value.
-        let primary_ic_width = ft_face.as_ref().and_then(|face| {
-            face.set_char_size(0, (ft_pixel_size * 64.0) as isize, 72, 72).ok()?;
-            face.load_char('水' as usize, LoadFlag::DEFAULT).ok()?;
-            let ic = face.glyph().advance().x as f32 / 64.0;
-            if ic > cell_width * 1.5 { Some(ic) } else { None }
-        });
-        let cjk_ic_width = cjk_ft_face.as_ref().and_then(|face| {
-            face.set_char_size(0, (ft_pixel_size * 64.0) as isize, 72, 72).ok()?;
-            face.load_char('水' as usize, LoadFlag::DEFAULT).ok()?;
-            Some(face.glyph().advance().x as f32 / 64.0)
-        });
-        let target_ic = primary_ic_width.unwrap_or(cell_width * 2.0);
-        let cjk_scale = match cjk_ic_width {
-            Some(cic) if cic > 0.0 => target_ic / cic,
-            _ => 1.0,
-        };
-        let cjk_pixel_size = ft_pixel_size * cjk_scale;
-        if (cjk_scale - 1.0).abs() > 0.01 {
-            log::info!(
-                "CJK ic_width normalization: primary={:.1} cjk={:.1} scale={:.3} cjk_px={:.1}",
-                target_ic,
-                cjk_ic_width.unwrap_or(0.0),
-                cjk_scale,
-                cjk_pixel_size,
-            );
-        }
+        // Keep CJK glyphs at the same nominal pixel size as the primary font.
+        // Wide-cell width fitting is handled at placement time (terminal.rs).
 
         GlyphCache {
             alpha_packer: ShelfPacker::new(atlas_size),
@@ -399,7 +369,6 @@ impl GlyphCache {
             cjk_ft_face,
             cjk_font_id,
             ft_pixel_size,
-            cjk_pixel_size,
             cell_width,
             cell_height,
             ascent: safe_ascent,
@@ -455,7 +424,7 @@ impl GlyphCache {
     /// Ensure a glyph by its ID (from text shaping) is in the atlas.
     /// Uses the thin FreeType path since crossfont only accepts characters.
     /// `font_id` selects between primary, CJK, and emoji font faces.
-    /// `wide` indicates the glyph will be constrained to a double-width cell (disables hinting).
+    /// `wide` indicates the glyph may be constrained to a double-width cell (disables hinting).
     pub fn ensure_glyph_id(
         &mut self,
         glyph_id: u32,
@@ -481,10 +450,10 @@ impl GlyphCache {
 
         let (ft_face, pixel_size) = match font_class {
             FontClass::Emoji => (self.emoji_ft_face.as_ref(), self.ft_pixel_size),
-            FontClass::Cjk => (self.cjk_ft_face.as_ref(), self.cjk_pixel_size),
+            FontClass::Cjk => (self.cjk_ft_face.as_ref(), self.ft_pixel_size),
             FontClass::Primary => (self.ft_face.as_ref(), self.ft_pixel_size),
         };
-        let constrained = wide || font_class == FontClass::Cjk;
+        let constrained = wide;
         let glyph = self.rasterize_glyph_id_ft(ft_face, glyph_id, style, pixel_size, constrained)?;
 
         if glyph.width == 0 || glyph.height == 0 {
@@ -499,7 +468,7 @@ impl GlyphCache {
 
     /// Rasterize a glyph by ID using the thin FreeType path.
     /// Tries color bitmap first (for emoji), then falls back to grayscale outline.
-    /// `pixel_size` controls the rendering size (may differ for CJK scaled fonts).
+    /// `pixel_size` controls the rendering size.
     /// `constrained` disables hinting for glyphs that will be scaled/repositioned.
     fn rasterize_glyph_id_ft(
         &self,

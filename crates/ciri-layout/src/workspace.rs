@@ -395,6 +395,7 @@ impl Workspace {
     pub fn set_column_width_by_index(&mut self, idx: usize, width: ColumnWidth) {
         if let Some(col) = self.columns.get_mut(idx) {
             col.width = width;
+            col.preset_width_idx = None;
         }
     }
 
@@ -425,7 +426,8 @@ impl Workspace {
         }
         let active_idx = self.active_column_idx;
         let current_width = self.columns[active_idx].width;
-        let current_effective_width = self.columns[active_idx].effective_width(self.view_size.width);
+        let current_effective_width =
+            self.columns[active_idx].effective_width(self.view_size.width);
         let current_idx = self.columns[active_idx].preset_width_idx;
         let vw_for_log = self.view_size.width;
         log::info!(
@@ -588,7 +590,11 @@ impl Workspace {
         (new_first, total - new_first)
     }
 
-    fn closest_preset_width_index(&self, presets: &[ColumnWidth], current_proportion: f64) -> usize {
+    fn closest_preset_width_index(
+        &self,
+        presets: &[ColumnWidth],
+        current_proportion: f64,
+    ) -> usize {
         let viewport_width = self.view_size.width;
         presets
             .iter()
@@ -596,8 +602,9 @@ impl Workspace {
             .min_by(|(_, left), (_, right)| {
                 let left_distance =
                     (column_width_to_proportion(**left, viewport_width) - current_proportion).abs();
-                let right_distance =
-                    (column_width_to_proportion(**right, viewport_width) - current_proportion).abs();
+                let right_distance = (column_width_to_proportion(**right, viewport_width)
+                    - current_proportion)
+                    .abs();
                 left_distance.partial_cmp(&right_distance).unwrap()
             })
             .map(|(idx, _)| idx)
@@ -614,10 +621,7 @@ fn column_width_to_proportion(width: ColumnWidth, viewport_width: f32) -> f64 {
 
 fn tile_border_positions(col: &Column, col_width: f32, column_height: f32) -> Vec<f32> {
     let rects = col.tile_rects(col_width, column_height);
-    rects
-        .windows(2)
-        .map(|pair| pair[0].1 + pair[0].2)
-        .collect()
+    rects.windows(2).map(|pair| pair[0].1 + pair[0].2).collect()
 }
 
 fn clamped_tile_pair_height(top_height: f32, total_height: f32, delta_y: f32) -> f32 {
@@ -824,6 +828,19 @@ mod tests {
     }
 
     #[test]
+    fn set_column_width_by_index_clears_stale_preset_tracking() {
+        let mut w = ws();
+        w.add_column_right_default(1);
+        w.add_column_right_default(2);
+
+        w.columns[0].preset_width_idx = Some(1);
+        w.set_column_width_by_index(0, ColumnWidth::Proportion(0.68));
+
+        assert_eq!(w.columns[0].preset_width_idx, None);
+        assert!((w.columns[0].proportion(w.view_size.width) - 0.68).abs() < 1e-6);
+    }
+
+    #[test]
     fn hit_test_tile_border_uses_screen_coordinates() {
         let mut w = ws();
         w.add_column_right_default(1);
@@ -835,7 +852,10 @@ mod tests {
             w.hit_test_tile_border(0.0, 250.0, border_y + 1.0, 4.0),
             Some((0, 0))
         );
-        assert_eq!(w.hit_test_tile_border(0.0, 250.0, border_y + 8.0, 4.0), None);
+        assert_eq!(
+            w.hit_test_tile_border(0.0, 250.0, border_y + 8.0, 4.0),
+            None
+        );
     }
 
     #[test]

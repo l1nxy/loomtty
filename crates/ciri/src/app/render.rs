@@ -310,6 +310,9 @@ impl App {
                     h: tr.h,
                     color: [accent[0], accent[1], accent[2], 0.65],
                 });
+
+                // Action bar is rendered in the overlay layer (build_ui)
+                // to avoid being clipped by pane scissor rects.
             }
 
             let Some(view) = self.cached_views.get(pane_id) else {

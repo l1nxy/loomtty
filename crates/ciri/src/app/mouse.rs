@@ -11,11 +11,11 @@ impl App {
         let my = position.y as f32;
         self.last_mouse_pos = Some((mx, my));
 
-        if self.handle_ui_cursor_hover(mx, my) {
+        if self.overview.active && self.overview.dragging {
+            self.handle_overview_cursor_moved(mx, my);
+        } else if self.handle_ui_cursor_hover(mx, my) {
             return;
-        }
-
-        if self.overview.active {
+        } else if self.overview.active {
             self.handle_overview_cursor_moved(mx, my);
         } else {
             self.handle_main_cursor_moved(mx, my);

@@ -33,7 +33,17 @@ impl App {
         event: &winit::event::KeyEvent,
         _event_loop: &ActiveEventLoop,
     ) {
-        if event.state != ElementState::Pressed || self.ime.preedit_active {
+        if self.ime.preedit_active {
+            return;
+        }
+
+        // Handle key release: bare-modifier leader (e.g. Alt) exits leader on release
+        if event.state == ElementState::Released {
+            let key_name = self.resolve_key_name(event, false);
+            if !key_name.is_empty() {
+                self.input.process_key_release(key_name);
+                self.request_redraw();
+            }
             return;
         }
 
@@ -231,7 +241,7 @@ impl App {
         }
     }
 
-    fn send_paste_to_active_pane(&mut self, text: &[u8]) {
+    pub(crate) fn send_paste_to_active_pane(&mut self, text: &[u8]) {
         let Some(pid) = self.workspaces.active_mut().active_pane_id() else {
             return;
         };

@@ -1,5 +1,5 @@
 /// Actions triggered by keybindings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     /// New column to the right in the current workspace.
     NewColumnRight,
@@ -47,12 +47,20 @@ pub enum Action {
     SendLeaderKey,
     ScrollPageUp,
     ScrollPageDown,
+    ScrollHalfPageUp,
+    ScrollHalfPageDown,
+    ScrollLineUp,
+    ScrollLineDown,
     ScrollTop,
     ScrollBottom,
     /// Detach from session (close client, server keeps running).
     Detach,
     /// Toggle the command palette overlay.
     ToggleCommandPalette,
+    /// Enter a named key table (e.g. "resize").
+    EnterMode(String),
+    /// Toggle locked mode (all keys pass through to terminal).
+    ToggleLock,
 }
 
 impl Action {
@@ -79,6 +87,10 @@ impl Action {
                 | Action::EqualizeAdjacentColumns
                 | Action::ScrollPageUp
                 | Action::ScrollPageDown
+                | Action::ScrollHalfPageUp
+                | Action::ScrollHalfPageDown
+                | Action::ScrollLineUp
+                | Action::ScrollLineDown
                 | Action::ScrollTop
                 | Action::ScrollBottom
                 | Action::SwitchWorkspace(_)
@@ -118,16 +130,27 @@ impl Action {
             "send_leader_key" => Some(Action::SendLeaderKey),
             "scroll_page_up" => Some(Action::ScrollPageUp),
             "scroll_page_down" => Some(Action::ScrollPageDown),
+            "scroll_half_page_up" => Some(Action::ScrollHalfPageUp),
+            "scroll_half_page_down" => Some(Action::ScrollHalfPageDown),
+            "scroll_line_up" => Some(Action::ScrollLineUp),
+            "scroll_line_down" => Some(Action::ScrollLineDown),
             "scroll_top" => Some(Action::ScrollTop),
             "scroll_bottom" => Some(Action::ScrollBottom),
             "detach" => Some(Action::Detach),
             "toggle_command_palette" => Some(Action::ToggleCommandPalette),
+            "toggle_lock" => Some(Action::ToggleLock),
             _ => {
                 // Handle switch_workspace_N
                 if let Some(rest) = s.strip_prefix("switch_workspace_")
                     && let Ok(n) = rest.parse::<usize>()
                 {
                     return Some(Action::SwitchWorkspace(n));
+                }
+                // Handle enter_mode:name
+                if let Some(name) = s.strip_prefix("enter_mode:") {
+                    if !name.is_empty() {
+                        return Some(Action::EnterMode(name.to_string()));
+                    }
                 }
                 None
             }
@@ -162,10 +185,15 @@ impl Action {
             (Action::ToggleOverview, "Toggle Overview"),
             (Action::ScrollPageUp, "Scroll Page Up"),
             (Action::ScrollPageDown, "Scroll Page Down"),
+            (Action::ScrollHalfPageUp, "Scroll Half Page Up"),
+            (Action::ScrollHalfPageDown, "Scroll Half Page Down"),
+            (Action::ScrollLineUp, "Scroll Line Up"),
+            (Action::ScrollLineDown, "Scroll Line Down"),
             (Action::ScrollTop, "Scroll to Top"),
             (Action::ScrollBottom, "Scroll to Bottom"),
             (Action::Detach, "Detach"),
             (Action::ToggleCommandPalette, "Toggle Command Palette"),
+            (Action::ToggleLock, "Toggle Lock"),
         ]
     }
 }

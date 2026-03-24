@@ -70,9 +70,14 @@ backend = "auto"
 # Available presets: "one_dark", "catppuccin_mocha", "tokyo_night", "dracula", "nord", "gruvbox_dark"
 # Set preset, then override individual colors below if needed.
 preset = "one_dark"
+foreground = "#FFFFFF"
 
 [keys]
 leader = "ctrl+w"
+
+# Direct bindings: work without leader key (e.g. Ctrl+key to enter modes directly)
+[keys.direct_bindings]
+"ctrl+g" = "toggle_lock"
 
 [keys.bindings]
 n = "new_column_right"
@@ -82,12 +87,15 @@ h = "focus_left"
 l = "focus_right"
 k = "focus_up"
 j = "focus_down"
+"Left" = "focus_left"
+"Right" = "focus_right"
+"Up" = "focus_up"
+"Down" = "focus_down"
 "shift+h" = "move_pane_left"
 "shift+l" = "move_pane_right"
-"[" = "column_width_decrease"
-"]" = "column_width_increase"
-r = "cycle_preset_width"
-"shift+r" = "cycle_preset_width_reverse"
+r = "enter_mode:resize"
+s = "enter_mode:scroll"
+m = "enter_mode:move"
 f = "column_width_full"
 b = "toggle_broadcast"
 c = "consume_into_column"
@@ -95,6 +103,36 @@ e = "expel_from_column"
 o = "toggle_overview"
 tab = "toggle_overview"
 q = "detach"
+p = "toggle_command_palette"
+g = "toggle_lock"
+
+[keys.modes.resize]
+h = "column_width_decrease"
+l = "column_width_increase"
+"[" = "column_width_decrease"
+"]" = "column_width_increase"
+r = "cycle_preset_width"
+"shift+r" = "cycle_preset_width_reverse"
+f = "column_width_full"
+"=" = "equalize_adjacent_columns"
+
+[keys.modes.scroll]
+j = "scroll_line_down"
+k = "scroll_line_up"
+"Down" = "scroll_line_down"
+"Up" = "scroll_line_up"
+d = "scroll_half_page_down"
+u = "scroll_half_page_up"
+f = "scroll_page_down"
+b = "scroll_page_up"
+g = "scroll_top"
+"shift+g" = "scroll_bottom"
+
+[keys.modes.move]
+h = "move_pane_left"
+l = "move_pane_right"
+"Left" = "move_pane_left"
+"Right" = "move_pane_right"
 
 [keys.overview_bindings]
 h = "focus_left"

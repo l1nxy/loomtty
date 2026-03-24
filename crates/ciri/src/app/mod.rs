@@ -1,16 +1,23 @@
 pub(crate) mod event;
+pub(crate) mod context_menu;
 pub(crate) mod ime;
 pub(crate) mod input_handler;
 pub(crate) mod keyboard;
 pub(crate) mod mouse;
 pub(crate) mod paste_guard;
+pub(crate) mod paste_dialog;
 pub(crate) mod notification;
+pub(crate) mod overview;
+pub(crate) mod palette;
 pub(crate) mod render;
+pub(crate) mod resize;
 pub(crate) mod status_bar;
 pub(crate) mod sync;
+pub(crate) mod top_bar;
+pub(crate) mod ui;
 
 use ciri_anim::animation::ViewOffset;
-use ciri_config::config::CiriConfig;
+use ciri_config::config::{CiriConfig, StatusBarPosition};
 use ciri_input::keybind::KeybindMap;
 use ciri_input::leader::InputHandler;
 use ciri_layout::geometry::Rect as GeoRect;
@@ -33,6 +40,7 @@ use ciri_input::action::Action;
 
 use crate::connection::ServerEvent;
 use crate::grid::ClientPaneGrid;
+use std::path::PathBuf;
 
 /// A context menu item.
 #[derive(Debug, Clone)]
@@ -118,7 +126,33 @@ pub(crate) struct CommandPaletteState {
     pub entries: Vec<PaletteEntry>,
     pub filtered: Vec<usize>, // indices into entries
     pub selected_idx: usize,
+    pub hovered_idx: Option<usize>,
     pub sessions_only: bool,
+    pub sessions_show_all: bool,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct CommandPaletteLayout {
+    pub panel_x: f32,
+    pub panel_y: f32,
+    pub panel_w: f32,
+    pub panel_h: f32,
+    pub row_h: f32,
+    pub input_row_h: f32,
+    pub visible_rows: usize,
+    pub entry_count: usize,
+    pub text_x: f32,
+    pub text_y: f32,
+    pub sep_y: f32,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct PaletteToggleLayout {
+    pub bg_x: f32,
+    pub bg_y: f32,
+    pub bg_w: f32,
+    pub bg_h: f32,
+    pub label_x: f32,
 }
 
 pub(crate) struct PaletteEntry {
@@ -130,6 +164,13 @@ pub(crate) enum PaletteEntryKind {
     Action(Action),
     SwitchSession(String),
     KillSession(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TopBarHoverRegion {
+    Session,
+    Mode,
+    LeaderHint,
 }
 
 /// Reusable render buffers (cleared each frame).
@@ -270,6 +311,8 @@ pub(crate) struct App {
     pub cursor_blink_visible: bool,
     pub cursor_blink_timer: Instant,
     pub pane_tab_scroll: f32,
+    pub hovered_top_bar_region: Option<TopBarHoverRegion>,
+    pub hovered_pane_tab: Option<u64>,
     pub workspace_last_pane_ids: HashMap<usize, u64>,
     pub clipboard: Option<arboard::Clipboard>,
     pub selection: Option<Selection>,
@@ -314,6 +357,17 @@ pub(crate) struct RemoteConnectionConfig {
 }
 
 impl App {
+    const COMMAND_PALETTE_MIN_WIDTH: f32 = 300.0;
+    const COMMAND_PALETTE_EDGE_MARGIN: f32 = 20.0;
+    const COMMAND_PALETTE_TOP_RATIO: f32 = 0.15;
+    const COMMAND_PALETTE_MAX_HEIGHT_RATIO: f32 = 0.6;
+    const COMMAND_PALETTE_INPUT_PAD_X: f32 = 8.0;
+    const COMMAND_PALETTE_INPUT_PAD_Y: f32 = 4.0;
+    const COMMAND_PALETTE_BOTTOM_PAD: f32 = 4.0;
+    const COMMAND_PALETTE_TOGGLE_RIGHT_PAD: f32 = 16.0;
+    const COMMAND_PALETTE_TOGGLE_TOP_PAD: f32 = 3.0;
+    const COMMAND_PALETTE_TOGGLE_SIDE_PAD: f32 = 4.0;
+
     pub fn new(config: CiriConfig, session_name: impl Into<String>) -> Self {
         let frame_interval = Duration::from_millis(config.render.frame_interval_ms);
         let initial_view = ViewSize {
@@ -395,6 +449,8 @@ impl App {
             cursor_blink_visible: true,
             cursor_blink_timer: Instant::now(),
             pane_tab_scroll: 0.0,
+            hovered_top_bar_region: None,
+            hovered_pane_tab: None,
             workspace_last_pane_ids: HashMap::new(),
             clipboard: arboard::Clipboard::new().ok(),
             selection: None,
@@ -496,6 +552,87 @@ impl App {
         }
     }
 
+    pub(crate) fn command_palette_viewport_size(&self) -> (f32, f32) {
+        self.renderer
+            .as_ref()
+            .map(|r| {
+                let (w, h) = r.surface_size();
+                (w as f32, h as f32)
+            })
+            .unwrap_or((
+                self.config.window.width as f32,
+                self.config.window.height as f32,
+            ))
+    }
+
+    pub(crate) fn command_palette_layout(&self) -> Option<CommandPaletteLayout> {
+        let palette = self.command_palette.as_ref()?;
+        let (_, vh) = self.command_palette_viewport_size();
+        let (_, ch) = self.cell_dimensions();
+        let (vw, _) = self.command_palette_viewport_size();
+
+        let panel_w = (vw * 0.5)
+            .max(Self::COMMAND_PALETTE_MIN_WIDTH)
+            .min(vw - Self::COMMAND_PALETTE_EDGE_MARGIN);
+        let panel_max_h = vh * Self::COMMAND_PALETTE_MAX_HEIGHT_RATIO;
+        let panel_x = (vw - panel_w) / 2.0;
+        let panel_y = vh * Self::COMMAND_PALETTE_TOP_RATIO;
+        let row_h = ch + 4.0;
+        let input_row_h = ch + 8.0;
+        let visible_rows = ((panel_max_h - input_row_h) / row_h).floor().max(1.0) as usize;
+        let entry_count = palette.filtered.len().min(visible_rows);
+        let panel_h = input_row_h + entry_count as f32 * row_h + Self::COMMAND_PALETTE_BOTTOM_PAD;
+        let text_x = panel_x + Self::COMMAND_PALETTE_INPUT_PAD_X;
+        let text_y = panel_y + Self::COMMAND_PALETTE_INPUT_PAD_Y;
+        let sep_y = panel_y + input_row_h;
+
+        Some(CommandPaletteLayout {
+            panel_x,
+            panel_y,
+            panel_w,
+            panel_h,
+            row_h,
+            input_row_h,
+            visible_rows,
+            entry_count,
+            text_x,
+            text_y,
+            sep_y,
+        })
+    }
+
+    pub(crate) fn command_palette_toggle_layout(
+        &self,
+        layout: CommandPaletteLayout,
+    ) -> Option<PaletteToggleLayout> {
+        let palette = self.command_palette.as_ref()?;
+        if !palette.sessions_only {
+            return None;
+        }
+
+        let (cw, ch) = self.cell_dimensions();
+        let active_label_w = " ACTIVE ".len() as f32 * cw;
+        let label = if palette.sessions_show_all {
+            " ALL "
+        } else {
+            " ACTIVE "
+        };
+        let label_w = label.len() as f32 * cw;
+        let bg_w = active_label_w + Self::COMMAND_PALETTE_TOGGLE_SIDE_PAD * 2.0;
+        let bg_x = layout.panel_x + layout.panel_w - bg_w - Self::COMMAND_PALETTE_TOGGLE_RIGHT_PAD;
+        let bg_y = layout.panel_y + Self::COMMAND_PALETTE_TOGGLE_TOP_PAD;
+        let label_x =
+            bg_x + Self::COMMAND_PALETTE_TOGGLE_SIDE_PAD + (active_label_w - label_w) * 0.5;
+
+        Some(PaletteToggleLayout {
+            bg_x,
+            bg_y,
+            bg_w,
+            bg_h: ch + 6.0,
+            label_x,
+        })
+    }
+
     pub fn compute_grid_size(&self) -> (u16, u16) {
         if let Some(cache) = &self.glyph_cache {
             let pad = self.total_inset();
@@ -525,6 +662,30 @@ impl App {
         cell_h + padding
     }
 
+    pub fn status_bar_y(&self, window_height: f32) -> f32 {
+        match self.config.statusbar.position {
+            StatusBarPosition::Top => 0.0,
+            StatusBarPosition::Bottom => window_height - self.status_bar_height(),
+        }
+    }
+
+    pub fn content_origin_y(&self) -> f32 {
+        match self.config.statusbar.position {
+            StatusBarPosition::Top => self.status_bar_height(),
+            StatusBarPosition::Bottom => 0.0,
+        }
+    }
+
+    pub fn content_y_from_screen(&self, screen_y: f32) -> Option<f32> {
+        match self.config.statusbar.position {
+            StatusBarPosition::Top => {
+                let y = screen_y - self.status_bar_height();
+                (y >= 0.0).then_some(y)
+            }
+            StatusBarPosition::Bottom => Some(screen_y),
+        }
+    }
+
     pub fn remember_workspace_pane(&mut self, workspace_idx: usize, pane_id: u64) {
         self.workspace_last_pane_ids.insert(workspace_idx, pane_id);
     }
@@ -550,6 +711,18 @@ impl App {
                 self.workspace_last_pane_ids.insert(ws_idx, pane_id);
             }
         }
+    }
+
+    pub fn write_last_session(&self) {
+        let path = Self::last_session_path();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(path, &self.session_name);
+    }
+
+    fn last_session_path() -> PathBuf {
+        ciri_protocol::transport::state_dir().join("last-session")
     }
 
     /// Invalidate all cached rendering state for a pane (view + glyph cache).

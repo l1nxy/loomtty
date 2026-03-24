@@ -1,6 +1,7 @@
 use anyhow::Result;
 use ciri_config::config::config_path;
 use dialoguer::{Input, Select, theme::ColorfulTheme};
+use std::process::Command;
 
 pub fn run_init() -> Result<()> {
     let path = config_path();
@@ -71,22 +72,31 @@ pub fn run_init() -> Result<()> {
         .interact()?;
     let theme = themes[theme_idx];
 
-    // 4. Shell (auto-detect default)
-    let default_shell = detect_shell();
-    let shell: String = Input::with_theme(&ColorfulTheme::default())
-        .with_prompt("Shell")
-        .default(default_shell)
-        .interact_text()?;
+    // 4. Status bar position
+    let statusbar_position_idx = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt("Status bar position")
+        .items(&["Top", "Bottom"])
+        .default(0)
+        .interact()?;
+    let statusbar_position = if statusbar_position_idx == 0 {
+        "top"
+    } else {
+        "bottom"
+    };
 
-    // 5. Font
-    let font: String = Input::with_theme(&ColorfulTheme::default())
-        .with_prompt("Font family (leave empty for monospace default)")
-        .default(String::new())
-        .allow_empty(true)
-        .interact_text()?;
+    // 5. Shell and font (auto-detect)
+    let default_shell = detect_shell();
+    let default_font = detect_font_family();
 
     // Generate config
-    let config = generate_config(mode, &leader, theme, &shell, &font);
+    let config = generate_config(
+        mode,
+        &leader,
+        theme,
+        statusbar_position,
+        &default_shell,
+        &default_font,
+    );
 
     // Write
     if let Some(parent) = path.parent() {
@@ -95,6 +105,10 @@ pub fn run_init() -> Result<()> {
     std::fs::write(&path, &config)?;
 
     println!("\n  Config written to {}", path.display());
+    println!("  Summary:");
+    println!("    detected shell: {}", default_shell);
+    println!("    detected font: {}", default_font);
+    println!("    status bar: {}", statusbar_position);
     println!("  Run `ciri` to start!\n");
 
     Ok(())
@@ -115,7 +129,6 @@ fn detect_shell() -> String {
     // Windows: probe PATH for common shells
     #[cfg(windows)]
     {
-        use std::process::Command;
         for candidate in &["nu.exe", "pwsh.exe", "powershell.exe"] {
             if Command::new("where")
                 .arg(candidate)
@@ -136,6 +149,36 @@ fn detect_shell() -> String {
     }
 }
 
+fn detect_font_family() -> String {
+    #[cfg(unix)]
+    {
+        if let Ok(output) = Command::new("fc-match")
+            .args(["monospace", "--format=%{family[0]}"])
+            .output()
+            && output.status.success()
+        {
+            let family = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !family.is_empty() {
+                return family;
+            }
+        }
+        "monospace".to_string()
+    }
+
+    #[cfg(windows)]
+    {
+        for candidate in ["Cascadia Mono", "Cascadia Code", "Consolas"] {
+            return candidate.to_string();
+        }
+        "Consolas".to_string()
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        "monospace".to_string()
+    }
+}
+
 /// Escape a string for safe embedding in a TOML double-quoted value.
 fn escape_toml_string(s: &str) -> String {
     s.replace('\\', "\\\\")
@@ -145,9 +188,15 @@ fn escape_toml_string(s: &str) -> String {
         .replace('\t', "\\t")
 }
 
-fn generate_config(mode: &str, leader: &str, theme: &str, shell: &str, font: &str) -> String {
-    let font_family = if font.is_empty() { "monospace" } else { font };
-    let font_family = escape_toml_string(font_family);
+fn generate_config(
+    mode: &str,
+    leader: &str,
+    theme: &str,
+    statusbar_position: &str,
+    shell: &str,
+    font: &str,
+) -> String {
+    let font_family = escape_toml_string(font);
     let shell = escape_toml_string(shell);
     let leader = escape_toml_string(leader);
 
@@ -165,6 +214,9 @@ border_width = 2.0
 
 [terminal]
 shell = "{shell}"
+
+[statusbar]
+position = "{statusbar_position}"
 
 [input]
 mode = "{mode}"

@@ -271,42 +271,44 @@ impl App {
                     .hovered_pane
                     .is_some_and(|(_, hovered_pane_id)| hovered_pane_id == *pane_id)
             {
-                bg_rects.push(Rect {
-                    x: tr.x + border_w * zoom,
-                    y: tr.y + border_w * zoom,
-                    w: tr.w - border_w * zoom * 2.0,
-                    h: tr.h - border_w * zoom * 2.0,
-                    color: [accent[0], accent[1], accent[2], 0.10],
-                });
-
                 let hover_border_w = (border_w * zoom).max(1.0);
+                for layer in (1..=2).rev() {
+                    let spread = layer as f32 * 2.0 * zoom.max(1.0);
+                    bg_rects.push(Rect {
+                        x: tr.x - spread,
+                        y: tr.y - spread,
+                        w: tr.w + spread * 2.0,
+                        h: tr.h + spread * 2.0,
+                        color: [accent[0], accent[1], accent[2], 0.08 / layer as f32],
+                    });
+                }
                 bg_rects.push(Rect {
                     x: tr.x,
                     y: tr.y,
                     w: tr.w,
                     h: hover_border_w,
-                    color: [accent[0], accent[1], accent[2], 0.55],
+                    color: [accent[0], accent[1], accent[2], 0.65],
                 });
                 bg_rects.push(Rect {
                     x: tr.x,
                     y: tr.y + tr.h - hover_border_w,
                     w: tr.w,
                     h: hover_border_w,
-                    color: [accent[0], accent[1], accent[2], 0.55],
+                    color: [accent[0], accent[1], accent[2], 0.65],
                 });
                 bg_rects.push(Rect {
                     x: tr.x,
                     y: tr.y,
                     w: hover_border_w,
                     h: tr.h,
-                    color: [accent[0], accent[1], accent[2], 0.55],
+                    color: [accent[0], accent[1], accent[2], 0.65],
                 });
                 bg_rects.push(Rect {
                     x: tr.x + tr.w - hover_border_w,
                     y: tr.y,
                     w: hover_border_w,
                     h: tr.h,
-                    color: [accent[0], accent[1], accent[2], 0.55],
+                    color: [accent[0], accent[1], accent[2], 0.65],
                 });
             }
 
@@ -704,192 +706,6 @@ impl App {
         );
     }
 
-    pub fn build_command_palette(
-        &mut self,
-        vw: f32,
-        vh: f32,
-        bg_rects: &mut Vec<Rect>,
-        glyphs: &mut Vec<GlyphInstance>,
-    ) {
-        let Some(palette) = &self.command_palette else {
-            return;
-        };
-        let atlas = self.glyph_cache.as_mut().unwrap();
-
-        let cw = atlas.cell_width;
-        let ch = atlas.cell_height;
-        let baseline = ch * self.config.statusbar.text_baseline;
-
-        // Semi-transparent dark backdrop over entire viewport
-        bg_rects.push(Rect {
-            x: 0.0,
-            y: 0.0,
-            w: vw,
-            h: vh,
-            color: [0.0, 0.0, 0.0, 0.5],
-        });
-
-        // Panel dimensions: ~50% width, up to 60% height, centered
-        let panel_w = (vw * 0.5).max(300.0).min(vw - 20.0);
-        let panel_max_h = vh * 0.6;
-        let panel_x = (vw - panel_w) / 2.0;
-        let panel_y = vh * 0.15; // positioned toward the top
-
-        let row_h = ch + 4.0;
-        let input_row_h = ch + 8.0;
-        let visible_rows = ((panel_max_h - input_row_h) / row_h).floor().max(1.0) as usize;
-        let entry_count = palette.filtered.len().min(visible_rows);
-        let panel_h = input_row_h + entry_count as f32 * row_h + 4.0;
-
-        let bg_color = ThemeConfig::parse_color(&self.config.theme.background);
-        let accent = ThemeConfig::parse_color(&self.config.theme.accent);
-        let border_color = ThemeConfig::parse_color(&self.config.theme.border_active);
-
-        // Panel border
-        let bw = 2.0;
-        bg_rects.push(Rect {
-            x: panel_x - bw,
-            y: panel_y - bw,
-            w: panel_w + bw * 2.0,
-            h: panel_h + bw * 2.0,
-            color: border_color,
-        });
-
-        // Panel background
-        bg_rects.push(Rect {
-            x: panel_x,
-            y: panel_y,
-            w: panel_w,
-            h: panel_h,
-            color: bg_color,
-        });
-
-        // Input row background (slightly different shade)
-        bg_rects.push(Rect {
-            x: panel_x,
-            y: panel_y,
-            w: panel_w,
-            h: input_row_h,
-            color: [bg_color[0] + 0.05, bg_color[1] + 0.05, bg_color[2] + 0.05, 1.0],
-        });
-
-        // Input text: "> query"
-        let input_text = format!("> {}", palette.query);
-        let text_color = [1.0, 1.0, 1.0, 1.0];
-        let text_x = panel_x + 8.0;
-        let text_y = panel_y + 4.0;
-        emit_status_text(
-            atlas,
-            &input_text,
-            text_x,
-            text_y,
-            cw,
-            baseline,
-            text_color,
-            glyphs,
-        );
-
-        // Cursor after query text
-        let cursor_x = text_x + input_text.len() as f32 * cw;
-        bg_rects.push(Rect {
-            x: cursor_x,
-            y: text_y,
-            w: 2.0,
-            h: ch,
-            color: [1.0, 1.0, 1.0, 0.8],
-        });
-
-        // Separator line between input and entries
-        let sep_y = panel_y + input_row_h;
-        bg_rects.push(Rect {
-            x: panel_x,
-            y: sep_y - 1.0,
-            w: panel_w,
-            h: 1.0,
-            color: border_color,
-        });
-
-        // Render filtered entries
-        let dim_color = ThemeConfig::parse_color(&self.config.theme.statusbar_dim);
-        let selected_bg = [accent[0], accent[1], accent[2], 0.25];
-
-        // Ensure selected_idx is visible by computing a scroll window
-        let scroll_offset = if palette.selected_idx >= visible_rows {
-            palette.selected_idx - visible_rows + 1
-        } else {
-            0
-        };
-
-        for (vis_row, filt_idx) in palette.filtered.iter()
-            .skip(scroll_offset)
-            .take(visible_rows)
-            .enumerate()
-        {
-            let entry = &palette.entries[*filt_idx];
-            let row_y = sep_y + vis_row as f32 * row_h;
-            let is_selected = scroll_offset + vis_row == palette.selected_idx;
-
-            // Highlight selected row
-            if is_selected {
-                bg_rects.push(Rect {
-                    x: panel_x,
-                    y: row_y,
-                    w: panel_w,
-                    h: row_h,
-                    color: selected_bg,
-                });
-            }
-
-            let label_color = if is_selected { text_color } else { dim_color };
-
-            // Entry kind prefix
-            let prefix = match &entry.kind {
-                super::PaletteEntryKind::Action(_) => "",
-                super::PaletteEntryKind::SwitchSession(_) => "",
-                super::PaletteEntryKind::KillSession(_) => "",
-            };
-            let label = if prefix.is_empty() {
-                entry.label.clone()
-            } else {
-                format!("{}{}", prefix, entry.label)
-            };
-
-            // Truncate label to panel width
-            let max_chars = ((panel_w - 16.0) / cw).floor().max(1.0) as usize;
-            let display = if label.len() > max_chars {
-                format!("{}...", &label[..max_chars.saturating_sub(3)])
-            } else {
-                label
-            };
-
-            emit_status_text(
-                atlas,
-                &display,
-                text_x,
-                row_y + 2.0,
-                cw,
-                baseline,
-                label_color,
-                glyphs,
-            );
-        }
-
-        // "No matches" message
-        if palette.filtered.is_empty() && !palette.query.is_empty() {
-            let msg = "No matching commands";
-            emit_status_text(
-                atlas,
-                msg,
-                text_x,
-                sep_y + 4.0,
-                cw,
-                baseline,
-                dim_color,
-                glyphs,
-            );
-        }
-    }
-
     pub fn build_bell_flash(
         &mut self,
         tiles: &[(u64, GeoRect, bool)],
@@ -1129,214 +945,6 @@ impl App {
                 );
             }
         }
-    }
-
-    pub fn build_context_menu(
-        &mut self,
-        vw: f32,
-        vh: f32,
-        bg_rects: &mut Vec<Rect>,
-        glyphs: &mut Vec<GlyphInstance>,
-    ) {
-        if !self.context_menu.visible {
-            return;
-        }
-
-        let atlas = self.glyph_cache.as_mut().unwrap();
-
-        let (_, ch) = (atlas.cell_width, atlas.cell_height);
-        let cw = atlas.cell_width;
-        let item_height = ch * 1.5;
-        let padding = 8.0;
-        let menu_width = 200.0;
-        let menu_height =
-            self.context_menu.items.len() as f32 * item_height + padding * 2.0;
-
-        // Clamp to screen bounds
-        let mx = self.context_menu.x.min(vw - menu_width);
-        let my = self.context_menu.y.min(vh - menu_height);
-
-        // Shadow (slightly offset, more transparent)
-        let shadow_offset = 3.0;
-        bg_rects.push(Rect {
-            x: mx + shadow_offset,
-            y: my + shadow_offset,
-            w: menu_width,
-            h: menu_height,
-            color: [0.0, 0.0, 0.0, 0.4],
-        });
-
-        // Menu background
-        let menu_bg = ThemeConfig::parse_color(&self.config.theme.background);
-        let bg_color = [
-            menu_bg[0] * 0.9,
-            menu_bg[1] * 0.9,
-            menu_bg[2] * 0.9,
-            1.0,
-        ];
-        bg_rects.push(Rect {
-            x: mx,
-            y: my,
-            w: menu_width,
-            h: menu_height,
-            color: bg_color,
-        });
-
-        // Border
-        let border_color = ThemeConfig::parse_color(&self.config.theme.border_active);
-        let bw = 1.0;
-        // Top
-        bg_rects.push(Rect { x: mx, y: my, w: menu_width, h: bw, color: border_color });
-        // Bottom
-        bg_rects.push(Rect { x: mx, y: my + menu_height - bw, w: menu_width, h: bw, color: border_color });
-        // Left
-        bg_rects.push(Rect { x: mx, y: my, w: bw, h: menu_height, color: border_color });
-        // Right
-        bg_rects.push(Rect { x: mx + menu_width - bw, y: my, w: bw, h: menu_height, color: border_color });
-
-        let accent = ThemeConfig::parse_color(&self.config.theme.accent);
-        let fg_color = [1.0f32, 1.0, 1.0, 1.0];
-        let dim_color = [0.5f32, 0.5, 0.5, 0.6];
-        let baseline = ch * self.config.statusbar.text_baseline;
-
-        for (i, item) in self.context_menu.items.iter().enumerate() {
-            let iy = my + padding + i as f32 * item_height;
-
-            // Hover highlight
-            if Some(i) == self.context_menu.hovered_index && item.enabled {
-                let hover_color = [accent[0], accent[1], accent[2], 0.25];
-                bg_rects.push(Rect {
-                    x: mx + bw,
-                    y: iy,
-                    w: menu_width - bw * 2.0,
-                    h: item_height,
-                    color: hover_color,
-                });
-            }
-
-            // Text color: dim for disabled items, normal for enabled
-            let color = if item.enabled { fg_color } else { dim_color };
-            let text_y = iy + (item_height - ch) * 0.5;
-
-            emit_status_text(
-                atlas,
-                &item.label,
-                mx + padding,
-                text_y,
-                cw,
-                baseline,
-                color,
-                glyphs,
-            );
-        }
-    }
-
-    pub fn build_paste_confirmation(
-        &mut self,
-        vw: f32,
-        vh: f32,
-        bg_rects: &mut Vec<Rect>,
-        glyphs: &mut Vec<GlyphInstance>,
-    ) {
-        let Some(ref pending) = self.pending_paste else {
-            return;
-        };
-        let atlas = self.glyph_cache.as_mut().unwrap();
-
-        let cw = atlas.cell_width;
-        let ch = atlas.cell_height;
-        let baseline = ch * self.config.statusbar.text_baseline;
-
-        // Dialog dimensions: 60% width, 40% height, centered
-        let dialog_w = vw * 0.6;
-        let dialog_h = vh * 0.4;
-        let dx = (vw - dialog_w) / 2.0;
-        let dy = (vh - dialog_h) / 2.0;
-
-        // Semi-transparent full-screen overlay
-        bg_rects.push(Rect {
-            x: 0.0, y: 0.0, w: vw, h: vh,
-            color: [0.0, 0.0, 0.0, 0.5],
-        });
-
-        // Dialog background
-        bg_rects.push(Rect {
-            x: dx, y: dy, w: dialog_w, h: dialog_h,
-            color: [0.12, 0.12, 0.15, 1.0],
-        });
-
-        // Border
-        let border = 1.0;
-        let border_color = ThemeConfig::parse_color(&self.config.theme.border_active);
-        bg_rects.push(Rect { x: dx, y: dy, w: dialog_w, h: border, color: border_color });
-        bg_rects.push(Rect { x: dx, y: dy + dialog_h - border, w: dialog_w, h: border, color: border_color });
-        bg_rects.push(Rect { x: dx, y: dy, w: border, h: dialog_h, color: border_color });
-        bg_rects.push(Rect { x: dx + dialog_w - border, y: dy, w: border, h: dialog_h, color: border_color });
-
-        let text_x = dx + 16.0;
-        let mut text_y = dy + 16.0;
-
-        // Title
-        let fg_color = [0.9, 0.9, 0.9, 1.0];
-        let size_str = super::paste_guard::format_size(pending.info.size);
-        let title = format!(
-            "Are you sure you want to paste {} ({} lines)?",
-            size_str, pending.info.line_count
-        );
-        emit_status_text(atlas, &title, text_x, text_y, cw, baseline, fg_color, glyphs);
-        text_y += ch + 12.0;
-
-        // Preview label
-        let dim_color = [0.6, 0.6, 0.6, 1.0];
-        emit_status_text(atlas, "Preview:", text_x, text_y, cw, baseline, dim_color, glyphs);
-        text_y += ch + 4.0;
-
-        // Preview content
-        let max_chars = ((dialog_w - 32.0) / cw) as usize;
-        let preview = &pending.preview;
-        let preview_display = if preview.len() > max_chars {
-            format!("{}...", &preview[..preview.floor_char_boundary(max_chars.saturating_sub(3))])
-        } else {
-            preview.clone()
-        };
-
-        bg_rects.push(Rect {
-            x: text_x - 4.0, y: text_y - 2.0,
-            w: dialog_w - 24.0, h: ch + 4.0,
-            color: [0.08, 0.08, 0.1, 1.0],
-        });
-        emit_status_text(atlas, &preview_display, text_x, text_y, cw, baseline, dim_color, glyphs);
-
-        // Buttons — layout must match paste_dialog_button_rects() in mouse.rs
-        let accent = ThemeConfig::parse_color(&self.config.theme.accent);
-        let btn_w = 100.0;
-        let btn_h = ch + 12.0;
-        let btn_y = dy + dialog_h - 16.0 - btn_h;
-        let paste_x = dx + dialog_w / 2.0 - btn_w - 16.0;
-        let cancel_x = dx + dialog_w / 2.0 + 16.0;
-        let hovered = pending.hovered_button;
-
-        // Paste button
-        let paste_bg = if hovered == Some(super::PasteButton::Paste) {
-            [accent[0], accent[1], accent[2], 0.8]
-        } else {
-            [accent[0], accent[1], accent[2], 0.5]
-        };
-        bg_rects.push(Rect { x: paste_x, y: btn_y, w: btn_w, h: btn_h, color: paste_bg });
-        let label_x = paste_x + (btn_w - cw * 5.0) / 2.0;
-        let label_y = btn_y + (btn_h - ch) / 2.0;
-        emit_status_text(atlas, "Paste", label_x, label_y, cw, baseline, [1.0, 1.0, 1.0, 1.0], glyphs);
-
-        // Cancel button
-        let cancel_bg = if hovered == Some(super::PasteButton::Cancel) {
-            [0.4, 0.4, 0.4, 0.8]
-        } else {
-            [0.3, 0.3, 0.3, 0.5]
-        };
-        bg_rects.push(Rect { x: cancel_x, y: btn_y, w: btn_w, h: btn_h, color: cancel_bg });
-        let label_x = cancel_x + (btn_w - cw * 6.0) / 2.0;
-        let label_y = btn_y + (btn_h - ch) / 2.0;
-        emit_status_text(atlas, "Cancel", label_x, label_y, cw, baseline, [0.9, 0.9, 0.9, 1.0], glyphs);
     }
 
     pub fn render(&mut self) {
@@ -1611,7 +1219,7 @@ impl App {
             }
         }
 
-        let content_y = self.status_bar_height();
+        let content_y = self.content_origin_y();
         let offset_tiles: Vec<(u64, GeoRect, bool)> = tiles
             .iter()
             .map(|(pane_id, rect, is_active)| {
@@ -1648,14 +1256,11 @@ impl App {
         let pane_glyph_end = glyphs.len();
         let pane_color_glyph_end = color_glyphs.len();
         let overlay_bg_start = bg_rects.len();
-        self.build_status_bar(vw_f, vh_f, &mut bg_rects, &mut glyphs);
+        self.build_ui(vw_f, vh_f, &mut bg_rects, &mut glyphs);
         self.build_search_bar(&offset_tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs);
         self.build_bell_flash(&offset_tiles, zoom, vw_f, vh_f, &mut bg_rects);
         self.build_ime_preedit(&offset_tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs);
         self.build_image_placements(&offset_tiles, zoom, vw_f, vh_f, &mut bg_rects, &mut glyphs);
-        self.build_command_palette(vw_f, vh_f, &mut bg_rects, &mut glyphs);
-        self.build_paste_confirmation(vw_f, vh_f, &mut bg_rects, &mut glyphs);
-        self.build_context_menu(vw_f, vh_f, &mut bg_rects, &mut glyphs);
 
         let clear_color = if self.overview.active || zoom < zoom_threshold {
             ThemeConfig::parse_color(&self.config.theme.overview_background)

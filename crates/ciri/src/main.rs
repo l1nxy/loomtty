@@ -11,6 +11,7 @@ use clap::Parser;
 use ciri_config::config::CiriConfig;
 use ciri_protocol::message::ClientMessage;
 use cli::CliCommand;
+use std::path::PathBuf;
 use winit::event_loop::EventLoop;
 
 fn main() -> Result<()> {
@@ -119,6 +120,7 @@ fn main() -> Result<()> {
             port,
             session_name
         );
+        write_last_session(&session_name);
 
         let event_loop = EventLoop::new()?;
         let mut app = App::new(config, session_name);
@@ -134,18 +136,28 @@ fn main() -> Result<()> {
     // Resolve session name
     let session_name = match cli {
         CliCommand::Default => {
-            // No subcommand: auto-attach to most recent active session, or create new.
-            let active = control::query_active_sessions();
-            if let Some(name) = active.first() {
-                log::info!("attaching to most recent session: {name}");
-                name.clone()
-            } else {
-                let existing =
-                    ciri_session::restore::list_sessions(&ciri_protocol::transport::state_dir())
-                        .unwrap_or_default();
-                let name = ciri_session::names::unique_name(&existing);
-                log::info!("creating new session: {name}");
+            // No subcommand: prefer the last locally used session, then fall back
+            // to the most recent active session, then create a new one.
+            let state_dir = ciri_protocol::transport::state_dir();
+            let saved =
+                ciri_session::restore::list_sessions(&state_dir).unwrap_or_default();
+            if let Some(name) = read_last_session()
+                .filter(|name| {
+                    saved.iter().any(|n| n == name) || control::session_exists_on_server(name)
+                })
+            {
+                log::info!("attaching to last local session: {name}");
                 name
+            } else {
+                let active = control::query_active_sessions();
+                if let Some(name) = active.first() {
+                    log::info!("attaching to most recent session: {name}");
+                    name.clone()
+                } else {
+                    let name = ciri_session::names::unique_name(&saved);
+                    log::info!("creating new session: {name}");
+                    name
+                }
             }
         }
         CliCommand::New => {
@@ -202,9 +214,32 @@ fn main() -> Result<()> {
         config.font.size,
         session_name
     );
+    write_last_session(&session_name);
 
     let event_loop = EventLoop::new()?;
     let mut app = App::new(config, session_name);
     event_loop.run_app(&mut app)?;
     Ok(())
+}
+
+fn last_session_path() -> PathBuf {
+    ciri_protocol::transport::state_dir().join("last-session")
+}
+
+fn read_last_session() -> Option<String> {
+    let path = last_session_path();
+    let name = std::fs::read_to_string(path).ok()?.trim().to_string();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+fn write_last_session(session_name: &str) {
+    let path = last_session_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, session_name);
 }

@@ -47,13 +47,14 @@ pub(crate) enum UiAction {
     ConfirmPaste,
     CancelPaste,
     FocusOverviewPane(usize, u64),
+    CloseOverviewPane(u64),
     StartOverviewDrag,
 }
 
 pub(crate) enum UiTopBarHit {
     Session,
+    Workspace,
     Mode,
-    LeaderHint,
     PaneTab(u64),
     Background,
 }
@@ -80,6 +81,8 @@ pub(crate) enum UiPasteDialogHit {
 
 pub(crate) enum UiOverviewHit {
     Pane(usize, u64),
+    ClosePane(u64),
+    FocusPane(usize, u64),
     Background,
     None,
 }
@@ -87,7 +90,7 @@ pub(crate) enum UiOverviewHit {
 struct TopBarComponent {
     layout: TopBarLayout,
     session_text: String,
-    hints: String,
+    workspace_label: String,
     mode_label: String,
     mode_color: [f32; 4],
     pane_tabs: Vec<PaneTabLayout>,
@@ -149,6 +152,104 @@ struct OverviewComponent {
     hovered_pane: Option<(usize, u64)>,
 }
 
+struct OverviewActionBarData {
+    pane_x: f32,
+    pane_w: f32,
+    bar_y: f32,
+    bar_h: f32,
+    close_x: f32,
+    close_w: f32,
+    focus_x: f32,
+    focus_w: f32,
+}
+
+struct HintsBarComponent {
+    bar_y: f32,
+    bar_h: f32,
+    segments: Vec<(String, bool)>, // (text, is_key) — keys use accent, labels use dim
+}
+
+struct InfoBoxComponent {
+    title: String,
+    rows: Vec<(String, String)>, // (key_display, description)
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+}
+
+fn action_short_label(action: &str) -> &str {
+    match action {
+        "focus_left" => "focus left",
+        "focus_right" => "focus right",
+        "focus_up" => "focus up",
+        "focus_down" => "focus down",
+        "move_pane_left" => "move left",
+        "move_pane_right" => "move right",
+        "new_column_right" => "new pane",
+        "new_row_below" | "new_workspace_below" | "split_down" => "split down",
+        "close_pane" => "close pane",
+        "column_width_decrease" => "width -",
+        "column_width_increase" => "width +",
+        "column_width_full" => "full width",
+        "cycle_preset_width" => "cycle width",
+        "cycle_preset_width_reverse" => "cycle reverse",
+        "equalize_adjacent_columns" => "equalize",
+        "consume_into_column" => "stack",
+        "expel_from_column" => "unstack",
+        "toggle_broadcast" => "broadcast",
+        "toggle_overview" => "overview",
+        "exit_overview" => "exit overview",
+        "toggle_command_palette" => "palette",
+        "toggle_lock" => "lock",
+        "detach" => "detach",
+        "scroll_line_up" => "line up",
+        "scroll_line_down" => "line down",
+        "scroll_half_page_up" => "half page up",
+        "scroll_half_page_down" => "half page down",
+        "scroll_page_up" => "page up",
+        "scroll_page_down" => "page down",
+        "scroll_top" => "top",
+        "scroll_bottom" => "bottom",
+        s if s.starts_with("enter_mode:") => s.strip_prefix("enter_mode:").unwrap_or(s),
+        s if s.starts_with("switch_workspace_") => s.strip_prefix("switch_workspace_").unwrap_or(s),
+        other => other,
+    }
+}
+
+/// Build infobox rows from a bindings map. Merges keys that share the same action.
+fn build_infobox_rows(bindings: &std::collections::HashMap<String, String>) -> Vec<(String, String)> {
+    use std::collections::HashMap;
+    // Group keys by action
+    let mut action_to_keys: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (key, action) in bindings {
+        action_to_keys
+            .entry(action.as_str())
+            .or_default()
+            .push(key.as_str());
+    }
+    for keys in action_to_keys.values_mut() {
+        keys.sort_by_key(|k| k.len());
+    }
+    // Sort deterministically: by shortest key length, then alphabetically
+    let mut entries: Vec<_> = action_to_keys.into_iter().collect();
+    entries.sort_by(|(_, a_keys), (_, b_keys)| {
+        a_keys[0].len().cmp(&b_keys[0].len()).then(a_keys[0].cmp(&b_keys[0]))
+    });
+
+    entries
+        .into_iter()
+        .map(|(action, keys)| {
+            let key_display = if keys.len() <= 2 {
+                keys.join("/")
+            } else {
+                keys[..2].join("/")
+            };
+            (key_display, action_short_label(action).to_string())
+        })
+        .collect()
+}
+
 impl App {
     pub(crate) fn build_ui(
         &mut self,
@@ -176,9 +277,17 @@ impl App {
         };
 
         let top_bar = TopBarComponent::capture(self, top_bar_layout, &cx);
+        let hints_bar = HintsBarComponent::capture(self, &cx);
         let palette = PaletteComponent::capture(self, &cx);
         let context_menu = ContextMenuComponent::capture(self, &cx);
         let paste_dialog = PasteDialogComponent::capture(self, &cx);
+        let infobox = InfoBoxComponent::capture(self, &cx);
+        let overview_bar = if self.overview.active && self.overview.hovered_pane.is_some() {
+            self.overview_action_bar_data(&cx)
+        } else {
+            None
+        };
+        let overview_hover = self.overview_action_hover;
 
         let atlas = self.glyph_cache.as_mut().unwrap();
         let mut scene = UiScene {
@@ -188,6 +297,13 @@ impl App {
         };
 
         top_bar.paint(&cx, &mut scene);
+        hints_bar.paint(&cx, &mut scene);
+        if let Some(d) = &overview_bar {
+            Self::paint_overview_action_bar_from_data(d, overview_hover, &cx, &mut scene);
+        }
+        if let Some(component) = infobox {
+            component.paint(&cx, &mut scene);
+        }
         if let Some(component) = palette {
             component.paint(&cx, &mut scene);
         }
@@ -197,6 +313,99 @@ impl App {
         if let Some(component) = context_menu {
             component.paint(&cx, &mut scene);
         }
+    }
+
+    fn overview_action_bar_data(&self, cx: &UiContext<'_>) -> Option<OverviewActionBarData> {
+        let (_, hovered_id) = self.overview.hovered_pane?;
+        let zoom = self.overview.zoom.value() as f32;
+        let vox = self.view_offset_x.value() as f32;
+        let voy = self.view_offset_y.value() as f32;
+        let tiles = self.workspaces.all_tiles_2d(vox, voy);
+        let (vw, vh) = self.command_palette_viewport_size();
+        let center_x = vw / 2.0;
+        let center_y = vh / 2.0;
+        let zoom_threshold = self.config.animation.zoom_threshold;
+        for (pane_id, tile_rect, _) in &tiles {
+            if *pane_id != hovered_id { continue; }
+            let tr = if zoom < zoom_threshold {
+                ciri_layout::geometry::Rect::new(
+                    center_x + (tile_rect.x - center_x) * zoom,
+                    center_y + (tile_rect.y - center_y) * zoom,
+                    tile_rect.w * zoom,
+                    tile_rect.h * zoom,
+                )
+            } else {
+                *tile_rect
+            };
+            // Need at least enough width for both labels
+            let min_w = cx.cell_w * 14.0; // ~7 chars per button minimum
+            if tr.w < min_w {
+                return None;
+            }
+            let bar_h = (cx.cell_h * 2.0).max(28.0);
+            let bar_y = tr.y + tr.h - bar_h;
+            // 50/50 split
+            let half_w = tr.w / 2.0;
+            return Some(OverviewActionBarData {
+                pane_x: tr.x, pane_w: tr.w,
+                bar_y, bar_h,
+                close_x: tr.x, close_w: half_w,
+                focus_x: tr.x + half_w, focus_w: half_w,
+            });
+        }
+        None
+    }
+
+    fn paint_overview_action_bar_from_data(
+        d: &OverviewActionBarData,
+        hover: Option<super::OverviewActionHover>,
+        cx: &UiContext<'_>,
+        scene: &mut UiScene<'_>,
+    ) {
+        let accent = ciri_config::theme::ThemeConfig::parse_color(&cx.config.theme.accent);
+        let text_y = d.bar_y + (d.bar_h - cx.cell_h) * 0.5;
+
+        // Bar background
+        scene.bg_rects.push(Rect {
+            x: d.pane_x, y: d.bar_y, w: d.pane_w, h: d.bar_h,
+            color: [0.0, 0.0, 0.0, 0.8],
+        });
+        // Divider
+        scene.bg_rects.push(Rect {
+            x: d.focus_x, y: d.bar_y + 2.0, w: 1.0, h: d.bar_h - 4.0,
+            color: [1.0, 1.0, 1.0, 0.15],
+        });
+
+        let close_label = "\u{2715} Close";
+        let focus_label = "Focus";
+        let close_text_w = close_label.chars().count() as f32 * cx.cell_w;
+        let focus_text_w = focus_label.chars().count() as f32 * cx.cell_w;
+
+        // Close button — center text in left half
+        if hover == Some(super::OverviewActionHover::Close) {
+            scene.bg_rects.push(Rect {
+                x: d.close_x, y: d.bar_y, w: d.close_w, h: d.bar_h,
+                color: [0.9, 0.2, 0.2, 0.5],
+            });
+        }
+        let close_text_x = d.close_x + (d.close_w - close_text_w) * 0.5;
+        emit_status_text(
+            scene.atlas, close_label, close_text_x, text_y,
+            cx.cell_w, cx.baseline, [1.0, 0.6, 0.6, 1.0], scene.glyphs,
+        );
+
+        // Focus button — center text in right half
+        if hover == Some(super::OverviewActionHover::Focus) {
+            scene.bg_rects.push(Rect {
+                x: d.focus_x, y: d.bar_y, w: d.focus_w, h: d.bar_h,
+                color: [accent[0], accent[1], accent[2], 0.35],
+            });
+        }
+        let focus_text_x = d.focus_x + (d.focus_w - focus_text_w) * 0.5;
+        emit_status_text(
+            scene.atlas, focus_label, focus_text_x, text_y,
+            cx.cell_w, cx.baseline, [1.0, 1.0, 1.0, 0.9], scene.glyphs,
+        );
     }
 
     fn ui_context(&self) -> UiContext<'_> {
@@ -226,8 +435,8 @@ impl App {
         );
         match component.hit_test(mx, my, &cx) {
             Some(UiTopBarHit::Session) => (Some(TopBarHoverRegion::Session), None),
+            Some(UiTopBarHit::Workspace) => (Some(TopBarHoverRegion::Workspace), None),
             Some(UiTopBarHit::Mode) => (Some(TopBarHoverRegion::Mode), None),
-            Some(UiTopBarHit::LeaderHint) => (Some(TopBarHoverRegion::LeaderHint), None),
             Some(UiTopBarHit::PaneTab(pane_id)) => (None, Some(pane_id)),
             Some(UiTopBarHit::Background) | None => (None, None),
         }
@@ -242,8 +451,8 @@ impl App {
         );
         match component.hit_test(mx, my, &cx) {
             Some(UiTopBarHit::Session) => Some(UiAction::OpenSessionPalette),
+            Some(UiTopBarHit::Workspace) => Some(UiAction::CycleWorkspace),
             Some(UiTopBarHit::Mode) => Some(UiAction::ToggleOverview),
-            Some(UiTopBarHit::LeaderHint) => Some(UiAction::CycleWorkspace),
             Some(UiTopBarHit::PaneTab(pane_id)) => Some(UiAction::FocusPaneTab(pane_id)),
             Some(UiTopBarHit::Background) | None => None,
         }
@@ -330,11 +539,20 @@ impl App {
         }
     }
 
-    pub(crate) fn ui_overview_hover(&self, mx: f32, my: f32) -> Option<(usize, u64)> {
+    pub(crate) fn ui_overview_hover(&mut self, mx: f32, my: f32) -> Option<(usize, u64)> {
         let cx = self.ui_context();
         let component = OverviewComponent::capture(self, &cx);
-        match component.hit_test(self, mx, my) {
-            UiOverviewHit::Pane(ws_idx, pane_id) => Some((ws_idx, pane_id)),
+        // Also update action hover state for the action bar highlight
+        let hit = component.hit_test(self, mx, my);
+        self.overview_action_hover = match &hit {
+            UiOverviewHit::ClosePane(_) => Some(super::OverviewActionHover::Close),
+            UiOverviewHit::FocusPane(_, _) => Some(super::OverviewActionHover::Focus),
+            _ => None,
+        };
+        match hit {
+            UiOverviewHit::Pane(ws_idx, pane_id)
+            | UiOverviewHit::FocusPane(ws_idx, pane_id) => Some((ws_idx, pane_id)),
+            UiOverviewHit::ClosePane(_) => self.overview.hovered_pane,
             UiOverviewHit::Background | UiOverviewHit::None => None,
         }
     }
@@ -344,6 +562,8 @@ impl App {
         let component = OverviewComponent::capture(self, &cx);
         match component.hit_test(self, mx, my) {
             UiOverviewHit::Pane(ws_idx, pane_id) => Some(UiAction::FocusOverviewPane(ws_idx, pane_id)),
+            UiOverviewHit::FocusPane(ws_idx, pane_id) => Some(UiAction::FocusOverviewPane(ws_idx, pane_id)),
+            UiOverviewHit::ClosePane(pane_id) => Some(UiAction::CloseOverviewPane(pane_id)),
             UiOverviewHit::Background => Some(UiAction::StartOverviewDrag),
             UiOverviewHit::None => None,
         }
@@ -460,6 +680,10 @@ impl App {
             UiAction::FocusOverviewPane(ws_idx, pane_id) => {
                 self.focus_overview_target(ws_idx, pane_id);
             }
+            UiAction::CloseOverviewPane(pane_id) => {
+                self.overview.hovered_pane = None;
+                self.send(ciri_protocol::message::ClientMessage::ClosePane { pane_id });
+            }
             UiAction::StartOverviewDrag => {
                 self.overview.dragging = true;
                 self.overview.drag_last_pos = self.last_mouse_pos;
@@ -547,13 +771,13 @@ impl App {
 impl TopBarComponent {
     fn capture(app: &App, layout: TopBarLayout, cx: &UiContext<'_>) -> Self {
         let (mode_label, mode_color) = app.current_mode_label();
-        let hints = app.statusbar_hints();
+        let workspace_label = app.workspace_indicator_label();
         let pane_tabs = app.pane_tab_layouts(cx.cell_w, layout.tabs_area_px);
         Self {
             layout,
             session_text: format!(" {}  ", app.session_name),
-            hints,
-            mode_label: mode_label.to_string(),
+            workspace_label,
+            mode_label,
             mode_color,
             pane_tabs,
             hovered_region: app.hovered_top_bar_region,
@@ -573,19 +797,15 @@ impl TopBarComponent {
         if mx >= self.layout.session_x && mx <= self.layout.session_x + self.layout.session_w {
             return Some(UiTopBarHit::Session);
         }
+        if self.layout.workspace_w > 0.0
+            && mx >= self.layout.workspace_x
+            && mx <= self.layout.workspace_x + self.layout.workspace_w
+        {
+            return Some(UiTopBarHit::Workspace);
+        }
         if mx >= self.layout.mode_x && mx <= self.layout.mode_x + self.layout.mode_w {
             return Some(UiTopBarHit::Mode);
         }
-        if !self.is_broadcast
-            && !self.is_overview
-            && !self.is_leader
-            && self.layout.hints_w > 0.0
-            && mx >= self.layout.hints_x
-            && mx <= self.layout.hints_x + self.layout.hints_w
-        {
-            return Some(UiTopBarHit::LeaderHint);
-        }
-
         let tabs_start_x = self.layout.session_x + self.layout.session_w;
         let tabs_end_x = tabs_start_x + self.layout.tabs_area_px;
         for tab in &self.pane_tabs {
@@ -622,26 +842,35 @@ impl UiComponent for TopBarComponent {
             color: bar_bg,
         });
 
-        if self.hovered_region == Some(TopBarHoverRegion::Session) {
-            scene.bg_rects.push(Rect {
-                x: self.layout.session_x,
-                y: self.layout.bar_y,
-                w: self.layout.session_w,
-                h: bar_height,
-                color: [accent[0], accent[1], accent[2], 0.10],
-            });
-        }
-
+        // Session pill
+        let session_hover = self.hovered_region == Some(TopBarHoverRegion::Session);
+        scene.bg_rects.push(Rect {
+            x: self.layout.session_x,
+            y: self.layout.bar_y,
+            w: self.layout.session_w,
+            h: bar_height,
+            color: [dim[0], dim[1], dim[2], if session_hover { 0.18 } else { 0.08 }],
+        });
         emit_status_text(
-            scene.atlas,
-            &self.session_text,
-            0.0,
-            text_y,
-            cx.cell_w,
-            cx.baseline,
-            dim,
-            scene.glyphs,
+            scene.atlas, &self.session_text, 0.0, text_y,
+            cx.cell_w, cx.baseline, dim, scene.glyphs,
         );
+
+        // Workspace indicator pill (right side, before mode)
+        if !self.workspace_label.is_empty() {
+            let ws_hover = self.hovered_region == Some(TopBarHoverRegion::Workspace);
+            scene.bg_rects.push(Rect {
+                x: self.layout.workspace_x,
+                y: self.layout.bar_y,
+                w: self.layout.workspace_w,
+                h: bar_height,
+                color: [accent[0], accent[1], accent[2], if ws_hover { 0.22 } else { 0.12 }],
+            });
+            emit_status_text(
+                scene.atlas, &self.workspace_label, self.layout.workspace_x, text_y,
+                cx.cell_w, cx.baseline, accent, scene.glyphs,
+            );
+        }
 
         let tabs_start_x = self.layout.session_x + self.layout.session_w;
         let tabs_end_x = tabs_start_x + self.layout.tabs_area_px;
@@ -714,16 +943,6 @@ impl UiComponent for TopBarComponent {
             }
         }
 
-        if self.hovered_region == Some(TopBarHoverRegion::LeaderHint) && self.layout.hints_w > 0.0 {
-            scene.bg_rects.push(Rect {
-                x: self.layout.hints_x - cx.cell_w * 0.5,
-                y: self.layout.bar_y,
-                w: self.layout.hints_w + cx.cell_w,
-                h: bar_height,
-                color: [accent[0], accent[1], accent[2], 0.10],
-            });
-        }
-
         let mut pill_bg = self.mode_color;
         pill_bg[3] = if self.hovered_region == Some(TopBarHoverRegion::Mode) {
             0.24
@@ -738,19 +957,11 @@ impl UiComponent for TopBarComponent {
             color: pill_bg,
         });
 
-        let right_segments = [
-            (self.hints.as_str(), dim),
-            ("  ", dim),
-            (self.mode_label.as_str(), self.mode_color),
-        ];
-        let right_chars: usize = right_segments.iter().map(|(s, _)| s.len()).sum();
-        let available = (cx.viewport_w / cx.cell_w) as usize;
-        let right_text_chars = right_chars.min(available);
-        let mut rx = cx.viewport_w - right_text_chars as f32 * cx.cell_w;
-        for (text, color) in right_segments {
-            emit_status_text(scene.atlas, text, rx, text_y, cx.cell_w, cx.baseline, color, scene.glyphs);
-            rx += text.len() as f32 * cx.cell_w;
-        }
+        // Mode label (right-aligned)
+        let mode_str = self.mode_label.as_str();
+        let mode_chars = mode_str.chars().count();
+        let rx = cx.viewport_w - mode_chars as f32 * cx.cell_w;
+        emit_status_text(scene.atlas, mode_str, rx, text_y, cx.cell_w, cx.baseline, self.mode_color, scene.glyphs);
 
         if self.is_leader || self.is_broadcast || self.is_overview {
             let indicator_h = cx.cell_h * cx.config.statusbar.leader_indicator_ratio;
@@ -1130,6 +1341,204 @@ impl UiComponent for ContextMenuComponent {
     }
 }
 
+impl InfoBoxComponent {
+    fn capture(app: &App, cx: &UiContext<'_>) -> Option<Self> {
+        // Only show when in a named mode or prefix leader's AwaitingAction
+        let (title, bindings) = if let Some(mode_name) = app.input.current_mode_name() {
+            let bindings = app.config.keys.modes.get(mode_name)?;
+            (mode_name.to_uppercase(), bindings.clone())
+        } else if app.input.is_awaiting_action() {
+            ("LEADER".to_string(), app.config.keys.bindings.clone())
+        } else {
+            return None;
+        };
+
+        // Don't show infobox when palette or paste dialog is active
+        if app.command_palette.is_some() || app.pending_paste.is_some() {
+            return None;
+        }
+
+        let mut rows = build_infobox_rows(&bindings);
+        rows.push(("esc".to_string(), "exit".to_string()));
+
+        let padding = cx.cell_w;
+        let row_h = cx.cell_h * 1.3;
+        let key_col_chars = rows.iter().map(|(k, _)| k.chars().count()).max().unwrap_or(0);
+        let val_col_chars = rows.iter().map(|(_, v)| v.chars().count()).max().unwrap_or(0);
+        let title_chars = title.chars().count() + 4; // " TITLE " + border padding
+        let content_chars = key_col_chars + 3 + val_col_chars; // key + "   " + val
+        let box_chars = content_chars.max(title_chars);
+        let w = box_chars as f32 * cx.cell_w + padding * 2.0;
+        let h = rows.len() as f32 * row_h + padding * 2.0 + cx.cell_h; // extra row for title
+
+        // Position: bottom-right, above the hints bar
+        let hints_bar_h = app.hints_bar_height();
+        let status_bar_h = app.status_bar_height();
+        let margin = 8.0;
+        let x = cx.viewport_w - w - margin;
+        let bottom_chrome = match cx.config.statusbar.position {
+            StatusBarPosition::Top => hints_bar_h,
+            StatusBarPosition::Bottom => status_bar_h + hints_bar_h,
+        };
+        let y = cx.viewport_h - h - bottom_chrome - margin;
+
+        Some(Self { title, rows, x, y, w, h })
+    }
+
+    fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        let bg = ThemeConfig::parse_color(&cx.config.theme.background);
+        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
+        let fg = [1.0f32, 1.0, 1.0, 0.9];
+        let dim = [1.0f32, 1.0, 1.0, 0.5];
+        let padding = cx.cell_w;
+        let row_h = cx.cell_h * 1.3;
+        let bw = 1.0f32;
+
+        // Shadow
+        scene.bg_rects.push(Rect {
+            x: self.x + 3.0, y: self.y + 3.0, w: self.w, h: self.h,
+            color: [0.0, 0.0, 0.0, 0.4],
+        });
+        // Background
+        scene.bg_rects.push(Rect {
+            x: self.x, y: self.y, w: self.w, h: self.h,
+            color: [bg[0] * 0.85, bg[1] * 0.85, bg[2] * 0.85, 0.97],
+        });
+        // Border
+        scene.bg_rects.push(Rect { x: self.x, y: self.y, w: self.w, h: bw, color: accent });
+        scene.bg_rects.push(Rect { x: self.x, y: self.y + self.h - bw, w: self.w, h: bw, color: accent });
+        scene.bg_rects.push(Rect { x: self.x, y: self.y, w: bw, h: self.h, color: accent });
+        scene.bg_rects.push(Rect { x: self.x + self.w - bw, y: self.y, w: bw, h: self.h, color: accent });
+
+        // Title bar background
+        let title_h = cx.cell_h + 2.0;
+        scene.bg_rects.push(Rect {
+            x: self.x + bw, y: self.y + bw, w: self.w - bw * 2.0, h: title_h,
+            color: [accent[0], accent[1], accent[2], 0.2],
+        });
+
+        // Title text
+        let title_text = format!(" {} ", self.title);
+        let title_y = self.y + bw + (title_h - cx.cell_h) * 0.5;
+        emit_status_text(
+            scene.atlas, &title_text, self.x + padding, title_y,
+            cx.cell_w, cx.baseline, accent, scene.glyphs,
+        );
+
+        // Key column width
+        let key_col_chars = self.rows.iter().map(|(k, _)| k.chars().count()).max().unwrap_or(0);
+
+        // Rows
+        let content_y = self.y + bw + title_h + 4.0;
+        for (i, (key, desc)) in self.rows.iter().enumerate() {
+            let ry = content_y + i as f32 * row_h;
+            let text_y = ry + (row_h - cx.cell_h) * 0.5;
+
+            // Key (accent color, right-aligned within key column)
+            let key_chars = key.chars().count();
+            let key_offset = (key_col_chars - key_chars) as f32 * cx.cell_w;
+            emit_status_text(
+                scene.atlas, key, self.x + padding + key_offset, text_y,
+                cx.cell_w, cx.baseline, accent, scene.glyphs,
+            );
+
+            // Description (dim color)
+            let desc_x = self.x + padding + (key_col_chars as f32 + 2.0) * cx.cell_w;
+            emit_status_text(
+                scene.atlas, desc, desc_x, text_y,
+                cx.cell_w, cx.baseline,
+                if key == "esc" { dim } else { fg },
+                scene.glyphs,
+            );
+        }
+    }
+}
+
+impl HintsBarComponent {
+    fn capture(app: &App, cx: &UiContext<'_>) -> Self {
+        let bar_h = app.hints_bar_height();
+        let bar_y = app.hints_bar_y(cx.viewport_h);
+
+        // Build segments: alternating [key, separator, label, separator, ...]
+        let bindings = if app.input.is_locked() {
+            // Locked: just show unlock
+            let mut m = std::collections::HashMap::new();
+            // Find unlock key from direct_bindings or leader bindings
+            for (k, v) in &app.config.keys.direct_bindings {
+                if v == "toggle_lock" { m.insert(k.clone(), v.clone()); }
+            }
+            if m.is_empty() {
+                for (k, v) in &app.config.keys.bindings {
+                    if v == "toggle_lock" { m.insert(k.clone(), v.clone()); }
+                }
+            }
+            m
+        } else if let Some(mode_name) = app.input.current_mode_name() {
+            app.config.keys.modes.get(mode_name).cloned().unwrap_or_default()
+        } else if app.input.is_awaiting_action() {
+            app.config.keys.bindings.clone()
+        } else {
+            // Normal/Idle: show direct bindings (the promoted Alt+key ones)
+            // Merge leader bindings + direct_bindings for display
+            let mut merged = app.config.keys.bindings.clone();
+            for (k, v) in &app.config.keys.direct_bindings {
+                merged.insert(k.clone(), v.clone());
+            }
+            merged
+        };
+
+        let rows = build_infobox_rows(&bindings);
+        let mut segments = Vec::new();
+        for (i, (key, desc)) in rows.iter().enumerate() {
+            if i > 0 {
+                segments.push(("  ".to_string(), false));
+            }
+            segments.push((key.clone(), true));
+            segments.push((format!(" {}", desc), false));
+        }
+        // Add esc:exit for modes
+        if app.input.current_mode_name().is_some() || app.input.is_awaiting_action() {
+            segments.push(("  ".to_string(), false));
+            segments.push(("esc".to_string(), true));
+            segments.push((" exit".to_string(), false));
+        }
+
+        Self { bar_y, bar_h, segments }
+    }
+
+    fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        let bg = ThemeConfig::parse_color(&cx.config.theme.background);
+        let bar_bg = [bg[0] * 0.85, bg[1] * 0.85, bg[2] * 0.85, 1.0];
+        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
+        let dim = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
+
+        // Bar background
+        scene.bg_rects.push(Rect {
+            x: 0.0, y: self.bar_y, w: cx.viewport_w, h: self.bar_h,
+            color: bar_bg,
+        });
+
+        // Render segments left-to-right, truncating at viewport edge
+        let text_y = self.bar_y + (self.bar_h - cx.cell_h) * 0.5;
+        let padding = cx.cell_w;
+        let mut x = padding;
+        let max_x = cx.viewport_w - padding;
+        for (text, is_key) in &self.segments {
+            let char_count = text.chars().count();
+            let text_w = char_count as f32 * cx.cell_w;
+            if x + text_w > max_x {
+                break; // Don't overflow
+            }
+            let color = if *is_key { accent } else { dim };
+            emit_status_text(
+                scene.atlas, text, x, text_y,
+                cx.cell_w, cx.baseline, color, scene.glyphs,
+            );
+            x += text_w;
+        }
+    }
+}
+
 impl PasteDialogComponent {
     fn capture(app: &App, cx: &UiContext<'_>) -> Option<Self> {
         let pending = app.pending_paste.as_ref()?;
@@ -1186,6 +1595,18 @@ impl PasteDialogComponent {
     }
 }
 
+/// Action bar button rects: (close_x, close_w, focus_x, focus_w, bar_y, bar_h)
+struct OverviewActionBar {
+    close_x: f32,
+    close_w: f32,
+    focus_x: f32,
+    focus_w: f32,
+    bar_y: f32,
+    bar_h: f32,
+    pane_x: f32,
+    pane_w: f32,
+}
+
 impl OverviewComponent {
     fn capture(app: &App, _cx: &UiContext<'_>) -> Self {
         Self {
@@ -1197,12 +1618,75 @@ impl OverviewComponent {
         if !app.overview.active {
             return UiOverviewHit::None;
         }
+        // Check action bar on hovered pane first
+        if let Some((ws_idx, hovered_id)) = self.hovered_pane {
+            if let Some(bar) = self.action_bar_layout(app) {
+                if mx >= bar.pane_x
+                    && mx <= bar.pane_x + bar.pane_w
+                    && my >= bar.bar_y
+                    && my <= bar.bar_y + bar.bar_h
+                {
+                    if mx >= bar.close_x && mx < bar.close_x + bar.close_w {
+                        return UiOverviewHit::ClosePane(hovered_id);
+                    }
+                    if mx >= bar.focus_x && mx < bar.focus_x + bar.focus_w {
+                        return UiOverviewHit::FocusPane(ws_idx, hovered_id);
+                    }
+                    // Clicked on bar but not a button — don't fall through to pane click
+                    return UiOverviewHit::Background;
+                }
+            }
+        }
         if let Some((ws_idx, pane_id)) = app.hit_test_overview(mx, my) {
             UiOverviewHit::Pane(ws_idx, pane_id)
         } else {
-            let _ = self.hovered_pane;
             UiOverviewHit::Background
         }
+    }
+
+    fn action_bar_layout(&self, app: &App) -> Option<OverviewActionBar> {
+        let (_, hovered_id) = self.hovered_pane?;
+        let zoom = app.overview.zoom.value() as f32;
+        let vox = app.view_offset_x.value() as f32;
+        let voy = app.view_offset_y.value() as f32;
+        let tiles = app.workspaces.all_tiles_2d(vox, voy);
+        let (vw, vh) = app.command_palette_viewport_size();
+        let center_x = vw / 2.0;
+        let center_y = vh / 2.0;
+        let zoom_threshold = app.config.animation.zoom_threshold;
+        let cell_w = app.glyph_cache.as_ref().map(|c| c.cell_width).unwrap_or(8.0);
+        let cell_h = app.glyph_cache.as_ref().map(|c| c.cell_height).unwrap_or(16.0);
+
+        for (pane_id, tile_rect, _) in &tiles {
+            if *pane_id != hovered_id {
+                continue;
+            }
+            let tr = if zoom < zoom_threshold {
+                ciri_layout::geometry::Rect::new(
+                    center_x + (tile_rect.x - center_x) * zoom,
+                    center_y + (tile_rect.y - center_y) * zoom,
+                    tile_rect.w * zoom,
+                    tile_rect.h * zoom,
+                )
+            } else {
+                *tile_rect
+            };
+            let min_w = cell_w * 14.0;
+            if tr.w < min_w {
+                return None;
+            }
+            let bar_h = (cell_h * 2.0).max(28.0);
+            let bar_y = tr.y + tr.h - bar_h;
+            let half_w = tr.w / 2.0;
+
+            return Some(OverviewActionBar {
+                close_x: tr.x, close_w: half_w,
+                focus_x: tr.x + half_w, focus_w: half_w,
+                bar_y, bar_h,
+                pane_x: tr.x, pane_w: tr.w,
+            });
+        }
+        None
     }
 }
 

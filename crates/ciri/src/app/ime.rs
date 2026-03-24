@@ -10,10 +10,26 @@ impl App {
                 self.ime.preedit_active = false;
                 self.ime.preedit_text.clear();
                 self.ime.preedit_cursor = None;
-                if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
+                let data = text.into_bytes();
+                if self.broadcast_mode {
+                    let vox = self.view_offset_x.value() as f32;
+                    let pids: Vec<u64> = self
+                        .workspaces
+                        .active()
+                        .visible_tiles(vox)
+                        .iter()
+                        .map(|(pid, _, _)| *pid)
+                        .collect();
+                    for pid in pids {
+                        self.send(ClientMessage::Input {
+                            pane_id: pid,
+                            data: data.clone(),
+                        });
+                    }
+                } else if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
                     self.send(ClientMessage::Input {
                         pane_id: pid,
-                        data: text.into_bytes(),
+                        data,
                     });
                 }
                 if let Some(w) = &self.window {

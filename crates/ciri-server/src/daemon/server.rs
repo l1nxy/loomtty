@@ -507,10 +507,10 @@ impl Server {
             ClientMessage::AdjustColumnSplitAt { column_idx, delta } => {
                 self.with_session(&session_name, |session, clients| {
                     let ws = session.workspaces.active_mut();
-                    let saved_idx = ws.active_column_idx;
-                    ws.active_column_idx = column_idx;
-                    ws.resize_active_with_neighbor(delta);
-                    ws.active_column_idx = saved_idx;
+                    let right_idx = column_idx + 1;
+                    if right_idx < ws.columns.len() {
+                        ws.resize_column_pair(column_idx, right_idx, delta);
+                    }
                     Self::layout_changed(session, clients, &session_name, true, &mut responses);
                 });
             }

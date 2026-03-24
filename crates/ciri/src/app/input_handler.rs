@@ -137,6 +137,30 @@ impl App {
                     .unwrap_or(24);
                 self.scroll_active_down(rows);
             }
+            Action::ScrollHalfPageUp => {
+                let rows = self
+                    .pane_grids
+                    .values()
+                    .next()
+                    .map(|g| (g.rows as usize) / 2)
+                    .unwrap_or(12);
+                self.scroll_active_up(rows.max(1));
+            }
+            Action::ScrollHalfPageDown => {
+                let rows = self
+                    .pane_grids
+                    .values()
+                    .next()
+                    .map(|g| (g.rows as usize) / 2)
+                    .unwrap_or(12);
+                self.scroll_active_down(rows.max(1));
+            }
+            Action::ScrollLineUp => {
+                self.scroll_active_up(1);
+            }
+            Action::ScrollLineDown => {
+                self.scroll_active_down(1);
+            }
             Action::ScrollTop => {
                 if let Some(pid) = self.workspaces.active().active_pane_id() {
                     if let Some(grid) = self.pane_grids.get_mut(&pid) {
@@ -158,6 +182,12 @@ impl App {
                 } else {
                     self.open_command_palette();
                 }
+            }
+            Action::EnterMode(_) => {
+                // State transition handled by InputHandler::process_key
+            }
+            Action::ToggleLock => {
+                self.input.toggle_lock();
             }
         }
     }

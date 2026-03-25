@@ -166,10 +166,10 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                         for (&pane_id, acc) in client.damage.iter_mut() {
                             if !acc.is_empty() {
                                 // DEC 2026: defer sending while pane is in sync mode
-                                if let Some(pane) = session.panes.get(&pane_id) {
-                                    if pane.is_sync_output() {
-                                        continue;
-                                    }
+                                if let Some(pane) = session.panes.get(&pane_id)
+                                    && pane.is_sync_output()
+                                {
+                                    continue;
                                 }
                                 pending.push((cid, pane_id, acc.take()));
                             }
@@ -286,7 +286,7 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
             // Yield to the executor so writer tasks can flush pending
             // ServerShutdown frames to their sockets before we tear down.
             tokio::time::sleep(Duration::from_millis(50)).await;
-            let _ = std::fs::remove_file(&transport::server_socket_path());
+            let _ = std::fs::remove_file(transport::server_socket_path());
             tick_shutdown.notify_one();
             return;
         }

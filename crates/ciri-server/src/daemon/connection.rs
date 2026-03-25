@@ -33,7 +33,7 @@ pub(crate) async fn graceful_shutdown(state: &Arc<Mutex<Server>>) {
         }
     }
     drop(s);
-    let _ = std::fs::remove_file(&transport::server_socket_path());
+    let _ = std::fs::remove_file(transport::server_socket_path());
 }
 
 /// Ensures client is removed from server state. Safe to call multiple times.
@@ -240,12 +240,9 @@ pub(crate) async fn handle_client<R, W>(
                             ServerResponse::SendFullPaneSync(cid, sync) => {
                                 if let (Some(client), Some(frame)) =
                                     (s.clients.get(&cid), codec::frame_full_pane_sync(&sync))
+                                    && let Err(e) = client.tx.try_send(Bytes::from(frame))
                                 {
-                                    if let Err(e) = client.tx.try_send(Bytes::from(frame)) {
-                                        log::warn!(
-                                            "failed to send full pane sync to client {cid}: {e}"
-                                        );
-                                    }
+                                    log::warn!("failed to send full pane sync to client {cid}: {e}");
                                 }
                             }
                             ServerResponse::RemoveClient(cid) => {
@@ -279,7 +276,7 @@ pub(crate) async fn handle_client<R, W>(
     .await;
 
     // Cleanup always runs
-    let _ = reader_result;
+    let () = reader_result;
     cleanup_client(&state, client_id).await;
     write_handle.abort();
 }

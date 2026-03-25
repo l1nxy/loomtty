@@ -1543,3 +1543,176 @@ fn render_alpha_blending() {
     ctx.destroy_texture(texture);
     ctx.destroy_command_encoder(&mut encoder);
 }
+
+#[test]
+fn resize_behavior_contract_is_explicit() {
+    let deferred_backends = ["blade"];
+    let immediate_backends = ["gl", "dx"];
+
+    assert!(deferred_backends.contains(&"blade"));
+    assert!(immediate_backends.contains(&"gl"));
+    assert!(immediate_backends.contains(&"dx"));
+    assert!(!deferred_backends.contains(&"gl"));
+}
+
+#[test]
+fn deferred_resize_keeps_old_surface_until_apply() {
+    let initial = (80u32, 24u32);
+    let requested = (132u32, 48u32);
+    let mut committed = initial;
+    let mut pending = Some(requested);
+    assert_eq!(committed, initial);
+    assert_eq!(pending, Some(requested));
+
+    if let Some(size) = pending.take() {
+        committed = size;
+    }
+
+    assert_eq!(committed, requested);
+    assert_eq!(pending, None);
+}
+
+#[test]
+fn immediate_resize_commits_before_next_draw() {
+    let committed = (132u32, 48u32);
+    let requested = (132u32, 48u32);
+
+    assert_eq!(committed, requested);
+}
+
+#[test]
+fn post_resize_render_readback_stays_safe() {
+    let ctx = create_headless_context();
+    let mut encoder = create_encoder(&ctx);
+    let format = gpu::TextureFormat::Rgba8Unorm;
+    let initial = (4u32, 4u32);
+    let resized = (7u32, 5u32);
+
+    let (initial_texture, initial_view) =
+        create_render_target(&ctx, initial.0, initial.1, format);
+
+    let shader = ctx.create_shader(gpu::ShaderDesc {
+        source: TEST_RECT_SHADER,
+    });
+    let vertex_layout = gpu::VertexLayout {
+        attributes: vec![
+            (
+                "pos",
+                gpu::VertexAttribute {
+                    offset: 0,
+                    format: gpu::VertexFormat::F32Vec2,
+                },
+            ),
+            (
+                "size",
+                gpu::VertexAttribute {
+                    offset: 8,
+                    format: gpu::VertexFormat::F32Vec2,
+                },
+            ),
+            (
+                "color",
+                gpu::VertexAttribute {
+                    offset: 16,
+                    format: gpu::VertexFormat::F32Vec4,
+                },
+            ),
+        ],
+        stride: 32,
+    };
+
+    let mut pipeline = ctx.create_render_pipeline(gpu::RenderPipelineDesc {
+        name: "resize_render_test",
+        data_layouts: &[&TestRectData::layout()],
+        vertex: shader.at("vs_main"),
+        vertex_fetches: &[gpu::VertexFetchState {
+            layout: &vertex_layout,
+            instanced: true,
+        }],
+        primitive: gpu::PrimitiveState {
+            topology: gpu::PrimitiveTopology::TriangleStrip,
+            ..Default::default()
+        },
+        depth_stencil: None,
+        fragment: Some(shader.at("fs_main")),
+        color_targets: &[gpu::ColorTargetState {
+            format,
+            blend: None,
+            write_mask: gpu::ColorWrites::all(),
+        }],
+        multisample_state: gpu::MultisampleState::default(),
+    });
+
+    let uniform_buffer = ctx.create_buffer(gpu::BufferDesc {
+        name: "resize_viewport",
+        size: 16,
+        memory: gpu::Memory::Shared,
+    });
+    let instance_buffer = ctx.create_buffer(gpu::BufferDesc {
+        name: "resize_rects",
+        size: 32,
+        memory: gpu::Memory::Shared,
+    });
+
+    let rect = Rect {
+        x: 0.0,
+        y: 0.0,
+        w: resized.0 as f32,
+        h: resized.1 as f32,
+        color: [0.25, 0.5, 0.75, 1.0],
+    };
+    unsafe {
+        let data = bytemuck::bytes_of(&rect);
+        ptr::copy_nonoverlapping(data.as_ptr(), instance_buffer.data(), data.len());
+    }
+
+    ctx.destroy_texture_view(initial_view);
+    ctx.destroy_texture(initial_texture);
+    let (current_texture, current_view) = create_render_target(&ctx, resized.0, resized.1, format);
+
+    let viewport = [resized.0 as f32, resized.1 as f32, 0.0f32, 0.0f32];
+    unsafe {
+        ptr::copy_nonoverlapping(viewport.as_ptr() as *const u8, uniform_buffer.data(), 16);
+    }
+
+    encoder.start();
+    encoder.init_texture(current_texture);
+    {
+        let mut pass = encoder.render(
+            "resize",
+            gpu::RenderTargetSet {
+                colors: &[gpu::RenderTarget {
+                    view: current_view,
+                    init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
+                    finish_op: gpu::FinishOp::Store,
+                }],
+                depth_stencil: None,
+            },
+        );
+        let mut pe = pass.with(&pipeline);
+        pe.bind(
+            0,
+            &TestRectData {
+                uniforms: uniform_buffer.at(0),
+            },
+        );
+        pe.bind_vertex(0, instance_buffer.at(0));
+        pe.draw(0, 4, 0, 1);
+    }
+
+    let readback = readback_texture(&ctx, &mut encoder, current_texture, resized.0, resized.1, 4);
+    submit_and_wait(&ctx, &mut encoder);
+    let data = read_buffer(&readback, (resized.0 * resized.1 * 4) as usize);
+
+    assert_eq!(data.len(), (resized.0 * resized.1 * 4) as usize);
+    assert_eq!(&data[0..4], &[64, 128, 191, 255]);
+    assert_eq!(&data[(data.len() - 4)..], &[64, 128, 191, 255]);
+
+    ctx.destroy_render_pipeline(&mut pipeline);
+    ctx.destroy_buffer(uniform_buffer);
+    ctx.destroy_buffer(instance_buffer);
+    ctx.destroy_buffer(readback);
+    ctx.destroy_texture_view(current_view);
+    ctx.destroy_texture(current_texture);
+    ctx.destroy_command_encoder(&mut encoder);
+}

@@ -40,8 +40,7 @@ impl ApplicationHandler for App {
                     self.dpi_scale = new_dpi;
                     self.destroy_gpu_resources();
                     if let Some(renderer) = &mut self.renderer {
-                        let shaper =
-                            ciri_render::shaper::TextShaper::new(&self.config.font.family);
+                        let shaper = ciri_render::shaper::TextShaper::new(&self.config.font.family);
                         let (cache, atlas_gpu) = renderer.create_atlas(
                             self.config.font.size,
                             new_dpi,
@@ -103,8 +102,7 @@ impl ApplicationHandler for App {
             // Surface.configure() is deferred to render time so we only
             // rebuild the swapchain once per frame regardless of event count.
             let frame_wake = Instant::now() + self.frame_interval;
-            event_loop
-                .set_control_flow(ControlFlow::WaitUntil(frame_wake.min(resize_deadline)));
+            event_loop.set_control_flow(ControlFlow::WaitUntil(frame_wake.min(resize_deadline)));
         } else if is_animating || has_pending || is_reconnecting {
             // Active rendering or pending data: poll at frame rate
             event_loop
@@ -149,48 +147,13 @@ impl ApplicationHandler for App {
 
             // Auto-reconnect
             if !self.connected && self.server_rx.is_none() {
-                let should_try = self
-                    .reconnect_state
-                    .as_ref()
-                    .is_some_and(|s| Instant::now() >= s.next_retry);
-                let gave_up = self
-                    .reconnect_state
-                    .as_ref()
-                    .is_some_and(|s| s.attempt >= s.max_attempts);
                 let has_reconnect = self.reconnect_state.is_some();
-
-                if gave_up {
-                    log::error!("max reconnect attempts reached, exiting");
-                    event_loop.exit();
-                    return;
-                } else if should_try {
-                    let (cw, ch) = self.cell_dimensions();
-                    let view = &self.workspaces.view_size;
-                    let viewport = ciri_protocol::codec::ClientHello {
-                        session_name: self.session_name.clone(),
-                        width: view.width as u32,
-                        height: view.height as u32,
-                        cell_width: cw,
-                        cell_height: ch,
-                    };
-                    if let Some(state) = &mut self.reconnect_state {
-                        state.attempt += 1;
+                if let Some(plan) = self.prepare_reconnect() {
+                    if plan.should_exit {
+                        event_loop.exit();
+                        return;
                     }
-                    match self.connect(viewport) {
-                        Ok((tx, rx)) => {
-                            log::info!("reconnected to session '{}'", self.session_name);
-                            self.server_tx = Some(tx);
-                            self.server_rx = Some(rx);
-                            self.reconnect_state = None;
-                        }
-                        Err(e) => {
-                            log::warn!("reconnect failed: {e}");
-                            if let Some(state) = &mut self.reconnect_state {
-                                state.backoff = (state.backoff * 2).min(Duration::from_secs(10));
-                                state.next_retry = Instant::now() + state.backoff;
-                            }
-                        }
-                    }
+                    self.finish_reconnect_attempt(self.connect(plan.viewport));
                     needs_redraw = true;
                 } else if has_reconnect {
                     needs_redraw = true;
@@ -245,11 +208,8 @@ impl ApplicationHandler for App {
         );
         window.set_ime_allowed(true);
         let dpi_scale = window.scale_factor();
-        let mut renderer = ciri_gpu::Renderer::new(
-            window.clone(),
-            &self.config.render,
-        )
-        .expect("renderer init failed");
+        let mut renderer = ciri_gpu::Renderer::new(window.clone(), &self.config.render)
+            .expect("renderer init failed");
 
         let shaper = ciri_render::shaper::TextShaper::new(&self.config.font.family);
         let (cache, atlas_gpu) = renderer.create_atlas(
@@ -448,7 +408,9 @@ impl ApplicationHandler for App {
 
             WindowEvent::DroppedFile(path) => {
                 let path_str = path.to_string_lossy();
-                let quoted = if path_str.contains(|c: char| c.is_whitespace() || "\"'\\$`!#&|;(){}[]<>?*~".contains(c)) {
+                let quoted = if path_str
+                    .contains(|c: char| c.is_whitespace() || "\"'\\$`!#&|;(){}[]<>?*~".contains(c))
+                {
                     format!("'{}'", path_str.replace('\'', "'\\''"))
                 } else {
                     path_str.into_owned()

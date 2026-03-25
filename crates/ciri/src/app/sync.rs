@@ -28,148 +28,145 @@ impl App {
         let mut needs_redraw = false;
 
         loop {
-        let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok())
-            .take(BATCH)
-            .collect();
-        let hit_budget = events.len() >= BATCH;
-        if events.is_empty() {
-            break;
-        }
+            let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok())
+                .take(BATCH)
+                .collect();
+            let hit_budget = events.len() >= BATCH;
+            if events.is_empty() {
+                break;
+            }
 
-        for event in events {
-            match event {
-                ServerEvent::Control(ServerMessage::StateSync { layout, pane_ids }) => {
-                    self.apply_layout(&layout);
-                    for &id in &pane_ids {
-                        self.pane_grids.entry(id).or_insert_with(|| {
-                            ClientPaneGrid::new(80, 24, self.config.terminal.scrollback_lines)
-                        });
+            for event in events {
+                match event {
+                    ServerEvent::Control(ServerMessage::StateSync { layout, pane_ids }) => {
+                        self.apply_layout(&layout);
+                        for &id in &pane_ids {
+                            self.pane_grids.entry(id).or_insert_with(|| {
+                                ClientPaneGrid::new(80, 24, self.config.terminal.scrollback_lines)
+                            });
+                        }
+                        self.connected = true;
+                        needs_redraw = true;
                     }
-                    self.connected = true;
-                    needs_redraw = true;
-                }
-                ServerEvent::Control(ServerMessage::LayoutUpdate { layout }) => {
-                    log::trace!(
-                        "LayoutUpdate: {} workspaces, active={}",
-                        layout.workspaces.len(),
-                        layout.active_workspace_idx
-                    );
-                    for (i, ws) in layout.workspaces.iter().enumerate() {
+                    ServerEvent::Control(ServerMessage::LayoutUpdate { layout }) => {
                         log::trace!(
-                            "  ws[{}]: {} columns, active_col={}",
-                            i,
-                            ws.columns.len(),
-                            ws.active_column_idx
+                            "LayoutUpdate: {} workspaces, active={}",
+                            layout.workspaces.len(),
+                            layout.active_workspace_idx
                         );
-                        for (j, col) in ws.columns.iter().enumerate() {
+                        for (i, ws) in layout.workspaces.iter().enumerate() {
                             log::trace!(
-                                "    col[{}]: width={:.3}, {} tiles",
-                                j,
-                                col.width_proportion,
-                                col.tiles.len()
+                                "  ws[{}]: {} columns, active_col={}",
+                                i,
+                                ws.columns.len(),
+                                ws.active_column_idx
+                            );
+                            for (j, col) in ws.columns.iter().enumerate() {
+                                log::trace!(
+                                    "    col[{}]: width={:.3}, {} tiles",
+                                    j,
+                                    col.width_proportion,
+                                    col.tiles.len()
+                                );
+                            }
+                        }
+                        self.apply_layout(&layout);
+                        // Cancel any active tile drag — layout indices may have changed
+                        self.drag.tile_dragging = None;
+                        needs_redraw = true;
+                    }
+                    ServerEvent::Control(ServerMessage::PaneCreated {
+                        pane_id,
+                        cols,
+                        rows,
+                        ..
+                    }) => {
+                        log::debug!("PaneCreated: pane_id={pane_id} {cols}x{rows}");
+                        self.pane_grids.entry(pane_id).or_insert_with(|| {
+                            ClientPaneGrid::new(cols, rows, self.config.terminal.scrollback_lines)
+                        });
+                        self.pane_anims.open_opacity.insert(pane_id, 0.0); // start fade-in
+                        if !matches!(
+                            self.config.animation.pane_open_style,
+                            ciri_config::config::PaneOpenStyle::Fade
+                        ) {
+                            self.pane_anims.open_slides.insert(pane_id, 1.0);
+                        }
+                        needs_redraw = true;
+                    }
+                    ServerEvent::Control(ServerMessage::PaneClosed { pane_id }) => {
+                        log::debug!("PaneClosed: pane_id={pane_id}");
+                        // Capture pane rect for close animation before removing
+                        let vox = self.view_offset_x.value() as f32;
+                        let voy = self.view_offset_y.value() as f32;
+                        let tiles = self.workspaces.visible_tiles_2d(vox, voy);
+                        if let Some((_, rect, _)) = tiles.iter().find(|(pid, _, _)| *pid == pane_id)
+                        {
+                            self.pane_anims.closing.push(super::ClosingPaneState {
+                                rect: *rect,
+                                opacity: 1.0,
+                                started: std::time::Instant::now(),
+                                duration_ms: 200,
+                            });
+                        }
+                        self.pane_grids.remove(&pane_id);
+                        self.invalidate_pane_cache(pane_id);
+                        self.pane_anims.open_opacity.remove(&pane_id);
+                        needs_redraw = true;
+                    }
+                    ServerEvent::Control(ServerMessage::ServerShutdown) => {
+                        log::info!("server shut down, exiting");
+                        self.should_exit = true;
+                        break;
+                    }
+                    ServerEvent::Control(ServerMessage::ClipboardStore { data }) => {
+                        // OSC 52: TUI app wrote to clipboard via server
+                        if let Some(cb) = &mut self.clipboard {
+                            if let Err(e) = cb.set_text(&data) {
+                                log::warn!("OSC 52 clipboard write failed: {e}");
+                            } else {
+                                log::debug!("OSC 52: clipboard set ({} bytes)", data.len());
+                            }
+                        }
+                    }
+                    ServerEvent::Control(ServerMessage::Bell { pane_id }) => {
+                        log::debug!("bell from pane {pane_id}");
+                        self.pane_anims.bell_flash = Some((pane_id, std::time::Instant::now()));
+
+                        // Window urgency hint
+                        if self.config.terminal.bell_urgency && !self.window_focused {
+                            if let Some(ref window) = self.window {
+                                window.request_user_attention(Some(
+                                    winit::window::UserAttentionType::Informational,
+                                ));
+                            }
+                        }
+
+                        // Bell audio
+                        self.play_bell_audio();
+
+                        needs_redraw = true;
+                    }
+                    ServerEvent::Control(ServerMessage::CommandCompleted {
+                        pane_id,
+                        duration_secs,
+                        exit_code,
+                    }) => {
+                        let threshold = self.config.terminal.notify_command_threshold_secs;
+                        if threshold > 0 && duration_secs >= threshold && !self.window_focused {
+                            self.send_desktop_notification(
+                                "Command completed",
+                                &format!(
+                                    "Pane {} finished after {}s (exit: {})",
+                                    pane_id,
+                                    duration_secs,
+                                    exit_code.unwrap_or(0)
+                                ),
                             );
                         }
                     }
-                    self.apply_layout(&layout);
-                    // Cancel any active tile drag — layout indices may have changed
-                    self.drag.tile_dragging = None;
-                    needs_redraw = true;
-                }
-                ServerEvent::Control(ServerMessage::PaneCreated {
-                    pane_id,
-                    cols,
-                    rows,
-                    ..
-                }) => {
-                    log::debug!("PaneCreated: pane_id={pane_id} {cols}x{rows}");
-                    self.pane_grids.entry(pane_id).or_insert_with(|| {
-                        ClientPaneGrid::new(cols, rows, self.config.terminal.scrollback_lines)
-                    });
-                    self.pane_anims.open_opacity.insert(pane_id, 0.0); // start fade-in
-                    if !matches!(
-                        self.config.animation.pane_open_style,
-                        ciri_config::config::PaneOpenStyle::Fade
-                    ) {
-                        self.pane_anims.open_slides.insert(pane_id, 1.0);
-                    }
-                    needs_redraw = true;
-                }
-                ServerEvent::Control(ServerMessage::PaneClosed { pane_id }) => {
-                    log::debug!("PaneClosed: pane_id={pane_id}");
-                    // Capture pane rect for close animation before removing
-                    let vox = self.view_offset_x.value() as f32;
-                    let voy = self.view_offset_y.value() as f32;
-                    let tiles = self.workspaces.visible_tiles_2d(vox, voy);
-                    if let Some((_, rect, _)) = tiles.iter().find(|(pid, _, _)| *pid == pane_id) {
-                        self.pane_anims.closing.push(super::ClosingPaneState {
-                            rect: *rect,
-                            opacity: 1.0,
-                            started: std::time::Instant::now(),
-                            duration_ms: 200,
-                        });
-                    }
-                    self.pane_grids.remove(&pane_id);
-                    self.invalidate_pane_cache(pane_id);
-                    self.pane_anims.open_opacity.remove(&pane_id);
-                    needs_redraw = true;
-                }
-                ServerEvent::Control(ServerMessage::ServerShutdown) => {
-                    log::info!("server shut down, exiting");
-                    self.should_exit = true;
-                    break;
-                }
-                ServerEvent::Control(ServerMessage::ClipboardStore { data }) => {
-                    // OSC 52: TUI app wrote to clipboard via server
-                    if let Some(cb) = &mut self.clipboard {
-                        if let Err(e) = cb.set_text(&data) {
-                            log::warn!("OSC 52 clipboard write failed: {e}");
-                        } else {
-                            log::debug!("OSC 52: clipboard set ({} bytes)", data.len());
-                        }
-                    }
-                }
-                ServerEvent::Control(ServerMessage::Bell { pane_id }) => {
-                    log::debug!("bell from pane {pane_id}");
-                    self.pane_anims.bell_flash = Some((pane_id, std::time::Instant::now()));
-
-                    // Window urgency hint
-                    if self.config.terminal.bell_urgency && !self.window_focused {
-                        if let Some(ref window) = self.window {
-                            window.request_user_attention(Some(winit::window::UserAttentionType::Informational));
-                        }
-                    }
-
-                    // Bell audio
-                    self.play_bell_audio();
-
-                    needs_redraw = true;
-                }
-                ServerEvent::Control(ServerMessage::CommandCompleted { pane_id, duration_secs, exit_code }) => {
-                    let threshold = self.config.terminal.notify_command_threshold_secs;
-                    if threshold > 0 && duration_secs >= threshold && !self.window_focused {
-                        self.send_desktop_notification(
-                            "Command completed",
-                            &format!("Pane {} finished after {}s (exit: {})",
-                                pane_id, duration_secs, exit_code.unwrap_or(0)),
-                        );
-                    }
-                }
-                ServerEvent::Control(ServerMessage::ImagePlacement {
-                    pane_id,
-                    image_id,
-                    col,
-                    row,
-                    width_cells,
-                    height_cells,
-                    pixel_width,
-                    pixel_height,
-                    ..
-                }) => {
-                    log::debug!(
-                        "image #{image_id} for pane {pane_id}: {width_cells}x{height_cells} cells"
-                    );
-                    let placements = self.image_placements.entry(pane_id).or_default();
-                    placements.push(super::ClientImagePlacement {
+                    ServerEvent::Control(ServerMessage::ImagePlacement {
+                        pane_id,
                         image_id,
                         col,
                         row,
@@ -177,120 +174,119 @@ impl App {
                         height_cells,
                         pixel_width,
                         pixel_height,
-                    });
-                    needs_redraw = true;
-                }
-                ServerEvent::Control(ServerMessage::SessionList { sessions }) => {
-                    if let Some(palette) = &mut self.command_palette {
-                        if palette.sessions_only {
-                            palette.entries.clear();
-                        } else {
-                            // Remove old session entries, keep actions.
-                            palette
-                                .entries
-                                .retain(|e| matches!(e.kind, super::PaletteEntryKind::Action(_)));
-                        }
-                        for s in &sessions {
-                            palette.entries.push(super::PaletteEntry {
-                                label: format!("Switch to: {}", s.name),
-                                kind: super::PaletteEntryKind::SwitchSession(s.name.clone()),
-                            });
-                            if !palette.sessions_only && s.running {
-                                palette.entries.push(super::PaletteEntry {
-                                    label: format!("Kill: {}", s.name),
-                                    kind: super::PaletteEntryKind::KillSession(s.name.clone()),
-                                });
-                            }
-                        }
-                        self.filter_palette();
-                    }
-                    needs_redraw = true;
-                }
-                ServerEvent::Control(ServerMessage::SessionSwitched { session_name }) => {
-                    self.session_name = session_name;
-                    self.write_last_session();
-                    self.command_palette = None;
-                    if let Some(window) = &self.window {
-                        window.set_title(&format!(
-                            "{} [{}]",
-                            self.config.window.title, self.session_name
-                        ));
-                    }
-                    needs_redraw = true;
-                }
-                ServerEvent::Control(ServerMessage::SessionKilled { .. })
-                | ServerEvent::Control(ServerMessage::TemplateApplied { .. })
-                | ServerEvent::Control(ServerMessage::TemplateList { .. })
-                | ServerEvent::Control(ServerMessage::TemplateSaved { .. })
-                | ServerEvent::Control(ServerMessage::Error { .. }) => {
-                    // Session/template management and IPC responses — not yet handled by GUI client
-                }
-                ServerEvent::FullPaneSync(sync) => {
-                    let grid = self.pane_grids.entry(sync.pane_id).or_insert_with(|| {
-                        ClientPaneGrid::new(
-                            sync.cols,
-                            sync.rows,
-                            self.config.terminal.scrollback_lines,
-                        )
-                    });
-                    grid.apply_full_sync(&sync);
-                    self.send_lossy(ClientMessage::Ack {
-                        generation: sync.generation,
-                    });
-                    // grid.dirty is set by apply_full_sync — no need to remove cached view
-                    needs_redraw = true;
-                }
-                ServerEvent::CellDelta(delta) => {
-                    log::trace!(
-                        "CellDelta: pane={} regions={} cursor=({},{})",
-                        delta.pane_id,
-                        delta.regions.len(),
-                        delta.cursor_col,
-                        delta.cursor_line
-                    );
-                    if let Some(grid) = self.pane_grids.get_mut(&delta.pane_id) {
-                        grid.apply_delta_borrowed(&delta);
-                        self.send_lossy(ClientMessage::Ack {
-                            generation: delta.generation,
+                        ..
+                    }) => {
+                        log::debug!(
+                            "image #{image_id} for pane {pane_id}: {width_cells}x{height_cells} cells"
+                        );
+                        let placements = self.image_placements.entry(pane_id).or_default();
+                        placements.push(super::ClientImagePlacement {
+                            image_id,
+                            col,
+                            row,
+                            width_cells,
+                            height_cells,
+                            pixel_width,
+                            pixel_height,
                         });
-                        // grid.dirty is set by apply_delta_borrowed — no need to remove cached view
                         needs_redraw = true;
                     }
-                }
-                // IPC-only responses — not relevant for the GUI client
-                ServerEvent::Control(ServerMessage::SessionInfoReply { .. })
-                | ServerEvent::Control(ServerMessage::PaneListReply { .. })
-                | ServerEvent::Control(ServerMessage::CommandResult { .. })
-                | ServerEvent::Control(ServerMessage::LayoutReply { .. }) => {}
-                ServerEvent::Disconnected => {
-                    log::warn!("disconnected from server");
-                    self.connected = false;
-                    // Preserve pane_grids for scrollback history — they'll be
-                    // validated against server state on reconnect via FullPaneSync.
-                    for grid in self.pane_grids.values_mut() {
-                        grid.dirty = true;
+                    ServerEvent::Control(ServerMessage::SessionList { sessions }) => {
+                        if let Some(palette) = &mut self.command_palette {
+                            if palette.sessions_only {
+                                palette.entries.clear();
+                            } else {
+                                // Remove old session entries, keep actions.
+                                palette.entries.retain(|e| {
+                                    matches!(e.kind, super::PaletteEntryKind::Action(_))
+                                });
+                            }
+                            for s in &sessions {
+                                palette.entries.push(super::PaletteEntry {
+                                    label: format!("Switch to: {}", s.name),
+                                    kind: super::PaletteEntryKind::SwitchSession(s.name.clone()),
+                                });
+                                if !palette.sessions_only && s.running {
+                                    palette.entries.push(super::PaletteEntry {
+                                        label: format!("Kill: {}", s.name),
+                                        kind: super::PaletteEntryKind::KillSession(s.name.clone()),
+                                    });
+                                }
+                            }
+                            self.filter_palette();
+                        }
+                        needs_redraw = true;
                     }
-                    self.cached_views.clear();
-                    self.cached_tile_glyphs.clear();
-                    self.server_tx = None;
-                    self.server_rx = None;
-                    self.reconnect_state = Some(super::ReconnectState {
-                        attempt: 0,
-                        max_attempts: 10,
-                        next_retry: std::time::Instant::now()
-                            + std::time::Duration::from_millis(500),
-                        backoff: std::time::Duration::from_millis(500),
-                    });
-                    return true;
+                    ServerEvent::Control(ServerMessage::SessionSwitched { session_name }) => {
+                        self.session_name = session_name;
+                        self.write_last_session();
+                        self.command_palette = None;
+                        if let Some(window) = &self.window {
+                            window.set_title(&format!(
+                                "{} [{}]",
+                                self.config.window.title, self.session_name
+                            ));
+                        }
+                        needs_redraw = true;
+                    }
+                    ServerEvent::Control(ServerMessage::SessionKilled { .. })
+                    | ServerEvent::Control(ServerMessage::TemplateApplied { .. })
+                    | ServerEvent::Control(ServerMessage::TemplateList { .. })
+                    | ServerEvent::Control(ServerMessage::TemplateSaved { .. })
+                    | ServerEvent::Control(ServerMessage::Error { .. }) => {
+                        // Session/template management and IPC responses — not yet handled by GUI client
+                    }
+                    ServerEvent::FullPaneSync(sync) => {
+                        let grid = self.pane_grids.entry(sync.pane_id).or_insert_with(|| {
+                            ClientPaneGrid::new(
+                                sync.cols,
+                                sync.rows,
+                                self.config.terminal.scrollback_lines,
+                            )
+                        });
+                        grid.apply_full_sync(&sync);
+                        self.send_lossy(ClientMessage::Ack {
+                            generation: sync.generation,
+                        });
+                        // grid.dirty is set by apply_full_sync — no need to remove cached view
+                        needs_redraw = true;
+                    }
+                    ServerEvent::CellDelta(delta) => {
+                        log::trace!(
+                            "CellDelta: pane={} regions={} cursor=({},{})",
+                            delta.pane_id,
+                            delta.regions.len(),
+                            delta.cursor_col,
+                            delta.cursor_line
+                        );
+                        if let Some(grid) = self.pane_grids.get_mut(&delta.pane_id) {
+                            grid.apply_delta_borrowed(&delta);
+                            self.send_lossy(ClientMessage::Ack {
+                                generation: delta.generation,
+                            });
+                            // grid.dirty is set by apply_delta_borrowed — no need to remove cached view
+                            needs_redraw = true;
+                        }
+                    }
+                    // IPC-only responses — not relevant for the GUI client
+                    ServerEvent::Control(ServerMessage::SessionInfoReply { .. })
+                    | ServerEvent::Control(ServerMessage::PaneListReply { .. })
+                    | ServerEvent::Control(ServerMessage::CommandResult { .. })
+                    | ServerEvent::Control(ServerMessage::LayoutReply { .. }) => {}
+                    ServerEvent::Disconnected => {
+                        // Preserve pane_grids for scrollback history — they'll be
+                        // validated against server state on reconnect via FullPaneSync.
+                        self.mark_disconnected_for_reconnect();
+                        return true;
+                    }
                 }
             }
-        }
-        // If we consumed a full batch and still have time, loop to drain more
-        // before rendering — this avoids showing intermediate states after a
-        // backlog (e.g. returning from background).
-        if !hit_budget || drain_start.elapsed() >= MAX_DRAIN {
-            break;
-        }
+            // If we consumed a full batch and still have time, loop to drain more
+            // before rendering — this avoids showing intermediate states after a
+            // backlog (e.g. returning from background).
+            if !hit_budget || drain_start.elapsed() >= MAX_DRAIN {
+                break;
+            }
         } // end loop
 
         self.server_rx = Some(rx);
@@ -367,7 +363,13 @@ impl App {
                     || (new_config.font.size - self.config.font.size).abs() > 0.01;
                 self.config = new_config;
                 self.cached_color_table = ciri_render::terminal::ColorTable::new(&self.config);
-                self.input.keybinds = KeybindMap::from_config(&self.config.keys.bindings);
+                self.input.reload_bindings(
+                    &self.config.keys.leader,
+                    &self.config.input.mode,
+                    &self.config.keys.bindings,
+                    &self.config.keys.modes,
+                    &self.config.keys.direct_bindings,
+                );
                 self.overview_keybinds =
                     KeybindMap::from_overview_config(&self.config.keys.overview_bindings);
                 if font_changed {
@@ -395,13 +397,6 @@ impl App {
                 for grid in self.pane_grids.values_mut() {
                     grid.dirty = true;
                 }
-                // Update leader key and input mode from config
-                self.input.leader_key =
-                    ciri_input::leader::LeaderKey::parse(&self.config.keys.leader);
-                self.input.input_mode = match self.config.input.mode.as_str() {
-                    "sticky" => ciri_input::leader::InputMode::Sticky,
-                    _ => ciri_input::leader::InputMode::Prefix,
-                };
                 // Notify server of new cell dimensions after font change
                 if font_changed {
                     let (cw, ch) = self.cell_dimensions();

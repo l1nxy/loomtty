@@ -492,12 +492,7 @@ impl Server {
                     && resize.height > 0
                     && resize.height <= 16384
                 {
-                    self.apply_resize_for_client(
-                        &session_name,
-                        client_id,
-                        &resize,
-                        &mut responses,
-                    );
+                    self.apply_resize_for_client(&session_name, client_id, &resize, &mut responses);
                 } else {
                     log::warn!(
                         "ignoring invalid resize from client {client_id}: {width}x{height} cell={cell_width}x{cell_height}"
@@ -1513,6 +1508,9 @@ struct ResizeMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use tokio::io::AsyncWriteExt;
+    use tokio::sync::Mutex;
     use tokio::sync::mpsc;
 
     fn test_client(id: u64, session_name: &str) -> ClientState {
@@ -1604,5 +1602,60 @@ mod tests {
                 ServerResponse::SendToClient(1, ServerMessage::CommandResult { success: true, pane_id: Some(pid), .. })
             ] if target == &session_name && *pid == target_pane
         ));
+    }
+
+    #[test]
+    fn control_attach_does_not_create_runtime_session() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let (client_reader, server_writer) = tokio::io::duplex(4096);
+            let (server_reader, client_writer) = tokio::io::duplex(4096);
+            let state = Arc::new(Mutex::new(Server::new("/bin/sh", 8.0)));
+            let shutdown = Arc::new(tokio::sync::Notify::new());
+
+            let handle = tokio::spawn(super::super::connection::handle_client(
+                server_reader,
+                server_writer,
+                state.clone(),
+                shutdown,
+            ));
+
+            let hello = ciri_protocol::codec::ClientHello {
+                session_name: "__control__".to_string(),
+                width: 1024,
+                height: 768,
+                cell_width: 8.0,
+                cell_height: 16.0,
+            };
+
+            let mut client_reader = tokio::io::BufReader::new(client_reader);
+            let mut client_writer = tokio::io::BufWriter::new(client_writer);
+            ciri_protocol::codec::write_client_hello(&mut client_writer, &hello)
+                .await
+                .unwrap();
+            client_writer.flush().await.unwrap();
+            let compat = ciri_protocol::codec::read_server_hello(&mut client_reader)
+                .await
+                .unwrap();
+            assert!(matches!(
+                compat,
+                ciri_protocol::codec::VersionCompat::Exact(_)
+                    | ciri_protocol::codec::VersionCompat::PatchMismatch { .. }
+                    | ciri_protocol::codec::VersionCompat::MinorMismatch { .. }
+            ));
+
+            {
+                let server = state.lock().await;
+                assert!(
+                    server
+                        .clients
+                        .values()
+                        .any(|c| c.session_name == "__control__")
+                );
+                assert!(!server.sessions.contains_key("__control__"));
+            }
+
+            handle.abort();
+        });
     }
 }

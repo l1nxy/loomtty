@@ -148,6 +148,7 @@ impl ClientPaneGrid {
 
     /// Swap out the dirty_rows flags and reset the counter.
     /// Returns the old dirty flags; leaves a zeroed vec in place.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn take_dirty_rows(&mut self) -> Vec<bool> {
         let mut taken = vec![false; self.dirty_rows.len()];
         std::mem::swap(&mut taken, &mut self.dirty_rows);
@@ -355,6 +356,7 @@ impl ClientPaneGrid {
     }
 
     /// Set scroll offset directly (clamped to valid range). Used by scrollbar drag.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn set_scroll_offset(&mut self, offset: usize) {
         let max = self.max_scroll_offset();
         let new = offset.min(max);
@@ -1015,8 +1017,8 @@ mod tests {
             scrollback: vec![],
             scrollback_rows: 0,
             cells: vec![PackedCell::with_ch('X'); 18],
-                grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
-                hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
+            grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
+            hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
         };
         grid.apply_full_sync(&sync);
         assert_eq!(grid.cols, 6);
@@ -1134,8 +1136,8 @@ mod tests {
             scrollback: vec![],
             scrollback_rows: 0,
             cells: vec![PackedCell::default(); 3],
-                grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
-                hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
+            grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
+            hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
         };
         grid.apply_full_sync(&sync);
         assert_eq!(grid.scroll_offset, 0); // reset by dimension change

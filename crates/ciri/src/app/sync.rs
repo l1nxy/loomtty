@@ -39,6 +39,7 @@ impl App {
             for event in events {
                 match event {
                     ServerEvent::Control(ServerMessage::StateSync { layout, pane_ids }) => {
+                        self.expected_pane_ids = pane_ids.iter().copied().collect();
                         self.apply_layout(&layout);
                         for &id in &pane_ids {
                             self.pane_grids.entry(id).or_insert_with(|| {
@@ -95,6 +96,7 @@ impl App {
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::PaneClosed { pane_id }) => {
+                        self.expected_pane_ids.remove(&pane_id);
                         log::debug!("PaneClosed: pane_id={pane_id}");
                         // Capture pane rect for close animation before removing
                         let vox = self.view_offset_x.value() as f32;
@@ -219,6 +221,11 @@ impl App {
                     }
                     ServerEvent::Control(ServerMessage::SessionSwitched { session_name }) => {
                         self.session_name = session_name;
+                        self.expected_pane_ids.clear();
+                        self.pane_grids.clear();
+                        self.image_placements.clear();
+                        self.cached_views.clear();
+                        self.cached_tile_glyphs.clear();
                         self.write_last_session();
                         self.command_palette = None;
                         if let Some(window) = &self.window {
@@ -237,6 +244,9 @@ impl App {
                         // Session/template management and IPC responses — not yet handled by GUI client
                     }
                     ServerEvent::FullPaneSync(sync) => {
+                        if !self.expected_pane_ids.contains(&sync.pane_id) {
+                            continue;
+                        }
                         let grid = self.pane_grids.entry(sync.pane_id).or_insert_with(|| {
                             ClientPaneGrid::new(
                                 sync.cols,
@@ -252,6 +262,9 @@ impl App {
                         needs_redraw = true;
                     }
                     ServerEvent::CellDelta(delta) => {
+                        if !self.expected_pane_ids.contains(&delta.pane_id) {
+                            continue;
+                        }
                         log::trace!(
                             "CellDelta: pane={} regions={} cursor=({},{})",
                             delta.pane_id,
@@ -414,5 +427,149 @@ impl App {
             }
             Err(e) => log::warn!("config reload failed: {e}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{CachedTileGlyphs, ClientImagePlacement};
+    use crate::connection::ServerEvent;
+    use ciri_config::config::CiriConfig;
+    use ciri_protocol::message::{
+        FullPaneSync, GraphemeExtras, HyperlinkExtras, LayoutState, PackedCell, ServerMessage,
+        WorkspaceState,
+    };
+
+    fn make_app() -> App {
+        App::new(CiriConfig::default(), "test-session")
+    }
+
+    fn empty_layout() -> LayoutState {
+        LayoutState {
+            workspaces: vec![WorkspaceState {
+                columns: Vec::new(),
+                active_column_idx: 0,
+            }],
+            active_workspace_idx: 0,
+        }
+    }
+
+    fn blank_full_sync(pane_id: u64, generation: u64, title: &str) -> FullPaneSync {
+        FullPaneSync {
+            pane_id,
+            generation,
+            cols: 2,
+            rows: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: 0,
+            mode_flags: 0,
+            title: title.to_string(),
+            scrollback: Vec::new(),
+            scrollback_rows: 0,
+            cells: vec![PackedCell::default(), PackedCell::default()],
+            grapheme_extras: GraphemeExtras::new(),
+            hyperlink_extras: HyperlinkExtras::new(),
+        }
+    }
+
+    #[test]
+    fn session_switch_clears_stale_client_pane_state_before_resync() {
+        let mut app = make_app();
+        let (event_tx, rx) = crossbeam_channel::unbounded();
+        app.server_rx = Some(rx);
+
+        let stale = blank_full_sync(7, 1, "stale");
+        app.pane_grids.insert(
+            stale.pane_id,
+            crate::grid::ClientPaneGrid::new(stale.cols, stale.rows, 100),
+        );
+        app.image_placements.insert(
+            stale.pane_id,
+            vec![ClientImagePlacement {
+                image_id: 9,
+                col: 0,
+                row: 0,
+                width_cells: 1,
+                height_cells: 1,
+                pixel_width: 8,
+                pixel_height: 16,
+            }],
+        );
+        app.write_last_session();
+        app.cached_tile_glyphs.insert(
+            stale.pane_id,
+            CachedTileGlyphs {
+                generation: 0,
+                key: (0, 0, 0, 0),
+                glyphs: Vec::new(),
+                color_glyphs: Vec::new(),
+            },
+        );
+
+        let new_sync = blank_full_sync(11, 2, "fresh");
+        event_tx
+            .send(ServerEvent::Control(ServerMessage::SessionSwitched {
+                session_name: "other-session".to_string(),
+            }))
+            .unwrap();
+        event_tx
+            .send(ServerEvent::Control(ServerMessage::StateSync {
+                layout: empty_layout(),
+                pane_ids: vec![11],
+            }))
+            .unwrap();
+        event_tx.send(ServerEvent::FullPaneSync(new_sync)).unwrap();
+
+        assert!(app.process_server_events());
+        assert_eq!(app.session_name, "other-session");
+        assert!(app.pane_grids.contains_key(&11));
+        assert!(!app.pane_grids.contains_key(&stale.pane_id));
+        assert!(app.image_placements.is_empty());
+        assert!(app.cached_tile_glyphs.is_empty());
+    }
+
+    #[test]
+    fn stale_frame_for_old_session_is_dropped_after_session_switch() {
+        let mut app = make_app();
+        let (event_tx, rx) = crossbeam_channel::unbounded();
+        app.server_rx = Some(rx);
+
+        let stale = blank_full_sync(7, 1, "stale");
+        let fresh = blank_full_sync(11, 2, "fresh");
+
+        event_tx
+            .send(ServerEvent::Control(ServerMessage::SessionSwitched {
+                session_name: "other-session".to_string(),
+            }))
+            .unwrap();
+        event_tx
+            .send(ServerEvent::Control(ServerMessage::StateSync {
+                layout: LayoutState {
+                    workspaces: vec![WorkspaceState {
+                        columns: vec![ColumnState {
+                            tiles: vec![TileState {
+                                pane_id: fresh.pane_id,
+                                weight: 1.0,
+                            }],
+                            active_tile_idx: 0,
+                            width_proportion: 1.0,
+                            width_fixed_px: None,
+                        }],
+                        active_column_idx: 0,
+                    }],
+                    active_workspace_idx: 0,
+                },
+                pane_ids: vec![fresh.pane_id],
+            }))
+            .unwrap();
+        event_tx.send(ServerEvent::FullPaneSync(fresh)).unwrap();
+        event_tx.send(ServerEvent::FullPaneSync(stale)).unwrap();
+
+        assert!(app.process_server_events());
+        assert_eq!(app.session_name, "other-session");
+        assert!(app.pane_grids.contains_key(&11));
+        assert!(!app.pane_grids.contains_key(&7));
     }
 }

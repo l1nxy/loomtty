@@ -30,7 +30,7 @@ use ciri_render::rect::Rect;
 use ciri_render::shaper::TextShaper;
 use ciri_render::terminal::{ColorTable, TerminalView};
 use crossbeam_channel::{Receiver, Sender};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::keyboard::ModifiersState;
@@ -333,6 +333,7 @@ pub(crate) struct App {
     pub hovered_link: Option<HoveredLink>,
     pub mouse_left_held: bool,
     pub reconnect_state: Option<ReconnectState>,
+    pub expected_pane_ids: std::collections::HashSet<u64>,
     pub search_state: Option<SearchState>,
     pub command_palette: Option<CommandPaletteState>,
     pub pending_paste: Option<PendingPaste>,
@@ -476,6 +477,7 @@ impl App {
             hovered_link: None,
             mouse_left_held: false,
             reconnect_state: None,
+            expected_pane_ids: HashSet::new(),
             search_state: None,
             command_palette: None,
             pending_paste: None,

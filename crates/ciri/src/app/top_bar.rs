@@ -205,7 +205,6 @@ impl App {
         let workspace_w = ws_label.chars().count() as f32 * cw;
         let mode_w = self.current_mode_label().0.chars().count() as f32 * cw;
         // Right side: workspace + gap + mode
-        let right_w = workspace_w + mode_w;
         let mode_x = vw - mode_w;
         let workspace_x = mode_x - workspace_w;
         let tabs_area_px = (workspace_x - cw - session_w).max(0.0);

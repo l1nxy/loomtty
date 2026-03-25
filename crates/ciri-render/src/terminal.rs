@@ -1475,33 +1475,55 @@ pub fn build_scrollbar(
         return None;
     }
 
-    let scrollbar_width = SCROLLBAR_WIDTH;
-    let scrollbar_margin = SCROLLBAR_MARGIN;
+    let thumb_height = scrollbar_thumb_height(visible, total_lines, pane_height);
+    let y = scrollbar_thumb_y(scroll_offset, total_lines, visible, pane_height, thumb_height);
+    let [r, g, b, _] = scrollbar_thumb_color(state, config);
 
-    // Thumb size proportional to visible/total ratio
-    let ratio = visible as f32 / total_lines as f32;
-    let thumb_height = (ratio * pane_height).max(10.0);
-
-    // Thumb position: offset=0 → bottom, max → top
-    let max_offset = total_lines - visible;
-    let position_ratio = if max_offset > 0 {
-        1.0 - (scroll_offset as f32 / max_offset as f32)
-    } else {
-        1.0
-    };
-
-    let (base_color, alpha) = match state {
-        ScrollbarState::Idle => (ThemeConfig::parse_color(&config.theme.bright_black), 0.4),
-        ScrollbarState::Hovered => (ThemeConfig::parse_color(&config.theme.foreground), 0.45),
-        ScrollbarState::Pressed => (ThemeConfig::parse_color(&config.theme.foreground), 0.6),
-    };
     Some(Rect {
-        x: pane_width - scrollbar_width - scrollbar_margin,
-        y: position_ratio * (pane_height - thumb_height),
-        w: scrollbar_width,
+        x: pane_width - SCROLLBAR_WIDTH - SCROLLBAR_MARGIN,
+        y,
+        w: SCROLLBAR_WIDTH,
         h: thumb_height,
-        color: [base_color[0], base_color[1], base_color[2], alpha],
+        color: [r, g, b, scrollbar_thumb_alpha(state)],
     })
+}
+
+fn scrollbar_thumb_height(visible: usize, total_lines: usize, pane_height: f32) -> f32 {
+    let ratio = visible as f32 / total_lines as f32;
+    (ratio * pane_height).max(10.0)
+}
+
+fn scrollbar_thumb_y(
+    scroll_offset: usize,
+    total_lines: usize,
+    visible: usize,
+    pane_height: f32,
+    thumb_height: f32,
+) -> f32 {
+    let max_offset = total_lines - visible;
+    let position_ratio = if max_offset == 0 {
+        1.0
+    } else {
+        1.0 - (scroll_offset as f32 / max_offset as f32)
+    };
+    position_ratio * (pane_height - thumb_height)
+}
+
+fn scrollbar_thumb_color(state: ScrollbarState, config: &CiriConfig) -> [f32; 4] {
+    match state {
+        ScrollbarState::Idle => ThemeConfig::parse_color(&config.theme.bright_black),
+        ScrollbarState::Hovered | ScrollbarState::Pressed => {
+            ThemeConfig::parse_color(&config.theme.foreground)
+        }
+    }
+}
+
+fn scrollbar_thumb_alpha(state: ScrollbarState) -> f32 {
+    match state {
+        ScrollbarState::Idle => 0.4,
+        ScrollbarState::Hovered => 0.45,
+        ScrollbarState::Pressed => 0.6,
+    }
 }
 
 // ─── Color resolution ────────────────────────────────────────────────
@@ -1896,5 +1918,46 @@ mod tests {
             &incremental.color_glyph_instances,
             &rebuilt.color_glyph_instances,
         );
+    }
+
+    #[test]
+    fn scrollbar_hidden_without_scrollback() {
+        let config = test_config();
+        assert!(
+            build_scrollbar(0, 4, 4, 120.0, 80.0, ScrollbarState::Idle, &config).is_none()
+        );
+    }
+
+    #[test]
+    fn scrollbar_thumb_geometry_tracks_scroll_extent() {
+        let config = test_config();
+        let rect = build_scrollbar(3, 10, 4, 120.0, 100.0, ScrollbarState::Idle, &config)
+            .expect("scrollback should produce a scrollbar");
+        assert_eq!(rect.x, 114.0);
+        assert_eq!(rect.w, SCROLLBAR_WIDTH);
+        assert_eq!(rect.h, 40.0);
+        assert_eq!(rect.y, 30.0);
+    }
+
+    #[test]
+    fn scrollbar_thumb_visual_state_changes_color_and_alpha() {
+        let config = test_config();
+        let idle = build_scrollbar(0, 10, 4, 120.0, 100.0, ScrollbarState::Idle, &config)
+            .expect("scrollback should produce a scrollbar");
+        let hovered =
+            build_scrollbar(0, 10, 4, 120.0, 100.0, ScrollbarState::Hovered, &config)
+                .expect("scrollback should produce a scrollbar");
+        let pressed =
+            build_scrollbar(0, 10, 4, 120.0, 100.0, ScrollbarState::Pressed, &config)
+                .expect("scrollback should produce a scrollbar");
+
+        assert_eq!(idle.x, hovered.x);
+        assert_eq!(idle.y, hovered.y);
+        assert_eq!(idle.w, hovered.w);
+        assert_eq!(idle.h, hovered.h);
+        assert_eq!(hovered.color[..3], pressed.color[..3]);
+        assert_eq!(idle.color[3], 0.4);
+        assert_eq!(hovered.color[3], 0.45);
+        assert_eq!(pressed.color[3], 0.6);
     }
 }

@@ -16,8 +16,8 @@
 // for hot-path). Re-evaluate only if a new variable-length hot-path message is added.
 // ─────────────────────────────────────────────────────────────────────
 
-use bytes::Buf;
 use crate::message::*;
+use bytes::Buf;
 use std::io;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -49,6 +49,11 @@ fn unpack_version(v: u32) -> String {
 }
 
 const HANDSHAKE_MAGIC: [u8; 4] = *b"CIRI";
+const CLIENT_HELLO_FIXED_FIELDS_LEN: usize = 16;
+const CLIENT_HELLO_HEADER_LEN: usize = 11;
+const SERVER_HELLO_LEN: usize = 8;
+const MAX_SESSION_NAME_LEN: usize = 255;
+const MAX_FRAME_LEN: u32 = 16 * 1024 * 1024;
 
 /// Wire protocol version. Incremented whenever the handshake or frame format
 /// changes in a backward-incompatible way. This is separate from CARGO_PKG_VERSION
@@ -111,6 +116,15 @@ pub struct ClientHello {
     pub cell_height: f32,
 }
 
+struct ClientHelloHeader {
+    peer_version: u32,
+    session_name_len: usize,
+}
+
+struct ServerHello {
+    peer_version: u32,
+}
+
 /// ClientHello wire format:
 /// [magic(4)][version(4)][wire_ver(1)][session_name_len(2)][session_name(N)][width(4)][height(4)][cell_w(4)][cell_h(4)]
 ///
@@ -120,14 +134,17 @@ pub async fn write_client_hello<W: AsyncWrite + Unpin>(
     writer: &mut W,
     hello: &ClientHello,
 ) -> io::Result<()> {
-    let name_bytes = hello.session_name.as_bytes();
-    if name_bytes.len() > 255 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "session name too long",
-        ));
-    }
-    let mut buf = Vec::with_capacity(27 + name_bytes.len());
+    let buf = build_client_hello(hello)?;
+    writer.write_all(&buf).await?;
+    writer.flush().await
+}
+
+pub fn build_client_hello(hello: &ClientHello) -> io::Result<Vec<u8>> {
+    let name_bytes =
+        validate_session_name_len(hello.session_name.as_bytes(), io::ErrorKind::InvalidInput)?;
+    let mut buf = Vec::with_capacity(
+        CLIENT_HELLO_HEADER_LEN + CLIENT_HELLO_FIXED_FIELDS_LEN + name_bytes.len(),
+    );
     buf.extend_from_slice(&HANDSHAKE_MAGIC);
     buf.extend_from_slice(&parse_pkg_version().to_le_bytes());
     buf.push(WIRE_PROTOCOL_VERSION);
@@ -137,49 +154,68 @@ pub async fn write_client_hello<W: AsyncWrite + Unpin>(
     buf.extend_from_slice(&hello.height.to_le_bytes());
     buf.extend_from_slice(&hello.cell_width.to_bits().to_le_bytes());
     buf.extend_from_slice(&hello.cell_height.to_bits().to_le_bytes());
-    writer.write_all(&buf).await?;
-    writer.flush().await
+    Ok(buf)
 }
 
 /// Server reads ClientHello. Returns version compat + hello payload.
 pub async fn read_client_hello<R: AsyncRead + Unpin>(
     reader: &mut R,
 ) -> io::Result<(VersionCompat, ClientHello)> {
-    // Read fixed header: magic(4) + version(4) + wire_ver(1) + name_len(2) = 11 bytes
-    let mut header = [0u8; 11];
+    let header = read_client_hello_header(reader).await?;
+    let compat = check_version(header.peer_version)?;
+
+    let rest = read_client_hello_body(reader, header.session_name_len).await?;
+    decode_client_hello_parts(header.session_name_len, &rest).map(|hello| (compat, hello))
+}
+
+async fn read_client_hello_header<R: AsyncRead + Unpin>(
+    reader: &mut R,
+) -> io::Result<ClientHelloHeader> {
+    let mut header = [0u8; CLIENT_HELLO_HEADER_LEN];
     reader.read_exact(&mut header).await?;
-    if header[0..4] != HANDSHAKE_MAGIC {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "bad magic bytes",
-        ));
-    }
-    let peer_ver = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
-    let compat = check_version(peer_ver)?;
-    let wire_ver = header[8];
-    if wire_ver != WIRE_PROTOCOL_VERSION {
+    parse_client_hello_header(&header)
+}
+
+async fn read_client_hello_body<R: AsyncRead + Unpin>(
+    reader: &mut R,
+    session_name_len: usize,
+) -> io::Result<Vec<u8>> {
+    let mut rest = vec![0u8; session_name_len + CLIENT_HELLO_FIXED_FIELDS_LEN];
+    reader.read_exact(&mut rest).await?;
+    Ok(rest)
+}
+
+fn parse_client_hello_header(
+    header: &[u8; CLIENT_HELLO_HEADER_LEN],
+) -> io::Result<ClientHelloHeader> {
+    require_handshake_magic(&header[..4])?;
+    let peer_version = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
+    let wire_version = header[8];
+    if wire_version != WIRE_PROTOCOL_VERSION {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!(
-                "incompatible wire protocol: peer={wire_ver}, local={WIRE_PROTOCOL_VERSION} \
+                "incompatible wire protocol: peer={wire_version}, local={WIRE_PROTOCOL_VERSION} \
                  (client and server binaries must be the same build)",
             ),
         ));
     }
-    let name_len = u16::from_le_bytes([header[9], header[10]]) as usize;
-    if name_len > 255 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "session name too long",
-        ));
-    }
 
-    // Read session name + viewport (N + 16 bytes)
-    let mut rest = vec![0u8; name_len + 16];
-    reader.read_exact(&mut rest).await?;
-    let session_name = String::from_utf8(rest[..name_len].to_vec())
+    let session_name_len = validate_session_name_len_value(
+        u16::from_le_bytes([header[9], header[10]]) as usize,
+        io::ErrorKind::InvalidData,
+    )?;
+
+    Ok(ClientHelloHeader {
+        peer_version,
+        session_name_len,
+    })
+}
+
+fn decode_client_hello_parts(session_name_len: usize, rest: &[u8]) -> io::Result<ClientHello> {
+    let session_name = String::from_utf8(rest[..session_name_len].to_vec())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid session name utf8"))?;
-    let mut cursor = &rest[name_len..] as &[u8];
+    let mut cursor = &rest[session_name_len..] as &[u8];
     let hello = ClientHello {
         session_name,
         width: cursor.get_u32_le(),
@@ -187,7 +223,64 @@ pub async fn read_client_hello<R: AsyncRead + Unpin>(
         cell_width: cursor.get_f32_le(),
         cell_height: cursor.get_f32_le(),
     };
-    // Validate viewport values
+    validate_viewport_dims(&hello)?;
+    Ok(hello)
+}
+
+/// ServerHello: [magic(4)][version(4)] = 8 bytes
+pub async fn write_server_hello<W: AsyncWrite + Unpin>(writer: &mut W) -> io::Result<()> {
+    let mut buf = [0u8; SERVER_HELLO_LEN];
+    buf[0..4].copy_from_slice(&HANDSHAKE_MAGIC);
+    buf[4..8].copy_from_slice(&parse_pkg_version().to_le_bytes());
+    writer.write_all(&buf).await?;
+    // Don't flush here — caller will send StateSync frames right after
+    Ok(())
+}
+
+/// Client reads ServerHello.
+pub async fn read_server_hello<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<VersionCompat> {
+    let hello = read_server_hello_payload(reader).await?;
+    check_version(hello.peer_version)
+}
+
+async fn read_server_hello_payload<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<ServerHello> {
+    let mut buf = [0u8; SERVER_HELLO_LEN];
+    reader.read_exact(&mut buf).await?;
+    parse_server_hello(&buf)
+}
+
+fn parse_server_hello(buf: &[u8; SERVER_HELLO_LEN]) -> io::Result<ServerHello> {
+    require_handshake_magic(&buf[0..4])?;
+    Ok(ServerHello {
+        peer_version: u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]),
+    })
+}
+
+fn require_handshake_magic(magic: &[u8]) -> io::Result<()> {
+    if magic == HANDSHAKE_MAGIC {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "bad magic bytes",
+        ))
+    }
+}
+
+fn validate_session_name_len(name_bytes: &[u8], kind: io::ErrorKind) -> io::Result<&[u8]> {
+    validate_session_name_len_value(name_bytes.len(), kind)?;
+    Ok(name_bytes)
+}
+
+fn validate_session_name_len_value(len: usize, kind: io::ErrorKind) -> io::Result<usize> {
+    if len > MAX_SESSION_NAME_LEN {
+        Err(io::Error::new(kind, "session name too long"))
+    } else {
+        Ok(len)
+    }
+}
+
+fn validate_viewport_dims(hello: &ClientHello) -> io::Result<()> {
     if !hello.cell_width.is_finite() || hello.cell_width <= 0.0 || hello.cell_width > 200.0 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -212,31 +305,7 @@ pub async fn read_client_hello<R: AsyncRead + Unpin>(
             format!("invalid viewport height: {}", hello.height),
         ));
     }
-    Ok((compat, hello))
-}
-
-/// ServerHello: [magic(4)][version(4)] = 8 bytes
-pub async fn write_server_hello<W: AsyncWrite + Unpin>(writer: &mut W) -> io::Result<()> {
-    let mut buf = [0u8; 8];
-    buf[0..4].copy_from_slice(&HANDSHAKE_MAGIC);
-    buf[4..8].copy_from_slice(&parse_pkg_version().to_le_bytes());
-    writer.write_all(&buf).await?;
-    // Don't flush here — caller will send StateSync frames right after
     Ok(())
-}
-
-/// Client reads ServerHello.
-pub async fn read_server_hello<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<VersionCompat> {
-    let mut buf = [0u8; 8];
-    reader.read_exact(&mut buf).await?;
-    if buf[0..4] != HANDSHAKE_MAGIC {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "bad magic bytes",
-        ));
-    }
-    let peer_ver = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
-    check_version(peer_ver)
 }
 
 // ─── Safe integer readers ───────────────────────────────────────────
@@ -284,12 +353,8 @@ const TAG_FULL_PANE_SYNC: u8 = 0x21;
 // ─── Frame format: [u8 tag][u32 LE payload_len][payload] ───────────
 
 /// Write a framed message to an async writer.
-async fn write_frame<W: AsyncWrite + Unpin>(
-    writer: &mut W,
-    tag: u8,
-    payload: &[u8],
-) -> io::Result<()> {
-    let len = payload.len() as u32;
+async fn write_frame<W: AsyncWrite + Unpin>(writer: &mut W, tag: u8, payload: &[u8]) -> io::Result<()> {
+    let len = frame_len_u32(payload)?;
     let mut header = [0u8; 5];
     header[0] = tag;
     header[1..5].copy_from_slice(&len.to_le_bytes());
@@ -298,13 +363,26 @@ async fn write_frame<W: AsyncWrite + Unpin>(
     Ok(())
 }
 
+fn frame_len_u32(payload: &[u8]) -> io::Result<u32> {
+    u32::try_from(payload.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "frame payload too large"))
+}
+
+fn build_frame(tag: u8, payload: &[u8]) -> io::Result<Vec<u8>> {
+    let mut frame = Vec::with_capacity(5 + payload.len());
+    frame.push(tag);
+    frame.extend_from_slice(&frame_len_u32(payload)?.to_le_bytes());
+    frame.extend_from_slice(payload);
+    Ok(frame)
+}
+
 /// Read a frame header, returning (tag, payload_length).
 async fn read_frame_header<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<(u8, u32)> {
     let mut header = [0u8; 5];
     reader.read_exact(&mut header).await?;
     let tag = header[0];
     let len = u32::from_le_bytes([header[1], header[2], header[3], header[4]]);
-    if len > 16 * 1024 * 1024 {
+    if len > MAX_FRAME_LEN {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "frame too large",
@@ -339,11 +417,7 @@ pub async fn encode_server_msg<W: AsyncWrite + Unpin>(
 /// Returns `None` if serialization fails.
 pub fn frame_server_msg(msg: &ServerMessage) -> Option<Vec<u8>> {
     let payload = rmp_serde::to_vec(msg).ok()?;
-    let mut frame = Vec::with_capacity(5 + payload.len());
-    frame.push(TAG_SERVER_MSG);
-    frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-    frame.extend_from_slice(&payload);
-    Some(frame)
+    build_frame(TAG_SERVER_MSG, &payload).ok()
 }
 
 /// Build a complete framed `ServerMessage` into a caller-supplied buffer (for pooled use).
@@ -353,10 +427,14 @@ pub fn frame_server_msg_into(buf: &mut Vec<u8>, msg: &ServerMessage) -> bool {
         Ok(p) => p,
         Err(_) => return false,
     };
+    let payload_len = match frame_len_u32(&payload) {
+        Ok(len) => len,
+        Err(_) => return false,
+    };
     buf.clear();
     buf.reserve(5 + payload.len());
     buf.push(TAG_SERVER_MSG);
-    buf.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&payload_len.to_le_bytes());
     buf.extend_from_slice(&payload);
     true
 }
@@ -365,11 +443,7 @@ pub fn frame_server_msg_into(buf: &mut Vec<u8>, msg: &ServerMessage) -> bool {
 /// Returns `None` if encoding fails.
 pub fn frame_full_pane_sync(sync: &FullPaneSync) -> Option<Vec<u8>> {
     let payload = encode_full_pane_sync_payload(sync).ok()?;
-    let mut frame = Vec::with_capacity(5 + payload.len());
-    frame.push(TAG_FULL_PANE_SYNC);
-    frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-    frame.extend_from_slice(&payload);
-    Some(frame)
+    build_frame(TAG_FULL_PANE_SYNC, &payload).ok()
 }
 
 // ─── State-machine opcode constants ─────────────────────────────────
@@ -551,6 +625,12 @@ impl StateEncoder {
         self.run_count = 0;
         self.char_buf.clear();
         self.out.clear();
+    }
+}
+
+impl Default for StateEncoder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -751,6 +831,7 @@ fn overflow_err() -> io::Error {
 
 /// Encode a CellDelta frame by streaming cells through a StateEncoder.
 /// The `write_cells` callback pushes packed cells into the encoder for each region.
+#[allow(clippy::too_many_arguments)]
 pub fn encode_cell_delta_streaming_framed<F>(
     buf: &mut Vec<u8>,
     pane_id: u64,
@@ -1161,34 +1242,36 @@ pub enum Frame {
 
 /// Read one frame from an async reader.
 pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Frame> {
-    let (tag, len) = read_frame_header(reader).await?;
+    let header = read_frame_header(reader).await?;
+    let payload = read_frame_payload(reader, header.1).await?;
+    let tag = header.0;
+    decode_frame(tag, payload)
+}
+
+async fn read_frame_payload<R: AsyncRead + Unpin>(reader: &mut R, len: u32) -> io::Result<Vec<u8>> {
     let mut payload = vec![0u8; len as usize];
     reader.read_exact(&mut payload).await?;
+    Ok(payload)
+}
 
+fn decode_frame(tag: u8, payload: Vec<u8>) -> io::Result<Frame> {
     match tag {
-        TAG_CLIENT_MSG => {
-            let msg: ClientMessage = rmp_serde::from_slice(&payload)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            Ok(Frame::ClientMsg(msg))
-        }
-        TAG_SERVER_MSG => {
-            let msg: ServerMessage = rmp_serde::from_slice(&payload)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            Ok(Frame::ServerMsg(msg))
-        }
-        TAG_CELL_DELTA => {
-            let delta = decode_cell_delta_borrowed(payload)?;
-            Ok(Frame::CellDelta(delta))
-        }
-        TAG_FULL_PANE_SYNC => {
-            let sync = decode_full_pane_sync(&payload)?;
-            Ok(Frame::FullPaneSync(sync))
-        }
+        TAG_CLIENT_MSG => decode_msgpack_frame(&payload).map(Frame::ClientMsg),
+        TAG_SERVER_MSG => decode_msgpack_frame(&payload).map(Frame::ServerMsg),
+        TAG_CELL_DELTA => decode_cell_delta_borrowed(payload).map(Frame::CellDelta),
+        TAG_FULL_PANE_SYNC => decode_full_pane_sync(&payload).map(Frame::FullPaneSync),
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("unknown frame tag: 0x{tag:02x}"),
         )),
     }
+}
+
+fn decode_msgpack_frame<T>(payload: &[u8]) -> io::Result<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    rmp_serde::from_slice(payload).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
 #[cfg(test)]
@@ -1207,7 +1290,11 @@ mod tests {
         assert_eq!(n, 80);
         assert_eq!(decoded, cells);
         // Should be very compact: Reset(0 if already default) + Repeat + End
-        assert!(encoded.len() < 20, "blank line encoded as {}B", encoded.len());
+        assert!(
+            encoded.len() < 20,
+            "blank line encoded as {}B",
+            encoded.len()
+        );
     }
 
     #[test]
@@ -1313,10 +1400,12 @@ mod tests {
         c.flags = FLAG_WIDE_CHAR.to_le_bytes();
         cells.push(c);
         // Spacer cell
-        let mut s = PackedCell::default();
-        s.ch_bytes = [0; 4];
-        s.fg = PackedColor::indexed(196);
-        s.flags = FLAG_WIDE_CHAR_SPACER.to_le_bytes();
+        let s = PackedCell {
+            ch_bytes: [0; 4],
+            fg: PackedColor::indexed(196),
+            flags: FLAG_WIDE_CHAR_SPACER.to_le_bytes(),
+            ..PackedCell::default()
+        };
         cells.push(s);
 
         let encoded = sm_encode_cells(&cells);
@@ -1603,5 +1692,223 @@ mod tests {
         let n = decode_sm_cells(&encoded, &mut decoded).unwrap();
         assert_eq!(n, count);
         assert_eq!(decoded, cells);
+    }
+
+    #[tokio::test]
+    async fn read_client_hello_rejects_bad_magic() {
+        let mut hello = build_client_hello(&ClientHello {
+            session_name: "main".to_string(),
+            width: 1024,
+            height: 768,
+            cell_width: 8.0,
+            cell_height: 16.0,
+        })
+        .unwrap();
+        hello[0..4].copy_from_slice(b"NOPE");
+        let err = read_client_hello(&mut &hello[..]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("bad magic"));
+    }
+
+    #[tokio::test]
+    async fn read_client_hello_rejects_wrong_wire_version() {
+        let mut hello = build_client_hello(&ClientHello {
+            session_name: "main".to_string(),
+            width: 1024,
+            height: 768,
+            cell_width: 8.0,
+            cell_height: 16.0,
+        })
+        .unwrap();
+        hello[8] = WIRE_PROTOCOL_VERSION + 1;
+        let err = read_client_hello(&mut &hello[..]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("incompatible wire protocol"));
+    }
+
+    #[tokio::test]
+    async fn read_client_hello_rejects_invalid_utf8_session_name() {
+        let mut hello = build_client_hello(&ClientHello {
+            session_name: "main".to_string(),
+            width: 1024,
+            height: 768,
+            cell_width: 8.0,
+            cell_height: 16.0,
+        })
+        .unwrap();
+        let name_start = CLIENT_HELLO_HEADER_LEN;
+        hello[name_start..name_start + 4].copy_from_slice(&[0xff, 0xfe, 0xfd, 0xfc]);
+        let err = read_client_hello(&mut &hello[..]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("invalid session name utf8"));
+    }
+
+    #[tokio::test]
+    async fn read_client_hello_rejects_invalid_cell_width() {
+        let mut hello = build_client_hello(&ClientHello {
+            session_name: "main".to_string(),
+            width: 1024,
+            height: 768,
+            cell_width: 8.0,
+            cell_height: 16.0,
+        })
+        .unwrap();
+        let width_offset = CLIENT_HELLO_HEADER_LEN + 4 + 4 + 4;
+        hello[width_offset..width_offset + 4].copy_from_slice(&f32::NAN.to_bits().to_le_bytes());
+
+        let err = read_client_hello(&mut &hello[..]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("invalid cell_width"));
+    }
+
+    #[tokio::test]
+    async fn read_client_hello_rejects_zero_viewport_width() {
+        let mut hello = build_client_hello(&ClientHello {
+            session_name: "main".to_string(),
+            width: 1024,
+            height: 768,
+            cell_width: 8.0,
+            cell_height: 16.0,
+        })
+        .unwrap();
+        let width_offset = CLIENT_HELLO_HEADER_LEN + 4;
+        hello[width_offset..width_offset + 4].copy_from_slice(&0u32.to_le_bytes());
+
+        let err = read_client_hello(&mut &hello[..]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("invalid viewport width"));
+    }
+
+    #[tokio::test]
+    async fn read_server_hello_rejects_bad_magic() {
+        let mut hello = [0u8; SERVER_HELLO_LEN];
+        hello[0..4].copy_from_slice(b"NOPE");
+        hello[4..8].copy_from_slice(&parse_pkg_version().to_le_bytes());
+
+        let err = read_server_hello(&mut &hello[..]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("bad magic"));
+    }
+
+    #[tokio::test]
+    async fn read_frame_rejects_unknown_tag() {
+        let mut frame = vec![0x7f];
+        frame.extend_from_slice(&1u32.to_le_bytes());
+        frame.push(0);
+        let err = read_frame(&mut &frame[..]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("unknown frame tag"));
+    }
+
+    #[tokio::test]
+    async fn read_frame_rejects_truncated_header() {
+        let frame = [TAG_SERVER_MSG, 0, 0, 0];
+        let err = read_frame(&mut &frame[..]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[tokio::test]
+    async fn read_frame_rejects_truncated_payload() {
+        let msg = ServerMessage::ServerShutdown;
+        let payload = rmp_serde::to_vec(&msg).unwrap();
+        let mut frame = build_frame(TAG_SERVER_MSG, &payload).unwrap();
+        frame.pop();
+        let err = read_frame(&mut &frame[..]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[tokio::test]
+    async fn read_frame_rejects_oversized_payload() {
+        let mut frame = vec![TAG_SERVER_MSG];
+        frame.extend_from_slice(&(MAX_FRAME_LEN + 1).to_le_bytes());
+        let err = read_frame(&mut &frame[..]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("frame too large"));
+    }
+
+    #[tokio::test]
+    async fn frame_roundtrip_server_message_variants() {
+        let layout = LayoutState {
+            workspaces: vec![WorkspaceState {
+                columns: vec![ColumnState {
+                    tiles: vec![
+                        TileState {
+                            pane_id: 10,
+                            weight: 1.0,
+                        },
+                        TileState {
+                            pane_id: 11,
+                            weight: 2.0,
+                        },
+                    ],
+                    active_tile_idx: 1,
+                    width_proportion: 0.6,
+                    width_fixed_px: Some(480.0),
+                }],
+                active_column_idx: 0,
+            }],
+            active_workspace_idx: 0,
+        };
+
+        for msg in [
+            ServerMessage::LayoutUpdate {
+                layout: layout.clone(),
+            },
+            ServerMessage::PaneCreated {
+                pane_id: 42,
+                column_idx: 2,
+                cols: 80,
+                rows: 24,
+            },
+            ServerMessage::CommandResult {
+                success: true,
+                message: "ok".to_string(),
+                pane_id: Some(42),
+            },
+            ServerMessage::TemplateApplied {
+                session_name: "main".to_string(),
+            },
+        ] {
+            let expected = format!("{msg:?}");
+            let frame = frame_server_msg(&msg).expect("server frame");
+            match read_frame(&mut &frame[..]).await.unwrap() {
+                Frame::ServerMsg(decoded) => assert_eq!(format!("{decoded:?}"), expected),
+                other => panic!("expected server message frame, got {other:?}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn frame_roundtrip_client_message_variants() {
+        let cases = vec![
+            ClientMessage::Resize {
+                cols: 80,
+                rows: 24,
+                width: 1280,
+                height: 720,
+                cell_width: 8.0,
+                cell_height: 16.0,
+            },
+            ClientMessage::SaveTemplate {
+                template_name: "dev".to_string(),
+                session_name: "main".to_string(),
+            },
+            ClientMessage::RunCommand {
+                session_name: "main".to_string(),
+                command: "ls".to_string(),
+                cwd: Some("/tmp".to_string()),
+            },
+            ClientMessage::ListSessions { all: true },
+        ];
+
+        for msg in cases {
+            let expected = format!("{msg:?}");
+            let mut frame = Vec::new();
+            encode_client_msg(&mut frame, &msg).await.unwrap();
+            match read_frame(&mut &frame[..]).await.unwrap() {
+                Frame::ClientMsg(decoded) => assert_eq!(format!("{decoded:?}"), expected),
+                other => panic!("expected client message frame, got {other:?}"),
+            }
+        }
     }
 }

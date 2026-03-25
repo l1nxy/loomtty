@@ -14,9 +14,9 @@ use std::ptr;
 use std::sync::Arc;
 use winit::window::Window;
 
+use ciri_render::FrameScene;
 use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, PendingUpload, ScissoredRange};
 use ciri_render::rect::Rect;
-use ciri_render::FrameScene;
 
 // ─── Rect pipeline ──────────────────────────────────────────────────
 
@@ -55,18 +55,27 @@ impl RectPipeline {
 
         let vertex_layout = gpu::VertexLayout {
             attributes: vec![
-                ("pos", gpu::VertexAttribute {
-                    offset: 0,
-                    format: gpu::VertexFormat::F32Vec2,
-                }),
-                ("size", gpu::VertexAttribute {
-                    offset: 8,
-                    format: gpu::VertexFormat::F32Vec2,
-                }),
-                ("color", gpu::VertexAttribute {
-                    offset: 16,
-                    format: gpu::VertexFormat::F32Vec4,
-                }),
+                (
+                    "pos",
+                    gpu::VertexAttribute {
+                        offset: 0,
+                        format: gpu::VertexFormat::F32Vec2,
+                    },
+                ),
+                (
+                    "size",
+                    gpu::VertexAttribute {
+                        offset: 8,
+                        format: gpu::VertexFormat::F32Vec2,
+                    },
+                ),
+                (
+                    "color",
+                    gpu::VertexAttribute {
+                        offset: 16,
+                        format: gpu::VertexFormat::F32Vec4,
+                    },
+                ),
             ],
             stride: std::mem::size_of::<Rect>() as u32,
         };
@@ -102,12 +111,7 @@ impl RectPipeline {
     }
 
     /// Upload all rect instance data to the GPU buffer.
-    fn upload(
-        &self,
-        rects: &[Rect],
-        viewport_w: f32,
-        viewport_h: f32,
-    ) {
+    fn upload(&self, rects: &[Rect], viewport_w: f32, viewport_h: f32) {
         if rects.is_empty() {
             return;
         }
@@ -129,12 +133,7 @@ impl RectPipeline {
     }
 
     /// Draw a range of previously uploaded rects.
-    fn draw_range(
-        &self,
-        pass: &mut gpu::RenderCommandEncoder,
-        start: usize,
-        count: usize,
-    ) {
+    fn draw_range(&self, pass: &mut gpu::RenderCommandEncoder, start: usize, count: usize) {
         if count == 0 {
             return;
         }
@@ -180,6 +179,7 @@ struct AtlasLayer {
 }
 
 impl AtlasLayer {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         context: &gpu::Context,
         surface_format: gpu::TextureFormat,
@@ -550,8 +550,7 @@ impl GlyphAtlasGpu {
         encoder: &mut gpu::CommandEncoder,
         cache: &mut GlyphCache,
     ) {
-        let (mut alpha_pending, mut color_pending, alpha_clear, color_clear) =
-            cache.take_pending();
+        let (mut alpha_pending, mut color_pending, alpha_clear, color_clear) = cache.take_pending();
         self.alpha
             .flush_uploads(context, encoder, &mut alpha_pending, alpha_clear);
         self.color
@@ -791,6 +790,7 @@ impl Renderer {
     // ─── Atlas init ──────────────────────────────────────────────────
 
     /// Create a new GlyphCache + GlyphAtlasGpu bound to this renderer's GPU context.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_atlas(
         &mut self,
         font_size_pt: f32,
@@ -894,13 +894,7 @@ impl Renderer {
             self.rects.draw_range(&mut pass, 0, pane_bg_count);
 
             // 3. Pane alpha glyphs (scissored) — upload + draw batches.
-            atlas_gpu.render_pane_glyphs(
-                &mut pass,
-                scene.glyphs,
-                vw_f,
-                vh_f,
-                scene.glyph_batches,
-            );
+            atlas_gpu.render_pane_glyphs(&mut pass, scene.glyphs, vw_f, vh_f, scene.glyph_batches);
 
             // 4. Pane color emoji (scissored).
             atlas_gpu.render_pane_color_glyphs(
@@ -915,17 +909,12 @@ impl Renderer {
             //    occlude terminal text underneath popups like the context menu).
             let overlay_bg_count = total_bg.saturating_sub(overlay_bg_idx);
             if overlay_bg_count > 0 {
-                self.rects.draw_range(&mut pass, overlay_bg_idx, overlay_bg_count);
+                self.rects
+                    .draw_range(&mut pass, overlay_bg_idx, overlay_bg_count);
             }
 
             // 6. Overlay alpha glyphs.
-            atlas_gpu.render_overlay_glyphs(
-                &mut pass,
-                scene.glyphs,
-                scene.pane_glyph_end,
-                vw,
-                vh,
-            );
+            atlas_gpu.render_overlay_glyphs(&mut pass, scene.glyphs, scene.pane_glyph_end, vw, vh);
 
             // 7. Overlay color emoji.
             atlas_gpu.render_overlay_color_glyphs(
@@ -956,26 +945,41 @@ impl Drop for Renderer {
 fn glyph_vertex_layout() -> gpu::VertexLayout {
     gpu::VertexLayout {
         attributes: vec![
-            ("pos", gpu::VertexAttribute {
-                offset: 0,
-                format: gpu::VertexFormat::F32Vec2,
-            }),
-            ("size", gpu::VertexAttribute {
-                offset: 8,
-                format: gpu::VertexFormat::F32Vec2,
-            }),
-            ("uv_pos", gpu::VertexAttribute {
-                offset: 16,
-                format: gpu::VertexFormat::F32Vec2,
-            }),
-            ("uv_size", gpu::VertexAttribute {
-                offset: 24,
-                format: gpu::VertexFormat::F32Vec2,
-            }),
-            ("color", gpu::VertexAttribute {
-                offset: 32,
-                format: gpu::VertexFormat::F32Vec4,
-            }),
+            (
+                "pos",
+                gpu::VertexAttribute {
+                    offset: 0,
+                    format: gpu::VertexFormat::F32Vec2,
+                },
+            ),
+            (
+                "size",
+                gpu::VertexAttribute {
+                    offset: 8,
+                    format: gpu::VertexFormat::F32Vec2,
+                },
+            ),
+            (
+                "uv_pos",
+                gpu::VertexAttribute {
+                    offset: 16,
+                    format: gpu::VertexFormat::F32Vec2,
+                },
+            ),
+            (
+                "uv_size",
+                gpu::VertexAttribute {
+                    offset: 24,
+                    format: gpu::VertexFormat::F32Vec2,
+                },
+            ),
+            (
+                "color",
+                gpu::VertexAttribute {
+                    offset: 32,
+                    format: gpu::VertexFormat::F32Vec4,
+                },
+            ),
         ],
         stride: std::mem::size_of::<GlyphInstance>() as u32,
     }

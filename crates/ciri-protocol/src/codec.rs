@@ -478,13 +478,17 @@ pub struct StateEncoder {
     out: Vec<u8>,
 }
 
+fn default_cell_state() -> (PackedColor, PackedColor, u16) {
+    (DEFAULT_FOREGROUND, DEFAULT_BACKGROUND, DEFAULT_CELL_FLAGS)
+}
+
 impl StateEncoder {
     pub fn new() -> Self {
-        let def = PackedCell::default();
+        let (fg, bg, flags) = default_cell_state();
         Self {
-            cur_fg: def.fg,
-            cur_bg: def.bg,
-            cur_flags: 0,
+            cur_fg: fg,
+            cur_bg: bg,
+            cur_flags: flags,
             run_ch: None,
             run_count: 0,
             char_buf: Vec::new(),
@@ -503,8 +507,8 @@ impl StateEncoder {
             self.flush_run();
             self.flush_char_buf();
 
-            let def = PackedCell::default();
-            let target_is_default = fg == def.fg && bg == def.bg && flags == 0;
+            let target_is_default =
+                fg == DEFAULT_FOREGROUND && bg == DEFAULT_BACKGROUND && flags == DEFAULT_CELL_FLAGS;
 
             if target_is_default {
                 self.out.push(OP_RESET);
@@ -617,10 +621,10 @@ impl StateEncoder {
 
     /// Reset the encoder for reuse with a new region.
     pub fn reset(&mut self) {
-        let def = PackedCell::default();
-        self.cur_fg = def.fg;
-        self.cur_bg = def.bg;
-        self.cur_flags = 0;
+        let (fg, bg, flags) = default_cell_state();
+        self.cur_fg = fg;
+        self.cur_bg = bg;
+        self.cur_flags = flags;
         self.run_ch = None;
         self.run_count = 0;
         self.char_buf.clear();
@@ -639,10 +643,7 @@ impl Default for StateEncoder {
 /// Decode an SM opcode stream, writing cells into the provided slice.
 /// Returns the number of cells written. Initial state: default PackedCell attrs.
 pub fn decode_sm_cells(data: &[u8], cells: &mut [PackedCell]) -> io::Result<usize> {
-    let def = PackedCell::default();
-    let mut fg = def.fg;
-    let mut bg = def.bg;
-    let mut flags: u16 = 0;
+    let (mut fg, mut bg, mut flags) = default_cell_state();
     let mut pos = 0;
     let mut ci = 0; // cell index
 
@@ -681,9 +682,7 @@ pub fn decode_sm_cells(data: &[u8], cells: &mut [PackedCell]) -> io::Result<usiz
                 pos += 8;
             }
             OP_RESET => {
-                fg = def.fg;
-                bg = def.bg;
-                flags = 0;
+                (fg, bg, flags) = default_cell_state();
             }
             OP_CHAR1 => {
                 if pos + 4 > data.len() {
@@ -918,12 +917,7 @@ pub fn decode_cell_delta_borrowed(payload: Vec<u8>) -> io::Result<CellDeltaBorro
         let right = read_u16_le(&payload, offset + 4)?;
         let sm_data_len = read_u32_le(&payload, offset + 6)? as usize;
         offset += 10;
-        if left > right {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid damage region: left > right",
-            ));
-        }
+        validate_damage_bounds(left, right)?;
         if offset + sm_data_len > payload.len() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -950,6 +944,17 @@ pub fn decode_cell_delta_borrowed(payload: Vec<u8>) -> io::Result<CellDeltaBorro
         regions,
         payload,
     ))
+}
+
+fn validate_damage_bounds(left: u16, right: u16) -> io::Result<()> {
+    if left > right {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid damage region: left > right",
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 // ─── Encode FullPaneSync (state-machine) ────────────────────────────
@@ -1692,6 +1697,49 @@ mod tests {
         let n = decode_sm_cells(&encoded, &mut decoded).unwrap();
         assert_eq!(n, count);
         assert_eq!(decoded, cells);
+    }
+
+    #[test]
+    fn decode_cell_delta_rejects_inverted_region_bounds() {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&1u64.to_le_bytes());
+        payload.extend_from_slice(&2u64.to_le_bytes());
+        payload.extend_from_slice(&0i16.to_le_bytes());
+        payload.extend_from_slice(&0u16.to_le_bytes());
+        payload.push(0);
+        payload.push(0);
+        payload.extend_from_slice(&80u16.to_le_bytes());
+        payload.extend_from_slice(&1u16.to_le_bytes());
+        payload.extend_from_slice(&3u16.to_le_bytes());
+        payload.extend_from_slice(&5u16.to_le_bytes());
+        payload.extend_from_slice(&4u16.to_le_bytes());
+        payload.extend_from_slice(&0u32.to_le_bytes());
+
+        let err = decode_cell_delta_borrowed(payload).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("left > right"));
+    }
+
+    #[test]
+    fn decode_cell_delta_rejects_truncated_region_data() {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&1u64.to_le_bytes());
+        payload.extend_from_slice(&2u64.to_le_bytes());
+        payload.extend_from_slice(&0i16.to_le_bytes());
+        payload.extend_from_slice(&0u16.to_le_bytes());
+        payload.push(0);
+        payload.push(0);
+        payload.extend_from_slice(&80u16.to_le_bytes());
+        payload.extend_from_slice(&1u16.to_le_bytes());
+        payload.extend_from_slice(&3u16.to_le_bytes());
+        payload.extend_from_slice(&4u16.to_le_bytes());
+        payload.extend_from_slice(&6u16.to_le_bytes());
+        payload.extend_from_slice(&4u32.to_le_bytes());
+        payload.extend_from_slice(&[OP_END]);
+
+        let err = decode_cell_delta_borrowed(payload).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("truncated SM data"));
     }
 
     #[tokio::test]

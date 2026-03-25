@@ -340,6 +340,16 @@ mod tests {
         AUTO_BACKEND, BLADE_BACKEND, BackendChoice, BackendMismatchOp, BackendRequest, DX_BACKEND,
         GL_BACKEND, backend_not_compiled_error, default_backend_for_platform,
     };
+    #[cfg(all(feature = "blade", feature = "gl"))]
+    use crate::{GlyphAtlasGpu, Renderer};
+
+    #[cfg(all(feature = "blade", feature = "gl"))]
+    #[allow(invalid_value)]
+    fn backend_mismatch_renderer_and_atlas() -> (Renderer, GlyphAtlasGpu) {
+        let renderer = Renderer::Blade(unsafe { std::mem::MaybeUninit::zeroed().assume_init() });
+        let atlas = GlyphAtlasGpu::Gl(unsafe { std::mem::MaybeUninit::zeroed().assume_init() });
+        (renderer, atlas)
+    }
 
     #[test]
     fn auto_backend_uses_platform_default() {
@@ -389,4 +399,51 @@ mod tests {
     fn backend_mismatch_ops_are_distinct() {
         assert_ne!(BackendMismatchOp::DestroyAtlas, BackendMismatchOp::DrawFrame);
     }
+
+    #[cfg(all(feature = "blade", feature = "gl"))]
+    #[test]
+    fn destroy_atlas_backend_mismatch_is_safe() {
+        let (renderer, mut atlas) = backend_mismatch_renderer_and_atlas();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            renderer.destroy_atlas(&mut atlas);
+        }));
+        std::mem::forget(renderer);
+        std::mem::forget(atlas);
+        assert!(result.is_ok(), "destroy_atlas mismatch path should not panic");
+    }
+
+    #[cfg(all(feature = "blade", feature = "gl"))]
+    #[test]
+    fn draw_frame_backend_mismatch_is_safe() {
+        let (mut renderer, mut atlas) = backend_mismatch_renderer_and_atlas();
+        let mut cache = ciri_render::glyph_cache::GlyphCache::new(
+            32.0,
+            1.0,
+            "monospace",
+            None,
+            None,
+            None,
+            None,
+            None,
+            &ciri_config::config::RenderConfig::default(),
+        );
+        let scene = ciri_render::FrameScene {
+            clear_color: [0.0, 0.0, 0.0, 1.0],
+            bg_rects: &[],
+            glyphs: &[],
+            color_glyphs: &[],
+            glyph_batches: &[],
+            color_glyph_batches: &[],
+            pane_glyph_end: 0,
+            pane_color_glyph_end: 0,
+            overlay_bg_start: 0,
+        };
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            renderer.draw_frame(&mut atlas, &mut cache, scene);
+        }));
+        std::mem::forget(renderer);
+        std::mem::forget(atlas);
+        assert!(result.is_ok(), "draw_frame mismatch path should not panic");
+    }
 }
+

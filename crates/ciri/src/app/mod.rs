@@ -295,6 +295,7 @@ pub(crate) struct ReconnectPlan {
 pub(crate) struct App {
     pub config: CiriConfig,
     pub session_name: String,
+    pub pending_session_name: Option<String>,
     pub frame_interval: Duration,
     pub window: Option<Arc<Window>>,
     pub renderer: Option<Renderer>,
@@ -409,6 +410,7 @@ impl App {
         App {
             config,
             session_name,
+            pending_session_name: None,
             frame_interval,
             window: None,
             renderer: None,

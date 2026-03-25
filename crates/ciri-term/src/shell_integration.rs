@@ -9,6 +9,22 @@ pub(crate) struct Osc133Parser {
     partial: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Osc133Command<'a> {
+    kind: u8,
+    params: &'a str,
+}
+
+fn parse_command(payload: &[u8]) -> Option<Osc133Command<'_>> {
+    let (&kind, rest) = payload.split_first()?;
+    let params = if let Some(rest) = rest.strip_prefix(b";") {
+        std::str::from_utf8(rest).unwrap_or("")
+    } else {
+        ""
+    };
+    Some(Osc133Command { kind, params })
+}
+
 impl Osc133Parser {
     pub fn new() -> Self {
         Osc133Parser {
@@ -40,20 +56,11 @@ impl Osc133Parser {
         for (_offset, payload) in &result.sequences {
             // payload is everything between "133;" and ST.
             // First byte is the command (A/B/C/D), optionally followed by ";<params>".
-            if payload.is_empty() {
+            let Some(command) = parse_command(payload) else {
                 continue;
-            }
-
-            let cmd = payload[0];
-            let params = if payload.len() > 1 && payload[1] == b';' {
-                std::str::from_utf8(&payload[2..])
-                    .unwrap_or("")
-                    .to_string()
-            } else {
-                String::new()
             };
 
-            match cmd {
+            match command.kind {
                 b'A' => {
                     shell_state.zone = SemanticZone::Prompt;
                     shell_state.prompt_line = Some(0); // exact line resolved at snapshot time
@@ -72,7 +79,7 @@ impl Osc133Parser {
                 }
                 b'D' => {
                     shell_state.zone = SemanticZone::Prompt;
-                    let exit_code = params.trim().parse::<i32>().ok();
+                    let exit_code = command.params.trim().parse::<i32>().ok();
                     shell_state.last_exit_code = exit_code;
                     if let Some(start) = shell_state.command_start.take() {
                         *last_command_duration = Some(start.elapsed());
@@ -80,7 +87,7 @@ impl Osc133Parser {
                     log::debug!("OSC 133;D command done, exit={exit_code:?}");
                 }
                 _ => {
-                    log::trace!("OSC 133;{} unknown subcommand", cmd as char);
+                    log::trace!("OSC 133;{} unknown subcommand", command.kind as char);
                 }
             }
         }
@@ -98,5 +105,52 @@ impl Osc133Parser {
                 self.partial = partial.to_vec();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pane::SemanticZone;
+
+    fn shell_state() -> ShellState {
+        ShellState {
+            zone: SemanticZone::Prompt,
+            last_exit_code: None,
+            prompt_line: None,
+            output_line: None,
+            command_start: None,
+        }
+    }
+
+    #[test]
+    fn fragmented_sequence_updates_zone_and_exit_code() {
+        let mut parser = Osc133Parser::new();
+        let mut shell_state = shell_state();
+        let mut duration = None;
+
+        parser.scan(b"prefix\x1b]133;C", &mut shell_state, &mut duration);
+        assert_eq!(shell_state.zone, SemanticZone::Prompt);
+        parser.scan(b"\x07suffix", &mut shell_state, &mut duration);
+        assert_eq!(shell_state.zone, SemanticZone::Output);
+
+        parser.scan(b"\x1b]133;D;7\x07", &mut shell_state, &mut duration);
+        assert_eq!(shell_state.zone, SemanticZone::Prompt);
+        assert_eq!(shell_state.last_exit_code, Some(7));
+        assert!(duration.is_some());
+    }
+
+    #[test]
+    fn oversized_partial_is_discarded() {
+        let mut parser = Osc133Parser::new();
+        let mut shell_state = shell_state();
+        let mut duration = None;
+        let mut data = vec![0x1b, b']', b'1', b'3', b'3', b';'];
+        data.extend(std::iter::repeat_n(b'a', MAX_OSC_PARTIAL_SIZE + 1));
+
+        parser.scan(&data, &mut shell_state, &mut duration);
+        assert!(parser.partial.is_empty());
+        assert_eq!(shell_state.zone, SemanticZone::Prompt);
+        assert!(duration.is_none());
     }
 }

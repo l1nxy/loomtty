@@ -344,7 +344,9 @@ pub enum ClientMessage {
         focused: bool,
     },
     /// Focus a specific pane by ID (used for focus-follows-mouse).
-    FocusPane { pane_id: u64 },
+    FocusPane {
+        pane_id: u64,
+    },
     /// IPC: Send keystrokes to a specific pane in a named session.
     SendKeys {
         session_name: String,
@@ -352,25 +354,49 @@ pub enum ClientMessage {
         keys: Vec<u8>,
     },
     /// IPC: Run a command in a new pane in the named session.
-    RunCommand { session_name: String, command: String, cwd: Option<String> },
+    RunCommand {
+        session_name: String,
+        command: String,
+        cwd: Option<String>,
+    },
     /// IPC: Get detailed info about a session.
-    GetSessionInfo { session_name: String },
+    GetSessionInfo {
+        session_name: String,
+    },
     /// IPC: List all panes in a session.
-    ListPanes { session_name: String },
+    ListPanes {
+        session_name: String,
+    },
     /// IPC: Focus a specific pane by ID.
-    FocusPaneById { session_name: String, pane_id: u64 },
+    FocusPaneById {
+        session_name: String,
+        pane_id: u64,
+    },
     /// IPC: Close a specific pane by ID.
-    ClosePaneById { session_name: String, pane_id: u64 },
+    ClosePaneById {
+        session_name: String,
+        pane_id: u64,
+    },
     /// IPC: Create a new pane in the named session.
-    CreatePaneIn { session_name: String },
+    CreatePaneIn {
+        session_name: String,
+    },
     /// IPC: Get the full layout state of a session.
-    GetLayout { session_name: String },
+    GetLayout {
+        session_name: String,
+    },
     /// Apply a layout template to create/recreate a session.
-    ApplyTemplate { template_name: String, session_name: String },
+    ApplyTemplate {
+        template_name: String,
+        session_name: String,
+    },
     /// List available templates.
     ListTemplates,
     /// Save current session layout as a template.
-    SaveTemplate { template_name: String, session_name: String },
+    SaveTemplate {
+        template_name: String,
+        session_name: String,
+    },
 }
 
 /// Control messages from server to client (msgpack encoded, tags 0x10-0x1F).
@@ -430,9 +456,16 @@ pub enum ServerMessage {
     /// IPC response: list of panes.
     PaneListReply { panes: Vec<PaneDetailInfo> },
     /// IPC response: command result.
-    CommandResult { success: bool, message: String, pane_id: Option<u64> },
+    CommandResult {
+        success: bool,
+        message: String,
+        pane_id: Option<u64>,
+    },
     /// IPC response: full layout state.
-    LayoutReply { layout: LayoutState, session_name: String },
+    LayoutReply {
+        layout: LayoutState,
+        session_name: String,
+    },
     /// Template was applied successfully.
     TemplateApplied { session_name: String },
     /// List of available templates.

@@ -13,8 +13,8 @@ use std::sync::mpsc;
 use crate::dec_mode_parser::DecModeParser;
 use crate::event::PtyEventListener;
 use crate::kitty_graphics::KittyGraphicsParser;
-use crate::osc8_parser::Osc8Parser;
 use crate::osc7_parser::Osc7Parser;
+use crate::osc8_parser::Osc8Parser;
 use crate::pty::Pty;
 use crate::shell_integration::Osc133Parser;
 use crate::sixel::SixelParser;
@@ -144,7 +144,13 @@ impl Pane {
     }
 
     /// Create a new pane with CWD override (convenience for OSC 7 CWD inheritance).
-    pub fn new_with_cwd(id: PaneId, cols: u16, rows: u16, shell: &str, cwd: Option<&std::path::Path>) -> Result<Self> {
+    pub fn new_with_cwd(
+        id: PaneId,
+        cols: u16,
+        rows: u16,
+        shell: &str,
+        cwd: Option<&std::path::Path>,
+    ) -> Result<Self> {
         Self::new_with_opts(id, cols, rows, shell, None, cwd)
     }
 
@@ -163,8 +169,10 @@ impl Pane {
             cols: cols as usize,
             rows: rows as usize,
         };
-        let mut config = TermConfig::default();
-        config.kitty_keyboard = true;
+        let config = TermConfig {
+            kitty_keyboard: true,
+            ..TermConfig::default()
+        };
         let (event_listener, event_rx) = PtyEventListener::new();
         let term = Term::new(config, &size, event_listener);
 
@@ -215,7 +223,11 @@ impl Pane {
             // hyperlink, and OSC 7 CWD sequences before VT parsing
             // (alacritty_terminal ignores these).
             for chunk in &chunks {
-                self.osc133_parser.scan(chunk, &mut self.shell_state, &mut self.last_command_duration);
+                self.osc133_parser.scan(
+                    chunk,
+                    &mut self.shell_state,
+                    &mut self.last_command_duration,
+                );
                 self.dec_mode_parser.scan(chunk);
                 self.osc8_parser.scan(chunk);
                 self.osc7_parser.scan(chunk);
@@ -474,7 +486,7 @@ impl Pane {
         let cursor_line = content.cursor.point.line.0 as i16;
         let cursor_col = content.cursor.point.column.0 as u16;
         let cursor_shape = cursor_shape_to_u8(content.cursor.shape);
-        let mode_flags = self.mode_flags_from_term(&term);
+        let mode_flags = self.mode_flags_from_term(term);
         (cursor_line, cursor_col, cursor_shape, mode_flags)
     }
 

@@ -7,6 +7,7 @@
 //! - **"dx"**: Direct3D 11 — native Windows backend
 
 #![allow(unsafe_op_in_unsafe_fn)]
+#![allow(clippy::large_enum_variant)]
 
 #[cfg(feature = "blade")]
 pub mod blade;
@@ -19,10 +20,15 @@ pub mod dx;
 
 use anyhow::Result;
 use ciri_config::config::RenderConfig;
-use ciri_render::glyph_cache::GlyphCache;
 use ciri_render::FrameScene;
+use ciri_render::glyph_cache::GlyphCache;
 use std::sync::Arc;
 use winit::window::Window;
+
+const AUTO_BACKEND: &str = "auto";
+const BLADE_BACKEND: &str = "blade";
+const GL_BACKEND: &str = "gl";
+const DX_BACKEND: &str = "dx";
 
 /// Runtime-selected GPU atlas.
 pub enum GlyphAtlasGpu {
@@ -44,6 +50,85 @@ pub enum Renderer {
     Dx(dx::Renderer),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BackendMismatchOp {
+    DestroyAtlas,
+    DrawFrame,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BackendRequest<'a> {
+    Auto,
+    Explicit(&'a str),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BackendChoice<'a> {
+    requested: BackendRequest<'a>,
+    resolved: &'a str,
+}
+
+impl<'a> BackendChoice<'a> {
+    fn from_config(backend: &'a str) -> Self {
+        let requested = if backend.is_empty() || backend == AUTO_BACKEND {
+            BackendRequest::Auto
+        } else {
+            BackendRequest::Explicit(backend)
+        };
+
+        let resolved = match requested {
+            BackendRequest::Auto => default_backend_for_platform(),
+            BackendRequest::Explicit("vulkan") => BLADE_BACKEND,
+            BackendRequest::Explicit(other) => other,
+        };
+
+        Self {
+            requested,
+            resolved,
+        }
+    }
+
+    fn is_explicit(self) -> bool {
+        matches!(self.requested, BackendRequest::Explicit(_))
+    }
+}
+
+fn default_backend_for_platform() -> &'static str {
+    if cfg!(target_os = "macos") {
+        BLADE_BACKEND
+    } else if cfg!(windows) {
+        if cfg!(feature = "dx") {
+            DX_BACKEND
+        } else {
+            GL_BACKEND
+        }
+    } else {
+        GL_BACKEND
+    }
+}
+
+fn log_backend_init_error(backend: &str, error: &anyhow::Error) {
+    match backend {
+        DX_BACKEND => log::warn!("DX11 backend failed: {error:#}"),
+        BLADE_BACKEND => log::warn!("blade backend failed: {error:#}"),
+        GL_BACKEND => log::warn!("GL backend failed: {error:#}"),
+        other => log::warn!("{other} backend failed: {error:#}"),
+    }
+}
+
+fn backend_not_compiled_error(backend: &str) -> anyhow::Error {
+    anyhow::anyhow!("backend {backend:?} not compiled (available features: blade, gl, dx)")
+}
+
+pub(crate) fn log_backend_mismatch(op: BackendMismatchOp) {
+    match op {
+        BackendMismatchOp::DestroyAtlas => {
+            log::error!("renderer/atlas backend mismatch in destroy_atlas")
+        }
+        BackendMismatchOp::DrawFrame => log::error!("renderer/atlas backend mismatch in draw_frame"),
+    }
+}
+
 impl Renderer {
     /// Create a renderer with the backend specified in config.
     ///
@@ -54,74 +139,52 @@ impl Renderer {
     ///
     /// Explicit values: `"gl"`, `"vulkan"` / `"blade"`, `"dx"`.
     pub fn new(window: Arc<Window>, render_config: &RenderConfig) -> Result<Self> {
-        let backend = render_config.backend.as_str();
-
-        // Resolve "auto" to the platform-native default
-        let resolved = if backend == "auto" || backend.is_empty() {
-            if cfg!(target_os = "macos") {
-                "blade" // Metal via blade
-            } else if cfg!(windows) {
-                if cfg!(feature = "dx") { "dx" } else { "gl" }
-            } else {
-                "gl" // Linux: GL is the safest default
-            }
-        } else {
-            backend
-        };
-
-        // Normalize "vulkan" → "blade"
-        let resolved = if resolved == "vulkan" { "blade" } else { resolved };
+        let choice = BackendChoice::from_config(render_config.backend.as_str());
 
         // Try requested backend
-        match resolved {
+        match choice.resolved {
             #[cfg(all(feature = "dx", windows))]
-            "dx" => {
-                match dx::Renderer::new(window.clone(), render_config) {
-                    Ok(r) => {
-                        log::info!("using DX11 (Direct3D 11) backend");
-                        return Ok(Renderer::Dx(r));
-                    }
-                    Err(e) => {
-                        log::warn!("DX11 backend failed: {e:#}");
-                        if backend != "auto" && !backend.is_empty() {
-                            return Err(e);
-                        }
+            DX_BACKEND => match dx::Renderer::new(window.clone(), render_config) {
+                Ok(r) => {
+                    log::info!("using DX11 (Direct3D 11) backend");
+                    return Ok(Renderer::Dx(r));
+                }
+                Err(e) => {
+                    log_backend_init_error(DX_BACKEND, &e);
+                    if choice.is_explicit() {
+                        return Err(e);
                     }
                 }
-            }
+            },
             #[cfg(feature = "blade")]
-            "blade" => {
-                match blade::Renderer::new(window.clone(), render_config) {
-                    Ok(r) => {
-                        log::info!("using blade (Vulkan/Metal) backend");
-                        return Ok(Renderer::Blade(r));
-                    }
-                    Err(e) => {
-                        log::warn!("blade backend failed: {e:#}");
-                        if backend != "auto" && !backend.is_empty() {
-                            return Err(e);
-                        }
+            BLADE_BACKEND => match blade::Renderer::new(window.clone(), render_config) {
+                Ok(r) => {
+                    log::info!("using blade (Vulkan/Metal) backend");
+                    return Ok(Renderer::Blade(r));
+                }
+                Err(e) => {
+                    log_backend_init_error(BLADE_BACKEND, &e);
+                    if choice.is_explicit() {
+                        return Err(e);
                     }
                 }
-            }
+            },
             #[cfg(feature = "gl")]
-            "gl" => {
-                match gl::Renderer::new(window.clone(), render_config) {
-                    Ok(r) => {
-                        log::info!("using GL (OpenGL/EGL) backend");
-                        return Ok(Renderer::Gl(r));
-                    }
-                    Err(e) => {
-                        log::warn!("GL backend failed: {e:#}");
-                        if backend != "auto" && !backend.is_empty() {
-                            return Err(e);
-                        }
+            GL_BACKEND => match gl::Renderer::new(window.clone(), render_config) {
+                Ok(r) => {
+                    log::info!("using GL (OpenGL/EGL) backend");
+                    return Ok(Renderer::Gl(r));
+                }
+                Err(e) => {
+                    log_backend_init_error(GL_BACKEND, &e);
+                    if choice.is_explicit() {
+                        return Err(e);
                     }
                 }
-            }
+            },
             other => {
-                if backend != "auto" && !backend.is_empty() {
-                    anyhow::bail!("backend {other:?} not compiled (available features: blade, gl, dx)");
+                if choice.is_explicit() {
+                    return Err(backend_not_compiled_error(other));
                 }
             }
         }
@@ -143,7 +206,7 @@ impl Renderer {
             return Ok(Renderer::Blade(r));
         }
 
-        anyhow::bail!("no GPU backend available (tried: {resolved})")
+        anyhow::bail!("no GPU backend available (tried: {})", choice.resolved)
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -179,6 +242,7 @@ impl Renderer {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_atlas(
         &mut self,
         font_size_pt: f32,
@@ -194,20 +258,47 @@ impl Renderer {
         match self {
             #[cfg(feature = "blade")]
             Renderer::Blade(r) => {
-                let (cache, atlas) =
-                    r.create_atlas(font_size_pt, dpi_scale, family_name, primary_font_path, emoji_font_path, emoji_font_id, cjk_font_path, cjk_font_id, render_config);
+                let (cache, atlas) = r.create_atlas(
+                    font_size_pt,
+                    dpi_scale,
+                    family_name,
+                    primary_font_path,
+                    emoji_font_path,
+                    emoji_font_id,
+                    cjk_font_path,
+                    cjk_font_id,
+                    render_config,
+                );
                 (cache, GlyphAtlasGpu::Blade(atlas))
             }
             #[cfg(feature = "gl")]
             Renderer::Gl(r) => {
-                let (cache, atlas) =
-                    r.create_atlas(font_size_pt, dpi_scale, family_name, primary_font_path, emoji_font_path, emoji_font_id, cjk_font_path, cjk_font_id, render_config);
+                let (cache, atlas) = r.create_atlas(
+                    font_size_pt,
+                    dpi_scale,
+                    family_name,
+                    primary_font_path,
+                    emoji_font_path,
+                    emoji_font_id,
+                    cjk_font_path,
+                    cjk_font_id,
+                    render_config,
+                );
                 (cache, GlyphAtlasGpu::Gl(atlas))
             }
             #[cfg(all(feature = "dx", windows))]
             Renderer::Dx(r) => {
-                let (cache, atlas) =
-                    r.create_atlas(font_size_pt, dpi_scale, family_name, primary_font_path, emoji_font_path, emoji_font_id, cjk_font_path, cjk_font_id, render_config);
+                let (cache, atlas) = r.create_atlas(
+                    font_size_pt,
+                    dpi_scale,
+                    family_name,
+                    primary_font_path,
+                    emoji_font_path,
+                    emoji_font_id,
+                    cjk_font_path,
+                    cjk_font_id,
+                    render_config,
+                );
                 (cache, GlyphAtlasGpu::Dx(atlas))
             }
         }
@@ -221,7 +312,7 @@ impl Renderer {
             (Renderer::Gl(r), GlyphAtlasGpu::Gl(a)) => r.destroy_atlas(a),
             #[cfg(all(feature = "dx", windows))]
             (Renderer::Dx(r), GlyphAtlasGpu::Dx(a)) => r.destroy_atlas(a),
-            _ => log::error!("renderer/atlas backend mismatch in destroy_atlas"),
+            _ => log_backend_mismatch(BackendMismatchOp::DestroyAtlas),
         }
     }
 
@@ -238,7 +329,64 @@ impl Renderer {
             (Renderer::Gl(r), GlyphAtlasGpu::Gl(a)) => r.draw_frame(a, cache, scene),
             #[cfg(all(feature = "dx", windows))]
             (Renderer::Dx(r), GlyphAtlasGpu::Dx(a)) => r.draw_frame(a, cache, scene),
-            _ => log::error!("renderer/atlas backend mismatch in draw_frame"),
+            _ => log_backend_mismatch(BackendMismatchOp::DrawFrame),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        AUTO_BACKEND, BLADE_BACKEND, BackendChoice, BackendMismatchOp, BackendRequest, DX_BACKEND,
+        GL_BACKEND, backend_not_compiled_error, default_backend_for_platform,
+    };
+
+    #[test]
+    fn auto_backend_uses_platform_default() {
+        let choice = BackendChoice::from_config(AUTO_BACKEND);
+        assert_eq!(choice.requested, BackendRequest::Auto);
+        assert_eq!(choice.resolved, default_backend_for_platform());
+        assert!(!choice.is_explicit());
+    }
+
+    #[test]
+    fn empty_backend_uses_platform_default() {
+        let choice = BackendChoice::from_config("");
+        assert_eq!(choice.requested, BackendRequest::Auto);
+        assert_eq!(choice.resolved, default_backend_for_platform());
+    }
+
+    #[test]
+    fn vulkan_alias_resolves_to_blade() {
+        let choice = BackendChoice::from_config("vulkan");
+        assert_eq!(choice.requested, BackendRequest::Explicit("vulkan"));
+        assert_eq!(choice.resolved, BLADE_BACKEND);
+        assert!(choice.is_explicit());
+    }
+
+    #[test]
+    fn explicit_backend_is_preserved() {
+        for backend in [BLADE_BACKEND, GL_BACKEND, DX_BACKEND, "custom"] {
+            let choice = BackendChoice::from_config(backend);
+            assert_eq!(choice.requested, BackendRequest::Explicit(backend));
+            assert_eq!(choice.resolved, backend);
+            assert!(choice.is_explicit());
+        }
+    }
+
+    #[test]
+    fn backend_not_compiled_error_mentions_backend_name() {
+        let error = backend_not_compiled_error("mystery");
+        assert!(
+            error
+                .to_string()
+                .contains("backend \"mystery\" not compiled"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn backend_mismatch_ops_are_distinct() {
+        assert_ne!(BackendMismatchOp::DestroyAtlas, BackendMismatchOp::DrawFrame);
     }
 }

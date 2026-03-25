@@ -2029,9 +2029,8 @@ mod tests {
         assert!(err.to_string().contains("frame too large"));
     }
 
-    #[tokio::test]
-    async fn frame_roundtrip_server_message_variants() {
-        let layout = LayoutState {
+    fn sample_layout_state() -> LayoutState {
+        LayoutState {
             workspaces: vec![WorkspaceState {
                 columns: vec![ColumnState {
                     tiles: vec![
@@ -2051,9 +2050,65 @@ mod tests {
                 active_column_idx: 0,
             }],
             active_workspace_idx: 0,
-        };
+        }
+    }
 
-        for msg in [
+    fn sample_session_info() -> SessionInfo {
+        SessionInfo {
+            name: "main".to_string(),
+            running: true,
+            pane_count: 3,
+            client_count: 2,
+        }
+    }
+
+    fn sample_session_detail_info() -> SessionDetailInfo {
+        SessionDetailInfo {
+            name: "main".to_string(),
+            running: true,
+            pane_count: 3,
+            client_count: 2,
+            workspace_count: 2,
+            active_workspace: 1,
+        }
+    }
+
+    fn sample_pane_detail_info() -> PaneDetailInfo {
+        PaneDetailInfo {
+            pane_id: 42,
+            cols: 120,
+            rows: 40,
+            title: "shell".to_string(),
+            cwd: Some("/tmp/project".to_string()),
+            is_active: true,
+            workspace_idx: 1,
+            column_idx: 2,
+            tile_idx: 0,
+        }
+    }
+
+    fn sample_template_info() -> TemplateInfo {
+        TemplateInfo {
+            name: "dev".to_string(),
+            description: Some("Dev workspace".to_string()),
+            workspace_count: 2,
+            total_panes: 5,
+        }
+    }
+
+    #[tokio::test]
+    async fn frame_roundtrip_server_message_variants() {
+        let layout = sample_layout_state();
+        let session_info = sample_session_info();
+        let session_detail = sample_session_detail_info();
+        let pane_detail = sample_pane_detail_info();
+        let template_info = sample_template_info();
+
+        let cases = vec![
+            ServerMessage::StateSync {
+                layout: layout.clone(),
+                pane_ids: vec![10, 11, 12],
+            },
             ServerMessage::LayoutUpdate {
                 layout: layout.clone(),
             },
@@ -2063,15 +2118,68 @@ mod tests {
                 cols: 80,
                 rows: 24,
             },
+            ServerMessage::PaneClosed { pane_id: 42 },
+            ServerMessage::ServerShutdown,
+            ServerMessage::ClipboardStore {
+                data: "copied text".to_string(),
+            },
+            ServerMessage::SessionList {
+                sessions: vec![session_info.clone()],
+            },
+            ServerMessage::SessionSwitched {
+                session_name: "main".to_string(),
+            },
+            ServerMessage::SessionKilled {
+                session_name: "old".to_string(),
+            },
+            ServerMessage::Error {
+                message: "boom".to_string(),
+            },
+            ServerMessage::Bell { pane_id: 7 },
+            ServerMessage::CommandCompleted {
+                pane_id: 7,
+                duration_secs: 3,
+                exit_code: Some(1),
+            },
+            ServerMessage::ImagePlacement {
+                pane_id: 9,
+                image_id: 5,
+                col: 3,
+                row: 4,
+                width_cells: 6,
+                height_cells: 7,
+                pixel_width: 240,
+                pixel_height: 112,
+                format: "png".to_string(),
+                data: vec![1, 2, 3, 4],
+            },
+            ServerMessage::SessionInfoReply {
+                info: session_detail.clone(),
+            },
+            ServerMessage::PaneListReply {
+                panes: vec![pane_detail.clone()],
+            },
             ServerMessage::CommandResult {
                 success: true,
                 message: "ok".to_string(),
                 pane_id: Some(42),
             },
+            ServerMessage::LayoutReply {
+                layout: layout.clone(),
+                session_name: "main".to_string(),
+            },
             ServerMessage::TemplateApplied {
                 session_name: "main".to_string(),
             },
-        ] {
+            ServerMessage::TemplateList {
+                templates: vec![template_info.clone()],
+            },
+            ServerMessage::TemplateSaved {
+                template_name: "dev".to_string(),
+            },
+        ];
+
+        for msg in cases {
             let expected = format!("{msg:?}");
             let frame = frame_server_msg(&msg).expect("server frame");
             match read_frame(&mut &frame[..]).await.unwrap() {
@@ -2084,6 +2192,19 @@ mod tests {
     #[tokio::test]
     async fn frame_roundtrip_client_message_variants() {
         let cases = vec![
+            ClientMessage::Input {
+                pane_id: 42,
+                data: vec![0x1b, b'[', b'A'],
+            },
+            ClientMessage::CreatePane,
+            ClientMessage::SplitDown,
+            ClientMessage::ClosePane { pane_id: 42 },
+            ClientMessage::FocusLeft,
+            ClientMessage::FocusRight,
+            ClientMessage::FocusUp,
+            ClientMessage::FocusDown,
+            ClientMessage::MovePaneLeft,
+            ClientMessage::MovePaneRight,
             ClientMessage::Resize {
                 cols: 80,
                 rows: 24,
@@ -2091,6 +2212,51 @@ mod tests {
                 height: 720,
                 cell_width: 8.0,
                 cell_height: 16.0,
+            },
+            ClientMessage::SetColumnWidth {
+                proportion: 0.6,
+                fixed_px: Some(320.0),
+            },
+            ClientMessage::AdjustColumnSplit { delta: -0.15 },
+            ClientMessage::EqualizeColumnSplit,
+            ClientMessage::Attach,
+            ClientMessage::Detach,
+            ClientMessage::Ack { generation: 7 },
+            ClientMessage::MouseInput {
+                pane_id: 42,
+                button: 1,
+                col: 12,
+                row: 6,
+                pressed: true,
+                modifiers: 2,
+            },
+            ClientMessage::SwitchWorkspace { workspace_idx: 1 },
+            ClientMessage::ConsumeIntoColumn,
+            ClientMessage::ExpelFromColumn,
+            ClientMessage::ListSessions { all: false },
+            ClientMessage::KillSession {
+                session_name: "old".to_string(),
+            },
+            ClientMessage::KillServer,
+            ClientMessage::SwitchSession {
+                session_name: "main".to_string(),
+            },
+            ClientMessage::SetTileWeights {
+                column_idx: 1,
+                top_tile_idx: 0,
+                top_weight: 1.5,
+                bottom_weight: 2.5,
+            },
+            ClientMessage::AdjustColumnSplitAt {
+                column_idx: 2,
+                delta: 0.25,
+            },
+            ClientMessage::FocusChange { focused: true },
+            ClientMessage::FocusPane { pane_id: 99 },
+            ClientMessage::SendKeys {
+                session_name: "main".to_string(),
+                pane_id: 42,
+                keys: vec![b'l', b's', b'\n'],
             },
             ClientMessage::SaveTemplate {
                 template_name: "dev".to_string(),
@@ -2101,6 +2267,31 @@ mod tests {
                 command: "ls".to_string(),
                 cwd: Some("/tmp".to_string()),
             },
+            ClientMessage::GetSessionInfo {
+                session_name: "main".to_string(),
+            },
+            ClientMessage::ListPanes {
+                session_name: "main".to_string(),
+            },
+            ClientMessage::FocusPaneById {
+                session_name: "main".to_string(),
+                pane_id: 7,
+            },
+            ClientMessage::ClosePaneById {
+                session_name: "main".to_string(),
+                pane_id: 8,
+            },
+            ClientMessage::CreatePaneIn {
+                session_name: "main".to_string(),
+            },
+            ClientMessage::GetLayout {
+                session_name: "main".to_string(),
+            },
+            ClientMessage::ApplyTemplate {
+                template_name: "dev".to_string(),
+                session_name: "main".to_string(),
+            },
+            ClientMessage::ListTemplates,
             ClientMessage::ListSessions { all: true },
         ];
 

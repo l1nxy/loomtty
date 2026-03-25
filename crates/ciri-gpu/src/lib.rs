@@ -125,7 +125,9 @@ pub(crate) fn log_backend_mismatch(op: BackendMismatchOp) {
         BackendMismatchOp::DestroyAtlas => {
             log::error!("renderer/atlas backend mismatch in destroy_atlas")
         }
-        BackendMismatchOp::DrawFrame => log::error!("renderer/atlas backend mismatch in draw_frame"),
+        BackendMismatchOp::DrawFrame => {
+            log::error!("renderer/atlas backend mismatch in draw_frame")
+        }
     }
 }
 
@@ -397,7 +399,10 @@ mod tests {
 
     #[test]
     fn backend_mismatch_ops_are_distinct() {
-        assert_ne!(BackendMismatchOp::DestroyAtlas, BackendMismatchOp::DrawFrame);
+        assert_ne!(
+            BackendMismatchOp::DestroyAtlas,
+            BackendMismatchOp::DrawFrame
+        );
     }
 
     #[cfg(all(feature = "blade", feature = "gl"))]
@@ -409,7 +414,10 @@ mod tests {
         }));
         std::mem::forget(renderer);
         std::mem::forget(atlas);
-        assert!(result.is_ok(), "destroy_atlas mismatch path should not panic");
+        assert!(
+            result.is_ok(),
+            "destroy_atlas mismatch path should not panic"
+        );
     }
 
     #[cfg(all(feature = "blade", feature = "gl"))]
@@ -446,4 +454,3 @@ mod tests {
         assert!(result.is_ok(), "draw_frame mismatch path should not panic");
     }
 }
-

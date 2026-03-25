@@ -1008,8 +1008,11 @@ fn update_dirty_rows(
             }
         }
 
-        view.row_data[row] =
-            grid.build_row_data(row, rebuilt_row_lig_cache.get(row).and_then(Option::as_ref), atlas);
+        view.row_data[row] = grid.build_row_data(
+            row,
+            rebuilt_row_lig_cache.get(row).and_then(Option::as_ref),
+            atlas,
+        );
     }
 }
 
@@ -2069,7 +2072,10 @@ mod tests {
 
         update_view_from_grid(&mut view, &[true, false], &updated_params, &mut atlas);
 
-        assert_eq!(view.row_lig_cache[1].skip_cols, original_clean_row.skip_cols);
+        assert_eq!(
+            view.row_lig_cache[1].skip_cols,
+            original_clean_row.skip_cols
+        );
         assert_eq!(
             view.row_lig_cache[1].ligature_glyphs,
             original_clean_row.ligature_glyphs

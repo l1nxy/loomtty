@@ -957,6 +957,25 @@ fn build_row_lig_cache(params: &ViewBuildParams<'_>) -> Vec<RowLigatureData> {
         .collect()
 }
 
+fn precompute_dirty_row_shaping(
+    params: &ViewBuildParams<'_>,
+    dirty_rows: &[bool],
+) -> Vec<Option<RowLigatureData>> {
+    let Some(fid) = params.shaper.primary_font_id() else {
+        return Vec::new();
+    };
+    let Some(face) = params.shaper.create_face(fid) else {
+        return Vec::new();
+    };
+
+    dirty_rows
+        .iter()
+        .enumerate()
+        .take(params.grid.rows as usize)
+        .map(|(row, dirty)| dirty.then(|| precompute_row_shaping(params, row, fid, &face)))
+        .collect()
+}
+
 fn build_row_render_cache(
     grid: PackedGridContext<'_>,
     row_lig_data: &[RowLigatureData],
@@ -974,14 +993,14 @@ fn update_dirty_rows(
     dirty_rows: &[bool],
     grid: PackedGridContext<'_>,
     atlas: &mut GlyphCache,
-    rebuilt_row_lig_cache: &[RowLigatureData],
+    rebuilt_row_lig_cache: &[Option<RowLigatureData>],
 ) {
     for (row, &dirty) in dirty_rows.iter().enumerate().take(grid.rows as usize) {
         if !dirty || row >= view.row_data.len() {
             continue;
         }
 
-        if let Some(rebuilt) = rebuilt_row_lig_cache.get(row) {
+        if let Some(Some(rebuilt)) = rebuilt_row_lig_cache.get(row) {
             if row < view.row_lig_cache.len() {
                 view.row_lig_cache[row] = rebuilt.clone();
             } else {
@@ -989,7 +1008,8 @@ fn update_dirty_rows(
             }
         }
 
-        view.row_data[row] = grid.build_row_data(row, rebuilt_row_lig_cache.get(row), atlas);
+        view.row_data[row] =
+            grid.build_row_data(row, rebuilt_row_lig_cache.get(row).and_then(Option::as_ref), atlas);
     }
 }
 
@@ -1038,7 +1058,7 @@ pub fn update_view_from_grid(
 ) {
     let metrics = CellMetrics::new(atlas, inputs.config);
     let params = inputs.build_params(&metrics);
-    let rebuilt_row_lig_cache = build_row_lig_cache(&params);
+    let rebuilt_row_lig_cache = precompute_dirty_row_shaping(&params, dirty_rows);
     update_dirty_rows(view, dirty_rows, params.grid, atlas, &rebuilt_row_lig_cache);
 
     // Rebuild cursor
@@ -1988,6 +2008,79 @@ mod tests {
         assert_relative_glyph_lists_match(
             &incremental.color_glyph_instances,
             &rebuilt.color_glyph_instances,
+        );
+    }
+
+    #[test]
+    fn incremental_update_only_recomputes_dirty_row_shaping() {
+        let config = test_config();
+        let shaper = test_shaper(&config);
+        let ct = test_color_table(&config);
+        let graphemes = HashMap::new();
+        let initial_cells = vec![
+            PackedCell::with_ch('f'),
+            PackedCell::with_ch('i'),
+            PackedCell::default(),
+            PackedCell::default(),
+            PackedCell::with_ch('a'),
+            PackedCell::with_ch('b'),
+            PackedCell::default(),
+            PackedCell::default(),
+        ];
+
+        let mut atlas = test_atlas(&config, &shaper);
+        let initial_params = test_view_inputs(
+            &initial_cells,
+            4,
+            2,
+            -1,
+            0,
+            CURSOR_HIDDEN,
+            &shaper,
+            &config,
+            &ct,
+            &graphemes,
+        );
+        let mut view = build_view_from_grid(&mut atlas, &initial_params);
+        let original_clean_row = view.row_lig_cache[1].clone();
+
+        let updated_cells = vec![
+            PackedCell::with_ch('o'),
+            PackedCell::with_ch('f'),
+            PackedCell::with_ch('f'),
+            PackedCell::with_ch('i'),
+            PackedCell::with_ch('a'),
+            PackedCell::with_ch('b'),
+            PackedCell::default(),
+            PackedCell::default(),
+        ];
+        let updated_params = test_view_inputs(
+            &updated_cells,
+            4,
+            2,
+            -1,
+            0,
+            CURSOR_HIDDEN,
+            &shaper,
+            &config,
+            &ct,
+            &graphemes,
+        );
+
+        update_view_from_grid(&mut view, &[true, false], &updated_params, &mut atlas);
+
+        assert_eq!(view.row_lig_cache[1].skip_cols, original_clean_row.skip_cols);
+        assert_eq!(
+            view.row_lig_cache[1].ligature_glyphs,
+            original_clean_row.ligature_glyphs
+        );
+        assert_eq!(
+            view.row_lig_cache[1].grapheme_glyphs,
+            original_clean_row.grapheme_glyphs
+        );
+        assert_eq!(
+            view.row_lig_cache[1].char_glyphs,
+            original_clean_row.char_glyphs
         );
     }
 

@@ -98,9 +98,8 @@ impl Osc8Parser {
                     }
                 }
                 Err(_) => {
-                    // Malformed payload — treat as end hyperlink.
-                    self.current_uri = None;
-                    self.current_link_id = None;
+                    // Malformed payload — ignore it and preserve any active
+                    // hyperlink state from earlier valid OSC 8 sequences.
                 }
             }
         }
@@ -205,12 +204,17 @@ mod tests {
     }
 
     #[test]
-    fn malformed_payload_ends_hyperlink() {
+    fn malformed_payload_inside_active_hyperlink_is_ignored() {
         let mut parser = Osc8Parser::new();
         parser.scan(b"\x1b]8;;https://example.com\x07");
-        assert!(parser.current_uri.is_some());
+        let active_uri = parser.current_uri.clone();
+        let active_link_id = parser.current_link_id;
+        let initial_link_map = parser.link_map().to_vec();
+
         parser.scan(b"\x1b]8;broken\x07");
-        assert!(parser.current_uri.is_none());
-        assert!(parser.current_link_id.is_none());
+
+        assert_eq!(parser.current_uri, active_uri);
+        assert_eq!(parser.current_link_id, active_link_id);
+        assert_eq!(parser.link_map(), initial_link_map.as_slice());
     }
 }

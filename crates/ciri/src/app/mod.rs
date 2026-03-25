@@ -1,14 +1,14 @@
-pub(crate) mod event;
 pub(crate) mod context_menu;
+pub(crate) mod event;
 pub(crate) mod ime;
 pub(crate) mod input_handler;
 pub(crate) mod keyboard;
 pub(crate) mod mouse;
-pub(crate) mod paste_guard;
-pub(crate) mod paste_dialog;
 pub(crate) mod notification;
 pub(crate) mod overview;
 pub(crate) mod palette;
+pub(crate) mod paste_dialog;
+pub(crate) mod paste_guard;
 pub(crate) mod render;
 pub(crate) mod resize;
 pub(crate) mod status_bar;
@@ -18,13 +18,13 @@ pub(crate) mod ui;
 
 use ciri_anim::animation::ViewOffset;
 use ciri_config::config::{CiriConfig, StatusBarPosition};
+use ciri_gpu::{GlyphAtlasGpu, Renderer};
 use ciri_input::keybind::KeybindMap;
 use ciri_input::leader::InputHandler;
 use ciri_layout::geometry::Rect as GeoRect;
 use ciri_layout::geometry::ViewSize;
 use ciri_layout::workspace_set::WorkspaceSet;
 use ciri_protocol::message::*;
-use ciri_gpu::{GlyphAtlasGpu, Renderer};
 use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, ScissoredRange};
 use ciri_render::rect::Rect;
 use ciri_render::shaper::TextShaper;
@@ -226,7 +226,6 @@ pub(crate) struct OverviewState {
     pub hovered_pane: Option<(usize, u64)>,
 }
 
-
 /// Per-pane animation state (open/close/focus/bell).
 pub(crate) struct PaneAnimations {
     pub open_opacity: HashMap<u64, f32>,
@@ -286,6 +285,11 @@ pub(crate) struct ReconnectState {
     pub max_attempts: u32,
     pub next_retry: Instant,
     pub backoff: Duration,
+}
+
+pub(crate) struct ReconnectPlan {
+    pub viewport: ciri_protocol::codec::ClientHello,
+    pub should_exit: bool,
 }
 
 pub(crate) struct App {
@@ -390,51 +394,13 @@ impl App {
             Duration::from_millis(config.input.leader_timeout_ms),
             Duration::from_millis(config.input.double_tap_window_ms),
         );
-        input.keybinds = KeybindMap::from_config(&config.keys.bindings);
-        input.leader_key = ciri_input::leader::LeaderKey::parse(&config.keys.leader);
-        input.input_mode = match config.input.mode.as_str() {
-            "sticky" => ciri_input::leader::InputMode::Sticky,
-            _ => ciri_input::leader::InputMode::Prefix,
-        };
-        for (name, bindings) in &config.keys.modes {
-            input
-                .mode_keybinds
-                .insert(name.clone(), KeybindMap::from_config_only(bindings));
-        }
-        input.direct_keybinds = KeybindMap::from_config_only(&config.keys.direct_bindings);
-
-        // Zellij-style: when leader is a bare modifier (e.g. "alt") in sticky mode,
-        // promote all leader bindings to direct bindings with the modifier prefix.
-        // This way Alt+h fires FocusLeft directly from Idle — no LEADER state needed.
-        if input.input_mode == ciri_input::leader::InputMode::Sticky
-            && input.leader_key.key.is_empty()
-        {
-            for (combo, action) in &input.keybinds.bindings {
-                let mut direct_combo = combo.clone();
-                if input.leader_key.alt {
-                    direct_combo.alt = true;
-                }
-                if input.leader_key.ctrl {
-                    direct_combo.ctrl = true;
-                }
-                if input.leader_key.super_key {
-                    direct_combo.super_key = true;
-                }
-                // Don't overwrite explicit direct_bindings from config
-                input
-                    .direct_keybinds
-                    .bindings
-                    .entry(direct_combo)
-                    .or_insert_with(|| action.clone());
-            }
-            // Disable the leader key so bare Alt press is ignored
-            input.leader_key = ciri_input::leader::LeaderKey {
-                key: "__disabled__".to_string(),
-                ctrl: false,
-                alt: false,
-                super_key: false,
-            };
-        }
+        input.reload_bindings(
+            &config.keys.leader,
+            &config.input.mode,
+            &config.keys.bindings,
+            &config.keys.modes,
+            &config.keys.direct_bindings,
+        );
         let overview_keybinds = KeybindMap::from_overview_config(&config.keys.overview_bindings);
         let column_gap = config.appearance.column_gap;
 
@@ -544,7 +510,10 @@ impl App {
     }
 
     /// Connect to the server, either locally or via remote SSH tunnel.
-    pub fn connect(&self, viewport: ciri_protocol::codec::ClientHello) -> std::io::Result<(Sender<ClientMessage>, Receiver<ServerEvent>)> {
+    pub fn connect(
+        &self,
+        viewport: ciri_protocol::codec::ClientHello,
+    ) -> std::io::Result<(Sender<ClientMessage>, Receiver<ServerEvent>)> {
         if let Some(ref rc) = self.remote_config {
             crate::connection::connect_remote(&rc.host, rc.port, rc.ssh_port, viewport)
         } else {
@@ -736,7 +705,9 @@ impl App {
     pub fn hints_bar_y(&self, window_height: f32) -> f32 {
         match self.config.statusbar.position {
             StatusBarPosition::Top => window_height - self.hints_bar_height(),
-            StatusBarPosition::Bottom => window_height - self.status_bar_height() - self.hints_bar_height(),
+            StatusBarPosition::Bottom => {
+                window_height - self.status_bar_height() - self.hints_bar_height()
+            }
         }
     }
 
@@ -790,6 +761,94 @@ impl App {
             let _ = std::fs::create_dir_all(parent);
         }
         let _ = std::fs::write(path, &self.session_name);
+    }
+
+    pub fn mark_disconnected_for_reconnect(&mut self) {
+        log::warn!("disconnected from server");
+        self.connected = false;
+        for grid in self.pane_grids.values_mut() {
+            grid.dirty = true;
+        }
+        self.cached_views.clear();
+        self.cached_tile_glyphs.clear();
+        self.server_tx = None;
+        self.server_rx = None;
+        self.reconnect_state = Some(ReconnectState {
+            attempt: 0,
+            max_attempts: 10,
+            next_retry: Instant::now() + Duration::from_millis(500),
+            backoff: Duration::from_millis(500),
+        });
+    }
+
+    pub fn prepare_reconnect(&mut self) -> Option<ReconnectPlan> {
+        if self.connected || self.server_rx.is_some() {
+            return None;
+        }
+
+        let should_try = self
+            .reconnect_state
+            .as_ref()
+            .is_some_and(|state| Instant::now() >= state.next_retry);
+        let gave_up = self
+            .reconnect_state
+            .as_ref()
+            .is_some_and(|state| state.attempt >= state.max_attempts);
+        if gave_up {
+            log::error!("max reconnect attempts reached, exiting");
+            return Some(ReconnectPlan {
+                viewport: self.current_viewport(),
+                should_exit: true,
+            });
+        }
+        if !should_try {
+            return None;
+        }
+
+        if let Some(state) = &mut self.reconnect_state {
+            state.attempt += 1;
+        }
+
+        Some(ReconnectPlan {
+            viewport: self.current_viewport(),
+            should_exit: false,
+        })
+    }
+
+    pub fn finish_reconnect_attempt(
+        &mut self,
+        result: std::io::Result<(
+            crossbeam_channel::Sender<ClientMessage>,
+            crossbeam_channel::Receiver<crate::connection::ServerEvent>,
+        )>,
+    ) {
+        match result {
+            Ok((tx, rx)) => {
+                log::info!("reconnected to session '{}'", self.session_name);
+                self.server_tx = Some(tx);
+                self.server_rx = Some(rx);
+                self.reconnect_state = None;
+            }
+            Err(e) => {
+                log::warn!("reconnect failed: {e}");
+                if let Some(state) = &mut self.reconnect_state {
+                    state.backoff = (state.backoff * 2).min(Duration::from_secs(10));
+                    state.next_retry = Instant::now() + state.backoff;
+                }
+            }
+        }
+    }
+
+    pub fn current_viewport(&self) -> ciri_protocol::codec::ClientHello {
+        let (cell_width, cell_height) = self.cell_dimensions();
+        let view = &self.workspaces.view_size;
+        ciri_protocol::codec::ClientHello {
+            session_name: self.session_name.clone(),
+            width: view.width as u32,
+            height: view.height as u32,
+            cell_width,
+            cell_height,
+        }
     }
 
     fn last_session_path() -> PathBuf {

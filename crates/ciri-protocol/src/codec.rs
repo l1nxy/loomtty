@@ -243,7 +243,9 @@ pub async fn read_server_hello<R: AsyncRead + Unpin>(reader: &mut R) -> io::Resu
     check_version(hello.peer_version)
 }
 
-async fn read_server_hello_payload<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<ServerHello> {
+async fn read_server_hello_payload<R: AsyncRead + Unpin>(
+    reader: &mut R,
+) -> io::Result<ServerHello> {
     let mut buf = [0u8; SERVER_HELLO_LEN];
     reader.read_exact(&mut buf).await?;
     parse_server_hello(&buf)
@@ -353,7 +355,11 @@ const TAG_FULL_PANE_SYNC: u8 = 0x21;
 // ─── Frame format: [u8 tag][u32 LE payload_len][payload] ───────────
 
 /// Write a framed message to an async writer.
-async fn write_frame<W: AsyncWrite + Unpin>(writer: &mut W, tag: u8, payload: &[u8]) -> io::Result<()> {
+async fn write_frame<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    tag: u8,
+    payload: &[u8],
+) -> io::Result<()> {
     let len = frame_len_u32(payload)?;
     let mut header = [0u8; 5];
     header[0] = tag;
@@ -1724,9 +1730,7 @@ mod tests {
 
         let truncated_title = &payload[..27];
         assert_eq!(
-            decode_full_pane_sync(truncated_title)
-                .unwrap_err()
-                .kind(),
+            decode_full_pane_sync(truncated_title).unwrap_err().kind(),
             io::ErrorKind::InvalidData
         );
 

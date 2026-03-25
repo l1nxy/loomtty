@@ -1,3 +1,4 @@
+use winnow::Parser;
 /// Shared escape sequence scanning utilities for terminal parsers.
 ///
 /// All scanners operate on `&[u8]` data that may be split across PTY read
@@ -6,7 +7,6 @@
 use winnow::combinator::alt;
 use winnow::error::ModalResult;
 use winnow::token::{literal, take_while};
-use winnow::Parser;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -187,11 +187,9 @@ pub(crate) fn scan_csi_dec<'a>(data: &'a [u8]) -> ScanResult<'a> {
         if remaining < 5 {
             // Could be a partial CSI DEC sequence.
             // Check if what we have looks like the start of one.
-            if remaining >= 2 && data[i + 1] == b'[' {
-                if remaining >= 3 && data[i + 2] == b'?' {
-                    result.partial_start = Some(i);
-                    break;
-                }
+            if remaining >= 2 && data[i + 1] == b'[' && remaining >= 3 && data[i + 2] == b'?' {
+                result.partial_start = Some(i);
+                break;
             }
             // Just a lone ESC at the end — might be partial for some sequence.
             if remaining == 1 {
@@ -214,9 +212,7 @@ pub(crate) fn scan_csi_dec<'a>(data: &'a [u8]) -> ScanResult<'a> {
                 Err(_) => {
                     // Could be partial: digits but no h/l yet.
                     let rest = &data[i + 3..];
-                    let all_params = rest
-                        .iter()
-                        .all(|&b| b.is_ascii_digit() || b == b';');
+                    let all_params = rest.iter().all(|&b| b.is_ascii_digit() || b == b';');
                     if all_params && !rest.is_empty() {
                         result.partial_start = Some(i);
                         break;

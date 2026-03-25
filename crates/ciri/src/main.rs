@@ -225,18 +225,18 @@ fn resolve_session_launch(cli: CliCommand) -> SessionLaunchChoice {
 fn choose_default_session() -> SessionLaunchChoice {
     let state_dir = ciri_protocol::transport::state_dir();
     let saved = ciri_session::restore::list_sessions(&state_dir).unwrap_or_default();
-    if let Some(name) = read_last_session()
-        .filter(|name| saved.iter().any(|saved_name| saved_name == name) || session_is_running(name))
-    {
-        log::info!("attaching to last local session: {name}");
+    if let Some(name) = control::query_active_sessions().into_iter().next() {
+        log::info!("attaching to most recent session: {name}");
         return SessionLaunchChoice {
             session_name: name,
             remembers_last_session: true,
         };
     }
 
-    if let Some(name) = control::query_active_sessions().into_iter().next() {
-        log::info!("attaching to most recent session: {name}");
+    if let Some(name) = read_last_session()
+        .filter(|name| saved.iter().any(|saved_name| saved_name == name) || session_is_running(name))
+    {
+        log::info!("attaching to last local session: {name}");
         return SessionLaunchChoice {
             session_name: name,
             remembers_last_session: true,
@@ -312,6 +312,34 @@ fn remember_last_session(session_name: &str) {
 mod tests {
     use super::*;
 
+    fn choose_default_session_for_test(
+        active_sessions: Vec<&str>,
+        remembered: Option<&str>,
+        saved_sessions: Vec<&str>,
+    ) -> SessionLaunchChoice {
+        let saved = saved_sessions.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        if let Some(name) = active_sessions.into_iter().next() {
+            return SessionLaunchChoice {
+                session_name: name.to_owned(),
+                remembers_last_session: true,
+            };
+        }
+
+        if let Some(name) = remembered.filter(|name| {
+            saved.iter().any(|saved_name| saved_name == name)
+        }) {
+            return SessionLaunchChoice {
+                session_name: name.to_owned(),
+                remembers_last_session: true,
+            };
+        }
+
+        SessionLaunchChoice {
+            session_name: ciri_session::names::unique_name(&saved),
+            remembers_last_session: true,
+        }
+    }
+
     #[test]
     fn validated_session_name_returns_input() {
         assert_eq!(validated_session_name("ops".into()), "ops");
@@ -344,5 +372,20 @@ mod tests {
             remembers_last_session: true,
         };
         assert!(launch.remembers_last_session);
+    }
+
+    #[test]
+    fn default_launch_prefers_running_session_before_remembered_session() {
+        assert_eq!(
+            choose_default_session_for_test(
+                vec!["running-now"],
+                Some("remembered-old"),
+                vec!["remembered-old"],
+            ),
+            SessionLaunchChoice {
+                session_name: "running-now".into(),
+                remembers_last_session: true,
+            }
+        );
     }
 }

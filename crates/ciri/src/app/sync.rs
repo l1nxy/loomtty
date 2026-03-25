@@ -101,6 +101,7 @@ impl App {
                         ..
                     }) => {
                         log::debug!("PaneCreated: pane_id={pane_id} {cols}x{rows}");
+                        self.expected_pane_ids.insert(pane_id);
                         self.pane_grids.entry(pane_id).or_insert_with(|| {
                             ClientPaneGrid::new(cols, rows, self.config.terminal.scrollback_lines)
                         });

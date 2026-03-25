@@ -96,7 +96,14 @@ impl RectPipeline {
             fragment: Some(shader.at("fs_main")),
             color_targets: &[gpu::ColorTargetState {
                 format,
-                blend: Some(gpu::BlendState::ALPHA_BLENDING),
+                blend: Some(gpu::BlendState {
+                    color: gpu::BlendComponent {
+                        src_factor: gpu::BlendFactor::One,
+                        dst_factor: gpu::BlendFactor::OneMinusSrcAlpha,
+                        operation: gpu::BlendOperation::Add,
+                    },
+                    alpha: gpu::BlendComponent::OVER,
+                }),
                 write_mask: gpu::ColorWrites::all(),
             }],
             multisample_state: gpu::MultisampleState::default(),
@@ -510,11 +517,11 @@ impl GlyphAtlasGpu {
             atlas_size,
             max_instances,
             gpu::TextureFormat::R8Unorm,
-            gpu::FilterMode::Nearest,
+            gpu::FilterMode::Linear,
             &alpha_shader_src,
             gpu::BlendState {
                 color: gpu::BlendComponent {
-                    src_factor: gpu::BlendFactor::SrcAlpha,
+                    src_factor: gpu::BlendFactor::One,
                     dst_factor: gpu::BlendFactor::OneMinusSrcAlpha,
                     operation: gpu::BlendOperation::Add,
                 },
@@ -1024,12 +1031,7 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: RectInstance) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(
-        in.color.r,
-        in.color.g,
-        in.color.b,
-        in.color.a
-    );
+    return vec4<f32>(in.color.rgb * in.color.a, in.color.a);
 }
 "#;
 
@@ -1079,7 +1081,8 @@ var atlas_sampler: sampler;
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let a = textureSample(atlas_tex, atlas_sampler, in.uv).r;
-    return vec4<f32>(in.color.rgb, in.color.a * a);
+    let alpha = in.color.a * a;
+    return vec4<f32>(in.color.rgb * alpha, alpha);
 }
 "#;
 

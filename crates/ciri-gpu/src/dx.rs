@@ -57,7 +57,7 @@ PSInput vs_main(VSInput input) {
 }
 
 float4 ps_main(PSInput input) : SV_TARGET {
-    return input.color;
+    return float4(input.color.rgb * input.color.a, input.color.a);
 }
 "#;
 
@@ -115,7 +115,8 @@ struct PSInput {
 
 float4 ps_main(PSInput input) : SV_TARGET {
     float alpha = atlas_tex.Sample(atlas_sampler, input.uv).r;
-    return float4(input.color.rgb, input.color.a * alpha);
+    float out_alpha = input.color.a * alpha;
+    return float4(input.color.rgb * out_alpha, out_alpha);
 }
 "#;
 
@@ -760,7 +761,7 @@ impl Renderer {
         let mut blend_desc = D3D11_BLEND_DESC::default();
         blend_desc.RenderTarget[0] = D3D11_RENDER_TARGET_BLEND_DESC {
             BlendEnable: true.into(),
-            SrcBlend: D3D11_BLEND_SRC_ALPHA,
+            SrcBlend: D3D11_BLEND_ONE,
             DestBlend: D3D11_BLEND_INV_SRC_ALPHA,
             BlendOp: D3D11_BLEND_OP_ADD,
             SrcBlendAlpha: D3D11_BLEND_ONE,
@@ -855,7 +856,7 @@ impl Renderer {
                 1,
                 GLYPH_HLSL,
                 ALPHA_PS_HLSL,
-                D3D11_FILTER_MIN_MAG_MIP_POINT,
+                D3D11_FILTER_MIN_MAG_MIP_LINEAR,
             )
             .expect("alpha atlas creation failed")
         };

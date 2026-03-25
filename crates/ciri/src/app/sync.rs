@@ -11,6 +11,30 @@ use ciri_layout::column::Column;
 use ciri_layout::tile::Tile;
 
 impl App {
+    fn finalize_authoritative_session_switch(&mut self, pane_ids: &[u64]) {
+        let Some(session_name) = self.pending_session_name.take() else {
+            return;
+        };
+
+        self.session_name = session_name;
+        self.expected_pane_ids = pane_ids.iter().copied().collect();
+        self.pane_grids.retain(|pane_id, _| self.expected_pane_ids.contains(pane_id));
+        self.image_placements
+            .retain(|pane_id, _| self.expected_pane_ids.contains(pane_id));
+        self.cached_views
+            .retain(|pane_id, _| self.expected_pane_ids.contains(pane_id));
+        self.cached_tile_glyphs
+            .retain(|pane_id, _| self.expected_pane_ids.contains(pane_id));
+        self.write_last_session();
+        self.command_palette = None;
+        if let Some(window) = &self.window {
+            window.set_title(&format!(
+                "{} [{}]",
+                self.config.window.title, self.session_name
+            ));
+        }
+    }
+
     /// Process all pending server events. Returns true if a redraw is needed.
     ///
     /// Drains up to `BATCH` events at a time, repeating until the channel is
@@ -39,6 +63,7 @@ impl App {
             for event in events {
                 match event {
                     ServerEvent::Control(ServerMessage::StateSync { layout, pane_ids }) => {
+                        self.finalize_authoritative_session_switch(&pane_ids);
                         self.expected_pane_ids = pane_ids.iter().copied().collect();
                         self.apply_layout(&layout);
                         for &id in &pane_ids {
@@ -220,20 +245,7 @@ impl App {
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::SessionSwitched { session_name }) => {
-                        self.session_name = session_name;
-                        self.expected_pane_ids.clear();
-                        self.pane_grids.clear();
-                        self.image_placements.clear();
-                        self.cached_views.clear();
-                        self.cached_tile_glyphs.clear();
-                        self.write_last_session();
-                        self.command_palette = None;
-                        if let Some(window) = &self.window {
-                            window.set_title(&format!(
-                                "{} [{}]",
-                                self.config.window.title, self.session_name
-                            ));
-                        }
+                        self.pending_session_name = Some(session_name);
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::SessionKilled { .. })
@@ -475,7 +487,7 @@ mod tests {
     }
 
     #[test]
-    fn session_switch_clears_stale_client_pane_state_before_resync() {
+    fn session_switch_retains_client_state_until_authoritative_resync() {
         let mut app = make_app();
         let (event_tx, rx) = crossbeam_channel::unbounded();
         app.server_rx = Some(rx);
@@ -514,6 +526,14 @@ mod tests {
                 session_name: "other-session".to_string(),
             }))
             .unwrap();
+
+        assert!(app.process_server_events());
+        assert_eq!(app.session_name, "test-session");
+        assert_eq!(app.pending_session_name.as_deref(), Some("other-session"));
+        assert!(app.pane_grids.contains_key(&stale.pane_id));
+        assert!(app.image_placements.contains_key(&stale.pane_id));
+        assert!(app.cached_tile_glyphs.contains_key(&stale.pane_id));
+
         event_tx
             .send(ServerEvent::Control(ServerMessage::StateSync {
                 layout: empty_layout(),
@@ -524,10 +544,43 @@ mod tests {
 
         assert!(app.process_server_events());
         assert_eq!(app.session_name, "other-session");
+        assert_eq!(app.pending_session_name, None);
         assert!(app.pane_grids.contains_key(&11));
         assert!(!app.pane_grids.contains_key(&stale.pane_id));
         assert!(app.image_placements.is_empty());
         assert!(app.cached_tile_glyphs.is_empty());
+    }
+
+    #[test]
+    fn session_switch_only_persists_last_session_after_authoritative_resync() {
+        let mut app = make_app();
+        let (event_tx, rx) = crossbeam_channel::unbounded();
+        app.server_rx = Some(rx);
+        let last_session_path = App::last_session_path();
+        if let Some(parent) = last_session_path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&last_session_path, "test-session").unwrap();
+
+        event_tx
+            .send(ServerEvent::Control(ServerMessage::SessionSwitched {
+                session_name: "other-session".to_string(),
+            }))
+            .unwrap();
+
+        assert!(app.process_server_events());
+        assert_eq!(app.pending_session_name.as_deref(), Some("other-session"));
+
+        event_tx
+            .send(ServerEvent::Control(ServerMessage::StateSync {
+                layout: empty_layout(),
+                pane_ids: vec![],
+            }))
+            .unwrap();
+
+        assert!(app.process_server_events());
+        assert_eq!(app.pending_session_name, None);
+        assert_eq!(std::fs::read_to_string(&last_session_path).unwrap(), "other-session");
     }
 
     #[test]

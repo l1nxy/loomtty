@@ -3,10 +3,10 @@ use ciri_config::config::{FocusRingStyle, PaneOpenStyle};
 use ciri_config::theme::ThemeConfig;
 use ciri_layout::geometry::Rect as GeoRect;
 use ciri_protocol::message::*;
+use ciri_render::FrameScene;
 use ciri_render::glyph_cache::{GlyphInstance, ScissoredRange};
 use ciri_render::rect::Rect;
 use ciri_render::terminal;
-use ciri_render::FrameScene;
 use std::time::Instant;
 
 use super::App;
@@ -698,7 +698,6 @@ impl App {
 
         emit_status_text(
             atlas,
-
             &bar_text,
             bar_x + padding,
             text_y,
@@ -819,7 +818,6 @@ impl App {
         let text_color = [1.0, 1.0, 1.0, 1.0];
         emit_status_text(
             atlas,
-
             text,
             base_x + 2.0,
             base_y + 1.0,
@@ -937,7 +935,6 @@ impl App {
                 let baseline = ch * self.config.statusbar.text_baseline;
                 emit_status_text(
                     atlas,
-        
                     &label,
                     ix + 4.0 * zoom,
                     iy + 2.0 * zoom,
@@ -1095,19 +1092,19 @@ impl App {
                     } else {
                         (0, 0, CURSOR_HIDDEN)
                     };
-                let view = terminal::build_view_from_grid(
-                    &visible,
-                    grid.cols,
-                    grid.rows,
-                    cur_line,
-                    cur_col,
-                    cur_shape,
-                    cache,
+                let inputs = terminal::PackedViewInputs {
+                    cells: &visible,
+                    cols: grid.cols,
+                    rows: grid.rows,
+                    cursor_line: cur_line,
+                    cursor_col: cur_col,
+                    cursor_shape: cur_shape,
+                    config: &self.config,
                     shaper,
-                    &self.config,
-                    &self.cached_color_table,
-                    &grid.grapheme_map,
-                );
+                    colors: &self.cached_color_table,
+                    grapheme_map: &grid.grapheme_map,
+                };
+                let view = terminal::build_view_from_grid(cache, &inputs);
                 grid.clear_dirty();
                 self.cached_views.insert(*pane_id, view);
                 // Invalidate tile glyph cache — generation counter alone is
@@ -1127,21 +1124,19 @@ impl App {
                     grid.clear_dirty();
                     let visible = grid.visible_cells();
                     if let Some(view) = self.cached_views.get_mut(pane_id) {
-                        terminal::update_view_from_grid(
-                            view,
-                            &dirty_rows_copy,
-                            &visible,
-                            grid.cols,
-                            grid.rows,
-                            cur_line,
-                            cur_col,
-                            cur_shape,
-                            cache,
+                        let inputs = terminal::PackedViewInputs {
+                            cells: &visible,
+                            cols: grid.cols,
+                            rows: grid.rows,
+                            cursor_line: cur_line,
+                            cursor_col: cur_col,
+                            cursor_shape: cur_shape,
+                            config: &self.config,
                             shaper,
-                            &self.config,
-                            &self.cached_color_table,
-                            &grid.grapheme_map,
-                        );
+                            colors: &self.cached_color_table,
+                            grapheme_map: &grid.grapheme_map,
+                        };
+                        terminal::update_view_from_grid(view, &dirty_rows_copy, &inputs, cache);
                     }
                 }
             }
@@ -1156,7 +1151,12 @@ impl App {
                 let pw = tile_rect.w - inset;
                 let ph = tile_rect.h - inset;
                 // Determine scrollbar visual state (Pressed > Hovered > Idle)
-                let sb_state = if self.drag.scrollbar_dragging.as_ref().is_some_and(|info| info.pane_id == *pane_id) {
+                let sb_state = if self
+                    .drag
+                    .scrollbar_dragging
+                    .as_ref()
+                    .is_some_and(|info| info.pane_id == *pane_id)
+                {
                     terminal::ScrollbarState::Pressed
                 } else if let Some((mx, my)) = self.last_mouse_pos
                     && tile_rect.contains(mx, my)
@@ -1313,7 +1313,6 @@ impl App {
             w.request_redraw();
         }
     }
-
 }
 
 /// Emit a dashed border (4 edges) as rect segments.

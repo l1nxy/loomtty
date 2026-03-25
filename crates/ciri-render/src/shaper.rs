@@ -60,16 +60,17 @@ impl TextShaper {
             shaper.load_font(fid);
         }
         // Preload emoji font data for fallback shaping
-        if let Some(eid) = emoji_font_id {
-            if Some(eid) != primary_font_id {
-                shaper.load_font(eid);
-            }
+        if let Some(eid) = emoji_font_id
+            && Some(eid) != primary_font_id
+        {
+            shaper.load_font(eid);
         }
         // Preload CJK font data for fallback shaping
-        if let Some(cid) = cjk_font_id {
-            if Some(cid) != primary_font_id && Some(cid) != emoji_font_id {
-                shaper.load_font(cid);
-            }
+        if let Some(cid) = cjk_font_id
+            && Some(cid) != primary_font_id
+            && Some(cid) != emoji_font_id
+        {
+            shaper.load_font(cid);
         }
 
         shaper
@@ -243,10 +244,10 @@ impl TextShaper {
         primary_face: &rustybuzz::Face,
         shape: fn(&Self, &str, &rustybuzz::Face) -> Option<u32>,
     ) -> Option<(u32, fontdb::ID)> {
-        if let Some(font_id) = self.primary_font_id {
-            if let Some(glyph_id) = shape(self, text, primary_face) {
-                return Some((glyph_id, font_id));
-            }
+        if let Some(font_id) = self.primary_font_id
+            && let Some(glyph_id) = shape(self, text, primary_face)
+        {
+            return Some((glyph_id, font_id));
         }
 
         self.try_shape_with_font_id(text, self.cjk_font_id, shape)
@@ -422,7 +423,7 @@ fn find_cjk_font(db: &fontdb::Database, primary: Option<fontdb::ID>) -> Option<f
             let lower = fam.0.to_ascii_lowercase();
             if keywords.iter().any(|kw| lower.contains(kw)) {
                 let dist = (face.weight.0 as i32 - 400).unsigned_abs() as u16;
-                if best.map_or(true, |(_, d)| dist < d) {
+                if best.is_none_or(|(_, d)| dist < d) {
                     log::info!("CJK font candidate: {} (weight={})", fam.0, face.weight.0);
                     best = Some((face.id, dist));
                 }

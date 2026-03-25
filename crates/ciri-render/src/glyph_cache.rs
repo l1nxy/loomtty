@@ -229,6 +229,7 @@ impl GlyphCache {
     ///
     /// `primary_font_path` is the file path + face index for the thin FreeType
     /// path used by `ensure_glyph_id()`. Obtained from `TextShaper::primary_font_path()`.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         font_size_pt: f32,
         dpi_scale: f64,
@@ -529,7 +530,7 @@ impl GlyphCache {
             if is_bgra && bitmap.width() > 0 && bitmap.rows() > 0 {
                 let w = bitmap.width() as u32;
                 let h = bitmap.rows() as u32;
-                let pitch = bitmap.pitch().unsigned_abs() as u32;
+                let pitch = bitmap.pitch().unsigned_abs();
                 let raw = bitmap.buffer();
                 // Convert BGRA → RGBA
                 let mut data = Vec::with_capacity((w * h * 4) as usize);
@@ -584,11 +585,11 @@ impl GlyphCache {
         let need_synth_bold = matches!(style, FontStyle::Bold | FontStyle::BoldItalic);
         let need_synth_italic = matches!(style, FontStyle::Italic | FontStyle::BoldItalic);
         unsafe {
-            let slot = (*ft_face.raw()).glyph;
+            let slot = ft_face.raw().glyph;
             if (*slot).format == freetype::ffi::FT_GLYPH_FORMAT_OUTLINE {
                 let outline = &mut (*slot).outline;
                 if need_synth_bold {
-                    let font_height = (*(*ft_face.raw()).size).metrics.height as f64;
+                    let font_height = (*ft_face.raw().size).metrics.height as f64;
                     let amount = (font_height * 64.0 / 2048.0).ceil() as freetype::ffi::FT_Pos;
                     freetype::ffi::FT_Outline_Embolden(outline, amount);
                 }
@@ -613,7 +614,7 @@ impl GlyphCache {
             return None;
         }
 
-        let pitch = bitmap.pitch().unsigned_abs() as u32;
+        let pitch = bitmap.pitch().unsigned_abs();
         let raw = bitmap.buffer();
         let mut data = Vec::with_capacity((w * h) as usize);
         for row in 0..h {
@@ -638,10 +639,7 @@ impl GlyphCache {
     fn cache_rasterized_glyph(&mut self, glyph: RasterizedGlyph) -> Option<GlyphEntry> {
         let region = self.allocate_atlas_region(glyph.width, glyph.height, glyph.is_color)?;
         let entry = make_glyph_entry(
-            region.x,
-            region.y,
-            region.w,
-            region.h,
+            region,
             glyph.bearing_x,
             glyph.bearing_y,
             self.atlas_size,
@@ -794,10 +792,7 @@ struct RasterizedGlyph {
 
 /// Build a `GlyphEntry` from atlas coordinates.
 fn make_glyph_entry(
-    ax: u32,
-    ay: u32,
-    w: u32,
-    h: u32,
+    region: AtlasRegion,
     bearing_x: f32,
     bearing_y: f32,
     atlas_size: u32,
@@ -805,12 +800,12 @@ fn make_glyph_entry(
 ) -> GlyphEntry {
     let s = atlas_size as f32;
     GlyphEntry {
-        u0: ax as f32 / s,
-        v0: ay as f32 / s,
-        u1: (ax + w) as f32 / s,
-        v1: (ay + h) as f32 / s,
-        width: w as u16,
-        height: h as u16,
+        u0: region.x as f32 / s,
+        v0: region.y as f32 / s,
+        u1: (region.x + region.w) as f32 / s,
+        v1: (region.y + region.h) as f32 / s,
+        width: region.w as u16,
+        height: region.h as u16,
         bearing_x,
         bearing_y,
         is_color,
@@ -930,9 +925,13 @@ mod tests {
     #[test]
     fn clear_cache_resets_packers_and_marks_pending_clear() {
         let mut cache = test_cache(32);
-        cache.cache.insert(('A', FontStyle::Regular), GlyphEntry::EMPTY);
-        cache.glyph_id_cache
-            .insert((1, FontClass::Primary, FontStyle::Regular, false), GlyphEntry::EMPTY);
+        cache
+            .cache
+            .insert(('A', FontStyle::Regular), GlyphEntry::EMPTY);
+        cache.glyph_id_cache.insert(
+            (1, FontClass::Primary, FontStyle::Regular, false),
+            GlyphEntry::EMPTY,
+        );
         cache.alpha_pending.push(PendingUpload {
             x: 0,
             y: 0,

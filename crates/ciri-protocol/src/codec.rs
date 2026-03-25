@@ -960,24 +960,42 @@ fn validate_damage_bounds(left: u16, right: u16) -> io::Result<()> {
 // ─── Encode FullPaneSync (state-machine) ────────────────────────────
 //
 // Wire format:
-//   [header: pane_id(8), gen(8), cols(2), rows(2), cursor(6), title_len(2), title(N)]
-//   [u16 scrollback_rows][u32 sb_sm_len][sb_sm_data...]
-//   [u32 vp_sm_len][vp_sm_data...]
-//   [grapheme_extras...]
+//   mandatory:
+//     [pane_id(8), generation(8), cols(2), rows(2), cursor_line(2), cursor_col(2),
+//      cursor_shape(1), mode_flags(1), title_len(2), title(N)]
+//     [scrollback_rows(2), scrollback_sm_len(4), scrollback_sm_data...]
+//     [viewport_sm_len(4), viewport_sm_data...]
+//   optional extras (backward-compatible tail):
+//     [grapheme_extras...]
+//     [hyperlink_extras...]
 
-pub fn encode_full_pane_sync_payload(sync: &FullPaneSync) -> io::Result<Vec<u8>> {
-    let title_bytes = sync.title.as_bytes();
-    if title_bytes.len() > u16::MAX as usize {
+const FULL_PANE_SYNC_MIN_HEADER_LEN: usize = 28;
+const FULL_PANE_SYNC_SCROLLBACK_HEADER_LEN: usize = 6;
+const FULL_PANE_SYNC_VIEWPORT_HEADER_LEN: usize = 4;
+
+#[derive(Debug)]
+struct FullPaneSyncMandatorySections<'a> {
+    scrollback: &'a [u8],
+    viewport: &'a [u8],
+    extra_offset: usize,
+}
+
+fn validate_full_pane_sync_title(title: &[u8]) -> io::Result<()> {
+    if title.len() > u16::MAX as usize {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "title too long for FullPaneSync (exceeds u16::MAX)",
         ));
     }
-    let sm_scrollback = sm_encode_cells(&sync.scrollback);
-    let sm_viewport = sm_encode_cells(&sync.cells);
-    let mut buf =
-        Vec::with_capacity(38 + title_bytes.len() + sm_scrollback.len() + sm_viewport.len());
+    Ok(())
+}
 
+fn write_full_pane_sync_header(
+    buf: &mut Vec<u8>,
+    sync: &FullPaneSync,
+    title_bytes: &[u8],
+) -> io::Result<()> {
+    validate_full_pane_sync_title(title_bytes)?;
     buf.extend_from_slice(&sync.pane_id.to_le_bytes());
     buf.extend_from_slice(&sync.generation.to_le_bytes());
     buf.extend_from_slice(&sync.cols.to_le_bytes());
@@ -988,12 +1006,10 @@ pub fn encode_full_pane_sync_payload(sync: &FullPaneSync) -> io::Result<Vec<u8>>
     buf.push(sync.mode_flags);
     buf.extend_from_slice(&(title_bytes.len() as u16).to_le_bytes());
     buf.extend_from_slice(title_bytes);
-    buf.extend_from_slice(&sync.scrollback_rows.to_le_bytes());
-    buf.extend_from_slice(&(sm_scrollback.len() as u32).to_le_bytes());
-    buf.extend_from_slice(&sm_scrollback);
-    buf.extend_from_slice(&(sm_viewport.len() as u32).to_le_bytes());
-    buf.extend_from_slice(&sm_viewport);
-    // Grapheme extras (sparse): count(u16) + [(cell_index(u32), len(u8), utf8...)]
+    Ok(())
+}
+
+fn write_full_pane_sync_grapheme_extras(buf: &mut Vec<u8>, sync: &FullPaneSync) {
     let extras = &sync.grapheme_extras.0;
     buf.extend_from_slice(&(extras.len() as u16).to_le_bytes());
     for (idx, extra) in extras {
@@ -1002,6 +1018,196 @@ pub fn encode_full_pane_sync_payload(sync: &FullPaneSync) -> io::Result<Vec<u8>>
         buf.push(bytes.len().min(255) as u8);
         buf.extend_from_slice(&bytes[..bytes.len().min(255)]);
     }
+}
+
+fn write_full_pane_sync_hyperlink_extras(buf: &mut Vec<u8>, sync: &FullPaneSync) {
+    let extras = &sync.hyperlink_extras;
+    buf.extend_from_slice(&(extras.cell_links.len() as u16).to_le_bytes());
+    for &(cell_idx, link_id) in &extras.cell_links {
+        buf.extend_from_slice(&cell_idx.to_le_bytes());
+        buf.extend_from_slice(&link_id.to_le_bytes());
+    }
+    buf.extend_from_slice(&(extras.link_map.len() as u16).to_le_bytes());
+    for (link_id, uri) in &extras.link_map {
+        buf.extend_from_slice(&link_id.to_le_bytes());
+        let uri_bytes = uri.as_bytes();
+        let len = uri_bytes.len().min(u16::MAX as usize);
+        buf.extend_from_slice(&(len as u16).to_le_bytes());
+        buf.extend_from_slice(&uri_bytes[..len]);
+    }
+}
+
+fn read_full_pane_sync_mandatory_sections(
+    payload: &[u8],
+    mut offset: usize,
+) -> io::Result<(u16, String, FullPaneSyncMandatorySections<'_>)> {
+    let title_len = read_u16_le(payload, 26)? as usize;
+    if offset + title_len > payload.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "truncated title",
+        ));
+    }
+    let title = String::from_utf8_lossy(&payload[offset..offset + title_len]);
+    offset += title_len;
+
+    if offset + FULL_PANE_SYNC_SCROLLBACK_HEADER_LEN > payload.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "truncated scrollback header",
+        ));
+    }
+    let scrollback_rows = read_u16_le(payload, offset)?;
+    offset += 2;
+    let scrollback_len = read_u32_le(payload, offset)? as usize;
+    offset += 4;
+    if offset + scrollback_len > payload.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "truncated scrollback data",
+        ));
+    }
+    let scrollback = &payload[offset..offset + scrollback_len];
+    offset += scrollback_len;
+
+    if offset + FULL_PANE_SYNC_VIEWPORT_HEADER_LEN > payload.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "truncated cell header",
+        ));
+    }
+    let viewport_len = read_u32_le(payload, offset)? as usize;
+    offset += 4;
+    if offset + viewport_len > payload.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "truncated cell data",
+        ));
+    }
+    let viewport = &payload[offset..offset + viewport_len];
+    offset += viewport_len;
+
+    Ok((
+        scrollback_rows,
+        title.into_owned(),
+        FullPaneSyncMandatorySections {
+            scrollback,
+            viewport,
+            extra_offset: offset,
+        },
+    ))
+}
+
+fn decode_grapheme_extras(payload: &[u8], offset: &mut usize) -> GraphemeExtras {
+    let mut grapheme_extras = GraphemeExtras::new();
+    if *offset + 2 > payload.len() {
+        return grapheme_extras;
+    }
+
+    let count = match read_u16_le(payload, *offset) {
+        Ok(count) => count as usize,
+        Err(_) => return grapheme_extras,
+    };
+    *offset += 2;
+
+    for _ in 0..count {
+        if *offset + 5 > payload.len() {
+            break;
+        }
+        let idx = match read_u32_le(payload, *offset) {
+            Ok(idx) => idx,
+            Err(_) => break,
+        };
+        *offset += 4;
+        let len = payload[*offset] as usize;
+        *offset += 1;
+        if *offset + len > payload.len() {
+            break;
+        }
+        let extra = String::from_utf8_lossy(&payload[*offset..*offset + len]).to_string();
+        *offset += len;
+        grapheme_extras.push(idx, &extra);
+    }
+
+    grapheme_extras
+}
+
+fn decode_hyperlink_extras(payload: &[u8], offset: &mut usize) -> HyperlinkExtras {
+    let mut hyperlink_extras = HyperlinkExtras::new();
+    if *offset + 2 > payload.len() {
+        return hyperlink_extras;
+    }
+
+    let cell_links_count = match read_u16_le(payload, *offset) {
+        Ok(count) => count as usize,
+        Err(_) => return hyperlink_extras,
+    };
+    *offset += 2;
+    for _ in 0..cell_links_count {
+        if *offset + 6 > payload.len() {
+            return hyperlink_extras;
+        }
+        let cell_idx = match read_u32_le(payload, *offset) {
+            Ok(cell_idx) => cell_idx,
+            Err(_) => return hyperlink_extras,
+        };
+        *offset += 4;
+        let link_id = match read_u16_le(payload, *offset) {
+            Ok(link_id) => link_id,
+            Err(_) => return hyperlink_extras,
+        };
+        *offset += 2;
+        hyperlink_extras.cell_links.push((cell_idx, link_id));
+    }
+
+    if *offset + 2 > payload.len() {
+        return hyperlink_extras;
+    }
+    let link_map_count = match read_u16_le(payload, *offset) {
+        Ok(count) => count as usize,
+        Err(_) => return hyperlink_extras,
+    };
+    *offset += 2;
+    for _ in 0..link_map_count {
+        if *offset + 4 > payload.len() {
+            return hyperlink_extras;
+        }
+        let link_id = match read_u16_le(payload, *offset) {
+            Ok(link_id) => link_id,
+            Err(_) => return hyperlink_extras,
+        };
+        *offset += 2;
+        let uri_len = match read_u16_le(payload, *offset) {
+            Ok(uri_len) => uri_len as usize,
+            Err(_) => return hyperlink_extras,
+        };
+        *offset += 2;
+        if *offset + uri_len > payload.len() {
+            return hyperlink_extras;
+        }
+        let uri = String::from_utf8_lossy(&payload[*offset..*offset + uri_len]).to_string();
+        *offset += uri_len;
+        hyperlink_extras.link_map.push((link_id, uri));
+    }
+
+    hyperlink_extras
+}
+
+pub fn encode_full_pane_sync_payload(sync: &FullPaneSync) -> io::Result<Vec<u8>> {
+    let title_bytes = sync.title.as_bytes();
+    validate_full_pane_sync_title(title_bytes)?;
+    let sm_scrollback = sm_encode_cells(&sync.scrollback);
+    let sm_viewport = sm_encode_cells(&sync.cells);
+    let mut buf =
+        Vec::with_capacity(38 + title_bytes.len() + sm_scrollback.len() + sm_viewport.len());
+
+    write_full_pane_sync_header(&mut buf, sync, title_bytes)?;
+    buf.extend_from_slice(&sync.scrollback_rows.to_le_bytes());
+    buf.extend_from_slice(&(sm_scrollback.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&sm_scrollback);
+    buf.extend_from_slice(&(sm_viewport.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&sm_viewport);
+    write_full_pane_sync_grapheme_extras(&mut buf, sync);
     Ok(buf)
 }
 
@@ -1009,27 +1215,12 @@ pub fn encode_full_pane_sync_payload(sync: &FullPaneSync) -> io::Result<Vec<u8>>
 pub fn encode_full_pane_sync_framed(buf: &mut Vec<u8>, sync: &FullPaneSync) -> io::Result<()> {
     buf.clear();
     let title_bytes = sync.title.as_bytes();
-    if title_bytes.len() > u16::MAX as usize {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "title too long for FullPaneSync (exceeds u16::MAX)",
-        ));
-    }
+    validate_full_pane_sync_title(title_bytes)?;
     // Tag + length placeholder
     buf.push(TAG_FULL_PANE_SYNC);
     buf.extend_from_slice(&[0u8; 4]);
     let payload_start = 5;
-    // Header fields
-    buf.extend_from_slice(&sync.pane_id.to_le_bytes());
-    buf.extend_from_slice(&sync.generation.to_le_bytes());
-    buf.extend_from_slice(&sync.cols.to_le_bytes());
-    buf.extend_from_slice(&sync.rows.to_le_bytes());
-    buf.extend_from_slice(&sync.cursor_line.to_le_bytes());
-    buf.extend_from_slice(&sync.cursor_col.to_le_bytes());
-    buf.push(sync.cursor_shape);
-    buf.push(sync.mode_flags);
-    buf.extend_from_slice(&(title_bytes.len() as u16).to_le_bytes());
-    buf.extend_from_slice(title_bytes);
+    write_full_pane_sync_header(buf, sync, title_bytes)?;
     // Scrollback (SM-encoded)
     buf.extend_from_slice(&sync.scrollback_rows.to_le_bytes());
     let mut encoder = StateEncoder::new();
@@ -1047,30 +1238,8 @@ pub fn encode_full_pane_sync_framed(buf: &mut Vec<u8>, sync: &FullPaneSync) -> i
     let vp_data = encoder.finish();
     buf.extend_from_slice(&(vp_data.len() as u32).to_le_bytes());
     buf.extend_from_slice(vp_data);
-    // Grapheme extras
-    let extras = &sync.grapheme_extras.0;
-    buf.extend_from_slice(&(extras.len() as u16).to_le_bytes());
-    for (idx, extra) in extras {
-        buf.extend_from_slice(&idx.to_le_bytes());
-        let bytes = extra.as_bytes();
-        buf.push(bytes.len().min(255) as u8);
-        buf.extend_from_slice(&bytes[..bytes.len().min(255)]);
-    }
-    // Hyperlink extras (OSC 8)
-    let hl = &sync.hyperlink_extras;
-    buf.extend_from_slice(&(hl.cell_links.len() as u16).to_le_bytes());
-    for &(cell_idx, link_id) in &hl.cell_links {
-        buf.extend_from_slice(&cell_idx.to_le_bytes());
-        buf.extend_from_slice(&link_id.to_le_bytes());
-    }
-    buf.extend_from_slice(&(hl.link_map.len() as u16).to_le_bytes());
-    for (link_id, uri) in &hl.link_map {
-        buf.extend_from_slice(&link_id.to_le_bytes());
-        let uri_bytes = uri.as_bytes();
-        let len = uri_bytes.len().min(u16::MAX as usize);
-        buf.extend_from_slice(&(len as u16).to_le_bytes());
-        buf.extend_from_slice(&uri_bytes[..len]);
-    }
+    write_full_pane_sync_grapheme_extras(buf, sync);
+    write_full_pane_sync_hyperlink_extras(buf, sync);
     // Patch the length field
     let payload_len = (buf.len() - payload_start) as u32;
     buf[1..5].copy_from_slice(&payload_len.to_le_bytes());
@@ -1086,7 +1255,7 @@ pub async fn encode_full_pane_sync<W: AsyncWrite + Unpin>(
 }
 
 pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
-    if payload.len() < 32 {
+    if payload.len() < FULL_PANE_SYNC_MIN_HEADER_LEN {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "FullPaneSync too short",
@@ -1107,114 +1276,14 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
     let cursor_col = read_u16_le(payload, 22)?;
     let cursor_shape = payload[24];
     let mode_flags = payload[25];
-    let title_len = read_u16_le(payload, 26)? as usize;
-    let mut offset = 28;
-    if offset + title_len > payload.len() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "truncated title",
-        ));
-    }
-    let title = String::from_utf8_lossy(&payload[offset..offset + title_len]).to_string();
-    offset += title_len;
-
-    // Scrollback (SM-encoded)
-    if offset + 6 > payload.len() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "truncated scrollback header",
-        ));
-    }
-    let scrollback_rows = read_u16_le(payload, offset)?;
-    offset += 2;
-    let sb_data_len = read_u32_le(payload, offset)? as usize;
-    offset += 4;
-    if offset + sb_data_len > payload.len() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "truncated scrollback data",
-        ));
-    }
+    let (scrollback_rows, title, sections) =
+        read_full_pane_sync_mandatory_sections(payload, FULL_PANE_SYNC_MIN_HEADER_LEN)?;
     let sb_expected = scrollback_rows as usize * cols as usize;
-    let scrollback = sm_decode_cells_vec(&payload[offset..offset + sb_data_len], sb_expected)?;
-    offset += sb_data_len;
-
-    // Viewport (SM-encoded)
-    if offset + 4 > payload.len() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "truncated cell header",
-        ));
-    }
-    let cell_data_len = read_u32_le(payload, offset)? as usize;
-    offset += 4;
-    if offset + cell_data_len > payload.len() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "truncated cell data",
-        ));
-    }
-    let expected = total_cells;
-    let cells = sm_decode_cells_vec(&payload[offset..offset + cell_data_len], expected)?;
-    offset += cell_data_len;
-
-    // Grapheme extras (optional, backward-compatible)
-    let mut grapheme_extras = GraphemeExtras::new();
-    if offset + 2 <= payload.len() {
-        let count = read_u16_le(payload, offset)? as usize;
-        offset += 2;
-        for _ in 0..count {
-            if offset + 5 > payload.len() {
-                break;
-            }
-            let idx = read_u32_le(payload, offset)?;
-            offset += 4;
-            let len = payload[offset] as usize;
-            offset += 1;
-            if offset + len > payload.len() {
-                break;
-            }
-            let extra = String::from_utf8_lossy(&payload[offset..offset + len]).to_string();
-            offset += len;
-            grapheme_extras.push(idx, &extra);
-        }
-    }
-
-    // Hyperlink extras (optional, backward-compatible)
-    let mut hyperlink_extras = HyperlinkExtras::new();
-    if offset + 2 <= payload.len() {
-        let cell_links_count = read_u16_le(payload, offset)? as usize;
-        offset += 2;
-        for _ in 0..cell_links_count {
-            if offset + 6 > payload.len() {
-                break;
-            }
-            let cell_idx = read_u32_le(payload, offset)?;
-            offset += 4;
-            let link_id = read_u16_le(payload, offset)?;
-            offset += 2;
-            hyperlink_extras.cell_links.push((cell_idx, link_id));
-        }
-        if offset + 2 <= payload.len() {
-            let link_map_count = read_u16_le(payload, offset)? as usize;
-            offset += 2;
-            for _ in 0..link_map_count {
-                if offset + 4 > payload.len() {
-                    break;
-                }
-                let link_id = read_u16_le(payload, offset)?;
-                offset += 2;
-                let uri_len = read_u16_le(payload, offset)? as usize;
-                offset += 2;
-                if offset + uri_len > payload.len() {
-                    break;
-                }
-                let uri = String::from_utf8_lossy(&payload[offset..offset + uri_len]).to_string();
-                offset += uri_len;
-                hyperlink_extras.link_map.push((link_id, uri));
-            }
-        }
-    }
+    let scrollback = sm_decode_cells_vec(sections.scrollback, sb_expected)?;
+    let cells = sm_decode_cells_vec(sections.viewport, total_cells)?;
+    let mut extra_offset = sections.extra_offset;
+    let grapheme_extras = decode_grapheme_extras(payload, &mut extra_offset);
+    let hyperlink_extras = decode_hyperlink_extras(payload, &mut extra_offset);
 
     Ok(FullPaneSync {
         pane_id,
@@ -1225,7 +1294,7 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
         cursor_col,
         cursor_shape,
         mode_flags,
-        title,
+        title: title.to_string(),
         scrollback,
         scrollback_rows,
         cells,
@@ -1631,6 +1700,92 @@ mod tests {
         assert_eq!(decoded.scrollback_rows, 3);
         assert_eq!(decoded.scrollback.len(), 30);
         assert_eq!(decoded.scrollback, sb);
+    }
+
+    #[test]
+    fn full_pane_sync_rejects_truncated_mandatory_sections() {
+        let sync = FullPaneSync {
+            pane_id: 7,
+            generation: 12,
+            cols: 4,
+            rows: 2,
+            cursor_line: 1,
+            cursor_col: 2,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+            title: "pane".to_string(),
+            scrollback: vec![PackedCell::default(); 4],
+            scrollback_rows: 1,
+            cells: vec![PackedCell::default(); 8],
+            grapheme_extras: GraphemeExtras::new(),
+            hyperlink_extras: HyperlinkExtras::new(),
+        };
+        let payload = encode_full_pane_sync_payload(&sync).unwrap();
+
+        let truncated_title = &payload[..27];
+        assert_eq!(
+            decode_full_pane_sync(truncated_title)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+
+        let truncated_scrollback = &payload[..payload.len() - 5];
+        assert_eq!(
+            decode_full_pane_sync(truncated_scrollback)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+
+    #[test]
+    fn full_pane_sync_ignores_truncated_optional_extras() {
+        let mut sync = FullPaneSync {
+            pane_id: 9,
+            generation: 99,
+            cols: 2,
+            rows: 1,
+            cursor_line: 0,
+            cursor_col: 1,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+            title: "links".to_string(),
+            scrollback: Vec::new(),
+            scrollback_rows: 0,
+            cells: vec![PackedCell::with_ch('A'), PackedCell::with_ch('B')],
+            grapheme_extras: GraphemeExtras::new(),
+            hyperlink_extras: HyperlinkExtras::new(),
+        };
+        sync.grapheme_extras.push(0, "é");
+        sync.hyperlink_extras.cell_links.push((1, 3));
+        sync.hyperlink_extras
+            .link_map
+            .push((3, "https://example.test".to_string()));
+
+        let mut framed = Vec::new();
+        encode_full_pane_sync_framed(&mut framed, &sync).unwrap();
+        let payload = &framed[5..];
+
+        let mut grapheme_only = sync.clone();
+        grapheme_only.hyperlink_extras = HyperlinkExtras::new();
+        let grapheme_only_payload = encode_full_pane_sync_payload(&grapheme_only).unwrap();
+        let grapheme_cut = &grapheme_only_payload[..grapheme_only_payload.len() - 1];
+        let decoded = decode_full_pane_sync(grapheme_cut).unwrap();
+        assert_eq!(decoded.pane_id, sync.pane_id);
+        assert_eq!(decoded.cells, sync.cells);
+        assert_eq!(decoded.scrollback, sync.scrollback);
+        assert!(decoded.grapheme_extras.0.is_empty());
+        assert!(decoded.hyperlink_extras.cell_links.is_empty());
+        assert!(decoded.hyperlink_extras.link_map.is_empty());
+
+        let hyperlink_cut = &payload[..payload.len() - 3];
+        let decoded = decode_full_pane_sync(hyperlink_cut).unwrap();
+        assert_eq!(decoded.pane_id, sync.pane_id);
+        assert_eq!(decoded.cells, sync.cells);
+        assert_eq!(decoded.grapheme_extras.0.len(), 1);
+        assert_eq!(decoded.hyperlink_extras.cell_links, vec![(1, 3)]);
+        assert!(decoded.hyperlink_extras.link_map.is_empty());
     }
 
     // ─── Frame-level roundtrip ──────────────────────────────────────

@@ -163,19 +163,19 @@ impl App {
         let padding = self.config.appearance.padding;
         let border_w = self.config.appearance.border_width;
         let active_border = if self.config.appearance.active_border_color.is_empty() {
-            ThemeConfig::parse_color(&self.config.theme.border_active)
+            ThemeConfig::parse_color_linear(&self.config.theme.border_active)
         } else {
-            ThemeConfig::parse_color(&self.config.appearance.active_border_color)
+            ThemeConfig::parse_color_linear(&self.config.appearance.active_border_color)
         };
         let inactive_border = if self.config.appearance.inactive_border_color.is_empty() {
-            ThemeConfig::parse_color(&self.config.theme.border_inactive)
+            ThemeConfig::parse_color_linear(&self.config.theme.border_inactive)
         } else {
-            ThemeConfig::parse_color(&self.config.appearance.inactive_border_color)
+            ThemeConfig::parse_color_linear(&self.config.appearance.inactive_border_color)
         };
         let inactive_opacity = self.config.appearance.inactive_opacity;
-        let bg_color = ThemeConfig::parse_color(&self.config.theme.background);
-        let link_color = ThemeConfig::parse_color(&self.config.theme.accent);
-        let accent = ThemeConfig::parse_color(&self.config.theme.accent);
+        let bg_color = ThemeConfig::parse_color_linear(&self.config.theme.background);
+        let link_color = ThemeConfig::parse_color_linear(&self.config.theme.accent);
+        let accent = ThemeConfig::parse_color_linear(&self.config.theme.accent);
         let cache_tile_glyphs = self.pending_resize.is_none();
 
         for (pane_id, tile_rect, is_active) in tiles {
@@ -1266,9 +1266,9 @@ impl App {
         self.build_image_placements(&offset_tiles, zoom, vw_f, vh_f, &mut bg_rects, &mut glyphs);
 
         let clear_color = if self.overview.active || zoom < zoom_threshold {
-            ThemeConfig::parse_color(&self.config.theme.overview_background)
+            ThemeConfig::parse_color_linear(&self.config.theme.overview_background)
         } else {
-            ThemeConfig::parse_color(&self.config.theme.ui_background)
+            ThemeConfig::parse_color_linear(&self.config.theme.ui_background)
         };
         let renderer = self.renderer.as_mut().unwrap();
         let cache = self.glyph_cache.as_mut().unwrap();

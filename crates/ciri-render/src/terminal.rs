@@ -67,7 +67,7 @@ impl CellMetrics {
             cw: atlas.cell_width,
             ch: atlas.cell_height,
             baseline: atlas.ascent,
-            default_bg: ThemeConfig::parse_color(&config.theme.background),
+            default_bg: ThemeConfig::parse_color_linear(&config.theme.background),
         }
     }
 }
@@ -84,24 +84,24 @@ pub struct ColorTable {
 impl ColorTable {
     pub fn new(config: &CiriConfig) -> Self {
         let theme = &config.theme;
-        let fg = ThemeConfig::parse_color(&theme.foreground);
+        let fg = ThemeConfig::parse_color_linear(&theme.foreground);
         let named = [
-            ThemeConfig::parse_color(&theme.black),
-            ThemeConfig::parse_color(&theme.red),
-            ThemeConfig::parse_color(&theme.green),
-            ThemeConfig::parse_color(&theme.yellow),
-            ThemeConfig::parse_color(&theme.blue),
-            ThemeConfig::parse_color(&theme.magenta),
-            ThemeConfig::parse_color(&theme.cyan),
-            ThemeConfig::parse_color(&theme.white),
-            ThemeConfig::parse_color(&theme.bright_black),
-            ThemeConfig::parse_color(&theme.bright_red),
-            ThemeConfig::parse_color(&theme.bright_green),
-            ThemeConfig::parse_color(&theme.bright_yellow),
-            ThemeConfig::parse_color(&theme.bright_blue),
-            ThemeConfig::parse_color(&theme.bright_magenta),
-            ThemeConfig::parse_color(&theme.bright_cyan),
-            ThemeConfig::parse_color(&theme.foreground), // bright_white = foreground
+            ThemeConfig::parse_color_linear(&theme.black),
+            ThemeConfig::parse_color_linear(&theme.red),
+            ThemeConfig::parse_color_linear(&theme.green),
+            ThemeConfig::parse_color_linear(&theme.yellow),
+            ThemeConfig::parse_color_linear(&theme.blue),
+            ThemeConfig::parse_color_linear(&theme.magenta),
+            ThemeConfig::parse_color_linear(&theme.cyan),
+            ThemeConfig::parse_color_linear(&theme.white),
+            ThemeConfig::parse_color_linear(&theme.bright_black),
+            ThemeConfig::parse_color_linear(&theme.bright_red),
+            ThemeConfig::parse_color_linear(&theme.bright_green),
+            ThemeConfig::parse_color_linear(&theme.bright_yellow),
+            ThemeConfig::parse_color_linear(&theme.bright_blue),
+            ThemeConfig::parse_color_linear(&theme.bright_magenta),
+            ThemeConfig::parse_color_linear(&theme.bright_cyan),
+            ThemeConfig::parse_color_linear(&theme.foreground), // bright_white = foreground
         ];
         let mut dim_colors = [[0.0f32; 4]; 8];
         for i in 0..8 {
@@ -115,7 +115,7 @@ impl ColorTable {
         ColorTable {
             named,
             foreground: fg,
-            background: ThemeConfig::parse_color(&theme.background),
+            background: ThemeConfig::parse_color_linear(&theme.background),
             dim_foreground: [fg[0] * 0.67, fg[1] * 0.67, fg[2] * 0.67, fg[3]],
             dim_colors,
         }
@@ -1408,8 +1408,8 @@ fn make_relative_glyph(
     color: [f32; 4],
 ) -> RelativeGlyph {
     RelativeGlyph {
-        px: (px + entry.bearing_x).round(),
-        py: (py + baseline - entry.bearing_y).round(),
+        px: px + entry.bearing_x,
+        py: py + baseline - entry.bearing_y,
         glyph_w: entry.width as f32,
         glyph_h: entry.height as f32,
         u0: entry.u0,
@@ -1453,8 +1453,9 @@ fn constrain_wide_glyph(
     }
 }
 
-/// Place a wide text glyph inside a double-width cell without enlarging height.
-/// Keeps baseline-aligned vertical metrics and only constrains horizontal width.
+/// Place a wide text glyph inside a double-width cell using bearing positioning.
+/// Uses bearing_x like regular glyphs instead of centering, to avoid excessive
+/// inter-character spacing with CJK fonts that already encode correct metrics.
 #[inline]
 fn constrain_wide_text_glyph(
     entry: &GlyphEntry,
@@ -1465,11 +1466,11 @@ fn constrain_wide_text_glyph(
 ) -> RelativeGlyph {
     let gw = entry.width as f32;
     let target_w = m.cw * 2.0;
+    // Use bearing positioning; clamp width to cell bounds if glyph overflows
     let final_w = gw.min(target_w);
-    let offset_x = (target_w - final_w) * 0.5;
     RelativeGlyph {
-        px: (px + offset_x).round(),
-        py: (py + m.baseline - entry.bearing_y).round(),
+        px: px + entry.bearing_x,
+        py: py + m.baseline - entry.bearing_y,
         glyph_w: final_w,
         glyph_h: entry.height as f32,
         u0: entry.u0,
@@ -1595,12 +1596,12 @@ fn scrollbar_thumb_alpha(state: ScrollbarState) -> f32 {
 fn ansi_color_to_rgba(color: AnsiColor, config: &CiriConfig) -> [f32; 4] {
     match color {
         AnsiColor::Named(named) => named_color_to_rgba(named, config),
-        AnsiColor::Spec(rgb) => [
+        AnsiColor::Spec(rgb) => ThemeConfig::srgb_to_linear([
             rgb.r as f32 / 255.0,
             rgb.g as f32 / 255.0,
             rgb.b as f32 / 255.0,
             1.0,
-        ],
+        ]),
         AnsiColor::Indexed(idx) => indexed_color_to_rgba(idx, config),
     }
 }
@@ -1632,26 +1633,26 @@ fn named_color_from_index(idx: u8) -> NamedColor {
 fn named_color_to_rgba(c: NamedColor, config: &CiriConfig) -> [f32; 4] {
     let theme = &config.theme;
     match c {
-        NamedColor::Black => ThemeConfig::parse_color(&theme.black),
-        NamedColor::Red => ThemeConfig::parse_color(&theme.red),
-        NamedColor::Green => ThemeConfig::parse_color(&theme.green),
-        NamedColor::Yellow => ThemeConfig::parse_color(&theme.yellow),
-        NamedColor::Blue => ThemeConfig::parse_color(&theme.blue),
-        NamedColor::Magenta => ThemeConfig::parse_color(&theme.magenta),
-        NamedColor::Cyan => ThemeConfig::parse_color(&theme.cyan),
-        NamedColor::White => ThemeConfig::parse_color(&theme.white),
-        NamedColor::BrightBlack => ThemeConfig::parse_color(&theme.bright_black),
-        NamedColor::BrightRed => ThemeConfig::parse_color(&theme.bright_red),
-        NamedColor::BrightGreen => ThemeConfig::parse_color(&theme.bright_green),
-        NamedColor::BrightYellow => ThemeConfig::parse_color(&theme.bright_yellow),
-        NamedColor::BrightBlue => ThemeConfig::parse_color(&theme.bright_blue),
-        NamedColor::BrightMagenta => ThemeConfig::parse_color(&theme.bright_magenta),
-        NamedColor::BrightCyan => ThemeConfig::parse_color(&theme.bright_cyan),
+        NamedColor::Black => ThemeConfig::parse_color_linear(&theme.black),
+        NamedColor::Red => ThemeConfig::parse_color_linear(&theme.red),
+        NamedColor::Green => ThemeConfig::parse_color_linear(&theme.green),
+        NamedColor::Yellow => ThemeConfig::parse_color_linear(&theme.yellow),
+        NamedColor::Blue => ThemeConfig::parse_color_linear(&theme.blue),
+        NamedColor::Magenta => ThemeConfig::parse_color_linear(&theme.magenta),
+        NamedColor::Cyan => ThemeConfig::parse_color_linear(&theme.cyan),
+        NamedColor::White => ThemeConfig::parse_color_linear(&theme.white),
+        NamedColor::BrightBlack => ThemeConfig::parse_color_linear(&theme.bright_black),
+        NamedColor::BrightRed => ThemeConfig::parse_color_linear(&theme.bright_red),
+        NamedColor::BrightGreen => ThemeConfig::parse_color_linear(&theme.bright_green),
+        NamedColor::BrightYellow => ThemeConfig::parse_color_linear(&theme.bright_yellow),
+        NamedColor::BrightBlue => ThemeConfig::parse_color_linear(&theme.bright_blue),
+        NamedColor::BrightMagenta => ThemeConfig::parse_color_linear(&theme.bright_magenta),
+        NamedColor::BrightCyan => ThemeConfig::parse_color_linear(&theme.bright_cyan),
         NamedColor::BrightWhite | NamedColor::Foreground => {
-            ThemeConfig::parse_color(&theme.foreground)
+            ThemeConfig::parse_color_linear(&theme.foreground)
         }
-        NamedColor::Background => ThemeConfig::parse_color(&theme.background),
-        _ => ThemeConfig::parse_color(&theme.foreground),
+        NamedColor::Background => ThemeConfig::parse_color_linear(&theme.background),
+        _ => ThemeConfig::parse_color_linear(&theme.foreground),
     }
 }
 
@@ -1674,11 +1675,11 @@ fn indexed_color_to_rgba(idx: u8, config: &CiriConfig) -> [f32; 4] {
                 (55.0 + 40.0 * v as f32) / 255.0
             }
         };
-        return [to_f(r), to_f(g), to_f(b), 1.0];
+        return ThemeConfig::srgb_to_linear([to_f(r), to_f(g), to_f(b), 1.0]);
     }
     // Grayscale ramp: 232–255 → 8, 18, 28, ..., 238
     let v = (8 + 10 * (idx - 232) as u32) as f32 / 255.0;
-    [v, v, v, 1.0]
+    ThemeConfig::srgb_to_linear([v, v, v, 1.0])
 }
 
 #[cfg(test)]

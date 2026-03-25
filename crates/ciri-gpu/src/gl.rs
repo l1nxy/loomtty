@@ -74,20 +74,12 @@ impl GlAtlasLayer {
         gl.tex_parameter_i32(
             glow::TEXTURE_2D,
             glow::TEXTURE_MIN_FILTER,
-            if bpp == 1 {
-                glow::NEAREST as i32
-            } else {
-                glow::LINEAR as i32
-            },
+            glow::LINEAR as i32,
         );
         gl.tex_parameter_i32(
             glow::TEXTURE_2D,
             glow::TEXTURE_MAG_FILTER,
-            if bpp == 1 {
-                glow::NEAREST as i32
-            } else {
-                glow::LINEAR as i32
-            },
+            glow::LINEAR as i32,
         );
         gl.tex_parameter_i32(
             glow::TEXTURE_2D,
@@ -516,16 +508,13 @@ impl Renderer {
         unsafe {
             gl.enable(glow::BLEND);
             gl.blend_func_separate(
-                glow::SRC_ALPHA,
+                glow::ONE,
                 glow::ONE_MINUS_SRC_ALPHA,
                 glow::ONE,
                 glow::ONE_MINUS_SRC_ALPHA,
             );
             gl.disable(glow::DEPTH_TEST);
-            // Disable sRGB framebuffer conversion — our color values are already
-            // in sRGB space (parsed from hex like #282C34), so we write them
-            // directly without linear→sRGB re-encoding.
-            gl.disable(glow::FRAMEBUFFER_SRGB);
+            gl.enable(glow::FRAMEBUFFER_SRGB);
             gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
         }
 
@@ -617,7 +606,12 @@ impl Renderer {
             atlas_gpu.color.flush_uploads(&self.gl, &mut cp, cc);
 
             // Clear
-            self.gl.clear_color(0.0, 0.0, 0.0, 1.0);
+            self.gl.clear_color(
+                scene.clear_color[0],
+                scene.clear_color[1],
+                scene.clear_color[2],
+                scene.clear_color[3],
+            );
             self.gl.clear(glow::COLOR_BUFFER_BIT);
 
             // 1. Upload all background rects (clear + pane + overlay) once.
@@ -807,7 +801,7 @@ in vec4 v_color;
 out vec4 frag_color;
 
 void main() {
-    frag_color = v_color;
+    frag_color = vec4(v_color.rgb * v_color.a, v_color.a);
 }
 "#;
 
@@ -851,7 +845,8 @@ out vec4 frag_color;
 
 void main() {
     float alpha = texture(u_atlas, v_uv).r;
-    frag_color = vec4(v_color.rgb, v_color.a * alpha);
+    float out_alpha = v_color.a * alpha;
+    frag_color = vec4(v_color.rgb * out_alpha, out_alpha);
 }
 "#;
 

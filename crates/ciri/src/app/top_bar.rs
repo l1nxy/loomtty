@@ -173,10 +173,10 @@ impl App {
     }
 
     pub(crate) fn current_mode_label(&self) -> (String, [f32; 4]) {
-        let accent = ThemeConfig::parse_color(&self.config.theme.accent);
-        let broadcast_color = ThemeConfig::parse_color(&self.config.theme.mode_broadcast);
-        let dim = ThemeConfig::parse_color(&self.config.theme.statusbar_dim);
-        let warn_color = ThemeConfig::parse_color(&self.config.theme.mode_broadcast);
+        let accent = ThemeConfig::parse_color_linear(&self.config.theme.accent);
+        let broadcast_color = ThemeConfig::parse_color_linear(&self.config.theme.mode_broadcast);
+        let dim = ThemeConfig::parse_color_linear(&self.config.theme.statusbar_dim);
+        let warn_color = ThemeConfig::parse_color_linear(&self.config.theme.mode_broadcast);
         if self.input.is_locked() {
             (" LOCKED ".into(), warn_color)
         } else if self.broadcast_mode {

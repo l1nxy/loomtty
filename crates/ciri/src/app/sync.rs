@@ -18,13 +18,6 @@ impl App {
 
         self.session_name = session_name;
         self.expected_pane_ids = pane_ids.iter().copied().collect();
-        self.pane_grids.retain(|pane_id, _| self.expected_pane_ids.contains(pane_id));
-        self.image_placements
-            .retain(|pane_id, _| self.expected_pane_ids.contains(pane_id));
-        self.cached_views
-            .retain(|pane_id, _| self.expected_pane_ids.contains(pane_id));
-        self.cached_tile_glyphs
-            .retain(|pane_id, _| self.expected_pane_ids.contains(pane_id));
         self.write_last_session();
         self.command_palette = None;
         if let Some(window) = &self.window {
@@ -487,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn session_switch_retains_client_state_until_authoritative_resync() {
+    fn session_switch_state_sync_does_not_prune_retained_client_state() {
         let mut app = make_app();
         let (event_tx, rx) = crossbeam_channel::unbounded();
         app.server_rx = Some(rx);
@@ -540,15 +533,25 @@ mod tests {
                 pane_ids: vec![11],
             }))
             .unwrap();
-        event_tx.send(ServerEvent::FullPaneSync(new_sync)).unwrap();
 
         assert!(app.process_server_events());
         assert_eq!(app.session_name, "other-session");
         assert_eq!(app.pending_session_name, None);
+        assert_eq!(
+            app.expected_pane_ids.iter().copied().collect::<Vec<_>>(),
+            vec![11]
+        );
+        assert!(app.pane_grids.contains_key(&stale.pane_id));
+        assert!(app.image_placements.contains_key(&stale.pane_id));
+        assert!(app.cached_tile_glyphs.contains_key(&stale.pane_id));
+
+        event_tx.send(ServerEvent::FullPaneSync(new_sync)).unwrap();
+
+        assert!(app.process_server_events());
         assert!(app.pane_grids.contains_key(&11));
-        assert!(!app.pane_grids.contains_key(&stale.pane_id));
-        assert!(app.image_placements.is_empty());
-        assert!(app.cached_tile_glyphs.is_empty());
+        assert!(app.pane_grids.contains_key(&stale.pane_id));
+        assert!(app.image_placements.contains_key(&stale.pane_id));
+        assert!(app.cached_tile_glyphs.contains_key(&stale.pane_id));
     }
 
     #[test]
@@ -574,13 +577,19 @@ mod tests {
         event_tx
             .send(ServerEvent::Control(ServerMessage::StateSync {
                 layout: empty_layout(),
-                pane_ids: vec![],
+                pane_ids: vec![11],
             }))
+            .unwrap();
+        event_tx
+            .send(ServerEvent::FullPaneSync(blank_full_sync(11, 1, "fresh")))
             .unwrap();
 
         assert!(app.process_server_events());
         assert_eq!(app.pending_session_name, None);
-        assert_eq!(std::fs::read_to_string(&last_session_path).unwrap(), "other-session");
+        assert_eq!(
+            std::fs::read_to_string(&last_session_path).unwrap(),
+            "other-session"
+        );
     }
 
     #[test]

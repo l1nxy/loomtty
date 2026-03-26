@@ -762,7 +762,114 @@ fn normalize_link_token(token: &str) -> Option<String> {
             .any(|ch| ch.is_alphanumeric())
             .then(|| format!("https://{token}"))
     } else {
-        None
+        detect_file_path(token)
+    }
+}
+
+/// Detect file path patterns in a token. Returns the path (with optional :line:col).
+///
+/// Recognized patterns:
+/// - Absolute Unix: `/foo/bar.rs`, `/foo/bar.rs:42:10`
+/// - Absolute Windows: `C:\foo\bar.rs`, `C:/foo/bar.rs`
+/// - Relative: `./foo.rs`, `../foo.rs`
+/// - Home: `~/foo/bar.rs`
+/// - Bare paths with extension: `src/main.rs`, `Cargo.toml`
+fn detect_file_path(token: &str) -> Option<String> {
+    // Strip trailing `:line:col` or `:line` suffix, keeping it for the result
+    let (path_part, _suffix) = split_path_line_col(token);
+
+    if path_part.is_empty() {
+        return None;
+    }
+
+    let is_file_path = if path_part.starts_with('/')
+        || path_part.starts_with("~/")
+        || path_part.starts_with("./")
+        || path_part.starts_with("../")
+    {
+        // Unix absolute, home, or relative path
+        true
+    } else if path_part.len() >= 3
+        && path_part.as_bytes()[0].is_ascii_alphabetic()
+        && (path_part.as_bytes()[1] == b':')
+        && (path_part.as_bytes()[2] == b'\\' || path_part.as_bytes()[2] == b'/')
+    {
+        // Windows absolute path: C:\foo or C:/foo
+        true
+    } else {
+        // Bare path: must contain a separator AND have a file-like component
+        // e.g. "src/main.rs", "crates/foo/lib.rs"
+        (path_part.contains('/') || path_part.contains('\\')) && has_file_extension(path_part)
+    };
+
+    if !is_file_path {
+        return None;
+    }
+
+    // Sanity check: path should have at least one alphanumeric char
+    if !path_part.chars().any(|c| c.is_alphanumeric()) {
+        return None;
+    }
+
+    // Reject paths that look like they're just punctuation or too short
+    if path_part.len() < 2 {
+        return None;
+    }
+
+    Some(token.to_string())
+}
+
+/// Split `path:line:col` into `(path, ":line:col")`.
+/// Returns `(token, "")` if no line/col suffix is found.
+fn split_path_line_col(token: &str) -> (&str, &str) {
+    // Walk backwards looking for `:digits` patterns
+    // Handle: path:42 or path:42:10
+    let bytes = token.as_bytes();
+    let end = bytes.len();
+
+    // Try to strip :col
+    if let Some(pos) = rfind_colon_digits(bytes, end) {
+        let after_first_strip = pos;
+        // Try to strip another :line
+        if let Some(pos2) = rfind_colon_digits(bytes, after_first_strip) {
+            return (&token[..pos2], &token[pos2..]);
+        }
+        return (&token[..after_first_strip], &token[after_first_strip..]);
+    }
+
+    (token, "")
+}
+
+/// Find the position of `:` in `bytes[..end]` where `:` is followed by only digits.
+fn rfind_colon_digits(bytes: &[u8], end: usize) -> Option<usize> {
+    if end < 2 {
+        return None;
+    }
+    // Find the last `:` before `end`
+    let slice = &bytes[..end];
+    let colon_pos = slice.iter().rposition(|&b| b == b':')?;
+    // Everything after the colon must be digits (at least one)
+    let after = &slice[colon_pos + 1..];
+    if after.is_empty() || !after.iter().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(colon_pos)
+}
+
+/// Check if a path has a recognizable file extension.
+fn has_file_extension(path: &str) -> bool {
+    // Get the last path component
+    let file_name = path
+        .rsplit(|c: char| c == '/' || c == '\\')
+        .next()
+        .unwrap_or(path);
+    // Must contain a dot that's not at the start (not hidden files alone)
+    if let Some(dot_pos) = file_name.rfind('.') {
+        let ext = &file_name[dot_pos + 1..];
+        // Extension must be 1-12 chars, all alphanumeric
+        !ext.is_empty() && ext.len() <= 12 && ext.chars().all(|c| c.is_alphanumeric())
+    } else {
+        false
     }
 }
 
@@ -1329,6 +1436,90 @@ mod tests {
     fn link_at_out_of_bounds_returns_none() {
         let grid = ClientPaneGrid::new(4, 2, 0);
         assert_eq!(grid.link_at(0, 999), None);
+    }
+
+    // ─── file path detection ─────────────────────────────────────────
+
+    #[test]
+    fn link_at_detects_absolute_unix_path() {
+        let grid = grid_with_line("error in /usr/src/main.rs found");
+        let m = grid.link_at(15, 0).unwrap();
+        assert_eq!(m.url, "/usr/src/main.rs");
+    }
+
+    #[test]
+    fn link_at_detects_relative_path() {
+        let grid = grid_with_line("see ./src/lib.rs for details");
+        let m = grid.link_at(6, 0).unwrap();
+        assert_eq!(m.url, "./src/lib.rs");
+    }
+
+    #[test]
+    fn link_at_detects_parent_relative_path() {
+        let grid = grid_with_line("check ../config.toml now");
+        let m = grid.link_at(10, 0).unwrap();
+        assert_eq!(m.url, "../config.toml");
+    }
+
+    #[test]
+    fn link_at_detects_bare_path_with_extension() {
+        let grid = grid_with_line("error at src/main.rs:42:10 here");
+        let m = grid.link_at(12, 0).unwrap();
+        assert_eq!(m.url, "src/main.rs:42:10");
+    }
+
+    #[test]
+    fn link_at_detects_path_with_line_number() {
+        let grid = grid_with_line("warning crates/foo/lib.rs:99 x");
+        let m = grid.link_at(15, 0).unwrap();
+        assert_eq!(m.url, "crates/foo/lib.rs:99");
+    }
+
+    #[test]
+    fn link_at_detects_home_path() {
+        let grid = grid_with_line("edit ~/docs/notes.md please");
+        let m = grid.link_at(10, 0).unwrap();
+        assert_eq!(m.url, "~/docs/notes.md");
+    }
+
+    #[test]
+    fn link_at_detects_windows_path() {
+        let grid = grid_with_line(r"open C:\Users\foo\bar.txt now");
+        let m = grid.link_at(10, 0).unwrap();
+        assert_eq!(m.url, r"C:\Users\foo\bar.txt");
+    }
+
+    #[test]
+    fn link_at_ignores_bare_word_without_separator() {
+        let grid = grid_with_line("just a plain word here");
+        assert_eq!(grid.link_at(8, 0), None);
+    }
+
+    #[test]
+    fn detect_file_path_unit_tests() {
+        assert!(detect_file_path("/foo/bar.rs").is_some());
+        assert!(detect_file_path("./foo.rs").is_some());
+        assert!(detect_file_path("../foo.rs").is_some());
+        assert!(detect_file_path("~/foo.rs").is_some());
+        assert!(detect_file_path("src/main.rs").is_some());
+        assert!(detect_file_path("src/main.rs:42").is_some());
+        assert!(detect_file_path("src/main.rs:42:10").is_some());
+        assert_eq!(detect_file_path("plainword"), None);
+        assert_eq!(detect_file_path("no_slash_here"), None);
+    }
+
+    #[test]
+    fn split_path_line_col_cases() {
+        assert_eq!(split_path_line_col("foo.rs"), ("foo.rs", ""));
+        assert_eq!(split_path_line_col("foo.rs:42"), ("foo.rs", ":42"));
+        assert_eq!(
+            split_path_line_col("foo.rs:42:10"),
+            ("foo.rs", ":42:10")
+        );
+        assert_eq!(
+            split_path_line_col("C:\\foo.rs:42"),
+            ("C:\\foo.rs", ":42")
+        );
     }
 
     #[test]

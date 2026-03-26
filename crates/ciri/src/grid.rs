@@ -76,6 +76,8 @@ pub struct ClientPaneGrid {
     pub has_kitty_keyboard: bool,
     /// OSC 8 hyperlink map: link_id → URI (from server's HyperlinkExtras).
     pub hyperlink_map: Vec<(u16, String)>,
+    /// Current working directory from OSC 7 (reported by the shell via server).
+    pub cwd: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -106,6 +108,7 @@ impl ClientPaneGrid {
             has_shell_integration: false,
             has_kitty_keyboard: false,
             hyperlink_map: Vec::new(),
+            cwd: None,
         }
     }
 
@@ -251,6 +254,7 @@ impl ClientPaneGrid {
         self.title = sync.title.clone();
         self.grapheme_map = sync.grapheme_extras.build_lookup(&sync.cells);
         self.hyperlink_map = sync.hyperlink_extras.link_map.clone();
+        self.cwd = sync.cwd.clone();
         self.dirty = true;
     }
 
@@ -978,6 +982,7 @@ mod tests {
                 cells: vec![PackedCell::with_ch(ch.to_ascii_uppercase()); 8],
                 grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
                 hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
+                cwd: None,
             };
             grid.apply_full_sync(&sync);
         }
@@ -1126,6 +1131,7 @@ mod tests {
             cells: vec![PackedCell::with_ch('X'); 18],
             grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
             hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
+            cwd: None,
         };
         grid.apply_full_sync(&sync);
         assert_eq!(grid.cols, 6);
@@ -1164,6 +1170,7 @@ mod tests {
             cells: vec![PackedCell::with_ch('A'); 3], // only 3 of 8 cells
             grapheme_extras: GraphemeExtras::new(),
             hyperlink_extras: HyperlinkExtras::new(),
+            cwd: None,
         };
         grid.apply_full_sync(&sync);
         assert_eq!(grid.viewport[0].ch(), 'A');
@@ -1192,6 +1199,7 @@ mod tests {
                 cells: vec![PackedCell::with_ch('.'); 2],
                 grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
                 hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
+                cwd: None,
             };
             grid.apply_full_sync(&sync);
         }
@@ -1222,6 +1230,7 @@ mod tests {
                 cells: vec![PackedCell::default(); 2],
                 grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
                 hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
+                cwd: None,
             };
             grid.apply_full_sync(&sync);
         }
@@ -1245,6 +1254,7 @@ mod tests {
             cells: vec![PackedCell::default(); 3],
             grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
             hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
+            cwd: None,
         };
         grid.apply_full_sync(&sync);
         assert_eq!(grid.scroll_offset, 0); // reset by dimension change
@@ -1377,6 +1387,7 @@ mod tests {
             ],
             grapheme_extras: GraphemeExtras::new(),
             hyperlink_extras: HyperlinkExtras::new(),
+            cwd: None,
         };
         grid.apply_full_sync(&sync);
         // buffer_row 0 = scrollback 'abc', buffer_row 1 = viewport 'XYZ'
@@ -1416,6 +1427,7 @@ mod tests {
             ],
             grapheme_extras: GraphemeExtras::new(),
             hyperlink_extras: HyperlinkExtras::new(),
+            cwd: None,
         };
         grid.apply_full_sync(&sync);
         let results = grid.search("hello");
@@ -1546,6 +1558,7 @@ mod tests {
             ],
             grapheme_extras: GraphemeExtras::new(),
             hyperlink_extras: HyperlinkExtras::new(),
+            cwd: None,
         };
         grid.apply_full_sync(&sync);
         // buffer_row 1 = viewport row → "ab cd"
@@ -1609,6 +1622,7 @@ mod tests {
             ],
             grapheme_extras: GraphemeExtras::new(),
             hyperlink_extras: HyperlinkExtras::new(),
+            cwd: None,
         };
         grid.apply_full_sync(&sync);
         assert_eq!(grid.scrollback.len(), 1);
@@ -1670,6 +1684,7 @@ mod tests {
             cells: vec![PackedCell::default(); 8],
             grapheme_extras: GraphemeExtras::new(),
             hyperlink_extras: HyperlinkExtras::new(),
+            cwd: None,
         };
         grid.apply_full_sync(&sync);
 
@@ -1712,6 +1727,7 @@ mod tests {
             cells: vec![PackedCell::default(); 3],
             grapheme_extras: GraphemeExtras::new(),
             hyperlink_extras: HyperlinkExtras::new(),
+            cwd: None,
         };
         grid.apply_full_sync(&sync);
 
@@ -1764,6 +1780,7 @@ mod tests {
             cells: vec![PackedCell::default(); 8],
             grapheme_extras: GraphemeExtras::new(),
             hyperlink_extras: HyperlinkExtras::new(),
+            cwd: None,
         };
         grid.apply_full_sync(&sync);
 

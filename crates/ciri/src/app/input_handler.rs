@@ -333,7 +333,18 @@ impl App {
     }
 
     pub fn open_url(&self, url: &str) {
-        if let Err(e) = open_url(url) {
+        // Look up the CWD of the relevant pane for relative path resolution.
+        // Try hovered link pane first, then context menu target pane.
+        let pane_id = self
+            .hovered_link
+            .as_ref()
+            .map(|link| link.pane_id)
+            .or(self.context_menu.target_pane_id)
+            .or_else(|| self.workspaces.active().active_pane_id());
+        let pane_cwd = pane_id
+            .and_then(|id| self.pane_grids.get(&id))
+            .and_then(|grid| grid.cwd.as_deref());
+        if let Err(e) = open_url(url, pane_cwd) {
             log::warn!("failed to open url '{url}': {e}");
         }
     }
@@ -708,10 +719,10 @@ fn link_activation_modifier_active(modifiers: winit::keyboard::ModifiersState) -
     modifiers.control_key()
 }
 
-fn open_url(url: &str) -> std::io::Result<()> {
+fn open_url(url: &str, pane_cwd: Option<&str>) -> std::io::Result<()> {
     // Check if this is a file path (not a URL)
     if is_file_path_link(url) {
-        return open_file_path(url);
+        return open_file_path(url, pane_cwd);
     }
 
     #[cfg(target_os = "macos")]
@@ -775,7 +786,7 @@ fn is_file_path_link(s: &str) -> bool {
 /// Uses $EDITOR with line number support when available, otherwise falls
 /// back to the OS default handler. All arguments are passed as argv
 /// elements (not through a shell) to prevent command injection.
-fn open_file_path(path_with_loc: &str) -> std::io::Result<()> {
+fn open_file_path(path_with_loc: &str, pane_cwd: Option<&str>) -> std::io::Result<()> {
     let (path, line, _col) = parse_file_location(path_with_loc);
 
     // Resolve ~ to home directory
@@ -792,11 +803,30 @@ fn open_file_path(path_with_loc: &str) -> std::io::Result<()> {
         path.to_string()
     };
 
+    // For relative paths, resolve against the pane's CWD (from OSC 7).
+    // Without a known CWD, relative paths cannot be safely resolved.
+    let to_resolve = if !std::path::Path::new(&expanded).is_absolute() {
+        match pane_cwd {
+            Some(cwd) => {
+                let joined = std::path::Path::new(cwd).join(&expanded);
+                joined.to_string_lossy().into_owned()
+            }
+            None => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("cannot resolve relative path without pane CWD: {expanded}"),
+                ));
+            }
+        }
+    } else {
+        expanded
+    };
+
     // Canonicalize: resolve `..`, symlinks, and convert to absolute path.
     // This also serves as an existence check — canonicalize fails if the
     // file doesn't exist.
-    let canonical = std::fs::canonicalize(&expanded).map_err(|e| {
-        log::debug!("file path not found or inaccessible: {expanded}: {e}");
+    let canonical = std::fs::canonicalize(&to_resolve).map_err(|e| {
+        log::debug!("file path not found or inaccessible: {to_resolve}: {e}");
         e
     })?;
     let resolved = canonical.to_string_lossy();

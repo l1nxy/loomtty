@@ -166,7 +166,17 @@ struct OverviewActionBarData {
 struct HintsBarComponent {
     bar_y: f32,
     bar_h: f32,
-    segments: Vec<(String, bool)>, // (text, is_key) — keys use accent, labels use dim
+    groups: Vec<HintGroup>,
+}
+
+struct HintGroup {
+    title: String,
+    items: Vec<HintItem>,
+}
+
+struct HintItem {
+    key: String,
+    label: String,
 }
 
 struct InfoBoxComponent {
@@ -180,40 +190,81 @@ struct InfoBoxComponent {
 
 fn action_short_label(action: &str) -> &str {
     match action {
-        "focus_left" => "focus left",
-        "focus_right" => "focus right",
-        "focus_up" => "focus up",
-        "focus_down" => "focus down",
-        "move_pane_left" => "move left",
-        "move_pane_right" => "move right",
+        "focus_left" => "left",
+        "focus_right" => "right",
+        "focus_up" => "up",
+        "focus_down" => "down",
+        "move_pane_left" => "move ←",
+        "move_pane_right" => "move →",
         "new_column_right" => "new pane",
-        "new_row_below" | "new_workspace_below" | "split_down" => "split down",
-        "close_pane" => "close pane",
-        "column_width_decrease" => "width -",
-        "column_width_increase" => "width +",
-        "column_width_full" => "full width",
-        "cycle_preset_width" => "cycle width",
-        "cycle_preset_width_reverse" => "cycle reverse",
+        "new_row_below" | "new_workspace_below" | "split_down" => "split ↓",
+        "close_pane" => "close",
+        "column_width_decrease" => "shrink",
+        "column_width_increase" => "grow",
+        "column_width_full" => "full",
+        "column_width_one_third" => "1/3",
+        "column_width_half" => "1/2",
+        "column_width_two_thirds" => "2/3",
+        "cycle_preset_width" => "next width",
+        "cycle_preset_width_reverse" => "prev width",
         "equalize_adjacent_columns" => "equalize",
         "consume_into_column" => "stack",
         "expel_from_column" => "unstack",
         "toggle_broadcast" => "broadcast",
         "toggle_overview" => "overview",
-        "exit_overview" => "exit overview",
+        "exit_overview" => "exit",
         "toggle_command_palette" => "palette",
         "toggle_lock" => "lock",
         "detach" => "detach",
-        "scroll_line_up" => "line up",
-        "scroll_line_down" => "line down",
-        "scroll_half_page_up" => "half page up",
-        "scroll_half_page_down" => "half page down",
-        "scroll_page_up" => "page up",
-        "scroll_page_down" => "page down",
+        "scroll_line_up" => "line ↑",
+        "scroll_line_down" => "line ↓",
+        "scroll_half_page_up" => "half ↑",
+        "scroll_half_page_down" => "half ↓",
+        "scroll_page_up" => "page ↑",
+        "scroll_page_down" => "page ↓",
         "scroll_top" => "top",
         "scroll_bottom" => "bottom",
+        s if s.starts_with("enter_mode:workspace") => "workspace",
+        s if s.starts_with("enter_mode:session") => "session",
+        s if s.starts_with("enter_mode:resize") => "resize",
+        s if s.starts_with("enter_mode:move") => "move",
+        s if s.starts_with("enter_mode:scroll") => "scroll",
         s if s.starts_with("enter_mode:") => s.strip_prefix("enter_mode:").unwrap_or(s),
         s if s.starts_with("switch_workspace_") => s.strip_prefix("switch_workspace_").unwrap_or(s),
         other => other,
+    }
+}
+
+fn action_group_label(action: &str) -> &'static str {
+    match action {
+        "focus_left" | "focus_right" | "focus_up" | "focus_down" => "move",
+        "move_pane_left" | "move_pane_right" => "pane",
+        "new_column_right" | "new_row_below" | "new_workspace_below" | "split_down" | "close_pane" => {
+            "pane"
+        }
+        "consume_into_column" | "expel_from_column" => "stack",
+        "column_width_decrease"
+        | "column_width_increase"
+        | "column_width_one_third"
+        | "column_width_half"
+        | "column_width_two_thirds"
+        | "column_width_full"
+        | "cycle_preset_width"
+        | "cycle_preset_width_reverse"
+        | "equalize_adjacent_columns" => "width",
+        "toggle_overview" | "exit_overview" => "view",
+        "toggle_broadcast" | "toggle_command_palette" | "toggle_lock" | "detach" => "mode",
+        "scroll_line_up"
+        | "scroll_line_down"
+        | "scroll_half_page_up"
+        | "scroll_half_page_down"
+        | "scroll_page_up"
+        | "scroll_page_down"
+        | "scroll_top"
+        | "scroll_bottom" => "scroll",
+        s if s.starts_with("switch_workspace_") => "ws",
+        s if s.starts_with("enter_mode:") => "mode",
+        _ => "misc",
     }
 }
 
@@ -231,7 +282,7 @@ fn build_infobox_rows(bindings: &std::collections::HashMap<String, String>) -> V
     for keys in action_to_keys.values_mut() {
         keys.sort_by_key(|k| k.len());
     }
-    // Sort deterministically: by shortest key length, then alphabetically
+    // Sort deterministically: by shortest key length, then alphabetically.
     let mut entries: Vec<_> = action_to_keys.into_iter().collect();
     entries.sort_by(|(_, a_keys), (_, b_keys)| {
         a_keys[0].len().cmp(&b_keys[0].len()).then(a_keys[0].cmp(&b_keys[0]))
@@ -248,6 +299,118 @@ fn build_infobox_rows(bindings: &std::collections::HashMap<String, String>) -> V
             (key_display, action_short_label(action).to_string())
         })
         .collect()
+}
+
+fn build_hint_groups(bindings: &std::collections::HashMap<String, String>) -> Vec<HintGroup> {
+    use std::collections::HashMap;
+    let mut action_to_keys: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (key, action) in bindings {
+        action_to_keys
+            .entry(action.as_str())
+            .or_default()
+            .push(key.as_str());
+    }
+
+    fn action_rank(action: &str) -> usize {
+        match action {
+            "focus_left" => 0,
+            "focus_down" => 1,
+            "focus_up" => 2,
+            "focus_right" => 3,
+            "move_pane_left" => 10,
+            "move_pane_right" => 11,
+            "new_column_right" => 20,
+            "new_row_below" | "new_workspace_below" | "split_down" => 21,
+            "close_pane" => 22,
+            "consume_into_column" => 30,
+            "expel_from_column" => 31,
+            "column_width_decrease" => 40,
+            "column_width_increase" => 41,
+            "column_width_one_third" => 42,
+            "column_width_half" => 43,
+            "column_width_two_thirds" => 44,
+            "column_width_full" => 45,
+            "cycle_preset_width" => 46,
+            "cycle_preset_width_reverse" => 47,
+            "toggle_overview" => 60,
+            "exit_overview" => 61,
+            "toggle_broadcast" => 62,
+            "toggle_command_palette" => 63,
+            "toggle_lock" => 64,
+            "detach" => 65,
+            "scroll_line_up" => 70,
+            "scroll_line_down" => 71,
+            "scroll_half_page_up" => 72,
+            "scroll_half_page_down" => 73,
+            "scroll_page_up" => 74,
+            "scroll_page_down" => 75,
+            "scroll_top" => 76,
+            "scroll_bottom" => 77,
+            s if s.starts_with("switch_workspace_") => 90,
+            s if s.starts_with("enter_mode:") => 100,
+            _ => 999,
+        }
+    }
+
+    fn key_rank(key: &str) -> usize {
+        match key {
+            "h" => 0,
+            "j" => 1,
+            "k" => 2,
+            "l" => 3,
+            "n" => 10,
+            "d" => 11,
+            "x" => 12,
+            "c" => 13,
+            "e" => 14,
+            "[" => 20,
+            "]" => 21,
+            "r" => 22,
+            "shift+r" => 23,
+            "f" => 24,
+            "b" => 30,
+            "o" => 31,
+            "tab" => 32,
+            "p" => 33,
+            "q" => 34,
+            "esc" => 35,
+            _ => 999,
+        }
+    }
+
+    for keys in action_to_keys.values_mut() {
+        keys.sort_by(|a, b| key_rank(a).cmp(&key_rank(b)).then(a.len().cmp(&b.len())).then(a.cmp(b)));
+    }
+
+    let mut entries: Vec<_> = action_to_keys.into_iter().collect();
+    entries.sort_by(|(a_action, a_keys), (b_action, b_keys)| {
+        action_rank(a_action)
+            .cmp(&action_rank(b_action))
+            .then(key_rank(a_keys[0]).cmp(&key_rank(b_keys[0])))
+            .then(a_keys[0].len().cmp(&b_keys[0].len()))
+            .then(a_keys[0].cmp(&b_keys[0]))
+    });
+
+    let mut grouped: Vec<HintGroup> = Vec::new();
+    for (action, keys) in entries {
+        let key = if keys.len() <= 2 {
+            keys.join("/")
+        } else {
+            keys[..2].join("/")
+        };
+        let label = action_short_label(action).to_string();
+        let title = action_group_label(action).to_string();
+        if let Some(group) = grouped.iter_mut().find(|g| g.title == title) {
+            group.items.push(HintItem { key, label });
+        } else {
+            grouped.push(HintGroup {
+                title,
+                items: vec![HintItem { key, label }],
+            });
+        }
+    }
+
+    grouped
 }
 
 impl App {
@@ -362,7 +525,7 @@ impl App {
         cx: &UiContext<'_>,
         scene: &mut UiScene<'_>,
     ) {
-        let accent = ciri_config::theme::ThemeConfig::parse_color(&cx.config.theme.accent);
+        let accent = ciri_config::theme::ThemeConfig::parse_color_linear(&cx.config.theme.accent);
         let text_y = d.bar_y + (d.bar_h - cx.cell_h) * 0.5;
 
         // Bar background
@@ -829,10 +992,10 @@ impl UiComponent for TopBarComponent {
         };
         let bar_height = cx.cell_h + padding;
         let text_y = self.layout.bar_y + padding * 0.5;
-        let bar_bg = ThemeConfig::parse_color(&cx.config.theme.statusbar_background);
-        let dim = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
-        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
-        let broadcast_color = ThemeConfig::parse_color(&cx.config.theme.mode_broadcast);
+        let bar_bg = ThemeConfig::parse_color_linear(&cx.config.theme.statusbar_background);
+        let dim = ThemeConfig::parse_color_linear(&cx.config.theme.statusbar_dim);
+        let accent = ThemeConfig::parse_color_linear(&cx.config.theme.accent);
+        let broadcast_color = ThemeConfig::parse_color_linear(&cx.config.theme.mode_broadcast);
 
         scene.bg_rects.push(Rect {
             x: 0.0,
@@ -1044,10 +1207,10 @@ impl PaletteComponent {
 
 impl UiComponent for PaletteComponent {
     fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let bg_color = ThemeConfig::parse_color(&cx.config.theme.background);
-        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
-        let border_color = ThemeConfig::parse_color(&cx.config.theme.border_active);
-        let dim_color = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
+        let bg_color = ThemeConfig::parse_color_linear(&cx.config.theme.background);
+        let accent = ThemeConfig::parse_color_linear(&cx.config.theme.accent);
+        let border_color = ThemeConfig::parse_color_linear(&cx.config.theme.border_active);
+        let dim_color = ThemeConfig::parse_color_linear(&cx.config.theme.statusbar_dim);
         let text_color = [1.0, 1.0, 1.0, 1.0];
 
         scene.bg_rects.push(Rect {
@@ -1295,7 +1458,7 @@ impl UiComponent for ContextMenuComponent {
             color: [0.0, 0.0, 0.0, 0.4],
         });
 
-        let menu_bg = ThemeConfig::parse_color(&cx.config.theme.background);
+        let menu_bg = ThemeConfig::parse_color_linear(&cx.config.theme.background);
         let bg_color = [menu_bg[0] * 0.9, menu_bg[1] * 0.9, menu_bg[2] * 0.9, 1.0];
         scene.bg_rects.push(Rect {
             x: self.x,
@@ -1305,16 +1468,17 @@ impl UiComponent for ContextMenuComponent {
             color: bg_color,
         });
 
-        let border_color = ThemeConfig::parse_color(&cx.config.theme.border_active);
+        let border_color = ThemeConfig::parse_color_linear(&cx.config.theme.border_active);
         let bw = 1.0;
         scene.bg_rects.push(Rect { x: self.x, y: self.y, w: self.menu_width, h: bw, color: border_color });
         scene.bg_rects.push(Rect { x: self.x, y: self.y + self.menu_height - bw, w: self.menu_width, h: bw, color: border_color });
         scene.bg_rects.push(Rect { x: self.x, y: self.y, w: bw, h: self.menu_height, color: border_color });
         scene.bg_rects.push(Rect { x: self.x + self.menu_width - bw, y: self.y, w: bw, h: self.menu_height, color: border_color });
 
-        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
-        let fg_color = [1.0f32, 1.0, 1.0, 1.0];
-        let dim_color = [0.5f32, 0.5, 0.5, 0.6];
+        let accent = ThemeConfig::parse_color_linear(&cx.config.theme.accent);
+        let fg_color = ThemeConfig::parse_color_linear(&cx.config.theme.foreground);
+        let dim_base = ThemeConfig::parse_color_linear(&cx.config.theme.statusbar_dim);
+        let dim_color = [dim_base[0], dim_base[1], dim_base[2], 0.75];
         for (i, row) in self.rows.iter().enumerate() {
             let iy = self.y + padding + i as f32 * self.item_height;
             if row.hovered {
@@ -1323,7 +1487,7 @@ impl UiComponent for ContextMenuComponent {
                     y: iy,
                     w: self.menu_width - bw * 2.0,
                     h: self.item_height,
-                    color: [accent[0], accent[1], accent[2], 0.25],
+                    color: [accent[0], accent[1], accent[2], 0.12],
                 });
             }
             let text_y = iy + (self.item_height - cx.cell_h) * 0.5;
@@ -1386,8 +1550,8 @@ impl InfoBoxComponent {
     }
 
     fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let bg = ThemeConfig::parse_color(&cx.config.theme.background);
-        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
+        let bg = ThemeConfig::parse_color_linear(&cx.config.theme.background);
+        let accent = ThemeConfig::parse_color_linear(&cx.config.theme.accent);
         let fg = [1.0f32, 1.0, 1.0, 0.9];
         let dim = [1.0f32, 1.0, 1.0, 0.5];
         let padding = cx.cell_w;
@@ -1487,30 +1651,58 @@ impl HintsBarComponent {
             merged
         };
 
-        let rows = build_infobox_rows(&bindings);
-        let mut segments = Vec::new();
-        for (i, (key, desc)) in rows.iter().enumerate() {
-            if i > 0 {
-                segments.push(("  ".to_string(), false));
+        let mut groups = build_hint_groups(&bindings);
+
+        if app.input.is_locked() {
+            groups.retain(|g| g.title == "mode");
+        } else if app.overview.active {
+            groups.retain(|g| matches!(g.title.as_str(), "move" | "pane" | "view"));
+        } else if app.input.current_mode_name().is_some() {
+            // Keep current mode concise and mode-relevant.
+            groups.retain(|g| matches!(g.title.as_str(), "move" | "pane" | "stack" | "width" | "scroll" | "mode"));
+        } else if app.input.is_awaiting_action() {
+            groups.retain(|g| matches!(g.title.as_str(), "move" | "pane" | "width" | "mode" | "view"));
+        } else {
+            // Idle: prefer summary-level hints only.
+            groups.retain(|g| matches!(g.title.as_str(), "move" | "pane" | "width" | "view" | "mode"));
+            for group in &mut groups {
+                let keep = match group.title.as_str() {
+                    "move" => 4,
+                    "pane" => 3,
+                    "width" => 3,
+                    "view" => 1,
+                    "mode" => 2,
+                    _ => group.items.len(),
+                };
+                group.items.truncate(keep);
             }
-            segments.push((key.clone(), true));
-            segments.push((format!(" {}", desc), false));
-        }
-        // Add esc:exit for modes
-        if app.input.current_mode_name().is_some() || app.input.is_awaiting_action() {
-            segments.push(("  ".to_string(), false));
-            segments.push(("esc".to_string(), true));
-            segments.push((" exit".to_string(), false));
         }
 
-        Self { bar_y, bar_h, segments }
+        if app.input.current_mode_name().is_some() || app.input.is_awaiting_action() {
+            if let Some(group) = groups.iter_mut().find(|g| g.title == "mode") {
+                group.items.push(HintItem {
+                    key: "esc".to_string(),
+                    label: "exit".to_string(),
+                });
+            } else {
+                groups.push(HintGroup {
+                    title: "mode".to_string(),
+                    items: vec![HintItem {
+                        key: "esc".to_string(),
+                        label: "exit".to_string(),
+                    }],
+                });
+            }
+        }
+
+        Self { bar_y, bar_h, groups }
     }
 
     fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let bg = ThemeConfig::parse_color(&cx.config.theme.background);
+        let bg = ThemeConfig::parse_color_linear(&cx.config.theme.background);
         let bar_bg = [bg[0] * 0.85, bg[1] * 0.85, bg[2] * 0.85, 1.0];
-        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
-        let dim = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
+        let accent = ThemeConfig::parse_color_linear(&cx.config.theme.accent);
+        let dim = ThemeConfig::parse_color_linear(&cx.config.theme.statusbar_dim);
 
         // Bar background
         scene.bg_rects.push(Rect {
@@ -1518,23 +1710,99 @@ impl HintsBarComponent {
             color: bar_bg,
         });
 
-        // Render segments left-to-right, truncating at viewport edge
+        // Render grouped hints left-to-right, truncating group-wise at viewport edge.
         let text_y = self.bar_y + (self.bar_h - cx.cell_h) * 0.5;
         let padding = cx.cell_w;
         let mut x = padding;
         let max_x = cx.viewport_w - padding;
-        for (text, is_key) in &self.segments {
-            let char_count = text.chars().count();
-            let text_w = char_count as f32 * cx.cell_w;
-            if x + text_w > max_x {
-                break; // Don't overflow
+
+        let key_pad = cx.cell_w * 0.6;
+        let key_gap = cx.cell_w * 0.4;
+        let mut pill_bg = accent;
+        pill_bg[3] = 0.15;
+
+        for (group_idx, group) in self.groups.iter().enumerate() {
+            let mut preview_parts = Vec::new();
+            preview_parts.push(format!("{}:", group.title));
+            for item in &group.items {
+                preview_parts.push(format!("{} {}", item.key, item.label));
             }
-            let color = if *is_key { accent } else { dim };
+            let group_preview = preview_parts.join("  ");
+            let group_w = group_preview.chars().count() as f32 * cx.cell_w;
+
+            if x + group_w > max_x {
+                let ellipsis_w = 3.0 * cx.cell_w;
+                if x + ellipsis_w <= max_x {
+                    emit_status_text(
+                        scene.atlas,
+                        "...",
+                        x,
+                        text_y,
+                        cx.cell_w,
+                        cx.baseline,
+                        dim,
+                        scene.glyphs,
+                    );
+                }
+                break;
+            }
+
+            if group_idx > 0 {
+                x += cx.cell_w * 1.5;
+            }
+
+            let title_text = format!("{}:", group.title);
             emit_status_text(
-                scene.atlas, text, x, text_y,
-                cx.cell_w, cx.baseline, color, scene.glyphs,
+                scene.atlas,
+                &title_text,
+                x,
+                text_y,
+                cx.cell_w,
+                cx.baseline,
+                dim,
+                scene.glyphs,
             );
-            x += text_w;
+            x += title_text.chars().count() as f32 * cx.cell_w + cx.cell_w * 0.5;
+
+            for (item_idx, item) in group.items.iter().enumerate() {
+                if item_idx > 0 {
+                    x += cx.cell_w;
+                }
+                let key_chars = item.key.chars().count() as f32;
+                let pill_w = key_chars * cx.cell_w + key_pad * 2.0;
+                scene.bg_rects.push(Rect {
+                    x,
+                    y: self.bar_y + (self.bar_h - cx.cell_h) * 0.5 - cx.cell_h * 0.08,
+                    w: pill_w,
+                    h: cx.cell_h * 1.02,
+                    color: pill_bg,
+                });
+                emit_status_text(
+                    scene.atlas,
+                    &item.key,
+                    x + key_pad,
+                    text_y,
+                    cx.cell_w,
+                    cx.baseline,
+                    accent,
+                    scene.glyphs,
+                );
+                x += pill_w;
+
+                let label_text = format!(" {}", item.label);
+                emit_status_text(
+                    scene.atlas,
+                    &label_text,
+                    x,
+                    text_y,
+                    cx.cell_w,
+                    cx.baseline,
+                    dim,
+                    scene.glyphs,
+                );
+                x += label_text.chars().count() as f32 * cx.cell_w;
+                x += key_gap;
+            }
         }
     }
 }
@@ -1707,7 +1975,7 @@ impl UiComponent for PasteDialogComponent {
             color: [0.12, 0.12, 0.15, 1.0],
         });
 
-        let border_color = ThemeConfig::parse_color(&cx.config.theme.border_active);
+        let border_color = ThemeConfig::parse_color_linear(&cx.config.theme.border_active);
         let border = 1.0;
         scene.bg_rects.push(Rect { x: self.dx, y: self.dy, w: self.dialog_w, h: border, color: border_color });
         scene.bg_rects.push(Rect { x: self.dx, y: self.dy + self.dialog_h - border, w: self.dialog_w, h: border, color: border_color });
@@ -1729,7 +1997,7 @@ impl UiComponent for PasteDialogComponent {
         });
         emit_status_text(scene.atlas, &self.preview, text_x, text_y, cx.cell_w, cx.baseline, [0.6, 0.6, 0.6, 1.0], scene.glyphs);
 
-        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
+        let accent = ThemeConfig::parse_color_linear(&cx.config.theme.accent);
         let (paste_x, btn_y, btn_w, btn_h) = self.paste_button;
         let (cancel_x, _, _, _) = self.cancel_button;
         let paste_bg = if self.hovered_button == Some(super::PasteButton::Paste) {

@@ -7,9 +7,9 @@
 
 use anyhow::Result;
 use ciri_config::config::RenderConfig;
+use ciri_render::FrameScene;
 use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, PendingUpload, ScissoredRange};
 use ciri_render::rect::Rect;
-use ciri_render::FrameScene;
 use glow::HasContext;
 use glutin::config::ConfigTemplateBuilder;
 use glutin::context::{ContextApi, ContextAttributesBuilder, PossiblyCurrentContext, Version};
@@ -35,6 +35,7 @@ struct GlAtlasLayer {
 }
 
 impl GlAtlasLayer {
+    #[allow(clippy::too_many_arguments)]
     unsafe fn new(
         gl: &glow::Context,
         atlas_size: u32,
@@ -65,25 +66,20 @@ impl GlAtlasLayer {
             0,
             format,
             glow::UNSIGNED_BYTE,
-            glow::PixelUnpackData::Slice(Some(&vec![0u8; (atlas_size * atlas_size * bpp) as usize])),
+            glow::PixelUnpackData::Slice(Some(&vec![
+                0u8;
+                (atlas_size * atlas_size * bpp) as usize
+            ])),
         );
         gl.tex_parameter_i32(
             glow::TEXTURE_2D,
             glow::TEXTURE_MIN_FILTER,
-            if bpp == 1 {
-                glow::NEAREST as i32
-            } else {
-                glow::LINEAR as i32
-            },
+            glow::LINEAR as i32,
         );
         gl.tex_parameter_i32(
             glow::TEXTURE_2D,
             glow::TEXTURE_MAG_FILTER,
-            if bpp == 1 {
-                glow::NEAREST as i32
-            } else {
-                glow::LINEAR as i32
-            },
+            glow::LINEAR as i32,
         );
         gl.tex_parameter_i32(
             glow::TEXTURE_2D,
@@ -133,11 +129,7 @@ impl GlAtlasLayer {
 
         if pending_clear {
             let zeros = vec![0u8; (self.atlas_size * self.atlas_size * self.bpp) as usize];
-            let format = if self.bpp == 1 {
-                glow::RED
-            } else {
-                glow::RGBA
-            };
+            let format = if self.bpp == 1 { glow::RED } else { glow::RGBA };
             gl.tex_sub_image_2d(
                 glow::TEXTURE_2D,
                 0,
@@ -151,11 +143,7 @@ impl GlAtlasLayer {
             );
         }
 
-        let format = if self.bpp == 1 {
-            glow::RED
-        } else {
-            glow::RGBA
-        };
+        let format = if self.bpp == 1 { glow::RED } else { glow::RGBA };
 
         for upload in pending.drain(..) {
             gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
@@ -177,6 +165,7 @@ impl GlAtlasLayer {
 
     /// Upload glyph instances and render scissored pane batches only.
     /// Data remains in the VBO for a subsequent `render_overlay` call.
+    #[allow(clippy::too_many_arguments)]
     unsafe fn render_pane_glyphs(
         &self,
         gl: &glow::Context,
@@ -219,12 +208,7 @@ impl GlAtlasLayer {
             let base_offset = start * std::mem::size_of::<GlyphInstance>();
             setup_glyph_vertex_attribs_offset(gl, base_offset as i32);
 
-            gl.draw_arrays_instanced(
-                glow::TRIANGLE_STRIP,
-                0,
-                4,
-                (end - start) as i32,
-            );
+            gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, (end - start) as i32);
         }
 
         gl.disable(glow::SCISSOR_TEST);
@@ -233,6 +217,7 @@ impl GlAtlasLayer {
     }
 
     /// Render overlay glyphs (data already uploaded by `render_pane_glyphs`).
+    #[allow(clippy::too_many_arguments)]
     unsafe fn render_overlay_glyphs(
         &self,
         gl: &glow::Context,
@@ -271,12 +256,7 @@ impl GlAtlasLayer {
         );
         let base_offset = overlay_start * std::mem::size_of::<GlyphInstance>();
         setup_glyph_vertex_attribs_offset(gl, base_offset as i32);
-        gl.draw_arrays_instanced(
-            glow::TRIANGLE_STRIP,
-            0,
-            4,
-            (count - overlay_start) as i32,
-        );
+        gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, (count - overlay_start) as i32);
 
         gl.disable(glow::SCISSOR_TEST);
         gl.bind_vertex_array(None);
@@ -345,13 +325,7 @@ impl GlRectPipeline {
     }
 
     /// Upload all rect instance data to the GPU buffer.
-    unsafe fn upload(
-        &self,
-        gl: &glow::Context,
-        rects: &[Rect],
-        viewport_w: f32,
-        viewport_h: f32,
-    ) {
+    unsafe fn upload(&self, gl: &glow::Context, rects: &[Rect], viewport_w: f32, viewport_h: f32) {
         if rects.is_empty() {
             return;
         }
@@ -534,16 +508,13 @@ impl Renderer {
         unsafe {
             gl.enable(glow::BLEND);
             gl.blend_func_separate(
-                glow::SRC_ALPHA,
+                glow::ONE,
                 glow::ONE_MINUS_SRC_ALPHA,
                 glow::ONE,
                 glow::ONE_MINUS_SRC_ALPHA,
             );
             gl.disable(glow::DEPTH_TEST);
-            // Disable sRGB framebuffer conversion — our color values are already
-            // in sRGB space (parsed from hex like #282C34), so we write them
-            // directly without linear→sRGB re-encoding.
-            gl.disable(glow::FRAMEBUFFER_SRGB);
+            gl.enable(glow::FRAMEBUFFER_SRGB);
             gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
         }
 
@@ -580,6 +551,7 @@ impl Renderer {
         (self.width, self.height)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_atlas(
         &mut self,
         font_size_pt: f32,
@@ -603,9 +575,8 @@ impl Renderer {
             cjk_font_id,
             render_config,
         );
-        let atlas_gpu = unsafe {
-            GlyphAtlasGpu::new(&self.gl, cache.atlas_size, cache.max_instances)
-        };
+        let atlas_gpu =
+            unsafe { GlyphAtlasGpu::new(&self.gl, cache.atlas_size, cache.max_instances) };
         (cache, atlas_gpu)
     }
 
@@ -626,7 +597,8 @@ impl Renderer {
         let vh = self.height as f32;
 
         unsafe {
-            self.gl.viewport(0, 0, self.width as i32, self.height as i32);
+            self.gl
+                .viewport(0, 0, self.width as i32, self.height as i32);
 
             // Flush pending glyph uploads
             let (mut ap, mut cp, ac, cc) = cache.take_pending();
@@ -634,7 +606,12 @@ impl Renderer {
             atlas_gpu.color.flush_uploads(&self.gl, &mut cp, cc);
 
             // Clear
-            self.gl.clear_color(0.0, 0.0, 0.0, 1.0);
+            self.gl.clear_color(
+                scene.clear_color[0],
+                scene.clear_color[1],
+                scene.clear_color[2],
+                scene.clear_color[3],
+            );
             self.gl.clear(glow::COLOR_BUFFER_BIT);
 
             // 1. Upload all background rects (clear + pane + overlay) once.
@@ -681,7 +658,8 @@ impl Renderer {
             //    occlude terminal text underneath popups like the context menu).
             let overlay_bg_count = total_bg.saturating_sub(overlay_bg_idx);
             if overlay_bg_count > 0 {
-                self.rects.draw_range(&self.gl, overlay_bg_idx, overlay_bg_count, vw, vh);
+                self.rects
+                    .draw_range(&self.gl, overlay_bg_idx, overlay_bg_count, vw, vh);
             }
 
             // 6. Overlay alpha glyphs (status bar, context menu text, etc.).
@@ -823,7 +801,7 @@ in vec4 v_color;
 out vec4 frag_color;
 
 void main() {
-    frag_color = v_color;
+    frag_color = vec4(v_color.rgb * v_color.a, v_color.a);
 }
 "#;
 
@@ -867,7 +845,8 @@ out vec4 frag_color;
 
 void main() {
     float alpha = texture(u_atlas, v_uv).r;
-    frag_color = vec4(v_color.rgb, v_color.a * alpha);
+    float out_alpha = v_color.a * alpha;
+    frag_color = vec4(v_color.rgb * out_alpha, out_alpha);
 }
 "#;
 

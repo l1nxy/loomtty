@@ -1,4 +1,9 @@
-/// Generate readable random session names in "adjective-animal" format.
+//! Generate readable random session names in "adjective-animal" format.
+
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::SystemTime;
 
 const ADJECTIVES: &[&str] = &[
     "aged", "bold", "brave", "brief", "bright", "calm", "clean", "clear", "cold", "cool", "crisp",
@@ -23,20 +28,14 @@ const ANIMALS: &[&str] = &[
     "tuna", "vole", "wasp", "whale", "wolf", "worm", "wren", "yak",
 ];
 
+static COUNTER: AtomicU64 = AtomicU64::new(0);
+
 /// Generate a random "adjective-animal" name.
 pub fn random_name() -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    use std::time::SystemTime;
-
     let mut hasher = DefaultHasher::new();
     SystemTime::now().hash(&mut hasher);
     std::process::id().hash(&mut hasher);
-    // Mix in a counter to reduce collisions within the same ms
-    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    COUNTER
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        .hash(&mut hasher);
+    COUNTER.fetch_add(1, Ordering::Relaxed).hash(&mut hasher);
     let h = hasher.finish();
 
     let adj = ADJECTIVES[(h as usize) % ADJECTIVES.len()];
@@ -47,39 +46,57 @@ pub fn random_name() -> String {
 /// Generate a unique name that doesn't collide with existing names.
 pub fn unique_name(existing: &[String]) -> String {
     let base = random_name();
-    if !existing.contains(&base) {
+    if !name_exists(existing, &base) {
         return base;
     }
+
     for i in 2..1000 {
         let candidate = format!("{base}-{i}");
-        if !existing.contains(&candidate) {
+        if !name_exists(existing, &candidate) {
             return candidate;
         }
     }
-    // Fallback: use timestamp
+
     format!("{base}-{}", std::process::id())
 }
 
 /// Validate a session name. Only allows [a-z0-9][a-z0-9\-]*, max 64 chars.
 pub fn validate_name(name: &str) -> Result<(), String> {
-    if name.is_empty() {
-        return Err("session name cannot be empty".to_string());
-    }
-    if name.len() > 64 {
-        return Err("session name too long (max 64 chars)".to_string());
-    }
-    if name.starts_with('-') {
-        return Err("session name cannot start with '-'".to_string());
-    }
-    if !name
-        .chars()
+    validate_not_empty(name)?;
+    validate_length(name)?;
+    validate_first_char(name)?;
+    validate_characters(name)
+}
+
+fn name_exists(existing: &[String], candidate: &str) -> bool {
+    existing.iter().any(|name| name == candidate)
+}
+
+fn validate_not_empty(name: &str) -> Result<(), String> {
+    (!name.is_empty())
+        .then_some(())
+        .ok_or_else(|| "session name cannot be empty".to_string())
+}
+
+fn validate_length(name: &str) -> Result<(), String> {
+    (name.len() <= 64)
+        .then_some(())
+        .ok_or_else(|| "session name too long (max 64 chars)".to_string())
+}
+
+fn validate_first_char(name: &str) -> Result<(), String> {
+    (!name.starts_with('-'))
+        .then_some(())
+        .ok_or_else(|| "session name cannot start with '-'".to_string())
+}
+
+fn validate_characters(name: &str) -> Result<(), String> {
+    name.chars()
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-    {
-        return Err(
-            "session name can only contain lowercase letters, digits, and hyphens".to_string(),
-        );
-    }
-    Ok(())
+        .then_some(())
+        .ok_or_else(|| {
+            "session name can only contain lowercase letters, digits, and hyphens".to_string()
+        })
 }
 
 #[cfg(test)]
@@ -98,7 +115,7 @@ mod tests {
     #[test]
     fn unique_name_avoids_collisions() {
         let first = random_name();
-        let name = unique_name(&[first.clone()]);
+        let name = unique_name(std::slice::from_ref(&first));
         assert_ne!(name, first);
         assert!(validate_name(&name).is_ok());
     }

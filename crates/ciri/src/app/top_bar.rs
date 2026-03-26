@@ -28,14 +28,12 @@ pub(crate) struct TopBarLayout {
 
 impl App {
     pub(crate) fn hit_test_top_bar(&self, mx: f32, my: f32) -> bool {
-        let Some(atlas) = self.glyph_cache.as_ref() else {
-            return false;
-        };
+        let (cell_w, cell_h) = self.cell_dimensions();
         let layout = self.top_bar_layout(
             self.workspaces.view_size.width,
             self.workspaces.view_size.height + self.total_chrome_height(),
-            atlas.cell_width,
-            atlas.cell_height,
+            cell_w,
+            cell_h,
         );
         mx >= 0.0 && my >= layout.bar_y && my <= layout.bar_y + layout.bar_height
     }
@@ -175,10 +173,10 @@ impl App {
     }
 
     pub(crate) fn current_mode_label(&self) -> (String, [f32; 4]) {
-        let accent = ThemeConfig::parse_color(&self.config.theme.accent);
-        let broadcast_color = ThemeConfig::parse_color(&self.config.theme.mode_broadcast);
-        let dim = ThemeConfig::parse_color(&self.config.theme.statusbar_dim);
-        let warn_color = ThemeConfig::parse_color(&self.config.theme.mode_broadcast);
+        let accent = ThemeConfig::parse_color_linear(&self.config.theme.accent);
+        let broadcast_color = ThemeConfig::parse_color_linear(&self.config.theme.mode_broadcast);
+        let dim = ThemeConfig::parse_color_linear(&self.config.theme.statusbar_dim);
+        let warn_color = ThemeConfig::parse_color_linear(&self.config.theme.mode_broadcast);
         if self.input.is_locked() {
             (" LOCKED ".into(), warn_color)
         } else if self.broadcast_mode {
@@ -207,7 +205,6 @@ impl App {
         let workspace_w = ws_label.chars().count() as f32 * cw;
         let mode_w = self.current_mode_label().0.chars().count() as f32 * cw;
         // Right side: workspace + gap + mode
-        let right_w = workspace_w + mode_w;
         let mode_x = vw - mode_w;
         let workspace_x = mode_x - workspace_w;
         let tabs_area_px = (workspace_x - cw - session_w).max(0.0);

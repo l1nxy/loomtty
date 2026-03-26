@@ -1,3 +1,4 @@
+use winnow::Parser;
 /// Parser for OSC 8 hyperlink sequences.
 ///
 /// OSC 8 format:
@@ -11,7 +12,6 @@
 /// Uses `crate::esc_scanner::scan_osc` for sequence detection and winnow for
 /// payload parsing.
 use winnow::token::{rest, take_till};
-use winnow::Parser;
 
 use crate::esc_scanner;
 
@@ -56,16 +56,6 @@ impl Osc8Parser {
         }
     }
 
-    /// Whether we are currently inside a hyperlink region.
-    pub fn in_hyperlink(&self) -> bool {
-        self.current_uri.is_some()
-    }
-
-    /// The link ID of the current hyperlink (if any).
-    pub fn current_link_id(&self) -> Option<u16> {
-        self.current_link_id
-    }
-
     /// Get the current link ID → URI mapping.
     pub fn link_map(&self) -> &[(u16, String)] {
         &self.link_map
@@ -108,9 +98,8 @@ impl Osc8Parser {
                     }
                 }
                 Err(_) => {
-                    // Malformed payload — treat as end hyperlink.
-                    self.current_uri = None;
-                    self.current_link_id = None;
+                    // Malformed payload — ignore it and preserve any active
+                    // hyperlink state from earlier valid OSC 8 sequences.
                 }
             }
         }
@@ -141,22 +130,22 @@ mod tests {
 
         // Start hyperlink
         parser.scan(b"\x1b]8;;https://example.com\x1b\\");
-        assert!(parser.in_hyperlink());
-        assert!(parser.current_link_id().is_some());
+        assert!(parser.current_uri.is_some());
+        assert!(parser.current_link_id.is_some());
         assert_eq!(parser.link_map().len(), 1);
         assert_eq!(parser.link_map()[0].1, "https://example.com");
 
         // End hyperlink
         parser.scan(b"\x1b]8;;\x1b\\");
-        assert!(!parser.in_hyperlink());
-        assert!(parser.current_link_id().is_none());
+        assert!(parser.current_uri.is_none());
+        assert!(parser.current_link_id.is_none());
     }
 
     #[test]
     fn hyperlink_with_bel_terminator() {
         let mut parser = Osc8Parser::new();
         parser.scan(b"\x1b]8;;https://example.com\x07");
-        assert!(parser.in_hyperlink());
+        assert!(parser.current_uri.is_some());
         assert_eq!(parser.link_map()[0].1, "https://example.com");
     }
 
@@ -165,15 +154,17 @@ mod tests {
         let mut parser = Osc8Parser::new();
         // OSC 8 with id parameter: ESC ] 8 ; id=foo ; URI ST
         parser.scan(b"\x1b]8;id=foo;https://example.com\x1b\\");
-        assert!(parser.in_hyperlink());
+        assert!(parser.current_uri.is_some());
         assert_eq!(parser.link_map()[0].1, "https://example.com");
     }
 
     #[test]
     fn multiple_hyperlinks() {
         let mut parser = Osc8Parser::new();
-        parser.scan(b"\x1b]8;;https://a.com\x07text\x1b]8;;\x07\x1b]8;;https://b.com\x07text\x1b]8;;\x07");
-        assert!(!parser.in_hyperlink());
+        parser.scan(
+            b"\x1b]8;;https://a.com\x07text\x1b]8;;\x07\x1b]8;;https://b.com\x07text\x1b]8;;\x07",
+        );
+        assert!(parser.current_uri.is_none());
         assert_eq!(parser.link_map().len(), 2);
         assert_eq!(parser.link_map()[0].1, "https://a.com");
         assert_eq!(parser.link_map()[1].1, "https://b.com");
@@ -185,12 +176,12 @@ mod tests {
 
         // First read: incomplete
         parser.scan(b"\x1b]8;;https://exam");
-        assert!(!parser.in_hyperlink());
+        assert!(parser.current_uri.is_none());
         assert!(!parser.partial.is_empty());
 
         // Second read: completes
         parser.scan(b"ple.com\x1b\\");
-        assert!(parser.in_hyperlink());
+        assert!(parser.current_uri.is_some());
         assert_eq!(parser.link_map()[0].1, "https://example.com");
     }
 
@@ -198,7 +189,32 @@ mod tests {
     fn mixed_with_normal_text() {
         let mut parser = Osc8Parser::new();
         parser.scan(b"normal text\x1b]8;;https://example.com\x07link text\x1b]8;;\x07more text");
-        assert!(!parser.in_hyperlink());
+        assert!(parser.current_uri.is_none());
         assert_eq!(parser.link_map().len(), 1);
+    }
+
+    #[test]
+    fn oversized_partial_is_discarded() {
+        let mut parser = Osc8Parser::new();
+        let mut data = vec![0x1b, b']', b'8', b';'];
+        data.extend(std::iter::repeat_n(b'a', MAX_OSC8_PARTIAL_SIZE + 1));
+        parser.scan(&data);
+        assert!(parser.partial.is_empty());
+        assert!(parser.current_uri.is_none());
+    }
+
+    #[test]
+    fn malformed_payload_inside_active_hyperlink_is_ignored() {
+        let mut parser = Osc8Parser::new();
+        parser.scan(b"\x1b]8;;https://example.com\x07");
+        let active_uri = parser.current_uri.clone();
+        let active_link_id = parser.current_link_id;
+        let initial_link_map = parser.link_map().to_vec();
+
+        parser.scan(b"\x1b]8;broken\x07");
+
+        assert_eq!(parser.current_uri, active_uri);
+        assert_eq!(parser.current_link_id, active_link_id);
+        assert_eq!(parser.link_map(), initial_link_map.as_slice());
     }
 }

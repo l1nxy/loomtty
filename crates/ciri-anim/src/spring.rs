@@ -42,9 +42,8 @@ impl Spring {
         if dt <= 0.0 {
             return;
         }
-        let c1 = self.position - self.target;
-        let c2 = self.velocity + self.omega * c1;
-        let exp = (-self.omega * dt).exp();
+        let (c1, c2) = self.solution_constants();
+        let exp = self.decay(dt);
 
         self.position = self.target + (c1 + c2 * dt) * exp;
         self.velocity = (c2 - self.omega * (c1 + c2 * dt)) * exp;
@@ -59,6 +58,16 @@ impl Spring {
             self.position = self.target;
             self.velocity = 0.0;
         }
+    }
+
+    fn solution_constants(&self) -> (f64, f64) {
+        let c1 = self.position - self.target;
+        let c2 = self.velocity + self.omega * c1;
+        (c1, c2)
+    }
+
+    fn decay(&self, dt: f64) -> f64 {
+        (-self.omega * dt).exp()
     }
 }
 
@@ -125,5 +134,19 @@ mod tests {
             s.advance(1.0 / 60.0);
         }
         assert!(s.position > 95.0, "too slow: pos={}", s.position);
+    }
+
+    #[test]
+    fn settle_snaps_resting_spring_to_target() {
+        let mut s = Spring::with_omega(12.0);
+        s.position = 100.05;
+        s.velocity = 0.05;
+        s.target = 100.0;
+
+        assert!(s.is_at_rest());
+        s.settle();
+
+        assert_eq!(s.position, 100.0);
+        assert_eq!(s.velocity, 0.0);
     }
 }

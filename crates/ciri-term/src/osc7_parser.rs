@@ -8,20 +8,11 @@ use crate::esc_scanner;
 
 const MAX_OSC7_PARTIAL_SIZE: usize = 4096;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Osc7Parser {
     current_cwd: Option<String>,
     /// Partial OSC sequence from a previous read.
     partial: Vec<u8>,
-}
-
-impl Default for Osc7Parser {
-    fn default() -> Self {
-        Self {
-            current_cwd: None,
-            partial: Vec::new(),
-        }
-    }
 }
 
 impl Osc7Parser {
@@ -62,14 +53,14 @@ impl Osc7Parser {
     }
 
     fn parse_uri(&mut self, uri_bytes: &[u8]) {
-        if let Ok(uri) = std::str::from_utf8(uri_bytes) {
-            if let Some(path) = parse_file_uri.parse(uri).ok() {
-                let decoded = percent_decode_str(path)
-                    .decode_utf8()
-                    .map(|c| c.into_owned())
-                    .unwrap_or_else(|_| path.to_string());
-                self.current_cwd = Some(decoded);
-            }
+        if let Ok(uri) = std::str::from_utf8(uri_bytes)
+            && let Ok(path) = parse_file_uri.parse(uri)
+        {
+            let decoded = percent_decode_str(path)
+                .decode_utf8()
+                .map(|c| c.into_owned())
+                .unwrap_or_else(|_| path.to_string());
+            self.current_cwd = Some(decoded);
         }
     }
 
@@ -131,6 +122,25 @@ mod tests {
     fn no_osc7_returns_none() {
         let mut parser = Osc7Parser::new();
         parser.scan(b"hello world");
+        assert_eq!(parser.cwd(), None);
+    }
+
+    #[test]
+    fn fragmented_sequence_keeps_plain_text_and_updates_cwd() {
+        let mut parser = Osc7Parser::new();
+        parser.scan(b"prefix\x1b]7;file://host/home/use");
+        assert_eq!(parser.cwd(), None);
+        parser.scan(b"r/project\x07suffix");
+        assert_eq!(parser.cwd(), Some("/home/user/project"));
+    }
+
+    #[test]
+    fn oversized_partial_is_discarded() {
+        let mut parser = Osc7Parser::new();
+        let mut data = vec![0x1b, b']', b'7', b';'];
+        data.extend(std::iter::repeat_n(b'a', MAX_OSC7_PARTIAL_SIZE + 1));
+        parser.scan(&data);
+        assert!(parser.partial.is_empty());
         assert_eq!(parser.cwd(), None);
     }
 }

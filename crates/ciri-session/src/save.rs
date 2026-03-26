@@ -13,10 +13,25 @@ pub fn validate_session_name(name: &str) -> Result<()> {
 pub fn save_session(state: &SessionState, dir: &Path) -> Result<()> {
     validate_session_name(&state.name)?;
     fs::create_dir_all(dir)?;
-    let path = dir.join(format!("{}.json", state.name));
-    let tmp_path = dir.join(format!(".{}.json.tmp", state.name));
     let json = serde_json::to_string_pretty(state)?;
-    fs::write(&tmp_path, &json)?;
-    fs::rename(&tmp_path, &path)?;
+    let paths = session_paths(dir, &state.name);
+    fs::write(&paths.temp, &json)?;
+    fs::rename(&paths.temp, &paths.final_path)?;
     Ok(())
+}
+
+pub(crate) fn session_path(dir: &Path, name: &str) -> SessionPaths {
+    session_paths(dir, name)
+}
+
+pub(crate) struct SessionPaths {
+    pub final_path: std::path::PathBuf,
+    pub temp: std::path::PathBuf,
+}
+
+fn session_paths(dir: &Path, name: &str) -> SessionPaths {
+    SessionPaths {
+        final_path: dir.join(format!("{name}.json")),
+        temp: dir.join(format!(".{name}.json.tmp")),
+    }
 }

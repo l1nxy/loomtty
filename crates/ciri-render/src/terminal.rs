@@ -67,7 +67,7 @@ impl CellMetrics {
             cw: atlas.cell_width,
             ch: atlas.cell_height,
             baseline: atlas.ascent,
-            default_bg: ThemeConfig::parse_color(&config.theme.background),
+            default_bg: ThemeConfig::parse_color_linear(&config.theme.background),
         }
     }
 }
@@ -84,24 +84,24 @@ pub struct ColorTable {
 impl ColorTable {
     pub fn new(config: &CiriConfig) -> Self {
         let theme = &config.theme;
-        let fg = ThemeConfig::parse_color(&theme.foreground);
+        let fg = ThemeConfig::parse_color_linear(&theme.foreground);
         let named = [
-            ThemeConfig::parse_color(&theme.black),
-            ThemeConfig::parse_color(&theme.red),
-            ThemeConfig::parse_color(&theme.green),
-            ThemeConfig::parse_color(&theme.yellow),
-            ThemeConfig::parse_color(&theme.blue),
-            ThemeConfig::parse_color(&theme.magenta),
-            ThemeConfig::parse_color(&theme.cyan),
-            ThemeConfig::parse_color(&theme.white),
-            ThemeConfig::parse_color(&theme.bright_black),
-            ThemeConfig::parse_color(&theme.bright_red),
-            ThemeConfig::parse_color(&theme.bright_green),
-            ThemeConfig::parse_color(&theme.bright_yellow),
-            ThemeConfig::parse_color(&theme.bright_blue),
-            ThemeConfig::parse_color(&theme.bright_magenta),
-            ThemeConfig::parse_color(&theme.bright_cyan),
-            ThemeConfig::parse_color(&theme.foreground), // bright_white = foreground
+            ThemeConfig::parse_color_linear(&theme.black),
+            ThemeConfig::parse_color_linear(&theme.red),
+            ThemeConfig::parse_color_linear(&theme.green),
+            ThemeConfig::parse_color_linear(&theme.yellow),
+            ThemeConfig::parse_color_linear(&theme.blue),
+            ThemeConfig::parse_color_linear(&theme.magenta),
+            ThemeConfig::parse_color_linear(&theme.cyan),
+            ThemeConfig::parse_color_linear(&theme.white),
+            ThemeConfig::parse_color_linear(&theme.bright_black),
+            ThemeConfig::parse_color_linear(&theme.bright_red),
+            ThemeConfig::parse_color_linear(&theme.bright_green),
+            ThemeConfig::parse_color_linear(&theme.bright_yellow),
+            ThemeConfig::parse_color_linear(&theme.bright_blue),
+            ThemeConfig::parse_color_linear(&theme.bright_magenta),
+            ThemeConfig::parse_color_linear(&theme.bright_cyan),
+            ThemeConfig::parse_color_linear(&theme.foreground), // bright_white = foreground
         ];
         let mut dim_colors = [[0.0f32; 4]; 8];
         for i in 0..8 {
@@ -115,7 +115,7 @@ impl ColorTable {
         ColorTable {
             named,
             foreground: fg,
-            background: ThemeConfig::parse_color(&theme.background),
+            background: ThemeConfig::parse_color_linear(&theme.background),
             dim_foreground: [fg[0] * 0.67, fg[1] * 0.67, fg[2] * 0.67, fg[3]],
             dim_colors,
         }
@@ -175,6 +175,15 @@ struct RowRenderData {
     glyphs: Vec<RelativeGlyph>,
     color_glyphs: Vec<RelativeGlyph>,
     bg_rects: Vec<Rect>,
+}
+
+struct CellRenderer<'a> {
+    row: usize,
+    metrics: &'a CellMetrics,
+    atlas: &'a mut GlyphCache,
+    bg_rects: &'a mut Vec<Rect>,
+    glyphs: &'a mut Vec<RelativeGlyph>,
+    color_glyphs: &'a mut Vec<RelativeGlyph>,
 }
 
 /// Cached terminal view with positions RELATIVE to the tile's inner origin (0,0).
@@ -346,19 +355,14 @@ impl UnderlineStyle {
 // ─── Core rendering (shared by both paths) ───────────────────────────
 
 /// Render a single cell: emit decorations and glyph (NOT background — handled by strip merger).
-fn render_cell(
-    row: usize,
-    col: usize,
-    cell: &CellProps,
-    m: &CellMetrics,
-    atlas: &mut GlyphCache,
-    bg_rects: &mut Vec<Rect>,
-    glyphs: &mut Vec<RelativeGlyph>,
-    color_glyphs: &mut Vec<RelativeGlyph>,
-) {
-    let px = col as f32 * m.cw;
-    let py = row as f32 * m.ch;
-    let bg_width = if cell.is_wide { m.cw * 2.0 } else { m.cw };
+fn render_cell(col: usize, cell: &CellProps, renderer: &mut CellRenderer<'_>) {
+    let px = col as f32 * renderer.metrics.cw;
+    let py = renderer.row as f32 * renderer.metrics.ch;
+    let bg_width = if cell.is_wide {
+        renderer.metrics.cw * 2.0
+    } else {
+        renderer.metrics.cw
+    };
 
     // Hidden cells: no text or decorations (background handled by strip merger)
     if cell.is_hidden {
@@ -367,15 +371,23 @@ fn render_cell(
 
     // Underline decoration
     if cell.underline != UnderlineStyle::None {
-        let uy = py + m.baseline + 1.0;
-        emit_underline_rects(bg_rects, cell.underline, px, uy, bg_width, cell.fg, m.cw);
+        let uy = py + renderer.metrics.baseline + 1.0;
+        emit_underline_rects(
+            renderer.bg_rects,
+            cell.underline,
+            px,
+            uy,
+            bg_width,
+            cell.fg,
+            renderer.metrics.cw,
+        );
     }
 
     // Strikethrough: 1px line through vertical center
     if cell.is_strikeout {
-        bg_rects.push(Rect {
+        renderer.bg_rects.push(Rect {
             x: px,
-            y: py + m.ch * 0.5,
+            y: py + renderer.metrics.ch * 0.5,
             w: bg_width,
             h: 1.0,
             color: cell.fg,
@@ -389,19 +401,19 @@ fn render_cell(
     }
 
     // Rasterize and cache the glyph, then emit a rendering instance
-    if let Some(entry) = atlas.ensure_styled_char(c, cell.style) {
+    if let Some(entry) = renderer.atlas.ensure_styled_char(c, cell.style) {
         if entry.width == 0 || entry.height == 0 {
             return;
         }
         let glyph = if cell.is_wide && entry.is_color {
-            constrain_wide_glyph(&entry, px, py, m, cell.fg)
+            constrain_wide_glyph(&entry, px, py, renderer.metrics, cell.fg)
         } else {
-            make_relative_glyph(&entry, px, py, m.baseline, cell.fg)
+            make_relative_glyph(&entry, px, py, renderer.metrics.baseline, cell.fg)
         };
         if entry.is_color {
-            color_glyphs.push(glyph);
+            renderer.color_glyphs.push(glyph);
         } else {
-            glyphs.push(glyph);
+            renderer.glyphs.push(glyph);
         }
     }
 }
@@ -639,16 +651,15 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
                     flush_bg_strip(&mut bg_rects, sc, strip_start, col, row, &m);
                 }
 
-                render_cell(
+                let mut renderer = CellRenderer {
                     row,
-                    col,
-                    &props,
-                    &m,
+                    metrics: &m,
                     atlas,
-                    &mut bg_rects,
-                    &mut glyphs,
-                    &mut color_glyphs,
-                );
+                    bg_rects: &mut bg_rects,
+                    glyphs: &mut glyphs,
+                    color_glyphs: &mut color_glyphs,
+                };
+                render_cell(col, &props, &mut renderer);
             }
         }
         if let Some(sc) = strip_color {
@@ -681,6 +692,7 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
 }
 
 /// Pre-computed ligature info for a single row.
+#[derive(Clone)]
 struct RowLigatureData {
     /// True for columns that are continuations of a ligature (should skip normal rendering).
     skip_cols: Vec<bool>,
@@ -694,13 +706,9 @@ struct RowLigatureData {
 
 /// Render a single row of cells into per-row buffers.
 fn render_single_row(
-    cells: &[PackedCell],
+    grid: PackedGridContext<'_>,
     row: usize,
-    cols: u16,
     lig: Option<&RowLigatureData>,
-    cjk_font_id: Option<fontdb::ID>,
-    m: &CellMetrics,
-    ct: &ColorTable,
     atlas: &mut GlyphCache,
 ) -> RowRenderData {
     let mut glyphs = Vec::new();
@@ -710,20 +718,20 @@ fn render_single_row(
     let mut strip_color: Option<[f32; 4]> = None;
     let mut strip_start: usize = 0;
 
-    for col in 0..cols as usize {
-        let idx = row * cols as usize + col;
-        if idx >= cells.len() {
+    for col in 0..grid.cols as usize {
+        let idx = row * grid.cols as usize + col;
+        if idx >= grid.cells.len() {
             break;
         }
 
-        let Some(props) = CellProps::from_packed_cell_fast(&cells[idx], ct) else {
+        let Some(props) = CellProps::from_packed_cell_fast(&grid.cells[idx], grid.colors) else {
             continue;
         };
 
-        if props.bg != m.default_bg {
+        if props.bg != grid.metrics.default_bg {
             if let Some(sc) = strip_color {
                 if sc != props.bg {
-                    flush_bg_strip(&mut bg_rects, sc, strip_start, col, row, m);
+                    flush_bg_strip(&mut bg_rects, sc, strip_start, col, row, grid.metrics);
                     strip_color = Some(props.bg);
                     strip_start = col;
                 }
@@ -732,83 +740,82 @@ fn render_single_row(
                 strip_start = col;
             }
         } else if let Some(sc) = strip_color.take() {
-            flush_bg_strip(&mut bg_rects, sc, strip_start, col, row, m);
+            flush_bg_strip(&mut bg_rects, sc, strip_start, col, row, grid.metrics);
         }
 
-        render_cell_decorations(row, col, &props, m, &mut bg_rects);
+        render_cell_decorations(row, col, &props, grid.metrics, &mut bg_rects);
 
         if props.is_hidden || props.ch == ' ' || props.ch == '\0' || props.ch.is_control() {
             continue;
         }
 
-        if let Some(ld) = lig {
-            if col < ld.skip_cols.len() && ld.skip_cols[col] {
-                continue;
-            }
+        if let Some(ld) = lig
+            && col < ld.skip_cols.len()
+            && ld.skip_cols[col]
+        {
+            continue;
         }
 
-        if let Some(ld) = lig {
-            if let Ok(gi) = ld.grapheme_glyphs.binary_search_by_key(&col, |(c, _, _)| *c) {
-                let gid = ld.grapheme_glyphs[gi].1;
-                let glyph_font_id = ld.grapheme_glyphs[gi].2;
-                let mut rendered = false;
-                if let Some(entry) =
-                    atlas.ensure_glyph_id(gid, glyph_font_id, props.style, props.is_wide)
-                {
-                    if entry.width > 0 && entry.height > 0 {
-                        let px = col as f32 * m.cw;
-                        let py = row as f32 * m.ch;
-                        let is_cjk_text_wide = props.is_wide
-                            && !entry.is_color
-                            && Some(glyph_font_id) == cjk_font_id;
-                        let g = if props.is_wide && entry.is_color {
-                            constrain_wide_glyph(&entry, px, py, m, props.fg)
-                        } else if is_cjk_text_wide {
-                            constrain_wide_text_glyph(&entry, px, py, m, props.fg)
-                        } else {
-                            make_relative_glyph(&entry, px, py, m.baseline, props.fg)
-                        };
-                        if entry.is_color {
-                            color_glyphs.push(g);
-                        } else {
-                            glyphs.push(g);
-                        }
-                        rendered = true;
-                    }
+        if let Some(ld) = lig
+            && let Ok(gi) = ld
+                .grapheme_glyphs
+                .binary_search_by_key(&col, |(c, _, _)| *c)
+        {
+            let gid = ld.grapheme_glyphs[gi].1;
+            let glyph_font_id = ld.grapheme_glyphs[gi].2;
+            if let Some(entry) =
+                atlas.ensure_glyph_id(gid, glyph_font_id, props.style, props.is_wide)
+                && entry.width > 0
+                && entry.height > 0
+            {
+                let px = col as f32 * grid.metrics.cw;
+                let py = row as f32 * grid.metrics.ch;
+                let is_cjk_text_wide =
+                    props.is_wide && !entry.is_color && Some(glyph_font_id) == grid.cjk_font_id;
+                let g = if props.is_wide && entry.is_color {
+                    constrain_wide_glyph(&entry, px, py, grid.metrics, props.fg)
+                } else if is_cjk_text_wide {
+                    constrain_wide_text_glyph(&entry, px, py, grid.metrics, props.fg)
+                } else {
+                    make_relative_glyph(&entry, px, py, grid.metrics.baseline, props.fg)
+                };
+                if entry.is_color {
+                    color_glyphs.push(g);
+                } else {
+                    glyphs.push(g);
                 }
-                if rendered {
-                    continue;
-                }
-                // Rasterization failed — fall through to emit_glyph
-                // so the base character is still visible.
+                continue;
             }
+            // Rasterization failed — fall through to emit_glyph
+            // so the base character is still visible.
         }
 
         // Try single-char shaping path (glyph-ID based, all-through-shaping)
-        if let Some(ld) = lig {
-            if let Ok(ci) = ld.char_glyphs.binary_search_by_key(&col, |(c, _, _, _)| *c) {
-                let (_, gid, font_id, is_wide) = ld.char_glyphs[ci];
-                if let Some(entry) = atlas.ensure_glyph_id(gid, font_id, props.style, is_wide) {
-                    if entry.width > 0 && entry.height > 0 {
-                        let px = col as f32 * m.cw;
-                        let py = row as f32 * m.ch;
-                        let is_cjk_text_wide =
-                            is_wide && !entry.is_color && Some(font_id) == cjk_font_id;
-                        let g = if is_wide && entry.is_color {
-                            constrain_wide_glyph(&entry, px, py, m, props.fg)
-                        } else if is_cjk_text_wide {
-                            constrain_wide_text_glyph(&entry, px, py, m, props.fg)
-                        } else {
-                            make_relative_glyph(&entry, px, py, m.baseline, props.fg)
-                        };
-                        if entry.is_color {
-                            color_glyphs.push(g);
-                        } else {
-                            glyphs.push(g);
-                        }
-                        continue;
-                    }
+        if let Some(ld) = lig
+            && let Ok(ci) = ld.char_glyphs.binary_search_by_key(&col, |(c, _, _, _)| *c)
+        {
+            let (_, gid, font_id, is_wide) = ld.char_glyphs[ci];
+            if let Some(entry) = atlas.ensure_glyph_id(gid, font_id, props.style, is_wide)
+                && entry.width > 0
+                && entry.height > 0
+            {
+                let px = col as f32 * grid.metrics.cw;
+                let py = row as f32 * grid.metrics.ch;
+                let is_cjk_text_wide =
+                    is_wide && !entry.is_color && Some(font_id) == grid.cjk_font_id;
+                let g = if is_wide && entry.is_color {
+                    constrain_wide_glyph(&entry, px, py, grid.metrics, props.fg)
+                } else if is_cjk_text_wide {
+                    constrain_wide_text_glyph(&entry, px, py, grid.metrics, props.fg)
+                } else {
+                    make_relative_glyph(&entry, px, py, grid.metrics.baseline, props.fg)
+                };
+                if entry.is_color {
+                    color_glyphs.push(g);
+                } else {
+                    glyphs.push(g);
                 }
+                continue;
             }
         }
 
@@ -817,14 +824,21 @@ fn render_single_row(
             col,
             row,
             &props,
-            m,
+            grid.metrics,
             atlas,
             &mut glyphs,
             &mut color_glyphs,
         );
     }
     if let Some(sc) = strip_color {
-        flush_bg_strip(&mut bg_rects, sc, strip_start, cols as usize, row, m);
+        flush_bg_strip(
+            &mut bg_rects,
+            sc,
+            strip_start,
+            grid.cols as usize,
+            row,
+            grid.metrics,
+        );
     }
 
     if let Some(ld) = lig {
@@ -833,9 +847,9 @@ fn render_single_row(
                 if entry.width == 0 || entry.height == 0 {
                     continue;
                 }
-                let px = col as f32 * m.cw;
-                let py = row as f32 * m.ch;
-                let g = make_relative_glyph(&entry, px, py, m.baseline, fg);
+                let px = col as f32 * grid.metrics.cw;
+                let py = row as f32 * grid.metrics.ch;
+                let g = make_relative_glyph(&entry, px, py, grid.metrics.baseline, fg);
                 if entry.is_color {
                     color_glyphs.push(g);
                 } else {
@@ -865,65 +879,161 @@ fn flatten_view(view: &mut TerminalView) {
     }
 }
 
+#[derive(Clone, Copy)]
+struct PackedGridContext<'a> {
+    cells: &'a [PackedCell],
+    cols: u16,
+    rows: u16,
+    cjk_font_id: Option<fontdb::ID>,
+    metrics: &'a CellMetrics,
+    colors: &'a ColorTable,
+}
+
+struct ViewBuildParams<'a> {
+    grid: PackedGridContext<'a>,
+    cursor_line: i16,
+    cursor_col: u16,
+    cursor_shape: u8,
+    config: &'a CiriConfig,
+    shaper: &'a TextShaper,
+    grapheme_map: &'a std::collections::HashMap<u32, String>,
+}
+
+pub struct PackedViewInputs<'a> {
+    pub cells: &'a [PackedCell],
+    pub cols: u16,
+    pub rows: u16,
+    pub cursor_line: i16,
+    pub cursor_col: u16,
+    pub cursor_shape: u8,
+    pub config: &'a CiriConfig,
+    pub shaper: &'a TextShaper,
+    pub colors: &'a ColorTable,
+    pub grapheme_map: &'a std::collections::HashMap<u32, String>,
+}
+
+impl<'a> PackedViewInputs<'a> {
+    fn build_params(&'a self, metrics: &'a CellMetrics) -> ViewBuildParams<'a> {
+        ViewBuildParams {
+            grid: PackedGridContext {
+                cells: self.cells,
+                cols: self.cols,
+                rows: self.rows,
+                cjk_font_id: self.shaper.cjk_font_id(),
+                metrics,
+                colors: self.colors,
+            },
+            cursor_line: self.cursor_line,
+            cursor_col: self.cursor_col,
+            cursor_shape: self.cursor_shape,
+            config: self.config,
+            shaper: self.shaper,
+            grapheme_map: self.grapheme_map,
+        }
+    }
+}
+
+impl<'a> PackedGridContext<'a> {
+    fn build_row_data(
+        self,
+        row: usize,
+        row_lig_data: Option<&RowLigatureData>,
+        atlas: &mut GlyphCache,
+    ) -> RowRenderData {
+        render_single_row(self, row, row_lig_data, atlas)
+    }
+}
+
+fn build_row_lig_cache(params: &ViewBuildParams<'_>) -> Vec<RowLigatureData> {
+    let Some(fid) = params.shaper.primary_font_id() else {
+        return Vec::new();
+    };
+    let Some(face) = params.shaper.create_face(fid) else {
+        return Vec::new();
+    };
+
+    (0..params.grid.rows as usize)
+        .map(|row| precompute_row_shaping(params, row, fid, &face))
+        .collect()
+}
+
+fn precompute_dirty_row_shaping(
+    params: &ViewBuildParams<'_>,
+    dirty_rows: &[bool],
+) -> Vec<Option<RowLigatureData>> {
+    let Some(fid) = params.shaper.primary_font_id() else {
+        return Vec::new();
+    };
+    let Some(face) = params.shaper.create_face(fid) else {
+        return Vec::new();
+    };
+
+    dirty_rows
+        .iter()
+        .enumerate()
+        .take(params.grid.rows as usize)
+        .map(|(row, dirty)| dirty.then(|| precompute_row_shaping(params, row, fid, &face)))
+        .collect()
+}
+
+fn build_row_render_cache(
+    grid: PackedGridContext<'_>,
+    row_lig_data: &[RowLigatureData],
+    atlas: &mut GlyphCache,
+) -> Vec<RowRenderData> {
+    let mut row_data = Vec::with_capacity(grid.rows as usize);
+    for row in 0..grid.rows as usize {
+        row_data.push(grid.build_row_data(row, row_lig_data.get(row), atlas));
+    }
+    row_data
+}
+
+fn update_dirty_rows(
+    view: &mut TerminalView,
+    dirty_rows: &[bool],
+    grid: PackedGridContext<'_>,
+    atlas: &mut GlyphCache,
+    rebuilt_row_lig_cache: &[Option<RowLigatureData>],
+) {
+    for (row, &dirty) in dirty_rows.iter().enumerate().take(grid.rows as usize) {
+        if !dirty || row >= view.row_data.len() {
+            continue;
+        }
+
+        if let Some(Some(rebuilt)) = rebuilt_row_lig_cache.get(row) {
+            if row < view.row_lig_cache.len() {
+                view.row_lig_cache[row] = rebuilt.clone();
+            } else {
+                view.row_lig_cache.push(rebuilt.clone());
+            }
+        }
+
+        view.row_data[row] = grid.build_row_data(
+            row,
+            rebuilt_row_lig_cache.get(row).and_then(Option::as_ref),
+            atlas,
+        );
+    }
+}
+
 /// Build rendering data from a `PackedCell` grid (client-side path, full rebuild).
 ///
 /// The `shaper` is passed separately from `atlas` to allow simultaneous
 /// immutable shaper access (for Face creation) and mutable atlas access
 /// (for glyph caching).
-pub fn build_view_from_grid(
-    cells: &[PackedCell],
-    cols: u16,
-    rows: u16,
-    cursor_line: i16,
-    cursor_col: u16,
-    cursor_shape: u8,
-    atlas: &mut GlyphCache,
-    shaper: &TextShaper,
-    config: &CiriConfig,
-    ct: &ColorTable,
-    grapheme_map: &std::collections::HashMap<u32, String>,
-) -> TerminalView {
-    let m = CellMetrics::new(atlas, config);
-    let primary_font_id = shaper.primary_font_id();
-    let cjk_font_id = shaper.cjk_font_id();
+pub fn build_view_from_grid(atlas: &mut GlyphCache, inputs: &PackedViewInputs<'_>) -> TerminalView {
+    let metrics = CellMetrics::new(atlas, inputs.config);
+    let params = inputs.build_params(&metrics);
+    let row_lig_data = build_row_lig_cache(&params);
+    let row_data = build_row_render_cache(params.grid, &row_lig_data, atlas);
 
-    // ─── Phase 1: Pre-compute all shaping data (immutable shaper access) ───
-    let row_lig_data: Vec<RowLigatureData> = if let Some(fid) = primary_font_id {
-        if let Some(face) = shaper.create_face(fid) {
-            (0..rows as usize)
-                .map(|row| precompute_row_shaping(cells, row, cols, ct, shaper, fid, &face, grapheme_map))
-                .collect()
-        } else {
-            Vec::new()
-        }
-    } else {
-        Vec::new()
-    };
-
-    // ─── Phase 2: Render all rows into per-row buffers ───
-    let mut row_data = Vec::with_capacity(rows as usize);
-    for row in 0..rows as usize {
-        let lig = row_lig_data.get(row);
-        row_data.push(render_single_row(
-            cells,
-            row,
-            cols,
-            lig,
-            cjk_font_id,
-            &m,
-            ct,
-            atlas,
-        ));
-    }
-
-    // ─── Phase 3: Flatten into contiguous vecs ───
     let cursor_rects = make_cursor_rects(
-        cursor_shape,
-        cursor_line as i32,
-        cursor_col as usize,
-        rows as usize,
-        &m,
-        config,
+        params.cursor_shape,
+        params.cursor_line as i32,
+        params.cursor_col as usize,
+        params.grid.rows as usize,
+        params.grid.metrics,
+        params.config,
     );
 
     let mut view = TerminalView {
@@ -946,60 +1056,22 @@ pub fn build_view_from_grid(
 pub fn update_view_from_grid(
     view: &mut TerminalView,
     dirty_rows: &[bool],
-    cells: &[PackedCell],
-    cols: u16,
-    rows: u16,
-    cursor_line: i16,
-    cursor_col: u16,
-    cursor_shape: u8,
+    inputs: &PackedViewInputs<'_>,
     atlas: &mut GlyphCache,
-    shaper: &TextShaper,
-    config: &CiriConfig,
-    ct: &ColorTable,
-    grapheme_map: &std::collections::HashMap<u32, String>,
 ) {
-    let m = CellMetrics::new(atlas, config);
-    let primary_font_id = shaper.primary_font_id();
-    let cjk_font_id = shaper.cjk_font_id();
-    let nrows = rows as usize;
-
-    // Re-shape only dirty rows (immutable shaper access)
-    if let Some(fid) = primary_font_id {
-        if let Some(face) = shaper.create_face(fid) {
-            for (row, &dirty) in dirty_rows.iter().enumerate().take(nrows) {
-                if dirty && row < view.row_lig_cache.len() {
-                    view.row_lig_cache[row] =
-                        precompute_row_shaping(cells, row, cols, ct, shaper, fid, &face, grapheme_map);
-                }
-            }
-        }
-    }
-
-    // Re-render only dirty rows (mutable atlas access)
-    for (row, &dirty) in dirty_rows.iter().enumerate().take(nrows) {
-        if dirty && row < view.row_data.len() {
-            let lig = view.row_lig_cache.get(row);
-            view.row_data[row] = render_single_row(
-                cells,
-                row,
-                cols,
-                lig,
-                cjk_font_id,
-                &m,
-                ct,
-                atlas,
-            );
-        }
-    }
+    let metrics = CellMetrics::new(atlas, inputs.config);
+    let params = inputs.build_params(&metrics);
+    let rebuilt_row_lig_cache = precompute_dirty_row_shaping(&params, dirty_rows);
+    update_dirty_rows(view, dirty_rows, params.grid, atlas, &rebuilt_row_lig_cache);
 
     // Rebuild cursor
     view.cursor_rects = make_cursor_rects(
-        cursor_shape,
-        cursor_line as i32,
-        cursor_col as usize,
-        nrows,
-        &m,
-        config,
+        params.cursor_shape,
+        params.cursor_line as i32,
+        params.cursor_col as usize,
+        params.grid.rows as usize,
+        params.grid.metrics,
+        params.config,
     );
 
     // Bump generation and re-flatten
@@ -1012,16 +1084,46 @@ pub fn update_view_from_grid(
 /// Pre-compute all ligature/grapheme shaping data for a single row.
 /// Uses a pre-created Face to avoid per-row Face::from_slice overhead.
 fn precompute_row_shaping(
-    cells: &[PackedCell],
+    params: &ViewBuildParams<'_>,
     row: usize,
-    cols: u16,
-    ct: &ColorTable,
-    shaper: &TextShaper,
     fid: fontdb::ID,
     face: &rustybuzz::Face,
-    grapheme_map: &std::collections::HashMap<u32, String>,
 ) -> RowLigatureData {
-    let cols_usize = cols as usize;
+    #[allow(clippy::too_many_arguments)]
+    fn flush_ligature_run(
+        shaper: &TextShaper,
+        face: &rustybuzz::Face,
+        fid: fontdb::ID,
+        cols_usize: usize,
+        run_start: Option<usize>,
+        run_text: &str,
+        run_style: FontStyle,
+        run_fg: [f32; 4],
+        skip_cols: &mut [bool],
+        ligature_glyphs: &mut Vec<(usize, u32, fontdb::ID, FontStyle, [f32; 4])>,
+    ) {
+        if let Some(start) = run_start
+            && run_text.len() >= 2
+        {
+            for lig in shaper.detect_ligatures_with_face(run_text, face, fid) {
+                for k in 1..lig.char_count {
+                    let c = start + lig.start_col + k;
+                    if c < cols_usize {
+                        skip_cols[c] = true;
+                    }
+                }
+                ligature_glyphs.push((
+                    start + lig.start_col,
+                    lig.glyph_id,
+                    lig.font_id,
+                    run_style,
+                    run_fg,
+                ));
+            }
+        }
+    }
+
+    let cols_usize = params.grid.cols as usize;
     let mut skip_cols = vec![false; cols_usize];
     let mut ligature_glyphs = Vec::new();
     let mut grapheme_glyphs = Vec::new();
@@ -1035,8 +1137,8 @@ fn precompute_row_shaping(
     for col in 0..=cols_usize {
         let cell_info = if col < cols_usize {
             let idx = row * cols_usize + col;
-            if idx < cells.len() {
-                CellProps::from_packed_cell_fast(&cells[idx], ct)
+            if idx < params.grid.cells.len() {
+                CellProps::from_packed_cell_fast(&params.grid.cells[idx], params.grid.colors)
                     .filter(|p| !p.is_hidden && p.ch != ' ' && p.ch != '\0' && !p.ch.is_control())
             } else {
                 None
@@ -1050,49 +1152,36 @@ fn precompute_row_shaping(
                 run_text.push(props.ch);
                 continue;
             }
-            // Flush previous run
-            if run_start.is_some() && run_text.len() >= 2 {
-                let start = run_start.unwrap();
-                for lig in shaper.detect_ligatures_with_face(&run_text, face, fid) {
-                    for k in 1..lig.char_count {
-                        let c = start + lig.start_col + k;
-                        if c < cols_usize {
-                            skip_cols[c] = true;
-                        }
-                    }
-                    ligature_glyphs.push((
-                        start + lig.start_col,
-                        lig.glyph_id,
-                        lig.font_id,
-                        run_style,
-                        run_fg,
-                    ));
-                }
-            }
+            flush_ligature_run(
+                params.shaper,
+                face,
+                fid,
+                cols_usize,
+                run_start,
+                &run_text,
+                run_style,
+                run_fg,
+                &mut skip_cols,
+                &mut ligature_glyphs,
+            );
             run_start = Some(col);
             run_text.clear();
             run_text.push(props.ch);
             run_style = props.style;
             run_fg = props.fg;
         } else {
-            if run_start.is_some() && run_text.len() >= 2 {
-                let start = run_start.unwrap();
-                for lig in shaper.detect_ligatures_with_face(&run_text, face, fid) {
-                    for k in 1..lig.char_count {
-                        let c = start + lig.start_col + k;
-                        if c < cols_usize {
-                            skip_cols[c] = true;
-                        }
-                    }
-                    ligature_glyphs.push((
-                        start + lig.start_col,
-                        lig.glyph_id,
-                        lig.font_id,
-                        run_style,
-                        run_fg,
-                    ));
-                }
-            }
+            flush_ligature_run(
+                params.shaper,
+                face,
+                fid,
+                cols_usize,
+                run_start,
+                &run_text,
+                run_style,
+                run_fg,
+                &mut skip_cols,
+                &mut ligature_glyphs,
+            );
             run_start = None;
             run_text.clear();
         }
@@ -1101,10 +1190,12 @@ fn precompute_row_shaping(
     // ── Detect grapheme clusters ──
     for col in 0..cols_usize {
         let idx = row * cols_usize + col;
-        if idx >= cells.len() {
+        if idx >= params.grid.cells.len() {
             break;
         }
-        let Some(props) = CellProps::from_packed_cell_fast(&cells[idx], ct) else {
+        let Some(props) =
+            CellProps::from_packed_cell_fast(&params.grid.cells[idx], params.grid.colors)
+        else {
             continue;
         };
         if props.is_hidden || props.ch == ' ' || props.ch == '\0' || props.ch.is_control() {
@@ -1117,7 +1208,7 @@ fn precompute_row_shaping(
         // Check if the grapheme extras map has multi-codepoint data for this cell
         // (e.g. flag emoji with zerowidth combiners sent by the server)
         let (cluster_str, consumed_cols) =
-            if let Some(full_grapheme) = grapheme_map.get(&(idx as u32)) {
+            if let Some(full_grapheme) = params.grapheme_map.get(&(idx as u32)) {
                 // Server sent the full grapheme — use it directly.
                 // Wide char spacers are already skipped by render_single_row.
                 (full_grapheme.clone(), 0usize)
@@ -1127,8 +1218,8 @@ fn precompute_row_shaping(
                 let next_col = col + 1;
                 if next_col < cols_usize {
                     let li = row * cols_usize + next_col;
-                    if li < cells.len() {
-                        let next_ch = cells[li].ch();
+                    if li < params.grid.cells.len() {
+                        let next_ch = params.grid.cells[li].ch();
                         if is_regional_indicator(next_ch) {
                             s.push(next_ch);
                         }
@@ -1143,10 +1234,10 @@ fn precompute_row_shaping(
                 let mut consumed = 0usize;
                 while look < cols_usize {
                     let li = row * cols_usize + look;
-                    if li >= cells.len() {
+                    if li >= params.grid.cells.len() {
                         break;
                     }
-                    let next_ch = cells[li].ch();
+                    let next_ch = params.grid.cells[li].ch();
                     if is_combining_or_modifier(next_ch) {
                         s.push(next_ch);
                         consumed += 1;
@@ -1158,16 +1249,19 @@ fn precompute_row_shaping(
                 (s, consumed)
             };
 
-        if cluster_str.graphemes(true).count() == 1 && cluster_str.chars().count() > 1 {
-            if let Some((gid, fid)) = shaper.shape_grapheme_with_fallback(&cluster_str, face) {
-                grapheme_glyphs.push((col, gid, fid));
-                // Mark consumed cells so they aren't rendered independently
-                let start = col + if props.is_wide { 2 } else { 1 };
-                for k in 0..consumed_cols {
-                    let c = start + k;
-                    if c < cols_usize {
-                        skip_cols[c] = true;
-                    }
+        if cluster_str.graphemes(true).count() == 1
+            && cluster_str.chars().count() > 1
+            && let Some((gid, fid)) = params
+                .shaper
+                .shape_grapheme_with_fallback(&cluster_str, face)
+        {
+            grapheme_glyphs.push((col, gid, fid));
+            // Mark consumed cells so they aren't rendered independently
+            let start = col + if props.is_wide { 2 } else { 1 };
+            for k in 0..consumed_cols {
+                let c = start + k;
+                if c < cols_usize {
+                    skip_cols[c] = true;
                 }
             }
         }
@@ -1175,12 +1269,15 @@ fn precompute_row_shaping(
 
     // ── Single-char shaping for all remaining characters ──
     let mut char_glyphs = Vec::new();
-    for col in 0..cols_usize {
-        if skip_cols[col] {
+    for (col, should_skip) in skip_cols.iter().enumerate().take(cols_usize) {
+        if *should_skip {
             continue;
         }
         // Skip columns already handled by grapheme shaping
-        if grapheme_glyphs.binary_search_by_key(&col, |(c, _, _)| *c).is_ok() {
+        if grapheme_glyphs
+            .binary_search_by_key(&col, |(c, _, _)| *c)
+            .is_ok()
+        {
             continue;
         }
         // Skip columns handled by ligatures
@@ -1188,16 +1285,18 @@ fn precompute_row_shaping(
             continue;
         }
         let idx = row * cols_usize + col;
-        if idx >= cells.len() {
+        if idx >= params.grid.cells.len() {
             break;
         }
-        let Some(props) = CellProps::from_packed_cell_fast(&cells[idx], ct) else {
+        let Some(props) =
+            CellProps::from_packed_cell_fast(&params.grid.cells[idx], params.grid.colors)
+        else {
             continue;
         };
         if props.is_hidden || props.ch == ' ' || props.ch == '\0' || props.ch.is_control() {
             continue;
         }
-        if let Some((gid, fid)) = shaper.shape_char_with_fallback(props.ch, face) {
+        if let Some((gid, fid)) = params.shaper.shape_char_with_fallback(props.ch, face) {
             char_glyphs.push((col, gid, fid, props.is_wide));
         }
     }
@@ -1309,8 +1408,8 @@ fn make_relative_glyph(
     color: [f32; 4],
 ) -> RelativeGlyph {
     RelativeGlyph {
-        px: (px + entry.bearing_x).round(),
-        py: (py + baseline - entry.bearing_y).round(),
+        px: px + entry.bearing_x,
+        py: py + baseline - entry.bearing_y,
         glyph_w: entry.width as f32,
         glyph_h: entry.height as f32,
         u0: entry.u0,
@@ -1354,8 +1453,9 @@ fn constrain_wide_glyph(
     }
 }
 
-/// Place a wide text glyph inside a double-width cell without enlarging height.
-/// Keeps baseline-aligned vertical metrics and only constrains horizontal width.
+/// Place a wide text glyph inside a double-width cell using bearing positioning.
+/// Uses bearing_x like regular glyphs instead of centering, to avoid excessive
+/// inter-character spacing with CJK fonts that already encode correct metrics.
 #[inline]
 fn constrain_wide_text_glyph(
     entry: &GlyphEntry,
@@ -1366,11 +1466,11 @@ fn constrain_wide_text_glyph(
 ) -> RelativeGlyph {
     let gw = entry.width as f32;
     let target_w = m.cw * 2.0;
+    // Use bearing positioning; clamp width to cell bounds if glyph overflows
     let final_w = gw.min(target_w);
-    let offset_x = (target_w - final_w) * 0.5;
     RelativeGlyph {
-        px: (px + offset_x).round(),
-        py: (py + m.baseline - entry.bearing_y).round(),
+        px: px + entry.bearing_x,
+        py: py + m.baseline - entry.bearing_y,
         glyph_w: final_w,
         glyph_h: entry.height as f32,
         u0: entry.u0,
@@ -1433,33 +1533,61 @@ pub fn build_scrollbar(
         return None;
     }
 
-    let scrollbar_width = SCROLLBAR_WIDTH;
-    let scrollbar_margin = SCROLLBAR_MARGIN;
+    let thumb_height = scrollbar_thumb_height(visible, total_lines, pane_height);
+    let y = scrollbar_thumb_y(
+        scroll_offset,
+        total_lines,
+        visible,
+        pane_height,
+        thumb_height,
+    );
+    let [r, g, b, _] = scrollbar_thumb_color(state, config);
 
-    // Thumb size proportional to visible/total ratio
-    let ratio = visible as f32 / total_lines as f32;
-    let thumb_height = (ratio * pane_height).max(10.0);
-
-    // Thumb position: offset=0 → bottom, max → top
-    let max_offset = total_lines - visible;
-    let position_ratio = if max_offset > 0 {
-        1.0 - (scroll_offset as f32 / max_offset as f32)
-    } else {
-        1.0
-    };
-
-    let (base_color, alpha) = match state {
-        ScrollbarState::Idle => (ThemeConfig::parse_color(&config.theme.bright_black), 0.4),
-        ScrollbarState::Hovered => (ThemeConfig::parse_color(&config.theme.foreground), 0.45),
-        ScrollbarState::Pressed => (ThemeConfig::parse_color(&config.theme.foreground), 0.6),
-    };
     Some(Rect {
-        x: pane_width - scrollbar_width - scrollbar_margin,
-        y: position_ratio * (pane_height - thumb_height),
-        w: scrollbar_width,
+        x: pane_width - SCROLLBAR_WIDTH - SCROLLBAR_MARGIN,
+        y,
+        w: SCROLLBAR_WIDTH,
         h: thumb_height,
-        color: [base_color[0], base_color[1], base_color[2], alpha],
+        color: [r, g, b, scrollbar_thumb_alpha(state)],
     })
+}
+
+fn scrollbar_thumb_height(visible: usize, total_lines: usize, pane_height: f32) -> f32 {
+    let ratio = visible as f32 / total_lines as f32;
+    (ratio * pane_height).max(10.0)
+}
+
+fn scrollbar_thumb_y(
+    scroll_offset: usize,
+    total_lines: usize,
+    visible: usize,
+    pane_height: f32,
+    thumb_height: f32,
+) -> f32 {
+    let max_offset = total_lines - visible;
+    let position_ratio = if max_offset == 0 {
+        1.0
+    } else {
+        1.0 - (scroll_offset as f32 / max_offset as f32)
+    };
+    position_ratio * (pane_height - thumb_height)
+}
+
+fn scrollbar_thumb_color(state: ScrollbarState, config: &CiriConfig) -> [f32; 4] {
+    match state {
+        ScrollbarState::Idle => ThemeConfig::parse_color(&config.theme.bright_black),
+        ScrollbarState::Hovered | ScrollbarState::Pressed => {
+            ThemeConfig::parse_color(&config.theme.foreground)
+        }
+    }
+}
+
+fn scrollbar_thumb_alpha(state: ScrollbarState) -> f32 {
+    match state {
+        ScrollbarState::Idle => 0.4,
+        ScrollbarState::Hovered => 0.45,
+        ScrollbarState::Pressed => 0.6,
+    }
 }
 
 // ─── Color resolution ────────────────────────────────────────────────
@@ -1468,12 +1596,12 @@ pub fn build_scrollbar(
 fn ansi_color_to_rgba(color: AnsiColor, config: &CiriConfig) -> [f32; 4] {
     match color {
         AnsiColor::Named(named) => named_color_to_rgba(named, config),
-        AnsiColor::Spec(rgb) => [
+        AnsiColor::Spec(rgb) => ThemeConfig::srgb_to_linear([
             rgb.r as f32 / 255.0,
             rgb.g as f32 / 255.0,
             rgb.b as f32 / 255.0,
             1.0,
-        ],
+        ]),
         AnsiColor::Indexed(idx) => indexed_color_to_rgba(idx, config),
     }
 }
@@ -1505,26 +1633,26 @@ fn named_color_from_index(idx: u8) -> NamedColor {
 fn named_color_to_rgba(c: NamedColor, config: &CiriConfig) -> [f32; 4] {
     let theme = &config.theme;
     match c {
-        NamedColor::Black => ThemeConfig::parse_color(&theme.black),
-        NamedColor::Red => ThemeConfig::parse_color(&theme.red),
-        NamedColor::Green => ThemeConfig::parse_color(&theme.green),
-        NamedColor::Yellow => ThemeConfig::parse_color(&theme.yellow),
-        NamedColor::Blue => ThemeConfig::parse_color(&theme.blue),
-        NamedColor::Magenta => ThemeConfig::parse_color(&theme.magenta),
-        NamedColor::Cyan => ThemeConfig::parse_color(&theme.cyan),
-        NamedColor::White => ThemeConfig::parse_color(&theme.white),
-        NamedColor::BrightBlack => ThemeConfig::parse_color(&theme.bright_black),
-        NamedColor::BrightRed => ThemeConfig::parse_color(&theme.bright_red),
-        NamedColor::BrightGreen => ThemeConfig::parse_color(&theme.bright_green),
-        NamedColor::BrightYellow => ThemeConfig::parse_color(&theme.bright_yellow),
-        NamedColor::BrightBlue => ThemeConfig::parse_color(&theme.bright_blue),
-        NamedColor::BrightMagenta => ThemeConfig::parse_color(&theme.bright_magenta),
-        NamedColor::BrightCyan => ThemeConfig::parse_color(&theme.bright_cyan),
+        NamedColor::Black => ThemeConfig::parse_color_linear(&theme.black),
+        NamedColor::Red => ThemeConfig::parse_color_linear(&theme.red),
+        NamedColor::Green => ThemeConfig::parse_color_linear(&theme.green),
+        NamedColor::Yellow => ThemeConfig::parse_color_linear(&theme.yellow),
+        NamedColor::Blue => ThemeConfig::parse_color_linear(&theme.blue),
+        NamedColor::Magenta => ThemeConfig::parse_color_linear(&theme.magenta),
+        NamedColor::Cyan => ThemeConfig::parse_color_linear(&theme.cyan),
+        NamedColor::White => ThemeConfig::parse_color_linear(&theme.white),
+        NamedColor::BrightBlack => ThemeConfig::parse_color_linear(&theme.bright_black),
+        NamedColor::BrightRed => ThemeConfig::parse_color_linear(&theme.bright_red),
+        NamedColor::BrightGreen => ThemeConfig::parse_color_linear(&theme.bright_green),
+        NamedColor::BrightYellow => ThemeConfig::parse_color_linear(&theme.bright_yellow),
+        NamedColor::BrightBlue => ThemeConfig::parse_color_linear(&theme.bright_blue),
+        NamedColor::BrightMagenta => ThemeConfig::parse_color_linear(&theme.bright_magenta),
+        NamedColor::BrightCyan => ThemeConfig::parse_color_linear(&theme.bright_cyan),
         NamedColor::BrightWhite | NamedColor::Foreground => {
-            ThemeConfig::parse_color(&theme.foreground)
+            ThemeConfig::parse_color_linear(&theme.foreground)
         }
-        NamedColor::Background => ThemeConfig::parse_color(&theme.background),
-        _ => ThemeConfig::parse_color(&theme.foreground),
+        NamedColor::Background => ThemeConfig::parse_color_linear(&theme.background),
+        _ => ThemeConfig::parse_color_linear(&theme.foreground),
     }
 }
 
@@ -1547,9 +1675,456 @@ fn indexed_color_to_rgba(idx: u8, config: &CiriConfig) -> [f32; 4] {
                 (55.0 + 40.0 * v as f32) / 255.0
             }
         };
-        return [to_f(r), to_f(g), to_f(b), 1.0];
+        return ThemeConfig::srgb_to_linear([to_f(r), to_f(g), to_f(b), 1.0]);
     }
     // Grayscale ramp: 232–255 → 8, 18, 28, ..., 238
     let v = (8 + 10 * (idx - 232) as u32) as f32 / 255.0;
-    [v, v, v, 1.0]
+    ThemeConfig::srgb_to_linear([v, v, v, 1.0])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ciri_config::config::CiriConfig;
+    use ciri_protocol::message::{
+        CURSOR_BEAM, CURSOR_BLOCK, CURSOR_HIDDEN, CURSOR_HOLLOW_BLOCK, CURSOR_UNDERLINE,
+        FLAG_HIDDEN, FLAG_STRIKEOUT, FLAG_UNDERLINE, FLAG_WIDE_CHAR, FLAG_WIDE_CHAR_SPACER,
+        PackedCell, PackedColor,
+    };
+    use std::collections::HashMap;
+
+    fn assert_rect_lists_match(left: &[Rect], right: &[Rect]) {
+        assert_eq!(left.len(), right.len());
+        for (left, right) in left.iter().zip(right.iter()) {
+            assert_eq!(left.x, right.x);
+            assert_eq!(left.y, right.y);
+            assert_eq!(left.w, right.w);
+            assert_eq!(left.h, right.h);
+            assert_eq!(left.color, right.color);
+        }
+    }
+
+    fn assert_relative_glyph_lists_match(left: &[RelativeGlyph], right: &[RelativeGlyph]) {
+        assert_eq!(left.len(), right.len());
+        for (left, right) in left.iter().zip(right.iter()) {
+            assert_eq!(left.px, right.px);
+            assert_eq!(left.py, right.py);
+            assert_eq!(left.glyph_w, right.glyph_w);
+            assert_eq!(left.glyph_h, right.glyph_h);
+            assert_eq!(left.color, right.color);
+        }
+    }
+
+    fn test_config() -> CiriConfig {
+        CiriConfig::default()
+    }
+
+    fn test_shaper(config: &CiriConfig) -> TextShaper {
+        TextShaper::new(&config.font.family)
+    }
+
+    fn test_atlas(config: &CiriConfig, shaper: &TextShaper) -> GlyphCache {
+        GlyphCache::new(
+            config.font.size,
+            1.0,
+            &config.font.family,
+            shaper.primary_font_path(),
+            shaper.emoji_font_path(),
+            shaper.emoji_font_id(),
+            shaper.cjk_font_path(),
+            shaper.cjk_font_id(),
+            &config.render,
+        )
+    }
+
+    fn test_color_table(config: &CiriConfig) -> ColorTable {
+        ColorTable::new(config)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn test_view_inputs<'a>(
+        cells: &'a [PackedCell],
+        cols: u16,
+        rows: u16,
+        cursor_line: i16,
+        cursor_col: u16,
+        cursor_shape: u8,
+        shaper: &'a TextShaper,
+        config: &'a CiriConfig,
+        ct: &'a ColorTable,
+        grapheme_map: &'a HashMap<u32, String>,
+    ) -> PackedViewInputs<'a> {
+        PackedViewInputs {
+            cells,
+            cols,
+            rows,
+            cursor_line,
+            cursor_col,
+            cursor_shape,
+            config,
+            shaper,
+            colors: ct,
+            grapheme_map,
+        }
+    }
+
+    fn grid_with_size(cols: usize, rows: usize) -> Vec<PackedCell> {
+        vec![PackedCell::default(); cols * rows]
+    }
+
+    fn styled_cell(ch: char, fg: PackedColor, bg: PackedColor, flags: u16) -> PackedCell {
+        let mut cell = PackedCell::with_ch(ch);
+        cell.fg = fg;
+        cell.bg = bg;
+        cell.flags = flags.to_le_bytes();
+        cell
+    }
+
+    #[test]
+    fn packed_hidden_and_wide_spacer_cells_do_not_render_text_or_decorations() {
+        let config = test_config();
+        let shaper = test_shaper(&config);
+        let mut atlas = test_atlas(&config, &shaper);
+        let ct = test_color_table(&config);
+        let graphemes = HashMap::new();
+        let mut cells = grid_with_size(3, 1);
+        cells[0] = styled_cell(
+            'A',
+            PackedColor::rgb(255, 0, 0),
+            PackedColor::rgb(0, 0, 32),
+            FLAG_HIDDEN | FLAG_UNDERLINE | FLAG_STRIKEOUT,
+        );
+        cells[1] = styled_cell(
+            '好',
+            PackedColor::rgb(0, 255, 0),
+            PackedColor::rgb(32, 0, 0),
+            FLAG_WIDE_CHAR,
+        );
+        cells[2] = styled_cell(
+            ' ',
+            PackedColor::rgb(0, 0, 255),
+            PackedColor::rgb(0, 32, 0),
+            FLAG_WIDE_CHAR_SPACER,
+        );
+        let params = test_view_inputs(
+            &cells,
+            3,
+            1,
+            -1,
+            0,
+            CURSOR_HIDDEN,
+            &shaper,
+            &config,
+            &ct,
+            &graphemes,
+        );
+
+        let view = build_view_from_grid(&mut atlas, &params);
+
+        let wide_background = view
+            .bg_rects
+            .iter()
+            .find(|rect| rect.color == ct.resolve_packed(cells[1].bg))
+            .expect("wide visible cell background should render");
+        assert_eq!(wide_background.w, atlas.cell_width * 2.0);
+        assert!(
+            view.bg_rects
+                .iter()
+                .all(|rect| rect.color != ct.resolve_packed(cells[0].fg)),
+            "hidden cells should not emit underline/strikeout rects"
+        );
+        assert!(
+            !view.glyph_instances.is_empty() || !view.color_glyph_instances.is_empty(),
+            "visible wide cell should still render a glyph"
+        );
+    }
+
+    #[test]
+    fn packed_cursor_shapes_map_to_expected_rect_geometry() {
+        let config = test_config();
+        let shaper = test_shaper(&config);
+        let mut atlas = test_atlas(&config, &shaper);
+        let ct = test_color_table(&config);
+        let graphemes = HashMap::new();
+        let cells = grid_with_size(2, 2);
+        let cw = atlas.cell_width;
+        let ch = atlas.cell_height;
+        let block_params = test_view_inputs(
+            &cells,
+            2,
+            2,
+            1,
+            1,
+            CURSOR_BLOCK,
+            &shaper,
+            &config,
+            &ct,
+            &graphemes,
+        );
+        let block = build_view_from_grid(&mut atlas, &block_params);
+        assert_eq!(block.cursor_rects.len(), 1);
+        assert_eq!(block.cursor_rects[0].x, cw);
+        assert_eq!(block.cursor_rects[0].y, ch);
+        assert_eq!(block.cursor_rects[0].w, cw);
+        assert_eq!(block.cursor_rects[0].h, ch);
+
+        let beam_params = test_view_inputs(
+            &cells,
+            2,
+            2,
+            0,
+            1,
+            CURSOR_BEAM,
+            &shaper,
+            &config,
+            &ct,
+            &graphemes,
+        );
+        let beam = build_view_from_grid(&mut atlas, &beam_params);
+        assert_eq!(beam.cursor_rects.len(), 1);
+        assert_eq!(beam.cursor_rects[0].w, 2.0);
+        assert_eq!(beam.cursor_rects[0].h, ch);
+
+        let underline_params = test_view_inputs(
+            &cells,
+            2,
+            2,
+            0,
+            0,
+            CURSOR_UNDERLINE,
+            &shaper,
+            &config,
+            &ct,
+            &graphemes,
+        );
+        let underline = build_view_from_grid(&mut atlas, &underline_params);
+        assert_eq!(underline.cursor_rects.len(), 1);
+        assert_eq!(underline.cursor_rects[0].y, ch - 2.0);
+        assert_eq!(underline.cursor_rects[0].h, 2.0);
+
+        let hollow_params = test_view_inputs(
+            &cells,
+            2,
+            2,
+            1,
+            0,
+            CURSOR_HOLLOW_BLOCK,
+            &shaper,
+            &config,
+            &ct,
+            &graphemes,
+        );
+        let hollow = build_view_from_grid(&mut atlas, &hollow_params);
+        assert_eq!(hollow.cursor_rects.len(), 4);
+    }
+
+    #[test]
+    fn incremental_update_matches_full_rebuild_for_same_final_grid() {
+        let config = test_config();
+        let shaper = test_shaper(&config);
+        let ct = test_color_table(&config);
+        let graphemes = HashMap::new();
+        let mut initial_cells = grid_with_size(4, 2);
+        initial_cells[0] = styled_cell(
+            'a',
+            PackedColor::rgb(255, 255, 255),
+            PackedColor::rgb(16, 16, 16),
+            0,
+        );
+        initial_cells[1] = styled_cell(
+            'b',
+            PackedColor::rgb(200, 0, 0),
+            PackedColor::rgb(16, 16, 16),
+            FLAG_UNDERLINE,
+        );
+
+        let mut full_cells = initial_cells.clone();
+        full_cells[0] = styled_cell(
+            '中',
+            PackedColor::rgb(255, 255, 0),
+            PackedColor::rgb(0, 0, 48),
+            FLAG_WIDE_CHAR,
+        );
+        full_cells[1] = styled_cell(
+            ' ',
+            PackedColor::rgb(255, 255, 0),
+            PackedColor::rgb(0, 0, 48),
+            FLAG_WIDE_CHAR_SPACER,
+        );
+        full_cells[5] = styled_cell(
+            'x',
+            PackedColor::rgb(0, 255, 255),
+            PackedColor::rgb(48, 0, 0),
+            FLAG_STRIKEOUT,
+        );
+
+        let mut atlas_for_incremental = test_atlas(&config, &shaper);
+        let initial_params = test_view_inputs(
+            &initial_cells,
+            4,
+            2,
+            0,
+            1,
+            CURSOR_BLOCK,
+            &shaper,
+            &config,
+            &ct,
+            &graphemes,
+        );
+        let mut incremental = build_view_from_grid(&mut atlas_for_incremental, &initial_params);
+        let updated_params = test_view_inputs(
+            &full_cells,
+            4,
+            2,
+            1,
+            2,
+            CURSOR_UNDERLINE,
+            &shaper,
+            &config,
+            &ct,
+            &graphemes,
+        );
+        update_view_from_grid(
+            &mut incremental,
+            &[true, true],
+            &updated_params,
+            &mut atlas_for_incremental,
+        );
+
+        let mut atlas_for_full = test_atlas(&config, &shaper);
+        let rebuilt_params = test_view_inputs(
+            &full_cells,
+            4,
+            2,
+            1,
+            2,
+            CURSOR_UNDERLINE,
+            &shaper,
+            &config,
+            &ct,
+            &graphemes,
+        );
+        let rebuilt = build_view_from_grid(&mut atlas_for_full, &rebuilt_params);
+
+        assert_rect_lists_match(&incremental.bg_rects, &rebuilt.bg_rects);
+        assert_rect_lists_match(&incremental.cursor_rects, &rebuilt.cursor_rects);
+        assert_relative_glyph_lists_match(&incremental.glyph_instances, &rebuilt.glyph_instances);
+        assert_relative_glyph_lists_match(
+            &incremental.color_glyph_instances,
+            &rebuilt.color_glyph_instances,
+        );
+    }
+
+    #[test]
+    fn incremental_update_only_recomputes_dirty_row_shaping() {
+        let config = test_config();
+        let shaper = test_shaper(&config);
+        let ct = test_color_table(&config);
+        let graphemes = HashMap::new();
+        let initial_cells = vec![
+            PackedCell::with_ch('f'),
+            PackedCell::with_ch('i'),
+            PackedCell::default(),
+            PackedCell::default(),
+            PackedCell::with_ch('a'),
+            PackedCell::with_ch('b'),
+            PackedCell::default(),
+            PackedCell::default(),
+        ];
+
+        let mut atlas = test_atlas(&config, &shaper);
+        let initial_params = test_view_inputs(
+            &initial_cells,
+            4,
+            2,
+            -1,
+            0,
+            CURSOR_HIDDEN,
+            &shaper,
+            &config,
+            &ct,
+            &graphemes,
+        );
+        let mut view = build_view_from_grid(&mut atlas, &initial_params);
+        let original_clean_row = view.row_lig_cache[1].clone();
+
+        let updated_cells = vec![
+            PackedCell::with_ch('o'),
+            PackedCell::with_ch('f'),
+            PackedCell::with_ch('f'),
+            PackedCell::with_ch('i'),
+            PackedCell::with_ch('a'),
+            PackedCell::with_ch('b'),
+            PackedCell::default(),
+            PackedCell::default(),
+        ];
+        let updated_params = test_view_inputs(
+            &updated_cells,
+            4,
+            2,
+            -1,
+            0,
+            CURSOR_HIDDEN,
+            &shaper,
+            &config,
+            &ct,
+            &graphemes,
+        );
+
+        update_view_from_grid(&mut view, &[true, false], &updated_params, &mut atlas);
+
+        assert_eq!(
+            view.row_lig_cache[1].skip_cols,
+            original_clean_row.skip_cols
+        );
+        assert_eq!(
+            view.row_lig_cache[1].ligature_glyphs,
+            original_clean_row.ligature_glyphs
+        );
+        assert_eq!(
+            view.row_lig_cache[1].grapheme_glyphs,
+            original_clean_row.grapheme_glyphs
+        );
+        assert_eq!(
+            view.row_lig_cache[1].char_glyphs,
+            original_clean_row.char_glyphs
+        );
+    }
+
+    #[test]
+    fn scrollbar_hidden_without_scrollback() {
+        let config = test_config();
+        assert!(build_scrollbar(0, 4, 4, 120.0, 80.0, ScrollbarState::Idle, &config).is_none());
+    }
+
+    #[test]
+    fn scrollbar_thumb_geometry_tracks_scroll_extent() {
+        let config = test_config();
+        let rect = build_scrollbar(3, 10, 4, 120.0, 100.0, ScrollbarState::Idle, &config)
+            .expect("scrollback should produce a scrollbar");
+        assert_eq!(rect.x, 114.0);
+        assert_eq!(rect.w, SCROLLBAR_WIDTH);
+        assert_eq!(rect.h, 40.0);
+        assert_eq!(rect.y, 30.0);
+    }
+
+    #[test]
+    fn scrollbar_thumb_visual_state_changes_color_and_alpha() {
+        let config = test_config();
+        let idle = build_scrollbar(0, 10, 4, 120.0, 100.0, ScrollbarState::Idle, &config)
+            .expect("scrollback should produce a scrollbar");
+        let hovered = build_scrollbar(0, 10, 4, 120.0, 100.0, ScrollbarState::Hovered, &config)
+            .expect("scrollback should produce a scrollbar");
+        let pressed = build_scrollbar(0, 10, 4, 120.0, 100.0, ScrollbarState::Pressed, &config)
+            .expect("scrollback should produce a scrollbar");
+
+        assert_eq!(idle.x, hovered.x);
+        assert_eq!(idle.y, hovered.y);
+        assert_eq!(idle.w, hovered.w);
+        assert_eq!(idle.h, hovered.h);
+        assert_eq!(hovered.color[..3], pressed.color[..3]);
+        assert_eq!(idle.color[3], 0.4);
+        assert_eq!(hovered.color[3], 0.45);
+        assert_eq!(pressed.color[3], 0.6);
+    }
 }

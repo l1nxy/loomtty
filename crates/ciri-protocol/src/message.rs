@@ -93,6 +93,10 @@ impl PackedColor {
 // `#[repr(C, packed)]` guarantees no padding → bytemuck::cast_slice works.
 
 pub const PACKED_CELL_SIZE: usize = 14;
+pub const DEFAULT_CELL_CHAR: char = ' ';
+pub const DEFAULT_CELL_FLAGS: u16 = 0;
+pub const DEFAULT_FOREGROUND: PackedColor = PackedColor::named(NAMED_FOREGROUND);
+pub const DEFAULT_BACKGROUND: PackedColor = PackedColor::named(NAMED_BACKGROUND);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C, packed)]
@@ -132,11 +136,11 @@ impl Default for PackedCell {
     fn default() -> Self {
         let mut cell = PackedCell {
             ch_bytes: [0; 4],
-            fg: PackedColor::named(NAMED_FOREGROUND),
-            bg: PackedColor::named(NAMED_BACKGROUND),
-            flags: [0; 2],
+            fg: DEFAULT_FOREGROUND,
+            bg: DEFAULT_BACKGROUND,
+            flags: DEFAULT_CELL_FLAGS.to_le_bytes(),
         };
-        cell.set_ch(' ');
+        cell.set_ch(DEFAULT_CELL_CHAR);
         cell
     }
 }
@@ -340,29 +344,59 @@ pub enum ClientMessage {
         focused: bool,
     },
     /// Focus a specific pane by ID (used for focus-follows-mouse).
-    FocusPane { pane_id: u64 },
+    FocusPane {
+        pane_id: u64,
+    },
     /// IPC: Send keystrokes to a specific pane in a named session.
-    SendKeys { session_name: String, pane_id: u64, keys: Vec<u8> },
+    SendKeys {
+        session_name: String,
+        pane_id: u64,
+        keys: Vec<u8>,
+    },
     /// IPC: Run a command in a new pane in the named session.
-    RunCommand { session_name: String, command: String, cwd: Option<String> },
+    RunCommand {
+        session_name: String,
+        command: String,
+        cwd: Option<String>,
+    },
     /// IPC: Get detailed info about a session.
-    GetSessionInfo { session_name: String },
+    GetSessionInfo {
+        session_name: String,
+    },
     /// IPC: List all panes in a session.
-    ListPanes { session_name: String },
+    ListPanes {
+        session_name: String,
+    },
     /// IPC: Focus a specific pane by ID.
-    FocusPaneById { session_name: String, pane_id: u64 },
+    FocusPaneById {
+        session_name: String,
+        pane_id: u64,
+    },
     /// IPC: Close a specific pane by ID.
-    ClosePaneById { session_name: String, pane_id: u64 },
+    ClosePaneById {
+        session_name: String,
+        pane_id: u64,
+    },
     /// IPC: Create a new pane in the named session.
-    CreatePaneIn { session_name: String },
+    CreatePaneIn {
+        session_name: String,
+    },
     /// IPC: Get the full layout state of a session.
-    GetLayout { session_name: String },
+    GetLayout {
+        session_name: String,
+    },
     /// Apply a layout template to create/recreate a session.
-    ApplyTemplate { template_name: String, session_name: String },
+    ApplyTemplate {
+        template_name: String,
+        session_name: String,
+    },
     /// List available templates.
     ListTemplates,
     /// Save current session layout as a template.
-    SaveTemplate { template_name: String, session_name: String },
+    SaveTemplate {
+        template_name: String,
+        session_name: String,
+    },
 }
 
 /// Control messages from server to client (msgpack encoded, tags 0x10-0x1F).
@@ -422,9 +456,16 @@ pub enum ServerMessage {
     /// IPC response: list of panes.
     PaneListReply { panes: Vec<PaneDetailInfo> },
     /// IPC response: command result.
-    CommandResult { success: bool, message: String, pane_id: Option<u64> },
+    CommandResult {
+        success: bool,
+        message: String,
+        pane_id: Option<u64>,
+    },
     /// IPC response: full layout state.
-    LayoutReply { layout: LayoutState, session_name: String },
+    LayoutReply {
+        layout: LayoutState,
+        session_name: String,
+    },
     /// Template was applied successfully.
     TemplateApplied { session_name: String },
     /// List of available templates.
@@ -521,6 +562,15 @@ pub struct DamageRegion {
     pub cells: Vec<PackedCell>,
 }
 
+impl DamageRegion {
+    pub fn cell_count(&self) -> usize {
+        self.right
+            .checked_sub(self.left)
+            .map(|width| width as usize + 1)
+            .unwrap_or(0)
+    }
+}
+
 /// Incremental cell update for a pane (tag 0x20).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CellDelta {
@@ -574,6 +624,15 @@ pub struct BorrowedRegionMeta {
     pub sm_len: usize,
 }
 
+impl BorrowedRegionMeta {
+    pub fn cell_count(&self) -> usize {
+        self.right
+            .checked_sub(self.left)
+            .map(|width| width as usize + 1)
+            .unwrap_or(0)
+    }
+}
+
 /// Borrowed variant of `CellDelta`. Owns the raw payload `Vec<u8>` and stores
 /// parsed region metadata (offsets into SM opcode streams). Cell data is decoded
 /// on demand via `decode_sm_cells` rather than zero-copy cast.
@@ -593,6 +652,7 @@ pub struct CellDeltaBorrowed {
 
 impl CellDeltaBorrowed {
     /// Construct from pre-parsed metadata and the raw payload.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         pane_id: u64,
         generation: u64,
@@ -701,5 +761,37 @@ mod tests {
             let decoded: &PackedColor = bytemuck::from_bytes(bytes);
             assert_eq!(*decoded, color);
         }
+    }
+
+    #[test]
+    fn packed_cell_default_layout_stays_stable() {
+        let cell = PackedCell::default();
+        assert_eq!(cell.ch(), DEFAULT_CELL_CHAR);
+        assert_eq!(cell.fg, DEFAULT_FOREGROUND);
+        assert_eq!(cell.bg, DEFAULT_BACKGROUND);
+        assert_eq!(cell.flags_u16(), DEFAULT_CELL_FLAGS);
+    }
+
+    #[test]
+    fn damage_region_cell_count_uses_inclusive_bounds() {
+        let region = DamageRegion {
+            line: 3,
+            left: 4,
+            right: 6,
+            cells: vec![PackedCell::default(); 3],
+        };
+        assert_eq!(region.cell_count(), 3);
+    }
+
+    #[test]
+    fn borrowed_region_cell_count_uses_inclusive_bounds() {
+        let region = BorrowedRegionMeta {
+            line: 7,
+            left: 10,
+            right: 12,
+            sm_offset: 0,
+            sm_len: 5,
+        };
+        assert_eq!(region.cell_count(), 3);
     }
 }

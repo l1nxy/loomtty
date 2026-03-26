@@ -10,8 +10,8 @@ use ciri_config::config::RenderConfig;
 use crossfont::{
     BitmapBuffer, FontDesc, FontKey, GlyphKey, Rasterize, Rasterizer, Size, Slant, Style, Weight,
 };
-use freetype::face::LoadFlag;
 use freetype::Library as FtLibrary;
+use freetype::face::LoadFlag;
 use std::collections::HashMap;
 
 // ─── Font style ──────────────────────────────────────────────────────
@@ -139,6 +139,14 @@ impl ShelfPacker {
     }
 }
 
+#[derive(Clone, Copy)]
+struct AtlasRegion {
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+}
+
 // ─── Pending upload ──────────────────────────────────────────────────
 
 /// Queued glyph pixel data, flushed to GPU at frame start by the backend.
@@ -221,6 +229,7 @@ impl GlyphCache {
     ///
     /// `primary_font_path` is the file path + face index for the thin FreeType
     /// path used by `ensure_glyph_id()`. Obtained from `TextShaper::primary_font_path()`.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         font_size_pt: f32,
         dpi_scale: f64,
@@ -243,14 +252,27 @@ impl GlyphCache {
 
         let regular_desc = FontDesc::new(
             family_name,
-            Style::Description { slant: Slant::Normal, weight: Weight::Normal },
+            Style::Description {
+                slant: Slant::Normal,
+                weight: Weight::Normal,
+            },
         );
         let regular_key = rasterizer
             .load_font(&regular_desc, font_size)
             .or_else(|e| {
-                log::warn!("font '{}' not found ({:?}), trying monospace fallback", family_name, e);
+                log::warn!(
+                    "font '{}' not found ({:?}), trying monospace fallback",
+                    family_name,
+                    e
+                );
                 rasterizer.load_font(
-                    &FontDesc::new("monospace", Style::Description { slant: Slant::Normal, weight: Weight::Normal }),
+                    &FontDesc::new(
+                        "monospace",
+                        Style::Description {
+                            slant: Slant::Normal,
+                            weight: Weight::Normal,
+                        },
+                    ),
                     font_size,
                 )
             })
@@ -258,21 +280,39 @@ impl GlyphCache {
 
         let bold_key = rasterizer
             .load_font(
-                &FontDesc::new(family_name, Style::Description { slant: Slant::Normal, weight: Weight::Bold }),
+                &FontDesc::new(
+                    family_name,
+                    Style::Description {
+                        slant: Slant::Normal,
+                        weight: Weight::Bold,
+                    },
+                ),
                 font_size,
             )
             .unwrap_or(regular_key);
 
         let italic_key = rasterizer
             .load_font(
-                &FontDesc::new(family_name, Style::Description { slant: Slant::Italic, weight: Weight::Normal }),
+                &FontDesc::new(
+                    family_name,
+                    Style::Description {
+                        slant: Slant::Italic,
+                        weight: Weight::Normal,
+                    },
+                ),
                 font_size,
             )
             .unwrap_or(regular_key);
 
         let bold_italic_key = rasterizer
             .load_font(
-                &FontDesc::new(family_name, Style::Description { slant: Slant::Italic, weight: Weight::Bold }),
+                &FontDesc::new(
+                    family_name,
+                    Style::Description {
+                        slant: Slant::Italic,
+                        weight: Weight::Bold,
+                    },
+                ),
                 font_size,
             )
             .unwrap_or(regular_key);
@@ -377,11 +417,7 @@ impl GlyphCache {
     }
 
     /// Ensure a glyph for `ch` with the given `style` is in the atlas.
-    pub fn ensure_styled_char(
-        &mut self,
-        ch: char,
-        style: FontStyle,
-    ) -> Option<GlyphEntry> {
+    pub fn ensure_styled_char(&mut self, ch: char, style: FontStyle) -> Option<GlyphEntry> {
         let key = (ch, style);
         if let Some(entry) = self.cache.get(&key) {
             return Some(*entry);
@@ -416,7 +452,7 @@ impl GlyphCache {
         }
 
         let rasterized = convert_crossfont_glyph(glyph);
-        let entry = self.upload_rasterized(rasterized)?;
+        let entry = self.cache_rasterized_glyph(rasterized)?;
         self.cache.insert(key, entry);
         Some(entry)
     }
@@ -454,14 +490,15 @@ impl GlyphCache {
             FontClass::Primary => (self.ft_face.as_ref(), self.ft_pixel_size),
         };
         let constrained = wide;
-        let glyph = self.rasterize_glyph_id_ft(ft_face, glyph_id, style, pixel_size, constrained)?;
+        let glyph =
+            self.rasterize_glyph_id_ft(ft_face, glyph_id, style, pixel_size, constrained)?;
 
         if glyph.width == 0 || glyph.height == 0 {
             self.glyph_id_cache.insert(key, GlyphEntry::EMPTY);
             return Some(GlyphEntry::EMPTY);
         }
 
-        let entry = self.upload_rasterized(glyph)?;
+        let entry = self.cache_rasterized_glyph(glyph)?;
         self.glyph_id_cache.insert(key, entry);
         Some(entry)
     }
@@ -493,7 +530,7 @@ impl GlyphCache {
             if is_bgra && bitmap.width() > 0 && bitmap.rows() > 0 {
                 let w = bitmap.width() as u32;
                 let h = bitmap.rows() as u32;
-                let pitch = bitmap.pitch().unsigned_abs() as u32;
+                let pitch = bitmap.pitch().unsigned_abs();
                 let raw = bitmap.buffer();
                 // Convert BGRA → RGBA
                 let mut data = Vec::with_capacity((w * h * 4) as usize);
@@ -504,7 +541,7 @@ impl GlyphCache {
                         if offset + 3 < raw.len() {
                             data.push(raw[offset + 2]); // R
                             data.push(raw[offset + 1]); // G
-                            data.push(raw[offset]);     // B
+                            data.push(raw[offset]); // B
                             data.push(raw[offset + 3]); // A
                         }
                     }
@@ -548,11 +585,11 @@ impl GlyphCache {
         let need_synth_bold = matches!(style, FontStyle::Bold | FontStyle::BoldItalic);
         let need_synth_italic = matches!(style, FontStyle::Italic | FontStyle::BoldItalic);
         unsafe {
-            let slot = (*ft_face.raw()).glyph;
+            let slot = ft_face.raw().glyph;
             if (*slot).format == freetype::ffi::FT_GLYPH_FORMAT_OUTLINE {
                 let outline = &mut (*slot).outline;
                 if need_synth_bold {
-                    let font_height = (*(*ft_face.raw()).size).metrics.height as f64;
+                    let font_height = (*ft_face.raw().size).metrics.height as f64;
                     let amount = (font_height * 64.0 / 2048.0).ceil() as freetype::ffi::FT_Pos;
                     freetype::ffi::FT_Outline_Embolden(outline, amount);
                 }
@@ -577,7 +614,7 @@ impl GlyphCache {
             return None;
         }
 
-        let pitch = bitmap.pitch().unsigned_abs() as u32;
+        let pitch = bitmap.pitch().unsigned_abs();
         let raw = bitmap.buffer();
         let mut data = Vec::with_capacity((w * h) as usize);
         for row in 0..h {
@@ -599,45 +636,49 @@ impl GlyphCache {
     }
 
     /// Allocate atlas space, queue pixel data for upload, return the entry.
-    fn upload_rasterized(&mut self, glyph: RasterizedGlyph) -> Option<GlyphEntry> {
-        let w = glyph.width;
-        let h = glyph.height;
-        if glyph.is_color {
-            let (ax, ay) = match self.color_packer.allocate(w, h) {
-                Some(pos) => pos,
-                None => {
-                    log::warn!("color atlas full, flagging for clear");
-                    self.atlas_needs_clear = true;
-                    return None;
-                }
-            };
-            let entry = make_glyph_entry(
-                ax, ay, w, h, glyph.bearing_x, glyph.bearing_y,
-                self.atlas_size, true,
-            );
-            self.color_pending.push(PendingUpload {
-                x: ax, y: ay, w, h,
-                data: glyph.data,
-            });
-            Some(entry)
+    fn cache_rasterized_glyph(&mut self, glyph: RasterizedGlyph) -> Option<GlyphEntry> {
+        let region = self.allocate_atlas_region(glyph.width, glyph.height, glyph.is_color)?;
+        let entry = make_glyph_entry(
+            region,
+            glyph.bearing_x,
+            glyph.bearing_y,
+            self.atlas_size,
+            glyph.is_color,
+        );
+        self.queue_upload(region, glyph.data, glyph.is_color);
+        Some(entry)
+    }
+
+    fn allocate_atlas_region(&mut self, w: u32, h: u32, is_color: bool) -> Option<AtlasRegion> {
+        let pos = if is_color {
+            self.color_packer.allocate(w, h)
         } else {
-            let (ax, ay) = match self.alpha_packer.allocate(w, h) {
-                Some(pos) => pos,
-                None => {
-                    log::warn!("alpha atlas full, flagging for clear");
-                    self.atlas_needs_clear = true;
-                    return None;
-                }
-            };
-            let entry = make_glyph_entry(
-                ax, ay, w, h, glyph.bearing_x, glyph.bearing_y,
-                self.atlas_size, false,
-            );
-            self.alpha_pending.push(PendingUpload {
-                x: ax, y: ay, w, h,
-                data: glyph.data,
-            });
-            Some(entry)
+            self.alpha_packer.allocate(w, h)
+        };
+        let (x, y) = match pos {
+            Some(pos) => pos,
+            None => {
+                let atlas_name = if is_color { "color" } else { "alpha" };
+                log::warn!("{atlas_name} atlas full, flagging for clear");
+                self.atlas_needs_clear = true;
+                return None;
+            }
+        };
+        Some(AtlasRegion { x, y, w, h })
+    }
+
+    fn queue_upload(&mut self, region: AtlasRegion, data: Vec<u8>, is_color: bool) {
+        let pending = PendingUpload {
+            x: region.x,
+            y: region.y,
+            w: region.w,
+            h: region.h,
+            data,
+        };
+        if is_color {
+            self.color_pending.push(pending);
+        } else {
+            self.alpha_pending.push(pending);
         }
     }
 
@@ -648,9 +689,7 @@ impl GlyphCache {
 
     /// Drain pending glyph uploads for the GPU backend to consume.
     /// Returns `(alpha_uploads, color_uploads, alpha_needs_clear, color_needs_clear)`.
-    pub fn take_pending(
-        &mut self,
-    ) -> (Vec<PendingUpload>, Vec<PendingUpload>, bool, bool) {
+    pub fn take_pending(&mut self) -> (Vec<PendingUpload>, Vec<PendingUpload>, bool, bool) {
         let alpha_clear = std::mem::take(&mut self.alpha_pending_clear);
         let color_clear = std::mem::take(&mut self.color_pending_clear);
         (
@@ -730,16 +769,14 @@ fn convert_crossfont_glyph(glyph: crossfont::RasterizedGlyph) -> RasterizedGlyph
                 data: alpha_data,
             }
         }
-        BitmapBuffer::Rgba(rgba_data) => {
-            RasterizedGlyph {
-                width: w,
-                height: h,
-                bearing_x: glyph.left as f32,
-                bearing_y: glyph.top as f32,
-                is_color: true,
-                data: rgba_data,
-            }
-        }
+        BitmapBuffer::Rgba(rgba_data) => RasterizedGlyph {
+            width: w,
+            height: h,
+            bearing_x: glyph.left as f32,
+            bearing_y: glyph.top as f32,
+            is_color: true,
+            data: rgba_data,
+        },
     }
 }
 
@@ -755,10 +792,7 @@ struct RasterizedGlyph {
 
 /// Build a `GlyphEntry` from atlas coordinates.
 fn make_glyph_entry(
-    ax: u32,
-    ay: u32,
-    w: u32,
-    h: u32,
+    region: AtlasRegion,
     bearing_x: f32,
     bearing_y: f32,
     atlas_size: u32,
@@ -766,12 +800,12 @@ fn make_glyph_entry(
 ) -> GlyphEntry {
     let s = atlas_size as f32;
     GlyphEntry {
-        u0: ax as f32 / s,
-        v0: ay as f32 / s,
-        u1: (ax + w) as f32 / s,
-        v1: (ay + h) as f32 / s,
-        width: w as u16,
-        height: h as u16,
+        u0: region.x as f32 / s,
+        v0: region.y as f32 / s,
+        u1: (region.x + region.w) as f32 / s,
+        v1: (region.y + region.h) as f32 / s,
+        width: region.w as u16,
+        height: region.h as u16,
         bearing_x,
         bearing_y,
         is_color,
@@ -783,6 +817,23 @@ fn make_glyph_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ciri_config::config::CiriConfig;
+
+    fn test_cache(atlas_size: u32) -> GlyphCache {
+        let mut config = CiriConfig::default();
+        config.render.atlas_size = atlas_size;
+        GlyphCache::new(
+            config.font.size,
+            1.0,
+            &config.font.family,
+            None,
+            None,
+            None,
+            None,
+            None,
+            &config.render,
+        )
+    }
 
     #[test]
     fn shelf_packer_basic() {
@@ -869,5 +920,74 @@ mod tests {
         let converted = convert_crossfont_glyph(glyph);
         assert!(converted.is_color);
         assert_eq!(converted.data, vec![255, 0, 0, 128]);
+    }
+
+    #[test]
+    fn clear_cache_resets_packers_and_marks_pending_clear() {
+        let mut cache = test_cache(32);
+        cache
+            .cache
+            .insert(('A', FontStyle::Regular), GlyphEntry::EMPTY);
+        cache.glyph_id_cache.insert(
+            (1, FontClass::Primary, FontStyle::Regular, false),
+            GlyphEntry::EMPTY,
+        );
+        cache.alpha_pending.push(PendingUpload {
+            x: 0,
+            y: 0,
+            w: 1,
+            h: 1,
+            data: vec![255],
+        });
+        cache.color_pending.push(PendingUpload {
+            x: 0,
+            y: 0,
+            w: 1,
+            h: 1,
+            data: vec![255, 0, 0, 255],
+        });
+
+        cache.clear_cache();
+        let (alpha, color, alpha_clear, color_clear) = cache.take_pending();
+
+        assert!(cache.cache.is_empty());
+        assert!(cache.glyph_id_cache.is_empty());
+        assert_eq!(cache.alpha_packer.allocate(4, 4), Some((0, 0)));
+        assert_eq!(cache.color_packer.allocate(4, 4), Some((0, 0)));
+        assert!(alpha.is_empty());
+        assert!(color.is_empty());
+        assert!(alpha_clear);
+        assert!(color_clear);
+    }
+
+    #[test]
+    fn atlas_full_sets_needs_clear_without_queueing_uploads() {
+        let mut cache = test_cache(4);
+        let glyph = RasterizedGlyph {
+            width: 4,
+            height: 4,
+            bearing_x: 0.0,
+            bearing_y: 0.0,
+            is_color: false,
+            data: vec![255; 16],
+        };
+        assert!(cache.cache_rasterized_glyph(glyph).is_some());
+
+        let overflow = RasterizedGlyph {
+            width: 1,
+            height: 1,
+            bearing_x: 0.0,
+            bearing_y: 0.0,
+            is_color: false,
+            data: vec![255],
+        };
+        assert!(cache.cache_rasterized_glyph(overflow).is_none());
+        assert!(cache.atlas_needs_clear);
+
+        let (alpha, color, alpha_clear, color_clear) = cache.take_pending();
+        assert_eq!(alpha.len(), 1);
+        assert!(color.is_empty());
+        assert!(!alpha_clear);
+        assert!(!color_clear);
     }
 }

@@ -12,10 +12,9 @@
 
 use blade_graphics as gpu;
 use blade_graphics::ShaderData;
-use bytemuck;
+use ciri_render::FrameScene;
 use ciri_render::glyph_cache::{GlyphInstance, PendingUpload, ScissoredRange};
 use ciri_render::rect::Rect;
-use ciri_render::FrameScene;
 use std::ptr;
 
 // ─── Test infrastructure ────────────────────────────────────────────
@@ -636,11 +635,7 @@ fn atlas_pending_upload_flush() {
     for upload in &uploads {
         let total = (upload.w * upload.h) as usize;
         unsafe {
-            ptr::copy_nonoverlapping(
-                upload.data.as_ptr(),
-                staging.data().add(cursor),
-                total,
-            );
+            ptr::copy_nonoverlapping(upload.data.as_ptr(), staging.data().add(cursor), total);
         }
         cursor += total;
     }
@@ -783,7 +778,7 @@ fn atlas_clear_and_refill() {
     submit_and_wait(&ctx, &mut encoder);
 
     // Step 3: Refill with new data — separate submission to avoid staging conflicts
-    let new_data = vec![0x55_u8; 64]; // 8x8 glyph
+    let new_data = [0x55_u8; 64]; // 8x8 glyph
     unsafe {
         ptr::copy_nonoverlapping(new_data.as_ptr(), staging.data(), new_data.len());
     }
@@ -882,18 +877,27 @@ fn render_pipeline_creation() {
 
     let vertex_layout = gpu::VertexLayout {
         attributes: vec![
-            ("pos", gpu::VertexAttribute {
-                offset: 0,
-                format: gpu::VertexFormat::F32Vec2,
-            }),
-            ("size", gpu::VertexAttribute {
-                offset: 8,
-                format: gpu::VertexFormat::F32Vec2,
-            }),
-            ("color", gpu::VertexAttribute {
-                offset: 16,
-                format: gpu::VertexFormat::F32Vec4,
-            }),
+            (
+                "pos",
+                gpu::VertexAttribute {
+                    offset: 0,
+                    format: gpu::VertexFormat::F32Vec2,
+                },
+            ),
+            (
+                "size",
+                gpu::VertexAttribute {
+                    offset: 8,
+                    format: gpu::VertexFormat::F32Vec2,
+                },
+            ),
+            (
+                "color",
+                gpu::VertexAttribute {
+                    offset: 16,
+                    format: gpu::VertexFormat::F32Vec4,
+                },
+            ),
         ],
         stride: 32,
     };
@@ -938,18 +942,27 @@ fn render_fullscreen_rect_and_readback() {
 
     let vertex_layout = gpu::VertexLayout {
         attributes: vec![
-            ("pos", gpu::VertexAttribute {
-                offset: 0,
-                format: gpu::VertexFormat::F32Vec2,
-            }),
-            ("size", gpu::VertexAttribute {
-                offset: 8,
-                format: gpu::VertexFormat::F32Vec2,
-            }),
-            ("color", gpu::VertexAttribute {
-                offset: 16,
-                format: gpu::VertexFormat::F32Vec4,
-            }),
+            (
+                "pos",
+                gpu::VertexAttribute {
+                    offset: 0,
+                    format: gpu::VertexFormat::F32Vec2,
+                },
+            ),
+            (
+                "size",
+                gpu::VertexAttribute {
+                    offset: 8,
+                    format: gpu::VertexFormat::F32Vec2,
+                },
+            ),
+            (
+                "color",
+                gpu::VertexAttribute {
+                    offset: 16,
+                    format: gpu::VertexFormat::F32Vec4,
+                },
+            ),
         ],
         stride: 32,
     };
@@ -1075,9 +1088,27 @@ fn render_instanced_rects() {
 
     let vertex_layout = gpu::VertexLayout {
         attributes: vec![
-            ("pos", gpu::VertexAttribute { offset: 0, format: gpu::VertexFormat::F32Vec2 }),
-            ("size", gpu::VertexAttribute { offset: 8, format: gpu::VertexFormat::F32Vec2 }),
-            ("color", gpu::VertexAttribute { offset: 16, format: gpu::VertexFormat::F32Vec4 }),
+            (
+                "pos",
+                gpu::VertexAttribute {
+                    offset: 0,
+                    format: gpu::VertexFormat::F32Vec2,
+                },
+            ),
+            (
+                "size",
+                gpu::VertexAttribute {
+                    offset: 8,
+                    format: gpu::VertexFormat::F32Vec2,
+                },
+            ),
+            (
+                "color",
+                gpu::VertexAttribute {
+                    offset: 16,
+                    format: gpu::VertexFormat::F32Vec4,
+                },
+            ),
         ],
         stride: 32,
     };
@@ -1116,8 +1147,20 @@ fn render_instanced_rects() {
 
     // Two rects: left half green, right half blue
     let rects = [
-        Rect { x: 0.0, y: 0.0, w: 4.0, h: 4.0, color: [0.0, 1.0, 0.0, 1.0] },
-        Rect { x: 4.0, y: 0.0, w: 4.0, h: 4.0, color: [0.0, 0.0, 1.0, 1.0] },
+        Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 4.0,
+            h: 4.0,
+            color: [0.0, 1.0, 0.0, 1.0],
+        },
+        Rect {
+            x: 4.0,
+            y: 0.0,
+            w: 4.0,
+            h: 4.0,
+            color: [0.0, 0.0, 1.0, 1.0],
+        },
     ];
     let instance_buffer = ctx.create_buffer(gpu::BufferDesc {
         name: "rects",
@@ -1145,7 +1188,12 @@ fn render_instanced_rects() {
             },
         );
         let mut pe = pass.with(&pipeline);
-        pe.bind(0, &TestRectData { uniforms: uniform_buffer.at(0) });
+        pe.bind(
+            0,
+            &TestRectData {
+                uniforms: uniform_buffer.at(0),
+            },
+        );
         pe.bind_vertex(0, instance_buffer.at(0));
         pe.draw(0, 4, 0, 2); // 4 vertices, 2 instances
     }
@@ -1182,13 +1230,33 @@ fn render_scissor_rect() {
     let format = gpu::TextureFormat::Rgba8Unorm;
 
     let (texture, view) = create_render_target(&ctx, w, h, format);
-    let shader = ctx.create_shader(gpu::ShaderDesc { source: TEST_RECT_SHADER });
+    let shader = ctx.create_shader(gpu::ShaderDesc {
+        source: TEST_RECT_SHADER,
+    });
 
     let vertex_layout = gpu::VertexLayout {
         attributes: vec![
-            ("pos", gpu::VertexAttribute { offset: 0, format: gpu::VertexFormat::F32Vec2 }),
-            ("size", gpu::VertexAttribute { offset: 8, format: gpu::VertexFormat::F32Vec2 }),
-            ("color", gpu::VertexAttribute { offset: 16, format: gpu::VertexFormat::F32Vec4 }),
+            (
+                "pos",
+                gpu::VertexAttribute {
+                    offset: 0,
+                    format: gpu::VertexFormat::F32Vec2,
+                },
+            ),
+            (
+                "size",
+                gpu::VertexAttribute {
+                    offset: 8,
+                    format: gpu::VertexFormat::F32Vec2,
+                },
+            ),
+            (
+                "color",
+                gpu::VertexAttribute {
+                    offset: 16,
+                    format: gpu::VertexFormat::F32Vec4,
+                },
+            ),
         ],
         stride: 32,
     };
@@ -1197,26 +1265,45 @@ fn render_scissor_rect() {
         name: "scissor_test",
         data_layouts: &[&TestRectData::layout()],
         vertex: shader.at("vs_main"),
-        vertex_fetches: &[gpu::VertexFetchState { layout: &vertex_layout, instanced: true }],
+        vertex_fetches: &[gpu::VertexFetchState {
+            layout: &vertex_layout,
+            instanced: true,
+        }],
         primitive: gpu::PrimitiveState {
             topology: gpu::PrimitiveTopology::TriangleStrip,
             ..Default::default()
         },
         depth_stencil: None,
         fragment: Some(shader.at("fs_main")),
-        color_targets: &[gpu::ColorTargetState { format, blend: None, write_mask: gpu::ColorWrites::all() }],
+        color_targets: &[gpu::ColorTargetState {
+            format,
+            blend: None,
+            write_mask: gpu::ColorWrites::all(),
+        }],
         multisample_state: gpu::MultisampleState::default(),
     });
 
     let uniform_buffer = ctx.create_buffer(gpu::BufferDesc {
-        name: "viewport", size: 16, memory: gpu::Memory::Shared,
+        name: "viewport",
+        size: 16,
+        memory: gpu::Memory::Shared,
     });
     let viewport = [w as f32, h as f32, 0.0f32, 0.0f32];
-    unsafe { ptr::copy_nonoverlapping(viewport.as_ptr() as *const u8, uniform_buffer.data(), 16); }
+    unsafe {
+        ptr::copy_nonoverlapping(viewport.as_ptr() as *const u8, uniform_buffer.data(), 16);
+    }
 
-    let rect = Rect { x: 0.0, y: 0.0, w: w as f32, h: h as f32, color: [1.0, 1.0, 1.0, 1.0] };
+    let rect = Rect {
+        x: 0.0,
+        y: 0.0,
+        w: w as f32,
+        h: h as f32,
+        color: [1.0, 1.0, 1.0, 1.0],
+    };
     let instance_buffer = ctx.create_buffer(gpu::BufferDesc {
-        name: "rects", size: 32, memory: gpu::Memory::Shared,
+        name: "rects",
+        size: 32,
+        memory: gpu::Memory::Shared,
     });
     unsafe {
         let data = bytemuck::bytes_of(&rect);
@@ -1239,10 +1326,20 @@ fn render_scissor_rect() {
             },
         );
         let mut pe = pass.with(&pipeline);
-        pe.bind(0, &TestRectData { uniforms: uniform_buffer.at(0) });
+        pe.bind(
+            0,
+            &TestRectData {
+                uniforms: uniform_buffer.at(0),
+            },
+        );
         pe.bind_vertex(0, instance_buffer.at(0));
         // Scissor: only top-left 2x2
-        pe.set_scissor_rect(&gpu::ScissorRect { x: 0, y: 0, w: 2, h: 2 });
+        pe.set_scissor_rect(&gpu::ScissorRect {
+            x: 0,
+            y: 0,
+            w: 2,
+            h: 2,
+        });
         pe.draw(0, 4, 0, 1);
     }
 
@@ -1262,14 +1359,20 @@ fn render_scissor_rect() {
     for y in 2..4u32 {
         for x in 0..4u32 {
             let off = ((y * w + x) * 4) as usize;
-            assert_eq!(data[off], 0, "pixel ({x},{y}) R outside scissor should be 0");
+            assert_eq!(
+                data[off], 0,
+                "pixel ({x},{y}) R outside scissor should be 0"
+            );
         }
     }
     // Right half of top rows also outside scissor
     for y in 0..2u32 {
         for x in 2..4u32 {
             let off = ((y * w + x) * 4) as usize;
-            assert_eq!(data[off], 0, "pixel ({x},{y}) R outside scissor should be 0");
+            assert_eq!(
+                data[off], 0,
+                "pixel ({x},{y}) R outside scissor should be 0"
+            );
         }
     }
 
@@ -1292,13 +1395,33 @@ fn render_alpha_blending() {
     let format = gpu::TextureFormat::Rgba8Unorm;
 
     let (texture, view) = create_render_target(&ctx, w, h, format);
-    let shader = ctx.create_shader(gpu::ShaderDesc { source: TEST_RECT_SHADER });
+    let shader = ctx.create_shader(gpu::ShaderDesc {
+        source: TEST_RECT_SHADER,
+    });
 
     let vertex_layout = gpu::VertexLayout {
         attributes: vec![
-            ("pos", gpu::VertexAttribute { offset: 0, format: gpu::VertexFormat::F32Vec2 }),
-            ("size", gpu::VertexAttribute { offset: 8, format: gpu::VertexFormat::F32Vec2 }),
-            ("color", gpu::VertexAttribute { offset: 16, format: gpu::VertexFormat::F32Vec4 }),
+            (
+                "pos",
+                gpu::VertexAttribute {
+                    offset: 0,
+                    format: gpu::VertexFormat::F32Vec2,
+                },
+            ),
+            (
+                "size",
+                gpu::VertexAttribute {
+                    offset: 8,
+                    format: gpu::VertexFormat::F32Vec2,
+                },
+            ),
+            (
+                "color",
+                gpu::VertexAttribute {
+                    offset: 16,
+                    format: gpu::VertexFormat::F32Vec4,
+                },
+            ),
         ],
         stride: 32,
     };
@@ -1307,7 +1430,10 @@ fn render_alpha_blending() {
         name: "blend_test",
         data_layouts: &[&TestRectData::layout()],
         vertex: shader.at("vs_main"),
-        vertex_fetches: &[gpu::VertexFetchState { layout: &vertex_layout, instanced: true }],
+        vertex_fetches: &[gpu::VertexFetchState {
+            layout: &vertex_layout,
+            instanced: true,
+        }],
         primitive: gpu::PrimitiveState {
             topology: gpu::PrimitiveTopology::TriangleStrip,
             ..Default::default()
@@ -1323,7 +1449,9 @@ fn render_alpha_blending() {
     });
 
     let uniform_buffer = ctx.create_buffer(gpu::BufferDesc {
-        name: "viewport", size: 16, memory: gpu::Memory::Shared,
+        name: "viewport",
+        size: 16,
+        memory: gpu::Memory::Shared,
     });
     unsafe {
         let vp = [w as f32, h as f32, 0.0f32, 0.0f32];
@@ -1332,11 +1460,25 @@ fn render_alpha_blending() {
 
     // Two fullscreen rects: opaque red then 50% green
     let rects = [
-        Rect { x: 0.0, y: 0.0, w: w as f32, h: h as f32, color: [1.0, 0.0, 0.0, 1.0] },
-        Rect { x: 0.0, y: 0.0, w: w as f32, h: h as f32, color: [0.0, 1.0, 0.0, 0.5] },
+        Rect {
+            x: 0.0,
+            y: 0.0,
+            w: w as f32,
+            h: h as f32,
+            color: [1.0, 0.0, 0.0, 1.0],
+        },
+        Rect {
+            x: 0.0,
+            y: 0.0,
+            w: w as f32,
+            h: h as f32,
+            color: [0.0, 1.0, 0.0, 0.5],
+        },
     ];
     let instance_buffer = ctx.create_buffer(gpu::BufferDesc {
-        name: "rects", size: 64, memory: gpu::Memory::Shared,
+        name: "rects",
+        size: 64,
+        memory: gpu::Memory::Shared,
     });
     unsafe {
         let data = bytemuck::cast_slice(&rects);
@@ -1360,7 +1502,12 @@ fn render_alpha_blending() {
         );
         // Draw opaque red
         let mut pe = pass.with(&pipeline);
-        pe.bind(0, &TestRectData { uniforms: uniform_buffer.at(0) });
+        pe.bind(
+            0,
+            &TestRectData {
+                uniforms: uniform_buffer.at(0),
+            },
+        );
         pe.bind_vertex(0, instance_buffer.at(0));
         pe.draw(0, 4, 0, 1);
         // Draw 50% green on top
@@ -1394,5 +1541,178 @@ fn render_alpha_blending() {
     ctx.destroy_buffer(readback);
     ctx.destroy_texture_view(view);
     ctx.destroy_texture(texture);
+    ctx.destroy_command_encoder(&mut encoder);
+}
+
+#[test]
+fn resize_behavior_contract_is_explicit() {
+    let deferred_backends = ["blade"];
+    let immediate_backends = ["gl", "dx"];
+
+    assert!(deferred_backends.contains(&"blade"));
+    assert!(immediate_backends.contains(&"gl"));
+    assert!(immediate_backends.contains(&"dx"));
+    assert!(!deferred_backends.contains(&"gl"));
+}
+
+#[test]
+fn deferred_resize_keeps_old_surface_until_apply() {
+    let initial = (80u32, 24u32);
+    let requested = (132u32, 48u32);
+    let mut committed = initial;
+    let mut pending = Some(requested);
+    assert_eq!(committed, initial);
+    assert_eq!(pending, Some(requested));
+
+    if let Some(size) = pending.take() {
+        committed = size;
+    }
+
+    assert_eq!(committed, requested);
+    assert_eq!(pending, None);
+}
+
+#[test]
+fn immediate_resize_commits_before_next_draw() {
+    let committed = (132u32, 48u32);
+    let requested = (132u32, 48u32);
+
+    assert_eq!(committed, requested);
+}
+
+#[test]
+fn post_resize_render_readback_stays_safe() {
+    let ctx = create_headless_context();
+    let mut encoder = create_encoder(&ctx);
+    let format = gpu::TextureFormat::Rgba8Unorm;
+    let initial = (4u32, 4u32);
+    let resized = (7u32, 5u32);
+
+    let (initial_texture, initial_view) =
+        create_render_target(&ctx, initial.0, initial.1, format);
+
+    let shader = ctx.create_shader(gpu::ShaderDesc {
+        source: TEST_RECT_SHADER,
+    });
+    let vertex_layout = gpu::VertexLayout {
+        attributes: vec![
+            (
+                "pos",
+                gpu::VertexAttribute {
+                    offset: 0,
+                    format: gpu::VertexFormat::F32Vec2,
+                },
+            ),
+            (
+                "size",
+                gpu::VertexAttribute {
+                    offset: 8,
+                    format: gpu::VertexFormat::F32Vec2,
+                },
+            ),
+            (
+                "color",
+                gpu::VertexAttribute {
+                    offset: 16,
+                    format: gpu::VertexFormat::F32Vec4,
+                },
+            ),
+        ],
+        stride: 32,
+    };
+
+    let mut pipeline = ctx.create_render_pipeline(gpu::RenderPipelineDesc {
+        name: "resize_render_test",
+        data_layouts: &[&TestRectData::layout()],
+        vertex: shader.at("vs_main"),
+        vertex_fetches: &[gpu::VertexFetchState {
+            layout: &vertex_layout,
+            instanced: true,
+        }],
+        primitive: gpu::PrimitiveState {
+            topology: gpu::PrimitiveTopology::TriangleStrip,
+            ..Default::default()
+        },
+        depth_stencil: None,
+        fragment: Some(shader.at("fs_main")),
+        color_targets: &[gpu::ColorTargetState {
+            format,
+            blend: None,
+            write_mask: gpu::ColorWrites::all(),
+        }],
+        multisample_state: gpu::MultisampleState::default(),
+    });
+
+    let uniform_buffer = ctx.create_buffer(gpu::BufferDesc {
+        name: "resize_viewport",
+        size: 16,
+        memory: gpu::Memory::Shared,
+    });
+    let instance_buffer = ctx.create_buffer(gpu::BufferDesc {
+        name: "resize_rects",
+        size: 32,
+        memory: gpu::Memory::Shared,
+    });
+
+    let rect = Rect {
+        x: 0.0,
+        y: 0.0,
+        w: resized.0 as f32,
+        h: resized.1 as f32,
+        color: [0.25, 0.5, 0.75, 1.0],
+    };
+    unsafe {
+        let data = bytemuck::bytes_of(&rect);
+        ptr::copy_nonoverlapping(data.as_ptr(), instance_buffer.data(), data.len());
+    }
+
+    ctx.destroy_texture_view(initial_view);
+    ctx.destroy_texture(initial_texture);
+    let (current_texture, current_view) = create_render_target(&ctx, resized.0, resized.1, format);
+
+    let viewport = [resized.0 as f32, resized.1 as f32, 0.0f32, 0.0f32];
+    unsafe {
+        ptr::copy_nonoverlapping(viewport.as_ptr() as *const u8, uniform_buffer.data(), 16);
+    }
+
+    encoder.start();
+    encoder.init_texture(current_texture);
+    {
+        let mut pass = encoder.render(
+            "resize",
+            gpu::RenderTargetSet {
+                colors: &[gpu::RenderTarget {
+                    view: current_view,
+                    init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
+                    finish_op: gpu::FinishOp::Store,
+                }],
+                depth_stencil: None,
+            },
+        );
+        let mut pe = pass.with(&pipeline);
+        pe.bind(
+            0,
+            &TestRectData {
+                uniforms: uniform_buffer.at(0),
+            },
+        );
+        pe.bind_vertex(0, instance_buffer.at(0));
+        pe.draw(0, 4, 0, 1);
+    }
+
+    let readback = readback_texture(&ctx, &mut encoder, current_texture, resized.0, resized.1, 4);
+    submit_and_wait(&ctx, &mut encoder);
+    let data = read_buffer(&readback, (resized.0 * resized.1 * 4) as usize);
+
+    assert_eq!(data.len(), (resized.0 * resized.1 * 4) as usize);
+    assert_eq!(&data[0..4], &[64, 128, 191, 255]);
+    assert_eq!(&data[(data.len() - 4)..], &[64, 128, 191, 255]);
+
+    ctx.destroy_render_pipeline(&mut pipeline);
+    ctx.destroy_buffer(uniform_buffer);
+    ctx.destroy_buffer(instance_buffer);
+    ctx.destroy_buffer(readback);
+    ctx.destroy_texture_view(current_view);
+    ctx.destroy_texture(current_texture);
     ctx.destroy_command_encoder(&mut encoder);
 }

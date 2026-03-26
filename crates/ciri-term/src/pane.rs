@@ -13,8 +13,8 @@ use std::sync::mpsc;
 use crate::dec_mode_parser::DecModeParser;
 use crate::event::PtyEventListener;
 use crate::kitty_graphics::KittyGraphicsParser;
-use crate::osc8_parser::Osc8Parser;
 use crate::osc7_parser::Osc7Parser;
+use crate::osc8_parser::Osc8Parser;
 use crate::pty::Pty;
 use crate::shell_integration::Osc133Parser;
 use crate::sixel::SixelParser;
@@ -101,6 +101,24 @@ fn cursor_shape_to_u8(shape: CursorShape) -> u8 {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SnapshotScrollback {
+    rows: usize,
+}
+
+impl SnapshotScrollback {
+    fn full(history_size: usize) -> Self {
+        Self { rows: history_size }
+    }
+
+    fn incremental(current_history: usize, history_sent: usize) -> Self {
+        let retained_history = history_sent.min(current_history);
+        Self {
+            rows: current_history - retained_history,
+        }
+    }
+}
+
 pub struct Pane {
     pub id: PaneId,
     term: Term<PtyEventListener>,
@@ -144,7 +162,13 @@ impl Pane {
     }
 
     /// Create a new pane with CWD override (convenience for OSC 7 CWD inheritance).
-    pub fn new_with_cwd(id: PaneId, cols: u16, rows: u16, shell: &str, cwd: Option<&std::path::Path>) -> Result<Self> {
+    pub fn new_with_cwd(
+        id: PaneId,
+        cols: u16,
+        rows: u16,
+        shell: &str,
+        cwd: Option<&std::path::Path>,
+    ) -> Result<Self> {
         Self::new_with_opts(id, cols, rows, shell, None, cwd)
     }
 
@@ -163,8 +187,10 @@ impl Pane {
             cols: cols as usize,
             rows: rows as usize,
         };
-        let mut config = TermConfig::default();
-        config.kitty_keyboard = true;
+        let config = TermConfig {
+            kitty_keyboard: true,
+            ..TermConfig::default()
+        };
         let (event_listener, event_rx) = PtyEventListener::new();
         let term = Term::new(config, &size, event_listener);
 
@@ -215,7 +241,11 @@ impl Pane {
             // hyperlink, and OSC 7 CWD sequences before VT parsing
             // (alacritty_terminal ignores these).
             for chunk in &chunks {
-                self.osc133_parser.scan(chunk, &mut self.shell_state, &mut self.last_command_duration);
+                self.osc133_parser.scan(
+                    chunk,
+                    &mut self.shell_state,
+                    &mut self.last_command_duration,
+                );
                 self.dec_mode_parser.scan(chunk);
                 self.osc8_parser.scan(chunk);
                 self.osc7_parser.scan(chunk);
@@ -423,40 +453,16 @@ impl Pane {
     /// read at encoding time via `write_cells_into` to avoid intermediate allocations).
     /// Resets damage tracking after extraction.
     pub fn extract_damage(&mut self) -> Option<Vec<(u16, u16, u16)>> {
-        let cols = self.term.grid().columns();
-        let total_rows = self.term.grid().screen_lines();
-
-        if cols == 0 || total_rows == 0 {
+        let Some((total_rows, right)) = self.damage_bounds() else {
             self.term.reset_damage();
             return None;
-        }
-
-        let right = cols.saturating_sub(1) as u16;
+        };
 
         // Determine which lines are damaged, consuming the TermDamage borrow.
         use alacritty_terminal::term::TermDamage;
         let ranges = match self.term.damage() {
-            TermDamage::Full => {
-                let mut ranges = Vec::with_capacity(total_rows);
-                for row in 0..total_rows {
-                    ranges.push((row as u16, 0u16, right));
-                }
-                ranges
-            }
-            TermDamage::Partial(iter) => {
-                let mut seen = [false; 256];
-                let mut ranges = Vec::new();
-                for b in iter {
-                    let line = b.line;
-                    if line < 256 && !seen[line] {
-                        seen[line] = true;
-                        ranges.push((line as u16, 0u16, right));
-                    } else if line >= 256 {
-                        ranges.push((line as u16, 0u16, right));
-                    }
-                }
-                ranges
-            }
+            TermDamage::Full => full_damage_rows(total_rows, right),
+            TermDamage::Partial(iter) => partial_damage_rows(iter, right),
         };
 
         self.term.reset_damage();
@@ -474,7 +480,7 @@ impl Pane {
         let cursor_line = content.cursor.point.line.0 as i16;
         let cursor_col = content.cursor.point.column.0 as u16;
         let cursor_shape = cursor_shape_to_u8(content.cursor.shape);
-        let mode_flags = self.mode_flags_from_term(&term);
+        let mode_flags = self.mode_flags_from_term(term);
         (cursor_line, cursor_col, cursor_shape, mode_flags)
     }
 
@@ -485,63 +491,30 @@ impl Pane {
 
     /// Create a full pane snapshot with incremental scrollback (only new lines since `history_sent`).
     pub fn snapshot_incremental(&self, generation: u64, history_sent: usize) -> FullPaneSync {
-        let term = &self.term;
-        let current_history = term.grid().history_size();
-        let last_sent = history_sent.min(current_history);
-        let new_lines = current_history - last_sent;
-        self.build_snapshot(term, generation, new_lines)
+        let scrollback = SnapshotScrollback::incremental(self.term.grid().history_size(), history_sent);
+        self.build_snapshot(generation, scrollback)
     }
 
     /// Create a full pane snapshot for StateSync / reattach.
     /// Sends all available scrollback — the client trims to its own `max_scrollback`.
     pub fn snapshot(&self, generation: u64) -> FullPaneSync {
-        let term = &self.term;
-        let history_size = term.grid().history_size();
-        self.build_snapshot(term, generation, history_size)
+        let scrollback = SnapshotScrollback::full(self.term.grid().history_size());
+        self.build_snapshot(generation, scrollback)
     }
 
     /// Shared snapshot builder: reads viewport cells, scrollback, cursor, and mode flags.
-    fn build_snapshot(
-        &self,
-        term: &Term<PtyEventListener>,
-        generation: u64,
-        scrollback_lines: usize,
-    ) -> FullPaneSync {
+    fn build_snapshot(&self, generation: u64, scrollback: SnapshotScrollback) -> FullPaneSync {
+        let term = &self.term;
         let grid = term.grid();
         let cols = grid.columns();
         let rows = grid.screen_lines();
         let content = term.renderable_content();
 
         // Read viewport cells + collect grapheme extras for multi-codepoint chars
-        let mut cells = Vec::with_capacity(cols * rows);
-        let mut grapheme_extras = ciri_protocol::message::GraphemeExtras::new();
-        for row in 0..rows {
-            for col in 0..cols {
-                let point = Point::new(Line(row as i32), Column(col));
-                let cell = &grid[point];
-                let cell_idx = (row * cols + col) as u32;
-                cells.push(pack_cell(cell));
-                // Collect zerowidth combining chars (emoji flag sequences, skin tones, etc.)
-                if let Some(zw) = cell.zerowidth()
-                    && !zw.is_empty()
-                {
-                    let extra: String = zw.iter().collect();
-                    grapheme_extras.push(cell_idx, &extra);
-                }
-            }
-        }
+        let (cells, grapheme_extras) = collect_viewport_cells(grid, rows, cols);
 
         // Read scrollback lines (oldest first)
-        let mut sb_cells = Vec::new();
-        if scrollback_lines > 0 {
-            sb_cells.reserve(scrollback_lines * cols);
-            for i in (1..=scrollback_lines).rev() {
-                for col in 0..cols {
-                    let point = Point::new(Line(-(i as i32)), Column(col));
-                    sb_cells.push(pack_cell(&grid[point]));
-                }
-            }
-        }
+        let sb_cells = collect_scrollback_cells(grid, cols, scrollback.rows);
 
         // Collect hyperlink data from OSC 8 parser
         let hyperlink_extras = {
@@ -567,10 +540,20 @@ impl Pane {
             mode_flags: self.mode_flags_from_term(term),
             title: self.title.clone(),
             scrollback: sb_cells,
-            scrollback_rows: scrollback_lines as u16,
+            scrollback_rows: scrollback.rows as u16,
             cells,
             grapheme_extras,
             hyperlink_extras,
+        }
+    }
+
+    fn damage_bounds(&self) -> Option<(usize, u16)> {
+        let cols = self.term.grid().columns();
+        let total_rows = self.term.grid().screen_lines();
+        if cols == 0 || total_rows == 0 {
+            None
+        } else {
+            Some((total_rows, cols.saturating_sub(1) as u16))
         }
     }
 
@@ -710,6 +693,77 @@ pub fn pack_cell(cell: &alacritty_terminal::term::cell::Cell) -> PackedCell {
     packed
 }
 
+fn full_damage_rows(total_rows: usize, right: u16) -> Vec<(u16, u16, u16)> {
+    let mut ranges = Vec::with_capacity(total_rows);
+    for row in 0..total_rows {
+        ranges.push((row as u16, 0u16, right));
+    }
+    ranges
+}
+
+fn partial_damage_rows(
+    iter: impl IntoIterator<Item = alacritty_terminal::term::LineDamageBounds>,
+    right: u16,
+) -> Vec<(u16, u16, u16)> {
+    let mut seen = [false; 256];
+    let mut ranges = Vec::new();
+    for bounds in iter {
+        let line = bounds.line;
+        if line < 256 {
+            if seen[line] {
+                continue;
+            }
+            seen[line] = true;
+        }
+        ranges.push((line as u16, 0u16, right));
+    }
+    ranges
+}
+
+fn collect_viewport_cells(
+    grid: &alacritty_terminal::grid::Grid<alacritty_terminal::term::cell::Cell>,
+    rows: usize,
+    cols: usize,
+) -> (Vec<PackedCell>, ciri_protocol::message::GraphemeExtras) {
+    let mut cells = Vec::with_capacity(cols * rows);
+    let mut grapheme_extras = ciri_protocol::message::GraphemeExtras::new();
+
+    for row in 0..rows {
+        for col in 0..cols {
+            let point = Point::new(Line(row as i32), Column(col));
+            let cell = &grid[point];
+            let cell_idx = (row * cols + col) as u32;
+            cells.push(pack_cell(cell));
+            if let Some(zw) = cell.zerowidth()
+                && !zw.is_empty()
+            {
+                let extra: String = zw.iter().collect();
+                grapheme_extras.push(cell_idx, &extra);
+            }
+        }
+    }
+
+    (cells, grapheme_extras)
+}
+
+fn collect_scrollback_cells(
+    grid: &alacritty_terminal::grid::Grid<alacritty_terminal::term::cell::Cell>,
+    cols: usize,
+    scrollback_rows: usize,
+) -> Vec<PackedCell> {
+    let mut cells = Vec::new();
+    if scrollback_rows > 0 {
+        cells.reserve(scrollback_rows * cols);
+        for row_offset in (1..=scrollback_rows).rev() {
+            for col in 0..cols {
+                let point = Point::new(Line(-(row_offset as i32)), Column(col));
+                cells.push(pack_cell(&grid[point]));
+            }
+        }
+    }
+    cells
+}
+
 /// Convert alacritty AnsiColor to PackedColor.
 pub fn pack_color(color: AnsiColor) -> PackedColor {
     match color {
@@ -753,5 +807,75 @@ fn named_color_to_compact(n: NamedColor) -> u8 {
         BrightForeground => 27,
         DimForeground => 28,
         _ => 16, // fallback to Foreground
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn shell_path() -> &'static str {
+        if std::path::Path::new("/bin/sh").exists() {
+            "/bin/sh"
+        } else {
+            "sh"
+        }
+    }
+
+    fn new_test_pane() -> Pane {
+        Pane::new(7, 4, 3, shell_path()).expect("create test pane")
+    }
+
+    #[test]
+    fn extract_damage_resets_after_read() {
+        let mut pane = new_test_pane();
+
+        let first = pane.extract_damage().expect("new pane should start dirty");
+        assert_eq!(first, vec![(0, 0, 3), (1, 0, 3), (2, 0, 3)]);
+
+        let second = pane.extract_damage().expect("alacritty keeps the cursor line dirty");
+        assert_eq!(second, vec![(0, 0, 3)]);
+
+        let third = pane.extract_damage().expect("cursor line damage remains stable after reset");
+        assert_eq!(third, vec![(0, 0, 3)]);
+    }
+
+    #[test]
+    fn snapshot_incremental_only_includes_new_scrollback() {
+        let pane = new_test_pane();
+
+        let none_sent = pane.snapshot_incremental(11, 0);
+        let over_sent = pane.snapshot_incremental(12, 99);
+
+        assert_eq!(none_sent.scrollback_rows, 0);
+        assert!(none_sent.scrollback.is_empty());
+        assert_eq!(over_sent.scrollback_rows, 0);
+        assert!(over_sent.scrollback.is_empty());
+    }
+
+    #[test]
+    fn drain_images_leaves_active_images_available_for_reconnect() {
+        let mut pane = new_test_pane();
+        let image = ImagePlacement {
+            id: 1,
+            row: 2,
+            col: 3,
+            width_cells: 4,
+            height_cells: 5,
+            pixel_width: 6,
+            pixel_height: 7,
+            format: "png".into(),
+            data: Arc::new(vec![1, 2, 3]),
+        };
+
+        pane.pending_images.push(image.clone());
+        pane.active_images.push(image.clone());
+
+        let drained = pane.drain_images();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].id, image.id);
+        assert_eq!(pane.active_images().len(), 1);
+        assert_eq!(pane.active_images()[0].id, image.id);
+        assert!(pane.drain_images().is_empty());
     }
 }

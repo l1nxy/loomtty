@@ -101,60 +101,7 @@ impl Action {
 impl Action {
     /// Parse an action from its string name (used for config-driven keybindings).
     pub fn from_name(s: &str) -> Option<Action> {
-        match s {
-            "new_column_right" => Some(Action::NewColumnRight),
-            "split_down" | "new_row_below" | "new_workspace_below" => {
-                Some(Action::NewWorkspaceBelow)
-            }
-            "close_pane" => Some(Action::ClosePane),
-            "focus_left" => Some(Action::FocusLeft),
-            "focus_right" => Some(Action::FocusRight),
-            "focus_down" => Some(Action::FocusDown),
-            "focus_up" => Some(Action::FocusUp),
-            "move_pane_left" => Some(Action::MovePaneLeft),
-            "move_pane_right" => Some(Action::MovePaneRight),
-            "cycle_preset_width" => Some(Action::CyclePresetWidth),
-            "cycle_preset_width_reverse" => Some(Action::CyclePresetWidthReverse),
-            "column_width_one_third" => Some(Action::ColumnWidthOneThird),
-            "column_width_half" => Some(Action::ColumnWidthHalf),
-            "column_width_two_thirds" => Some(Action::ColumnWidthTwoThirds),
-            "column_width_full" => Some(Action::ColumnWidthFull),
-            "column_width_increase" => Some(Action::ColumnWidthIncrease),
-            "column_width_decrease" => Some(Action::ColumnWidthDecrease),
-            "equalize_adjacent_columns" => Some(Action::EqualizeAdjacentColumns),
-            "consume_into_column" => Some(Action::ConsumeIntoColumn),
-            "expel_from_column" => Some(Action::ExpelFromColumn),
-            "toggle_broadcast" => Some(Action::ToggleBroadcast),
-            "toggle_overview" => Some(Action::ToggleOverview),
-            "exit_overview" => Some(Action::ExitOverview),
-            "send_leader_key" => Some(Action::SendLeaderKey),
-            "scroll_page_up" => Some(Action::ScrollPageUp),
-            "scroll_page_down" => Some(Action::ScrollPageDown),
-            "scroll_half_page_up" => Some(Action::ScrollHalfPageUp),
-            "scroll_half_page_down" => Some(Action::ScrollHalfPageDown),
-            "scroll_line_up" => Some(Action::ScrollLineUp),
-            "scroll_line_down" => Some(Action::ScrollLineDown),
-            "scroll_top" => Some(Action::ScrollTop),
-            "scroll_bottom" => Some(Action::ScrollBottom),
-            "detach" => Some(Action::Detach),
-            "toggle_command_palette" => Some(Action::ToggleCommandPalette),
-            "toggle_lock" => Some(Action::ToggleLock),
-            _ => {
-                // Handle switch_workspace_N
-                if let Some(rest) = s.strip_prefix("switch_workspace_")
-                    && let Ok(n) = rest.parse::<usize>()
-                {
-                    return Some(Action::SwitchWorkspace(n));
-                }
-                // Handle enter_mode:name
-                if let Some(name) = s.strip_prefix("enter_mode:") {
-                    if !name.is_empty() {
-                        return Some(Action::EnterMode(name.to_string()));
-                    }
-                }
-                None
-            }
-        }
+        parse_named_action(s).or_else(|| parse_dynamic_action(s))
     }
 
     /// Return all actions with human-readable labels for the command palette.
@@ -171,7 +118,10 @@ impl Action {
             (Action::MovePaneLeft, "Move Pane Left"),
             (Action::MovePaneRight, "Move Pane Right"),
             (Action::CyclePresetWidth, "Cycle Column Width"),
-            (Action::CyclePresetWidthReverse, "Cycle Column Width (Reverse)"),
+            (
+                Action::CyclePresetWidthReverse,
+                "Cycle Column Width (Reverse)",
+            ),
             (Action::ColumnWidthOneThird, "Column Width 1/3"),
             (Action::ColumnWidthHalf, "Column Width 1/2"),
             (Action::ColumnWidthTwoThirds, "Column Width 2/3"),
@@ -195,5 +145,110 @@ impl Action {
             (Action::ToggleCommandPalette, "Toggle Command Palette"),
             (Action::ToggleLock, "Toggle Lock"),
         ]
+    }
+}
+
+fn parse_named_action(name: &str) -> Option<Action> {
+    match name {
+        "new_column_right" => Some(Action::NewColumnRight),
+        "split_down" | "new_row_below" | "new_workspace_below" => Some(Action::NewWorkspaceBelow),
+        "close_pane" => Some(Action::ClosePane),
+        "focus_left" => Some(Action::FocusLeft),
+        "focus_right" => Some(Action::FocusRight),
+        "focus_down" => Some(Action::FocusDown),
+        "focus_up" => Some(Action::FocusUp),
+        "move_pane_left" => Some(Action::MovePaneLeft),
+        "move_pane_right" => Some(Action::MovePaneRight),
+        "cycle_preset_width" => Some(Action::CyclePresetWidth),
+        "cycle_preset_width_reverse" => Some(Action::CyclePresetWidthReverse),
+        "column_width_one_third" => Some(Action::ColumnWidthOneThird),
+        "column_width_half" => Some(Action::ColumnWidthHalf),
+        "column_width_two_thirds" => Some(Action::ColumnWidthTwoThirds),
+        "column_width_full" => Some(Action::ColumnWidthFull),
+        "column_width_increase" => Some(Action::ColumnWidthIncrease),
+        "column_width_decrease" => Some(Action::ColumnWidthDecrease),
+        "equalize_adjacent_columns" => Some(Action::EqualizeAdjacentColumns),
+        "consume_into_column" => Some(Action::ConsumeIntoColumn),
+        "expel_from_column" => Some(Action::ExpelFromColumn),
+        "toggle_broadcast" => Some(Action::ToggleBroadcast),
+        "toggle_overview" => Some(Action::ToggleOverview),
+        "exit_overview" => Some(Action::ExitOverview),
+        "send_leader_key" => Some(Action::SendLeaderKey),
+        "scroll_page_up" => Some(Action::ScrollPageUp),
+        "scroll_page_down" => Some(Action::ScrollPageDown),
+        "scroll_half_page_up" => Some(Action::ScrollHalfPageUp),
+        "scroll_half_page_down" => Some(Action::ScrollHalfPageDown),
+        "scroll_line_up" => Some(Action::ScrollLineUp),
+        "scroll_line_down" => Some(Action::ScrollLineDown),
+        "scroll_top" => Some(Action::ScrollTop),
+        "scroll_bottom" => Some(Action::ScrollBottom),
+        "detach" => Some(Action::Detach),
+        "toggle_command_palette" => Some(Action::ToggleCommandPalette),
+        "toggle_lock" => Some(Action::ToggleLock),
+        _ => None,
+    }
+}
+
+fn parse_dynamic_action(name: &str) -> Option<Action> {
+    parse_switch_workspace(name).or_else(|| parse_enter_mode(name))
+}
+
+fn parse_switch_workspace(name: &str) -> Option<Action> {
+    let rest = name.strip_prefix("switch_workspace_")?;
+    let workspace = rest.parse::<usize>().ok()?;
+    Some(Action::SwitchWorkspace(workspace))
+}
+
+fn parse_enter_mode(name: &str) -> Option<Action> {
+    let mode = name.strip_prefix("enter_mode:")?;
+    if mode.is_empty() {
+        return None;
+    }
+
+    Some(Action::EnterMode(mode.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Action;
+
+    #[test]
+    fn parses_named_actions_and_aliases() {
+        assert_eq!(
+            Action::from_name("new_column_right"),
+            Some(Action::NewColumnRight)
+        );
+        assert_eq!(
+            Action::from_name("new_workspace_below"),
+            Some(Action::NewWorkspaceBelow)
+        );
+        assert_eq!(
+            Action::from_name("split_down"),
+            Some(Action::NewWorkspaceBelow)
+        );
+        assert_eq!(
+            Action::from_name("new_row_below"),
+            Some(Action::NewWorkspaceBelow)
+        );
+        assert_eq!(Action::from_name("toggle_lock"), Some(Action::ToggleLock));
+    }
+
+    #[test]
+    fn parses_dynamic_actions() {
+        assert_eq!(
+            Action::from_name("switch_workspace_7"),
+            Some(Action::SwitchWorkspace(7))
+        );
+        assert_eq!(
+            Action::from_name("enter_mode:resize"),
+            Some(Action::EnterMode("resize".into()))
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_dynamic_actions() {
+        assert_eq!(Action::from_name("switch_workspace_x"), None);
+        assert_eq!(Action::from_name("enter_mode:"), None);
+        assert_eq!(Action::from_name("unknown_action"), None);
     }
 }

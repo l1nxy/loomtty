@@ -60,16 +60,17 @@ impl TextShaper {
             shaper.load_font(fid);
         }
         // Preload emoji font data for fallback shaping
-        if let Some(eid) = emoji_font_id {
-            if Some(eid) != primary_font_id {
-                shaper.load_font(eid);
-            }
+        if let Some(eid) = emoji_font_id
+            && Some(eid) != primary_font_id
+        {
+            shaper.load_font(eid);
         }
         // Preload CJK font data for fallback shaping
-        if let Some(cid) = cjk_font_id {
-            if Some(cid) != primary_font_id && Some(cid) != emoji_font_id {
-                shaper.load_font(cid);
-            }
+        if let Some(cid) = cjk_font_id
+            && Some(cid) != primary_font_id
+            && Some(cid) != emoji_font_id
+        {
+            shaper.load_font(cid);
         }
 
         shaper
@@ -210,23 +211,7 @@ impl TextShaper {
         cluster: &str,
         primary_face: &rustybuzz::Face,
     ) -> Option<(u32, fontdb::ID)> {
-        // Try primary font first
-        if let Some(gid) = self.shape_grapheme_with_face(cluster, primary_face) {
-            return Some((gid, self.primary_font_id?));
-        }
-        // Try CJK font as fallback
-        if let Some(cid) = self.cjk_font_id {
-            if let Some(cjk_face) = self.create_face(cid) {
-                if let Some(gid) = self.shape_grapheme_with_face(cluster, &cjk_face) {
-                    return Some((gid, cid));
-                }
-            }
-        }
-        // Try emoji font as fallback
-        let eid = self.emoji_font_id?;
-        let emoji_face = self.create_face(eid)?;
-        let gid = self.shape_grapheme_with_face(cluster, &emoji_face)?;
-        Some((gid, eid))
+        self.try_shape_with_fallback_faces(cluster, primary_face, Self::shape_grapheme_with_face)
     }
 
     /// Shape a single character with fallback through primary → CJK → emoji fonts.
@@ -237,27 +222,7 @@ impl TextShaper {
         primary_face: &rustybuzz::Face,
     ) -> Option<(u32, fontdb::ID)> {
         let s = String::from(ch);
-        // Try primary font
-        if let Some(gid) = self.shape_single_char(&s, primary_face) {
-            return Some((gid, self.primary_font_id?));
-        }
-        // Try CJK font
-        if let Some(cid) = self.cjk_font_id {
-            if let Some(cjk_face) = self.create_face(cid) {
-                if let Some(gid) = self.shape_single_char(&s, &cjk_face) {
-                    return Some((gid, cid));
-                }
-            }
-        }
-        // Try emoji font
-        if let Some(eid) = self.emoji_font_id {
-            if let Some(emoji_face) = self.create_face(eid) {
-                if let Some(gid) = self.shape_single_char(&s, &emoji_face) {
-                    return Some((gid, eid));
-                }
-            }
-        }
-        None
+        self.try_shape_with_fallback_faces(&s, primary_face, Self::shape_single_char)
     }
 
     /// Shape a single character string and return its glyph ID.
@@ -271,6 +236,34 @@ impl TextShaper {
             .iter()
             .find(|gi| gi.glyph_id != 0)
             .map(|gi| gi.glyph_id)
+    }
+
+    fn try_shape_with_fallback_faces(
+        &self,
+        text: &str,
+        primary_face: &rustybuzz::Face,
+        shape: fn(&Self, &str, &rustybuzz::Face) -> Option<u32>,
+    ) -> Option<(u32, fontdb::ID)> {
+        if let Some(font_id) = self.primary_font_id
+            && let Some(glyph_id) = shape(self, text, primary_face)
+        {
+            return Some((glyph_id, font_id));
+        }
+
+        self.try_shape_with_font_id(text, self.cjk_font_id, shape)
+            .or_else(|| self.try_shape_with_font_id(text, self.emoji_font_id, shape))
+    }
+
+    fn try_shape_with_font_id(
+        &self,
+        text: &str,
+        font_id: Option<fontdb::ID>,
+        shape: fn(&Self, &str, &rustybuzz::Face) -> Option<u32>,
+    ) -> Option<(u32, fontdb::ID)> {
+        let font_id = font_id?;
+        let face = self.create_face(font_id)?;
+        let glyph_id = shape(self, text, &face)?;
+        Some((glyph_id, font_id))
     }
 
     /// Shape a grapheme cluster using a pre-created face.
@@ -325,7 +318,11 @@ fn find_primary_font(db: &fontdb::Database, family_name: &str) -> Option<fontdb:
         }
         for family in &face.families {
             if family.0.eq_ignore_ascii_case(family_name) {
-                log::info!("primary font: {} (monospaced={})", family.0, face.monospaced);
+                log::info!(
+                    "primary font: {} (monospaced={})",
+                    family.0,
+                    face.monospaced
+                );
                 return Some(face.id);
             }
         }
@@ -338,7 +335,11 @@ fn find_primary_font(db: &fontdb::Database, family_name: &str) -> Option<fontdb:
         }
         for family in &face.families {
             if family.0.to_ascii_lowercase().contains(&family_lower) {
-                log::info!("primary font (substring): {} (monospaced={})", family.0, face.monospaced);
+                log::info!(
+                    "primary font (substring): {} (monospaced={})",
+                    family.0,
+                    face.monospaced
+                );
                 return Some(face.id);
             }
         }
@@ -404,7 +405,15 @@ fn find_cjk_font(db: &fontdb::Database, primary: Option<fontdb::ID>) -> Option<f
         }
     }
     // Fallback: any font with CJK-related keywords, prefer regular weight
-    let keywords = ["cjk", "han", "wenquanyi", "yahei", "simhei", "hiragino", "pingfang"];
+    let keywords = [
+        "cjk",
+        "han",
+        "wenquanyi",
+        "yahei",
+        "simhei",
+        "hiragino",
+        "pingfang",
+    ];
     let mut best: Option<(fontdb::ID, u16)> = None;
     for face in db.faces() {
         if Some(face.id) == primary || face.style != fontdb::Style::Normal {
@@ -414,7 +423,7 @@ fn find_cjk_font(db: &fontdb::Database, primary: Option<fontdb::ID>) -> Option<f
             let lower = fam.0.to_ascii_lowercase();
             if keywords.iter().any(|kw| lower.contains(kw)) {
                 let dist = (face.weight.0 as i32 - 400).unsigned_abs() as u16;
-                if best.map_or(true, |(_, d)| dist < d) {
+                if best.is_none_or(|(_, d)| dist < d) {
                     log::info!("CJK font candidate: {} (weight={})", fam.0, face.weight.0);
                     best = Some((face.id, dist));
                 }

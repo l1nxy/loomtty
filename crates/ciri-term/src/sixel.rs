@@ -170,9 +170,7 @@ fn decode_sixel(data: &[u8]) -> Option<SixelImage> {
                 b'#' => {
                     i += 1;
                     // Just skip over the color command for dimension calculation
-                    while i < data.len()
-                        && (data[i].is_ascii_digit() || data[i] == b';')
-                    {
+                    while i < data.len() && (data[i].is_ascii_digit() || data[i] == b';') {
                         i += 1;
                     }
                     continue;
@@ -182,11 +180,12 @@ fn decode_sixel(data: &[u8]) -> Option<SixelImage> {
                     i += 1;
                     let mut count = 0u32;
                     while i < data.len() && data[i].is_ascii_digit() {
-                        count =
-                            count.saturating_mul(10).saturating_add((data[i] - b'0') as u32);
+                        count = count
+                            .saturating_mul(10)
+                            .saturating_add((data[i] - b'0') as u32);
                         i += 1;
                     }
-                    if i < data.len() && data[i] >= 0x3F && data[i] <= 0x7E {
+                    if i < data.len() && (0x3F..=0x7E).contains(&data[i]) {
                         px = px.saturating_add(count);
                         i += 1;
                     }
@@ -203,7 +202,7 @@ fn decode_sixel(data: &[u8]) -> Option<SixelImage> {
                     py += 6;
                 }
                 // Sixel data character (0x3F to 0x7E)
-                c if c >= 0x3F && c <= 0x7E => {
+                c if (0x3F..=0x7E).contains(&c) => {
                     px += 1;
                     max_x = max_x.max(px);
                     max_y = max_y.max(py + 6);
@@ -242,9 +241,7 @@ fn decode_sixel(data: &[u8]) -> Option<SixelImage> {
             // Raster attributes
             b'"' => {
                 i += 1;
-                while i < data.len()
-                    && (data[i].is_ascii_digit() || data[i] == b';')
-                {
+                while i < data.len() && (data[i].is_ascii_digit() || data[i] == b';') {
                     i += 1;
                 }
                 continue;
@@ -254,8 +251,9 @@ fn decode_sixel(data: &[u8]) -> Option<SixelImage> {
                 i += 1;
                 let mut color_num = 0u32;
                 while i < data.len() && data[i].is_ascii_digit() {
-                    color_num =
-                        color_num.saturating_mul(10).saturating_add((data[i] - b'0') as u32);
+                    color_num = color_num
+                        .saturating_mul(10)
+                        .saturating_add((data[i] - b'0') as u32);
                     i += 1;
                 }
                 current_color = (color_num as usize).min(MAX_PALETTE - 1);
@@ -308,14 +306,23 @@ fn decode_sixel(data: &[u8]) -> Option<SixelImage> {
                 i += 1;
                 let mut count = 0u32;
                 while i < data.len() && data[i].is_ascii_digit() {
-                    count =
-                        count.saturating_mul(10).saturating_add((data[i] - b'0') as u32);
+                    count = count
+                        .saturating_mul(10)
+                        .saturating_add((data[i] - b'0') as u32);
                     i += 1;
                 }
-                if i < data.len() && data[i] >= 0x3F && data[i] <= 0x7E {
+                if i < data.len() && (0x3F..=0x7E).contains(&data[i]) {
                     let sixel_val = data[i] - 0x3F;
                     for _ in 0..count {
-                        put_sixel(&mut pixels, width, height, x, y, sixel_val, &palette[current_color]);
+                        put_sixel(
+                            &mut pixels,
+                            width,
+                            height,
+                            x,
+                            y,
+                            sixel_val,
+                            &palette[current_color],
+                        );
                         x += 1;
                     }
                     i += 1;
@@ -332,9 +339,17 @@ fn decode_sixel(data: &[u8]) -> Option<SixelImage> {
                 y += 6;
             }
             // Sixel data character
-            c if c >= 0x3F && c <= 0x7E => {
+            c if (0x3F..=0x7E).contains(&c) => {
                 let sixel_val = c - 0x3F;
-                put_sixel(&mut pixels, width, height, x, y, sixel_val, &palette[current_color]);
+                put_sixel(
+                    &mut pixels,
+                    width,
+                    height,
+                    x,
+                    y,
+                    sixel_val,
+                    &palette[current_color],
+                );
                 x += 1;
             }
             _ => {}
@@ -392,21 +407,21 @@ fn hls_to_rgb(h: u32, l: u32, s: u32) -> (u8, u8, u8) {
 fn init_default_palette(palette: &mut [[u8; 3]; MAX_PALETTE]) {
     let defaults: [[u8; 3]; 16] = [
         [0, 0, 0],       // 0: black
-        [51, 51, 204],    // 1: blue
-        [204, 33, 33],    // 2: red
-        [51, 204, 51],    // 3: green
-        [204, 51, 204],   // 4: magenta
-        [51, 204, 204],   // 5: cyan
-        [204, 204, 51],   // 6: yellow
-        [135, 135, 135],  // 7: gray 50%
-        [51, 51, 51],     // 8: gray 25%
-        [84, 84, 255],    // 9: light blue
-        [255, 84, 84],    // 10: light red
-        [84, 255, 84],    // 11: light green
-        [255, 84, 255],   // 12: light magenta
-        [84, 255, 255],   // 13: light cyan
-        [255, 255, 84],   // 14: light yellow
-        [255, 255, 255],  // 15: white
+        [51, 51, 204],   // 1: blue
+        [204, 33, 33],   // 2: red
+        [51, 204, 51],   // 3: green
+        [204, 51, 204],  // 4: magenta
+        [51, 204, 204],  // 5: cyan
+        [204, 204, 51],  // 6: yellow
+        [135, 135, 135], // 7: gray 50%
+        [51, 51, 51],    // 8: gray 25%
+        [84, 84, 255],   // 9: light blue
+        [255, 84, 84],   // 10: light red
+        [84, 255, 84],   // 11: light green
+        [255, 84, 255],  // 12: light magenta
+        [84, 255, 255],  // 13: light cyan
+        [255, 255, 84],  // 14: light yellow
+        [255, 255, 255], // 15: white
     ];
     for (i, c) in defaults.iter().enumerate() {
         palette[i] = *c;

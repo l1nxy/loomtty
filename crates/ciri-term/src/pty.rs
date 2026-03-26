@@ -126,10 +126,10 @@ impl Pty {
         }
 
         // Set working directory if provided.
-        if let Some(dir) = cwd {
-            if dir.is_dir() {
-                cmd.cwd(dir);
-            }
+        if let Some(dir) = cwd
+            && dir.is_dir()
+        {
+            cmd.cwd(dir);
         }
 
         // pair.master is the PTY master fd
@@ -184,7 +184,12 @@ impl Pty {
     }
 
     /// Spawn with just a CWD override (convenience for OSC 7 CWD inheritance).
-    pub fn spawn_with_cwd(cols: u16, rows: u16, shell: &str, cwd: Option<&std::path::Path>) -> Result<Self> {
+    pub fn spawn_with_cwd(
+        cols: u16,
+        rows: u16,
+        shell: &str,
+        cwd: Option<&std::path::Path>,
+    ) -> Result<Self> {
         Self::spawn_with_opts(cols, rows, shell, None, cwd)
     }
 
@@ -222,10 +227,15 @@ impl Pty {
     }
 
     pub fn resize(&self, cols: u16, rows: u16) {
-        if let Some(ref master) = self.master {
-            if let Err(e) = master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }) {
-                log::warn!("pty resize failed: {e}");
-            }
+        if let Some(ref master) = self.master
+            && let Err(e) = master.resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+        {
+            log::warn!("pty resize failed: {e}");
         }
     }
 }
@@ -263,8 +273,8 @@ impl Drop for Pty {
                     Ok(_handle) => {
                         // Drain the channel while ClosePseudoConsole runs.
                         // Safety timeout prevents infinite hang if something goes wrong.
-                        let deadline = std::time::Instant::now()
-                            + std::time::Duration::from_secs(5);
+                        let deadline =
+                            std::time::Instant::now() + std::time::Duration::from_secs(5);
                         while !close_done.load(Ordering::Acquire)
                             && std::time::Instant::now() < deadline
                         {

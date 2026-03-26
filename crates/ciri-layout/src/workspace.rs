@@ -174,14 +174,13 @@ impl Workspace {
             ColumnWidth::Proportion(1.0)
         } else {
             // When adding the second column, shrink the first from full-width to default
-            if self.columns.len() == 1 {
-                if let ColumnWidth::Proportion(p) = self.columns[0].width {
-                    if (p - 1.0).abs() < 1e-6 {
-                        log::info!("  shrinking col[0] from 1.0 to {default_width:?}");
-                        self.columns[0].width = default_width;
-                        self.columns[0].preset_width_idx = None;
-                    }
-                }
+            if self.columns.len() == 1
+                && let ColumnWidth::Proportion(p) = self.columns[0].width
+                && (p - 1.0).abs() < 1e-6
+            {
+                log::info!("  shrinking col[0] from 1.0 to {default_width:?}");
+                self.columns[0].width = default_width;
+                self.columns[0].preset_width_idx = None;
             }
             log::info!("  new col gets {default_width:?}");
             default_width
@@ -305,11 +304,11 @@ impl Workspace {
     /// Focus the next tile down within the current column.
     /// Returns true if focus moved within the column, false if at bottom.
     pub fn focus_tile_down(&mut self) -> bool {
-        if let Some(col) = self.columns.get_mut(self.active_column_idx) {
-            if col.active_tile_idx + 1 < col.tiles.len() {
-                col.active_tile_idx += 1;
-                return true;
-            }
+        if let Some(col) = self.columns.get_mut(self.active_column_idx)
+            && col.active_tile_idx + 1 < col.tiles.len()
+        {
+            col.active_tile_idx += 1;
+            return true;
         }
         false
     }
@@ -317,11 +316,11 @@ impl Workspace {
     /// Focus the previous tile up within the current column.
     /// Returns true if focus moved within the column, false if at top.
     pub fn focus_tile_up(&mut self) -> bool {
-        if let Some(col) = self.columns.get_mut(self.active_column_idx) {
-            if col.active_tile_idx > 0 {
-                col.active_tile_idx -= 1;
-                return true;
-            }
+        if let Some(col) = self.columns.get_mut(self.active_column_idx)
+            && col.active_tile_idx > 0
+        {
+            col.active_tile_idx -= 1;
+            return true;
         }
         false
     }
@@ -360,18 +359,8 @@ impl Workspace {
         if self.columns.is_empty() {
             return;
         }
-        let target = match width {
-            ColumnWidth::Proportion(p) => p.max(MIN_COLUMN_PROPORTION),
-            ColumnWidth::Fixed(px) => {
-                let vw = self.view_size.width;
-                if vw > 0.0 {
-                    (px / vw as f64).max(MIN_COLUMN_PROPORTION)
-                } else {
-                    0.5
-                }
-            }
-        };
-        self.columns[self.active_column_idx].width = ColumnWidth::Proportion(target);
+        self.columns[self.active_column_idx].width =
+            ColumnWidth::Proportion(self.clamp_column_width(width));
     }
 
     /// Resize the active column against its nearest neighbor.
@@ -381,13 +370,8 @@ impl Workspace {
             return;
         };
         let idx = self.active_column_idx;
-        let vw = self.view_size.width;
-        let active_width = self.columns[idx].proportion(vw);
-        let neighbor_width = self.columns[neighbor_idx].proportion(vw);
-        let total = active_width + neighbor_width;
-        let min_width = MIN_COLUMN_PROPORTION.min(total / 2.0);
-        let new_active = (active_width + delta_proportion).clamp(min_width, total - min_width);
-        let new_neighbor = total - new_active;
+        let (new_active, new_neighbor) =
+            self.resized_pair_proportions(idx, neighbor_idx, delta_proportion);
 
         self.columns[idx].width = ColumnWidth::Proportion(new_active);
         self.columns[idx].preset_width_idx = None; // manual resize clears preset
@@ -400,13 +384,7 @@ impl Workspace {
         if left_idx >= self.columns.len() || right_idx >= self.columns.len() {
             return;
         }
-        let vw = self.view_size.width;
-        let left_w = self.columns[left_idx].proportion(vw);
-        let right_w = self.columns[right_idx].proportion(vw);
-        let total = left_w + right_w;
-        let min_w = MIN_COLUMN_PROPORTION.min(total / 2.0);
-        let new_left = (left_w + delta).clamp(min_w, total - min_w);
-        let new_right = total - new_left;
+        let (new_left, new_right) = self.resized_pair_proportions(left_idx, right_idx, delta);
         self.columns[left_idx].width = ColumnWidth::Proportion(new_left);
         self.columns[left_idx].preset_width_idx = None;
         self.columns[right_idx].width = ColumnWidth::Proportion(new_right);
@@ -417,6 +395,7 @@ impl Workspace {
     pub fn set_column_width_by_index(&mut self, idx: usize, width: ColumnWidth) {
         if let Some(col) = self.columns.get_mut(idx) {
             col.width = width;
+            col.preset_width_idx = None;
         }
     }
 
@@ -445,17 +424,20 @@ impl Workspace {
         if presets.is_empty() || self.columns.is_empty() {
             return None;
         }
-        let col = &mut self.columns[self.active_column_idx];
+        let active_idx = self.active_column_idx;
+        let current_width = self.columns[active_idx].width;
+        let current_effective_width =
+            self.columns[active_idx].effective_width(self.view_size.width);
+        let current_idx = self.columns[active_idx].preset_width_idx;
         let vw_for_log = self.view_size.width;
         log::info!(
             "cycle_preset_width: active_col={} current_width={:?} effective={:.1}px preset_idx={:?} reverse={reverse} viewport={vw_for_log}x{}",
-            self.active_column_idx,
-            col.width,
-            col.effective_width(vw_for_log),
-            col.preset_width_idx,
+            active_idx,
+            current_width,
+            current_effective_width,
+            current_idx,
             self.view_size.height
         );
-        let current_idx = col.preset_width_idx;
         let new_idx = match current_idx {
             Some(idx) => {
                 if reverse {
@@ -466,27 +448,8 @@ impl Workspace {
             }
             None => {
                 // No preset selected: find the closest preset to current width, then advance
-                let vw = self.view_size.width;
-                let current_p = col.proportion(vw);
-                let closest = presets
-                    .iter()
-                    .enumerate()
-                    .min_by(|(_, a), (_, b)| {
-                        let pa = match a {
-                            ColumnWidth::Proportion(p) => *p,
-                            ColumnWidth::Fixed(px) => *px / vw as f64,
-                        };
-                        let pb = match b {
-                            ColumnWidth::Proportion(p) => *p,
-                            ColumnWidth::Fixed(px) => *px / vw as f64,
-                        };
-                        (pa - current_p)
-                            .abs()
-                            .partial_cmp(&(pb - current_p).abs())
-                            .unwrap()
-                    })
-                    .map(|(i, _)| i)
-                    .unwrap_or(0);
+                let current_p = self.columns[active_idx].proportion(self.view_size.width);
+                let closest = self.closest_preset_width_index(presets, current_p);
                 if reverse {
                     if closest == 0 {
                         presets.len() - 1
@@ -502,16 +465,14 @@ impl Workspace {
             "  cycle: current_idx={current_idx:?} → new_idx={new_idx} new_width={:?}",
             presets[new_idx]
         );
-        col.preset_width_idx = Some(new_idx);
+        self.columns[active_idx].preset_width_idx = Some(new_idx);
         let new_width = presets[new_idx];
-        // Use set_active_column_width to properly redistribute other columns
         self.set_active_column_width(new_width);
-        // Restore the preset_width_idx that set_active_column_width may not preserve
-        self.columns[self.active_column_idx].preset_width_idx = Some(new_idx);
+        self.columns[active_idx].preset_width_idx = Some(new_idx);
         log::info!(
             "  after cycle: col width={:?} effective={:.1}px",
-            self.columns[self.active_column_idx].width,
-            self.columns[self.active_column_idx].effective_width(self.view_size.width)
+            self.columns[active_idx].width,
+            self.columns[active_idx].effective_width(self.view_size.width)
         );
         Some(new_width)
     }
@@ -525,22 +486,20 @@ impl Workspace {
         my: f32,
         threshold: f32,
     ) -> Option<(usize, usize)> {
-        let vox = view_offset_x;
         for (col_idx, col) in self.columns.iter().enumerate() {
             if col.tile_count() < 2 {
                 continue;
             }
-            let col_x = self.column_x(col_idx) - vox;
+            let col_x = self.column_x(col_idx) - view_offset_x;
             let col_w = col.effective_width(self.view_size.width);
             if mx < col_x || mx > col_x + col_w {
                 continue;
             }
 
-            let rects = col.tile_rects(col_w, self.view_size.height);
-            for i in 0..rects.len() - 1 {
-                let border_y = rects[i].1 + rects[i].2; // y + h of top tile
+            let border_ys = tile_border_positions(col, col_w, self.view_size.height);
+            for (tile_idx, border_y) in border_ys.into_iter().enumerate() {
                 if (my - border_y).abs() < threshold {
-                    return Some((col_idx, i));
+                    return Some((col_idx, tile_idx));
                 }
             }
         }
@@ -558,15 +517,12 @@ impl Workspace {
             return;
         }
 
-        let vh = self.view_size.height;
         let col_w = col.effective_width(self.view_size.width);
-        let rects = col.tile_rects(col_w, vh);
+        let rects = col.tile_rects(col_w, self.view_size.height);
         let top_h = rects[top_tile_idx].2;
         let bot_h = rects[bot_tile_idx].2;
         let total_h = top_h + bot_h;
-        let min_h = 30.0_f32;
-
-        let new_top_h = (top_h + delta_y).clamp(min_h, total_h - min_h);
+        let new_top_h = clamped_tile_pair_height(top_h, total_h, delta_y);
 
         // Redistribute the pair's original combined weight proportionally,
         // so other tiles in the column keep their share unchanged.
@@ -604,6 +560,73 @@ impl Workspace {
             None
         }
     }
+
+    fn clamp_column_width(&self, width: ColumnWidth) -> f64 {
+        match width {
+            ColumnWidth::Proportion(p) => p.max(MIN_COLUMN_PROPORTION),
+            ColumnWidth::Fixed(px) => {
+                let vw = self.view_size.width;
+                if vw > 0.0 {
+                    (px / vw as f64).max(MIN_COLUMN_PROPORTION)
+                } else {
+                    0.5
+                }
+            }
+        }
+    }
+
+    fn resized_pair_proportions(
+        &self,
+        first_idx: usize,
+        second_idx: usize,
+        delta: f64,
+    ) -> (f64, f64) {
+        let vw = self.view_size.width;
+        let first_width = self.columns[first_idx].proportion(vw);
+        let second_width = self.columns[second_idx].proportion(vw);
+        let total = first_width + second_width;
+        let min_width = MIN_COLUMN_PROPORTION.min(total / 2.0);
+        let new_first = (first_width + delta).clamp(min_width, total - min_width);
+        (new_first, total - new_first)
+    }
+
+    fn closest_preset_width_index(
+        &self,
+        presets: &[ColumnWidth],
+        current_proportion: f64,
+    ) -> usize {
+        let viewport_width = self.view_size.width;
+        presets
+            .iter()
+            .enumerate()
+            .min_by(|(_, left), (_, right)| {
+                let left_distance =
+                    (column_width_to_proportion(**left, viewport_width) - current_proportion).abs();
+                let right_distance = (column_width_to_proportion(**right, viewport_width)
+                    - current_proportion)
+                    .abs();
+                left_distance.partial_cmp(&right_distance).unwrap()
+            })
+            .map(|(idx, _)| idx)
+            .unwrap_or(0)
+    }
+}
+
+fn column_width_to_proportion(width: ColumnWidth, viewport_width: f32) -> f64 {
+    match width {
+        ColumnWidth::Proportion(p) => p,
+        ColumnWidth::Fixed(px) => px / viewport_width as f64,
+    }
+}
+
+fn tile_border_positions(col: &Column, col_width: f32, column_height: f32) -> Vec<f32> {
+    let rects = col.tile_rects(col_width, column_height);
+    rects.windows(2).map(|pair| pair[0].1 + pair[0].2).collect()
+}
+
+fn clamped_tile_pair_height(top_height: f32, total_height: f32, delta_y: f32) -> f32 {
+    let min_height = 30.0_f32;
+    (top_height + delta_y).clamp(min_height, total_height - min_height)
 }
 
 #[cfg(test)]
@@ -780,5 +803,78 @@ mod tests {
         let expected = (0.8 + 0.5) / 2.0;
         assert!((widths[0] - expected).abs() < 1e-6);
         assert!((widths[1] - expected).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cycle_preset_width_advances_from_closest_preset() {
+        let mut w = ws();
+        w.add_column_right_default(1);
+        w.add_column_right_default(2);
+        w.active_column_idx = 0;
+        w.set_active_column_width(ColumnWidth::Proportion(0.68));
+
+        let presets = [
+            ColumnWidth::Proportion(1.0 / 3.0),
+            ColumnWidth::Proportion(0.5),
+            ColumnWidth::Proportion(2.0 / 3.0),
+            ColumnWidth::Proportion(1.0),
+        ];
+
+        let new_width = w.cycle_preset_width(&presets, false);
+
+        assert_eq!(new_width, Some(ColumnWidth::Proportion(1.0)));
+        assert_eq!(w.columns[0].preset_width_idx, Some(3));
+        assert!((w.columns[0].proportion(w.view_size.width) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn set_column_width_by_index_clears_stale_preset_tracking() {
+        let mut w = ws();
+        w.add_column_right_default(1);
+        w.add_column_right_default(2);
+
+        w.columns[0].preset_width_idx = Some(1);
+        w.set_column_width_by_index(0, ColumnWidth::Proportion(0.68));
+
+        assert_eq!(w.columns[0].preset_width_idx, None);
+        assert!((w.columns[0].proportion(w.view_size.width) - 0.68).abs() < 1e-6);
+    }
+
+    #[test]
+    fn hit_test_tile_border_uses_screen_coordinates() {
+        let mut w = ws();
+        w.add_column_right_default(1);
+        w.columns[0].tiles.push(crate::tile::Tile::new(2));
+
+        let border_y = w.columns[0].tile_rects(500.0, w.view_size.height)[0].2;
+
+        assert_eq!(
+            w.hit_test_tile_border(0.0, 250.0, border_y + 1.0, 4.0),
+            Some((0, 0))
+        );
+        assert_eq!(
+            w.hit_test_tile_border(0.0, 250.0, border_y + 8.0, 4.0),
+            None
+        );
+    }
+
+    #[test]
+    fn resize_tile_pair_preserves_pair_weight_total() {
+        let mut w = ws();
+        w.add_column_right_default(1);
+        w.columns[0].tiles.push(crate::tile::Tile::new(2));
+        w.columns[0].tiles.push(crate::tile::Tile::new(3));
+
+        let before_total = w.columns[0].tiles[0].height.weight() as f64
+            + w.columns[0].tiles[1].height.weight() as f64;
+
+        w.resize_tile_pair(0, 0, 60.0);
+
+        let top_weight = w.columns[0].tiles[0].height.weight() as f64;
+        let bottom_weight = w.columns[0].tiles[1].height.weight() as f64;
+
+        assert!(top_weight > bottom_weight);
+        assert!(((top_weight + bottom_weight) - before_total).abs() < 1e-6);
+        assert!((w.columns[0].tiles[2].height.weight() as f64 - 1.0).abs() < 1e-6);
     }
 }

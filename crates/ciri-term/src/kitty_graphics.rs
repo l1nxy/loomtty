@@ -53,8 +53,7 @@ struct KvPair<'a> {
 fn kv_pair<'a>(input: &mut &'a str) -> ModalResult<KvPair<'a>> {
     let key = take_while(1.., |c: char| c.is_ascii_alphabetic()).parse_next(input)?;
     '='.parse_next(input)?;
-    let value =
-        take_while(0.., |c: char| c != ',').parse_next(input)?;
+    let value = take_while(0.., |c: char| c != ',').parse_next(input)?;
     Ok(KvPair { key, value })
 }
 
@@ -154,12 +153,11 @@ impl KittyGraphicsParser {
             let payload_str = String::from_utf8_lossy(payload);
 
             // Split at first ';' into control and base64 data parts
-            let (control_str, img_data_str) =
-                if let Some(sep) = payload_str.find(';') {
-                    (&payload_str[..sep], &payload_str[sep + 1..])
-                } else {
-                    (payload_str.as_ref(), "")
-                };
+            let (control_str, img_data_str) = if let Some(sep) = payload_str.find(';') {
+                (&payload_str[..sep], &payload_str[sep + 1..])
+            } else {
+                (payload_str.as_ref(), "")
+            };
 
             let fields = parse_control(control_str);
 
@@ -254,5 +252,73 @@ impl KittyGraphicsParser {
             placements: new_placements,
             deleted,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fragmented_transmit_keeps_image_until_final_chunk() {
+        let mut parser = KittyGraphicsParser::new();
+        let mut active_images = Vec::new();
+
+        let partial = parser.scan(
+            b"\x1b_Ga=T,f=24,s=2,v=2,c=1,r=1,m=1;AQ",
+            3,
+            4,
+            &mut active_images,
+        );
+        assert!(partial.placements.is_empty());
+        assert!(!partial.deleted);
+        assert!(!parser.apc_partial.is_empty());
+        assert!(active_images.is_empty());
+
+        let complete = parser.scan(b"ID\x1b\\\x1b_Gm=0;BAU=\x1b\\", 3, 4, &mut active_images);
+        assert_eq!(complete.placements.len(), 1);
+        assert_eq!(active_images.len(), 1);
+        let placement = &complete.placements[0];
+        assert_eq!(placement.col, 3);
+        assert_eq!(placement.row, 4);
+        assert_eq!(placement.width_cells, 1);
+        assert_eq!(placement.height_cells, 1);
+        assert_eq!(placement.pixel_width, 2);
+        assert_eq!(placement.pixel_height, 2);
+        assert_eq!(placement.format, "rgb");
+        assert_eq!(placement.data.as_slice(), &[1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn delete_clears_active_and_pending_images() {
+        let mut parser = KittyGraphicsParser::new();
+        let mut active_images = Vec::new();
+
+        let created = parser.scan(
+            b"\x1b_Ga=T,f=24,s=1,v=1,c=1,r=1;AQID\x1b\\",
+            0,
+            0,
+            &mut active_images,
+        );
+        assert_eq!(created.placements.len(), 1);
+        assert_eq!(active_images.len(), 1);
+
+        let deleted = parser.scan(b"\x1b_Ga=d\x1b\\", 0, 0, &mut active_images);
+        assert!(deleted.deleted);
+        assert!(deleted.placements.is_empty());
+        assert!(active_images.is_empty());
+    }
+
+    #[test]
+    fn oversized_partial_is_discarded() {
+        let mut parser = KittyGraphicsParser::new();
+        let mut active_images = Vec::new();
+        let mut data = vec![0x1b, b'_', b'G'];
+        data.extend(std::iter::repeat_n(b'a', MAX_APC_PARTIAL_SIZE + 1));
+
+        let result = parser.scan(&data, 0, 0, &mut active_images);
+        assert!(result.placements.is_empty());
+        assert!(!result.deleted);
+        assert!(parser.apc_partial.is_empty());
     }
 }

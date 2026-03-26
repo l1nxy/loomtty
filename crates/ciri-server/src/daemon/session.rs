@@ -110,9 +110,14 @@ impl Session {
             self.pane_inset
         );
         // Use provided CWD, or fall back to inheriting from the active pane (OSC 7)
-        let inherited_cwd = if cwd.is_none() { self.active_pane_cwd() } else { None };
+        let inherited_cwd = if cwd.is_none() {
+            self.active_pane_cwd()
+        } else {
+            None
+        };
         let effective_cwd = cwd.or_else(|| inherited_cwd.as_deref().map(std::path::Path::new));
-        let pane = Pane::new_with_opts(id, cols, rows, &self.default_shell, command, effective_cwd)?;
+        let pane =
+            Pane::new_with_opts(id, cols, rows, &self.default_shell, command, effective_cwd)?;
         self.panes.insert(id, pane);
         self.generation.insert(id, 0);
         self.workspaces
@@ -136,7 +141,13 @@ impl Session {
         let vh = self.workspaces.view_size.height;
         let (_, _, cw, ch) = Self::effective_dims_from(clients, &self.session_name);
         let (cols, rows) = self.pane_grid_size_with_cells(vw, vh, cw, ch);
-        let pane = Pane::new_with_cwd(id, cols, rows, &self.default_shell, cwd.as_deref().map(std::path::Path::new))?;
+        let pane = Pane::new_with_cwd(
+            id,
+            cols,
+            rows,
+            &self.default_shell,
+            cwd.as_deref().map(std::path::Path::new),
+        )?;
         self.panes.insert(id, pane);
         self.generation.insert(id, 0);
         self.workspaces.add_workspace_below(id);
@@ -507,6 +518,8 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::daemon::client::ClientState;
+    use tokio::sync::mpsc;
 
     #[test]
     fn autosave_is_debounced() {
@@ -530,5 +543,65 @@ mod tests {
 
         assert!(session.session_dirty);
         assert!(session.last_session_change.is_some());
+    }
+
+    #[test]
+    fn effective_dims_use_smallest_attached_client() {
+        let (tx1, _rx1) = mpsc::channel(1);
+        let (tx2, _rx2) = mpsc::channel(1);
+        let (tx3, _rx3) = mpsc::channel(1);
+        let mut clients = HashMap::new();
+        clients.insert(
+            1,
+            ClientState {
+                id: 1,
+                tx: tx1,
+                damage: HashMap::new(),
+                last_acked_generation: 0,
+                history_sent: HashMap::new(),
+                send_failures: 0,
+                cell_width: 9.0,
+                cell_height: 18.0,
+                viewport_width: 1200.0,
+                viewport_height: 900.0,
+                session_name: "alpha".to_string(),
+            },
+        );
+        clients.insert(
+            2,
+            ClientState {
+                id: 2,
+                tx: tx2,
+                damage: HashMap::new(),
+                last_acked_generation: 0,
+                history_sent: HashMap::new(),
+                send_failures: 0,
+                cell_width: 8.0,
+                cell_height: 16.0,
+                viewport_width: 900.0,
+                viewport_height: 700.0,
+                session_name: "alpha".to_string(),
+            },
+        );
+        clients.insert(
+            3,
+            ClientState {
+                id: 3,
+                tx: tx3,
+                damage: HashMap::new(),
+                last_acked_generation: 0,
+                history_sent: HashMap::new(),
+                send_failures: 0,
+                cell_width: 7.0,
+                cell_height: 14.0,
+                viewport_width: 640.0,
+                viewport_height: 480.0,
+                session_name: "beta".to_string(),
+            },
+        );
+
+        let dims = Session::effective_dims_from(&clients, "alpha");
+
+        assert_eq!(dims, (900.0, 700.0, 8.0, 16.0));
     }
 }

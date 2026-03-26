@@ -765,26 +765,47 @@ fn is_file_path_link(s: &str) -> bool {
 }
 
 /// Open a file path, optionally at a specific line:col.
-/// Tries $EDITOR first (with line number support), then falls back to OS default.
+///
+/// Security: resolves the path to an absolute canonical form and verifies
+/// that the file exists before opening. This prevents:
+/// - Opening non-existent paths crafted by malicious terminal output
+/// - Path traversal via unresolved `..` components
+/// - Uncontrolled tilde/env-var expansion
+///
+/// Uses $EDITOR with line number support when available, otherwise falls
+/// back to the OS default handler. All arguments are passed as argv
+/// elements (not through a shell) to prevent command injection.
 fn open_file_path(path_with_loc: &str) -> std::io::Result<()> {
     let (path, line, _col) = parse_file_location(path_with_loc);
 
     // Resolve ~ to home directory
-    let resolved = if path.starts_with("~/") {
+    let expanded = if path.starts_with("~/") {
         if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
             format!("{}{}", home.to_string_lossy(), &path[1..])
         } else {
-            path.to_string()
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "cannot expand ~: HOME not set",
+            ));
         }
     } else {
         path.to_string()
     };
 
+    // Canonicalize: resolve `..`, symlinks, and convert to absolute path.
+    // This also serves as an existence check — canonicalize fails if the
+    // file doesn't exist.
+    let canonical = std::fs::canonicalize(&expanded).map_err(|e| {
+        log::debug!("file path not found or inaccessible: {expanded}: {e}");
+        e
+    })?;
+    let resolved = canonical.to_string_lossy();
+
     // Try $EDITOR first (supports line numbers)
     if let Ok(editor) = std::env::var("EDITOR") {
         let editor_lower = editor.to_ascii_lowercase();
         if editor_lower.contains("code") || editor_lower.contains("cursor") {
-            let mut loc = resolved.clone();
+            let mut loc = resolved.to_string();
             if let Some(l) = line {
                 loc = format!("{loc}:{l}");
             }
@@ -801,16 +822,19 @@ fn open_file_path(path_with_loc: &str) -> std::io::Result<()> {
             if let Some(l) = line {
                 args.push(format!("+{l}"));
             }
-            args.push(resolved.clone());
+            args.push(resolved.to_string());
             return Command::new(&editor).args(&args).spawn().map(|_| ());
         }
-        return Command::new(&editor).arg(&resolved).spawn().map(|_| ());
+        return Command::new(&editor)
+            .arg(resolved.as_ref())
+            .spawn()
+            .map(|_| ());
     }
 
     // Fallback: OS default handler (no line number support)
     #[cfg(target_os = "macos")]
     {
-        Command::new("open").arg(&resolved).spawn()?;
+        Command::new("open").arg(resolved.as_ref()).spawn()?;
         return Ok(());
     }
 
@@ -824,7 +848,9 @@ fn open_file_path(path_with_loc: &str) -> std::io::Result<()> {
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        Command::new("xdg-open").arg(&resolved).spawn()?;
+        Command::new("xdg-open")
+            .arg(resolved.as_ref())
+            .spawn()?;
         return Ok(());
     }
 

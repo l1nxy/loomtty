@@ -771,8 +771,14 @@ fn is_file_path_link(s: &str) -> bool {
     {
         return true;
     }
-    // Bare path with separator (src/main.rs, etc.)
-    (path.contains('/') || path.contains('\\')) && !path.contains("://")
+    // Bare path with separator — must also have a file extension to avoid
+    // false positives (consistent with detect_file_path in grid.rs).
+    if (path.contains('/') || path.contains('\\')) && !path.contains("://") {
+        // Require a dot in the last path component (file extension)
+        let file_name = path.rsplit(|c: char| c == '/' || c == '\\').next().unwrap_or(path);
+        return file_name.contains('.');
+    }
+    false
 }
 
 /// Open a file path, optionally at a specific line:col.
@@ -861,31 +867,15 @@ fn open_file_path(path_with_loc: &str, pane_cwd: Option<&str>) -> std::io::Resul
             .map(|_| ());
     }
 
-    // Fallback: OS default handler (no line number support)
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open").arg(resolved.as_ref()).spawn()?;
-        return Ok(());
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("cmd")
-            .args(["/C", "start", "", &resolved])
-            .spawn()?;
-        return Ok(());
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        Command::new("xdg-open")
-            .arg(resolved.as_ref())
-            .spawn()?;
-        return Ok(());
-    }
-
-    #[allow(unreachable_code)]
-    Ok(())
+    // No $EDITOR set — refuse to open file paths via OS handler.
+    // OS handlers (cmd /C start, open, xdg-open) can execute arbitrary
+    // binaries (.exe, .bat, .app), which is unsafe for untrusted paths
+    // from terminal output. URLs are fine (browser is sandboxed), but
+    // file paths need an explicit editor.
+    Err(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        "set $EDITOR to open file paths (OS handler refused for safety)",
+    ))
 }
 
 /// Parse `path:line:col` into `(path, Option<line>, Option<col>)`.

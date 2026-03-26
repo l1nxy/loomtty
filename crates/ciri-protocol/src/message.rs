@@ -608,6 +608,8 @@ pub struct FullPaneSync {
     /// Sparse hyperlink data from OSC 8 sequences.
     /// Empty unless the terminal application uses explicit hyperlinks.
     pub hyperlink_extras: HyperlinkExtras,
+    /// Current working directory from OSC 7 (if reported by the shell).
+    pub cwd: Option<String>,
 }
 
 // ─── Zero-copy borrowed CellDelta ───────────────────────────────────

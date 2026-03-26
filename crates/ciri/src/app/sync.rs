@@ -477,6 +477,7 @@ mod tests {
             cells: vec![PackedCell::default(), PackedCell::default()],
             grapheme_extras: GraphemeExtras::new(),
             hyperlink_extras: HyperlinkExtras::new(),
+            cwd: None,
         }
     }
 

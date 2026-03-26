@@ -1043,6 +1043,42 @@ fn write_full_pane_sync_hyperlink_extras(buf: &mut Vec<u8>, sync: &FullPaneSync)
     }
 }
 
+fn write_full_pane_sync_cwd(buf: &mut Vec<u8>, sync: &FullPaneSync) {
+    match &sync.cwd {
+        Some(cwd) => {
+            let bytes = cwd.as_bytes();
+            let len = bytes.len().min(u16::MAX as usize);
+            buf.extend_from_slice(&(len as u16).to_le_bytes());
+            buf.extend_from_slice(&bytes[..len]);
+        }
+        None => {
+            buf.extend_from_slice(&0u16.to_le_bytes());
+        }
+    }
+}
+
+fn decode_cwd(payload: &[u8], offset: &mut usize) -> Option<String> {
+    if *offset + 2 > payload.len() {
+        return None;
+    }
+    let len = match read_u16_le(payload, *offset) {
+        Ok(len) => len as usize,
+        Err(_) => return None,
+    };
+    *offset += 2;
+    if len == 0 {
+        return None;
+    }
+    if *offset + len > payload.len() {
+        return None;
+    }
+    let s = std::str::from_utf8(&payload[*offset..*offset + len])
+        .ok()?
+        .to_string();
+    *offset += len;
+    Some(s)
+}
+
 fn read_full_pane_sync_mandatory_sections(
     payload: &[u8],
     mut offset: usize,
@@ -1214,6 +1250,7 @@ pub fn encode_full_pane_sync_payload(sync: &FullPaneSync) -> io::Result<Vec<u8>>
     buf.extend_from_slice(&(sm_viewport.len() as u32).to_le_bytes());
     buf.extend_from_slice(&sm_viewport);
     write_full_pane_sync_grapheme_extras(&mut buf, sync);
+    write_full_pane_sync_cwd(&mut buf, sync);
     Ok(buf)
 }
 
@@ -1246,6 +1283,7 @@ pub fn encode_full_pane_sync_framed(buf: &mut Vec<u8>, sync: &FullPaneSync) -> i
     buf.extend_from_slice(vp_data);
     write_full_pane_sync_grapheme_extras(buf, sync);
     write_full_pane_sync_hyperlink_extras(buf, sync);
+    write_full_pane_sync_cwd(buf, sync);
     // Patch the length field
     let payload_len = (buf.len() - payload_start) as u32;
     buf[1..5].copy_from_slice(&payload_len.to_le_bytes());
@@ -1290,6 +1328,7 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
     let mut extra_offset = sections.extra_offset;
     let grapheme_extras = decode_grapheme_extras(payload, &mut extra_offset);
     let hyperlink_extras = decode_hyperlink_extras(payload, &mut extra_offset);
+    let cwd = decode_cwd(payload, &mut extra_offset);
 
     Ok(FullPaneSync {
         pane_id,
@@ -1306,6 +1345,7 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
         cells,
         grapheme_extras,
         hyperlink_extras,
+        cwd,
     })
 }
 
@@ -1662,6 +1702,7 @@ mod tests {
             cells,
             grapheme_extras: GraphemeExtras::new(),
             hyperlink_extras: HyperlinkExtras::new(),
+            cwd: None,
         };
         let payload = encode_full_pane_sync_payload(&sync).unwrap();
         // SM should compress blank cells significantly
@@ -1700,6 +1741,7 @@ mod tests {
             cells,
             grapheme_extras: GraphemeExtras::new(),
             hyperlink_extras: HyperlinkExtras::new(),
+            cwd: None,
         };
         let payload = encode_full_pane_sync_payload(&sync).unwrap();
         let decoded = decode_full_pane_sync(&payload).unwrap();
@@ -1725,6 +1767,7 @@ mod tests {
             cells: vec![PackedCell::default(); 8],
             grapheme_extras: GraphemeExtras::new(),
             hyperlink_extras: HyperlinkExtras::new(),
+            cwd: None,
         };
         let payload = encode_full_pane_sync_payload(&sync).unwrap();
 
@@ -1760,6 +1803,7 @@ mod tests {
             cells: vec![PackedCell::with_ch('A'), PackedCell::with_ch('B')],
             grapheme_extras: GraphemeExtras::new(),
             hyperlink_extras: HyperlinkExtras::new(),
+            cwd: None,
         };
         sync.grapheme_extras.push(0, "é");
         sync.hyperlink_extras.cell_links.push((1, 3));
@@ -1774,7 +1818,9 @@ mod tests {
         let mut grapheme_only = sync.clone();
         grapheme_only.hyperlink_extras = HyperlinkExtras::new();
         let grapheme_only_payload = encode_full_pane_sync_payload(&grapheme_only).unwrap();
-        let grapheme_cut = &grapheme_only_payload[..grapheme_only_payload.len() - 1];
+        // Cut 3 bytes to truncate into the grapheme extras section
+        // (payload has 2-byte CWD trailer after grapheme extras)
+        let grapheme_cut = &grapheme_only_payload[..grapheme_only_payload.len() - 3];
         let decoded = decode_full_pane_sync(grapheme_cut).unwrap();
         assert_eq!(decoded.pane_id, sync.pane_id);
         assert_eq!(decoded.cells, sync.cells);

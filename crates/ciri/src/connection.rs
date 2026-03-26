@@ -4,7 +4,13 @@ use ciri_protocol::transport;
 use crossbeam_channel::{Receiver, Sender};
 use std::io;
 
-pub use ciri_app::app::{RemoteProbeResult, RemoteQueryResult, ServerEvent};
+/// Messages from server to client (received on the winit thread).
+pub enum ServerEvent {
+    Control(ServerMessage),
+    CellDelta(CellDeltaBorrowed),
+    FullPaneSync(FullPaneSync),
+    Disconnected,
+}
 
 /// Run the protocol IO loop over any AsyncRead + AsyncWrite pair.
 /// Performs handshake, spawns writer task, runs reader loop.
@@ -35,9 +41,7 @@ async fn run_protocol_io<R, W>(
             log::warn!("server version {peer} differs from client {local} (patch mismatch)");
         }
         Ok(codec::VersionCompat::MinorMismatch { peer, local }) => {
-            log::warn!(
-                "server version {peer} differs from client {local} (minor mismatch, may be unstable)"
-            );
+            log::warn!("server version {peer} differs from client {local} (minor mismatch, may be unstable)");
         }
         Err(e) => {
             log::error!("server rejected connection: {e}");
@@ -49,15 +53,18 @@ async fn run_protocol_io<R, W>(
     // Spawn writer task
     let writer_msg_rx = msg_rx;
     let write_handle = tokio::spawn(async move {
-        while let Ok(msg) = tokio::task::block_in_place(|| writer_msg_rx.recv()) {
+        loop {
+            // Use blocking recv in a spawned blocking task to avoid busy-waiting
+            let msg = match tokio::task::block_in_place(|| writer_msg_rx.recv()) {
+                Ok(m) => m,
+                Err(_) => break, // sender dropped
+            };
             if let Err(e) = codec::encode_client_msg(&mut writer, &msg).await {
                 log::warn!("write error: {e}");
                 break;
             }
             use tokio::io::AsyncWriteExt;
-            if writer.flush().await.is_err() {
-                break;
-            }
+            if writer.flush().await.is_err() { break; }
         }
     });
 
@@ -65,19 +72,13 @@ async fn run_protocol_io<R, W>(
     loop {
         match codec::read_frame(&mut reader).await {
             Ok(codec::Frame::ServerMsg(msg)) => {
-                if event_tx.send(ServerEvent::Control(msg)).is_err() {
-                    break;
-                }
+                if event_tx.send(ServerEvent::Control(msg)).is_err() { break; }
             }
             Ok(codec::Frame::CellDelta(delta)) => {
-                if event_tx.send(ServerEvent::CellDelta(delta)).is_err() {
-                    break;
-                }
+                if event_tx.send(ServerEvent::CellDelta(delta)).is_err() { break; }
             }
             Ok(codec::Frame::FullPaneSync(sync)) => {
-                if event_tx.send(ServerEvent::FullPaneSync(sync)).is_err() {
-                    break;
-                }
+                if event_tx.send(ServerEvent::FullPaneSync(sync)).is_err() { break; }
             }
             Ok(codec::Frame::ClientMsg(_)) => {
                 // Shouldn't receive client messages from server
@@ -101,12 +102,16 @@ pub fn connect_or_spawn(
     session_name: &str,
     viewport: codec::ClientHello,
 ) -> io::Result<(Sender<ClientMessage>, Receiver<ServerEvent>)> {
-    // Validate session name using the same function as the server to prevent
-    // divergent validation rules (client allows what server rejects or vice versa).
-    if let Err(reason) = ciri_session::names::validate_name(session_name) {
+    // Validate session name to prevent path traversal
+    if session_name.is_empty()
+        || session_name.contains('/')
+        || session_name.contains('\\')
+        || session_name.contains("..")
+        || session_name.contains('\0')
+    {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("invalid session name: {reason}"),
+            format!("invalid session name: {session_name:?}"),
         ));
     }
     let _sock_path = transport::server_socket_path();
@@ -174,18 +179,12 @@ pub fn connect_or_spawn(
                 let mut connect_result = Err(io::Error::new(io::ErrorKind::ConnectionRefused, ""));
                 for attempt in 0..50 {
                     #[cfg(unix)]
-                    {
-                        let sock_path = transport::server_socket_path();
-                        connect_result = tokio::net::UnixStream::connect(&sock_path).await;
-                    }
+                    { let sock_path = transport::server_socket_path();
+                      connect_result = tokio::net::UnixStream::connect(&sock_path).await; }
                     #[cfg(windows)]
-                    {
-                        connect_result = tokio::net::windows::named_pipe::ClientOptions::new()
-                            .open(&transport::server_pipe_name());
-                    }
-                    if connect_result.is_ok() {
-                        break;
-                    }
+                    { connect_result = tokio::net::windows::named_pipe::ClientOptions::new()
+                        .open(&transport::server_pipe_name()); }
+                    if connect_result.is_ok() { break; }
                     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                     if attempt == 0 {
                         log::debug!("waiting for server...");
@@ -213,71 +212,13 @@ pub fn connect_or_spawn(
     Ok((msg_tx, event_rx))
 }
 
-/// Validate an SSH hostname/address using an allowlist approach modeled on
-/// OpenSSH's `valid_domain()` from `misc.c`.  An allowlist is safer than a
-/// blocklist because it rejects unknown-dangerous characters by default.
-///
-/// Allowed forms:
-///   - Hostnames: `[a-zA-Z0-9][a-zA-Z0-9._-]*` (no consecutive dots)
-///   - user@host: `@` permitted for SSH user syntax
-///   - IPv6 literals: `[::1]` — brackets, colons, hex digits
-///   - IPv4 addresses: digits and dots
-fn validate_ssh_host(host: &str) -> io::Result<()> {
-    if host.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "SSH host cannot be empty",
-        ));
-    }
-    // Reject hosts starting with '-' (could be interpreted as SSH flags)
-    if host.starts_with('-') {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "SSH host cannot start with '-'",
-        ));
-    }
-    // First char must be alphanumeric, '_', or '[' (IPv6 literal).
-    let first = host.chars().next().unwrap();
-    if !first.is_ascii_alphanumeric() && first != '_' && first != '[' {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("SSH host starts with invalid character: {first:?}"),
-        ));
-    }
-    // Allowlist: only characters that are safe in hostnames, IPv4/IPv6, and
-    // user@host syntax.  This matches OpenSSH's valid_domain() plus extensions
-    // for user@host and IPv6 brackets.
-    for ch in host.chars() {
-        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_' | '@' | ':' | '[' | ']' | '%')
-        {
-            continue;
-        }
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("SSH host contains disallowed character: {ch:?}"),
-        ));
-    }
-    // Reject consecutive dots (invalid hostname, potential path traversal).
-    if host.contains("..") {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "SSH host contains consecutive dots",
-        ));
-    }
-    Ok(())
-}
-
 /// Connect to a remote ciri-server via SSH stdio proxy tunnel.
-/// If the remote server is not running, attempts to start it via
-/// `ssh ciri-server --daemonize` before connecting.
 pub fn connect_remote(
     host: &str,
     remote_port: u16,
     ssh_port: u16,
     viewport: codec::ClientHello,
 ) -> io::Result<(Sender<ClientMessage>, Receiver<ServerEvent>)> {
-    validate_ssh_host(host)?;
-
     let (msg_tx, msg_rx) = crossbeam_channel::bounded::<ClientMessage>(256);
     let (event_tx, event_rx) = crossbeam_channel::bounded::<ServerEvent>(256);
 
@@ -292,16 +233,17 @@ pub fn connect_remote(
                 .build()
                 .expect("tokio runtime");
             rt.block_on(async move {
-                // Try to ensure the remote server is running before connecting.
-                if let Err(e) = ensure_remote_server(&host, remote_port, ssh_port).await {
-                    log::error!("failed to ensure remote server: {e}");
-                    let _ = event_tx.send(ServerEvent::Disconnected);
-                    return;
-                }
-
                 // Spawn SSH process with -W for stdio proxy
-                let mut child = match spawn_ssh_tunnel(&host, remote_port, ssh_port) {
-                    Ok(c) => c,
+                let mut child = match tokio::process::Command::new("ssh")
+                    .args(["-p", &ssh_port.to_string()])
+                    .args(["-W", &format!("localhost:{remote_port}")])
+                    .arg(&host)
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                {
+                    Ok(child) => child,
                     Err(e) => {
                         log::error!("failed to spawn ssh: {e}");
                         let _ = event_tx.send(ServerEvent::Disconnected);
@@ -325,92 +267,24 @@ pub fn connect_remote(
     Ok((msg_tx, event_rx))
 }
 
-fn spawn_ssh_tunnel(
-    host: &str,
-    remote_port: u16,
-    ssh_port: u16,
-) -> io::Result<tokio::process::Child> {
-    tokio::process::Command::new("ssh")
-        .args(["-p", &ssh_port.to_string()])
-        .args(["-W", &format!("localhost:{remote_port}")])
-        // Let the user's SSH config handle host key verification.
-        // Do not override StrictHostKeyChecking — auto-accepting unknown
-        // keys enables MITM attacks on first connection.
-        .arg(host)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
+/// Result of probing a remote host for ciri-server availability.
+pub enum RemoteProbeResult {
+    /// ciri-server is available; here are its sessions.
+    Sessions(Vec<SessionInfo>),
+    /// SSH connected but no ciri-server (handshake failed / connection refused).
+    NoServer,
+    /// SSH itself failed or timed out.
+    Error(String),
 }
 
-/// Ensure the remote ciri-server is running. Probes first, starts if needed.
-async fn ensure_remote_server(host: &str, remote_port: u16, ssh_port: u16) -> io::Result<()> {
-    // Quick probe: try connecting to see if server is already up.
-    let probe = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        probe_remote(host, remote_port, ssh_port),
-    )
-    .await;
-
-    match probe {
-        Ok(RemoteProbeResult::Sessions(_)) => {
-            log::info!("remote server already running");
-            return Ok(());
-        }
-        _ => {
-            log::info!("remote server not reachable, attempting to start");
-        }
-    }
-
-    // Start the server via SSH.
-    let output = tokio::process::Command::new("ssh")
-        .args(["-p", &ssh_port.to_string()])
-        .args(["-o", "ConnectTimeout=10"])
-        // Let the user's SSH config handle host key verification.
-        // Do not override StrictHostKeyChecking — auto-accepting unknown
-        // keys enables MITM attacks on first connection.
-        .arg(host)
-        .arg("ciri-server --daemonize")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output()
-        .await?;
-
-    if output.status.success() {
-        log::info!("remote ciri-server started, verifying");
-        // Wait for the server to bind its socket, then verify it's reachable.
-        for attempt in 0..5 {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            let verify = tokio::time::timeout(
-                std::time::Duration::from_secs(3),
-                probe_remote(host, remote_port, ssh_port),
-            )
-            .await;
-            if matches!(verify, Ok(RemoteProbeResult::Sessions(_))) {
-                log::info!("remote server verified on attempt {}", attempt + 1);
-                return Ok(());
-            }
-        }
-        return Err(io::Error::other(
-            "remote ciri-server started but not reachable after 5 attempts",
-        ));
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let code = output.status.code().unwrap_or(-1);
-
-    // Exit code 127 = command not found on most shells.
-    if code == 127 || stderr.contains("not found") || stderr.contains("No such file") {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "ciri-server not found on remote host. Install it with: cargo install ciri-server",
-        ));
-    }
-
-    Err(io::Error::other(format!(
-        "failed to start remote server (exit {code}): {stderr}"
-    )))
+/// Result returned from an async remote host query.
+pub struct RemoteQueryResult {
+    /// Display name from config.
+    pub host_name: String,
+    pub host: String,
+    pub port: u16,
+    pub ssh_port: u16,
+    pub result: RemoteProbeResult,
 }
 
 /// Fire-and-forget: probe a remote host for ciri-server, query its sessions.
@@ -464,9 +338,7 @@ async fn probe_remote(host: &str, remote_port: u16, ssh_port: u16) -> RemoteProb
         .args(["-p", &ssh_port.to_string()])
         .args(["-W", &format!("localhost:{remote_port}")])
         .args(["-o", "ConnectTimeout=4"])
-        // Let the user's SSH config handle host key verification.
-        // Do not override StrictHostKeyChecking — auto-accepting unknown
-        // keys enables MITM attacks on first connection.
+        .args(["-o", "StrictHostKeyChecking=accept-new"])
         .arg(host)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -488,12 +360,9 @@ async fn probe_remote(host: &str, remote_port: u16, ssh_port: u16) -> RemoteProb
         height: 600,
         cell_width: 10.0,
         cell_height: 20.0,
-        session_name: "__control__".to_string(),
+        session_name: "__probe__".to_string(),
     };
-    if codec::write_client_hello(&mut writer, &hello)
-        .await
-        .is_err()
-    {
+    if let Err(_) = codec::write_client_hello(&mut writer, &hello).await {
         let _ = child.kill().await;
         return RemoteProbeResult::NoServer;
     }
@@ -507,7 +376,7 @@ async fn probe_remote(host: &str, remote_port: u16, ssh_port: u16) -> RemoteProb
 
     // Send ListSessions
     let msg = ClientMessage::ListSessions { all: true };
-    if codec::encode_client_msg(&mut writer, &msg).await.is_err() {
+    if let Err(_) = codec::encode_client_msg(&mut writer, &msg).await {
         let _ = child.kill().await;
         return RemoteProbeResult::NoServer;
     }
@@ -527,32 +396,6 @@ async fn probe_remote(host: &str, remote_port: u16, ssh_port: u16) -> RemoteProb
                 return RemoteProbeResult::NoServer;
             }
         }
-    }
-}
-
-/// Synchronously probe a remote server and return session names (sorted by
-/// last_attached, most recent first — as returned by the server).
-/// Used at startup to pick a default session when the user didn't specify one.
-pub fn probe_remote_sessions_blocking(host: &str, remote_port: u16, ssh_port: u16) -> Vec<String> {
-    let rt = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(rt) => rt,
-        Err(_) => return Vec::new(),
-    };
-
-    let result = rt.block_on(async {
-        tokio::time::timeout(
-            std::time::Duration::from_secs(8),
-            probe_remote(host, remote_port, ssh_port),
-        )
-        .await
-    });
-
-    match result {
-        Ok(RemoteProbeResult::Sessions(sessions)) => sessions.into_iter().map(|s| s.name).collect(),
-        _ => Vec::new(),
     }
 }
 

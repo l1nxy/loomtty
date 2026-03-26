@@ -54,8 +54,14 @@ impl Osc7Parser {
 
     fn parse_uri(&mut self, uri_bytes: &[u8]) {
         if let Ok(uri) = std::str::from_utf8(uri_bytes)
-            && let Ok(path) = parse_file_uri.parse(uri)
+            && let Ok((hostname, path)) = parse_file_uri.parse(uri)
         {
+            // Security: only accept local hostnames to prevent a remote SSH
+            // session from setting the CWD to an attacker-controlled path.
+            if !is_local_hostname(hostname) {
+                log::warn!("OSC 7: rejecting non-local hostname: {hostname}");
+                return;
+            }
             let decoded = percent_decode_str(path)
                 .decode_utf8()
                 .map(|c| c.into_owned())
@@ -70,15 +76,28 @@ impl Osc7Parser {
     }
 }
 
-/// Parse `file://hostname/path` and return the `/path` portion (including leading slash).
-fn parse_file_uri<'a>(input: &mut &'a str) -> ModalResult<&'a str> {
+/// Parse `file://hostname/path` and return `(hostname, path)`.
+fn parse_file_uri<'a>(input: &mut &'a str) -> ModalResult<(&'a str, &'a str)> {
     literal("file://").parse_next(input)?;
     // hostname: everything up to the first '/'
-    let _hostname = take_until(0.., "/").parse_next(input)?;
+    let hostname = take_until(0.., "/").parse_next(input)?;
     // The rest is the path (including leading '/')
     let path = *input;
     *input = "";
-    Ok(path)
+    Ok((hostname, path))
+}
+
+/// Check if a hostname refers to the local machine.
+/// Empty hostname and "localhost" are always local (per RFC 8089).
+/// Otherwise, compare against the system's DNS hostname via `gethostname`.
+fn is_local_hostname(hostname: &str) -> bool {
+    if hostname.is_empty() || hostname.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    let local = gethostname::gethostname();
+    local
+        .to_str()
+        .is_some_and(|l| l.eq_ignore_ascii_case(hostname))
 }
 
 #[cfg(test)]
@@ -88,7 +107,15 @@ mod tests {
     #[test]
     fn parse_osc7_esc_backslash() {
         let mut parser = Osc7Parser::new();
-        let data = b"\x1b]7;file://myhost/home/user/projects\x1b\\";
+        let data = b"\x1b]7;file://localhost/home/user/projects\x1b\\";
+        parser.scan(data);
+        assert_eq!(parser.cwd(), Some("/home/user/projects"));
+    }
+
+    #[test]
+    fn parse_osc7_empty_hostname() {
+        let mut parser = Osc7Parser::new();
+        let data = b"\x1b]7;file:///home/user/projects\x1b\\";
         parser.scan(data);
         assert_eq!(parser.cwd(), Some("/home/user/projects"));
     }
@@ -104,7 +131,7 @@ mod tests {
     #[test]
     fn parse_osc7_percent_encoded() {
         let mut parser = Osc7Parser::new();
-        let data = b"\x1b]7;file://host/home/user/my%20dir\x1b\\";
+        let data = b"\x1b]7;file://localhost/home/user/my%20dir\x1b\\";
         parser.scan(data);
         assert_eq!(parser.cwd(), Some("/home/user/my dir"));
     }
@@ -112,10 +139,18 @@ mod tests {
     #[test]
     fn parse_osc7_updates_cwd() {
         let mut parser = Osc7Parser::new();
-        parser.scan(b"\x1b]7;file://h/first\x1b\\");
+        parser.scan(b"\x1b]7;file:///first\x1b\\");
         assert_eq!(parser.cwd(), Some("/first"));
-        parser.scan(b"\x1b]7;file://h/second\x1b\\");
+        parser.scan(b"\x1b]7;file:///second\x1b\\");
         assert_eq!(parser.cwd(), Some("/second"));
+    }
+
+    #[test]
+    fn parse_osc7_rejects_non_local_hostname() {
+        let mut parser = Osc7Parser::new();
+        let data = b"\x1b]7;file://attacker.com/malicious/path\x1b\\";
+        parser.scan(data);
+        assert_eq!(parser.cwd(), None);
     }
 
     #[test]
@@ -128,7 +163,7 @@ mod tests {
     #[test]
     fn fragmented_sequence_keeps_plain_text_and_updates_cwd() {
         let mut parser = Osc7Parser::new();
-        parser.scan(b"prefix\x1b]7;file://host/home/use");
+        parser.scan(b"prefix\x1b]7;file://localhost/home/use");
         assert_eq!(parser.cwd(), None);
         parser.scan(b"r/project\x07suffix");
         assert_eq!(parser.cwd(), Some("/home/user/project"));

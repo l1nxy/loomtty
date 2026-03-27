@@ -399,6 +399,8 @@ pub struct RemoteConfig {
     pub enabled: bool,
     /// TCP port to listen on, bound to 127.0.0.1 only (default: 7890).
     pub port: u16,
+    /// Known remote hosts that appear in the command palette.
+    pub hosts: Vec<RemoteHostConfig>,
 }
 
 impl Default for RemoteConfig {
@@ -406,8 +408,31 @@ impl Default for RemoteConfig {
         RemoteConfig {
             enabled: false,
             port: 7890,
+            hosts: Vec::new(),
         }
     }
+}
+
+fn default_remote_port() -> u16 {
+    7890
+}
+fn default_ssh_port() -> u16 {
+    22
+}
+
+/// A configured remote host for the command palette.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteHostConfig {
+    /// Display name for this host (e.g. "dev-box").
+    pub name: String,
+    /// SSH destination (e.g. "user@host.example.com").
+    pub host: String,
+    /// Remote ciri-server TCP port.
+    #[serde(default = "default_remote_port")]
+    pub port: u16,
+    /// SSH port.
+    #[serde(default = "default_ssh_port")]
+    pub ssh_port: u16,
 }
 
 impl CiriConfig {

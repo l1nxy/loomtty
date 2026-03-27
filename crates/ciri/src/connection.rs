@@ -267,6 +267,138 @@ pub fn connect_remote(
     Ok((msg_tx, event_rx))
 }
 
+/// Result of probing a remote host for ciri-server availability.
+pub enum RemoteProbeResult {
+    /// ciri-server is available; here are its sessions.
+    Sessions(Vec<SessionInfo>),
+    /// SSH connected but no ciri-server (handshake failed / connection refused).
+    NoServer,
+    /// SSH itself failed or timed out.
+    Error(String),
+}
+
+/// Result returned from an async remote host query.
+pub struct RemoteQueryResult {
+    /// Display name from config.
+    pub host_name: String,
+    pub host: String,
+    pub port: u16,
+    pub ssh_port: u16,
+    pub result: RemoteProbeResult,
+}
+
+/// Fire-and-forget: probe a remote host for ciri-server, query its sessions.
+/// Sends the result through `result_tx`. Runs entirely in a background thread.
+pub fn query_remote_sessions(
+    host_name: &str,
+    host: &str,
+    remote_port: u16,
+    ssh_port: u16,
+    result_tx: crossbeam_channel::Sender<RemoteQueryResult>,
+) {
+    let host_name = host_name.to_string();
+    let host = host.to_string();
+
+    std::thread::Builder::new()
+        .name("remote-query".into())
+        .spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime");
+
+            let result = rt.block_on(async {
+                // 5-second timeout for the entire probe
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    probe_remote(&host, remote_port, ssh_port),
+                )
+                .await
+                {
+                    Ok(r) => r,
+                    Err(_) => RemoteProbeResult::Error("Connection timed out".into()),
+                }
+            });
+
+            let _ = result_tx.send(RemoteQueryResult {
+                host_name,
+                host,
+                port: remote_port,
+                ssh_port,
+                result,
+            });
+        })
+        .ok();
+}
+
+/// Internal: SSH tunnel → handshake → ListSessions → return result.
+async fn probe_remote(host: &str, remote_port: u16, ssh_port: u16) -> RemoteProbeResult {
+    // Spawn SSH process
+    let mut child = match tokio::process::Command::new("ssh")
+        .args(["-p", &ssh_port.to_string()])
+        .args(["-W", &format!("localhost:{remote_port}")])
+        .args(["-o", "ConnectTimeout=4"])
+        .args(["-o", "StrictHostKeyChecking=accept-new"])
+        .arg(host)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(e) => return RemoteProbeResult::Error(format!("SSH spawn failed: {e}")),
+    };
+
+    let stdin = child.stdin.take().expect("stdin");
+    let stdout = child.stdout.take().expect("stdout");
+    let mut reader = tokio::io::BufReader::new(stdout);
+    let mut writer = tokio::io::BufWriter::new(stdin);
+
+    // Handshake with a dummy viewport
+    let hello = codec::ClientHello {
+        width: 800,
+        height: 600,
+        cell_width: 10.0,
+        cell_height: 20.0,
+        session_name: "__probe__".to_string(),
+    };
+    if let Err(_) = codec::write_client_hello(&mut writer, &hello).await {
+        let _ = child.kill().await;
+        return RemoteProbeResult::NoServer;
+    }
+    match codec::read_server_hello(&mut reader).await {
+        Ok(_) => {}
+        Err(_) => {
+            let _ = child.kill().await;
+            return RemoteProbeResult::NoServer;
+        }
+    }
+
+    // Send ListSessions
+    let msg = ClientMessage::ListSessions { all: true };
+    if let Err(_) = codec::encode_client_msg(&mut writer, &msg).await {
+        let _ = child.kill().await;
+        return RemoteProbeResult::NoServer;
+    }
+    use tokio::io::AsyncWriteExt;
+    let _ = writer.flush().await;
+
+    // Read frames until we get a SessionList
+    loop {
+        match codec::read_frame(&mut reader).await {
+            Ok(codec::Frame::ServerMsg(ServerMessage::SessionList { sessions })) => {
+                let _ = child.kill().await;
+                return RemoteProbeResult::Sessions(sessions);
+            }
+            Ok(_) => continue, // skip StateSync, FullPaneSync, etc.
+            Err(_) => {
+                let _ = child.kill().await;
+                return RemoteProbeResult::NoServer;
+            }
+        }
+    }
+}
+
 fn spawn_server(_session_name: &str) -> io::Result<()> {
     use std::process::Command;
     // Try to find ciri-server binary next to the current executable

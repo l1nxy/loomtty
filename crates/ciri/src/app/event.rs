@@ -82,6 +82,7 @@ impl ApplicationHandler for App {
         let has_server = self.server_rx.is_some();
         let is_reconnecting = self.reconnect_state.is_some();
         let wants_blink = self.config.terminal.cursor_blink;
+        let has_remote_query = self.remote_query_rx.is_some();
 
         let has_pending = self.server_rx.as_ref().is_some_and(|rx| !rx.is_empty());
 
@@ -97,7 +98,7 @@ impl ApplicationHandler for App {
             // rebuild the swapchain once per frame regardless of event count.
             let frame_wake = Instant::now() + self.frame_interval;
             event_loop.set_control_flow(ControlFlow::WaitUntil(frame_wake.min(resize_deadline)));
-        } else if is_animating || has_pending || is_reconnecting {
+        } else if is_animating || has_pending || is_reconnecting || has_remote_query {
             // Active rendering or pending data: poll at frame rate
             event_loop
                 .set_control_flow(ControlFlow::WaitUntil(Instant::now() + self.frame_interval));
@@ -119,6 +120,15 @@ impl ApplicationHandler for App {
 
             if self.process_server_events() {
                 needs_redraw = true;
+            }
+
+            // Poll async remote session query result
+            if let Some(rx) = &self.remote_query_rx {
+                if let Ok(result) = rx.try_recv() {
+                    self.remote_query_rx = None;
+                    self.handle_remote_query_result(result);
+                    needs_redraw = true;
+                }
             }
 
             // Cursor blink

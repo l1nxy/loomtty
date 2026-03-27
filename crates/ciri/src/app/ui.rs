@@ -108,6 +108,18 @@ struct PaletteRow {
     label: String,
     is_selected: bool,
     is_hovered: bool,
+    style: PaletteRowStyle,
+}
+
+/// Visual category for a palette row (used for color differentiation).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PaletteRowStyle {
+    Action,
+    Session,
+    RemoteHost,
+    RemoteSession,
+    SshShell,
+    SwitchSlot,
 }
 
 struct PaletteComponent {
@@ -119,6 +131,8 @@ struct PaletteComponent {
     total_entries: usize,
     selected_idx: usize,
     show_no_matches: bool,
+    loading_text: Option<String>,
+    error_text: Option<String>,
 }
 
 struct ContextMenuRow {
@@ -824,13 +838,20 @@ impl App {
                 self.refresh_session_palette();
             }
             UiAction::ExecutePaletteEntry(entry_idx) => {
+                let keep_open = self
+                    .command_palette
+                    .as_ref()
+                    .and_then(|p| p.entries.get(entry_idx))
+                    .is_some_and(|e| matches!(e.kind, super::PaletteEntryKind::RemoteHost { .. }));
                 if let Some(palette) = &mut self.command_palette
                     && let Some(pos) = palette.filtered.iter().position(|&idx| idx == entry_idx)
                 {
                     palette.selected_idx = pos;
                 }
                 self.execute_palette_entry(entry_idx);
-                self.command_palette = None;
+                if !keep_open {
+                    self.command_palette = None;
+                }
             }
             UiAction::ClosePalette => self.command_palette = None,
             UiAction::ExecuteContextMenuEntry(idx) => {
@@ -1157,14 +1178,33 @@ impl PaletteComponent {
             .enumerate()
             .map(|(vis_row, filt_idx)| {
                 let entry = &palette.entries[*filt_idx];
+                let style = match &entry.kind {
+                    super::PaletteEntryKind::Action(_) => PaletteRowStyle::Action,
+                    super::PaletteEntryKind::SwitchSession(_)
+                    | super::PaletteEntryKind::KillSession(_) => PaletteRowStyle::Session,
+                    super::PaletteEntryKind::RemoteHost { .. } => PaletteRowStyle::RemoteHost,
+                    super::PaletteEntryKind::RemoteSession { .. } => PaletteRowStyle::RemoteSession,
+                    super::PaletteEntryKind::SshShell { .. } => PaletteRowStyle::SshShell,
+                    super::PaletteEntryKind::SwitchSlot(_) => PaletteRowStyle::SwitchSlot,
+                };
                 PaletteRow {
                     entry_idx: *filt_idx,
                     label: truncate_label(&entry.label, layout.panel_w, cx.cell_w),
                     is_selected: scroll_offset + vis_row == palette.selected_idx,
                     is_hovered: palette.hovered_idx == Some(scroll_offset + vis_row),
+                    style,
                 }
             })
             .collect();
+
+        let loading_text = palette
+            .remote_loading
+            .as_ref()
+            .map(|name| format!("Loading sessions from {}...", name));
+        let error_text = palette
+            .remote_error
+            .as_ref()
+            .map(|(name, err)| format!("{}: {}", name, err));
 
         Some(Self {
             layout,
@@ -1175,6 +1215,8 @@ impl PaletteComponent {
             total_entries: palette.filtered.len(),
             selected_idx: palette.selected_idx,
             show_no_matches: palette.filtered.is_empty() && !palette.query.is_empty(),
+            loading_text,
+            error_text,
         })
     }
 
@@ -1300,6 +1342,12 @@ impl UiComponent for PaletteComponent {
 
         let selected_bg = [accent[0], accent[1], accent[2], 0.25];
         let hovered_bg = [accent[0], accent[1], accent[2], 0.14];
+        // Per-style colors
+        let remote_host_color = [accent[0] * 0.8, accent[1] * 1.1, accent[2] * 1.2, 1.0];
+        let remote_session_color = [0.6, 0.85, 1.0, 1.0];
+        let ssh_color = [1.0, 0.75, 0.4, 1.0];
+        let slot_color = [accent[0], accent[1], accent[2], 1.0];
+
         for (idx, row) in self.rows.iter().enumerate() {
             let row_y = self.layout.sep_y + idx as f32 * self.layout.row_h;
             if row.is_selected {
@@ -1319,6 +1367,18 @@ impl UiComponent for PaletteComponent {
                     color: hovered_bg,
                 });
             }
+            let row_color = if row.is_selected || row.is_hovered {
+                text_color
+            } else {
+                match row.style {
+                    PaletteRowStyle::Action => dim_color,
+                    PaletteRowStyle::Session => dim_color,
+                    PaletteRowStyle::RemoteHost => remote_host_color,
+                    PaletteRowStyle::RemoteSession => remote_session_color,
+                    PaletteRowStyle::SshShell => ssh_color,
+                    PaletteRowStyle::SwitchSlot => slot_color,
+                }
+            };
             emit_status_text(
                 scene.atlas,
                 &row.label,
@@ -1326,7 +1386,7 @@ impl UiComponent for PaletteComponent {
                 row_y + 2.0,
                 cx.cell_w,
                 cx.baseline,
-                if row.is_selected || row.is_hovered { text_color } else { dim_color },
+                row_color,
                 scene.glyphs,
             );
         }
@@ -1390,6 +1450,36 @@ impl UiComponent for PaletteComponent {
                 cx.cell_w,
                 cx.baseline,
                 dim_color,
+                scene.glyphs,
+            );
+        }
+
+        // Loading indicator
+        if let Some(ref loading) = self.loading_text {
+            let loading_y = self.layout.panel_y + self.layout.panel_h - cx.cell_h * 2.0 - 4.0;
+            emit_status_text(
+                scene.atlas,
+                loading,
+                self.layout.text_x,
+                loading_y,
+                cx.cell_w,
+                cx.baseline,
+                [accent[0], accent[1], accent[2], 0.7],
+                scene.glyphs,
+            );
+        }
+
+        // Error message
+        if let Some(ref error) = self.error_text {
+            let error_y = self.layout.panel_y + self.layout.panel_h - cx.cell_h * 2.0 - 4.0;
+            emit_status_text(
+                scene.atlas,
+                error,
+                self.layout.text_x,
+                error_y,
+                cx.cell_w,
+                cx.baseline,
+                [1.0, 0.4, 0.3, 0.9],
                 scene.glyphs,
             );
         }
@@ -2099,6 +2189,8 @@ mod tests {
             hovered_idx: None,
             sessions_only: true,
             sessions_show_all: false,
+            remote_loading: None,
+            remote_error: None,
         });
         let layout = app.command_palette_layout().unwrap();
         let toggle = app.command_palette_toggle_layout(layout).unwrap();
@@ -2160,6 +2252,8 @@ mod tests {
             hovered_idx: None,
             sessions_only: false,
             sessions_show_all: true,
+            remote_loading: None,
+            remote_error: None,
         });
         assert!(app.dispatch_ui_click(0.0, 0.0));
         assert!(app.command_palette.is_none());

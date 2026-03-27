@@ -373,7 +373,7 @@ impl App {
 
         self.scroll_active_to_bottom();
         if self.broadcast_mode {
-            let vox = self.view_offset_x.value() as f32;
+            let vox = self.anim_mgr.view_offset_x.value() as f32;
             let visible_pids: Vec<u64> = self
                 .workspaces
                 .active()

@@ -15,16 +15,21 @@ pub struct Spring {
 }
 
 impl Spring {
-    /// Create a critically damped spring.
-    /// `omega`: angular frequency, controls speed. Recommended: 8-15 for smooth UI.
-    pub fn with_omega(omega: f64) -> Self {
+    /// Create a critically damped spring with configurable epsilon.
+    pub fn new(omega: f64, epsilon: f64) -> Self {
         Spring {
             position: 0.0,
             velocity: 0.0,
             target: 0.0,
             omega,
-            epsilon: 0.1,
+            epsilon,
         }
+    }
+
+    /// Create a critically damped spring with default epsilon (0.1).
+    /// `omega`: angular frequency, controls speed. Recommended: 8-15 for smooth UI.
+    pub fn with_omega(omega: f64) -> Self {
+        Self::new(omega, 0.1)
     }
 
     pub fn set_target(&mut self, target: f64) {

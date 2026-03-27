@@ -113,8 +113,8 @@ impl App {
                         self.expected_pane_ids.remove(&pane_id);
                         log::debug!("PaneClosed: pane_id={pane_id}");
                         // Capture pane rect for close animation before removing
-                        let vox = self.view_offset_x.value() as f32;
-                        let voy = self.view_offset_y.value() as f32;
+                        let vox = self.anim_mgr.view_offset_x.value() as f32;
+                        let voy = self.anim_mgr.view_offset_y.value() as f32;
                         let tiles = self.workspaces.visible_tiles_2d(vox, voy);
                         let params = self.anim_params();
                         if let Some((_, rect, _)) = tiles.iter().find(|(pid, _, _)| *pid == pane_id)
@@ -318,8 +318,8 @@ impl App {
         log::debug!(
             "apply_layout: view_size={:?}, vox={:.1}, voy={:.1}",
             self.workspaces.view_size,
-            self.view_offset_x.value(),
-            self.view_offset_y.value()
+            self.anim_mgr.view_offset_x.value(),
+            self.anim_mgr.view_offset_y.value()
         );
         let view_size = self.workspaces.view_size;
         let column_gap = self.workspaces.column_gap;

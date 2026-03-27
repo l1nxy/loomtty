@@ -87,7 +87,7 @@ impl App {
         my: f32,
     ) -> (bool, bool) {
         let ws = self.workspaces.active();
-        let vox = self.view_offset_x.value() as f32;
+        let vox = self.anim_mgr.view_offset_x.value() as f32;
         let mut near_col_border = false;
         for i in 1..ws.columns.len() {
             let col_x = ws.column_x(i) - vox;
@@ -102,7 +102,7 @@ impl App {
 
     pub(crate) fn start_column_resize_drag(&mut self, mx: f32) -> bool {
         let ws = self.workspaces.active();
-        let vox = self.view_offset_x.value() as f32;
+        let vox = self.anim_mgr.view_offset_x.value() as f32;
         let vw = ws.view_size.width;
         for i in 1..ws.columns.len() {
             let col_x = ws.column_x(i) - vox;
@@ -128,7 +128,7 @@ impl App {
         if let Some((col_idx, top_tile_idx)) = self
             .workspaces
             .active()
-            .hit_test_tile_border(self.view_offset_x.value() as f32, mx, my, 4.0)
+            .hit_test_tile_border(self.anim_mgr.view_offset_x.value() as f32, mx, my, 4.0)
         {
             if let Some(col) = self.workspaces.active().columns.get(col_idx)
                 && let Some(tile) = col.tiles.get(top_tile_idx)

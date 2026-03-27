@@ -12,7 +12,7 @@ impl App {
                 self.ime.preedit_cursor = None;
                 let data = text.into_bytes();
                 if self.broadcast_mode {
-                    let vox = self.view_offset_x.value() as f32;
+                    let vox = self.anim_mgr.view_offset_x.value() as f32;
                     let pids: Vec<u64> = self
                         .workspaces
                         .active()

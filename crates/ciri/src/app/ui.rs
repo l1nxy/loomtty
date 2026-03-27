@@ -480,9 +480,9 @@ impl App {
 
     fn overview_action_bar_data(&self, cx: &UiContext<'_>) -> Option<OverviewActionBarData> {
         let (_, hovered_id) = self.overview.hovered_pane?;
-        let zoom = self.overview.zoom.value() as f32;
-        let vox = self.view_offset_x.value() as f32;
-        let voy = self.view_offset_y.value() as f32;
+        let zoom = self.anim_mgr.overview_zoom.value() as f32;
+        let vox = self.anim_mgr.view_offset_x.value() as f32;
+        let voy = self.anim_mgr.view_offset_y.value() as f32;
         let tiles = self.workspaces.all_tiles_2d(vox, voy);
         let (vw, vh) = self.command_palette_viewport_size();
         let center_x = vw / 2.0;
@@ -1914,9 +1914,9 @@ impl OverviewComponent {
 
     fn action_bar_layout(&self, app: &App) -> Option<OverviewActionBar> {
         let (_, hovered_id) = self.hovered_pane?;
-        let zoom = app.overview.zoom.value() as f32;
-        let vox = app.view_offset_x.value() as f32;
-        let voy = app.view_offset_y.value() as f32;
+        let zoom = app.anim_mgr.overview_zoom.value() as f32;
+        let vox = app.anim_mgr.view_offset_x.value() as f32;
+        let voy = app.anim_mgr.view_offset_y.value() as f32;
         let tiles = app.workspaces.all_tiles_2d(vox, voy);
         let (vw, vh) = app.command_palette_viewport_size();
         let center_x = vw / 2.0;

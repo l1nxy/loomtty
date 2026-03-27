@@ -16,7 +16,6 @@ pub(crate) mod sync;
 pub(crate) mod top_bar;
 pub(crate) mod ui;
 
-use ciri_anim::animation::ViewOffset;
 use ciri_anim::manager::{AnimParams, AnimationManager};
 use ciri_config::config::{CiriConfig, PaneOpenStyle, StatusBarPosition};
 use ciri_gpu::{GlyphAtlasGpu, Renderer};
@@ -185,7 +184,6 @@ pub(crate) struct RenderBuffers {
 /// Touchpad gesture tracking state.
 pub(crate) struct GestureState {
     pub scroll_accum: f64,
-    pub row_offset: ViewOffset,
     pub row_active: bool,
     pub row_start: usize,
 }
@@ -220,7 +218,6 @@ pub(crate) enum OverviewActionHover {
 
 pub(crate) struct OverviewState {
     pub active: bool,
-    pub zoom: ViewOffset,
     pub dragging: bool,
     pub drag_last_pos: Option<(f32, f32)>,
     pub hovered_pane: Option<(usize, u64)>,
@@ -291,9 +288,6 @@ pub(crate) struct App {
     pub input: InputHandler,
     pub server_tx: Option<Sender<ClientMessage>>,
     pub server_rx: Option<Receiver<ServerEvent>>,
-    pub view_offset_x: ViewOffset,
-    pub view_offset_y: ViewOffset,
-    pub col_widths: Vec<ViewOffset>,
     pub last_frame: Instant,
     pub modifiers: ModifiersState,
     pub cached_views: HashMap<u64, TerminalView>,
@@ -406,9 +400,6 @@ impl App {
             input,
             server_tx: None,
             server_rx: None,
-            view_offset_x: ViewOffset::new(),
-            view_offset_y: ViewOffset::new(),
-            col_widths: Vec::new(),
             last_frame: Instant::now(),
             modifiers: ModifiersState::empty(),
             cached_views: HashMap::new(),
@@ -418,11 +409,6 @@ impl App {
                 dragging: false,
                 drag_last_pos: None,
                 hovered_pane: None,
-                zoom: {
-                    let mut v = ViewOffset::new();
-                    v.jump_to(1.0);
-                    v
-                },
             },
             overview_action_hover: None,
             render_bufs: RenderBuffers {
@@ -477,7 +463,6 @@ impl App {
             config_change_rx: None,
             gestures: GestureState {
                 scroll_accum: 0.0,
-                row_offset: ViewOffset::new(),
                 row_active: false,
                 row_start: 0,
             },
@@ -884,12 +869,12 @@ impl App {
                 ciri_layout::workspace::CenterStrategy::Never
             }
         };
-        let current_vox = self.view_offset_x.value() as f32;
+        let current_vox = self.anim_mgr.view_offset_x.value() as f32;
         let t = self
             .workspaces
             .active_mut()
             .target_offset_for_active_with_strategy(center_strategy, current_vox);
-        self.view_offset_x.jump_to(t as f64);
+        self.anim_mgr.view_offset_x.jump_to(t as f64);
     }
 
     /// Apply a deferred resize. Called once per frame from `new_events` so

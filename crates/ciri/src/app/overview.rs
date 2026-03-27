@@ -5,10 +5,10 @@ use super::App;
 impl App {
     pub fn hit_test_overview(&self, mx: f32, my: f32) -> Option<(usize, u64)> {
         let my = self.content_y_from_screen(my)?;
-        let zoom = self.overview.zoom.value() as f32;
+        let zoom = self.anim_mgr.overview_zoom.value() as f32;
         let zoom_threshold = self.config.animation.zoom_threshold;
-        let vox = self.view_offset_x.value() as f32;
-        let voy = self.view_offset_y.value() as f32;
+        let vox = self.anim_mgr.view_offset_x.value() as f32;
+        let voy = self.anim_mgr.view_offset_y.value() as f32;
         let tiles = if self.overview.active || zoom < zoom_threshold {
             self.workspaces.all_tiles_2d(vox, voy)
         } else {
@@ -43,9 +43,9 @@ impl App {
     pub(crate) fn exit_overview(&mut self) {
         self.overview.active = false;
         self.overview.hovered_pane = None;
-        self.overview
-            .zoom
-            .animate_to(1.0, self.config.animation.speed);
+        self.anim_mgr
+            .overview_zoom
+            .animate_to(1.0, self.config.animation.speed, self.config.animation.epsilon);
         self.animate_to_active();
     }
 
@@ -56,11 +56,12 @@ impl App {
             self.context_menu.visible = false;
             self.overview.hovered_pane = None;
             self.refresh_overview_zoom();
-            self.view_offset_x.animate_to(0.0, omega);
-            self.view_offset_y.animate_to(0.0, omega);
+            let epsilon = self.config.animation.epsilon;
+            self.anim_mgr.view_offset_x.animate_to(0.0, omega, epsilon);
+            self.anim_mgr.view_offset_y.animate_to(0.0, omega, epsilon);
         } else {
             self.overview.hovered_pane = None;
-            self.overview.zoom.animate_to(1.0, omega);
+            self.anim_mgr.overview_zoom.animate_to(1.0, omega, self.config.animation.epsilon);
             self.animate_to_active();
         }
     }

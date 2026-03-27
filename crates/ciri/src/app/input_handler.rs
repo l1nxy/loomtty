@@ -201,7 +201,7 @@ impl App {
         let my = self.content_y_from_screen(my)?;
         let border_w = self.config.appearance.border_width;
         let padding = self.config.appearance.padding;
-        let vox = self.view_offset_x.value() as f32;
+        let vox = self.anim_mgr.view_offset_x.value() as f32;
         let tiles = self.workspaces.active().visible_tiles(vox);
         for (pane_id, rect, _) in &tiles {
             if rect.contains(mx, my) {
@@ -229,7 +229,7 @@ impl App {
         let my = self.content_y_from_screen(my)?;
         let border_w = self.config.appearance.border_width;
         let padding = self.config.appearance.padding;
-        let vox = self.view_offset_x.value() as f32;
+        let vox = self.anim_mgr.view_offset_x.value() as f32;
         let tiles = self.workspaces.active().visible_tiles(vox);
         for (pane_id, rect, _) in &tiles {
             if rect.contains(mx, my) {

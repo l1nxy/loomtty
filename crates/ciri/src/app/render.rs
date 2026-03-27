@@ -1,4 +1,4 @@
-use ciri_anim::animation::ViewOffset;
+use ciri_anim::anim_value::AnimValue;
 use ciri_config::config::{FocusRingStyle, PaneOpenStyle};
 use ciri_config::theme::ThemeConfig;
 use ciri_layout::geometry::Rect as GeoRect;
@@ -15,7 +15,7 @@ use super::status_bar::emit_status_text;
 impl App {
     pub fn snap_all_col_widths(&mut self) {
         let vw = self.workspaces.view_size.width;
-        self.col_widths.clear();
+        self.anim_mgr.col_widths.clear();
         for ws in &mut self.workspaces.workspaces {
             for col in &mut ws.columns {
                 col.snap_width(vw);
@@ -50,7 +50,7 @@ impl App {
         let zoom_x = vw / max_w;
         let zoom_y = vh / total_h;
         let zoom = (zoom_x.min(zoom_y).min(1.0) * fit).max(0.15);
-        self.overview.zoom.animate_to(zoom as f64, omega);
+        self.anim_mgr.overview_zoom.animate_to(zoom as f64, omega, self.config.animation.epsilon);
     }
 
     pub fn animate_to_active(&mut self) {
@@ -68,22 +68,23 @@ impl App {
                 ciri_layout::workspace::CenterStrategy::Never
             }
         };
-        let current_vox = self.view_offset_x.value() as f32;
+        let epsilon = self.config.animation.epsilon;
+        let current_vox = self.anim_mgr.view_offset_x.value() as f32;
         let target_x = self
             .workspaces
             .active_mut()
             .target_offset_for_active_with_strategy(center_strategy, current_vox);
         if enabled {
-            self.view_offset_x.animate_to(target_x as f64, omega);
+            self.anim_mgr.view_offset_x.animate_to(target_x as f64, omega, epsilon);
         } else {
-            self.view_offset_x.jump_to(target_x as f64);
+            self.anim_mgr.view_offset_x.jump_to(target_x as f64);
         }
 
         let target_y = self.workspaces.target_offset_y();
         if enabled {
-            self.view_offset_y.animate_to(target_y as f64, omega);
+            self.anim_mgr.view_offset_y.animate_to(target_y as f64, omega, epsilon);
         } else {
-            self.view_offset_y.jump_to(target_y as f64);
+            self.anim_mgr.view_offset_y.jump_to(target_y as f64);
         }
 
         self.sync_col_animations();
@@ -91,57 +92,50 @@ impl App {
 
     pub fn sync_col_animations(&mut self) {
         let ncols = self.workspaces.active().columns.len();
-        while self.col_widths.len() < ncols {
-            self.col_widths.push(ViewOffset::new());
+        while self.anim_mgr.col_widths.len() < ncols {
+            self.anim_mgr.col_widths.push(AnimValue::new(0.0));
         }
-        self.col_widths.truncate(ncols);
+        self.anim_mgr.col_widths.truncate(ncols);
 
         let vw = self.workspaces.active().view_size.width;
         let omega = self.config.animation.speed;
+        let epsilon = self.config.animation.epsilon;
         for (i, col) in self.workspaces.active().columns.iter().enumerate() {
             let target = col.resolve_width(vw) as f64;
-            let current = self.col_widths[i].value();
-            let anim_target = self.col_widths[i].target();
+            let current = self.anim_mgr.col_widths[i].value();
+            let anim_target = self.anim_mgr.col_widths[i].target();
             if self.config.animation.enabled {
                 if current == 0.0 {
-                    self.col_widths[i].jump_to(target);
+                    self.anim_mgr.col_widths[i].jump_to(target);
                 } else if (anim_target - target).abs() > 1.0 {
-                    self.col_widths[i].animate_to(target, omega);
+                    self.anim_mgr.col_widths[i].animate_to(target, omega, epsilon);
                 }
             } else {
-                self.col_widths[i].jump_to(target);
+                self.anim_mgr.col_widths[i].jump_to(target);
             }
         }
 
         let ws = self.workspaces.active_mut();
         for (i, col) in ws.columns.iter_mut().enumerate() {
-            if i < self.col_widths.len() {
-                col.set_rendered_width(self.col_widths[i].value() as f32);
+            if i < self.anim_mgr.col_widths.len() {
+                col.set_rendered_width(self.anim_mgr.col_widths[i].value() as f32);
             }
         }
     }
 
     pub fn advance_animations(&mut self, dt: f64) -> bool {
-        let mut animating = self.view_offset_x.advance(dt);
-        if self.view_offset_y.advance(dt) {
-            animating = true;
-        }
-        if self.overview.zoom.advance(dt) {
-            animating = true;
-        }
-        if self.gestures.row_offset.advance(dt) {
-            animating = true;
-        }
-        if !self.col_widths.is_empty() {
+        // sync_col_animations keeps col_widths targets up-to-date with layout
+        if !self.anim_mgr.col_widths.is_empty() {
             self.sync_col_animations();
-            let ws = self.workspaces.active_mut();
-            for (i, col) in ws.columns.iter_mut().enumerate() {
-                if i < self.col_widths.len() {
-                    if self.col_widths[i].advance(dt) {
-                        animating = true;
-                    }
-                    col.set_rendered_width(self.col_widths[i].value() as f32);
-                }
+        }
+        // advance_all ticks view_offset_x/y, overview_zoom, gesture_row_offset,
+        // col_widths, and per-pane/effect animations.
+        let animating = self.anim_mgr.advance_all(dt);
+        // Apply advanced col_width values back to rendered layout
+        let ws = self.workspaces.active_mut();
+        for (i, col) in ws.columns.iter_mut().enumerate() {
+            if i < self.anim_mgr.col_widths.len() {
+                col.set_rendered_width(self.anim_mgr.col_widths[i].value() as f32);
             }
         }
         animating
@@ -955,11 +949,11 @@ impl App {
         let (vw, vh) = renderer.surface_size();
         let vw_f = vw as f32;
         let vh_f = vh as f32;
-        let zoom = self.overview.zoom.value() as f32;
+        let zoom = self.anim_mgr.overview_zoom.value() as f32;
         let zoom_threshold = self.config.animation.zoom_threshold;
 
-        let vox = self.view_offset_x.value() as f32;
-        let voy = self.view_offset_y.value() as f32;
+        let vox = self.anim_mgr.view_offset_x.value() as f32;
+        let voy = self.anim_mgr.view_offset_y.value() as f32;
         let tiles = if self.overview.active || zoom < zoom_threshold {
             self.workspaces.all_tiles_2d(vox, voy)
         } else {

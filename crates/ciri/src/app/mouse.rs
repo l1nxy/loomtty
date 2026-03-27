@@ -251,15 +251,16 @@ impl App {
                 let zoom_delta = delta * sensitivity;
                 if self.overview.active {
                     // In overview: pinch out (delta > 0) zooms in toward normal
-                    let cur_zoom = self.overview.zoom.value();
+                    let cur_zoom = self.anim_mgr.overview_zoom.value();
                     let new_zoom = (cur_zoom + zoom_delta).clamp(0.05, 1.0);
+                    let epsilon = self.config.animation.epsilon;
                     if new_zoom >= self.config.animation.zoom_threshold as f64 {
                         self.overview.hovered_pane = None;
                         self.overview.active = false;
-                        self.overview.zoom.animate_to(1.0, omega);
+                        self.anim_mgr.overview_zoom.animate_to(1.0, omega, epsilon);
                         self.animate_to_active();
                     } else {
-                        self.overview.zoom.animate_to(new_zoom, omega);
+                        self.anim_mgr.overview_zoom.animate_to(new_zoom, omega, epsilon);
                     }
                 } else {
                     // In normal mode: pinch in (delta < 0) enters overview
@@ -268,19 +269,20 @@ impl App {
                         self.overview.hovered_pane = None;
                         self.context_menu.visible = false;
                         self.refresh_overview_zoom();
-                        self.view_offset_x.animate_to(0.0, omega);
-                        self.view_offset_y.animate_to(0.0, omega);
+                        let epsilon = self.config.animation.epsilon;
+                        self.anim_mgr.view_offset_x.animate_to(0.0, omega, epsilon);
+                        self.anim_mgr.view_offset_y.animate_to(0.0, omega, epsilon);
                     }
                 }
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
                 // Snap: if barely zoomed out, snap back to normal
                 if self.overview.active
-                    && self.overview.zoom.value() > self.config.animation.zoom_threshold as f64
+                    && self.anim_mgr.overview_zoom.value() > self.config.animation.zoom_threshold as f64
                 {
                     self.overview.hovered_pane = None;
                     self.overview.active = false;
-                    self.overview.zoom.animate_to(1.0, omega);
+                    self.anim_mgr.overview_zoom.animate_to(1.0, omega, self.config.animation.epsilon);
                     self.animate_to_active();
                 }
             }
@@ -294,7 +296,7 @@ impl App {
     fn hit_test_scrollbar(&self, mx: f32, my: f32) -> Option<super::resize::ScrollbarHit> {
         let border_w = self.config.appearance.border_width;
         let padding = self.config.appearance.padding;
-        let vox = self.view_offset_x.value() as f32;
+        let vox = self.anim_mgr.view_offset_x.value() as f32;
         let tiles = self.workspaces.active().visible_tiles(vox);
         let my = self.content_y_from_screen(my)?;
         // Wider hit area (8px from right edge) for comfortable clicking
@@ -386,13 +388,13 @@ impl App {
         }
 
         if let Some((lx, ly)) = self.overview.drag_last_pos {
-            let zoom = self.overview.zoom.value() as f32;
+            let zoom = self.anim_mgr.overview_zoom.value() as f32;
             let dx = (mx - lx) / zoom;
             let dy = (my - ly) / zoom;
-            self.view_offset_x
-                .jump_to(self.view_offset_x.value() - dx as f64);
-            self.view_offset_y
-                .jump_to(self.view_offset_y.value() - dy as f64);
+            self.anim_mgr.view_offset_x
+                .jump_to(self.anim_mgr.view_offset_x.value() - dx as f64);
+            self.anim_mgr.view_offset_y
+                .jump_to(self.anim_mgr.view_offset_y.value() - dy as f64);
             self.request_mouse_redraw();
         }
         self.overview.drag_last_pos = Some((mx, my));
@@ -474,7 +476,7 @@ impl App {
     }
 
     fn hovered_pane_at(&self, mx: f32, my: f32) -> Option<u64> {
-        let vox = self.view_offset_x.value() as f32;
+        let vox = self.anim_mgr.view_offset_x.value() as f32;
         self.workspaces
             .active()
             .visible_tiles(vox)
@@ -578,15 +580,16 @@ impl App {
             MouseScrollDelta::LineDelta(_, y) => y as f64 * 0.05,
             MouseScrollDelta::PixelDelta(pos) => pos.y * 0.001,
         };
-        let cur_zoom = self.overview.zoom.value();
+        let cur_zoom = self.anim_mgr.overview_zoom.value();
         let new_zoom = (cur_zoom + dy).clamp(0.05, 1.0);
         let omega = self.config.animation.speed;
+        let epsilon = self.config.animation.epsilon;
         if new_zoom >= self.config.animation.zoom_threshold as f64 {
             self.overview.active = false;
-            self.overview.zoom.animate_to(1.0, omega);
+            self.anim_mgr.overview_zoom.animate_to(1.0, omega, epsilon);
             self.animate_to_active();
         } else {
-            self.overview.zoom.animate_to(new_zoom, omega);
+            self.anim_mgr.overview_zoom.animate_to(new_zoom, omega, epsilon);
         }
     }
 
@@ -645,28 +648,28 @@ impl App {
             TouchPhase::Started => {
                 self.gestures.row_active = true;
                 self.gestures.row_start = self.workspaces.active_workspace_idx;
-                self.gestures.row_offset.begin_gesture();
+                self.anim_mgr.gesture_row_offset.begin_gesture();
             }
             TouchPhase::Moved => {
                 if self.gestures.row_active {
-                    self.gestures.row_offset.update_gesture_unclamped(py);
-                    let accum = self.gestures.row_offset.value();
+                    self.anim_mgr.gesture_row_offset.update_gesture_unclamped(py);
+                    let accum = self.anim_mgr.gesture_row_offset.value();
                     if accum > threshold {
                         self.workspaces.focus_down();
-                        self.gestures.row_offset.jump_to(0.0);
-                        self.gestures.row_offset.begin_gesture();
+                        self.anim_mgr.gesture_row_offset.jump_to(0.0);
+                        self.anim_mgr.gesture_row_offset.begin_gesture();
                         self.animate_to_active();
                     } else if accum < -threshold {
                         self.workspaces.focus_up();
-                        self.gestures.row_offset.jump_to(0.0);
-                        self.gestures.row_offset.begin_gesture();
+                        self.anim_mgr.gesture_row_offset.jump_to(0.0);
+                        self.anim_mgr.gesture_row_offset.begin_gesture();
                         self.animate_to_active();
                     }
                 }
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
                 self.gestures.row_active = false;
-                self.gestures.row_offset.end_gesture(0.0, omega);
+                self.anim_mgr.gesture_row_offset.end_gesture(0.0, omega, self.config.animation.epsilon);
                 self.animate_to_active();
             }
         }
@@ -789,10 +792,10 @@ impl App {
         };
         match phase {
             TouchPhase::Started => {
-                self.view_offset_x.begin_gesture();
+                self.anim_mgr.view_offset_x.begin_gesture();
             }
             TouchPhase::Moved => {
-                self.view_offset_x.update_gesture(dx);
+                self.anim_mgr.view_offset_x.update_gesture(dx);
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
                 let center_strategy = match self.config.layout.center_focused_column {
@@ -806,12 +809,12 @@ impl App {
                         ciri_layout::workspace::CenterStrategy::Never
                     }
                 };
-                let current_vox = self.view_offset_x.value() as f32;
+                let current_vox = self.anim_mgr.view_offset_x.value() as f32;
                 let t = self
                     .workspaces
                     .active_mut()
                     .target_offset_for_active_with_strategy(center_strategy, current_vox);
-                self.view_offset_x.end_gesture(t as f64, self.config.animation.speed);
+                self.anim_mgr.view_offset_x.end_gesture(t as f64, self.config.animation.speed, self.config.animation.epsilon);
             }
         }
     }

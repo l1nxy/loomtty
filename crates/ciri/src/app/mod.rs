@@ -37,7 +37,7 @@ use winit::window::Window;
 
 use ciri_input::action::Action;
 
-use crate::connection::ServerEvent;
+use crate::connection::{RemoteQueryResult, ServerEvent};
 use crate::grid::ClientPaneGrid;
 use std::path::PathBuf;
 
@@ -128,6 +128,10 @@ pub(crate) struct CommandPaletteState {
     pub hovered_idx: Option<usize>,
     pub sessions_only: bool,
     pub sessions_show_all: bool,
+    /// Remote host name currently being queried (loading state).
+    pub remote_loading: Option<String>,
+    /// (host_name, error_message) for a failed remote query.
+    pub remote_error: Option<(String, String)>,
 }
 
 #[derive(Clone, Copy)]
@@ -159,10 +163,34 @@ pub(crate) struct PaletteEntry {
     pub kind: PaletteEntryKind,
 }
 
+#[derive(Clone)]
 pub(crate) enum PaletteEntryKind {
     Action(Action),
     SwitchSession(String),
     KillSession(String),
+    /// A configured remote host — selecting it triggers session probing.
+    RemoteHost {
+        name: String,
+        host: String,
+        port: u16,
+        ssh_port: u16,
+    },
+    /// A session on a remote ciri-server (full remote mode).
+    RemoteSession {
+        host: String,
+        port: u16,
+        ssh_port: u16,
+        session_name: String,
+    },
+    /// SSH shell fallback (no ciri-server on remote).
+    SshShell {
+        #[allow(dead_code)]
+        name: String,
+        host: String,
+        ssh_port: u16,
+    },
+    /// Switch to a background connection slot.
+    SwitchSlot(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -341,6 +369,12 @@ pub(crate) struct App {
     pub last_focus_follows_mouse: Option<(u64, Instant)>,
     /// Right-click context menu state.
     pub context_menu: ContextMenu,
+    /// Background connection slots (saved state from non-active connections).
+    pub background_slots: HashMap<String, ConnectionSlot>,
+    /// ID of the currently active connection slot ("local" or "remote:host:port").
+    pub active_slot_id: String,
+    /// Channel for receiving async remote host probe results.
+    pub remote_query_rx: Option<crossbeam_channel::Receiver<RemoteQueryResult>>,
 }
 
 /// Parameters for a remote SSH tunnel connection.
@@ -348,6 +382,37 @@ pub(crate) struct RemoteConnectionConfig {
     pub host: String,
     pub port: u16,
     pub ssh_port: u16,
+}
+
+/// Identifies what kind of connection a slot represents.
+#[derive(Debug, Clone)]
+pub(crate) enum ConnectionKind {
+    Local,
+    Remote {
+        host: String,
+        port: u16,
+        ssh_port: u16,
+    },
+}
+
+/// Snapshot of per-connection state, saved when a connection goes to background.
+pub(crate) struct ConnectionSlot {
+    pub id: String,
+    pub kind: ConnectionKind,
+    pub session_name: String,
+    pub server_tx: Sender<ClientMessage>,
+    pub server_rx: Receiver<ServerEvent>,
+    pub pane_grids: HashMap<u64, ClientPaneGrid>,
+    pub workspaces: WorkspaceSet,
+    pub expected_pane_ids: HashSet<u64>,
+    pub connected: bool,
+    pub reconnect_state: Option<ReconnectState>,
+    pub pending_session_name: Option<String>,
+    pub anim_mgr: AnimationManager,
+    pub workspace_last_pane_ids: HashMap<usize, u64>,
+    pub selection: Option<Selection>,
+    pub broadcast_mode: bool,
+    pub image_placements: HashMap<u64, Vec<ClientImagePlacement>>,
 }
 
 impl App {
@@ -471,6 +536,9 @@ impl App {
             remote_config: None,
             last_focus_follows_mouse: None,
             context_menu: ContextMenu::default(),
+            background_slots: HashMap::new(),
+            active_slot_id: "local".to_string(),
+            remote_query_rx: None,
         }
     }
 
@@ -483,6 +551,173 @@ impl App {
             crate::connection::connect_remote(&rc.host, rc.port, rc.ssh_port, viewport)
         } else {
             crate::connection::connect_or_spawn(&self.session_name, viewport)
+        }
+    }
+
+    /// Save the current per-connection state into a ConnectionSlot and reset App fields.
+    fn save_current_to_slot(&mut self) -> Option<ConnectionSlot> {
+        let server_tx = self.server_tx.take()?;
+        let server_rx = self.server_rx.take()?;
+
+        let kind = if let Some(ref rc) = self.remote_config {
+            ConnectionKind::Remote {
+                host: rc.host.clone(),
+                port: rc.port,
+                ssh_port: rc.ssh_port,
+            }
+        } else {
+            ConnectionKind::Local
+        };
+
+        let initial_view = self.workspaces.view_size;
+        let column_gap = self.config.appearance.column_gap;
+
+        Some(ConnectionSlot {
+            id: self.active_slot_id.clone(),
+            kind,
+            session_name: std::mem::replace(&mut self.session_name, String::new()),
+            server_tx,
+            server_rx,
+            pane_grids: std::mem::take(&mut self.pane_grids),
+            workspaces: std::mem::replace(
+                &mut self.workspaces,
+                WorkspaceSet::new_with_gaps(initial_view, column_gap, column_gap),
+            ),
+            expected_pane_ids: std::mem::take(&mut self.expected_pane_ids),
+            connected: std::mem::replace(&mut self.connected, false),
+            reconnect_state: self.reconnect_state.take(),
+            pending_session_name: self.pending_session_name.take(),
+            anim_mgr: std::mem::replace(&mut self.anim_mgr, AnimationManager::new()),
+            workspace_last_pane_ids: std::mem::take(&mut self.workspace_last_pane_ids),
+            selection: self.selection.take(),
+            broadcast_mode: std::mem::replace(&mut self.broadcast_mode, false),
+            image_placements: std::mem::take(&mut self.image_placements),
+        })
+    }
+
+    /// Restore per-connection state from a ConnectionSlot into App fields.
+    fn restore_from_slot(&mut self, slot: ConnectionSlot) {
+        self.active_slot_id = slot.id;
+        self.session_name = slot.session_name;
+        self.server_tx = Some(slot.server_tx);
+        self.server_rx = Some(slot.server_rx);
+        self.pane_grids = slot.pane_grids;
+        self.workspaces = slot.workspaces;
+        self.expected_pane_ids = slot.expected_pane_ids;
+        self.connected = slot.connected;
+        self.reconnect_state = slot.reconnect_state;
+        self.pending_session_name = slot.pending_session_name;
+        self.anim_mgr = slot.anim_mgr;
+        self.workspace_last_pane_ids = slot.workspace_last_pane_ids;
+        self.selection = slot.selection;
+        self.broadcast_mode = slot.broadcast_mode;
+        self.image_placements = slot.image_placements;
+
+        // Set remote_config based on slot kind
+        self.remote_config = match &slot.kind {
+            ConnectionKind::Local => None,
+            ConnectionKind::Remote {
+                host,
+                port,
+                ssh_port,
+            } => Some(RemoteConnectionConfig {
+                host: host.clone(),
+                port: *port,
+                ssh_port: *ssh_port,
+            }),
+        };
+
+        // Clear caches — they'll be rebuilt on next render
+        self.cached_views.clear();
+        self.cached_tile_glyphs.clear();
+
+        // Update window title
+        let suffix = match &self.remote_config {
+            Some(rc) => format!(" (remote: {})", rc.host),
+            None => String::new(),
+        };
+        if let Some(w) = &self.window {
+            w.set_title(&format!(
+                "{} [{}]{}",
+                self.config.window.title, self.session_name, suffix
+            ));
+        }
+    }
+
+    /// Switch to a background connection slot by ID.
+    pub fn switch_to_slot(&mut self, target_id: &str) {
+        let target = match self.background_slots.remove(target_id) {
+            Some(slot) => slot,
+            None => {
+                log::warn!("no background slot with id: {target_id}");
+                return;
+            }
+        };
+
+        // Save current state to background
+        if let Some(current) = self.save_current_to_slot() {
+            self.background_slots.insert(current.id.clone(), current);
+        }
+
+        // Restore target
+        self.restore_from_slot(target);
+
+        // Process any events that accumulated while this slot was in the background
+        self.process_server_events();
+    }
+
+    /// Create a new remote connection and switch to it.
+    pub fn connect_remote_session(
+        &mut self,
+        host: String,
+        port: u16,
+        ssh_port: u16,
+        session_name: String,
+    ) {
+        let slot_id = format!("remote:{}:{}", host, port);
+
+        // If a slot already exists for this remote, switch to it instead
+        if self.background_slots.contains_key(&slot_id) {
+            self.switch_to_slot(&slot_id);
+            // Once connected, switch session within the remote server
+            self.send(ClientMessage::SwitchSession {
+                session_name,
+            });
+            return;
+        }
+
+        // Save current state to background
+        if let Some(current) = self.save_current_to_slot() {
+            self.background_slots.insert(current.id.clone(), current);
+        }
+
+        // Set up new remote connection
+        self.remote_config = Some(RemoteConnectionConfig {
+            host: host.clone(),
+            port,
+            ssh_port,
+        });
+        self.session_name = session_name;
+        self.active_slot_id = slot_id;
+
+        let viewport = self.current_viewport();
+        match self.connect(viewport) {
+            Ok((tx, rx)) => {
+                self.server_tx = Some(tx);
+                self.server_rx = Some(rx);
+            }
+            Err(e) => {
+                log::error!("remote connection failed: {e}");
+                self.mark_disconnected_for_reconnect();
+            }
+        }
+
+        // Update window title
+        if let Some(w) = &self.window {
+            w.set_title(&format!(
+                "{} [{}] (remote: {})",
+                self.config.window.title, self.session_name, host
+            ));
         }
     }
 

@@ -61,6 +61,8 @@ pub enum Action {
     EnterMode(String),
     /// Toggle locked mode (all keys pass through to terminal).
     ToggleLock,
+    /// Toggle the help panel showing available keybindings.
+    ToggleHelp,
 }
 
 impl Action {
@@ -144,6 +146,7 @@ impl Action {
             (Action::Detach, "Detach"),
             (Action::ToggleCommandPalette, "Toggle Command Palette"),
             (Action::ToggleLock, "Toggle Lock"),
+            (Action::ToggleHelp, "Toggle Help"),
         ]
     }
 }
@@ -185,6 +188,7 @@ fn parse_named_action(name: &str) -> Option<Action> {
         "detach" => Some(Action::Detach),
         "toggle_command_palette" => Some(Action::ToggleCommandPalette),
         "toggle_lock" => Some(Action::ToggleLock),
+        "toggle_help" => Some(Action::ToggleHelp),
         _ => None,
     }
 }

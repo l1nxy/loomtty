@@ -1005,7 +1005,17 @@ unsafe fn create_rtv(
 ) -> Result<ID3D11RenderTargetView> {
     let back_buffer: ID3D11Texture2D = swap_chain.GetBuffer(0)?;
     let resource: ID3D11Resource = back_buffer.cast()?;
+    // Use an sRGB view so the GPU automatically converts linear→sRGB on write.
+    // The swap chain buffer is DXGI_FORMAT_R8G8B8A8_UNORM (required by flip model),
+    // but we can create an sRGB-typed RTV on the same underlying resource.
+    let rtv_desc = D3D11_RENDER_TARGET_VIEW_DESC {
+        Format: DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
+        ViewDimension: D3D11_RTV_DIMENSION_TEXTURE2D,
+        Anonymous: D3D11_RENDER_TARGET_VIEW_DESC_0 {
+            Texture2D: D3D11_TEX2D_RTV { MipSlice: 0 },
+        },
+    };
     let mut rtv = None;
-    device.CreateRenderTargetView(&resource, None, Some(&mut rtv))?;
+    device.CreateRenderTargetView(&resource, Some(&rtv_desc), Some(&mut rtv))?;
     Ok(rtv.unwrap())
 }

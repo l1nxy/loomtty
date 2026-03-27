@@ -8,10 +8,8 @@ pub struct KeybindConfig {
     pub bindings: HashMap<String, String>,
     pub overview_bindings: HashMap<String, String>,
     /// Named key tables (e.g. "resize" mode).
-    #[serde(default)]
     pub modes: HashMap<String, HashMap<String, String>>,
     /// Direct bindings that work without leader (e.g. "ctrl+g" = "toggle_lock").
-    #[serde(default)]
     pub direct_bindings: HashMap<String, String>,
 }
 
@@ -40,6 +38,7 @@ impl Default for KeybindConfig {
         bindings.insert("q".to_string(), "detach".to_string());
         bindings.insert("p".to_string(), "toggle_command_palette".to_string());
         bindings.insert("g".to_string(), "toggle_lock".to_string());
+        bindings.insert("/".to_string(), "toggle_help".to_string());
 
         let mut overview_bindings = HashMap::new();
         overview_bindings.insert("h".to_string(), "focus_left".to_string());

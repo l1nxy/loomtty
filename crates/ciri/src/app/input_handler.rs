@@ -9,6 +9,11 @@ use super::App;
 
 impl App {
     pub fn handle_action(&mut self, action: Action) {
+        // Dismiss help panel on any action except ToggleHelp itself
+        if self.show_help && action != Action::ToggleHelp {
+            self.show_help = false;
+        }
+
         match action {
             Action::NewColumnRight => {
                 self.send(ClientMessage::CreatePane);
@@ -188,6 +193,9 @@ impl App {
             }
             Action::ToggleLock => {
                 self.input.toggle_lock();
+            }
+            Action::ToggleHelp => {
+                self.show_help = !self.show_help;
             }
         }
     }

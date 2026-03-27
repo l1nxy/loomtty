@@ -213,7 +213,7 @@ mod tests {
         theme.resolve_preset();
 
         assert_eq!(theme.background, "#282C34");
-        assert_eq!(theme.accent, "#98C379");
+        assert_eq!(theme.accent, "#6B8EC5");
     }
 
     #[test]

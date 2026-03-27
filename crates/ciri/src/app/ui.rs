@@ -166,12 +166,11 @@ struct OverviewActionBarData {
 struct HintsBarComponent {
     bar_y: f32,
     bar_h: f32,
-    groups: Vec<HintGroup>,
-}
-
-struct HintGroup {
-    title: String,
-    items: Vec<HintItem>,
+    // Left side: status info
+    pane_count: usize,
+    active_pane_title: String,
+    // Right side: contextual hints (flattened, no group titles)
+    hints: Vec<HintItem>,
 }
 
 struct HintItem {
@@ -235,39 +234,6 @@ fn action_short_label(action: &str) -> &str {
     }
 }
 
-fn action_group_label(action: &str) -> &'static str {
-    match action {
-        "focus_left" | "focus_right" | "focus_up" | "focus_down" => "move",
-        "move_pane_left" | "move_pane_right" => "pane",
-        "new_column_right" | "new_row_below" | "new_workspace_below" | "split_down" | "close_pane" => {
-            "pane"
-        }
-        "consume_into_column" | "expel_from_column" => "stack",
-        "column_width_decrease"
-        | "column_width_increase"
-        | "column_width_one_third"
-        | "column_width_half"
-        | "column_width_two_thirds"
-        | "column_width_full"
-        | "cycle_preset_width"
-        | "cycle_preset_width_reverse"
-        | "equalize_adjacent_columns" => "width",
-        "toggle_overview" | "exit_overview" => "view",
-        "toggle_broadcast" | "toggle_command_palette" | "toggle_lock" | "detach" => "mode",
-        "scroll_line_up"
-        | "scroll_line_down"
-        | "scroll_half_page_up"
-        | "scroll_half_page_down"
-        | "scroll_page_up"
-        | "scroll_page_down"
-        | "scroll_top"
-        | "scroll_bottom" => "scroll",
-        s if s.starts_with("switch_workspace_") => "ws",
-        s if s.starts_with("enter_mode:") => "mode",
-        _ => "misc",
-    }
-}
-
 /// Build infobox rows from a bindings map. Merges keys that share the same action.
 fn build_infobox_rows(bindings: &std::collections::HashMap<String, String>) -> Vec<(String, String)> {
     use std::collections::HashMap;
@@ -299,118 +265,6 @@ fn build_infobox_rows(bindings: &std::collections::HashMap<String, String>) -> V
             (key_display, action_short_label(action).to_string())
         })
         .collect()
-}
-
-fn build_hint_groups(bindings: &std::collections::HashMap<String, String>) -> Vec<HintGroup> {
-    use std::collections::HashMap;
-    let mut action_to_keys: HashMap<&str, Vec<&str>> = HashMap::new();
-    for (key, action) in bindings {
-        action_to_keys
-            .entry(action.as_str())
-            .or_default()
-            .push(key.as_str());
-    }
-
-    fn action_rank(action: &str) -> usize {
-        match action {
-            "focus_left" => 0,
-            "focus_down" => 1,
-            "focus_up" => 2,
-            "focus_right" => 3,
-            "move_pane_left" => 10,
-            "move_pane_right" => 11,
-            "new_column_right" => 20,
-            "new_row_below" | "new_workspace_below" | "split_down" => 21,
-            "close_pane" => 22,
-            "consume_into_column" => 30,
-            "expel_from_column" => 31,
-            "column_width_decrease" => 40,
-            "column_width_increase" => 41,
-            "column_width_one_third" => 42,
-            "column_width_half" => 43,
-            "column_width_two_thirds" => 44,
-            "column_width_full" => 45,
-            "cycle_preset_width" => 46,
-            "cycle_preset_width_reverse" => 47,
-            "toggle_overview" => 60,
-            "exit_overview" => 61,
-            "toggle_broadcast" => 62,
-            "toggle_command_palette" => 63,
-            "toggle_lock" => 64,
-            "detach" => 65,
-            "scroll_line_up" => 70,
-            "scroll_line_down" => 71,
-            "scroll_half_page_up" => 72,
-            "scroll_half_page_down" => 73,
-            "scroll_page_up" => 74,
-            "scroll_page_down" => 75,
-            "scroll_top" => 76,
-            "scroll_bottom" => 77,
-            s if s.starts_with("switch_workspace_") => 90,
-            s if s.starts_with("enter_mode:") => 100,
-            _ => 999,
-        }
-    }
-
-    fn key_rank(key: &str) -> usize {
-        match key {
-            "h" => 0,
-            "j" => 1,
-            "k" => 2,
-            "l" => 3,
-            "n" => 10,
-            "d" => 11,
-            "x" => 12,
-            "c" => 13,
-            "e" => 14,
-            "[" => 20,
-            "]" => 21,
-            "r" => 22,
-            "shift+r" => 23,
-            "f" => 24,
-            "b" => 30,
-            "o" => 31,
-            "tab" => 32,
-            "p" => 33,
-            "q" => 34,
-            "esc" => 35,
-            _ => 999,
-        }
-    }
-
-    for keys in action_to_keys.values_mut() {
-        keys.sort_by(|a, b| key_rank(a).cmp(&key_rank(b)).then(a.len().cmp(&b.len())).then(a.cmp(b)));
-    }
-
-    let mut entries: Vec<_> = action_to_keys.into_iter().collect();
-    entries.sort_by(|(a_action, a_keys), (b_action, b_keys)| {
-        action_rank(a_action)
-            .cmp(&action_rank(b_action))
-            .then(key_rank(a_keys[0]).cmp(&key_rank(b_keys[0])))
-            .then(a_keys[0].len().cmp(&b_keys[0].len()))
-            .then(a_keys[0].cmp(&b_keys[0]))
-    });
-
-    let mut grouped: Vec<HintGroup> = Vec::new();
-    for (action, keys) in entries {
-        let key = if keys.len() <= 2 {
-            keys.join("/")
-        } else {
-            keys[..2].join("/")
-        };
-        let label = action_short_label(action).to_string();
-        let title = action_group_label(action).to_string();
-        if let Some(group) = grouped.iter_mut().find(|g| g.title == title) {
-            group.items.push(HintItem { key, label });
-        } else {
-            grouped.push(HintGroup {
-                title,
-                items: vec![HintItem { key, label }],
-            });
-        }
-    }
-
-    grouped
 }
 
 impl App {
@@ -993,10 +847,12 @@ impl UiComponent for TopBarComponent {
         let bar_height = cx.cell_h + padding;
         let text_y = self.layout.bar_y + padding * 0.5;
         let bar_bg = ThemeConfig::parse_color_linear(&cx.config.theme.statusbar_background);
+        let fg = ThemeConfig::parse_color_linear(&cx.config.theme.foreground);
         let dim = ThemeConfig::parse_color_linear(&cx.config.theme.statusbar_dim);
         let accent = ThemeConfig::parse_color_linear(&cx.config.theme.accent);
         let broadcast_color = ThemeConfig::parse_color_linear(&cx.config.theme.mode_broadcast);
 
+        // Bar background — flat, no per-element pill backgrounds
         scene.bg_rects.push(Rect {
             x: 0.0,
             y: self.layout.bar_y,
@@ -1005,77 +861,79 @@ impl UiComponent for TopBarComponent {
             color: bar_bg,
         });
 
-        // Session pill
-        let session_hover = self.hovered_region == Some(TopBarHoverRegion::Session);
+        // 1px separator between bar and content
+        let sep_y = match cx.config.statusbar.position {
+            StatusBarPosition::Top => self.layout.bar_y + bar_height - 1.0,
+            StatusBarPosition::Bottom => self.layout.bar_y,
+        };
         scene.bg_rects.push(Rect {
-            x: self.layout.session_x,
-            y: self.layout.bar_y,
-            w: self.layout.session_w,
-            h: bar_height,
-            color: [dim[0], dim[1], dim[2], if session_hover { 0.18 } else { 0.08 }],
+            x: 0.0, y: sep_y, w: cx.viewport_w, h: 1.0,
+            color: [dim[0], dim[1], dim[2], 0.25],
         });
+
+        // Session name — text only, no background
+        let session_color = if self.hovered_region == Some(TopBarHoverRegion::Session) { fg } else { dim };
         emit_status_text(
             scene.atlas, &self.session_text, 0.0, text_y,
-            cx.cell_w, cx.baseline, dim, scene.glyphs,
+            cx.cell_w, cx.baseline, session_color, scene.glyphs,
         );
 
-        // Workspace indicator pill (right side, before mode)
+        // Workspace indicator — accent text only, no background
         if !self.workspace_label.is_empty() {
-            let ws_hover = self.hovered_region == Some(TopBarHoverRegion::Workspace);
-            scene.bg_rects.push(Rect {
-                x: self.layout.workspace_x,
-                y: self.layout.bar_y,
-                w: self.layout.workspace_w,
-                h: bar_height,
-                color: [accent[0], accent[1], accent[2], if ws_hover { 0.22 } else { 0.12 }],
-            });
             emit_status_text(
                 scene.atlas, &self.workspace_label, self.layout.workspace_x, text_y,
                 cx.cell_w, cx.baseline, accent, scene.glyphs,
             );
         }
 
+        // Pane tabs — brightness differentiation + accent bottom indicator
+        let indicator_thickness = 1.5_f32;
         let tabs_start_x = self.layout.session_x + self.layout.session_w;
         let tabs_end_x = tabs_start_x + self.layout.tabs_area_px;
+        let indicator_y = match cx.config.statusbar.position {
+            StatusBarPosition::Top => self.layout.bar_y + bar_height - indicator_thickness,
+            StatusBarPosition::Bottom => self.layout.bar_y,
+        };
+
         for tab in &self.pane_tabs {
             let hovered = self.hovered_pane_tab == Some(tab.pane_id);
-            let mut tab_bg = if tab.active || hovered { accent } else { dim };
-            tab_bg[3] = if tab.active {
-                0.18
-            } else if hovered {
-                0.12
-            } else {
-                0.10
-            };
             let visible_left = tab.x.max(tabs_start_x);
             let visible_right = (tab.x + tab.w).min(tabs_end_x);
             let visible_w = (visible_right - visible_left).max(0.0);
             if visible_w <= 0.0 {
                 continue;
             }
-            scene.bg_rects.push(Rect {
-                x: visible_left - 2.0,
-                y: self.layout.bar_y + 1.0,
-                w: visible_w + 4.0,
-                h: bar_height - 2.0,
-                color: tab_bg,
-            });
+
+            // Active tab: accent bottom indicator line
+            if tab.active {
+                scene.bg_rects.push(Rect {
+                    x: visible_left,
+                    y: indicator_y,
+                    w: visible_w,
+                    h: indicator_thickness,
+                    color: accent,
+                });
+            }
+
+            // Text: active → foreground, hovered → foreground, inactive → dim
+            let tab_text_color = if tab.active {
+                fg
+            } else if hovered {
+                fg
+            } else {
+                dim
+            };
             if let Some((label, label_x)) =
                 clip_tab_label(&tab.label, tab.x, tab.w, cx.cell_w, tabs_start_x, tabs_end_x)
             {
                 emit_status_text(
-                    scene.atlas,
-                    &label,
-                    label_x,
-                    text_y,
-                    cx.cell_w,
-                    cx.baseline,
-                    if tab.active || hovered { accent } else { dim },
-                    scene.glyphs,
+                    scene.atlas, &label, label_x, text_y,
+                    cx.cell_w, cx.baseline, tab_text_color, scene.glyphs,
                 );
             }
         }
 
+        // Scroll fade (kept — functional, not decorative)
         let fade_w = (cx.cell_w * 3.0).min(self.layout.tabs_area_px * 0.25);
         if fade_w > 0.0 {
             if self.tab_scroll > 0.5 {
@@ -1085,8 +943,7 @@ impl UiComponent for TopBarComponent {
                     scene.bg_rects.push(Rect {
                         x: tabs_start_x + i as f32 * (fade_w / 4.0),
                         y: self.layout.bar_y,
-                        w: strip_w,
-                        h: bar_height,
+                        w: strip_w, h: bar_height,
                         color: [bar_bg[0], bar_bg[1], bar_bg[2], alpha],
                     });
                 }
@@ -1098,34 +955,20 @@ impl UiComponent for TopBarComponent {
                     scene.bg_rects.push(Rect {
                         x: tabs_end_x - fade_w + i as f32 * (fade_w / 4.0),
                         y: self.layout.bar_y,
-                        w: strip_w,
-                        h: bar_height,
+                        w: strip_w, h: bar_height,
                         color: [bar_bg[0], bar_bg[1], bar_bg[2], alpha],
                     });
                 }
             }
         }
 
-        let mut pill_bg = self.mode_color;
-        pill_bg[3] = if self.hovered_region == Some(TopBarHoverRegion::Mode) {
-            0.24
-        } else {
-            0.15
-        };
-        scene.bg_rects.push(Rect {
-            x: self.layout.mode_x,
-            y: self.layout.bar_y,
-            w: self.layout.mode_w,
-            h: bar_height,
-            color: pill_bg,
-        });
-
-        // Mode label (right-aligned)
+        // Mode label — text only, no pill background
         let mode_str = self.mode_label.as_str();
         let mode_chars = mode_str.chars().count();
         let rx = cx.viewport_w - mode_chars as f32 * cx.cell_w;
         emit_status_text(scene.atlas, mode_str, rx, text_y, cx.cell_w, cx.baseline, self.mode_color, scene.glyphs);
 
+        // Leader / broadcast / overview indicator line
         if self.is_leader || self.is_broadcast || self.is_overview {
             let indicator_h = cx.cell_h * cx.config.statusbar.leader_indicator_ratio;
             let indicator_color = if self.is_broadcast { broadcast_color } else { accent };
@@ -1507,20 +1350,23 @@ impl UiComponent for ContextMenuComponent {
 
 impl InfoBoxComponent {
     fn capture(app: &App, cx: &UiContext<'_>) -> Option<Self> {
-        // Only show when in a named mode or prefix leader's AwaitingAction
+        // Don't show infobox when palette or paste dialog is active
+        if app.command_palette.is_some() || app.pending_paste.is_some() {
+            return None;
+        }
+
+        // Show when: named mode, leader awaiting, OR help panel toggled
         let (title, bindings) = if let Some(mode_name) = app.input.current_mode_name() {
             let bindings = app.config.keys.modes.get(mode_name)?;
             (mode_name.to_uppercase(), bindings.clone())
         } else if app.input.is_awaiting_action() {
             ("LEADER".to_string(), app.config.keys.bindings.clone())
+        } else if app.show_help {
+            // Help panel: show all leader bindings
+            ("HELP".to_string(), app.config.keys.bindings.clone())
         } else {
             return None;
         };
-
-        // Don't show infobox when palette or paste dialog is active
-        if app.command_palette.is_some() || app.pending_paste.is_some() {
-            return None;
-        }
 
         let mut rows = build_infobox_rows(&bindings);
         rows.push(("esc".to_string(), "exit".to_string()));
@@ -1623,86 +1469,104 @@ impl HintsBarComponent {
         let bar_h = app.hints_bar_height();
         let bar_y = app.hints_bar_y(cx.viewport_h);
 
-        // Build segments: alternating [key, separator, label, separator, ...]
-        let bindings = if app.input.is_locked() {
-            // Locked: just show unlock
-            let mut m = std::collections::HashMap::new();
-            // Find unlock key from direct_bindings or leader bindings
-            for (k, v) in &app.config.keys.direct_bindings {
-                if v == "toggle_lock" { m.insert(k.clone(), v.clone()); }
-            }
-            if m.is_empty() {
-                for (k, v) in &app.config.keys.bindings {
-                    if v == "toggle_lock" { m.insert(k.clone(), v.clone()); }
-                }
-            }
-            m
-        } else if let Some(mode_name) = app.input.current_mode_name() {
-            app.config.keys.modes.get(mode_name).cloned().unwrap_or_default()
-        } else if app.input.is_awaiting_action() {
-            app.config.keys.bindings.clone()
-        } else {
-            // Normal/Idle: show direct bindings (the promoted Alt+key ones)
-            // Merge leader bindings + direct_bindings for display
-            let mut merged = app.config.keys.bindings.clone();
-            for (k, v) in &app.config.keys.direct_bindings {
-                merged.insert(k.clone(), v.clone());
-            }
-            merged
+        // Left side: pane count + active pane title
+        let ws = app.workspaces.active();
+        let pane_count = ws.columns.iter().map(|c| c.tiles.len()).sum::<usize>();
+        let active_pane_title = ws
+            .active_pane_id()
+            .and_then(|id| app.pane_grids.get(&id))
+            .map(|g| g.title.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_default();
+
+        // Right side: pick only the 3-4 most relevant hints for current state
+        let hints = Self::pick_hints(app);
+
+        Self { bar_y, bar_h, pane_count, active_pane_title, hints }
+    }
+
+    /// Pick a small number of contextual hints (max ~4) for the current input state.
+    fn pick_hints(app: &App) -> Vec<HintItem> {
+        let h = |key: &str, label: &str| HintItem { key: key.into(), label: label.into() };
+
+        // Helper: find the first key bound to an action
+        let find_key = |action: &str, bindings: &std::collections::HashMap<String, String>| -> Option<String> {
+            bindings.iter()
+                .find(|(_, v)| v.as_str() == action)
+                .map(|(k, _)| k.clone())
         };
 
-        let mut groups = build_hint_groups(&bindings);
-
         if app.input.is_locked() {
-            groups.retain(|g| g.title == "mode");
-        } else if app.overview.active {
-            groups.retain(|g| matches!(g.title.as_str(), "move" | "pane" | "view"));
-        } else if app.input.current_mode_name().is_some() {
-            // Keep current mode concise and mode-relevant.
-            groups.retain(|g| matches!(g.title.as_str(), "move" | "pane" | "stack" | "width" | "scroll" | "mode"));
-        } else if app.input.is_awaiting_action() {
-            groups.retain(|g| matches!(g.title.as_str(), "move" | "pane" | "width" | "mode" | "view"));
-        } else {
-            // Idle: prefer summary-level hints only.
-            groups.retain(|g| matches!(g.title.as_str(), "move" | "pane" | "width" | "view" | "mode"));
-            for group in &mut groups {
-                let keep = match group.title.as_str() {
-                    "move" => 4,
-                    "pane" => 3,
-                    "width" => 3,
-                    "view" => 1,
-                    "mode" => 2,
-                    _ => group.items.len(),
-                };
-                group.items.truncate(keep);
-            }
+            // Locked: just show how to unlock
+            let key = find_key("toggle_lock", &app.config.keys.direct_bindings)
+                .or_else(|| find_key("toggle_lock", &app.config.keys.bindings))
+                .unwrap_or_else(|| "g".into());
+            return vec![h(&key, "unlock")];
         }
 
-        if app.input.current_mode_name().is_some() || app.input.is_awaiting_action() {
-            if let Some(group) = groups.iter_mut().find(|g| g.title == "mode") {
-                group.items.push(HintItem {
-                    key: "esc".to_string(),
-                    label: "exit".to_string(),
-                });
-            } else {
-                groups.push(HintGroup {
-                    title: "mode".to_string(),
-                    items: vec![HintItem {
-                        key: "esc".to_string(),
-                        label: "exit".to_string(),
-                    }],
-                });
-            }
+        if app.overview.active {
+            return vec![
+                h("hjkl", "move"),
+                h("enter", "select"),
+                h("esc", "exit"),
+            ];
         }
 
-        Self { bar_y, bar_h, groups }
+        if let Some(mode_name) = app.input.current_mode_name() {
+            let mut hints = Vec::new();
+            if let Some(mode_bindings) = app.config.keys.modes.get(mode_name) {
+                // Show top 3 bindings from the mode, sorted by key simplicity
+                let mut entries: Vec<_> = mode_bindings.iter().collect();
+                entries.sort_by_key(|(k, _)| k.len());
+                for (key, action) in entries.into_iter().take(3) {
+                    hints.push(h(key, action_short_label(action)));
+                }
+            }
+            hints.push(h("esc", "exit"));
+            return hints;
+        }
+
+        if app.input.is_awaiting_action() {
+            // Leader awaiting: show the most common actions
+            let bindings = &app.config.keys.bindings;
+            let mut hints = Vec::new();
+            for (action, label) in [
+                ("new_column_right", "new"),
+                ("close_pane", "close"),
+                ("toggle_overview", "overview"),
+                ("toggle_command_palette", "palette"),
+            ] {
+                if let Some(key) = find_key(action, bindings) {
+                    hints.push(h(&key, label));
+                }
+            }
+            return hints;
+        }
+
+        // Idle/Normal: show direct bindings (including promoted alt+key in sticky mode)
+        let mut hints = Vec::new();
+        // In promoted bare-modifier mode, leader is disabled — don't show it
+        if !app.input.uses_bare_modifier_promotion() {
+            hints.push(h(&app.config.keys.leader, "leader"));
+        }
+        // Pick a few useful direct bindings to show
+        let direct = &app.input.direct_keybinds;
+        for (action, label) in [
+            ("toggle_help", "help"),
+            ("toggle_lock", "lock"),
+        ] {
+            if let Some(key_display) = direct.find_key_for_action(action) {
+                hints.push(h(&key_display, label));
+            }
+        }
+        hints
     }
 
     fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let bg = ThemeConfig::parse_color_linear(&cx.config.theme.background);
-        let bar_bg = [bg[0] * 0.85, bg[1] * 0.85, bg[2] * 0.85, 1.0];
+        let bar_bg = ThemeConfig::parse_color_linear(&cx.config.theme.statusbar_background);
         let accent = ThemeConfig::parse_color_linear(&cx.config.theme.accent);
         let dim = ThemeConfig::parse_color_linear(&cx.config.theme.statusbar_dim);
+        let fg = ThemeConfig::parse_color_linear(&cx.config.theme.foreground);
 
         // Bar background
         scene.bg_rects.push(Rect {
@@ -1710,99 +1574,90 @@ impl HintsBarComponent {
             color: bar_bg,
         });
 
-        // Render grouped hints left-to-right, truncating group-wise at viewport edge.
+        // 1px separator at top edge
+        scene.bg_rects.push(Rect {
+            x: 0.0, y: self.bar_y, w: cx.viewport_w, h: 1.0,
+            color: [dim[0], dim[1], dim[2], 0.25],
+        });
+
         let text_y = self.bar_y + (self.bar_h - cx.cell_h) * 0.5;
         let padding = cx.cell_w;
+
+        // ── Left side: status info ──
         let mut x = padding;
-        let max_x = cx.viewport_w - padding;
 
-        let key_pad = cx.cell_w * 0.6;
-        let key_gap = cx.cell_w * 0.4;
-        let mut pill_bg = accent;
-        pill_bg[3] = 0.15;
+        // Accent dot indicator
+        emit_status_text(
+            scene.atlas, "\u{25CF}", x, text_y,
+            cx.cell_w, cx.baseline, accent, scene.glyphs,
+        );
+        x += cx.cell_w * 2.0;
 
-        for (group_idx, group) in self.groups.iter().enumerate() {
-            let mut preview_parts = Vec::new();
-            preview_parts.push(format!("{}:", group.title));
-            for item in &group.items {
-                preview_parts.push(format!("{} {}", item.key, item.label));
+        // Pane count
+        let pane_text = if self.pane_count == 1 {
+            "1 pane".to_string()
+        } else {
+            format!("{} panes", self.pane_count)
+        };
+        emit_status_text(
+            scene.atlas, &pane_text, x, text_y,
+            cx.cell_w, cx.baseline, dim, scene.glyphs,
+        );
+        x += pane_text.chars().count() as f32 * cx.cell_w;
+
+        // Separator dot + active pane title
+        if !self.active_pane_title.is_empty() {
+            let sep = " \u{00B7} ";
+            emit_status_text(
+                scene.atlas, sep, x, text_y,
+                cx.cell_w, cx.baseline, dim, scene.glyphs,
+            );
+            x += sep.chars().count() as f32 * cx.cell_w;
+
+            let max_title_chars = 24;
+            let title: String = self.active_pane_title.chars().take(max_title_chars).collect();
+            emit_status_text(
+                scene.atlas, &title, x, text_y,
+                cx.cell_w, cx.baseline, fg, scene.glyphs,
+            );
+        }
+
+        // ── Right side: hint keys (right-aligned) ──
+        // Pre-calculate total width of hints to right-align
+        let hint_spacing = cx.cell_w * 2.0;
+        let mut total_hints_w = 0.0_f32;
+        for (i, item) in self.hints.iter().enumerate() {
+            if i > 0 {
+                total_hints_w += hint_spacing;
             }
-            let group_preview = preview_parts.join("  ");
-            let group_w = group_preview.chars().count() as f32 * cx.cell_w;
+            total_hints_w += (item.key.chars().count() + 1 + item.label.chars().count()) as f32 * cx.cell_w;
+        }
 
-            if x + group_w > max_x {
-                let ellipsis_w = 3.0 * cx.cell_w;
-                if x + ellipsis_w <= max_x {
-                    emit_status_text(
-                        scene.atlas,
-                        "...",
-                        x,
-                        text_y,
-                        cx.cell_w,
-                        cx.baseline,
-                        dim,
-                        scene.glyphs,
-                    );
-                }
+        let max_hints_w = cx.viewport_w * 0.6;
+        let mut rx = cx.viewport_w - padding - total_hints_w.min(max_hints_w);
+
+        for (i, item) in self.hints.iter().enumerate() {
+            if rx > cx.viewport_w - padding {
                 break;
             }
-
-            if group_idx > 0 {
-                x += cx.cell_w * 1.5;
+            if i > 0 {
+                rx += hint_spacing;
             }
 
-            let title_text = format!("{}:", group.title);
+            // Key in accent
             emit_status_text(
-                scene.atlas,
-                &title_text,
-                x,
-                text_y,
-                cx.cell_w,
-                cx.baseline,
-                dim,
-                scene.glyphs,
+                scene.atlas, &item.key, rx, text_y,
+                cx.cell_w, cx.baseline, accent, scene.glyphs,
             );
-            x += title_text.chars().count() as f32 * cx.cell_w + cx.cell_w * 0.5;
+            rx += item.key.chars().count() as f32 * cx.cell_w;
 
-            for (item_idx, item) in group.items.iter().enumerate() {
-                if item_idx > 0 {
-                    x += cx.cell_w;
-                }
-                let key_chars = item.key.chars().count() as f32;
-                let pill_w = key_chars * cx.cell_w + key_pad * 2.0;
-                scene.bg_rects.push(Rect {
-                    x,
-                    y: self.bar_y + (self.bar_h - cx.cell_h) * 0.5 - cx.cell_h * 0.08,
-                    w: pill_w,
-                    h: cx.cell_h * 1.02,
-                    color: pill_bg,
-                });
-                emit_status_text(
-                    scene.atlas,
-                    &item.key,
-                    x + key_pad,
-                    text_y,
-                    cx.cell_w,
-                    cx.baseline,
-                    accent,
-                    scene.glyphs,
-                );
-                x += pill_w;
-
-                let label_text = format!(" {}", item.label);
-                emit_status_text(
-                    scene.atlas,
-                    &label_text,
-                    x,
-                    text_y,
-                    cx.cell_w,
-                    cx.baseline,
-                    dim,
-                    scene.glyphs,
-                );
-                x += label_text.chars().count() as f32 * cx.cell_w;
-                x += key_gap;
-            }
+            // Label in dim
+            let label_text = format!(" {}", item.label);
+            emit_status_text(
+                scene.atlas, &label_text, rx, text_y,
+                cx.cell_w, cx.baseline, dim, scene.glyphs,
+            );
+            rx += label_text.chars().count() as f32 * cx.cell_w;
         }
     }
 }

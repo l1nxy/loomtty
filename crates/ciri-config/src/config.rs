@@ -35,7 +35,7 @@ impl Default for FontConfig {
     fn default() -> Self {
         FontConfig {
             family: "monospace".to_string(),
-            size: 14.0,
+            size: 10.0,
         }
     }
 }
@@ -445,7 +445,7 @@ impl CiriConfig {
             &mut self.appearance.inactive_opacity,
             "appearance.inactive_opacity",
         );
-        clamp_positive_f32(&mut self.font.size, 14.0, "font.size");
+        clamp_positive_f32(&mut self.font.size, 10.0, "font.size");
         clamp_unit_f32(
             &mut self.terminal.cursor_opacity,
             "terminal.cursor_opacity",
@@ -606,7 +606,7 @@ mod tests {
         assert_eq!(config.animation.pane_close_duration_ms, 150);
         assert_eq!(config.appearance.border_width, 0.0);
         assert_eq!(config.appearance.inactive_opacity, 1.0);
-        assert_eq!(config.font.size, 14.0);
+        assert_eq!(config.font.size, 10.0);
         assert_eq!(config.terminal.cursor_opacity, 0.0);
         assert_eq!(config.render.frame_interval_ms, 16);
     }

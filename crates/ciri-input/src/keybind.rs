@@ -27,6 +27,17 @@ impl KeyCombo {
         combo
     }
 
+    /// Format this combo as a human-readable string (e.g. "alt+?", "ctrl+g").
+    pub fn display(&self) -> String {
+        let mut parts = Vec::new();
+        if self.ctrl { parts.push("ctrl"); }
+        if self.alt { parts.push("alt"); }
+        if self.super_key { parts.push("super"); }
+        if self.shift { parts.push("shift"); }
+        parts.push(&self.key);
+        parts.join("+")
+    }
+
     /// Build a KeyCombo from runtime modifier state + key name.
     pub fn from_modifiers(key: &str, ctrl: bool, shift: bool, alt: bool, super_key: bool) -> Self {
         KeyCombo {
@@ -54,6 +65,16 @@ impl Default for KeybindMap {
 impl KeybindMap {
     pub fn lookup(&self, combo: &KeyCombo) -> Option<Action> {
         self.bindings.get(combo).cloned()
+    }
+
+    /// Find the shortest key display string bound to a given action name.
+    pub fn find_key_for_action(&self, action_name: &str) -> Option<String> {
+        let target = Action::from_name(action_name)?;
+        self.bindings
+            .iter()
+            .filter(|(_, a)| **a == target)
+            .map(|(combo, _)| combo.display())
+            .min_by_key(|s| s.len())
     }
 
     /// Default overview-mode keybindings.

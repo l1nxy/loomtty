@@ -472,6 +472,14 @@ impl InputHandler {
         }
     }
 
+    /// Whether this handler has promoted leader bindings to direct (bare-modifier sticky mode).
+    pub fn uses_bare_modifier_promotion(&self) -> bool {
+        // After promotion, leader_key is disabled — check if input_mode is sticky
+        // and the original config was a bare modifier. We detect this by checking
+        // if the leader key was disabled (the sentinel value after promotion).
+        self.leader_key.key == "__disabled__"
+    }
+
     fn uses_promoted_bare_modifier_leader(&self) -> bool {
         self.input_mode == InputMode::Sticky && self.leader_key.is_bare_modifier()
     }

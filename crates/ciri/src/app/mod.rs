@@ -339,6 +339,7 @@ pub(crate) struct App {
     pub command_palette: Option<CommandPaletteState>,
     pub pending_paste: Option<PendingPaste>,
     pub broadcast_mode: bool,
+    pub show_help: bool,
     pub pane_anims: PaneAnimations,
     /// Inline image placements per pane.
     pub image_placements: HashMap<u64, Vec<ClientImagePlacement>>,
@@ -484,6 +485,7 @@ impl App {
             command_palette: None,
             pending_paste: None,
             broadcast_mode: false,
+            show_help: false,
             pane_anims: PaneAnimations {
                 open_opacity: HashMap::new(),
                 open_slides: HashMap::new(),

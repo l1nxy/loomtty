@@ -544,6 +544,7 @@ impl Pane {
             cells,
             grapheme_extras,
             hyperlink_extras,
+            cwd: self.cwd().map(|s| s.to_string()),
         }
     }
 

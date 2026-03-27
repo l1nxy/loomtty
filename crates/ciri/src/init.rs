@@ -205,7 +205,7 @@ fn generate_config(
 
 [font]
 family = "{font_family}"
-size = 14.0
+size = 10.0
 
 [appearance]
 padding = 4.0

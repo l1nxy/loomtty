@@ -70,7 +70,6 @@ backend = "auto"
 # Available presets: "one_dark", "catppuccin_mocha", "tokyo_night", "dracula", "nord", "gruvbox_dark"
 # Set preset, then override individual colors below if needed.
 preset = "one_dark"
-foreground = "#FFFFFF"
 
 [keys]
 leader = "ctrl+w"
@@ -105,6 +104,7 @@ tab = "toggle_overview"
 q = "detach"
 p = "toggle_command_palette"
 g = "toggle_lock"
+"/" = "toggle_help"
 
 [keys.modes.resize]
 h = "column_width_decrease"

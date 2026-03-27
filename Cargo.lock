@@ -754,6 +754,7 @@ dependencies = [
  "base64",
  "ciri-protocol",
  "colorsys",
+ "gethostname",
  "libc",
  "log",
  "percent-encoding",

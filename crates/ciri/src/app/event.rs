@@ -83,8 +83,7 @@ impl ApplicationHandler for App {
             || self.overview.zoom.is_animating()
             || self.gestures.row_offset.is_animating()
             || self.col_widths.iter().any(|v| v.is_animating())
-            || !self.pane_anims.open_opacity.is_empty()
-            || !self.pane_anims.closing.is_empty();
+            || self.anim_mgr.is_animating();
         let has_server = self.server_rx.is_some();
         let is_reconnecting = self.reconnect_state.is_some();
         let wants_blink = self.config.terminal.cursor_blink;

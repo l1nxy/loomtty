@@ -488,27 +488,12 @@ impl App {
             }
 
             // Animated focus opacity (smooth transition on focus change)
-            let focus_dim = self
-                .pane_anims
-                .focus_opacity
-                .get(pane_id)
-                .map(|v| v.value() as f32)
-                .unwrap_or(if *is_active { 1.0 } else { inactive_opacity });
-            let open_opacity = self
-                .pane_anims
-                .open_opacity
-                .get(pane_id)
-                .copied()
-                .unwrap_or(1.0);
+            let focus_dim = self.anim_mgr.pane_focus_opacity(*pane_id, inactive_opacity);
+            let open_opacity = self.anim_mgr.pane_open_opacity(*pane_id);
             let dim = focus_dim * open_opacity;
 
             // Pane open slide offset
-            let slide_progress = self
-                .pane_anims
-                .open_slides
-                .get(pane_id)
-                .copied()
-                .unwrap_or(0.0);
+            let slide_progress = self.anim_mgr.pane_open_slide(*pane_id);
             let (slide_dx, slide_dy) = match self.config.animation.pane_open_style {
                 PaneOpenStyle::SlideUp | PaneOpenStyle::FadeSlideUp => {
                     (0.0, -tr.h * slide_progress)
@@ -630,13 +615,13 @@ impl App {
         }
 
         // Render closing panes as fading-out rects
-        for cp in &self.pane_anims.closing {
+        for (rect, opacity, _slide) in self.anim_mgr.closing_panes() {
             bg_rects.push(Rect {
-                x: cp.rect.x,
-                y: cp.rect.y,
-                w: cp.rect.w,
-                h: cp.rect.h,
-                color: [0.1, 0.1, 0.1, cp.opacity * 0.5],
+                x: rect.x,
+                y: rect.y,
+                w: rect.w,
+                h: rect.h,
+                color: [0.1, 0.1, 0.1, opacity * 0.5],
             });
         }
     }
@@ -716,20 +701,13 @@ impl App {
         vh: f32,
         bg_rects: &mut Vec<Rect>,
     ) {
-        let Some((pane_id, started)) = &self.pane_anims.bell_flash else {
-            return;
-        };
-        let elapsed = started.elapsed().as_millis() as f32;
-        let duration_ms = 150.0;
-        if elapsed >= duration_ms {
-            self.pane_anims.bell_flash = None;
-            return;
-        }
-        let alpha = 0.15 * (1.0 - elapsed / duration_ms);
         let zoom_threshold = self.config.animation.zoom_threshold;
-
-        // Flash the specific pane that belled
-        if let Some((_, tile_rect, _)) = tiles.iter().find(|(pid, _, _)| *pid == *pane_id) {
+        for (pane_id, tile_rect, _) in tiles {
+            let intensity = self.anim_mgr.bell_flash(*pane_id);
+            if intensity <= 0.0 {
+                continue;
+            }
+            let alpha = 0.15 * intensity;
             let tr = if zoom < zoom_threshold {
                 let cx = vw / 2.0;
                 let cy = vh / 2.0;
@@ -963,95 +941,13 @@ impl App {
 
         let mut animating = self.advance_animations(dt);
 
-        // Update pane open fade-in + slide animations
-        let open_duration = self.config.animation.pane_open_duration_ms.max(1) as f32 / 1000.0;
-        let fade_speed = 1.0 / open_duration;
-        let mut open_done = Vec::new();
-        for (pane_id, opacity) in &mut self.pane_anims.open_opacity {
-            *opacity = (*opacity + dt as f32 * fade_speed).min(1.0);
-            if *opacity >= 1.0 {
-                open_done.push(*pane_id);
-            }
-        }
-        for pid in &open_done {
-            self.pane_anims.open_opacity.remove(pid);
-        }
-
-        let mut slide_done = Vec::new();
-        for (pane_id, slide) in &mut self.pane_anims.open_slides {
-            *slide = (*slide - dt as f32 * fade_speed).max(0.0);
-            if *slide <= 0.0 {
-                slide_done.push(*pane_id);
-            }
-        }
-        for pid in slide_done {
-            self.pane_anims.open_slides.remove(&pid);
-        }
-
-        // Focus opacity transitions
+        // Focus change detection → delegate to AnimationManager
         let current_focus = self.workspaces.active().active_pane_id();
-        if current_focus != self.pane_anims.prev_focused {
-            let omega = self.config.animation.focus_transition_speed;
-            let target_inactive = self.config.appearance.inactive_opacity as f64;
-            if let Some(prev) = self.pane_anims.prev_focused {
-                let mut v = self
-                    .pane_anims
-                    .focus_opacity
-                    .remove(&prev)
-                    .unwrap_or_else(|| {
-                        let mut vo = ViewOffset::new();
-                        vo.jump_to(1.0);
-                        vo
-                    });
-                if self.config.animation.enabled {
-                    v.animate_to(target_inactive, omega);
-                } else {
-                    v.jump_to(target_inactive);
-                }
-                self.pane_anims.focus_opacity.insert(prev, v);
-            }
-            if let Some(curr) = current_focus {
-                let mut v = self
-                    .pane_anims
-                    .focus_opacity
-                    .remove(&curr)
-                    .unwrap_or_else(|| {
-                        let mut vo = ViewOffset::new();
-                        vo.jump_to(target_inactive);
-                        vo
-                    });
-                if self.config.animation.enabled {
-                    v.animate_to(1.0, omega);
-                } else {
-                    v.jump_to(1.0);
-                }
-                self.pane_anims.focus_opacity.insert(curr, v);
-            }
-            self.pane_anims.prev_focused = current_focus;
-        }
-        for (_, v) in &mut self.pane_anims.focus_opacity {
-            v.advance(dt);
-        }
+        let params = self.anim_params();
+        self.anim_mgr.on_focus_changed(current_focus, &params);
 
-        // Update closing pane fade-out animations
-        self.pane_anims.closing.retain_mut(|cp| {
-            let elapsed = cp.started.elapsed().as_millis() as u64;
-            cp.opacity = 1.0 - (elapsed as f32 / cp.duration_ms as f32).min(1.0);
-            cp.opacity > 0.0
-        });
-
-        if !self.pane_anims.open_opacity.is_empty()
-            || !self.pane_anims.open_slides.is_empty()
-            || self
-                .pane_anims
-                .focus_opacity
-                .values()
-                .any(|v| v.is_animating())
-            || !self.pane_anims.closing.is_empty()
-            || self.pane_anims.bell_flash.is_some()
-        {
-            animating = true;
-        }
+        // Advance all pane animations (open, close, focus, bell) in one call
+        animating |= self.anim_mgr.advance_all(dt);
 
         let renderer = self.renderer.as_mut().unwrap();
         let cache = self.glyph_cache.as_mut().unwrap();

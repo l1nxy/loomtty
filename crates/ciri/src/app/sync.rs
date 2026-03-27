@@ -105,13 +105,8 @@ impl App {
                         self.pane_grids.entry(pane_id).or_insert_with(|| {
                             ClientPaneGrid::new(cols, rows, self.config.terminal.scrollback_lines)
                         });
-                        self.pane_anims.open_opacity.insert(pane_id, 0.0); // start fade-in
-                        if !matches!(
-                            self.config.animation.pane_open_style,
-                            ciri_config::config::PaneOpenStyle::Fade
-                        ) {
-                            self.pane_anims.open_slides.insert(pane_id, 1.0);
-                        }
+                        let params = self.anim_params();
+                        self.anim_mgr.on_pane_created(pane_id, &params);
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::PaneClosed { pane_id }) => {
@@ -121,18 +116,23 @@ impl App {
                         let vox = self.view_offset_x.value() as f32;
                         let voy = self.view_offset_y.value() as f32;
                         let tiles = self.workspaces.visible_tiles_2d(vox, voy);
+                        let params = self.anim_params();
                         if let Some((_, rect, _)) = tiles.iter().find(|(pid, _, _)| *pid == pane_id)
                         {
-                            self.pane_anims.closing.push(super::ClosingPaneState {
-                                rect: *rect,
-                                opacity: 1.0,
-                                started: std::time::Instant::now(),
-                                duration_ms: 200,
-                            });
+                            let geo = ciri_anim::manager::GeoRect {
+                                x: rect.x, y: rect.y, w: rect.w, h: rect.h,
+                            };
+                            self.anim_mgr.on_pane_closed(pane_id, geo, &params);
+                        } else {
+                            // Off-screen pane: just remove state, no close animation
+                            self.anim_mgr.on_pane_closed(
+                                pane_id,
+                                ciri_anim::manager::GeoRect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 },
+                                &params,
+                            );
                         }
                         self.pane_grids.remove(&pane_id);
                         self.invalidate_pane_cache(pane_id);
-                        self.pane_anims.open_opacity.remove(&pane_id);
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::ServerShutdown) => {
@@ -152,7 +152,8 @@ impl App {
                     }
                     ServerEvent::Control(ServerMessage::Bell { pane_id }) => {
                         log::debug!("bell from pane {pane_id}");
-                        self.pane_anims.bell_flash = Some((pane_id, std::time::Instant::now()));
+                        let params = self.anim_params();
+                        self.anim_mgr.on_bell(pane_id, &params);
 
                         // Window urgency hint
                         if self.config.terminal.bell_urgency && !self.window_focused {

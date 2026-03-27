@@ -17,11 +17,11 @@ pub(crate) mod top_bar;
 pub(crate) mod ui;
 
 use ciri_anim::animation::ViewOffset;
-use ciri_config::config::{CiriConfig, StatusBarPosition};
+use ciri_anim::manager::{AnimParams, AnimationManager};
+use ciri_config::config::{CiriConfig, PaneOpenStyle, StatusBarPosition};
 use ciri_gpu::{GlyphAtlasGpu, Renderer};
 use ciri_input::keybind::KeybindMap;
 use ciri_input::leader::InputHandler;
-use ciri_layout::geometry::Rect as GeoRect;
 use ciri_layout::geometry::ViewSize;
 use ciri_layout::workspace_set::WorkspaceSet;
 use ciri_protocol::message::*;
@@ -226,23 +226,6 @@ pub(crate) struct OverviewState {
     pub hovered_pane: Option<(usize, u64)>,
 }
 
-/// Per-pane animation state (open/close/focus/bell).
-pub(crate) struct PaneAnimations {
-    pub open_opacity: HashMap<u64, f32>,
-    pub open_slides: HashMap<u64, f32>,
-    pub focus_opacity: HashMap<u64, ViewOffset>,
-    pub prev_focused: Option<u64>,
-    pub closing: Vec<ClosingPaneState>,
-    pub bell_flash: Option<(u64, Instant)>,
-}
-
-/// State for a pane that is being animated out (fade-to-close).
-pub(crate) struct ClosingPaneState {
-    pub rect: GeoRect,
-    pub opacity: f32,
-    pub started: Instant,
-    pub duration_ms: u64,
-}
 
 /// Cached pre-transformed glyph instances for a pane tile.
 /// Avoids redundant pixel-position computation when content/position haven't changed.
@@ -339,7 +322,7 @@ pub(crate) struct App {
     pub command_palette: Option<CommandPaletteState>,
     pub pending_paste: Option<PendingPaste>,
     pub broadcast_mode: bool,
-    pub pane_anims: PaneAnimations,
+    pub anim_mgr: AnimationManager,
     /// Inline image placements per pane.
     pub image_placements: HashMap<u64, Vec<ClientImagePlacement>>,
     pub cached_color_table: ColorTable,
@@ -484,14 +467,7 @@ impl App {
             command_palette: None,
             pending_paste: None,
             broadcast_mode: false,
-            pane_anims: PaneAnimations {
-                open_opacity: HashMap::new(),
-                open_slides: HashMap::new(),
-                focus_opacity: HashMap::new(),
-                prev_focused: None,
-                closing: Vec::new(),
-                bell_flash: None,
-            },
+            anim_mgr: AnimationManager::new(),
             image_placements: HashMap::new(),
             cached_color_table,
             cached_tile_glyphs: HashMap::new(),
@@ -672,6 +648,28 @@ impl App {
 
     pub fn total_inset(&self) -> f32 {
         (self.config.appearance.padding + self.config.appearance.border_width) * 2.0
+    }
+
+    pub(crate) fn anim_params(&self) -> AnimParams {
+        use ciri_anim::manager::{CloseStyle, OpenStyle};
+        AnimParams {
+            omega: self.config.animation.speed,
+            epsilon: self.config.animation.epsilon,
+            focus_speed: self.config.animation.focus_transition_speed,
+            open_style: match self.config.animation.pane_open_style {
+                PaneOpenStyle::Fade => OpenStyle::Fade,
+                PaneOpenStyle::SlideUp => OpenStyle::SlideUp,
+                PaneOpenStyle::SlideDown => OpenStyle::SlideDown,
+                PaneOpenStyle::SlideLeft => OpenStyle::SlideLeft,
+                PaneOpenStyle::FadeSlideUp => OpenStyle::FadeSlideUp,
+            },
+            open_duration_secs: self.config.animation.pane_open_duration_ms.max(1) as f64 / 1000.0,
+            close_style: CloseStyle::Fade,
+            close_duration_secs: self.config.animation.pane_close_duration_ms.max(1) as f64
+                / 1000.0,
+            bell_duration_secs: 0.15,
+            inactive_opacity: self.config.appearance.inactive_opacity,
+        }
     }
 
     pub fn status_bar_height(&self) -> f32 {

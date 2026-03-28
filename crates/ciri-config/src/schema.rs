@@ -88,6 +88,21 @@ impl Default for FocusRingConfig {
     }
 }
 
+/// Global animation speed preset.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum AnimationPreset {
+    /// ~0.3s — quick and responsive.
+    Snappy,
+    /// ~0.5s — comfortable balance (Apple-like).
+    #[default]
+    Default,
+    /// ~0.7s — relaxed, smooth transitions.
+    Smooth,
+    /// ~1.0s — slow and elegant.
+    Gentle,
+}
+
 /// Pane open/close animation style.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
@@ -136,24 +151,16 @@ impl Default for AppearanceConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 #[serde(default)]
 pub struct AnimationConfig {
-    #[garde(range(min = 0.001))]
-    pub speed: f64,
     #[garde(skip)]
     pub enabled: bool,
-    #[garde(range(min = 0.00001))]
-    pub epsilon: f64,
+    #[garde(skip)]
+    pub preset: AnimationPreset,
+    #[garde(skip)]
+    pub pane_open_style: PaneOpenStyle,
     #[garde(skip)]
     pub overview_zoom_fit: f32,
     #[garde(skip)]
     pub zoom_threshold: f32,
-    #[garde(skip)]
-    pub pane_open_style: PaneOpenStyle,
-    #[garde(range(min = 1))]
-    pub pane_open_duration_ms: u64,
-    #[garde(range(min = 1))]
-    pub pane_close_duration_ms: u64,
-    #[garde(range(min = 0.001))]
-    pub focus_transition_speed: f64,
     #[garde(range(min = 0.0, max = 1.0))]
     pub drag_opacity: f32,
 }
@@ -161,15 +168,11 @@ pub struct AnimationConfig {
 impl Default for AnimationConfig {
     fn default() -> Self {
         AnimationConfig {
-            speed: 10.0,
             enabled: true,
-            epsilon: 0.0001,
+            preset: AnimationPreset::Default,
+            pane_open_style: PaneOpenStyle::Fade,
             overview_zoom_fit: 0.9,
             zoom_threshold: 0.99,
-            pane_open_style: PaneOpenStyle::Fade,
-            pane_open_duration_ms: 250,
-            pane_close_duration_ms: 180,
-            focus_transition_speed: 10.0,
             drag_opacity: 0.6,
         }
     }

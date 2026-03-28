@@ -875,18 +875,41 @@ impl App {
         use ciri_anim::easing::EasingCurve;
         use ciri_anim::manager::{AnimKind, CloseStyle, OpenStyle, PaneCloseConfig, PaneOpenConfig};
         use ciri_anim::spring::SpringParams;
+        use ciri_config::config::AnimationPreset;
 
-        // Use named presets based on Apple SwiftUI spring parameters
-        let scroll_params = SpringParams::default();  // 0.5s
-        let focus_params = SpringParams::snappy();     // 0.3s
-
-        let open_dur = self.config.animation.pane_open_duration_ms.max(1) as f64 / 1000.0;
-        let close_dur = self.config.animation.pane_close_duration_ms.max(1) as f64 / 1000.0;
+        // All timings derived from a single preset
+        // stiffness = (2π / response)², damping_ratio = 0.86
+        let (primary, fast, slow, open_dur, close_dur) = match self.config.animation.preset {
+            AnimationPreset::Snappy => (
+                SpringParams::new(0.86, 440.0, 0.0001),  // ~0.3s
+                SpringParams::new(0.86, 800.0, 0.0001),  // ~0.2s
+                SpringParams::new(0.86, 250.0, 0.0001),  // ~0.4s
+                0.15, 0.12,
+            ),
+            AnimationPreset::Default => (
+                SpringParams::new(0.86, 158.0, 0.0001),  // ~0.5s
+                SpringParams::new(0.86, 440.0, 0.0001),  // ~0.3s
+                SpringParams::new(0.86, 80.0, 0.0001),   // ~0.7s
+                0.25, 0.18,
+            ),
+            AnimationPreset::Smooth => (
+                SpringParams::new(0.86, 80.0, 0.0001),   // ~0.7s
+                SpringParams::new(0.86, 158.0, 0.0001),  // ~0.5s
+                SpringParams::new(0.86, 40.0, 0.001),    // ~1.0s
+                0.35, 0.25,
+            ),
+            AnimationPreset::Gentle => (
+                SpringParams::new(0.86, 40.0, 0.001),    // ~1.0s
+                SpringParams::new(0.86, 80.0, 0.0001),   // ~0.7s
+                SpringParams::new(0.86, 25.0, 0.001),    // ~1.3s
+                0.50, 0.35,
+            ),
+        };
 
         AnimConfig {
             enabled: self.config.animation.enabled,
-            view_scroll: AnimKind::Spring(scroll_params),
-            focus_transition: AnimKind::Spring(focus_params),
+            view_scroll: AnimKind::Spring(primary),
+            focus_transition: AnimKind::Spring(fast),
             pane_open: PaneOpenConfig {
                 style: match self.config.animation.pane_open_style {
                     PaneOpenStyle::Fade => OpenStyle::Fade,
@@ -907,14 +930,14 @@ impl App {
                     curve: EasingCurve::EaseOutCubic,
                 },
             },
-            column_resize: AnimKind::Spring(SpringParams::smooth()),
-            overview_zoom: AnimKind::Spring(SpringParams::smooth()),
+            column_resize: AnimKind::Spring(slow),
+            overview_zoom: AnimKind::Spring(slow),
             bell_flash_secs: 0.15,
             leader_pulse_secs: 0.3,
             inactive_opacity: self.config.appearance.inactive_opacity,
-            pane_move: AnimKind::Spring(SpringParams::default()),
+            pane_move: AnimKind::Spring(primary),
             drag_opacity: self.config.animation.drag_opacity,
-            drag_dim: AnimKind::Spring(SpringParams::snappy()),
+            drag_dim: AnimKind::Spring(fast),
         }
     }
 

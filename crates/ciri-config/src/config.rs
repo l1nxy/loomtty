@@ -102,11 +102,7 @@ mod tests {
     #[test]
     fn validate_rejects_invalid_values() {
         let mut config = CiriConfig::default();
-        config.animation.speed = 0.0;
-        assert!(config.validate().is_err());
-
-        let mut config = CiriConfig::default();
-        config.animation.pane_open_duration_ms = 0;
+        config.animation.drag_opacity = 1.5;
         assert!(config.validate().is_err());
 
         let mut config = CiriConfig::default();

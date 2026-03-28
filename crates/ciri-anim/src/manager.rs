@@ -161,6 +161,16 @@ impl AnimationManager {
         );
     }
 
+    /// Ensure a pane is registered in the animation system without starting open animations.
+    /// Used for panes that already exist on reconnect (StateSync).
+    pub fn ensure_pane_registered(&mut self, pane_id: PaneId) {
+        self.pane_anims.entry(pane_id).or_insert_with(|| PaneAnimState {
+            open_opacity: None,
+            open_slide: None,
+            focus_opacity: AnimValue::new(1.0),
+        });
+    }
+
     /// Called when a pane is closed. Starts close animation and removes pane state.
     pub fn on_pane_closed(&mut self, pane_id: PaneId, rect: GeoRect, params: &AnimParams) {
         // Remove live pane state (including focus_opacity — no leak)
@@ -259,11 +269,11 @@ impl AnimationManager {
     }
 
     /// Get pane focus opacity (1.0 for active, inactive_opacity for inactive).
-    pub fn pane_focus_opacity(&self, pane_id: PaneId, inactive_opacity: f32) -> f32 {
+    pub fn pane_focus_opacity(&self, pane_id: PaneId, _inactive_opacity: f32) -> f32 {
         self.pane_anims
             .get(&pane_id)
             .map(|s| s.focus_opacity.value() as f32)
-            .unwrap_or(inactive_opacity)
+            .unwrap_or(1.0)
     }
 
     /// Iterate closing panes: (rect, opacity, slide_offset).

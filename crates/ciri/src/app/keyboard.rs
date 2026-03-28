@@ -73,7 +73,7 @@ impl App {
 
         // ── Unified pipeline: compute mode → process key → handle action ──
         let app_mode = self.compute_binding_mode();
-        let result = self.input.process_key_v2(
+        let result = self.input.process_key_event(
             key_name,
             modifiers.ctrl,
             modifiers.shift,
@@ -153,7 +153,7 @@ impl App {
     }
 
     // Priority handlers removed — all keybindings now go through
-    // the unified pipeline: compute_binding_mode() + process_key_v2().
+    // the unified pipeline: compute_binding_mode() + process_key_event().
 
     pub(crate) fn handle_clipboard_paste(&mut self) {
         log::info!("clipboard paste triggered");
@@ -238,6 +238,25 @@ impl App {
                 NamedKey::ArrowRight => "Right",
                 NamedKey::ArrowUp => "Up",
                 NamedKey::ArrowDown => "Down",
+                NamedKey::Backspace => "backspace",
+                NamedKey::Delete => "delete",
+                NamedKey::Home => "home",
+                NamedKey::End => "end",
+                NamedKey::PageUp => "pageup",
+                NamedKey::PageDown => "pagedown",
+                NamedKey::Insert => "insert",
+                NamedKey::F1 => "f1",
+                NamedKey::F2 => "f2",
+                NamedKey::F3 => "f3",
+                NamedKey::F4 => "f4",
+                NamedKey::F5 => "f5",
+                NamedKey::F6 => "f6",
+                NamedKey::F7 => "f7",
+                NamedKey::F8 => "f8",
+                NamedKey::F9 => "f9",
+                NamedKey::F10 => "f10",
+                NamedKey::F11 => "f11",
+                NamedKey::F12 => "f12",
                 NamedKey::Alt => "Alt",
                 NamedKey::Control => "Control",
                 NamedKey::Super => "Super",

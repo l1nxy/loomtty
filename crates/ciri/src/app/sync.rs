@@ -62,6 +62,7 @@ impl App {
                             self.pane_grids.entry(id).or_insert_with(|| {
                                 ClientPaneGrid::new(80, 24, self.config.terminal.scrollback_lines)
                             });
+                            self.anim_mgr.ensure_pane_registered(id);
                         }
                         self.connected = true;
                         needs_redraw = true;

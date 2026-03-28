@@ -61,6 +61,52 @@ pub enum Action {
     EnterMode(String),
     /// Toggle locked mode (all keys pass through to terminal).
     ToggleLock,
+    /// Toggle help overlay.
+    ToggleHelp,
+
+    // ── Search mode ──
+    /// Open the search bar.
+    OpenSearch,
+    /// Close the search bar and restore scroll.
+    CloseSearch,
+    /// Jump to the next search match.
+    SearchNextMatch,
+    /// Jump to the previous search match.
+    SearchPrevMatch,
+
+    // ── Command palette ──
+    /// Close the command palette.
+    CloseCommandPalette,
+    /// Move selection up in the palette.
+    PaletteUp,
+    /// Move selection down in the palette.
+    PaletteDown,
+    /// Execute the selected palette entry.
+    PaletteConfirm,
+
+    // ── Clipboard ──
+    /// Copy the current selection to clipboard.
+    ClipboardCopy,
+    /// Paste from clipboard.
+    ClipboardPaste,
+
+    // ── Paste confirmation ──
+    /// Confirm a pending paste operation.
+    ConfirmPaste,
+    /// Dismiss the paste confirmation dialog.
+    DismissPasteConfirm,
+
+    // ── Text input (for search/palette query) ──
+    /// Forward the key character to the active text input buffer.
+    TextInput,
+    /// Delete the last character from the active text input buffer.
+    TextBackspace,
+
+    // ── Key table management ──
+    /// Push a named key table onto the stack (e.g. "resize").
+    ActivateKeyTable(String),
+    /// Pop the current key table from the stack.
+    DeactivateKeyTable,
 }
 
 impl Action {
@@ -144,6 +190,11 @@ impl Action {
             (Action::Detach, "Detach"),
             (Action::ToggleCommandPalette, "Toggle Command Palette"),
             (Action::ToggleLock, "Toggle Lock"),
+            (Action::ToggleHelp, "Toggle Help"),
+            (Action::OpenSearch, "Open Search"),
+            (Action::CloseSearch, "Close Search"),
+            (Action::ClipboardCopy, "Copy"),
+            (Action::ClipboardPaste, "Paste"),
         ]
     }
 }
@@ -185,12 +236,30 @@ fn parse_named_action(name: &str) -> Option<Action> {
         "detach" => Some(Action::Detach),
         "toggle_command_palette" => Some(Action::ToggleCommandPalette),
         "toggle_lock" => Some(Action::ToggleLock),
+        "toggle_help" => Some(Action::ToggleHelp),
+        "open_search" => Some(Action::OpenSearch),
+        "close_search" => Some(Action::CloseSearch),
+        "search_next_match" => Some(Action::SearchNextMatch),
+        "search_prev_match" => Some(Action::SearchPrevMatch),
+        "close_command_palette" => Some(Action::CloseCommandPalette),
+        "palette_up" => Some(Action::PaletteUp),
+        "palette_down" => Some(Action::PaletteDown),
+        "palette_confirm" => Some(Action::PaletteConfirm),
+        "clipboard_copy" => Some(Action::ClipboardCopy),
+        "clipboard_paste" => Some(Action::ClipboardPaste),
+        "confirm_paste" => Some(Action::ConfirmPaste),
+        "dismiss_paste_confirm" => Some(Action::DismissPasteConfirm),
+        "text_input" => Some(Action::TextInput),
+        "text_backspace" => Some(Action::TextBackspace),
+        "deactivate_key_table" => Some(Action::DeactivateKeyTable),
         _ => None,
     }
 }
 
 fn parse_dynamic_action(name: &str) -> Option<Action> {
-    parse_switch_workspace(name).or_else(|| parse_enter_mode(name))
+    parse_switch_workspace(name)
+        .or_else(|| parse_enter_mode(name))
+        .or_else(|| parse_activate_key_table(name))
 }
 
 fn parse_switch_workspace(name: &str) -> Option<Action> {
@@ -204,8 +273,15 @@ fn parse_enter_mode(name: &str) -> Option<Action> {
     if mode.is_empty() {
         return None;
     }
-
     Some(Action::EnterMode(mode.to_string()))
+}
+
+fn parse_activate_key_table(name: &str) -> Option<Action> {
+    let table = name.strip_prefix("activate_key_table:")?;
+    if table.is_empty() {
+        return None;
+    }
+    Some(Action::ActivateKeyTable(table.to_string()))
 }
 
 #[cfg(test)]

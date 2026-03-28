@@ -6,6 +6,7 @@ use winnow::token::take_while;
 
 use crate::esc_scanner;
 use crate::pane::ImagePlacement;
+use crate::partial_buf::PartialBuf;
 
 const MAX_APC_PARTIAL_SIZE: usize = 16 * 1024 * 1024; // 16MB
 
@@ -108,7 +109,7 @@ fn parse_control(control: &str) -> ControlFields {
 pub(crate) struct KittyGraphicsParser {
     image_buf: Vec<u8>,
     image_meta: Option<KittyImageMeta>,
-    apc_partial: Vec<u8>,
+    apc_partial: PartialBuf,
     next_image_id: u64,
 }
 
@@ -117,7 +118,7 @@ impl KittyGraphicsParser {
         KittyGraphicsParser {
             image_buf: Vec::new(),
             image_meta: None,
-            apc_partial: Vec::new(),
+            apc_partial: PartialBuf::new(MAX_APC_PARTIAL_SIZE, "kitty APC"),
             next_image_id: 1,
         }
     }
@@ -134,15 +135,8 @@ impl KittyGraphicsParser {
     ) -> KittyScanResult {
         use base64::Engine;
 
-        // If we have a partial APC from a previous read, prepend it
-        let working_data;
-        let data = if !self.apc_partial.is_empty() {
-            self.apc_partial.extend_from_slice(data);
-            working_data = std::mem::take(&mut self.apc_partial);
-            &working_data[..]
-        } else {
-            data
-        };
+        let mut tmp = Vec::new();
+        let data = self.apc_partial.prepend_to(data, &mut tmp);
 
         let scan = esc_scanner::scan_apc_kitty(data);
 
@@ -234,18 +228,8 @@ impl KittyGraphicsParser {
             }
         }
 
-        // Handle partial APC at end of data
         if let Some(partial_start) = scan.partial_start {
-            let partial = &data[partial_start..];
-            if partial.len() > MAX_APC_PARTIAL_SIZE {
-                log::warn!(
-                    "kitty APC partial buffer exceeded {}MB limit, discarding",
-                    MAX_APC_PARTIAL_SIZE / (1024 * 1024)
-                );
-                self.apc_partial.clear();
-            } else {
-                self.apc_partial = partial.to_vec();
-            }
+            self.apc_partial.store(&data[partial_start..]);
         }
 
         KittyScanResult {

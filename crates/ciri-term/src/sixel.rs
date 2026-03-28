@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::pane::ImagePlacement;
+use crate::partial_buf::PartialBuf;
 
 /// Maximum size of a partial DCS buffer (4MB — Sixel images can be large).
 const MAX_DCS_PARTIAL_SIZE: usize = 4 * 1024 * 1024;
@@ -21,17 +22,15 @@ pub(crate) struct SixelScanResult {
 /// - Data: sixel pixel data with color commands
 /// - End: `ESC \` (ST) or `0x9C`
 pub(crate) struct SixelParser {
-    /// Partial DCS data from a previous read (incomplete sequence).
-    dcs_partial: Vec<u8>,
-    /// Unique image ID counter.
+    dcs_partial: PartialBuf,
     next_image_id: u64,
 }
 
 impl SixelParser {
     pub fn new() -> Self {
         Self {
-            dcs_partial: Vec::new(),
-            next_image_id: 1_000_000, // offset from kitty IDs to avoid collisions
+            dcs_partial: PartialBuf::new(MAX_DCS_PARTIAL_SIZE, "sixel DCS"),
+            next_image_id: 1_000_000,
         }
     }
 
@@ -44,15 +43,8 @@ impl SixelParser {
         cursor_row: u16,
         active_images: &mut Vec<ImagePlacement>,
     ) -> SixelScanResult {
-        // If we have a partial DCS from a previous read, prepend it
-        let working_data;
-        let data = if !self.dcs_partial.is_empty() {
-            self.dcs_partial.extend_from_slice(data);
-            working_data = std::mem::take(&mut self.dcs_partial);
-            &working_data[..]
-        } else {
-            data
-        };
+        let mut tmp = Vec::new();
+        let data = self.dcs_partial.prepend_to(data, &mut tmp);
 
         let mut placements = Vec::new();
 
@@ -92,24 +84,11 @@ impl SixelParser {
             }
         }
 
-        // Buffer any incomplete trailing sequence
         if let Some(partial_start) = scan.partial_start {
-            self.buffer_partial(&data[partial_start..]);
+            self.dcs_partial.store(&data[partial_start..]);
         }
 
         SixelScanResult { placements }
-    }
-
-    fn buffer_partial(&mut self, data: &[u8]) {
-        if data.len() > MAX_DCS_PARTIAL_SIZE {
-            log::warn!(
-                "sixel DCS partial buffer exceeded {}MB limit, discarding",
-                MAX_DCS_PARTIAL_SIZE / (1024 * 1024)
-            );
-            self.dcs_partial.clear();
-        } else {
-            self.dcs_partial = data.to_vec();
-        }
     }
 }
 

@@ -5,50 +5,33 @@ use winnow::prelude::*;
 use winnow::token::{literal, take_until};
 
 use crate::esc_scanner;
+use crate::partial_buf::PartialBuf;
 
-const MAX_OSC7_PARTIAL_SIZE: usize = 4096;
-
-#[derive(Debug, Default)]
 pub struct Osc7Parser {
     current_cwd: Option<String>,
-    /// Partial OSC sequence from a previous read.
-    partial: Vec<u8>,
+    partial: PartialBuf,
 }
 
 impl Osc7Parser {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            current_cwd: None,
+            partial: PartialBuf::new(4096, "OSC 7"),
+        }
     }
 
     /// Scan raw PTY output for OSC 7 sequences.
     pub fn scan(&mut self, data: &[u8]) {
-        // If we have a partial OSC from a previous read, prepend it
-        let working_data;
-        let data = if !self.partial.is_empty() {
-            self.partial.extend_from_slice(data);
-            working_data = std::mem::take(&mut self.partial);
-            &working_data[..]
-        } else {
-            data
-        };
+        let mut tmp = Vec::new();
+        let data = self.partial.prepend_to(data, &mut tmp);
 
         let result = esc_scanner::scan_osc(data, b"7");
         for (_offset, payload) in &result.sequences {
             self.parse_uri(payload);
         }
 
-        // Buffer partial data for next read.
         if let Some(partial_start) = result.partial_start {
-            let partial = &data[partial_start..];
-            if partial.len() > MAX_OSC7_PARTIAL_SIZE {
-                log::warn!(
-                    "OSC 7 partial buffer exceeded {}B limit, discarding",
-                    MAX_OSC7_PARTIAL_SIZE
-                );
-                self.partial.clear();
-            } else {
-                self.partial = partial.to_vec();
-            }
+            self.partial.store(&data[partial_start..]);
         }
     }
 
@@ -173,7 +156,7 @@ mod tests {
     fn oversized_partial_is_discarded() {
         let mut parser = Osc7Parser::new();
         let mut data = vec![0x1b, b']', b'7', b';'];
-        data.extend(std::iter::repeat_n(b'a', MAX_OSC7_PARTIAL_SIZE + 1));
+        data.extend(std::iter::repeat_n(b'a', 4097)); // exceeds 4096 limit
         parser.scan(&data);
         assert!(parser.partial.is_empty());
         assert_eq!(parser.cwd(), None);

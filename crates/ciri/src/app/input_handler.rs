@@ -189,6 +189,27 @@ impl App {
             Action::ToggleLock => {
                 self.input.toggle_lock();
             }
+            // New unified actions — placeholder implementations for Phase 1.
+            // These will replace hardcoded handlers in Phase 3.
+            Action::OpenSearch
+            | Action::CloseSearch
+            | Action::SearchNextMatch
+            | Action::SearchPrevMatch
+            | Action::CloseCommandPalette
+            | Action::PaletteUp
+            | Action::PaletteDown
+            | Action::PaletteConfirm
+            | Action::ClipboardCopy
+            | Action::ClipboardPaste
+            | Action::ConfirmPaste
+            | Action::DismissPasteConfirm
+            | Action::TextInput
+            | Action::TextBackspace
+            | Action::ToggleHelp
+            | Action::ActivateKeyTable(_)
+            | Action::DeactivateKeyTable => {
+                log::debug!("action {:?} not yet wired (Phase 3)", action);
+            }
         }
     }
 

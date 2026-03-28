@@ -57,8 +57,10 @@ impl App {
             self.overview.hovered_pane = None;
             self.refresh_overview_zoom();
             let epsilon = self.config.animation.epsilon;
-            self.anim_mgr.view_offset_x.animate_to(0.0, omega, epsilon);
-            self.anim_mgr.view_offset_y.animate_to(0.0, omega, epsilon);
+            let target_x = self.workspaces.active().target_offset_for_active() as f64;
+            let target_y = self.workspaces.target_offset_y() as f64;
+            self.anim_mgr.view_offset_x.animate_to(target_x, omega, epsilon);
+            self.anim_mgr.view_offset_y.animate_to(target_y, omega, epsilon);
         } else {
             self.overview.hovered_pane = None;
             self.anim_mgr.overview_zoom.animate_to(1.0, omega, self.config.animation.epsilon);

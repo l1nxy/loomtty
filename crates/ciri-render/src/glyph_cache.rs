@@ -218,6 +218,8 @@ pub struct GlyphCache {
     cjk_ft_face: Option<freetype::Face>,
     cjk_font_id: Option<fontdb::ID>,
     ft_pixel_size: f32,
+    /// CJK font pixel size, adjusted so that "水" advance matches 2 * cell_width.
+    cjk_pixel_size: f32,
     // Public metrics
     pub cell_width: f32,
     pub cell_height: f32,
@@ -389,6 +391,15 @@ impl GlyphCache {
                 (cw, ch, asc, cw)
             };
 
+        // ── CJK font size adjustment (ghostty approach) ──
+        // Scale the CJK font so that "水" advance matches 2 * cell_width.
+        let cjk_pixel_size = compute_cjk_pixel_size(
+            ft_pixel_size,
+            cell_width,
+            ft_face.as_ref(),
+            cjk_ft_face.as_ref(),
+        );
+
         GlyphCache {
             alpha_packer: ShelfPacker::new(atlas_size),
             color_packer: ShelfPacker::new(atlas_size),
@@ -415,6 +426,7 @@ impl GlyphCache {
             cjk_ft_face,
             cjk_font_id,
             ft_pixel_size,
+            cjk_pixel_size,
             cell_width,
             cell_height,
             ascent,
@@ -493,7 +505,7 @@ impl GlyphCache {
 
         let (ft_face, pixel_size) = match font_class {
             FontClass::Emoji => (self.emoji_ft_face.as_ref(), self.ft_pixel_size),
-            FontClass::Cjk => (self.cjk_ft_face.as_ref(), self.ft_pixel_size),
+            FontClass::Cjk => (self.cjk_ft_face.as_ref(), self.cjk_pixel_size),
             FontClass::Primary => (self.ft_face.as_ref(), self.ft_pixel_size),
         };
         let constrained = wide;
@@ -847,6 +859,119 @@ fn measure_max_ascii_advance(
     } else {
         // Fallback to FreeType's max_advance
         size_metrics.max_advance as f64 / 64.0
+    }
+}
+
+/// Compute the CJK font pixel size using em-normalized ic_width matching (ghostty approach).
+///
+/// Measures "水" (U+6C34) advance in both fonts, normalizes to em units, and scales
+/// the CJK pixel size so its ic_width proportion matches the primary font's.
+/// If the primary font lacks "水", falls back to min(asciiHeight, 2*cell_width) as estimate.
+fn compute_cjk_pixel_size(
+    ft_pixel_size: f32,
+    cell_width: f32,
+    primary_face: Option<&freetype::Face>,
+    cjk_face: Option<&freetype::Face>,
+) -> f32 {
+    let Some(cjk) = cjk_face else {
+        return ft_pixel_size;
+    };
+
+    // Initialize both faces at the base pixel size for measurement.
+    let px = ft_pixel_size;
+    let init = |face: &freetype::Face| -> bool {
+        face.set_char_size(0, (px * 64.0) as isize, 72, 72).is_ok()
+    };
+
+    if !init(cjk) {
+        return ft_pixel_size;
+    }
+
+    // Measure "水" advance in CJK font — if we can't, no adjustment possible.
+    let cjk_ic = match measure_char_advance(cjk, '水') {
+        Some(w) if w > 0.0 => w,
+        _ => return ft_pixel_size,
+    };
+
+    // Get px_per_em for both faces (= y_ppem from size_metrics).
+    let cjk_ppem = cjk
+        .size_metrics()
+        .map(|m| m.y_ppem as f64)
+        .unwrap_or(px as f64);
+
+    // Compute primary font's ic_width (or estimate).
+    let (primary_ic, primary_ppem) = if let Some(primary) = primary_face {
+        if !init(primary) {
+            return ft_pixel_size;
+        }
+        let ppem = primary
+            .size_metrics()
+            .map(|m| m.y_ppem as f64)
+            .unwrap_or(px as f64);
+        let ic = measure_char_advance(primary, '水').unwrap_or_else(|| {
+            // Primary font lacks "水" — estimate as min(asciiHeight, 2*cell_width),
+            // following ghostty's icWidth() fallback.
+            let ascii_h = estimate_ascii_height(primary).unwrap_or(cell_width as f64 * 2.0);
+            ascii_h.min(cell_width as f64 * 2.0)
+        });
+        (ic, ppem)
+    } else {
+        let ic = (cell_width as f64 * 2.0).min(px as f64 * 1.5);
+        (ic, px as f64)
+    };
+
+    // Normalize to em units and compute scale factor.
+    let primary_em = primary_ic / primary_ppem;
+    let cjk_em = cjk_ic / cjk_ppem;
+
+    if cjk_em <= 0.0 {
+        return ft_pixel_size;
+    }
+
+    let scale = primary_em / cjk_em;
+    let adjusted = ft_pixel_size as f64 * scale;
+
+    log::info!(
+        "CJK size adjustment: primary_ic={primary_ic:.2} ({primary_em:.3}em) \
+         cjk_ic={cjk_ic:.2} ({cjk_em:.3}em) scale={scale:.3} \
+         px={ft_pixel_size:.1}→{adjusted:.1}",
+    );
+
+    adjusted as f32
+}
+
+/// Measure the horizontal advance of a single character in the given face.
+/// The face must already have set_char_size called.
+fn measure_char_advance(face: &freetype::Face, ch: char) -> Option<f64> {
+    let glyph_index = face.get_char_index(ch as usize)?;
+    face.load_glyph(glyph_index, LoadFlag::DEFAULT).ok()?;
+    let adv = unsafe { (*face.raw().glyph).advance.x as f64 / 64.0 };
+    if adv > 0.0 { Some(adv) } else { None }
+}
+
+/// Estimate the bounding box height of printable ASCII characters.
+/// Used as a proxy for ic_width when the primary font lacks CJK glyphs.
+fn estimate_ascii_height(face: &freetype::Face) -> Option<f64> {
+    let mut top: f64 = 0.0;
+    let mut bottom: f64 = 0.0;
+    let mut any = false;
+    for ch in 0x20u32..=0x7Eu32 {
+        if let Some(gi) = face.get_char_index(ch as usize) {
+            if face.load_glyph(gi, LoadFlag::DEFAULT).is_ok() {
+                let glyph = unsafe { &*face.raw().glyph };
+                let metrics = glyph.metrics;
+                let g_top = metrics.horiBearingY as f64 / 64.0;
+                let g_bottom = g_top - metrics.height as f64 / 64.0;
+                top = top.max(g_top);
+                bottom = bottom.min(g_bottom);
+                any = true;
+            }
+        }
+    }
+    if any && top > bottom {
+        Some(top - bottom)
+    } else {
+        None
     }
 }
 

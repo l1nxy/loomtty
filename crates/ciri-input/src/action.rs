@@ -61,8 +61,6 @@ pub enum Action {
     EnterMode(String),
     /// Toggle locked mode (all keys pass through to terminal).
     ToggleLock,
-    /// Toggle help overlay.
-    ToggleHelp,
 
     // ── Search mode ──
     /// Open the search bar.
@@ -190,7 +188,6 @@ impl Action {
             (Action::Detach, "Detach"),
             (Action::ToggleCommandPalette, "Toggle Command Palette"),
             (Action::ToggleLock, "Toggle Lock"),
-            (Action::ToggleHelp, "Toggle Help"),
             (Action::OpenSearch, "Open Search"),
             (Action::CloseSearch, "Close Search"),
             (Action::ClipboardCopy, "Copy"),
@@ -236,7 +233,6 @@ fn parse_named_action(name: &str) -> Option<Action> {
         "detach" => Some(Action::Detach),
         "toggle_command_palette" => Some(Action::ToggleCommandPalette),
         "toggle_lock" => Some(Action::ToggleLock),
-        "toggle_help" => Some(Action::ToggleHelp),
         "open_search" => Some(Action::OpenSearch),
         "close_search" => Some(Action::CloseSearch),
         "search_next_match" => Some(Action::SearchNextMatch),

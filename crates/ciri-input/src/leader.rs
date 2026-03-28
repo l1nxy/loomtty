@@ -266,9 +266,16 @@ impl InputHandler {
         self.key_table_stack.last().map(|s| s.as_str())
     }
 
+    /// Maximum key table nesting depth.
+    const MAX_TABLE_DEPTH: usize = 4;
+
     /// Push a named key table onto the stack.
     pub fn activate_key_table(&mut self, name: &str) {
-        self.key_table_stack.push(name.to_string());
+        if self.key_table_stack.len() < Self::MAX_TABLE_DEPTH {
+            self.key_table_stack.push(name.to_string());
+        } else {
+            log::warn!("key table stack depth limit ({}) reached, ignoring activate_key_table({name:?})", Self::MAX_TABLE_DEPTH);
+        }
     }
 
     /// Pop the topmost key table from the stack.
@@ -304,7 +311,7 @@ impl InputHandler {
         let event = KeyEvent::new(key_name, ctrl, shift, alt, super_key);
 
         // Build full mode from app state + internal state.
-        let mut mode = app_mode | BindingMode::NORMAL;
+        let mut mode = app_mode;
         if matches!(self.state, State::AwaitingAction { .. }) {
             mode |= BindingMode::LEADER;
         }
@@ -412,7 +419,7 @@ impl InputHandler {
         match &action {
             // Key table management.
             Action::ActivateKeyTable(name) => {
-                self.key_table_stack.push(name.clone());
+                self.activate_key_table(name);
                 // Also exit LEADER state (mode entered).
                 self.state = State::Idle;
                 return InputResult::Consumed;
@@ -423,7 +430,7 @@ impl InputHandler {
             }
             // EnterMode is treated as ActivateKeyTable for backward compat.
             Action::EnterMode(name) => {
-                self.key_table_stack.push(name.clone());
+                self.activate_key_table(name);
                 self.state = State::Idle;
                 return InputResult::Consumed;
             }

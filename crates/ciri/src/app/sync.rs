@@ -389,14 +389,7 @@ impl App {
                     &self.config.keys.modes,
                     &self.config.keys.direct_bindings,
                 );
-                self.input.set_binding_set(ciri_input::keybind::BindingSet::from_legacy(
-                    &self.input.keybinds,
-                    &self.input.direct_keybinds,
-                    &self.input.mode_keybinds,
-                    &ciri_input::keybind::KeybindMap::from_overview_config(&self.config.keys.overview_bindings),
-                    &self.config.keys.search_bindings,
-                    &self.config.keys.palette_bindings,
-                ));
+                Self::rebuild_binding_set(&mut self.input, &self.config);
                 if font_changed {
                     self.destroy_gpu_resources();
                     if let Some(renderer) = &mut self.renderer {

@@ -876,12 +876,9 @@ impl App {
         use ciri_anim::manager::{AnimKind, CloseStyle, OpenStyle, PaneCloseConfig, PaneOpenConfig};
         use ciri_anim::spring::SpringParams;
 
-        let scroll_params =
-            SpringParams::from_omega(self.config.animation.speed, self.config.animation.epsilon);
-        let focus_params = SpringParams::from_omega(
-            self.config.animation.focus_transition_speed,
-            self.config.animation.epsilon,
-        );
+        // Use named presets based on Apple SwiftUI spring parameters
+        let scroll_params = SpringParams::default();  // 0.5s
+        let focus_params = SpringParams::snappy();     // 0.3s
 
         let open_dur = self.config.animation.pane_open_duration_ms.max(1) as f64 / 1000.0;
         let close_dur = self.config.animation.pane_close_duration_ms.max(1) as f64 / 1000.0;
@@ -910,14 +907,14 @@ impl App {
                     curve: EasingCurve::EaseOutCubic,
                 },
             },
-            column_resize: AnimKind::Spring(scroll_params),
-            overview_zoom: AnimKind::Spring(scroll_params),
+            column_resize: AnimKind::Spring(SpringParams::smooth()),
+            overview_zoom: AnimKind::Spring(SpringParams::smooth()),
             bell_flash_secs: 0.15,
             leader_pulse_secs: 0.3,
             inactive_opacity: self.config.appearance.inactive_opacity,
-            pane_move: AnimKind::Spring(scroll_params),
+            pane_move: AnimKind::Spring(SpringParams::default()),
             drag_opacity: self.config.animation.drag_opacity,
-            drag_dim: AnimKind::Spring(SpringParams::new(1.0, 600.0, 0.01)),
+            drag_dim: AnimKind::Spring(SpringParams::snappy()),
         }
     }
 

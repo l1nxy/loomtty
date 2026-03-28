@@ -137,8 +137,8 @@ impl Default for AnimConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            view_scroll: AnimKind::Spring(SpringParams::snappy()),
-            focus_transition: AnimKind::Spring(SpringParams::new(1.0, 800.0, 0.001)),
+            view_scroll: AnimKind::Spring(SpringParams::default()),
+            focus_transition: AnimKind::Spring(SpringParams::snappy()),
             pane_open: PaneOpenConfig::default(),
             pane_close: PaneCloseConfig::default(),
             column_resize: AnimKind::Spring(SpringParams::smooth()),
@@ -146,9 +146,9 @@ impl Default for AnimConfig {
             bell_flash_secs: 0.15,
             leader_pulse_secs: 0.3,
             inactive_opacity: 0.7,
-            pane_move: AnimKind::Spring(SpringParams::snappy()),
+            pane_move: AnimKind::Spring(SpringParams::default()),
             drag_opacity: 0.6,
-            drag_dim: AnimKind::Spring(SpringParams::new(1.0, 600.0, 0.01)),
+            drag_dim: AnimKind::Spring(SpringParams::snappy()),
         }
     }
 }

@@ -26,7 +26,7 @@ impl App {
 
     /// Helper: spring params for scroll/zoom from config.
     fn scroll_spring(&self) -> SpringParams {
-        SpringParams::from_omega(self.config.animation.speed, self.config.animation.epsilon)
+        SpringParams::default()
     }
 
     pub fn refresh_overview_zoom(&mut self) {

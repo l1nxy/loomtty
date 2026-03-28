@@ -42,7 +42,7 @@ impl App {
     }
 
     pub(crate) fn exit_overview(&mut self) {
-        let sp = SpringParams::from_omega(self.config.animation.speed, self.config.animation.epsilon);
+        let sp = SpringParams::default();
         self.overview.active = false;
         self.overview.hovered_pane = None;
         self.anim_mgr.overview_zoom.animate_to(1.0, sp);
@@ -51,7 +51,7 @@ impl App {
 
     pub(crate) fn toggle_overview(&mut self) {
         self.overview.active = !self.overview.active;
-        let sp = SpringParams::from_omega(self.config.animation.speed, self.config.animation.epsilon);
+        let sp = SpringParams::default();
         if self.overview.active {
             self.context_menu.visible = false;
             self.overview.hovered_pane = None;

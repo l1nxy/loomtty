@@ -1,5 +1,8 @@
 # Ciri shell integration for Fish
 
+# Only activate in interactive shells
+not status is-interactive; and return
+
 if set -q CIRI_SHELL_INTEGRATION
     return
 end

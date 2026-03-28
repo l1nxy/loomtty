@@ -1,5 +1,8 @@
 # Ciri shell integration for Zsh
 
+# Only activate in interactive shells
+[[ ! -o interactive ]] && return
+
 [[ -n "$CIRI_SHELL_INTEGRATION" ]] && return
 export CIRI_SHELL_INTEGRATION=1
 

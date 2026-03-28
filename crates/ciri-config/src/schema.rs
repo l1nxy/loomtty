@@ -140,7 +140,7 @@ pub struct AnimationConfig {
     pub speed: f64,
     #[garde(skip)]
     pub enabled: bool,
-    #[garde(range(min = 0.001))]
+    #[garde(range(min = 0.00001))]
     pub epsilon: f64,
     #[garde(skip)]
     pub overview_zoom_fit: f32,
@@ -161,15 +161,15 @@ pub struct AnimationConfig {
 impl Default for AnimationConfig {
     fn default() -> Self {
         AnimationConfig {
-            speed: 12.0,
+            speed: 10.0,
             enabled: true,
-            epsilon: 0.1,
+            epsilon: 0.0001,
             overview_zoom_fit: 0.9,
             zoom_threshold: 0.99,
             pane_open_style: PaneOpenStyle::Fade,
-            pane_open_duration_ms: 200,
-            pane_close_duration_ms: 150,
-            focus_transition_speed: 15.0,
+            pane_open_duration_ms: 250,
+            pane_close_duration_ms: 180,
+            focus_transition_speed: 10.0,
             drag_opacity: 0.6,
         }
     }

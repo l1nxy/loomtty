@@ -1,3 +1,4 @@
+use ciri_anim::spring::SpringParams;
 use ciri_layout::geometry::Rect as GeoRect;
 
 use super::App;
@@ -41,29 +42,27 @@ impl App {
     }
 
     pub(crate) fn exit_overview(&mut self) {
+        let sp = SpringParams::from_omega(self.config.animation.speed, self.config.animation.epsilon);
         self.overview.active = false;
         self.overview.hovered_pane = None;
-        self.anim_mgr
-            .overview_zoom
-            .animate_to(1.0, self.config.animation.speed, self.config.animation.epsilon);
+        self.anim_mgr.overview_zoom.animate_to(1.0, sp);
         self.animate_to_active();
     }
 
     pub(crate) fn toggle_overview(&mut self) {
         self.overview.active = !self.overview.active;
-        let omega = self.config.animation.speed;
+        let sp = SpringParams::from_omega(self.config.animation.speed, self.config.animation.epsilon);
         if self.overview.active {
             self.context_menu.visible = false;
             self.overview.hovered_pane = None;
             self.refresh_overview_zoom();
-            let epsilon = self.config.animation.epsilon;
             let target_x = self.workspaces.active().target_offset_for_active() as f64;
             let target_y = self.workspaces.target_offset_y() as f64;
-            self.anim_mgr.view_offset_x.animate_to(target_x, omega, epsilon);
-            self.anim_mgr.view_offset_y.animate_to(target_y, omega, epsilon);
+            self.anim_mgr.view_offset_x.animate_to(target_x, sp);
+            self.anim_mgr.view_offset_y.animate_to(target_y, sp);
         } else {
             self.overview.hovered_pane = None;
-            self.anim_mgr.overview_zoom.animate_to(1.0, omega, self.config.animation.epsilon);
+            self.anim_mgr.overview_zoom.animate_to(1.0, sp);
             self.animate_to_active();
         }
     }

@@ -154,6 +154,8 @@ pub struct AnimationConfig {
     pub pane_close_duration_ms: u64,
     #[garde(range(min = 0.001))]
     pub focus_transition_speed: f64,
+    #[garde(range(min = 0.0, max = 1.0))]
+    pub drag_opacity: f32,
 }
 
 impl Default for AnimationConfig {
@@ -168,6 +170,7 @@ impl Default for AnimationConfig {
             pane_open_duration_ms: 200,
             pane_close_duration_ms: 150,
             focus_transition_speed: 15.0,
+            drag_opacity: 0.6,
         }
     }
 }

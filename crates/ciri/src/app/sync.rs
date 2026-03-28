@@ -105,7 +105,7 @@ impl App {
                         self.pane_grids.entry(pane_id).or_insert_with(|| {
                             ClientPaneGrid::new(cols, rows, self.config.terminal.scrollback_lines)
                         });
-                        let params = self.anim_params();
+                        let params = self.anim_config();
                         self.anim_mgr.on_pane_created(pane_id, &params);
                         needs_redraw = true;
                     }
@@ -116,7 +116,7 @@ impl App {
                         let vox = self.anim_mgr.view_offset_x.value() as f32;
                         let voy = self.anim_mgr.view_offset_y.value() as f32;
                         let tiles = self.workspaces.visible_tiles_2d(vox, voy);
-                        let params = self.anim_params();
+                        let params = self.anim_config();
                         if let Some((_, rect, _)) = tiles.iter().find(|(pid, _, _)| *pid == pane_id)
                         {
                             let geo = ciri_anim::manager::GeoRect {
@@ -152,7 +152,7 @@ impl App {
                     }
                     ServerEvent::Control(ServerMessage::Bell { pane_id }) => {
                         log::debug!("bell from pane {pane_id}");
-                        let params = self.anim_params();
+                        let params = self.anim_config();
                         self.anim_mgr.on_bell(pane_id, &params);
 
                         // Window urgency hint
@@ -313,6 +313,18 @@ impl App {
         needs_redraw
     }
 
+    /// Snapshot current pane screen positions for move animation.
+    /// Uses animation target (not in-flight value) for stable snapshots.
+    fn snapshot_pane_positions(&self) -> std::collections::HashMap<u64, (f32, f32)> {
+        let vox = self.anim_mgr.view_offset_x.target() as f32;
+        let voy = self.anim_mgr.view_offset_y.target() as f32;
+        let tiles = self.workspaces.visible_tiles_2d(vox, voy);
+        tiles
+            .into_iter()
+            .map(|(pid, rect, _)| (pid, (rect.x, rect.y)))
+            .collect()
+    }
+
     /// Rebuild the full 2D WorkspaceSet from the server's authoritative layout.
     pub fn apply_layout(&mut self, layout: &LayoutState) {
         log::debug!(
@@ -321,6 +333,10 @@ impl App {
             self.anim_mgr.view_offset_x.value(),
             self.anim_mgr.view_offset_y.value()
         );
+
+        // Snapshot old pane positions for move animation
+        let old_positions = self.snapshot_pane_positions();
+
         let view_size = self.workspaces.view_size;
         let column_gap = self.workspaces.column_gap;
 
@@ -373,6 +389,23 @@ impl App {
         self.sync_workspace_pane_memory();
 
         self.snap_all_col_widths();
+
+        // Compute new positions and start move animations for shifted panes
+        let new_positions = self.snapshot_pane_positions();
+        if self.config.animation.enabled {
+            let config = self.anim_config();
+            for (pane_id, (old_x, old_y)) in &old_positions {
+                if let Some(&(new_x, new_y)) = new_positions.get(pane_id) {
+                    let dx = old_x - new_x;
+                    let dy = old_y - new_y;
+                    if dx.abs() > 1.0 || dy.abs() > 1.0 {
+                        self.anim_mgr.ensure_pane_registered(*pane_id);
+                        self.anim_mgr.start_move_animation(*pane_id, dx, dy, &config);
+                    }
+                }
+            }
+        }
+
         self.animate_to_active();
     }
 

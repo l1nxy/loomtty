@@ -16,7 +16,7 @@ pub(crate) mod sync;
 pub(crate) mod top_bar;
 pub(crate) mod ui;
 
-use ciri_anim::manager::{AnimParams, AnimationManager};
+use ciri_anim::manager::{AnimConfig, AnimationManager};
 use ciri_config::config::{CiriConfig, PaneOpenStyle, StatusBarPosition};
 use ciri_gpu::{GlyphAtlasGpu, Renderer};
 use ciri_input::leader::InputHandler;
@@ -871,25 +871,53 @@ impl App {
         (self.config.appearance.padding + self.config.appearance.border_width) * 2.0
     }
 
-    pub(crate) fn anim_params(&self) -> AnimParams {
-        use ciri_anim::manager::{CloseStyle, OpenStyle};
-        AnimParams {
-            omega: self.config.animation.speed,
-            epsilon: self.config.animation.epsilon,
-            focus_speed: self.config.animation.focus_transition_speed,
-            open_style: match self.config.animation.pane_open_style {
-                PaneOpenStyle::Fade => OpenStyle::Fade,
-                PaneOpenStyle::SlideUp => OpenStyle::SlideUp,
-                PaneOpenStyle::SlideDown => OpenStyle::SlideDown,
-                PaneOpenStyle::SlideLeft => OpenStyle::SlideLeft,
-                PaneOpenStyle::FadeSlideUp => OpenStyle::FadeSlideUp,
+    pub(crate) fn anim_config(&self) -> AnimConfig {
+        use ciri_anim::easing::EasingCurve;
+        use ciri_anim::manager::{AnimKind, CloseStyle, OpenStyle, PaneCloseConfig, PaneOpenConfig};
+        use ciri_anim::spring::SpringParams;
+
+        let scroll_params =
+            SpringParams::from_omega(self.config.animation.speed, self.config.animation.epsilon);
+        let focus_params = SpringParams::from_omega(
+            self.config.animation.focus_transition_speed,
+            self.config.animation.epsilon,
+        );
+
+        let open_dur = self.config.animation.pane_open_duration_ms.max(1) as f64 / 1000.0;
+        let close_dur = self.config.animation.pane_close_duration_ms.max(1) as f64 / 1000.0;
+
+        AnimConfig {
+            enabled: self.config.animation.enabled,
+            view_scroll: AnimKind::Spring(scroll_params),
+            focus_transition: AnimKind::Spring(focus_params),
+            pane_open: PaneOpenConfig {
+                style: match self.config.animation.pane_open_style {
+                    PaneOpenStyle::Fade => OpenStyle::Fade,
+                    PaneOpenStyle::SlideUp => OpenStyle::SlideUp,
+                    PaneOpenStyle::SlideDown => OpenStyle::SlideDown,
+                    PaneOpenStyle::SlideLeft => OpenStyle::SlideLeft,
+                    PaneOpenStyle::FadeSlideUp => OpenStyle::FadeSlideUp,
+                },
+                kind: AnimKind::Easing {
+                    duration_secs: open_dur,
+                    curve: EasingCurve::EaseOutCubic,
+                },
             },
-            open_duration_secs: self.config.animation.pane_open_duration_ms.max(1) as f64 / 1000.0,
-            close_style: CloseStyle::Fade,
-            close_duration_secs: self.config.animation.pane_close_duration_ms.max(1) as f64
-                / 1000.0,
-            bell_duration_secs: 0.15,
+            pane_close: PaneCloseConfig {
+                style: CloseStyle::Fade,
+                kind: AnimKind::Easing {
+                    duration_secs: close_dur,
+                    curve: EasingCurve::EaseOutCubic,
+                },
+            },
+            column_resize: AnimKind::Spring(scroll_params),
+            overview_zoom: AnimKind::Spring(scroll_params),
+            bell_flash_secs: 0.15,
+            leader_pulse_secs: 0.3,
             inactive_opacity: self.config.appearance.inactive_opacity,
+            pane_move: AnimKind::Spring(scroll_params),
+            drag_opacity: self.config.animation.drag_opacity,
+            drag_dim: AnimKind::Spring(SpringParams::new(1.0, 600.0, 0.01)),
         }
     }
 

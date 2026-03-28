@@ -189,26 +189,95 @@ impl App {
             Action::ToggleLock => {
                 self.input.toggle_lock();
             }
-            // New unified actions — placeholder implementations for Phase 1.
-            // These will replace hardcoded handlers in Phase 3.
-            Action::OpenSearch
-            | Action::CloseSearch
-            | Action::SearchNextMatch
-            | Action::SearchPrevMatch
-            | Action::CloseCommandPalette
-            | Action::PaletteUp
-            | Action::PaletteDown
-            | Action::PaletteConfirm
-            | Action::ClipboardCopy
-            | Action::ClipboardPaste
-            | Action::ConfirmPaste
-            | Action::DismissPasteConfirm
-            | Action::TextInput
-            | Action::TextBackspace
-            | Action::ToggleHelp
-            | Action::ActivateKeyTable(_)
-            | Action::DeactivateKeyTable => {
-                log::debug!("action {:?} not yet wired (Phase 3)", action);
+            // ── Search ──
+            Action::OpenSearch => {
+                self.open_search();
+            }
+            Action::CloseSearch => {
+                self.close_search_restore_scroll();
+            }
+            Action::SearchNextMatch => {
+                if self.search_state.as_ref().is_some_and(|s| s.query.is_empty()) {
+                    // Empty query: just exit search
+                    self.search_state = None;
+                } else {
+                    self.jump_to_match(false);
+                }
+            }
+            Action::SearchPrevMatch => {
+                self.jump_to_match(true);
+            }
+
+            // ── Command palette ──
+            Action::CloseCommandPalette => {
+                self.command_palette = None;
+            }
+            Action::PaletteUp => {
+                if let Some(palette) = &mut self.command_palette {
+                    if !palette.filtered.is_empty() {
+                        palette.selected_idx = if palette.selected_idx == 0 {
+                            palette.filtered.len() - 1
+                        } else {
+                            palette.selected_idx - 1
+                        };
+                    }
+                }
+            }
+            Action::PaletteDown => {
+                if let Some(palette) = &mut self.command_palette {
+                    if !palette.filtered.is_empty() {
+                        palette.selected_idx =
+                            (palette.selected_idx + 1) % palette.filtered.len();
+                    }
+                }
+            }
+            Action::PaletteConfirm => {
+                self.execute_palette_selection();
+            }
+
+            // ── Clipboard ──
+            Action::ClipboardCopy => {
+                self.handle_clipboard_copy();
+            }
+            Action::ClipboardPaste => {
+                self.handle_clipboard_paste();
+            }
+
+            // ── Paste confirmation ──
+            Action::ConfirmPaste => {
+                if let Some(paste) = self.pending_paste.take() {
+                    let _ = paste; // paste guard already handled; the actual paste was deferred
+                    // Re-trigger paste without guard
+                    self.handle_clipboard_paste_force();
+                }
+            }
+            Action::DismissPasteConfirm => {
+                self.pending_paste = None;
+            }
+
+            // ── Text input ──
+            Action::TextInput => {
+                // Handled in keyboard.rs handle_text_input(); should not reach here.
+                log::debug!("TextInput action reached handle_action (unexpected)");
+            }
+            Action::TextBackspace => {
+                if let Some(search) = &mut self.search_state {
+                    search.query.pop();
+                    self.update_search_results();
+                } else if let Some(palette) = &mut self.command_palette {
+                    palette.query.pop();
+                    self.filter_palette();
+                }
+            }
+
+            // ── Toggle help ──
+            Action::ToggleHelp => {
+                log::debug!("ToggleHelp (no help panel in this version)");
+            }
+
+            // ── Key table management (handled by InputHandler internally) ──
+            Action::ActivateKeyTable(_) | Action::DeactivateKeyTable => {
+                // State transitions already handled in process_key_v2.
             }
         }
     }
@@ -370,6 +439,75 @@ impl App {
         }
     }
 
+    // ── Unified action helpers ──
+
+    fn open_search(&mut self) {
+        let Some(pane_id) = self.workspaces.active().active_pane_id() else {
+            return;
+        };
+        let scroll_offset = self
+            .pane_grids
+            .get(&pane_id)
+            .map(|g| g.scroll_offset)
+            .unwrap_or(0);
+        self.search_state = Some(super::SearchState {
+            query: String::new(),
+            matches: Vec::new(),
+            current_match_idx: 0,
+            pane_id,
+            original_scroll_offset: scroll_offset,
+        });
+    }
+
+    fn close_search_restore_scroll(&mut self) {
+        let Some(search) = &self.search_state else {
+            return;
+        };
+        let pane_id = search.pane_id;
+        let orig = search.original_scroll_offset;
+        if let Some(grid) = self.pane_grids.get_mut(&pane_id) {
+            grid.scroll_offset = orig;
+            grid.dirty = true;
+            self.invalidate_pane_cache(pane_id);
+        }
+        self.search_state = None;
+    }
+
+    fn execute_palette_selection(&mut self) {
+        let Some(palette) = &self.command_palette else {
+            return;
+        };
+        let keep_open = palette
+            .filtered
+            .get(palette.selected_idx)
+            .and_then(|&idx| palette.entries.get(idx))
+            .is_some_and(|e| {
+                matches!(
+                    e.kind,
+                    super::PaletteEntryKind::RemoteHost { .. }
+                )
+            });
+        if let Some(&entry_idx) = palette.filtered.get(palette.selected_idx) {
+            self.execute_palette_entry(entry_idx);
+        }
+        if !keep_open {
+            self.command_palette = None;
+        }
+    }
+
+    fn handle_clipboard_paste_force(&mut self) {
+        // Re-paste without guard check.
+        match &mut self.clipboard {
+            None => log::warn!("clipboard not available"),
+            Some(cb) => match cb.get_text() {
+                Err(e) => log::warn!("clipboard read failed: {e}"),
+                Ok(text) => {
+                    self.send_paste_to_active_pane(text.as_bytes());
+                }
+            },
+        }
+    }
+
     pub fn handle_search_key(&mut self, event: &winit::event::KeyEvent, ctrl: bool, shift: bool) {
         let Some(search) = &mut self.search_state else {
             return;
@@ -413,7 +551,7 @@ impl App {
         }
     }
 
-    fn update_search_results(&mut self) {
+    pub(crate) fn update_search_results(&mut self) {
         let Some(search) = &mut self.search_state else {
             return;
         };

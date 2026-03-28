@@ -1,5 +1,5 @@
 use ciri_input::action::Action;
-use ciri_input::keybind::KeyCombo;
+use ciri_input::keybind::BindingMode;
 use ciri_protocol::message::ClientMessage;
 use winit::event::ElementState;
 use winit::event_loop::ActiveEventLoop;
@@ -64,21 +64,78 @@ impl App {
             event.physical_key
         );
 
-        if self.handle_priority_keyboard_input(event, modifiers) {
+        self.clear_selection_on_typing(event);
+        let key_name = self.resolve_key_name(event, modifiers.ctrl);
+        if key_name.is_empty() {
             self.request_redraw();
             return;
         }
 
-        self.clear_selection_on_typing(event);
-        let key_name = self.resolve_key_name(event, modifiers.ctrl);
+        // ── Unified pipeline: compute mode → process key → handle action ──
+        let app_mode = self.compute_binding_mode();
+        let result = self.input.process_key_v2(
+            key_name,
+            modifiers.ctrl,
+            modifiers.shift,
+            modifiers.alt,
+            modifiers.super_key,
+            app_mode,
+        );
 
-        if self.overview.active {
-            self.handle_overview_keyboard_input(key_name, modifiers);
-        } else {
-            self.handle_regular_keyboard_input(event, key_name, modifiers);
+        use ciri_input::leader::InputResult;
+        match result {
+            InputResult::Action(Action::TextInput) => {
+                self.handle_text_input(event, modifiers);
+            }
+            InputResult::Action(action) => self.handle_action(action),
+            InputResult::Consumed => {}
+            InputResult::PassThrough => self.send_key_input(event, modifiers),
         }
 
         self.request_redraw();
+    }
+
+    /// Compute the current binding mode from application state.
+    fn compute_binding_mode(&self) -> BindingMode {
+        let mut mode = BindingMode::EMPTY;
+        if self.overview.active {
+            mode |= BindingMode::OVERVIEW;
+        }
+        if self.search_state.is_some() {
+            mode |= BindingMode::SEARCH;
+        }
+        if self.command_palette.is_some() {
+            mode |= BindingMode::PALETTE;
+        }
+        if self.pending_paste.is_some() {
+            mode |= BindingMode::PASTE_CONFIRM;
+        }
+        if self.input.is_locked() {
+            mode |= BindingMode::LOCKED;
+        }
+        if self.input.has_active_table() {
+            mode |= BindingMode::KEY_TABLE;
+        }
+        mode
+    }
+
+    /// Handle TextInput action: append character to active text buffer (search/palette).
+    fn handle_text_input(&mut self, event: &winit::event::KeyEvent, modifiers: KeyModifiers) {
+        if modifiers.ctrl {
+            return; // Don't accumulate ctrl+key as text
+        }
+        let Key::Character(c) = &event.logical_key else {
+            return;
+        };
+        let s: &str = c.as_str();
+
+        if let Some(search) = &mut self.search_state {
+            search.query.push_str(s);
+            self.update_search_results();
+        } else if let Some(palette) = &mut self.command_palette {
+            palette.query.push_str(s);
+            self.filter_palette();
+        }
     }
 
     fn dismiss_context_menu_on_keypress(&mut self) -> bool {
@@ -95,110 +152,10 @@ impl App {
         self.cursor_blink_timer = std::time::Instant::now();
     }
 
-    fn handle_priority_keyboard_input(
-        &mut self,
-        event: &winit::event::KeyEvent,
-        modifiers: KeyModifiers,
-    ) -> bool {
-        self.try_enter_search_mode(event, modifiers)
-            || self.handle_pending_paste_key(event)
-            || self.handle_search_mode_key(event, modifiers)
-            || self.handle_command_palette_mode_key(event, modifiers)
-            || self.handle_clipboard_shortcuts(event, modifiers)
-    }
+    // Priority handlers removed — all keybindings now go through
+    // the unified pipeline: compute_binding_mode() + process_key_v2().
 
-    fn try_enter_search_mode(
-        &mut self,
-        event: &winit::event::KeyEvent,
-        modifiers: KeyModifiers,
-    ) -> bool {
-        use winit::keyboard::{KeyCode, PhysicalKey};
-
-        if !(modifiers.ctrl && modifiers.shift) {
-            return false;
-        }
-        if event.physical_key != PhysicalKey::Code(KeyCode::KeyF) {
-            return false;
-        }
-
-        let Some(pane_id) = self.workspaces.active().active_pane_id() else {
-            return true;
-        };
-        let scroll_offset = self
-            .pane_grids
-            .get(&pane_id)
-            .map(|g| g.scroll_offset)
-            .unwrap_or(0);
-        self.search_state = Some(super::SearchState {
-            query: String::new(),
-            matches: Vec::new(),
-            current_match_idx: 0,
-            pane_id,
-            original_scroll_offset: scroll_offset,
-        });
-        true
-    }
-
-    fn handle_pending_paste_key(&mut self, event: &winit::event::KeyEvent) -> bool {
-        if self.pending_paste.is_none() {
-            return false;
-        }
-        if matches!(&event.logical_key, Key::Named(NamedKey::Escape)) {
-            self.pending_paste = None;
-        }
-        true
-    }
-
-    fn handle_search_mode_key(
-        &mut self,
-        event: &winit::event::KeyEvent,
-        modifiers: KeyModifiers,
-    ) -> bool {
-        if self.search_state.is_none() {
-            return false;
-        }
-        self.handle_search_key(event, modifiers.ctrl, modifiers.shift);
-        true
-    }
-
-    fn handle_command_palette_mode_key(
-        &mut self,
-        event: &winit::event::KeyEvent,
-        modifiers: KeyModifiers,
-    ) -> bool {
-        if self.command_palette.is_none() {
-            return false;
-        }
-        self.handle_command_palette_key(event, modifiers.ctrl, modifiers.shift, modifiers.alt);
-        true
-    }
-
-    fn handle_clipboard_shortcuts(
-        &mut self,
-        event: &winit::event::KeyEvent,
-        modifiers: KeyModifiers,
-    ) -> bool {
-        use winit::keyboard::{KeyCode, PhysicalKey};
-
-        if !(modifiers.ctrl && modifiers.shift) {
-            return false;
-        }
-
-        log::info!("ctrl+shift detected, physical={:?}", event.physical_key);
-        match event.physical_key {
-            PhysicalKey::Code(KeyCode::KeyV) => {
-                self.handle_clipboard_paste();
-                true
-            }
-            PhysicalKey::Code(KeyCode::KeyC) => {
-                self.handle_clipboard_copy();
-                true
-            }
-            _ => false,
-        }
-    }
-
-    fn handle_clipboard_paste(&mut self) {
+    pub(crate) fn handle_clipboard_paste(&mut self) {
         log::info!("clipboard paste triggered");
         match &mut self.clipboard {
             None => log::warn!("clipboard not available"),
@@ -228,7 +185,7 @@ impl App {
         }
     }
 
-    fn handle_clipboard_copy(&mut self) {
+    pub(crate) fn handle_clipboard_copy(&mut self) {
         log::info!(
             "clipboard copy triggered, selection={}",
             self.selection.is_some()
@@ -316,48 +273,8 @@ impl App {
         }
     }
 
-    fn handle_overview_keyboard_input(&mut self, key_name: &str, modifiers: KeyModifiers) {
-        let combo = KeyCombo::from_modifiers(
-            &key_name.to_lowercase(),
-            modifiers.ctrl,
-            modifiers.shift,
-            modifiers.alt,
-            modifiers.super_key,
-        );
-        if let Some(action) = self.overview_keybinds.lookup(&combo) {
-            match action {
-                Action::ExitOverview => self.exit_overview(),
-                other => self.handle_action(other),
-            }
-        }
-    }
-
-    fn handle_regular_keyboard_input(
-        &mut self,
-        event: &winit::event::KeyEvent,
-        key_name: &str,
-        modifiers: KeyModifiers,
-    ) {
-        use ciri_input::leader::InputResult;
-
-        let result = if key_name.is_empty() {
-            InputResult::PassThrough
-        } else {
-            self.input.process_key(
-                key_name,
-                modifiers.ctrl,
-                modifiers.shift,
-                modifiers.alt,
-                modifiers.super_key,
-            )
-        };
-
-        match result {
-            InputResult::Action(action) => self.handle_action(action),
-            InputResult::Consumed => {}
-            InputResult::PassThrough => self.send_key_input(event, modifiers),
-        }
-    }
+    // handle_overview_keyboard_input and handle_regular_keyboard_input removed —
+    // all key processing now goes through the unified pipeline above.
 
     fn send_key_input(&mut self, event: &winit::event::KeyEvent, modifiers: KeyModifiers) {
         let use_kitty = self

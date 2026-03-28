@@ -19,7 +19,6 @@ pub(crate) mod ui;
 use ciri_anim::manager::{AnimParams, AnimationManager};
 use ciri_config::config::{CiriConfig, PaneOpenStyle, StatusBarPosition};
 use ciri_gpu::{GlyphAtlasGpu, Renderer};
-use ciri_input::keybind::KeybindMap;
 use ciri_input::leader::InputHandler;
 use ciri_layout::geometry::ViewSize;
 use ciri_layout::workspace_set::WorkspaceSet;
@@ -324,7 +323,6 @@ pub(crate) struct App {
     pub overview_action_hover: Option<OverviewActionHover>,
     pub render_bufs: RenderBuffers,
     pub ime: ImeState,
-    pub overview_keybinds: KeybindMap,
     pub drag: ResizeDragState,
     pub connected: bool,
     pub cursor_blink_visible: bool,
@@ -445,7 +443,6 @@ impl App {
             &config.keys.modes,
             &config.keys.direct_bindings,
         );
-        let overview_keybinds = KeybindMap::from_overview_config(&config.keys.overview_bindings);
         let column_gap = config.appearance.column_gap;
 
         let cached_color_table = ColorTable::new(&config);
@@ -489,7 +486,6 @@ impl App {
                 preedit_cursor: None,
                 last_pos: None,
             },
-            overview_keybinds,
             drag: ResizeDragState {
                 col_dragging: None,
                 col_right_idx: None,

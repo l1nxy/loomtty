@@ -685,6 +685,7 @@ pub struct Renderer {
     rects: DxRectPipeline,
     width: u32,
     height: u32,
+    sync_interval: u32,
 }
 
 impl Renderer {
@@ -777,6 +778,11 @@ impl Renderer {
 
         let rects = unsafe { DxRectPipeline::new(&device, render_config.max_rectangles)? };
 
+        let sync_interval = match render_config.present_mode.as_str() {
+            "immediate" | "mailbox" => 0,
+            _ => 1,
+        };
+
         log::info!("D3D11 renderer initialized ({}x{})", size.width, size.height);
 
         Ok(Renderer {
@@ -789,6 +795,7 @@ impl Renderer {
             rects,
             width: size.width.max(1),
             height: size.height.max(1),
+            sync_interval,
         })
     }
 
@@ -866,7 +873,7 @@ impl Renderer {
                 &self.device,
                 cache.atlas_size,
                 cache.max_instances,
-                DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
+                DXGI_FORMAT_R8G8B8A8_UNORM,
                 4,
                 GLYPH_HLSL,
                 COLOR_PS_HLSL,
@@ -994,7 +1001,7 @@ impl Renderer {
             );
 
             // Present
-            let _ = self.swap_chain.Present(1, DXGI_PRESENT(0)).ok();
+            let _ = self.swap_chain.Present(self.sync_interval, DXGI_PRESENT(0)).ok();
         }
     }
 }
@@ -1005,17 +1012,7 @@ unsafe fn create_rtv(
 ) -> Result<ID3D11RenderTargetView> {
     let back_buffer: ID3D11Texture2D = swap_chain.GetBuffer(0)?;
     let resource: ID3D11Resource = back_buffer.cast()?;
-    // Use an sRGB view so the GPU automatically converts linear→sRGB on write.
-    // The swap chain buffer is DXGI_FORMAT_R8G8B8A8_UNORM (required by flip model),
-    // but we can create an sRGB-typed RTV on the same underlying resource.
-    let rtv_desc = D3D11_RENDER_TARGET_VIEW_DESC {
-        Format: DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
-        ViewDimension: D3D11_RTV_DIMENSION_TEXTURE2D,
-        Anonymous: D3D11_RENDER_TARGET_VIEW_DESC_0 {
-            Texture2D: D3D11_TEX2D_RTV { MipSlice: 0 },
-        },
-    };
     let mut rtv = None;
-    device.CreateRenderTargetView(&resource, Some(&rtv_desc), Some(&mut rtv))?;
+    device.CreateRenderTargetView(&resource, None, Some(&mut rtv))?;
     Ok(rtv.unwrap())
 }

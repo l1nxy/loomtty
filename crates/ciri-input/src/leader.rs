@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::action::Action;
-use crate::keybind::{KeyCombo, KeybindMap};
+use crate::keybind::{BindingMode, BindingSet, KeyCombo, KeybindMap};
 
 // ── Public types ──
 
@@ -139,6 +139,13 @@ pub struct InputHandler {
     leader_timeout: Duration,
     double_tap_window: Duration,
     last_leader_press: Option<Instant>,
+
+    // ── v2 unified system ──
+
+    /// Unified binding set (populated via `set_binding_set`).
+    pub binding_set: BindingSet,
+    /// Stack of active named key tables (e.g. ["resize"]).
+    key_table_stack: Vec<String>,
 }
 
 impl InputHandler {
@@ -155,6 +162,8 @@ impl InputHandler {
             leader_timeout,
             double_tap_window,
             last_leader_press: None,
+            binding_set: BindingSet::new(),
+            key_table_stack: Vec::new(),
         }
     }
 
@@ -245,7 +254,204 @@ impl InputHandler {
         }
     }
 
-    // ── State handlers ──
+    // ── v2 unified API ──
+
+    /// Whether any key table is active on the stack.
+    pub fn has_active_table(&self) -> bool {
+        !self.key_table_stack.is_empty()
+    }
+
+    /// Name of the topmost key table, if any.
+    pub fn active_table_name(&self) -> Option<&str> {
+        self.key_table_stack.last().map(|s| s.as_str())
+    }
+
+    /// Maximum key table nesting depth.
+    const MAX_TABLE_DEPTH: usize = 4;
+
+    /// Push a named key table onto the stack.
+    pub fn activate_key_table(&mut self, name: &str) {
+        if self.key_table_stack.len() < Self::MAX_TABLE_DEPTH {
+            self.key_table_stack.push(name.to_string());
+        } else {
+            log::warn!("key table stack depth limit ({}) reached, ignoring activate_key_table({name:?})", Self::MAX_TABLE_DEPTH);
+        }
+    }
+
+    /// Pop the topmost key table from the stack.
+    pub fn deactivate_key_table(&mut self) {
+        self.key_table_stack.pop();
+    }
+
+    /// Pop all key tables.
+    pub fn deactivate_all_key_tables(&mut self) {
+        self.key_table_stack.clear();
+    }
+
+    /// Replace the unified binding set.
+    pub fn set_binding_set(&mut self, set: BindingSet) {
+        self.binding_set = set;
+    }
+
+    /// Unified key processing that uses BindingSet + BindingMode.
+    ///
+    /// `app_mode` is the mode computed by the app layer (OVERVIEW, SEARCH,
+    /// PALETTE, LOCKED, PASTE_CONFIRM, etc.). This method combines it with
+    /// internal state (LEADER, KEY_TABLE, NORMAL) for the full lookup.
+    pub fn process_key_v2(
+        &mut self,
+        key_name: &str,
+        ctrl: bool,
+        shift: bool,
+        alt: bool,
+        super_key: bool,
+        app_mode: BindingMode,
+    ) -> InputResult {
+        self.check_timeout();
+        let event = KeyEvent::new(key_name, ctrl, shift, alt, super_key);
+
+        // Build full mode from app state + internal state.
+        let mut mode = app_mode;
+        if matches!(self.state, State::AwaitingAction { .. }) {
+            mode |= BindingMode::LEADER;
+        }
+        if !self.key_table_stack.is_empty() {
+            mode |= BindingMode::KEY_TABLE;
+        }
+
+        // AwaitingUnlock must be checked before LOCKED (unlock sequence in progress).
+        if matches!(self.state, State::AwaitingUnlock) {
+            return self.process_awaiting_unlock_v2(event);
+        }
+        // Locked: only leader key and ToggleLock direct bindings pass through.
+        if mode.contains(BindingMode::LOCKED) {
+            return self.process_locked_v2(event, mode);
+        }
+
+        // Paste confirm: only bindings with PASTE_CONFIRM mode fire.
+        if mode.contains(BindingMode::PASTE_CONFIRM) {
+            return self.lookup_binding_v2(event, mode);
+        }
+
+        // Leader key handling.
+        if self.is_leader_press(event) && !matches!(self.state, State::AwaitingAction { .. }) {
+            if self.detect_double_tap() {
+                return InputResult::Action(Action::SendLeaderKey);
+            }
+            self.enter_awaiting_action();
+            return InputResult::Consumed;
+        }
+
+        // Escape handling.
+        if is_escape(event.key_name) {
+            if matches!(self.state, State::AwaitingAction { .. }) {
+                self.state = State::Idle;
+                return InputResult::Consumed;
+            }
+            if !self.key_table_stack.is_empty() {
+                self.key_table_stack.pop();
+                return InputResult::Consumed;
+            }
+        }
+
+        self.lookup_binding_v2(event, mode)
+    }
+
+    fn process_locked_v2(&mut self, event: KeyEvent<'_>, mode: BindingMode) -> InputResult {
+        // Leader key starts unlock sequence.
+        if self.is_leader_press(event) {
+            self.state = State::AwaitingUnlock;
+            return InputResult::Consumed;
+        }
+        // Check BindingSet for ToggleLock (e.g. direct Ctrl+G binding).
+        let combo = self.event_combo(event);
+        if let Some(binding) = self.binding_set.lookup(mode, None, &combo) {
+            if matches!(binding.action, Action::ToggleLock) {
+                return InputResult::Action(Action::ToggleLock);
+            }
+        }
+        InputResult::PassThrough
+    }
+
+    fn process_awaiting_unlock_v2(&mut self, event: KeyEvent<'_>) -> InputResult {
+        let combo = self.combo_stripping_leader(event);
+        // Look in BindingSet with LEADER mode for ToggleLock.
+        if let Some(binding) = self.binding_set.lookup(BindingMode::LEADER, None, &combo) {
+            if matches!(binding.action, Action::ToggleLock) {
+                self.state = State::Idle;
+                return InputResult::Action(Action::ToggleLock);
+            }
+        }
+        self.state = State::Idle;
+        InputResult::PassThrough
+    }
+
+    fn lookup_binding_v2(&mut self, event: KeyEvent<'_>, mode: BindingMode) -> InputResult {
+        let combo = if mode.contains(BindingMode::LEADER) {
+            self.combo_stripping_leader(event)
+        } else {
+            self.event_combo(event)
+        };
+
+        let active_table = self.key_table_stack.last().map(|s| s.as_str());
+        if let Some(binding) = self.binding_set.lookup(mode, active_table, &combo) {
+            let action = binding.action.clone();
+            return self.dispatch_v2(action, mode);
+        }
+
+        // Text input fallback: search/palette unmatched keys → TextInput.
+        if mode.intersects(BindingMode::SEARCH | BindingMode::PALETTE) {
+            return InputResult::Action(Action::TextInput);
+        }
+
+        // Unmatched in LEADER mode.
+        if mode.contains(BindingMode::LEADER) {
+            if self.input_mode == InputMode::Prefix {
+                self.state = State::Idle;
+            }
+            return InputResult::Consumed;
+        }
+
+        InputResult::PassThrough
+    }
+
+    fn dispatch_v2(&mut self, action: Action, mode: BindingMode) -> InputResult {
+        match &action {
+            // Key table management.
+            Action::ActivateKeyTable(name) => {
+                self.activate_key_table(name);
+                // Also exit LEADER state (mode entered).
+                self.state = State::Idle;
+                return InputResult::Consumed;
+            }
+            Action::DeactivateKeyTable => {
+                self.key_table_stack.pop();
+                return InputResult::Consumed;
+            }
+            // EnterMode is treated as ActivateKeyTable for backward compat.
+            Action::EnterMode(name) => {
+                self.activate_key_table(name);
+                self.state = State::Idle;
+                return InputResult::Consumed;
+            }
+            Action::ToggleLock => {
+                // The app layer handles the actual lock toggle.
+                // We just reset state.
+                self.state = State::Idle;
+                return InputResult::Action(action);
+            }
+            _ => {}
+        }
+
+        // After executing a leader action, decide next state.
+        if mode.contains(BindingMode::LEADER) {
+            self.transition_after_action(&action);
+        }
+
+        InputResult::Action(action)
+    }
+
+    // ── State handlers (legacy) ──
 
     fn process_idle(&mut self, event: KeyEvent<'_>) -> InputResult {
         // 1. Direct bindings (Ctrl+R → resize, Alt+H → focus_left, etc.)
@@ -922,5 +1128,225 @@ mod tests {
         // Ctrl+G should unlock directly (via direct binding in Locked state)
         h.process_key("g", true, false, false, false);
         assert!(!h.is_locked());
+    }
+
+    // ══════════════════════════════════════════════
+    //  process_key_v2 tests
+    // ══════════════════════════════════════════════
+
+    use crate::keybind::{Binding, BindingMode, BindingSet};
+
+    /// Helper: build a handler with v2 BindingSet populated.
+    fn v2_handler() -> InputHandler {
+        let mut h = InputHandler::new(Duration::from_millis(1000), Duration::from_millis(300));
+        h.leader_key = LeaderKey::parse("ctrl+w");
+        h.input_mode = InputMode::Prefix;
+
+        let mut set = BindingSet::new();
+
+        // Leader bindings (mode: LEADER)
+        set.push(Binding::in_mode(KeyCombo::new("n"), Action::NewColumnRight, BindingMode::LEADER));
+        set.push(Binding::in_mode(KeyCombo::new("h"), Action::FocusLeft, BindingMode::LEADER));
+        set.push(Binding::in_mode(KeyCombo::new("l"), Action::FocusRight, BindingMode::LEADER));
+        set.push(Binding::in_mode(KeyCombo::new("o"), Action::ToggleOverview, BindingMode::LEADER));
+        set.push(Binding::in_mode(KeyCombo::new("r"), Action::EnterMode("resize".into()), BindingMode::LEADER));
+        set.push(Binding::in_mode(KeyCombo::new("g"), Action::ToggleLock, BindingMode::LEADER));
+
+        // Direct bindings (no mode requirement, but not in text-input overlays)
+        set.push(Binding {
+            combo: KeyCombo::parse("ctrl+g"),
+            action: Action::ToggleLock,
+            mode: BindingMode::EMPTY,
+            notmode: BindingMode::SEARCH | BindingMode::PALETTE,
+            key_table: String::new(),
+        });
+
+        // Resize key table
+        set.push(Binding::in_table(KeyCombo::new("h"), Action::ColumnWidthDecrease, "resize"));
+        set.push(Binding::in_table(KeyCombo::new("l"), Action::ColumnWidthIncrease, "resize"));
+
+        // Overview bindings
+        set.push(Binding::in_mode(KeyCombo::new("h"), Action::FocusLeft, BindingMode::OVERVIEW));
+        set.push(Binding::in_mode(KeyCombo::new("escape"), Action::ExitOverview, BindingMode::OVERVIEW));
+
+        // Search bindings
+        set.push(Binding::in_mode(KeyCombo::new("escape"), Action::CloseSearch, BindingMode::SEARCH));
+        set.push(Binding::in_mode(KeyCombo::new("enter"), Action::SearchNextMatch, BindingMode::SEARCH));
+
+        // Palette bindings
+        set.push(Binding::in_mode(KeyCombo::new("escape"), Action::CloseCommandPalette, BindingMode::PALETTE));
+        set.push(Binding::in_mode(KeyCombo::new("up"), Action::PaletteUp, BindingMode::PALETTE));
+        set.push(Binding::in_mode(KeyCombo::new("down"), Action::PaletteDown, BindingMode::PALETTE));
+        set.push(Binding::in_mode(KeyCombo::new("enter"), Action::PaletteConfirm, BindingMode::PALETTE));
+
+        h.binding_set = set;
+        h
+    }
+
+    #[test]
+    fn v2_normal_passthrough() {
+        let mut h = v2_handler();
+        let r = h.process_key_v2("a", false, false, false, false, BindingMode::EMPTY);
+        assert!(matches!(r, InputResult::PassThrough));
+    }
+
+    #[test]
+    fn v2_leader_then_action() {
+        let mut h = v2_handler();
+        // Press leader
+        let r = h.process_key_v2("w", true, false, false, false, BindingMode::EMPTY);
+        assert!(matches!(r, InputResult::Consumed));
+        assert!(h.is_awaiting_action());
+        // Press action key
+        let r = h.process_key_v2("n", false, false, false, false, BindingMode::EMPTY);
+        assert!(matches!(r, InputResult::Action(Action::NewColumnRight)));
+    }
+
+    #[test]
+    fn v2_leader_escape_exits() {
+        let mut h = v2_handler();
+        h.process_key_v2("w", true, false, false, false, BindingMode::EMPTY);
+        let r = h.process_key_v2("escape", false, false, false, false, BindingMode::EMPTY);
+        assert!(matches!(r, InputResult::Consumed));
+        assert!(!h.is_awaiting_action());
+    }
+
+    #[test]
+    fn v2_enter_mode_pushes_key_table() {
+        let mut h = v2_handler();
+        h.process_key_v2("w", true, false, false, false, BindingMode::EMPTY);
+        h.process_key_v2("r", false, false, false, false, BindingMode::EMPTY);
+        assert!(h.has_active_table());
+        assert_eq!(h.active_table_name(), Some("resize"));
+    }
+
+    #[test]
+    fn v2_key_table_dispatches_action() {
+        let mut h = v2_handler();
+        // Enter resize table
+        h.process_key_v2("w", true, false, false, false, BindingMode::EMPTY);
+        h.process_key_v2("r", false, false, false, false, BindingMode::EMPTY);
+        // Press "h" in resize table
+        let r = h.process_key_v2("h", false, false, false, false, BindingMode::EMPTY);
+        assert!(matches!(r, InputResult::Action(Action::ColumnWidthDecrease)));
+        // Still in resize table
+        assert!(h.has_active_table());
+    }
+
+    #[test]
+    fn v2_escape_pops_key_table() {
+        let mut h = v2_handler();
+        h.process_key_v2("w", true, false, false, false, BindingMode::EMPTY);
+        h.process_key_v2("r", false, false, false, false, BindingMode::EMPTY);
+        assert!(h.has_active_table());
+        h.process_key_v2("escape", false, false, false, false, BindingMode::EMPTY);
+        assert!(!h.has_active_table());
+    }
+
+    #[test]
+    fn v2_overview_binding() {
+        let mut h = v2_handler();
+        let r = h.process_key_v2("h", false, false, false, false, BindingMode::OVERVIEW);
+        assert!(matches!(r, InputResult::Action(Action::FocusLeft)));
+    }
+
+    #[test]
+    fn v2_overview_escape() {
+        let mut h = v2_handler();
+        let r = h.process_key_v2("escape", false, false, false, false, BindingMode::OVERVIEW);
+        assert!(matches!(r, InputResult::Action(Action::ExitOverview)));
+    }
+
+    #[test]
+    fn v2_overview_leader_toggle() {
+        let mut h = v2_handler();
+        // In overview mode, press leader then "o" → should toggle overview
+        h.process_key_v2("w", true, false, false, false, BindingMode::OVERVIEW);
+        let r = h.process_key_v2("o", false, false, false, false, BindingMode::OVERVIEW);
+        assert!(matches!(r, InputResult::Action(Action::ToggleOverview)));
+    }
+
+    #[test]
+    fn v2_search_control_keys() {
+        let mut h = v2_handler();
+        let r = h.process_key_v2("escape", false, false, false, false, BindingMode::SEARCH);
+        assert!(matches!(r, InputResult::Action(Action::CloseSearch)));
+
+        let r = h.process_key_v2("enter", false, false, false, false, BindingMode::SEARCH);
+        assert!(matches!(r, InputResult::Action(Action::SearchNextMatch)));
+    }
+
+    #[test]
+    fn v2_search_text_input_fallback() {
+        let mut h = v2_handler();
+        // Unmatched key in SEARCH mode → TextInput
+        let r = h.process_key_v2("a", false, false, false, false, BindingMode::SEARCH);
+        assert!(matches!(r, InputResult::Action(Action::TextInput)));
+    }
+
+    #[test]
+    fn v2_palette_navigation() {
+        let mut h = v2_handler();
+        let r = h.process_key_v2("up", false, false, false, false, BindingMode::PALETTE);
+        assert!(matches!(r, InputResult::Action(Action::PaletteUp)));
+
+        let r = h.process_key_v2("down", false, false, false, false, BindingMode::PALETTE);
+        assert!(matches!(r, InputResult::Action(Action::PaletteDown)));
+
+        let r = h.process_key_v2("enter", false, false, false, false, BindingMode::PALETTE);
+        assert!(matches!(r, InputResult::Action(Action::PaletteConfirm)));
+    }
+
+    #[test]
+    fn v2_palette_text_input_fallback() {
+        let mut h = v2_handler();
+        let r = h.process_key_v2("x", false, false, false, false, BindingMode::PALETTE);
+        assert!(matches!(r, InputResult::Action(Action::TextInput)));
+    }
+
+    #[test]
+    fn v2_locked_passthrough() {
+        let mut h = v2_handler();
+        let r = h.process_key_v2("a", false, false, false, false, BindingMode::LOCKED);
+        assert!(matches!(r, InputResult::PassThrough));
+    }
+
+    #[test]
+    fn v2_locked_direct_toggle_lock() {
+        let mut h = v2_handler();
+        let r = h.process_key_v2("g", true, false, false, false, BindingMode::LOCKED);
+        assert!(matches!(r, InputResult::Action(Action::ToggleLock)));
+    }
+
+    #[test]
+    fn v2_locked_leader_then_unlock() {
+        let mut h = v2_handler();
+        // Press leader while locked
+        h.process_key_v2("w", true, false, false, false, BindingMode::LOCKED);
+        assert!(matches!(h.state, State::AwaitingUnlock));
+        // Press "g" to unlock
+        let r = h.process_key_v2("g", false, false, false, false, BindingMode::LOCKED);
+        assert!(matches!(r, InputResult::Action(Action::ToggleLock)));
+        assert!(!matches!(h.state, State::AwaitingUnlock));
+    }
+
+    #[test]
+    fn v2_sticky_mode_repeatable_stays() {
+        let mut h = v2_handler();
+        h.input_mode = InputMode::Sticky;
+        h.process_key_v2("w", true, false, false, false, BindingMode::EMPTY);
+        let r = h.process_key_v2("h", false, false, false, false, BindingMode::EMPTY);
+        assert!(matches!(r, InputResult::Action(Action::FocusLeft)));
+        assert!(h.is_awaiting_action()); // stays in leader
+    }
+
+    #[test]
+    fn v2_sticky_mode_oneshot_exits() {
+        let mut h = v2_handler();
+        h.input_mode = InputMode::Sticky;
+        h.process_key_v2("w", true, false, false, false, BindingMode::EMPTY);
+        let r = h.process_key_v2("n", false, false, false, false, BindingMode::EMPTY);
+        assert!(matches!(r, InputResult::Action(Action::NewColumnRight)));
+        assert!(!h.is_awaiting_action()); // exits
     }
 }

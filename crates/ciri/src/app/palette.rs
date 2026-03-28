@@ -1,6 +1,5 @@
 use ciri_input::action::Action;
 use ciri_protocol::message::ClientMessage;
-use winit::keyboard::{Key, NamedKey};
 
 use super::{App, PaletteEntry, PaletteEntryKind};
 use crate::connection::{RemoteProbeResult, RemoteQueryResult};
@@ -81,65 +80,6 @@ impl App {
             self.send(ClientMessage::ListSessions {
                 all: palette.sessions_show_all,
             });
-        }
-    }
-
-    pub fn handle_command_palette_key(
-        &mut self,
-        event: &winit::event::KeyEvent,
-        ctrl: bool,
-        _shift: bool,
-        _alt: bool,
-    ) {
-        let Some(palette) = &mut self.command_palette else {
-            return;
-        };
-
-        match &event.logical_key {
-            Key::Named(NamedKey::Escape) => {
-                self.command_palette = None;
-            }
-            Key::Named(NamedKey::ArrowUp) => {
-                if !palette.filtered.is_empty() {
-                    palette.selected_idx = if palette.selected_idx == 0 {
-                        palette.filtered.len() - 1
-                    } else {
-                        palette.selected_idx - 1
-                    };
-                }
-            }
-            Key::Named(NamedKey::ArrowDown) => {
-                if !palette.filtered.is_empty() {
-                    palette.selected_idx = (palette.selected_idx + 1) % palette.filtered.len();
-                }
-            }
-            Key::Named(NamedKey::Enter) => {
-                let keep_open = palette
-                    .filtered
-                    .get(palette.selected_idx)
-                    .and_then(|&idx| palette.entries.get(idx))
-                    .is_some_and(|e| matches!(e.kind, PaletteEntryKind::RemoteHost { .. }));
-
-                if let Some(&entry_idx) = palette.filtered.get(palette.selected_idx) {
-                    self.execute_palette_entry(entry_idx);
-                }
-                if !keep_open {
-                    self.command_palette = None;
-                }
-            }
-            Key::Named(NamedKey::Backspace) => {
-                palette.query.pop();
-                self.filter_palette();
-            }
-            Key::Character(c) if !ctrl => {
-                let s: &str = c.as_str();
-                let Some(palette) = &mut self.command_palette else {
-                    return;
-                };
-                palette.query.push_str(s);
-                self.filter_palette();
-            }
-            _ => {}
         }
     }
 

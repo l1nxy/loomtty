@@ -1451,9 +1451,6 @@ impl InfoBoxComponent {
             (mode_name.to_uppercase(), bindings.clone())
         } else if app.input.is_awaiting_action() {
             ("LEADER".to_string(), app.config.keys.bindings.clone())
-        } else if app.show_help {
-            // Help panel: show all leader bindings
-            ("HELP".to_string(), app.config.keys.bindings.clone())
         } else {
             return None;
         };

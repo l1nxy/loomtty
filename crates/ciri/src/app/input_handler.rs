@@ -1,4 +1,7 @@
+use ciri_config::config::CiriConfig;
 use ciri_input::action::Action;
+use ciri_input::keybind::{BindingSet, KeybindMap};
+use ciri_input::leader::InputHandler;
 use ciri_protocol::message::*;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -8,12 +11,20 @@ use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 use super::App;
 
 impl App {
-    pub fn handle_action(&mut self, action: Action) {
-        // Dismiss help panel on any action except ToggleHelp itself
-        if self.show_help && action != Action::ToggleHelp {
-            self.show_help = false;
-        }
+    /// Build unified BindingSet from all config sources and install it.
+    pub(crate) fn rebuild_binding_set(input: &mut InputHandler, config: &CiriConfig) {
+        input.set_binding_set(BindingSet::from_legacy(
+            &input.keybinds,
+            &input.direct_keybinds,
+            &input.mode_keybinds,
+            &KeybindMap::from_overview_config(&config.keys.overview_bindings),
+            &config.keys.search_bindings,
+            &config.keys.palette_bindings,
+            &config.keys.paste_confirm_bindings,
+        ));
+    }
 
+    pub fn handle_action(&mut self, action: Action) {
         match action {
             Action::NewColumnRight => {
                 self.send(ClientMessage::CreatePane);
@@ -194,8 +205,88 @@ impl App {
             Action::ToggleLock => {
                 self.input.toggle_lock();
             }
-            Action::ToggleHelp => {
-                self.show_help = !self.show_help;
+            // ── Search ──
+            Action::OpenSearch => {
+                self.open_search();
+            }
+            Action::CloseSearch => {
+                self.close_search_restore_scroll();
+            }
+            Action::SearchNextMatch => {
+                if self.search_state.as_ref().is_some_and(|s| s.query.is_empty()) {
+                    // Empty query: just exit search
+                    self.search_state = None;
+                } else {
+                    self.jump_to_match(false);
+                }
+            }
+            Action::SearchPrevMatch => {
+                self.jump_to_match(true);
+            }
+
+            // ── Command palette ──
+            Action::CloseCommandPalette => {
+                self.command_palette = None;
+            }
+            Action::PaletteUp => {
+                if let Some(palette) = &mut self.command_palette {
+                    if !palette.filtered.is_empty() {
+                        palette.selected_idx = if palette.selected_idx == 0 {
+                            palette.filtered.len() - 1
+                        } else {
+                            palette.selected_idx - 1
+                        };
+                    }
+                }
+            }
+            Action::PaletteDown => {
+                if let Some(palette) = &mut self.command_palette {
+                    if !palette.filtered.is_empty() {
+                        palette.selected_idx =
+                            (palette.selected_idx + 1) % palette.filtered.len();
+                    }
+                }
+            }
+            Action::PaletteConfirm => {
+                self.execute_palette_selection();
+            }
+
+            // ── Clipboard ──
+            Action::ClipboardCopy => {
+                self.handle_clipboard_copy();
+            }
+            Action::ClipboardPaste => {
+                self.handle_clipboard_paste();
+            }
+
+            // ── Paste confirmation ──
+            Action::ConfirmPaste => {
+                if self.pending_paste.take().is_some() {
+                    self.handle_clipboard_paste_force();
+                }
+            }
+            Action::DismissPasteConfirm => {
+                self.pending_paste = None;
+            }
+
+            // ── Text input ──
+            Action::TextInput => {
+                // Handled in keyboard.rs handle_text_input(); should not reach here.
+                log::debug!("TextInput action reached handle_action (unexpected)");
+            }
+            Action::TextBackspace => {
+                if let Some(search) = &mut self.search_state {
+                    search.query.pop();
+                    self.update_search_results();
+                } else if let Some(palette) = &mut self.command_palette {
+                    palette.query.pop();
+                    self.filter_palette();
+                }
+            }
+
+            // ── Key table management (handled by InputHandler internally) ──
+            Action::ActivateKeyTable(_) | Action::DeactivateKeyTable => {
+                // State transitions already handled in process_key_v2.
             }
         }
     }
@@ -357,50 +448,76 @@ impl App {
         }
     }
 
-    pub fn handle_search_key(&mut self, event: &winit::event::KeyEvent, ctrl: bool, shift: bool) {
-        let Some(search) = &mut self.search_state else {
+    // ── Unified action helpers ──
+
+    fn open_search(&mut self) {
+        let Some(pane_id) = self.workspaces.active().active_pane_id() else {
+            return;
+        };
+        let scroll_offset = self
+            .pane_grids
+            .get(&pane_id)
+            .map(|g| g.scroll_offset)
+            .unwrap_or(0);
+        self.search_state = Some(super::SearchState {
+            query: String::new(),
+            matches: Vec::new(),
+            current_match_idx: 0,
+            pane_id,
+            original_scroll_offset: scroll_offset,
+        });
+    }
+
+    fn close_search_restore_scroll(&mut self) {
+        let Some(search) = &self.search_state else {
             return;
         };
         let pane_id = search.pane_id;
+        let orig = search.original_scroll_offset;
+        if let Some(grid) = self.pane_grids.get_mut(&pane_id) {
+            grid.scroll_offset = orig;
+            grid.dirty = true;
+            self.invalidate_pane_cache(pane_id);
+        }
+        self.search_state = None;
+    }
 
-        match &event.logical_key {
-            Key::Named(NamedKey::Escape) => {
-                // Restore original scroll position
-                let orig = search.original_scroll_offset;
-                if let Some(grid) = self.pane_grids.get_mut(&pane_id) {
-                    grid.scroll_offset = orig;
-                    grid.dirty = true;
-                    self.invalidate_pane_cache(pane_id);
-                }
-                self.search_state = None;
-            }
-            Key::Named(NamedKey::Enter) if shift => {
-                // Previous match
-                self.jump_to_match(true);
-            }
-            Key::Named(NamedKey::Enter) => {
-                if search.query.is_empty() {
-                    // Exit search, keep current position
-                    self.search_state = None;
-                } else {
-                    // Next match
-                    self.jump_to_match(false);
-                }
-            }
-            Key::Named(NamedKey::Backspace) => {
-                search.query.pop();
-                self.update_search_results();
-            }
-            Key::Character(c) if !ctrl => {
-                let s: &str = c.as_str();
-                search.query.push_str(s);
-                self.update_search_results();
-            }
-            _ => {}
+    fn execute_palette_selection(&mut self) {
+        let Some(palette) = &self.command_palette else {
+            return;
+        };
+        let keep_open = palette
+            .filtered
+            .get(palette.selected_idx)
+            .and_then(|&idx| palette.entries.get(idx))
+            .is_some_and(|e| {
+                matches!(
+                    e.kind,
+                    super::PaletteEntryKind::RemoteHost { .. }
+                )
+            });
+        if let Some(&entry_idx) = palette.filtered.get(palette.selected_idx) {
+            self.execute_palette_entry(entry_idx);
+        }
+        if !keep_open {
+            self.command_palette = None;
         }
     }
 
-    fn update_search_results(&mut self) {
+    fn handle_clipboard_paste_force(&mut self) {
+        // Re-paste without guard check.
+        match &mut self.clipboard {
+            None => log::warn!("clipboard not available"),
+            Some(cb) => match cb.get_text() {
+                Err(e) => log::warn!("clipboard read failed: {e}"),
+                Ok(text) => {
+                    self.send_paste_to_active_pane(text.as_bytes());
+                }
+            },
+        }
+    }
+
+    pub(crate) fn update_search_results(&mut self) {
         let Some(search) = &mut self.search_state else {
             return;
         };

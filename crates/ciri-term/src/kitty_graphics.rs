@@ -13,7 +13,7 @@ const MAX_APC_PARTIAL_SIZE: usize = 16 * 1024 * 1024; // 16MB
 /// Kitty image metadata parsed from the first chunk of a transmission.
 #[derive(Debug, Clone)]
 struct KittyImageMeta {
-    format: String, // "png", "rgb", "rgba"
+    format: &'static str,
     width: u32,
     height: u32,
     cols: u16,
@@ -27,6 +27,17 @@ fn kitty_format_str(format_val: u32) -> &'static str {
         32 => "rgba",
         _ => "png",
     }
+}
+
+/// Split a kitty payload into (control, base64_data) at the first `;`.
+fn split_payload<'a>(input: &mut &'a [u8]) -> winnow::error::ModalResult<(&'a [u8], &'a [u8])> {
+    let control = winnow::token::take_till(0.., |b: u8| b == b';').parse_next(input)?;
+    let data = if winnow::combinator::opt(b';').parse_next(input)?.is_some() {
+        winnow::token::rest.parse_next(input)?
+    } else {
+        &[] as &[u8]
+    };
+    Ok((control, data))
 }
 
 /// Result of scanning PTY data for Kitty graphics sequences.
@@ -113,6 +124,18 @@ pub(crate) struct KittyGraphicsParser {
     next_image_id: u64,
 }
 
+impl ControlFields {
+    fn to_meta(&self) -> KittyImageMeta {
+        KittyImageMeta {
+            format: kitty_format_str(self.format_val),
+            width: self.width,
+            height: self.height,
+            cols: if self.cols > 0 { self.cols } else { 10 },
+            rows: if self.rows > 0 { self.rows } else { 5 },
+        }
+    }
+}
+
 impl KittyGraphicsParser {
     pub fn new() -> Self {
         KittyGraphicsParser {
@@ -123,9 +146,6 @@ impl KittyGraphicsParser {
         }
     }
 
-    /// Scan data for Kitty APC sequences. Returns new placements and whether
-    /// a delete command was encountered.
-    /// `active_images` is updated in-place with new placements (for reconnect).
     pub fn scan(
         &mut self,
         data: &[u8],
@@ -144,49 +164,33 @@ impl KittyGraphicsParser {
         let mut deleted = false;
 
         for (_offset, payload) in &scan.sequences {
-            let payload_str = String::from_utf8_lossy(payload);
+            // Split payload into control + base64 data via winnow
+            let mut input: &[u8] = payload;
+            let (control_bytes, img_data_bytes) =
+                match split_payload.parse_next(&mut input) {
+                    Ok(pair) => pair,
+                    Err(_) => continue,
+                };
 
-            // Split at first ';' into control and base64 data parts
-            let (control_str, img_data_str) = if let Some(sep) = payload_str.find(';') {
-                (&payload_str[..sep], &payload_str[sep + 1..])
-            } else {
-                (payload_str.as_ref(), "")
-            };
+            let control_str = String::from_utf8_lossy(control_bytes);
+            let fields = parse_control(&control_str);
 
-            let fields = parse_control(control_str);
-
-            // Decode base64 image data
             let decoded = base64::engine::general_purpose::STANDARD
-                .decode(img_data_str.as_bytes())
+                .decode(img_data_bytes)
                 .unwrap_or_default();
 
             match fields.action {
                 'T' | 't' => {
-                    // Transmit (and display if 'T')
                     if fields.more_chunks {
-                        // First/middle chunk: accumulate
                         if self.image_meta.is_none() {
-                            self.image_meta = Some(KittyImageMeta {
-                                format: kitty_format_str(fields.format_val).to_string(),
-                                width: fields.width,
-                                height: fields.height,
-                                cols: if fields.cols > 0 { fields.cols } else { 10 },
-                                rows: if fields.rows > 0 { fields.rows } else { 5 },
-                            });
+                            self.image_meta = Some(fields.to_meta());
                         }
                         self.image_buf.extend_from_slice(&decoded);
                     } else {
-                        // Final (or only) chunk
                         let mut full_data = std::mem::take(&mut self.image_buf);
                         full_data.extend_from_slice(&decoded);
 
-                        let meta = self.image_meta.take().unwrap_or(KittyImageMeta {
-                            format: kitty_format_str(fields.format_val).to_string(),
-                            width: fields.width,
-                            height: fields.height,
-                            cols: if fields.cols > 0 { fields.cols } else { 10 },
-                            rows: if fields.rows > 0 { fields.rows } else { 5 },
-                        });
+                        let meta = self.image_meta.take().unwrap_or_else(|| fields.to_meta());
 
                         if !full_data.is_empty() {
                             let id = self.next_image_id;
@@ -200,7 +204,6 @@ impl KittyGraphicsParser {
                                 meta.rows,
                                 full_data.len()
                             );
-                            let data = Arc::new(full_data);
                             let placement = ImagePlacement {
                                 id,
                                 row: cursor_row,
@@ -209,8 +212,8 @@ impl KittyGraphicsParser {
                                 height_cells: meta.rows,
                                 pixel_width: meta.width,
                                 pixel_height: meta.height,
-                                format: meta.format,
-                                data,
+                                format: meta.format.to_string(),
+                                data: Arc::new(full_data),
                             };
                             active_images.push(placement.clone());
                             new_placements.push(placement);
@@ -218,8 +221,6 @@ impl KittyGraphicsParser {
                     }
                 }
                 'd' => {
-                    // Delete images: clear active set and any placements
-                    // queued earlier in this scan (they're already stale).
                     active_images.clear();
                     new_placements.clear();
                     deleted = true;

@@ -10,66 +10,43 @@ use ciri_protocol::message::*;
 use std::sync::Arc;
 use std::sync::mpsc;
 
-use crate::dec_mode_parser::DecModeParser;
 use crate::event::PtyEventListener;
-use crate::kitty_graphics::KittyGraphicsParser;
-use crate::osc7_parser::Osc7Parser;
-use crate::osc8_parser::Osc8Parser;
+use crate::image_store::ImageStore;
+use crate::parser_suite::ParserSuite;
+use crate::pending_events::PendingEvents;
 use crate::pty::Pty;
-use crate::shell_integration::Osc133Parser;
-use crate::sixel::SixelParser;
 
 pub type PaneId = u64;
-
-/// Maximum number of active image placements retained for reconnecting clients.
-const MAX_ACTIVE_IMAGES: usize = 64;
 
 /// Semantic zone type from OSC 133 shell integration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SemanticZone {
-    /// After prompt start (OSC 133;A) — the prompt region.
     Prompt,
-    /// After command start (OSC 133;B) — user is typing a command.
     Input,
-    /// After command executed (OSC 133;C) — command output region.
     Output,
 }
 
 /// An inline image placement in the terminal grid.
 #[derive(Debug, Clone)]
 pub struct ImagePlacement {
-    /// Unique ID for this image.
     pub id: u64,
-    /// Row (viewport-relative) where the image starts.
     pub row: u16,
-    /// Column where the image starts.
     pub col: u16,
-    /// Width in cells.
     pub width_cells: u16,
-    /// Height in cells.
     pub height_cells: u16,
-    /// Image width in pixels (from protocol).
     pub pixel_width: u32,
-    /// Image height in pixels (from protocol).
     pub pixel_height: u32,
-    /// Image format: "png", "rgb", "rgba", "sixel".
     pub format: String,
-    /// Raw image data (PNG/RGB/RGBA bytes, or decoded sixel).
     pub data: Arc<Vec<u8>>,
 }
 
 /// Shell integration state tracked via OSC 133.
 #[derive(Debug, Clone)]
 pub struct ShellState {
-    /// Current semantic zone.
     pub zone: SemanticZone,
-    /// Last command exit code (from OSC 133;D;exitcode).
     pub last_exit_code: Option<i32>,
-    /// Line where the current prompt started.
     pub prompt_line: Option<i32>,
-    /// Line where command output started.
     pub output_line: Option<i32>,
-    /// Timestamp when the last command started (OSC 133;C).
     pub command_start: Option<std::time::Instant>,
 }
 
@@ -90,7 +67,6 @@ impl Dimensions for TermSize {
     }
 }
 
-/// Map alacritty CursorShape to our wire-format constant.
 fn cursor_shape_to_u8(shape: CursorShape) -> u8 {
     match shape {
         CursorShape::Block => CURSOR_BLOCK,
@@ -119,41 +95,31 @@ impl SnapshotScrollback {
     }
 }
 
+// ─── Pane ────────────────────────────────────────────────────────────
+
 pub struct Pane {
     pub id: PaneId,
+    pub title: String,
+    pub shell_state: ShellState,
+
+    // Core terminal
     term: Term<PtyEventListener>,
-    dirty: bool,
-    exited: bool,
-    pty: Pty,
     processor: Processor,
     event_rx: mpsc::Receiver<Event>,
+    pty: Pty,
+
+    // Dimensions
     cols: u16,
     rows: u16,
-    pub title: String,
-    /// Pending clipboard writes from OSC 52 (drained by server each tick).
-    clipboard_pending: Vec<String>,
-    /// Bell fired since last drain (BEL / \x07).
-    bell_pending: bool,
-    /// Shell integration state (OSC 133).
-    pub shell_state: ShellState,
-    /// Active image placements (persistent — survives drain, used for reconnecting clients).
-    active_images: Vec<ImagePlacement>,
-    /// Newly added image placements since last drain (broadcast to clients then cleared).
-    pending_images: Vec<ImagePlacement>,
-    /// Kitty graphics protocol parser.
-    kitty_parser: KittyGraphicsParser,
-    /// OSC 133 shell integration parser.
-    osc133_parser: Osc133Parser,
-    /// DEC private mode parser (focus events 1004, sync output 2026).
-    dec_mode_parser: DecModeParser,
-    /// Sixel image protocol parser.
-    sixel_parser: SixelParser,
-    /// OSC 8 hyperlink parser.
-    osc8_parser: Osc8Parser,
-    /// OSC 7 working directory parser.
-    osc7_parser: Osc7Parser,
-    /// Duration of the last completed command (set on OSC 133;D, drained by server).
-    last_command_duration: Option<std::time::Duration>,
+
+    // State
+    dirty: bool,
+    exited: bool,
+
+    // Subsystems
+    parsers: ParserSuite,
+    images: ImageStore,
+    events: PendingEvents,
 }
 
 impl Pane {
@@ -161,7 +127,6 @@ impl Pane {
         Self::new_with_opts(id, cols, rows, shell, None, None)
     }
 
-    /// Create a new pane with CWD override (convenience for OSC 7 CWD inheritance).
     pub fn new_with_cwd(
         id: PaneId,
         cols: u16,
@@ -172,7 +137,6 @@ impl Pane {
         Self::new_with_opts(id, cols, rows, shell, None, cwd)
     }
 
-    /// Create a new pane with optional command and working directory.
     pub fn new_with_opts(
         id: PaneId,
         cols: u16,
@@ -182,7 +146,6 @@ impl Pane {
         cwd: Option<&std::path::Path>,
     ) -> Result<Self> {
         let pty = Pty::spawn_with_opts(cols, rows, shell, command, cwd)?;
-
         let size = TermSize {
             cols: cols as usize,
             rows: rows as usize,
@@ -196,17 +159,7 @@ impl Pane {
 
         Ok(Pane {
             id,
-            term,
-            dirty: true,
-            exited: false,
-            pty,
-            processor: Processor::new(),
-            event_rx,
-            cols,
-            rows,
             title: String::new(),
-            clipboard_pending: Vec::new(),
-            bell_pending: false,
             shell_state: ShellState {
                 zone: SemanticZone::Prompt,
                 last_exit_code: None,
@@ -214,162 +167,145 @@ impl Pane {
                 output_line: None,
                 command_start: None,
             },
-            active_images: Vec::new(),
-            pending_images: Vec::new(),
-            kitty_parser: KittyGraphicsParser::new(),
-            osc133_parser: Osc133Parser::new(),
-            dec_mode_parser: DecModeParser::new(),
-            sixel_parser: SixelParser::new(),
-            osc8_parser: Osc8Parser::new(),
-            osc7_parser: Osc7Parser::new(),
-            last_command_duration: None,
+            term,
+            processor: Processor::new(),
+            event_rx,
+            pty,
+            cols,
+            rows,
+            dirty: true,
+            exited: false,
+            parsers: ParserSuite::new(),
+            images: ImageStore::new(),
+            events: PendingEvents::new(),
         })
     }
 
-    /// Read PTY output, feed to terminal emulator, and handle terminal events.
+    // ── PTY I/O ──────────────────────────────────────────────────────
+
     pub fn process_pty_output(&mut self) -> bool {
         if self.exited {
             return false;
         }
 
-        let mut processed = false;
+        let data_processed = self.drain_and_parse_pty();
+        self.process_terminal_events();
+        self.check_pty_exit();
 
-        // Drain all available output from the background reader thread
+        if data_processed {
+            self.dirty = true;
+        }
+        data_processed
+    }
+
+    fn drain_and_parse_pty(&mut self) -> bool {
         let chunks = self.pty.drain_output();
-        if !chunks.is_empty() {
-            // Scan for OSC 133 shell integration, DEC private mode, OSC 8
-            // hyperlink, and OSC 7 CWD sequences before VT parsing
-            // (alacritty_terminal ignores these).
-            for chunk in &chunks {
-                self.osc133_parser.scan(
-                    chunk,
-                    &mut self.shell_state,
-                    &mut self.last_command_duration,
-                );
-                self.dec_mode_parser.scan(chunk);
-                self.osc8_parser.scan(chunk);
-                self.osc7_parser.scan(chunk);
-            }
+        if chunks.is_empty() {
+            return false;
+        }
 
-            // VT-parse each chunk individually, recording the cursor position
-            // after each one. This ensures Kitty image placements use the cursor
-            // at the time of each sequence, not the final cursor after all chunks.
-            let mut per_chunk_cursors: Vec<(u16, u16)> = Vec::with_capacity(chunks.len());
-            for chunk in &chunks {
+        // Run non-image parsers on each chunk
+        for chunk in &chunks {
+            self.parsers.scan_control(
+                chunk,
+                &mut self.shell_state,
+                &mut self.events.command_completion,
+            );
+        }
+
+        // VT-parse each chunk, recording cursor position after each
+        let cursors: Vec<(u16, u16)> = chunks
+            .iter()
+            .map(|chunk| {
                 self.processor.advance(&mut self.term, chunk);
                 let cursor = self.term.grid().cursor.point;
-                per_chunk_cursors.push((cursor.column.0 as u16, cursor.line.0.max(0) as u16));
+                (cursor.column.0 as u16, cursor.line.0.max(0) as u16)
+            })
+            .collect();
+
+        // Run image parsers with per-chunk cursor positions
+        for (chunk, &(cursor_col, cursor_row)) in chunks.iter().zip(cursors.iter()) {
+            let (kitty_result, sixel_placements) = self.parsers.scan_images(
+                chunk,
+                cursor_col,
+                cursor_row,
+                self.images.active_mut(),
+            );
+            if kitty_result.deleted {
+                self.images.clear_on_delete();
             }
-
-            // Scan for Kitty graphics sequences with per-chunk cursor positions.
-            for (chunk, (cursor_col, cursor_row)) in chunks.iter().zip(per_chunk_cursors.iter()) {
-                let result = self.kitty_parser.scan(
-                    chunk,
-                    *cursor_col,
-                    *cursor_row,
-                    &mut self.active_images,
-                );
-                if result.deleted {
-                    // A delete command invalidates everything queued so far.
-                    self.pending_images.clear();
-                }
-                self.pending_images.extend(result.placements);
-
-                // Scan for Sixel graphics sequences (DCS q ... ST).
-                let sixel_result = self.sixel_parser.scan(
-                    chunk,
-                    *cursor_col,
-                    *cursor_row,
-                    &mut self.active_images,
-                );
-                self.pending_images.extend(sixel_result.placements);
-            }
-
-            // Cap active images to prevent unbounded growth
-            if self.active_images.len() > MAX_ACTIVE_IMAGES {
-                let excess = self.active_images.len() - MAX_ACTIVE_IMAGES;
-                self.active_images.drain(..excess);
-            }
-
-            processed = true;
+            self.images.add_placements(kitty_result.placements);
+            self.images.add_placements(sixel_placements);
         }
 
-        if self.pty.reader_eof() {
-            self.exited = true;
-        }
+        self.images.cap_active();
+        true
+    }
 
-        // Process terminal events (PtyWrite for DA1/DA2 responses, etc.)
+    fn process_terminal_events(&mut self) {
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
-                Event::PtyWrite(text) => {
-                    self.write_to_pty(text.as_bytes());
-                }
-                Event::Title(t) => {
-                    self.title = t;
-                }
-                Event::ResetTitle => {
-                    self.title.clear();
-                }
-                Event::ClipboardStore(_, text) => {
-                    // OSC 52: TUI app wants to write to system clipboard
-                    self.clipboard_pending.push(text);
-                }
+                Event::PtyWrite(text) => self.write_to_pty(text.as_bytes()),
+                Event::Title(t) => self.title = t,
+                Event::ResetTitle => self.title.clear(),
+                Event::ClipboardStore(_, text) => self.events.clipboard.push(text),
                 Event::ClipboardLoad(_, formatter) => {
-                    // OSC 52: TUI app wants to read clipboard.
-                    // We can't access the client clipboard from the server,
-                    // so respond with empty string (common fallback).
                     let response = formatter("");
                     self.write_to_pty(response.as_bytes());
                 }
-                Event::Bell => {
-                    self.bell_pending = true;
-                }
-                Event::Exit | Event::ChildExit(_) => {
-                    self.exited = true;
-                }
+                Event::Bell => self.events.bell = true,
+                Event::Exit | Event::ChildExit(_) => self.exited = true,
                 _ => {}
             }
         }
+    }
 
+    fn check_pty_exit(&mut self) {
+        if !self.exited && self.pty.reader_eof() {
+            self.exited = true;
+        }
         if !self.exited && self.pty.try_wait() {
             self.exited = true;
         }
-
-        if processed {
-            self.dirty = true;
-        }
-        processed
     }
 
-    /// Drain pending OSC 52 clipboard writes.
+    // ── Drain methods ────────────────────────────────────────────────
+
     pub fn drain_clipboard(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.clipboard_pending)
+        self.events.drain_clipboard()
     }
 
-    /// Check and clear the bell pending flag.
     pub fn drain_bell(&mut self) -> bool {
-        std::mem::take(&mut self.bell_pending)
+        self.events.drain_bell()
     }
 
-    /// Drain the last completed command duration (from OSC 133;D).
     pub fn drain_command_completion(&mut self) -> Option<std::time::Duration> {
-        self.last_command_duration.take()
+        self.events.drain_command_completion()
     }
 
-    /// Get the current shell semantic zone (from OSC 133).
+    pub fn drain_images(&mut self) -> Vec<ImagePlacement> {
+        self.images.drain_pending()
+    }
+
+    pub fn active_images(&self) -> &[ImagePlacement] {
+        self.images.active()
+    }
+
+    // ── Shell integration ────────────────────────────────────────────
+
     pub fn shell_zone(&self) -> SemanticZone {
         self.shell_state.zone
     }
 
-    /// Get the last command exit code (from OSC 133;D).
     pub fn last_exit_code(&self) -> Option<i32> {
         self.shell_state.last_exit_code
     }
 
-    /// Get the current working directory (from OSC 7).
     pub fn cwd(&self) -> Option<&str> {
-        self.osc7_parser.cwd()
+        self.parsers.osc7.cwd()
     }
+
+    // ── PTY write ────────────────────────────────────────────────────
 
     pub fn write_to_pty(&mut self, data: &[u8]) {
         if self.exited {
@@ -380,13 +316,12 @@ impl Pane {
         }
     }
 
-    /// Check if the terminal has mouse reporting mode enabled.
+    // ── Mouse ────────────────────────────────────────────────────────
+
     pub fn has_mouse_mode(&self) -> bool {
         self.mode_flags_from_term(&self.term) & MODE_MOUSE_REPORT != 0
     }
 
-    /// Forward mouse input as SGR escape sequence to the PTY.
-    /// Does NOT reset viewport state (TUI apps manage their own scrolling).
     pub fn send_mouse_input(
         &mut self,
         button: u8,
@@ -397,7 +332,6 @@ impl Pane {
     ) {
         let btn_with_mods = button as u32 | ((modifiers as u32) << 2);
         let suffix = if pressed { b'M' } else { b'm' };
-        // Stack-allocated buffer avoids heap allocation for every mouse event
         let mut buf = [0u8; 32];
         let len = {
             use std::io::Write;
@@ -416,6 +350,8 @@ impl Pane {
         self.write_to_pty(&buf[..len]);
     }
 
+    // ── Resize & grid ────────────────────────────────────────────────
+
     pub fn resize(&mut self, cols: u16, rows: u16) {
         if cols == self.cols && rows == self.rows {
             return;
@@ -423,11 +359,10 @@ impl Pane {
         self.cols = cols;
         self.rows = rows;
         self.pty.resize(cols, rows);
-        let size = TermSize {
+        self.term.resize(TermSize {
             cols: cols as usize,
             rows: rows as usize,
-        };
-        self.term.resize(size);
+        });
         self.dirty = true;
     }
 
@@ -448,17 +383,14 @@ impl Pane {
         self.dirty = dirty;
     }
 
-    /// Extract damage metadata from the terminal. Returns None if no damage.
-    /// Returns (line, left, right) tuples — cells are NOT read here (they are
-    /// read at encoding time via `write_cells_into` to avoid intermediate allocations).
-    /// Resets damage tracking after extraction.
+    // ── Damage & cursor ──────────────────────────────────────────────
+
     pub fn extract_damage(&mut self) -> Option<Vec<(u16, u16, u16)>> {
         let Some((total_rows, right)) = self.damage_bounds() else {
             self.term.reset_damage();
             return None;
         };
 
-        // Determine which lines are damaged, consuming the TermDamage borrow.
         use alacritty_terminal::term::TermDamage;
         let ranges = match self.term.damage() {
             TermDamage::Full => full_damage_rows(total_rows, right),
@@ -473,36 +405,80 @@ impl Pane {
         }
     }
 
-    /// Read cursor position, shape, and mode flags.
     pub fn cursor_info(&self) -> (i16, u16, u8, u8) {
-        let term = &self.term;
-        let content = term.renderable_content();
+        let content = self.term.renderable_content();
         let cursor_line = content.cursor.point.line.0 as i16;
         let cursor_col = content.cursor.point.column.0 as u16;
         let cursor_shape = cursor_shape_to_u8(content.cursor.shape);
-        let mode_flags = self.mode_flags_from_term(term);
+        let mode_flags = self.mode_flags_from_term(&self.term);
         (cursor_line, cursor_col, cursor_shape, mode_flags)
     }
 
-    /// Current history size (number of scrollback lines).
     pub fn history_size(&self) -> usize {
         self.term.grid().history_size()
     }
 
-    /// Create a full pane snapshot with incremental scrollback (only new lines since `history_sent`).
+    // ── Mode flags ───────────────────────────────────────────────────
+
+    fn mode_flags_from_term(&self, term: &Term<PtyEventListener>) -> u8 {
+        use alacritty_terminal::term::TermMode;
+        let mode = term.mode();
+        let mut flags = 0u8;
+        if mode.contains(TermMode::MOUSE_REPORT_CLICK)
+            || mode.contains(TermMode::MOUSE_DRAG)
+            || mode.contains(TermMode::MOUSE_MOTION)
+        {
+            flags |= MODE_MOUSE_REPORT;
+        }
+        if mode.contains(TermMode::ALT_SCREEN) {
+            flags |= MODE_ALT_SCREEN;
+        }
+        if self.shell_state.prompt_line.is_some() {
+            flags |= MODE_SHELL_INTEGRATION;
+        }
+        if mode.contains(TermMode::DISAMBIGUATE_ESC_CODES) {
+            flags |= MODE_KITTY_KEYBOARD;
+        }
+        if mode.contains(TermMode::BRACKETED_PASTE) {
+            flags |= MODE_BRACKETED_PASTE;
+        }
+        if self.parsers.dec_mode.focus_event_mode {
+            flags |= MODE_FOCUS_EVENT;
+        }
+        if self.parsers.dec_mode.sync_output_mode {
+            flags |= MODE_SYNCHRONIZED_OUTPUT;
+        }
+        flags
+    }
+
+    pub fn write_focus_event(&mut self, focused: bool) {
+        if self.parsers.dec_mode.focus_event_mode {
+            let seq = if focused { b"\x1b[I" } else { b"\x1b[O" };
+            self.write_to_pty(seq);
+        }
+    }
+
+    pub fn has_focus_event_mode(&self) -> bool {
+        self.parsers.dec_mode.focus_event_mode
+    }
+
+    pub fn is_sync_output(&self) -> bool {
+        self.parsers.dec_mode.sync_output_mode
+    }
+
+    // ── Snapshots ────────────────────────────────────────────────────
+
     pub fn snapshot_incremental(&self, generation: u64, history_sent: usize) -> FullPaneSync {
-        let scrollback = SnapshotScrollback::incremental(self.term.grid().history_size(), history_sent);
+        let scrollback =
+            SnapshotScrollback::incremental(self.term.grid().history_size(), history_sent);
         self.build_snapshot(generation, scrollback)
     }
 
-    /// Create a full pane snapshot for StateSync / reattach.
-    /// Sends all available scrollback — the client trims to its own `max_scrollback`.
     pub fn snapshot(&self, generation: u64) -> FullPaneSync {
         let scrollback = SnapshotScrollback::full(self.term.grid().history_size());
         self.build_snapshot(generation, scrollback)
     }
 
-    /// Shared snapshot builder: reads viewport cells, scrollback, cursor, and mode flags.
     fn build_snapshot(&self, generation: u64, scrollback: SnapshotScrollback) -> FullPaneSync {
         let term = &self.term;
         let grid = term.grid();
@@ -510,20 +486,16 @@ impl Pane {
         let rows = grid.screen_lines();
         let content = term.renderable_content();
 
-        // Read viewport cells + collect grapheme extras for multi-codepoint chars
         let (cells, grapheme_extras) = collect_viewport_cells(grid, rows, cols);
-
-        // Read scrollback lines (oldest first)
         let sb_cells = collect_scrollback_cells(grid, cols, scrollback.rows);
 
-        // Collect hyperlink data from OSC 8 parser
         let hyperlink_extras = {
-            let link_map = self.osc8_parser.link_map();
+            let link_map = self.parsers.osc8.link_map();
             if link_map.is_empty() {
-                ciri_protocol::message::HyperlinkExtras::new()
+                HyperlinkExtras::new()
             } else {
-                ciri_protocol::message::HyperlinkExtras {
-                    cell_links: Vec::new(), // Per-cell mapping requires terminal-level tracking
+                HyperlinkExtras {
+                    cell_links: Vec::new(),
                     link_map: link_map.to_vec(),
                 }
             }
@@ -558,72 +530,8 @@ impl Pane {
         }
     }
 
-    /// Helper: compute mode flags from a term reference.
-    fn mode_flags_from_term(&self, term: &Term<PtyEventListener>) -> u8 {
-        use alacritty_terminal::term::TermMode;
-        let mode = term.mode();
-        let mut flags = 0u8;
-        if mode.contains(TermMode::MOUSE_REPORT_CLICK)
-            || mode.contains(TermMode::MOUSE_DRAG)
-            || mode.contains(TermMode::MOUSE_MOTION)
-        {
-            flags |= MODE_MOUSE_REPORT;
-        }
-        if mode.contains(TermMode::ALT_SCREEN) {
-            flags |= MODE_ALT_SCREEN;
-        }
-        // Shell integration detected if we've seen OSC 133 sequences
-        if self.shell_state.prompt_line.is_some() {
-            flags |= MODE_SHELL_INTEGRATION;
-        }
-        // Kitty keyboard protocol: at minimum, disambiguate escape codes
-        if mode.contains(TermMode::DISAMBIGUATE_ESC_CODES) {
-            flags |= MODE_KITTY_KEYBOARD;
-        }
-        if mode.contains(TermMode::BRACKETED_PASTE) {
-            flags |= MODE_BRACKETED_PASTE;
-        }
-        if self.dec_mode_parser.focus_event_mode {
-            flags |= MODE_FOCUS_EVENT;
-        }
-        if self.dec_mode_parser.sync_output_mode {
-            flags |= MODE_SYNCHRONIZED_OUTPUT;
-        }
-        flags
-    }
+    // ── Cell encoding ────────────────────────────────────────────────
 
-    /// Write a focus event escape sequence to the PTY (CSI I / CSI O).
-    /// Only call this when the pane has DECSET 1004 enabled.
-    pub fn write_focus_event(&mut self, focused: bool) {
-        if self.dec_mode_parser.focus_event_mode {
-            let seq = if focused { b"\x1b[I" } else { b"\x1b[O" };
-            self.write_to_pty(seq);
-        }
-    }
-
-    /// Whether this pane has focus event reporting (DECSET 1004) enabled.
-    pub fn has_focus_event_mode(&self) -> bool {
-        self.dec_mode_parser.focus_event_mode
-    }
-
-    /// Whether this pane has synchronized output (DEC 2026) enabled.
-    pub fn is_sync_output(&self) -> bool {
-        self.dec_mode_parser.sync_output_mode
-    }
-
-    /// Drain new image placements since last call (for broadcasting to clients).
-    /// Active images are preserved for reconnecting clients.
-    pub fn drain_images(&mut self) -> Vec<ImagePlacement> {
-        std::mem::take(&mut self.pending_images)
-    }
-
-    /// Get all currently active image placements (for full sync on client reconnect).
-    pub fn active_images(&self) -> &[ImagePlacement] {
-        &self.active_images
-    }
-
-    /// Push packed cells for a line range into a state-machine encoder.
-    /// Cells go from grid → PackedCell → StateEncoder opcode stream.
     pub fn write_cells_into_sm(
         &self,
         line: u16,
@@ -634,13 +542,13 @@ impl Pane {
         let grid = self.term.grid();
         for col in left..=right {
             let point = Point::new(Line(line as i32), Column(col as usize));
-            let packed = pack_cell(&grid[point]);
-            encoder.push_cell(&packed);
+            encoder.push_cell(&pack_cell(&grid[point]));
         }
     }
 }
 
-/// Pack an alacritty cell into our wire format.
+// ─── Free functions ──────────────────────────────────────────────────
+
 pub fn pack_cell(cell: &alacritty_terminal::term::cell::Cell) -> PackedCell {
     let fg = pack_color(cell.fg);
     let bg = pack_color(cell.bg);
@@ -657,7 +565,6 @@ pub fn pack_cell(cell: &alacritty_terminal::term::cell::Cell) -> PackedCell {
     if cell.flags.contains(CellFlags::ITALIC) {
         flags |= FLAG_ITALIC;
     }
-    // Preserve underline style variants
     if cell.flags.contains(CellFlags::DOUBLE_UNDERLINE) {
         flags |= FLAG_UNDERLINE | FLAG_UNDERLINE_DOUBLE;
     } else if cell.flags.contains(CellFlags::UNDERCURL) {
@@ -695,11 +602,9 @@ pub fn pack_cell(cell: &alacritty_terminal::term::cell::Cell) -> PackedCell {
 }
 
 fn full_damage_rows(total_rows: usize, right: u16) -> Vec<(u16, u16, u16)> {
-    let mut ranges = Vec::with_capacity(total_rows);
-    for row in 0..total_rows {
-        ranges.push((row as u16, 0u16, right));
-    }
-    ranges
+    (0..total_rows)
+        .map(|row| (row as u16, 0u16, right))
+        .collect()
 }
 
 fn partial_damage_rows(
@@ -725,9 +630,9 @@ fn collect_viewport_cells(
     grid: &alacritty_terminal::grid::Grid<alacritty_terminal::term::cell::Cell>,
     rows: usize,
     cols: usize,
-) -> (Vec<PackedCell>, ciri_protocol::message::GraphemeExtras) {
+) -> (Vec<PackedCell>, GraphemeExtras) {
     let mut cells = Vec::with_capacity(cols * rows);
-    let mut grapheme_extras = ciri_protocol::message::GraphemeExtras::new();
+    let mut grapheme_extras = GraphemeExtras::new();
 
     for row in 0..rows {
         for col in 0..cols {
@@ -752,20 +657,19 @@ fn collect_scrollback_cells(
     cols: usize,
     scrollback_rows: usize,
 ) -> Vec<PackedCell> {
-    let mut cells = Vec::new();
-    if scrollback_rows > 0 {
-        cells.reserve(scrollback_rows * cols);
-        for row_offset in (1..=scrollback_rows).rev() {
-            for col in 0..cols {
-                let point = Point::new(Line(-(row_offset as i32)), Column(col));
-                cells.push(pack_cell(&grid[point]));
-            }
+    if scrollback_rows == 0 {
+        return Vec::new();
+    }
+    let mut cells = Vec::with_capacity(scrollback_rows * cols);
+    for row_offset in (1..=scrollback_rows).rev() {
+        for col in 0..cols {
+            let point = Point::new(Line(-(row_offset as i32)), Column(col));
+            cells.push(pack_cell(&grid[point]));
         }
     }
     cells
 }
 
-/// Convert alacritty AnsiColor to PackedColor.
 pub fn pack_color(color: AnsiColor) -> PackedColor {
     match color {
         AnsiColor::Named(n) => PackedColor::named(named_color_to_compact(n)),
@@ -807,7 +711,7 @@ fn named_color_to_compact(n: NamedColor) -> u8 {
         DimWhite => 26,
         BrightForeground => 27,
         DimForeground => 28,
-        _ => 16, // fallback to Foreground
+        _ => 16,
     }
 }
 
@@ -869,8 +773,8 @@ mod tests {
             data: Arc::new(vec![1, 2, 3]),
         };
 
-        pane.pending_images.push(image.clone());
-        pane.active_images.push(image.clone());
+        pane.images.add_placements(vec![image.clone()]);
+        pane.images.active_mut().push(image.clone());
 
         let drained = pane.drain_images();
         assert_eq!(drained.len(), 1);

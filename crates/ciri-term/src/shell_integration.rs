@@ -1,12 +1,11 @@
 use crate::esc_scanner::scan_osc;
 use crate::pane::{SemanticZone, ShellState};
-
-const MAX_OSC_PARTIAL_SIZE: usize = 4096; // OSC 133 sequences are tiny
+use crate::partial_buf::PartialBuf;
 
 /// Parser for OSC 133 shell integration sequences.
 /// Handles sequences split across PTY read boundaries.
 pub(crate) struct Osc133Parser {
-    partial: Vec<u8>,
+    partial: PartialBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,7 +27,7 @@ fn parse_command(payload: &[u8]) -> Option<Osc133Command<'_>> {
 impl Osc133Parser {
     pub fn new() -> Self {
         Osc133Parser {
-            partial: Vec::new(),
+            partial: PartialBuf::new(4096, "OSC 133"),
         }
     }
 
@@ -41,15 +40,8 @@ impl Osc133Parser {
         shell_state: &mut ShellState,
         last_command_duration: &mut Option<std::time::Duration>,
     ) {
-        // If we have a partial OSC from a previous read, prepend it
-        let working_data;
-        let data = if !self.partial.is_empty() {
-            self.partial.extend_from_slice(data);
-            working_data = std::mem::take(&mut self.partial);
-            &working_data[..]
-        } else {
-            data
-        };
+        let mut tmp = Vec::new();
+        let data = self.partial.prepend_to(data, &mut tmp);
 
         let result = scan_osc(data, b"133");
 
@@ -92,18 +84,8 @@ impl Osc133Parser {
             }
         }
 
-        // Handle partial buffering when the scanner reports an incomplete sequence
         if let Some(partial_start) = result.partial_start {
-            let partial = &data[partial_start..];
-            if partial.len() > MAX_OSC_PARTIAL_SIZE {
-                log::warn!(
-                    "OSC 133 partial buffer exceeded {}B limit, discarding",
-                    MAX_OSC_PARTIAL_SIZE
-                );
-                self.partial.clear();
-            } else {
-                self.partial = partial.to_vec();
-            }
+            self.partial.store(&data[partial_start..]);
         }
     }
 }
@@ -146,7 +128,7 @@ mod tests {
         let mut shell_state = shell_state();
         let mut duration = None;
         let mut data = vec![0x1b, b']', b'1', b'3', b'3', b';'];
-        data.extend(std::iter::repeat_n(b'a', MAX_OSC_PARTIAL_SIZE + 1));
+        data.extend(std::iter::repeat_n(b'a', 4097)); // exceeds 4096 limit
 
         parser.scan(&data, &mut shell_state, &mut duration);
         assert!(parser.partial.is_empty());

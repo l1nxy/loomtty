@@ -1,5 +1,6 @@
 mod dec_mode_parser;
 mod esc_scanner;
+mod partial_buf;
 pub mod event;
 mod kitty_graphics;
 mod osc8_parser;

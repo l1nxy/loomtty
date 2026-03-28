@@ -14,6 +14,7 @@ use winnow::Parser;
 use winnow::token::{rest, take_till};
 
 use crate::esc_scanner;
+use crate::partial_buf::PartialBuf;
 
 pub(crate) struct Osc8Parser {
     /// Currently active hyperlink URI (None if not in a hyperlink).
@@ -24,11 +25,8 @@ pub(crate) struct Osc8Parser {
     next_link_id: u16,
     /// Link ID → URI mapping for the current pane content.
     link_map: Vec<(u16, String)>,
-    /// Partial OSC sequence from previous read.
-    partial: Vec<u8>,
+    partial: PartialBuf,
 }
-
-const MAX_OSC8_PARTIAL_SIZE: usize = 8192;
 
 /// Parse an OSC 8 payload into (params, uri).
 ///
@@ -52,7 +50,7 @@ impl Osc8Parser {
             current_link_id: None,
             next_link_id: 1,
             link_map: Vec::new(),
-            partial: Vec::new(),
+            partial: PartialBuf::new(8192, "OSC 8"),
         }
     }
 
@@ -63,14 +61,8 @@ impl Osc8Parser {
 
     /// Scan PTY output for OSC 8 sequences and update hyperlink state.
     pub fn scan(&mut self, data: &[u8]) {
-        let working_data;
-        let data = if !self.partial.is_empty() {
-            self.partial.extend_from_slice(data);
-            working_data = std::mem::take(&mut self.partial);
-            &working_data[..]
-        } else {
-            data
-        };
+        let mut tmp = Vec::new();
+        let data = self.partial.prepend_to(data, &mut tmp);
 
         let result = esc_scanner::scan_osc(data, b"8");
 
@@ -104,18 +96,8 @@ impl Osc8Parser {
             }
         }
 
-        // Buffer partial data for next read.
         if let Some(partial_start) = result.partial_start {
-            self.buffer_partial(&data[partial_start..]);
-        }
-    }
-
-    fn buffer_partial(&mut self, data: &[u8]) {
-        if data.len() > MAX_OSC8_PARTIAL_SIZE {
-            log::warn!("OSC 8 partial buffer exceeded limit, discarding");
-            self.partial.clear();
-        } else {
-            self.partial = data.to_vec();
+            self.partial.store(&data[partial_start..]);
         }
     }
 }
@@ -197,7 +179,7 @@ mod tests {
     fn oversized_partial_is_discarded() {
         let mut parser = Osc8Parser::new();
         let mut data = vec![0x1b, b']', b'8', b';'];
-        data.extend(std::iter::repeat_n(b'a', MAX_OSC8_PARTIAL_SIZE + 1));
+        data.extend(std::iter::repeat_n(b'a', 8193)); // exceeds 8192 limit
         parser.scan(&data);
         assert!(parser.partial.is_empty());
         assert!(parser.current_uri.is_none());

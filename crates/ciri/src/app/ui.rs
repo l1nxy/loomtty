@@ -393,7 +393,7 @@ impl App {
         cx: &UiContext<'_>,
         scene: &mut UiScene<'_>,
     ) {
-        let accent = ciri_config::theme::ThemeConfig::parse_color_linear(&cx.config.theme.accent);
+        let accent = ciri_config::theme::ThemeConfig::parse_color(&cx.config.theme.accent);
         let text_y = d.bar_y + (d.bar_h - cx.cell_h) * 0.5;
 
         // Bar background
@@ -867,11 +867,11 @@ impl UiComponent for TopBarComponent {
         };
         let bar_height = cx.cell_h + padding;
         let text_y = self.layout.bar_y + padding * 0.5;
-        let bar_bg = ThemeConfig::parse_color_linear(&cx.config.theme.statusbar_background);
-        let fg = ThemeConfig::parse_color_linear(&cx.config.theme.foreground);
-        let dim = ThemeConfig::parse_color_linear(&cx.config.theme.statusbar_dim);
-        let accent = ThemeConfig::parse_color_linear(&cx.config.theme.accent);
-        let broadcast_color = ThemeConfig::parse_color_linear(&cx.config.theme.mode_broadcast);
+        let bar_bg = ThemeConfig::parse_color(&cx.config.theme.statusbar_background);
+        let fg = ThemeConfig::parse_color(&cx.config.theme.foreground);
+        let dim = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
+        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
+        let broadcast_color = ThemeConfig::parse_color(&cx.config.theme.mode_broadcast);
 
         // Bar background — flat, no per-element pill backgrounds
         scene.bg_rects.push(Rect {
@@ -1092,10 +1092,10 @@ impl PaletteComponent {
 
 impl UiComponent for PaletteComponent {
     fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let bg_color = ThemeConfig::parse_color_linear(&cx.config.theme.background);
-        let accent = ThemeConfig::parse_color_linear(&cx.config.theme.accent);
-        let border_color = ThemeConfig::parse_color_linear(&cx.config.theme.border_active);
-        let dim_color = ThemeConfig::parse_color_linear(&cx.config.theme.statusbar_dim);
+        let bg_color = ThemeConfig::parse_color(&cx.config.theme.background);
+        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
+        let border_color = ThemeConfig::parse_color(&cx.config.theme.border_active);
+        let dim_color = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
         let text_color = [1.0, 1.0, 1.0, 1.0];
 
         scene.bg_rects.push(Rect {
@@ -1391,7 +1391,7 @@ impl UiComponent for ContextMenuComponent {
             color: [0.0, 0.0, 0.0, 0.4],
         });
 
-        let menu_bg = ThemeConfig::parse_color_linear(&cx.config.theme.background);
+        let menu_bg = ThemeConfig::parse_color(&cx.config.theme.background);
         let bg_color = [menu_bg[0] * 0.9, menu_bg[1] * 0.9, menu_bg[2] * 0.9, 1.0];
         scene.bg_rects.push(Rect {
             x: self.x,
@@ -1401,16 +1401,16 @@ impl UiComponent for ContextMenuComponent {
             color: bg_color,
         });
 
-        let border_color = ThemeConfig::parse_color_linear(&cx.config.theme.border_active);
+        let border_color = ThemeConfig::parse_color(&cx.config.theme.border_active);
         let bw = 1.0;
         scene.bg_rects.push(Rect { x: self.x, y: self.y, w: self.menu_width, h: bw, color: border_color });
         scene.bg_rects.push(Rect { x: self.x, y: self.y + self.menu_height - bw, w: self.menu_width, h: bw, color: border_color });
         scene.bg_rects.push(Rect { x: self.x, y: self.y, w: bw, h: self.menu_height, color: border_color });
         scene.bg_rects.push(Rect { x: self.x + self.menu_width - bw, y: self.y, w: bw, h: self.menu_height, color: border_color });
 
-        let accent = ThemeConfig::parse_color_linear(&cx.config.theme.accent);
-        let fg_color = ThemeConfig::parse_color_linear(&cx.config.theme.foreground);
-        let dim_base = ThemeConfig::parse_color_linear(&cx.config.theme.statusbar_dim);
+        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
+        let fg_color = ThemeConfig::parse_color(&cx.config.theme.foreground);
+        let dim_base = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
         let dim_color = [dim_base[0], dim_base[1], dim_base[2], 0.75];
         for (i, row) in self.rows.iter().enumerate() {
             let iy = self.y + padding + i as f32 * self.item_height;
@@ -1483,8 +1483,8 @@ impl InfoBoxComponent {
     }
 
     fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let bg = ThemeConfig::parse_color_linear(&cx.config.theme.background);
-        let accent = ThemeConfig::parse_color_linear(&cx.config.theme.accent);
+        let bg = ThemeConfig::parse_color(&cx.config.theme.background);
+        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
         let fg = [1.0f32, 1.0, 1.0, 0.9];
         let dim = [1.0f32, 1.0, 1.0, 0.5];
         let padding = cx.cell_w;
@@ -1650,10 +1650,10 @@ impl HintsBarComponent {
     }
 
     fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let bar_bg = ThemeConfig::parse_color_linear(&cx.config.theme.statusbar_background);
-        let accent = ThemeConfig::parse_color_linear(&cx.config.theme.accent);
-        let dim = ThemeConfig::parse_color_linear(&cx.config.theme.statusbar_dim);
-        let fg = ThemeConfig::parse_color_linear(&cx.config.theme.foreground);
+        let bar_bg = ThemeConfig::parse_color(&cx.config.theme.statusbar_background);
+        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
+        let dim = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
+        let fg = ThemeConfig::parse_color(&cx.config.theme.foreground);
 
         // Bar background
         scene.bg_rects.push(Rect {
@@ -1917,7 +1917,7 @@ impl UiComponent for PasteDialogComponent {
             color: [0.12, 0.12, 0.15, 1.0],
         });
 
-        let border_color = ThemeConfig::parse_color_linear(&cx.config.theme.border_active);
+        let border_color = ThemeConfig::parse_color(&cx.config.theme.border_active);
         let border = 1.0;
         scene.bg_rects.push(Rect { x: self.dx, y: self.dy, w: self.dialog_w, h: border, color: border_color });
         scene.bg_rects.push(Rect { x: self.dx, y: self.dy + self.dialog_h - border, w: self.dialog_w, h: border, color: border_color });
@@ -1939,7 +1939,7 @@ impl UiComponent for PasteDialogComponent {
         });
         emit_status_text(scene.atlas, &self.preview, text_x, text_y, cx.cell_w, cx.baseline, [0.6, 0.6, 0.6, 1.0], scene.glyphs);
 
-        let accent = ThemeConfig::parse_color_linear(&cx.config.theme.accent);
+        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
         let (paste_x, btn_y, btn_w, btn_h) = self.paste_button;
         let (cancel_x, _, _, _) = self.cancel_button;
         let paste_bg = if self.hovered_button == Some(super::PasteButton::Paste) {

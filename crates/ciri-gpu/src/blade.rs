@@ -536,10 +536,10 @@ impl GlyphAtlasGpu {
             surface_format,
             atlas_size,
             max_instances,
-            gpu::TextureFormat::Rgba8UnormSrgb,
+            gpu::TextureFormat::Rgba8Unorm,
             gpu::FilterMode::Linear,
             &color_shader_src,
-            gpu::BlendState::ALPHA_BLENDING,
+            gpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
             "color_emoji_atlas",
         );
 

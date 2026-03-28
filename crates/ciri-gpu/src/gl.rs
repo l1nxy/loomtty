@@ -404,7 +404,7 @@ impl GlyphAtlasGpu {
             gl,
             atlas_size,
             max_instances,
-            glow::SRGB8_ALPHA8,
+            glow::RGBA8,
             glow::RGBA,
             GLYPH_VS,
             COLOR_FS,
@@ -514,7 +514,8 @@ impl Renderer {
                 glow::ONE_MINUS_SRC_ALPHA,
             );
             gl.disable(glow::DEPTH_TEST);
-            gl.enable(glow::FRAMEBUFFER_SRGB);
+            // No GL_FRAMEBUFFER_SRGB — colors are passed as sRGB directly,
+            // matching ghostty's non-linear-blending pipeline.
             gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
         }
 

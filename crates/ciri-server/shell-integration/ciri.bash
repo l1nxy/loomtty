@@ -1,6 +1,9 @@
 # Ciri shell integration for Bash
 # Injected automatically via PROMPT_COMMAND
 
+# Only activate in interactive shells (BASH_ENV is sourced by non-interactive bash too)
+[[ $- != *i* ]] && return
+
 # Guard against double-sourcing
 [[ -n "$CIRI_SHELL_INTEGRATION" ]] && return
 export CIRI_SHELL_INTEGRATION=1

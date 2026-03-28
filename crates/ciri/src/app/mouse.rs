@@ -244,7 +244,6 @@ impl App {
             return;
         }
         let sensitivity = self.config.gesture.pinch_sensitivity;
-        let omega = self.config.animation.speed;
 
         match phase {
             TouchPhase::Started => {}
@@ -254,7 +253,7 @@ impl App {
                     // In overview: pinch out (delta > 0) zooms in toward normal
                     let cur_zoom = self.anim_mgr.overview_zoom.value();
                     let new_zoom = (cur_zoom + zoom_delta).clamp(0.05, 1.0);
-                    let sp = SpringParams::from_omega(omega, self.config.animation.epsilon);
+                    let sp = SpringParams::default();
                     if new_zoom >= self.config.animation.zoom_threshold as f64 {
                         self.overview.hovered_pane = None;
                         self.overview.active = false;
@@ -270,7 +269,7 @@ impl App {
                         self.overview.hovered_pane = None;
                         self.context_menu.visible = false;
                         self.refresh_overview_zoom();
-                        let sp = SpringParams::from_omega(omega, self.config.animation.epsilon);
+                        let sp = SpringParams::default();
                         self.anim_mgr.view_offset_x.animate_to(0.0, sp);
                         self.anim_mgr.view_offset_y.animate_to(0.0, sp);
                     }
@@ -283,7 +282,7 @@ impl App {
                 {
                     self.overview.hovered_pane = None;
                     self.overview.active = false;
-                    let sp = SpringParams::from_omega(omega, self.config.animation.epsilon);
+                    let sp = SpringParams::default();
                     self.anim_mgr.overview_zoom.animate_to(1.0, sp);
                     self.animate_to_active();
                 }
@@ -584,7 +583,7 @@ impl App {
         };
         let cur_zoom = self.anim_mgr.overview_zoom.value();
         let new_zoom = (cur_zoom + dy).clamp(0.05, 1.0);
-        let sp = SpringParams::from_omega(self.config.animation.speed, self.config.animation.epsilon);
+        let sp = SpringParams::default();
         if new_zoom >= self.config.animation.zoom_threshold as f64 {
             self.overview.active = false;
             self.anim_mgr.overview_zoom.animate_to(1.0, sp);
@@ -643,7 +642,6 @@ impl App {
         };
         let py = pos.y;
         let threshold = self.config.gesture.vertical_swipe_threshold;
-        let omega = self.config.animation.speed;
 
         match phase {
             TouchPhase::Started => {
@@ -670,7 +668,7 @@ impl App {
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
                 self.gestures.row_active = false;
-                let sp = SpringParams::from_omega(omega, self.config.animation.epsilon);
+                let sp = SpringParams::default();
                 self.anim_mgr.gesture_row_offset.end_gesture(0.0, sp);
                 self.animate_to_active();
             }
@@ -816,7 +814,7 @@ impl App {
                     .workspaces
                     .active_mut()
                     .target_offset_for_active_with_strategy(center_strategy, current_vox);
-                let sp = SpringParams::from_omega(self.config.animation.speed, self.config.animation.epsilon);
+                let sp = SpringParams::default();
                 self.anim_mgr.view_offset_x.end_gesture(t as f64, sp);
             }
         }

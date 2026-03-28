@@ -42,25 +42,31 @@ impl SpringParams {
     }
 
     // ── Named presets ──
+    // Apple SwiftUI style: stiffness = (2π / response)², slight underdamping.
 
-    /// Fast, no overshoot. Good for view scrolling and focus transitions.
+    /// ~0.3s response. Quick, lively. Good for focus transitions, button feedback.
     pub fn snappy() -> Self {
-        Self::new(1.0, 1000.0, 0.001)
+        Self::new(0.86, 440.0, 0.0001)
     }
 
-    /// Smooth, no overshoot. Good for column resizing.
+    /// ~0.5s response. The comfortable default for panel switching.
+    pub fn default() -> Self {
+        Self::new(0.86, 158.0, 0.0001)
+    }
+
+    /// ~0.7s response. Relaxed, no rush. Good for column resize, zoom.
     pub fn smooth() -> Self {
-        Self::new(1.0, 500.0, 0.001)
+        Self::new(0.86, 80.0, 0.0001)
     }
 
-    /// Bouncy with overshoot. Good for pane open, notification pop-in.
-    pub fn bouncy() -> Self {
-        Self::new(0.6, 800.0, 0.001)
-    }
-
-    /// Slow and gentle. Good for subtle background transitions.
+    /// ~1.0s response. Slow and elegant. Good for background transitions.
     pub fn gentle() -> Self {
-        Self::new(0.8, 300.0, 0.01)
+        Self::new(0.86, 40.0, 0.001)
+    }
+
+    /// ~0.5s with visible bounce. Good for pane open pop-in, notifications.
+    pub fn bouncy() -> Self {
+        Self::new(0.6, 158.0, 0.0001)
     }
 
     /// Convert from legacy omega + epsilon (critically damped only).

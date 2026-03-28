@@ -443,6 +443,15 @@ impl App {
             &config.keys.modes,
             &config.keys.direct_bindings,
         );
+        // Build unified BindingSet from all config sources.
+        input.set_binding_set(ciri_input::keybind::BindingSet::from_legacy(
+            &input.keybinds,
+            &input.direct_keybinds,
+            &input.mode_keybinds,
+            &ciri_input::keybind::KeybindMap::from_overview_config(&config.keys.overview_bindings),
+            &config.keys.search_bindings,
+            &config.keys.palette_bindings,
+        ));
         let column_gap = config.appearance.column_gap;
 
         let cached_color_table = ColorTable::new(&config);

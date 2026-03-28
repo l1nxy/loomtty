@@ -1,33 +1,49 @@
 use anyhow::Result;
+use garde::Validate;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::keys::KeybindConfig;
 use crate::theme::ThemeConfig;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 #[serde(default)]
 #[derive(Default)]
 pub struct CiriConfig {
+    #[garde(dive)]
     pub font: FontConfig,
+    #[garde(dive)]
     pub appearance: AppearanceConfig,
+    #[garde(dive)]
     pub animation: AnimationConfig,
+    #[garde(skip)]
     pub keys: KeybindConfig,
+    #[garde(skip)]
     pub theme: ThemeConfig,
+    #[garde(skip)]
     pub window: WindowConfig,
+    #[garde(dive)]
     pub terminal: TerminalConfig,
+    #[garde(skip)]
     pub statusbar: StatusBarConfig,
+    #[garde(skip)]
     pub input: InputConfig,
+    #[garde(dive)]
     pub render: RenderConfig,
+    #[garde(skip)]
     pub layout: LayoutConfig,
+    #[garde(skip)]
     pub gesture: GestureConfig,
+    #[garde(skip)]
     pub remote: RemoteConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 #[serde(default)]
 pub struct FontConfig {
+    #[garde(skip)]
     pub family: String,
+    #[garde(range(min = 1.0, max = 200.0))]
     pub size: f32,
 }
 
@@ -84,15 +100,22 @@ pub enum PaneOpenStyle {
     FadeSlideUp,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 #[serde(default)]
 pub struct AppearanceConfig {
+    #[garde(skip)]
     pub padding: f32,
+    #[garde(skip)]
     pub column_gap: f32,
+    #[garde(range(min = 0.0))]
     pub border_width: f32,
+    #[garde(skip)]
     pub active_border_color: String,
+    #[garde(skip)]
     pub inactive_border_color: String,
+    #[garde(range(min = 0.0, max = 1.0))]
     pub inactive_opacity: f32,
+    #[garde(skip)]
     pub focus_ring: FocusRingConfig,
 }
 
@@ -110,17 +133,26 @@ impl Default for AppearanceConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 #[serde(default)]
 pub struct AnimationConfig {
+    #[garde(range(min = 0.001))]
     pub speed: f64,
+    #[garde(skip)]
     pub enabled: bool,
+    #[garde(range(min = 0.001))]
     pub epsilon: f64,
+    #[garde(skip)]
     pub overview_zoom_fit: f32,
+    #[garde(skip)]
     pub zoom_threshold: f32,
+    #[garde(skip)]
     pub pane_open_style: PaneOpenStyle,
+    #[garde(range(min = 1))]
     pub pane_open_duration_ms: u64,
+    #[garde(range(min = 1))]
     pub pane_close_duration_ms: u64,
+    #[garde(range(min = 0.001))]
     pub focus_transition_speed: f64,
 }
 
@@ -158,36 +190,36 @@ impl Default for WindowConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 #[serde(default)]
 pub struct TerminalConfig {
+    #[garde(skip)]
     pub default_cols: u16,
+    #[garde(skip)]
     pub default_rows: u16,
-    /// Cursor color as hex string.
+    #[garde(skip)]
     pub cursor_color: String,
-    /// Cursor opacity (0.0-1.0).
+    #[garde(range(min = 0.0, max = 1.0))]
     pub cursor_opacity: f32,
-    /// Enable cursor blinking.
+    #[garde(skip)]
     pub cursor_blink: bool,
-    /// Cursor blink interval in milliseconds.
+    #[garde(skip)]
     pub cursor_blink_interval_ms: u64,
-    /// Shell program to spawn. If empty, uses platform default (cmd.exe on Windows, $SHELL on Unix).
+    #[garde(skip)]
     pub shell: String,
-    /// Maximum scrollback lines per pane. 0 = no scrollback.
+    #[garde(skip)]
     pub scrollback_lines: usize,
-    /// Automatically copy selected text to clipboard on mouse release.
+    #[garde(skip)]
     pub copy_on_select: bool,
-    /// Clear text selection when typing.
+    #[garde(skip)]
     pub clear_selection_on_type: bool,
-    /// Send desktop notification when a command takes longer than this many seconds.
-    /// Requires shell integration (OSC 133). 0 = disabled.
+    #[garde(skip)]
     pub notify_command_threshold_secs: u64,
-    /// Audio file path for bell notification. Empty = no audio.
+    #[garde(skip)]
     pub bell_audio: String,
-    /// Request window attention on bell (urgency hint).
+    #[garde(skip)]
     pub bell_urgency: bool,
-    /// Show a confirmation dialog when pasted content exceeds this many bytes.
-    /// 0 = disabled.
+    #[garde(skip)]
     pub paste_warn_threshold: usize,
 }
 
@@ -216,13 +248,9 @@ impl Default for TerminalConfig {
 #[serde(default)]
 pub struct StatusBarConfig {
     pub position: StatusBarPosition,
-    /// Vertical padding as a proportion of cell height (applied above and below text).
     pub padding_ratio: f32,
-    /// Text baseline factor (0.0-1.0) relative to cell height.
     pub text_baseline: f32,
-    /// Leader indicator line height as a proportion of cell height.
     pub leader_indicator_ratio: f32,
-    /// Legacy: extra height in pixels (overrides padding_ratio if set by user config).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height_padding: Option<f32>,
 }
@@ -247,19 +275,22 @@ impl Default for StatusBarConfig {
     }
 }
 
+/// Input mode determines how keybindings are activated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum InputMode {
+    #[default]
+    Prefix,
+    Sticky,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct InputConfig {
-    /// Leader mode timeout in milliseconds (prefix mode only).
     pub leader_timeout_ms: u64,
-    /// Double-tap window in milliseconds for SendLeaderKey.
     pub double_tap_window_ms: u64,
-    /// Scroll multiplier for line-based scroll delta.
     pub scroll_multiplier: f64,
-    /// Input mode: "prefix" (tmux-style, one action per leader press)
-    /// or "sticky" (zellij-style, stay in leader until Esc).
-    pub mode: String,
-    /// Enable focus-follows-mouse: hovering over a pane focuses it.
+    pub mode: InputMode,
     pub focus_follows_mouse: bool,
 }
 
@@ -269,29 +300,49 @@ impl Default for InputConfig {
             leader_timeout_ms: 1000,
             double_tap_window_ms: 300,
             scroll_multiplier: 50.0,
-            mode: "prefix".to_string(),
+            mode: InputMode::Prefix,
             focus_follows_mouse: false,
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// GPU present mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum PresentMode {
+    #[default]
+    Fifo,
+    Mailbox,
+    Immediate,
+}
+
+/// GPU backend selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum RenderBackend {
+    #[default]
+    Auto,
+    Blade,
+    Gl,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 #[serde(default)]
 pub struct RenderConfig {
-    /// Frame interval in milliseconds (16 = ~60fps).
+    #[garde(range(min = 1))]
     pub frame_interval_ms: u64,
-    /// Glyph atlas texture size (width and height).
+    #[garde(skip)]
     pub atlas_size: u32,
-    /// Maximum glyph instances per frame.
+    #[garde(skip)]
     pub max_glyph_instances: usize,
-    /// Maximum rectangles per frame.
+    #[garde(skip)]
     pub max_rectangles: usize,
-    /// Desired maximum frame latency.
+    #[garde(skip)]
     pub frame_latency: u32,
-    /// Present mode: "fifo" (vsync), "mailbox" (low-latency), "immediate" (no vsync).
-    pub present_mode: String,
-    /// GPU backend: "auto" (default), "blade" (Vulkan), "gl" (OpenGL/EGL).
-    pub backend: String,
+    #[garde(skip)]
+    pub present_mode: PresentMode,
+    #[garde(skip)]
+    pub backend: RenderBackend,
 }
 
 impl Default for RenderConfig {
@@ -302,8 +353,8 @@ impl Default for RenderConfig {
             max_glyph_instances: 32768,
             max_rectangles: 8192,
             frame_latency: 2,
-            present_mode: "fifo".to_string(),
-            backend: "auto".to_string(),
+            present_mode: PresentMode::Fifo,
+            backend: RenderBackend::Auto,
         }
     }
 }
@@ -319,15 +370,8 @@ pub enum PresetWidth {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LayoutConfig {
-    /// Default width for newly created columns.
-    /// If not set, uses the first entry in preset_widths.
     pub default_column_width: Option<PresetWidth>,
-    /// Width presets to cycle through with the preset key.
-    /// Supports both proportional and fixed-pixel widths.
     pub preset_widths: Vec<PresetWidth>,
-    /// How the viewport centers on the focused column.
-    /// "always" = always center, "on-overflow" = center only when column wider than viewport,
-    /// "never" = left-aligned scrolling.
     pub center_focused_column: CenterStrategy,
 }
 
@@ -362,19 +406,12 @@ impl Default for LayoutConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GestureConfig {
-    /// Enable trackpad gesture support.
     pub enabled: bool,
-    /// Pinch-to-zoom sensitivity multiplier.
     pub pinch_sensitivity: f64,
-    /// Natural (inverted) scrolling direction for trackpad.
     pub natural_scroll: bool,
-    /// Pixel threshold to trigger a workspace row switch via vertical swipe.
     pub vertical_swipe_threshold: f64,
-    /// Pixel threshold to trigger a column switch via horizontal swipe.
     pub horizontal_swipe_threshold: f64,
-    /// Smooth scrollback: track gesture phases for momentum scrolling.
     pub smooth_scroll: bool,
-    /// Pixels per scrollback line for smooth scroll conversion.
     pub scroll_pixels_per_line: f64,
 }
 
@@ -395,11 +432,8 @@ impl Default for GestureConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RemoteConfig {
-    /// Enable TCP listener for remote connections (default: false).
     pub enabled: bool,
-    /// TCP port to listen on, bound to 127.0.0.1 only (default: 7890).
     pub port: u16,
-    /// Known remote hosts that appear in the command palette.
     pub hosts: Vec<RemoteHostConfig>,
 }
 
@@ -423,14 +457,10 @@ fn default_ssh_port() -> u16 {
 /// A configured remote host for the command palette.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteHostConfig {
-    /// Display name for this host (e.g. "dev-box").
     pub name: String,
-    /// SSH destination (e.g. "user@host.example.com").
     pub host: String,
-    /// Remote ciri-server TCP port.
     #[serde(default = "default_remote_port")]
     pub port: u16,
-    /// SSH port.
     #[serde(default = "default_ssh_port")]
     pub ssh_port: u16,
 }
@@ -439,52 +469,9 @@ impl CiriConfig {
     pub fn load() -> Result<Self> {
         let path = config_path();
         let mut config = load_from_path(&path)?;
-        config.apply_runtime_adjustments();
+        config.theme.resolve_preset();
+        config.validate()?;
         Ok(config)
-    }
-
-    pub fn validate(&mut self) {
-        clamp_positive_f64(&mut self.animation.speed, 12.0, "animation.speed");
-        clamp_positive_f64(&mut self.animation.epsilon, 0.1, "animation.epsilon");
-        clamp_positive_f64(
-            &mut self.animation.focus_transition_speed,
-            15.0,
-            "animation.focus_transition_speed",
-        );
-        clamp_nonzero_u64(
-            &mut self.animation.pane_open_duration_ms,
-            200,
-            "animation.pane_open_duration_ms",
-        );
-        clamp_nonzero_u64(
-            &mut self.animation.pane_close_duration_ms,
-            150,
-            "animation.pane_close_duration_ms",
-        );
-        clamp_min_f32(
-            &mut self.appearance.border_width,
-            0.0,
-            "appearance.border_width",
-        );
-        clamp_unit_f32(
-            &mut self.appearance.inactive_opacity,
-            "appearance.inactive_opacity",
-        );
-        clamp_positive_f32(&mut self.font.size, 10.0, "font.size");
-        clamp_unit_f32(
-            &mut self.terminal.cursor_opacity,
-            "terminal.cursor_opacity",
-        );
-        clamp_nonzero_u64(
-            &mut self.render.frame_interval_ms,
-            16,
-            "render.frame_interval_ms",
-        );
-    }
-
-    fn apply_runtime_adjustments(&mut self) {
-        self.theme.resolve_preset();
-        self.validate();
     }
 }
 
@@ -497,43 +484,7 @@ fn load_from_path(path: &PathBuf) -> Result<CiriConfig> {
     }
 }
 
-fn clamp_positive_f64(value: &mut f64, fallback: f64, name: &str) {
-    if *value <= 0.0 {
-        log::warn!("{name} <= 0.0, resetting to {fallback}");
-        *value = fallback;
-    }
-}
-
-fn clamp_positive_f32(value: &mut f32, fallback: f32, name: &str) {
-    if *value <= 0.0 {
-        log::warn!("{name} <= 0.0, resetting to {fallback}");
-        *value = fallback;
-    }
-}
-
-fn clamp_nonzero_u64(value: &mut u64, fallback: u64, name: &str) {
-    if *value == 0 {
-        log::warn!("{name} == 0, resetting to {fallback}");
-        *value = fallback;
-    }
-}
-
-fn clamp_min_f32(value: &mut f32, min: f32, name: &str) {
-    if *value < min {
-        log::warn!("{name} < {min}, resetting to {min}");
-        *value = min;
-    }
-}
-
-fn clamp_unit_f32(value: &mut f32, name: &str) {
-    if *value < 0.0 || *value > 1.0 {
-        log::warn!("{name} out of range, clamping to [0.0, 1.0]");
-        *value = value.clamp(0.0, 1.0);
-    }
-}
-
 pub fn config_path() -> PathBuf {
-    // Check legacy XDG-style path on macOS for backward compat
     #[cfg(target_os = "macos")]
     {
         if let Some(home) = dirs::home_dir() {
@@ -544,8 +495,6 @@ pub fn config_path() -> PathBuf {
         }
     }
 
-    // dirs::config_dir() handles XDG_CONFIG_HOME on Linux, ~/Library/Application
-    // Support on macOS, and FOLDERID_RoamingAppData on Windows.
     dirs::config_dir()
         .map(|d| d.join("ciri").join("config.toml"))
         .unwrap_or_else(|| {
@@ -598,42 +547,52 @@ mod tests {
         .unwrap();
 
         let mut config = load_from_path(&path).unwrap();
-        config.apply_runtime_adjustments();
+        config.theme.resolve_preset();
+        config.validate().unwrap();
 
         assert_eq!(config.font.family, "Iosevka");
         assert_eq!(config.font.size, 17.5);
-        assert_eq!(config.render.backend, "gl");
+        assert_eq!(config.render.backend, RenderBackend::Gl);
         assert_eq!(config.theme.preset, "nord");
         assert_eq!(config.theme.accent, "#123456");
         assert_eq!(config.theme.background, "#2E3440");
     }
 
     #[test]
-    fn validate_corrects_invalid_runtime_values() {
+    fn validate_rejects_invalid_values() {
         let mut config = CiriConfig::default();
         config.animation.speed = 0.0;
-        config.animation.epsilon = -1.0;
-        config.animation.focus_transition_speed = 0.0;
+        assert!(config.validate().is_err());
+
+        let mut config = CiriConfig::default();
         config.animation.pane_open_duration_ms = 0;
-        config.animation.pane_close_duration_ms = 0;
+        assert!(config.validate().is_err());
+
+        let mut config = CiriConfig::default();
         config.appearance.border_width = -2.0;
+        assert!(config.validate().is_err());
+
+        let mut config = CiriConfig::default();
         config.appearance.inactive_opacity = 1.5;
+        assert!(config.validate().is_err());
+
+        let mut config = CiriConfig::default();
         config.font.size = 0.0;
+        assert!(config.validate().is_err());
+
+        let mut config = CiriConfig::default();
         config.terminal.cursor_opacity = -0.25;
+        assert!(config.validate().is_err());
+
+        let mut config = CiriConfig::default();
         config.render.frame_interval_ms = 0;
+        assert!(config.validate().is_err());
+    }
 
-        config.validate();
-
-        assert_eq!(config.animation.speed, 12.0);
-        assert_eq!(config.animation.epsilon, 0.1);
-        assert_eq!(config.animation.focus_transition_speed, 15.0);
-        assert_eq!(config.animation.pane_open_duration_ms, 200);
-        assert_eq!(config.animation.pane_close_duration_ms, 150);
-        assert_eq!(config.appearance.border_width, 0.0);
-        assert_eq!(config.appearance.inactive_opacity, 1.0);
-        assert_eq!(config.font.size, 10.0);
-        assert_eq!(config.terminal.cursor_opacity, 0.0);
-        assert_eq!(config.render.frame_interval_ms, 16);
+    #[test]
+    fn default_config_passes_validation() {
+        let config = CiriConfig::default();
+        config.validate().unwrap();
     }
 
     fn temp_config_path(label: &str) -> PathBuf {

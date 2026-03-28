@@ -385,7 +385,10 @@ impl App {
                 self.cached_color_table = ciri_render::terminal::ColorTable::new(&self.config);
                 self.input.reload_bindings(
                     &self.config.keys.leader,
-                    &self.config.input.mode,
+                    match self.config.input.mode {
+                        ciri_config::config::InputMode::Prefix => "prefix",
+                        ciri_config::config::InputMode::Sticky => "sticky",
+                    },
                     &self.config.keys.bindings,
                     &self.config.keys.modes,
                     &self.config.keys.direct_bindings,

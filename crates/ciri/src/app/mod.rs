@@ -438,7 +438,10 @@ impl App {
         );
         input.reload_bindings(
             &config.keys.leader,
-            &config.input.mode,
+            match config.input.mode {
+                ciri_config::config::InputMode::Prefix => "prefix",
+                ciri_config::config::InputMode::Sticky => "sticky",
+            },
             &config.keys.bindings,
             &config.keys.modes,
             &config.keys.direct_bindings,

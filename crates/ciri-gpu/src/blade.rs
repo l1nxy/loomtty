@@ -708,10 +708,10 @@ impl Renderer {
             info.driver_name
         );
 
-        let display_sync = match render_config.present_mode.as_str() {
-            "mailbox" => gpu::DisplaySync::Recent,
-            "immediate" => gpu::DisplaySync::Tear,
-            _ => gpu::DisplaySync::Block,
+        let display_sync = match render_config.present_mode {
+            ciri_config::config::PresentMode::Mailbox => gpu::DisplaySync::Recent,
+            ciri_config::config::PresentMode::Immediate => gpu::DisplaySync::Tear,
+            ciri_config::config::PresentMode::Fifo => gpu::DisplaySync::Block,
         };
 
         let surface_config = gpu::SurfaceConfig {

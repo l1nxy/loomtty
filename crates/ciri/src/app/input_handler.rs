@@ -508,49 +508,6 @@ impl App {
         }
     }
 
-    pub fn handle_search_key(&mut self, event: &winit::event::KeyEvent, ctrl: bool, shift: bool) {
-        let Some(search) = &mut self.search_state else {
-            return;
-        };
-        let pane_id = search.pane_id;
-
-        match &event.logical_key {
-            Key::Named(NamedKey::Escape) => {
-                // Restore original scroll position
-                let orig = search.original_scroll_offset;
-                if let Some(grid) = self.pane_grids.get_mut(&pane_id) {
-                    grid.scroll_offset = orig;
-                    grid.dirty = true;
-                    self.invalidate_pane_cache(pane_id);
-                }
-                self.search_state = None;
-            }
-            Key::Named(NamedKey::Enter) if shift => {
-                // Previous match
-                self.jump_to_match(true);
-            }
-            Key::Named(NamedKey::Enter) => {
-                if search.query.is_empty() {
-                    // Exit search, keep current position
-                    self.search_state = None;
-                } else {
-                    // Next match
-                    self.jump_to_match(false);
-                }
-            }
-            Key::Named(NamedKey::Backspace) => {
-                search.query.pop();
-                self.update_search_results();
-            }
-            Key::Character(c) if !ctrl => {
-                let s: &str = c.as_str();
-                search.query.push_str(s);
-                self.update_search_results();
-            }
-            _ => {}
-        }
-    }
-
     pub(crate) fn update_search_results(&mut self) {
         let Some(search) = &mut self.search_state else {
             return;

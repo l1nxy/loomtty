@@ -145,3 +145,28 @@ escape = "exit_overview"
 enter = "exit_overview"
 o = "exit_overview"
 tab = "exit_overview"
+
+[keys.direct_bindings]
+"ctrl+g" = "toggle_lock"
+"ctrl+shift+f" = "open_search"
+"ctrl+shift+c" = "clipboard_copy"
+"ctrl+shift+v" = "clipboard_paste"
+
+[keys.search_bindings]
+escape = "close_search"
+enter = "search_next_match"
+"shift+enter" = "search_prev_match"
+backspace = "text_backspace"
+
+[keys.palette_bindings]
+escape = "close_command_palette"
+up = "palette_up"
+down = "palette_down"
+enter = "palette_confirm"
+backspace = "text_backspace"
+
+[keys.paste_confirm_bindings]
+enter = "confirm_paste"
+y = "confirm_paste"
+escape = "dismiss_paste_confirm"
+n = "dismiss_paste_confirm"

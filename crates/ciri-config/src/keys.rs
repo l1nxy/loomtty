@@ -11,6 +11,15 @@ pub struct KeybindConfig {
     pub modes: HashMap<String, HashMap<String, String>>,
     /// Direct bindings that work without leader (e.g. "ctrl+g" = "toggle_lock").
     pub direct_bindings: HashMap<String, String>,
+    /// Search mode control keys (e.g. "escape" = "close_search").
+    #[serde(default)]
+    pub search_bindings: HashMap<String, String>,
+    /// Command palette control keys (e.g. "Up" = "palette_up").
+    #[serde(default)]
+    pub palette_bindings: HashMap<String, String>,
+    /// Paste confirmation dialog keys (e.g. "enter" = "confirm_paste").
+    #[serde(default)]
+    pub paste_confirm_bindings: HashMap<String, String>,
 }
 
 impl Default for KeybindConfig {
@@ -89,6 +98,28 @@ impl Default for KeybindConfig {
 
         let mut direct_bindings = HashMap::new();
         direct_bindings.insert("ctrl+g".to_string(), "toggle_lock".to_string());
+        direct_bindings.insert("ctrl+shift+f".to_string(), "open_search".to_string());
+        direct_bindings.insert("ctrl+shift+c".to_string(), "clipboard_copy".to_string());
+        direct_bindings.insert("ctrl+shift+v".to_string(), "clipboard_paste".to_string());
+
+        let mut search_bindings = HashMap::new();
+        search_bindings.insert("escape".to_string(), "close_search".to_string());
+        search_bindings.insert("enter".to_string(), "search_next_match".to_string());
+        search_bindings.insert("shift+enter".to_string(), "search_prev_match".to_string());
+        search_bindings.insert("backspace".to_string(), "text_backspace".to_string());
+
+        let mut palette_bindings = HashMap::new();
+        palette_bindings.insert("escape".to_string(), "close_command_palette".to_string());
+        palette_bindings.insert("up".to_string(), "palette_up".to_string());
+        palette_bindings.insert("down".to_string(), "palette_down".to_string());
+        palette_bindings.insert("enter".to_string(), "palette_confirm".to_string());
+        palette_bindings.insert("backspace".to_string(), "text_backspace".to_string());
+
+        let mut paste_confirm_bindings = HashMap::new();
+        paste_confirm_bindings.insert("enter".to_string(), "confirm_paste".to_string());
+        paste_confirm_bindings.insert("y".to_string(), "confirm_paste".to_string());
+        paste_confirm_bindings.insert("escape".to_string(), "dismiss_paste_confirm".to_string());
+        paste_confirm_bindings.insert("n".to_string(), "dismiss_paste_confirm".to_string());
 
         KeybindConfig {
             leader: "ctrl+w".to_string(),
@@ -96,6 +127,9 @@ impl Default for KeybindConfig {
             overview_bindings,
             modes,
             direct_bindings,
+            search_bindings,
+            palette_bindings,
+            paste_confirm_bindings,
         }
     }
 }

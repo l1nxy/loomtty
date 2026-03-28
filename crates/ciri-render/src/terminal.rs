@@ -55,9 +55,10 @@ struct CellProps {
 
 /// Pre-computed cell layout values from the glyph atlas.
 struct CellMetrics {
-    cw: f32,       // cell width in pixels
-    ch: f32,       // cell height in pixels
-    baseline: f32, // font ascent (baseline offset from cell top)
+    cw: f32,         // cell width in pixels
+    ch: f32,         // cell height in pixels
+    baseline: f32,   // baseline offset from cell top
+    face_width: f32, // unrounded face advance width (for centering compensation)
     default_bg: [f32; 4],
 }
 
@@ -67,6 +68,7 @@ impl CellMetrics {
             cw: atlas.cell_width,
             ch: atlas.cell_height,
             baseline: atlas.ascent,
+            face_width: atlas.face_width,
             default_bg: ThemeConfig::parse_color_linear(&config.theme.background),
         }
     }
@@ -408,7 +410,7 @@ fn render_cell(col: usize, cell: &CellProps, renderer: &mut CellRenderer<'_>) {
         let glyph = if cell.is_wide && entry.is_color {
             constrain_wide_glyph(&entry, px, py, renderer.metrics, cell.fg)
         } else {
-            make_relative_glyph(&entry, px, py, renderer.metrics.baseline, cell.fg)
+            make_relative_glyph(&entry, px, py, renderer.metrics, cell.fg)
         };
         if entry.is_color {
             renderer.color_glyphs.push(glyph);
@@ -777,7 +779,7 @@ fn render_single_row(
                 } else if is_cjk_text_wide {
                     constrain_wide_text_glyph(&entry, px, py, grid.metrics, props.fg)
                 } else {
-                    make_relative_glyph(&entry, px, py, grid.metrics.baseline, props.fg)
+                    make_relative_glyph(&entry, px, py, grid.metrics, props.fg)
                 };
                 if entry.is_color {
                     color_glyphs.push(g);
@@ -808,7 +810,7 @@ fn render_single_row(
                 } else if is_cjk_text_wide {
                     constrain_wide_text_glyph(&entry, px, py, grid.metrics, props.fg)
                 } else {
-                    make_relative_glyph(&entry, px, py, grid.metrics.baseline, props.fg)
+                    make_relative_glyph(&entry, px, py, grid.metrics, props.fg)
                 };
                 if entry.is_color {
                     color_glyphs.push(g);
@@ -849,7 +851,7 @@ fn render_single_row(
                 }
                 let px = col as f32 * grid.metrics.cw;
                 let py = row as f32 * grid.metrics.ch;
-                let g = make_relative_glyph(&entry, px, py, grid.metrics.baseline, fg);
+                let g = make_relative_glyph(&entry, px, py, grid.metrics, fg);
                 if entry.is_color {
                     color_glyphs.push(g);
                 } else {
@@ -1388,7 +1390,7 @@ fn emit_glyph(
         let g = if cell.is_wide && entry.is_color {
             constrain_wide_glyph(&entry, px, py, m, cell.fg)
         } else {
-            make_relative_glyph(&entry, px, py, m.baseline, cell.fg)
+            make_relative_glyph(&entry, px, py, m, cell.fg)
         };
         if entry.is_color {
             color_glyphs.push(g);
@@ -1399,17 +1401,20 @@ fn emit_glyph(
 }
 
 /// Create a `RelativeGlyph` positioned by bearing offsets.
+/// Applies face_width centering compensation when cell_width > face_width (from rounding).
 #[inline]
 fn make_relative_glyph(
     entry: &GlyphEntry,
     px: f32,
     py: f32,
-    baseline: f32,
+    m: &CellMetrics,
     color: [f32; 4],
 ) -> RelativeGlyph {
+    // Center glyphs when cell is wider than face advance (due to rounding)
+    let x_center = ((m.cw - m.face_width) / 2.0).round();
     RelativeGlyph {
-        px: px + entry.bearing_x,
-        py: py + baseline - entry.bearing_y,
+        px: px + entry.bearing_x + x_center,
+        py: py + m.baseline - entry.bearing_y,
         glyph_w: entry.width as f32,
         glyph_h: entry.height as f32,
         u0: entry.u0,
@@ -1453,9 +1458,7 @@ fn constrain_wide_glyph(
     }
 }
 
-/// Place a wide text glyph inside a double-width cell using bearing positioning.
-/// Uses bearing_x like regular glyphs instead of centering, to avoid excessive
-/// inter-character spacing with CJK fonts that already encode correct metrics.
+/// Place a wide CJK text glyph centered horizontally in a double-width cell.
 #[inline]
 fn constrain_wide_text_glyph(
     entry: &GlyphEntry,
@@ -1466,10 +1469,11 @@ fn constrain_wide_text_glyph(
 ) -> RelativeGlyph {
     let gw = entry.width as f32;
     let target_w = m.cw * 2.0;
-    // Use bearing positioning; clamp width to cell bounds if glyph overflows
     let final_w = gw.min(target_w);
+    // Center horizontally within the double-width cell
+    let offset_x = ((target_w - final_w) * 0.5).round().max(0.0);
     RelativeGlyph {
-        px: px + entry.bearing_x,
+        px: px + offset_x,
         py: py + m.baseline - entry.bearing_y,
         glyph_w: final_w,
         glyph_h: entry.height as f32,

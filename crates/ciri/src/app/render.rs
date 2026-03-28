@@ -1,4 +1,5 @@
 use ciri_anim::anim_value::AnimValue;
+use ciri_anim::spring::SpringParams;
 use ciri_config::config::{FocusRingStyle, PaneOpenStyle};
 use ciri_config::theme::ThemeConfig;
 use ciri_layout::geometry::Rect as GeoRect;
@@ -23,11 +24,16 @@ impl App {
         }
     }
 
+    /// Helper: spring params for scroll/zoom from config.
+    fn scroll_spring(&self) -> SpringParams {
+        SpringParams::from_omega(self.config.animation.speed, self.config.animation.epsilon)
+    }
+
     pub fn refresh_overview_zoom(&mut self) {
         if !self.overview.active {
             return;
         }
-        let omega = self.config.animation.speed;
+        let sp = self.scroll_spring();
         let vw = self.workspaces.view_size.width;
         let vh = self.workspaces.view_size.height;
         let max_w = self
@@ -50,11 +56,11 @@ impl App {
         let zoom_x = vw / max_w;
         let zoom_y = vh / total_h;
         let zoom = (zoom_x.min(zoom_y).min(1.0) * fit).max(0.15);
-        self.anim_mgr.overview_zoom.animate_to(zoom as f64, omega, self.config.animation.epsilon);
+        self.anim_mgr.overview_zoom.animate_to(zoom as f64, sp);
     }
 
     pub fn animate_to_active(&mut self) {
-        let omega = self.config.animation.speed;
+        let sp = self.scroll_spring();
         let enabled = self.config.animation.enabled;
 
         let center_strategy = match self.config.layout.center_focused_column {
@@ -68,21 +74,20 @@ impl App {
                 ciri_layout::workspace::CenterStrategy::Never
             }
         };
-        let epsilon = self.config.animation.epsilon;
         let current_vox = self.anim_mgr.view_offset_x.value() as f32;
         let target_x = self
             .workspaces
             .active_mut()
             .target_offset_for_active_with_strategy(center_strategy, current_vox);
         if enabled {
-            self.anim_mgr.view_offset_x.animate_to(target_x as f64, omega, epsilon);
+            self.anim_mgr.view_offset_x.animate_to(target_x as f64, sp);
         } else {
             self.anim_mgr.view_offset_x.jump_to(target_x as f64);
         }
 
         let target_y = self.workspaces.target_offset_y();
         if enabled {
-            self.anim_mgr.view_offset_y.animate_to(target_y as f64, omega, epsilon);
+            self.anim_mgr.view_offset_y.animate_to(target_y as f64, sp);
         } else {
             self.anim_mgr.view_offset_y.jump_to(target_y as f64);
         }
@@ -98,17 +103,31 @@ impl App {
         self.anim_mgr.col_widths.truncate(ncols);
 
         let vw = self.workspaces.active().view_size.width;
-        let omega = self.config.animation.speed;
-        let epsilon = self.config.animation.epsilon;
+        let sp = self.scroll_spring();
         for (i, col) in self.workspaces.active().columns.iter().enumerate() {
             let target = col.resolve_width(vw) as f64;
             let current = self.anim_mgr.col_widths[i].value();
             let anim_target = self.anim_mgr.col_widths[i].target();
             if self.config.animation.enabled {
                 if current == 0.0 {
-                    self.anim_mgr.col_widths[i].jump_to(target);
+                    // New column: animate from average neighbor width for smooth entry
+                    let neighbor = if i > 0 {
+                        self.anim_mgr.col_widths[i - 1].target()
+                    } else if i + 1 < ncols {
+                        // Next column hasn't been set yet, use target
+                        self.workspaces
+                            .active()
+                            .columns
+                            .get(i + 1)
+                            .map(|c| c.resolve_width(vw) as f64)
+                            .unwrap_or(target)
+                    } else {
+                        target
+                    };
+                    self.anim_mgr.col_widths[i].jump_to(neighbor);
+                    self.anim_mgr.col_widths[i].animate_to(target, sp);
                 } else if (anim_target - target).abs() > 1.0 {
-                    self.anim_mgr.col_widths[i].animate_to(target, omega, epsilon);
+                    self.anim_mgr.col_widths[i].animate_to(target, sp);
                 }
             } else {
                 self.anim_mgr.col_widths[i].jump_to(target);
@@ -166,7 +185,7 @@ impl App {
         } else {
             ThemeConfig::parse_color(&self.config.appearance.inactive_border_color)
         };
-        let inactive_opacity = self.config.appearance.inactive_opacity;
+        // inactive_opacity is now handled by AnimConfig in the animation manager
         let bg_color = ThemeConfig::parse_color(&self.config.theme.background);
         let link_color = ThemeConfig::parse_color(&self.config.theme.accent);
         let accent = ThemeConfig::parse_color(&self.config.theme.accent);
@@ -482,13 +501,14 @@ impl App {
             }
 
             // Animated focus opacity (smooth transition on focus change)
-            let focus_dim = self.anim_mgr.pane_focus_opacity(*pane_id, inactive_opacity);
+            let focus_dim = self.anim_mgr.pane_focus_opacity(*pane_id);
             let open_opacity = self.anim_mgr.pane_open_opacity(*pane_id);
-            let dim = focus_dim * open_opacity;
+            let drag_dim = self.anim_mgr.pane_drag_dim(*pane_id);
+            let dim = focus_dim * open_opacity * drag_dim;
 
-            // Pane open slide offset
+            // Combined pane offset: open slide + move animation
             let slide_progress = self.anim_mgr.pane_open_slide(*pane_id);
-            let (slide_dx, slide_dy) = match self.config.animation.pane_open_style {
+            let (open_dx, open_dy) = match self.config.animation.pane_open_style {
                 PaneOpenStyle::SlideUp | PaneOpenStyle::FadeSlideUp => {
                     (0.0, -tr.h * slide_progress)
                 }
@@ -496,11 +516,15 @@ impl App {
                 PaneOpenStyle::SlideLeft => (-tr.w * slide_progress, 0.0),
                 PaneOpenStyle::Fade => (0.0, 0.0),
             };
+            let (move_dx, move_dy) = self.anim_mgr.pane_move_offset(*pane_id);
+            let offset_dx = open_dx + move_dx * zoom;
+            let offset_dy = open_dy + move_dy * zoom;
 
             // Check if cached tile glyphs are still valid
+            // Include slide offsets in cache key so animations invalidate the cache
             let tile_key = (
-                inner_x.to_bits(),
-                inner_y.to_bits(),
+                (inner_x + offset_dx).to_bits(),
+                (inner_y + offset_dy).to_bits(),
                 zoom.to_bits(),
                 dim.to_bits(),
             );
@@ -521,8 +545,8 @@ impl App {
                 // Tile clipping is handled by the render-pass scissor rect.
                 let make_instance =
                     |g: &terminal::RelativeGlyph, color: [f32; 4]| -> Option<GlyphInstance> {
-                        let sx = (inner_x + g.px * zoom + slide_dx).round();
-                        let sy = (inner_y + g.py * zoom + slide_dy).round();
+                        let sx = (inner_x + g.px * zoom + offset_dx).round();
+                        let sy = (inner_y + g.py * zoom + offset_dy).round();
                         let gw = (g.glyph_w * zoom).round();
                         let gh = (g.glyph_h * zoom).round();
 
@@ -937,8 +961,8 @@ impl App {
 
         // Focus change detection → delegate to AnimationManager
         let current_focus = self.workspaces.active().active_pane_id();
-        let params = self.anim_params();
-        self.anim_mgr.on_focus_changed(current_focus, &params);
+        let config = self.anim_config();
+        self.anim_mgr.on_focus_changed(current_focus, &config);
 
         // Advance all pane animations (open, close, focus, bell) in one call
         animating |= self.anim_mgr.advance_all(dt);

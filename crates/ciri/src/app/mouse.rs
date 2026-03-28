@@ -1,3 +1,4 @@
+use ciri_anim::spring::SpringParams;
 use ciri_protocol::message::ClientMessage;
 use std::time::Instant;
 use winit::dpi::PhysicalPosition;
@@ -253,14 +254,14 @@ impl App {
                     // In overview: pinch out (delta > 0) zooms in toward normal
                     let cur_zoom = self.anim_mgr.overview_zoom.value();
                     let new_zoom = (cur_zoom + zoom_delta).clamp(0.05, 1.0);
-                    let epsilon = self.config.animation.epsilon;
+                    let sp = SpringParams::from_omega(omega, self.config.animation.epsilon);
                     if new_zoom >= self.config.animation.zoom_threshold as f64 {
                         self.overview.hovered_pane = None;
                         self.overview.active = false;
-                        self.anim_mgr.overview_zoom.animate_to(1.0, omega, epsilon);
+                        self.anim_mgr.overview_zoom.animate_to(1.0, sp);
                         self.animate_to_active();
                     } else {
-                        self.anim_mgr.overview_zoom.animate_to(new_zoom, omega, epsilon);
+                        self.anim_mgr.overview_zoom.animate_to(new_zoom, sp);
                     }
                 } else {
                     // In normal mode: pinch in (delta < 0) enters overview
@@ -269,9 +270,9 @@ impl App {
                         self.overview.hovered_pane = None;
                         self.context_menu.visible = false;
                         self.refresh_overview_zoom();
-                        let epsilon = self.config.animation.epsilon;
-                        self.anim_mgr.view_offset_x.animate_to(0.0, omega, epsilon);
-                        self.anim_mgr.view_offset_y.animate_to(0.0, omega, epsilon);
+                        let sp = SpringParams::from_omega(omega, self.config.animation.epsilon);
+                        self.anim_mgr.view_offset_x.animate_to(0.0, sp);
+                        self.anim_mgr.view_offset_y.animate_to(0.0, sp);
                     }
                 }
             }
@@ -282,7 +283,8 @@ impl App {
                 {
                     self.overview.hovered_pane = None;
                     self.overview.active = false;
-                    self.anim_mgr.overview_zoom.animate_to(1.0, omega, self.config.animation.epsilon);
+                    let sp = SpringParams::from_omega(omega, self.config.animation.epsilon);
+                    self.anim_mgr.overview_zoom.animate_to(1.0, sp);
                     self.animate_to_active();
                 }
             }
@@ -582,14 +584,13 @@ impl App {
         };
         let cur_zoom = self.anim_mgr.overview_zoom.value();
         let new_zoom = (cur_zoom + dy).clamp(0.05, 1.0);
-        let omega = self.config.animation.speed;
-        let epsilon = self.config.animation.epsilon;
+        let sp = SpringParams::from_omega(self.config.animation.speed, self.config.animation.epsilon);
         if new_zoom >= self.config.animation.zoom_threshold as f64 {
             self.overview.active = false;
-            self.anim_mgr.overview_zoom.animate_to(1.0, omega, epsilon);
+            self.anim_mgr.overview_zoom.animate_to(1.0, sp);
             self.animate_to_active();
         } else {
-            self.anim_mgr.overview_zoom.animate_to(new_zoom, omega, epsilon);
+            self.anim_mgr.overview_zoom.animate_to(new_zoom, sp);
         }
     }
 
@@ -669,7 +670,8 @@ impl App {
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
                 self.gestures.row_active = false;
-                self.anim_mgr.gesture_row_offset.end_gesture(0.0, omega, self.config.animation.epsilon);
+                let sp = SpringParams::from_omega(omega, self.config.animation.epsilon);
+                self.anim_mgr.gesture_row_offset.end_gesture(0.0, sp);
                 self.animate_to_active();
             }
         }
@@ -814,7 +816,8 @@ impl App {
                     .workspaces
                     .active_mut()
                     .target_offset_for_active_with_strategy(center_strategy, current_vox);
-                self.anim_mgr.view_offset_x.end_gesture(t as f64, self.config.animation.speed, self.config.animation.epsilon);
+                let sp = SpringParams::from_omega(self.config.animation.speed, self.config.animation.epsilon);
+                self.anim_mgr.view_offset_x.end_gesture(t as f64, sp);
             }
         }
     }

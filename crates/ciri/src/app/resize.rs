@@ -101,9 +101,12 @@ impl App {
     }
 
     pub(crate) fn start_column_resize_drag(&mut self, mx: f32) -> bool {
-        let ws = self.workspaces.active();
         let vox = self.anim_mgr.view_offset_x.value() as f32;
+        let ws = self.workspaces.active();
         let vw = ws.view_size.width;
+
+        // Find matching column border and collect info before mutating
+        let mut found = None;
         for i in 1..ws.columns.len() {
             let col_x = ws.column_x(i) - vox;
             if (mx - col_x).abs() < 4.0 {
@@ -111,15 +114,33 @@ impl App {
                 let right_col_idx = i;
                 let left_col_width = ws.columns[left_col_idx].effective_width(vw);
                 let pane_id = ws.columns[left_col_idx].active_pane_id();
-                self.remember_workspace_pane(self.workspaces.active_workspace_idx, pane_id);
-                self.send(ciri_protocol::message::ClientMessage::FocusPane { pane_id });
-                self.drag.col_dragging = Some(left_col_idx);
-                self.drag.col_right_idx = Some(right_col_idx);
-                self.drag.col_start_x = mx;
-                self.drag.col_start_width = left_col_width;
-                self.drag.col_delta = 0.0;
-                return true;
+                let dim_panes: Vec<_> = ws.columns[left_col_idx]
+                    .tiles
+                    .iter()
+                    .chain(ws.columns[right_col_idx].tiles.iter())
+                    .map(|t| t.pane_id)
+                    .collect();
+                found = Some((left_col_idx, right_col_idx, left_col_width, pane_id, dim_panes));
+                break;
             }
+        }
+
+        if let Some((left_col_idx, right_col_idx, left_col_width, pane_id, dim_panes)) = found {
+            self.remember_workspace_pane(self.workspaces.active_workspace_idx, pane_id);
+            self.send(ciri_protocol::message::ClientMessage::FocusPane { pane_id });
+            self.drag.col_dragging = Some(left_col_idx);
+            self.drag.col_right_idx = Some(right_col_idx);
+            self.drag.col_start_x = mx;
+            self.drag.col_start_width = left_col_width;
+            self.drag.col_delta = 0.0;
+
+            let config = self.anim_config();
+            for pid in dim_panes {
+                self.anim_mgr.ensure_pane_registered(pid);
+                self.anim_mgr.start_drag_dim(pid, &config);
+            }
+
+            return true;
         }
         false
     }
@@ -174,6 +195,20 @@ impl App {
                 column_idx: drag_col,
                 delta: self.drag.col_delta,
             });
+
+            // Restore opacity for dimmed panes
+            let config = self.anim_config();
+            let ws = self.workspaces.active();
+            let right_idx = self.drag.col_right_idx.unwrap_or(drag_col + 1);
+            let pane_ids: Vec<_> = [drag_col, right_idx]
+                .iter()
+                .filter_map(|&idx| ws.columns.get(idx))
+                .flat_map(|col| col.tiles.iter().map(|t| t.pane_id))
+                .collect();
+            for pid in pane_ids {
+                self.anim_mgr.end_drag_dim(pid, &config);
+            }
+
             self.drag.col_dragging = None;
             self.snap_all_col_widths();
             if let Some(w) = &self.window {

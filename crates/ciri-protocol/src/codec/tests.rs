@@ -1,4 +1,9 @@
 use super::*;
+use super::frame::{MAX_FRAME_LEN, TAG_SERVER_MSG, build_frame};
+use super::handshake::{CLIENT_HELLO_HEADER_LEN, SERVER_HELLO_LEN, parse_pkg_version};
+use super::state_machine::{sm_encode_cells, OP_END, OP_REPEAT, OP_RESET, OP_SET_FG};
+use crate::message::*;
+use std::io;
 
 // ─── SM encoder/decoder roundtrip tests ─────────────────────────
 

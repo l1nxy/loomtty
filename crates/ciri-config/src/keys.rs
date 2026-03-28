@@ -19,6 +19,9 @@ pub struct KeybindConfig {
     /// Command palette control keys (e.g. "Up" = "palette_up").
     #[serde(default)]
     pub palette_bindings: HashMap<String, String>,
+    /// Paste confirmation dialog keys (e.g. "enter" = "confirm_paste").
+    #[serde(default)]
+    pub paste_confirm_bindings: HashMap<String, String>,
 }
 
 impl Default for KeybindConfig {
@@ -108,10 +111,16 @@ impl Default for KeybindConfig {
 
         let mut palette_bindings = HashMap::new();
         palette_bindings.insert("escape".to_string(), "close_command_palette".to_string());
-        palette_bindings.insert("Up".to_string(), "palette_up".to_string());
-        palette_bindings.insert("Down".to_string(), "palette_down".to_string());
+        palette_bindings.insert("up".to_string(), "palette_up".to_string());
+        palette_bindings.insert("down".to_string(), "palette_down".to_string());
         palette_bindings.insert("enter".to_string(), "palette_confirm".to_string());
         palette_bindings.insert("backspace".to_string(), "text_backspace".to_string());
+
+        let mut paste_confirm_bindings = HashMap::new();
+        paste_confirm_bindings.insert("enter".to_string(), "confirm_paste".to_string());
+        paste_confirm_bindings.insert("y".to_string(), "confirm_paste".to_string());
+        paste_confirm_bindings.insert("escape".to_string(), "dismiss_paste_confirm".to_string());
+        paste_confirm_bindings.insert("n".to_string(), "dismiss_paste_confirm".to_string());
 
         KeybindConfig {
             leader: "ctrl+w".to_string(),
@@ -121,6 +130,7 @@ impl Default for KeybindConfig {
             direct_bindings,
             search_bindings,
             palette_bindings,
+            paste_confirm_bindings,
         }
     }
 }

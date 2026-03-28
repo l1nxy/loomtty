@@ -160,7 +160,13 @@ backspace = "text_backspace"
 
 [keys.palette_bindings]
 escape = "close_command_palette"
-"Up" = "palette_up"
-"Down" = "palette_down"
+up = "palette_up"
+down = "palette_down"
 enter = "palette_confirm"
 backspace = "text_backspace"
+
+[keys.paste_confirm_bindings]
+enter = "confirm_paste"
+y = "confirm_paste"
+escape = "dismiss_paste_confirm"
+n = "dismiss_paste_confirm"

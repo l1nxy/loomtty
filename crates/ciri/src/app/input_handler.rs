@@ -1,4 +1,7 @@
+use ciri_config::config::CiriConfig;
 use ciri_input::action::Action;
+use ciri_input::keybind::{BindingSet, KeybindMap};
+use ciri_input::leader::InputHandler;
 use ciri_protocol::message::*;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -8,6 +11,19 @@ use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 use super::App;
 
 impl App {
+    /// Build unified BindingSet from all config sources and install it.
+    pub(crate) fn rebuild_binding_set(input: &mut InputHandler, config: &CiriConfig) {
+        input.set_binding_set(BindingSet::from_legacy(
+            &input.keybinds,
+            &input.direct_keybinds,
+            &input.mode_keybinds,
+            &KeybindMap::from_overview_config(&config.keys.overview_bindings),
+            &config.keys.search_bindings,
+            &config.keys.palette_bindings,
+            &config.keys.paste_confirm_bindings,
+        ));
+    }
+
     pub fn handle_action(&mut self, action: Action) {
         match action {
             Action::NewColumnRight => {
@@ -245,9 +261,7 @@ impl App {
 
             // ── Paste confirmation ──
             Action::ConfirmPaste => {
-                if let Some(paste) = self.pending_paste.take() {
-                    let _ = paste; // paste guard already handled; the actual paste was deferred
-                    // Re-trigger paste without guard
+                if self.pending_paste.take().is_some() {
                     self.handle_clipboard_paste_force();
                 }
             }
@@ -268,11 +282,6 @@ impl App {
                     palette.query.pop();
                     self.filter_palette();
                 }
-            }
-
-            // ── Toggle help ──
-            Action::ToggleHelp => {
-                log::debug!("ToggleHelp (no help panel in this version)");
             }
 
             // ── Key table management (handled by InputHandler internally) ──

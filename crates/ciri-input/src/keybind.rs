@@ -6,7 +6,7 @@ use std::collections::HashMap;
 /// Bitflags representing the current application input context.
 /// Each binding declares which mode flags must / must-not be active for it to match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct BindingMode(u16);
+pub struct BindingMode(u32);
 
 impl BindingMode {
     pub const EMPTY: Self = Self(0);
@@ -179,10 +179,11 @@ impl BindingSet {
         overview_bindings: &KeybindMap,
         search_bindings: &HashMap<String, String>,
         palette_bindings: &HashMap<String, String>,
+        paste_confirm_bindings: &HashMap<String, String>,
     ) -> Self {
         let mut set = BindingSet::new();
 
-        // Direct bindings: active in NORMAL, not in text-input overlays
+        // Direct bindings: not in text-input overlays or paste confirm
         for (combo, action) in &direct_bindings.bindings {
             set.push(Binding {
                 combo: combo.clone(),
@@ -232,6 +233,12 @@ impl BindingSet {
         let palette_parsed = parse_bindings(palette_bindings, BindingSource::KeybindingConfig);
         for (combo, action) in palette_parsed {
             set.push(Binding::in_mode(combo, action, BindingMode::PALETTE));
+        }
+
+        // Paste confirmation bindings
+        let paste_parsed = parse_bindings(paste_confirm_bindings, BindingSource::KeybindingConfig);
+        for (combo, action) in paste_parsed {
+            set.push(Binding::in_mode(combo, action, BindingMode::PASTE_CONFIRM));
         }
 
         set
@@ -731,8 +738,12 @@ mod tests {
         let palette = HashMap::from([
             ("escape".to_string(), "close_command_palette".to_string()),
         ]);
+        let paste_confirm = HashMap::from([
+            ("enter".to_string(), "confirm_paste".to_string()),
+            ("escape".to_string(), "dismiss_paste_confirm".to_string()),
+        ]);
 
-        let set = BindingSet::from_legacy(&leader, &direct, &modes, &overview, &search, &palette);
+        let set = BindingSet::from_legacy(&leader, &direct, &modes, &overview, &search, &palette, &paste_confirm);
         assert!(!set.is_empty());
 
         // Direct binding works in NORMAL
@@ -764,5 +775,14 @@ mod tests {
         let combo = KeyCombo::new("escape");
         let r = set.lookup(BindingMode::PALETTE, None, &combo);
         assert_eq!(r.map(|b| &b.action), Some(&Action::CloseCommandPalette));
+
+        // Paste confirm bindings work
+        let combo = KeyCombo::new("enter");
+        let r = set.lookup(BindingMode::PASTE_CONFIRM, None, &combo);
+        assert_eq!(r.map(|b| &b.action), Some(&Action::ConfirmPaste));
+
+        let combo = KeyCombo::new("escape");
+        let r = set.lookup(BindingMode::PASTE_CONFIRM, None, &combo);
+        assert_eq!(r.map(|b| &b.action), Some(&Action::DismissPasteConfirm));
     }
 }

@@ -778,8 +778,8 @@ impl Renderer {
 
         let rects = unsafe { DxRectPipeline::new(&device, render_config.max_rectangles)? };
 
-        let sync_interval = match render_config.present_mode.as_str() {
-            "immediate" | "mailbox" => 0,
+        let sync_interval = match render_config.present_mode {
+            ciri_config::config::PresentMode::Immediate | ciri_config::config::PresentMode::Mailbox => 0,
             _ => 1,
         };
 

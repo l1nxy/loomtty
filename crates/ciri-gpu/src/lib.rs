@@ -141,7 +141,12 @@ impl Renderer {
     ///
     /// Explicit values: `"gl"`, `"vulkan"` / `"blade"`, `"dx"`.
     pub fn new(window: Arc<Window>, render_config: &RenderConfig) -> Result<Self> {
-        let choice = BackendChoice::from_config(render_config.backend.as_str());
+        let backend_str = match render_config.backend {
+            ciri_config::config::RenderBackend::Auto => "auto",
+            ciri_config::config::RenderBackend::Blade => "blade",
+            ciri_config::config::RenderBackend::Gl => "gl",
+        };
+        let choice = BackendChoice::from_config(backend_str);
 
         // Try requested backend
         match choice.resolved {

@@ -488,10 +488,9 @@ impl Renderer {
             .map_err(|e| anyhow::anyhow!("make current failed: {e}"))?;
 
         // Set swap interval based on present mode
-        let interval = match render_config.present_mode.as_str() {
-            "immediate" => SwapInterval::DontWait,
-            "mailbox" => SwapInterval::DontWait,
-            _ => SwapInterval::Wait(NonZeroU32::new(1).unwrap()),
+        let interval = match render_config.present_mode {
+            ciri_config::config::PresentMode::Immediate | ciri_config::config::PresentMode::Mailbox => SwapInterval::DontWait,
+            ciri_config::config::PresentMode::Fifo => SwapInterval::Wait(NonZeroU32::new(1).unwrap()),
         };
         let _ = gl_surface.set_swap_interval(&gl_context, interval);
 

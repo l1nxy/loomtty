@@ -1,4 +1,3 @@
-use ciri_input::keybind::KeybindMap;
 use ciri_layout::column::ColumnWidth;
 use ciri_layout::workspace::Workspace;
 use ciri_protocol::message::*;
@@ -390,8 +389,7 @@ impl App {
                     &self.config.keys.modes,
                     &self.config.keys.direct_bindings,
                 );
-                self.overview_keybinds =
-                    KeybindMap::from_overview_config(&self.config.keys.overview_bindings);
+                // TODO(Phase 4): rebuild unified binding_set here
                 if font_changed {
                     self.destroy_gpu_resources();
                     if let Some(renderer) = &mut self.renderer {

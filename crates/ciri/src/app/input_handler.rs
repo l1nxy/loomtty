@@ -4,7 +4,7 @@ use ciri_input::keybind::{BindingSet, KeybindMap};
 use ciri_input::leader::InputHandler;
 use ciri_protocol::message::*;
 use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use winit::keyboard::{Key, NamedKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
@@ -291,6 +291,42 @@ impl App {
         }
     }
 
+    /// Delegate: extract selected text.
+    pub fn extract_selected_text(&self) -> Option<String> {
+        self.core.extract_selected_text()
+    }
+
+    /// Delegate: check for double left click.
+    pub fn is_double_left_click(
+        &self,
+        pane_id: u64,
+        col: u16,
+        buffer_row: usize,
+        now: Instant,
+    ) -> bool {
+        self.core.is_double_left_click(pane_id, col, buffer_row, now)
+    }
+
+    /// Delegate: remember left click.
+    pub fn remember_left_click(&mut self, pane_id: u64, col: u16, buffer_row: usize, now: Instant) {
+        self.core.remember_left_click(pane_id, col, buffer_row, now);
+    }
+
+    /// Delegate: select word at position.
+    pub fn select_word_at(&mut self, pane_id: u64, col: u16, buffer_row: usize) -> bool {
+        self.core.select_word_at(pane_id, col, buffer_row)
+    }
+
+    /// Delegate: clear hovered link.
+    pub fn clear_hovered_link(&mut self) -> bool {
+        self.core.clear_hovered_link()
+    }
+
+    /// Delegate: hovered link URL at position.
+    pub fn hovered_link_url_at(&self, pane_id: u64, col: u16, buffer_row: usize) -> Option<String> {
+        self.core.hovered_link_url_at(pane_id, col, buffer_row)
+    }
+
     /// Convert pixel coordinates to (pane_id, col, buffer_row) using absolute buffer indices.
     pub fn pixel_to_cell(&self, mx: f32, my: f32) -> Option<(u64, u16, usize)> {
         let (cw, ch) = self.cell_dimensions();
@@ -346,54 +382,6 @@ impl App {
         None
     }
 
-    /// Extract selected text from the pane grid using absolute buffer coordinates.
-    pub fn extract_selected_text(&self) -> Option<String> {
-        let sel = self.core.selection.as_ref()?;
-        let grid = self.core.pane_grids.get(&sel.pane_id)?;
-        Some(grid.text_in_range(sel.start, sel.end))
-    }
-
-    pub fn is_double_left_click(
-        &self,
-        pane_id: u64,
-        col: u16,
-        buffer_row: usize,
-        now: Instant,
-    ) -> bool {
-        let threshold = Duration::from_millis(self.core.config.input.double_tap_window_ms);
-        self.core.last_left_click.as_ref().is_some_and(|last| {
-            last.pane_id == pane_id
-                && last.buffer_row == buffer_row
-                && last.col.abs_diff(col) <= 1
-                && now.duration_since(last.at) <= threshold
-        })
-    }
-
-    pub fn remember_left_click(&mut self, pane_id: u64, col: u16, buffer_row: usize, now: Instant) {
-        self.core.last_left_click = Some(super::LastLeftClick {
-            pane_id,
-            col,
-            buffer_row,
-            at: now,
-        });
-    }
-
-    pub fn select_word_at(&mut self, pane_id: u64, col: u16, buffer_row: usize) -> bool {
-        let Some(grid) = self.core.pane_grids.get(&pane_id) else {
-            return false;
-        };
-        let Some((start_col, end_col)) = grid.word_bounds_at(col, buffer_row) else {
-            return false;
-        };
-        self.core.selection = Some(super::Selection {
-            pane_id,
-            start: (start_col, buffer_row),
-            end: (end_col, buffer_row),
-            active: true,
-        });
-        true
-    }
-
     pub fn update_hovered_link(&mut self, mx: f32, my: f32) -> bool {
         let next = self
             .pixel_to_cell(mx, my)
@@ -411,20 +399,6 @@ impl App {
         }
         self.core.hovered_link = next;
         true
-    }
-
-    pub fn clear_hovered_link(&mut self) -> bool {
-        self.core.hovered_link.take().is_some()
-    }
-
-    pub fn hovered_link_url_at(&self, pane_id: u64, col: u16, buffer_row: usize) -> Option<String> {
-        self.core.hovered_link.as_ref().and_then(|link| {
-            (link.pane_id == pane_id
-                && link.start.1 == buffer_row
-                && col >= link.start.0
-                && col <= link.end.0)
-                .then(|| link.url.clone())
-        })
     }
 
     pub fn link_activation_modifier_active(&self) -> bool {
@@ -451,21 +425,7 @@ impl App {
     // ── Unified action helpers ──
 
     fn open_search(&mut self) {
-        let Some(pane_id) = self.core.workspaces.active().active_pane_id() else {
-            return;
-        };
-        let scroll_offset = self
-            .core.pane_grids
-            .get(&pane_id)
-            .map(|g| g.scroll_offset)
-            .unwrap_or(0);
-        self.core.search_state = Some(super::SearchState {
-            query: String::new(),
-            matches: Vec::new(),
-            current_match_idx: 0,
-            pane_id,
-            original_scroll_offset: scroll_offset,
-        });
+        self.core.open_search();
     }
 
     fn close_search_restore_scroll(&mut self) {

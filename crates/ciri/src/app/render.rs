@@ -1,5 +1,3 @@
-use ciri_anim::anim_value::AnimValue;
-use ciri_anim::spring::SpringParams;
 use ciri_config::config::{FocusRingStyle, PaneOpenStyle};
 use ciri_config::theme::ThemeConfig;
 use ciri_layout::geometry::Rect as GeoRect;
@@ -14,150 +12,24 @@ use super::App;
 use super::status_bar::emit_status_text;
 
 impl App {
+    /// Delegate: snap all column widths.
     pub fn snap_all_col_widths(&mut self) {
-        let vw = self.core.workspaces.view_size.width;
-        self.core.anim_mgr.col_widths.clear();
-        for ws in &mut self.core.workspaces.workspaces {
-            for col in &mut ws.columns {
-                col.snap_width(vw);
-            }
-        }
+        self.core.snap_all_col_widths();
     }
 
-    /// Helper: spring params for scroll/zoom from config.
-    fn scroll_spring(&self) -> SpringParams {
-        SpringParams::default()
-    }
-
+    /// Delegate: refresh overview zoom level.
     pub fn refresh_overview_zoom(&mut self) {
-        if !self.core.overview.active {
-            return;
-        }
-        let sp = self.scroll_spring();
-        let vw = self.core.workspaces.view_size.width;
-        let vh = self.core.workspaces.view_size.height;
-        let max_w = self
-            .core.workspaces
-            .workspaces
-            .iter()
-            .map(|ws| ws.total_width())
-            .fold(0.0f32, f32::max)
-            .max(vw);
-        let nrows = self
-            .core.workspaces
-            .workspaces
-            .iter()
-            .filter(|ws| !ws.is_empty())
-            .count()
-            .max(1);
-        let total_h =
-            nrows as f32 * vh + (nrows.saturating_sub(1)) as f32 * self.core.workspaces.workspace_gap;
-        let fit = self.core.config.animation.overview_zoom_fit;
-        let zoom_x = vw / max_w;
-        let zoom_y = vh / total_h;
-        let zoom = (zoom_x.min(zoom_y).min(1.0) * fit).max(0.15);
-        self.core.anim_mgr.overview_zoom.animate_to(zoom as f64, sp);
+        self.core.refresh_overview_zoom();
     }
 
+    /// Delegate: animate view to active column/workspace.
     pub fn animate_to_active(&mut self) {
-        let sp = self.scroll_spring();
-        let enabled = self.core.config.animation.enabled;
-
-        let center_strategy = match self.core.config.layout.center_focused_column {
-            ciri_config::config::CenterStrategy::Always => {
-                ciri_layout::workspace::CenterStrategy::Always
-            }
-            ciri_config::config::CenterStrategy::OnOverflow => {
-                ciri_layout::workspace::CenterStrategy::OnOverflow
-            }
-            ciri_config::config::CenterStrategy::Never => {
-                ciri_layout::workspace::CenterStrategy::Never
-            }
-        };
-        let current_vox = self.core.anim_mgr.view_offset_x.value() as f32;
-        let target_x = self
-            .core.workspaces
-            .active_mut()
-            .target_offset_for_active_with_strategy(center_strategy, current_vox);
-        if enabled {
-            self.core.anim_mgr.view_offset_x.animate_to(target_x as f64, sp);
-        } else {
-            self.core.anim_mgr.view_offset_x.jump_to(target_x as f64);
-        }
-
-        let target_y = self.core.workspaces.target_offset_y();
-        if enabled {
-            self.core.anim_mgr.view_offset_y.animate_to(target_y as f64, sp);
-        } else {
-            self.core.anim_mgr.view_offset_y.jump_to(target_y as f64);
-        }
-
-        self.sync_col_animations();
+        self.core.animate_to_active();
     }
 
-    pub fn sync_col_animations(&mut self) {
-        let ncols = self.core.workspaces.active().columns.len();
-        while self.core.anim_mgr.col_widths.len() < ncols {
-            self.core.anim_mgr.col_widths.push(AnimValue::new(0.0));
-        }
-        self.core.anim_mgr.col_widths.truncate(ncols);
-
-        let vw = self.core.workspaces.active().view_size.width;
-        let sp = self.scroll_spring();
-        for (i, col) in self.core.workspaces.active().columns.iter().enumerate() {
-            let target = col.resolve_width(vw) as f64;
-            let current = self.core.anim_mgr.col_widths[i].value();
-            let anim_target = self.core.anim_mgr.col_widths[i].target();
-            if self.core.config.animation.enabled {
-                if current == 0.0 {
-                    // New column: animate from average neighbor width for smooth entry
-                    let neighbor = if i > 0 {
-                        self.core.anim_mgr.col_widths[i - 1].target()
-                    } else if i + 1 < ncols {
-                        // Next column hasn't been set yet, use target
-                        self.core.workspaces
-                            .active()
-                            .columns
-                            .get(i + 1)
-                            .map(|c| c.resolve_width(vw) as f64)
-                            .unwrap_or(target)
-                    } else {
-                        target
-                    };
-                    self.core.anim_mgr.col_widths[i].jump_to(neighbor);
-                    self.core.anim_mgr.col_widths[i].animate_to(target, sp);
-                } else if (anim_target - target).abs() > 1.0 {
-                    self.core.anim_mgr.col_widths[i].animate_to(target, sp);
-                }
-            } else {
-                self.core.anim_mgr.col_widths[i].jump_to(target);
-            }
-        }
-
-        let ws = self.core.workspaces.active_mut();
-        for (i, col) in ws.columns.iter_mut().enumerate() {
-            if i < self.core.anim_mgr.col_widths.len() {
-                col.set_rendered_width(self.core.anim_mgr.col_widths[i].value() as f32);
-            }
-        }
-    }
-
+    /// Delegate: advance all animations by dt seconds.
     pub fn advance_animations(&mut self, dt: f64) -> bool {
-        // sync_col_animations keeps col_widths targets up-to-date with layout
-        if !self.core.anim_mgr.col_widths.is_empty() {
-            self.sync_col_animations();
-        }
-        // advance_all ticks view_offset_x/y, overview_zoom, gesture_row_offset,
-        // col_widths, and per-pane/effect animations.
-        let animating = self.core.anim_mgr.advance_all(dt);
-        // Apply advanced col_width values back to rendered layout
-        let ws = self.core.workspaces.active_mut();
-        for (i, col) in ws.columns.iter_mut().enumerate() {
-            if i < self.core.anim_mgr.col_widths.len() {
-                col.set_rendered_width(self.core.anim_mgr.col_widths[i].value() as f32);
-            }
-        }
-        animating
+        self.core.advance_animations(dt)
     }
 
     pub fn build_tiles(

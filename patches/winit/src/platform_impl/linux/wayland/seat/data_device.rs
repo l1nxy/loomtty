@@ -241,6 +241,37 @@ impl DataSourceHandler for WinitState {
     }
 }
 
+/// Decode percent-encoded characters in a URI path component.
+///
+/// This replaces the `percent-encoding` crate dependency so that the wayland
+/// feature does not need to pull in that crate (it was only gated behind `x11`).
+fn percent_decode(input: &str) -> String {
+    let mut output = Vec::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h), Some(l)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
+                output.push(h * 16 + l);
+                i += 3;
+                continue;
+            }
+        }
+        output.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&output).into_owned()
+}
+
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
 /// Parse a `text/uri-list` payload into a list of file paths.
 ///
 /// The format is one URI per line, separated by `\r\n`.
@@ -265,9 +296,7 @@ pub(crate) fn parse_uri_list(data: &str) -> Vec<PathBuf> {
                 }
             };
             // Percent-decode the path
-            let decoded = percent_encoding::percent_decode_str(path_str)
-                .decode_utf8_lossy()
-                .into_owned();
+            let decoded = percent_decode(path_str);
             let path = PathBuf::from(decoded);
             // Try to canonicalize but don't fail if the file doesn't exist
             match path.canonicalize() {

@@ -6,6 +6,7 @@ use ahash::AHashMap;
 use tracing::warn;
 
 use sctk::reexports::client::backend::ObjectId;
+use sctk::data_device_manager::data_device::DataDevice;
 use sctk::reexports::client::protocol::wl_seat::WlSeat;
 use sctk::reexports::client::protocol::wl_touch::WlTouch;
 use sctk::reexports::client::{Connection, Proxy, QueueHandle};
@@ -19,6 +20,7 @@ use crate::event::WindowEvent;
 use crate::keyboard::ModifiersState;
 use crate::platform_impl::wayland::state::WinitState;
 
+pub(super) mod data_device;
 mod keyboard;
 mod pointer;
 mod text_input;
@@ -32,7 +34,7 @@ use keyboard::{KeyboardData, KeyboardState};
 use text_input::TextInputData;
 use touch::TouchPoint;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct WinitSeatState {
     /// The pointer bound on the seat.
     pointer: Option<Arc<ThemedPointer<WinitPointerData>>>,
@@ -57,11 +59,35 @@ pub struct WinitSeatState {
 
     /// Whether we have pending modifiers.
     modifiers_pending: bool,
+
+    /// The data device bound on the seat (for DnD / clipboard).
+    data_device: Option<DataDevice>,
+}
+
+impl Default for WinitSeatState {
+    fn default() -> Self {
+        Self {
+            pointer: None,
+            touch: None,
+            touch_map: AHashMap::default(),
+            text_input: None,
+            relative_pointer: None,
+            keyboard_state: None,
+            modifiers: ModifiersState::default(),
+            modifiers_pending: false,
+            data_device: None,
+        }
+    }
 }
 
 impl WinitSeatState {
     pub fn new() -> Self {
         Default::default()
+    }
+
+    /// Set the data device for this seat (used for DnD/clipboard).
+    pub fn set_data_device(&mut self, data_device: DataDevice) {
+        self.data_device = Some(data_device);
     }
 }
 
@@ -202,10 +228,15 @@ impl SeatHandler for WinitState {
     fn new_seat(
         &mut self,
         _connection: &Connection,
-        _queue_handle: &QueueHandle<Self>,
+        queue_handle: &QueueHandle<Self>,
         seat: WlSeat,
     ) {
-        self.seats.insert(seat.id(), WinitSeatState::new());
+        let mut seat_state = WinitSeatState::new();
+        // Create a data device for DnD/clipboard on this seat.
+        if let Some(ref ddm) = self.data_device_manager_state {
+            seat_state.data_device = Some(ddm.get_data_device(queue_handle, &seat));
+        }
+        self.seats.insert(seat.id(), seat_state);
     }
 
     fn remove_seat(

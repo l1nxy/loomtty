@@ -172,7 +172,7 @@ fn main() -> Result<()> {
 
         let event_loop = EventLoop::new()?;
         let mut app = App::new(config, session_name);
-        app.remote_config = Some(app::RemoteConnectionConfig {
+        app.core.remote_config = Some(app::RemoteConnectionConfig {
             host,
             port,
             ssh_port,

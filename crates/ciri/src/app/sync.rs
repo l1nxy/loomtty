@@ -11,18 +11,18 @@ use ciri_layout::tile::Tile;
 
 impl App {
     fn finalize_authoritative_session_switch(&mut self, pane_ids: &[u64]) {
-        let Some(session_name) = self.pending_session_name.take() else {
+        let Some(session_name) = self.core.pending_session_name.take() else {
             return;
         };
 
-        self.session_name = session_name;
-        self.expected_pane_ids = pane_ids.iter().copied().collect();
+        self.core.session_name = session_name;
+        self.core.expected_pane_ids = pane_ids.iter().copied().collect();
         self.write_last_session();
-        self.command_palette = None;
+        self.core.command_palette = None;
         if let Some(window) = &self.window {
             window.set_title(&format!(
                 "{} [{}]",
-                self.config.window.title, self.session_name
+                self.core.config.window.title, self.core.session_name
             ));
         }
     }
@@ -35,7 +35,7 @@ impl App {
     /// the window was in the background), while still bounding the time spent
     /// here so the UI thread stays responsive.
     pub fn process_server_events(&mut self) -> bool {
-        let Some(rx) = self.server_rx.take() else {
+        let Some(rx) = self.core.server_rx.take() else {
             return false;
         };
         const BATCH: usize = 200;
@@ -56,15 +56,15 @@ impl App {
                 match event {
                     ServerEvent::Control(ServerMessage::StateSync { layout, pane_ids }) => {
                         self.finalize_authoritative_session_switch(&pane_ids);
-                        self.expected_pane_ids = pane_ids.iter().copied().collect();
+                        self.core.expected_pane_ids = pane_ids.iter().copied().collect();
                         self.apply_layout(&layout);
                         for &id in &pane_ids {
-                            self.pane_grids.entry(id).or_insert_with(|| {
-                                ClientPaneGrid::new(80, 24, self.config.terminal.scrollback_lines)
+                            self.core.pane_grids.entry(id).or_insert_with(|| {
+                                ClientPaneGrid::new(80, 24, self.core.config.terminal.scrollback_lines)
                             });
-                            self.anim_mgr.ensure_pane_registered(id);
+                            self.core.anim_mgr.ensure_pane_registered(id);
                         }
-                        self.connected = true;
+                        self.core.connected = true;
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::LayoutUpdate { layout }) => {
@@ -91,7 +91,7 @@ impl App {
                         }
                         self.apply_layout(&layout);
                         // Cancel any active tile drag — layout indices may have changed
-                        self.drag.tile_dragging = None;
+                        self.core.drag.tile_dragging = None;
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::PaneCreated {
@@ -101,43 +101,43 @@ impl App {
                         ..
                     }) => {
                         log::debug!("PaneCreated: pane_id={pane_id} {cols}x{rows}");
-                        self.expected_pane_ids.insert(pane_id);
-                        self.pane_grids.entry(pane_id).or_insert_with(|| {
-                            ClientPaneGrid::new(cols, rows, self.config.terminal.scrollback_lines)
+                        self.core.expected_pane_ids.insert(pane_id);
+                        self.core.pane_grids.entry(pane_id).or_insert_with(|| {
+                            ClientPaneGrid::new(cols, rows, self.core.config.terminal.scrollback_lines)
                         });
                         let params = self.anim_config();
-                        self.anim_mgr.on_pane_created(pane_id, &params);
+                        self.core.anim_mgr.on_pane_created(pane_id, &params);
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::PaneClosed { pane_id }) => {
-                        self.expected_pane_ids.remove(&pane_id);
+                        self.core.expected_pane_ids.remove(&pane_id);
                         log::debug!("PaneClosed: pane_id={pane_id}");
                         // Capture pane rect for close animation before removing
-                        let vox = self.anim_mgr.view_offset_x.value() as f32;
-                        let voy = self.anim_mgr.view_offset_y.value() as f32;
-                        let tiles = self.workspaces.visible_tiles_2d(vox, voy);
+                        let vox = self.core.anim_mgr.view_offset_x.value() as f32;
+                        let voy = self.core.anim_mgr.view_offset_y.value() as f32;
+                        let tiles = self.core.workspaces.visible_tiles_2d(vox, voy);
                         let params = self.anim_config();
                         if let Some((_, rect, _)) = tiles.iter().find(|(pid, _, _)| *pid == pane_id)
                         {
                             let geo = ciri_anim::manager::GeoRect {
                                 x: rect.x, y: rect.y, w: rect.w, h: rect.h,
                             };
-                            self.anim_mgr.on_pane_closed(pane_id, geo, &params);
+                            self.core.anim_mgr.on_pane_closed(pane_id, geo, &params);
                         } else {
                             // Off-screen pane: just remove state, no close animation
-                            self.anim_mgr.on_pane_closed(
+                            self.core.anim_mgr.on_pane_closed(
                                 pane_id,
                                 ciri_anim::manager::GeoRect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 },
                                 &params,
                             );
                         }
-                        self.pane_grids.remove(&pane_id);
+                        self.core.pane_grids.remove(&pane_id);
                         self.invalidate_pane_cache(pane_id);
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::ServerShutdown) => {
                         log::info!("server shut down, exiting");
-                        self.should_exit = true;
+                        self.core.should_exit = true;
                         break;
                     }
                     ServerEvent::Control(ServerMessage::ClipboardStore { data }) => {
@@ -153,10 +153,10 @@ impl App {
                     ServerEvent::Control(ServerMessage::Bell { pane_id }) => {
                         log::debug!("bell from pane {pane_id}");
                         let params = self.anim_config();
-                        self.anim_mgr.on_bell(pane_id, &params);
+                        self.core.anim_mgr.on_bell(pane_id, &params);
 
                         // Window urgency hint
-                        if self.config.terminal.bell_urgency && !self.window_focused {
+                        if self.core.config.terminal.bell_urgency && !self.window_focused {
                             if let Some(ref window) = self.window {
                                 window.request_user_attention(Some(
                                     winit::window::UserAttentionType::Informational,
@@ -174,7 +174,7 @@ impl App {
                         duration_secs,
                         exit_code,
                     }) => {
-                        let threshold = self.config.terminal.notify_command_threshold_secs;
+                        let threshold = self.core.config.terminal.notify_command_threshold_secs;
                         if threshold > 0 && duration_secs >= threshold && !self.window_focused {
                             self.send_desktop_notification(
                                 "Command completed",
@@ -201,7 +201,7 @@ impl App {
                         log::debug!(
                             "image #{image_id} for pane {pane_id}: {width_cells}x{height_cells} cells"
                         );
-                        let placements = self.image_placements.entry(pane_id).or_default();
+                        let placements = self.core.image_placements.entry(pane_id).or_default();
                         placements.push(super::ClientImagePlacement {
                             image_id,
                             col,
@@ -214,7 +214,7 @@ impl App {
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::SessionList { sessions }) => {
-                        if let Some(palette) = &mut self.command_palette {
+                        if let Some(palette) = &mut self.core.command_palette {
                             if palette.sessions_only {
                                 palette.entries.clear();
                             } else {
@@ -240,7 +240,7 @@ impl App {
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::SessionSwitched { session_name }) => {
-                        self.pending_session_name = Some(session_name);
+                        self.core.pending_session_name = Some(session_name);
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::SessionKilled { .. })
@@ -251,14 +251,14 @@ impl App {
                         // Session/template management and IPC responses — not yet handled by GUI client
                     }
                     ServerEvent::FullPaneSync(sync) => {
-                        if !self.expected_pane_ids.contains(&sync.pane_id) {
+                        if !self.core.expected_pane_ids.contains(&sync.pane_id) {
                             continue;
                         }
-                        let grid = self.pane_grids.entry(sync.pane_id).or_insert_with(|| {
+                        let grid = self.core.pane_grids.entry(sync.pane_id).or_insert_with(|| {
                             ClientPaneGrid::new(
                                 sync.cols,
                                 sync.rows,
-                                self.config.terminal.scrollback_lines,
+                                self.core.config.terminal.scrollback_lines,
                             )
                         });
                         grid.apply_full_sync(&sync);
@@ -269,7 +269,7 @@ impl App {
                         needs_redraw = true;
                     }
                     ServerEvent::CellDelta(delta) => {
-                        if !self.expected_pane_ids.contains(&delta.pane_id) {
+                        if !self.core.expected_pane_ids.contains(&delta.pane_id) {
                             continue;
                         }
                         log::trace!(
@@ -279,7 +279,7 @@ impl App {
                             delta.cursor_col,
                             delta.cursor_line
                         );
-                        if let Some(grid) = self.pane_grids.get_mut(&delta.pane_id) {
+                        if let Some(grid) = self.core.pane_grids.get_mut(&delta.pane_id) {
                             grid.apply_delta_borrowed(&delta);
                             self.send_lossy(ClientMessage::Ack {
                                 generation: delta.generation,
@@ -309,16 +309,16 @@ impl App {
             }
         } // end loop
 
-        self.server_rx = Some(rx);
+        self.core.server_rx = Some(rx);
         needs_redraw
     }
 
     /// Snapshot current pane screen positions for move animation.
     /// Uses animation target (not in-flight value) for stable snapshots.
     fn snapshot_pane_positions(&self) -> std::collections::HashMap<u64, (f32, f32)> {
-        let vox = self.anim_mgr.view_offset_x.target() as f32;
-        let voy = self.anim_mgr.view_offset_y.target() as f32;
-        let tiles = self.workspaces.visible_tiles_2d(vox, voy);
+        let vox = self.core.anim_mgr.view_offset_x.target() as f32;
+        let voy = self.core.anim_mgr.view_offset_y.target() as f32;
+        let tiles = self.core.workspaces.visible_tiles_2d(vox, voy);
         tiles
             .into_iter()
             .map(|(pid, rect, _)| (pid, (rect.x, rect.y)))
@@ -329,16 +329,16 @@ impl App {
     pub fn apply_layout(&mut self, layout: &LayoutState) {
         log::debug!(
             "apply_layout: view_size={:?}, vox={:.1}, voy={:.1}",
-            self.workspaces.view_size,
-            self.anim_mgr.view_offset_x.value(),
-            self.anim_mgr.view_offset_y.value()
+            self.core.workspaces.view_size,
+            self.core.anim_mgr.view_offset_x.value(),
+            self.core.anim_mgr.view_offset_y.value()
         );
 
         // Snapshot old pane positions for move animation
         let old_positions = self.snapshot_pane_positions();
 
-        let view_size = self.workspaces.view_size;
-        let column_gap = self.workspaces.column_gap;
+        let view_size = self.core.workspaces.view_size;
+        let column_gap = self.core.workspaces.column_gap;
 
         let mut new_workspaces: Vec<Workspace> = layout
             .workspaces
@@ -382,25 +382,25 @@ impl App {
             new_workspaces.push(Workspace::new_with_gap(view_size, column_gap));
         }
 
-        self.workspaces.workspaces = new_workspaces;
-        self.workspaces.active_workspace_idx = layout
+        self.core.workspaces.workspaces = new_workspaces;
+        self.core.workspaces.active_workspace_idx = layout
             .active_workspace_idx
-            .min(self.workspaces.workspaces.len().saturating_sub(1));
+            .min(self.core.workspaces.workspaces.len().saturating_sub(1));
         self.sync_workspace_pane_memory();
 
         self.snap_all_col_widths();
 
         // Compute new positions and start move animations for shifted panes
         let new_positions = self.snapshot_pane_positions();
-        if self.config.animation.enabled {
+        if self.core.config.animation.enabled {
             let config = self.anim_config();
             for (pane_id, (old_x, old_y)) in &old_positions {
                 if let Some(&(new_x, new_y)) = new_positions.get(pane_id) {
                     let dx = old_x - new_x;
                     let dy = old_y - new_y;
                     if dx.abs() > 1.0 || dy.abs() > 1.0 {
-                        self.anim_mgr.ensure_pane_registered(*pane_id);
-                        self.anim_mgr.start_move_animation(*pane_id, dx, dy, &config);
+                        self.core.anim_mgr.ensure_pane_registered(*pane_id);
+                        self.core.anim_mgr.start_move_animation(*pane_id, dx, dy, &config);
                     }
                 }
             }
@@ -412,35 +412,35 @@ impl App {
     pub fn reload_config(&mut self) {
         match ciri_config::config::CiriConfig::load() {
             Ok(new_config) => {
-                let font_changed = new_config.font.family != self.config.font.family
-                    || (new_config.font.size - self.config.font.size).abs() > 0.01;
-                self.config = new_config;
-                self.cached_color_table = ciri_render::terminal::ColorTable::new(&self.config);
-                self.input.reload_bindings(
-                    &self.config.keys.leader,
-                    match self.config.input.mode {
+                let font_changed = new_config.font.family != self.core.config.font.family
+                    || (new_config.font.size - self.core.config.font.size).abs() > 0.01;
+                self.core.config = new_config;
+                self.cached_color_table = ciri_render::terminal::ColorTable::new(&self.core.config);
+                self.core.input.reload_bindings(
+                    &self.core.config.keys.leader,
+                    match self.core.config.input.mode {
                         ciri_config::config::InputMode::Prefix => "prefix",
                         ciri_config::config::InputMode::Sticky => "sticky",
                     },
-                    &self.config.keys.bindings,
-                    &self.config.keys.modes,
-                    &self.config.keys.direct_bindings,
+                    &self.core.config.keys.bindings,
+                    &self.core.config.keys.modes,
+                    &self.core.config.keys.direct_bindings,
                 );
-                Self::rebuild_binding_set(&mut self.input, &self.config);
+                Self::rebuild_binding_set(&mut self.core.input, &self.core.config);
                 if font_changed {
                     self.destroy_gpu_resources();
                     if let Some(renderer) = &mut self.renderer {
-                        let shaper = ciri_render::shaper::TextShaper::new(&self.config.font.family);
+                        let shaper = ciri_render::shaper::TextShaper::new(&self.core.config.font.family);
                         let (cache, atlas_gpu) = renderer.create_atlas(
-                            self.config.font.size,
+                            self.core.config.font.size,
                             self.dpi_scale,
-                            &self.config.font.family,
+                            &self.core.config.font.family,
                             shaper.primary_font_path(),
                             shaper.emoji_font_path(),
                             shaper.emoji_font_id(),
                             shaper.cjk_font_path(),
                             shaper.cjk_font_id(),
-                            &self.config.render,
+                            &self.core.config.render,
                         );
                         self.glyph_cache = Some(cache);
                         self.glyph_atlas_gpu = Some(atlas_gpu);
@@ -449,13 +449,13 @@ impl App {
                 }
                 self.cached_views.clear();
                 self.cached_tile_glyphs.clear();
-                for grid in self.pane_grids.values_mut() {
+                for grid in self.core.pane_grids.values_mut() {
                     grid.dirty = true;
                 }
                 // Notify server of new cell dimensions after font change
                 if font_changed {
                     let (cw, ch) = self.cell_dimensions();
-                    let view = &self.workspaces.view_size;
+                    let view = &self.core.workspaces.view_size;
                     self.send(ClientMessage::Resize {
                         cols: 0,
                         rows: 0,
@@ -475,7 +475,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{CachedTileGlyphs, ClientImagePlacement};
+    use crate::app::{CachedTileGlyphs, ClientImagePlacement, CoreApp};
     use crate::connection::ServerEvent;
     use ciri_config::config::CiriConfig;
     use ciri_protocol::message::{
@@ -522,14 +522,14 @@ mod tests {
     fn session_switch_state_sync_does_not_prune_retained_client_state() {
         let mut app = make_app();
         let (event_tx, rx) = crossbeam_channel::unbounded();
-        app.server_rx = Some(rx);
+        app.core.server_rx = Some(rx);
 
         let stale = blank_full_sync(7, 1, "stale");
-        app.pane_grids.insert(
+        app.core.pane_grids.insert(
             stale.pane_id,
             crate::grid::ClientPaneGrid::new(stale.cols, stale.rows, 100),
         );
-        app.image_placements.insert(
+        app.core.image_placements.insert(
             stale.pane_id,
             vec![ClientImagePlacement {
                 image_id: 9,
@@ -560,10 +560,10 @@ mod tests {
             .unwrap();
 
         assert!(app.process_server_events());
-        assert_eq!(app.session_name, "test-session");
-        assert_eq!(app.pending_session_name.as_deref(), Some("other-session"));
-        assert!(app.pane_grids.contains_key(&stale.pane_id));
-        assert!(app.image_placements.contains_key(&stale.pane_id));
+        assert_eq!(app.core.session_name, "test-session");
+        assert_eq!(app.core.pending_session_name.as_deref(), Some("other-session"));
+        assert!(app.core.pane_grids.contains_key(&stale.pane_id));
+        assert!(app.core.image_placements.contains_key(&stale.pane_id));
         assert!(app.cached_tile_glyphs.contains_key(&stale.pane_id));
 
         event_tx
@@ -574,22 +574,22 @@ mod tests {
             .unwrap();
 
         assert!(app.process_server_events());
-        assert_eq!(app.session_name, "other-session");
-        assert_eq!(app.pending_session_name, None);
+        assert_eq!(app.core.session_name, "other-session");
+        assert_eq!(app.core.pending_session_name, None);
         assert_eq!(
-            app.expected_pane_ids.iter().copied().collect::<Vec<_>>(),
+            app.core.expected_pane_ids.iter().copied().collect::<Vec<_>>(),
             vec![11]
         );
-        assert!(app.pane_grids.contains_key(&stale.pane_id));
-        assert!(app.image_placements.contains_key(&stale.pane_id));
+        assert!(app.core.pane_grids.contains_key(&stale.pane_id));
+        assert!(app.core.image_placements.contains_key(&stale.pane_id));
         assert!(app.cached_tile_glyphs.contains_key(&stale.pane_id));
 
         event_tx.send(ServerEvent::FullPaneSync(new_sync)).unwrap();
 
         assert!(app.process_server_events());
-        assert!(app.pane_grids.contains_key(&11));
-        assert!(app.pane_grids.contains_key(&stale.pane_id));
-        assert!(app.image_placements.contains_key(&stale.pane_id));
+        assert!(app.core.pane_grids.contains_key(&11));
+        assert!(app.core.pane_grids.contains_key(&stale.pane_id));
+        assert!(app.core.image_placements.contains_key(&stale.pane_id));
         assert!(app.cached_tile_glyphs.contains_key(&stale.pane_id));
     }
 
@@ -597,8 +597,8 @@ mod tests {
     fn session_switch_only_persists_last_session_after_authoritative_resync() {
         let mut app = make_app();
         let (event_tx, rx) = crossbeam_channel::unbounded();
-        app.server_rx = Some(rx);
-        let last_session_path = App::last_session_path();
+        app.core.server_rx = Some(rx);
+        let last_session_path = CoreApp::last_session_path();
         if let Some(parent) = last_session_path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
@@ -611,7 +611,7 @@ mod tests {
             .unwrap();
 
         assert!(app.process_server_events());
-        assert_eq!(app.pending_session_name.as_deref(), Some("other-session"));
+        assert_eq!(app.core.pending_session_name.as_deref(), Some("other-session"));
 
         event_tx
             .send(ServerEvent::Control(ServerMessage::StateSync {
@@ -624,7 +624,7 @@ mod tests {
             .unwrap();
 
         assert!(app.process_server_events());
-        assert_eq!(app.pending_session_name, None);
+        assert_eq!(app.core.pending_session_name, None);
         assert_eq!(
             std::fs::read_to_string(&last_session_path).unwrap(),
             "other-session"
@@ -635,7 +635,7 @@ mod tests {
     fn stale_frame_for_old_session_is_dropped_after_session_switch() {
         let mut app = make_app();
         let (event_tx, rx) = crossbeam_channel::unbounded();
-        app.server_rx = Some(rx);
+        app.core.server_rx = Some(rx);
 
         let stale = blank_full_sync(7, 1, "stale");
         let fresh = blank_full_sync(11, 2, "fresh");
@@ -669,8 +669,8 @@ mod tests {
         event_tx.send(ServerEvent::FullPaneSync(stale)).unwrap();
 
         assert!(app.process_server_events());
-        assert_eq!(app.session_name, "other-session");
-        assert!(app.pane_grids.contains_key(&11));
-        assert!(!app.pane_grids.contains_key(&7));
+        assert_eq!(app.core.session_name, "other-session");
+        assert!(app.core.pane_grids.contains_key(&11));
+        assert!(!app.core.pane_grids.contains_key(&7));
     }
 }

@@ -4,13 +4,7 @@ use ciri_protocol::transport;
 use crossbeam_channel::{Receiver, Sender};
 use std::io;
 
-/// Messages from server to client (received on the winit thread).
-pub enum ServerEvent {
-    Control(ServerMessage),
-    CellDelta(CellDeltaBorrowed),
-    FullPaneSync(FullPaneSync),
-    Disconnected,
-}
+pub use ciri_core::app::{RemoteProbeResult, RemoteQueryResult, ServerEvent};
 
 /// Run the protocol IO loop over any AsyncRead + AsyncWrite pair.
 /// Performs handshake, spawns writer task, runs reader loop.
@@ -265,26 +259,6 @@ pub fn connect_remote(
         })?;
 
     Ok((msg_tx, event_rx))
-}
-
-/// Result of probing a remote host for ciri-server availability.
-pub enum RemoteProbeResult {
-    /// ciri-server is available; here are its sessions.
-    Sessions(Vec<SessionInfo>),
-    /// SSH connected but no ciri-server (handshake failed / connection refused).
-    NoServer,
-    /// SSH itself failed or timed out.
-    Error(String),
-}
-
-/// Result returned from an async remote host query.
-pub struct RemoteQueryResult {
-    /// Display name from config.
-    pub host_name: String,
-    pub host: String,
-    pub port: u16,
-    pub ssh_port: u16,
-    pub result: RemoteProbeResult,
 }
 
 /// Fire-and-forget: probe a remote host for ciri-server, query its sessions.

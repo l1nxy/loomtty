@@ -293,13 +293,13 @@ impl App {
             .glyph_cache
             .as_ref()
             .map(|c| c.cell_height)
-            .unwrap_or(self.config.font.size * 1.2);
+            .unwrap_or(self.core.config.font.size * 1.2);
         let cell_w = self.glyph_cache.as_ref().map(|c| c.cell_width).unwrap_or(8.0);
         let top_bar_layout = self.top_bar_layout(vw, vh, cell_w, cell_h);
         self.ensure_active_pane_tab_visible(top_bar_layout.tabs_area_px);
-        let baseline = cell_h * self.config.statusbar.text_baseline;
+        let baseline = cell_h * self.core.config.statusbar.text_baseline;
         let cx = UiContext {
-            config: &self.config,
+            config: &self.core.config,
             viewport_w: vw,
             viewport_h: vh,
             cell_w,
@@ -313,12 +313,12 @@ impl App {
         let context_menu = ContextMenuComponent::capture(self, &cx);
         let paste_dialog = PasteDialogComponent::capture(self, &cx);
         let infobox = InfoBoxComponent::capture(self, &cx);
-        let overview_bar = if self.overview.active && self.overview.hovered_pane.is_some() {
+        let overview_bar = if self.core.overview.active && self.core.overview.hovered_pane.is_some() {
             self.overview_action_bar_data(&cx)
         } else {
             None
         };
-        let overview_hover = self.overview_action_hover;
+        let overview_hover = self.core.overview_action_hover;
 
         let atlas = self.glyph_cache.as_mut().unwrap();
         let mut scene = UiScene {
@@ -347,15 +347,15 @@ impl App {
     }
 
     fn overview_action_bar_data(&self, cx: &UiContext<'_>) -> Option<OverviewActionBarData> {
-        let (_, hovered_id) = self.overview.hovered_pane?;
-        let zoom = self.anim_mgr.overview_zoom.value() as f32;
-        let vox = self.anim_mgr.view_offset_x.value() as f32;
-        let voy = self.anim_mgr.view_offset_y.value() as f32;
-        let tiles = self.workspaces.all_tiles_2d(vox, voy);
+        let (_, hovered_id) = self.core.overview.hovered_pane?;
+        let zoom = self.core.anim_mgr.overview_zoom.value() as f32;
+        let vox = self.core.anim_mgr.view_offset_x.value() as f32;
+        let voy = self.core.anim_mgr.view_offset_y.value() as f32;
+        let tiles = self.core.workspaces.all_tiles_2d(vox, voy);
         let (vw, vh) = self.command_palette_viewport_size();
         let center_x = vw / 2.0;
         let center_y = vh / 2.0;
-        let zoom_threshold = self.config.animation.zoom_threshold;
+        let zoom_threshold = self.core.config.animation.zoom_threshold;
         for (pane_id, tile_rect, _) in &tiles {
             if *pane_id != hovered_id { continue; }
             let tr = if zoom < zoom_threshold {
@@ -444,16 +444,16 @@ impl App {
             .glyph_cache
             .as_ref()
             .map(|c| c.cell_height)
-            .unwrap_or(self.config.font.size * 1.2);
+            .unwrap_or(self.core.config.font.size * 1.2);
         let cell_w = self.glyph_cache.as_ref().map(|c| c.cell_width).unwrap_or(8.0);
         let (viewport_w, viewport_h) = self.command_palette_viewport_size();
         UiContext {
-            config: &self.config,
+            config: &self.core.config,
             viewport_w,
             viewport_h,
             cell_w,
             cell_h,
-            baseline: cell_h * self.config.statusbar.text_baseline,
+            baseline: cell_h * self.core.config.statusbar.text_baseline,
         }
     }
 
@@ -497,7 +497,7 @@ impl App {
         match component.hit_test(mx, my) {
             UiPaletteHit::Toggle => (None, true),
             UiPaletteHit::Entry(entry_idx) => {
-                let hovered = self.command_palette.as_ref().and_then(|palette| {
+                let hovered = self.core.command_palette.as_ref().and_then(|palette| {
                     palette
                         .filtered
                         .iter()
@@ -575,7 +575,7 @@ impl App {
         let component = OverviewComponent::capture(self, &cx);
         // Also update action hover state for the action bar highlight
         let hit = component.hit_test(self, mx, my);
-        self.overview_action_hover = match &hit {
+        self.core.overview_action_hover = match &hit {
             UiOverviewHit::ClosePane(_) => Some(super::OverviewActionHover::Close),
             UiOverviewHit::FocusPane(_, _) => Some(super::OverviewActionHover::Focus),
             _ => None,
@@ -583,7 +583,7 @@ impl App {
         match hit {
             UiOverviewHit::Pane(ws_idx, pane_id)
             | UiOverviewHit::FocusPane(ws_idx, pane_id) => Some((ws_idx, pane_id)),
-            UiOverviewHit::ClosePane(_) => self.overview.hovered_pane,
+            UiOverviewHit::ClosePane(_) => self.core.overview.hovered_pane,
             UiOverviewHit::Background | UiOverviewHit::None => None,
         }
     }
@@ -601,15 +601,15 @@ impl App {
     }
 
     pub(crate) fn dispatch_ui_click(&mut self, mx: f32, my: f32) -> bool {
-        let action = if self.pending_paste.is_some() {
+        let action = if self.core.pending_paste.is_some() {
             self.ui_paste_dialog_action(mx, my)
-        } else if self.command_palette.is_some() {
+        } else if self.core.command_palette.is_some() {
             self.ui_palette_action(mx, my)
-        } else if self.context_menu.visible {
+        } else if self.core.context_menu.visible {
             self.ui_context_menu_action(mx, my)
         } else if self.hit_test_top_bar(mx, my) {
             self.ui_top_bar_action(mx, my)
-        } else if self.overview.active {
+        } else if self.core.overview.active {
             self.ui_overview_action(mx, my)
         } else {
             None
@@ -618,11 +618,11 @@ impl App {
             self.apply_ui_action(action);
             true
         } else {
-            self.pending_paste.is_some()
-                || self.command_palette.is_some()
-                || self.context_menu.visible
+            self.core.pending_paste.is_some()
+                || self.core.command_palette.is_some()
+                || self.core.context_menu.visible
                 || self.hit_test_top_bar(mx, my)
-                || self.overview.active
+                || self.core.overview.active
         }
     }
 
@@ -633,11 +633,11 @@ impl App {
                 self.handle_action(ciri_input::action::Action::ToggleOverview);
             }
             UiAction::CycleWorkspace => {
-                let workspace_count = self.workspaces.workspaces.len();
+                let workspace_count = self.core.workspaces.workspaces.len();
                 if workspace_count > 0 {
-                    let next_idx = (self.workspaces.active_workspace_idx + 1) % workspace_count;
-                    self.workspaces.active_workspace_idx = next_idx;
-                    if let Some(&pane_id) = self.workspace_last_pane_ids.get(&next_idx)
+                    let next_idx = (self.core.workspaces.active_workspace_idx + 1) % workspace_count;
+                    self.core.workspaces.active_workspace_idx = next_idx;
+                    if let Some(&pane_id) = self.core.workspace_last_pane_ids.get(&next_idx)
                         && self.focus_workspace_pane_local(next_idx, pane_id)
                     {
                         self.send(ciri_protocol::message::ClientMessage::FocusPane { pane_id });
@@ -650,7 +650,7 @@ impl App {
             }
             UiAction::FocusPaneTab(pane_id) => {
                 let mut target: Option<(usize, usize, usize)> = None;
-                for (ws_idx, ws) in self.workspaces.workspaces.iter().enumerate() {
+                for (ws_idx, ws) in self.core.workspaces.workspaces.iter().enumerate() {
                     for (col_idx, col) in ws.columns.iter().enumerate() {
                         if col.contains_pane(pane_id) {
                             let tile_idx = col
@@ -667,8 +667,8 @@ impl App {
                     }
                 }
                 if let Some((ws_idx, col_idx, tile_idx)) = target {
-                    self.workspaces.active_workspace_idx = ws_idx;
-                    let ws = self.workspaces.active_mut();
+                    self.core.workspaces.active_workspace_idx = ws_idx;
+                    let ws = self.core.workspaces.active_mut();
                     ws.active_column_idx = col_idx;
                     if col_idx < ws.columns.len() {
                         ws.columns[col_idx].active_tile_idx =
@@ -680,7 +680,7 @@ impl App {
                 }
             }
             UiAction::ToggleSessionPaletteScope => {
-                if let Some(palette) = &mut self.command_palette
+                if let Some(palette) = &mut self.core.command_palette
                     && palette.sessions_only
                 {
                     palette.sessions_show_all = !palette.sessions_show_all;
@@ -693,47 +693,47 @@ impl App {
             }
             UiAction::ExecutePaletteEntry(entry_idx) => {
                 let keep_open = self
-                    .command_palette
+                    .core.command_palette
                     .as_ref()
                     .and_then(|p| p.entries.get(entry_idx))
                     .is_some_and(|e| matches!(e.kind, super::PaletteEntryKind::RemoteHost { .. }));
-                if let Some(palette) = &mut self.command_palette
+                if let Some(palette) = &mut self.core.command_palette
                     && let Some(pos) = palette.filtered.iter().position(|&idx| idx == entry_idx)
                 {
                     palette.selected_idx = pos;
                 }
                 self.execute_palette_entry(entry_idx);
                 if !keep_open {
-                    self.command_palette = None;
+                    self.core.command_palette = None;
                 }
             }
-            UiAction::ClosePalette => self.command_palette = None,
+            UiAction::ClosePalette => self.core.command_palette = None,
             UiAction::ExecuteContextMenuEntry(idx) => {
-                self.context_menu.hovered_index = Some(idx);
+                self.core.context_menu.hovered_index = Some(idx);
                 self.handle_context_menu_click();
             }
-            UiAction::CloseContextMenu => self.context_menu.visible = false,
+            UiAction::CloseContextMenu => self.core.context_menu.visible = false,
             UiAction::ConfirmPaste => self.confirm_pending_paste(),
-            UiAction::CancelPaste => self.pending_paste = None,
+            UiAction::CancelPaste => self.core.pending_paste = None,
             UiAction::FocusOverviewPane(ws_idx, pane_id) => {
                 self.focus_overview_target(ws_idx, pane_id);
             }
             UiAction::CloseOverviewPane(pane_id) => {
-                self.overview.hovered_pane = None;
+                self.core.overview.hovered_pane = None;
                 self.send(ciri_protocol::message::ClientMessage::ClosePane { pane_id });
             }
             UiAction::StartOverviewDrag => {
-                self.overview.dragging = true;
-                self.overview.drag_last_pos = self.last_mouse_pos;
+                self.core.overview.dragging = true;
+                self.core.overview.drag_last_pos = self.last_mouse_pos;
             }
         }
     }
 
     pub(crate) fn dispatch_ui_hover(&mut self, mx: f32, my: f32) -> UiHoverOutcome {
-        if self.pending_paste.is_some() {
-            let prev = self.pending_paste.as_ref().and_then(|p| p.hovered_button);
+        if self.core.pending_paste.is_some() {
+            let prev = self.core.pending_paste.as_ref().and_then(|p| p.hovered_button);
             let next = self.ui_paste_dialog_hover(mx, my);
-            if let Some(pending) = &mut self.pending_paste {
+            if let Some(pending) = &mut self.core.pending_paste {
                 pending.hovered_button = next;
             }
             return UiHoverOutcome {
@@ -743,10 +743,10 @@ impl App {
             };
         }
 
-        if self.context_menu.visible {
-            let prev = self.context_menu.hovered_index;
+        if self.core.context_menu.visible {
+            let prev = self.core.context_menu.hovered_index;
             let next = self.ui_context_menu_hover(mx, my);
-            self.context_menu.hovered_index = next;
+            self.core.context_menu.hovered_index = next;
             return UiHoverOutcome {
                 handled: true,
                 cursor: if next.is_some() { CursorIcon::Pointer } else { CursorIcon::Default },
@@ -754,10 +754,10 @@ impl App {
             };
         }
 
-        if self.command_palette.is_some() {
-            let prev_hovered = self.command_palette.as_ref().and_then(|p| p.hovered_idx);
+        if self.core.command_palette.is_some() {
+            let prev_hovered = self.core.command_palette.as_ref().and_then(|p| p.hovered_idx);
             let (next_hovered, pointer) = self.ui_palette_hover(mx, my);
-            if let Some(palette) = &mut self.command_palette {
+            if let Some(palette) = &mut self.core.command_palette {
                 palette.hovered_idx = next_hovered;
             }
             return UiHoverOutcome {
@@ -768,11 +768,11 @@ impl App {
         }
 
         if self.hit_test_top_bar(mx, my) {
-            let prev_region = self.hovered_top_bar_region;
-            let prev_tab = self.hovered_pane_tab;
+            let prev_region = self.core.hovered_top_bar_region;
+            let prev_tab = self.core.hovered_pane_tab;
             let (region, tab) = self.ui_top_bar_hover(mx, my);
-            self.hovered_top_bar_region = region;
-            self.hovered_pane_tab = tab;
+            self.core.hovered_top_bar_region = region;
+            self.core.hovered_pane_tab = tab;
             return UiHoverOutcome {
                 handled: true,
                 cursor: if region.is_some() || tab.is_some() {
@@ -785,12 +785,12 @@ impl App {
         }
 
         let had_top_bar_hover =
-            self.hovered_top_bar_region.take().is_some() || self.hovered_pane_tab.take().is_some();
+            self.core.hovered_top_bar_region.take().is_some() || self.core.hovered_pane_tab.take().is_some();
 
-        if self.overview.active {
-            let prev = self.overview.hovered_pane;
+        if self.core.overview.active {
+            let prev = self.core.overview.hovered_pane;
             let next = self.ui_overview_hover(mx, my);
-            self.overview.hovered_pane = next;
+            self.core.overview.hovered_pane = next;
             return UiHoverOutcome {
                 handled: true,
                 cursor: if next.is_some() { CursorIcon::Pointer } else { CursorIcon::Default },
@@ -813,17 +813,17 @@ impl TopBarComponent {
         let pane_tabs = app.pane_tab_layouts(cx.cell_w, layout.tabs_area_px);
         Self {
             layout,
-            session_text: format!(" {}  ", app.session_name),
+            session_text: format!(" {}  ", app.core.session_name),
             workspace_label,
             mode_label,
             mode_color,
             pane_tabs,
-            hovered_region: app.hovered_top_bar_region,
-            hovered_pane_tab: app.hovered_pane_tab,
-            is_leader: app.input.is_awaiting_action(),
-            is_broadcast: app.broadcast_mode,
-            is_overview: app.overview.active,
-            tab_scroll: app.pane_tab_scroll,
+            hovered_region: app.core.hovered_top_bar_region,
+            hovered_pane_tab: app.core.hovered_pane_tab,
+            is_leader: app.core.input.is_awaiting_action(),
+            is_broadcast: app.core.broadcast_mode,
+            is_overview: app.core.overview.active,
+            tab_scroll: app.core.pane_tab_scroll,
             tab_scroll_max: app.pane_tab_scroll_max(),
         }
     }
@@ -1009,7 +1009,7 @@ impl UiComponent for TopBarComponent {
 
 impl PaletteComponent {
     fn capture(app: &App, cx: &UiContext<'_>) -> Option<Self> {
-        let palette = app.command_palette.as_ref()?;
+        let palette = app.core.command_palette.as_ref()?;
         let layout = app.command_palette_layout()?;
         let toggle = app.command_palette_toggle_layout(layout);
         let scroll_offset = app.command_palette_scroll_offset(layout.visible_rows);
@@ -1331,24 +1331,24 @@ impl UiComponent for PaletteComponent {
 
 impl ContextMenuComponent {
     fn capture(app: &App, cx: &UiContext<'_>) -> Option<Self> {
-        if !app.context_menu.visible {
+        if !app.core.context_menu.visible {
             return None;
         }
         let item_height = cx.cell_h * 1.5;
         let padding = 8.0;
         let menu_width = 200.0;
-        let menu_height = app.context_menu.items.len() as f32 * item_height + padding * 2.0;
-        let x = app.context_menu.x.min(cx.viewport_w - menu_width);
-        let y = app.context_menu.y.min(cx.viewport_h - menu_height);
+        let menu_height = app.core.context_menu.items.len() as f32 * item_height + padding * 2.0;
+        let x = app.core.context_menu.x.min(cx.viewport_w - menu_width);
+        let y = app.core.context_menu.y.min(cx.viewport_h - menu_height);
         let rows = app
-            .context_menu
+            .core.context_menu
             .items
             .iter()
             .enumerate()
             .map(|(i, item)| ContextMenuRow {
                 label: item.label.clone(),
                 enabled: item.enabled,
-                hovered: Some(i) == app.context_menu.hovered_index && item.enabled,
+                hovered: Some(i) == app.core.context_menu.hovered_index && item.enabled,
             })
             .collect();
         Some(Self {
@@ -1441,16 +1441,16 @@ impl UiComponent for ContextMenuComponent {
 impl InfoBoxComponent {
     fn capture(app: &App, cx: &UiContext<'_>) -> Option<Self> {
         // Don't show infobox when palette or paste dialog is active
-        if app.command_palette.is_some() || app.pending_paste.is_some() {
+        if app.core.command_palette.is_some() || app.core.pending_paste.is_some() {
             return None;
         }
 
         // Show when: named mode, leader awaiting, OR help panel toggled
-        let (title, bindings) = if let Some(mode_name) = app.input.current_mode_name() {
-            let bindings = app.config.keys.modes.get(mode_name)?;
+        let (title, bindings) = if let Some(mode_name) = app.core.input.current_mode_name() {
+            let bindings = app.core.config.keys.modes.get(mode_name)?;
             (mode_name.to_uppercase(), bindings.clone())
-        } else if app.input.is_awaiting_action() {
-            ("LEADER".to_string(), app.config.keys.bindings.clone())
+        } else if app.core.input.is_awaiting_action() {
+            ("LEADER".to_string(), app.core.config.keys.bindings.clone())
         } else {
             return None;
         };
@@ -1557,11 +1557,11 @@ impl HintsBarComponent {
         let bar_y = app.hints_bar_y(cx.viewport_h);
 
         // Left side: pane count + active pane title
-        let ws = app.workspaces.active();
+        let ws = app.core.workspaces.active();
         let pane_count = ws.columns.iter().map(|c| c.tiles.len()).sum::<usize>();
         let active_pane_title = ws
             .active_pane_id()
-            .and_then(|id| app.pane_grids.get(&id))
+            .and_then(|id| app.core.pane_grids.get(&id))
             .map(|g| g.title.trim().to_string())
             .filter(|s| !s.is_empty())
             .unwrap_or_default();
@@ -1583,15 +1583,15 @@ impl HintsBarComponent {
                 .map(|(k, _)| k.clone())
         };
 
-        if app.input.is_locked() {
+        if app.core.input.is_locked() {
             // Locked: just show how to unlock
-            let key = find_key("toggle_lock", &app.config.keys.direct_bindings)
-                .or_else(|| find_key("toggle_lock", &app.config.keys.bindings))
+            let key = find_key("toggle_lock", &app.core.config.keys.direct_bindings)
+                .or_else(|| find_key("toggle_lock", &app.core.config.keys.bindings))
                 .unwrap_or_else(|| "g".into());
             return vec![h(&key, "unlock")];
         }
 
-        if app.overview.active {
+        if app.core.overview.active {
             return vec![
                 h("hjkl", "move"),
                 h("enter", "select"),
@@ -1599,9 +1599,9 @@ impl HintsBarComponent {
             ];
         }
 
-        if let Some(mode_name) = app.input.current_mode_name() {
+        if let Some(mode_name) = app.core.input.current_mode_name() {
             let mut hints = Vec::new();
-            if let Some(mode_bindings) = app.config.keys.modes.get(mode_name) {
+            if let Some(mode_bindings) = app.core.config.keys.modes.get(mode_name) {
                 // Show top 3 bindings from the mode, sorted by key simplicity
                 let mut entries: Vec<_> = mode_bindings.iter().collect();
                 entries.sort_by_key(|(k, _)| k.len());
@@ -1613,9 +1613,9 @@ impl HintsBarComponent {
             return hints;
         }
 
-        if app.input.is_awaiting_action() {
+        if app.core.input.is_awaiting_action() {
             // Leader awaiting: show the most common actions
-            let bindings = &app.config.keys.bindings;
+            let bindings = &app.core.config.keys.bindings;
             let mut hints = Vec::new();
             for (action, label) in [
                 ("new_column_right", "new"),
@@ -1633,11 +1633,11 @@ impl HintsBarComponent {
         // Idle/Normal: show direct bindings (including promoted alt+key in sticky mode)
         let mut hints = Vec::new();
         // In promoted bare-modifier mode, leader is disabled — don't show it
-        if !app.input.uses_bare_modifier_promotion() {
-            hints.push(h(&app.config.keys.leader, "leader"));
+        if !app.core.input.uses_bare_modifier_promotion() {
+            hints.push(h(&app.core.config.keys.leader, "leader"));
         }
         // Pick a few useful direct bindings to show
-        let direct = &app.input.direct_keybinds;
+        let direct = &app.core.input.direct_keybinds;
         for (action, label) in [
             ("toggle_help", "help"),
             ("toggle_lock", "lock"),
@@ -1751,7 +1751,7 @@ impl HintsBarComponent {
 
 impl PasteDialogComponent {
     fn capture(app: &App, cx: &UiContext<'_>) -> Option<Self> {
-        let pending = app.pending_paste.as_ref()?;
+        let pending = app.core.pending_paste.as_ref()?;
         let dialog_w = cx.viewport_w * 0.6;
         let dialog_h = cx.viewport_h * 0.4;
         let dx = (cx.viewport_w - dialog_w) / 2.0;
@@ -1820,12 +1820,12 @@ struct OverviewActionBar {
 impl OverviewComponent {
     fn capture(app: &App, _cx: &UiContext<'_>) -> Self {
         Self {
-            hovered_pane: app.overview.hovered_pane,
+            hovered_pane: app.core.overview.hovered_pane,
         }
     }
 
     fn hit_test(&self, app: &App, mx: f32, my: f32) -> UiOverviewHit {
-        if !app.overview.active {
+        if !app.core.overview.active {
             return UiOverviewHit::None;
         }
         // Check action bar on hovered pane first
@@ -1856,14 +1856,14 @@ impl OverviewComponent {
 
     fn action_bar_layout(&self, app: &App) -> Option<OverviewActionBar> {
         let (_, hovered_id) = self.hovered_pane?;
-        let zoom = app.anim_mgr.overview_zoom.value() as f32;
-        let vox = app.anim_mgr.view_offset_x.value() as f32;
-        let voy = app.anim_mgr.view_offset_y.value() as f32;
-        let tiles = app.workspaces.all_tiles_2d(vox, voy);
+        let zoom = app.core.anim_mgr.overview_zoom.value() as f32;
+        let vox = app.core.anim_mgr.view_offset_x.value() as f32;
+        let voy = app.core.anim_mgr.view_offset_y.value() as f32;
+        let tiles = app.core.workspaces.all_tiles_2d(vox, voy);
         let (vw, vh) = app.command_palette_viewport_size();
         let center_x = vw / 2.0;
         let center_y = vh / 2.0;
-        let zoom_threshold = app.config.animation.zoom_threshold;
+        let zoom_threshold = app.core.config.animation.zoom_threshold;
         let cell_w = app.glyph_cache.as_ref().map(|c| c.cell_width).unwrap_or(8.0);
         let cell_h = app.glyph_cache.as_ref().map(|c| c.cell_height).unwrap_or(16.0);
 
@@ -2033,7 +2033,7 @@ mod tests {
     #[test]
     fn palette_toggle_click_maps_to_scope_toggle() {
         let mut app = make_app();
-        app.command_palette = Some(CommandPaletteState {
+        app.core.command_palette = Some(CommandPaletteState {
             query: String::new(),
             entries: Vec::new(),
             filtered: Vec::new(),
@@ -2053,7 +2053,7 @@ mod tests {
     #[test]
     fn context_menu_entry_click_maps_to_execute_entry() {
         let mut app = make_app();
-        app.context_menu = ContextMenu {
+        app.core.context_menu = ContextMenu {
             visible: true,
             x: 40.0,
             y: 50.0,
@@ -2072,7 +2072,7 @@ mod tests {
     #[test]
     fn paste_dialog_outside_click_maps_to_cancel() {
         let mut app = make_app();
-        app.pending_paste = Some(PendingPaste {
+        app.core.pending_paste = Some(PendingPaste {
             info: PasteInfo {
                 text: "hello".into(),
                 size: 5,
@@ -2088,7 +2088,7 @@ mod tests {
     #[test]
     fn overview_background_click_maps_to_start_drag() {
         let mut app = make_app();
-        app.overview.active = true;
+        app.core.overview.active = true;
         let action = app.ui_overview_action(10.0, 10.0);
         assert_eq!(action, Some(UiAction::StartOverviewDrag));
     }
@@ -2096,7 +2096,7 @@ mod tests {
     #[test]
     fn dispatch_ui_click_closes_palette() {
         let mut app = make_app();
-        app.command_palette = Some(CommandPaletteState {
+        app.core.command_palette = Some(CommandPaletteState {
             query: String::new(),
             entries: Vec::new(),
             filtered: Vec::new(),
@@ -2108,7 +2108,7 @@ mod tests {
             remote_error: None,
         });
         assert!(app.dispatch_ui_click(0.0, 0.0));
-        assert!(app.command_palette.is_none());
+        assert!(app.core.command_palette.is_none());
     }
 
     #[test]
@@ -2119,13 +2119,13 @@ mod tests {
         let hover = app.dispatch_ui_hover(layout.session_x + 2.0, layout.bar_y + 2.0);
         assert!(hover.handled);
         assert_eq!(hover.cursor, CursorIcon::Pointer);
-        assert_eq!(app.hovered_top_bar_region, Some(TopBarHoverRegion::Session));
+        assert_eq!(app.core.hovered_top_bar_region, Some(TopBarHoverRegion::Session));
     }
 
     #[test]
     fn dispatch_ui_hover_updates_paste_button_hover() {
         let mut app = make_app();
-        app.pending_paste = Some(PendingPaste {
+        app.core.pending_paste = Some(PendingPaste {
             info: PasteInfo {
                 text: "hello".into(),
                 size: 5,
@@ -2141,7 +2141,7 @@ mod tests {
         assert!(hover.handled);
         assert_eq!(hover.cursor, CursorIcon::Pointer);
         assert_eq!(
-            app.pending_paste.as_ref().and_then(|p| p.hovered_button),
+            app.core.pending_paste.as_ref().and_then(|p| p.hovered_button),
             Some(super::super::PasteButton::Paste)
         );
     }

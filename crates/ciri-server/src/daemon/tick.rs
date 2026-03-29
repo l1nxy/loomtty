@@ -191,39 +191,43 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                                     .get(&cid)
                                     .and_then(|c| c.history_sent.get(&pane_id).copied())
                                     .unwrap_or(0);
-                                let sync = pane.snapshot_incremental(pgen, last_sent);
-                                let current_history = pane.history_size();
+                                // When pane is in alt screen, preserve history_sent
+                                // (alt buffer has no scrollback — history_size() returns 0).
+                                let current_total = if pane.is_alt_screen() {
+                                    last_sent
+                                } else {
+                                    pane.scrollback_total()
+                                };
+                                let sync = build_scrollback_sync(pane, pgen, last_sent, current_total);
                                 pending_sends.push(PendingSend {
                                     client_id: cid,
                                     session_name: session_name.clone(),
                                     snapshot: Snapshot::FullSync {
                                         sync,
-                                        current_history,
+                                        current_history: current_total,
                                         pane_id,
                                     },
                                 });
                             }
                         } else if let Some(pane) = session.panes.get(&pane_id) {
-                            // Check if scrollback has grown since last sent.
-                            // CellDelta only carries viewport cells — scrollback lines
-                            // that scrolled off the top would be lost. Upgrade to
-                            // FullPaneSync when new history is available.
-                            let current_history = pane.history_size();
+                            // Use monotonic scrollback_total to detect new scrollback,
+                            // including ring buffer rotations after the buffer is full.
+                            let current_total = pane.scrollback_total();
                             let last_sent = s
                                 .clients
                                 .get(&cid)
                                 .and_then(|c| c.history_sent.get(&pane_id).copied())
                                 .unwrap_or(0);
 
-                            if current_history > last_sent {
-                                // New scrollback — send FullPaneSync with incremental history
-                                let sync = pane.snapshot_incremental(pgen, last_sent);
+                            if current_total > last_sent {
+                                // New scrollback — send FullPaneSync with delta history
+                                let sync = build_scrollback_sync(pane, pgen, last_sent, current_total);
                                 pending_sends.push(PendingSend {
                                     client_id: cid,
                                     session_name: session_name.clone(),
                                     snapshot: Snapshot::FullSync {
                                         sync,
-                                        current_history,
+                                        current_history: current_total,
                                         pane_id,
                                     },
                                 });
@@ -409,4 +413,32 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
             }
         }
     }
+}
+
+/// Build a FullPaneSync with the right scrollback delta, handling both the
+/// growing phase and ring-buffer rotation (where history_size() is capped).
+///
+/// - `last_sent`: the client's `scrollback_total` watermark
+/// - `current_total`: the pane's current `scrollback_total()`
+///
+/// When `delta > history_size()`, the server has rotated past what the client
+/// has: send ALL current scrollback with `scrollback_replace = true`.
+/// Otherwise, send only the new rows (incremental append).
+fn build_scrollback_sync(
+    pane: &ciri_term::pane::Pane,
+    generation: u64,
+    last_sent: usize,
+    current_total: usize,
+) -> FullPaneSync {
+    let hs = pane.history_size();
+    let delta = current_total.saturating_sub(last_sent);
+    let rows_to_send = delta.min(hs);
+    let replace = delta > hs;
+
+    // Compute the `history_sent` value that snapshot_incremental expects:
+    // it will send `history_size - adjusted_sent` rows from the end.
+    let adjusted_sent = hs.saturating_sub(rows_to_send);
+    let mut sync = pane.snapshot_incremental(generation, adjusted_sent);
+    sync.scrollback_replace = replace;
+    sync
 }

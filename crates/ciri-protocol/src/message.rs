@@ -597,10 +597,15 @@ pub struct FullPaneSync {
     /// Terminal mode flags (mouse mode, alt screen, etc.)
     pub mode_flags: u8,
     pub title: String,
-    /// New scrollback lines that the client hasn't seen yet (oldest first).
-    /// Client should prepend these to its buffer before applying the viewport.
+    /// New scrollback lines (oldest first).
+    /// When `scrollback_replace` is false, the client appends these to its buffer.
+    /// When `scrollback_replace` is true, the client clears its buffer first.
     pub scrollback: Vec<PackedCell>, // row-major, scrollback_rows * cols
-    pub scrollback_rows: u16,
+    pub scrollback_rows: u32,
+    /// When true, the client should replace its entire scrollback buffer
+    /// with these rows instead of appending. Used when the server's ring buffer
+    /// has rotated past what the client has.
+    pub scrollback_replace: bool,
     pub cells: Vec<PackedCell>, // row-major, rows * cols (viewport)
     /// Sparse grapheme overflow for multi-codepoint clusters (emoji, etc.).
     /// Empty for >99.9% of frames.

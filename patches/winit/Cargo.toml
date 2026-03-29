@@ -104,6 +104,7 @@ wayland = [
     "sctk",
     "ahash",
     "memmap2",
+    "percent-encoding",
 ]
 wayland-csd-adwaita = [
     "sctk-adwaita",

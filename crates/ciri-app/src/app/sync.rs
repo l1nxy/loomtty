@@ -3,9 +3,9 @@ use ciri_layout::tile::Tile;
 use ciri_layout::workspace::Workspace;
 use ciri_protocol::message::LayoutState;
 
-use super::CoreApp;
+use super::AppModel;
 
-impl CoreApp {
+impl AppModel {
     /// Rebuild the full 2D WorkspaceSet from the server's authoritative layout.
     pub fn apply_layout(&mut self, layout: &LayoutState) {
         log::debug!(

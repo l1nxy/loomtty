@@ -379,7 +379,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{CachedTileGlyphs, ClientImagePlacement, CoreApp};
+    use crate::app::{CachedTileGlyphs, ClientImagePlacement, AppModel};
     use crate::connection::ServerEvent;
     use ciri_config::config::CiriConfig;
     use ciri_protocol::message::{
@@ -502,7 +502,7 @@ mod tests {
         let mut app = make_app();
         let (event_tx, rx) = crossbeam_channel::unbounded();
         app.core.server_rx = Some(rx);
-        let last_session_path = CoreApp::last_session_path();
+        let last_session_path = AppModel::last_session_path();
         if let Some(parent) = last_session_path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }

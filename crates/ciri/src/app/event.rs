@@ -206,13 +206,12 @@ impl ApplicationHandler for App {
                 self.core.config.window.height,
             ));
 
+        // macOS: transparent titlebar for a cleaner look, but keep title visible
+        // and do NOT use fullsize_content_view (no safe area handling for traffic lights)
         #[cfg(target_os = "macos")]
         {
             use winit::platform::macos::WindowAttributesExtMacOS;
-            attrs = attrs
-                .with_titlebar_transparent(true)
-                .with_title_hidden(true)
-                .with_fullsize_content_view(true);
+            attrs = attrs.with_titlebar_transparent(true);
         }
 
         let window = Arc::new(
@@ -225,7 +224,8 @@ impl ApplicationHandler for App {
         #[cfg(target_os = "macos")]
         {
             use winit::platform::macos::{OptionAsAlt, WindowExtMacOS};
-            window.set_option_as_alt(OptionAsAlt::Both);
+            // OnlyLeft: left Option = Alt (for keybindings), right Option = special chars (é, ñ, #)
+            window.set_option_as_alt(OptionAsAlt::OnlyLeft);
         }
         let dpi_scale = window.scale_factor();
         let mut renderer = ciri_gpu::Renderer::new(window.clone(), &self.core.config.render)

@@ -1,8 +1,8 @@
 use ciri_anim::spring::SpringParams;
 
-use super::CoreApp;
+use super::AppModel;
 
-impl CoreApp {
+impl AppModel {
     pub fn exit_overview(&mut self) {
         let sp = SpringParams::default();
         self.overview.active = false;

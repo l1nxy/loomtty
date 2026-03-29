@@ -8,7 +8,7 @@ name = "ciri"
 path = "src/main.rs"
 
 [dependencies]
-ciri-core = { workspace = true }
+ciri-app = { workspace = true }
 ciri-render = { workspace = true }
 ciri-gpu = { workspace = true }
 ciri-protocol = { workspace = true }

@@ -9,10 +9,14 @@ pub fn runtime_dir() -> PathBuf {
         return rd;
     }
 
-    // macOS: preserve old behavior (~/.cache) for backward compat
+    // macOS: prefer ~/Library/Caches, fall back to ~/.cache for backward compat
     #[cfg(target_os = "macos")]
     {
         if let Some(home) = dirs::home_dir() {
+            let native = home.join("Library").join("Caches");
+            if native.exists() {
+                return native;
+            }
             let legacy = home.join(".cache");
             if legacy.exists() {
                 return legacy;

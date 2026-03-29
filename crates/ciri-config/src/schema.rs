@@ -50,10 +50,19 @@ pub struct FontConfig {
 impl Default for FontConfig {
     fn default() -> Self {
         FontConfig {
-            family: "monospace".to_string(),
+            family: default_font_family().to_string(),
             size: 10.0,
         }
     }
+}
+
+fn default_font_family() -> &'static str {
+    #[cfg(target_os = "macos")]
+    { "Menlo" }
+    #[cfg(target_os = "windows")]
+    { "Consolas" }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    { "monospace" }
 }
 
 /// Focus ring style for the active pane border.

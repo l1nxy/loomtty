@@ -477,6 +477,7 @@ mod tests {
             title: title.to_string(),
             scrollback: Vec::new(),
             scrollback_rows: 0,
+                scrollback_replace: false,
             cells: vec![PackedCell::default(), PackedCell::default()],
             grapheme_extras: GraphemeExtras::new(),
             hyperlink_extras: HyperlinkExtras::new(),

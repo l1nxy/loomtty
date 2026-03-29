@@ -210,7 +210,10 @@ impl ClientPaneGrid {
             self.scroll_offset = 0;
         }
 
-        // Step 1: Append new scrollback lines (server sends oldest first)
+        // Step 1: Handle scrollback — replace or append
+        if sync.scrollback_replace {
+            self.scrollback.clear();
+        }
         let sb_rows = sync.scrollback_rows as usize;
         for r in 0..sb_rows {
             let start = r * new_cols;
@@ -423,7 +426,7 @@ impl ClientPaneGrid {
             logical_lines.push(current_line);
         }
 
-        // Phase 2: re-split logical lines at new_cols
+        // Phase 2: re-split logical lines at new_cols, respecting wide chars
         let n_logical = logical_lines.len();
         for logical in logical_lines {
             if logical.is_empty() {
@@ -435,17 +438,48 @@ impl ClientPaneGrid {
                 continue;
             }
 
-            let chunks = logical.chunks(new_cols);
-            let n_chunks = chunks.len();
-            for (i, chunk) in chunks.enumerate() {
-                let is_last = i == n_chunks - 1;
-                let mut cells = chunk.to_vec();
-                // Pad to new_cols
+            // Split at new_cols boundaries, but avoid splitting wide chars.
+            // If the last cell of a chunk is the first half of a wide char,
+            // move it to the next row to prevent rendering corruption.
+            let mut pos = 0;
+            while pos < logical.len() {
+                // Skip over orphan WIDE_CHAR_SPACER cells (shouldn't happen
+                // in well-formed data, but be defensive).
+                if logical[pos].flags_u16() & FLAG_WIDE_CHAR_SPACER != 0 {
+                    pos += 1;
+                    continue;
+                }
+                // If this cell is a wide char and new_cols < 2, the wide char
+                // can't fit — skip the wide+spacer pair entirely.
+                if new_cols < 2
+                    && logical[pos].flags_u16() & FLAG_WIDE_CHAR != 0
+                {
+                    pos += 1;
+                    // Skip the spacer too if present
+                    if pos < logical.len()
+                        && logical[pos].flags_u16() & FLAG_WIDE_CHAR_SPACER != 0
+                    {
+                        pos += 1;
+                    }
+                    continue;
+                }
+                let mut end = (pos + new_cols).min(logical.len());
+                // Check if we'd split a wide character: the cell at end-1
+                // is WIDE_CHAR but its spacer at end would be on the next row.
+                if end < logical.len() && end > pos + 1 {
+                    let last = &logical[end - 1];
+                    if last.flags_u16() & FLAG_WIDE_CHAR != 0 {
+                        end -= 1;
+                    }
+                }
+                let is_last = end >= logical.len();
+                let mut cells = logical[pos..end].to_vec();
                 cells.resize(new_cols, PackedCell::default());
                 self.scrollback.push_back(ScrollbackRow {
                     cells,
                     wrapped: !is_last,
                 });
+                pos = end;
             }
         }
         log::debug!(
@@ -979,6 +1013,7 @@ mod tests {
                 title: String::new(),
                 scrollback: vec![PackedCell::with_ch(ch); 4],
                 scrollback_rows: 1,
+                scrollback_replace: false,
                 cells: vec![PackedCell::with_ch(ch.to_ascii_uppercase()); 8],
                 grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
                 hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
@@ -1128,6 +1163,7 @@ mod tests {
             title: "resized".into(),
             scrollback: vec![],
             scrollback_rows: 0,
+                scrollback_replace: false,
             cells: vec![PackedCell::with_ch('X'); 18],
             grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
             hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
@@ -1167,6 +1203,7 @@ mod tests {
             title: String::new(),
             scrollback: vec![],
             scrollback_rows: 0,
+                scrollback_replace: false,
             cells: vec![PackedCell::with_ch('A'); 3], // only 3 of 8 cells
             grapheme_extras: GraphemeExtras::new(),
             hyperlink_extras: HyperlinkExtras::new(),
@@ -1196,6 +1233,7 @@ mod tests {
                 title: String::new(),
                 scrollback: vec![PackedCell::with_ch(ch); 2],
                 scrollback_rows: 1,
+                scrollback_replace: false,
                 cells: vec![PackedCell::with_ch('.'); 2],
                 grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
                 hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
@@ -1227,6 +1265,7 @@ mod tests {
                 title: String::new(),
                 scrollback: vec![PackedCell::with_ch('x'); 2],
                 scrollback_rows: 1,
+                scrollback_replace: false,
                 cells: vec![PackedCell::default(); 2],
                 grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
                 hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
@@ -1251,6 +1290,7 @@ mod tests {
             title: String::new(),
             scrollback: vec![],
             scrollback_rows: 0,
+                scrollback_replace: false,
             cells: vec![PackedCell::default(); 3],
             grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
             hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
@@ -1259,6 +1299,63 @@ mod tests {
         grid.apply_full_sync(&sync);
         assert_eq!(grid.scroll_offset, 0); // reset by dimension change
         assert_eq!(grid.scrollback.len(), 4); // scrollback preserved
+    }
+
+    #[test]
+    fn scrollback_replace_clears_and_repopulates() {
+        let mut grid = ClientPaneGrid::new(4, 2, 10);
+        // Accumulate 3 scrollback rows: 'a', 'b', 'c'
+        for ch in ['a', 'b', 'c'] {
+            grid.apply_full_sync(&FullPaneSync {
+                pane_id: 1,
+                generation: 1,
+                cols: 4,
+                rows: 2,
+                cursor_line: 0,
+                cursor_col: 0,
+                cursor_shape: CURSOR_BLOCK,
+                mode_flags: 0,
+                title: String::new(),
+                scrollback: vec![PackedCell::with_ch(ch); 4],
+                scrollback_rows: 1,
+                scrollback_replace: false,
+                cells: vec![PackedCell::default(); 8],
+                grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
+                hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
+                cwd: None,
+            });
+        }
+        assert_eq!(grid.scrollback.len(), 3);
+        assert_eq!(grid.scrollback[0].cells[0].ch(), 'a');
+
+        // Now apply a replace sync with 2 rows: 'X', 'Y'
+        grid.apply_full_sync(&FullPaneSync {
+            pane_id: 1,
+            generation: 2,
+            cols: 4,
+            rows: 2,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+            title: String::new(),
+            scrollback: vec![
+                PackedCell::with_ch('X'), PackedCell::with_ch('X'),
+                PackedCell::with_ch('X'), PackedCell::with_ch('X'),
+                PackedCell::with_ch('Y'), PackedCell::with_ch('Y'),
+                PackedCell::with_ch('Y'), PackedCell::with_ch('Y'),
+            ],
+            scrollback_rows: 2,
+            scrollback_replace: true,
+            cells: vec![PackedCell::default(); 8],
+            grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
+            hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
+            cwd: None,
+        });
+        // Old scrollback cleared, replaced with 2 new rows
+        assert_eq!(grid.scrollback.len(), 2);
+        assert_eq!(grid.scrollback[0].cells[0].ch(), 'X');
+        assert_eq!(grid.scrollback[1].cells[0].ch(), 'Y');
     }
 
     // ─── apply_delta edge cases ─────────────────────────────────────
@@ -1380,6 +1477,7 @@ mod tests {
                 PackedCell::with_ch('c'),
             ],
             scrollback_rows: 1,
+                scrollback_replace: false,
             cells: vec![
                 PackedCell::with_ch('X'),
                 PackedCell::with_ch('Y'),
@@ -1418,6 +1516,7 @@ mod tests {
                 PackedCell::with_ch('o'),
             ],
             scrollback_rows: 1,
+                scrollback_replace: false,
             cells: vec![
                 PackedCell::with_ch('h'),
                 PackedCell::with_ch('e'),
@@ -1549,6 +1648,7 @@ mod tests {
             title: String::new(),
             scrollback: vec![PackedCell::with_ch('x'); 5],
             scrollback_rows: 1,
+                scrollback_replace: false,
             cells: vec![
                 PackedCell::with_ch('a'),
                 PackedCell::with_ch('b'),
@@ -1610,6 +1710,7 @@ mod tests {
             title: String::new(),
             scrollback: vec![PackedCell::with_ch('S'); 4],
             scrollback_rows: 1,
+                scrollback_replace: false,
             cells: vec![
                 PackedCell::with_ch('A'),
                 PackedCell::with_ch('B'),
@@ -1681,6 +1782,7 @@ mod tests {
             title: String::new(),
             scrollback: vec![],
             scrollback_rows: 0,
+                scrollback_replace: false,
             cells: vec![PackedCell::default(); 8],
             grapheme_extras: GraphemeExtras::new(),
             hyperlink_extras: HyperlinkExtras::new(),
@@ -1724,6 +1826,7 @@ mod tests {
             title: String::new(),
             scrollback: vec![],
             scrollback_rows: 0,
+                scrollback_replace: false,
             cells: vec![PackedCell::default(); 3],
             grapheme_extras: GraphemeExtras::new(),
             hyperlink_extras: HyperlinkExtras::new(),
@@ -1777,6 +1880,7 @@ mod tests {
             title: String::new(),
             scrollback: vec![],
             scrollback_rows: 0,
+                scrollback_replace: false,
             cells: vec![PackedCell::default(); 8],
             grapheme_extras: GraphemeExtras::new(),
             hyperlink_extras: HyperlinkExtras::new(),

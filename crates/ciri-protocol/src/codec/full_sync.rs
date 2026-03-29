@@ -9,7 +9,7 @@ use super::state_machine::{sm_decode_cells_vec, sm_encode_cells, StateEncoder};
 use super::util::*;
 
 const FULL_PANE_SYNC_MIN_HEADER_LEN: usize = 28;
-const FULL_PANE_SYNC_SCROLLBACK_HEADER_LEN: usize = 6;
+const FULL_PANE_SYNC_SCROLLBACK_HEADER_LEN: usize = 9; // u32 rows + u8 replace + u32 data_len
 const FULL_PANE_SYNC_VIEWPORT_HEADER_LEN: usize = 4;
 
 #[derive(Debug)]
@@ -115,7 +115,7 @@ fn decode_cwd(payload: &[u8], offset: &mut usize) -> Option<String> {
 fn read_full_pane_sync_mandatory_sections(
     payload: &[u8],
     mut offset: usize,
-) -> io::Result<(u16, String, FullPaneSyncMandatorySections<'_>)> {
+) -> io::Result<(u32, bool, String, FullPaneSyncMandatorySections<'_>)> {
     let title_len = read_u16_le(payload, 26)? as usize;
     if offset + title_len > payload.len() {
         return Err(io::Error::new(
@@ -132,8 +132,10 @@ fn read_full_pane_sync_mandatory_sections(
             "truncated scrollback header",
         ));
     }
-    let scrollback_rows = read_u16_le(payload, offset)?;
-    offset += 2;
+    let scrollback_rows = read_u32_le(payload, offset)?;
+    offset += 4;
+    let scrollback_replace = payload[offset] != 0;
+    offset += 1;
     let scrollback_len = read_u32_le(payload, offset)? as usize;
     offset += 4;
     if offset + scrollback_len > payload.len() {
@@ -164,6 +166,7 @@ fn read_full_pane_sync_mandatory_sections(
 
     Ok((
         scrollback_rows,
+        scrollback_replace,
         title.into_owned(),
         FullPaneSyncMandatorySections {
             scrollback,
@@ -278,11 +281,13 @@ pub fn encode_full_pane_sync_payload(sync: &FullPaneSync) -> io::Result<Vec<u8>>
 
     write_full_pane_sync_header(&mut buf, sync, title_bytes)?;
     buf.extend_from_slice(&sync.scrollback_rows.to_le_bytes());
+    buf.push(sync.scrollback_replace as u8);
     buf.extend_from_slice(&(sm_scrollback.len() as u32).to_le_bytes());
     buf.extend_from_slice(&sm_scrollback);
     buf.extend_from_slice(&(sm_viewport.len() as u32).to_le_bytes());
     buf.extend_from_slice(&sm_viewport);
     write_full_pane_sync_grapheme_extras(&mut buf, sync);
+    write_full_pane_sync_hyperlink_extras(&mut buf, sync);
     write_full_pane_sync_cwd(&mut buf, sync);
     Ok(buf)
 }
@@ -296,6 +301,7 @@ pub fn encode_full_pane_sync_framed(buf: &mut Vec<u8>, sync: &FullPaneSync) -> i
     let payload_start = 5;
     write_full_pane_sync_header(buf, sync, title_bytes)?;
     buf.extend_from_slice(&sync.scrollback_rows.to_le_bytes());
+    buf.push(sync.scrollback_replace as u8);
     let mut encoder = StateEncoder::new();
     for cell in &sync.scrollback {
         encoder.push_cell(cell);
@@ -348,7 +354,7 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
     let cursor_col = read_u16_le(payload, 22)?;
     let cursor_shape = payload[24];
     let mode_flags = payload[25];
-    let (scrollback_rows, title, sections) =
+    let (scrollback_rows, scrollback_replace, title, sections) =
         read_full_pane_sync_mandatory_sections(payload, FULL_PANE_SYNC_MIN_HEADER_LEN)?;
     let sb_expected = scrollback_rows as usize * cols as usize;
     let scrollback = sm_decode_cells_vec(sections.scrollback, sb_expected)?;
@@ -370,6 +376,7 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
         title: title.to_string(),
         scrollback,
         scrollback_rows,
+        scrollback_replace,
         cells,
         grapheme_extras,
         hyperlink_extras,

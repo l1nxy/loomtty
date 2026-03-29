@@ -171,7 +171,7 @@ pub(crate) async fn handle_client<R, W>(
             let pane_histories: Vec<(u64, usize)> = session
                 .panes
                 .iter()
-                .map(|(&pid, pane)| (pid, pane.history_size()))
+                .map(|(&pid, pane)| (pid, pane.scrollback_total()))
                 .collect();
 
             if let Some(client) = s.clients.get_mut(&client_id) {

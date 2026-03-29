@@ -427,14 +427,23 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(window: Arc<Window>, render_config: &RenderConfig) -> Result<Self> {
-        // macOS deprecated OpenGL; reject before any GL/EGL setup
+    pub fn new(window: Arc<Window>, _render_config: &RenderConfig) -> Result<Self> {
+        // macOS deprecated OpenGL; entire GL backend is unavailable
         #[cfg(target_os = "macos")]
-        return Err(anyhow::anyhow!(
-            "GL backend is not supported on macOS (OpenGL is deprecated). \
-             Use blade (Metal) instead: backend = \"blade\""
-        ));
+        {
+            let _ = window;
+            return Err(anyhow::anyhow!(
+                "GL backend is not supported on macOS (OpenGL is deprecated). \
+                 Use blade (Metal) instead: backend = \"blade\""
+            ));
+        }
 
+        #[cfg(not(target_os = "macos"))]
+        Self::new_impl(window, _render_config)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn new_impl(window: Arc<Window>, render_config: &RenderConfig) -> Result<Self> {
         let size = window.inner_size();
 
         // Build glutin display from existing window
@@ -447,7 +456,6 @@ impl Renderer {
             .map_err(|e| anyhow::anyhow!("display handle error: {e}"))?
             .as_raw();
 
-        #[cfg(not(target_os = "macos"))]
         let display_api_preference = glutin::display::DisplayApiPreference::Egl;
 
         let display = unsafe {

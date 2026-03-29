@@ -27,7 +27,7 @@ impl App {
     /// Play bell audio file via system command (non-blocking).
     /// Guards against spawning unbounded threads by skipping if one is already playing.
     pub fn play_bell_audio(&self) {
-        let path = &self.config.terminal.bell_audio;
+        let path = &self.core.config.terminal.bell_audio;
         if path.is_empty() {
             return;
         }

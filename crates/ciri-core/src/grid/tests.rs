@@ -1,0 +1,969 @@
+use super::*;
+use super::link::{detect_file_path, split_path_line_col};
+
+fn grid_with_line(text: &str) -> ClientPaneGrid {
+    let cols = text.chars().count() as u16;
+    let mut grid = ClientPaneGrid::new(cols, 1, 0);
+    for (i, ch) in text.chars().enumerate() {
+        grid.viewport[i] = PackedCell::with_ch(ch);
+    }
+    grid
+}
+
+#[test]
+fn word_bounds_select_identifier() {
+    let grid = grid_with_line("echo hello_world test");
+    assert_eq!(grid.word_bounds_at(7, 0), Some((5, 15)));
+}
+
+#[test]
+fn word_bounds_select_whitespace_run() {
+    let grid = grid_with_line("a   b");
+    assert_eq!(grid.word_bounds_at(2, 0), Some((1, 3)));
+}
+
+#[test]
+fn word_bounds_select_symbol_run() {
+    let grid = grid_with_line("foo::bar");
+    assert_eq!(grid.word_bounds_at(4, 0), Some((3, 4)));
+}
+
+#[test]
+fn link_at_detects_https_url() {
+    let grid = grid_with_line("go https://example.com/docs now");
+    assert_eq!(
+        grid.link_at(8, 0),
+        Some(LinkMatch {
+            url: "https://example.com/docs".to_string(),
+            start_col: 3,
+            end_col: 26,
+        })
+    );
+}
+
+#[test]
+fn link_at_trims_wrapping_punctuation() {
+    let grid = grid_with_line("(https://example.com/path).");
+    assert_eq!(
+        grid.link_at(10, 0),
+        Some(LinkMatch {
+            url: "https://example.com/path".to_string(),
+            start_col: 1,
+            end_col: 24,
+        })
+    );
+    assert_eq!(grid.link_at(0, 0), None);
+    assert_eq!(grid.link_at(25, 0), None);
+}
+
+#[test]
+fn link_at_normalizes_www_urls() {
+    let grid = grid_with_line("visit www.example.com/test soon");
+    assert_eq!(
+        grid.link_at(10, 0),
+        Some(LinkMatch {
+            url: "https://www.example.com/test".to_string(),
+            start_col: 6,
+            end_col: 25,
+        })
+    );
+}
+
+// ─── Helper: build a grid with scrollback for scroll tests ─────
+fn grid_with_scrollback() -> ClientPaneGrid {
+    // 4 cols, 2 rows, 10 max_scrollback
+    let mut grid = ClientPaneGrid::new(4, 2, 10);
+    // Feed 3 full syncs to accumulate scrollback
+    for round in 0..3u8 {
+        let ch = (b'a' + round) as char;
+        let sync = FullPaneSync {
+            pane_id: 1,
+            generation: round as u64,
+            cols: 4,
+            rows: 2,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+            title: String::new(),
+            scrollback: vec![PackedCell::with_ch(ch); 4],
+            scrollback_rows: 1,
+            scrollback_replace: false,
+            cells: vec![PackedCell::with_ch(ch.to_ascii_uppercase()); 8],
+            grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
+            hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
+            cwd: None,
+        };
+        grid.apply_full_sync(&sync);
+    }
+    // scrollback: ['a'x4, 'b'x4, 'c'x4], viewport: ['C'x4, 'C'x4]
+    grid
+}
+
+// ─── row() ──────────────────────────────────────────────────────
+
+#[test]
+fn row_returns_scrollback_row() {
+    let grid = grid_with_scrollback();
+    let row = grid.row(0);
+    assert_eq!(row.len(), 4);
+    assert_eq!(row[0].ch(), 'a');
+}
+
+#[test]
+fn row_returns_viewport_row() {
+    let grid = grid_with_scrollback();
+    let sb = grid.scrollback.len(); // 3
+    let row = grid.row(sb); // first viewport row
+    assert_eq!(row.len(), 4);
+    assert_eq!(row[0].ch(), 'C');
+}
+
+#[test]
+fn row_out_of_bounds_returns_empty() {
+    let grid = grid_with_scrollback();
+    let row = grid.row(9999);
+    assert!(row.is_empty());
+}
+
+// ─── viewport_top() ─────────────────────────────────────────────
+
+#[test]
+fn viewport_top_no_scroll() {
+    let grid = grid_with_scrollback();
+    // scroll_offset=0 → top = scrollback.len()
+    assert_eq!(grid.viewport_top(), grid.scrollback.len());
+}
+
+#[test]
+fn viewport_top_scrolled_up() {
+    let mut grid = grid_with_scrollback();
+    grid.scroll_up(2);
+    // scroll_offset=2 → top = scrollback.len() - 2
+    assert_eq!(grid.viewport_top(), grid.scrollback.len() - 2);
+}
+
+#[test]
+fn viewport_top_scrolled_max() {
+    let mut grid = grid_with_scrollback();
+    grid.scroll_up(100); // clamped to max_scroll_offset = scrollback.len()
+    assert_eq!(grid.viewport_top(), 0);
+}
+
+// ─── visible_cells() ────────────────────────────────────────────
+
+#[test]
+fn visible_cells_no_scroll_returns_viewport_clone() {
+    let grid = grid_with_scrollback();
+    let cells = grid.visible_cells();
+    assert_eq!(cells.len(), 8); // 2 rows * 4 cols
+    assert_eq!(cells[0].ch(), 'C');
+    assert_eq!(cells[7].ch(), 'C');
+}
+
+#[test]
+fn visible_cells_scrolled_mixes_scrollback_and_viewport() {
+    let mut grid = grid_with_scrollback();
+    // scrollback: [row0='a', row1='b', row2='c'], viewport: [row3='C', row4='C']
+    grid.scroll_up(1);
+    let cells = grid.visible_cells();
+    assert_eq!(cells.len(), 8);
+    // top row should be last scrollback row ('c')
+    assert_eq!(cells[0].ch(), 'c');
+    // bottom row should be first viewport row ('C')
+    assert_eq!(cells[4].ch(), 'C');
+}
+
+#[test]
+fn visible_cells_scrolled_to_top() {
+    let mut grid = grid_with_scrollback();
+    grid.scroll_up(100); // clamp to max=3
+    let cells = grid.visible_cells();
+    // showing scrollback rows 0 and 1 ('a' and 'b')
+    assert_eq!(cells[0].ch(), 'a');
+    assert_eq!(cells[4].ch(), 'b');
+}
+
+// ─── scroll clamping ────────────────────────────────────────────
+
+#[test]
+fn scroll_up_returns_actual_scrolled() {
+    let mut grid = grid_with_scrollback(); // 3 scrollback rows
+    assert_eq!(grid.scroll_up(2), 2);
+    assert_eq!(grid.scroll_up(5), 1); // only 1 more possible
+    assert_eq!(grid.scroll_up(1), 0); // already at max
+}
+
+#[test]
+fn scroll_down_returns_actual_scrolled() {
+    let mut grid = grid_with_scrollback();
+    grid.scroll_up(3);
+    assert_eq!(grid.scroll_down(2), 2);
+    assert_eq!(grid.scroll_down(5), 1); // only 1 left
+    assert_eq!(grid.scroll_down(1), 0); // already at bottom
+}
+
+#[test]
+fn scroll_up_no_scrollback_returns_zero() {
+    let mut grid = ClientPaneGrid::new(4, 2, 0);
+    assert_eq!(grid.scroll_up(10), 0);
+}
+
+#[test]
+fn scroll_to_bottom_resets_offset() {
+    let mut grid = grid_with_scrollback();
+    grid.scroll_up(2);
+    assert_eq!(grid.scroll_offset, 2);
+    grid.scroll_to_bottom();
+    assert_eq!(grid.scroll_offset, 0);
+}
+
+// ─── apply_full_sync edge cases ─────────────────────────────────
+
+#[test]
+fn full_sync_dimension_change_preserves_scrollback() {
+    let mut grid = grid_with_scrollback();
+    assert_eq!(grid.scrollback.len(), 3);
+
+    // Resize from 4x2 to 6x3
+    let sync = FullPaneSync {
+        pane_id: 1,
+        generation: 10,
+        cols: 6,
+        rows: 3,
+        cursor_line: 1,
+        cursor_col: 2,
+        cursor_shape: CURSOR_BEAM,
+        mode_flags: 0,
+        title: "resized".into(),
+        scrollback: vec![],
+        scrollback_rows: 0,
+            scrollback_replace: false,
+        cells: vec![PackedCell::with_ch('X'); 18],
+        grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
+        hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
+        cwd: None,
+    };
+    grid.apply_full_sync(&sync);
+    assert_eq!(grid.cols, 6);
+    assert_eq!(grid.rows, 3);
+    assert_eq!(grid.scrollback.len(), 3); // preserved across resize
+    assert_eq!(grid.viewport.len(), 18);
+    assert_eq!(grid.viewport[0].ch(), 'X');
+    assert_eq!(grid.scroll_offset, 0);
+
+    // Old scrollback rows are 4 cols wide; visible_cells() pads to 6
+    grid.scroll_up(1);
+    let cells = grid.visible_cells();
+    assert_eq!(cells.len(), 18); // 3 rows × 6 cols
+    // Last scrollback row ('c' × 4) padded to 6 cols
+    assert_eq!(cells[0].ch(), 'c');
+    assert_eq!(cells[3].ch(), 'c');
+    assert_eq!(cells[4].ch(), ' '); // padded
+    assert_eq!(cells[5].ch(), ' '); // padded
+}
+
+#[test]
+fn full_sync_short_cells_blanks_remainder() {
+    let mut grid = ClientPaneGrid::new(4, 2, 10);
+    let sync = FullPaneSync {
+        pane_id: 1,
+        generation: 1,
+        cols: 4,
+        rows: 2,
+        cursor_line: 0,
+        cursor_col: 0,
+        cursor_shape: CURSOR_BLOCK,
+        mode_flags: 0,
+        title: String::new(),
+        scrollback: vec![],
+        scrollback_rows: 0,
+            scrollback_replace: false,
+        cells: vec![PackedCell::with_ch('A'); 3], // only 3 of 8 cells
+        grapheme_extras: GraphemeExtras::new(),
+        hyperlink_extras: HyperlinkExtras::new(),
+        cwd: None,
+    };
+    grid.apply_full_sync(&sync);
+    assert_eq!(grid.viewport[0].ch(), 'A');
+    assert_eq!(grid.viewport[2].ch(), 'A');
+    assert_eq!(grid.viewport[3].ch(), ' '); // default blank
+    assert_eq!(grid.viewport[7].ch(), ' ');
+}
+
+#[test]
+fn full_sync_scrollback_trimmed_to_max() {
+    let mut grid = ClientPaneGrid::new(2, 1, 3); // max 3 scrollback rows
+    for i in 0u8..10 {
+        let ch = (b'0' + i) as char;
+        let sync = FullPaneSync {
+            pane_id: 1,
+            generation: i as u64,
+            cols: 2,
+            rows: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+            title: String::new(),
+            scrollback: vec![PackedCell::with_ch(ch); 2],
+            scrollback_rows: 1,
+            scrollback_replace: false,
+            cells: vec![PackedCell::with_ch('.'); 2],
+            grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
+            hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
+            cwd: None,
+        };
+        grid.apply_full_sync(&sync);
+    }
+    // Should keep only the last 3 scrollback rows
+    assert_eq!(grid.scrollback.len(), 3);
+    // Oldest surviving = '7', then '8', then '9'
+    assert_eq!(grid.scrollback[0].cells[0].ch(), '7');
+    assert_eq!(grid.scrollback[2].cells[0].ch(), '9');
+}
+
+#[test]
+fn full_sync_clamps_scroll_offset() {
+    let mut grid = ClientPaneGrid::new(2, 1, 5);
+    // Add some scrollback
+    for i in 0..4u8 {
+        let sync = FullPaneSync {
+            pane_id: 1,
+            generation: i as u64,
+            cols: 2,
+            rows: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+            title: String::new(),
+            scrollback: vec![PackedCell::with_ch('x'); 2],
+            scrollback_rows: 1,
+            scrollback_replace: false,
+            cells: vec![PackedCell::default(); 2],
+            grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
+            hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
+            cwd: None,
+        };
+        grid.apply_full_sync(&sync);
+    }
+    assert_eq!(grid.scrollback.len(), 4);
+    grid.scroll_up(4); // scroll to top
+    assert_eq!(grid.scroll_offset, 4);
+
+    // Resize resets scroll_offset to 0, but preserves scrollback
+    let sync = FullPaneSync {
+        pane_id: 1,
+        generation: 10,
+        cols: 3,
+        rows: 1, // dimension change
+        cursor_line: 0,
+        cursor_col: 0,
+        cursor_shape: CURSOR_BLOCK,
+        mode_flags: 0,
+        title: String::new(),
+        scrollback: vec![],
+        scrollback_rows: 0,
+            scrollback_replace: false,
+        cells: vec![PackedCell::default(); 3],
+        grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
+        hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
+        cwd: None,
+    };
+    grid.apply_full_sync(&sync);
+    assert_eq!(grid.scroll_offset, 0); // reset by dimension change
+    assert_eq!(grid.scrollback.len(), 4); // scrollback preserved
+}
+
+#[test]
+fn scrollback_replace_clears_and_repopulates() {
+    let mut grid = ClientPaneGrid::new(4, 2, 10);
+    // Accumulate 3 scrollback rows: 'a', 'b', 'c'
+    for ch in ['a', 'b', 'c'] {
+        grid.apply_full_sync(&FullPaneSync {
+            pane_id: 1,
+            generation: 1,
+            cols: 4,
+            rows: 2,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+            title: String::new(),
+            scrollback: vec![PackedCell::with_ch(ch); 4],
+            scrollback_rows: 1,
+            scrollback_replace: false,
+            cells: vec![PackedCell::default(); 8],
+            grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
+            hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
+            cwd: None,
+        });
+    }
+    assert_eq!(grid.scrollback.len(), 3);
+    assert_eq!(grid.scrollback[0].cells[0].ch(), 'a');
+
+    // Now apply a replace sync with 2 rows: 'X', 'Y'
+    grid.apply_full_sync(&FullPaneSync {
+        pane_id: 1,
+        generation: 2,
+        cols: 4,
+        rows: 2,
+        cursor_line: 0,
+        cursor_col: 0,
+        cursor_shape: CURSOR_BLOCK,
+        mode_flags: 0,
+        title: String::new(),
+        scrollback: vec![
+            PackedCell::with_ch('X'), PackedCell::with_ch('X'),
+            PackedCell::with_ch('X'), PackedCell::with_ch('X'),
+            PackedCell::with_ch('Y'), PackedCell::with_ch('Y'),
+            PackedCell::with_ch('Y'), PackedCell::with_ch('Y'),
+        ],
+        scrollback_rows: 2,
+        scrollback_replace: true,
+        cells: vec![PackedCell::default(); 8],
+        grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
+        hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
+        cwd: None,
+    });
+    // Old scrollback cleared, replaced with 2 new rows
+    assert_eq!(grid.scrollback.len(), 2);
+    assert_eq!(grid.scrollback[0].cells[0].ch(), 'X');
+    assert_eq!(grid.scrollback[1].cells[0].ch(), 'Y');
+}
+
+// ─── apply_delta edge cases ─────────────────────────────────────
+
+#[test]
+fn delta_apply_second_row() {
+    let mut grid = ClientPaneGrid::new(5, 3, 0);
+    let delta = CellDelta {
+        pane_id: 1,
+        generation: 1,
+        cursor_line: 0,
+        cursor_col: 0,
+        cursor_shape: 0,
+        mode_flags: 0,
+        regions: vec![DamageRegion {
+            line: 2,
+            left: 1,
+            right: 3,
+            cells: vec![
+                PackedCell::with_ch('X'),
+                PackedCell::with_ch('Y'),
+                PackedCell::with_ch('Z'),
+            ],
+        }],
+    };
+    grid.apply_delta(&delta);
+    // Row 2 (offset = 2 * 5 = 10), cols 1-3
+    assert_eq!(grid.viewport[10].ch(), ' '); // col 0 untouched
+    assert_eq!(grid.viewport[11].ch(), 'X');
+    assert_eq!(grid.viewport[12].ch(), 'Y');
+    assert_eq!(grid.viewport[13].ch(), 'Z');
+    assert_eq!(grid.viewport[14].ch(), ' '); // col 4 untouched
+}
+
+#[test]
+fn delta_out_of_bounds_line_skipped() {
+    let mut grid = ClientPaneGrid::new(4, 2, 0);
+    let delta = CellDelta {
+        pane_id: 1,
+        generation: 1,
+        cursor_line: 0,
+        cursor_col: 0,
+        cursor_shape: 0,
+        mode_flags: 0,
+        regions: vec![DamageRegion {
+            line: 5,
+            left: 0,
+            right: 0, // line 5 doesn't exist in 2-row grid
+            cells: vec![PackedCell::with_ch('X')],
+        }],
+    };
+    grid.apply_delta(&delta);
+    // Should not panic, viewport unchanged
+    assert_eq!(grid.viewport[0].ch(), ' ');
+}
+
+#[test]
+fn delta_region_clamped_to_cols() {
+    let mut grid = ClientPaneGrid::new(3, 1, 0);
+    let delta = CellDelta {
+        pane_id: 1,
+        generation: 1,
+        cursor_line: 0,
+        cursor_col: 0,
+        cursor_shape: 0,
+        mode_flags: 0,
+        regions: vec![DamageRegion {
+            line: 0,
+            left: 1,
+            right: 9, // right extends way past cols=3
+            cells: vec![PackedCell::with_ch('X'); 9],
+        }],
+    };
+    grid.apply_delta(&delta);
+    // Only cols 1 and 2 should be written (clamped to cols=3)
+    assert_eq!(grid.viewport[0].ch(), ' ');
+    assert_eq!(grid.viewport[1].ch(), 'X');
+    assert_eq!(grid.viewport[2].ch(), 'X');
+}
+
+#[test]
+fn delta_sets_mode_flags() {
+    let mut grid = ClientPaneGrid::new(4, 1, 0);
+    let delta = CellDelta {
+        pane_id: 1,
+        generation: 1,
+        cursor_line: 0,
+        cursor_col: 3,
+        cursor_shape: CURSOR_BEAM,
+        mode_flags: MODE_SHELL_INTEGRATION | MODE_ALT_SCREEN,
+        regions: vec![],
+    };
+    grid.apply_delta(&delta);
+    assert_eq!(grid.cursor_col, 3);
+    assert_eq!(grid.cursor_shape, CURSOR_BEAM);
+    assert!(grid.has_shell_integration);
+    assert!(!grid.has_kitty_keyboard);
+}
+
+// ─── text_in_range spanning scrollback + viewport ────────────────
+
+#[test]
+fn text_in_range_spans_scrollback_and_viewport() {
+    let mut grid = ClientPaneGrid::new(3, 1, 10);
+    // Add one scrollback row 'abc', viewport row 'XYZ'
+    let sync = FullPaneSync {
+        pane_id: 1,
+        generation: 1,
+        cols: 3,
+        rows: 1,
+        cursor_line: 0,
+        cursor_col: 0,
+        cursor_shape: CURSOR_BLOCK,
+        mode_flags: 0,
+        title: String::new(),
+        scrollback: vec![
+            PackedCell::with_ch('a'),
+            PackedCell::with_ch('b'),
+            PackedCell::with_ch('c'),
+        ],
+        scrollback_rows: 1,
+            scrollback_replace: false,
+        cells: vec![
+            PackedCell::with_ch('X'),
+            PackedCell::with_ch('Y'),
+            PackedCell::with_ch('Z'),
+        ],
+        grapheme_extras: GraphemeExtras::new(),
+        hyperlink_extras: HyperlinkExtras::new(),
+        cwd: None,
+    };
+    grid.apply_full_sync(&sync);
+    // buffer_row 0 = scrollback 'abc', buffer_row 1 = viewport 'XYZ'
+    let text = grid.text_in_range((0, 0), (2, 1));
+    assert_eq!(text, "abc\nXYZ");
+}
+
+// ─── search spanning scrollback + viewport ──────────────────────
+
+#[test]
+fn search_finds_in_scrollback_and_viewport() {
+    let mut grid = ClientPaneGrid::new(5, 1, 10);
+    let sync = FullPaneSync {
+        pane_id: 1,
+        generation: 1,
+        cols: 5,
+        rows: 1,
+        cursor_line: 0,
+        cursor_col: 0,
+        cursor_shape: CURSOR_BLOCK,
+        mode_flags: 0,
+        title: String::new(),
+        scrollback: vec![
+            PackedCell::with_ch('h'),
+            PackedCell::with_ch('e'),
+            PackedCell::with_ch('l'),
+            PackedCell::with_ch('l'),
+            PackedCell::with_ch('o'),
+        ],
+        scrollback_rows: 1,
+            scrollback_replace: false,
+        cells: vec![
+            PackedCell::with_ch('h'),
+            PackedCell::with_ch('e'),
+            PackedCell::with_ch('l'),
+            PackedCell::with_ch('l'),
+            PackedCell::with_ch('o'),
+        ],
+        grapheme_extras: GraphemeExtras::new(),
+        hyperlink_extras: HyperlinkExtras::new(),
+        cwd: None,
+    };
+    grid.apply_full_sync(&sync);
+    let results = grid.search("hello");
+    assert_eq!(results.len(), 2); // found in both scrollback row 0 and viewport row 1
+    assert_eq!(results[0].0, 0); // scrollback row
+    assert_eq!(results[1].0, 1); // viewport row
+}
+
+// ─── word_bounds_at / link_at bounds ────────────────────────────
+
+#[test]
+fn word_bounds_at_out_of_bounds_returns_none() {
+    let grid = ClientPaneGrid::new(4, 2, 0);
+    assert_eq!(grid.word_bounds_at(0, 999), None);
+}
+
+#[test]
+fn link_at_out_of_bounds_returns_none() {
+    let grid = ClientPaneGrid::new(4, 2, 0);
+    assert_eq!(grid.link_at(0, 999), None);
+}
+
+// ─── file path detection ─────────────────────────────────────────
+
+#[test]
+fn link_at_detects_absolute_unix_path() {
+    let grid = grid_with_line("error in /usr/src/main.rs found");
+    let m = grid.link_at(15, 0).unwrap();
+    assert_eq!(m.url, "/usr/src/main.rs");
+}
+
+#[test]
+fn link_at_detects_relative_path() {
+    let grid = grid_with_line("see ./src/lib.rs for details");
+    let m = grid.link_at(6, 0).unwrap();
+    assert_eq!(m.url, "./src/lib.rs");
+}
+
+#[test]
+fn link_at_detects_parent_relative_path() {
+    let grid = grid_with_line("check ../config.toml now");
+    let m = grid.link_at(10, 0).unwrap();
+    assert_eq!(m.url, "../config.toml");
+}
+
+#[test]
+fn link_at_detects_bare_path_with_extension() {
+    let grid = grid_with_line("error at src/main.rs:42:10 here");
+    let m = grid.link_at(12, 0).unwrap();
+    assert_eq!(m.url, "src/main.rs:42:10");
+}
+
+#[test]
+fn link_at_detects_path_with_line_number() {
+    let grid = grid_with_line("warning crates/foo/lib.rs:99 x");
+    let m = grid.link_at(15, 0).unwrap();
+    assert_eq!(m.url, "crates/foo/lib.rs:99");
+}
+
+#[test]
+fn link_at_detects_home_path() {
+    let grid = grid_with_line("edit ~/docs/notes.md please");
+    let m = grid.link_at(10, 0).unwrap();
+    assert_eq!(m.url, "~/docs/notes.md");
+}
+
+#[test]
+fn link_at_detects_windows_path() {
+    let grid = grid_with_line(r"open C:\Users\foo\bar.txt now");
+    let m = grid.link_at(10, 0).unwrap();
+    assert_eq!(m.url, r"C:\Users\foo\bar.txt");
+}
+
+#[test]
+fn link_at_ignores_bare_word_without_separator() {
+    let grid = grid_with_line("just a plain word here");
+    assert_eq!(grid.link_at(8, 0), None);
+}
+
+#[test]
+fn detect_file_path_unit_tests() {
+    assert!(detect_file_path("/foo/bar.rs").is_some());
+    assert!(detect_file_path("./foo.rs").is_some());
+    assert!(detect_file_path("../foo.rs").is_some());
+    assert!(detect_file_path("~/foo.rs").is_some());
+    assert!(detect_file_path("src/main.rs").is_some());
+    assert!(detect_file_path("src/main.rs:42").is_some());
+    assert!(detect_file_path("src/main.rs:42:10").is_some());
+    assert_eq!(detect_file_path("plainword"), None);
+    assert_eq!(detect_file_path("no_slash_here"), None);
+}
+
+#[test]
+fn split_path_line_col_cases() {
+    assert_eq!(split_path_line_col("foo.rs"), ("foo.rs", ""));
+    assert_eq!(split_path_line_col("foo.rs:42"), ("foo.rs", ":42"));
+    assert_eq!(
+        split_path_line_col("foo.rs:42:10"),
+        ("foo.rs", ":42:10")
+    );
+    assert_eq!(
+        split_path_line_col("C:\\foo.rs:42"),
+        ("C:\\foo.rs", ":42")
+    );
+}
+
+#[test]
+fn word_bounds_on_viewport_row() {
+    let mut grid = ClientPaneGrid::new(5, 1, 10);
+    let sync = FullPaneSync {
+        pane_id: 1,
+        generation: 1,
+        cols: 5,
+        rows: 1,
+        cursor_line: 0,
+        cursor_col: 0,
+        cursor_shape: CURSOR_BLOCK,
+        mode_flags: 0,
+        title: String::new(),
+        scrollback: vec![PackedCell::with_ch('x'); 5],
+        scrollback_rows: 1,
+            scrollback_replace: false,
+        cells: vec![
+            PackedCell::with_ch('a'),
+            PackedCell::with_ch('b'),
+            PackedCell::with_ch(' '),
+            PackedCell::with_ch('c'),
+            PackedCell::with_ch('d'),
+        ],
+        grapheme_extras: GraphemeExtras::new(),
+        hyperlink_extras: HyperlinkExtras::new(),
+        cwd: None,
+    };
+    grid.apply_full_sync(&sync);
+    // buffer_row 1 = viewport row → "ab cd"
+    assert_eq!(grid.word_bounds_at(0, 1), Some((0, 1))); // "ab"
+    assert_eq!(grid.word_bounds_at(3, 1), Some((3, 4))); // "cd"
+}
+
+// ─── existing tests (unchanged) ─────────────────────────────────
+
+#[test]
+fn delta_apply_patches_viewport() {
+    let mut grid = ClientPaneGrid::new(10, 2, 0);
+    let delta = CellDelta {
+        pane_id: 1,
+        generation: 1,
+        cursor_line: 0,
+        cursor_col: 0,
+        cursor_shape: CURSOR_BLOCK,
+        mode_flags: 0,
+        regions: vec![DamageRegion {
+            line: 0,
+            left: 2,
+            right: 4,
+            cells: vec![
+                PackedCell::with_ch('A'),
+                PackedCell::with_ch('B'),
+                PackedCell::with_ch('C'),
+            ],
+        }],
+    };
+    grid.apply_delta(&delta);
+    assert_eq!(grid.viewport[2].ch(), 'A');
+    assert_eq!(grid.viewport[3].ch(), 'B');
+    assert_eq!(grid.viewport[4].ch(), 'C');
+}
+
+#[test]
+fn full_sync_populates_viewport_and_scrollback() {
+    let mut grid = ClientPaneGrid::new(4, 2, 100);
+    let sync = FullPaneSync {
+        pane_id: 1,
+        generation: 1,
+        cols: 4,
+        rows: 2,
+        cursor_line: 0,
+        cursor_col: 0,
+        cursor_shape: CURSOR_BLOCK,
+        mode_flags: 0,
+        title: String::new(),
+        scrollback: vec![PackedCell::with_ch('S'); 4],
+        scrollback_rows: 1,
+            scrollback_replace: false,
+        cells: vec![
+            PackedCell::with_ch('A'),
+            PackedCell::with_ch('B'),
+            PackedCell::with_ch('C'),
+            PackedCell::with_ch('D'),
+            PackedCell::with_ch('E'),
+            PackedCell::with_ch('F'),
+            PackedCell::with_ch('G'),
+            PackedCell::with_ch('H'),
+        ],
+        grapheme_extras: GraphemeExtras::new(),
+        hyperlink_extras: HyperlinkExtras::new(),
+        cwd: None,
+    };
+    grid.apply_full_sync(&sync);
+    assert_eq!(grid.scrollback.len(), 1);
+    assert_eq!(grid.viewport[0].ch(), 'A');
+    assert_eq!(grid.viewport[7].ch(), 'H');
+    assert_eq!(grid.total_lines(), 3); // 1 scrollback + 2 viewport
+    assert_eq!(grid.max_scroll_offset(), 1);
+}
+
+// ─── reflow tests ──────────────────────────────────────────────────
+
+/// Helper: make a PackedCell with a char and optional WRAPLINE flag.
+fn cell_with(ch: char, wrap: bool) -> PackedCell {
+    let mut c = PackedCell::with_ch(ch);
+    if wrap {
+        let f = c.flags_u16() | FLAG_WRAPLINE;
+        c.flags = f.to_le_bytes();
+    }
+    c
+}
+
+#[test]
+fn reflow_widen_joins_wrapped_rows() {
+    // Start with 4-col grid, scrollback has a 8-char logical line wrapped
+    // across 2 rows: "ABCD" (wrapped) + "EF  " (not wrapped)
+    let mut grid = ClientPaneGrid::new(4, 1, 100);
+    grid.scrollback.push_back(ScrollbackRow {
+        cells: vec![
+            PackedCell::with_ch('A'),
+            PackedCell::with_ch('B'),
+            PackedCell::with_ch('C'),
+            cell_with('D', true), // last cell has WRAPLINE
+        ],
+        wrapped: true,
+    });
+    grid.scrollback.push_back(ScrollbackRow {
+        cells: vec![
+            PackedCell::with_ch('E'),
+            PackedCell::with_ch('F'),
+            PackedCell::default(),
+            PackedCell::default(),
+        ],
+        wrapped: false,
+    });
+
+    // Resize to 8 cols via a sync
+    let sync = FullPaneSync {
+        pane_id: 1,
+        generation: 1,
+        cols: 8,
+        rows: 1,
+        cursor_line: 0,
+        cursor_col: 0,
+        cursor_shape: CURSOR_BLOCK,
+        mode_flags: 0,
+        title: String::new(),
+        scrollback: vec![],
+        scrollback_rows: 0,
+            scrollback_replace: false,
+        cells: vec![PackedCell::default(); 8],
+        grapheme_extras: GraphemeExtras::new(),
+        hyperlink_extras: HyperlinkExtras::new(),
+        cwd: None,
+    };
+    grid.apply_full_sync(&sync);
+
+    // Should reflow to 1 row: "ABCDEF  " (not wrapped)
+    assert_eq!(grid.scrollback.len(), 1);
+    assert!(!grid.scrollback[0].wrapped);
+    assert_eq!(grid.scrollback[0].cells[0].ch(), 'A');
+    assert_eq!(grid.scrollback[0].cells[5].ch(), 'F');
+}
+
+#[test]
+fn reflow_narrow_splits_long_line() {
+    // Start with 6-col grid, scrollback has "ABCDEF" (not wrapped)
+    let mut grid = ClientPaneGrid::new(6, 1, 100);
+    grid.scrollback.push_back(ScrollbackRow {
+        cells: vec![
+            PackedCell::with_ch('A'),
+            PackedCell::with_ch('B'),
+            PackedCell::with_ch('C'),
+            PackedCell::with_ch('D'),
+            PackedCell::with_ch('E'),
+            PackedCell::with_ch('F'),
+        ],
+        wrapped: false,
+    });
+
+    // Resize to 3 cols
+    let sync = FullPaneSync {
+        pane_id: 1,
+        generation: 1,
+        cols: 3,
+        rows: 1,
+        cursor_line: 0,
+        cursor_col: 0,
+        cursor_shape: CURSOR_BLOCK,
+        mode_flags: 0,
+        title: String::new(),
+        scrollback: vec![],
+        scrollback_rows: 0,
+            scrollback_replace: false,
+        cells: vec![PackedCell::default(); 3],
+        grapheme_extras: GraphemeExtras::new(),
+        hyperlink_extras: HyperlinkExtras::new(),
+        cwd: None,
+    };
+    grid.apply_full_sync(&sync);
+
+    // Should reflow to 2 rows: "ABC" (wrapped) + "DEF" (not wrapped)
+    assert_eq!(grid.scrollback.len(), 2);
+    assert!(grid.scrollback[0].wrapped);
+    assert!(!grid.scrollback[1].wrapped);
+    assert_eq!(grid.scrollback[0].cells[0].ch(), 'A');
+    assert_eq!(grid.scrollback[0].cells[2].ch(), 'C');
+    assert_eq!(grid.scrollback[1].cells[0].ch(), 'D');
+    assert_eq!(grid.scrollback[1].cells[2].ch(), 'F');
+}
+
+#[test]
+fn reflow_preserves_unwrapped_lines() {
+    // Two separate logical lines that don't wrap
+    let mut grid = ClientPaneGrid::new(4, 1, 100);
+    grid.scrollback.push_back(ScrollbackRow {
+        cells: vec![
+            PackedCell::with_ch('A'),
+            PackedCell::with_ch('B'),
+            PackedCell::default(),
+            PackedCell::default(),
+        ],
+        wrapped: false,
+    });
+    grid.scrollback.push_back(ScrollbackRow {
+        cells: vec![
+            PackedCell::with_ch('X'),
+            PackedCell::with_ch('Y'),
+            PackedCell::default(),
+            PackedCell::default(),
+        ],
+        wrapped: false,
+    });
+
+    // Resize to 8 cols — should stay as 2 separate rows (not joined)
+    let sync = FullPaneSync {
+        pane_id: 1,
+        generation: 1,
+        cols: 8,
+        rows: 1,
+        cursor_line: 0,
+        cursor_col: 0,
+        cursor_shape: CURSOR_BLOCK,
+        mode_flags: 0,
+        title: String::new(),
+        scrollback: vec![],
+        scrollback_rows: 0,
+            scrollback_replace: false,
+        cells: vec![PackedCell::default(); 8],
+        grapheme_extras: GraphemeExtras::new(),
+        hyperlink_extras: HyperlinkExtras::new(),
+        cwd: None,
+    };
+    grid.apply_full_sync(&sync);
+
+    assert_eq!(grid.scrollback.len(), 2);
+    assert_eq!(grid.scrollback[0].cells[0].ch(), 'A');
+    assert_eq!(grid.scrollback[1].cells[0].ch(), 'X');
+}

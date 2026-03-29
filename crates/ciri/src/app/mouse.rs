@@ -12,11 +12,11 @@ impl App {
         let my = position.y as f32;
         self.last_mouse_pos = Some((mx, my));
 
-        if self.overview.active && self.overview.dragging {
+        if self.core.overview.active && self.core.overview.dragging {
             self.handle_overview_cursor_moved(mx, my);
         } else if self.handle_ui_cursor_hover(mx, my) {
             return;
-        } else if self.overview.active {
+        } else if self.core.overview.active {
             self.handle_overview_cursor_moved(mx, my);
         } else {
             self.handle_main_cursor_moved(mx, my);
@@ -48,7 +48,7 @@ impl App {
     }
 
     fn handle_left_mouse_pressed(&mut self, mx: f32, my: f32) {
-        if self.overview.active {
+        if self.core.overview.active {
             self.dispatch_ui_click(mx, my);
         } else {
             let mut started_drag = self.start_column_resize_drag(mx);
@@ -61,7 +61,7 @@ impl App {
                 if let Some(hit) = self.hit_test_scrollbar(mx, my) {
                     if hit.on_thumb {
                         // Start dragging the scrollbar thumb
-                        self.drag.scrollbar_dragging = Some(super::ScrollbarDragInfo {
+                        self.core.drag.scrollbar_dragging = Some(super::ScrollbarDragInfo {
                             pane_id: hit.pane_id,
                             pane_inner_y: hit.inner_y,
                             pane_inner_h: hit.inner_h,
@@ -96,7 +96,7 @@ impl App {
                         && self.link_activation_modifier_active()
                         && let Some(url) = self.hovered_link_url_at(pane_id, col, buf_row)
                     {
-                        self.selection = None;
+                        self.core.selection = None;
                         self.open_url(&url);
                         if let Some(w) = &self.window {
                             w.request_redraw();
@@ -108,7 +108,7 @@ impl App {
                     let click_now = Instant::now();
                     let is_double_click =
                         !shift && self.is_double_left_click(pane_id, col, buf_row, click_now);
-                    let ws = self.workspaces.active_mut();
+                    let ws = self.core.workspaces.active_mut();
                     for col_idx in 0..ws.columns.len() {
                         if ws.columns[col_idx].contains_pane(pane_id) {
                             ws.active_column_idx = col_idx;
@@ -123,13 +123,13 @@ impl App {
                             break;
                         }
                     }
-                    self.remember_workspace_pane(self.workspaces.active_workspace_idx, pane_id);
+                    self.remember_workspace_pane(self.core.workspaces.active_workspace_idx, pane_id);
                     self.send(ClientMessage::FocusPane { pane_id });
                     self.animate_to_active();
                     self.remember_left_click(pane_id, col, buf_row, click_now);
 
                     if shift {
-                        self.selection = Some(super::Selection {
+                        self.core.selection = Some(super::Selection {
                             pane_id,
                             start: (col, buf_row),
                             end: (col, buf_row),
@@ -137,7 +137,7 @@ impl App {
                         });
                     } else if is_double_click {
                         if !self.select_word_at(pane_id, col, buf_row) {
-                            self.selection = Some(super::Selection {
+                            self.core.selection = Some(super::Selection {
                                 pane_id,
                                 start: (col, buf_row),
                                 end: (col, buf_row),
@@ -155,7 +155,7 @@ impl App {
                                 modifiers: 0,
                             });
                         }
-                        self.selection = Some(super::Selection {
+                        self.core.selection = Some(super::Selection {
                             pane_id,
                             start: (col, buf_row),
                             end: (col, buf_row),
@@ -178,8 +178,8 @@ impl App {
         if self.finish_resize_drag() {
             return;
         }
-        self.overview.dragging = false;
-        self.overview.drag_last_pos = None;
+        self.core.overview.dragging = false;
+        self.core.overview.drag_last_pos = None;
 
         if had_left_hold && let Some((pane_id, col, row)) = self.pixel_to_viewport_cell(mx, my) {
             self.send_lossy(ClientMessage::MouseInput {
@@ -192,14 +192,14 @@ impl App {
             });
         }
 
-        if let Some(sel) = &self.selection {
+        if let Some(sel) = &self.core.selection {
             log::debug!(
                 "selection release: start={:?} end={:?} active={}",
                 sel.start,
                 sel.end,
                 sel.active
             );
-            if sel.active && sel.start != sel.end && self.config.terminal.copy_on_select {
+            if sel.active && sel.start != sel.end && self.core.config.terminal.copy_on_select {
                 if let Some(text) = self.extract_selected_text() {
                     log::info!("copy-on-select: {} bytes", text.len());
                     if let Some(cb) = &mut self.clipboard {
@@ -208,7 +208,7 @@ impl App {
                 }
             }
         }
-        if let Some(sel) = &mut self.selection {
+        if let Some(sel) = &mut self.core.selection {
             sel.active = false;
         }
     }
@@ -230,7 +230,7 @@ impl App {
             return;
         }
 
-        if self.overview.active {
+        if self.core.overview.active {
             self.handle_overview_wheel(delta);
         } else {
             self.handle_main_wheel(delta, phase);
@@ -240,50 +240,50 @@ impl App {
 
     /// Handle pinch-to-zoom gesture (macOS/trackpad).
     pub(crate) fn handle_pinch_gesture(&mut self, delta: f64, phase: TouchPhase) {
-        if !self.config.gesture.enabled || !delta.is_finite() {
+        if !self.core.config.gesture.enabled || !delta.is_finite() {
             return;
         }
-        let sensitivity = self.config.gesture.pinch_sensitivity;
+        let sensitivity = self.core.config.gesture.pinch_sensitivity;
 
         match phase {
             TouchPhase::Started => {}
             TouchPhase::Moved => {
                 let zoom_delta = delta * sensitivity;
-                if self.overview.active {
+                if self.core.overview.active {
                     // In overview: pinch out (delta > 0) zooms in toward normal
-                    let cur_zoom = self.anim_mgr.overview_zoom.value();
+                    let cur_zoom = self.core.anim_mgr.overview_zoom.value();
                     let new_zoom = (cur_zoom + zoom_delta).clamp(0.05, 1.0);
                     let sp = SpringParams::default();
-                    if new_zoom >= self.config.animation.zoom_threshold as f64 {
-                        self.overview.hovered_pane = None;
-                        self.overview.active = false;
-                        self.anim_mgr.overview_zoom.animate_to(1.0, sp);
+                    if new_zoom >= self.core.config.animation.zoom_threshold as f64 {
+                        self.core.overview.hovered_pane = None;
+                        self.core.overview.active = false;
+                        self.core.anim_mgr.overview_zoom.animate_to(1.0, sp);
                         self.animate_to_active();
                     } else {
-                        self.anim_mgr.overview_zoom.animate_to(new_zoom, sp);
+                        self.core.anim_mgr.overview_zoom.animate_to(new_zoom, sp);
                     }
                 } else {
                     // In normal mode: pinch in (delta < 0) enters overview
                     if zoom_delta < -0.02 {
-                        self.overview.active = true;
-                        self.overview.hovered_pane = None;
-                        self.context_menu.visible = false;
+                        self.core.overview.active = true;
+                        self.core.overview.hovered_pane = None;
+                        self.core.context_menu.visible = false;
                         self.refresh_overview_zoom();
                         let sp = SpringParams::default();
-                        self.anim_mgr.view_offset_x.animate_to(0.0, sp);
-                        self.anim_mgr.view_offset_y.animate_to(0.0, sp);
+                        self.core.anim_mgr.view_offset_x.animate_to(0.0, sp);
+                        self.core.anim_mgr.view_offset_y.animate_to(0.0, sp);
                     }
                 }
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
                 // Snap: if barely zoomed out, snap back to normal
-                if self.overview.active
-                    && self.anim_mgr.overview_zoom.value() > self.config.animation.zoom_threshold as f64
+                if self.core.overview.active
+                    && self.core.anim_mgr.overview_zoom.value() > self.core.config.animation.zoom_threshold as f64
                 {
-                    self.overview.hovered_pane = None;
-                    self.overview.active = false;
+                    self.core.overview.hovered_pane = None;
+                    self.core.overview.active = false;
                     let sp = SpringParams::default();
-                    self.anim_mgr.overview_zoom.animate_to(1.0, sp);
+                    self.core.anim_mgr.overview_zoom.animate_to(1.0, sp);
                     self.animate_to_active();
                 }
             }
@@ -295,10 +295,10 @@ impl App {
 
     /// Result of a scrollbar hit-test.
     fn hit_test_scrollbar(&self, mx: f32, my: f32) -> Option<super::resize::ScrollbarHit> {
-        let border_w = self.config.appearance.border_width;
-        let padding = self.config.appearance.padding;
-        let vox = self.anim_mgr.view_offset_x.value() as f32;
-        let tiles = self.workspaces.active().visible_tiles(vox);
+        let border_w = self.core.config.appearance.border_width;
+        let padding = self.core.config.appearance.padding;
+        let vox = self.core.anim_mgr.view_offset_x.value() as f32;
+        let tiles = self.core.workspaces.active().visible_tiles(vox);
         let my = self.content_y_from_screen(my)?;
         // Wider hit area (8px from right edge) for comfortable clicking
         let hit_zone_width = 8.0f32;
@@ -319,7 +319,7 @@ impl App {
                 continue;
             }
 
-            let grid = self.pane_grids.get(pane_id)?;
+            let grid = self.core.pane_grids.get(pane_id)?;
             let total_lines = grid.total_lines();
             let visible_rows = grid.rows;
             if total_lines <= visible_rows as usize {
@@ -353,7 +353,7 @@ impl App {
 
     /// Scroll a specific pane up (into history) by `lines`.
     fn scroll_pane_up(&mut self, pane_id: u64, lines: usize) {
-        if let Some(grid) = self.pane_grids.get_mut(&pane_id) {
+        if let Some(grid) = self.core.pane_grids.get_mut(&pane_id) {
             grid.scroll_up(lines);
             self.invalidate_pane_cache(pane_id);
         }
@@ -361,7 +361,7 @@ impl App {
 
     /// Scroll a specific pane down (toward live) by `lines`.
     fn scroll_pane_down(&mut self, pane_id: u64, lines: usize) {
-        if let Some(grid) = self.pane_grids.get_mut(&pane_id) {
+        if let Some(grid) = self.core.pane_grids.get_mut(&pane_id) {
             grid.scroll_down(lines);
             self.invalidate_pane_cache(pane_id);
         }
@@ -384,21 +384,21 @@ impl App {
             self.request_mouse_redraw();
         }
 
-        if !self.overview.dragging {
+        if !self.core.overview.dragging {
             return;
         }
 
-        if let Some((lx, ly)) = self.overview.drag_last_pos {
-            let zoom = self.anim_mgr.overview_zoom.value() as f32;
+        if let Some((lx, ly)) = self.core.overview.drag_last_pos {
+            let zoom = self.core.anim_mgr.overview_zoom.value() as f32;
             let dx = (mx - lx) / zoom;
             let dy = (my - ly) / zoom;
-            self.anim_mgr.view_offset_x
-                .jump_to(self.anim_mgr.view_offset_x.value() - dx as f64);
-            self.anim_mgr.view_offset_y
-                .jump_to(self.anim_mgr.view_offset_y.value() - dy as f64);
+            self.core.anim_mgr.view_offset_x
+                .jump_to(self.core.anim_mgr.view_offset_x.value() - dx as f64);
+            self.core.anim_mgr.view_offset_y
+                .jump_to(self.core.anim_mgr.view_offset_y.value() - dy as f64);
             self.request_mouse_redraw();
         }
-        self.overview.drag_last_pos = Some((mx, my));
+        self.core.overview.drag_last_pos = Some((mx, my));
     }
 
     fn handle_main_cursor_moved(&mut self, mx: f32, my: f32) {
@@ -428,7 +428,7 @@ impl App {
                 w.set_cursor(winit::window::CursorIcon::ColResize);
             } else if near_tile_border {
                 w.set_cursor(winit::window::CursorIcon::RowResize);
-            } else if self.hovered_link.is_some() {
+            } else if self.core.hovered_link.is_some() {
                 w.set_cursor(winit::window::CursorIcon::Pointer);
             } else {
                 w.set_cursor(winit::window::CursorIcon::Default);
@@ -441,27 +441,27 @@ impl App {
     }
 
     fn handle_focus_follows_mouse(&mut self, mx: f32, my: f32) {
-        if !self.config.input.focus_follows_mouse
+        if !self.core.config.input.focus_follows_mouse
             || self.mouse_left_held
-            || self.search_state.is_some()
-            || self.command_palette.is_some()
-            || self.context_menu.visible
+            || self.core.search_state.is_some()
+            || self.core.command_palette.is_some()
+            || self.core.context_menu.visible
         {
             return;
         }
 
         let hover_pane = self.hovered_pane_at(mx, my);
         let Some(pane_id) = hover_pane else {
-            self.last_focus_follows_mouse = None;
+            self.core.last_focus_follows_mouse = None;
             return;
         };
 
-        if self.workspaces.active().active_pane_id() == Some(pane_id) {
+        if self.core.workspaces.active().active_pane_id() == Some(pane_id) {
             return;
         }
 
         let now = Instant::now();
-        let should_switch = match self.last_focus_follows_mouse {
+        let should_switch = match self.core.last_focus_follows_mouse {
             Some((last_id, last_time)) => {
                 pane_id != last_id || now.duration_since(last_time).as_millis() > 50
             }
@@ -471,14 +471,14 @@ impl App {
             return;
         }
 
-        self.last_focus_follows_mouse = Some((pane_id, now));
-        self.remember_workspace_pane(self.workspaces.active_workspace_idx, pane_id);
+        self.core.last_focus_follows_mouse = Some((pane_id, now));
+        self.remember_workspace_pane(self.core.workspaces.active_workspace_idx, pane_id);
         self.send_lossy(ClientMessage::FocusPane { pane_id });
     }
 
     fn hovered_pane_at(&self, mx: f32, my: f32) -> Option<u64> {
-        let vox = self.anim_mgr.view_offset_x.value() as f32;
-        self.workspaces
+        let vox = self.core.anim_mgr.view_offset_x.value() as f32;
+        self.core.workspaces
             .active()
             .visible_tiles(vox)
             .into_iter()
@@ -490,10 +490,10 @@ impl App {
             return;
         }
 
-        if self.selection.as_ref().is_some_and(|s| s.active)
+        if self.core.selection.as_ref().is_some_and(|s| s.active)
             && let Some((_, col, buf_row)) = self.pixel_to_cell(mx, my)
         {
-            if let Some(sel) = &mut self.selection {
+            if let Some(sel) = &mut self.core.selection {
                 sel.end = (col, buf_row);
             }
             self.request_mouse_redraw();
@@ -512,16 +512,16 @@ impl App {
     }
 
     fn dismiss_context_menu_on_scroll(&mut self) -> bool {
-        if !self.context_menu.visible {
+        if !self.core.context_menu.visible {
             return false;
         }
-        self.context_menu.visible = false;
+        self.core.context_menu.visible = false;
         self.request_mouse_redraw();
         true
     }
 
     fn handle_palette_wheel(&mut self, delta: MouseScrollDelta) -> bool {
-        let Some(palette) = &mut self.command_palette else {
+        let Some(palette) = &mut self.core.command_palette else {
             return false;
         };
         if palette.filtered.is_empty() {
@@ -571,7 +571,7 @@ impl App {
             MouseScrollDelta::PixelDelta(pos) => -(pos.y as f32),
         };
         let max_scroll = self.pane_tab_scroll_max();
-        self.pane_tab_scroll = (self.pane_tab_scroll + delta_px).clamp(0.0, max_scroll);
+        self.core.pane_tab_scroll = (self.core.pane_tab_scroll + delta_px).clamp(0.0, max_scroll);
         self.request_mouse_redraw();
         true
     }
@@ -581,32 +581,32 @@ impl App {
             MouseScrollDelta::LineDelta(_, y) => y as f64 * 0.05,
             MouseScrollDelta::PixelDelta(pos) => pos.y * 0.001,
         };
-        let cur_zoom = self.anim_mgr.overview_zoom.value();
+        let cur_zoom = self.core.anim_mgr.overview_zoom.value();
         let new_zoom = (cur_zoom + dy).clamp(0.05, 1.0);
         let sp = SpringParams::default();
-        if new_zoom >= self.config.animation.zoom_threshold as f64 {
-            self.overview.active = false;
-            self.anim_mgr.overview_zoom.animate_to(1.0, sp);
+        if new_zoom >= self.core.config.animation.zoom_threshold as f64 {
+            self.core.overview.active = false;
+            self.core.anim_mgr.overview_zoom.animate_to(1.0, sp);
             self.animate_to_active();
         } else {
-            self.anim_mgr.overview_zoom.animate_to(new_zoom, sp);
+            self.core.anim_mgr.overview_zoom.animate_to(new_zoom, sp);
         }
     }
 
     fn handle_main_wheel(&mut self, delta: MouseScrollDelta, phase: TouchPhase) {
-        let gestures_enabled = self.config.gesture.enabled;
-        let smooth_scroll = gestures_enabled && self.config.gesture.smooth_scroll;
+        let gestures_enabled = self.core.config.gesture.enabled;
+        let smooth_scroll = gestures_enabled && self.core.config.gesture.smooth_scroll;
         let has_mouse = self
-            .workspaces
+            .core.workspaces
             .active()
             .active_pane_id()
-            .and_then(|pid| self.pane_grids.get(&pid))
+            .and_then(|pid| self.core.pane_grids.get(&pid))
             .is_some_and(|g| g.mode_flags & ciri_protocol::message::MODE_MOUSE_REPORT != 0);
         let is_alt_screen = self
-            .workspaces
+            .core.workspaces
             .active()
             .active_pane_id()
-            .and_then(|pid| self.pane_grids.get(&pid))
+            .and_then(|pid| self.core.pane_grids.get(&pid))
             .is_some_and(|g| g.mode_flags & ciri_protocol::message::MODE_ALT_SCREEN != 0);
 
         if self.handle_workspace_row_swipe(delta, phase, gestures_enabled) {
@@ -628,7 +628,7 @@ impl App {
         gestures_enabled: bool,
     ) -> bool {
         let shift_held = self.modifiers.shift_key();
-        let multi_row = self.workspaces.workspaces.len() > 1;
+        let multi_row = self.core.workspaces.workspaces.len() > 1;
         if !(gestures_enabled
             && shift_held
             && multi_row
@@ -641,35 +641,35 @@ impl App {
             unreachable!();
         };
         let py = pos.y;
-        let threshold = self.config.gesture.vertical_swipe_threshold;
+        let threshold = self.core.config.gesture.vertical_swipe_threshold;
 
         match phase {
             TouchPhase::Started => {
-                self.gestures.row_active = true;
-                self.gestures.row_start = self.workspaces.active_workspace_idx;
-                self.anim_mgr.gesture_row_offset.begin_gesture();
+                self.core.gestures.row_active = true;
+                self.core.gestures.row_start = self.core.workspaces.active_workspace_idx;
+                self.core.anim_mgr.gesture_row_offset.begin_gesture();
             }
             TouchPhase::Moved => {
-                if self.gestures.row_active {
-                    self.anim_mgr.gesture_row_offset.update_gesture_unclamped(py);
-                    let accum = self.anim_mgr.gesture_row_offset.value();
+                if self.core.gestures.row_active {
+                    self.core.anim_mgr.gesture_row_offset.update_gesture_unclamped(py);
+                    let accum = self.core.anim_mgr.gesture_row_offset.value();
                     if accum > threshold {
-                        self.workspaces.focus_down();
-                        self.anim_mgr.gesture_row_offset.jump_to(0.0);
-                        self.anim_mgr.gesture_row_offset.begin_gesture();
+                        self.core.workspaces.focus_down();
+                        self.core.anim_mgr.gesture_row_offset.jump_to(0.0);
+                        self.core.anim_mgr.gesture_row_offset.begin_gesture();
                         self.animate_to_active();
                     } else if accum < -threshold {
-                        self.workspaces.focus_up();
-                        self.anim_mgr.gesture_row_offset.jump_to(0.0);
-                        self.anim_mgr.gesture_row_offset.begin_gesture();
+                        self.core.workspaces.focus_up();
+                        self.core.anim_mgr.gesture_row_offset.jump_to(0.0);
+                        self.core.anim_mgr.gesture_row_offset.begin_gesture();
                         self.animate_to_active();
                     }
                 }
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
-                self.gestures.row_active = false;
+                self.core.gestures.row_active = false;
                 let sp = SpringParams::default();
-                self.anim_mgr.gesture_row_offset.end_gesture(0.0, sp);
+                self.core.anim_mgr.gesture_row_offset.end_gesture(0.0, sp);
                 self.animate_to_active();
             }
         }
@@ -691,7 +691,7 @@ impl App {
         let MouseScrollDelta::PixelDelta(pos) = delta else {
             unreachable!();
         };
-        let py = if self.config.gesture.natural_scroll {
+        let py = if self.core.config.gesture.natural_scroll {
             pos.y
         } else {
             -pos.y
@@ -699,14 +699,14 @@ impl App {
 
         match phase {
             TouchPhase::Started => {
-                self.gestures.scroll_accum = 0.0;
+                self.core.gestures.scroll_accum = 0.0;
             }
             TouchPhase::Moved | TouchPhase::Ended | TouchPhase::Cancelled => {
-                self.gestures.scroll_accum += py;
-                let ppl = self.config.gesture.scroll_pixels_per_line;
-                let lines = (self.gestures.scroll_accum / ppl) as i64;
+                self.core.gestures.scroll_accum += py;
+                let ppl = self.core.config.gesture.scroll_pixels_per_line;
+                let lines = (self.core.gestures.scroll_accum / ppl) as i64;
                 if lines != 0 {
-                    self.gestures.scroll_accum -= lines as f64 * ppl;
+                    self.core.gestures.scroll_accum -= lines as f64 * ppl;
                     if lines > 0 {
                         self.scroll_active_up(lines as usize);
                     } else {
@@ -746,7 +746,7 @@ impl App {
     }
 
     fn forward_scroll_to_mouse_mode(&mut self, dy: i32) {
-        let Some(pid) = self.workspaces.active().active_pane_id() else {
+        let Some(pid) = self.core.workspaces.active().active_pane_id() else {
             return;
         };
         let Some((_, col, row)) = self
@@ -771,7 +771,7 @@ impl App {
     }
 
     fn forward_scroll_to_alt_screen(&mut self, dy: i32) {
-        let Some(pid) = self.workspaces.active().active_pane_id() else {
+        let Some(pid) = self.core.workspaces.active().active_pane_id() else {
             return;
         };
         let key = if dy > 0 { b"\x1b[A" } else { b"\x1b[B" };
@@ -785,20 +785,20 @@ impl App {
     }
 
     fn handle_horizontal_gesture(&mut self, delta: MouseScrollDelta, phase: TouchPhase) {
-        let scroll_mult = self.config.input.scroll_multiplier;
+        let scroll_mult = self.core.config.input.scroll_multiplier;
         let dx = match delta {
             MouseScrollDelta::LineDelta(x, _) => x as f64 * scroll_mult,
             MouseScrollDelta::PixelDelta(pos) => pos.x,
         };
         match phase {
             TouchPhase::Started => {
-                self.anim_mgr.view_offset_x.begin_gesture();
+                self.core.anim_mgr.view_offset_x.begin_gesture();
             }
             TouchPhase::Moved => {
-                self.anim_mgr.view_offset_x.update_gesture(dx);
+                self.core.anim_mgr.view_offset_x.update_gesture(dx);
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
-                let center_strategy = match self.config.layout.center_focused_column {
+                let center_strategy = match self.core.config.layout.center_focused_column {
                     ciri_config::config::CenterStrategy::Always => {
                         ciri_layout::workspace::CenterStrategy::Always
                     }
@@ -809,13 +809,13 @@ impl App {
                         ciri_layout::workspace::CenterStrategy::Never
                     }
                 };
-                let current_vox = self.anim_mgr.view_offset_x.value() as f32;
+                let current_vox = self.core.anim_mgr.view_offset_x.value() as f32;
                 let t = self
-                    .workspaces
+                    .core.workspaces
                     .active_mut()
                     .target_offset_for_active_with_strategy(center_strategy, current_vox);
                 let sp = SpringParams::default();
-                self.anim_mgr.view_offset_x.end_gesture(t as f64, sp);
+                self.core.anim_mgr.view_offset_x.end_gesture(t as f64, sp);
             }
         }
     }

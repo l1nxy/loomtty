@@ -1,0 +1,13 @@
+[package]
+name = "ciri-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ciri-protocol = { path = "../ciri-protocol" }
+ciri-config = { path = "../ciri-config" }
+ciri-layout = { path = "../ciri-layout" }
+ciri-anim = { path = "../ciri-anim" }
+ciri-input = { path = "../ciri-input" }
+crossbeam-channel = { workspace = true }
+log = { workspace = true }

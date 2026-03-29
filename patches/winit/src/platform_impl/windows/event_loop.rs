@@ -2327,14 +2327,18 @@ unsafe fn public_window_callback_inner(
                 // See: https://github.com/rust-windowing/winit/issues/4041
                 // Ref: https://github.com/tauri-apps/tao/pull/1056
                 let is_win11 = {
-                    let version = unsafe {
-                        let mut osvi: windows_sys::Win32::System::SystemInformation::OSVERSIONINFOW = mem::zeroed();
-                        osvi.dwOSVersionInfoSize = mem::size_of_val(&osvi) as u32;
-                        #[allow(deprecated)]
-                        windows_sys::Win32::System::SystemInformation::GetVersionExW(&mut osvi);
-                        osvi
-                    };
-                    version.dwBuildNumber >= 22000
+                    // Use RtlGetVersion (from ntdll) which returns real version info,
+                    // unlike GetVersionExW which returns shimmed values without a manifest.
+                    type RtlGetVersion = unsafe extern "system" fn(*mut windows_sys::Win32::System::SystemInformation::OSVERSIONINFOW) -> windows_sys::Win32::Foundation::NTSTATUS;
+                    let build = get_function!("ntdll.dll", RtlGetVersion).and_then(|rtl_get_version| {
+                        unsafe {
+                            let mut vi: windows_sys::Win32::System::SystemInformation::OSVERSIONINFOW = mem::zeroed();
+                            vi.dwOSVersionInfoSize = mem::size_of::<windows_sys::Win32::System::SystemInformation::OSVERSIONINFOW>() as u32;
+                            let status = (rtl_get_version)(&mut vi);
+                            if status >= 0 { Some(vi.dwBuildNumber) } else { None }
+                        }
+                    });
+                    build.unwrap_or(0) >= 22000
                 };
 
                 if !is_win11 && dragging_window {

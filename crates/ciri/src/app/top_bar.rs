@@ -1,5 +1,3 @@
-use ciri_config::theme::ThemeConfig;
-
 use super::App;
 
 const PANE_TAB_WIDTH_CHARS: usize = 20;
@@ -30,8 +28,8 @@ impl App {
     pub(crate) fn hit_test_top_bar(&self, mx: f32, my: f32) -> bool {
         let (cell_w, cell_h) = self.cell_dimensions();
         let layout = self.top_bar_layout(
-            self.workspaces.view_size.width,
-            self.workspaces.view_size.height + self.total_chrome_height(),
+            self.core.workspaces.view_size.width,
+            self.core.workspaces.view_size.height + self.total_chrome_height(),
             cell_w,
             cell_h,
         );
@@ -40,13 +38,13 @@ impl App {
 
     pub(crate) fn ensure_active_pane_tab_visible(&mut self, tab_area_px: f32) {
         if tab_area_px <= 0.0 {
-            self.pane_tab_scroll = 0.0;
+            self.core.pane_tab_scroll = 0.0;
             return;
         }
 
         let tabs = self.pane_tab_layouts_raw();
         if tabs.is_empty() {
-            self.pane_tab_scroll = 0.0;
+            self.core.pane_tab_scroll = 0.0;
             return;
         }
 
@@ -57,13 +55,13 @@ impl App {
         let active_idx = tabs.iter().position(|t| t.active).unwrap_or(0);
         let active_start = active_idx as f32 * tab_w;
         let active_end = active_start + tab_w;
-        let mut scroll = self.pane_tab_scroll.clamp(0.0, max_scroll);
+        let mut scroll = self.core.pane_tab_scroll.clamp(0.0, max_scroll);
         if active_start < scroll {
             scroll = active_start;
         } else if active_end > scroll + tab_area_px {
             scroll = (active_end - tab_area_px).max(0.0);
         }
-        self.pane_tab_scroll = scroll.clamp(0.0, max_scroll);
+        self.core.pane_tab_scroll = scroll.clamp(0.0, max_scroll);
     }
 
     pub(crate) fn pane_tab_scroll_max(&self) -> f32 {
@@ -71,7 +69,7 @@ impl App {
             .glyph_cache
             .as_ref()
             .map(|c| c.cell_height)
-            .unwrap_or(self.config.font.size * 1.2);
+            .unwrap_or(self.core.config.font.size * 1.2);
         let cw = self
             .glyph_cache
             .as_ref()
@@ -79,8 +77,8 @@ impl App {
             .unwrap_or(8.0);
         let tab_area_px = self
             .top_bar_layout(
-                self.workspaces.view_size.width,
-                self.workspaces.view_size.height + self.total_chrome_height(),
+                self.core.workspaces.view_size.width,
+                self.core.workspaces.view_size.height + self.total_chrome_height(),
                 cw,
                 ch,
             )
@@ -93,15 +91,15 @@ impl App {
 
     pub(crate) fn pane_tab_layouts(&self, cw: f32, tabs_area_px: f32) -> Vec<PaneTabLayout> {
         let tab_w = PANE_TAB_WIDTH_CHARS as f32 * cw;
-        let session_w = format!(" {}  ", self.session_name).chars().count() as f32 * cw;
+        let session_w = format!(" {}  ", self.core.session_name).chars().count() as f32 * cw;
         let tabs_start_x = session_w;
         let tabs_end_x = tabs_start_x + tabs_area_px;
-        let mut x = tabs_start_x - self.pane_tab_scroll;
+        let mut x = tabs_start_x - self.core.pane_tab_scroll;
         let mut layouts = Vec::new();
 
         for (idx, (pane_id, title)) in self.pane_tab_entries().into_iter().enumerate() {
             let label = self.format_pane_tab_label(idx, &title);
-            let active = self.workspaces.active().active_pane_id() == Some(pane_id);
+            let active = self.core.workspaces.active().active_pane_id() == Some(pane_id);
             let tab_x = x;
             let tab_end = tab_x + tab_w;
             if tab_end > tabs_start_x && tab_x < tabs_end_x {
@@ -127,80 +125,44 @@ impl App {
             layouts.push(PaneTabLayout {
                 pane_id,
                 label,
-                x: format!(" {}  ", self.session_name).len() as f32 * self.cell_dimensions().0
+                x: format!(" {}  ", self.core.session_name).len() as f32 * self.cell_dimensions().0
                     + idx as f32 * tab_w,
                 w: tab_w,
-                active: self.workspaces.active().active_pane_id() == Some(pane_id),
+                active: self.core.workspaces.active().active_pane_id() == Some(pane_id),
             });
         }
         layouts
     }
 
+    /// Delegate: get pane tab entries.
     fn pane_tab_entries(&self) -> Vec<(u64, String)> {
-        let mut panes = Vec::new();
-        let ws = self.workspaces.active();
-        for col in &ws.columns {
-            for tile in &col.tiles {
-                let title = self
-                    .pane_grids
-                    .get(&tile.pane_id)
-                    .map(|g| g.title.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| "pane".to_string());
-                panes.push((tile.pane_id, title));
-            }
-        }
-        panes
+        self.core.pane_tab_entries()
     }
 
+    /// Delegate: format pane tab label.
     fn format_pane_tab_label(&self, idx: usize, title: &str) -> String {
-        let prefix = format!("{:>2} ", idx + 1);
-        let max_title_chars = PANE_TAB_WIDTH_CHARS.saturating_sub(prefix.len());
-        let mut title = title.chars().take(max_title_chars).collect::<String>();
-        let label = format!("{}{}", prefix, title);
-        title.clear();
-        format!("{:<width$}", label, width = PANE_TAB_WIDTH_CHARS)
+        self.core.format_pane_tab_label(idx, title)
     }
 
+    /// Delegate: workspace indicator label.
     pub(crate) fn workspace_indicator_label(&self) -> String {
-        let idx = self.workspaces.active_workspace_idx + 1;
-        let total = self.workspaces.workspaces.len();
-        if total <= 1 {
-            String::new()
-        } else {
-            format!("[{}/{}] ", idx, total)
-        }
+        self.core.workspace_indicator_label()
     }
 
+    /// Delegate: current mode label.
     pub(crate) fn current_mode_label(&self) -> (String, [f32; 4]) {
-        let accent = ThemeConfig::parse_color(&self.config.theme.accent);
-        let broadcast_color = ThemeConfig::parse_color(&self.config.theme.mode_broadcast);
-        let dim = ThemeConfig::parse_color(&self.config.theme.statusbar_dim);
-        let warn_color = ThemeConfig::parse_color(&self.config.theme.mode_broadcast);
-        if self.input.is_locked() {
-            (" LOCKED ".into(), warn_color)
-        } else if self.broadcast_mode {
-            (" BROADCAST ".into(), broadcast_color)
-        } else if self.overview.active {
-            (" OVERVIEW ".into(), accent)
-        } else if let Some(name) = self.input.current_mode_name() {
-            (format!(" {} ", name.to_uppercase()), accent)
-        } else if self.input.is_awaiting_action() {
-            (" LEADER ".into(), accent)
-        } else {
-            (" NORMAL ".into(), dim)
-        }
+        self.core.current_mode_label()
     }
 
     pub(crate) fn top_bar_layout(&self, vw: f32, vh: f32, cw: f32, ch: f32) -> TopBarLayout {
-        let padding = if let Some(px) = self.config.statusbar.height_padding {
+        let padding = if let Some(px) = self.core.config.statusbar.height_padding {
             px
         } else {
-            ch * self.config.statusbar.padding_ratio
+            ch * self.core.config.statusbar.padding_ratio
         };
         let bar_height = ch + padding;
         let bar_y = self.status_bar_y(vh);
-        let session_w = format!(" {}  ", self.session_name).chars().count() as f32 * cw;
+        let session_w = format!(" {}  ", self.core.session_name).chars().count() as f32 * cw;
         let ws_label = self.workspace_indicator_label();
         let workspace_w = ws_label.chars().count() as f32 * cw;
         let mode_w = self.current_mode_label().0.chars().count() as f32 * cw;

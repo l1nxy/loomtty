@@ -619,6 +619,7 @@ dependencies = [
  "arboard",
  "ciri-anim",
  "ciri-config",
+ "ciri-core",
  "ciri-gpu",
  "ciri-input",
  "ciri-layout",
@@ -658,6 +659,19 @@ dependencies = [
  "log",
  "serde",
  "toml 0.8.23",
+]
+
+[[package]]
+name = "ciri-core"
+version = "0.1.0"
+dependencies = [
+ "ciri-anim",
+ "ciri-config",
+ "ciri-input",
+ "ciri-layout",
+ "ciri-protocol",
+ "crossbeam-channel",
+ "log",
 ]
 
 [[package]]

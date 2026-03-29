@@ -17,9 +17,8 @@ pub(crate) mod top_bar;
 pub(crate) mod ui;
 
 use ciri_anim::manager::{AnimConfig, AnimationManager};
-use ciri_config::config::{CiriConfig, PaneOpenStyle, StatusBarPosition};
+use ciri_config::config::{CiriConfig, StatusBarPosition};
 use ciri_gpu::{GlyphAtlasGpu, Renderer};
-use ciri_input::leader::InputHandler;
 use ciri_layout::geometry::ViewSize;
 use ciri_layout::workspace_set::WorkspaceSet;
 use ciri_protocol::message::*;
@@ -28,109 +27,29 @@ use ciri_render::rect::Rect;
 use ciri_render::shaper::TextShaper;
 use ciri_render::terminal::{ColorTable, TerminalView};
 use crossbeam_channel::{Receiver, Sender};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use winit::keyboard::ModifiersState;
 use winit::window::Window;
 
-use ciri_input::action::Action;
+// Re-export core types so existing `use super::*` in submodules still works.
+#[allow(unused_imports)]
+pub(crate) use ciri_core::app::{
+    ClientImagePlacement, CommandPaletteState, ConnectionKind, ConnectionSlot, ContextMenu,
+    ContextMenuAction, ContextMenuItem, CoreApp, HoveredLink,
+    OverviewActionHover, PaletteEntry, PaletteEntryKind, PasteButton, PendingPaste,
+    ReconnectPlan, RemoteConnectionConfig, ScrollbarDragInfo, SearchMatch, SearchState,
+    Selection, ServerEvent, TopBarHoverRegion,
+};
 
-use crate::connection::{RemoteQueryResult, ServerEvent};
-use crate::grid::ClientPaneGrid;
-use std::path::PathBuf;
-
-/// A context menu item.
-#[derive(Debug, Clone)]
-pub(crate) struct ContextMenuItem {
-    pub label: String,
-    pub action: ContextMenuAction,
-    pub enabled: bool,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) enum ContextMenuAction {
-    Copy,
-    Paste,
-    SelectAll,
-    Search,
-    OpenLink(String),
-    CopyLink(String),
-    SplitRight,
-    SplitDown,
-    ClosePane,
-}
-
-/// Context menu state.
-#[derive(Debug, Default)]
-pub(crate) struct ContextMenu {
-    pub visible: bool,
-    pub x: f32,
-    pub y: f32,
-    pub target_pane_id: Option<u64>,
-    pub items: Vec<ContextMenuItem>,
-    pub hovered_index: Option<usize>,
-}
-
-/// Text selection state with absolute buffer coordinates.
-pub(crate) struct Selection {
-    pub pane_id: u64,
-    pub start: (u16, usize), // (col, buffer_row)
-    pub end: (u16, usize),
-    pub active: bool, // true while mouse is held
-}
-
-pub(crate) struct LastLeftClick {
-    pub pane_id: u64,
-    pub col: u16,
-    pub buffer_row: usize,
-    pub at: Instant,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct HoveredLink {
-    pub pane_id: u64,
-    pub url: String,
-    pub start: (u16, usize),
-    pub end: (u16, usize),
-}
-
-/// Active search session state.
-pub(crate) struct SearchState {
-    pub query: String,
-    pub matches: Vec<SearchMatch>,
-    pub current_match_idx: usize,
-    pub pane_id: u64,
-    pub original_scroll_offset: usize,
-}
-
-pub(crate) struct SearchMatch {
-    pub buffer_row: usize,
-    pub start_col: u16,
-    pub end_col: u16,
-}
-
-/// IME composition state.
-pub(crate) struct ImeState {
-    pub preedit_active: bool,
-    pub preedit_text: String,
-    pub preedit_cursor: Option<usize>,
-    pub last_pos: Option<(i32, i32)>,
-}
-
-/// Command palette state.
-pub(crate) struct CommandPaletteState {
-    pub query: String,
-    pub entries: Vec<PaletteEntry>,
-    pub filtered: Vec<usize>, // indices into entries
-    pub selected_idx: usize,
-    pub hovered_idx: Option<usize>,
-    pub sessions_only: bool,
-    pub sessions_show_all: bool,
-    /// Remote host name currently being queried (loading state).
-    pub remote_loading: Option<String>,
-    /// (host_name, error_message) for a failed remote query.
-    pub remote_error: Option<(String, String)>,
+/// Cached pre-transformed glyph instances for a pane tile.
+/// Avoids redundant pixel-position computation when content/position haven't changed.
+pub(crate) struct CachedTileGlyphs {
+    pub generation: u64,
+    pub key: (u32, u32, u32, u32), // (inner_x_bits, inner_y_bits, zoom_bits, dim_bits)
+    pub glyphs: Vec<GlyphInstance>,
+    pub color_glyphs: Vec<GlyphInstance>,
 }
 
 #[derive(Clone, Copy)]
@@ -157,48 +76,6 @@ pub(crate) struct PaletteToggleLayout {
     pub label_x: f32,
 }
 
-pub(crate) struct PaletteEntry {
-    pub label: String,
-    pub kind: PaletteEntryKind,
-}
-
-#[derive(Clone)]
-pub(crate) enum PaletteEntryKind {
-    Action(Action),
-    SwitchSession(String),
-    KillSession(String),
-    /// A configured remote host — selecting it triggers session probing.
-    RemoteHost {
-        name: String,
-        host: String,
-        port: u16,
-        ssh_port: u16,
-    },
-    /// A session on a remote ciri-server (full remote mode).
-    RemoteSession {
-        host: String,
-        port: u16,
-        ssh_port: u16,
-        session_name: String,
-    },
-    /// SSH shell fallback (no ciri-server on remote).
-    SshShell {
-        #[allow(dead_code)]
-        name: String,
-        host: String,
-        ssh_port: u16,
-    },
-    /// Switch to a background connection slot.
-    SwitchSlot(String),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TopBarHoverRegion {
-    Session,
-    Workspace,
-    Mode,
-}
-
 /// Reusable render buffers (cleared each frame).
 pub(crate) struct RenderBuffers {
     pub bg_rects: Vec<Rect>,
@@ -208,209 +85,35 @@ pub(crate) struct RenderBuffers {
     pub color_glyph_batches: Vec<ScissoredRange>,
 }
 
-/// Touchpad gesture tracking state.
-pub(crate) struct GestureState {
-    pub scroll_accum: f64,
-    pub row_active: bool,
-    pub row_start: usize,
-}
-
-/// Scrollbar drag tracking state.
-pub(crate) struct ScrollbarDragInfo {
-    pub pane_id: u64,
-    pub pane_inner_y: f32,
-    pub pane_inner_h: f32,
-    pub total_lines: usize,
-    pub visible_rows: u16,
-}
-
-/// Column/tile border drag resize state.
-pub(crate) struct ResizeDragState {
-    pub col_dragging: Option<usize>,
-    pub col_right_idx: Option<usize>,
-    pub col_start_x: f32,
-    pub col_start_width: f32,
-    pub col_delta: f64,
-    pub tile_dragging: Option<(usize, usize)>,
-    pub tile_start_y: f32,
-    pub scrollbar_dragging: Option<ScrollbarDragInfo>,
-}
-
-/// Overview zoom mode state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OverviewActionHover {
-    Close,
-    Focus,
-}
-
-pub(crate) struct OverviewState {
-    pub active: bool,
-    pub dragging: bool,
-    pub drag_last_pos: Option<(f32, f32)>,
-    pub hovered_pane: Option<(usize, u64)>,
-}
-
-
-/// Cached pre-transformed glyph instances for a pane tile.
-/// Avoids redundant pixel-position computation when content/position haven't changed.
-pub(crate) struct CachedTileGlyphs {
-    pub generation: u64,
-    pub key: (u32, u32, u32, u32), // (inner_x_bits, inner_y_bits, zoom_bits, dim_bits)
-    pub glyphs: Vec<GlyphInstance>,
-    pub color_glyphs: Vec<GlyphInstance>,
-}
-
-/// Client-side image placement for rendering.
-#[allow(dead_code)]
-pub(crate) struct ClientImagePlacement {
-    pub image_id: u64,
-    pub col: u16,
-    pub row: u16,
-    pub width_cells: u16,
-    pub height_cells: u16,
-    pub pixel_width: u32,
-    pub pixel_height: u32,
-}
-
-/// Pending paste that needs user confirmation.
-#[derive(Debug, Clone)]
-pub(crate) struct PendingPaste {
-    pub info: paste_guard::PasteInfo,
-    pub preview: String,
-    pub hovered_button: Option<PasteButton>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PasteButton {
-    Paste,
-    Cancel,
-}
-
-/// Auto-reconnection state.
-pub(crate) struct ReconnectState {
-    pub attempt: u32,
-    pub max_attempts: u32,
-    pub next_retry: Instant,
-    pub backoff: Duration,
-}
-
-pub(crate) struct ReconnectPlan {
-    pub viewport: ciri_protocol::codec::ClientHello,
-    pub should_exit: bool,
-}
-
 pub(crate) struct App {
-    pub config: CiriConfig,
-    pub session_name: String,
-    pub pending_session_name: Option<String>,
-    pub frame_interval: Duration,
+    /// Core logic state — platform-agnostic.
+    pub core: CoreApp,
+
+    // --- Shell-only fields (GPU / windowing / platform) ---
     pub window: Option<Arc<Window>>,
     pub renderer: Option<Renderer>,
     pub glyph_cache: Option<GlyphCache>,
     pub glyph_atlas_gpu: Option<GlyphAtlasGpu>,
     pub text_shaper: Option<TextShaper>,
     pub dpi_scale: f64,
-    pub workspaces: WorkspaceSet,
-    pub pane_grids: HashMap<u64, ClientPaneGrid>,
-    pub input: InputHandler,
-    pub server_tx: Option<Sender<ClientMessage>>,
-    pub server_rx: Option<Receiver<ServerEvent>>,
-    pub last_frame: Instant,
     pub modifiers: ModifiersState,
     pub cached_views: HashMap<u64, TerminalView>,
     pub last_mouse_pos: Option<(f32, f32)>,
-    pub overview: OverviewState,
-    pub overview_action_hover: Option<OverviewActionHover>,
     pub render_bufs: RenderBuffers,
-    pub ime: ImeState,
-    pub drag: ResizeDragState,
-    pub connected: bool,
-    pub cursor_blink_visible: bool,
-    pub cursor_blink_timer: Instant,
-    pub pane_tab_scroll: f32,
-    pub hovered_top_bar_region: Option<TopBarHoverRegion>,
-    pub hovered_pane_tab: Option<u64>,
-    pub workspace_last_pane_ids: HashMap<usize, u64>,
     pub clipboard: Option<arboard::Clipboard>,
-    pub selection: Option<Selection>,
-    pub last_left_click: Option<LastLeftClick>,
-    pub hovered_link: Option<HoveredLink>,
     pub mouse_left_held: bool,
-    pub reconnect_state: Option<ReconnectState>,
-    pub expected_pane_ids: std::collections::HashSet<u64>,
-    pub search_state: Option<SearchState>,
-    pub command_palette: Option<CommandPaletteState>,
-    pub pending_paste: Option<PendingPaste>,
-    pub broadcast_mode: bool,
-    pub anim_mgr: AnimationManager,
-    /// Inline image placements per pane.
-    pub image_placements: HashMap<u64, Vec<ClientImagePlacement>>,
     pub cached_color_table: ColorTable,
     /// Per-pane cached glyph instances to skip redundant transformation in build_tiles.
     pub cached_tile_glyphs: HashMap<u64, CachedTileGlyphs>,
     /// Whether the window currently has input focus.
     pub window_focused: bool,
-    pub should_exit: bool,
     #[allow(dead_code)]
     pub config_watcher: Option<notify::RecommendedWatcher>,
     pub config_change_rx: Option<crossbeam_channel::Receiver<()>>,
-    pub gestures: GestureState,
     /// Latest pending resize event and its timestamp.
-    /// Local layout preview is immediate; PTY/server resize is committed once
-    /// after the window size settles.
     pub pending_resize: Option<(winit::dpi::PhysicalSize<u32>, Instant)>,
     /// Deferred DPI change — applied when resize settles to avoid atlas churn.
     pub pending_dpi: Option<f64>,
-    /// Remote connection parameters, if connecting via SSH tunnel.
-    pub remote_config: Option<RemoteConnectionConfig>,
-    /// Last pane focused by focus-follows-mouse and the time it was set (for debouncing).
-    pub last_focus_follows_mouse: Option<(u64, Instant)>,
-    /// Right-click context menu state.
-    pub context_menu: ContextMenu,
-    /// Background connection slots (saved state from non-active connections).
-    pub background_slots: HashMap<String, ConnectionSlot>,
-    /// ID of the currently active connection slot ("local" or "remote:host:port").
-    pub active_slot_id: String,
-    /// Channel for receiving async remote host probe results.
-    pub remote_query_rx: Option<crossbeam_channel::Receiver<RemoteQueryResult>>,
-}
-
-/// Parameters for a remote SSH tunnel connection.
-pub(crate) struct RemoteConnectionConfig {
-    pub host: String,
-    pub port: u16,
-    pub ssh_port: u16,
-}
-
-/// Identifies what kind of connection a slot represents.
-#[derive(Debug, Clone)]
-pub(crate) enum ConnectionKind {
-    Local,
-    Remote {
-        host: String,
-        port: u16,
-        ssh_port: u16,
-    },
-}
-
-/// Snapshot of per-connection state, saved when a connection goes to background.
-pub(crate) struct ConnectionSlot {
-    pub id: String,
-    pub kind: ConnectionKind,
-    pub session_name: String,
-    pub server_tx: Sender<ClientMessage>,
-    pub server_rx: Receiver<ServerEvent>,
-    pub pane_grids: HashMap<u64, ClientPaneGrid>,
-    pub workspaces: WorkspaceSet,
-    pub expected_pane_ids: HashSet<u64>,
-    pub connected: bool,
-    pub reconnect_state: Option<ReconnectState>,
-    pub pending_session_name: Option<String>,
-    pub anim_mgr: AnimationManager,
-    pub workspace_last_pane_ids: HashMap<usize, u64>,
-    pub selection: Option<Selection>,
-    pub broadcast_mode: bool,
-    pub image_placements: HashMap<u64, Vec<ClientImagePlacement>>,
 }
 
 impl App {
@@ -426,58 +129,19 @@ impl App {
     const COMMAND_PALETTE_TOGGLE_SIDE_PAD: f32 = 4.0;
 
     pub fn new(config: CiriConfig, session_name: impl Into<String>) -> Self {
-        let frame_interval = Duration::from_millis(config.render.frame_interval_ms);
-        let initial_view = ViewSize {
-            width: config.window.width as f32,
-            height: config.window.height as f32,
-        };
-        let session_name = session_name.into();
-        let mut input = InputHandler::new(
-            Duration::from_millis(config.input.leader_timeout_ms),
-            Duration::from_millis(config.input.double_tap_window_ms),
-        );
-        input.reload_bindings(
-            &config.keys.leader,
-            match config.input.mode {
-                ciri_config::config::InputMode::Prefix => "prefix",
-                ciri_config::config::InputMode::Sticky => "sticky",
-            },
-            &config.keys.bindings,
-            &config.keys.modes,
-            &config.keys.direct_bindings,
-        );
-        // Build unified BindingSet from all config sources.
-        Self::rebuild_binding_set(&mut input, &config);
-        let column_gap = config.appearance.column_gap;
-
         let cached_color_table = ColorTable::new(&config);
+        let core = CoreApp::new(config, session_name);
         App {
-            config,
-            session_name,
-            pending_session_name: None,
-            frame_interval,
+            core,
             window: None,
             renderer: None,
             glyph_cache: None,
             glyph_atlas_gpu: None,
             text_shaper: None,
             dpi_scale: 1.0,
-            workspaces: WorkspaceSet::new_with_gaps(initial_view, column_gap, column_gap),
-            pane_grids: HashMap::new(),
-            input,
-            server_tx: None,
-            server_rx: None,
-            last_frame: Instant::now(),
             modifiers: ModifiersState::empty(),
             cached_views: HashMap::new(),
             last_mouse_pos: None,
-            overview: OverviewState {
-                active: false,
-                dragging: false,
-                drag_last_pos: None,
-                hovered_pane: None,
-            },
-            overview_action_hover: None,
             render_bufs: RenderBuffers {
                 bg_rects: Vec::new(),
                 glyphs: Vec::new(),
@@ -485,61 +149,15 @@ impl App {
                 glyph_batches: Vec::new(),
                 color_glyph_batches: Vec::new(),
             },
-            ime: ImeState {
-                preedit_active: false,
-                preedit_text: String::new(),
-                preedit_cursor: None,
-                last_pos: None,
-            },
-            drag: ResizeDragState {
-                col_dragging: None,
-                col_right_idx: None,
-                col_start_x: 0.0,
-                col_start_width: 0.0,
-                col_delta: 0.0,
-                tile_dragging: None,
-                tile_start_y: 0.0,
-                scrollbar_dragging: None,
-            },
-            connected: false,
-            cursor_blink_visible: true,
-            cursor_blink_timer: Instant::now(),
-            pane_tab_scroll: 0.0,
-            hovered_top_bar_region: None,
-            hovered_pane_tab: None,
-            workspace_last_pane_ids: HashMap::new(),
             clipboard: arboard::Clipboard::new().ok(),
-            selection: None,
-            last_left_click: None,
-            hovered_link: None,
             mouse_left_held: false,
-            reconnect_state: None,
-            expected_pane_ids: HashSet::new(),
-            search_state: None,
-            command_palette: None,
-            pending_paste: None,
-            broadcast_mode: false,
-            anim_mgr: AnimationManager::new(),
-            image_placements: HashMap::new(),
             cached_color_table,
             cached_tile_glyphs: HashMap::new(),
             window_focused: true,
-            should_exit: false,
             config_watcher: None,
             config_change_rx: None,
-            gestures: GestureState {
-                scroll_accum: 0.0,
-                row_active: false,
-                row_start: 0,
-            },
             pending_resize: None,
             pending_dpi: None,
-            remote_config: None,
-            last_focus_follows_mouse: None,
-            context_menu: ContextMenu::default(),
-            background_slots: HashMap::new(),
-            active_slot_id: "local".to_string(),
-            remote_query_rx: None,
         }
     }
 
@@ -548,19 +166,19 @@ impl App {
         &self,
         viewport: ciri_protocol::codec::ClientHello,
     ) -> std::io::Result<(Sender<ClientMessage>, Receiver<ServerEvent>)> {
-        if let Some(ref rc) = self.remote_config {
+        if let Some(ref rc) = self.core.remote_config {
             crate::connection::connect_remote(&rc.host, rc.port, rc.ssh_port, viewport)
         } else {
-            crate::connection::connect_or_spawn(&self.session_name, viewport)
+            crate::connection::connect_or_spawn(&self.core.session_name, viewport)
         }
     }
 
     /// Save the current per-connection state into a ConnectionSlot and reset App fields.
     fn save_current_to_slot(&mut self) -> Option<ConnectionSlot> {
-        let server_tx = self.server_tx.take()?;
-        let server_rx = self.server_rx.take()?;
+        let server_tx = self.core.server_tx.take()?;
+        let server_rx = self.core.server_rx.take()?;
 
-        let kind = if let Some(ref rc) = self.remote_config {
+        let kind = if let Some(ref rc) = self.core.remote_config {
             ConnectionKind::Remote {
                 host: rc.host.clone(),
                 port: rc.port,
@@ -570,52 +188,52 @@ impl App {
             ConnectionKind::Local
         };
 
-        let initial_view = self.workspaces.view_size;
-        let column_gap = self.config.appearance.column_gap;
+        let initial_view = self.core.workspaces.view_size;
+        let column_gap = self.core.config.appearance.column_gap;
 
         Some(ConnectionSlot {
-            id: self.active_slot_id.clone(),
+            id: self.core.active_slot_id.clone(),
             kind,
-            session_name: std::mem::replace(&mut self.session_name, String::new()),
+            session_name: std::mem::replace(&mut self.core.session_name, String::new()),
             server_tx,
             server_rx,
-            pane_grids: std::mem::take(&mut self.pane_grids),
+            pane_grids: std::mem::take(&mut self.core.pane_grids),
             workspaces: std::mem::replace(
-                &mut self.workspaces,
+                &mut self.core.workspaces,
                 WorkspaceSet::new_with_gaps(initial_view, column_gap, column_gap),
             ),
-            expected_pane_ids: std::mem::take(&mut self.expected_pane_ids),
-            connected: std::mem::replace(&mut self.connected, false),
-            reconnect_state: self.reconnect_state.take(),
-            pending_session_name: self.pending_session_name.take(),
-            anim_mgr: std::mem::replace(&mut self.anim_mgr, AnimationManager::new()),
-            workspace_last_pane_ids: std::mem::take(&mut self.workspace_last_pane_ids),
-            selection: self.selection.take(),
-            broadcast_mode: std::mem::replace(&mut self.broadcast_mode, false),
-            image_placements: std::mem::take(&mut self.image_placements),
+            expected_pane_ids: std::mem::take(&mut self.core.expected_pane_ids),
+            connected: std::mem::replace(&mut self.core.connected, false),
+            reconnect_state: self.core.reconnect_state.take(),
+            pending_session_name: self.core.pending_session_name.take(),
+            anim_mgr: std::mem::replace(&mut self.core.anim_mgr, AnimationManager::new()),
+            workspace_last_pane_ids: std::mem::take(&mut self.core.workspace_last_pane_ids),
+            selection: self.core.selection.take(),
+            broadcast_mode: std::mem::replace(&mut self.core.broadcast_mode, false),
+            image_placements: std::mem::take(&mut self.core.image_placements),
         })
     }
 
     /// Restore per-connection state from a ConnectionSlot into App fields.
     fn restore_from_slot(&mut self, slot: ConnectionSlot) {
-        self.active_slot_id = slot.id;
-        self.session_name = slot.session_name;
-        self.server_tx = Some(slot.server_tx);
-        self.server_rx = Some(slot.server_rx);
-        self.pane_grids = slot.pane_grids;
-        self.workspaces = slot.workspaces;
-        self.expected_pane_ids = slot.expected_pane_ids;
-        self.connected = slot.connected;
-        self.reconnect_state = slot.reconnect_state;
-        self.pending_session_name = slot.pending_session_name;
-        self.anim_mgr = slot.anim_mgr;
-        self.workspace_last_pane_ids = slot.workspace_last_pane_ids;
-        self.selection = slot.selection;
-        self.broadcast_mode = slot.broadcast_mode;
-        self.image_placements = slot.image_placements;
+        self.core.active_slot_id = slot.id;
+        self.core.session_name = slot.session_name;
+        self.core.server_tx = Some(slot.server_tx);
+        self.core.server_rx = Some(slot.server_rx);
+        self.core.pane_grids = slot.pane_grids;
+        self.core.workspaces = slot.workspaces;
+        self.core.expected_pane_ids = slot.expected_pane_ids;
+        self.core.connected = slot.connected;
+        self.core.reconnect_state = slot.reconnect_state;
+        self.core.pending_session_name = slot.pending_session_name;
+        self.core.anim_mgr = slot.anim_mgr;
+        self.core.workspace_last_pane_ids = slot.workspace_last_pane_ids;
+        self.core.selection = slot.selection;
+        self.core.broadcast_mode = slot.broadcast_mode;
+        self.core.image_placements = slot.image_placements;
 
         // Set remote_config based on slot kind
-        self.remote_config = match &slot.kind {
+        self.core.remote_config = match &slot.kind {
             ConnectionKind::Local => None,
             ConnectionKind::Remote {
                 host,
@@ -633,21 +251,21 @@ impl App {
         self.cached_tile_glyphs.clear();
 
         // Update window title
-        let suffix = match &self.remote_config {
+        let suffix = match &self.core.remote_config {
             Some(rc) => format!(" (remote: {})", rc.host),
             None => String::new(),
         };
         if let Some(w) = &self.window {
             w.set_title(&format!(
                 "{} [{}]{}",
-                self.config.window.title, self.session_name, suffix
+                self.core.config.window.title, self.core.session_name, suffix
             ));
         }
     }
 
     /// Switch to a background connection slot by ID.
     pub fn switch_to_slot(&mut self, target_id: &str) {
-        let target = match self.background_slots.remove(target_id) {
+        let target = match self.core.background_slots.remove(target_id) {
             Some(slot) => slot,
             None => {
                 log::warn!("no background slot with id: {target_id}");
@@ -657,7 +275,7 @@ impl App {
 
         // Save current state to background
         if let Some(current) = self.save_current_to_slot() {
-            self.background_slots.insert(current.id.clone(), current);
+            self.core.background_slots.insert(current.id.clone(), current);
         }
 
         // Restore target
@@ -678,10 +296,10 @@ impl App {
         let slot_id = format!("remote:{}:{}", host, port);
 
         // If a slot already exists for this remote, switch to it instead
-        if self.background_slots.contains_key(&slot_id) {
+        if self.core.background_slots.contains_key(&slot_id) {
             self.switch_to_slot(&slot_id);
             // Once connected, switch session within the remote server
-            self.send(ClientMessage::SwitchSession {
+            self.core.send(ClientMessage::SwitchSession {
                 session_name,
             });
             return;
@@ -689,23 +307,23 @@ impl App {
 
         // Save current state to background
         if let Some(current) = self.save_current_to_slot() {
-            self.background_slots.insert(current.id.clone(), current);
+            self.core.background_slots.insert(current.id.clone(), current);
         }
 
         // Set up new remote connection
-        self.remote_config = Some(RemoteConnectionConfig {
+        self.core.remote_config = Some(RemoteConnectionConfig {
             host: host.clone(),
             port,
             ssh_port,
         });
-        self.session_name = session_name;
-        self.active_slot_id = slot_id;
+        self.core.session_name = session_name;
+        self.core.active_slot_id = slot_id;
 
         let viewport = self.current_viewport();
         match self.connect(viewport) {
             Ok((tx, rx)) => {
-                self.server_tx = Some(tx);
-                self.server_rx = Some(rx);
+                self.core.server_tx = Some(tx);
+                self.core.server_rx = Some(rx);
             }
             Err(e) => {
                 log::error!("remote connection failed: {e}");
@@ -717,43 +335,24 @@ impl App {
         if let Some(w) = &self.window {
             w.set_title(&format!(
                 "{} [{}] (remote: {})",
-                self.config.window.title, self.session_name, host
+                self.core.config.window.title, self.core.session_name, host
             ));
         }
     }
 
-    /// Convert config preset_widths to layout ColumnWidth values.
+    /// Delegate: Convert config preset_widths to layout ColumnWidth values.
     pub fn preset_widths(&self) -> Vec<ciri_layout::column::ColumnWidth> {
-        use ciri_config::config::PresetWidth;
-        use ciri_layout::column::ColumnWidth;
-        self.config
-            .layout
-            .preset_widths
-            .iter()
-            .map(|pw| match pw {
-                PresetWidth::Proportion { proportion } => ColumnWidth::Proportion(*proportion),
-                PresetWidth::Fixed { fixed } => ColumnWidth::Fixed(*fixed),
-            })
-            .collect()
+        self.core.preset_widths()
     }
 
-    /// Send a message to the server.
+    /// Delegate: Send a message to the server.
     pub fn send(&self, msg: ClientMessage) {
-        if let Some(tx) = &self.server_tx {
-            if let Err(e) = tx.send(msg) {
-                log::warn!("server channel closed: {e}");
-            }
-        }
+        self.core.send(msg);
     }
 
-    /// Send a non-critical message (drops if queue full).
-    /// Used for: Ack, MouseInput.
+    /// Delegate: Send a non-critical message (drops if queue full).
     pub fn send_lossy(&self, msg: ClientMessage) {
-        if let Some(tx) = &self.server_tx {
-            if let Err(e) = tx.try_send(msg) {
-                log::debug!("dropped non-critical message: {e}");
-            }
-        }
+        self.core.send_lossy(msg);
     }
 
     /// Destroy GPU resources (atlas, etc.) before dropping the renderer.
@@ -783,13 +382,13 @@ impl App {
                 (w as f32, h as f32)
             })
             .unwrap_or((
-                self.config.window.width as f32,
-                self.config.window.height as f32,
+                self.core.config.window.width as f32,
+                self.core.config.window.height as f32,
             ))
     }
 
     pub(crate) fn command_palette_layout(&self) -> Option<CommandPaletteLayout> {
-        let palette = self.command_palette.as_ref()?;
+        let palette = self.core.command_palette.as_ref()?;
         let (_, vh) = self.command_palette_viewport_size();
         let (_, ch) = self.cell_dimensions();
         let (vw, _) = self.command_palette_viewport_size();
@@ -828,7 +427,7 @@ impl App {
         &self,
         layout: CommandPaletteLayout,
     ) -> Option<PaletteToggleLayout> {
-        let palette = self.command_palette.as_ref()?;
+        let palette = self.core.command_palette.as_ref()?;
         if !palette.sessions_only {
             return None;
         }
@@ -858,87 +457,18 @@ impl App {
 
     pub fn compute_grid_size(&self) -> (u16, u16) {
         if let Some(cache) = &self.glyph_cache {
-            let pad = self.total_inset();
-            let vw = self.workspaces.view_size.width - pad;
-            let vh = self.workspaces.view_size.height - pad;
+            let pad = self.core.total_inset();
+            let vw = self.core.workspaces.view_size.width - pad;
+            let vh = self.core.workspaces.view_size.height - pad;
             cache.grid_size(vw, vh)
         } else {
             (80, 24)
         }
     }
 
-    pub fn total_inset(&self) -> f32 {
-        (self.config.appearance.padding + self.config.appearance.border_width) * 2.0
-    }
-
+    /// Delegate: get animation configuration.
     pub(crate) fn anim_config(&self) -> AnimConfig {
-        use ciri_anim::easing::EasingCurve;
-        use ciri_anim::manager::{AnimKind, CloseStyle, OpenStyle, PaneCloseConfig, PaneOpenConfig};
-        use ciri_anim::spring::SpringParams;
-        use ciri_config::config::AnimationPreset;
-
-        // All timings derived from a single preset
-        // stiffness = (2π / response)², damping_ratio = 0.86
-        let (primary, fast, slow, open_dur, close_dur) = match self.config.animation.preset {
-            AnimationPreset::Snappy => (
-                SpringParams::new(0.86, 440.0, 0.0001),  // ~0.3s
-                SpringParams::new(0.86, 800.0, 0.0001),  // ~0.2s
-                SpringParams::new(0.86, 250.0, 0.0001),  // ~0.4s
-                0.15, 0.12,
-            ),
-            AnimationPreset::Default => (
-                SpringParams::new(0.86, 158.0, 0.0001),  // ~0.5s
-                SpringParams::new(0.86, 440.0, 0.0001),  // ~0.3s
-                SpringParams::new(0.86, 80.0, 0.0001),   // ~0.7s
-                0.25, 0.18,
-            ),
-            AnimationPreset::Smooth => (
-                SpringParams::new(0.86, 80.0, 0.0001),   // ~0.7s
-                SpringParams::new(0.86, 158.0, 0.0001),  // ~0.5s
-                SpringParams::new(0.86, 40.0, 0.001),    // ~1.0s
-                0.35, 0.25,
-            ),
-            AnimationPreset::Gentle => (
-                SpringParams::new(0.86, 40.0, 0.001),    // ~1.0s
-                SpringParams::new(0.86, 80.0, 0.0001),   // ~0.7s
-                SpringParams::new(0.86, 25.0, 0.001),    // ~1.3s
-                0.50, 0.35,
-            ),
-        };
-
-        AnimConfig {
-            enabled: self.config.animation.enabled,
-            view_scroll: AnimKind::Spring(primary),
-            focus_transition: AnimKind::Spring(fast),
-            pane_open: PaneOpenConfig {
-                style: match self.config.animation.pane_open_style {
-                    PaneOpenStyle::Fade => OpenStyle::Fade,
-                    PaneOpenStyle::SlideUp => OpenStyle::SlideUp,
-                    PaneOpenStyle::SlideDown => OpenStyle::SlideDown,
-                    PaneOpenStyle::SlideLeft => OpenStyle::SlideLeft,
-                    PaneOpenStyle::FadeSlideUp => OpenStyle::FadeSlideUp,
-                },
-                kind: AnimKind::Easing {
-                    duration_secs: open_dur,
-                    curve: EasingCurve::EaseOutCubic,
-                },
-            },
-            pane_close: PaneCloseConfig {
-                style: CloseStyle::Fade,
-                kind: AnimKind::Easing {
-                    duration_secs: close_dur,
-                    curve: EasingCurve::EaseOutCubic,
-                },
-            },
-            column_resize: AnimKind::Spring(slow),
-            overview_zoom: AnimKind::Spring(slow),
-            bell_flash_secs: 0.15,
-            leader_pulse_secs: 0.3,
-            inactive_opacity: self.config.appearance.inactive_opacity,
-            pane_move: AnimKind::Spring(primary),
-            drag_opacity: self.config.animation.drag_opacity,
-            drag_dim: AnimKind::Spring(fast),
-        }
+        self.core.anim_config()
     }
 
     pub fn status_bar_height(&self) -> f32 {
@@ -946,11 +476,11 @@ impl App {
             .glyph_cache
             .as_ref()
             .map(|c| c.cell_height)
-            .unwrap_or(self.config.font.size * 1.2);
-        let padding = if let Some(px) = self.config.statusbar.height_padding {
+            .unwrap_or(self.core.config.font.size * 1.2);
+        let padding = if let Some(px) = self.core.config.statusbar.height_padding {
             px
         } else {
-            cell_h * self.config.statusbar.padding_ratio
+            cell_h * self.core.config.statusbar.padding_ratio
         };
         cell_h + padding
     }
@@ -966,7 +496,7 @@ impl App {
     }
 
     pub fn status_bar_y(&self, window_height: f32) -> f32 {
-        match self.config.statusbar.position {
+        match self.core.config.statusbar.position {
             StatusBarPosition::Top => 0.0,
             StatusBarPosition::Bottom => window_height - self.status_bar_height(),
         }
@@ -974,7 +504,7 @@ impl App {
 
     /// Y position of the bottom hints bar.
     pub fn hints_bar_y(&self, window_height: f32) -> f32 {
-        match self.config.statusbar.position {
+        match self.core.config.statusbar.position {
             StatusBarPosition::Top => window_height - self.hints_bar_height(),
             StatusBarPosition::Bottom => {
                 window_height - self.status_bar_height() - self.hints_bar_height()
@@ -983,14 +513,14 @@ impl App {
     }
 
     pub fn content_origin_y(&self) -> f32 {
-        match self.config.statusbar.position {
+        match self.core.config.statusbar.position {
             StatusBarPosition::Top => self.status_bar_height(),
             StatusBarPosition::Bottom => 0.0,
         }
     }
 
     pub fn content_y_from_screen(&self, screen_y: f32) -> Option<f32> {
-        match self.config.statusbar.position {
+        match self.core.config.statusbar.position {
             StatusBarPosition::Top => {
                 let y = screen_y - self.status_bar_height();
                 (y >= 0.0).then_some(y)
@@ -999,131 +529,72 @@ impl App {
         }
     }
 
+    /// Delegate: remember workspace pane.
     pub fn remember_workspace_pane(&mut self, workspace_idx: usize, pane_id: u64) {
-        self.workspace_last_pane_ids.insert(workspace_idx, pane_id);
+        self.core.remember_workspace_pane(workspace_idx, pane_id);
     }
 
+    /// Delegate: focus workspace pane local.
     pub fn focus_workspace_pane_local(&mut self, workspace_idx: usize, pane_id: u64) -> bool {
-        let Some(ws) = self.workspaces.workspaces.get_mut(workspace_idx) else {
-            return false;
-        };
-        for (col_idx, col) in ws.columns.iter_mut().enumerate() {
-            if let Some(tile_idx) = col.tiles.iter().position(|t| t.pane_id == pane_id) {
-                ws.active_column_idx = col_idx;
-                col.active_tile_idx = tile_idx;
-                return true;
-            }
-        }
-        false
+        self.core.focus_workspace_pane_local(workspace_idx, pane_id)
     }
 
-    pub fn sync_workspace_pane_memory(&mut self) {
-        self.workspace_last_pane_ids.clear();
-        for (ws_idx, ws) in self.workspaces.workspaces.iter().enumerate() {
-            if let Some(pane_id) = ws.active_pane_id() {
-                self.workspace_last_pane_ids.insert(ws_idx, pane_id);
-            }
-        }
-    }
-
+    /// Delegate: write last session.
     pub fn write_last_session(&self) {
-        let path = Self::last_session_path();
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::write(path, &self.session_name);
+        self.core.write_last_session();
     }
 
     pub fn mark_disconnected_for_reconnect(&mut self) {
-        log::warn!("disconnected from server");
-        self.connected = false;
-        for grid in self.pane_grids.values_mut() {
-            grid.dirty = true;
-        }
+        self.core.mark_disconnected_for_reconnect();
         self.cached_views.clear();
         self.cached_tile_glyphs.clear();
-        self.server_tx = None;
-        self.server_rx = None;
-        self.reconnect_state = Some(ReconnectState {
-            attempt: 0,
-            max_attempts: 10,
-            next_retry: Instant::now() + Duration::from_millis(500),
-            backoff: Duration::from_millis(500),
-        });
     }
 
     pub fn prepare_reconnect(&mut self) -> Option<ReconnectPlan> {
-        if self.connected || self.server_rx.is_some() {
-            return None;
+        use ciri_core::app::ReconnectPlanDecision;
+        match self.core.prepare_reconnect_plan()? {
+            ReconnectPlanDecision::GaveUp => {
+                Some(ReconnectPlan {
+                    viewport: self.current_viewport(),
+                    should_exit: true,
+                })
+            }
+            ReconnectPlanDecision::Try => {
+                self.core.bump_reconnect_attempt();
+                Some(ReconnectPlan {
+                    viewport: self.current_viewport(),
+                    should_exit: false,
+                })
+            }
         }
-
-        let should_try = self
-            .reconnect_state
-            .as_ref()
-            .is_some_and(|state| Instant::now() >= state.next_retry);
-        let gave_up = self
-            .reconnect_state
-            .as_ref()
-            .is_some_and(|state| state.attempt >= state.max_attempts);
-        if gave_up {
-            log::error!("max reconnect attempts reached, exiting");
-            return Some(ReconnectPlan {
-                viewport: self.current_viewport(),
-                should_exit: true,
-            });
-        }
-        if !should_try {
-            return None;
-        }
-
-        if let Some(state) = &mut self.reconnect_state {
-            state.attempt += 1;
-        }
-
-        Some(ReconnectPlan {
-            viewport: self.current_viewport(),
-            should_exit: false,
-        })
     }
 
     pub fn finish_reconnect_attempt(
         &mut self,
         result: std::io::Result<(
             crossbeam_channel::Sender<ClientMessage>,
-            crossbeam_channel::Receiver<crate::connection::ServerEvent>,
+            crossbeam_channel::Receiver<ServerEvent>,
         )>,
     ) {
         match result {
-            Ok((tx, rx)) => {
-                log::info!("reconnected to session '{}'", self.session_name);
-                self.server_tx = Some(tx);
-                self.server_rx = Some(rx);
-                self.reconnect_state = None;
-            }
+            Ok((tx, rx)) => self.core.finish_reconnect_ok(tx, rx),
             Err(e) => {
                 log::warn!("reconnect failed: {e}");
-                if let Some(state) = &mut self.reconnect_state {
-                    state.backoff = (state.backoff * 2).min(Duration::from_secs(10));
-                    state.next_retry = Instant::now() + state.backoff;
-                }
+                self.core.finish_reconnect_err();
             }
         }
     }
 
     pub fn current_viewport(&self) -> ciri_protocol::codec::ClientHello {
         let (cell_width, cell_height) = self.cell_dimensions();
-        let view = &self.workspaces.view_size;
+        let view = &self.core.workspaces.view_size;
         ciri_protocol::codec::ClientHello {
-            session_name: self.session_name.clone(),
+            session_name: self.core.session_name.clone(),
             width: view.width as u32,
             height: view.height as u32,
             cell_width,
             cell_height,
         }
-    }
-
-    fn last_session_path() -> PathBuf {
-        ciri_protocol::transport::state_dir().join("last-session")
     }
 
     /// Invalidate all cached rendering state for a pane (view + glyph cache).
@@ -1137,12 +608,12 @@ impl App {
     pub fn preview_resize(&mut self, size: winit::dpi::PhysicalSize<u32>) {
         log::debug!("preview_resize: {}x{}", size.width, size.height);
         let chrome_h = self.total_chrome_height();
-        self.workspaces.resize_view(ViewSize {
+        self.core.workspaces.resize_view(ViewSize {
             width: size.width as f32,
             height: size.height as f32 - chrome_h,
         });
         self.snap_all_col_widths();
-        let center_strategy = match self.config.layout.center_focused_column {
+        let center_strategy = match self.core.config.layout.center_focused_column {
             ciri_config::config::CenterStrategy::Always => {
                 ciri_layout::workspace::CenterStrategy::Always
             }
@@ -1153,12 +624,13 @@ impl App {
                 ciri_layout::workspace::CenterStrategy::Never
             }
         };
-        let current_vox = self.anim_mgr.view_offset_x.value() as f32;
+        let current_vox = self.core.anim_mgr.view_offset_x.value() as f32;
         let t = self
+            .core
             .workspaces
             .active_mut()
             .target_offset_for_active_with_strategy(center_strategy, current_vox);
-        self.anim_mgr.view_offset_x.jump_to(t as f64);
+        self.core.anim_mgr.view_offset_x.jump_to(t as f64);
     }
 
     /// Apply a deferred resize. Called once per frame from `new_events` so
@@ -1175,14 +647,14 @@ impl App {
             }
         }
         self.preview_resize(size);
-        for grid in self.pane_grids.values_mut() {
+        for grid in self.core.pane_grids.values_mut() {
             grid.dirty = true;
         }
         self.cached_views.clear();
         self.cached_tile_glyphs.clear();
         let (cols, rows) = self.compute_grid_size();
         let (cw, ch) = self.cell_dimensions();
-        let view = &self.workspaces.view_size;
+        let view = &self.core.workspaces.view_size;
         log::debug!("  sending Resize: {cols}x{rows} cells, {cw:.1}x{ch:.1} cell_px");
         self.send(ClientMessage::Resize {
             cols,

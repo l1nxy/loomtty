@@ -1,4 +1,3 @@
-use ciri_anim::spring::SpringParams;
 use ciri_layout::geometry::Rect as GeoRect;
 
 use super::App;
@@ -6,14 +5,14 @@ use super::App;
 impl App {
     pub fn hit_test_overview(&self, mx: f32, my: f32) -> Option<(usize, u64)> {
         let my = self.content_y_from_screen(my)?;
-        let zoom = self.anim_mgr.overview_zoom.value() as f32;
-        let zoom_threshold = self.config.animation.zoom_threshold;
-        let vox = self.anim_mgr.view_offset_x.value() as f32;
-        let voy = self.anim_mgr.view_offset_y.value() as f32;
-        let tiles = if self.overview.active || zoom < zoom_threshold {
-            self.workspaces.all_tiles_2d(vox, voy)
+        let zoom = self.core.anim_mgr.overview_zoom.value() as f32;
+        let zoom_threshold = self.core.config.animation.zoom_threshold;
+        let vox = self.core.anim_mgr.view_offset_x.value() as f32;
+        let voy = self.core.anim_mgr.view_offset_y.value() as f32;
+        let tiles = if self.core.overview.active || zoom < zoom_threshold {
+            self.core.workspaces.all_tiles_2d(vox, voy)
         } else {
-            self.workspaces.visible_tiles_2d(vox, voy)
+            self.core.workspaces.visible_tiles_2d(vox, voy)
         };
         let (vw, vh) = self.command_palette_viewport_size();
         let cx = vw / 2.0;
@@ -31,7 +30,7 @@ impl App {
                 *tile_rect
             };
             if tr.contains(mx, my) {
-                for (ws_idx, ws) in self.workspaces.workspaces.iter().enumerate() {
+                for (ws_idx, ws) in self.core.workspaces.workspaces.iter().enumerate() {
                     if ws.columns.iter().any(|c| c.contains_pane(*pane_id)) {
                         return Some((ws_idx, *pane_id));
                     }
@@ -41,36 +40,20 @@ impl App {
         None
     }
 
+    /// Delegate: exit overview mode.
     pub(crate) fn exit_overview(&mut self) {
-        let sp = SpringParams::default();
-        self.overview.active = false;
-        self.overview.hovered_pane = None;
-        self.anim_mgr.overview_zoom.animate_to(1.0, sp);
-        self.animate_to_active();
+        self.core.exit_overview();
     }
 
+    /// Delegate: toggle overview mode.
     pub(crate) fn toggle_overview(&mut self) {
-        self.overview.active = !self.overview.active;
-        let sp = SpringParams::default();
-        if self.overview.active {
-            self.context_menu.visible = false;
-            self.overview.hovered_pane = None;
-            self.refresh_overview_zoom();
-            let target_x = self.workspaces.active().target_offset_for_active() as f64;
-            let target_y = self.workspaces.target_offset_y() as f64;
-            self.anim_mgr.view_offset_x.animate_to(target_x, sp);
-            self.anim_mgr.view_offset_y.animate_to(target_y, sp);
-        } else {
-            self.overview.hovered_pane = None;
-            self.anim_mgr.overview_zoom.animate_to(1.0, sp);
-            self.animate_to_active();
-        }
+        self.core.toggle_overview();
     }
 
     pub(crate) fn focus_overview_target(&mut self, ws_idx: usize, pane_id: u64) {
-        if ws_idx < self.workspaces.workspaces.len() {
-            self.workspaces.active_workspace_idx = ws_idx;
-            let ws = self.workspaces.active_mut();
+        if ws_idx < self.core.workspaces.workspaces.len() {
+            self.core.workspaces.active_workspace_idx = ws_idx;
+            let ws = self.core.workspaces.active_mut();
             for (col_idx, col) in ws.columns.iter().enumerate() {
                 if col.contains_pane(pane_id) {
                     ws.active_column_idx = col_idx;
@@ -83,7 +66,7 @@ impl App {
         }
         self.remember_workspace_pane(ws_idx, pane_id);
         self.send(ciri_protocol::message::ClientMessage::FocusPane { pane_id });
-        self.overview.hovered_pane = None;
+        self.core.overview.hovered_pane = None;
         self.exit_overview();
     }
 }

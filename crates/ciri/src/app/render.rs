@@ -1,5 +1,3 @@
-use ciri_anim::anim_value::AnimValue;
-use ciri_anim::spring::SpringParams;
 use ciri_config::config::{FocusRingStyle, PaneOpenStyle};
 use ciri_config::theme::ThemeConfig;
 use ciri_layout::geometry::Rect as GeoRect;
@@ -14,150 +12,24 @@ use super::App;
 use super::status_bar::emit_status_text;
 
 impl App {
+    /// Delegate: snap all column widths.
     pub fn snap_all_col_widths(&mut self) {
-        let vw = self.workspaces.view_size.width;
-        self.anim_mgr.col_widths.clear();
-        for ws in &mut self.workspaces.workspaces {
-            for col in &mut ws.columns {
-                col.snap_width(vw);
-            }
-        }
+        self.core.snap_all_col_widths();
     }
 
-    /// Helper: spring params for scroll/zoom from config.
-    fn scroll_spring(&self) -> SpringParams {
-        SpringParams::default()
-    }
-
+    /// Delegate: refresh overview zoom level.
     pub fn refresh_overview_zoom(&mut self) {
-        if !self.overview.active {
-            return;
-        }
-        let sp = self.scroll_spring();
-        let vw = self.workspaces.view_size.width;
-        let vh = self.workspaces.view_size.height;
-        let max_w = self
-            .workspaces
-            .workspaces
-            .iter()
-            .map(|ws| ws.total_width())
-            .fold(0.0f32, f32::max)
-            .max(vw);
-        let nrows = self
-            .workspaces
-            .workspaces
-            .iter()
-            .filter(|ws| !ws.is_empty())
-            .count()
-            .max(1);
-        let total_h =
-            nrows as f32 * vh + (nrows.saturating_sub(1)) as f32 * self.workspaces.workspace_gap;
-        let fit = self.config.animation.overview_zoom_fit;
-        let zoom_x = vw / max_w;
-        let zoom_y = vh / total_h;
-        let zoom = (zoom_x.min(zoom_y).min(1.0) * fit).max(0.15);
-        self.anim_mgr.overview_zoom.animate_to(zoom as f64, sp);
+        self.core.refresh_overview_zoom();
     }
 
+    /// Delegate: animate view to active column/workspace.
     pub fn animate_to_active(&mut self) {
-        let sp = self.scroll_spring();
-        let enabled = self.config.animation.enabled;
-
-        let center_strategy = match self.config.layout.center_focused_column {
-            ciri_config::config::CenterStrategy::Always => {
-                ciri_layout::workspace::CenterStrategy::Always
-            }
-            ciri_config::config::CenterStrategy::OnOverflow => {
-                ciri_layout::workspace::CenterStrategy::OnOverflow
-            }
-            ciri_config::config::CenterStrategy::Never => {
-                ciri_layout::workspace::CenterStrategy::Never
-            }
-        };
-        let current_vox = self.anim_mgr.view_offset_x.value() as f32;
-        let target_x = self
-            .workspaces
-            .active_mut()
-            .target_offset_for_active_with_strategy(center_strategy, current_vox);
-        if enabled {
-            self.anim_mgr.view_offset_x.animate_to(target_x as f64, sp);
-        } else {
-            self.anim_mgr.view_offset_x.jump_to(target_x as f64);
-        }
-
-        let target_y = self.workspaces.target_offset_y();
-        if enabled {
-            self.anim_mgr.view_offset_y.animate_to(target_y as f64, sp);
-        } else {
-            self.anim_mgr.view_offset_y.jump_to(target_y as f64);
-        }
-
-        self.sync_col_animations();
+        self.core.animate_to_active();
     }
 
-    pub fn sync_col_animations(&mut self) {
-        let ncols = self.workspaces.active().columns.len();
-        while self.anim_mgr.col_widths.len() < ncols {
-            self.anim_mgr.col_widths.push(AnimValue::new(0.0));
-        }
-        self.anim_mgr.col_widths.truncate(ncols);
-
-        let vw = self.workspaces.active().view_size.width;
-        let sp = self.scroll_spring();
-        for (i, col) in self.workspaces.active().columns.iter().enumerate() {
-            let target = col.resolve_width(vw) as f64;
-            let current = self.anim_mgr.col_widths[i].value();
-            let anim_target = self.anim_mgr.col_widths[i].target();
-            if self.config.animation.enabled {
-                if current == 0.0 {
-                    // New column: animate from average neighbor width for smooth entry
-                    let neighbor = if i > 0 {
-                        self.anim_mgr.col_widths[i - 1].target()
-                    } else if i + 1 < ncols {
-                        // Next column hasn't been set yet, use target
-                        self.workspaces
-                            .active()
-                            .columns
-                            .get(i + 1)
-                            .map(|c| c.resolve_width(vw) as f64)
-                            .unwrap_or(target)
-                    } else {
-                        target
-                    };
-                    self.anim_mgr.col_widths[i].jump_to(neighbor);
-                    self.anim_mgr.col_widths[i].animate_to(target, sp);
-                } else if (anim_target - target).abs() > 1.0 {
-                    self.anim_mgr.col_widths[i].animate_to(target, sp);
-                }
-            } else {
-                self.anim_mgr.col_widths[i].jump_to(target);
-            }
-        }
-
-        let ws = self.workspaces.active_mut();
-        for (i, col) in ws.columns.iter_mut().enumerate() {
-            if i < self.anim_mgr.col_widths.len() {
-                col.set_rendered_width(self.anim_mgr.col_widths[i].value() as f32);
-            }
-        }
-    }
-
+    /// Delegate: advance all animations by dt seconds.
     pub fn advance_animations(&mut self, dt: f64) -> bool {
-        // sync_col_animations keeps col_widths targets up-to-date with layout
-        if !self.anim_mgr.col_widths.is_empty() {
-            self.sync_col_animations();
-        }
-        // advance_all ticks view_offset_x/y, overview_zoom, gesture_row_offset,
-        // col_widths, and per-pane/effect animations.
-        let animating = self.anim_mgr.advance_all(dt);
-        // Apply advanced col_width values back to rendered layout
-        let ws = self.workspaces.active_mut();
-        for (i, col) in ws.columns.iter_mut().enumerate() {
-            if i < self.anim_mgr.col_widths.len() {
-                col.set_rendered_width(self.anim_mgr.col_widths[i].value() as f32);
-            }
-        }
-        animating
+        self.core.advance_animations(dt)
     }
 
     pub fn build_tiles(
@@ -172,23 +44,23 @@ impl App {
         glyph_batches: &mut Vec<ScissoredRange>,
         color_glyph_batches: &mut Vec<ScissoredRange>,
     ) {
-        let zoom_threshold = self.config.animation.zoom_threshold;
-        let padding = self.config.appearance.padding;
-        let border_w = self.config.appearance.border_width;
-        let active_border = if self.config.appearance.active_border_color.is_empty() {
-            ThemeConfig::parse_color(&self.config.theme.border_active)
+        let zoom_threshold = self.core.config.animation.zoom_threshold;
+        let padding = self.core.config.appearance.padding;
+        let border_w = self.core.config.appearance.border_width;
+        let active_border = if self.core.config.appearance.active_border_color.is_empty() {
+            ThemeConfig::parse_color(&self.core.config.theme.border_active)
         } else {
-            ThemeConfig::parse_color(&self.config.appearance.active_border_color)
+            ThemeConfig::parse_color(&self.core.config.appearance.active_border_color)
         };
-        let inactive_border = if self.config.appearance.inactive_border_color.is_empty() {
-            ThemeConfig::parse_color(&self.config.theme.border_inactive)
+        let inactive_border = if self.core.config.appearance.inactive_border_color.is_empty() {
+            ThemeConfig::parse_color(&self.core.config.theme.border_inactive)
         } else {
-            ThemeConfig::parse_color(&self.config.appearance.inactive_border_color)
+            ThemeConfig::parse_color(&self.core.config.appearance.inactive_border_color)
         };
         // inactive_opacity is now handled by AnimConfig in the animation manager
-        let bg_color = ThemeConfig::parse_color(&self.config.theme.background);
-        let link_color = ThemeConfig::parse_color(&self.config.theme.accent);
-        let accent = ThemeConfig::parse_color(&self.config.theme.accent);
+        let bg_color = ThemeConfig::parse_color(&self.core.config.theme.background);
+        let link_color = ThemeConfig::parse_color(&self.core.config.theme.accent);
+        let accent = ThemeConfig::parse_color(&self.core.config.theme.accent);
         let cache_tile_glyphs = self.pending_resize.is_none();
 
         for (pane_id, tile_rect, is_active) in tiles {
@@ -211,9 +83,9 @@ impl App {
 
             // Focus ring: configurable style for active pane
             if *is_active {
-                match &self.config.appearance.focus_ring.style {
+                match &self.core.config.appearance.focus_ring.style {
                     FocusRingStyle::Glow => {
-                        let fr = &self.config.appearance.focus_ring;
+                        let fr = &self.core.config.appearance.focus_ring;
                         let layers = fr.glow_layers.max(1) as usize;
                         for layer in (0..layers).rev() {
                             let offset = fr.glow_radius * (layer + 1) as f32 / layers as f32;
@@ -241,7 +113,7 @@ impl App {
                         });
                     }
                     FocusRingStyle::Dashed => {
-                        let fr = &self.config.appearance.focus_ring;
+                        let fr = &self.core.config.appearance.focus_ring;
                         let bw = border_w * zoom;
                         emit_dashed_border(
                             bg_rects,
@@ -278,9 +150,9 @@ impl App {
                 h: tr.h - border_w * zoom * 2.0,
                 color: bg_color,
             });
-            if self.overview.active
+            if self.core.overview.active
                 && self
-                    .overview
+                    .core.overview
                     .hovered_pane
                     .is_some_and(|(_, hovered_pane_id)| hovered_pane_id == *pane_id)
             {
@@ -352,7 +224,7 @@ impl App {
                 }
             }
 
-            if self.cursor_blink_visible && *is_active {
+            if self.core.cursor_blink_visible && *is_active {
                 for cursor in &view.cursor_rects {
                     let src = GeoRect::new(
                         inner_x + cursor.x * zoom,
@@ -392,9 +264,9 @@ impl App {
             }
 
             // Selection overlay
-            if let Some(sel) = &self.selection {
+            if let Some(sel) = &self.core.selection {
                 if sel.pane_id == *pane_id {
-                    if let Some(grid) = self.pane_grids.get(pane_id) {
+                    if let Some(grid) = self.core.pane_grids.get(pane_id) {
                         let (cw, ch) = self.cell_dimensions();
                         let (start, end) = if sel.start.1 < sel.end.1
                             || (sel.start.1 == sel.end.1 && sel.start.0 <= sel.end.0)
@@ -434,9 +306,9 @@ impl App {
                 }
             }
 
-            if let Some(link) = &self.hovered_link {
+            if let Some(link) = &self.core.hovered_link {
                 if link.pane_id == *pane_id {
-                    if let Some(grid) = self.pane_grids.get(pane_id) {
+                    if let Some(grid) = self.core.pane_grids.get(pane_id) {
                         if let Some(viewport_row) = grid.buffer_to_viewport_row(link.start.1) {
                             let (cw, ch) = self.cell_dimensions();
                             let underline_h = (zoom.max(1.0)).clamp(1.0, 2.0);
@@ -461,9 +333,9 @@ impl App {
             }
 
             // Search match highlights
-            if let Some(search) = &self.search_state {
+            if let Some(search) = &self.core.search_state {
                 if search.pane_id == *pane_id {
-                    if let Some(grid) = self.pane_grids.get(pane_id) {
+                    if let Some(grid) = self.core.pane_grids.get(pane_id) {
                         let (cw, ch) = self.cell_dimensions();
                         let vp_top = grid.viewport_top();
                         let vp_bottom = vp_top + grid.rows as usize;
@@ -501,14 +373,14 @@ impl App {
             }
 
             // Animated focus opacity (smooth transition on focus change)
-            let focus_dim = self.anim_mgr.pane_focus_opacity(*pane_id);
-            let open_opacity = self.anim_mgr.pane_open_opacity(*pane_id);
-            let drag_dim = self.anim_mgr.pane_drag_dim(*pane_id);
+            let focus_dim = self.core.anim_mgr.pane_focus_opacity(*pane_id);
+            let open_opacity = self.core.anim_mgr.pane_open_opacity(*pane_id);
+            let drag_dim = self.core.anim_mgr.pane_drag_dim(*pane_id);
             let dim = focus_dim * open_opacity * drag_dim;
 
             // Combined pane offset: open slide + move animation
-            let slide_progress = self.anim_mgr.pane_open_slide(*pane_id);
-            let (open_dx, open_dy) = match self.config.animation.pane_open_style {
+            let slide_progress = self.core.anim_mgr.pane_open_slide(*pane_id);
+            let (open_dx, open_dy) = match self.core.config.animation.pane_open_style {
                 PaneOpenStyle::SlideUp | PaneOpenStyle::FadeSlideUp => {
                     (0.0, -tr.h * slide_progress)
                 }
@@ -516,7 +388,7 @@ impl App {
                 PaneOpenStyle::SlideLeft => (-tr.w * slide_progress, 0.0),
                 PaneOpenStyle::Fade => (0.0, 0.0),
             };
-            let (move_dx, move_dy) = self.anim_mgr.pane_move_offset(*pane_id);
+            let (move_dx, move_dy) = self.core.anim_mgr.pane_move_offset(*pane_id);
             let offset_dx = open_dx + move_dx * zoom;
             let offset_dy = open_dy + move_dy * zoom;
 
@@ -633,7 +505,7 @@ impl App {
         }
 
         // Render closing panes as fading-out rects
-        for (rect, opacity, _slide) in self.anim_mgr.closing_panes() {
+        for (rect, opacity, _slide) in self.core.anim_mgr.closing_panes() {
             bg_rects.push(Rect {
                 x: rect.x,
                 y: rect.y,
@@ -652,7 +524,7 @@ impl App {
         bg_rects: &mut Vec<Rect>,
         glyphs: &mut Vec<GlyphInstance>,
     ) {
-        let Some(search) = &self.search_state else {
+        let Some(search) = &self.core.search_state else {
             return;
         };
         let atlas = self.glyph_cache.as_mut().unwrap();
@@ -663,8 +535,8 @@ impl App {
             return;
         };
 
-        let border_w = self.config.appearance.border_width;
-        let padding = self.config.appearance.padding;
+        let border_w = self.core.config.appearance.border_width;
+        let padding = self.core.config.appearance.padding;
         let bar_height = atlas.cell_height + 4.0;
         let bar_y = pane_rect.y + pane_rect.h - border_w - bar_height;
         let bar_x = pane_rect.x + border_w;
@@ -695,7 +567,7 @@ impl App {
         let bar_text = format!(" Search: {}{}", search.query, match_info);
 
         let cw = atlas.cell_width;
-        let baseline = atlas.cell_height * self.config.statusbar.text_baseline;
+        let baseline = atlas.cell_height * self.core.config.statusbar.text_baseline;
         let text_y = bar_y + 2.0;
         let text_color = [1.0, 1.0, 1.0, 1.0];
 
@@ -719,9 +591,9 @@ impl App {
         vh: f32,
         bg_rects: &mut Vec<Rect>,
     ) {
-        let zoom_threshold = self.config.animation.zoom_threshold;
+        let zoom_threshold = self.core.config.animation.zoom_threshold;
         for (pane_id, tile_rect, _) in tiles {
-            let intensity = self.anim_mgr.bell_flash(*pane_id);
+            let intensity = self.core.anim_mgr.bell_flash(*pane_id);
             if intensity <= 0.0 {
                 continue;
             }
@@ -756,13 +628,13 @@ impl App {
         bg_rects: &mut Vec<Rect>,
         glyphs: &mut Vec<GlyphInstance>,
     ) {
-        if !self.ime.preedit_active || self.ime.preedit_text.is_empty() {
+        if !self.core.ime.preedit_active || self.core.ime.preedit_text.is_empty() {
             return;
         }
         let atlas = self.glyph_cache.as_mut().unwrap();
 
         // Find active pane tile rect and cursor position
-        let active_pid = match self.workspaces.active().active_pane_id() {
+        let active_pid = match self.core.workspaces.active().active_pane_id() {
             Some(pid) => pid,
             None => return,
         };
@@ -779,8 +651,8 @@ impl App {
             None => return,
         };
 
-        let border_w = self.config.appearance.border_width;
-        let padding = self.config.appearance.padding;
+        let border_w = self.core.config.appearance.border_width;
+        let padding = self.core.config.appearance.padding;
         let cw = atlas.cell_width;
         let ch = atlas.cell_height;
 
@@ -788,7 +660,7 @@ impl App {
         let base_x = tile_rect.x + border_w + padding + cursor_rect.x;
         let base_y = tile_rect.y + border_w + padding + cursor_rect.y;
 
-        let text = &self.ime.preedit_text;
+        let text = &self.core.ime.preedit_text;
         let text_width = text.chars().count() as f32 * cw;
 
         // Background box
@@ -810,7 +682,7 @@ impl App {
         });
 
         // Render text
-        let baseline = ch * self.config.statusbar.text_baseline;
+        let baseline = ch * self.core.config.statusbar.text_baseline;
         let text_color = [1.0, 1.0, 1.0, 1.0];
         emit_status_text(
             atlas,
@@ -824,7 +696,7 @@ impl App {
         );
 
         // Cursor within preedit text
-        if let Some(cursor_pos) = self.ime.preedit_cursor {
+        if let Some(cursor_pos) = self.core.ime.preedit_cursor {
             let cx = base_x + 2.0 + cursor_pos as f32 * cw;
             bg_rects.push(Rect {
                 x: cx,
@@ -845,17 +717,17 @@ impl App {
         bg_rects: &mut Vec<Rect>,
         glyphs: &mut Vec<GlyphInstance>,
     ) {
-        if self.image_placements.is_empty() {
+        if self.core.image_placements.is_empty() {
             return;
         }
         let atlas = self.glyph_cache.as_mut().unwrap();
-        let border_w = self.config.appearance.border_width;
-        let padding = self.config.appearance.padding;
+        let border_w = self.core.config.appearance.border_width;
+        let padding = self.core.config.appearance.padding;
         let (cw, ch) = (atlas.cell_width, atlas.cell_height);
-        let zoom_threshold = self.config.animation.zoom_threshold;
+        let zoom_threshold = self.core.config.animation.zoom_threshold;
 
         for (pane_id, tile_rect, _) in tiles {
-            let Some(placements) = self.image_placements.get(pane_id) else {
+            let Some(placements) = self.core.image_placements.get(pane_id) else {
                 continue;
             };
             if placements.is_empty() {
@@ -928,7 +800,7 @@ impl App {
 
                 // "IMG" label
                 let label = format!("IMG {}x{}", img.pixel_width, img.pixel_height);
-                let baseline = ch * self.config.statusbar.text_baseline;
+                let baseline = ch * self.core.config.statusbar.text_baseline;
                 emit_status_text(
                     atlas,
                     &label,
@@ -954,18 +826,18 @@ impl App {
         }
 
         let now = Instant::now();
-        let dt = (now - self.last_frame).as_secs_f64();
-        self.last_frame = now;
+        let dt = (now - self.core.last_frame).as_secs_f64();
+        self.core.last_frame = now;
 
         let mut animating = self.advance_animations(dt);
 
         // Focus change detection → delegate to AnimationManager
-        let current_focus = self.workspaces.active().active_pane_id();
+        let current_focus = self.core.workspaces.active().active_pane_id();
         let config = self.anim_config();
-        self.anim_mgr.on_focus_changed(current_focus, &config);
+        self.core.anim_mgr.on_focus_changed(current_focus, &config);
 
         // Advance all pane animations (open, close, focus, bell) in one call
-        animating |= self.anim_mgr.advance_all(dt);
+        animating |= self.core.anim_mgr.advance_all(dt);
 
         let renderer = self.renderer.as_mut().unwrap();
         let cache = self.glyph_cache.as_mut().unwrap();
@@ -973,22 +845,22 @@ impl App {
         let (vw, vh) = renderer.surface_size();
         let vw_f = vw as f32;
         let vh_f = vh as f32;
-        let zoom = self.anim_mgr.overview_zoom.value() as f32;
-        let zoom_threshold = self.config.animation.zoom_threshold;
+        let zoom = self.core.anim_mgr.overview_zoom.value() as f32;
+        let zoom_threshold = self.core.config.animation.zoom_threshold;
 
-        let vox = self.anim_mgr.view_offset_x.value() as f32;
-        let voy = self.anim_mgr.view_offset_y.value() as f32;
-        let tiles = if self.overview.active || zoom < zoom_threshold {
-            self.workspaces.all_tiles_2d(vox, voy)
+        let vox = self.core.anim_mgr.view_offset_x.value() as f32;
+        let voy = self.core.anim_mgr.view_offset_y.value() as f32;
+        let tiles = if self.core.overview.active || zoom < zoom_threshold {
+            self.core.workspaces.all_tiles_2d(vox, voy)
         } else {
-            self.workspaces.visible_tiles_2d(vox, voy)
+            self.core.workspaces.visible_tiles_2d(vox, voy)
         };
 
         // Update terminal views for dirty pane grids
         for (pane_id, tile_rect, _) in &tiles {
             // Snapshot dirty state before taking mutable borrows
             let (needs_full, has_dirty_rows, dirty_rows_copy) =
-                if let Some(g) = self.pane_grids.get(pane_id) {
+                if let Some(g) = self.core.pane_grids.get(pane_id) {
                     (g.dirty, g.is_dirty(), g.dirty_rows.clone())
                 } else {
                     (false, false, Vec::new())
@@ -996,7 +868,7 @@ impl App {
             let needs_initial = !self.cached_views.contains_key(pane_id);
 
             if (needs_full || needs_initial)
-                && let Some(grid) = self.pane_grids.get_mut(pane_id)
+                && let Some(grid) = self.core.pane_grids.get_mut(pane_id)
             {
                 // Full rebuild path
                 let visible = grid.visible_cells();
@@ -1013,7 +885,7 @@ impl App {
                     cursor_line: cur_line,
                     cursor_col: cur_col,
                     cursor_shape: cur_shape,
-                    config: &self.config,
+                    config: &self.core.config,
                     shaper,
                     colors: &self.cached_color_table,
                     grapheme_map: &grid.grapheme_map,
@@ -1026,7 +898,7 @@ impl App {
                 self.cached_tile_glyphs.remove(pane_id);
             } else if has_dirty_rows && !needs_full {
                 // Incremental update path — only re-render dirty rows
-                if let Some(grid) = self.pane_grids.get_mut(pane_id) {
+                if let Some(grid) = self.core.pane_grids.get_mut(pane_id) {
                     let (cur_col, cur_line, cur_shape) =
                         if let Some((col, line)) = grid.cursor_in_viewport() {
                             (col, line, grid.cursor_shape)
@@ -1045,7 +917,7 @@ impl App {
                             cursor_line: cur_line,
                             cursor_col: cur_col,
                             cursor_shape: cur_shape,
-                            config: &self.config,
+                            config: &self.core.config,
                             shaper,
                             colors: &self.cached_color_table,
                             grapheme_map: &grid.grapheme_map,
@@ -1056,17 +928,17 @@ impl App {
             }
 
             // Recompute scrollbar only when parameters change (avoids redundant float math).
-            if let Some(grid) = self.pane_grids.get(pane_id)
+            if let Some(grid) = self.core.pane_grids.get(pane_id)
                 && let Some(view) = self.cached_views.get_mut(pane_id)
             {
-                let border_w = self.config.appearance.border_width;
-                let padding = self.config.appearance.padding;
+                let border_w = self.core.config.appearance.border_width;
+                let padding = self.core.config.appearance.padding;
                 let inset = (border_w + padding) * 2.0;
                 let pw = tile_rect.w - inset;
                 let ph = tile_rect.h - inset;
                 // Determine scrollbar visual state (Pressed > Hovered > Idle)
                 let sb_state = if self
-                    .drag
+                    .core.drag
                     .scrollbar_dragging
                     .as_ref()
                     .is_some_and(|info| info.pane_id == *pane_id)
@@ -1104,7 +976,7 @@ impl App {
                         pw,
                         ph,
                         sb_state,
-                        &self.config,
+                        &self.core.config,
                     );
                     view.scrollbar_key = Some(sb_key);
                 }
@@ -1114,18 +986,18 @@ impl App {
         // Update IME cursor area
         if self.pending_resize.is_none()
             && let Some(window) = &self.window
-            && let Some(active_pid) = self.workspaces.active().active_pane_id()
+            && let Some(active_pid) = self.core.workspaces.active().active_pane_id()
             && let Some((_, tile_rect, _)) = tiles.iter().find(|(id, _, _)| *id == active_pid)
             && let Some(view) = self.cached_views.get(&active_pid)
             && let Some(cursor) = view.cursor_rects.first()
         {
-            let padding = self.config.appearance.padding;
-            let border_w = self.config.appearance.border_width;
+            let padding = self.core.config.appearance.padding;
+            let border_w = self.core.config.appearance.border_width;
             let cx = (tile_rect.x + border_w + padding + cursor.x) as i32;
             let cy = (tile_rect.y + border_w + padding + cursor.y) as i32;
             let pos = (cx, cy);
-            if self.ime.last_pos != Some(pos) {
-                self.ime.last_pos = Some(pos);
+            if self.core.ime.last_pos != Some(pos) {
+                self.core.ime.last_pos = Some(pos);
                 window.set_ime_cursor_area(
                     winit::dpi::PhysicalPosition::new(cx as f64, cy as f64),
                     winit::dpi::PhysicalSize::new(
@@ -1179,10 +1051,10 @@ impl App {
         self.build_ime_preedit(&offset_tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs);
         self.build_image_placements(&offset_tiles, zoom, vw_f, vh_f, &mut bg_rects, &mut glyphs);
 
-        let clear_color = if self.overview.active || zoom < zoom_threshold {
-            ThemeConfig::parse_color(&self.config.theme.overview_background)
+        let clear_color = if self.core.overview.active || zoom < zoom_threshold {
+            ThemeConfig::parse_color(&self.core.config.theme.overview_background)
         } else {
-            ThemeConfig::parse_color(&self.config.theme.ui_background)
+            ThemeConfig::parse_color(&self.core.config.theme.ui_background)
         };
         let renderer = self.renderer.as_mut().unwrap();
         let cache = self.glyph_cache.as_mut().unwrap();
@@ -1216,7 +1088,7 @@ impl App {
             cache.atlas_needs_clear = false;
             self.cached_views.clear();
             self.cached_tile_glyphs.clear();
-            for grid in self.pane_grids.values_mut() {
+            for grid in self.core.pane_grids.values_mut() {
                 grid.dirty = true;
             }
             animating = true; // ensure redraw to rebuild glyphs

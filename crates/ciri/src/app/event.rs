@@ -18,7 +18,7 @@ fn load_window_icon() -> Option<Icon> {
 
 impl ApplicationHandler for App {
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
-        if self.should_exit {
+        if self.core.should_exit {
             self.destroy_gpu_resources();
             self.renderer = None;
             self.window = None;
@@ -40,17 +40,17 @@ impl ApplicationHandler for App {
                     self.dpi_scale = new_dpi;
                     self.destroy_gpu_resources();
                     if let Some(renderer) = &mut self.renderer {
-                        let shaper = ciri_render::shaper::TextShaper::new(&self.config.font.family);
+                        let shaper = ciri_render::shaper::TextShaper::new(&self.core.config.font.family);
                         let (cache, atlas_gpu) = renderer.create_atlas(
-                            self.config.font.size,
+                            self.core.config.font.size,
                             new_dpi,
-                            &self.config.font.family,
+                            &self.core.config.font.family,
                             shaper.primary_font_path(),
                             shaper.emoji_font_path(),
                             shaper.emoji_font_id(),
                             shaper.cjk_font_path(),
                             shaper.cjk_font_id(),
-                            &self.config.render,
+                            &self.core.config.render,
                         );
                         log::info!(
                             "DPI changed: scale={:.2} cell={:.1}x{:.1}",
@@ -63,7 +63,7 @@ impl ApplicationHandler for App {
                         self.text_shaper = Some(shaper);
                         self.cached_views.clear();
                         self.cached_tile_glyphs.clear();
-                        for grid in self.pane_grids.values_mut() {
+                        for grid in self.core.pane_grids.values_mut() {
                             grid.dirty = true;
                         }
                     }
@@ -78,13 +78,13 @@ impl ApplicationHandler for App {
 
         // Idle-aware event loop: only poll at frame rate when animating or
         // expecting updates. Switch to Wait when idle to save power.
-        let is_animating = self.anim_mgr.is_animating();
-        let has_server = self.server_rx.is_some();
-        let is_reconnecting = self.reconnect_state.is_some();
-        let wants_blink = self.config.terminal.cursor_blink;
-        let has_remote_query = self.remote_query_rx.is_some();
+        let is_animating = self.core.anim_mgr.is_animating();
+        let has_server = self.core.server_rx.is_some();
+        let is_reconnecting = self.core.reconnect_state.is_some();
+        let wants_blink = self.core.config.terminal.cursor_blink;
+        let has_remote_query = self.core.remote_query_rx.is_some();
 
-        let has_pending = self.server_rx.as_ref().is_some_and(|rx| !rx.is_empty());
+        let has_pending = self.core.server_rx.as_ref().is_some_and(|rx| !rx.is_empty());
 
         let resize_deadline = self
             .pending_resize
@@ -96,12 +96,12 @@ impl ApplicationHandler for App {
             // During live resize: render at frame rate for a smooth preview.
             // Surface.configure() is deferred to render time so we only
             // rebuild the swapchain once per frame regardless of event count.
-            let frame_wake = Instant::now() + self.frame_interval;
+            let frame_wake = Instant::now() + self.core.frame_interval;
             event_loop.set_control_flow(ControlFlow::WaitUntil(frame_wake.min(resize_deadline)));
         } else if is_animating || has_pending || is_reconnecting || has_remote_query {
             // Active rendering or pending data: poll at frame rate
             event_loop
-                .set_control_flow(ControlFlow::WaitUntil(Instant::now() + self.frame_interval));
+                .set_control_flow(ControlFlow::WaitUntil(Instant::now() + self.core.frame_interval));
         } else if wants_blink || has_server {
             // Connected but idle: poll at reduced rate (50ms = 20fps idle)
             event_loop.set_control_flow(ControlFlow::WaitUntil(
@@ -123,20 +123,20 @@ impl ApplicationHandler for App {
             }
 
             // Poll async remote session query result
-            if let Some(rx) = &self.remote_query_rx {
+            if let Some(rx) = &self.core.remote_query_rx {
                 if let Ok(result) = rx.try_recv() {
-                    self.remote_query_rx = None;
+                    self.core.remote_query_rx = None;
                     self.handle_remote_query_result(result);
                     needs_redraw = true;
                 }
             }
 
             // Cursor blink
-            if self.config.terminal.cursor_blink {
-                let interval = Duration::from_millis(self.config.terminal.cursor_blink_interval_ms);
-                if self.cursor_blink_timer.elapsed() >= interval {
-                    self.cursor_blink_visible = !self.cursor_blink_visible;
-                    self.cursor_blink_timer = Instant::now();
+            if self.core.config.terminal.cursor_blink {
+                let interval = Duration::from_millis(self.core.config.terminal.cursor_blink_interval_ms);
+                if self.core.cursor_blink_timer.elapsed() >= interval {
+                    self.core.cursor_blink_visible = !self.core.cursor_blink_visible;
+                    self.core.cursor_blink_timer = Instant::now();
                     needs_redraw = true;
                 }
             }
@@ -150,8 +150,8 @@ impl ApplicationHandler for App {
             }
 
             // Auto-reconnect
-            if !self.connected && self.server_rx.is_none() {
-                let has_reconnect = self.reconnect_state.is_some();
+            if !self.core.connected && self.core.server_rx.is_none() {
+                let has_reconnect = self.core.reconnect_state.is_some();
                 if let Some(plan) = self.prepare_reconnect() {
                     if plan.should_exit {
                         event_loop.exit();
@@ -174,7 +174,7 @@ impl ApplicationHandler for App {
             }
 
             // Exit if all panes gone
-            if self.connected && self.pane_grids.is_empty() && self.workspaces.active().is_empty() {
+            if self.core.connected && self.core.pane_grids.is_empty() && self.core.workspaces.active().is_empty() {
                 self.cached_views.clear();
                 self.cached_tile_glyphs.clear();
                 self.destroy_gpu_resources();
@@ -195,15 +195,15 @@ impl ApplicationHandler for App {
             return;
         }
 
-        let window_title = format!("{} [{}]", self.config.window.title, self.session_name);
+        let window_title = format!("{} [{}]", self.core.config.window.title, self.core.session_name);
         let window_icon = load_window_icon();
         #[allow(unused_mut)]
         let mut attrs = WindowAttributes::default()
             .with_title(window_title)
             .with_window_icon(window_icon)
             .with_inner_size(winit::dpi::LogicalSize::new(
-                self.config.window.width,
-                self.config.window.height,
+                self.core.config.window.width,
+                self.core.config.window.height,
             ));
 
         #[cfg(target_os = "macos")]
@@ -228,31 +228,31 @@ impl ApplicationHandler for App {
             window.set_option_as_alt(OptionAsAlt::Both);
         }
         let dpi_scale = window.scale_factor();
-        let mut renderer = ciri_gpu::Renderer::new(window.clone(), &self.config.render)
+        let mut renderer = ciri_gpu::Renderer::new(window.clone(), &self.core.config.render)
             .expect("renderer init failed");
 
-        let shaper = ciri_render::shaper::TextShaper::new(&self.config.font.family);
+        let shaper = ciri_render::shaper::TextShaper::new(&self.core.config.font.family);
         let (cache, atlas_gpu) = renderer.create_atlas(
-            self.config.font.size,
+            self.core.config.font.size,
             dpi_scale,
-            &self.config.font.family,
+            &self.core.config.font.family,
             shaper.primary_font_path(),
             shaper.emoji_font_path(),
             shaper.emoji_font_id(),
             shaper.cjk_font_path(),
             shaper.cjk_font_id(),
-            &self.config.render,
+            &self.core.config.render,
         );
 
         let (w, h) = renderer.surface_size();
         let bar_padding = self
-            .config
+            .core.config
             .statusbar
             .height_padding
-            .unwrap_or(cache.cell_height * self.config.statusbar.padding_ratio);
+            .unwrap_or(cache.cell_height * self.core.config.statusbar.padding_ratio);
         let bar_h = cache.cell_height + bar_padding;
         let chrome_h = bar_h * 2.0; // status bar + hints bar
-        self.workspaces.resize_view(ViewSize {
+        self.core.workspaces.resize_view(ViewSize {
             width: w as f32,
             height: h as f32 - chrome_h,
         });
@@ -265,19 +265,19 @@ impl ApplicationHandler for App {
             dpi_scale
         );
 
-        let view = &self.workspaces.view_size;
+        let view = &self.core.workspaces.view_size;
         let viewport = ciri_protocol::codec::ClientHello {
-            session_name: self.session_name.clone(),
+            session_name: self.core.session_name.clone(),
             width: view.width as u32,
             height: view.height as u32,
             cell_width: cache.cell_width,
             cell_height: cache.cell_height,
         };
-        log::info!("connecting to session '{}'", self.session_name);
+        log::info!("connecting to session '{}'", self.core.session_name);
         match self.connect(viewport) {
             Ok((tx, rx)) => {
-                self.server_tx = Some(tx);
-                self.server_rx = Some(rx);
+                self.core.server_tx = Some(tx);
+                self.core.server_rx = Some(rx);
             }
             Err(e) => {
                 log::error!("failed to connect to server: {e}");
@@ -316,7 +316,7 @@ impl ApplicationHandler for App {
         self.animate_to_active();
         self.window = Some(window);
         self.renderer = Some(renderer);
-        self.last_frame = Instant::now();
+        self.core.last_frame = Instant::now();
 
         self.window.as_ref().unwrap().request_redraw();
     }
@@ -327,7 +327,7 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => {
                 self.send(ClientMessage::Detach);
-                self.pane_grids.clear();
+                self.core.pane_grids.clear();
                 self.cached_views.clear();
                 self.cached_tile_glyphs.clear();
                 self.destroy_gpu_resources();
@@ -345,7 +345,7 @@ impl ApplicationHandler for App {
                     return;
                 }
                 log::debug!("window resized: {}x{}", size.width, size.height);
-                self.context_menu.visible = false;
+                self.core.context_menu.visible = false;
                 // Keep local viewport/layout state in sync immediately so the
                 // user sees a smooth local preview while dragging.
                 self.preview_resize(size);
@@ -422,7 +422,7 @@ impl ApplicationHandler for App {
                 self.window_focused = focused;
                 self.send(ClientMessage::FocusChange { focused });
                 if !focused {
-                    self.context_menu.visible = false;
+                    self.core.context_menu.visible = false;
                 }
             }
 

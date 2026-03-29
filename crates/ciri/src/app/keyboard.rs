@@ -33,7 +33,7 @@ impl App {
         event: &winit::event::KeyEvent,
         _event_loop: &ActiveEventLoop,
     ) {
-        if self.ime.preedit_active {
+        if self.core.ime.preedit_active {
             return;
         }
 
@@ -41,7 +41,7 @@ impl App {
         if event.state == ElementState::Released {
             let key_name = self.resolve_key_name(event, false);
             if !key_name.is_empty() {
-                self.input.process_key_release(key_name);
+                self.core.input.process_key_release(key_name);
                 self.request_redraw();
             }
             return;
@@ -73,7 +73,7 @@ impl App {
 
         // ── Unified pipeline: compute mode → process key → handle action ──
         let app_mode = self.compute_binding_mode();
-        let result = self.input.process_key_event(
+        let result = self.core.input.process_key_event(
             key_name,
             modifiers.ctrl,
             modifiers.shift,
@@ -98,22 +98,22 @@ impl App {
     /// Compute the current binding mode from application state.
     fn compute_binding_mode(&self) -> BindingMode {
         let mut mode = BindingMode::EMPTY;
-        if self.overview.active {
+        if self.core.overview.active {
             mode |= BindingMode::OVERVIEW;
         }
-        if self.search_state.is_some() {
+        if self.core.search_state.is_some() {
             mode |= BindingMode::SEARCH;
         }
-        if self.command_palette.is_some() {
+        if self.core.command_palette.is_some() {
             mode |= BindingMode::PALETTE;
         }
-        if self.pending_paste.is_some() {
+        if self.core.pending_paste.is_some() {
             mode |= BindingMode::PASTE_CONFIRM;
         }
-        if self.input.is_locked() {
+        if self.core.input.is_locked() {
             mode |= BindingMode::LOCKED;
         }
-        if self.input.has_active_table() {
+        if self.core.input.has_active_table() {
             mode |= BindingMode::KEY_TABLE;
         }
         mode
@@ -129,27 +129,27 @@ impl App {
         };
         let s: &str = c.as_str();
 
-        if let Some(search) = &mut self.search_state {
+        if let Some(search) = &mut self.core.search_state {
             search.query.push_str(s);
             self.update_search_results();
-        } else if let Some(palette) = &mut self.command_palette {
+        } else if let Some(palette) = &mut self.core.command_palette {
             palette.query.push_str(s);
             self.filter_palette();
         }
     }
 
     fn dismiss_context_menu_on_keypress(&mut self) -> bool {
-        if !self.context_menu.visible {
+        if !self.core.context_menu.visible {
             return false;
         }
-        self.context_menu.visible = false;
+        self.core.context_menu.visible = false;
         self.request_redraw();
         true
     }
 
     fn reset_cursor_blink_on_input(&mut self) {
-        self.cursor_blink_visible = true;
-        self.cursor_blink_timer = std::time::Instant::now();
+        self.core.cursor_blink_visible = true;
+        self.core.cursor_blink_timer = std::time::Instant::now();
     }
 
     // Priority handlers removed — all keybindings now go through
@@ -163,7 +163,7 @@ impl App {
                 Err(e) => log::warn!("clipboard read failed: {e}"),
                 Ok(text) => {
                     log::info!("clipboard text: {} bytes", text.len());
-                    let threshold = self.config.terminal.paste_warn_threshold;
+                    let threshold = self.core.config.terminal.paste_warn_threshold;
                     if let Some(info) = super::paste_guard::check_paste_size(&text, threshold) {
                         let preview = if text.len() > 200 {
                             format!("{}...", &text[..text.floor_char_boundary(200)])
@@ -171,7 +171,7 @@ impl App {
                             text.clone()
                         };
                         let preview = preview.replace('\n', " \\n ").replace('\r', "");
-                        self.pending_paste = Some(super::PendingPaste {
+                        self.core.pending_paste = Some(super::PendingPaste {
                             info,
                             preview,
                             hovered_button: None,
@@ -188,7 +188,7 @@ impl App {
     pub(crate) fn handle_clipboard_copy(&mut self) {
         log::info!(
             "clipboard copy triggered, selection={}",
-            self.selection.is_some()
+            self.core.selection.is_some()
         );
         if let Some(text) = self.extract_selected_text() {
             log::info!("copying {} bytes", text.len());
@@ -199,11 +199,11 @@ impl App {
     }
 
     pub(crate) fn send_paste_to_active_pane(&mut self, text: &[u8]) {
-        let Some(pid) = self.workspaces.active_mut().active_pane_id() else {
+        let Some(pid) = self.core.workspaces.active_mut().active_pane_id() else {
             return;
         };
         let bracketed = self
-            .pane_grids
+            .core.pane_grids
             .get(&pid)
             .is_some_and(|g| g.mode_flags & ciri_protocol::message::MODE_BRACKETED_PASTE != 0);
         let mut data = Vec::with_capacity(text.len() + if bracketed { 12 } else { 0 });
@@ -222,8 +222,8 @@ impl App {
             event.logical_key,
             Key::Named(NamedKey::Control | NamedKey::Shift | NamedKey::Alt | NamedKey::Super)
         );
-        if !is_modifier_only && self.config.terminal.clear_selection_on_type {
-            self.selection = None;
+        if !is_modifier_only && self.core.config.terminal.clear_selection_on_type {
+            self.core.selection = None;
         }
     }
 
@@ -297,10 +297,10 @@ impl App {
 
     fn send_key_input(&mut self, event: &winit::event::KeyEvent, modifiers: KeyModifiers) {
         let use_kitty = self
-            .workspaces
+            .core.workspaces
             .active()
             .active_pane_id()
-            .and_then(|pid| self.pane_grids.get(&pid))
+            .and_then(|pid| self.core.pane_grids.get(&pid))
             .is_some_and(|grid| grid.has_kitty_keyboard);
         let bytes = self.encode_key_input(event, modifiers, use_kitty);
         if bytes.is_empty() {
@@ -308,10 +308,10 @@ impl App {
         }
 
         self.scroll_active_to_bottom();
-        if self.broadcast_mode {
-            let vox = self.anim_mgr.view_offset_x.value() as f32;
+        if self.core.broadcast_mode {
+            let vox = self.core.anim_mgr.view_offset_x.value() as f32;
             let visible_pids: Vec<u64> = self
-                .workspaces
+                .core.workspaces
                 .active()
                 .visible_tiles(vox)
                 .iter()
@@ -319,7 +319,7 @@ impl App {
                 .collect();
             for pid in visible_pids {
                 let pane_kitty = self
-                    .pane_grids
+                    .core.pane_grids
                     .get(&pid)
                     .is_some_and(|g| g.has_kitty_keyboard);
                 let pane_bytes = if pane_kitty == use_kitty {
@@ -335,7 +335,7 @@ impl App {
             return;
         }
 
-        if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
+        if let Some(pid) = self.core.workspaces.active_mut().active_pane_id() {
             self.send(ClientMessage::Input {
                 pane_id: pid,
                 data: bytes,

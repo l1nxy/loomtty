@@ -12,6 +12,7 @@ use sctk::reexports::client::protocol::wl_surface::WlSurface;
 use sctk::reexports::client::{Connection, Proxy, QueueHandle};
 
 use sctk::compositor::{CompositorHandler, CompositorState};
+use sctk::data_device_manager::DataDeviceManagerState;
 use sctk::output::{OutputHandler, OutputState};
 use sctk::registry::{ProvidesRegistryState, RegistryState};
 use sctk::seat::pointer::ThemedPointer;
@@ -22,6 +23,8 @@ use sctk::shell::WaylandSurface;
 use sctk::shm::slot::SlotPool;
 use sctk::shm::{Shm, ShmHandler};
 use sctk::subcompositor::SubcompositorState;
+
+use std::path::PathBuf;
 
 use crate::platform_impl::wayland::event_loop::sink::EventSink;
 use crate::platform_impl::wayland::output::MonitorHandle;
@@ -53,6 +56,9 @@ pub struct WinitState {
 
     /// The seat state responsible for all sorts of input.
     pub seat_state: SeatState,
+
+    /// The data device manager for drag-and-drop and clipboard.
+    pub data_device_manager_state: Option<DataDeviceManagerState>,
 
     /// The shm for software buffers, such as cursors.
     pub shm: Shm,
@@ -115,6 +121,12 @@ pub struct WinitState {
     /// Whether we have dispatched events to the user thus we want to
     /// send `AboutToWait` and normally wakeup the user.
     pub dispatched_events: bool,
+
+    /// The window currently being hovered during a DnD operation.
+    pub dnd_offer_window: Option<WindowId>,
+
+    /// Cached file paths from a DnD hover (populated on enter if available).
+    pub dnd_offer_paths: Vec<PathBuf>,
 }
 
 impl WinitState {
@@ -143,9 +155,16 @@ impl WinitState {
 
         let seat_state = SeatState::new(globals, queue_handle);
 
+        let data_device_manager_state =
+            DataDeviceManagerState::bind(globals, queue_handle).ok();
+
         let mut seats = AHashMap::default();
         for seat in seat_state.seats() {
-            seats.insert(seat.id(), WinitSeatState::new());
+            let mut seat_st = WinitSeatState::new();
+            if let Some(ref ddm) = data_device_manager_state {
+                seat_st.set_data_device(ddm.get_data_device(queue_handle, &seat));
+            }
+            seats.insert(seat.id(), seat_st);
         }
 
         let (viewporter_state, fractional_scaling_manager) =
@@ -164,6 +183,7 @@ impl WinitState {
             subcompositor_state: subcompositor_state.map(Arc::new),
             output_state,
             seat_state,
+            data_device_manager_state,
             shm,
             custom_cursor_pool,
 
@@ -192,6 +212,9 @@ impl WinitState {
             loop_handle,
             // Make it true by default.
             dispatched_events: true,
+
+            dnd_offer_window: None,
+            dnd_offer_paths: Vec::new(),
         })
     }
 
@@ -433,3 +456,4 @@ sctk::delegate_registry!(WinitState);
 sctk::delegate_shm!(WinitState);
 sctk::delegate_xdg_shell!(WinitState);
 sctk::delegate_xdg_window!(WinitState);
+sctk::delegate_data_device!(WinitState);

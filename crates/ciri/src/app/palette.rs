@@ -15,7 +15,7 @@ impl App {
             .collect();
 
         // Background connection slots — quick-switch entries
-        for (id, slot) in &self.background_slots {
+        for (id, slot) in &self.core.background_slots {
             let label = match &slot.kind {
                 super::ConnectionKind::Local => {
                     format!("Switch to: local ({})", slot.session_name)
@@ -31,7 +31,7 @@ impl App {
         }
 
         // Configured remote hosts
-        for rh in &self.config.remote.hosts {
+        for rh in &self.core.config.remote.hosts {
             entries.push(PaletteEntry {
                 label: format!("Remote: {} ({})", rh.name, rh.host),
                 kind: PaletteEntryKind::RemoteHost {
@@ -44,7 +44,7 @@ impl App {
         }
 
         let filtered: Vec<usize> = (0..entries.len()).collect();
-        self.command_palette = Some(super::CommandPaletteState {
+        self.core.command_palette = Some(super::CommandPaletteState {
             query: String::new(),
             entries,
             filtered,
@@ -59,7 +59,7 @@ impl App {
     }
 
     pub fn open_session_palette(&mut self) {
-        self.command_palette = Some(super::CommandPaletteState {
+        self.core.command_palette = Some(super::CommandPaletteState {
             query: String::new(),
             entries: Vec::new(),
             filtered: Vec::new(),
@@ -74,7 +74,7 @@ impl App {
     }
 
     pub fn refresh_session_palette(&mut self) {
-        if let Some(palette) = &self.command_palette
+        if let Some(palette) = &self.core.command_palette
             && palette.sessions_only
         {
             self.send(ClientMessage::ListSessions {
@@ -85,7 +85,7 @@ impl App {
 
     /// Returns true if the palette should stay open after this entry.
     pub(crate) fn execute_palette_entry(&mut self, entry_idx: usize) {
-        let Some(palette) = &self.command_palette else {
+        let Some(palette) = &self.core.command_palette else {
             return;
         };
         let Some(entry) = palette.entries.get(entry_idx) else {
@@ -112,13 +112,13 @@ impl App {
                 ssh_port,
             } => {
                 // Enter loading state and fire async query
-                if let Some(palette) = &mut self.command_palette {
+                if let Some(palette) = &mut self.core.command_palette {
                     palette.remote_loading = Some(name.clone());
                     palette.remote_error = None;
                 }
                 let (tx, rx) = crossbeam_channel::bounded(1);
                 crate::connection::query_remote_sessions(&name, &host, port, ssh_port, tx);
-                self.remote_query_rx = Some(rx);
+                self.core.remote_query_rx = Some(rx);
             }
             PaletteEntryKind::RemoteSession {
                 host,
@@ -139,7 +139,7 @@ impl App {
                     format!("ssh {}", host)
                 };
                 self.send(ClientMessage::RunCommand {
-                    session_name: self.session_name.clone(),
+                    session_name: self.core.session_name.clone(),
                     command,
                     cwd: None,
                 });
@@ -152,7 +152,7 @@ impl App {
 
     /// Handle the result of an async remote host probe.
     pub fn handle_remote_query_result(&mut self, result: RemoteQueryResult) {
-        let Some(palette) = &mut self.command_palette else {
+        let Some(palette) = &mut self.core.command_palette else {
             return;
         };
         palette.remote_loading = None;
@@ -219,7 +219,7 @@ impl App {
     }
 
     pub fn filter_palette(&mut self) {
-        let Some(palette) = &mut self.command_palette else {
+        let Some(palette) = &mut self.core.command_palette else {
             return;
         };
         let needle = palette.query.to_lowercase();
@@ -241,7 +241,7 @@ impl App {
     }
 
     pub(crate) fn command_palette_scroll_offset(&self, visible_rows: usize) -> usize {
-        self.command_palette
+        self.core.command_palette
             .as_ref()
             .map(|palette| {
                 if palette.selected_idx >= visible_rows {

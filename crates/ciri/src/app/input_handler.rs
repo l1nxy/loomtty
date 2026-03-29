@@ -33,7 +33,7 @@ impl App {
                 self.send(ClientMessage::SplitDown);
             }
             Action::ClosePane => {
-                if let Some(pane_id) = self.workspaces.active_mut().active_pane_id() {
+                if let Some(pane_id) = self.core.workspaces.active_mut().active_pane_id() {
                     self.send(ClientMessage::ClosePane { pane_id });
                 }
             }
@@ -59,14 +59,14 @@ impl App {
                 let reverse = matches!(action, Action::CyclePresetWidthReverse);
                 let presets = self.preset_widths();
                 if let Some(w) = self
-                    .workspaces
+                    .core.workspaces
                     .active_mut()
                     .cycle_preset_width(&presets, reverse)
                 {
                     let (proportion, fixed_px) = match w {
                         ciri_layout::column::ColumnWidth::Proportion(p) => (p, None),
                         ciri_layout::column::ColumnWidth::Fixed(px) => {
-                            let vw = self.workspaces.view_size.width as f64;
+                            let vw = self.core.workspaces.view_size.width as f64;
                             let p = if vw > 0.0 { px / vw } else { 0.5 };
                             (p, Some(px))
                         }
@@ -113,8 +113,8 @@ impl App {
                 self.send(ClientMessage::EqualizeColumnSplit);
             }
             Action::ToggleBroadcast => {
-                self.broadcast_mode = !self.broadcast_mode;
-                log::info!("broadcast mode: {}", self.broadcast_mode);
+                self.core.broadcast_mode = !self.core.broadcast_mode;
+                log::info!("broadcast mode: {}", self.core.broadcast_mode);
             }
             Action::ConsumeIntoColumn => {
                 self.send(ClientMessage::ConsumeIntoColumn);
@@ -128,7 +128,7 @@ impl App {
             }
             Action::ToggleOverview => self.toggle_overview(),
             Action::SendLeaderKey => {
-                if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
+                if let Some(pid) = self.core.workspaces.active_mut().active_pane_id() {
                     self.send(ClientMessage::Input {
                         pane_id: pid,
                         data: vec![0x17],
@@ -137,7 +137,7 @@ impl App {
             }
             Action::ScrollPageUp => {
                 let rows = self
-                    .pane_grids
+                    .core.pane_grids
                     .values()
                     .next()
                     .map(|g| g.rows as usize)
@@ -146,7 +146,7 @@ impl App {
             }
             Action::ScrollPageDown => {
                 let rows = self
-                    .pane_grids
+                    .core.pane_grids
                     .values()
                     .next()
                     .map(|g| g.rows as usize)
@@ -155,7 +155,7 @@ impl App {
             }
             Action::ScrollHalfPageUp => {
                 let rows = self
-                    .pane_grids
+                    .core.pane_grids
                     .values()
                     .next()
                     .map(|g| (g.rows as usize) / 2)
@@ -164,7 +164,7 @@ impl App {
             }
             Action::ScrollHalfPageDown => {
                 let rows = self
-                    .pane_grids
+                    .core.pane_grids
                     .values()
                     .next()
                     .map(|g| (g.rows as usize) / 2)
@@ -178,8 +178,8 @@ impl App {
                 self.scroll_active_down(1);
             }
             Action::ScrollTop => {
-                if let Some(pid) = self.workspaces.active().active_pane_id() {
-                    if let Some(grid) = self.pane_grids.get_mut(&pid) {
+                if let Some(pid) = self.core.workspaces.active().active_pane_id() {
+                    if let Some(grid) = self.core.pane_grids.get_mut(&pid) {
                         grid.scroll_up(grid.max_scroll_offset());
                         self.invalidate_pane_cache(pid);
                     }
@@ -190,11 +190,11 @@ impl App {
             }
             Action::Detach => {
                 self.send(ClientMessage::Detach);
-                self.should_exit = true;
+                self.core.should_exit = true;
             }
             Action::ToggleCommandPalette => {
-                if self.command_palette.is_some() {
-                    self.command_palette = None;
+                if self.core.command_palette.is_some() {
+                    self.core.command_palette = None;
                 } else {
                     self.open_command_palette();
                 }
@@ -203,7 +203,7 @@ impl App {
                 // State transition handled by InputHandler::process_key
             }
             Action::ToggleLock => {
-                self.input.toggle_lock();
+                self.core.input.toggle_lock();
             }
             // ── Search ──
             Action::OpenSearch => {
@@ -213,9 +213,9 @@ impl App {
                 self.close_search_restore_scroll();
             }
             Action::SearchNextMatch => {
-                if self.search_state.as_ref().is_some_and(|s| s.query.is_empty()) {
+                if self.core.search_state.as_ref().is_some_and(|s| s.query.is_empty()) {
                     // Empty query: just exit search
-                    self.search_state = None;
+                    self.core.search_state = None;
                 } else {
                     self.jump_to_match(false);
                 }
@@ -226,10 +226,10 @@ impl App {
 
             // ── Command palette ──
             Action::CloseCommandPalette => {
-                self.command_palette = None;
+                self.core.command_palette = None;
             }
             Action::PaletteUp => {
-                if let Some(palette) = &mut self.command_palette {
+                if let Some(palette) = &mut self.core.command_palette {
                     if !palette.filtered.is_empty() {
                         palette.selected_idx = if palette.selected_idx == 0 {
                             palette.filtered.len() - 1
@@ -240,7 +240,7 @@ impl App {
                 }
             }
             Action::PaletteDown => {
-                if let Some(palette) = &mut self.command_palette {
+                if let Some(palette) = &mut self.core.command_palette {
                     if !palette.filtered.is_empty() {
                         palette.selected_idx =
                             (palette.selected_idx + 1) % palette.filtered.len();
@@ -261,12 +261,12 @@ impl App {
 
             // ── Paste confirmation ──
             Action::ConfirmPaste => {
-                if self.pending_paste.take().is_some() {
+                if self.core.pending_paste.take().is_some() {
                     self.handle_clipboard_paste_force();
                 }
             }
             Action::DismissPasteConfirm => {
-                self.pending_paste = None;
+                self.core.pending_paste = None;
             }
 
             // ── Text input ──
@@ -275,10 +275,10 @@ impl App {
                 log::debug!("TextInput action reached handle_action (unexpected)");
             }
             Action::TextBackspace => {
-                if let Some(search) = &mut self.search_state {
+                if let Some(search) = &mut self.core.search_state {
                     search.query.pop();
                     self.update_search_results();
-                } else if let Some(palette) = &mut self.command_palette {
+                } else if let Some(palette) = &mut self.core.command_palette {
                     palette.query.pop();
                     self.filter_palette();
                 }
@@ -298,17 +298,17 @@ impl App {
             return None;
         }
         let my = self.content_y_from_screen(my)?;
-        let border_w = self.config.appearance.border_width;
-        let padding = self.config.appearance.padding;
-        let vox = self.anim_mgr.view_offset_x.value() as f32;
-        let tiles = self.workspaces.active().visible_tiles(vox);
+        let border_w = self.core.config.appearance.border_width;
+        let padding = self.core.config.appearance.padding;
+        let vox = self.core.anim_mgr.view_offset_x.value() as f32;
+        let tiles = self.core.workspaces.active().visible_tiles(vox);
         for (pane_id, rect, _) in &tiles {
             if rect.contains(mx, my) {
                 let inner_x = rect.x + border_w + padding;
                 let inner_y = rect.y + border_w + padding;
                 let col = ((mx - inner_x) / cw).floor().max(0.0) as u16;
                 let viewport_row = ((my - inner_y) / ch).floor().max(0.0) as u16;
-                if let Some(grid) = self.pane_grids.get(pane_id) {
+                if let Some(grid) = self.core.pane_grids.get(pane_id) {
                     let col = col.min(grid.cols.saturating_sub(1));
                     let viewport_row = viewport_row.min(grid.rows.saturating_sub(1));
                     let buffer_row = grid.viewport_to_buffer_row(viewport_row);
@@ -326,17 +326,17 @@ impl App {
             return None;
         }
         let my = self.content_y_from_screen(my)?;
-        let border_w = self.config.appearance.border_width;
-        let padding = self.config.appearance.padding;
-        let vox = self.anim_mgr.view_offset_x.value() as f32;
-        let tiles = self.workspaces.active().visible_tiles(vox);
+        let border_w = self.core.config.appearance.border_width;
+        let padding = self.core.config.appearance.padding;
+        let vox = self.core.anim_mgr.view_offset_x.value() as f32;
+        let tiles = self.core.workspaces.active().visible_tiles(vox);
         for (pane_id, rect, _) in &tiles {
             if rect.contains(mx, my) {
                 let inner_x = rect.x + border_w + padding;
                 let inner_y = rect.y + border_w + padding;
                 let col = ((mx - inner_x) / cw).floor().max(0.0) as u16;
                 let row = ((my - inner_y) / ch).floor().max(0.0) as u16;
-                if let Some(grid) = self.pane_grids.get(pane_id) {
+                if let Some(grid) = self.core.pane_grids.get(pane_id) {
                     let col = col.min(grid.cols.saturating_sub(1));
                     let row = row.min(grid.rows.saturating_sub(1));
                     return Some((*pane_id, col, row));
@@ -348,8 +348,8 @@ impl App {
 
     /// Extract selected text from the pane grid using absolute buffer coordinates.
     pub fn extract_selected_text(&self) -> Option<String> {
-        let sel = self.selection.as_ref()?;
-        let grid = self.pane_grids.get(&sel.pane_id)?;
+        let sel = self.core.selection.as_ref()?;
+        let grid = self.core.pane_grids.get(&sel.pane_id)?;
         Some(grid.text_in_range(sel.start, sel.end))
     }
 
@@ -360,8 +360,8 @@ impl App {
         buffer_row: usize,
         now: Instant,
     ) -> bool {
-        let threshold = Duration::from_millis(self.config.input.double_tap_window_ms);
-        self.last_left_click.as_ref().is_some_and(|last| {
+        let threshold = Duration::from_millis(self.core.config.input.double_tap_window_ms);
+        self.core.last_left_click.as_ref().is_some_and(|last| {
             last.pane_id == pane_id
                 && last.buffer_row == buffer_row
                 && last.col.abs_diff(col) <= 1
@@ -370,7 +370,7 @@ impl App {
     }
 
     pub fn remember_left_click(&mut self, pane_id: u64, col: u16, buffer_row: usize, now: Instant) {
-        self.last_left_click = Some(super::LastLeftClick {
+        self.core.last_left_click = Some(super::LastLeftClick {
             pane_id,
             col,
             buffer_row,
@@ -379,13 +379,13 @@ impl App {
     }
 
     pub fn select_word_at(&mut self, pane_id: u64, col: u16, buffer_row: usize) -> bool {
-        let Some(grid) = self.pane_grids.get(&pane_id) else {
+        let Some(grid) = self.core.pane_grids.get(&pane_id) else {
             return false;
         };
         let Some((start_col, end_col)) = grid.word_bounds_at(col, buffer_row) else {
             return false;
         };
-        self.selection = Some(super::Selection {
+        self.core.selection = Some(super::Selection {
             pane_id,
             start: (start_col, buffer_row),
             end: (end_col, buffer_row),
@@ -398,7 +398,7 @@ impl App {
         let next = self
             .pixel_to_cell(mx, my)
             .and_then(|(pane_id, col, buffer_row)| {
-                let link = self.pane_grids.get(&pane_id)?.link_at(col, buffer_row)?;
+                let link = self.core.pane_grids.get(&pane_id)?.link_at(col, buffer_row)?;
                 Some(super::HoveredLink {
                     pane_id,
                     url: link.url,
@@ -406,19 +406,19 @@ impl App {
                     end: (link.end_col, buffer_row),
                 })
             });
-        if self.hovered_link == next {
+        if self.core.hovered_link == next {
             return false;
         }
-        self.hovered_link = next;
+        self.core.hovered_link = next;
         true
     }
 
     pub fn clear_hovered_link(&mut self) -> bool {
-        self.hovered_link.take().is_some()
+        self.core.hovered_link.take().is_some()
     }
 
     pub fn hovered_link_url_at(&self, pane_id: u64, col: u16, buffer_row: usize) -> Option<String> {
-        self.hovered_link.as_ref().and_then(|link| {
+        self.core.hovered_link.as_ref().and_then(|link| {
             (link.pane_id == pane_id
                 && link.start.1 == buffer_row
                 && col >= link.start.0
@@ -435,13 +435,13 @@ impl App {
         // Look up the CWD of the relevant pane for relative path resolution.
         // Try hovered link pane first, then context menu target pane.
         let pane_id = self
-            .hovered_link
+            .core.hovered_link
             .as_ref()
             .map(|link| link.pane_id)
-            .or(self.context_menu.target_pane_id)
-            .or_else(|| self.workspaces.active().active_pane_id());
+            .or(self.core.context_menu.target_pane_id)
+            .or_else(|| self.core.workspaces.active().active_pane_id());
         let pane_cwd = pane_id
-            .and_then(|id| self.pane_grids.get(&id))
+            .and_then(|id| self.core.pane_grids.get(&id))
             .and_then(|grid| grid.cwd.as_deref());
         if let Err(e) = open_url(url, pane_cwd) {
             log::warn!("failed to open url '{url}': {e}");
@@ -451,15 +451,15 @@ impl App {
     // ── Unified action helpers ──
 
     fn open_search(&mut self) {
-        let Some(pane_id) = self.workspaces.active().active_pane_id() else {
+        let Some(pane_id) = self.core.workspaces.active().active_pane_id() else {
             return;
         };
         let scroll_offset = self
-            .pane_grids
+            .core.pane_grids
             .get(&pane_id)
             .map(|g| g.scroll_offset)
             .unwrap_or(0);
-        self.search_state = Some(super::SearchState {
+        self.core.search_state = Some(super::SearchState {
             query: String::new(),
             matches: Vec::new(),
             current_match_idx: 0,
@@ -469,21 +469,21 @@ impl App {
     }
 
     fn close_search_restore_scroll(&mut self) {
-        let Some(search) = &self.search_state else {
+        let Some(search) = &self.core.search_state else {
             return;
         };
         let pane_id = search.pane_id;
         let orig = search.original_scroll_offset;
-        if let Some(grid) = self.pane_grids.get_mut(&pane_id) {
+        if let Some(grid) = self.core.pane_grids.get_mut(&pane_id) {
             grid.scroll_offset = orig;
             grid.dirty = true;
             self.invalidate_pane_cache(pane_id);
         }
-        self.search_state = None;
+        self.core.search_state = None;
     }
 
     fn execute_palette_selection(&mut self) {
-        let Some(palette) = &self.command_palette else {
+        let Some(palette) = &self.core.command_palette else {
             return;
         };
         let keep_open = palette
@@ -500,7 +500,7 @@ impl App {
             self.execute_palette_entry(entry_idx);
         }
         if !keep_open {
-            self.command_palette = None;
+            self.core.command_palette = None;
         }
     }
 
@@ -518,13 +518,13 @@ impl App {
     }
 
     pub(crate) fn update_search_results(&mut self) {
-        let Some(search) = &mut self.search_state else {
+        let Some(search) = &mut self.core.search_state else {
             return;
         };
         let pane_id = search.pane_id;
         let query = search.query.clone();
 
-        if let Some(grid) = self.pane_grids.get(&pane_id) {
+        if let Some(grid) = self.core.pane_grids.get(&pane_id) {
             let raw_matches = grid.search(&query);
             search.matches = raw_matches
                 .into_iter()
@@ -551,7 +551,7 @@ impl App {
     }
 
     fn jump_to_match(&mut self, reverse: bool) {
-        let Some(search) = &mut self.search_state else {
+        let Some(search) = &mut self.core.search_state else {
             return;
         };
         if search.matches.is_empty() {
@@ -572,7 +572,7 @@ impl App {
     }
 
     fn scroll_to_match(&mut self, match_idx: usize) {
-        let Some(search) = &self.search_state else {
+        let Some(search) = &self.core.search_state else {
             return;
         };
         let Some(m) = search.matches.get(match_idx) else {
@@ -581,7 +581,7 @@ impl App {
         let pane_id = search.pane_id;
         let target_row = m.buffer_row;
 
-        if let Some(grid) = self.pane_grids.get_mut(&pane_id) {
+        if let Some(grid) = self.core.pane_grids.get_mut(&pane_id) {
             let total = grid.buffer_len();
             let rows = grid.rows as usize;
             // Calculate scroll_offset to put target_row in the middle of viewport
@@ -595,8 +595,8 @@ impl App {
     }
 
     pub fn scroll_active_up(&mut self, lines: usize) {
-        if let Some(pid) = self.workspaces.active().active_pane_id() {
-            if let Some(grid) = self.pane_grids.get_mut(&pid) {
+        if let Some(pid) = self.core.workspaces.active().active_pane_id() {
+            if let Some(grid) = self.core.pane_grids.get_mut(&pid) {
                 grid.scroll_up(lines);
                 self.invalidate_pane_cache(pid);
             }
@@ -604,8 +604,8 @@ impl App {
     }
 
     pub fn scroll_active_down(&mut self, lines: usize) {
-        if let Some(pid) = self.workspaces.active().active_pane_id() {
-            if let Some(grid) = self.pane_grids.get_mut(&pid) {
+        if let Some(pid) = self.core.workspaces.active().active_pane_id() {
+            if let Some(grid) = self.core.pane_grids.get_mut(&pid) {
                 grid.scroll_down(lines);
                 self.invalidate_pane_cache(pid);
             }
@@ -613,8 +613,8 @@ impl App {
     }
 
     pub fn scroll_active_to_bottom(&mut self) {
-        if let Some(pid) = self.workspaces.active().active_pane_id() {
-            if let Some(grid) = self.pane_grids.get_mut(&pid) {
+        if let Some(pid) = self.core.workspaces.active().active_pane_id() {
+            if let Some(grid) = self.core.pane_grids.get_mut(&pid) {
                 grid.scroll_to_bottom();
                 self.invalidate_pane_cache(pid);
             }

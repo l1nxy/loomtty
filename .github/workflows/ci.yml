@@ -1,15 +1,31 @@
 name: CI
 
-# Only run on PRs to main/dev, not every push
 on:
   pull_request:
     branches: [main, dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
 
 jobs:
+  # ── Format check (fast, run once) ────────────────────
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
   # ── Linux ──────────────────────────────────────────
   linux:
     runs-on: ubuntu-latest
@@ -27,18 +43,16 @@ jobs:
             libxcb-xfixes0-dev \
             libxkbcommon-dev \
             libwayland-dev \
-            libvulkan-dev
+            libvulkan-dev \
+            libegl-dev
 
       - uses: dtolnay/rust-toolchain@stable
-
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
         run: cargo build --workspace
-
       - name: Test
         run: cargo test --workspace
-
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings
 
@@ -47,17 +61,13 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
-
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
         run: cargo build --workspace
-
       - name: Test
         run: cargo test --workspace
-
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings
 
@@ -66,16 +76,12 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
-
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
         run: cargo build --workspace
-
       - name: Test
         run: cargo test --workspace
-
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings

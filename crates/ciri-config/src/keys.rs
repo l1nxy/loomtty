@@ -98,9 +98,18 @@ impl Default for KeybindConfig {
 
         let mut direct_bindings = HashMap::new();
         direct_bindings.insert("ctrl+g".to_string(), "toggle_lock".to_string());
-        direct_bindings.insert("ctrl+shift+f".to_string(), "open_search".to_string());
-        direct_bindings.insert("ctrl+shift+c".to_string(), "clipboard_copy".to_string());
-        direct_bindings.insert("ctrl+shift+v".to_string(), "clipboard_paste".to_string());
+        #[cfg(target_os = "macos")]
+        {
+            direct_bindings.insert("super+f".to_string(), "open_search".to_string());
+            direct_bindings.insert("super+c".to_string(), "clipboard_copy".to_string());
+            direct_bindings.insert("super+v".to_string(), "clipboard_paste".to_string());
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            direct_bindings.insert("ctrl+shift+f".to_string(), "open_search".to_string());
+            direct_bindings.insert("ctrl+shift+c".to_string(), "clipboard_copy".to_string());
+            direct_bindings.insert("ctrl+shift+v".to_string(), "clipboard_paste".to_string());
+        }
 
         let mut search_bindings = HashMap::new();
         search_bindings.insert("escape".to_string(), "close_search".to_string());
@@ -121,8 +130,13 @@ impl Default for KeybindConfig {
         paste_confirm_bindings.insert("escape".to_string(), "dismiss_paste_confirm".to_string());
         paste_confirm_bindings.insert("n".to_string(), "dismiss_paste_confirm".to_string());
 
+        #[cfg(target_os = "macos")]
+        let leader = "ctrl+b".to_string();
+        #[cfg(not(target_os = "macos"))]
+        let leader = "ctrl+w".to_string();
+
         KeybindConfig {
-            leader: "ctrl+w".to_string(),
+            leader,
             bindings,
             overview_bindings,
             modes,

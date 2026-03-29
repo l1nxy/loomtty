@@ -1,3 +1,8 @@
+mod animation;
+mod input_helpers;
+mod overview;
+mod palette;
+mod sync;
 mod types;
 
 pub use types::*;

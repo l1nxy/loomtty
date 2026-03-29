@@ -1,5 +1,3 @@
-use ciri_config::theme::ThemeConfig;
-
 use super::App;
 
 const PANE_TAB_WIDTH_CHARS: usize = 20;
@@ -136,60 +134,24 @@ impl App {
         layouts
     }
 
+    /// Delegate: get pane tab entries.
     fn pane_tab_entries(&self) -> Vec<(u64, String)> {
-        let mut panes = Vec::new();
-        let ws = self.core.workspaces.active();
-        for col in &ws.columns {
-            for tile in &col.tiles {
-                let title = self
-                    .core.pane_grids
-                    .get(&tile.pane_id)
-                    .map(|g| g.title.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| "pane".to_string());
-                panes.push((tile.pane_id, title));
-            }
-        }
-        panes
+        self.core.pane_tab_entries()
     }
 
+    /// Delegate: format pane tab label.
     fn format_pane_tab_label(&self, idx: usize, title: &str) -> String {
-        let prefix = format!("{:>2} ", idx + 1);
-        let max_title_chars = PANE_TAB_WIDTH_CHARS.saturating_sub(prefix.len());
-        let mut title = title.chars().take(max_title_chars).collect::<String>();
-        let label = format!("{}{}", prefix, title);
-        title.clear();
-        format!("{:<width$}", label, width = PANE_TAB_WIDTH_CHARS)
+        self.core.format_pane_tab_label(idx, title)
     }
 
+    /// Delegate: workspace indicator label.
     pub(crate) fn workspace_indicator_label(&self) -> String {
-        let idx = self.core.workspaces.active_workspace_idx + 1;
-        let total = self.core.workspaces.workspaces.len();
-        if total <= 1 {
-            String::new()
-        } else {
-            format!("[{}/{}] ", idx, total)
-        }
+        self.core.workspace_indicator_label()
     }
 
+    /// Delegate: current mode label.
     pub(crate) fn current_mode_label(&self) -> (String, [f32; 4]) {
-        let accent = ThemeConfig::parse_color(&self.core.config.theme.accent);
-        let broadcast_color = ThemeConfig::parse_color(&self.core.config.theme.mode_broadcast);
-        let dim = ThemeConfig::parse_color(&self.core.config.theme.statusbar_dim);
-        let warn_color = ThemeConfig::parse_color(&self.core.config.theme.mode_broadcast);
-        if self.core.input.is_locked() {
-            (" LOCKED ".into(), warn_color)
-        } else if self.core.broadcast_mode {
-            (" BROADCAST ".into(), broadcast_color)
-        } else if self.core.overview.active {
-            (" OVERVIEW ".into(), accent)
-        } else if let Some(name) = self.core.input.current_mode_name() {
-            (format!(" {} ", name.to_uppercase()), accent)
-        } else if self.core.input.is_awaiting_action() {
-            (" LEADER ".into(), accent)
-        } else {
-            (" NORMAL ".into(), dim)
-        }
+        self.core.current_mode_label()
     }
 
     pub(crate) fn top_bar_layout(&self, vw: f32, vh: f32, cw: f32, ch: f32) -> TopBarLayout {

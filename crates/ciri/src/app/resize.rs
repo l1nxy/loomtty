@@ -81,23 +81,9 @@ impl App {
         true
     }
 
-    pub(crate) fn content_resize_hit_test(
-        &self,
-        mx: f32,
-        my: f32,
-    ) -> (bool, bool) {
-        let ws = self.core.workspaces.active();
-        let vox = self.core.anim_mgr.view_offset_x.value() as f32;
-        let mut near_col_border = false;
-        for i in 1..ws.columns.len() {
-            let col_x = ws.column_x(i) - vox;
-            if (mx - col_x).abs() < 4.0 {
-                near_col_border = true;
-                break;
-            }
-        }
-        let near_tile_border = ws.hit_test_tile_border(vox, mx, my, 4.0).is_some();
-        (near_col_border, near_tile_border)
+    /// Delegate: content-area resize hit test.
+    pub(crate) fn content_resize_hit_test(&self, mx: f32, my: f32) -> (bool, bool) {
+        self.core.content_resize_hit_test(mx, my)
     }
 
     pub(crate) fn start_column_resize_drag(&mut self, mx: f32) -> bool {

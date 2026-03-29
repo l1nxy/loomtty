@@ -1,4 +1,3 @@
-use ciri_anim::spring::SpringParams;
 use ciri_layout::geometry::Rect as GeoRect;
 
 use super::App;
@@ -41,30 +40,14 @@ impl App {
         None
     }
 
+    /// Delegate: exit overview mode.
     pub(crate) fn exit_overview(&mut self) {
-        let sp = SpringParams::default();
-        self.core.overview.active = false;
-        self.core.overview.hovered_pane = None;
-        self.core.anim_mgr.overview_zoom.animate_to(1.0, sp);
-        self.animate_to_active();
+        self.core.exit_overview();
     }
 
+    /// Delegate: toggle overview mode.
     pub(crate) fn toggle_overview(&mut self) {
-        self.core.overview.active = !self.core.overview.active;
-        let sp = SpringParams::default();
-        if self.core.overview.active {
-            self.core.context_menu.visible = false;
-            self.core.overview.hovered_pane = None;
-            self.refresh_overview_zoom();
-            let target_x = self.core.workspaces.active().target_offset_for_active() as f64;
-            let target_y = self.core.workspaces.target_offset_y() as f64;
-            self.core.anim_mgr.view_offset_x.animate_to(target_x, sp);
-            self.core.anim_mgr.view_offset_y.animate_to(target_y, sp);
-        } else {
-            self.core.overview.hovered_pane = None;
-            self.core.anim_mgr.overview_zoom.animate_to(1.0, sp);
-            self.animate_to_active();
-        }
+        self.core.toggle_overview();
     }
 
     pub(crate) fn focus_overview_target(&mut self, ws_idx: usize, pane_id: u64) {

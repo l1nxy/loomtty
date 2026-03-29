@@ -262,7 +262,7 @@ pub struct ConnectionSlot {
 }
 
 /// Server event forwarded from the connection thread to the application.
-/// Re-exported here so CoreApp can reference it without depending on
+/// Re-exported here so AppModel can reference it without depending on
 /// platform-specific connection code.
 pub enum ServerEvent {
     Control(ServerMessage),

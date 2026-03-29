@@ -4,9 +4,9 @@ use ciri_anim::easing::EasingCurve;
 use ciri_anim::spring::SpringParams;
 use ciri_config::config::{AnimationPreset, PaneOpenStyle};
 
-use super::CoreApp;
+use super::AppModel;
 
-impl CoreApp {
+impl AppModel {
     pub fn anim_config(&self) -> AnimConfig {
         // All timings derived from a single preset
         // stiffness = (2π / response)^2, damping_ratio = 0.86

@@ -9,17 +9,13 @@ pub fn runtime_dir() -> PathBuf {
         return rd;
     }
 
-    // macOS: prefer ~/Library/Caches, fall back to ~/.cache for backward compat
+    // macOS: use $TMPDIR (per-user session temp, like tmux uses /tmp)
     #[cfg(target_os = "macos")]
     {
-        if let Some(home) = dirs::home_dir() {
-            let native = home.join("Library").join("Caches");
-            if native.exists() {
-                return native;
-            }
-            let legacy = home.join(".cache");
-            if legacy.exists() {
-                return legacy;
+        if let Ok(tmpdir) = std::env::var("TMPDIR") {
+            let p = PathBuf::from(tmpdir);
+            if p.exists() {
+                return p;
             }
         }
     }

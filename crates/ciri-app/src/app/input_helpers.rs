@@ -1,8 +1,8 @@
 use std::time::{Duration, Instant};
 
-use super::{CoreApp, LastLeftClick, SearchState, Selection};
+use super::{AppModel, LastLeftClick, SearchState, Selection};
 
-impl CoreApp {
+impl AppModel {
     /// Extract selected text from the pane grid using absolute buffer coordinates.
     pub fn extract_selected_text(&self) -> Option<String> {
         let sel = self.selection.as_ref()?;

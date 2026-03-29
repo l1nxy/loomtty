@@ -4,7 +4,7 @@ use ciri_protocol::transport;
 use crossbeam_channel::{Receiver, Sender};
 use std::io;
 
-pub use ciri_core::app::{RemoteProbeResult, RemoteQueryResult, ServerEvent};
+pub use ciri_app::app::{RemoteProbeResult, RemoteQueryResult, ServerEvent};
 
 /// Run the protocol IO loop over any AsyncRead + AsyncWrite pair.
 /// Performs handshake, spawns writer task, runs reader loop.

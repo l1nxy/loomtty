@@ -618,8 +618,8 @@ dependencies = [
  "anyhow",
  "arboard",
  "ciri-anim",
+ "ciri-app",
  "ciri-config",
- "ciri-core",
  "ciri-gpu",
  "ciri-input",
  "ciri-layout",
@@ -650,19 +650,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ciri-config"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "dirs",
- "garde",
- "log",
- "serde",
- "toml 0.8.23",
-]
-
-[[package]]
-name = "ciri-core"
+name = "ciri-app"
 version = "0.1.0"
 dependencies = [
  "ciri-anim",
@@ -672,6 +660,18 @@ dependencies = [
  "ciri-protocol",
  "crossbeam-channel",
  "log",
+]
+
+[[package]]
+name = "ciri-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "garde",
+ "log",
+ "serde",
+ "toml 0.8.23",
 ]
 
 [[package]]

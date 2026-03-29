@@ -1,1 +1,1 @@
-pub use ciri_core::paste_guard::*;
+pub use ciri_app::paste_guard::*;

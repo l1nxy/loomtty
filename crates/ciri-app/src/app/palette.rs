@@ -2,11 +2,11 @@ use ciri_input::action::Action;
 use ciri_protocol::message::ClientMessage;
 
 use super::{
-    CommandPaletteState, ConnectionKind, CoreApp, PaletteEntry, PaletteEntryKind,
+    CommandPaletteState, ConnectionKind, AppModel, PaletteEntry, PaletteEntryKind,
     RemoteProbeResult, RemoteQueryResult,
 };
 
-impl CoreApp {
+impl AppModel {
     pub fn open_command_palette(&mut self) {
         let mut entries: Vec<PaletteEntry> = Action::all_with_labels()
             .into_iter()

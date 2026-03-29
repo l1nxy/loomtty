@@ -21,10 +21,10 @@ use ciri_anim::manager::AnimationManager;
 use crate::grid::ClientPaneGrid;
 
 // ---------------------------------------------------------------------------
-// CoreApp — all pure-logic application state
+// AppModel — all pure-logic application state
 // ---------------------------------------------------------------------------
 
-pub struct CoreApp {
+pub struct AppModel {
     pub config: CiriConfig,
     pub session_name: String,
     pub pending_session_name: Option<String>,
@@ -80,7 +80,7 @@ pub struct CoreApp {
     pub image_placements: HashMap<u64, Vec<ClientImagePlacement>>,
 }
 
-impl CoreApp {
+impl AppModel {
     pub fn new(config: CiriConfig, session_name: impl Into<String>) -> Self {
         let frame_interval = Duration::from_millis(config.render.frame_interval_ms);
         let initial_view = ViewSize {
@@ -116,7 +116,7 @@ impl CoreApp {
         }
         let column_gap = config.appearance.column_gap;
 
-        CoreApp {
+        AppModel {
             config,
             session_name,
             pending_session_name: None,

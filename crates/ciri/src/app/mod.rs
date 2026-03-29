@@ -35,9 +35,9 @@ use winit::window::Window;
 
 // Re-export core types so existing `use super::*` in submodules still works.
 #[allow(unused_imports)]
-pub(crate) use ciri_core::app::{
+pub(crate) use ciri_app::app::{
     ClientImagePlacement, CommandPaletteState, ConnectionKind, ConnectionSlot, ContextMenu,
-    ContextMenuAction, ContextMenuItem, CoreApp, HoveredLink,
+    ContextMenuAction, ContextMenuItem, AppModel, HoveredLink,
     OverviewActionHover, PaletteEntry, PaletteEntryKind, PasteButton, PendingPaste,
     ReconnectPlan, RemoteConnectionConfig, ScrollbarDragInfo, SearchMatch, SearchState,
     Selection, ServerEvent, TopBarHoverRegion,
@@ -87,7 +87,7 @@ pub(crate) struct RenderBuffers {
 
 pub(crate) struct App {
     /// Core logic state — platform-agnostic.
-    pub core: CoreApp,
+    pub core: AppModel,
 
     // --- Shell-only fields (GPU / windowing / platform) ---
     pub window: Option<Arc<Window>>,
@@ -130,7 +130,7 @@ impl App {
 
     pub fn new(config: CiriConfig, session_name: impl Into<String>) -> Self {
         let cached_color_table = ColorTable::new(&config);
-        let core = CoreApp::new(config, session_name);
+        let core = AppModel::new(config, session_name);
         App {
             core,
             window: None,
@@ -551,7 +551,7 @@ impl App {
     }
 
     pub fn prepare_reconnect(&mut self) -> Option<ReconnectPlan> {
-        use ciri_core::app::ReconnectPlanDecision;
+        use ciri_app::app::ReconnectPlanDecision;
         match self.core.prepare_reconnect_plan()? {
             ReconnectPlanDecision::GaveUp => {
                 Some(ReconnectPlan {

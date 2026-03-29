@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
     "crates/ciri",
-    "crates/ciri-core",
+    "crates/ciri-app",
     "crates/ciri-server",
     "crates/ciri-protocol",
     "crates/ciri-layout",
@@ -22,7 +22,7 @@ license = "MIT"
 
 [workspace.dependencies]
 # Internal crates
-ciri-core = { path = "crates/ciri-core" }
+ciri-app = { path = "crates/ciri-app" }
 ciri-render = { path = "crates/ciri-render" }
 ciri-gpu = { path = "crates/ciri-gpu" }
 ciri-term = { path = "crates/ciri-term" }

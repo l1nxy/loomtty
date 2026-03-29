@@ -197,7 +197,8 @@ impl ApplicationHandler for App {
 
         let window_title = format!("{} [{}]", self.config.window.title, self.session_name);
         let window_icon = load_window_icon();
-        let attrs = WindowAttributes::default()
+        #[allow(unused_mut)]
+        let mut attrs = WindowAttributes::default()
             .with_title(window_title)
             .with_window_icon(window_icon)
             .with_inner_size(winit::dpi::LogicalSize::new(
@@ -205,12 +206,27 @@ impl ApplicationHandler for App {
                 self.config.window.height,
             ));
 
+        #[cfg(target_os = "macos")]
+        {
+            use winit::platform::macos::WindowAttributesExtMacOS;
+            attrs = attrs
+                .with_titlebar_transparent(true)
+                .with_title_hidden(true)
+                .with_fullsize_content_view(true);
+        }
+
         let window = Arc::new(
             event_loop
                 .create_window(attrs)
                 .expect("failed to create window"),
         );
         window.set_ime_allowed(true);
+
+        #[cfg(target_os = "macos")]
+        {
+            use winit::platform::macos::{OptionAsAlt, WindowExtMacOS};
+            window.set_option_as_alt(OptionAsAlt::Both);
+        }
         let dpi_scale = window.scale_factor();
         let mut renderer = ciri_gpu::Renderer::new(window.clone(), &self.config.render)
             .expect("renderer init failed");

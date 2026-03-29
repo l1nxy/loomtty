@@ -306,6 +306,7 @@ fn full_pane_sync_roundtrip() {
         title: "bash".to_string(),
         scrollback: Vec::new(),
         scrollback_rows: 0,
+                scrollback_replace: false,
         cells,
         grapheme_extras: GraphemeExtras::new(),
         hyperlink_extras: HyperlinkExtras::new(),
@@ -345,6 +346,7 @@ fn full_pane_sync_with_scrollback() {
         title: "test".to_string(),
         scrollback: sb.clone(),
         scrollback_rows: 3,
+                scrollback_replace: false,
         cells,
         grapheme_extras: GraphemeExtras::new(),
         hyperlink_extras: HyperlinkExtras::new(),
@@ -371,6 +373,7 @@ fn full_pane_sync_rejects_truncated_mandatory_sections() {
         title: "pane".to_string(),
         scrollback: vec![PackedCell::default(); 4],
         scrollback_rows: 1,
+                scrollback_replace: false,
         cells: vec![PackedCell::default(); 8],
         grapheme_extras: GraphemeExtras::new(),
         hyperlink_extras: HyperlinkExtras::new(),
@@ -384,7 +387,9 @@ fn full_pane_sync_rejects_truncated_mandatory_sections() {
         io::ErrorKind::InvalidData
     );
 
-    let truncated_scrollback = &payload[..payload.len() - 5];
+    // Truncate deep enough to land inside the viewport data section
+    // (past the trailing optional extras which tolerate truncation).
+    let truncated_scrollback = &payload[..payload.len() - 12];
     assert_eq!(
         decode_full_pane_sync(truncated_scrollback)
             .unwrap_err()
@@ -407,6 +412,7 @@ fn full_pane_sync_ignores_truncated_optional_extras() {
         title: "links".to_string(),
         scrollback: Vec::new(),
         scrollback_rows: 0,
+                scrollback_replace: false,
         cells: vec![PackedCell::with_ch('A'), PackedCell::with_ch('B')],
         grapheme_extras: GraphemeExtras::new(),
         hyperlink_extras: HyperlinkExtras::new(),
@@ -425,9 +431,9 @@ fn full_pane_sync_ignores_truncated_optional_extras() {
     let mut grapheme_only = sync.clone();
     grapheme_only.hyperlink_extras = HyperlinkExtras::new();
     let grapheme_only_payload = encode_full_pane_sync_payload(&grapheme_only).unwrap();
-    // Cut 3 bytes to truncate into the grapheme extras section
-    // (payload has 2-byte CWD trailer after grapheme extras)
-    let grapheme_cut = &grapheme_only_payload[..grapheme_only_payload.len() - 3];
+    // payload has: ...viewport | grapheme_extras | hyperlink_extras(4 bytes empty) | cwd(2 bytes)
+    // Cut 7 bytes to truncate into the grapheme extras section
+    let grapheme_cut = &grapheme_only_payload[..grapheme_only_payload.len() - 7];
     let decoded = decode_full_pane_sync(grapheme_cut).unwrap();
     assert_eq!(decoded.pane_id, sync.pane_id);
     assert_eq!(decoded.cells, sync.cells);

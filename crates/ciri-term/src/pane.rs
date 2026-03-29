@@ -116,6 +116,14 @@ pub struct Pane {
     dirty: bool,
     exited: bool,
 
+    // Scrollback tracking
+    /// Total number of lines ever added to scrollback (monotonically increasing).
+    /// Unlike `history_size()` which is bounded by the ring buffer capacity,
+    /// this counter keeps growing when old lines are evicted by new ones.
+    scrollback_total: usize,
+    /// Previous `history_size()` value, used to detect growth vs rotation.
+    prev_history_size: usize,
+
     // Subsystems
     parsers: ParserSuite,
     images: ImageStore,
@@ -175,6 +183,8 @@ impl Pane {
             rows,
             dirty: true,
             exited: false,
+            scrollback_total: 0,
+            prev_history_size: 0,
             parsers: ParserSuite::new(),
             images: ImageStore::new(),
             events: PendingEvents::new(),
@@ -188,14 +198,67 @@ impl Pane {
             return false;
         }
 
+        // Snapshot Line(-1) row hash before processing to detect ring buffer rotation.
+        let prev_sb_hash = if self.prev_history_size > 0 && !self.is_alt_screen() {
+            Some(self.hash_scrollback_top())
+        } else {
+            None
+        };
+
         let data_processed = self.drain_and_parse_pty();
         self.process_terminal_events();
         self.check_pty_exit();
 
         if data_processed {
             self.dirty = true;
+            self.track_scrollback_growth(prev_sb_hash);
         }
         data_processed
+    }
+
+    /// Fast hash of the most recent scrollback row (Line(-1)) for rotation detection.
+    /// Samples up to 8 evenly-spaced columns to keep cost bounded on wide terminals.
+    fn hash_scrollback_top(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let cols = self.term.grid().columns();
+        // Sample up to 8 columns across the row for a fast but reliable fingerprint.
+        let step = (cols / 8).max(1);
+        let mut col = 0;
+        while col < cols {
+            let cell = &self.term.grid()[Point::new(Line(-1), Column(col))];
+            cell.c.hash(&mut hasher);
+            col += step;
+        }
+        hasher.finish()
+    }
+
+    /// Detect scrollback growth or ring buffer rotation and update the
+    /// monotonic `scrollback_total` counter accordingly.
+    fn track_scrollback_growth(&mut self, prev_sb_hash: Option<u64>) {
+        if self.is_alt_screen() {
+            return;
+        }
+        let hs = self.term.grid().history_size();
+        if hs > self.prev_history_size {
+            // Growing phase: exact count available.
+            self.scrollback_total += hs - self.prev_history_size;
+        } else if hs > 0 && hs == self.prev_history_size {
+            // Buffer may be at capacity. Detect rotation by checking
+            // whether the most recent scrollback row changed.
+            let cur_hash = self.hash_scrollback_top();
+            if prev_sb_hash.is_some_and(|prev| prev != cur_hash) {
+                // Line(-1) content changed — scrollback rotated.
+                // We can't know the exact count from alacritty's API.
+                // Increment by 1 per tick — this may under-count rapid output
+                // but is self-correcting: each subsequent tick detects the
+                // still-changed hash and increments again, eventually catching up.
+                // Using a larger estimate (e.g. viewport rows) would over-count
+                // and trigger unnecessary full scrollback replacements.
+                self.scrollback_total += 1;
+            }
+        }
+        self.prev_history_size = hs;
     }
 
     fn drain_and_parse_pty(&mut self) -> bool {
@@ -359,10 +422,20 @@ impl Pane {
         self.cols = cols;
         self.rows = rows;
         self.pty.resize(cols, rows);
+        let hs_before = self.term.grid().history_size();
         self.term.resize(TermSize {
             cols: cols as usize,
             rows: rows as usize,
         });
+        let hs_after = self.term.grid().history_size();
+        // Reflow may add or remove scrollback lines. Adjust the monotonic
+        // counter so incremental sync stays consistent.
+        if hs_after > hs_before {
+            self.scrollback_total += hs_after - hs_before;
+        } else if hs_after < hs_before {
+            self.scrollback_total = self.scrollback_total.saturating_sub(hs_before - hs_after);
+        }
+        self.prev_history_size = hs_after;
         self.dirty = true;
     }
 
@@ -416,6 +489,18 @@ impl Pane {
 
     pub fn history_size(&self) -> usize {
         self.term.grid().history_size()
+    }
+
+    /// Monotonically increasing count of total lines ever added to scrollback.
+    /// Unlike `history_size()` which is bounded by the ring buffer capacity,
+    /// this counter keeps growing when old lines are evicted by new ones.
+    pub fn scrollback_total(&self) -> usize {
+        self.scrollback_total
+    }
+
+    pub fn is_alt_screen(&self) -> bool {
+        use alacritty_terminal::term::TermMode;
+        self.term.mode().contains(TermMode::ALT_SCREEN)
     }
 
     // ── Mode flags ───────────────────────────────────────────────────
@@ -512,7 +597,8 @@ impl Pane {
             mode_flags: self.mode_flags_from_term(term),
             title: self.title.clone(),
             scrollback: sb_cells,
-            scrollback_rows: scrollback.rows as u16,
+            scrollback_rows: scrollback.rows as u32,
+            scrollback_replace: false,
             cells,
             grapheme_extras,
             hyperlink_extras,

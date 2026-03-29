@@ -1383,7 +1383,7 @@ impl Server {
                         let pane_histories: Vec<(u64, usize)> = session
                             .panes
                             .iter()
-                            .map(|(&pid, pane)| (pid, pane.history_size()))
+                            .map(|(&pid, pane)| (pid, pane.scrollback_total()))
                             .collect();
                         if let Some(client) = self.clients.get_mut(&client_id) {
                             for (pane_id, history) in pane_histories {
@@ -1476,7 +1476,7 @@ impl Server {
                     // Record history_sent for the new session's panes
                     if let Some(client) = clients.get_mut(&client_id) {
                         for (&pid, pane) in &new_session.panes {
-                            client.history_sent.insert(pid, pane.history_size());
+                            client.history_sent.insert(pid, pane.scrollback_total());
                         }
                         for acc in client.damage.values_mut() {
                             *acc = DamageAccumulator::default();

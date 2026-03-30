@@ -218,18 +218,17 @@ impl GlyphCache {
         });
 
         // ── Compute metrics from FreeType directly ──
-        let (cell_width, cell_height, ascent, face_width) =
-            if let Some(ref mut face) = ft_face {
-                compute_ft_metrics(face, ft_pixel_size)
-            } else {
-                // Fallback: use crossfont metrics (legacy behavior)
-                let cw = (crossfont_metrics.average_advance as f32).ceil();
-                let ch = (crossfont_metrics.line_height as f32).ceil();
-                let asc = (crossfont_metrics.line_height as f32 + crossfont_metrics.descent)
-                    .ceil()
-                    .min(ch);
-                (cw, ch, asc, cw)
-            };
+        let (cell_width, cell_height, ascent, face_width) = if let Some(ref mut face) = ft_face {
+            compute_ft_metrics(face, ft_pixel_size)
+        } else {
+            // Fallback: use crossfont metrics (legacy behavior)
+            let cw = (crossfont_metrics.average_advance as f32).ceil();
+            let ch = (crossfont_metrics.line_height as f32).ceil();
+            let asc = (crossfont_metrics.line_height as f32 + crossfont_metrics.descent)
+                .ceil()
+                .min(ch);
+            (cw, ch, asc, cw)
+        };
 
         // ── CJK font size adjustment (ghostty approach) ──
         let cjk_pixel_size = compute_cjk_pixel_size(
@@ -355,9 +354,8 @@ impl GlyphCache {
             FontClass::Cjk => (self.cjk_ft_face.as_ref(), self.cjk_pixel_size),
             FontClass::Primary => (self.ft_face.as_ref(), self.ft_pixel_size),
         };
-        let glyph = rasterize_glyph_id_ft(
-            ft_face, glyph_id, style, pixel_size, wide, self.cell_height,
-        )?;
+        let glyph =
+            rasterize_glyph_id_ft(ft_face, glyph_id, style, pixel_size, wide, self.cell_height)?;
 
         if glyph.width == 0 || glyph.height == 0 {
             self.glyph_id_cache.insert(key, GlyphEntry::EMPTY);

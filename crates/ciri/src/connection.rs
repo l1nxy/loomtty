@@ -35,7 +35,9 @@ async fn run_protocol_io<R, W>(
             log::warn!("server version {peer} differs from client {local} (patch mismatch)");
         }
         Ok(codec::VersionCompat::MinorMismatch { peer, local }) => {
-            log::warn!("server version {peer} differs from client {local} (minor mismatch, may be unstable)");
+            log::warn!(
+                "server version {peer} differs from client {local} (minor mismatch, may be unstable)"
+            );
         }
         Err(e) => {
             log::error!("server rejected connection: {e}");
@@ -47,18 +49,15 @@ async fn run_protocol_io<R, W>(
     // Spawn writer task
     let writer_msg_rx = msg_rx;
     let write_handle = tokio::spawn(async move {
-        loop {
-            // Use blocking recv in a spawned blocking task to avoid busy-waiting
-            let msg = match tokio::task::block_in_place(|| writer_msg_rx.recv()) {
-                Ok(m) => m,
-                Err(_) => break, // sender dropped
-            };
+        while let Ok(msg) = tokio::task::block_in_place(|| writer_msg_rx.recv()) {
             if let Err(e) = codec::encode_client_msg(&mut writer, &msg).await {
                 log::warn!("write error: {e}");
                 break;
             }
             use tokio::io::AsyncWriteExt;
-            if writer.flush().await.is_err() { break; }
+            if writer.flush().await.is_err() {
+                break;
+            }
         }
     });
 
@@ -66,13 +65,19 @@ async fn run_protocol_io<R, W>(
     loop {
         match codec::read_frame(&mut reader).await {
             Ok(codec::Frame::ServerMsg(msg)) => {
-                if event_tx.send(ServerEvent::Control(msg)).is_err() { break; }
+                if event_tx.send(ServerEvent::Control(msg)).is_err() {
+                    break;
+                }
             }
             Ok(codec::Frame::CellDelta(delta)) => {
-                if event_tx.send(ServerEvent::CellDelta(delta)).is_err() { break; }
+                if event_tx.send(ServerEvent::CellDelta(delta)).is_err() {
+                    break;
+                }
             }
             Ok(codec::Frame::FullPaneSync(sync)) => {
-                if event_tx.send(ServerEvent::FullPaneSync(sync)).is_err() { break; }
+                if event_tx.send(ServerEvent::FullPaneSync(sync)).is_err() {
+                    break;
+                }
             }
             Ok(codec::Frame::ClientMsg(_)) => {
                 // Shouldn't receive client messages from server
@@ -173,12 +178,18 @@ pub fn connect_or_spawn(
                 let mut connect_result = Err(io::Error::new(io::ErrorKind::ConnectionRefused, ""));
                 for attempt in 0..50 {
                     #[cfg(unix)]
-                    { let sock_path = transport::server_socket_path();
-                      connect_result = tokio::net::UnixStream::connect(&sock_path).await; }
+                    {
+                        let sock_path = transport::server_socket_path();
+                        connect_result = tokio::net::UnixStream::connect(&sock_path).await;
+                    }
                     #[cfg(windows)]
-                    { connect_result = tokio::net::windows::named_pipe::ClientOptions::new()
-                        .open(&transport::server_pipe_name()); }
-                    if connect_result.is_ok() { break; }
+                    {
+                        connect_result = tokio::net::windows::named_pipe::ClientOptions::new()
+                            .open(&transport::server_pipe_name());
+                    }
+                    if connect_result.is_ok() {
+                        break;
+                    }
                     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                     if attempt == 0 {
                         log::debug!("waiting for server...");
@@ -336,7 +347,10 @@ async fn probe_remote(host: &str, remote_port: u16, ssh_port: u16) -> RemoteProb
         cell_height: 20.0,
         session_name: "__probe__".to_string(),
     };
-    if let Err(_) = codec::write_client_hello(&mut writer, &hello).await {
+    if codec::write_client_hello(&mut writer, &hello)
+        .await
+        .is_err()
+    {
         let _ = child.kill().await;
         return RemoteProbeResult::NoServer;
     }
@@ -350,7 +364,7 @@ async fn probe_remote(host: &str, remote_port: u16, ssh_port: u16) -> RemoteProb
 
     // Send ListSessions
     let msg = ClientMessage::ListSessions { all: true };
-    if let Err(_) = codec::encode_client_msg(&mut writer, &msg).await {
+    if codec::encode_client_msg(&mut writer, &msg).await.is_err() {
         let _ = child.kill().await;
         return RemoteProbeResult::NoServer;
     }

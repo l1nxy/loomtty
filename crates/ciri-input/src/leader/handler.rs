@@ -25,7 +25,6 @@ pub struct InputHandler {
     last_leader_press: Option<Instant>,
 
     // ── Unified binding system ──
-
     /// Unified binding set (populated via `set_binding_set`).
     pub binding_set: BindingSet,
     /// Stack of active named key tables (e.g. ["resize"]).
@@ -152,7 +151,10 @@ impl InputHandler {
         if self.key_table_stack.len() < Self::MAX_TABLE_DEPTH {
             self.key_table_stack.push(name.to_string());
         } else {
-            log::warn!("key table stack depth limit ({}) reached, ignoring activate_key_table({name:?})", Self::MAX_TABLE_DEPTH);
+            log::warn!(
+                "key table stack depth limit ({}) reached, ignoring activate_key_table({name:?})",
+                Self::MAX_TABLE_DEPTH
+            );
         }
     }
 
@@ -227,21 +229,21 @@ impl InputHandler {
             return InputResult::Consumed;
         }
         let combo = self.event_combo(event);
-        if let Some(binding) = self.binding_set.lookup(mode, None, &combo) {
-            if matches!(binding.action, Action::ToggleLock) {
-                return InputResult::Action(Action::ToggleLock);
-            }
+        if let Some(binding) = self.binding_set.lookup(mode, None, &combo)
+            && matches!(binding.action, Action::ToggleLock)
+        {
+            return InputResult::Action(Action::ToggleLock);
         }
         InputResult::PassThrough
     }
 
     fn process_awaiting_unlock(&mut self, event: KeyEvent<'_>) -> InputResult {
         let combo = self.combo_stripping_leader(event);
-        if let Some(binding) = self.binding_set.lookup(BindingMode::LEADER, None, &combo) {
-            if matches!(binding.action, Action::ToggleLock) {
-                self.state = State::Idle;
-                return InputResult::Action(Action::ToggleLock);
-            }
+        if let Some(binding) = self.binding_set.lookup(BindingMode::LEADER, None, &combo)
+            && matches!(binding.action, Action::ToggleLock)
+        {
+            self.state = State::Idle;
+            return InputResult::Action(Action::ToggleLock);
         }
         self.state = State::Idle;
         InputResult::PassThrough

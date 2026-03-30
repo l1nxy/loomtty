@@ -76,7 +76,10 @@ fn mixed_case_config_bindings_match_lowercase_modifier_prefixes() {
         map.lookup(&KeyCombo::parse("ctrl+r")),
         Some(Action::EnterMode("resize".into()))
     );
-    assert_eq!(map.lookup(&KeyCombo::parse("alt+h")), Some(Action::FocusLeft));
+    assert_eq!(
+        map.lookup(&KeyCombo::parse("alt+h")),
+        Some(Action::FocusLeft)
+    );
     assert_eq!(
         map.lookup(&KeyCombo::parse("super+1")),
         Some(Action::SwitchWorkspace(1))
@@ -101,11 +104,7 @@ fn binding_mode_contains_and_intersects() {
 
 #[test]
 fn binding_matches_exact_mode() {
-    let binding = Binding::in_mode(
-        KeyCombo::new("h"),
-        Action::FocusLeft,
-        BindingMode::OVERVIEW,
-    );
+    let binding = Binding::in_mode(KeyCombo::new("h"), Action::FocusLeft, BindingMode::OVERVIEW);
     let combo = KeyCombo::new("h");
 
     assert!(binding.matches(BindingMode::OVERVIEW, None, &combo));
@@ -131,11 +130,7 @@ fn binding_notmode_blocks_match() {
 
 #[test]
 fn binding_key_table_filter() {
-    let binding = Binding::in_table(
-        KeyCombo::new("h"),
-        Action::ColumnWidthDecrease,
-        "resize",
-    );
+    let binding = Binding::in_table(KeyCombo::new("h"), Action::ColumnWidthDecrease, "resize");
     let combo = KeyCombo::new("h");
 
     assert!(binding.matches(BindingMode::KEY_TABLE, Some("resize"), &combo));
@@ -198,28 +193,34 @@ fn binding_set_same_combo_different_modes() {
 #[test]
 fn binding_set_from_legacy_round_trip() {
     let leader = KeybindMap::default();
-    let direct = KeybindMap::from_config_only(&HashMap::from([
-        ("ctrl+g".to_string(), "toggle_lock".to_string()),
-    ]));
+    let direct = KeybindMap::from_config_only(&HashMap::from([(
+        "ctrl+g".to_string(),
+        "toggle_lock".to_string(),
+    )]));
     let overview = KeybindMap::overview_default();
     let modes = HashMap::from([(
         "resize".to_string(),
-        KeybindMap::from_config_only(&HashMap::from([
-            ("h".to_string(), "column_width_decrease".to_string()),
-        ])),
+        KeybindMap::from_config_only(&HashMap::from([(
+            "h".to_string(),
+            "column_width_decrease".to_string(),
+        )])),
     )]);
-    let search = HashMap::from([
-        ("escape".to_string(), "close_search".to_string()),
-    ]);
-    let palette = HashMap::from([
-        ("escape".to_string(), "close_command_palette".to_string()),
-    ]);
+    let search = HashMap::from([("escape".to_string(), "close_search".to_string())]);
+    let palette = HashMap::from([("escape".to_string(), "close_command_palette".to_string())]);
     let paste_confirm = HashMap::from([
         ("enter".to_string(), "confirm_paste".to_string()),
         ("escape".to_string(), "dismiss_paste_confirm".to_string()),
     ]);
 
-    let set = BindingSet::from_legacy(&leader, &direct, &modes, &overview, &search, &palette, &paste_confirm);
+    let set = BindingSet::from_legacy(
+        &leader,
+        &direct,
+        &modes,
+        &overview,
+        &search,
+        &palette,
+        &paste_confirm,
+    );
     assert!(!set.is_empty());
 
     let combo = KeyCombo::parse("ctrl+g");

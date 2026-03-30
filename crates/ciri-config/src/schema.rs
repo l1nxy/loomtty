@@ -60,11 +60,17 @@ impl Default for FontConfig {
 
 fn default_font_family() -> &'static str {
     #[cfg(target_os = "macos")]
-    { "Menlo" }
+    {
+        "Menlo"
+    }
     #[cfg(target_os = "windows")]
-    { "Consolas" }
+    {
+        "Consolas"
+    }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    { "monospace" }
+    {
+        "monospace"
+    }
 }
 
 /// Focus ring style for the active pane border.

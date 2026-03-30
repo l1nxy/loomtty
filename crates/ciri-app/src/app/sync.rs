@@ -81,7 +81,8 @@ impl AppModel {
                     let dy = old_y - new_y;
                     if dx.abs() > 1.0 || dy.abs() > 1.0 {
                         self.anim_mgr.ensure_pane_registered(*pane_id);
-                        self.anim_mgr.start_move_animation(*pane_id, dx, dy, &config);
+                        self.anim_mgr
+                            .start_move_animation(*pane_id, dx, dy, &config);
                     }
                 }
             }

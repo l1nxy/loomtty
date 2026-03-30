@@ -5,7 +5,11 @@ use crate::rect::Rect;
 use super::cell::{CellMetrics, CellProps, UnderlineStyle};
 
 /// Render a single cell: emit decorations and glyph (NOT background — handled by strip merger).
-pub(super) fn render_cell(col: usize, cell: &CellProps, renderer: &mut super::view::CellRenderer<'_>) {
+pub(super) fn render_cell(
+    col: usize,
+    cell: &CellProps,
+    renderer: &mut super::view::CellRenderer<'_>,
+) {
     let px = col as f32 * renderer.metrics.cw;
     let py = renderer.row as f32 * renderer.metrics.ch;
     let bg_width = if cell.is_wide {

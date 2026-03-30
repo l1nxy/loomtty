@@ -16,12 +16,12 @@ use std::mem;
 use std::os::windows::ffi::OsStringExt;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, MAX_PATH};
 use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, CREATE_TOOLHELP_SNAPSHOT_FLAGS,
-    PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+    CREATE_TOOLHELP_SNAPSHOT_FLAGS, CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW,
+    Process32NextW, TH32CS_SNAPPROCESS,
 };
 use windows::Win32::System::Threading::{
-    GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
-    PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
+    GetProcessTimes, OpenProcess, PROCESS_NAME_FORMAT, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
+    QueryFullProcessImageNameW,
 };
 
 pub fn foreground_process(shell_pid: u32, _master_fd: RawHandle) -> Option<ProcessInfo> {

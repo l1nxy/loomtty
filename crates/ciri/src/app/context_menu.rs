@@ -1,5 +1,5 @@
-use ciri_protocol::message::ClientMessage;
 use super::{App, ContextMenu, ContextMenuAction, ContextMenuItem};
+use ciri_protocol::message::ClientMessage;
 
 impl App {
     pub(crate) fn handle_context_menu_click(&mut self) {
@@ -25,8 +25,7 @@ impl App {
                         && let Ok(text) = cb.get_text()
                     {
                         let threshold = self.core.config.terminal.paste_warn_threshold;
-                        if let Some(info) = super::paste_guard::check_paste_size(&text, threshold)
-                        {
+                        if let Some(info) = super::paste_guard::check_paste_size(&text, threshold) {
                             let preview = if text.len() > 200 {
                                 format!("{}...", &text[..text.floor_char_boundary(200)])
                             } else {
@@ -38,11 +37,11 @@ impl App {
                                 preview,
                                 hovered_button: None,
                             });
-                        } else if let Some(pid) = self.core.workspaces.active_mut().active_pane_id() {
-                            let bracketed = self
-                                .core.pane_grids
-                                .get(&pid)
-                                .is_some_and(|g| g.mode_flags & ciri_protocol::message::MODE_BRACKETED_PASTE != 0);
+                        } else if let Some(pid) = self.core.workspaces.active_mut().active_pane_id()
+                        {
+                            let bracketed = self.core.pane_grids.get(&pid).is_some_and(|g| {
+                                g.mode_flags & ciri_protocol::message::MODE_BRACKETED_PASTE != 0
+                            });
                             let mut data =
                                 Vec::with_capacity(text.len() + if bracketed { 12 } else { 0 });
                             if bracketed {
@@ -57,7 +56,8 @@ impl App {
                     }
                 }
                 ContextMenuAction::SelectAll => {
-                    if let Some(pid) = target_pane_id.or(self.core.workspaces.active().active_pane_id())
+                    if let Some(pid) =
+                        target_pane_id.or(self.core.workspaces.active().active_pane_id())
                         && let Some(grid) = self.core.pane_grids.get(&pid)
                     {
                         let total = grid.total_lines();
@@ -71,10 +71,12 @@ impl App {
                     }
                 }
                 ContextMenuAction::Search => {
-                    if let Some(pane_id) = target_pane_id.or(self.core.workspaces.active().active_pane_id())
+                    if let Some(pane_id) =
+                        target_pane_id.or(self.core.workspaces.active().active_pane_id())
                     {
                         let scroll_offset = self
-                            .core.pane_grids
+                            .core
+                            .pane_grids
                             .get(&pane_id)
                             .map(|g| g.scroll_offset)
                             .unwrap_or(0);
@@ -96,7 +98,9 @@ impl App {
                 ContextMenuAction::SplitRight => self.send(ClientMessage::CreatePane),
                 ContextMenuAction::SplitDown => self.send(ClientMessage::SplitDown),
                 ContextMenuAction::ClosePane => {
-                    if let Some(pane_id) = target_pane_id.or(self.core.workspaces.active_mut().active_pane_id()) {
+                    if let Some(pane_id) =
+                        target_pane_id.or(self.core.workspaces.active_mut().active_pane_id())
+                    {
                         self.send(ClientMessage::ClosePane { pane_id });
                     }
                 }
@@ -130,7 +134,11 @@ impl App {
         }
 
         let mut items = Vec::new();
-        let has_selection = self.core.selection.as_ref().is_some_and(|s| s.start != s.end);
+        let has_selection = self
+            .core
+            .selection
+            .as_ref()
+            .is_some_and(|s| s.start != s.end);
 
         items.push(ContextMenuItem {
             label: "Copy".to_string(),
@@ -170,7 +178,8 @@ impl App {
         }
 
         items.push(ContextMenuItem {
-            label: "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}".to_string(),
+            label: "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}"
+                .to_string(),
             action: ContextMenuAction::Copy,
             enabled: false,
         });

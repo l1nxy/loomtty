@@ -288,12 +288,9 @@ impl Pane {
 
         // Run image parsers with per-chunk cursor positions
         for (chunk, &(cursor_col, cursor_row)) in chunks.iter().zip(cursors.iter()) {
-            let (kitty_result, sixel_placements) = self.parsers.scan_images(
-                chunk,
-                cursor_col,
-                cursor_row,
-                self.images.active_mut(),
-            );
+            let (kitty_result, sixel_placements) =
+                self.parsers
+                    .scan_images(chunk, cursor_col, cursor_row, self.images.active_mut());
             if kitty_result.deleted {
                 self.images.clear_on_delete();
             }
@@ -835,10 +832,14 @@ mod tests {
         let first = pane.extract_damage().expect("new pane should start dirty");
         assert_eq!(first, vec![(0, 0, 3), (1, 0, 3), (2, 0, 3)]);
 
-        let second = pane.extract_damage().expect("alacritty keeps the cursor line dirty");
+        let second = pane
+            .extract_damage()
+            .expect("alacritty keeps the cursor line dirty");
         assert_eq!(second, vec![(0, 0, 3)]);
 
-        let third = pane.extract_damage().expect("cursor line damage remains stable after reset");
+        let third = pane
+            .extract_damage()
+            .expect("cursor line damage remains stable after reset");
         assert_eq!(third, vec![(0, 0, 3)]);
     }
 

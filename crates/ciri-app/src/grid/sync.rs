@@ -1,7 +1,7 @@
 use ciri_protocol::message::*;
 
-use super::types::ScrollbackRow;
 use super::ClientPaneGrid;
+use super::types::ScrollbackRow;
 
 impl ClientPaneGrid {
     /// Apply a FullPaneSync from the server.

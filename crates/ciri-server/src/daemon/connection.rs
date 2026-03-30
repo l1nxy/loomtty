@@ -246,7 +246,9 @@ pub(crate) async fn handle_client<R, W>(
                                     (s.clients.get(&cid), codec::frame_full_pane_sync(&sync))
                                     && let Err(e) = client.tx.try_send(Bytes::from(frame))
                                 {
-                                    log::warn!("failed to send full pane sync to client {cid}: {e}");
+                                    log::warn!(
+                                        "failed to send full pane sync to client {cid}: {e}"
+                                    );
                                 }
                             }
                             ServerResponse::RemoveClient(cid) => {

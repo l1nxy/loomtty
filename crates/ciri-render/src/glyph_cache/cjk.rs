@@ -111,10 +111,7 @@ fn estimate_cap_height(face: &freetype::Face) -> Option<f64> {
             yMax: 0,
         };
         unsafe {
-            freetype::ffi::FT_Outline_Get_BBox(
-                &slot.outline as *const _ as *mut _,
-                &mut bbox,
-            );
+            freetype::ffi::FT_Outline_Get_BBox(&slot.outline as *const _ as *mut _, &mut bbox);
         }
         let height = (bbox.yMax - bbox.yMin) as f64 / 64.0;
         if height > 0.0 {
@@ -132,38 +129,38 @@ fn estimate_ascii_height(face: &freetype::Face) -> Option<f64> {
     let mut bottom: f64 = 0.0;
     let mut any = false;
     for ch in 0x20u32..=0x7Eu32 {
-        if let Some(gi) = face.get_char_index(ch as usize) {
-            if face.load_glyph(gi, LoadFlag::DEFAULT | LoadFlag::NO_BITMAP)
+        if let Some(gi) = face.get_char_index(ch as usize)
+            && face
+                .load_glyph(gi, LoadFlag::DEFAULT | LoadFlag::NO_BITMAP)
                 .is_ok()
-            {
-                let slot = unsafe { &*face.raw().glyph };
-                if slot.format == freetype::ffi::FT_GLYPH_FORMAT_OUTLINE {
-                    let mut bbox = freetype::ffi::FT_BBox {
-                        xMin: 0,
-                        yMin: 0,
-                        xMax: 0,
-                        yMax: 0,
-                    };
-                    unsafe {
-                        freetype::ffi::FT_Outline_Get_BBox(
-                            &slot.outline as *const _ as *mut _,
-                            &mut bbox,
-                        );
-                    }
-                    let y_min = bbox.yMin as f64 / 64.0;
-                    let y_max = bbox.yMax as f64 / 64.0;
-                    top = top.max(y_max);
-                    bottom = bottom.min(y_min);
-                    any = true;
-                } else {
-                    // Bitmap glyph: use metrics as fallback
-                    let metrics = slot.metrics;
-                    let g_top = metrics.horiBearingY as f64 / 64.0;
-                    let g_bottom = g_top - metrics.height as f64 / 64.0;
-                    top = top.max(g_top);
-                    bottom = bottom.min(g_bottom);
-                    any = true;
+        {
+            let slot = unsafe { &*face.raw().glyph };
+            if slot.format == freetype::ffi::FT_GLYPH_FORMAT_OUTLINE {
+                let mut bbox = freetype::ffi::FT_BBox {
+                    xMin: 0,
+                    yMin: 0,
+                    xMax: 0,
+                    yMax: 0,
+                };
+                unsafe {
+                    freetype::ffi::FT_Outline_Get_BBox(
+                        &slot.outline as *const _ as *mut _,
+                        &mut bbox,
+                    );
                 }
+                let y_min = bbox.yMin as f64 / 64.0;
+                let y_max = bbox.yMax as f64 / 64.0;
+                top = top.max(y_max);
+                bottom = bottom.min(y_min);
+                any = true;
+            } else {
+                // Bitmap glyph: use metrics as fallback
+                let metrics = slot.metrics;
+                let g_top = metrics.horiBearingY as f64 / 64.0;
+                let g_bottom = g_top - metrics.height as f64 / 64.0;
+                top = top.max(g_top);
+                bottom = bottom.min(g_bottom);
+                any = true;
             }
         }
     }

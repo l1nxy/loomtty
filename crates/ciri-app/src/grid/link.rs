@@ -1,5 +1,5 @@
-use super::types::{LinkMatch, RowChar};
 use super::ClientPaneGrid;
+use super::types::{LinkMatch, RowChar};
 
 impl ClientPaneGrid {
     pub fn link_at(&self, col: u16, buffer_row: usize) -> Option<LinkMatch> {
@@ -172,10 +172,7 @@ fn rfind_colon_digits(bytes: &[u8], end: usize) -> Option<usize> {
 /// Check if a path has a recognizable file extension.
 fn has_file_extension(path: &str) -> bool {
     // Get the last path component
-    let file_name = path
-        .rsplit(|c: char| c == '/' || c == '\\')
-        .next()
-        .unwrap_or(path);
+    let file_name = path.rsplit(['/', '\\']).next().unwrap_or(path);
     // Must contain a dot that's not at the start (not hidden files alone)
     if let Some(dot_pos) = file_name.rfind('.') {
         let ext = &file_name[dot_pos + 1..];

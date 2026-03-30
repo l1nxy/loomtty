@@ -210,7 +210,8 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                                 } else {
                                     pane.scrollback_total()
                                 };
-                                let sync = build_scrollback_sync(pane, pgen, last_sent, current_total);
+                                let sync =
+                                    build_scrollback_sync(pane, pgen, last_sent, current_total);
                                 pending_sends.push(PendingSend {
                                     client_id: cid,
                                     session_name: session_name.clone(),
@@ -233,7 +234,8 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
 
                             if current_total > last_sent {
                                 // New scrollback — send FullPaneSync with delta history
-                                let sync = build_scrollback_sync(pane, pgen, last_sent, current_total);
+                                let sync =
+                                    build_scrollback_sync(pane, pgen, last_sent, current_total);
                                 pending_sends.push(PendingSend {
                                     client_id: cid,
                                     session_name: session_name.clone(),

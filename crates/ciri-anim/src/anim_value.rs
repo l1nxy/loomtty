@@ -121,10 +121,10 @@ impl AnimValue {
             clamped_dur,
         }) = &self.mode
         {
-            if let Some(cd) = clamped_dur {
-                if *elapsed >= *cd {
-                    return self.target;
-                }
+            if let Some(cd) = clamped_dur
+                && *elapsed >= *cd
+            {
+                return self.target;
             }
             // Clamp to [min(from,to), max(from,to)] to prevent overshoot artifacts
             let lo = spring.from.min(spring.to);
@@ -265,7 +265,9 @@ impl AnimValue {
 
         let finished = match &mut self.mode {
             None => return false,
-            Some(AnimMode::Spring { spring, elapsed, .. }) => {
+            Some(AnimMode::Spring {
+                spring, elapsed, ..
+            }) => {
                 *elapsed += dt;
                 let t = *elapsed;
 

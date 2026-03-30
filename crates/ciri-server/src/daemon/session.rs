@@ -479,7 +479,7 @@ impl Session {
     pub(crate) fn agent_detection_due(&self, now: Instant, interval_secs: u64) -> bool {
         let interval = Duration::from_secs(interval_secs.max(1));
         self.last_agent_save
-            .map_or(true, |t| now.duration_since(t) >= interval)
+            .is_none_or(|t| now.duration_since(t) >= interval)
     }
 
     /// Process PTY output for all panes, extract damage, and merge into per-client accumulators.

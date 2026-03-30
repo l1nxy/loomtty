@@ -17,7 +17,9 @@ pub(crate) fn compute_ft_metrics(
     face.set_char_size(0, (pixel_size * 64.0) as isize, 72, 72)
         .expect("FreeType set_char_size failed");
 
-    let size_metrics = face.size_metrics().expect("FreeType size_metrics unavailable");
+    let size_metrics = face
+        .size_metrics()
+        .expect("FreeType size_metrics unavailable");
     let px_per_unit = (size_metrics.y_scale as f64 / 65536.0) / 64.0;
 
     // Read vertical metrics from OS/2 table, falling back to hhea then size_metrics.
@@ -45,7 +47,12 @@ pub(crate) fn compute_ft_metrics(
          baseline={baseline_from_top:.1}",
     );
 
-    (cell_width, cell_height, baseline_from_top, face_width as f32)
+    (
+        cell_width,
+        cell_height,
+        baseline_from_top,
+        face_width as f32,
+    )
 }
 
 /// Read ascent, descent (negative), and line_gap from font tables.
@@ -104,12 +111,12 @@ fn measure_max_ascii_advance(
 ) -> f64 {
     let mut max_advance: f64 = 0.0;
     for ch in 0x20u32..=0x7Eu32 {
-        if let Some(glyph_index) = face.get_char_index(ch as usize) {
-            if face.load_glyph(glyph_index, LoadFlag::DEFAULT).is_ok() {
-                let adv = unsafe { (*face.raw().glyph).advance.x as f64 / 64.0 };
-                if adv > max_advance {
-                    max_advance = adv;
-                }
+        if let Some(glyph_index) = face.get_char_index(ch as usize)
+            && face.load_glyph(glyph_index, LoadFlag::DEFAULT).is_ok()
+        {
+            let adv = unsafe { (*face.raw().glyph).advance.x as f64 / 64.0 };
+            if adv > max_advance {
+                max_advance = adv;
             }
         }
     }

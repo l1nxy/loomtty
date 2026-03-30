@@ -233,9 +233,9 @@ fn choose_default_session() -> SessionLaunchChoice {
         };
     }
 
-    if let Some(name) = read_last_session()
-        .filter(|name| saved.iter().any(|saved_name| saved_name == name) || session_is_running(name))
-    {
+    if let Some(name) = read_last_session().filter(|name| {
+        saved.iter().any(|saved_name| saved_name == name) || session_is_running(name)
+    }) {
         log::info!("attaching to last local session: {name}");
         return SessionLaunchChoice {
             session_name: name,
@@ -317,7 +317,10 @@ mod tests {
         remembered: Option<&str>,
         saved_sessions: Vec<&str>,
     ) -> SessionLaunchChoice {
-        let saved = saved_sessions.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        let saved = saved_sessions
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
         if let Some(name) = active_sessions.into_iter().next() {
             return SessionLaunchChoice {
                 session_name: name.to_owned(),
@@ -325,9 +328,9 @@ mod tests {
             };
         }
 
-        if let Some(name) = remembered.filter(|name| {
-            saved.iter().any(|saved_name| saved_name == name)
-        }) {
+        if let Some(name) =
+            remembered.filter(|name| saved.iter().any(|saved_name| saved_name == name))
+        {
             return SessionLaunchChoice {
                 session_name: name.to_owned(),
                 remembers_last_session: true,

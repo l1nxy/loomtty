@@ -15,8 +15,7 @@ use super::color::ColorTable;
 use super::cursor::{cursor_shape_to_protocol, make_cursor_rects};
 use super::decoration::{flush_bg_strip, render_cell, render_cell_decorations};
 use super::glyph::{
-    RelativeGlyph, constrain_wide_glyph, constrain_wide_text_glyph, emit_glyph,
-    make_relative_glyph,
+    RelativeGlyph, constrain_wide_glyph, constrain_wide_text_glyph, emit_glyph, make_relative_glyph,
 };
 use super::shaping::{RowLigatureData, precompute_row_shaping};
 
@@ -212,10 +211,7 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
 // ─── Client-side path ────────────────────────────────────────────────
 
 /// Build rendering data from a `PackedCell` grid (client-side path, full rebuild).
-pub fn build_view_from_grid(
-    atlas: &mut GlyphCache,
-    inputs: &PackedViewInputs<'_>,
-) -> TerminalView {
+pub fn build_view_from_grid(atlas: &mut GlyphCache, inputs: &PackedViewInputs<'_>) -> TerminalView {
     let metrics = CellMetrics::new(atlas, inputs.config);
     let params = inputs.build_params(&metrics);
     let row_lig_data = build_row_lig_cache(&params);

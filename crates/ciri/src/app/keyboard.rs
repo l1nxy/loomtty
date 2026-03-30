@@ -203,7 +203,8 @@ impl App {
             return;
         };
         let bracketed = self
-            .core.pane_grids
+            .core
+            .pane_grids
             .get(&pid)
             .is_some_and(|g| g.mode_flags & ciri_protocol::message::MODE_BRACKETED_PASTE != 0);
         let mut data = Vec::with_capacity(text.len() + if bracketed { 12 } else { 0 });
@@ -270,9 +271,9 @@ impl App {
                             ' ' => "space",
                             'a'..='z' => {
                                 const LETTERS: [&str; 26] = [
-                                    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k",
-                                    "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v",
-                                    "w", "x", "y", "z",
+                                    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l",
+                                    "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x",
+                                    "y", "z",
                                 ];
                                 LETTERS[(ch as u8 - b'a') as usize]
                             }
@@ -297,7 +298,8 @@ impl App {
 
     fn send_key_input(&mut self, event: &winit::event::KeyEvent, modifiers: KeyModifiers) {
         let use_kitty = self
-            .core.workspaces
+            .core
+            .workspaces
             .active()
             .active_pane_id()
             .and_then(|pid| self.core.pane_grids.get(&pid))
@@ -311,7 +313,8 @@ impl App {
         if self.core.broadcast_mode {
             let vox = self.core.anim_mgr.view_offset_x.value() as f32;
             let visible_pids: Vec<u64> = self
-                .core.workspaces
+                .core
+                .workspaces
                 .active()
                 .visible_tiles(vox)
                 .iter()
@@ -319,7 +322,8 @@ impl App {
                 .collect();
             for pid in visible_pids {
                 let pane_kitty = self
-                    .core.pane_grids
+                    .core
+                    .pane_grids
                     .get(&pid)
                     .is_some_and(|g| g.has_kitty_keyboard);
                 let pane_bytes = if pane_kitty == use_kitty {

@@ -185,20 +185,20 @@ impl AppModel {
 
     /// Send a message to the server.
     pub fn send(&self, msg: ClientMessage) {
-        if let Some(tx) = &self.server_tx {
-            if let Err(e) = tx.send(msg) {
-                log::warn!("server channel closed: {e}");
-            }
+        if let Some(tx) = &self.server_tx
+            && let Err(e) = tx.send(msg)
+        {
+            log::warn!("server channel closed: {e}");
         }
     }
 
     /// Send a non-critical message (drops if queue full).
     /// Used for: Ack, MouseInput.
     pub fn send_lossy(&self, msg: ClientMessage) {
-        if let Some(tx) = &self.server_tx {
-            if let Err(e) = tx.try_send(msg) {
-                log::debug!("dropped non-critical message: {e}");
-            }
+        if let Some(tx) = &self.server_tx
+            && let Err(e) = tx.try_send(msg)
+        {
+            log::debug!("dropped non-critical message: {e}");
         }
     }
 
@@ -303,11 +303,7 @@ impl AppModel {
         }
     }
 
-    pub fn finish_reconnect_ok(
-        &mut self,
-        tx: Sender<ClientMessage>,
-        rx: Receiver<ServerEvent>,
-    ) {
+    pub fn finish_reconnect_ok(&mut self, tx: Sender<ClientMessage>, rx: Receiver<ServerEvent>) {
         log::info!("reconnected to session '{}'", self.session_name);
         self.server_tx = Some(tx);
         self.server_rx = Some(rx);

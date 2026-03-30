@@ -4,8 +4,8 @@ use crate::message::*;
 use std::io;
 use tokio::io::AsyncWrite;
 
-use super::frame::{write_frame, TAG_FULL_PANE_SYNC};
-use super::state_machine::{sm_decode_cells_vec, sm_encode_cells, StateEncoder};
+use super::frame::{TAG_FULL_PANE_SYNC, write_frame};
+use super::state_machine::{StateEncoder, sm_decode_cells_vec, sm_encode_cells};
 use super::util::*;
 
 const FULL_PANE_SYNC_MIN_HEADER_LEN: usize = 28;

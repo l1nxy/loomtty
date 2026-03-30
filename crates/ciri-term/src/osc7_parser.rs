@@ -12,6 +12,12 @@ pub struct Osc7Parser {
     partial: PartialBuf,
 }
 
+impl Default for Osc7Parser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Osc7Parser {
     pub fn new() -> Self {
         Self {

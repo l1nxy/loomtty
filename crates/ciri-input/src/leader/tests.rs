@@ -391,12 +391,36 @@ fn make_test_handler() -> InputHandler {
     let mut set = BindingSet::new();
 
     // Leader bindings (mode: LEADER)
-    set.push(Binding::in_mode(KeyCombo::new("n"), Action::NewColumnRight, BindingMode::LEADER));
-    set.push(Binding::in_mode(KeyCombo::new("h"), Action::FocusLeft, BindingMode::LEADER));
-    set.push(Binding::in_mode(KeyCombo::new("l"), Action::FocusRight, BindingMode::LEADER));
-    set.push(Binding::in_mode(KeyCombo::new("o"), Action::ToggleOverview, BindingMode::LEADER));
-    set.push(Binding::in_mode(KeyCombo::new("r"), Action::EnterMode("resize".into()), BindingMode::LEADER));
-    set.push(Binding::in_mode(KeyCombo::new("g"), Action::ToggleLock, BindingMode::LEADER));
+    set.push(Binding::in_mode(
+        KeyCombo::new("n"),
+        Action::NewColumnRight,
+        BindingMode::LEADER,
+    ));
+    set.push(Binding::in_mode(
+        KeyCombo::new("h"),
+        Action::FocusLeft,
+        BindingMode::LEADER,
+    ));
+    set.push(Binding::in_mode(
+        KeyCombo::new("l"),
+        Action::FocusRight,
+        BindingMode::LEADER,
+    ));
+    set.push(Binding::in_mode(
+        KeyCombo::new("o"),
+        Action::ToggleOverview,
+        BindingMode::LEADER,
+    ));
+    set.push(Binding::in_mode(
+        KeyCombo::new("r"),
+        Action::EnterMode("resize".into()),
+        BindingMode::LEADER,
+    ));
+    set.push(Binding::in_mode(
+        KeyCombo::new("g"),
+        Action::ToggleLock,
+        BindingMode::LEADER,
+    ));
 
     // Direct bindings (no mode requirement, but not in text-input overlays)
     set.push(Binding {
@@ -408,22 +432,62 @@ fn make_test_handler() -> InputHandler {
     });
 
     // Resize key table
-    set.push(Binding::in_table(KeyCombo::new("h"), Action::ColumnWidthDecrease, "resize"));
-    set.push(Binding::in_table(KeyCombo::new("l"), Action::ColumnWidthIncrease, "resize"));
+    set.push(Binding::in_table(
+        KeyCombo::new("h"),
+        Action::ColumnWidthDecrease,
+        "resize",
+    ));
+    set.push(Binding::in_table(
+        KeyCombo::new("l"),
+        Action::ColumnWidthIncrease,
+        "resize",
+    ));
 
     // Overview bindings
-    set.push(Binding::in_mode(KeyCombo::new("h"), Action::FocusLeft, BindingMode::OVERVIEW));
-    set.push(Binding::in_mode(KeyCombo::new("escape"), Action::ExitOverview, BindingMode::OVERVIEW));
+    set.push(Binding::in_mode(
+        KeyCombo::new("h"),
+        Action::FocusLeft,
+        BindingMode::OVERVIEW,
+    ));
+    set.push(Binding::in_mode(
+        KeyCombo::new("escape"),
+        Action::ExitOverview,
+        BindingMode::OVERVIEW,
+    ));
 
     // Search bindings
-    set.push(Binding::in_mode(KeyCombo::new("escape"), Action::CloseSearch, BindingMode::SEARCH));
-    set.push(Binding::in_mode(KeyCombo::new("enter"), Action::SearchNextMatch, BindingMode::SEARCH));
+    set.push(Binding::in_mode(
+        KeyCombo::new("escape"),
+        Action::CloseSearch,
+        BindingMode::SEARCH,
+    ));
+    set.push(Binding::in_mode(
+        KeyCombo::new("enter"),
+        Action::SearchNextMatch,
+        BindingMode::SEARCH,
+    ));
 
     // Palette bindings
-    set.push(Binding::in_mode(KeyCombo::new("escape"), Action::CloseCommandPalette, BindingMode::PALETTE));
-    set.push(Binding::in_mode(KeyCombo::new("up"), Action::PaletteUp, BindingMode::PALETTE));
-    set.push(Binding::in_mode(KeyCombo::new("down"), Action::PaletteDown, BindingMode::PALETTE));
-    set.push(Binding::in_mode(KeyCombo::new("enter"), Action::PaletteConfirm, BindingMode::PALETTE));
+    set.push(Binding::in_mode(
+        KeyCombo::new("escape"),
+        Action::CloseCommandPalette,
+        BindingMode::PALETTE,
+    ));
+    set.push(Binding::in_mode(
+        KeyCombo::new("up"),
+        Action::PaletteUp,
+        BindingMode::PALETTE,
+    ));
+    set.push(Binding::in_mode(
+        KeyCombo::new("down"),
+        Action::PaletteDown,
+        BindingMode::PALETTE,
+    ));
+    set.push(Binding::in_mode(
+        KeyCombo::new("enter"),
+        Action::PaletteConfirm,
+        BindingMode::PALETTE,
+    ));
 
     h.binding_set = set;
     h
@@ -474,7 +538,10 @@ fn unified_key_table_dispatches_action() {
     h.process_key_event("r", false, false, false, false, BindingMode::EMPTY);
     // Press "h" in resize table
     let r = h.process_key_event("h", false, false, false, false, BindingMode::EMPTY);
-    assert!(matches!(r, InputResult::Action(Action::ColumnWidthDecrease)));
+    assert!(matches!(
+        r,
+        InputResult::Action(Action::ColumnWidthDecrease)
+    ));
     // Still in resize table
     assert!(h.has_active_table());
 }

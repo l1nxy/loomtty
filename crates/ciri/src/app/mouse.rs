@@ -15,7 +15,6 @@ impl App {
         if self.core.overview.active && self.core.overview.dragging {
             self.handle_overview_cursor_moved(mx, my);
         } else if self.handle_ui_cursor_hover(mx, my) {
-            return;
         } else if self.core.overview.active {
             self.handle_overview_cursor_moved(mx, my);
         } else {
@@ -41,9 +40,8 @@ impl App {
     }
 
     pub(crate) fn handle_mouse_released(&mut self, button: MouseButton) {
-        match button {
-            MouseButton::Left => self.handle_left_mouse_released(),
-            _ => {}
+        if button == MouseButton::Left {
+            self.handle_left_mouse_released()
         }
     }
 
@@ -57,35 +55,33 @@ impl App {
             }
 
             // Check for scrollbar click/drag
-            if !started_drag {
-                if let Some(hit) = self.hit_test_scrollbar(mx, my) {
-                    if hit.on_thumb {
-                        // Start dragging the scrollbar thumb
-                        self.core.drag.scrollbar_dragging = Some(super::ScrollbarDragInfo {
-                            pane_id: hit.pane_id,
-                            pane_inner_y: hit.inner_y,
-                            pane_inner_h: hit.inner_h,
-                            total_lines: hit.total_lines,
-                            visible_rows: hit.visible_rows,
-                        });
-                    } else {
-                        // Clicked on the track (not thumb) — page up or page down
-                        let page = hit.visible_rows as usize;
-                        if let Some(sb) = &hit.scrollbar_rect {
-                            let thumb_screen_y = hit.inner_y + sb.y;
-                            if my < thumb_screen_y {
-                                // Clicked above thumb → page up (into history)
-                                self.scroll_pane_up(hit.pane_id, page);
-                            } else {
-                                // Clicked below thumb → page down (toward live)
-                                self.scroll_pane_down(hit.pane_id, page);
-                            }
+            if !started_drag && let Some(hit) = self.hit_test_scrollbar(mx, my) {
+                if hit.on_thumb {
+                    // Start dragging the scrollbar thumb
+                    self.core.drag.scrollbar_dragging = Some(super::ScrollbarDragInfo {
+                        pane_id: hit.pane_id,
+                        pane_inner_y: hit.inner_y,
+                        pane_inner_h: hit.inner_h,
+                        total_lines: hit.total_lines,
+                        visible_rows: hit.visible_rows,
+                    });
+                } else {
+                    // Clicked on the track (not thumb) — page up or page down
+                    let page = hit.visible_rows as usize;
+                    if let Some(sb) = &hit.scrollbar_rect {
+                        let thumb_screen_y = hit.inner_y + sb.y;
+                        if my < thumb_screen_y {
+                            // Clicked above thumb → page up (into history)
+                            self.scroll_pane_up(hit.pane_id, page);
+                        } else {
+                            // Clicked below thumb → page down (toward live)
+                            self.scroll_pane_down(hit.pane_id, page);
                         }
                     }
-                    started_drag = true;
-                    if let Some(w) = &self.window {
-                        w.request_redraw();
-                    }
+                }
+                started_drag = true;
+                if let Some(w) = &self.window {
+                    w.request_redraw();
                 }
             }
 
@@ -123,7 +119,10 @@ impl App {
                             break;
                         }
                     }
-                    self.remember_workspace_pane(self.core.workspaces.active_workspace_idx, pane_id);
+                    self.remember_workspace_pane(
+                        self.core.workspaces.active_workspace_idx,
+                        pane_id,
+                    );
                     self.send(ClientMessage::FocusPane { pane_id });
                     self.animate_to_active();
                     self.remember_left_click(pane_id, col, buf_row, click_now);
@@ -199,12 +198,14 @@ impl App {
                 sel.end,
                 sel.active
             );
-            if sel.active && sel.start != sel.end && self.core.config.terminal.copy_on_select {
-                if let Some(text) = self.extract_selected_text() {
-                    log::info!("copy-on-select: {} bytes", text.len());
-                    if let Some(cb) = &mut self.clipboard {
-                        let _ = cb.set_text(&text);
-                    }
+            if sel.active
+                && sel.start != sel.end
+                && self.core.config.terminal.copy_on_select
+                && let Some(text) = self.extract_selected_text()
+            {
+                log::info!("copy-on-select: {} bytes", text.len());
+                if let Some(cb) = &mut self.clipboard {
+                    let _ = cb.set_text(&text);
                 }
             }
         }
@@ -278,7 +279,8 @@ impl App {
             TouchPhase::Ended | TouchPhase::Cancelled => {
                 // Snap: if barely zoomed out, snap back to normal
                 if self.core.overview.active
-                    && self.core.anim_mgr.overview_zoom.value() > self.core.config.animation.zoom_threshold as f64
+                    && self.core.anim_mgr.overview_zoom.value()
+                        > self.core.config.animation.zoom_threshold as f64
                 {
                     self.core.overview.hovered_pane = None;
                     self.core.overview.active = false;
@@ -345,7 +347,7 @@ impl App {
                 total_lines,
                 visible_rows,
                 on_thumb,
-                scrollbar_rect: Some(sb.clone()),
+                scrollbar_rect: Some(*sb),
             });
         }
         None
@@ -392,9 +394,13 @@ impl App {
             let zoom = self.core.anim_mgr.overview_zoom.value() as f32;
             let dx = (mx - lx) / zoom;
             let dy = (my - ly) / zoom;
-            self.core.anim_mgr.view_offset_x
+            self.core
+                .anim_mgr
+                .view_offset_x
                 .jump_to(self.core.anim_mgr.view_offset_x.value() - dx as f64);
-            self.core.anim_mgr.view_offset_y
+            self.core
+                .anim_mgr
+                .view_offset_y
                 .jump_to(self.core.anim_mgr.view_offset_y.value() - dy as f64);
             self.request_mouse_redraw();
         }
@@ -478,7 +484,8 @@ impl App {
 
     fn hovered_pane_at(&self, mx: f32, my: f32) -> Option<u64> {
         let vox = self.core.anim_mgr.view_offset_x.value() as f32;
-        self.core.workspaces
+        self.core
+            .workspaces
             .active()
             .visible_tiles(vox)
             .into_iter()
@@ -567,7 +574,7 @@ impl App {
         }
 
         let delta_px = match delta {
-            MouseScrollDelta::LineDelta(_, y) => -(y as f32) * self.cell_dimensions().0 * 3.0,
+            MouseScrollDelta::LineDelta(_, y) => -y * self.cell_dimensions().0 * 3.0,
             MouseScrollDelta::PixelDelta(pos) => -(pos.y as f32),
         };
         let max_scroll = self.pane_tab_scroll_max();
@@ -597,13 +604,15 @@ impl App {
         let gestures_enabled = self.core.config.gesture.enabled;
         let smooth_scroll = gestures_enabled && self.core.config.gesture.smooth_scroll;
         let has_mouse = self
-            .core.workspaces
+            .core
+            .workspaces
             .active()
             .active_pane_id()
             .and_then(|pid| self.core.pane_grids.get(&pid))
             .is_some_and(|g| g.mode_flags & ciri_protocol::message::MODE_MOUSE_REPORT != 0);
         let is_alt_screen = self
-            .core.workspaces
+            .core
+            .workspaces
             .active()
             .active_pane_id()
             .and_then(|pid| self.core.pane_grids.get(&pid))
@@ -651,7 +660,10 @@ impl App {
             }
             TouchPhase::Moved => {
                 if self.core.gestures.row_active {
-                    self.core.anim_mgr.gesture_row_offset.update_gesture_unclamped(py);
+                    self.core
+                        .anim_mgr
+                        .gesture_row_offset
+                        .update_gesture_unclamped(py);
                     let accum = self.core.anim_mgr.gesture_row_offset.value();
                     if accum > threshold {
                         self.core.workspaces.focus_down();
@@ -684,7 +696,11 @@ impl App {
         has_mouse: bool,
         is_alt_screen: bool,
     ) -> bool {
-        if !(smooth_scroll && matches!(delta, MouseScrollDelta::PixelDelta(_)) && !has_mouse && !is_alt_screen) {
+        if !smooth_scroll
+            || !matches!(delta, MouseScrollDelta::PixelDelta(_))
+            || has_mouse
+            || is_alt_screen
+        {
             return false;
         }
 
@@ -718,7 +734,12 @@ impl App {
         true
     }
 
-    fn handle_discrete_scroll(&mut self, delta: MouseScrollDelta, has_mouse: bool, is_alt_screen: bool) {
+    fn handle_discrete_scroll(
+        &mut self,
+        delta: MouseScrollDelta,
+        has_mouse: bool,
+        is_alt_screen: bool,
+    ) {
         let dy = match delta {
             MouseScrollDelta::LineDelta(_, y) => y as i32 * 3,
             MouseScrollDelta::PixelDelta(pos) => {
@@ -811,7 +832,8 @@ impl App {
                 };
                 let current_vox = self.core.anim_mgr.view_offset_x.value() as f32;
                 let t = self
-                    .core.workspaces
+                    .core
+                    .workspaces
                     .active_mut()
                     .target_offset_for_active_with_strategy(center_strategy, current_vox);
                 let sp = SpringParams::default();

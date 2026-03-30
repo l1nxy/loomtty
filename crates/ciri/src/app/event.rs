@@ -31,49 +31,50 @@ impl ApplicationHandler for App {
         // - defer PTY/server resize AND swapchain reconfigure until settled
         // - during live resize, render at old swapchain size (compositor scales)
         const RESIZE_SETTLE: Duration = Duration::from_millis(20);
-        if let Some((size, last_event)) = self.pending_resize {
-            if last_event.elapsed() >= RESIZE_SETTLE {
-                self.pending_resize = None;
+        if let Some((size, last_event)) = self.pending_resize
+            && last_event.elapsed() >= RESIZE_SETTLE
+        {
+            self.pending_resize = None;
 
-                // Apply deferred DPI change first (if any)
-                if let Some(new_dpi) = self.pending_dpi.take() {
-                    self.dpi_scale = new_dpi;
-                    self.destroy_gpu_resources();
-                    if let Some(renderer) = &mut self.renderer {
-                        let shaper = ciri_render::shaper::TextShaper::new(&self.core.config.font.family);
-                        let (cache, atlas_gpu) = renderer.create_atlas(
-                            self.core.config.font.size,
-                            new_dpi,
-                            &self.core.config.font.family,
-                            shaper.primary_font_path(),
-                            shaper.emoji_font_path(),
-                            shaper.emoji_font_id(),
-                            shaper.cjk_font_path(),
-                            shaper.cjk_font_id(),
-                            &self.core.config.render,
-                        );
-                        log::info!(
-                            "DPI changed: scale={:.2} cell={:.1}x{:.1}",
-                            new_dpi,
-                            cache.cell_width,
-                            cache.cell_height
-                        );
-                        self.glyph_cache = Some(cache);
-                        self.glyph_atlas_gpu = Some(atlas_gpu);
-                        self.text_shaper = Some(shaper);
-                        self.cached_views.clear();
-                        self.cached_tile_glyphs.clear();
-                        for grid in self.core.pane_grids.values_mut() {
-                            grid.dirty = true;
-                        }
+            // Apply deferred DPI change first (if any)
+            if let Some(new_dpi) = self.pending_dpi.take() {
+                self.dpi_scale = new_dpi;
+                self.destroy_gpu_resources();
+                if let Some(renderer) = &mut self.renderer {
+                    let shaper =
+                        ciri_render::shaper::TextShaper::new(&self.core.config.font.family);
+                    let (cache, atlas_gpu) = renderer.create_atlas(
+                        self.core.config.font.size,
+                        new_dpi,
+                        &self.core.config.font.family,
+                        shaper.primary_font_path(),
+                        shaper.emoji_font_path(),
+                        shaper.emoji_font_id(),
+                        shaper.cjk_font_path(),
+                        shaper.cjk_font_id(),
+                        &self.core.config.render,
+                    );
+                    log::info!(
+                        "DPI changed: scale={:.2} cell={:.1}x{:.1}",
+                        new_dpi,
+                        cache.cell_width,
+                        cache.cell_height
+                    );
+                    self.glyph_cache = Some(cache);
+                    self.glyph_atlas_gpu = Some(atlas_gpu);
+                    self.text_shaper = Some(shaper);
+                    self.cached_views.clear();
+                    self.cached_tile_glyphs.clear();
+                    for grid in self.core.pane_grids.values_mut() {
+                        grid.dirty = true;
                     }
                 }
-
-                if let Some(renderer) = &mut self.renderer {
-                    renderer.apply_surface();
-                }
-                self.apply_resize(size);
             }
+
+            if let Some(renderer) = &mut self.renderer {
+                renderer.apply_surface();
+            }
+            self.apply_resize(size);
         }
 
         // Idle-aware event loop: only poll at frame rate when animating or
@@ -84,7 +85,11 @@ impl ApplicationHandler for App {
         let wants_blink = self.core.config.terminal.cursor_blink;
         let has_remote_query = self.core.remote_query_rx.is_some();
 
-        let has_pending = self.core.server_rx.as_ref().is_some_and(|rx| !rx.is_empty());
+        let has_pending = self
+            .core
+            .server_rx
+            .as_ref()
+            .is_some_and(|rx| !rx.is_empty());
 
         let resize_deadline = self
             .pending_resize
@@ -100,8 +105,9 @@ impl ApplicationHandler for App {
             event_loop.set_control_flow(ControlFlow::WaitUntil(frame_wake.min(resize_deadline)));
         } else if is_animating || has_pending || is_reconnecting || has_remote_query {
             // Active rendering or pending data: poll at frame rate
-            event_loop
-                .set_control_flow(ControlFlow::WaitUntil(Instant::now() + self.core.frame_interval));
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + self.core.frame_interval,
+            ));
         } else if wants_blink || has_server {
             // Connected but idle: poll at reduced rate (50ms = 20fps idle)
             event_loop.set_control_flow(ControlFlow::WaitUntil(
@@ -123,17 +129,18 @@ impl ApplicationHandler for App {
             }
 
             // Poll async remote session query result
-            if let Some(rx) = &self.core.remote_query_rx {
-                if let Ok(result) = rx.try_recv() {
-                    self.core.remote_query_rx = None;
-                    self.handle_remote_query_result(result);
-                    needs_redraw = true;
-                }
+            if let Some(rx) = &self.core.remote_query_rx
+                && let Ok(result) = rx.try_recv()
+            {
+                self.core.remote_query_rx = None;
+                self.handle_remote_query_result(result);
+                needs_redraw = true;
             }
 
             // Cursor blink
             if self.core.config.terminal.cursor_blink {
-                let interval = Duration::from_millis(self.core.config.terminal.cursor_blink_interval_ms);
+                let interval =
+                    Duration::from_millis(self.core.config.terminal.cursor_blink_interval_ms);
                 if self.core.cursor_blink_timer.elapsed() >= interval {
                     self.core.cursor_blink_visible = !self.core.cursor_blink_visible;
                     self.core.cursor_blink_timer = Instant::now();
@@ -142,11 +149,11 @@ impl ApplicationHandler for App {
             }
 
             // Config hot-reload
-            if let Some(rx) = &self.config_change_rx {
-                if rx.try_recv().is_ok() {
-                    self.reload_config();
-                    needs_redraw = true;
-                }
+            if let Some(rx) = &self.config_change_rx
+                && rx.try_recv().is_ok()
+            {
+                self.reload_config();
+                needs_redraw = true;
             }
 
             // Auto-reconnect
@@ -174,7 +181,10 @@ impl ApplicationHandler for App {
             }
 
             // Exit if all panes gone
-            if self.core.connected && self.core.pane_grids.is_empty() && self.core.workspaces.active().is_empty() {
+            if self.core.connected
+                && self.core.pane_grids.is_empty()
+                && self.core.workspaces.active().is_empty()
+            {
                 self.cached_views.clear();
                 self.cached_tile_glyphs.clear();
                 self.destroy_gpu_resources();
@@ -195,7 +205,10 @@ impl ApplicationHandler for App {
             return;
         }
 
-        let window_title = format!("{} [{}]", self.core.config.window.title, self.core.session_name);
+        let window_title = format!(
+            "{} [{}]",
+            self.core.config.window.title, self.core.session_name
+        );
         let window_icon = load_window_icon();
         #[allow(unused_mut)]
         let mut attrs = WindowAttributes::default()
@@ -246,7 +259,8 @@ impl ApplicationHandler for App {
 
         let (w, h) = renderer.surface_size();
         let bar_padding = self
-            .core.config
+            .core
+            .config
             .statusbar
             .height_padding
             .unwrap_or(cache.cell_height * self.core.config.statusbar.padding_ratio);
@@ -288,10 +302,10 @@ impl ApplicationHandler for App {
         {
             let (ctx, crx) = crossbeam_channel::bounded(1);
             let watcher = notify::recommended_watcher(move |res: Result<notify::Event, _>| {
-                if let Ok(evt) = res {
-                    if evt.kind.is_modify() {
-                        let _ = ctx.try_send(());
-                    }
+                if let Ok(evt) = res
+                    && evt.kind.is_modify()
+                {
+                    let _ = ctx.try_send(());
                 }
             })
             .ok();

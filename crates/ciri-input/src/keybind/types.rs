@@ -81,10 +81,18 @@ impl KeyCombo {
     /// Format this combo as a human-readable string (e.g. "alt+?", "ctrl+g").
     pub fn display(&self) -> String {
         let mut parts = Vec::new();
-        if self.ctrl { parts.push("ctrl"); }
-        if self.alt { parts.push("alt"); }
-        if self.super_key { parts.push("super"); }
-        if self.shift { parts.push("shift"); }
+        if self.ctrl {
+            parts.push("ctrl");
+        }
+        if self.alt {
+            parts.push("alt");
+        }
+        if self.super_key {
+            parts.push("super");
+        }
+        if self.shift {
+            parts.push("shift");
+        }
         parts.push(&self.key);
         parts.join("+")
     }

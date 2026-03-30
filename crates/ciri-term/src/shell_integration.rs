@@ -120,7 +120,10 @@ mod tests {
     #[test]
     fn parse_command_variants() {
         let mut input: &[u8] = b"A";
-        assert_eq!(parse_command(&mut input).unwrap(), Osc133Command::PromptStart);
+        assert_eq!(
+            parse_command(&mut input).unwrap(),
+            Osc133Command::PromptStart
+        );
 
         let mut input: &[u8] = b"D;42";
         assert_eq!(

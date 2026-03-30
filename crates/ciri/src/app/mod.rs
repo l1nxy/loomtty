@@ -36,11 +36,11 @@ use winit::window::Window;
 // Re-export core types so existing `use super::*` in submodules still works.
 #[allow(unused_imports)]
 pub(crate) use ciri_app::app::{
-    ClientImagePlacement, CommandPaletteState, ConnectionKind, ConnectionSlot, ContextMenu,
-    ContextMenuAction, ContextMenuItem, AppModel, HoveredLink,
-    OverviewActionHover, PaletteEntry, PaletteEntryKind, PasteButton, PendingPaste,
-    ReconnectPlan, RemoteConnectionConfig, ScrollbarDragInfo, SearchMatch, SearchState,
-    Selection, ServerEvent, TopBarHoverRegion,
+    AppModel, ClientImagePlacement, CommandPaletteState, ConnectionKind, ConnectionSlot,
+    ContextMenu, ContextMenuAction, ContextMenuItem, HoveredLink, OverviewActionHover,
+    PaletteEntry, PaletteEntryKind, PasteButton, PendingPaste, ReconnectPlan,
+    RemoteConnectionConfig, ScrollbarDragInfo, SearchMatch, SearchState, Selection, ServerEvent,
+    TopBarHoverRegion,
 };
 
 /// Cached pre-transformed glyph instances for a pane tile.
@@ -194,7 +194,7 @@ impl App {
         Some(ConnectionSlot {
             id: self.core.active_slot_id.clone(),
             kind,
-            session_name: std::mem::replace(&mut self.core.session_name, String::new()),
+            session_name: std::mem::take(&mut self.core.session_name),
             server_tx,
             server_rx,
             pane_grids: std::mem::take(&mut self.core.pane_grids),
@@ -275,7 +275,9 @@ impl App {
 
         // Save current state to background
         if let Some(current) = self.save_current_to_slot() {
-            self.core.background_slots.insert(current.id.clone(), current);
+            self.core
+                .background_slots
+                .insert(current.id.clone(), current);
         }
 
         // Restore target
@@ -299,15 +301,16 @@ impl App {
         if self.core.background_slots.contains_key(&slot_id) {
             self.switch_to_slot(&slot_id);
             // Once connected, switch session within the remote server
-            self.core.send(ClientMessage::SwitchSession {
-                session_name,
-            });
+            self.core
+                .send(ClientMessage::SwitchSession { session_name });
             return;
         }
 
         // Save current state to background
         if let Some(current) = self.save_current_to_slot() {
-            self.core.background_slots.insert(current.id.clone(), current);
+            self.core
+                .background_slots
+                .insert(current.id.clone(), current);
         }
 
         // Set up new remote connection
@@ -553,12 +556,10 @@ impl App {
     pub fn prepare_reconnect(&mut self) -> Option<ReconnectPlan> {
         use ciri_app::app::ReconnectPlanDecision;
         match self.core.prepare_reconnect_plan()? {
-            ReconnectPlanDecision::GaveUp => {
-                Some(ReconnectPlan {
-                    viewport: self.current_viewport(),
-                    should_exit: true,
-                })
-            }
+            ReconnectPlanDecision::GaveUp => Some(ReconnectPlan {
+                viewport: self.current_viewport(),
+                should_exit: true,
+            }),
             ReconnectPlanDecision::Try => {
                 self.core.bump_reconnect_attempt();
                 Some(ReconnectPlan {

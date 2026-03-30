@@ -13,7 +13,7 @@ impl ScrollbackRow {
     pub(super) fn from_cells(cells: &[PackedCell]) -> Self {
         let wrapped = cells
             .last()
-            .map_or(false, |c| c.flags_u16() & FLAG_WRAPLINE != 0);
+            .is_some_and(|c| c.flags_u16() & FLAG_WRAPLINE != 0);
         ScrollbackRow {
             cells: cells.to_vec(),
             wrapped,

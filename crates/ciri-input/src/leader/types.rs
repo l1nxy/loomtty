@@ -50,7 +50,13 @@ pub(super) struct KeyEvent<'a> {
 }
 
 impl<'a> KeyEvent<'a> {
-    pub(super) fn new(key_name: &'a str, ctrl: bool, shift: bool, alt: bool, super_key: bool) -> Self {
+    pub(super) fn new(
+        key_name: &'a str,
+        ctrl: bool,
+        shift: bool,
+        alt: bool,
+        super_key: bool,
+    ) -> Self {
         Self {
             key_name,
             ctrl,

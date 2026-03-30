@@ -166,11 +166,10 @@ impl KittyGraphicsParser {
         for (_offset, payload) in &scan.sequences {
             // Split payload into control + base64 data via winnow
             let mut input: &[u8] = payload;
-            let (control_bytes, img_data_bytes) =
-                match split_payload.parse_next(&mut input) {
-                    Ok(pair) => pair,
-                    Err(_) => continue,
-                };
+            let (control_bytes, img_data_bytes) = match split_payload.parse_next(&mut input) {
+                Ok(pair) => pair,
+                Err(_) => continue,
+            };
 
             let control_str = String::from_utf8_lossy(control_bytes);
             let fields = parse_control(&control_str);

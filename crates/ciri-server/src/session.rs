@@ -39,12 +39,10 @@ pub fn list_running_sessions() -> Vec<String> {
             #[cfg(windows)]
             let ext_match = path.extension().is_some_and(|ext| ext == "pipe");
 
-            if ext_match {
-                if let Some(name) = path.file_stem() {
-                    let name = name.to_string_lossy().to_string();
-                    if is_session_running(&name) {
-                        sessions.push(name);
-                    }
+            if ext_match && let Some(name) = path.file_stem() {
+                let name = name.to_string_lossy().to_string();
+                if is_session_running(&name) {
+                    sessions.push(name);
                 }
             }
         }

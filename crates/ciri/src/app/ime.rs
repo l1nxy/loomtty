@@ -14,7 +14,8 @@ impl App {
                 if self.core.broadcast_mode {
                     let vox = self.core.anim_mgr.view_offset_x.value() as f32;
                     let pids: Vec<u64> = self
-                        .core.workspaces
+                        .core
+                        .workspaces
                         .active()
                         .visible_tiles(vox)
                         .iter()
@@ -27,10 +28,7 @@ impl App {
                         });
                     }
                 } else if let Some(pid) = self.core.workspaces.active_mut().active_pane_id() {
-                    self.send(ClientMessage::Input {
-                        pane_id: pid,
-                        data,
-                    });
+                    self.send(ClientMessage::Input { pane_id: pid, data });
                 }
                 if let Some(w) = &self.window {
                     w.request_redraw();

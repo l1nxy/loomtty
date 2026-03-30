@@ -50,7 +50,7 @@ impl SpringParams {
     }
 
     /// ~0.5s response. The comfortable default for panel switching.
-    pub fn default() -> Self {
+    pub fn comfortable() -> Self {
         Self::new(0.86, 158.0, 0.0001)
     }
 
@@ -73,6 +73,13 @@ impl SpringParams {
     /// omega² = stiffness / mass, mass = 1.
     pub fn from_omega(omega: f64, epsilon: f64) -> Self {
         Self::new(1.0, omega * omega, epsilon)
+    }
+}
+
+impl Default for SpringParams {
+    /// ~0.5s response. The comfortable default for panel switching.
+    fn default() -> Self {
+        Self::comfortable()
     }
 }
 
@@ -115,15 +122,13 @@ impl Spring {
             let omega1 = (omega0 * omega0 - beta * beta).sqrt();
             self.to
                 + envelope
-                    * (x0 * (omega1 * t).cos()
-                        + ((beta * x0 + v0) / omega1) * (omega1 * t).sin())
+                    * (x0 * (omega1 * t).cos() + ((beta * x0 + v0) / omega1) * (omega1 * t).sin())
         } else {
             // Overdamped
             let omega2 = (beta * beta - omega0 * omega0).sqrt();
             self.to
                 + envelope
-                    * (x0 * (omega2 * t).cosh()
-                        + ((beta * x0 + v0) / omega2) * (omega2 * t).sinh())
+                    * (x0 * (omega2 * t).cosh() + ((beta * x0 + v0) / omega2) * (omega2 * t).sinh())
         }
     }
 
@@ -277,10 +282,7 @@ mod tests {
     fn critically_damped_converges() {
         let s = critical_spring(0.0, 100.0);
         let val = s.value_at(1.0);
-        assert!(
-            (val - 100.0).abs() < 0.5,
-            "should converge: val={val}"
-        );
+        assert!((val - 100.0).abs() < 0.5, "should converge: val={val}");
     }
 
     #[test]
@@ -394,7 +396,10 @@ mod tests {
         };
         // Should behave like old critically damped spring
         let val = s.value_at(0.5);
-        assert!(val > 95.0, "should converge quickly with omega=12: val={val}");
+        assert!(
+            val > 95.0,
+            "should converge quickly with omega=12: val={val}"
+        );
     }
 
     #[test]
@@ -440,7 +445,10 @@ mod tests {
         };
         // Velocity should be positive early (moving toward target)
         let v = s.velocity_at(0.05);
-        assert!(v > 0.0, "underdamped velocity should be positive early: {v}");
+        assert!(
+            v > 0.0,
+            "underdamped velocity should be positive early: {v}"
+        );
         // Should eventually oscillate (velocity changes sign)
         let mut sign_changes = 0;
         let mut prev_sign = 1.0f64;
@@ -468,7 +476,10 @@ mod tests {
         };
         // Velocity should be positive (monotonically approaching target)
         let v_early = s.velocity_at(0.05);
-        assert!(v_early > 0.0, "overdamped velocity should be positive: {v_early}");
+        assert!(
+            v_early > 0.0,
+            "overdamped velocity should be positive: {v_early}"
+        );
         // Should decrease over time (no oscillation)
         let v_late = s.velocity_at(1.0);
         assert!(v_late >= 0.0, "overdamped should not go negative: {v_late}");

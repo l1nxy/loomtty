@@ -120,6 +120,18 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
 
                 session.autosave_if_due(Instant::now());
 
+                // Agent detection on slower timer (default 30s)
+                if s.session_config.restore_agents {
+                    let now = Instant::now();
+                    if session.agent_detection_due(now, s.session_config.agent_save_interval_secs) {
+                        let changed = session.detect_agents();
+                        session.last_agent_save = Some(now);
+                        if changed {
+                            session.mark_session_dirty();
+                        }
+                    }
+                }
+
                 // If session has no panes left, mark for removal
                 if session.panes.is_empty() {
                     let _ = ciri_session::restore::delete_session(

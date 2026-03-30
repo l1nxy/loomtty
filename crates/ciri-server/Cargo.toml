@@ -13,6 +13,7 @@ ciri-layout = { path = "../ciri-layout" }
 ciri-protocol = { workspace = true }
 ciri-session = { workspace = true }
 ciri-config = { workspace = true }
+ciri-procinfo = { workspace = true }
 rmp-serde = { workspace = true }
 bytes = { workspace = true }
 tokio = { workspace = true }

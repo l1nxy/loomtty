@@ -109,6 +109,7 @@ mod tests {
                         weight: 1.0,
                         cwd: Some("/tmp".to_string()),
                         title: Some("shell".to_string()),
+                        agent: None,
                     }],
                     active_tile_idx: 0,
                     width_proportion: 1.0,

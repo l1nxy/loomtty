@@ -709,6 +709,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ciri-procinfo"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "log",
+ "windows 0.58.0",
+]
+
+[[package]]
 name = "ciri-protocol"
 version = "0.1.0"
 dependencies = [
@@ -748,6 +757,7 @@ dependencies = [
  "bytes",
  "ciri-config",
  "ciri-layout",
+ "ciri-procinfo",
  "ciri-protocol",
  "ciri-session",
  "ciri-term",

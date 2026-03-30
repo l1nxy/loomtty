@@ -74,7 +74,7 @@ impl Pty {
         // 1. If command is provided and non-empty, use it
         // 2. Otherwise fall back to shell / $SHELL / getpwuid
         let mut cmd = if let Some(c) = command.filter(|c| !c.is_empty()) {
-            let builder = if cfg!(windows) {
+            if cfg!(windows) {
                 let mut b = CommandBuilder::new("cmd.exe");
                 b.arg("/C");
                 b.arg(c);
@@ -84,8 +84,7 @@ impl Pty {
                 b.arg("-c");
                 b.arg(c);
                 b
-            };
-            builder
+            }
         } else if !shell.is_empty() {
             CommandBuilder::new(shell)
         } else if cfg!(windows) {

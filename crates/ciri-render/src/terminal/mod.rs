@@ -18,7 +18,7 @@ mod view;
 
 pub use color::ColorTable;
 pub use glyph::RelativeGlyph;
-pub use scrollbar::{ScrollbarState, SCROLLBAR_MARGIN, SCROLLBAR_WIDTH, build_scrollbar};
+pub use scrollbar::{SCROLLBAR_MARGIN, SCROLLBAR_WIDTH, ScrollbarState, build_scrollbar};
 pub use view::{
     PackedViewInputs, TerminalView, build_terminal_view, build_view_from_grid,
     update_view_from_grid,

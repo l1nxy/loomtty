@@ -206,7 +206,9 @@ pub async fn run_daemon() -> Result<()> {
 }
 
 /// Accept from an optional TCP listener, or pend forever if None.
-async fn tcp_accept(listener: &Option<tokio::net::TcpListener>) -> std::io::Result<(tokio::net::TcpStream, std::net::SocketAddr)> {
+async fn tcp_accept(
+    listener: &Option<tokio::net::TcpListener>,
+) -> std::io::Result<(tokio::net::TcpStream, std::net::SocketAddr)> {
     match listener {
         Some(l) => l.accept().await,
         None => std::future::pending().await,

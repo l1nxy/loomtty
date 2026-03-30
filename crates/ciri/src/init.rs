@@ -118,12 +118,12 @@ fn detect_shell() -> String {
     // Unix: use $SHELL
     #[cfg(unix)]
     {
-        if let Ok(shell) = std::env::var("SHELL") {
-            if !shell.is_empty() {
-                return shell;
-            }
+        if let Ok(shell) = std::env::var("SHELL")
+            && !shell.is_empty()
+        {
+            return shell;
         }
-        return "/bin/sh".to_string();
+        "/bin/sh".to_string()
     }
 
     // Windows: probe PATH for common shells

@@ -52,8 +52,12 @@ impl ParserSuite {
         cursor_row: u16,
         active_images: &mut Vec<ImagePlacement>,
     ) -> (KittyScanResult, Vec<ImagePlacement>) {
-        let kitty_result = self.kitty.scan(chunk, cursor_col, cursor_row, active_images);
-        let sixel_result = self.sixel.scan(chunk, cursor_col, cursor_row, active_images);
+        let kitty_result = self
+            .kitty
+            .scan(chunk, cursor_col, cursor_row, active_images);
+        let sixel_result = self
+            .sixel
+            .scan(chunk, cursor_col, cursor_row, active_images);
         (kitty_result, sixel_result.placements)
     }
 }

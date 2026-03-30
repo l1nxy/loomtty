@@ -67,7 +67,7 @@ pub fn run_control_command(msg: ClientMessage, json: bool) -> Result<()> {
                 if saved.is_empty() {
                     println!("no sessions");
                 } else {
-                    println!("{:<20} {}", "NAME", "STATUS");
+                    println!("{:<20} STATUS", "NAME");
                     for name in saved {
                         println!("{:<20} saved", name);
                     }
@@ -114,7 +114,9 @@ pub fn run_control_command(msg: ClientMessage, json: bool) -> Result<()> {
         let tag = header[0];
         let len = u32::from_le_bytes([header[1], header[2], header[3], header[4]]) as usize;
         if len > MAX_FRAME_SIZE {
-            return Err(anyhow::anyhow!("frame too large ({len} bytes, max {MAX_FRAME_SIZE})"));
+            return Err(anyhow::anyhow!(
+                "frame too large ({len} bytes, max {MAX_FRAME_SIZE})"
+            ));
         }
         let mut payload = vec![0u8; len];
         stream.read_exact(&mut payload)?;
@@ -127,10 +129,7 @@ pub fn run_control_command(msg: ClientMessage, json: bool) -> Result<()> {
                         if sessions.is_empty() {
                             println!("no sessions");
                         } else {
-                            println!(
-                                "{:<20} {:<10} {:<6} {}",
-                                "NAME", "STATUS", "PANES", "CLIENTS"
-                            );
+                            println!("{:<20} {:<10} {:<6} CLIENTS", "NAME", "STATUS", "PANES");
                             for s in sessions {
                                 let status = if s.running { "running" } else { "saved" };
                                 println!(
@@ -153,10 +152,16 @@ pub fn run_control_command(msg: ClientMessage, json: bool) -> Result<()> {
                         if templates.is_empty() {
                             println!("no templates");
                         } else {
-                            println!("{:<20} {:<12} {:<6} {}", "NAME", "WORKSPACES", "PANES", "DESCRIPTION");
+                            println!(
+                                "{:<20} {:<12} {:<6} DESCRIPTION",
+                                "NAME", "WORKSPACES", "PANES"
+                            );
                             for t in templates {
                                 let desc = t.description.as_deref().unwrap_or("");
-                                println!("{:<20} {:<12} {:<6} {}", t.name, t.workspace_count, t.total_panes, desc);
+                                println!(
+                                    "{:<20} {:<12} {:<6} {}",
+                                    t.name, t.workspace_count, t.total_panes, desc
+                                );
                             }
                         }
                         return Ok(());
@@ -175,10 +180,16 @@ pub fn run_control_command(msg: ClientMessage, json: bool) -> Result<()> {
                     }
                     ServerMessage::SessionInfoReply { info } => {
                         if json {
-                            println!("{}", serde_json::to_string_pretty(&info).unwrap_or_default());
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&info).unwrap_or_default()
+                            );
                         } else {
                             println!("Session: {}", info.name);
-                            println!("  Status:           {}", if info.running { "running" } else { "stopped" });
+                            println!(
+                                "  Status:           {}",
+                                if info.running { "running" } else { "stopped" }
+                            );
                             println!("  Panes:            {}", info.pane_count);
                             println!("  Clients:          {}", info.client_count);
                             println!("  Workspaces:       {}", info.workspace_count);
@@ -188,16 +199,28 @@ pub fn run_control_command(msg: ClientMessage, json: bool) -> Result<()> {
                     }
                     ServerMessage::PaneListReply { panes } => {
                         if json {
-                            println!("{}", serde_json::to_string_pretty(&panes).unwrap_or_default());
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&panes).unwrap_or_default()
+                            );
                         } else if panes.is_empty() {
                             println!("no panes");
                         } else {
-                            println!("{:<8} {:<10} {:<30} {:<6} {:<4} {:<4} {:<4}", "ID", "SIZE", "TITLE", "ACTIVE", "WS", "COL", "TILE");
+                            println!(
+                                "{:<8} {:<10} {:<30} {:<6} {:<4} {:<4} {:<4}",
+                                "ID", "SIZE", "TITLE", "ACTIVE", "WS", "COL", "TILE"
+                            );
                             for p in panes {
-                                println!("{:<8} {}x{:<7} {:<30} {:<6} {:<4} {:<4} {:<4}",
+                                println!(
+                                    "{:<8} {}x{:<7} {:<30} {:<6} {:<4} {:<4} {:<4}",
                                     p.pane_id,
-                                    p.cols, p.rows,
-                                    if p.title.len() > 30 { p.title[..27].to_string() + "..." } else { p.title.clone() },
+                                    p.cols,
+                                    p.rows,
+                                    if p.title.len() > 30 {
+                                        p.title[..27].to_string() + "..."
+                                    } else {
+                                        p.title.clone()
+                                    },
                                     if p.is_active { "*" } else { "" },
                                     p.workspace_idx,
                                     p.column_idx,
@@ -207,7 +230,11 @@ pub fn run_control_command(msg: ClientMessage, json: bool) -> Result<()> {
                         }
                         return Ok(());
                     }
-                    ServerMessage::CommandResult { success, message, pane_id } => {
+                    ServerMessage::CommandResult {
+                        success,
+                        message,
+                        pane_id,
+                    } => {
                         if json {
                             let obj = serde_json::json!({
                                 "success": success,
@@ -227,7 +254,10 @@ pub fn run_control_command(msg: ClientMessage, json: bool) -> Result<()> {
                         }
                         return Ok(());
                     }
-                    ServerMessage::LayoutReply { layout, session_name } => {
+                    ServerMessage::LayoutReply {
+                        layout,
+                        session_name,
+                    } => {
                         // Layout is always returned as JSON
                         let obj = serde_json::json!({
                             "session_name": session_name,
@@ -325,10 +355,10 @@ pub fn session_exists_on_server(name: &str) -> bool {
         if stream.read_exact(&mut payload).is_err() {
             break;
         }
-        if tag == 0x10 {
-            if let Ok(ServerMessage::SessionList { sessions }) = rmp_serde::from_slice(&payload) {
-                return sessions.iter().any(|s| s.running && s.name == name);
-            }
+        if tag == 0x10
+            && let Ok(ServerMessage::SessionList { sessions }) = rmp_serde::from_slice(&payload)
+        {
+            return sessions.iter().any(|s| s.running && s.name == name);
         }
     }
     false
@@ -343,7 +373,9 @@ pub fn query_active_sessions() -> Vec<String> {
     #[cfg(unix)]
     let stream_result = {
         let p = transport::server_socket_path();
-        if !p.exists() { return Vec::new(); }
+        if !p.exists() {
+            return Vec::new();
+        }
         std::os::unix::net::UnixStream::connect(&p)
     };
     #[cfg(windows)]
@@ -409,16 +441,26 @@ pub fn query_active_sessions() -> Vec<String> {
 
     for _ in 0..20 {
         let mut header = [0u8; 5];
-        if stream.read_exact(&mut header).is_err() { break; }
+        if stream.read_exact(&mut header).is_err() {
+            break;
+        }
         let tag = header[0];
         let len = u32::from_le_bytes([header[1], header[2], header[3], header[4]]) as usize;
-        if len > MAX_FRAME_SIZE { break; }
+        if len > MAX_FRAME_SIZE {
+            break;
+        }
         let mut payload = vec![0u8; len];
-        if stream.read_exact(&mut payload).is_err() { break; }
-        if tag == 0x10 {
-            if let Ok(ServerMessage::SessionList { sessions }) = rmp_serde::from_slice(&payload) {
-                return sessions.into_iter().filter(|s| s.running).map(|s| s.name).collect();
-            }
+        if stream.read_exact(&mut payload).is_err() {
+            break;
+        }
+        if tag == 0x10
+            && let Ok(ServerMessage::SessionList { sessions }) = rmp_serde::from_slice(&payload)
+        {
+            return sessions
+                .into_iter()
+                .filter(|s| s.running)
+                .map(|s| s.name)
+                .collect();
         }
     }
     Vec::new()

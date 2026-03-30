@@ -2,8 +2,8 @@ use std::borrow::Cow;
 
 use ciri_protocol::message::*;
 
-use super::types::{RowChar, classify_word_cell};
 use super::ClientPaneGrid;
+use super::types::{RowChar, classify_word_cell};
 
 impl ClientPaneGrid {
     /// Get the cells for the current viewport (respecting scroll_offset).

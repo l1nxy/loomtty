@@ -1588,8 +1588,7 @@ fn post_resize_render_readback_stays_safe() {
     let initial = (4u32, 4u32);
     let resized = (7u32, 5u32);
 
-    let (initial_texture, initial_view) =
-        create_render_target(&ctx, initial.0, initial.1, format);
+    let (initial_texture, initial_view) = create_render_target(&ctx, initial.0, initial.1, format);
 
     let shader = ctx.create_shader(gpu::ShaderDesc {
         source: TEST_RECT_SHADER,

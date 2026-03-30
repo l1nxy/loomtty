@@ -1,7 +1,7 @@
 use ciri_protocol::message::*;
 
-use super::types::ScrollbackRow;
 use super::ClientPaneGrid;
+use super::types::ScrollbackRow;
 
 impl ClientPaneGrid {
     /// Scroll up (into history). Returns actual lines scrolled.
@@ -116,13 +116,10 @@ impl ClientPaneGrid {
                 }
                 // If this cell is a wide char and new_cols < 2, the wide char
                 // can't fit — skip the wide+spacer pair entirely.
-                if new_cols < 2
-                    && logical[pos].flags_u16() & FLAG_WIDE_CHAR != 0
-                {
+                if new_cols < 2 && logical[pos].flags_u16() & FLAG_WIDE_CHAR != 0 {
                     pos += 1;
                     // Skip the spacer too if present
-                    if pos < logical.len()
-                        && logical[pos].flags_u16() & FLAG_WIDE_CHAR_SPACER != 0
+                    if pos < logical.len() && logical[pos].flags_u16() & FLAG_WIDE_CHAR_SPACER != 0
                     {
                         pos += 1;
                     }

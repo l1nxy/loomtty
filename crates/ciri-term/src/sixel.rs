@@ -385,7 +385,9 @@ fn decode_sixel(data: &[u8]) -> Option<SixelImage> {
     }
 
     if width > MAX_IMAGE_DIM || height > MAX_IMAGE_DIM {
-        log::warn!("sixel image too large: {width}x{height}, capping to {MAX_IMAGE_DIM}x{MAX_IMAGE_DIM}");
+        log::warn!(
+            "sixel image too large: {width}x{height}, capping to {MAX_IMAGE_DIM}x{MAX_IMAGE_DIM}"
+        );
         width = width.min(MAX_IMAGE_DIM);
         height = height.min(MAX_IMAGE_DIM);
     }
@@ -445,7 +447,13 @@ mod tests {
     fn parse_rle_cmd() {
         let mut input: &[u8] = b"!3~";
         let cmd = sixel_cmd(&mut input).unwrap();
-        assert_eq!(cmd, SixelCmd::Repeat { count: 3, sixel: 0x3F });
+        assert_eq!(
+            cmd,
+            SixelCmd::Repeat {
+                count: 3,
+                sixel: 0x3F
+            }
+        );
     }
 
     #[test]

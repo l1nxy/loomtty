@@ -2,7 +2,7 @@ use ciri_input::action::Action;
 use ciri_protocol::message::ClientMessage;
 
 use super::{
-    CommandPaletteState, ConnectionKind, AppModel, PaletteEntry, PaletteEntryKind,
+    AppModel, CommandPaletteState, ConnectionKind, PaletteEntry, PaletteEntryKind,
     RemoteProbeResult, RemoteQueryResult,
 };
 

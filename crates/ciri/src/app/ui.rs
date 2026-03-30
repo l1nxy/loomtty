@@ -249,7 +249,9 @@ fn action_short_label(action: &str) -> &str {
 }
 
 /// Build infobox rows from a bindings map. Merges keys that share the same action.
-fn build_infobox_rows(bindings: &std::collections::HashMap<String, String>) -> Vec<(String, String)> {
+fn build_infobox_rows(
+    bindings: &std::collections::HashMap<String, String>,
+) -> Vec<(String, String)> {
     use std::collections::HashMap;
     // Group keys by action
     let mut action_to_keys: HashMap<&str, Vec<&str>> = HashMap::new();
@@ -265,7 +267,10 @@ fn build_infobox_rows(bindings: &std::collections::HashMap<String, String>) -> V
     // Sort deterministically: by shortest key length, then alphabetically.
     let mut entries: Vec<_> = action_to_keys.into_iter().collect();
     entries.sort_by(|(_, a_keys), (_, b_keys)| {
-        a_keys[0].len().cmp(&b_keys[0].len()).then(a_keys[0].cmp(&b_keys[0]))
+        a_keys[0]
+            .len()
+            .cmp(&b_keys[0].len())
+            .then(a_keys[0].cmp(b_keys[0]))
     });
 
     entries
@@ -294,7 +299,11 @@ impl App {
             .as_ref()
             .map(|c| c.cell_height)
             .unwrap_or(self.core.config.font.size * 1.2);
-        let cell_w = self.glyph_cache.as_ref().map(|c| c.cell_width).unwrap_or(8.0);
+        let cell_w = self
+            .glyph_cache
+            .as_ref()
+            .map(|c| c.cell_width)
+            .unwrap_or(8.0);
         let top_bar_layout = self.top_bar_layout(vw, vh, cell_w, cell_h);
         self.ensure_active_pane_tab_visible(top_bar_layout.tabs_area_px);
         let baseline = cell_h * self.core.config.statusbar.text_baseline;
@@ -313,7 +322,8 @@ impl App {
         let context_menu = ContextMenuComponent::capture(self, &cx);
         let paste_dialog = PasteDialogComponent::capture(self, &cx);
         let infobox = InfoBoxComponent::capture(self, &cx);
-        let overview_bar = if self.core.overview.active && self.core.overview.hovered_pane.is_some() {
+        let overview_bar = if self.core.overview.active && self.core.overview.hovered_pane.is_some()
+        {
             self.overview_action_bar_data(&cx)
         } else {
             None
@@ -357,7 +367,9 @@ impl App {
         let center_y = vh / 2.0;
         let zoom_threshold = self.core.config.animation.zoom_threshold;
         for (pane_id, tile_rect, _) in &tiles {
-            if *pane_id != hovered_id { continue; }
+            if *pane_id != hovered_id {
+                continue;
+            }
             let tr = if zoom < zoom_threshold {
                 ciri_layout::geometry::Rect::new(
                     center_x + (tile_rect.x - center_x) * zoom,
@@ -378,10 +390,14 @@ impl App {
             // 50/50 split
             let half_w = tr.w / 2.0;
             return Some(OverviewActionBarData {
-                pane_x: tr.x, pane_w: tr.w,
-                bar_y, bar_h,
-                close_x: tr.x, close_w: half_w,
-                focus_x: tr.x + half_w, focus_w: half_w,
+                pane_x: tr.x,
+                pane_w: tr.w,
+                bar_y,
+                bar_h,
+                close_x: tr.x,
+                close_w: half_w,
+                focus_x: tr.x + half_w,
+                focus_w: half_w,
             });
         }
         None
@@ -398,12 +414,18 @@ impl App {
 
         // Bar background
         scene.bg_rects.push(Rect {
-            x: d.pane_x, y: d.bar_y, w: d.pane_w, h: d.bar_h,
+            x: d.pane_x,
+            y: d.bar_y,
+            w: d.pane_w,
+            h: d.bar_h,
             color: [0.0, 0.0, 0.0, 0.8],
         });
         // Divider
         scene.bg_rects.push(Rect {
-            x: d.focus_x, y: d.bar_y + 2.0, w: 1.0, h: d.bar_h - 4.0,
+            x: d.focus_x,
+            y: d.bar_y + 2.0,
+            w: 1.0,
+            h: d.bar_h - 4.0,
             color: [1.0, 1.0, 1.0, 0.15],
         });
 
@@ -415,27 +437,45 @@ impl App {
         // Close button — center text in left half
         if hover == Some(super::OverviewActionHover::Close) {
             scene.bg_rects.push(Rect {
-                x: d.close_x, y: d.bar_y, w: d.close_w, h: d.bar_h,
+                x: d.close_x,
+                y: d.bar_y,
+                w: d.close_w,
+                h: d.bar_h,
                 color: [0.9, 0.2, 0.2, 0.5],
             });
         }
         let close_text_x = d.close_x + (d.close_w - close_text_w) * 0.5;
         emit_status_text(
-            scene.atlas, close_label, close_text_x, text_y,
-            cx.cell_w, cx.baseline, [1.0, 0.6, 0.6, 1.0], scene.glyphs,
+            scene.atlas,
+            close_label,
+            close_text_x,
+            text_y,
+            cx.cell_w,
+            cx.baseline,
+            [1.0, 0.6, 0.6, 1.0],
+            scene.glyphs,
         );
 
         // Focus button — center text in right half
         if hover == Some(super::OverviewActionHover::Focus) {
             scene.bg_rects.push(Rect {
-                x: d.focus_x, y: d.bar_y, w: d.focus_w, h: d.bar_h,
+                x: d.focus_x,
+                y: d.bar_y,
+                w: d.focus_w,
+                h: d.bar_h,
                 color: [accent[0], accent[1], accent[2], 0.35],
             });
         }
         let focus_text_x = d.focus_x + (d.focus_w - focus_text_w) * 0.5;
         emit_status_text(
-            scene.atlas, focus_label, focus_text_x, text_y,
-            cx.cell_w, cx.baseline, [1.0, 1.0, 1.0, 0.9], scene.glyphs,
+            scene.atlas,
+            focus_label,
+            focus_text_x,
+            text_y,
+            cx.cell_w,
+            cx.baseline,
+            [1.0, 1.0, 1.0, 0.9],
+            scene.glyphs,
         );
     }
 
@@ -445,7 +485,11 @@ impl App {
             .as_ref()
             .map(|c| c.cell_height)
             .unwrap_or(self.core.config.font.size * 1.2);
-        let cell_w = self.glyph_cache.as_ref().map(|c| c.cell_width).unwrap_or(8.0);
+        let cell_w = self
+            .glyph_cache
+            .as_ref()
+            .map(|c| c.cell_width)
+            .unwrap_or(8.0);
         let (viewport_w, viewport_h) = self.command_palette_viewport_size();
         UiContext {
             config: &self.core.config,
@@ -457,7 +501,11 @@ impl App {
         }
     }
 
-    pub(crate) fn ui_top_bar_hover(&self, mx: f32, my: f32) -> (Option<TopBarHoverRegion>, Option<u64>) {
+    pub(crate) fn ui_top_bar_hover(
+        &self,
+        mx: f32,
+        my: f32,
+    ) -> (Option<TopBarHoverRegion>, Option<u64>) {
         let cx = self.ui_context();
         let component = TopBarComponent::capture(
             self,
@@ -497,12 +545,10 @@ impl App {
         match component.hit_test(mx, my) {
             UiPaletteHit::Toggle => (None, true),
             UiPaletteHit::Entry(entry_idx) => {
-                let hovered = self.core.command_palette.as_ref().and_then(|palette| {
-                    palette
-                        .filtered
-                        .iter()
-                        .position(|&idx| idx == entry_idx)
-                });
+                let hovered =
+                    self.core.command_palette.as_ref().and_then(|palette| {
+                        palette.filtered.iter().position(|&idx| idx == entry_idx)
+                    });
                 (hovered, true)
             }
             UiPaletteHit::Panel => (None, false),
@@ -512,9 +558,7 @@ impl App {
 
     fn ui_palette_action(&self, mx: f32, my: f32) -> Option<UiAction> {
         let cx = self.ui_context();
-        let Some(component) = PaletteComponent::capture(self, &cx) else {
-            return None;
-        };
+        let component = PaletteComponent::capture(self, &cx)?;
         match component.hit_test(mx, my) {
             UiPaletteHit::Toggle => Some(UiAction::ToggleSessionPaletteScope),
             UiPaletteHit::Entry(entry_idx) => Some(UiAction::ExecutePaletteEntry(entry_idx)),
@@ -525,9 +569,7 @@ impl App {
 
     pub(crate) fn ui_context_menu_hover(&self, mx: f32, my: f32) -> Option<usize> {
         let cx = self.ui_context();
-        let Some(component) = ContextMenuComponent::capture(self, &cx) else {
-            return None;
-        };
+        let component = ContextMenuComponent::capture(self, &cx)?;
         match component.hit_test(mx, my) {
             UiContextMenuHit::Entry(idx) => Some(idx),
             UiContextMenuHit::Menu | UiContextMenuHit::None => None,
@@ -536,9 +578,7 @@ impl App {
 
     fn ui_context_menu_action(&self, mx: f32, my: f32) -> Option<UiAction> {
         let cx = self.ui_context();
-        let Some(component) = ContextMenuComponent::capture(self, &cx) else {
-            return None;
-        };
+        let component = ContextMenuComponent::capture(self, &cx)?;
         match component.hit_test(mx, my) {
             UiContextMenuHit::Entry(idx) => Some(UiAction::ExecuteContextMenuEntry(idx)),
             UiContextMenuHit::Menu => None,
@@ -548,9 +588,7 @@ impl App {
 
     pub(crate) fn ui_paste_dialog_hover(&self, mx: f32, my: f32) -> Option<super::PasteButton> {
         let cx = self.ui_context();
-        let Some(component) = PasteDialogComponent::capture(self, &cx) else {
-            return None;
-        };
+        let component = PasteDialogComponent::capture(self, &cx)?;
         match component.hit_test(mx, my) {
             UiPasteDialogHit::Paste => Some(super::PasteButton::Paste),
             UiPasteDialogHit::Cancel => Some(super::PasteButton::Cancel),
@@ -560,9 +598,7 @@ impl App {
 
     fn ui_paste_dialog_action(&self, mx: f32, my: f32) -> Option<UiAction> {
         let cx = self.ui_context();
-        let Some(component) = PasteDialogComponent::capture(self, &cx) else {
-            return None;
-        };
+        let component = PasteDialogComponent::capture(self, &cx)?;
         match component.hit_test(mx, my) {
             UiPasteDialogHit::Paste => Some(UiAction::ConfirmPaste),
             UiPasteDialogHit::Cancel | UiPasteDialogHit::None => Some(UiAction::CancelPaste),
@@ -581,8 +617,9 @@ impl App {
             _ => None,
         };
         match hit {
-            UiOverviewHit::Pane(ws_idx, pane_id)
-            | UiOverviewHit::FocusPane(ws_idx, pane_id) => Some((ws_idx, pane_id)),
+            UiOverviewHit::Pane(ws_idx, pane_id) | UiOverviewHit::FocusPane(ws_idx, pane_id) => {
+                Some((ws_idx, pane_id))
+            }
             UiOverviewHit::ClosePane(_) => self.core.overview.hovered_pane,
             UiOverviewHit::Background | UiOverviewHit::None => None,
         }
@@ -592,8 +629,12 @@ impl App {
         let cx = self.ui_context();
         let component = OverviewComponent::capture(self, &cx);
         match component.hit_test(self, mx, my) {
-            UiOverviewHit::Pane(ws_idx, pane_id) => Some(UiAction::FocusOverviewPane(ws_idx, pane_id)),
-            UiOverviewHit::FocusPane(ws_idx, pane_id) => Some(UiAction::FocusOverviewPane(ws_idx, pane_id)),
+            UiOverviewHit::Pane(ws_idx, pane_id) => {
+                Some(UiAction::FocusOverviewPane(ws_idx, pane_id))
+            }
+            UiOverviewHit::FocusPane(ws_idx, pane_id) => {
+                Some(UiAction::FocusOverviewPane(ws_idx, pane_id))
+            }
             UiOverviewHit::ClosePane(pane_id) => Some(UiAction::CloseOverviewPane(pane_id)),
             UiOverviewHit::Background => Some(UiAction::StartOverviewDrag),
             UiOverviewHit::None => None,
@@ -635,7 +676,8 @@ impl App {
             UiAction::CycleWorkspace => {
                 let workspace_count = self.core.workspaces.workspaces.len();
                 if workspace_count > 0 {
-                    let next_idx = (self.core.workspaces.active_workspace_idx + 1) % workspace_count;
+                    let next_idx =
+                        (self.core.workspaces.active_workspace_idx + 1) % workspace_count;
                     self.core.workspaces.active_workspace_idx = next_idx;
                     if let Some(&pane_id) = self.core.workspace_last_pane_ids.get(&next_idx)
                         && self.focus_workspace_pane_local(next_idx, pane_id)
@@ -693,7 +735,8 @@ impl App {
             }
             UiAction::ExecutePaletteEntry(entry_idx) => {
                 let keep_open = self
-                    .core.command_palette
+                    .core
+                    .command_palette
                     .as_ref()
                     .and_then(|p| p.entries.get(entry_idx))
                     .is_some_and(|e| matches!(e.kind, super::PaletteEntryKind::RemoteHost { .. }));
@@ -731,14 +774,22 @@ impl App {
 
     pub(crate) fn dispatch_ui_hover(&mut self, mx: f32, my: f32) -> UiHoverOutcome {
         if self.core.pending_paste.is_some() {
-            let prev = self.core.pending_paste.as_ref().and_then(|p| p.hovered_button);
+            let prev = self
+                .core
+                .pending_paste
+                .as_ref()
+                .and_then(|p| p.hovered_button);
             let next = self.ui_paste_dialog_hover(mx, my);
             if let Some(pending) = &mut self.core.pending_paste {
                 pending.hovered_button = next;
             }
             return UiHoverOutcome {
                 handled: true,
-                cursor: if next.is_some() { CursorIcon::Pointer } else { CursorIcon::Default },
+                cursor: if next.is_some() {
+                    CursorIcon::Pointer
+                } else {
+                    CursorIcon::Default
+                },
                 needs_redraw: prev != next,
             };
         }
@@ -749,20 +800,32 @@ impl App {
             self.core.context_menu.hovered_index = next;
             return UiHoverOutcome {
                 handled: true,
-                cursor: if next.is_some() { CursorIcon::Pointer } else { CursorIcon::Default },
+                cursor: if next.is_some() {
+                    CursorIcon::Pointer
+                } else {
+                    CursorIcon::Default
+                },
                 needs_redraw: prev != next,
             };
         }
 
         if self.core.command_palette.is_some() {
-            let prev_hovered = self.core.command_palette.as_ref().and_then(|p| p.hovered_idx);
+            let prev_hovered = self
+                .core
+                .command_palette
+                .as_ref()
+                .and_then(|p| p.hovered_idx);
             let (next_hovered, pointer) = self.ui_palette_hover(mx, my);
             if let Some(palette) = &mut self.core.command_palette {
                 palette.hovered_idx = next_hovered;
             }
             return UiHoverOutcome {
                 handled: true,
-                cursor: if pointer { CursorIcon::Pointer } else { CursorIcon::Default },
+                cursor: if pointer {
+                    CursorIcon::Pointer
+                } else {
+                    CursorIcon::Default
+                },
                 needs_redraw: prev_hovered != next_hovered,
             };
         }
@@ -784,8 +847,8 @@ impl App {
             };
         }
 
-        let had_top_bar_hover =
-            self.core.hovered_top_bar_region.take().is_some() || self.core.hovered_pane_tab.take().is_some();
+        let had_top_bar_hover = self.core.hovered_top_bar_region.take().is_some()
+            || self.core.hovered_pane_tab.take().is_some();
 
         if self.core.overview.active {
             let prev = self.core.overview.hovered_pane;
@@ -793,7 +856,11 @@ impl App {
             self.core.overview.hovered_pane = next;
             return UiHoverOutcome {
                 handled: true,
-                cursor: if next.is_some() { CursorIcon::Pointer } else { CursorIcon::Default },
+                cursor: if next.is_some() {
+                    CursorIcon::Pointer
+                } else {
+                    CursorIcon::Default
+                },
                 needs_redraw: had_top_bar_hover || prev != next,
             };
         }
@@ -888,22 +955,41 @@ impl UiComponent for TopBarComponent {
             StatusBarPosition::Bottom => self.layout.bar_y,
         };
         scene.bg_rects.push(Rect {
-            x: 0.0, y: sep_y, w: cx.viewport_w, h: 1.0,
+            x: 0.0,
+            y: sep_y,
+            w: cx.viewport_w,
+            h: 1.0,
             color: [dim[0], dim[1], dim[2], 0.25],
         });
 
         // Session name — text only, no background
-        let session_color = if self.hovered_region == Some(TopBarHoverRegion::Session) { fg } else { dim };
+        let session_color = if self.hovered_region == Some(TopBarHoverRegion::Session) {
+            fg
+        } else {
+            dim
+        };
         emit_status_text(
-            scene.atlas, &self.session_text, 0.0, text_y,
-            cx.cell_w, cx.baseline, session_color, scene.glyphs,
+            scene.atlas,
+            &self.session_text,
+            0.0,
+            text_y,
+            cx.cell_w,
+            cx.baseline,
+            session_color,
+            scene.glyphs,
         );
 
         // Workspace indicator — accent text only, no background
         if !self.workspace_label.is_empty() {
             emit_status_text(
-                scene.atlas, &self.workspace_label, self.layout.workspace_x, text_y,
-                cx.cell_w, cx.baseline, accent, scene.glyphs,
+                scene.atlas,
+                &self.workspace_label,
+                self.layout.workspace_x,
+                text_y,
+                cx.cell_w,
+                cx.baseline,
+                accent,
+                scene.glyphs,
             );
         }
 
@@ -937,19 +1023,24 @@ impl UiComponent for TopBarComponent {
             }
 
             // Text: active → foreground, hovered → foreground, inactive → dim
-            let tab_text_color = if tab.active {
-                fg
-            } else if hovered {
-                fg
-            } else {
-                dim
-            };
-            if let Some((label, label_x)) =
-                clip_tab_label(&tab.label, tab.x, tab.w, cx.cell_w, tabs_start_x, tabs_end_x)
-            {
+            let tab_text_color = if tab.active || hovered { fg } else { dim };
+            if let Some((label, label_x)) = clip_tab_label(
+                &tab.label,
+                tab.x,
+                tab.w,
+                cx.cell_w,
+                tabs_start_x,
+                tabs_end_x,
+            ) {
                 emit_status_text(
-                    scene.atlas, &label, label_x, text_y,
-                    cx.cell_w, cx.baseline, tab_text_color, scene.glyphs,
+                    scene.atlas,
+                    &label,
+                    label_x,
+                    text_y,
+                    cx.cell_w,
+                    cx.baseline,
+                    tab_text_color,
+                    scene.glyphs,
                 );
             }
         }
@@ -964,7 +1055,8 @@ impl UiComponent for TopBarComponent {
                     scene.bg_rects.push(Rect {
                         x: tabs_start_x + i as f32 * (fade_w / 4.0),
                         y: self.layout.bar_y,
-                        w: strip_w, h: bar_height,
+                        w: strip_w,
+                        h: bar_height,
                         color: [bar_bg[0], bar_bg[1], bar_bg[2], alpha],
                     });
                 }
@@ -976,7 +1068,8 @@ impl UiComponent for TopBarComponent {
                     scene.bg_rects.push(Rect {
                         x: tabs_end_x - fade_w + i as f32 * (fade_w / 4.0),
                         y: self.layout.bar_y,
-                        w: strip_w, h: bar_height,
+                        w: strip_w,
+                        h: bar_height,
                         color: [bar_bg[0], bar_bg[1], bar_bg[2], alpha],
                     });
                 }
@@ -987,12 +1080,25 @@ impl UiComponent for TopBarComponent {
         let mode_str = self.mode_label.as_str();
         let mode_chars = mode_str.chars().count();
         let rx = cx.viewport_w - mode_chars as f32 * cx.cell_w;
-        emit_status_text(scene.atlas, mode_str, rx, text_y, cx.cell_w, cx.baseline, self.mode_color, scene.glyphs);
+        emit_status_text(
+            scene.atlas,
+            mode_str,
+            rx,
+            text_y,
+            cx.cell_w,
+            cx.baseline,
+            self.mode_color,
+            scene.glyphs,
+        );
 
         // Leader / broadcast / overview indicator line
         if self.is_leader || self.is_broadcast || self.is_overview {
             let indicator_h = cx.cell_h * cx.config.statusbar.leader_indicator_ratio;
-            let indicator_color = if self.is_broadcast { broadcast_color } else { accent };
+            let indicator_color = if self.is_broadcast {
+                broadcast_color
+            } else {
+                accent
+            };
             scene.bg_rects.push(Rect {
                 x: 0.0,
                 y: match cx.config.statusbar.position {
@@ -1082,7 +1188,9 @@ impl PaletteComponent {
         if my < self.layout.sep_y {
             return UiPaletteHit::Panel;
         }
-        let vis_row = ((my - self.layout.sep_y) / self.layout.row_h).floor().max(0.0) as usize;
+        let vis_row = ((my - self.layout.sep_y) / self.layout.row_h)
+            .floor()
+            .max(0.0) as usize;
         if vis_row >= self.rows.len() {
             return UiPaletteHit::Panel;
         }
@@ -1126,7 +1234,12 @@ impl UiComponent for PaletteComponent {
             y: self.layout.panel_y,
             w: self.layout.panel_w,
             h: self.layout.input_row_h,
-            color: [bg_color[0] + 0.05, bg_color[1] + 0.05, bg_color[2] + 0.05, 1.0],
+            color: [
+                bg_color[0] + 0.05,
+                bg_color[1] + 0.05,
+                bg_color[2] + 0.05,
+                1.0,
+            ],
         });
 
         let input_text = format!("> {}", self.query);
@@ -1142,7 +1255,11 @@ impl UiComponent for PaletteComponent {
         );
 
         if let Some(toggle) = self.toggle {
-            let toggle_label = if self.sessions_show_all { " ALL " } else { " ACTIVE " };
+            let toggle_label = if self.sessions_show_all {
+                " ALL "
+            } else {
+                " ACTIVE "
+            };
             let toggle_bg = if self.sessions_show_all {
                 [accent[0], accent[1], accent[2], 0.22]
             } else {
@@ -1256,7 +1373,8 @@ impl UiComponent for PaletteComponent {
             };
             let thumb_y = track_y
                 + (track_h - thumb_h).max(0.0)
-                    * (scroll_offset as f32 / (self.total_entries - self.layout.visible_rows) as f32);
+                    * (scroll_offset as f32
+                        / (self.total_entries - self.layout.visible_rows) as f32);
             scene.bg_rects.push(Rect {
                 x: track_x,
                 y: thumb_y,
@@ -1271,7 +1389,8 @@ impl UiComponent for PaletteComponent {
         } else {
             "0/0".to_string()
         };
-        let footer_x = self.layout.panel_x + self.layout.panel_w - (footer.len() as f32 * cx.cell_w) - 12.0;
+        let footer_x =
+            self.layout.panel_x + self.layout.panel_w - (footer.len() as f32 * cx.cell_w) - 12.0;
         let footer_y = self.layout.panel_y + self.layout.panel_h - cx.cell_h - 2.0;
         emit_status_text(
             scene.atlas,
@@ -1341,7 +1460,8 @@ impl ContextMenuComponent {
         let x = app.core.context_menu.x.min(cx.viewport_w - menu_width);
         let y = app.core.context_menu.y.min(cx.viewport_h - menu_height);
         let rows = app
-            .core.context_menu
+            .core
+            .context_menu
             .items
             .iter()
             .enumerate()
@@ -1362,7 +1482,11 @@ impl ContextMenuComponent {
     }
 
     fn hit_test(&self, mx: f32, my: f32) -> UiContextMenuHit {
-        if mx < self.x || mx > self.x + self.menu_width || my < self.y || my > self.y + self.menu_height {
+        if mx < self.x
+            || mx > self.x + self.menu_width
+            || my < self.y
+            || my > self.y + self.menu_height
+        {
             return UiContextMenuHit::None;
         }
         let padding = 8.0;
@@ -1403,10 +1527,34 @@ impl UiComponent for ContextMenuComponent {
 
         let border_color = ThemeConfig::parse_color(&cx.config.theme.border_active);
         let bw = 1.0;
-        scene.bg_rects.push(Rect { x: self.x, y: self.y, w: self.menu_width, h: bw, color: border_color });
-        scene.bg_rects.push(Rect { x: self.x, y: self.y + self.menu_height - bw, w: self.menu_width, h: bw, color: border_color });
-        scene.bg_rects.push(Rect { x: self.x, y: self.y, w: bw, h: self.menu_height, color: border_color });
-        scene.bg_rects.push(Rect { x: self.x + self.menu_width - bw, y: self.y, w: bw, h: self.menu_height, color: border_color });
+        scene.bg_rects.push(Rect {
+            x: self.x,
+            y: self.y,
+            w: self.menu_width,
+            h: bw,
+            color: border_color,
+        });
+        scene.bg_rects.push(Rect {
+            x: self.x,
+            y: self.y + self.menu_height - bw,
+            w: self.menu_width,
+            h: bw,
+            color: border_color,
+        });
+        scene.bg_rects.push(Rect {
+            x: self.x,
+            y: self.y,
+            w: bw,
+            h: self.menu_height,
+            color: border_color,
+        });
+        scene.bg_rects.push(Rect {
+            x: self.x + self.menu_width - bw,
+            y: self.y,
+            w: bw,
+            h: self.menu_height,
+            color: border_color,
+        });
 
         let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
         let fg_color = ThemeConfig::parse_color(&cx.config.theme.foreground);
@@ -1460,8 +1608,16 @@ impl InfoBoxComponent {
 
         let padding = cx.cell_w;
         let row_h = cx.cell_h * 1.3;
-        let key_col_chars = rows.iter().map(|(k, _)| k.chars().count()).max().unwrap_or(0);
-        let val_col_chars = rows.iter().map(|(_, v)| v.chars().count()).max().unwrap_or(0);
+        let key_col_chars = rows
+            .iter()
+            .map(|(k, _)| k.chars().count())
+            .max()
+            .unwrap_or(0);
+        let val_col_chars = rows
+            .iter()
+            .map(|(_, v)| v.chars().count())
+            .max()
+            .unwrap_or(0);
         let title_chars = title.chars().count() + 4; // " TITLE " + border padding
         let content_chars = key_col_chars + 3 + val_col_chars; // key + "   " + val
         let box_chars = content_chars.max(title_chars);
@@ -1479,7 +1635,14 @@ impl InfoBoxComponent {
         };
         let y = cx.viewport_h - h - bottom_chrome - margin;
 
-        Some(Self { title, rows, x, y, w, h })
+        Some(Self {
+            title,
+            rows,
+            x,
+            y,
+            w,
+            h,
+        })
     }
 
     fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
@@ -1493,24 +1656,57 @@ impl InfoBoxComponent {
 
         // Shadow
         scene.bg_rects.push(Rect {
-            x: self.x + 3.0, y: self.y + 3.0, w: self.w, h: self.h,
+            x: self.x + 3.0,
+            y: self.y + 3.0,
+            w: self.w,
+            h: self.h,
             color: [0.0, 0.0, 0.0, 0.4],
         });
         // Background
         scene.bg_rects.push(Rect {
-            x: self.x, y: self.y, w: self.w, h: self.h,
+            x: self.x,
+            y: self.y,
+            w: self.w,
+            h: self.h,
             color: [bg[0] * 0.85, bg[1] * 0.85, bg[2] * 0.85, 0.97],
         });
         // Border
-        scene.bg_rects.push(Rect { x: self.x, y: self.y, w: self.w, h: bw, color: accent });
-        scene.bg_rects.push(Rect { x: self.x, y: self.y + self.h - bw, w: self.w, h: bw, color: accent });
-        scene.bg_rects.push(Rect { x: self.x, y: self.y, w: bw, h: self.h, color: accent });
-        scene.bg_rects.push(Rect { x: self.x + self.w - bw, y: self.y, w: bw, h: self.h, color: accent });
+        scene.bg_rects.push(Rect {
+            x: self.x,
+            y: self.y,
+            w: self.w,
+            h: bw,
+            color: accent,
+        });
+        scene.bg_rects.push(Rect {
+            x: self.x,
+            y: self.y + self.h - bw,
+            w: self.w,
+            h: bw,
+            color: accent,
+        });
+        scene.bg_rects.push(Rect {
+            x: self.x,
+            y: self.y,
+            w: bw,
+            h: self.h,
+            color: accent,
+        });
+        scene.bg_rects.push(Rect {
+            x: self.x + self.w - bw,
+            y: self.y,
+            w: bw,
+            h: self.h,
+            color: accent,
+        });
 
         // Title bar background
         let title_h = cx.cell_h + 2.0;
         scene.bg_rects.push(Rect {
-            x: self.x + bw, y: self.y + bw, w: self.w - bw * 2.0, h: title_h,
+            x: self.x + bw,
+            y: self.y + bw,
+            w: self.w - bw * 2.0,
+            h: title_h,
             color: [accent[0], accent[1], accent[2], 0.2],
         });
 
@@ -1518,12 +1714,23 @@ impl InfoBoxComponent {
         let title_text = format!(" {} ", self.title);
         let title_y = self.y + bw + (title_h - cx.cell_h) * 0.5;
         emit_status_text(
-            scene.atlas, &title_text, self.x + padding, title_y,
-            cx.cell_w, cx.baseline, accent, scene.glyphs,
+            scene.atlas,
+            &title_text,
+            self.x + padding,
+            title_y,
+            cx.cell_w,
+            cx.baseline,
+            accent,
+            scene.glyphs,
         );
 
         // Key column width
-        let key_col_chars = self.rows.iter().map(|(k, _)| k.chars().count()).max().unwrap_or(0);
+        let key_col_chars = self
+            .rows
+            .iter()
+            .map(|(k, _)| k.chars().count())
+            .max()
+            .unwrap_or(0);
 
         // Rows
         let content_y = self.y + bw + title_h + 4.0;
@@ -1535,15 +1742,25 @@ impl InfoBoxComponent {
             let key_chars = key.chars().count();
             let key_offset = (key_col_chars - key_chars) as f32 * cx.cell_w;
             emit_status_text(
-                scene.atlas, key, self.x + padding + key_offset, text_y,
-                cx.cell_w, cx.baseline, accent, scene.glyphs,
+                scene.atlas,
+                key,
+                self.x + padding + key_offset,
+                text_y,
+                cx.cell_w,
+                cx.baseline,
+                accent,
+                scene.glyphs,
             );
 
             // Description (dim color)
             let desc_x = self.x + padding + (key_col_chars as f32 + 2.0) * cx.cell_w;
             emit_status_text(
-                scene.atlas, desc, desc_x, text_y,
-                cx.cell_w, cx.baseline,
+                scene.atlas,
+                desc,
+                desc_x,
+                text_y,
+                cx.cell_w,
+                cx.baseline,
                 if key == "esc" { dim } else { fg },
                 scene.glyphs,
             );
@@ -1569,16 +1786,28 @@ impl HintsBarComponent {
         // Right side: pick only the 3-4 most relevant hints for current state
         let hints = Self::pick_hints(app);
 
-        Self { bar_y, bar_h, pane_count, active_pane_title, hints }
+        Self {
+            bar_y,
+            bar_h,
+            pane_count,
+            active_pane_title,
+            hints,
+        }
     }
 
     /// Pick a small number of contextual hints (max ~4) for the current input state.
     fn pick_hints(app: &App) -> Vec<HintItem> {
-        let h = |key: &str, label: &str| HintItem { key: key.into(), label: label.into() };
+        let h = |key: &str, label: &str| HintItem {
+            key: key.into(),
+            label: label.into(),
+        };
 
         // Helper: find the first key bound to an action
-        let find_key = |action: &str, bindings: &std::collections::HashMap<String, String>| -> Option<String> {
-            bindings.iter()
+        let find_key = |action: &str,
+                        bindings: &std::collections::HashMap<String, String>|
+         -> Option<String> {
+            bindings
+                .iter()
                 .find(|(_, v)| v.as_str() == action)
                 .map(|(k, _)| k.clone())
         };
@@ -1592,11 +1821,7 @@ impl HintsBarComponent {
         }
 
         if app.core.overview.active {
-            return vec![
-                h("hjkl", "move"),
-                h("enter", "select"),
-                h("esc", "exit"),
-            ];
+            return vec![h("hjkl", "move"), h("enter", "select"), h("esc", "exit")];
         }
 
         if let Some(mode_name) = app.core.input.current_mode_name() {
@@ -1638,10 +1863,7 @@ impl HintsBarComponent {
         }
         // Pick a few useful direct bindings to show
         let direct = &app.core.input.direct_keybinds;
-        for (action, label) in [
-            ("toggle_help", "help"),
-            ("toggle_lock", "lock"),
-        ] {
+        for (action, label) in [("toggle_help", "help"), ("toggle_lock", "lock")] {
             if let Some(key_display) = direct.find_key_for_action(action) {
                 hints.push(h(&key_display, label));
             }
@@ -1657,13 +1879,19 @@ impl HintsBarComponent {
 
         // Bar background
         scene.bg_rects.push(Rect {
-            x: 0.0, y: self.bar_y, w: cx.viewport_w, h: self.bar_h,
+            x: 0.0,
+            y: self.bar_y,
+            w: cx.viewport_w,
+            h: self.bar_h,
             color: bar_bg,
         });
 
         // 1px separator at top edge
         scene.bg_rects.push(Rect {
-            x: 0.0, y: self.bar_y, w: cx.viewport_w, h: 1.0,
+            x: 0.0,
+            y: self.bar_y,
+            w: cx.viewport_w,
+            h: 1.0,
             color: [dim[0], dim[1], dim[2], 0.25],
         });
 
@@ -1675,8 +1903,14 @@ impl HintsBarComponent {
 
         // Accent dot indicator
         emit_status_text(
-            scene.atlas, "\u{25CF}", x, text_y,
-            cx.cell_w, cx.baseline, accent, scene.glyphs,
+            scene.atlas,
+            "\u{25CF}",
+            x,
+            text_y,
+            cx.cell_w,
+            cx.baseline,
+            accent,
+            scene.glyphs,
         );
         x += cx.cell_w * 2.0;
 
@@ -1687,8 +1921,14 @@ impl HintsBarComponent {
             format!("{} panes", self.pane_count)
         };
         emit_status_text(
-            scene.atlas, &pane_text, x, text_y,
-            cx.cell_w, cx.baseline, dim, scene.glyphs,
+            scene.atlas,
+            &pane_text,
+            x,
+            text_y,
+            cx.cell_w,
+            cx.baseline,
+            dim,
+            scene.glyphs,
         );
         x += pane_text.chars().count() as f32 * cx.cell_w;
 
@@ -1696,16 +1936,32 @@ impl HintsBarComponent {
         if !self.active_pane_title.is_empty() {
             let sep = " \u{00B7} ";
             emit_status_text(
-                scene.atlas, sep, x, text_y,
-                cx.cell_w, cx.baseline, dim, scene.glyphs,
+                scene.atlas,
+                sep,
+                x,
+                text_y,
+                cx.cell_w,
+                cx.baseline,
+                dim,
+                scene.glyphs,
             );
             x += sep.chars().count() as f32 * cx.cell_w;
 
             let max_title_chars = 24;
-            let title: String = self.active_pane_title.chars().take(max_title_chars).collect();
+            let title: String = self
+                .active_pane_title
+                .chars()
+                .take(max_title_chars)
+                .collect();
             emit_status_text(
-                scene.atlas, &title, x, text_y,
-                cx.cell_w, cx.baseline, fg, scene.glyphs,
+                scene.atlas,
+                &title,
+                x,
+                text_y,
+                cx.cell_w,
+                cx.baseline,
+                fg,
+                scene.glyphs,
             );
         }
 
@@ -1717,7 +1973,8 @@ impl HintsBarComponent {
             if i > 0 {
                 total_hints_w += hint_spacing;
             }
-            total_hints_w += (item.key.chars().count() + 1 + item.label.chars().count()) as f32 * cx.cell_w;
+            total_hints_w +=
+                (item.key.chars().count() + 1 + item.label.chars().count()) as f32 * cx.cell_w;
         }
 
         let max_hints_w = cx.viewport_w * 0.6;
@@ -1733,16 +1990,28 @@ impl HintsBarComponent {
 
             // Key in accent
             emit_status_text(
-                scene.atlas, &item.key, rx, text_y,
-                cx.cell_w, cx.baseline, accent, scene.glyphs,
+                scene.atlas,
+                &item.key,
+                rx,
+                text_y,
+                cx.cell_w,
+                cx.baseline,
+                accent,
+                scene.glyphs,
             );
             rx += item.key.chars().count() as f32 * cx.cell_w;
 
             // Label in dim
             let label_text = format!(" {}", item.label);
             emit_status_text(
-                scene.atlas, &label_text, rx, text_y,
-                cx.cell_w, cx.baseline, dim, scene.glyphs,
+                scene.atlas,
+                &label_text,
+                rx,
+                text_y,
+                cx.cell_w,
+                cx.baseline,
+                dim,
+                scene.glyphs,
             );
             rx += label_text.chars().count() as f32 * cx.cell_w;
         }
@@ -1765,7 +2034,9 @@ impl PasteDialogComponent {
         let preview = if pending.preview.len() > max_chars {
             format!(
                 "{}...",
-                &pending.preview[..pending.preview.floor_char_boundary(max_chars.saturating_sub(3))]
+                &pending.preview[..pending
+                    .preview
+                    .floor_char_boundary(max_chars.saturating_sub(3))]
             )
         } else {
             pending.preview.clone()
@@ -1795,10 +2066,18 @@ impl PasteDialogComponent {
             return UiPasteDialogHit::Paste;
         }
         let (cancel_x, cancel_y, cancel_w, cancel_h) = self.cancel_button;
-        if mx >= cancel_x && mx <= cancel_x + cancel_w && my >= cancel_y && my <= cancel_y + cancel_h {
+        if mx >= cancel_x
+            && mx <= cancel_x + cancel_w
+            && my >= cancel_y
+            && my <= cancel_y + cancel_h
+        {
             return UiPasteDialogHit::Cancel;
         }
-        if mx >= self.dx && mx <= self.dx + self.dialog_w && my >= self.dy && my <= self.dy + self.dialog_h {
+        if mx >= self.dx
+            && mx <= self.dx + self.dialog_w
+            && my >= self.dy
+            && my <= self.dy + self.dialog_h
+        {
             return UiPasteDialogHit::Dialog;
         }
         UiPasteDialogHit::None
@@ -1829,23 +2108,21 @@ impl OverviewComponent {
             return UiOverviewHit::None;
         }
         // Check action bar on hovered pane first
-        if let Some((ws_idx, hovered_id)) = self.hovered_pane {
-            if let Some(bar) = self.action_bar_layout(app) {
-                if mx >= bar.pane_x
-                    && mx <= bar.pane_x + bar.pane_w
-                    && my >= bar.bar_y
-                    && my <= bar.bar_y + bar.bar_h
-                {
-                    if mx >= bar.close_x && mx < bar.close_x + bar.close_w {
-                        return UiOverviewHit::ClosePane(hovered_id);
-                    }
-                    if mx >= bar.focus_x && mx < bar.focus_x + bar.focus_w {
-                        return UiOverviewHit::FocusPane(ws_idx, hovered_id);
-                    }
-                    // Clicked on bar but not a button — don't fall through to pane click
-                    return UiOverviewHit::Background;
-                }
+        if let Some((ws_idx, hovered_id)) = self.hovered_pane
+            && let Some(bar) = self.action_bar_layout(app)
+            && mx >= bar.pane_x
+            && mx <= bar.pane_x + bar.pane_w
+            && my >= bar.bar_y
+            && my <= bar.bar_y + bar.bar_h
+        {
+            if mx >= bar.close_x && mx < bar.close_x + bar.close_w {
+                return UiOverviewHit::ClosePane(hovered_id);
             }
+            if mx >= bar.focus_x && mx < bar.focus_x + bar.focus_w {
+                return UiOverviewHit::FocusPane(ws_idx, hovered_id);
+            }
+            // Clicked on bar but not a button — don't fall through to pane click
+            return UiOverviewHit::Background;
         }
         if let Some((ws_idx, pane_id)) = app.hit_test_overview(mx, my) {
             UiOverviewHit::Pane(ws_idx, pane_id)
@@ -1864,8 +2141,16 @@ impl OverviewComponent {
         let center_x = vw / 2.0;
         let center_y = vh / 2.0;
         let zoom_threshold = app.core.config.animation.zoom_threshold;
-        let cell_w = app.glyph_cache.as_ref().map(|c| c.cell_width).unwrap_or(8.0);
-        let cell_h = app.glyph_cache.as_ref().map(|c| c.cell_height).unwrap_or(16.0);
+        let cell_w = app
+            .glyph_cache
+            .as_ref()
+            .map(|c| c.cell_width)
+            .unwrap_or(8.0);
+        let cell_h = app
+            .glyph_cache
+            .as_ref()
+            .map(|c| c.cell_height)
+            .unwrap_or(16.0);
 
         for (pane_id, tile_rect, _) in &tiles {
             if *pane_id != hovered_id {
@@ -1890,10 +2175,14 @@ impl OverviewComponent {
             let half_w = tr.w / 2.0;
 
             return Some(OverviewActionBar {
-                close_x: tr.x, close_w: half_w,
-                focus_x: tr.x + half_w, focus_w: half_w,
-                bar_y, bar_h,
-                pane_x: tr.x, pane_w: tr.w,
+                close_x: tr.x,
+                close_w: half_w,
+                focus_x: tr.x + half_w,
+                focus_w: half_w,
+                bar_y,
+                bar_h,
+                pane_x: tr.x,
+                pane_w: tr.w,
             });
         }
         None
@@ -1919,16 +2208,58 @@ impl UiComponent for PasteDialogComponent {
 
         let border_color = ThemeConfig::parse_color(&cx.config.theme.border_active);
         let border = 1.0;
-        scene.bg_rects.push(Rect { x: self.dx, y: self.dy, w: self.dialog_w, h: border, color: border_color });
-        scene.bg_rects.push(Rect { x: self.dx, y: self.dy + self.dialog_h - border, w: self.dialog_w, h: border, color: border_color });
-        scene.bg_rects.push(Rect { x: self.dx, y: self.dy, w: border, h: self.dialog_h, color: border_color });
-        scene.bg_rects.push(Rect { x: self.dx + self.dialog_w - border, y: self.dy, w: border, h: self.dialog_h, color: border_color });
+        scene.bg_rects.push(Rect {
+            x: self.dx,
+            y: self.dy,
+            w: self.dialog_w,
+            h: border,
+            color: border_color,
+        });
+        scene.bg_rects.push(Rect {
+            x: self.dx,
+            y: self.dy + self.dialog_h - border,
+            w: self.dialog_w,
+            h: border,
+            color: border_color,
+        });
+        scene.bg_rects.push(Rect {
+            x: self.dx,
+            y: self.dy,
+            w: border,
+            h: self.dialog_h,
+            color: border_color,
+        });
+        scene.bg_rects.push(Rect {
+            x: self.dx + self.dialog_w - border,
+            y: self.dy,
+            w: border,
+            h: self.dialog_h,
+            color: border_color,
+        });
 
         let text_x = self.dx + 16.0;
         let mut text_y = self.dy + 16.0;
-        emit_status_text(scene.atlas, &self.title, text_x, text_y, cx.cell_w, cx.baseline, [0.9, 0.9, 0.9, 1.0], scene.glyphs);
+        emit_status_text(
+            scene.atlas,
+            &self.title,
+            text_x,
+            text_y,
+            cx.cell_w,
+            cx.baseline,
+            [0.9, 0.9, 0.9, 1.0],
+            scene.glyphs,
+        );
         text_y += cx.cell_h + 12.0;
-        emit_status_text(scene.atlas, "Preview:", text_x, text_y, cx.cell_w, cx.baseline, [0.6, 0.6, 0.6, 1.0], scene.glyphs);
+        emit_status_text(
+            scene.atlas,
+            "Preview:",
+            text_x,
+            text_y,
+            cx.cell_w,
+            cx.baseline,
+            [0.6, 0.6, 0.6, 1.0],
+            scene.glyphs,
+        );
         text_y += cx.cell_h + 4.0;
         scene.bg_rects.push(Rect {
             x: text_x - 4.0,
@@ -1937,7 +2268,16 @@ impl UiComponent for PasteDialogComponent {
             h: cx.cell_h + 4.0,
             color: [0.08, 0.08, 0.1, 1.0],
         });
-        emit_status_text(scene.atlas, &self.preview, text_x, text_y, cx.cell_w, cx.baseline, [0.6, 0.6, 0.6, 1.0], scene.glyphs);
+        emit_status_text(
+            scene.atlas,
+            &self.preview,
+            text_x,
+            text_y,
+            cx.cell_w,
+            cx.baseline,
+            [0.6, 0.6, 0.6, 1.0],
+            scene.glyphs,
+        );
 
         let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
         let (paste_x, btn_y, btn_w, btn_h) = self.paste_button;
@@ -1947,7 +2287,13 @@ impl UiComponent for PasteDialogComponent {
         } else {
             [accent[0], accent[1], accent[2], 0.5]
         };
-        scene.bg_rects.push(Rect { x: paste_x, y: btn_y, w: btn_w, h: btn_h, color: paste_bg });
+        scene.bg_rects.push(Rect {
+            x: paste_x,
+            y: btn_y,
+            w: btn_w,
+            h: btn_h,
+            color: paste_bg,
+        });
         emit_status_text(
             scene.atlas,
             "Paste",
@@ -1964,7 +2310,13 @@ impl UiComponent for PasteDialogComponent {
         } else {
             [0.3, 0.3, 0.3, 0.5]
         };
-        scene.bg_rects.push(Rect { x: cancel_x, y: btn_y, w: btn_w, h: btn_h, color: cancel_bg });
+        scene.bg_rects.push(Rect {
+            x: cancel_x,
+            y: btn_y,
+            w: btn_w,
+            h: btn_h,
+            color: cancel_bg,
+        });
         emit_status_text(
             scene.atlas,
             "Cancel",
@@ -1993,7 +2345,11 @@ fn clip_tab_label(
     }
     let skip_left = ((visible_left - tab_x) / cw).floor().max(0.0) as usize;
     let visible_chars = ((visible_right - visible_left) / cw).floor().max(0.0) as usize;
-    let clipped = label.chars().skip(skip_left).take(visible_chars).collect::<String>();
+    let clipped = label
+        .chars()
+        .skip(skip_left)
+        .take(visible_chars)
+        .collect::<String>();
     if clipped.is_empty() {
         None
     } else {
@@ -2004,7 +2360,10 @@ fn clip_tab_label(
 fn truncate_label(label: &str, panel_w: f32, cw: f32) -> String {
     let max_chars = ((panel_w - 16.0) / cw).floor().max(1.0) as usize;
     if label.len() > max_chars {
-        format!("{}...", &label[..label.floor_char_boundary(max_chars.saturating_sub(3))])
+        format!(
+            "{}...",
+            &label[..label.floor_char_boundary(max_chars.saturating_sub(3))]
+        )
     } else {
         label.to_string()
     }
@@ -2013,8 +2372,10 @@ fn truncate_label(label: &str, panel_w: f32, cw: f32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{CommandPaletteState, ContextMenu, ContextMenuAction, ContextMenuItem, PendingPaste};
     use crate::app::paste_guard::PasteInfo;
+    use crate::app::{
+        CommandPaletteState, ContextMenu, ContextMenuAction, ContextMenuItem, PendingPaste,
+    };
     use ciri_config::config::CiriConfig;
 
     fn make_app() -> App {
@@ -2119,7 +2480,10 @@ mod tests {
         let hover = app.dispatch_ui_hover(layout.session_x + 2.0, layout.bar_y + 2.0);
         assert!(hover.handled);
         assert_eq!(hover.cursor, CursorIcon::Pointer);
-        assert_eq!(app.core.hovered_top_bar_region, Some(TopBarHoverRegion::Session));
+        assert_eq!(
+            app.core.hovered_top_bar_region,
+            Some(TopBarHoverRegion::Session)
+        );
     }
 
     #[test]
@@ -2141,7 +2505,10 @@ mod tests {
         assert!(hover.handled);
         assert_eq!(hover.cursor, CursorIcon::Pointer);
         assert_eq!(
-            app.core.pending_paste.as_ref().and_then(|p| p.hovered_button),
+            app.core
+                .pending_paste
+                .as_ref()
+                .and_then(|p| p.hovered_button),
             Some(super::super::PasteButton::Paste)
         );
     }

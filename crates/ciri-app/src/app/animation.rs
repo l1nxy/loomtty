@@ -1,6 +1,8 @@
 use ciri_anim::anim_value::AnimValue;
-use ciri_anim::manager::{AnimConfig, AnimKind, CloseStyle, OpenStyle, PaneCloseConfig, PaneOpenConfig};
 use ciri_anim::easing::EasingCurve;
+use ciri_anim::manager::{
+    AnimConfig, AnimKind, CloseStyle, OpenStyle, PaneCloseConfig, PaneOpenConfig,
+};
 use ciri_anim::spring::SpringParams;
 use ciri_config::config::{AnimationPreset, PaneOpenStyle};
 
@@ -12,28 +14,32 @@ impl AppModel {
         // stiffness = (2π / response)^2, damping_ratio = 0.86
         let (primary, fast, slow, open_dur, close_dur) = match self.config.animation.preset {
             AnimationPreset::Snappy => (
-                SpringParams::new(0.86, 440.0, 0.0001),  // ~0.3s
-                SpringParams::new(0.86, 800.0, 0.0001),  // ~0.2s
-                SpringParams::new(0.86, 250.0, 0.0001),  // ~0.4s
-                0.15, 0.12,
+                SpringParams::new(0.86, 440.0, 0.0001), // ~0.3s
+                SpringParams::new(0.86, 800.0, 0.0001), // ~0.2s
+                SpringParams::new(0.86, 250.0, 0.0001), // ~0.4s
+                0.15,
+                0.12,
             ),
             AnimationPreset::Default => (
-                SpringParams::new(0.86, 158.0, 0.0001),  // ~0.5s
-                SpringParams::new(0.86, 440.0, 0.0001),  // ~0.3s
-                SpringParams::new(0.86, 80.0, 0.0001),   // ~0.7s
-                0.25, 0.18,
+                SpringParams::new(0.86, 158.0, 0.0001), // ~0.5s
+                SpringParams::new(0.86, 440.0, 0.0001), // ~0.3s
+                SpringParams::new(0.86, 80.0, 0.0001),  // ~0.7s
+                0.25,
+                0.18,
             ),
             AnimationPreset::Smooth => (
-                SpringParams::new(0.86, 80.0, 0.0001),   // ~0.7s
-                SpringParams::new(0.86, 158.0, 0.0001),  // ~0.5s
-                SpringParams::new(0.86, 40.0, 0.001),    // ~1.0s
-                0.35, 0.25,
+                SpringParams::new(0.86, 80.0, 0.0001),  // ~0.7s
+                SpringParams::new(0.86, 158.0, 0.0001), // ~0.5s
+                SpringParams::new(0.86, 40.0, 0.001),   // ~1.0s
+                0.35,
+                0.25,
             ),
             AnimationPreset::Gentle => (
-                SpringParams::new(0.86, 40.0, 0.001),    // ~1.0s
-                SpringParams::new(0.86, 80.0, 0.0001),   // ~0.7s
-                SpringParams::new(0.86, 25.0, 0.001),    // ~1.3s
-                0.50, 0.35,
+                SpringParams::new(0.86, 40.0, 0.001),  // ~1.0s
+                SpringParams::new(0.86, 80.0, 0.0001), // ~0.7s
+                SpringParams::new(0.86, 25.0, 0.001),  // ~1.3s
+                0.50,
+                0.35,
             ),
         };
 

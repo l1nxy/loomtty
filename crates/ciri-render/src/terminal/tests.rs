@@ -4,9 +4,8 @@ use crate::rect::Rect;
 use crate::shaper::TextShaper;
 use ciri_config::config::CiriConfig;
 use ciri_protocol::message::{
-    CURSOR_BEAM, CURSOR_BLOCK, CURSOR_HIDDEN, CURSOR_HOLLOW_BLOCK, CURSOR_UNDERLINE,
-    FLAG_HIDDEN, FLAG_STRIKEOUT, FLAG_UNDERLINE, FLAG_WIDE_CHAR, FLAG_WIDE_CHAR_SPACER,
-    PackedCell, PackedColor,
+    CURSOR_BEAM, CURSOR_BLOCK, CURSOR_HIDDEN, CURSOR_HOLLOW_BLOCK, CURSOR_UNDERLINE, FLAG_HIDDEN,
+    FLAG_STRIKEOUT, FLAG_UNDERLINE, FLAG_WIDE_CHAR, FLAG_WIDE_CHAR_SPACER, PackedCell, PackedColor,
 };
 use std::collections::HashMap;
 
@@ -325,10 +324,7 @@ fn incremental_update_matches_full_rebuild_for_same_final_grid() {
 
     assert_rect_lists_match(&incremental.bg_rects, &rebuilt.bg_rects);
     assert_rect_lists_match(&incremental.cursor_rects, &rebuilt.cursor_rects);
-    assert_relative_glyph_lists_match(
-        &incremental.glyph_instances,
-        &rebuilt.glyph_instances,
-    );
+    assert_relative_glyph_lists_match(&incremental.glyph_instances, &rebuilt.glyph_instances);
     assert_relative_glyph_lists_match(
         &incremental.color_glyph_instances,
         &rebuilt.color_glyph_instances,
@@ -414,9 +410,7 @@ fn incremental_update_only_recomputes_dirty_row_shaping() {
 #[test]
 fn scrollbar_hidden_without_scrollback() {
     let config = test_config();
-    assert!(
-        build_scrollbar(0, 4, 4, 120.0, 80.0, ScrollbarState::Idle, &config).is_none()
-    );
+    assert!(build_scrollbar(0, 4, 4, 120.0, 80.0, ScrollbarState::Idle, &config).is_none());
 }
 
 #[test]
@@ -435,12 +429,10 @@ fn scrollbar_thumb_visual_state_changes_color_and_alpha() {
     let config = test_config();
     let idle = build_scrollbar(0, 10, 4, 120.0, 100.0, ScrollbarState::Idle, &config)
         .expect("scrollback should produce a scrollbar");
-    let hovered =
-        build_scrollbar(0, 10, 4, 120.0, 100.0, ScrollbarState::Hovered, &config)
-            .expect("scrollback should produce a scrollbar");
-    let pressed =
-        build_scrollbar(0, 10, 4, 120.0, 100.0, ScrollbarState::Pressed, &config)
-            .expect("scrollback should produce a scrollbar");
+    let hovered = build_scrollbar(0, 10, 4, 120.0, 100.0, ScrollbarState::Hovered, &config)
+        .expect("scrollback should produce a scrollbar");
+    let pressed = build_scrollbar(0, 10, 4, 120.0, 100.0, ScrollbarState::Pressed, &config)
+        .expect("scrollback should produce a scrollbar");
 
     assert_eq!(idle.x, hovered.x);
     assert_eq!(idle.y, hovered.y);

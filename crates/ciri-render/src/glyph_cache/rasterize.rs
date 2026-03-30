@@ -3,8 +3,8 @@
 use crossfont::BitmapBuffer;
 use freetype::face::LoadFlag;
 
-use super::types::{FontStyle, GlyphEntry};
 use super::atlas::{AtlasRegion, PendingUpload, make_glyph_entry};
+use super::types::{FontStyle, GlyphEntry};
 
 /// Backend-agnostic rasterized glyph data.
 pub(crate) struct RasterizedGlyph {
@@ -214,7 +214,13 @@ pub(crate) fn cache_rasterized_glyph(
         w: glyph.width,
         h: glyph.height,
     };
-    let entry = make_glyph_entry(region, glyph.bearing_x, glyph.bearing_y, atlas_size, is_color);
+    let entry = make_glyph_entry(
+        region,
+        glyph.bearing_x,
+        glyph.bearing_y,
+        atlas_size,
+        is_color,
+    );
     let pending = PendingUpload {
         x: region.x,
         y: region.y,

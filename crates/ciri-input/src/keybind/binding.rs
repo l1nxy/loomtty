@@ -155,11 +155,7 @@ impl BindingSet {
         // Mode/key-table bindings
         for (table_name, table_map) in mode_keybinds {
             for (combo, action) in &table_map.bindings {
-                set.push(Binding::in_table(
-                    combo.clone(),
-                    action.clone(),
-                    table_name,
-                ));
+                set.push(Binding::in_table(combo.clone(), action.clone(), table_name));
             }
         }
 

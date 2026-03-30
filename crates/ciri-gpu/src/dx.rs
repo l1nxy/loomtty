@@ -5,20 +5,20 @@
 
 use anyhow::Result;
 use ciri_config::config::RenderConfig;
+use ciri_render::FrameScene;
 use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, PendingUpload, ScissoredRange};
 use ciri_render::rect::Rect;
-use ciri_render::FrameScene;
 use std::sync::Arc;
 use winit::window::Window;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use windows::core::*;
+use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Direct3D::Fxc::*;
 use windows::Win32::Graphics::Direct3D::*;
 use windows::Win32::Graphics::Direct3D11::*;
-use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Dxgi::*;
+use windows::core::*;
 
 // ─── HLSL shaders ───────────────────────────────────────────────────
 
@@ -245,15 +245,19 @@ impl DxAtlasLayer {
 
         // Shaders
         let vs_blob = compile_shader(vs_hlsl, "vs_main", "vs_5_0")?;
-        let vs_code =
-            std::slice::from_raw_parts(vs_blob.GetBufferPointer() as *const u8, vs_blob.GetBufferSize());
+        let vs_code = std::slice::from_raw_parts(
+            vs_blob.GetBufferPointer() as *const u8,
+            vs_blob.GetBufferSize(),
+        );
         let mut vs = None;
         device.CreateVertexShader(vs_code, None, Some(&mut vs))?;
         let vs = vs.unwrap();
 
         let ps_blob = compile_shader(ps_hlsl, "ps_main", "ps_5_0")?;
-        let ps_code =
-            std::slice::from_raw_parts(ps_blob.GetBufferPointer() as *const u8, ps_blob.GetBufferSize());
+        let ps_code = std::slice::from_raw_parts(
+            ps_blob.GetBufferPointer() as *const u8,
+            ps_blob.GetBufferSize(),
+        );
         let mut ps = None;
         device.CreatePixelShader(ps_code, None, Some(&mut ps))?;
         let ps = ps.unwrap();
@@ -416,18 +420,28 @@ impl DxAtlasLayer {
         // Update viewport cbuffer
         let viewport = [viewport_w, viewport_h, 0.0f32, 0.0f32];
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-        ctx.Map(&self.cbuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped)).unwrap();
-        std::ptr::copy_nonoverlapping(
-            viewport.as_ptr() as *const u8,
-            mapped.pData as *mut u8,
-            16,
-        );
+        ctx.Map(
+            &self.cbuffer,
+            0,
+            D3D11_MAP_WRITE_DISCARD,
+            0,
+            Some(&mut mapped),
+        )
+        .unwrap();
+        std::ptr::copy_nonoverlapping(viewport.as_ptr() as *const u8, mapped.pData as *mut u8, 16);
         ctx.Unmap(&self.cbuffer, 0);
 
         // Update instance buffer
         let data = bytemuck::cast_slice(&instances[..count]);
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-        ctx.Map(&self.instance_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped)).unwrap();
+        ctx.Map(
+            &self.instance_buffer,
+            0,
+            D3D11_MAP_WRITE_DISCARD,
+            0,
+            Some(&mut mapped),
+        )
+        .unwrap();
         std::ptr::copy_nonoverlapping(data.as_ptr(), mapped.pData as *mut u8, data.len());
         ctx.Unmap(&self.instance_buffer, 0);
 
@@ -528,15 +542,19 @@ struct DxRectPipeline {
 impl DxRectPipeline {
     unsafe fn new(device: &ID3D11Device, max_rects: usize) -> Result<Self> {
         let vs_blob = compile_shader(RECT_HLSL, "vs_main", "vs_5_0")?;
-        let vs_code =
-            std::slice::from_raw_parts(vs_blob.GetBufferPointer() as *const u8, vs_blob.GetBufferSize());
+        let vs_code = std::slice::from_raw_parts(
+            vs_blob.GetBufferPointer() as *const u8,
+            vs_blob.GetBufferSize(),
+        );
         let mut vs = None;
         device.CreateVertexShader(vs_code, None, Some(&mut vs))?;
         let vs = vs.unwrap();
 
         let ps_blob = compile_shader(RECT_HLSL, "ps_main", "ps_5_0")?;
-        let ps_code =
-            std::slice::from_raw_parts(ps_blob.GetBufferPointer() as *const u8, ps_blob.GetBufferSize());
+        let ps_code = std::slice::from_raw_parts(
+            ps_blob.GetBufferPointer() as *const u8,
+            ps_blob.GetBufferSize(),
+        );
         let mut ps = None;
         device.CreatePixelShader(ps_code, None, Some(&mut ps))?;
         let ps = ps.unwrap();
@@ -622,29 +640,34 @@ impl DxRectPipeline {
         // Viewport cbuffer
         let viewport = [viewport_w, viewport_h, 0.0f32, 0.0f32];
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-        ctx.Map(&self.cbuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped)).unwrap();
-        std::ptr::copy_nonoverlapping(
-            viewport.as_ptr() as *const u8,
-            mapped.pData as *mut u8,
-            16,
-        );
+        ctx.Map(
+            &self.cbuffer,
+            0,
+            D3D11_MAP_WRITE_DISCARD,
+            0,
+            Some(&mut mapped),
+        )
+        .unwrap();
+        std::ptr::copy_nonoverlapping(viewport.as_ptr() as *const u8, mapped.pData as *mut u8, 16);
         ctx.Unmap(&self.cbuffer, 0);
 
         // Instance data
         let data = bytemuck::cast_slice(&rects[..count]);
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-        ctx.Map(&self.instance_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped)).unwrap();
+        ctx.Map(
+            &self.instance_buffer,
+            0,
+            D3D11_MAP_WRITE_DISCARD,
+            0,
+            Some(&mut mapped),
+        )
+        .unwrap();
         std::ptr::copy_nonoverlapping(data.as_ptr(), mapped.pData as *mut u8, data.len());
         ctx.Unmap(&self.instance_buffer, 0);
     }
 
     /// Draw a range of previously uploaded rects.
-    unsafe fn draw_range(
-        &self,
-        ctx: &ID3D11DeviceContext,
-        start: usize,
-        count: usize,
-    ) {
+    unsafe fn draw_range(&self, ctx: &ID3D11DeviceContext, start: usize, count: usize) {
         if count == 0 {
             return;
         }
@@ -779,11 +802,16 @@ impl Renderer {
         let rects = unsafe { DxRectPipeline::new(&device, render_config.max_rectangles)? };
 
         let sync_interval = match render_config.present_mode {
-            ciri_config::config::PresentMode::Immediate | ciri_config::config::PresentMode::Mailbox => 0,
+            ciri_config::config::PresentMode::Immediate
+            | ciri_config::config::PresentMode::Mailbox => 0,
             _ => 1,
         };
 
-        log::info!("D3D11 renderer initialized ({}x{})", size.width, size.height);
+        log::info!(
+            "D3D11 renderer initialized ({}x{})",
+            size.width,
+            size.height
+        );
 
         Ok(Renderer {
             device,
@@ -811,7 +839,13 @@ impl Renderer {
             std::ptr::drop_in_place(&mut self.rtv);
 
             self.swap_chain
-                .ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, DXGI_SWAP_CHAIN_FLAG(0))
+                .ResizeBuffers(
+                    0,
+                    width,
+                    height,
+                    DXGI_FORMAT_UNKNOWN,
+                    DXGI_SWAP_CHAIN_FLAG(0),
+                )
                 .expect("ResizeBuffers failed");
 
             // Write the new RTV without dropping the (now-invalid) old value.
@@ -979,7 +1013,8 @@ impl Renderer {
             let overlay_bg_count = total_bg.saturating_sub(overlay_bg_idx);
             if overlay_bg_count > 0 {
                 self.ctx.RSSetScissorRects(Some(&[full_rect]));
-                self.rects.draw_range(&self.ctx, overlay_bg_idx, overlay_bg_count);
+                self.rects
+                    .draw_range(&self.ctx, overlay_bg_idx, overlay_bg_count);
             }
 
             // 6. Overlay alpha glyphs.
@@ -1001,7 +1036,10 @@ impl Renderer {
             );
 
             // Present
-            let _ = self.swap_chain.Present(self.sync_interval, DXGI_PRESENT(0)).ok();
+            let _ = self
+                .swap_chain
+                .Present(self.sync_interval, DXGI_PRESENT(0))
+                .ok();
         }
     }
 }

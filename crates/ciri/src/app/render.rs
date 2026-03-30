@@ -32,6 +32,7 @@ impl App {
         self.core.advance_animations(dt)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn build_tiles(
         &mut self,
         tiles: &[(u64, GeoRect, bool)],
@@ -152,7 +153,8 @@ impl App {
             });
             if self.core.overview.active
                 && self
-                    .core.overview
+                    .core
+                    .overview
                     .hovered_pane
                     .is_some_and(|(_, hovered_pane_id)| hovered_pane_id == *pane_id)
             {
@@ -264,110 +266,104 @@ impl App {
             }
 
             // Selection overlay
-            if let Some(sel) = &self.core.selection {
-                if sel.pane_id == *pane_id {
-                    if let Some(grid) = self.core.pane_grids.get(pane_id) {
-                        let (cw, ch) = self.cell_dimensions();
-                        let (start, end) = if sel.start.1 < sel.end.1
-                            || (sel.start.1 == sel.end.1 && sel.start.0 <= sel.end.0)
-                        {
-                            (sel.start, sel.end)
-                        } else {
-                            (sel.end, sel.start)
-                        };
-                        let sel_color = [0.3, 0.5, 0.8, 0.3];
-                        for buf_row in start.1..=end.1 {
-                            let viewport_row = match grid.buffer_to_viewport_row(buf_row) {
-                                Some(r) => r,
-                                None => continue,
-                            };
-                            let left = if buf_row == start.1 { start.0 } else { 0 };
-                            let right = if buf_row == end.1 {
-                                end.0
-                            } else {
-                                grid.cols.saturating_sub(1)
-                            };
-                            let sx = inner_x + left as f32 * cw * zoom;
-                            let sy = inner_y + viewport_row as f32 * ch * zoom;
-                            let sw = (right - left + 1) as f32 * cw * zoom;
-                            let sh = ch * zoom;
-                            let src = GeoRect::new(sx, sy, sw, sh);
-                            if let Some(c) = src.intersection(&tr) {
-                                bg_rects.push(Rect {
-                                    x: c.x,
-                                    y: c.y,
-                                    w: c.w,
-                                    h: c.h,
-                                    color: sel_color,
-                                });
-                            }
-                        }
+            if let Some(sel) = &self.core.selection
+                && sel.pane_id == *pane_id
+                && let Some(grid) = self.core.pane_grids.get(pane_id)
+            {
+                let (cw, ch) = self.cell_dimensions();
+                let (start, end) = if sel.start.1 < sel.end.1
+                    || (sel.start.1 == sel.end.1 && sel.start.0 <= sel.end.0)
+                {
+                    (sel.start, sel.end)
+                } else {
+                    (sel.end, sel.start)
+                };
+                let sel_color = [0.3, 0.5, 0.8, 0.3];
+                for buf_row in start.1..=end.1 {
+                    let viewport_row = match grid.buffer_to_viewport_row(buf_row) {
+                        Some(r) => r,
+                        None => continue,
+                    };
+                    let left = if buf_row == start.1 { start.0 } else { 0 };
+                    let right = if buf_row == end.1 {
+                        end.0
+                    } else {
+                        grid.cols.saturating_sub(1)
+                    };
+                    let sx = inner_x + left as f32 * cw * zoom;
+                    let sy = inner_y + viewport_row as f32 * ch * zoom;
+                    let sw = (right - left + 1) as f32 * cw * zoom;
+                    let sh = ch * zoom;
+                    let src = GeoRect::new(sx, sy, sw, sh);
+                    if let Some(c) = src.intersection(&tr) {
+                        bg_rects.push(Rect {
+                            x: c.x,
+                            y: c.y,
+                            w: c.w,
+                            h: c.h,
+                            color: sel_color,
+                        });
                     }
                 }
             }
 
-            if let Some(link) = &self.core.hovered_link {
-                if link.pane_id == *pane_id {
-                    if let Some(grid) = self.core.pane_grids.get(pane_id) {
-                        if let Some(viewport_row) = grid.buffer_to_viewport_row(link.start.1) {
-                            let (cw, ch) = self.cell_dimensions();
-                            let underline_h = (zoom.max(1.0)).clamp(1.0, 2.0);
-                            let sx = inner_x + link.start.0 as f32 * cw * zoom;
-                            let sy = inner_y + (viewport_row as f32 + 1.0) * ch * zoom
-                                - underline_h
-                                - zoom;
-                            let sw = (link.end.0 - link.start.0 + 1) as f32 * cw * zoom;
-                            let src = GeoRect::new(sx, sy, sw, underline_h);
-                            if let Some(c) = src.intersection(&tr) {
-                                bg_rects.push(Rect {
-                                    x: c.x,
-                                    y: c.y,
-                                    w: c.w,
-                                    h: c.h,
-                                    color: link_color,
-                                });
-                            }
-                        }
-                    }
+            if let Some(link) = &self.core.hovered_link
+                && link.pane_id == *pane_id
+                && let Some(grid) = self.core.pane_grids.get(pane_id)
+                && let Some(viewport_row) = grid.buffer_to_viewport_row(link.start.1)
+            {
+                let (cw, ch) = self.cell_dimensions();
+                let underline_h = (zoom.max(1.0)).clamp(1.0, 2.0);
+                let sx = inner_x + link.start.0 as f32 * cw * zoom;
+                let sy = inner_y + (viewport_row as f32 + 1.0) * ch * zoom - underline_h - zoom;
+                let sw = (link.end.0 - link.start.0 + 1) as f32 * cw * zoom;
+                let src = GeoRect::new(sx, sy, sw, underline_h);
+                if let Some(c) = src.intersection(&tr) {
+                    bg_rects.push(Rect {
+                        x: c.x,
+                        y: c.y,
+                        w: c.w,
+                        h: c.h,
+                        color: link_color,
+                    });
                 }
             }
 
             // Search match highlights
-            if let Some(search) = &self.core.search_state {
-                if search.pane_id == *pane_id {
-                    if let Some(grid) = self.core.pane_grids.get(pane_id) {
-                        let (cw, ch) = self.cell_dimensions();
-                        let vp_top = grid.viewport_top();
-                        let vp_bottom = vp_top + grid.rows as usize;
+            if let Some(search) = &self.core.search_state
+                && search.pane_id == *pane_id
+                && let Some(grid) = self.core.pane_grids.get(pane_id)
+            {
+                let (cw, ch) = self.cell_dimensions();
+                let vp_top = grid.viewport_top();
+                let vp_bottom = vp_top + grid.rows as usize;
 
-                        for (match_idx, m) in search.matches.iter().enumerate() {
-                            if m.buffer_row < vp_top || m.buffer_row >= vp_bottom {
-                                continue;
-                            }
-                            let vp_row = m.buffer_row - vp_top;
+                for (match_idx, m) in search.matches.iter().enumerate() {
+                    if m.buffer_row < vp_top || m.buffer_row >= vp_bottom {
+                        continue;
+                    }
+                    let vp_row = m.buffer_row - vp_top;
 
-                            let sx = inner_x + m.start_col as f32 * cw * zoom;
-                            let sy = inner_y + vp_row as f32 * ch * zoom;
-                            let sw = (m.end_col - m.start_col + 1) as f32 * cw * zoom;
-                            let sh = ch * zoom;
+                    let sx = inner_x + m.start_col as f32 * cw * zoom;
+                    let sy = inner_y + vp_row as f32 * ch * zoom;
+                    let sw = (m.end_col - m.start_col + 1) as f32 * cw * zoom;
+                    let sh = ch * zoom;
 
-                            let color = if match_idx == search.current_match_idx {
-                                [1.0, 0.6, 0.0, 0.5] // orange for current match
-                            } else {
-                                [1.0, 1.0, 0.0, 0.3] // yellow for other matches
-                            };
+                    let color = if match_idx == search.current_match_idx {
+                        [1.0, 0.6, 0.0, 0.5] // orange for current match
+                    } else {
+                        [1.0, 1.0, 0.0, 0.3] // yellow for other matches
+                    };
 
-                            let src = GeoRect::new(sx, sy, sw, sh);
-                            if let Some(c) = src.intersection(&tr) {
-                                bg_rects.push(Rect {
-                                    x: c.x,
-                                    y: c.y,
-                                    w: c.w,
-                                    h: c.h,
-                                    color,
-                                });
-                            }
-                        }
+                    let src = GeoRect::new(sx, sy, sw, sh);
+                    if let Some(c) = src.intersection(&tr) {
+                        bg_rects.push(Rect {
+                            x: c.x,
+                            y: c.y,
+                            w: c.w,
+                            h: c.h,
+                            color,
+                        });
                     }
                 }
             }
@@ -938,7 +934,8 @@ impl App {
                 let ph = tile_rect.h - inset;
                 // Determine scrollbar visual state (Pressed > Hovered > Idle)
                 let sb_state = if self
-                    .core.drag
+                    .core
+                    .drag
                     .scrollbar_dragging
                     .as_ref()
                     .is_some_and(|info| info.pane_id == *pane_id)

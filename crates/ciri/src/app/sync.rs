@@ -55,7 +55,11 @@ impl App {
                         self.apply_layout(&layout);
                         for &id in &pane_ids {
                             self.core.pane_grids.entry(id).or_insert_with(|| {
-                                ClientPaneGrid::new(80, 24, self.core.config.terminal.scrollback_lines)
+                                ClientPaneGrid::new(
+                                    80,
+                                    24,
+                                    self.core.config.terminal.scrollback_lines,
+                                )
                             });
                             self.core.anim_mgr.ensure_pane_registered(id);
                         }
@@ -98,7 +102,11 @@ impl App {
                         log::debug!("PaneCreated: pane_id={pane_id} {cols}x{rows}");
                         self.core.expected_pane_ids.insert(pane_id);
                         self.core.pane_grids.entry(pane_id).or_insert_with(|| {
-                            ClientPaneGrid::new(cols, rows, self.core.config.terminal.scrollback_lines)
+                            ClientPaneGrid::new(
+                                cols,
+                                rows,
+                                self.core.config.terminal.scrollback_lines,
+                            )
                         });
                         let params = self.anim_config();
                         self.core.anim_mgr.on_pane_created(pane_id, &params);
@@ -115,14 +123,22 @@ impl App {
                         if let Some((_, rect, _)) = tiles.iter().find(|(pid, _, _)| *pid == pane_id)
                         {
                             let geo = ciri_anim::manager::GeoRect {
-                                x: rect.x, y: rect.y, w: rect.w, h: rect.h,
+                                x: rect.x,
+                                y: rect.y,
+                                w: rect.w,
+                                h: rect.h,
                             };
                             self.core.anim_mgr.on_pane_closed(pane_id, geo, &params);
                         } else {
                             // Off-screen pane: just remove state, no close animation
                             self.core.anim_mgr.on_pane_closed(
                                 pane_id,
-                                ciri_anim::manager::GeoRect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 },
+                                ciri_anim::manager::GeoRect {
+                                    x: 0.0,
+                                    y: 0.0,
+                                    w: 0.0,
+                                    h: 0.0,
+                                },
                                 &params,
                             );
                         }
@@ -151,12 +167,13 @@ impl App {
                         self.core.anim_mgr.on_bell(pane_id, &params);
 
                         // Window urgency hint
-                        if self.core.config.terminal.bell_urgency && !self.window_focused {
-                            if let Some(ref window) = self.window {
-                                window.request_user_attention(Some(
-                                    winit::window::UserAttentionType::Informational,
-                                ));
-                            }
+                        if self.core.config.terminal.bell_urgency
+                            && !self.window_focused
+                            && let Some(ref window) = self.window
+                        {
+                            window.request_user_attention(Some(
+                                winit::window::UserAttentionType::Informational,
+                            ));
                         }
 
                         // Bell audio
@@ -334,7 +351,8 @@ impl App {
                 if font_changed {
                     self.destroy_gpu_resources();
                     if let Some(renderer) = &mut self.renderer {
-                        let shaper = ciri_render::shaper::TextShaper::new(&self.core.config.font.family);
+                        let shaper =
+                            ciri_render::shaper::TextShaper::new(&self.core.config.font.family);
                         let (cache, atlas_gpu) = renderer.create_atlas(
                             self.core.config.font.size,
                             self.dpi_scale,
@@ -379,7 +397,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{CachedTileGlyphs, ClientImagePlacement, AppModel};
+    use crate::app::{AppModel, CachedTileGlyphs, ClientImagePlacement};
     use crate::connection::ServerEvent;
     use ciri_config::config::CiriConfig;
     use ciri_protocol::message::{
@@ -414,7 +432,7 @@ mod tests {
             title: title.to_string(),
             scrollback: Vec::new(),
             scrollback_rows: 0,
-                scrollback_replace: false,
+            scrollback_replace: false,
             cells: vec![PackedCell::default(), PackedCell::default()],
             grapheme_extras: GraphemeExtras::new(),
             hyperlink_extras: HyperlinkExtras::new(),
@@ -465,7 +483,10 @@ mod tests {
 
         assert!(app.process_server_events());
         assert_eq!(app.core.session_name, "test-session");
-        assert_eq!(app.core.pending_session_name.as_deref(), Some("other-session"));
+        assert_eq!(
+            app.core.pending_session_name.as_deref(),
+            Some("other-session")
+        );
         assert!(app.core.pane_grids.contains_key(&stale.pane_id));
         assert!(app.core.image_placements.contains_key(&stale.pane_id));
         assert!(app.cached_tile_glyphs.contains_key(&stale.pane_id));
@@ -481,7 +502,11 @@ mod tests {
         assert_eq!(app.core.session_name, "other-session");
         assert_eq!(app.core.pending_session_name, None);
         assert_eq!(
-            app.core.expected_pane_ids.iter().copied().collect::<Vec<_>>(),
+            app.core
+                .expected_pane_ids
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
             vec![11]
         );
         assert!(app.core.pane_grids.contains_key(&stale.pane_id));
@@ -515,7 +540,10 @@ mod tests {
             .unwrap();
 
         assert!(app.process_server_events());
-        assert_eq!(app.core.pending_session_name.as_deref(), Some("other-session"));
+        assert_eq!(
+            app.core.pending_session_name.as_deref(),
+            Some("other-session")
+        );
 
         event_tx
             .send(ServerEvent::Control(ServerMessage::StateSync {

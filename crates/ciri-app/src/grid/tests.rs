@@ -1,5 +1,5 @@
-use super::*;
 use super::link::{detect_file_path, split_path_line_col};
+use super::*;
 
 fn grid_with_line(text: &str) -> ClientPaneGrid {
     let cols = text.chars().count() as u16;
@@ -238,7 +238,7 @@ fn full_sync_dimension_change_preserves_scrollback() {
         title: "resized".into(),
         scrollback: vec![],
         scrollback_rows: 0,
-            scrollback_replace: false,
+        scrollback_replace: false,
         cells: vec![PackedCell::with_ch('X'); 18],
         grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
         hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
@@ -278,7 +278,7 @@ fn full_sync_short_cells_blanks_remainder() {
         title: String::new(),
         scrollback: vec![],
         scrollback_rows: 0,
-            scrollback_replace: false,
+        scrollback_replace: false,
         cells: vec![PackedCell::with_ch('A'); 3], // only 3 of 8 cells
         grapheme_extras: GraphemeExtras::new(),
         hyperlink_extras: HyperlinkExtras::new(),
@@ -365,7 +365,7 @@ fn full_sync_clamps_scroll_offset() {
         title: String::new(),
         scrollback: vec![],
         scrollback_rows: 0,
-            scrollback_replace: false,
+        scrollback_replace: false,
         cells: vec![PackedCell::default(); 3],
         grapheme_extras: ciri_protocol::message::GraphemeExtras::new(),
         hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
@@ -415,10 +415,14 @@ fn scrollback_replace_clears_and_repopulates() {
         mode_flags: 0,
         title: String::new(),
         scrollback: vec![
-            PackedCell::with_ch('X'), PackedCell::with_ch('X'),
-            PackedCell::with_ch('X'), PackedCell::with_ch('X'),
-            PackedCell::with_ch('Y'), PackedCell::with_ch('Y'),
-            PackedCell::with_ch('Y'), PackedCell::with_ch('Y'),
+            PackedCell::with_ch('X'),
+            PackedCell::with_ch('X'),
+            PackedCell::with_ch('X'),
+            PackedCell::with_ch('X'),
+            PackedCell::with_ch('Y'),
+            PackedCell::with_ch('Y'),
+            PackedCell::with_ch('Y'),
+            PackedCell::with_ch('Y'),
         ],
         scrollback_rows: 2,
         scrollback_replace: true,
@@ -552,7 +556,7 @@ fn text_in_range_spans_scrollback_and_viewport() {
             PackedCell::with_ch('c'),
         ],
         scrollback_rows: 1,
-            scrollback_replace: false,
+        scrollback_replace: false,
         cells: vec![
             PackedCell::with_ch('X'),
             PackedCell::with_ch('Y'),
@@ -591,7 +595,7 @@ fn search_finds_in_scrollback_and_viewport() {
             PackedCell::with_ch('o'),
         ],
         scrollback_rows: 1,
-            scrollback_replace: false,
+        scrollback_replace: false,
         cells: vec![
             PackedCell::with_ch('h'),
             PackedCell::with_ch('e'),
@@ -698,14 +702,8 @@ fn detect_file_path_unit_tests() {
 fn split_path_line_col_cases() {
     assert_eq!(split_path_line_col("foo.rs"), ("foo.rs", ""));
     assert_eq!(split_path_line_col("foo.rs:42"), ("foo.rs", ":42"));
-    assert_eq!(
-        split_path_line_col("foo.rs:42:10"),
-        ("foo.rs", ":42:10")
-    );
-    assert_eq!(
-        split_path_line_col("C:\\foo.rs:42"),
-        ("C:\\foo.rs", ":42")
-    );
+    assert_eq!(split_path_line_col("foo.rs:42:10"), ("foo.rs", ":42:10"));
+    assert_eq!(split_path_line_col("C:\\foo.rs:42"), ("C:\\foo.rs", ":42"));
 }
 
 #[test]
@@ -723,7 +721,7 @@ fn word_bounds_on_viewport_row() {
         title: String::new(),
         scrollback: vec![PackedCell::with_ch('x'); 5],
         scrollback_rows: 1,
-            scrollback_replace: false,
+        scrollback_replace: false,
         cells: vec![
             PackedCell::with_ch('a'),
             PackedCell::with_ch('b'),
@@ -785,7 +783,7 @@ fn full_sync_populates_viewport_and_scrollback() {
         title: String::new(),
         scrollback: vec![PackedCell::with_ch('S'); 4],
         scrollback_rows: 1,
-            scrollback_replace: false,
+        scrollback_replace: false,
         cells: vec![
             PackedCell::with_ch('A'),
             PackedCell::with_ch('B'),
@@ -857,7 +855,7 @@ fn reflow_widen_joins_wrapped_rows() {
         title: String::new(),
         scrollback: vec![],
         scrollback_rows: 0,
-            scrollback_replace: false,
+        scrollback_replace: false,
         cells: vec![PackedCell::default(); 8],
         grapheme_extras: GraphemeExtras::new(),
         hyperlink_extras: HyperlinkExtras::new(),
@@ -901,7 +899,7 @@ fn reflow_narrow_splits_long_line() {
         title: String::new(),
         scrollback: vec![],
         scrollback_rows: 0,
-            scrollback_replace: false,
+        scrollback_replace: false,
         cells: vec![PackedCell::default(); 3],
         grapheme_extras: GraphemeExtras::new(),
         hyperlink_extras: HyperlinkExtras::new(),
@@ -955,7 +953,7 @@ fn reflow_preserves_unwrapped_lines() {
         title: String::new(),
         scrollback: vec![],
         scrollback_rows: 0,
-            scrollback_replace: false,
+        scrollback_replace: false,
         cells: vec![PackedCell::default(); 8],
         grapheme_extras: GraphemeExtras::new(),
         hyperlink_extras: HyperlinkExtras::new(),

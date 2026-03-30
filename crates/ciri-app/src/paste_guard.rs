@@ -1,5 +1,5 @@
 /// Paste protection: warn when pasted content exceeds a size threshold.
-
+///
 /// Returns `Some(PasteInfo)` if the paste exceeds the threshold and needs
 /// user confirmation. Returns `None` if the paste is small enough to proceed.
 /// A threshold of 0 disables the check entirely.

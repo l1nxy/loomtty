@@ -1,5 +1,6 @@
 use ciri_render::glyph_cache::{GlyphCache, GlyphInstance};
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_status_text(
     atlas: &mut GlyphCache,
     text: &str,
@@ -15,8 +16,8 @@ pub(crate) fn emit_status_text(
             && entry.width > 0
             && entry.height > 0
         {
-            let sx = x_start + i as f32 * cell_width + entry.bearing_x as f32;
-            let sy = text_y + baseline - entry.bearing_y as f32;
+            let sx = x_start + i as f32 * cell_width + entry.bearing_x;
+            let sy = text_y + baseline - entry.bearing_y;
             glyphs.push(GlyphInstance {
                 pos: [sx, sy],
                 size: [entry.width as f32, entry.height as f32],

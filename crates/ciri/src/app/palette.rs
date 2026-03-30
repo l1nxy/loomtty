@@ -32,14 +32,10 @@ impl App {
                 self.handle_action(action);
             }
             PaletteEntryKind::SwitchSession(name) => {
-                self.send(ClientMessage::SwitchSession {
-                    session_name: name,
-                });
+                self.send(ClientMessage::SwitchSession { session_name: name });
             }
             PaletteEntryKind::KillSession(name) => {
-                self.send(ClientMessage::KillSession {
-                    session_name: name,
-                });
+                self.send(ClientMessage::KillSession { session_name: name });
             }
             PaletteEntryKind::RemoteHost {
                 name,

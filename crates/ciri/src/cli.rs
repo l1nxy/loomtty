@@ -111,15 +111,9 @@ pub enum MsgCommand {
     /// Get session info
     Info { session_name: String },
     /// Focus a pane by ID
-    FocusPane {
-        session_name: String,
-        pane_id: u64,
-    },
+    FocusPane { session_name: String, pane_id: u64 },
     /// Close a pane by ID
-    ClosePane {
-        session_name: String,
-        pane_id: u64,
-    },
+    ClosePane { session_name: String, pane_id: u64 },
     /// Create a new pane
     CreatePane { session_name: String },
     /// Get the full layout state
@@ -165,39 +159,78 @@ pub fn resolve(cli: Cli) -> CliCommand {
         Some(Command::Kill { session_name }) => CliCommand::Kill { session_name },
         Some(Command::KillServer) => CliCommand::KillServer,
         Some(Command::Delete { session_name }) => CliCommand::Delete { session_name },
-        Some(Command::Remote { host, session_name, port, ssh_port }) => {
-            CliCommand::Remote { host, session_name, port, ssh_port }
-        }
+        Some(Command::Remote {
+            host,
+            session_name,
+            port,
+            ssh_port,
+        }) => CliCommand::Remote {
+            host,
+            session_name,
+            port,
+            ssh_port,
+        },
         Some(Command::Msg { subcommand, json }) => {
             let sub = match subcommand {
-                MsgCommand::SendKeys { session_name, pane_id, keys } => {
-                    MsgSubcommand::SendKeys { session_name, pane_id, keys }
-                }
+                MsgCommand::SendKeys {
+                    session_name,
+                    pane_id,
+                    keys,
+                } => MsgSubcommand::SendKeys {
+                    session_name,
+                    pane_id,
+                    keys,
+                },
                 MsgCommand::ListPanes { session_name } => MsgSubcommand::ListPanes { session_name },
                 MsgCommand::Info { session_name } => MsgSubcommand::Info { session_name },
-                MsgCommand::FocusPane { session_name, pane_id } => {
-                    MsgSubcommand::FocusPane { session_name, pane_id }
+                MsgCommand::FocusPane {
+                    session_name,
+                    pane_id,
+                } => MsgSubcommand::FocusPane {
+                    session_name,
+                    pane_id,
+                },
+                MsgCommand::ClosePane {
+                    session_name,
+                    pane_id,
+                } => MsgSubcommand::ClosePane {
+                    session_name,
+                    pane_id,
+                },
+                MsgCommand::CreatePane { session_name } => {
+                    MsgSubcommand::CreatePane { session_name }
                 }
-                MsgCommand::ClosePane { session_name, pane_id } => {
-                    MsgSubcommand::ClosePane { session_name, pane_id }
-                }
-                MsgCommand::CreatePane { session_name } => MsgSubcommand::CreatePane { session_name },
                 MsgCommand::GetLayout { session_name } => MsgSubcommand::GetLayout { session_name },
-                MsgCommand::RunCommand { session_name, command } => {
-                    MsgSubcommand::RunCommand { session_name, command }
-                }
+                MsgCommand::RunCommand {
+                    session_name,
+                    command,
+                } => MsgSubcommand::RunCommand {
+                    session_name,
+                    command,
+                },
             };
-            CliCommand::Msg { subcommand: sub, json }
+            CliCommand::Msg {
+                subcommand: sub,
+                json,
+            }
         }
         Some(Command::Template { subcommand }) => {
             let sub = match subcommand {
                 TemplateCommand::List => TemplateSubcommand::List,
-                TemplateCommand::Apply { template_name, session_name } => {
-                    TemplateSubcommand::Apply { template_name, session_name }
-                }
-                TemplateCommand::Save { template_name, session_name } => {
-                    TemplateSubcommand::Save { template_name, session_name }
-                }
+                TemplateCommand::Apply {
+                    template_name,
+                    session_name,
+                } => TemplateSubcommand::Apply {
+                    template_name,
+                    session_name,
+                },
+                TemplateCommand::Save {
+                    template_name,
+                    session_name,
+                } => TemplateSubcommand::Save {
+                    template_name,
+                    session_name,
+                },
             };
             CliCommand::Template { subcommand: sub }
         }
@@ -212,34 +245,81 @@ pub enum CliCommand {
     Default,
     New,
     Init,
-    Run { session_name: String },
-    Attach { session_name: String },
-    List { all: bool },
-    Kill { session_name: String },
+    Run {
+        session_name: String,
+    },
+    Attach {
+        session_name: String,
+    },
+    List {
+        all: bool,
+    },
+    Kill {
+        session_name: String,
+    },
     KillServer,
-    Delete { session_name: String },
-    Remote { host: String, session_name: Option<String>, port: u16, ssh_port: u16 },
-    Msg { subcommand: MsgSubcommand, json: bool },
-    Template { subcommand: TemplateSubcommand },
+    Delete {
+        session_name: String,
+    },
+    Remote {
+        host: String,
+        session_name: Option<String>,
+        port: u16,
+        ssh_port: u16,
+    },
+    Msg {
+        subcommand: MsgSubcommand,
+        json: bool,
+    },
+    Template {
+        subcommand: TemplateSubcommand,
+    },
 }
 
 #[derive(Debug)]
 pub enum MsgSubcommand {
-    SendKeys { session_name: String, pane_id: u64, keys: String },
-    ListPanes { session_name: String },
-    Info { session_name: String },
-    FocusPane { session_name: String, pane_id: u64 },
-    ClosePane { session_name: String, pane_id: u64 },
-    CreatePane { session_name: String },
-    GetLayout { session_name: String },
-    RunCommand { session_name: String, command: String },
+    SendKeys {
+        session_name: String,
+        pane_id: u64,
+        keys: String,
+    },
+    ListPanes {
+        session_name: String,
+    },
+    Info {
+        session_name: String,
+    },
+    FocusPane {
+        session_name: String,
+        pane_id: u64,
+    },
+    ClosePane {
+        session_name: String,
+        pane_id: u64,
+    },
+    CreatePane {
+        session_name: String,
+    },
+    GetLayout {
+        session_name: String,
+    },
+    RunCommand {
+        session_name: String,
+        command: String,
+    },
 }
 
 #[derive(Debug)]
 pub enum TemplateSubcommand {
     List,
-    Apply { template_name: String, session_name: Option<String> },
-    Save { template_name: String, session_name: String },
+    Apply {
+        template_name: String,
+        session_name: Option<String>,
+    },
+    Save {
+        template_name: String,
+        session_name: String,
+    },
 }
 
 #[cfg(test)]
@@ -284,8 +364,14 @@ mod tests {
     fn list_command() {
         assert!(matches!(parse(&["list"]), CliCommand::List { all: false }));
         assert!(matches!(parse(&["ls"]), CliCommand::List { all: false }));
-        assert!(matches!(parse(&["ls", "--all"]), CliCommand::List { all: true }));
-        assert!(matches!(parse(&["ls", "-a"]), CliCommand::List { all: true }));
+        assert!(matches!(
+            parse(&["ls", "--all"]),
+            CliCommand::List { all: true }
+        ));
+        assert!(matches!(
+            parse(&["ls", "-a"]),
+            CliCommand::List { all: true }
+        ));
     }
 
     #[test]

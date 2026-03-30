@@ -70,9 +70,7 @@ pub(super) fn apply_modifiers(combo: &mut KeyCombo, modifiers: Vec<Modifier>) {
     }
 }
 
-pub(super) fn parse_bindings(
-    bindings: &HashMap<String, String>,
-) -> HashMap<KeyCombo, Action> {
+pub(super) fn parse_bindings(bindings: &HashMap<String, String>) -> HashMap<KeyCombo, Action> {
     parse_bindings_with_source(bindings, BindingSource::KeybindingConfig)
 }
 

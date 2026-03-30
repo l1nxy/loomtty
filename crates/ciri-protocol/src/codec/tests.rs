@@ -1,7 +1,7 @@
-use super::*;
 use super::frame::{MAX_FRAME_LEN, TAG_SERVER_MSG, build_frame};
 use super::handshake::{CLIENT_HELLO_HEADER_LEN, SERVER_HELLO_LEN, parse_pkg_version};
-use super::state_machine::{sm_encode_cells, OP_END, OP_REPEAT, OP_RESET, OP_SET_FG};
+use super::state_machine::{OP_END, OP_REPEAT, OP_RESET, OP_SET_FG, sm_encode_cells};
+use super::*;
 use crate::message::*;
 use std::io;
 
@@ -306,7 +306,7 @@ fn full_pane_sync_roundtrip() {
         title: "bash".to_string(),
         scrollback: Vec::new(),
         scrollback_rows: 0,
-                scrollback_replace: false,
+        scrollback_replace: false,
         cells,
         grapheme_extras: GraphemeExtras::new(),
         hyperlink_extras: HyperlinkExtras::new(),
@@ -346,7 +346,7 @@ fn full_pane_sync_with_scrollback() {
         title: "test".to_string(),
         scrollback: sb.clone(),
         scrollback_rows: 3,
-                scrollback_replace: false,
+        scrollback_replace: false,
         cells,
         grapheme_extras: GraphemeExtras::new(),
         hyperlink_extras: HyperlinkExtras::new(),
@@ -373,7 +373,7 @@ fn full_pane_sync_rejects_truncated_mandatory_sections() {
         title: "pane".to_string(),
         scrollback: vec![PackedCell::default(); 4],
         scrollback_rows: 1,
-                scrollback_replace: false,
+        scrollback_replace: false,
         cells: vec![PackedCell::default(); 8],
         grapheme_extras: GraphemeExtras::new(),
         hyperlink_extras: HyperlinkExtras::new(),
@@ -412,7 +412,7 @@ fn full_pane_sync_ignores_truncated_optional_extras() {
         title: "links".to_string(),
         scrollback: Vec::new(),
         scrollback_rows: 0,
-                scrollback_replace: false,
+        scrollback_replace: false,
         cells: vec![PackedCell::with_ch('A'), PackedCell::with_ch('B')],
         grapheme_extras: GraphemeExtras::new(),
         hyperlink_extras: HyperlinkExtras::new(),

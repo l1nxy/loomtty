@@ -38,7 +38,10 @@ pub enum CloseStyle {
 #[derive(Debug, Clone)]
 pub enum AnimKind {
     Spring(SpringParams),
-    Easing { duration_secs: f64, curve: EasingCurve },
+    Easing {
+        duration_secs: f64,
+        curve: EasingCurve,
+    },
 }
 
 impl AnimKind {
@@ -258,14 +261,16 @@ impl AnimationManager {
     /// Ensure a pane is registered without starting open animations.
     /// Used for panes that already exist on reconnect (StateSync).
     pub fn ensure_pane_registered(&mut self, pane_id: PaneId) {
-        self.pane_anims.entry(pane_id).or_insert_with(|| PaneAnimState {
-            open_opacity: None,
-            open_slide: None,
-            focus_opacity: AnimValue::new(1.0),
-            move_offset_x: None,
-            move_offset_y: None,
-            drag_dim: None,
-        });
+        self.pane_anims
+            .entry(pane_id)
+            .or_insert_with(|| PaneAnimState {
+                open_opacity: None,
+                open_slide: None,
+                focus_opacity: AnimValue::new(1.0),
+                move_offset_x: None,
+                move_offset_y: None,
+                drag_dim: None,
+            });
     }
 
     /// Called when a pane is closed. Starts close animation and removes pane state.
@@ -298,21 +303,19 @@ impl AnimationManager {
         }
 
         // Dim the previously focused pane
-        if let Some(old_id) = old_focus {
-            if let Some(state) = self.pane_anims.get_mut(&old_id) {
-                config
-                    .focus_transition
-                    .apply(&mut state.focus_opacity, config.inactive_opacity as f64);
-            }
+        if let Some(old_id) = old_focus
+            && let Some(state) = self.pane_anims.get_mut(&old_id)
+        {
+            config
+                .focus_transition
+                .apply(&mut state.focus_opacity, config.inactive_opacity as f64);
         }
 
         // Brighten the newly focused pane
-        if let Some(new_id) = new_focus {
-            if let Some(state) = self.pane_anims.get_mut(&new_id) {
-                config
-                    .focus_transition
-                    .apply(&mut state.focus_opacity, 1.0);
-            }
+        if let Some(new_id) = new_focus
+            && let Some(state) = self.pane_anims.get_mut(&new_id)
+        {
+            config.focus_transition.apply(&mut state.focus_opacity, 1.0);
         }
     }
 
@@ -323,12 +326,7 @@ impl AnimationManager {
 
         self.effects.push(TransientEffect {
             kind: EffectKind::BellFlash { pane_id },
-            intensity: AnimValue::eased(
-                1.0,
-                0.0,
-                config.bell_flash_secs,
-                EasingCurve::Linear,
-            ),
+            intensity: AnimValue::eased(1.0, 0.0, config.bell_flash_secs, EasingCurve::Linear),
         });
     }
 
@@ -350,13 +348,7 @@ impl AnimationManager {
 
     /// Start a move animation: pane slides from offset (dx, dy) back to 0.
     /// Used when layout changes cause pane positions to shift.
-    pub fn start_move_animation(
-        &mut self,
-        pane_id: PaneId,
-        dx: f32,
-        dy: f32,
-        config: &AnimConfig,
-    ) {
+    pub fn start_move_animation(&mut self, pane_id: PaneId, dx: f32, dy: f32, config: &AnimConfig) {
         if let Some(state) = self.pane_anims.get_mut(&pane_id) {
             if dx.abs() > 1.0 {
                 state.move_offset_x = Some(config.pane_move.create(dx as f64, 0.0));
@@ -378,13 +370,13 @@ impl AnimationManager {
 
     /// End drag dim: pane opacity restores to 1.0.
     pub fn end_drag_dim(&mut self, pane_id: PaneId, config: &AnimConfig) {
-        if let Some(state) = self.pane_anims.get_mut(&pane_id) {
-            if let Some(ref mut dim) = state.drag_dim {
-                // Animation still in progress — re-target to 1.0
-                config.drag_dim.apply(dim, 1.0);
-            }
-            // If drag_dim is None, animation already completed at target (1.0) — no-op
+        if let Some(state) = self.pane_anims.get_mut(&pane_id)
+            && let Some(ref mut dim) = state.drag_dim
+        {
+            // Animation still in progress — re-target to 1.0
+            config.drag_dim.apply(dim, 1.0);
         }
+        // If drag_dim is None, animation already completed at target (1.0) — no-op
     }
 
     // ── Query (for rendering) ──
@@ -420,8 +412,16 @@ impl AnimationManager {
         self.pane_anims
             .get(&pane_id)
             .map(|s| {
-                let dx = s.move_offset_x.as_ref().map(|v| v.value() as f32).unwrap_or(0.0);
-                let dy = s.move_offset_y.as_ref().map(|v| v.value() as f32).unwrap_or(0.0);
+                let dx = s
+                    .move_offset_x
+                    .as_ref()
+                    .map(|v| v.value() as f32)
+                    .unwrap_or(0.0);
+                let dy = s
+                    .move_offset_y
+                    .as_ref()
+                    .map(|v| v.value() as f32)
+                    .unwrap_or(0.0);
                 (dx, dy)
             })
             .unwrap_or((0.0, 0.0))

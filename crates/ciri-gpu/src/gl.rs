@@ -11,10 +11,16 @@ use ciri_render::FrameScene;
 use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, PendingUpload, ScissoredRange};
 use ciri_render::rect::Rect;
 use glow::HasContext;
+#[cfg(not(target_os = "macos"))]
 use glutin::config::ConfigTemplateBuilder;
-use glutin::context::{ContextApi, ContextAttributesBuilder, PossiblyCurrentContext, Version};
+use glutin::context::PossiblyCurrentContext;
+#[cfg(not(target_os = "macos"))]
+use glutin::context::{ContextApi, ContextAttributesBuilder, Version};
 use glutin::prelude::*;
-use glutin::surface::{SurfaceAttributesBuilder, SwapInterval, WindowSurface};
+use glutin::surface::WindowSurface;
+#[cfg(not(target_os = "macos"))]
+use glutin::surface::{SurfaceAttributesBuilder, SwapInterval};
+#[cfg(not(target_os = "macos"))]
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -273,6 +279,7 @@ impl GlAtlasLayer {
 
 // ─── GL rect pipeline ───────────────────────────────────────────────
 
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 struct GlRectPipeline {
     program: glow::Program,
     vao: glow::VertexArray,
@@ -282,6 +289,7 @@ struct GlRectPipeline {
 }
 
 impl GlRectPipeline {
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     unsafe fn new(gl: &glow::Context, max_rects: usize) -> Self {
         let program = compile_program(gl, RECT_VS, RECT_FS, "rect");
         let loc_viewport = gl
@@ -388,6 +396,7 @@ pub struct GlyphAtlasGpu {
 }
 
 impl GlyphAtlasGpu {
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     unsafe fn new(gl: &glow::Context, atlas_size: u32, max_instances: usize) -> Self {
         let alpha = GlAtlasLayer::new(
             gl,
@@ -459,11 +468,8 @@ impl Renderer {
         let display_api_preference = glutin::display::DisplayApiPreference::Egl;
 
         let display = unsafe {
-            glutin::display::Display::new(
-                raw_display_handle,
-                display_api_preference,
-            )
-            .map_err(|e| anyhow::anyhow!("GL display creation failed: {e}"))?
+            glutin::display::Display::new(raw_display_handle, display_api_preference)
+                .map_err(|e| anyhow::anyhow!("GL display creation failed: {e}"))?
         };
 
         let config_template = ConfigTemplateBuilder::new()
@@ -507,8 +513,11 @@ impl Renderer {
 
         // Set swap interval based on present mode
         let interval = match render_config.present_mode {
-            ciri_config::config::PresentMode::Immediate | ciri_config::config::PresentMode::Mailbox => SwapInterval::DontWait,
-            ciri_config::config::PresentMode::Fifo => SwapInterval::Wait(NonZeroU32::new(1).unwrap()),
+            ciri_config::config::PresentMode::Immediate
+            | ciri_config::config::PresentMode::Mailbox => SwapInterval::DontWait,
+            ciri_config::config::PresentMode::Fifo => {
+                SwapInterval::Wait(NonZeroU32::new(1).unwrap())
+            }
         };
         let _ = gl_surface.set_swap_interval(&gl_context, interval);
 
@@ -788,6 +797,7 @@ unsafe fn compile_program(
 
 // ─── GLSL shaders ───────────────────────────────────────────────────
 
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 const RECT_VS: &str = r#"#version 330 core
 
 layout(location = 0) in vec2 a_pos;
@@ -813,6 +823,7 @@ void main() {
 }
 "#;
 
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 const RECT_FS: &str = r#"#version 330 core
 
 in vec4 v_color;

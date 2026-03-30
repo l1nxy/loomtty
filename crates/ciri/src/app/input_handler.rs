@@ -59,7 +59,8 @@ impl App {
                 let reverse = matches!(action, Action::CyclePresetWidthReverse);
                 let presets = self.preset_widths();
                 if let Some(w) = self
-                    .core.workspaces
+                    .core
+                    .workspaces
                     .active_mut()
                     .cycle_preset_width(&presets, reverse)
                 {
@@ -137,7 +138,8 @@ impl App {
             }
             Action::ScrollPageUp => {
                 let rows = self
-                    .core.pane_grids
+                    .core
+                    .pane_grids
                     .values()
                     .next()
                     .map(|g| g.rows as usize)
@@ -146,7 +148,8 @@ impl App {
             }
             Action::ScrollPageDown => {
                 let rows = self
-                    .core.pane_grids
+                    .core
+                    .pane_grids
                     .values()
                     .next()
                     .map(|g| g.rows as usize)
@@ -155,7 +158,8 @@ impl App {
             }
             Action::ScrollHalfPageUp => {
                 let rows = self
-                    .core.pane_grids
+                    .core
+                    .pane_grids
                     .values()
                     .next()
                     .map(|g| (g.rows as usize) / 2)
@@ -164,7 +168,8 @@ impl App {
             }
             Action::ScrollHalfPageDown => {
                 let rows = self
-                    .core.pane_grids
+                    .core
+                    .pane_grids
                     .values()
                     .next()
                     .map(|g| (g.rows as usize) / 2)
@@ -178,11 +183,11 @@ impl App {
                 self.scroll_active_down(1);
             }
             Action::ScrollTop => {
-                if let Some(pid) = self.core.workspaces.active().active_pane_id() {
-                    if let Some(grid) = self.core.pane_grids.get_mut(&pid) {
-                        grid.scroll_up(grid.max_scroll_offset());
-                        self.invalidate_pane_cache(pid);
-                    }
+                if let Some(pid) = self.core.workspaces.active().active_pane_id()
+                    && let Some(grid) = self.core.pane_grids.get_mut(&pid)
+                {
+                    grid.scroll_up(grid.max_scroll_offset());
+                    self.invalidate_pane_cache(pid);
                 }
             }
             Action::ScrollBottom => {
@@ -213,7 +218,12 @@ impl App {
                 self.close_search_restore_scroll();
             }
             Action::SearchNextMatch => {
-                if self.core.search_state.as_ref().is_some_and(|s| s.query.is_empty()) {
+                if self
+                    .core
+                    .search_state
+                    .as_ref()
+                    .is_some_and(|s| s.query.is_empty())
+                {
                     // Empty query: just exit search
                     self.core.search_state = None;
                 } else {
@@ -229,22 +239,21 @@ impl App {
                 self.core.command_palette = None;
             }
             Action::PaletteUp => {
-                if let Some(palette) = &mut self.core.command_palette {
-                    if !palette.filtered.is_empty() {
-                        palette.selected_idx = if palette.selected_idx == 0 {
-                            palette.filtered.len() - 1
-                        } else {
-                            palette.selected_idx - 1
-                        };
-                    }
+                if let Some(palette) = &mut self.core.command_palette
+                    && !palette.filtered.is_empty()
+                {
+                    palette.selected_idx = if palette.selected_idx == 0 {
+                        palette.filtered.len() - 1
+                    } else {
+                        palette.selected_idx - 1
+                    };
                 }
             }
             Action::PaletteDown => {
-                if let Some(palette) = &mut self.core.command_palette {
-                    if !palette.filtered.is_empty() {
-                        palette.selected_idx =
-                            (palette.selected_idx + 1) % palette.filtered.len();
-                    }
+                if let Some(palette) = &mut self.core.command_palette
+                    && !palette.filtered.is_empty()
+                {
+                    palette.selected_idx = (palette.selected_idx + 1) % palette.filtered.len();
                 }
             }
             Action::PaletteConfirm => {
@@ -304,7 +313,8 @@ impl App {
         buffer_row: usize,
         now: Instant,
     ) -> bool {
-        self.core.is_double_left_click(pane_id, col, buffer_row, now)
+        self.core
+            .is_double_left_click(pane_id, col, buffer_row, now)
     }
 
     /// Delegate: remember left click.
@@ -386,7 +396,11 @@ impl App {
         let next = self
             .pixel_to_cell(mx, my)
             .and_then(|(pane_id, col, buffer_row)| {
-                let link = self.core.pane_grids.get(&pane_id)?.link_at(col, buffer_row)?;
+                let link = self
+                    .core
+                    .pane_grids
+                    .get(&pane_id)?
+                    .link_at(col, buffer_row)?;
                 Some(super::HoveredLink {
                     pane_id,
                     url: link.url,
@@ -409,7 +423,8 @@ impl App {
         // Look up the CWD of the relevant pane for relative path resolution.
         // Try hovered link pane first, then context menu target pane.
         let pane_id = self
-            .core.hovered_link
+            .core
+            .hovered_link
             .as_ref()
             .map(|link| link.pane_id)
             .or(self.core.context_menu.target_pane_id)
@@ -450,12 +465,7 @@ impl App {
             .filtered
             .get(palette.selected_idx)
             .and_then(|&idx| palette.entries.get(idx))
-            .is_some_and(|e| {
-                matches!(
-                    e.kind,
-                    super::PaletteEntryKind::RemoteHost { .. }
-                )
-            });
+            .is_some_and(|e| matches!(e.kind, super::PaletteEntryKind::RemoteHost { .. }));
         if let Some(&entry_idx) = palette.filtered.get(palette.selected_idx) {
             self.execute_palette_entry(entry_idx);
         }
@@ -555,32 +565,31 @@ impl App {
     }
 
     pub fn scroll_active_up(&mut self, lines: usize) {
-        if let Some(pid) = self.core.workspaces.active().active_pane_id() {
-            if let Some(grid) = self.core.pane_grids.get_mut(&pid) {
-                grid.scroll_up(lines);
-                self.invalidate_pane_cache(pid);
-            }
+        if let Some(pid) = self.core.workspaces.active().active_pane_id()
+            && let Some(grid) = self.core.pane_grids.get_mut(&pid)
+        {
+            grid.scroll_up(lines);
+            self.invalidate_pane_cache(pid);
         }
     }
 
     pub fn scroll_active_down(&mut self, lines: usize) {
-        if let Some(pid) = self.core.workspaces.active().active_pane_id() {
-            if let Some(grid) = self.core.pane_grids.get_mut(&pid) {
-                grid.scroll_down(lines);
-                self.invalidate_pane_cache(pid);
-            }
+        if let Some(pid) = self.core.workspaces.active().active_pane_id()
+            && let Some(grid) = self.core.pane_grids.get_mut(&pid)
+        {
+            grid.scroll_down(lines);
+            self.invalidate_pane_cache(pid);
         }
     }
 
     pub fn scroll_active_to_bottom(&mut self) {
-        if let Some(pid) = self.core.workspaces.active().active_pane_id() {
-            if let Some(grid) = self.core.pane_grids.get_mut(&pid) {
-                grid.scroll_to_bottom();
-                self.invalidate_pane_cache(pid);
-            }
+        if let Some(pid) = self.core.workspaces.active().active_pane_id()
+            && let Some(grid) = self.core.pane_grids.get_mut(&pid)
+        {
+            grid.scroll_to_bottom();
+            self.invalidate_pane_cache(pid);
         }
     }
-
 }
 
 pub(crate) fn key_event_to_pty_bytes(event: &winit::event::KeyEvent, ctrl: bool) -> Vec<u8> {
@@ -860,7 +869,7 @@ fn is_file_path_link(s: &str) -> bool {
     // false positives (consistent with detect_file_path in grid.rs).
     if (path.contains('/') || path.contains('\\')) && !path.contains("://") {
         // Require a dot in the last path component (file extension)
-        let file_name = path.rsplit(|c: char| c == '/' || c == '\\').next().unwrap_or(path);
+        let file_name = path.rsplit(['/', '\\']).next().unwrap_or(path);
         return file_name.contains('.');
     }
     false
@@ -966,24 +975,20 @@ fn open_file_path(path_with_loc: &str, pane_cwd: Option<&str>) -> std::io::Resul
 /// Parse `path:line:col` into `(path, Option<line>, Option<col>)`.
 fn parse_file_location(s: &str) -> (&str, Option<u32>, Option<u32>) {
     // Try path:line:col
-    if let Some((rest, col_s)) = s.rsplit_once(':') {
-        if let Ok(col) = col_s.parse::<u32>() {
-            if let Some((path, line_s)) = rest.rsplit_once(':') {
-                if let Ok(line) = line_s.parse::<u32>() {
-                    // Don't split on Windows drive letter (C:)
-                    if !path.is_empty()
-                        && !(path.len() == 1 && path.as_bytes()[0].is_ascii_alphabetic())
-                    {
-                        return (path, Some(line), Some(col));
-                    }
-                }
+    if let Some((rest, col_s)) = s.rsplit_once(':')
+        && let Ok(col) = col_s.parse::<u32>()
+    {
+        if let Some((path, line_s)) = rest.rsplit_once(':')
+            && let Ok(line) = line_s.parse::<u32>()
+        {
+            // Don't split on Windows drive letter (C:)
+            if !(path.is_empty() || path.len() == 1 && path.as_bytes()[0].is_ascii_alphabetic()) {
+                return (path, Some(line), Some(col));
             }
-            // path:line only
-            if !rest.is_empty()
-                && !(rest.len() == 1 && rest.as_bytes()[0].is_ascii_alphabetic())
-            {
-                return (rest, Some(col), None);
-            }
+        }
+        // path:line only
+        if !(rest.is_empty() || rest.len() == 1 && rest.as_bytes()[0].is_ascii_alphabetic()) {
+            return (rest, Some(col), None);
         }
     }
     (s, None, None)

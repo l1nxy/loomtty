@@ -113,10 +113,7 @@ impl Server {
                                         Some(format!("{cmd} || exec $SHELL"))
                                     }
                                 });
-                            let cwd = saved_tile
-                                .cwd
-                                .as_deref()
-                                .map(std::path::Path::new);
+                            let cwd = saved_tile.cwd.as_deref().map(std::path::Path::new);
                             match Pane::new_with_opts(
                                 id,
                                 cols,

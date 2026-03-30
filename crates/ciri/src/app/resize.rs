@@ -46,7 +46,8 @@ impl App {
             return false;
         };
         let delta_y = my - self.core.drag.tile_start_y;
-        self.core.workspaces
+        self.core
+            .workspaces
             .active_mut()
             .resize_tile_pair(col_idx, top_tile_idx, delta_y);
         self.core.drag.tile_start_y = my;
@@ -106,7 +107,13 @@ impl App {
                     .chain(ws.columns[right_col_idx].tiles.iter())
                     .map(|t| t.pane_id)
                     .collect();
-                found = Some((left_col_idx, right_col_idx, left_col_width, pane_id, dim_panes));
+                found = Some((
+                    left_col_idx,
+                    right_col_idx,
+                    left_col_width,
+                    pane_id,
+                    dim_panes,
+                ));
                 break;
             }
         }
@@ -132,11 +139,12 @@ impl App {
     }
 
     pub(crate) fn start_tile_resize_drag(&mut self, mx: f32, my: f32) -> bool {
-        if let Some((col_idx, top_tile_idx)) = self
-            .core.workspaces
-            .active()
-            .hit_test_tile_border(self.core.anim_mgr.view_offset_x.value() as f32, mx, my, 4.0)
-        {
+        if let Some((col_idx, top_tile_idx)) = self.core.workspaces.active().hit_test_tile_border(
+            self.core.anim_mgr.view_offset_x.value() as f32,
+            mx,
+            my,
+            4.0,
+        ) {
             if let Some(col) = self.core.workspaces.active().columns.get(col_idx)
                 && let Some(tile) = col.tiles.get(top_tile_idx)
             {

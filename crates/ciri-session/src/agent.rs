@@ -104,7 +104,10 @@ pub fn detect_agent(exe_name: &str, argv: &[String]) -> Option<SavedAgent> {
 /// Get the resume command for a given agent kind.
 /// Returns `None` if the kind is not in the registry (e.g. added in a newer version).
 pub fn resume_command(kind: AgentKind) -> Option<&'static str> {
-    AGENTS.iter().find(|d| d.kind == kind).map(|d| d.resume_command)
+    AGENTS
+        .iter()
+        .find(|d| d.kind == kind)
+        .map(|d| d.resume_command)
 }
 
 /// Strip path components and `.exe` suffix from an executable name.
@@ -135,7 +138,10 @@ mod tests {
     #[test]
     fn detect_claude_with_flags() {
         // Interactive with extra flags
-        let a = detect_agent("claude", &args(&["claude", "--dangerously-skip-permissions"]));
+        let a = detect_agent(
+            "claude",
+            &args(&["claude", "--dangerously-skip-permissions"]),
+        );
         assert_eq!(a.unwrap().kind, AgentKind::ClaudeCode);
     }
 
@@ -146,9 +152,7 @@ mod tests {
 
     #[test]
     fn reject_claude_native_host() {
-        assert!(
-            detect_agent("claude", &args(&["claude", "--chrome-native-host"])).is_none()
-        );
+        assert!(detect_agent("claude", &args(&["claude", "--chrome-native-host"])).is_none());
     }
 
     #[test]
@@ -238,7 +242,10 @@ mod tests {
             resume_command(AgentKind::ClaudeCode),
             Some("claude --continue")
         );
-        assert_eq!(resume_command(AgentKind::Codex), Some("codex resume --last"));
+        assert_eq!(
+            resume_command(AgentKind::Codex),
+            Some("codex resume --last")
+        );
         assert_eq!(
             resume_command(AgentKind::OpenCode),
             Some("opencode --continue")
@@ -300,7 +307,10 @@ mod tests {
         };
         let json = serde_json::to_string(&tile).unwrap();
         // "agent" field should be omitted for Unknown kind
-        assert!(!json.contains("agent"), "Unknown agent should not be serialized: {json}");
+        assert!(
+            !json.contains("agent"),
+            "Unknown agent should not be serialized: {json}"
+        );
     }
 
     #[test]
@@ -316,7 +326,10 @@ mod tests {
             }),
         };
         let json = serde_json::to_string(&tile).unwrap();
-        assert!(json.contains("claude-code"), "Known agent should be serialized: {json}");
+        assert!(
+            json.contains("claude-code"),
+            "Known agent should be serialized: {json}"
+        );
     }
 
     #[test]

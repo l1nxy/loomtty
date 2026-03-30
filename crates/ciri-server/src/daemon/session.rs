@@ -4,6 +4,7 @@ use ciri_layout::geometry::ViewSize;
 use ciri_layout::workspace_set::WorkspaceSet;
 use ciri_protocol::message::*;
 use ciri_protocol::transport;
+use ciri_session::agent::SavedAgent;
 use ciri_session::save::save_session;
 use ciri_session::state::{SavedColumn, SavedTile, SavedWorkspace, SessionState};
 use ciri_term::pane::Pane;
@@ -29,6 +30,10 @@ pub(crate) struct Session {
     pub(crate) last_session_change: Option<Instant>,
     /// Updated each time a client attaches to this session.
     pub(crate) last_attached: Instant,
+    /// Cached agent detection results per pane (updated on slow timer).
+    pub(crate) detected_agents: HashMap<u64, Option<SavedAgent>>,
+    /// Last time agent detection ran.
+    pub(crate) last_agent_save: Option<Instant>,
 }
 
 impl Session {
@@ -51,6 +56,8 @@ impl Session {
             session_dirty: false,
             last_session_change: None,
             last_attached: Instant::now(),
+            detected_agents: HashMap::new(),
+            last_agent_save: None,
         }
     }
 
@@ -262,6 +269,7 @@ impl Session {
         self.workspaces.cleanup_empty();
         self.panes.remove(&pane_id);
         self.generation.remove(&pane_id);
+        self.detected_agents.remove(&pane_id);
         for client in clients.values_mut() {
             if client.session_name == self.session_name {
                 client.damage.remove(&pane_id);
@@ -363,11 +371,17 @@ impl Session {
                             tiles: c
                                 .tiles
                                 .into_iter()
-                                .map(|t| SavedTile {
-                                    pane_id: t.pane_id,
-                                    weight: t.weight,
-                                    cwd: None,
-                                    title: None,
+                                .map(|t| {
+                                    let pane = self.panes.get(&t.pane_id);
+                                    let agent =
+                                        self.detected_agents.get(&t.pane_id).cloned().flatten();
+                                    SavedTile {
+                                        pane_id: t.pane_id,
+                                        weight: t.weight,
+                                        cwd: pane.and_then(|p| p.cwd().map(|s| s.to_string())),
+                                        title: None,
+                                        agent,
+                                    }
                                 })
                                 .collect(),
                             active_tile_idx: c.active_tile_idx,
@@ -411,6 +425,61 @@ impl Session {
                 log::warn!("failed to autosave session '{}': {e}", self.session_name);
             }
         }
+    }
+
+    /// Detect AI agents running in all panes.
+    /// Called on a slow timer (~30s) and on graceful shutdown.
+    /// Returns `true` if any detected agents changed since last call.
+    pub(crate) fn detect_agents(&mut self) -> bool {
+        let mut changed = false;
+        for (&pane_id, pane) in &self.panes {
+            let agent = Self::detect_agent_for_pane(pane);
+            let prev = self.detected_agents.get(&pane_id);
+            let new_kind = agent.as_ref().map(|a| a.kind);
+            let old_kind = prev.and_then(|a| a.as_ref().map(|a| a.kind));
+            if new_kind != old_kind {
+                changed = true;
+            }
+            self.detected_agents.insert(pane_id, agent);
+        }
+        log::debug!(
+            "agent detection: {} panes scanned, {} agents found, changed={}",
+            self.panes.len(),
+            self.detected_agents
+                .values()
+                .filter(|a| a.is_some())
+                .count(),
+            changed
+        );
+        changed
+    }
+
+    #[cfg(unix)]
+    fn detect_agent_for_pane(pane: &Pane) -> Option<SavedAgent> {
+        let shell_pid = pane.child_pid()?;
+        let master_fd = pane.master_raw_fd()?;
+        let info =
+            ciri_procinfo::foreground_process(shell_pid, master_fd as ciri_procinfo::RawHandle)?;
+        ciri_session::agent::detect_agent(&info.exe_name, &info.argv)
+    }
+
+    #[cfg(windows)]
+    fn detect_agent_for_pane(pane: &Pane) -> Option<SavedAgent> {
+        let shell_pid = pane.child_pid()?;
+        let info = ciri_procinfo::foreground_process(shell_pid, 0)?;
+        ciri_session::agent::detect_agent(&info.exe_name, &info.argv)
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    fn detect_agent_for_pane(_pane: &Pane) -> Option<SavedAgent> {
+        None
+    }
+
+    /// Check if agent detection should run based on the configured interval.
+    pub(crate) fn agent_detection_due(&self, now: Instant, interval_secs: u64) -> bool {
+        let interval = Duration::from_secs(interval_secs.max(1));
+        self.last_agent_save
+            .map_or(true, |t| now.duration_since(t) >= interval)
     }
 
     /// Process PTY output for all panes, extract damage, and merge into per-client accumulators.

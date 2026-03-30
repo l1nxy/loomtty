@@ -1,0 +1,19 @@
+[package]
+name = "ciri-procinfo"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+log = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_System_Threading",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_Foundation",
+] }
+# ntapi will be needed when PEB command line reading is implemented
+# ntapi = "0.4"

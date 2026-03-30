@@ -183,17 +183,23 @@ struct DxAtlasLayer {
     max_instances: usize,
 }
 
+struct DxAtlasLayerConfig<'a> {
+    atlas_size: u32,
+    max_instances: usize,
+    tex_format: DXGI_FORMAT,
+    bpp: u32,
+    vs_hlsl: &'a str,
+    ps_hlsl: &'a str,
+    filter: D3D11_FILTER,
+}
+
 impl DxAtlasLayer {
-    unsafe fn new(
-        device: &ID3D11Device,
-        atlas_size: u32,
-        max_instances: usize,
-        tex_format: DXGI_FORMAT,
-        bpp: u32,
-        vs_hlsl: &str,
-        ps_hlsl: &str,
-        filter: D3D11_FILTER,
-    ) -> Result<Self> {
+    unsafe fn new(device: &ID3D11Device, cfg: &DxAtlasLayerConfig<'_>) -> Result<Self> {
+        let atlas_size = cfg.atlas_size;
+        let max_instances = cfg.max_instances;
+        let tex_format = cfg.tex_format;
+        let bpp = cfg.bpp;
+        let filter = cfg.filter;
         // Texture
         let tex_desc = D3D11_TEXTURE2D_DESC {
             Width: atlas_size,
@@ -244,7 +250,7 @@ impl DxAtlasLayer {
         let sampler = sampler.unwrap();
 
         // Shaders
-        let vs_blob = compile_shader(vs_hlsl, "vs_main", "vs_5_0")?;
+        let vs_blob = compile_shader(cfg.vs_hlsl, "vs_main", "vs_5_0")?;
         let vs_code = std::slice::from_raw_parts(
             vs_blob.GetBufferPointer() as *const u8,
             vs_blob.GetBufferSize(),
@@ -253,7 +259,7 @@ impl DxAtlasLayer {
         device.CreateVertexShader(vs_code, None, Some(&mut vs))?;
         let vs = vs.unwrap();
 
-        let ps_blob = compile_shader(ps_hlsl, "ps_main", "ps_5_0")?;
+        let ps_blob = compile_shader(cfg.ps_hlsl, "ps_main", "ps_5_0")?;
         let ps_code = std::slice::from_raw_parts(
             ps_blob.GetBufferPointer() as *const u8,
             ps_blob.GetBufferSize(),
@@ -406,10 +412,7 @@ impl DxAtlasLayer {
         &self,
         ctx: &ID3D11DeviceContext,
         instances: &[GlyphInstance],
-        viewport_w: f32,
-        viewport_h: f32,
-        _viewport_w_px: u32,
-        _viewport_h_px: u32,
+        vp: &crate::ViewportDims,
         batches: &[ScissoredRange],
     ) {
         if instances.is_empty() {
@@ -418,7 +421,7 @@ impl DxAtlasLayer {
         let count = instances.len().min(self.max_instances);
 
         // Update viewport cbuffer
-        let viewport = [viewport_w, viewport_h, 0.0f32, 0.0f32];
+        let viewport = [vp.width, vp.height, 0.0f32, 0.0f32];
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
         ctx.Map(
             &self.cbuffer,
@@ -487,8 +490,7 @@ impl DxAtlasLayer {
         ctx: &ID3D11DeviceContext,
         instances: &[GlyphInstance],
         overlay_start: usize,
-        viewport_w_px: u32,
-        viewport_h_px: u32,
+        vp: &crate::ViewportDims,
     ) {
         if instances.is_empty() {
             return;
@@ -512,8 +514,8 @@ impl DxAtlasLayer {
         let rect = RECT {
             left: 0,
             top: 0,
-            right: viewport_w_px as i32,
-            bottom: viewport_h_px as i32,
+            right: vp.width_px as i32,
+            bottom: vp.height_px as i32,
         };
         ctx.RSSetScissorRects(Some(&[rect]));
         let offset = (overlay_start * std::mem::size_of::<GlyphInstance>()) as u32;
@@ -866,38 +868,22 @@ impl Renderer {
 
     pub fn create_atlas(
         &mut self,
-        font_size_pt: f32,
-        dpi_scale: f64,
-        family_name: &str,
-        primary_font_path: Option<(String, u32)>,
-        emoji_font_path: Option<(String, u32)>,
-        emoji_font_id: Option<fontdb::ID>,
-        cjk_font_path: Option<(String, u32)>,
-        cjk_font_id: Option<fontdb::ID>,
-        render_config: &RenderConfig,
+        params: &ciri_render::glyph_cache::FontInitParams,
     ) -> (GlyphCache, GlyphAtlasGpu) {
-        let cache = GlyphCache::new(
-            font_size_pt,
-            dpi_scale,
-            family_name,
-            primary_font_path,
-            emoji_font_path,
-            emoji_font_id,
-            cjk_font_path,
-            cjk_font_id,
-            render_config,
-        );
+        let cache = GlyphCache::new(params);
 
         let alpha = unsafe {
             DxAtlasLayer::new(
                 &self.device,
-                cache.atlas_size,
-                cache.max_instances,
-                DXGI_FORMAT_R8_UNORM,
-                1,
-                GLYPH_HLSL,
-                ALPHA_PS_HLSL,
-                D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+                &DxAtlasLayerConfig {
+                    atlas_size: cache.atlas_size,
+                    max_instances: cache.max_instances,
+                    tex_format: DXGI_FORMAT_R8_UNORM,
+                    bpp: 1,
+                    vs_hlsl: GLYPH_HLSL,
+                    ps_hlsl: ALPHA_PS_HLSL,
+                    filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+                },
             )
             .expect("alpha atlas creation failed")
         };
@@ -905,13 +891,15 @@ impl Renderer {
         let color = unsafe {
             DxAtlasLayer::new(
                 &self.device,
-                cache.atlas_size,
-                cache.max_instances,
-                DXGI_FORMAT_R8G8B8A8_UNORM,
-                4,
-                GLYPH_HLSL,
-                COLOR_PS_HLSL,
-                D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+                &DxAtlasLayerConfig {
+                    atlas_size: cache.atlas_size,
+                    max_instances: cache.max_instances,
+                    tex_format: DXGI_FORMAT_R8G8B8A8_UNORM,
+                    bpp: 4,
+                    vs_hlsl: GLYPH_HLSL,
+                    ps_hlsl: COLOR_PS_HLSL,
+                    filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+                },
             )
             .expect("color atlas creation failed")
         };
@@ -987,25 +975,23 @@ impl Renderer {
             let pane_bg_count = overlay_bg_idx.min(total_bg);
             self.rects.draw_range(&self.ctx, 0, pane_bg_count);
 
+            let vp = crate::ViewportDims {
+                width: vw,
+                height: vh,
+                width_px: self.width,
+                height_px: self.height,
+            };
+
             // 3. Pane alpha glyphs (scissored) — upload + draw batches.
-            atlas_gpu.alpha.render_pane_glyphs(
-                &self.ctx,
-                scene.glyphs,
-                vw,
-                vh,
-                self.width,
-                self.height,
-                scene.glyph_batches,
-            );
+            atlas_gpu
+                .alpha
+                .render_pane_glyphs(&self.ctx, scene.glyphs, &vp, scene.glyph_batches);
 
             // 4. Pane color emoji (scissored).
             atlas_gpu.color.render_pane_glyphs(
                 &self.ctx,
                 scene.color_glyphs,
-                vw,
-                vh,
-                self.width,
-                self.height,
+                &vp,
                 scene.color_glyph_batches,
             );
 
@@ -1022,8 +1008,7 @@ impl Renderer {
                 &self.ctx,
                 scene.glyphs,
                 scene.pane_glyph_end,
-                self.width,
-                self.height,
+                &vp,
             );
 
             // 7. Overlay color emoji.
@@ -1031,8 +1016,7 @@ impl Renderer {
                 &self.ctx,
                 scene.color_glyphs,
                 scene.pane_color_glyph_end,
-                self.width,
-                self.height,
+                &vp,
             );
 
             // Present

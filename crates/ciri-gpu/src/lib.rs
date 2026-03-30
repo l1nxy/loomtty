@@ -19,6 +19,14 @@ pub mod dx;
 
 use anyhow::Result;
 use ciri_config::config::RenderConfig;
+
+/// Viewport dimensions used by render functions.
+pub struct ViewportDims {
+    pub width: f32,
+    pub height: f32,
+    pub width_px: u32,
+    pub height_px: u32,
+}
 use ciri_render::FrameScene;
 use ciri_render::glyph_cache::GlyphCache;
 use std::sync::Arc;
@@ -250,63 +258,24 @@ impl Renderer {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn create_atlas(
         &mut self,
-        font_size_pt: f32,
-        dpi_scale: f64,
-        family_name: &str,
-        primary_font_path: Option<(String, u32)>,
-        emoji_font_path: Option<(String, u32)>,
-        emoji_font_id: Option<fontdb::ID>,
-        cjk_font_path: Option<(String, u32)>,
-        cjk_font_id: Option<fontdb::ID>,
-        render_config: &RenderConfig,
+        params: &ciri_render::glyph_cache::FontInitParams,
     ) -> (GlyphCache, GlyphAtlasGpu) {
         match self {
             #[cfg(feature = "blade")]
             Renderer::Blade(r) => {
-                let (cache, atlas) = r.create_atlas(
-                    font_size_pt,
-                    dpi_scale,
-                    family_name,
-                    primary_font_path,
-                    emoji_font_path,
-                    emoji_font_id,
-                    cjk_font_path,
-                    cjk_font_id,
-                    render_config,
-                );
+                let (cache, atlas) = r.create_atlas(params);
                 (cache, GlyphAtlasGpu::Blade(atlas))
             }
             #[cfg(feature = "gl")]
             Renderer::Gl(r) => {
-                let (cache, atlas) = r.create_atlas(
-                    font_size_pt,
-                    dpi_scale,
-                    family_name,
-                    primary_font_path,
-                    emoji_font_path,
-                    emoji_font_id,
-                    cjk_font_path,
-                    cjk_font_id,
-                    render_config,
-                );
+                let (cache, atlas) = r.create_atlas(params);
                 (cache, GlyphAtlasGpu::Gl(atlas))
             }
             #[cfg(all(feature = "dx", windows))]
             Renderer::Dx(r) => {
-                let (cache, atlas) = r.create_atlas(
-                    font_size_pt,
-                    dpi_scale,
-                    family_name,
-                    primary_font_path,
-                    emoji_font_path,
-                    emoji_font_id,
-                    cjk_font_path,
-                    cjk_font_id,
-                    render_config,
-                );
+                let (cache, atlas) = r.create_atlas(params);
                 (cache, GlyphAtlasGpu::Dx(atlas))
             }
         }
@@ -432,17 +401,19 @@ mod tests {
     #[test]
     fn draw_frame_backend_mismatch_is_safe() {
         let (mut renderer, mut atlas) = backend_mismatch_renderer_and_atlas();
-        let mut cache = ciri_render::glyph_cache::GlyphCache::new(
-            32.0,
-            1.0,
-            "monospace",
-            None,
-            None,
-            None,
-            None,
-            None,
-            &ciri_config::config::RenderConfig::default(),
-        );
+        let render_config = ciri_config::config::RenderConfig::default();
+        let mut cache =
+            ciri_render::glyph_cache::GlyphCache::new(&ciri_render::glyph_cache::FontInitParams {
+                font_size_pt: 32.0,
+                dpi_scale: 1.0,
+                family_name: "monospace",
+                primary_font_path: None,
+                emoji_font_path: None,
+                emoji_font_id: None,
+                cjk_font_path: None,
+                cjk_font_id: None,
+                render_config: &render_config,
+            });
         let scene = ciri_render::FrameScene {
             clear_color: [0.0, 0.0, 0.0, 1.0],
             bg_rects: &[],

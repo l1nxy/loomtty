@@ -29,24 +29,26 @@ pub(super) fn precompute_row_shaping(
     fid: fontdb::ID,
     face: &rustybuzz::Face,
 ) -> RowLigatureData {
-    // TODO: refactor ligature run params into a struct
-    #[allow(clippy::too_many_arguments)]
+    struct LigatureRun<'a> {
+        start: Option<usize>,
+        text: &'a str,
+        style: FontStyle,
+        fg: [f32; 4],
+    }
+
     fn flush_ligature_run(
         shaper: &TextShaper,
         face: &rustybuzz::Face,
         fid: fontdb::ID,
         cols_usize: usize,
-        run_start: Option<usize>,
-        run_text: &str,
-        run_style: FontStyle,
-        run_fg: [f32; 4],
+        run: &LigatureRun<'_>,
         skip_cols: &mut [bool],
         ligature_glyphs: &mut Vec<(usize, u32, fontdb::ID, FontStyle, [f32; 4])>,
     ) {
-        if let Some(start) = run_start
-            && run_text.len() >= 2
+        if let Some(start) = run.start
+            && run.text.len() >= 2
         {
-            for lig in shaper.detect_ligatures_with_face(run_text, face, fid) {
+            for lig in shaper.detect_ligatures_with_face(run.text, face, fid) {
                 for k in 1..lig.char_count {
                     let c = start + lig.start_col + k;
                     if c < cols_usize {
@@ -57,8 +59,8 @@ pub(super) fn precompute_row_shaping(
                     start + lig.start_col,
                     lig.glyph_id,
                     lig.font_id,
-                    run_style,
-                    run_fg,
+                    run.style,
+                    run.fg,
                 ));
             }
         }
@@ -98,10 +100,12 @@ pub(super) fn precompute_row_shaping(
                 face,
                 fid,
                 cols_usize,
-                run_start,
-                &run_text,
-                run_style,
-                run_fg,
+                &LigatureRun {
+                    start: run_start,
+                    text: &run_text,
+                    style: run_style,
+                    fg: run_fg,
+                },
                 &mut skip_cols,
                 &mut ligature_glyphs,
             );
@@ -116,10 +120,12 @@ pub(super) fn precompute_row_shaping(
                 face,
                 fid,
                 cols_usize,
-                run_start,
-                &run_text,
-                run_style,
-                run_fg,
+                &LigatureRun {
+                    start: run_start,
+                    text: &run_text,
+                    style: run_style,
+                    fg: run_fg,
+                },
                 &mut skip_cols,
                 &mut ligature_glyphs,
             );

@@ -26,6 +26,21 @@ use crossfont::{FontDesc, GlyphKey, Rasterize, Rasterizer, Size, Slant, Style, W
 use freetype::Library as FtLibrary;
 use std::collections::HashMap;
 
+// ─── Font init params ───────────────────────────────────────────────
+
+/// Parameters for initializing the glyph cache and font pipeline.
+pub struct FontInitParams<'a> {
+    pub font_size_pt: f32,
+    pub dpi_scale: f64,
+    pub family_name: &'a str,
+    pub primary_font_path: Option<(String, u32)>,
+    pub emoji_font_path: Option<(String, u32)>,
+    pub emoji_font_id: Option<fontdb::ID>,
+    pub cjk_font_path: Option<(String, u32)>,
+    pub cjk_font_id: Option<fontdb::ID>,
+    pub render_config: &'a RenderConfig,
+}
+
 // ─── Glyph cache (CPU) ──────────────────────────────────────────────
 
 /// CPU-side glyph cache: rasterization, packing, and caching.
@@ -75,30 +90,18 @@ impl GlyphCache {
     ///
     /// `primary_font_path` is the file path + face index for the thin FreeType
     /// path used by `ensure_glyph_id()`. Obtained from `TextShaper::primary_font_path()`.
-    // TODO: refactor font init params into a struct
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        font_size_pt: f32,
-        dpi_scale: f64,
-        family_name: &str,
-        primary_font_path: Option<(String, u32)>,
-        emoji_font_path: Option<(String, u32)>,
-        emoji_font_id: Option<fontdb::ID>,
-        cjk_font_path: Option<(String, u32)>,
-        cjk_font_id: Option<fontdb::ID>,
-        render_config: &RenderConfig,
-    ) -> Self {
-        let atlas_size = render_config.atlas_size;
-        let max_instances = render_config.max_glyph_instances;
+    pub fn new(params: &FontInitParams) -> Self {
+        let atlas_size = params.render_config.atlas_size;
+        let max_instances = params.render_config.max_glyph_instances;
 
         // ── Crossfont setup ──
         let mut rasterizer = Rasterizer::new().expect("crossfont init failed");
         // Convert point size to pixels: pt × (96 × scale) / 72, then use from_px
-        let pixel_size = font_size_pt * (96.0 * dpi_scale as f32) / 72.0;
+        let pixel_size = params.font_size_pt * (96.0 * params.dpi_scale as f32) / 72.0;
         let font_size = Size::from_px(pixel_size);
 
         let regular_desc = FontDesc::new(
-            family_name,
+            params.family_name,
             Style::Description {
                 slant: Slant::Normal,
                 weight: Weight::Normal,
@@ -109,7 +112,7 @@ impl GlyphCache {
             .or_else(|e| {
                 log::warn!(
                     "font '{}' not found ({:?}), trying monospace fallback",
-                    family_name,
+                    params.family_name,
                     e
                 );
                 rasterizer.load_font(
@@ -128,7 +131,7 @@ impl GlyphCache {
         let bold_key = rasterizer
             .load_font(
                 &FontDesc::new(
-                    family_name,
+                    params.family_name,
                     Style::Description {
                         slant: Slant::Normal,
                         weight: Weight::Bold,
@@ -141,7 +144,7 @@ impl GlyphCache {
         let italic_key = rasterizer
             .load_font(
                 &FontDesc::new(
-                    family_name,
+                    params.family_name,
                     Style::Description {
                         slant: Slant::Italic,
                         weight: Weight::Normal,
@@ -154,7 +157,7 @@ impl GlyphCache {
         let bold_italic_key = rasterizer
             .load_font(
                 &FontDesc::new(
-                    family_name,
+                    params.family_name,
                     Style::Description {
                         slant: Slant::Italic,
                         weight: Weight::Bold,
@@ -179,32 +182,34 @@ impl GlyphCache {
 
         // ── Thin FreeType path for glyph-ID rendering ──
         let ft_library = FtLibrary::init().expect("FreeType init failed");
-        let ft_pixel_size = font_size_pt * (96.0 * dpi_scale as f32) / 72.0;
-        let mut ft_face = primary_font_path.and_then(|(path, index)| {
-            match ft_library.new_face(&path, index as isize) {
-                Ok(face) => {
-                    log::info!("FreeType face loaded for glyph-ID path: {path}");
-                    Some(face)
+        let ft_pixel_size = params.font_size_pt * (96.0 * params.dpi_scale as f32) / 72.0;
+        let mut ft_face =
+            params.primary_font_path.clone().and_then(|(path, index)| {
+                match ft_library.new_face(&path, index as isize) {
+                    Ok(face) => {
+                        log::info!("FreeType face loaded for glyph-ID path: {path}");
+                        Some(face)
+                    }
+                    Err(e) => {
+                        log::warn!("failed to load FreeType face {path}: {e:?}");
+                        None
+                    }
                 }
-                Err(e) => {
-                    log::warn!("failed to load FreeType face {path}: {e:?}");
-                    None
+            });
+        let emoji_ft_face =
+            params.emoji_font_path.clone().and_then(|(path, index)| {
+                match ft_library.new_face(&path, index as isize) {
+                    Ok(face) => {
+                        log::info!("FreeType emoji face loaded: {path}");
+                        Some(face)
+                    }
+                    Err(e) => {
+                        log::warn!("failed to load emoji FreeType face {path}: {e:?}");
+                        None
+                    }
                 }
-            }
-        });
-        let emoji_ft_face = emoji_font_path.and_then(|(path, index)| {
-            match ft_library.new_face(&path, index as isize) {
-                Ok(face) => {
-                    log::info!("FreeType emoji face loaded: {path}");
-                    Some(face)
-                }
-                Err(e) => {
-                    log::warn!("failed to load emoji FreeType face {path}: {e:?}");
-                    None
-                }
-            }
-        });
-        let cjk_ft_face = cjk_font_path.and_then(|(path, index)| {
+            });
+        let cjk_ft_face = params.cjk_font_path.clone().and_then(|(path, index)| {
             match ft_library.new_face(&path, index as isize) {
                 Ok(face) => {
                     log::info!("FreeType CJK face loaded: {path}");
@@ -260,9 +265,9 @@ impl GlyphCache {
             _ft_library: ft_library,
             ft_face,
             emoji_ft_face,
-            emoji_font_id,
+            emoji_font_id: params.emoji_font_id,
             cjk_ft_face,
-            cjk_font_id,
+            cjk_font_id: params.cjk_font_id,
             ft_pixel_size,
             cjk_pixel_size,
             cell_width,
@@ -429,17 +434,17 @@ mod tests {
     fn test_cache(atlas_size: u32) -> GlyphCache {
         let mut config = CiriConfig::default();
         config.render.atlas_size = atlas_size;
-        GlyphCache::new(
-            config.font.size,
-            1.0,
-            &config.font.family,
-            None,
-            None,
-            None,
-            None,
-            None,
-            &config.render,
-        )
+        GlyphCache::new(&FontInitParams {
+            font_size_pt: config.font.size,
+            dpi_scale: 1.0,
+            family_name: &config.font.family,
+            primary_font_path: None,
+            emoji_font_path: None,
+            emoji_font_id: None,
+            cjk_font_path: None,
+            cjk_font_id: None,
+            render_config: &config.render,
+        })
     }
 
     #[test]

@@ -40,20 +40,25 @@ struct GlAtlasLayer {
     max_instances: usize,
 }
 
+struct GlAtlasLayerConfig<'a> {
+    atlas_size: u32,
+    max_instances: usize,
+    internal_format: u32,
+    format: u32,
+    vs_src: &'a str,
+    fs_src: &'a str,
+    bpp: u32,
+    label: &'a str,
+}
+
 impl GlAtlasLayer {
-    #[allow(clippy::too_many_arguments)]
-    unsafe fn new(
-        gl: &glow::Context,
-        atlas_size: u32,
-        max_instances: usize,
-        internal_format: u32,
-        format: u32,
-        vs_src: &str,
-        fs_src: &str,
-        bpp: u32,
-        label: &str,
-    ) -> Self {
-        let program = compile_program(gl, vs_src, fs_src, label);
+    unsafe fn new(gl: &glow::Context, cfg: &GlAtlasLayerConfig<'_>) -> Self {
+        let atlas_size = cfg.atlas_size;
+        let max_instances = cfg.max_instances;
+        let internal_format = cfg.internal_format;
+        let format = cfg.format;
+        let bpp = cfg.bpp;
+        let program = compile_program(gl, cfg.vs_src, cfg.fs_src, cfg.label);
         let loc_viewport = gl
             .get_uniform_location(program, "u_viewport")
             .expect("u_viewport uniform not found");
@@ -171,15 +176,11 @@ impl GlAtlasLayer {
 
     /// Upload glyph instances and render scissored pane batches only.
     /// Data remains in the VBO for a subsequent `render_overlay` call.
-    #[allow(clippy::too_many_arguments)]
     unsafe fn render_pane_glyphs(
         &self,
         gl: &glow::Context,
         instances: &[GlyphInstance],
-        viewport_w: f32,
-        viewport_h: f32,
-        _viewport_w_px: u32,
-        viewport_h_px: u32,
+        vp: &crate::ViewportDims,
         batches: &[ScissoredRange],
     ) {
         if instances.is_empty() {
@@ -189,7 +190,7 @@ impl GlAtlasLayer {
         let count = instances.len().min(self.max_instances);
 
         gl.use_program(Some(self.program));
-        gl.uniform_2_f32(Some(&self.loc_viewport), viewport_w, viewport_h);
+        gl.uniform_2_f32(Some(&self.loc_viewport), vp.width, vp.height);
 
         gl.active_texture(glow::TEXTURE0);
         gl.bind_texture(glow::TEXTURE_2D, Some(self.texture));
@@ -208,7 +209,7 @@ impl GlAtlasLayer {
             if start >= end || batch.w == 0 || batch.h == 0 {
                 continue;
             }
-            let sy = viewport_h_px.saturating_sub(batch.y + batch.h);
+            let sy = vp.height_px.saturating_sub(batch.y + batch.h);
             gl.scissor(batch.x as i32, sy as i32, batch.w as i32, batch.h as i32);
 
             let base_offset = start * std::mem::size_of::<GlyphInstance>();
@@ -223,16 +224,12 @@ impl GlAtlasLayer {
     }
 
     /// Render overlay glyphs (data already uploaded by `render_pane_glyphs`).
-    #[allow(clippy::too_many_arguments)]
     unsafe fn render_overlay_glyphs(
         &self,
         gl: &glow::Context,
         instances: &[GlyphInstance],
         overlay_start: usize,
-        viewport_w: f32,
-        viewport_h: f32,
-        viewport_w_px: u32,
-        viewport_h_px: u32,
+        vp: &crate::ViewportDims,
     ) {
         if instances.is_empty() {
             return;
@@ -244,7 +241,7 @@ impl GlAtlasLayer {
         }
 
         gl.use_program(Some(self.program));
-        gl.uniform_2_f32(Some(&self.loc_viewport), viewport_w, viewport_h);
+        gl.uniform_2_f32(Some(&self.loc_viewport), vp.width, vp.height);
 
         gl.active_texture(glow::TEXTURE0);
         gl.bind_texture(glow::TEXTURE_2D, Some(self.texture));
@@ -254,12 +251,7 @@ impl GlAtlasLayer {
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instance_vbo));
 
         gl.enable(glow::SCISSOR_TEST);
-        gl.scissor(
-            0,
-            0,
-            viewport_w_px.max(1) as i32,
-            viewport_h_px.max(1) as i32,
-        );
+        gl.scissor(0, 0, vp.width_px.max(1) as i32, vp.height_px.max(1) as i32);
         let base_offset = overlay_start * std::mem::size_of::<GlyphInstance>();
         setup_glyph_vertex_attribs_offset(gl, base_offset as i32);
         gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, (count - overlay_start) as i32);
@@ -397,25 +389,29 @@ impl GlyphAtlasGpu {
     unsafe fn new(gl: &glow::Context, atlas_size: u32, max_instances: usize) -> Self {
         let alpha = GlAtlasLayer::new(
             gl,
-            atlas_size,
-            max_instances,
-            glow::R8,
-            glow::RED,
-            GLYPH_VS,
-            ALPHA_FS,
-            1,
-            "alpha_atlas",
+            &GlAtlasLayerConfig {
+                atlas_size,
+                max_instances,
+                internal_format: glow::R8,
+                format: glow::RED,
+                vs_src: GLYPH_VS,
+                fs_src: ALPHA_FS,
+                bpp: 1,
+                label: "alpha_atlas",
+            },
         );
         let color = GlAtlasLayer::new(
             gl,
-            atlas_size,
-            max_instances,
-            glow::RGBA8,
-            glow::RGBA,
-            GLYPH_VS,
-            COLOR_FS,
-            4,
-            "color_atlas",
+            &GlAtlasLayerConfig {
+                atlas_size,
+                max_instances,
+                internal_format: glow::RGBA8,
+                format: glow::RGBA,
+                vs_src: GLYPH_VS,
+                fs_src: COLOR_FS,
+                bpp: 4,
+                label: "color_atlas",
+            },
         );
         GlyphAtlasGpu { alpha, color }
     }
@@ -575,30 +571,11 @@ impl Renderer {
         (self.width, self.height)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn create_atlas(
         &mut self,
-        font_size_pt: f32,
-        dpi_scale: f64,
-        family_name: &str,
-        primary_font_path: Option<(String, u32)>,
-        emoji_font_path: Option<(String, u32)>,
-        emoji_font_id: Option<fontdb::ID>,
-        cjk_font_path: Option<(String, u32)>,
-        cjk_font_id: Option<fontdb::ID>,
-        render_config: &RenderConfig,
+        params: &ciri_render::glyph_cache::FontInitParams,
     ) -> (GlyphCache, GlyphAtlasGpu) {
-        let cache = GlyphCache::new(
-            font_size_pt,
-            dpi_scale,
-            family_name,
-            primary_font_path,
-            emoji_font_path,
-            emoji_font_id,
-            cjk_font_path,
-            cjk_font_id,
-            render_config,
-        );
+        let cache = GlyphCache::new(params);
         let atlas_gpu =
             unsafe { GlyphAtlasGpu::new(&self.gl, cache.atlas_size, cache.max_instances) };
         (cache, atlas_gpu)
@@ -656,25 +633,23 @@ impl Renderer {
             let pane_bg_count = overlay_bg_idx.min(total_bg);
             self.rects.draw_range(&self.gl, 0, pane_bg_count, vw, vh);
 
+            let vp = crate::ViewportDims {
+                width: vw,
+                height: vh,
+                width_px: self.width,
+                height_px: self.height,
+            };
+
             // 3. Pane alpha glyphs (scissored) — upload + draw batches.
-            atlas_gpu.alpha.render_pane_glyphs(
-                &self.gl,
-                scene.glyphs,
-                vw,
-                vh,
-                self.width,
-                self.height,
-                scene.glyph_batches,
-            );
+            atlas_gpu
+                .alpha
+                .render_pane_glyphs(&self.gl, scene.glyphs, &vp, scene.glyph_batches);
 
             // 4. Pane color emoji (scissored).
             atlas_gpu.color.render_pane_glyphs(
                 &self.gl,
                 scene.color_glyphs,
-                vw,
-                vh,
-                self.width,
-                self.height,
+                &vp,
                 scene.color_glyph_batches,
             );
 
@@ -691,10 +666,7 @@ impl Renderer {
                 &self.gl,
                 scene.glyphs,
                 scene.pane_glyph_end,
-                vw,
-                vh,
-                self.width,
-                self.height,
+                &vp,
             );
 
             // 7. Overlay color emoji.
@@ -702,10 +674,7 @@ impl Renderer {
                 &self.gl,
                 scene.color_glyphs,
                 scene.pane_color_glyph_end,
-                vw,
-                vh,
-                self.width,
-                self.height,
+                &vp,
             );
         }
 

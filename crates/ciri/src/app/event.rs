@@ -43,17 +43,18 @@ impl ApplicationHandler for App {
                 if let Some(renderer) = &mut self.renderer {
                     let shaper =
                         ciri_render::shaper::TextShaper::new(&self.core.config.font.family);
-                    let (cache, atlas_gpu) = renderer.create_atlas(
-                        self.core.config.font.size,
-                        new_dpi,
-                        &self.core.config.font.family,
-                        shaper.primary_font_path(),
-                        shaper.emoji_font_path(),
-                        shaper.emoji_font_id(),
-                        shaper.cjk_font_path(),
-                        shaper.cjk_font_id(),
-                        &self.core.config.render,
-                    );
+                    let (cache, atlas_gpu) =
+                        renderer.create_atlas(&ciri_render::glyph_cache::FontInitParams {
+                            font_size_pt: self.core.config.font.size,
+                            dpi_scale: new_dpi,
+                            family_name: &self.core.config.font.family,
+                            primary_font_path: shaper.primary_font_path(),
+                            emoji_font_path: shaper.emoji_font_path(),
+                            emoji_font_id: shaper.emoji_font_id(),
+                            cjk_font_path: shaper.cjk_font_path(),
+                            cjk_font_id: shaper.cjk_font_id(),
+                            render_config: &self.core.config.render,
+                        });
                     log::info!(
                         "DPI changed: scale={:.2} cell={:.1}x{:.1}",
                         new_dpi,
@@ -244,17 +245,17 @@ impl ApplicationHandler for App {
             .expect("renderer init failed");
 
         let shaper = ciri_render::shaper::TextShaper::new(&self.core.config.font.family);
-        let (cache, atlas_gpu) = renderer.create_atlas(
-            self.core.config.font.size,
+        let (cache, atlas_gpu) = renderer.create_atlas(&ciri_render::glyph_cache::FontInitParams {
+            font_size_pt: self.core.config.font.size,
             dpi_scale,
-            &self.core.config.font.family,
-            shaper.primary_font_path(),
-            shaper.emoji_font_path(),
-            shaper.emoji_font_id(),
-            shaper.cjk_font_path(),
-            shaper.cjk_font_id(),
-            &self.core.config.render,
-        );
+            family_name: &self.core.config.font.family,
+            primary_font_path: shaper.primary_font_path(),
+            emoji_font_path: shaper.emoji_font_path(),
+            emoji_font_id: shaper.emoji_font_id(),
+            cjk_font_path: shaper.cjk_font_path(),
+            cjk_font_id: shaper.cjk_font_id(),
+            render_config: &self.core.config.render,
+        });
 
         let (w, h) = renderer.surface_size();
         let bar_padding = self

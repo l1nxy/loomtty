@@ -185,19 +185,27 @@ struct AtlasLayer {
     atlas_size: u32,
 }
 
+struct AtlasLayerConfig<'a> {
+    surface_format: gpu::TextureFormat,
+    atlas_size: u32,
+    max_instances: usize,
+    tex_format: gpu::TextureFormat,
+    filter: gpu::FilterMode,
+    shader_source: &'a str,
+    blend: gpu::BlendState,
+    label: &'a str,
+}
+
 impl AtlasLayer {
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        context: &gpu::Context,
-        surface_format: gpu::TextureFormat,
-        atlas_size: u32,
-        max_instances: usize,
-        tex_format: gpu::TextureFormat,
-        filter: gpu::FilterMode,
-        shader_source: &str,
-        blend: gpu::BlendState,
-        label: &str,
-    ) -> Self {
+    fn new(context: &gpu::Context, cfg: &AtlasLayerConfig<'_>) -> Self {
+        let atlas_size = cfg.atlas_size;
+        let max_instances = cfg.max_instances;
+        let tex_format = cfg.tex_format;
+        let filter = cfg.filter;
+        let shader_source = cfg.shader_source;
+        let label = cfg.label;
+        let surface_format = cfg.surface_format;
+        let blend = cfg.blend;
         let bpp = match tex_format {
             gpu::TextureFormat::R8Unorm => 1,
             _ => 4,
@@ -513,34 +521,38 @@ impl GlyphAtlasGpu {
         let alpha_shader_src = format!("{VERTEX_SHADER}\n{ALPHA_FRAGMENT}");
         let alpha = AtlasLayer::new(
             context,
-            surface_format,
-            atlas_size,
-            max_instances,
-            gpu::TextureFormat::R8Unorm,
-            gpu::FilterMode::Linear,
-            &alpha_shader_src,
-            gpu::BlendState {
-                color: gpu::BlendComponent {
-                    src_factor: gpu::BlendFactor::One,
-                    dst_factor: gpu::BlendFactor::OneMinusSrcAlpha,
-                    operation: gpu::BlendOperation::Add,
+            &AtlasLayerConfig {
+                surface_format,
+                atlas_size,
+                max_instances,
+                tex_format: gpu::TextureFormat::R8Unorm,
+                filter: gpu::FilterMode::Linear,
+                shader_source: &alpha_shader_src,
+                blend: gpu::BlendState {
+                    color: gpu::BlendComponent {
+                        src_factor: gpu::BlendFactor::One,
+                        dst_factor: gpu::BlendFactor::OneMinusSrcAlpha,
+                        operation: gpu::BlendOperation::Add,
+                    },
+                    alpha: gpu::BlendComponent::OVER,
                 },
-                alpha: gpu::BlendComponent::OVER,
+                label: "glyph_atlas",
             },
-            "glyph_atlas",
         );
 
         let color_shader_src = format!("{VERTEX_SHADER}\n{COLOR_FRAGMENT}");
         let color = AtlasLayer::new(
             context,
-            surface_format,
-            atlas_size,
-            max_instances,
-            gpu::TextureFormat::Rgba8Unorm,
-            gpu::FilterMode::Linear,
-            &color_shader_src,
-            gpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
-            "color_emoji_atlas",
+            &AtlasLayerConfig {
+                surface_format,
+                atlas_size,
+                max_instances,
+                tex_format: gpu::TextureFormat::Rgba8Unorm,
+                filter: gpu::FilterMode::Linear,
+                shader_source: &color_shader_src,
+                blend: gpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+                label: "color_emoji_atlas",
+            },
         );
 
         GlyphAtlasGpu {
@@ -797,30 +809,11 @@ impl Renderer {
     // ─── Atlas init ──────────────────────────────────────────────────
 
     /// Create a new GlyphCache + GlyphAtlasGpu bound to this renderer's GPU context.
-    #[allow(clippy::too_many_arguments)]
     pub fn create_atlas(
         &mut self,
-        font_size_pt: f32,
-        dpi_scale: f64,
-        family_name: &str,
-        primary_font_path: Option<(String, u32)>,
-        emoji_font_path: Option<(String, u32)>,
-        emoji_font_id: Option<fontdb::ID>,
-        cjk_font_path: Option<(String, u32)>,
-        cjk_font_id: Option<fontdb::ID>,
-        render_config: &RenderConfig,
+        params: &ciri_render::glyph_cache::FontInitParams,
     ) -> (GlyphCache, GlyphAtlasGpu) {
-        let cache = GlyphCache::new(
-            font_size_pt,
-            dpi_scale,
-            family_name,
-            primary_font_path,
-            emoji_font_path,
-            emoji_font_id,
-            cjk_font_path,
-            cjk_font_id,
-            render_config,
-        );
+        let cache = GlyphCache::new(params);
 
         let atlas_gpu = GlyphAtlasGpu::new(
             &self.context,

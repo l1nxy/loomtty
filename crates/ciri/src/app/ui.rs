@@ -4,7 +4,7 @@ use ciri_render::glyph_cache::{GlyphCache, GlyphInstance};
 use ciri_render::rect::Rect;
 use winit::window::CursorIcon;
 
-use super::status_bar::emit_status_text;
+use super::status_bar::{TextEmitParams, emit_status_text};
 use super::top_bar::{PaneTabLayout, TopBarLayout};
 use super::{App, PaletteToggleLayout, TopBarHoverRegion};
 
@@ -448,11 +448,13 @@ impl App {
         emit_status_text(
             scene.atlas,
             close_label,
-            close_text_x,
-            text_y,
-            cx.cell_w,
-            cx.baseline,
-            [1.0, 0.6, 0.6, 1.0],
+            &TextEmitParams {
+                x_start: close_text_x,
+                y: text_y,
+                cell_width: cx.cell_w,
+                baseline: cx.baseline,
+                color: [1.0, 0.6, 0.6, 1.0],
+            },
             scene.glyphs,
         );
 
@@ -470,11 +472,13 @@ impl App {
         emit_status_text(
             scene.atlas,
             focus_label,
-            focus_text_x,
-            text_y,
-            cx.cell_w,
-            cx.baseline,
-            [1.0, 1.0, 1.0, 0.9],
+            &TextEmitParams {
+                x_start: focus_text_x,
+                y: text_y,
+                cell_width: cx.cell_w,
+                baseline: cx.baseline,
+                color: [1.0, 1.0, 1.0, 0.9],
+            },
             scene.glyphs,
         );
     }
@@ -971,11 +975,13 @@ impl UiComponent for TopBarComponent {
         emit_status_text(
             scene.atlas,
             &self.session_text,
-            0.0,
-            text_y,
-            cx.cell_w,
-            cx.baseline,
-            session_color,
+            &TextEmitParams {
+                x_start: 0.0,
+                y: text_y,
+                cell_width: cx.cell_w,
+                baseline: cx.baseline,
+                color: session_color,
+            },
             scene.glyphs,
         );
 
@@ -984,11 +990,13 @@ impl UiComponent for TopBarComponent {
             emit_status_text(
                 scene.atlas,
                 &self.workspace_label,
-                self.layout.workspace_x,
-                text_y,
-                cx.cell_w,
-                cx.baseline,
-                accent,
+                &TextEmitParams {
+                    x_start: self.layout.workspace_x,
+                    y: text_y,
+                    cell_width: cx.cell_w,
+                    baseline: cx.baseline,
+                    color: accent,
+                },
                 scene.glyphs,
             );
         }
@@ -1035,11 +1043,13 @@ impl UiComponent for TopBarComponent {
                 emit_status_text(
                     scene.atlas,
                     &label,
-                    label_x,
-                    text_y,
-                    cx.cell_w,
-                    cx.baseline,
-                    tab_text_color,
+                    &TextEmitParams {
+                        x_start: label_x,
+                        y: text_y,
+                        cell_width: cx.cell_w,
+                        baseline: cx.baseline,
+                        color: tab_text_color,
+                    },
                     scene.glyphs,
                 );
             }
@@ -1083,11 +1093,13 @@ impl UiComponent for TopBarComponent {
         emit_status_text(
             scene.atlas,
             mode_str,
-            rx,
-            text_y,
-            cx.cell_w,
-            cx.baseline,
-            self.mode_color,
+            &TextEmitParams {
+                x_start: rx,
+                y: text_y,
+                cell_width: cx.cell_w,
+                baseline: cx.baseline,
+                color: self.mode_color,
+            },
             scene.glyphs,
         );
 
@@ -1246,11 +1258,13 @@ impl UiComponent for PaletteComponent {
         emit_status_text(
             scene.atlas,
             &input_text,
-            self.layout.text_x,
-            self.layout.text_y,
-            cx.cell_w,
-            cx.baseline,
-            text_color,
+            &TextEmitParams {
+                x_start: self.layout.text_x,
+                y: self.layout.text_y,
+                cell_width: cx.cell_w,
+                baseline: cx.baseline,
+                color: text_color,
+            },
             scene.glyphs,
         );
 
@@ -1275,11 +1289,13 @@ impl UiComponent for PaletteComponent {
             emit_status_text(
                 scene.atlas,
                 toggle_label,
-                toggle.label_x,
-                self.layout.text_y,
-                cx.cell_w,
-                cx.baseline,
-                text_color,
+                &TextEmitParams {
+                    x_start: toggle.label_x,
+                    y: self.layout.text_y,
+                    cell_width: cx.cell_w,
+                    baseline: cx.baseline,
+                    color: text_color,
+                },
                 scene.glyphs,
             );
         }
@@ -1342,11 +1358,13 @@ impl UiComponent for PaletteComponent {
             emit_status_text(
                 scene.atlas,
                 &row.label,
-                self.layout.text_x,
-                row_y + 2.0,
-                cx.cell_w,
-                cx.baseline,
-                row_color,
+                &TextEmitParams {
+                    x_start: self.layout.text_x,
+                    y: row_y + 2.0,
+                    cell_width: cx.cell_w,
+                    baseline: cx.baseline,
+                    color: row_color,
+                },
                 scene.glyphs,
             );
         }
@@ -1395,11 +1413,13 @@ impl UiComponent for PaletteComponent {
         emit_status_text(
             scene.atlas,
             &footer,
-            footer_x,
-            footer_y,
-            cx.cell_w,
-            cx.baseline,
-            dim_color,
+            &TextEmitParams {
+                x_start: footer_x,
+                y: footer_y,
+                cell_width: cx.cell_w,
+                baseline: cx.baseline,
+                color: dim_color,
+            },
             scene.glyphs,
         );
 
@@ -1407,11 +1427,13 @@ impl UiComponent for PaletteComponent {
             emit_status_text(
                 scene.atlas,
                 "No matching commands",
-                self.layout.text_x,
-                self.layout.sep_y + 4.0,
-                cx.cell_w,
-                cx.baseline,
-                dim_color,
+                &TextEmitParams {
+                    x_start: self.layout.text_x,
+                    y: self.layout.sep_y + 4.0,
+                    cell_width: cx.cell_w,
+                    baseline: cx.baseline,
+                    color: dim_color,
+                },
                 scene.glyphs,
             );
         }
@@ -1422,11 +1444,13 @@ impl UiComponent for PaletteComponent {
             emit_status_text(
                 scene.atlas,
                 loading,
-                self.layout.text_x,
-                loading_y,
-                cx.cell_w,
-                cx.baseline,
-                [accent[0], accent[1], accent[2], 0.7],
+                &TextEmitParams {
+                    x_start: self.layout.text_x,
+                    y: loading_y,
+                    cell_width: cx.cell_w,
+                    baseline: cx.baseline,
+                    color: [accent[0], accent[1], accent[2], 0.7],
+                },
                 scene.glyphs,
             );
         }
@@ -1437,11 +1461,13 @@ impl UiComponent for PaletteComponent {
             emit_status_text(
                 scene.atlas,
                 error,
-                self.layout.text_x,
-                error_y,
-                cx.cell_w,
-                cx.baseline,
-                [1.0, 0.4, 0.3, 0.9],
+                &TextEmitParams {
+                    x_start: self.layout.text_x,
+                    y: error_y,
+                    cell_width: cx.cell_w,
+                    baseline: cx.baseline,
+                    color: [1.0, 0.4, 0.3, 0.9],
+                },
                 scene.glyphs,
             );
         }
@@ -1575,11 +1601,13 @@ impl UiComponent for ContextMenuComponent {
             emit_status_text(
                 scene.atlas,
                 &row.label,
-                self.x + padding,
-                text_y,
-                cx.cell_w,
-                cx.baseline,
-                if row.enabled { fg_color } else { dim_color },
+                &TextEmitParams {
+                    x_start: self.x + padding,
+                    y: text_y,
+                    cell_width: cx.cell_w,
+                    baseline: cx.baseline,
+                    color: if row.enabled { fg_color } else { dim_color },
+                },
                 scene.glyphs,
             );
         }
@@ -1716,11 +1744,13 @@ impl InfoBoxComponent {
         emit_status_text(
             scene.atlas,
             &title_text,
-            self.x + padding,
-            title_y,
-            cx.cell_w,
-            cx.baseline,
-            accent,
+            &TextEmitParams {
+                x_start: self.x + padding,
+                y: title_y,
+                cell_width: cx.cell_w,
+                baseline: cx.baseline,
+                color: accent,
+            },
             scene.glyphs,
         );
 
@@ -1744,11 +1774,13 @@ impl InfoBoxComponent {
             emit_status_text(
                 scene.atlas,
                 key,
-                self.x + padding + key_offset,
-                text_y,
-                cx.cell_w,
-                cx.baseline,
-                accent,
+                &TextEmitParams {
+                    x_start: self.x + padding + key_offset,
+                    y: text_y,
+                    cell_width: cx.cell_w,
+                    baseline: cx.baseline,
+                    color: accent,
+                },
                 scene.glyphs,
             );
 
@@ -1757,11 +1789,13 @@ impl InfoBoxComponent {
             emit_status_text(
                 scene.atlas,
                 desc,
-                desc_x,
-                text_y,
-                cx.cell_w,
-                cx.baseline,
-                if key == "esc" { dim } else { fg },
+                &TextEmitParams {
+                    x_start: desc_x,
+                    y: text_y,
+                    cell_width: cx.cell_w,
+                    baseline: cx.baseline,
+                    color: if key == "esc" { dim } else { fg },
+                },
                 scene.glyphs,
             );
         }
@@ -1905,11 +1939,13 @@ impl HintsBarComponent {
         emit_status_text(
             scene.atlas,
             "\u{25CF}",
-            x,
-            text_y,
-            cx.cell_w,
-            cx.baseline,
-            accent,
+            &TextEmitParams {
+                x_start: x,
+                y: text_y,
+                cell_width: cx.cell_w,
+                baseline: cx.baseline,
+                color: accent,
+            },
             scene.glyphs,
         );
         x += cx.cell_w * 2.0;
@@ -1923,11 +1959,13 @@ impl HintsBarComponent {
         emit_status_text(
             scene.atlas,
             &pane_text,
-            x,
-            text_y,
-            cx.cell_w,
-            cx.baseline,
-            dim,
+            &TextEmitParams {
+                x_start: x,
+                y: text_y,
+                cell_width: cx.cell_w,
+                baseline: cx.baseline,
+                color: dim,
+            },
             scene.glyphs,
         );
         x += pane_text.chars().count() as f32 * cx.cell_w;
@@ -1938,11 +1976,13 @@ impl HintsBarComponent {
             emit_status_text(
                 scene.atlas,
                 sep,
-                x,
-                text_y,
-                cx.cell_w,
-                cx.baseline,
-                dim,
+                &TextEmitParams {
+                    x_start: x,
+                    y: text_y,
+                    cell_width: cx.cell_w,
+                    baseline: cx.baseline,
+                    color: dim,
+                },
                 scene.glyphs,
             );
             x += sep.chars().count() as f32 * cx.cell_w;
@@ -1956,11 +1996,13 @@ impl HintsBarComponent {
             emit_status_text(
                 scene.atlas,
                 &title,
-                x,
-                text_y,
-                cx.cell_w,
-                cx.baseline,
-                fg,
+                &TextEmitParams {
+                    x_start: x,
+                    y: text_y,
+                    cell_width: cx.cell_w,
+                    baseline: cx.baseline,
+                    color: fg,
+                },
                 scene.glyphs,
             );
         }
@@ -1992,11 +2034,13 @@ impl HintsBarComponent {
             emit_status_text(
                 scene.atlas,
                 &item.key,
-                rx,
-                text_y,
-                cx.cell_w,
-                cx.baseline,
-                accent,
+                &TextEmitParams {
+                    x_start: rx,
+                    y: text_y,
+                    cell_width: cx.cell_w,
+                    baseline: cx.baseline,
+                    color: accent,
+                },
                 scene.glyphs,
             );
             rx += item.key.chars().count() as f32 * cx.cell_w;
@@ -2006,11 +2050,13 @@ impl HintsBarComponent {
             emit_status_text(
                 scene.atlas,
                 &label_text,
-                rx,
-                text_y,
-                cx.cell_w,
-                cx.baseline,
-                dim,
+                &TextEmitParams {
+                    x_start: rx,
+                    y: text_y,
+                    cell_width: cx.cell_w,
+                    baseline: cx.baseline,
+                    color: dim,
+                },
                 scene.glyphs,
             );
             rx += label_text.chars().count() as f32 * cx.cell_w;
@@ -2242,22 +2288,26 @@ impl UiComponent for PasteDialogComponent {
         emit_status_text(
             scene.atlas,
             &self.title,
-            text_x,
-            text_y,
-            cx.cell_w,
-            cx.baseline,
-            [0.9, 0.9, 0.9, 1.0],
+            &TextEmitParams {
+                x_start: text_x,
+                y: text_y,
+                cell_width: cx.cell_w,
+                baseline: cx.baseline,
+                color: [0.9, 0.9, 0.9, 1.0],
+            },
             scene.glyphs,
         );
         text_y += cx.cell_h + 12.0;
         emit_status_text(
             scene.atlas,
             "Preview:",
-            text_x,
-            text_y,
-            cx.cell_w,
-            cx.baseline,
-            [0.6, 0.6, 0.6, 1.0],
+            &TextEmitParams {
+                x_start: text_x,
+                y: text_y,
+                cell_width: cx.cell_w,
+                baseline: cx.baseline,
+                color: [0.6, 0.6, 0.6, 1.0],
+            },
             scene.glyphs,
         );
         text_y += cx.cell_h + 4.0;
@@ -2271,11 +2321,13 @@ impl UiComponent for PasteDialogComponent {
         emit_status_text(
             scene.atlas,
             &self.preview,
-            text_x,
-            text_y,
-            cx.cell_w,
-            cx.baseline,
-            [0.6, 0.6, 0.6, 1.0],
+            &TextEmitParams {
+                x_start: text_x,
+                y: text_y,
+                cell_width: cx.cell_w,
+                baseline: cx.baseline,
+                color: [0.6, 0.6, 0.6, 1.0],
+            },
             scene.glyphs,
         );
 
@@ -2297,11 +2349,13 @@ impl UiComponent for PasteDialogComponent {
         emit_status_text(
             scene.atlas,
             "Paste",
-            paste_x + (btn_w - cx.cell_w * 5.0) / 2.0,
-            btn_y + (btn_h - cx.cell_h) / 2.0,
-            cx.cell_w,
-            cx.baseline,
-            [1.0, 1.0, 1.0, 1.0],
+            &TextEmitParams {
+                x_start: paste_x + (btn_w - cx.cell_w * 5.0) / 2.0,
+                y: btn_y + (btn_h - cx.cell_h) / 2.0,
+                cell_width: cx.cell_w,
+                baseline: cx.baseline,
+                color: [1.0, 1.0, 1.0, 1.0],
+            },
             scene.glyphs,
         );
 
@@ -2320,11 +2374,13 @@ impl UiComponent for PasteDialogComponent {
         emit_status_text(
             scene.atlas,
             "Cancel",
-            cancel_x + (btn_w - cx.cell_w * 6.0) / 2.0,
-            btn_y + (btn_h - cx.cell_h) / 2.0,
-            cx.cell_w,
-            cx.baseline,
-            [0.9, 0.9, 0.9, 1.0],
+            &TextEmitParams {
+                x_start: cancel_x + (btn_w - cx.cell_w * 6.0) / 2.0,
+                y: btn_y + (btn_h - cx.cell_h) / 2.0,
+                cell_width: cx.cell_w,
+                baseline: cx.baseline,
+                color: [0.9, 0.9, 0.9, 1.0],
+            },
             scene.glyphs,
         );
     }

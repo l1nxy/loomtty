@@ -357,17 +357,18 @@ impl App {
                     if let Some(renderer) = &mut self.renderer {
                         let shaper =
                             ciri_render::shaper::TextShaper::new(&self.core.config.font.family);
-                        let (cache, atlas_gpu) = renderer.create_atlas(
-                            self.core.config.font.size,
-                            self.dpi_scale,
-                            &self.core.config.font.family,
-                            shaper.primary_font_path(),
-                            shaper.emoji_font_path(),
-                            shaper.emoji_font_id(),
-                            shaper.cjk_font_path(),
-                            shaper.cjk_font_id(),
-                            &self.core.config.render,
-                        );
+                        let (cache, atlas_gpu) =
+                            renderer.create_atlas(&ciri_render::glyph_cache::FontInitParams {
+                                font_size_pt: self.core.config.font.size,
+                                dpi_scale: self.dpi_scale,
+                                family_name: &self.core.config.font.family,
+                                primary_font_path: shaper.primary_font_path(),
+                                emoji_font_path: shaper.emoji_font_path(),
+                                emoji_font_id: shaper.emoji_font_id(),
+                                cjk_font_path: shaper.cjk_font_path(),
+                                cjk_font_id: shaper.cjk_font_id(),
+                                render_config: &self.core.config.render,
+                            });
                         self.glyph_cache = Some(cache);
                         self.glyph_atlas_gpu = Some(atlas_gpu);
                         self.text_shaper = Some(shaper);

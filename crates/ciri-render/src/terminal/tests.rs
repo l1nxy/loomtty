@@ -1,5 +1,5 @@
 use super::*;
-use crate::glyph_cache::GlyphCache;
+use crate::glyph_cache::{FontInitParams, GlyphCache};
 use crate::rect::Rect;
 use crate::shaper::TextShaper;
 use ciri_config::config::CiriConfig;
@@ -40,17 +40,17 @@ fn test_shaper(config: &CiriConfig) -> TextShaper {
 }
 
 fn test_atlas(config: &CiriConfig, shaper: &TextShaper) -> GlyphCache {
-    GlyphCache::new(
-        config.font.size,
-        1.0,
-        &config.font.family,
-        shaper.primary_font_path(),
-        shaper.emoji_font_path(),
-        shaper.emoji_font_id(),
-        shaper.cjk_font_path(),
-        shaper.cjk_font_id(),
-        &config.render,
-    )
+    GlyphCache::new(&FontInitParams {
+        font_size_pt: config.font.size,
+        dpi_scale: 1.0,
+        family_name: &config.font.family,
+        primary_font_path: shaper.primary_font_path(),
+        emoji_font_path: shaper.emoji_font_path(),
+        emoji_font_id: shaper.emoji_font_id(),
+        cjk_font_path: shaper.cjk_font_path(),
+        cjk_font_id: shaper.cjk_font_id(),
+        render_config: &config.render,
+    })
 }
 
 fn test_color_table(config: &CiriConfig) -> ColorTable {

@@ -9,7 +9,15 @@ use ciri_render::terminal;
 use std::time::Instant;
 
 use super::App;
-use super::status_bar::emit_status_text;
+use super::status_bar::{TextEmitParams, emit_status_text};
+
+pub(crate) struct RenderOutput<'a> {
+    pub bg_rects: &'a mut Vec<Rect>,
+    pub glyphs: &'a mut Vec<GlyphInstance>,
+    pub color_glyphs: &'a mut Vec<GlyphInstance>,
+    pub glyph_batches: &'a mut Vec<ScissoredRange>,
+    pub color_glyph_batches: &'a mut Vec<ScissoredRange>,
+}
 
 impl App {
     /// Delegate: snap all column widths.
@@ -32,18 +40,13 @@ impl App {
         self.core.advance_animations(dt)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn build_tiles(
         &mut self,
         tiles: &[(u64, GeoRect, bool)],
         zoom: f32,
         vw: f32,
         vh: f32,
-        bg_rects: &mut Vec<Rect>,
-        glyphs: &mut Vec<GlyphInstance>,
-        color_glyphs: &mut Vec<GlyphInstance>,
-        glyph_batches: &mut Vec<ScissoredRange>,
-        color_glyph_batches: &mut Vec<ScissoredRange>,
+        out: &mut RenderOutput<'_>,
     ) {
         let zoom_threshold = self.core.config.animation.zoom_threshold;
         let padding = self.core.config.appearance.padding;
@@ -92,7 +95,7 @@ impl App {
                             let offset = fr.glow_radius * (layer + 1) as f32 / layers as f32;
                             let alpha =
                                 active_border[3] * (1.0 - layer as f32 / layers as f32) * 0.3;
-                            bg_rects.push(Rect {
+                            out.bg_rects.push(Rect {
                                 x: tr.x - offset,
                                 y: tr.y - offset,
                                 w: tr.w + offset * 2.0,
@@ -105,7 +108,7 @@ impl App {
                                 ],
                             });
                         }
-                        bg_rects.push(Rect {
+                        out.bg_rects.push(Rect {
                             x: tr.x,
                             y: tr.y,
                             w: tr.w,
@@ -117,7 +120,7 @@ impl App {
                         let fr = &self.core.config.appearance.focus_ring;
                         let bw = border_w * zoom;
                         emit_dashed_border(
-                            bg_rects,
+                            out.bg_rects,
                             &tr,
                             bw,
                             fr.dash_length,
@@ -126,7 +129,7 @@ impl App {
                         );
                     }
                     FocusRingStyle::Solid => {
-                        bg_rects.push(Rect {
+                        out.bg_rects.push(Rect {
                             x: tr.x,
                             y: tr.y,
                             w: tr.w,
@@ -136,7 +139,7 @@ impl App {
                     }
                 }
             } else {
-                bg_rects.push(Rect {
+                out.bg_rects.push(Rect {
                     x: tr.x,
                     y: tr.y,
                     w: tr.w,
@@ -144,7 +147,7 @@ impl App {
                     color: inactive_border,
                 });
             }
-            bg_rects.push(Rect {
+            out.bg_rects.push(Rect {
                 x: tr.x + border_w * zoom,
                 y: tr.y + border_w * zoom,
                 w: tr.w - border_w * zoom * 2.0,
@@ -161,7 +164,7 @@ impl App {
                 let hover_border_w = (border_w * zoom).max(1.0);
                 for layer in (1..=2).rev() {
                     let spread = layer as f32 * 2.0 * zoom.max(1.0);
-                    bg_rects.push(Rect {
+                    out.bg_rects.push(Rect {
                         x: tr.x - spread,
                         y: tr.y - spread,
                         w: tr.w + spread * 2.0,
@@ -169,28 +172,28 @@ impl App {
                         color: [accent[0], accent[1], accent[2], 0.08 / layer as f32],
                     });
                 }
-                bg_rects.push(Rect {
+                out.bg_rects.push(Rect {
                     x: tr.x,
                     y: tr.y,
                     w: tr.w,
                     h: hover_border_w,
                     color: [accent[0], accent[1], accent[2], 0.65],
                 });
-                bg_rects.push(Rect {
+                out.bg_rects.push(Rect {
                     x: tr.x,
                     y: tr.y + tr.h - hover_border_w,
                     w: tr.w,
                     h: hover_border_w,
                     color: [accent[0], accent[1], accent[2], 0.65],
                 });
-                bg_rects.push(Rect {
+                out.bg_rects.push(Rect {
                     x: tr.x,
                     y: tr.y,
                     w: hover_border_w,
                     h: tr.h,
                     color: [accent[0], accent[1], accent[2], 0.65],
                 });
-                bg_rects.push(Rect {
+                out.bg_rects.push(Rect {
                     x: tr.x + tr.w - hover_border_w,
                     y: tr.y,
                     w: hover_border_w,
@@ -216,7 +219,7 @@ impl App {
                     r.h * zoom,
                 );
                 if let Some(c) = src.intersection(&tr) {
-                    bg_rects.push(Rect {
+                    out.bg_rects.push(Rect {
                         x: c.x,
                         y: c.y,
                         w: c.w,
@@ -235,7 +238,7 @@ impl App {
                         cursor.h * zoom,
                     );
                     if let Some(c) = src.intersection(&tr) {
-                        bg_rects.push(Rect {
+                        out.bg_rects.push(Rect {
                             x: c.x,
                             y: c.y,
                             w: c.w,
@@ -255,7 +258,7 @@ impl App {
                     sb.h * zoom,
                 );
                 if let Some(c) = src.intersection(&tr) {
-                    bg_rects.push(Rect {
+                    out.bg_rects.push(Rect {
                         x: c.x,
                         y: c.y,
                         w: c.w,
@@ -296,7 +299,7 @@ impl App {
                     let sh = ch * zoom;
                     let src = GeoRect::new(sx, sy, sw, sh);
                     if let Some(c) = src.intersection(&tr) {
-                        bg_rects.push(Rect {
+                        out.bg_rects.push(Rect {
                             x: c.x,
                             y: c.y,
                             w: c.w,
@@ -319,7 +322,7 @@ impl App {
                 let sw = (link.end.0 - link.start.0 + 1) as f32 * cw * zoom;
                 let src = GeoRect::new(sx, sy, sw, underline_h);
                 if let Some(c) = src.intersection(&tr) {
-                    bg_rects.push(Rect {
+                    out.bg_rects.push(Rect {
                         x: c.x,
                         y: c.y,
                         w: c.w,
@@ -357,7 +360,7 @@ impl App {
 
                     let src = GeoRect::new(sx, sy, sw, sh);
                     if let Some(c) = src.intersection(&tr) {
-                        bg_rects.push(Rect {
+                        out.bg_rects.push(Rect {
                             x: c.x,
                             y: c.y,
                             w: c.w,
@@ -388,7 +391,7 @@ impl App {
             let offset_dx = open_dx + move_dx * zoom;
             let offset_dy = open_dy + move_dy * zoom;
 
-            // Check if cached tile glyphs are still valid
+            // Check if cached tile out.glyphs are still valid
             // Include slide offsets in cache key so animations invalidate the cache
             let tile_key = (
                 (inner_x + offset_dx).to_bits(),
@@ -396,8 +399,8 @@ impl App {
                 zoom.to_bits(),
                 dim.to_bits(),
             );
-            let glyph_start = glyphs.len();
-            let color_start = color_glyphs.len();
+            let glyph_start = out.glyphs.len();
+            let color_start = out.color_glyphs.len();
             let cache_hit = cache_tile_glyphs
                 && self
                     .cached_tile_glyphs
@@ -406,8 +409,8 @@ impl App {
 
             if cache_hit {
                 let cached = self.cached_tile_glyphs.get(pane_id).unwrap();
-                glyphs.extend_from_slice(&cached.glyphs);
-                color_glyphs.extend_from_slice(&cached.color_glyphs);
+                out.glyphs.extend_from_slice(&cached.glyphs);
+                out.color_glyphs.extend_from_slice(&cached.color_glyphs);
             } else {
                 // Convert relative glyphs to pixel-coord GlyphInstances.
                 // Tile clipping is handled by the render-pass scissor rect.
@@ -432,19 +435,20 @@ impl App {
                     };
 
                 // Regular text glyphs (alpha atlas): dim the foreground color
-                glyphs.extend(view.glyph_instances.iter().filter_map(|g| {
-                    let color = [
-                        g.color[0] * dim,
-                        g.color[1] * dim,
-                        g.color[2] * dim,
-                        g.color[3],
-                    ];
-                    make_instance(g, color)
-                }));
+                out.glyphs
+                    .extend(view.glyph_instances.iter().filter_map(|g| {
+                        let color = [
+                            g.color[0] * dim,
+                            g.color[1] * dim,
+                            g.color[2] * dim,
+                            g.color[3],
+                        ];
+                        make_instance(g, color)
+                    }));
 
                 // Color emoji glyphs (RGBA atlas)
                 let emoji_color = [dim, dim, dim, 1.0];
-                color_glyphs.extend(
+                out.color_glyphs.extend(
                     view.color_glyph_instances
                         .iter()
                         .filter_map(|g| make_instance(g, emoji_color)),
@@ -457,32 +461,32 @@ impl App {
                         super::CachedTileGlyphs {
                             generation: view.generation,
                             key: tile_key,
-                            glyphs: glyphs[glyph_start..].to_vec(),
-                            color_glyphs: color_glyphs[color_start..].to_vec(),
+                            glyphs: out.glyphs[glyph_start..].to_vec(),
+                            color_glyphs: out.color_glyphs[color_start..].to_vec(),
                         },
                     );
                 }
             }
 
             if let Some((sx, sy, sw, sh)) = scissor {
-                if glyph_start < glyphs.len() {
-                    glyph_batches.push(ScissoredRange {
+                if glyph_start < out.glyphs.len() {
+                    out.glyph_batches.push(ScissoredRange {
                         x: sx,
                         y: sy,
                         w: sw,
                         h: sh,
                         start: glyph_start,
-                        end: glyphs.len(),
+                        end: out.glyphs.len(),
                     });
                 }
-                if color_start < color_glyphs.len() {
-                    color_glyph_batches.push(ScissoredRange {
+                if color_start < out.color_glyphs.len() {
+                    out.color_glyph_batches.push(ScissoredRange {
                         x: sx,
                         y: sy,
                         w: sw,
                         h: sh,
                         start: color_start,
-                        end: color_glyphs.len(),
+                        end: out.color_glyphs.len(),
                     });
                 }
             }
@@ -490,7 +494,7 @@ impl App {
             // Fade-in overlay for newly opened panes
             if open_opacity < 1.0 {
                 let overlay_alpha = 1.0 - open_opacity;
-                bg_rects.push(Rect {
+                out.bg_rects.push(Rect {
                     x: tr.x,
                     y: tr.y,
                     w: tr.w,
@@ -502,7 +506,7 @@ impl App {
 
         // Render closing panes as fading-out rects
         for (rect, opacity, _slide) in self.core.anim_mgr.closing_panes() {
-            bg_rects.push(Rect {
+            out.bg_rects.push(Rect {
                 x: rect.x,
                 y: rect.y,
                 w: rect.w,
@@ -570,11 +574,13 @@ impl App {
         emit_status_text(
             atlas,
             &bar_text,
-            bar_x + padding,
-            text_y,
-            cw,
-            baseline,
-            text_color,
+            &TextEmitParams {
+                x_start: bar_x + padding,
+                y: text_y,
+                cell_width: cw,
+                baseline,
+                color: text_color,
+            },
             glyphs,
         );
     }
@@ -683,11 +689,13 @@ impl App {
         emit_status_text(
             atlas,
             text,
-            base_x + 2.0,
-            base_y + 1.0,
-            cw,
-            baseline,
-            text_color,
+            &TextEmitParams {
+                x_start: base_x + 2.0,
+                y: base_y + 1.0,
+                cell_width: cw,
+                baseline,
+                color: text_color,
+            },
             glyphs,
         );
 
@@ -800,11 +808,13 @@ impl App {
                 emit_status_text(
                     atlas,
                     &label,
-                    ix + 4.0 * zoom,
-                    iy + 2.0 * zoom,
-                    cw * zoom,
-                    baseline * zoom,
-                    [0.6, 0.8, 1.0, 0.7],
+                    &TextEmitParams {
+                        x_start: ix + 4.0 * zoom,
+                        y: iy + 2.0 * zoom,
+                        cell_width: cw * zoom,
+                        baseline: baseline * zoom,
+                        color: [0.6, 0.8, 1.0, 0.7],
+                    },
                     glyphs,
                 );
             }
@@ -1033,11 +1043,13 @@ impl App {
             zoom,
             vw_f,
             vh_f,
-            &mut bg_rects,
-            &mut glyphs,
-            &mut color_glyphs,
-            &mut glyph_batches,
-            &mut color_glyph_batches,
+            &mut RenderOutput {
+                bg_rects: &mut bg_rects,
+                glyphs: &mut glyphs,
+                color_glyphs: &mut color_glyphs,
+                glyph_batches: &mut glyph_batches,
+                color_glyph_batches: &mut color_glyph_batches,
+            },
         );
         let pane_glyph_end = glyphs.len();
         let pane_color_glyph_end = color_glyphs.len();

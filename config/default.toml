@@ -67,9 +67,9 @@ frame_latency = 2
 backend = "auto"
 
 [theme]
-# Available presets: "one_dark", "catppuccin_mocha", "tokyo_night", "dracula", "nord", "gruvbox_dark"
+# Available presets: "ciri_dark", "one_dark", "catppuccin_mocha", "tokyo_night", "dracula", "nord", "gruvbox_dark", "ghostty"
 # Set preset, then override individual colors below if needed.
-preset = "one_dark"
+preset = "ciri_dark"
 
 [keys]
 leader = "ctrl+w"

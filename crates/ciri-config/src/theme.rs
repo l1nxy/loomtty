@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 /// # background = "#000000"
 /// ```
 ///
-/// Available presets: "one_dark", "catppuccin_mocha", "tokyo_night", "dracula", "nord", "gruvbox_dark"
+/// Available presets: "one_dark", "catppuccin_mocha", "tokyo_night", "dracula", "nord", "gruvbox_dark", "ghostty", "ciri_dark"
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 #[derive(Default)]
@@ -139,10 +139,12 @@ impl ThemeConfig {
             "dracula" => include_str!("../themes/dracula.toml"),
             "nord" => include_str!("../themes/nord.toml"),
             "gruvbox_dark" => include_str!("../themes/gruvbox_dark.toml"),
-            "" | "one_dark" => include_str!("../themes/one_dark.toml"),
+            "" | "ciri_dark" => include_str!("../themes/ciri_dark.toml"),
+            "ghostty" => include_str!("../themes/ghostty.toml"),
+            "one_dark" => include_str!("../themes/one_dark.toml"),
             _ => {
-                log::warn!("unknown theme preset '{}', using one_dark", self.preset);
-                include_str!("../themes/one_dark.toml")
+                log::warn!("unknown theme preset '{}', using ciri_dark", self.preset);
+                include_str!("../themes/ciri_dark.toml")
             }
         };
         toml::from_str(toml_str).expect("built-in theme TOML is invalid")

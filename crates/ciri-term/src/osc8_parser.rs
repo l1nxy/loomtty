@@ -59,6 +59,11 @@ impl Osc8Parser {
         &self.link_map
     }
 
+    #[cfg(test)]
+    pub(crate) fn active_link(&self) -> Option<(u16, &str)> {
+        self.current_link_id.zip(self.current_uri.as_deref())
+    }
+
     /// Scan PTY output for OSC 8 sequences and update hyperlink state.
     pub fn scan(&mut self, data: &[u8]) {
         let mut tmp = Vec::new();
@@ -70,7 +75,9 @@ impl Osc8Parser {
             let mut input = *payload;
             match parse_payload.parse_next(&mut input) {
                 Ok((_params, uri_bytes)) => {
-                    let uri = std::str::from_utf8(uri_bytes).unwrap_or("").to_string();
+                    let Ok(uri) = std::str::from_utf8(uri_bytes) else {
+                        continue;
+                    };
                     if uri.is_empty() {
                         // End hyperlink: ESC ] 8 ; ; ST
                         self.current_uri = None;
@@ -83,8 +90,8 @@ impl Osc8Parser {
                         if self.next_link_id == 0 {
                             self.next_link_id = 1;
                         }
-                        self.link_map.push((link_id, uri.clone()));
-                        self.current_uri = Some(uri.clone());
+                        self.link_map.push((link_id, uri.to_string()));
+                        self.current_uri = Some(uri.to_string());
                         self.current_link_id = Some(link_id);
                         log::debug!("OSC 8: hyperlink start id={link_id} uri={uri}");
                     }
@@ -197,6 +204,26 @@ mod tests {
 
         assert_eq!(parser.current_uri, active_uri);
         assert_eq!(parser.current_link_id, active_link_id);
+        assert_eq!(parser.link_map(), initial_link_map.as_slice());
+    }
+
+    #[test]
+    fn malformed_utf8_payload_inside_active_hyperlink_is_ignored() {
+        let mut parser = Osc8Parser::new();
+        parser.scan(b"\x1b]8;;https://example.com\x07");
+        let active = parser
+            .active_link()
+            .map(|(id, uri)| (id, uri.to_string()));
+        let initial_link_map = parser.link_map().to_vec();
+
+        parser.scan(b"\x1b]8;;\xff\x07");
+
+        assert_eq!(
+            parser
+                .active_link()
+                .map(|(id, uri)| (id, uri.to_string())),
+            active
+        );
         assert_eq!(parser.link_map(), initial_link_map.as_slice());
     }
 }

@@ -14,6 +14,7 @@ members = [
     "crates/ciri-config",
     "crates/ciri-session",
     "crates/ciri-procinfo",
+    "crates/ciri-plugin",
 ]
 
 [workspace.package]
@@ -34,6 +35,7 @@ ciri-input = { path = "crates/ciri-input" }
 ciri-config = { path = "crates/ciri-config" }
 ciri-session = { path = "crates/ciri-session" }
 ciri-procinfo = { path = "crates/ciri-procinfo" }
+ciri-plugin = { path = "crates/ciri-plugin" }
 
 # External
 arboard = { version = "3", features = ["wayland-data-control"] }

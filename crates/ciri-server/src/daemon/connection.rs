@@ -16,9 +16,13 @@ const CONTROL_SESSION: &str = "__control__";
 
 /// Perform graceful shutdown: save all sessions, notify all clients, remove socket.
 pub(crate) async fn graceful_shutdown(state: &Arc<Mutex<Server>>) {
-    let s = state.lock().await;
-    // Save all sessions
-    for session in s.sessions.values() {
+    let mut s = state.lock().await;
+    // Detect agents and save all sessions
+    let restore_agents = s.session_config.restore_agents;
+    for session in s.sessions.values_mut() {
+        if restore_agents {
+            session.detect_agents();
+        }
         let _ = session.save_session();
     }
     log::info!("shutting down gracefully");

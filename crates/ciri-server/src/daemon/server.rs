@@ -20,6 +20,8 @@ pub(crate) struct Server {
     /// True once server has had at least one session. Prevents premature
     /// shutdown on startup before any client has connected.
     pub(crate) had_session: bool,
+    /// Session restore configuration.
+    pub(crate) session_config: ciri_config::schema::SessionConfig,
 }
 
 /// Internal response type for message handling.
@@ -43,6 +45,7 @@ impl Server {
             column_gap,
             pane_inset: 12.0,
             had_session: false,
+            session_config: ciri_config::schema::SessionConfig::default(),
         }
     }
 
@@ -95,7 +98,33 @@ impl Server {
                             let tile_h = vh / saved_col.tiles.len() as f32;
                             let (cols, rows) =
                                 session.pane_grid_size_with_cells(col_w, tile_h, 8.0, 16.0);
-                            match Pane::new(id, cols, rows, &session.default_shell) {
+                            // Build resume command if agent was detected and restore is enabled.
+                            // On failure, fall back to an interactive shell.
+                            let resume_cmd = saved_tile
+                                .agent
+                                .as_ref()
+                                .filter(|_| self.session_config.restore_agents)
+                                .and_then(|a| {
+                                    let cmd = ciri_session::agent::resume_command(a.kind)?;
+                                    if cfg!(windows) {
+                                        // cmd.exe supports || for fallback
+                                        Some(format!("{cmd} || cmd.exe"))
+                                    } else {
+                                        Some(format!("{cmd} || exec $SHELL"))
+                                    }
+                                });
+                            let cwd = saved_tile
+                                .cwd
+                                .as_deref()
+                                .map(std::path::Path::new);
+                            match Pane::new_with_opts(
+                                id,
+                                cols,
+                                rows,
+                                &session.default_shell,
+                                resume_cmd.as_deref(),
+                                cwd,
+                            ) {
                                 Ok(pane) => {
                                     session.panes.insert(id, pane);
                                     session.generation.insert(id, 0);

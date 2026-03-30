@@ -368,6 +368,17 @@ impl Pane {
         self.parsers.osc7.cwd()
     }
 
+    /// Get the child shell's PID.
+    pub fn child_pid(&self) -> Option<u32> {
+        self.pty.child_pid()
+    }
+
+    /// Get the master PTY file descriptor (for `tcgetpgrp` on Unix).
+    #[cfg(unix)]
+    pub fn master_raw_fd(&self) -> Option<std::os::unix::io::RawFd> {
+        self.pty.master_raw_fd()
+    }
+
     // ── PTY write ────────────────────────────────────────────────────
 
     pub fn write_to_pty(&mut self, data: &[u8]) {

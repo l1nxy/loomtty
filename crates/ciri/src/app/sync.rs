@@ -410,6 +410,10 @@ mod tests {
         WorkspaceState,
     };
 
+    /// Tests that touch the global `last-session` file must hold this lock
+    /// to prevent flaky parallel failures in CI.
+    static LAST_SESSION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn make_app() -> App {
         App::new(CiriConfig::default(), "test-session")
     }
@@ -449,6 +453,7 @@ mod tests {
 
     #[test]
     fn session_switch_state_sync_does_not_prune_retained_client_state() {
+        let _lock = LAST_SESSION_LOCK.lock().unwrap();
         let mut app = make_app();
         let (event_tx, rx) = crossbeam_channel::unbounded();
         app.core.server_rx = Some(rx);
@@ -531,6 +536,7 @@ mod tests {
 
     #[test]
     fn session_switch_only_persists_last_session_after_authoritative_resync() {
+        let _lock = LAST_SESSION_LOCK.lock().unwrap();
         let mut app = make_app();
         let (event_tx, rx) = crossbeam_channel::unbounded();
         app.core.server_rx = Some(rx);
@@ -572,6 +578,7 @@ mod tests {
 
     #[test]
     fn stale_frame_for_old_session_is_dropped_after_session_switch() {
+        let _lock = LAST_SESSION_LOCK.lock().unwrap();
         let mut app = make_app();
         let (event_tx, rx) = crossbeam_channel::unbounded();
         app.core.server_rx = Some(rx);

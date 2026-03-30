@@ -16,13 +16,13 @@ use std::mem;
 use std::os::windows::ffi::OsStringExt;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, MAX_PATH};
 use windows::Win32::System::Diagnostics::ToolHelp::{
-    CREATE_TOOLHELP_SNAPSHOT_FLAGS, CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW,
-    Process32NextW, TH32CS_SNAPPROCESS,
+    CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
 use windows::Win32::System::Threading::{
     GetProcessTimes, OpenProcess, PROCESS_NAME_FORMAT, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
     QueryFullProcessImageNameW,
 };
+use windows::core::PWSTR;
 
 pub fn foreground_process(shell_pid: u32, _master_fd: RawHandle) -> Option<ProcessInfo> {
     let snapshot = Snapshot::new()?;
@@ -154,7 +154,13 @@ fn read_exe_path(pid: u32) -> Option<String> {
     let mut size = buf.len() as u32;
 
     let ok = unsafe {
-        QueryFullProcessImageNameW(handle.0, PROCESS_NAME_FORMAT(0), &mut buf, &mut size).is_ok()
+        QueryFullProcessImageNameW(
+            handle.0,
+            PROCESS_NAME_FORMAT(0),
+            PWSTR(buf.as_mut_ptr()),
+            &mut size,
+        )
+        .is_ok()
     };
 
     if ok && size > 0 {

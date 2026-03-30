@@ -430,14 +430,14 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn new(window: Arc<Window>, _render_config: &RenderConfig) -> Result<Self> {
-        // macOS deprecated OpenGL; entire GL backend is unavailable
         #[cfg(target_os = "macos")]
         {
+            // macOS deprecated OpenGL; entire GL backend is unavailable
             let _ = window;
-            return Err(anyhow::anyhow!(
+            Err(anyhow::anyhow!(
                 "GL backend is not supported on macOS (OpenGL is deprecated). \
                  Use blade (Metal) instead: backend = \"blade\""
-            ));
+            ))
         }
 
         #[cfg(not(target_os = "macos"))]

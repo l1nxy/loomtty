@@ -83,6 +83,7 @@ pub async fn run_daemon() -> Result<()> {
         };
     }
     server.pane_inset = (config.appearance.padding + config.appearance.border_width) * 2.0;
+    server.session_config = config.session.clone();
     let state = Arc::new(Mutex::new(server));
 
     // Shutdown signal shared between tick loop, signal handler, and accept loop

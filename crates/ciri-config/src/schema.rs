@@ -36,6 +36,8 @@ pub struct CiriConfig {
     pub gesture: GestureConfig,
     #[garde(skip)]
     pub remote: RemoteConfig,
+    #[garde(skip)]
+    pub session: SessionConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
@@ -478,4 +480,24 @@ pub struct RemoteHostConfig {
     pub port: u16,
     #[serde(default = "default_ssh_port")]
     pub ssh_port: u16,
+}
+
+// ── Session restore ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SessionConfig {
+    /// Whether to detect and auto-resume AI agents on restart.
+    pub restore_agents: bool,
+    /// Interval in seconds for agent-state autosave (separate from layout autosave).
+    pub agent_save_interval_secs: u64,
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        SessionConfig {
+            restore_agents: true,
+            agent_save_interval_secs: 30,
+        }
+    }
 }

@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod names;
 pub mod restore;
 pub mod save;

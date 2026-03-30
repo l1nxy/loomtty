@@ -74,9 +74,17 @@ impl Pty {
         // 1. If command is provided and non-empty, use it
         // 2. Otherwise fall back to shell / $SHELL / getpwuid
         let mut cmd = if let Some(c) = command.filter(|c| !c.is_empty()) {
-            let mut builder = CommandBuilder::new("sh");
-            builder.arg("-c");
-            builder.arg(c);
+            let builder = if cfg!(windows) {
+                let mut b = CommandBuilder::new("cmd.exe");
+                b.arg("/C");
+                b.arg(c);
+                b
+            } else {
+                let mut b = CommandBuilder::new("sh");
+                b.arg("-c");
+                b.arg(c);
+                b
+            };
             builder
         } else if !shell.is_empty() {
             CommandBuilder::new(shell)
@@ -224,6 +232,20 @@ impl Pty {
             .ok()
             .flatten()
             .is_some()
+    }
+
+    /// Get the child shell's PID.
+    pub fn child_pid(&self) -> Option<u32> {
+        self.child
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .process_id()
+    }
+
+    /// Get the master PTY file descriptor (for `tcgetpgrp` on Unix).
+    #[cfg(unix)]
+    pub fn master_raw_fd(&self) -> Option<std::os::unix::io::RawFd> {
+        self.master.as_ref().and_then(|m| m.as_raw_fd())
     }
 
     pub fn resize(&self, cols: u16, rows: u16) {

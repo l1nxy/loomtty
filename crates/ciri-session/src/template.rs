@@ -147,6 +147,14 @@ fn validate_workspace(
         anyhow::bail!("template '{name}' workspace {workspace_idx} has no columns");
     }
 
+    if workspace.active_column >= workspace.columns.len() {
+        anyhow::bail!(
+            "template '{name}' workspace {workspace_idx} active column {} out of bounds for {} columns",
+            workspace.active_column,
+            workspace.columns.len()
+        );
+    }
+
     for (column_idx, column) in workspace.columns.iter().enumerate() {
         if column.tiles.is_empty() {
             anyhow::bail!(
@@ -284,6 +292,28 @@ mod tests {
         save_template("empty-tiles", &template).unwrap();
         let err = load_template("empty-tiles").unwrap_err();
         assert!(err.to_string().contains("column 0 has no tiles"));
+    }
+
+    #[test]
+    fn load_template_rejects_out_of_bounds_active_column() {
+        let template = LayoutTemplate {
+            description: None,
+            workspaces: vec![TemplateWorkspace {
+                columns: vec![TemplateColumn {
+                    tiles: vec![TemplateTile {
+                        command: String::new(),
+                        cwd: String::new(),
+                        weight: 1.0,
+                    }],
+                    width: None,
+                }],
+                active_column: 1,
+            }],
+        };
+
+        save_template("active-column-oob", &template).unwrap();
+        let err = load_template("active-column-oob").unwrap_err();
+        assert!(err.to_string().contains("active column 1 out of bounds"));
     }
 
     fn unique_config_home(label: &str) -> PathBuf {

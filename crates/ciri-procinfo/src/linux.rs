@@ -56,27 +56,28 @@ fn read_exe(pid: u32) -> Option<String> {
 fn read_cmdline(pid: u32) -> Option<Vec<String>> {
     let path = format!("/proc/{pid}/cmdline");
     match fs::read(&path) {
-        Ok(data) => {
-            if data.is_empty() {
-                return None;
-            }
-            // Strip trailing NUL if present
-            let data = if data.last() == Some(&0) {
-                &data[..data.len() - 1]
-            } else {
-                &data
-            };
-            let args = data
-                .split(|&b| b == 0)
-                .map(|s| String::from_utf8_lossy(s).into_owned())
-                .collect();
-            Some(args)
-        }
+        Ok(data) => parse_cmdline_bytes(&data),
         Err(e) => {
             log::debug!("failed to read {path}: {e}");
             None
         }
     }
+}
+
+fn parse_cmdline_bytes(data: &[u8]) -> Option<Vec<String>> {
+    if data.is_empty() {
+        return None;
+    }
+
+    let data = if data.last() == Some(&0) {
+        &data[..data.len() - 1]
+    } else {
+        data
+    };
+
+    data.split(|&b| b == 0)
+        .map(|arg| String::from_utf8(arg.to_vec()).ok())
+        .collect()
 }
 
 /// Read the current working directory via `/proc/<pid>/cwd` symlink.
@@ -94,6 +95,22 @@ fn read_cwd(pid: u32) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::symlink;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_dir(label: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "ciri-procinfo-{label}-{nanos}-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
 
     #[test]
     fn read_self_exe() {
@@ -125,5 +142,38 @@ mod tests {
         assert!(read_exe(4194304).is_none());
         assert!(read_cmdline(4194304).is_none());
         assert!(read_cwd(4194304).is_none());
+    }
+
+    #[test]
+    fn read_cmdline_rejects_invalid_utf8() {
+        let data = [b'a', 0xff, 0];
+        assert_eq!(
+            parse_cmdline_bytes(&data),
+            None,
+            "invalid utf-8 should fall back cleanly instead of manufacturing replacement characters"
+        );
+    }
+
+    #[test]
+    fn parse_cmdline_bytes_parses_nul_separated_args() {
+        let data = b"python\0-c\0print(1)\0";
+        let argv = parse_cmdline_bytes(data).unwrap();
+        assert_eq!(argv, vec!["python", "-c", "print(1)"]);
+    }
+
+    #[test]
+    fn read_link_with_invalid_utf8_returns_none() {
+        let dir = unique_temp_dir("invalid-link");
+        let target = dir.join("target");
+        fs::write(&target, []).unwrap();
+
+        let link = dir.join("link");
+        #[cfg(target_os = "linux")]
+        symlink(std::ffi::OsStr::from_bytes(b"bad-\xff"), &link).unwrap();
+
+        let resolved = fs::read_link(&link)
+            .ok()
+            .and_then(|target| target.to_str().map(|s| s.to_string()));
+        assert!(resolved.is_none());
     }
 }

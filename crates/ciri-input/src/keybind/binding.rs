@@ -132,13 +132,23 @@ impl BindingSet {
     ) -> Self {
         let mut set = BindingSet::new();
 
-        // Direct bindings: not in text-input overlays or paste confirm
+        // Direct bindings: not in text-input overlays or paste confirm,
+        // except toggle/close actions that need to work within their own overlay.
         for (combo, action) in &direct_bindings.bindings {
+            let notmode = match action {
+                Action::ToggleCommandPalette | Action::CloseCommandPalette => {
+                    BindingMode::SEARCH | BindingMode::PASTE_CONFIRM
+                }
+                Action::OpenSearch | Action::CloseSearch => {
+                    BindingMode::PALETTE | BindingMode::PASTE_CONFIRM
+                }
+                _ => BindingMode::SEARCH | BindingMode::PALETTE | BindingMode::PASTE_CONFIRM,
+            };
             set.push(Binding {
                 combo: combo.clone(),
                 action: action.clone(),
                 mode: BindingMode::EMPTY,
-                notmode: BindingMode::SEARCH | BindingMode::PALETTE | BindingMode::PASTE_CONFIRM,
+                notmode,
                 key_table: String::new(),
             });
         }

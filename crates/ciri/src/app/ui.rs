@@ -1233,14 +1233,15 @@ impl UiComponent for PaletteComponent {
         let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
         let border_color = ThemeConfig::parse_color(&cx.config.theme.border_active);
         let dim_color = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
-        let text_color = [1.0, 1.0, 1.0, 1.0];
+        let fg_color = ThemeConfig::parse_color(&cx.config.theme.foreground);
+        let text_color = fg_color;
 
         scene.bg_rects.push(Rect {
             x: 0.0,
             y: 0.0,
             w: cx.viewport_w,
             h: cx.viewport_h,
-            color: [0.0, 0.0, 0.0, 0.5],
+            color: [bg_color[0] * 0.5, bg_color[1] * 0.5, bg_color[2] * 0.5, 0.6],
         });
 
         let bw = 2.0;
@@ -1323,7 +1324,7 @@ impl UiComponent for PaletteComponent {
             y: self.layout.text_y,
             w: 2.0,
             h: cx.cell_h,
-            color: [1.0, 1.0, 1.0, 0.8],
+            color: [fg_color[0], fg_color[1], fg_color[2], 0.8],
         });
         scene.bg_rects.push(Rect {
             x: self.layout.panel_x,
@@ -1336,10 +1337,10 @@ impl UiComponent for PaletteComponent {
         let selected_bg = [accent[0], accent[1], accent[2], 0.25];
         let hovered_bg = [accent[0], accent[1], accent[2], 0.14];
         // Per-style colors
-        let remote_host_color = [accent[0] * 0.8, accent[1] * 1.1, accent[2] * 1.2, 1.0];
-        let remote_session_color = [0.6, 0.85, 1.0, 1.0];
-        let ssh_color = [1.0, 0.75, 0.4, 1.0];
-        let slot_color = [accent[0], accent[1], accent[2], 1.0];
+        let remote_host_color = ThemeConfig::parse_color(&cx.config.theme.cyan);
+        let remote_session_color = ThemeConfig::parse_color(&cx.config.theme.blue);
+        let ssh_color = ThemeConfig::parse_color(&cx.config.theme.yellow);
+        let slot_color = ThemeConfig::parse_color(&cx.config.theme.green);
 
         for (idx, row) in self.rows.iter().enumerate() {
             let row_y = self.layout.sep_y + idx as f32 * self.layout.row_h;
@@ -1483,7 +1484,10 @@ impl UiComponent for PaletteComponent {
                     y: error_y,
                     cell_width: cx.cell_w,
                     baseline: cx.baseline,
-                    color: [1.0, 0.4, 0.3, 0.9],
+                    color: {
+                        let red = ThemeConfig::parse_color(&cx.config.theme.red);
+                        [red[0], red[1], red[2], 0.9]
+                    },
                 },
                 scene.glyphs,
             );

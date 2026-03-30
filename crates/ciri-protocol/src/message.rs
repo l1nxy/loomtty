@@ -451,6 +451,8 @@ pub enum ServerMessage {
         format: String,
         data: Vec<u8>,
     },
+    /// Inline image deletion/invalidation for a pane.
+    ImageDeleted { pane_id: u64 },
     /// IPC response: session detail info.
     SessionInfoReply { info: SessionDetailInfo },
     /// IPC response: list of panes.

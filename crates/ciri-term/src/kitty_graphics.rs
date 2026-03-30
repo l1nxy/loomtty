@@ -220,6 +220,8 @@ impl KittyGraphicsParser {
                     }
                 }
                 'd' => {
+                    self.image_buf.clear();
+                    self.image_meta = None;
                     active_images.clear();
                     new_placements.clear();
                     deleted = true;
@@ -291,6 +293,43 @@ mod tests {
         assert!(deleted.deleted);
         assert!(deleted.placements.is_empty());
         assert!(active_images.is_empty());
+    }
+
+    #[test]
+    fn delete_clears_in_progress_transmission_state() {
+        let mut parser = KittyGraphicsParser::new();
+        let mut active_images = Vec::new();
+
+        let partial = parser.scan(
+            b"\x1b_Ga=T,f=24,s=2,v=2,c=2,r=2,m=1;AQID\x1b\\",
+            0,
+            0,
+            &mut active_images,
+        );
+        assert!(partial.placements.is_empty());
+        assert!(active_images.is_empty());
+
+        let deleted = parser.scan(b"\x1b_Ga=d\x1b\\", 0, 0, &mut active_images);
+        assert!(deleted.deleted);
+        assert!(active_images.is_empty());
+
+        let created = parser.scan(
+            b"\x1b_Ga=T,f=24,s=1,v=1,c=1,r=1;BAU=\x1b\\",
+            5,
+            6,
+            &mut active_images,
+        );
+        assert_eq!(created.placements.len(), 1);
+        assert_eq!(active_images.len(), 1);
+        let placement = &created.placements[0];
+        assert_eq!(placement.col, 5);
+        assert_eq!(placement.row, 6);
+        assert_eq!(placement.width_cells, 1);
+        assert_eq!(placement.height_cells, 1);
+        assert_eq!(placement.pixel_width, 1);
+        assert_eq!(placement.pixel_height, 1);
+        assert_eq!(placement.format, "rgb");
+        assert_eq!(placement.data.as_slice(), &[4, 5]);
     }
 
     #[test]

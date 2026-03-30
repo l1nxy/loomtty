@@ -528,7 +528,9 @@ impl Session {
                     data: Arc::try_unwrap(img.data).unwrap_or_else(|arc| (*arc).clone()),
                 });
             }
-
+            if pane.drain_image_deletes() {
+                clipboard_msgs.push(ServerMessage::ImageDeleted { pane_id });
+            }
             if let Some(ranges) = pane.extract_damage() {
                 // Bump generation
                 let g = self.generation.entry(pane_id).or_insert(0);
@@ -672,5 +674,23 @@ mod tests {
         let dims = Session::effective_dims_from(&clients, "alpha");
 
         assert_eq!(dims, (900.0, 700.0, 8.0, 16.0));
+    }
+
+    #[test]
+    fn collect_runtime_messages_emits_image_deleted_after_clear() {
+        let mut session = Session::new("default", "/bin/sh", 8.0);
+        let mut next_pane_id = 1;
+        let mut clients = HashMap::new();
+        let pane_id = session
+            .create_pane(&mut next_pane_id, &mut clients)
+            .expect("pane");
+        let pane = session.panes.get_mut(&pane_id).expect("pane exists");
+        pane.test_mark_image_deleted();
+
+        let messages = session.process_pty_and_damage(&mut clients);
+
+        assert!(messages.iter().any(
+            |msg| matches!(msg, ServerMessage::ImageDeleted { pane_id: id } if id == &pane_id)
+        ));
     }
 }

@@ -225,6 +225,11 @@ impl App {
                         });
                         needs_redraw = true;
                     }
+                    ServerEvent::Control(ServerMessage::ImageDeleted { pane_id }) => {
+                        self.core.image_placements.remove(&pane_id);
+                        self.invalidate_pane_cache(pane_id);
+                        needs_redraw = true;
+                    }
                     ServerEvent::Control(ServerMessage::SessionList { sessions }) => {
                         if let Some(palette) = &mut self.core.command_palette {
                             if palette.sessions_only {
@@ -561,7 +566,6 @@ mod tests {
             app.core.pending_session_name.as_deref(),
             Some("other-session")
         );
-
         event_tx
             .send(ServerEvent::Control(ServerMessage::StateSync {
                 layout: empty_layout(),
@@ -578,6 +582,34 @@ mod tests {
             std::fs::read_to_string(&last_session_path).unwrap(),
             "other-session"
         );
+    }
+
+    #[test]
+    fn image_deleted_event_clears_client_placements() {
+        let mut app = make_app();
+        let (event_tx, rx) = crossbeam_channel::unbounded();
+        app.core.server_rx = Some(rx);
+        app.core.image_placements.insert(
+            7,
+            vec![ClientImagePlacement {
+                image_id: 9,
+                col: 0,
+                row: 0,
+                width_cells: 1,
+                height_cells: 1,
+                pixel_width: 8,
+                pixel_height: 16,
+            }],
+        );
+
+        event_tx
+            .send(ServerEvent::Control(ServerMessage::ImageDeleted {
+                pane_id: 7,
+            }))
+            .unwrap();
+
+        assert!(app.process_server_events());
+        assert!(!app.core.image_placements.contains_key(&7));
     }
 
     #[test]

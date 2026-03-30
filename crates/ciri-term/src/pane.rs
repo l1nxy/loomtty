@@ -347,6 +347,14 @@ impl Pane {
         self.images.drain_pending()
     }
 
+    pub fn drain_image_deletes(&mut self) -> bool {
+        self.images.drain_deleted()
+    }
+
+    pub fn test_mark_image_deleted(&mut self) {
+        self.images.clear_on_delete();
+    }
+
     pub fn active_images(&self) -> &[ImagePlacement] {
         self.images.active()
     }
@@ -880,5 +888,15 @@ mod tests {
         assert_eq!(pane.active_images().len(), 1);
         assert_eq!(pane.active_images()[0].id, image.id);
         assert!(pane.drain_images().is_empty());
+    }
+
+    #[test]
+    fn delete_state_drains_once_after_clear() {
+        let mut pane = new_test_pane();
+
+        pane.images.clear_on_delete();
+
+        assert!(pane.drain_image_deletes());
+        assert!(!pane.drain_image_deletes());
     }
 }

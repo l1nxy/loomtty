@@ -873,6 +873,7 @@ async fn frame_roundtrip_server_message_variants() {
             format: "png".to_string(),
             data: vec![1, 2, 3, 4],
         },
+        ServerMessage::ImageDeleted { pane_id: 9 },
         ServerMessage::SessionInfoReply {
             info: session_detail.clone(),
         },

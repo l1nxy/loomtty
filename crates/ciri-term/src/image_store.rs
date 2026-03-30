@@ -10,6 +10,8 @@ pub(crate) struct ImageStore {
     active: Vec<ImagePlacement>,
     /// Newly added since last drain — broadcast to clients then cleared.
     pending: Vec<ImagePlacement>,
+    /// Whether a delete command was observed since the last drain.
+    deleted: bool,
 }
 
 impl ImageStore {
@@ -17,6 +19,7 @@ impl ImageStore {
         Self {
             active: Vec::new(),
             pending: Vec::new(),
+            deleted: false,
         }
     }
 
@@ -29,6 +32,7 @@ impl ImageStore {
     pub fn clear_on_delete(&mut self) {
         self.active.clear();
         self.pending.clear();
+        self.deleted = true;
     }
 
     /// Get a mutable reference to active images (parsers write directly).
@@ -44,6 +48,11 @@ impl ImageStore {
     /// Drain pending images (returns them and clears the pending buffer).
     pub fn drain_pending(&mut self) -> Vec<ImagePlacement> {
         std::mem::take(&mut self.pending)
+    }
+
+    /// Drain and reset the delete marker.
+    pub fn drain_deleted(&mut self) -> bool {
+        std::mem::take(&mut self.deleted)
     }
 
     /// Cap active images to prevent unbounded growth.

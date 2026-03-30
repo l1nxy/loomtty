@@ -263,38 +263,42 @@ impl App {
                         // Session/template management and IPC responses — not yet handled by GUI client
                     }
                     ServerEvent::FullPaneSync(sync) => {
-                        if !self.core.expected_pane_ids.contains(&sync.pane_id) {
+                        if !self.core.expected_pane_ids.contains(&sync.meta.pane_id) {
                             continue;
                         }
-                        let grid = self.core.pane_grids.entry(sync.pane_id).or_insert_with(|| {
-                            ClientPaneGrid::new(
-                                sync.cols,
-                                sync.rows,
-                                self.core.config.terminal.scrollback_lines,
-                            )
-                        });
+                        let grid = self
+                            .core
+                            .pane_grids
+                            .entry(sync.meta.pane_id)
+                            .or_insert_with(|| {
+                                ClientPaneGrid::new(
+                                    sync.cols,
+                                    sync.rows,
+                                    self.core.config.terminal.scrollback_lines,
+                                )
+                            });
                         grid.apply_full_sync(&sync);
                         self.send_lossy(ClientMessage::Ack {
-                            generation: sync.generation,
+                            generation: sync.meta.generation,
                         });
                         // grid.dirty is set by apply_full_sync — no need to remove cached view
                         needs_redraw = true;
                     }
                     ServerEvent::CellDelta(delta) => {
-                        if !self.core.expected_pane_ids.contains(&delta.pane_id) {
+                        if !self.core.expected_pane_ids.contains(&delta.meta.pane_id) {
                             continue;
                         }
                         log::trace!(
                             "CellDelta: pane={} regions={} cursor=({},{})",
-                            delta.pane_id,
+                            delta.meta.pane_id,
                             delta.regions.len(),
-                            delta.cursor_col,
-                            delta.cursor_line
+                            delta.meta.cursor_col,
+                            delta.meta.cursor_line
                         );
-                        if let Some(grid) = self.core.pane_grids.get_mut(&delta.pane_id) {
+                        if let Some(grid) = self.core.pane_grids.get_mut(&delta.meta.pane_id) {
                             grid.apply_delta_borrowed(&delta);
                             self.send_lossy(ClientMessage::Ack {
-                                generation: delta.generation,
+                                generation: delta.meta.generation,
                             });
                             // grid.dirty is set by apply_delta_borrowed — no need to remove cached view
                             needs_redraw = true;
@@ -421,14 +425,16 @@ mod tests {
 
     fn blank_full_sync(pane_id: u64, generation: u64, title: &str) -> FullPaneSync {
         FullPaneSync {
-            pane_id,
-            generation,
+            meta: PaneFrameMeta {
+                pane_id,
+                generation,
+                cursor_line: 0,
+                cursor_col: 0,
+                cursor_shape: 0,
+                mode_flags: 0,
+            },
             cols: 2,
             rows: 1,
-            cursor_line: 0,
-            cursor_col: 0,
-            cursor_shape: 0,
-            mode_flags: 0,
             title: title.to_string(),
             scrollback: Vec::new(),
             scrollback_rows: 0,
@@ -448,11 +454,11 @@ mod tests {
 
         let stale = blank_full_sync(7, 1, "stale");
         app.core.pane_grids.insert(
-            stale.pane_id,
+            stale.meta.pane_id,
             crate::grid::ClientPaneGrid::new(stale.cols, stale.rows, 100),
         );
         app.core.image_placements.insert(
-            stale.pane_id,
+            stale.meta.pane_id,
             vec![ClientImagePlacement {
                 image_id: 9,
                 col: 0,
@@ -465,7 +471,7 @@ mod tests {
         );
         app.write_last_session();
         app.cached_tile_glyphs.insert(
-            stale.pane_id,
+            stale.meta.pane_id,
             CachedTileGlyphs {
                 generation: 0,
                 key: (0, 0, 0, 0),
@@ -487,9 +493,9 @@ mod tests {
             app.core.pending_session_name.as_deref(),
             Some("other-session")
         );
-        assert!(app.core.pane_grids.contains_key(&stale.pane_id));
-        assert!(app.core.image_placements.contains_key(&stale.pane_id));
-        assert!(app.cached_tile_glyphs.contains_key(&stale.pane_id));
+        assert!(app.core.pane_grids.contains_key(&stale.meta.pane_id));
+        assert!(app.core.image_placements.contains_key(&stale.meta.pane_id));
+        assert!(app.cached_tile_glyphs.contains_key(&stale.meta.pane_id));
 
         event_tx
             .send(ServerEvent::Control(ServerMessage::StateSync {
@@ -509,17 +515,17 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![11]
         );
-        assert!(app.core.pane_grids.contains_key(&stale.pane_id));
-        assert!(app.core.image_placements.contains_key(&stale.pane_id));
-        assert!(app.cached_tile_glyphs.contains_key(&stale.pane_id));
+        assert!(app.core.pane_grids.contains_key(&stale.meta.pane_id));
+        assert!(app.core.image_placements.contains_key(&stale.meta.pane_id));
+        assert!(app.cached_tile_glyphs.contains_key(&stale.meta.pane_id));
 
         event_tx.send(ServerEvent::FullPaneSync(new_sync)).unwrap();
 
         assert!(app.process_server_events());
         assert!(app.core.pane_grids.contains_key(&11));
-        assert!(app.core.pane_grids.contains_key(&stale.pane_id));
-        assert!(app.core.image_placements.contains_key(&stale.pane_id));
-        assert!(app.cached_tile_glyphs.contains_key(&stale.pane_id));
+        assert!(app.core.pane_grids.contains_key(&stale.meta.pane_id));
+        assert!(app.core.image_placements.contains_key(&stale.meta.pane_id));
+        assert!(app.cached_tile_glyphs.contains_key(&stale.meta.pane_id));
     }
 
     #[test]
@@ -583,7 +589,7 @@ mod tests {
                     workspaces: vec![WorkspaceState {
                         columns: vec![ColumnState {
                             tiles: vec![TileState {
-                                pane_id: fresh.pane_id,
+                                pane_id: fresh.meta.pane_id,
                                 weight: 1.0,
                             }],
                             active_tile_idx: 0,
@@ -594,7 +600,7 @@ mod tests {
                     }],
                     active_workspace_idx: 0,
                 },
-                pane_ids: vec![fresh.pane_id],
+                pane_ids: vec![fresh.meta.pane_id],
             }))
             .unwrap();
         event_tx.send(ServerEvent::FullPaneSync(fresh)).unwrap();

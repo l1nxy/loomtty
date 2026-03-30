@@ -54,6 +54,8 @@ impl PartialBuf {
         tmp.as_slice()
     }
 
+    // Used by osc8_parser, shell_integration, sixel parsers in this crate.
+    // Clippy false-positive: methods on pub(crate) struct appear unused.
     #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.buf.clear();

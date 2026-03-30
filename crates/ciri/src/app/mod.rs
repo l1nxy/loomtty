@@ -34,13 +34,11 @@ use winit::keyboard::ModifiersState;
 use winit::window::Window;
 
 // Re-export core types so existing `use super::*` in submodules still works.
-#[allow(unused_imports)]
 pub(crate) use ciri_app::app::{
-    AppModel, ClientImagePlacement, CommandPaletteState, ConnectionKind, ConnectionSlot,
-    ContextMenu, ContextMenuAction, ContextMenuItem, HoveredLink, OverviewActionHover,
-    PaletteEntry, PaletteEntryKind, PasteButton, PendingPaste, ReconnectPlan,
-    RemoteConnectionConfig, ScrollbarDragInfo, SearchMatch, SearchState, Selection, ServerEvent,
-    TopBarHoverRegion,
+    AppModel, ClientImagePlacement, ConnectionKind, ConnectionSlot, ContextMenu, ContextMenuAction,
+    ContextMenuItem, HoveredLink, OverviewActionHover, PaletteEntry, PaletteEntryKind, PasteButton,
+    PendingPaste, ReconnectPlan, RemoteConnectionConfig, ScrollbarDragInfo, SearchMatch,
+    SearchState, Selection, ServerEvent, TopBarHoverRegion,
 };
 
 /// Cached pre-transformed glyph instances for a pane tile.
@@ -107,7 +105,6 @@ pub(crate) struct App {
     pub cached_tile_glyphs: HashMap<u64, CachedTileGlyphs>,
     /// Whether the window currently has input focus.
     pub window_focused: bool,
-    #[allow(dead_code)]
     pub config_watcher: Option<notify::RecommendedWatcher>,
     pub config_change_rx: Option<crossbeam_channel::Receiver<()>>,
     /// Latest pending resize event and its timestamp.

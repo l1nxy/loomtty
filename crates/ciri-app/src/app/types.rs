@@ -126,7 +126,6 @@ pub enum PaletteEntryKind {
     },
     /// SSH shell fallback (no ciri-server on remote).
     SshShell {
-        #[allow(dead_code)]
         name: String,
         host: String,
         ssh_port: u16,
@@ -185,7 +184,6 @@ pub struct OverviewState {
 }
 
 /// Client-side image placement for rendering.
-#[allow(dead_code)]
 pub struct ClientImagePlacement {
     pub image_id: u64,
     pub col: u16,

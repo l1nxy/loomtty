@@ -210,8 +210,7 @@ impl ApplicationHandler for App {
             self.core.config.window.title, self.core.session_name
         );
         let window_icon = load_window_icon();
-        #[allow(unused_mut)]
-        let mut attrs = WindowAttributes::default()
+        let attrs = WindowAttributes::default()
             .with_title(window_title)
             .with_window_icon(window_icon)
             .with_inner_size(winit::dpi::LogicalSize::new(

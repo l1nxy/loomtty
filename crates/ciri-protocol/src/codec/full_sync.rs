@@ -35,14 +35,14 @@ fn write_full_pane_sync_header(
     title_bytes: &[u8],
 ) -> io::Result<()> {
     validate_full_pane_sync_title(title_bytes)?;
-    buf.extend_from_slice(&sync.pane_id.to_le_bytes());
-    buf.extend_from_slice(&sync.generation.to_le_bytes());
+    buf.extend_from_slice(&sync.meta.pane_id.to_le_bytes());
+    buf.extend_from_slice(&sync.meta.generation.to_le_bytes());
     buf.extend_from_slice(&sync.cols.to_le_bytes());
     buf.extend_from_slice(&sync.rows.to_le_bytes());
-    buf.extend_from_slice(&sync.cursor_line.to_le_bytes());
-    buf.extend_from_slice(&sync.cursor_col.to_le_bytes());
-    buf.push(sync.cursor_shape);
-    buf.push(sync.mode_flags);
+    buf.extend_from_slice(&sync.meta.cursor_line.to_le_bytes());
+    buf.extend_from_slice(&sync.meta.cursor_col.to_le_bytes());
+    buf.push(sync.meta.cursor_shape);
+    buf.push(sync.meta.mode_flags);
     buf.extend_from_slice(&(title_bytes.len() as u16).to_le_bytes());
     buf.extend_from_slice(title_bytes);
     Ok(())
@@ -365,14 +365,16 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
     let cwd = decode_cwd(payload, &mut extra_offset);
 
     Ok(FullPaneSync {
-        pane_id,
-        generation,
+        meta: PaneFrameMeta {
+            pane_id,
+            generation,
+            cursor_line,
+            cursor_col,
+            cursor_shape,
+            mode_flags,
+        },
         cols,
         rows,
-        cursor_line,
-        cursor_col,
-        cursor_shape,
-        mode_flags,
         title: title.to_string(),
         scrollback,
         scrollback_rows,

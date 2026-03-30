@@ -8,15 +8,9 @@ use super::state_machine::StateEncoder;
 use super::util::*;
 
 /// Encode a CellDelta frame by streaming cells through a StateEncoder.
-#[allow(clippy::too_many_arguments)]
 pub fn encode_cell_delta_streaming_framed<F>(
     buf: &mut Vec<u8>,
-    pane_id: u64,
-    generation: u64,
-    cursor_line: i16,
-    cursor_col: u16,
-    cursor_shape: u8,
-    mode_flags: u8,
+    meta: &PaneFrameMeta,
     cols: u16,
     regions: &[(u16, u16, u16)],
     mut write_cells: F,
@@ -35,12 +29,12 @@ where
     buf.push(TAG_CELL_DELTA);
     buf.extend_from_slice(&[0u8; 4]);
     let payload_start = 5;
-    buf.extend_from_slice(&pane_id.to_le_bytes());
-    buf.extend_from_slice(&generation.to_le_bytes());
-    buf.extend_from_slice(&cursor_line.to_le_bytes());
-    buf.extend_from_slice(&cursor_col.to_le_bytes());
-    buf.push(cursor_shape);
-    buf.push(mode_flags);
+    buf.extend_from_slice(&meta.pane_id.to_le_bytes());
+    buf.extend_from_slice(&meta.generation.to_le_bytes());
+    buf.extend_from_slice(&meta.cursor_line.to_le_bytes());
+    buf.extend_from_slice(&meta.cursor_col.to_le_bytes());
+    buf.push(meta.cursor_shape);
+    buf.push(meta.mode_flags);
     buf.extend_from_slice(&cols.to_le_bytes());
     buf.extend_from_slice(&(regions.len() as u16).to_le_bytes());
 
@@ -107,17 +101,15 @@ pub fn decode_cell_delta_borrowed(payload: Vec<u8>) -> io::Result<CellDeltaBorro
         });
         offset += sm_data_len;
     }
-    Ok(CellDeltaBorrowed::new(
+    let meta = PaneFrameMeta {
         pane_id,
         generation,
         cursor_line,
         cursor_col,
         cursor_shape,
         mode_flags,
-        cols,
-        regions,
-        payload,
-    ))
+    };
+    Ok(CellDeltaBorrowed::new(meta, cols, regions, payload))
 }
 
 fn validate_damage_bounds(left: u16, right: u16) -> io::Result<()> {

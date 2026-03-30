@@ -77,14 +77,16 @@ fn grid_with_scrollback() -> ClientPaneGrid {
     for round in 0..3u8 {
         let ch = (b'a' + round) as char;
         let sync = FullPaneSync {
-            pane_id: 1,
-            generation: round as u64,
+            meta: PaneFrameMeta {
+                pane_id: 1,
+                generation: round as u64,
+                cursor_line: 0,
+                cursor_col: 0,
+                cursor_shape: CURSOR_BLOCK,
+                mode_flags: 0,
+            },
             cols: 4,
             rows: 2,
-            cursor_line: 0,
-            cursor_col: 0,
-            cursor_shape: CURSOR_BLOCK,
-            mode_flags: 0,
             title: String::new(),
             scrollback: vec![PackedCell::with_ch(ch); 4],
             scrollback_rows: 1,
@@ -227,14 +229,16 @@ fn full_sync_dimension_change_preserves_scrollback() {
 
     // Resize from 4x2 to 6x3
     let sync = FullPaneSync {
-        pane_id: 1,
-        generation: 10,
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 10,
+            cursor_line: 1,
+            cursor_col: 2,
+            cursor_shape: CURSOR_BEAM,
+            mode_flags: 0,
+        },
         cols: 6,
         rows: 3,
-        cursor_line: 1,
-        cursor_col: 2,
-        cursor_shape: CURSOR_BEAM,
-        mode_flags: 0,
         title: "resized".into(),
         scrollback: vec![],
         scrollback_rows: 0,
@@ -267,14 +271,16 @@ fn full_sync_dimension_change_preserves_scrollback() {
 fn full_sync_short_cells_blanks_remainder() {
     let mut grid = ClientPaneGrid::new(4, 2, 10);
     let sync = FullPaneSync {
-        pane_id: 1,
-        generation: 1,
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+        },
         cols: 4,
         rows: 2,
-        cursor_line: 0,
-        cursor_col: 0,
-        cursor_shape: CURSOR_BLOCK,
-        mode_flags: 0,
         title: String::new(),
         scrollback: vec![],
         scrollback_rows: 0,
@@ -297,14 +303,16 @@ fn full_sync_scrollback_trimmed_to_max() {
     for i in 0u8..10 {
         let ch = (b'0' + i) as char;
         let sync = FullPaneSync {
-            pane_id: 1,
-            generation: i as u64,
+            meta: PaneFrameMeta {
+                pane_id: 1,
+                generation: i as u64,
+                cursor_line: 0,
+                cursor_col: 0,
+                cursor_shape: CURSOR_BLOCK,
+                mode_flags: 0,
+            },
             cols: 2,
             rows: 1,
-            cursor_line: 0,
-            cursor_col: 0,
-            cursor_shape: CURSOR_BLOCK,
-            mode_flags: 0,
             title: String::new(),
             scrollback: vec![PackedCell::with_ch(ch); 2],
             scrollback_rows: 1,
@@ -329,14 +337,16 @@ fn full_sync_clamps_scroll_offset() {
     // Add some scrollback
     for i in 0..4u8 {
         let sync = FullPaneSync {
-            pane_id: 1,
-            generation: i as u64,
+            meta: PaneFrameMeta {
+                pane_id: 1,
+                generation: i as u64,
+                cursor_line: 0,
+                cursor_col: 0,
+                cursor_shape: CURSOR_BLOCK,
+                mode_flags: 0,
+            },
             cols: 2,
             rows: 1,
-            cursor_line: 0,
-            cursor_col: 0,
-            cursor_shape: CURSOR_BLOCK,
-            mode_flags: 0,
             title: String::new(),
             scrollback: vec![PackedCell::with_ch('x'); 2],
             scrollback_rows: 1,
@@ -354,14 +364,16 @@ fn full_sync_clamps_scroll_offset() {
 
     // Resize resets scroll_offset to 0, but preserves scrollback
     let sync = FullPaneSync {
-        pane_id: 1,
-        generation: 10,
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 10,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+        },
         cols: 3,
         rows: 1, // dimension change
-        cursor_line: 0,
-        cursor_col: 0,
-        cursor_shape: CURSOR_BLOCK,
-        mode_flags: 0,
         title: String::new(),
         scrollback: vec![],
         scrollback_rows: 0,
@@ -382,14 +394,16 @@ fn scrollback_replace_clears_and_repopulates() {
     // Accumulate 3 scrollback rows: 'a', 'b', 'c'
     for ch in ['a', 'b', 'c'] {
         grid.apply_full_sync(&FullPaneSync {
-            pane_id: 1,
-            generation: 1,
+            meta: PaneFrameMeta {
+                pane_id: 1,
+                generation: 1,
+                cursor_line: 0,
+                cursor_col: 0,
+                cursor_shape: CURSOR_BLOCK,
+                mode_flags: 0,
+            },
             cols: 4,
             rows: 2,
-            cursor_line: 0,
-            cursor_col: 0,
-            cursor_shape: CURSOR_BLOCK,
-            mode_flags: 0,
             title: String::new(),
             scrollback: vec![PackedCell::with_ch(ch); 4],
             scrollback_rows: 1,
@@ -405,14 +419,16 @@ fn scrollback_replace_clears_and_repopulates() {
 
     // Now apply a replace sync with 2 rows: 'X', 'Y'
     grid.apply_full_sync(&FullPaneSync {
-        pane_id: 1,
-        generation: 2,
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 2,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+        },
         cols: 4,
         rows: 2,
-        cursor_line: 0,
-        cursor_col: 0,
-        cursor_shape: CURSOR_BLOCK,
-        mode_flags: 0,
         title: String::new(),
         scrollback: vec![
             PackedCell::with_ch('X'),
@@ -541,14 +557,16 @@ fn text_in_range_spans_scrollback_and_viewport() {
     let mut grid = ClientPaneGrid::new(3, 1, 10);
     // Add one scrollback row 'abc', viewport row 'XYZ'
     let sync = FullPaneSync {
-        pane_id: 1,
-        generation: 1,
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+        },
         cols: 3,
         rows: 1,
-        cursor_line: 0,
-        cursor_col: 0,
-        cursor_shape: CURSOR_BLOCK,
-        mode_flags: 0,
         title: String::new(),
         scrollback: vec![
             PackedCell::with_ch('a'),
@@ -578,14 +596,16 @@ fn text_in_range_spans_scrollback_and_viewport() {
 fn search_finds_in_scrollback_and_viewport() {
     let mut grid = ClientPaneGrid::new(5, 1, 10);
     let sync = FullPaneSync {
-        pane_id: 1,
-        generation: 1,
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+        },
         cols: 5,
         rows: 1,
-        cursor_line: 0,
-        cursor_col: 0,
-        cursor_shape: CURSOR_BLOCK,
-        mode_flags: 0,
         title: String::new(),
         scrollback: vec![
             PackedCell::with_ch('h'),
@@ -710,14 +730,16 @@ fn split_path_line_col_cases() {
 fn word_bounds_on_viewport_row() {
     let mut grid = ClientPaneGrid::new(5, 1, 10);
     let sync = FullPaneSync {
-        pane_id: 1,
-        generation: 1,
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+        },
         cols: 5,
         rows: 1,
-        cursor_line: 0,
-        cursor_col: 0,
-        cursor_shape: CURSOR_BLOCK,
-        mode_flags: 0,
         title: String::new(),
         scrollback: vec![PackedCell::with_ch('x'); 5],
         scrollback_rows: 1,
@@ -772,14 +794,16 @@ fn delta_apply_patches_viewport() {
 fn full_sync_populates_viewport_and_scrollback() {
     let mut grid = ClientPaneGrid::new(4, 2, 100);
     let sync = FullPaneSync {
-        pane_id: 1,
-        generation: 1,
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+        },
         cols: 4,
         rows: 2,
-        cursor_line: 0,
-        cursor_col: 0,
-        cursor_shape: CURSOR_BLOCK,
-        mode_flags: 0,
         title: String::new(),
         scrollback: vec![PackedCell::with_ch('S'); 4],
         scrollback_rows: 1,
@@ -844,14 +868,16 @@ fn reflow_widen_joins_wrapped_rows() {
 
     // Resize to 8 cols via a sync
     let sync = FullPaneSync {
-        pane_id: 1,
-        generation: 1,
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+        },
         cols: 8,
         rows: 1,
-        cursor_line: 0,
-        cursor_col: 0,
-        cursor_shape: CURSOR_BLOCK,
-        mode_flags: 0,
         title: String::new(),
         scrollback: vec![],
         scrollback_rows: 0,
@@ -888,14 +914,16 @@ fn reflow_narrow_splits_long_line() {
 
     // Resize to 3 cols
     let sync = FullPaneSync {
-        pane_id: 1,
-        generation: 1,
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+        },
         cols: 3,
         rows: 1,
-        cursor_line: 0,
-        cursor_col: 0,
-        cursor_shape: CURSOR_BLOCK,
-        mode_flags: 0,
         title: String::new(),
         scrollback: vec![],
         scrollback_rows: 0,
@@ -942,14 +970,16 @@ fn reflow_preserves_unwrapped_lines() {
 
     // Resize to 8 cols — should stay as 2 separate rows (not joined)
     let sync = FullPaneSync {
-        pane_id: 1,
-        generation: 1,
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+        },
         cols: 8,
         rows: 1,
-        cursor_line: 0,
-        cursor_col: 0,
-        cursor_shape: CURSOR_BLOCK,
-        mode_flags: 0,
         title: String::new(),
         scrollback: vec![],
         scrollback_rows: 0,

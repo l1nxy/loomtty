@@ -584,18 +584,24 @@ pub struct CellDelta {
     pub regions: Vec<DamageRegion>,
 }
 
-/// Full pane snapshot (tag 0x21).
-#[derive(Debug, Clone, PartialEq)]
-pub struct FullPaneSync {
+/// Per-frame pane metadata shared by FullPaneSync and CellDelta.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct PaneFrameMeta {
     pub pane_id: u64,
     pub generation: u64,
-    pub cols: u16,
-    pub rows: u16,
     pub cursor_line: i16,
     pub cursor_col: u16,
     pub cursor_shape: u8,
     /// Terminal mode flags (mouse mode, alt screen, etc.)
     pub mode_flags: u8,
+}
+
+/// Full pane snapshot (tag 0x21).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FullPaneSync {
+    pub meta: PaneFrameMeta,
+    pub cols: u16,
+    pub rows: u16,
     pub title: String,
     /// New scrollback lines (oldest first).
     /// When `scrollback_replace` is false, the client appends these to its buffer.
@@ -645,12 +651,7 @@ impl BorrowedRegionMeta {
 /// on demand via `decode_sm_cells` rather than zero-copy cast.
 #[derive(Debug)]
 pub struct CellDeltaBorrowed {
-    pub pane_id: u64,
-    pub generation: u64,
-    pub cursor_line: i16,
-    pub cursor_col: u16,
-    pub cursor_shape: u8,
-    pub mode_flags: u8,
+    pub meta: PaneFrameMeta,
     pub cols: u16,
     pub regions: Vec<BorrowedRegionMeta>,
     /// Raw payload bytes — SM opcode streams are read from here.
@@ -659,25 +660,14 @@ pub struct CellDeltaBorrowed {
 
 impl CellDeltaBorrowed {
     /// Construct from pre-parsed metadata and the raw payload.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        pane_id: u64,
-        generation: u64,
-        cursor_line: i16,
-        cursor_col: u16,
-        cursor_shape: u8,
-        mode_flags: u8,
+        meta: PaneFrameMeta,
         cols: u16,
         regions: Vec<BorrowedRegionMeta>,
         payload: Vec<u8>,
     ) -> Self {
         Self {
-            pane_id,
-            generation,
-            cursor_line,
-            cursor_col,
-            cursor_shape,
-            mode_flags,
+            meta,
             cols,
             regions,
             payload,

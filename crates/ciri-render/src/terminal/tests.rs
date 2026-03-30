@@ -57,7 +57,6 @@ fn test_color_table(config: &CiriConfig) -> ColorTable {
     ColorTable::new(config)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn test_view_inputs<'a>(
     cells: &'a [PackedCell],
     cols: u16,

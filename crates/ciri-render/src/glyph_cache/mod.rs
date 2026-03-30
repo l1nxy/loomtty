@@ -52,8 +52,7 @@ pub struct GlyphCache {
     font_size: Size,
     // Thin FreeType path (glyph-ID rendering for shaped glyphs)
     // Keep library alive — ft_face borrows from it.
-    #[allow(dead_code)]
-    ft_library: FtLibrary,
+    _ft_library: FtLibrary,
     ft_face: Option<freetype::Face>,
     emoji_ft_face: Option<freetype::Face>,
     emoji_font_id: Option<fontdb::ID>,
@@ -76,6 +75,7 @@ impl GlyphCache {
     ///
     /// `primary_font_path` is the file path + face index for the thin FreeType
     /// path used by `ensure_glyph_id()`. Obtained from `TextShaper::primary_font_path()`.
+    // TODO: refactor font init params into a struct
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         font_size_pt: f32,
@@ -257,7 +257,7 @@ impl GlyphCache {
                 bold_italic: bold_italic_key,
             },
             font_size,
-            ft_library,
+            _ft_library: ft_library,
             ft_face,
             emoji_ft_face,
             emoji_font_id,

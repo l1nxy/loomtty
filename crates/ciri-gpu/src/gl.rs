@@ -279,7 +279,6 @@ impl GlAtlasLayer {
 
 // ─── GL rect pipeline ───────────────────────────────────────────────
 
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 struct GlRectPipeline {
     program: glow::Program,
     vao: glow::VertexArray,
@@ -289,7 +288,6 @@ struct GlRectPipeline {
 }
 
 impl GlRectPipeline {
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
     unsafe fn new(gl: &glow::Context, max_rects: usize) -> Self {
         let program = compile_program(gl, RECT_VS, RECT_FS, "rect");
         let loc_viewport = gl
@@ -396,7 +394,6 @@ pub struct GlyphAtlasGpu {
 }
 
 impl GlyphAtlasGpu {
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
     unsafe fn new(gl: &glow::Context, atlas_size: u32, max_instances: usize) -> Self {
         let alpha = GlAtlasLayer::new(
             gl,
@@ -797,7 +794,6 @@ unsafe fn compile_program(
 
 // ─── GLSL shaders ───────────────────────────────────────────────────
 
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 const RECT_VS: &str = r#"#version 330 core
 
 layout(location = 0) in vec2 a_pos;
@@ -823,7 +819,6 @@ void main() {
 }
 "#;
 
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 const RECT_FS: &str = r#"#version 330 core
 
 in vec4 v_color;

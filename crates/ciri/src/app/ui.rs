@@ -2373,9 +2373,8 @@ fn truncate_label(label: &str, panel_w: f32, cw: f32) -> String {
 mod tests {
     use super::*;
     use crate::app::paste_guard::PasteInfo;
-    use crate::app::{
-        CommandPaletteState, ContextMenu, ContextMenuAction, ContextMenuItem, PendingPaste,
-    };
+    use crate::app::{ContextMenu, ContextMenuAction, ContextMenuItem, PendingPaste};
+    use ciri_app::app::CommandPaletteState;
     use ciri_config::config::CiriConfig;
 
     fn make_app() -> App {

@@ -29,6 +29,7 @@ pub(super) fn precompute_row_shaping(
     fid: fontdb::ID,
     face: &rustybuzz::Face,
 ) -> RowLigatureData {
+    // TODO: refactor ligature run params into a struct
     #[allow(clippy::too_many_arguments)]
     fn flush_ligature_run(
         shaper: &TextShaper,

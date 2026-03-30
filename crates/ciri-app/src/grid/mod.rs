@@ -119,7 +119,6 @@ impl ClientPaneGrid {
 
     /// Swap out the dirty_rows flags and reset the counter.
     /// Returns the old dirty flags; leaves a zeroed vec in place.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn take_dirty_rows(&mut self) -> Vec<bool> {
         let mut taken = vec![false; self.dirty_rows.len()];
         std::mem::swap(&mut taken, &mut self.dirty_rows);

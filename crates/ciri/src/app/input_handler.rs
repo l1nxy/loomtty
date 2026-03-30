@@ -834,10 +834,8 @@ fn open_url(url: &str, pane_cwd: Option<&str>) -> std::io::Result<()> {
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         Command::new("xdg-open").arg(url).spawn()?;
-        return Ok(());
     }
 
-    #[allow(unreachable_code)]
     Ok(())
 }
 

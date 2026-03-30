@@ -595,14 +595,16 @@ impl Pane {
         };
 
         FullPaneSync {
-            pane_id: self.id,
-            generation,
+            meta: PaneFrameMeta {
+                pane_id: self.id,
+                generation,
+                cursor_line: content.cursor.point.line.0 as i16,
+                cursor_col: content.cursor.point.column.0 as u16,
+                cursor_shape: cursor_shape_to_u8(content.cursor.shape),
+                mode_flags: self.mode_flags_from_term(term),
+            },
             cols: cols as u16,
             rows: rows as u16,
-            cursor_line: content.cursor.point.line.0 as i16,
-            cursor_col: content.cursor.point.column.0 as u16,
-            cursor_shape: cursor_shape_to_u8(content.cursor.shape),
-            mode_flags: self.mode_flags_from_term(term),
             title: self.title.clone(),
             scrollback: sb_cells,
             scrollback_rows: scrollback.rows as u32,
@@ -774,7 +776,6 @@ pub fn pack_color(color: AnsiColor) -> PackedColor {
 
 fn named_color_to_compact(n: NamedColor) -> u8 {
     use alacritty_terminal::vte::ansi::NamedColor::*;
-    #[allow(unreachable_patterns)]
     match n {
         Black => 0,
         Red => 1,
@@ -805,7 +806,6 @@ fn named_color_to_compact(n: NamedColor) -> u8 {
         DimWhite => 26,
         BrightForeground => 27,
         DimForeground => 28,
-        _ => 16,
     }
 }
 

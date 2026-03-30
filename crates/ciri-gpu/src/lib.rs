@@ -6,13 +6,12 @@
 //! - **"gl"**: OpenGL 3.3+ / EGL — smooth Wayland resize
 //! - **"dx"**: Direct3D 11 — native Windows backend
 
-#![allow(unsafe_op_in_unsafe_fn)]
-#![allow(clippy::large_enum_variant)]
-
 #[cfg(feature = "blade")]
 pub mod blade;
 
+// GL binding layer: every function is inherently unsafe (glow API).
 #[cfg(feature = "gl")]
+#[allow(unsafe_op_in_unsafe_fn)]
 pub mod gl;
 
 #[cfg(all(feature = "dx", windows))]
@@ -31,6 +30,7 @@ const GL_BACKEND: &str = "gl";
 const DX_BACKEND: &str = "dx";
 
 /// Runtime-selected GPU atlas.
+#[allow(clippy::large_enum_variant)]
 pub enum GlyphAtlasGpu {
     #[cfg(feature = "blade")]
     Blade(blade::GlyphAtlasGpu),
@@ -41,6 +41,7 @@ pub enum GlyphAtlasGpu {
 }
 
 /// Runtime-selected GPU renderer.
+#[allow(clippy::large_enum_variant)]
 pub enum Renderer {
     #[cfg(feature = "blade")]
     Blade(blade::Renderer),
@@ -353,6 +354,8 @@ mod tests {
     #[cfg(all(feature = "blade", feature = "gl"))]
     #[allow(invalid_value)]
     fn backend_mismatch_renderer_and_atlas() -> (Renderer, GlyphAtlasGpu) {
+        // Safety: these values are never read — only used to test backend-mismatch
+        // error paths, and are immediately forgotten via `mem::forget`.
         let renderer = Renderer::Blade(unsafe { std::mem::MaybeUninit::zeroed().assume_init() });
         let atlas = GlyphAtlasGpu::Gl(unsafe { std::mem::MaybeUninit::zeroed().assume_init() });
         (renderer, atlas)

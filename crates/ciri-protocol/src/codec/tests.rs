@@ -247,14 +247,17 @@ fn cell_delta_sm_roundtrip() {
     ];
 
     let mut buf = Vec::new();
+    let meta = PaneFrameMeta {
+        pane_id: 42,
+        generation: 100,
+        cursor_line: 5,
+        cursor_col: 10,
+        cursor_shape: 0,
+        mode_flags: 0,
+    };
     encode_cell_delta_streaming_framed(
         &mut buf,
-        42,
-        100,
-        5,
-        10,
-        0,
-        0,
+        &meta,
         80,
         &[(5, 10, 12)],
         |_line, _left, _right, enc| {
@@ -268,8 +271,8 @@ fn cell_delta_sm_roundtrip() {
     // Skip frame header (tag + len = 5 bytes) to get payload
     let payload = buf[5..].to_vec();
     let delta = decode_cell_delta_borrowed(payload).unwrap();
-    assert_eq!(delta.pane_id, 42);
-    assert_eq!(delta.generation, 100);
+    assert_eq!(delta.meta.pane_id, 42);
+    assert_eq!(delta.meta.generation, 100);
     assert_eq!(delta.cols, 80);
     assert_eq!(delta.regions.len(), 1);
     assert_eq!(delta.regions[0].line, 5);
@@ -295,14 +298,16 @@ fn full_pane_sync_roundtrip() {
     let blank = PackedCell::default();
     let cells: Vec<PackedCell> = vec![blank; 80 * 24];
     let sync = FullPaneSync {
-        pane_id: 1,
-        generation: 50,
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 50,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+        },
         cols: 80,
         rows: 24,
-        cursor_line: 0,
-        cursor_col: 0,
-        cursor_shape: CURSOR_BLOCK,
-        mode_flags: 0,
         title: "bash".to_string(),
         scrollback: Vec::new(),
         scrollback_rows: 0,
@@ -316,7 +321,7 @@ fn full_pane_sync_roundtrip() {
     // SM should compress blank cells significantly
     assert!(payload.len() < 80 * 24 * PACKED_CELL_SIZE);
     let decoded = decode_full_pane_sync(&payload).unwrap();
-    assert_eq!(decoded.pane_id, 1);
+    assert_eq!(decoded.meta.pane_id, 1);
     assert_eq!(decoded.cols, 80);
     assert_eq!(decoded.rows, 24);
     assert_eq!(decoded.cells.len(), 80 * 24);
@@ -335,14 +340,16 @@ fn full_pane_sync_with_scrollback() {
     }
     let cells: Vec<PackedCell> = vec![PackedCell::default(); 10 * 5];
     let sync = FullPaneSync {
-        pane_id: 2,
-        generation: 10,
+        meta: PaneFrameMeta {
+            pane_id: 2,
+            generation: 10,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+        },
         cols: 10,
         rows: 5,
-        cursor_line: 0,
-        cursor_col: 0,
-        cursor_shape: CURSOR_BLOCK,
-        mode_flags: 0,
         title: "test".to_string(),
         scrollback: sb.clone(),
         scrollback_rows: 3,
@@ -362,14 +369,16 @@ fn full_pane_sync_with_scrollback() {
 #[test]
 fn full_pane_sync_rejects_truncated_mandatory_sections() {
     let sync = FullPaneSync {
-        pane_id: 7,
-        generation: 12,
+        meta: PaneFrameMeta {
+            pane_id: 7,
+            generation: 12,
+            cursor_line: 1,
+            cursor_col: 2,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+        },
         cols: 4,
         rows: 2,
-        cursor_line: 1,
-        cursor_col: 2,
-        cursor_shape: CURSOR_BLOCK,
-        mode_flags: 0,
         title: "pane".to_string(),
         scrollback: vec![PackedCell::default(); 4],
         scrollback_rows: 1,
@@ -401,14 +410,16 @@ fn full_pane_sync_rejects_truncated_mandatory_sections() {
 #[test]
 fn full_pane_sync_ignores_truncated_optional_extras() {
     let mut sync = FullPaneSync {
-        pane_id: 9,
-        generation: 99,
+        meta: PaneFrameMeta {
+            pane_id: 9,
+            generation: 99,
+            cursor_line: 0,
+            cursor_col: 1,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+        },
         cols: 2,
         rows: 1,
-        cursor_line: 0,
-        cursor_col: 1,
-        cursor_shape: CURSOR_BLOCK,
-        mode_flags: 0,
         title: "links".to_string(),
         scrollback: Vec::new(),
         scrollback_rows: 0,
@@ -435,7 +446,7 @@ fn full_pane_sync_ignores_truncated_optional_extras() {
     // Cut 7 bytes to truncate into the grapheme extras section
     let grapheme_cut = &grapheme_only_payload[..grapheme_only_payload.len() - 7];
     let decoded = decode_full_pane_sync(grapheme_cut).unwrap();
-    assert_eq!(decoded.pane_id, sync.pane_id);
+    assert_eq!(decoded.meta.pane_id, sync.meta.pane_id);
     assert_eq!(decoded.cells, sync.cells);
     assert_eq!(decoded.scrollback, sync.scrollback);
     assert!(decoded.grapheme_extras.0.is_empty());
@@ -444,7 +455,7 @@ fn full_pane_sync_ignores_truncated_optional_extras() {
 
     let hyperlink_cut = &payload[..payload.len() - 3];
     let decoded = decode_full_pane_sync(hyperlink_cut).unwrap();
-    assert_eq!(decoded.pane_id, sync.pane_id);
+    assert_eq!(decoded.meta.pane_id, sync.meta.pane_id);
     assert_eq!(decoded.cells, sync.cells);
     assert_eq!(decoded.grapheme_extras.0.len(), 1);
     assert_eq!(decoded.hyperlink_extras.cell_links, vec![(1, 3)]);
@@ -475,14 +486,17 @@ async fn frame_roundtrip_client_msg() {
 async fn frame_roundtrip_cell_delta_sm() {
     let cell = PackedCell::with_ch('X');
     let mut buf = Vec::new();
+    let meta = PaneFrameMeta {
+        pane_id: 1,
+        generation: 1,
+        cursor_line: 0,
+        cursor_col: 0,
+        cursor_shape: 0,
+        mode_flags: 0,
+    };
     encode_cell_delta_streaming_framed(
         &mut buf,
-        1,
-        1,
-        0,
-        0,
-        0,
-        0,
+        &meta,
         80,
         &[(0, 0, 0)],
         |_line, _left, _right, enc| {

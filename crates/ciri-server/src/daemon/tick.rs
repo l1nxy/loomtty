@@ -257,15 +257,18 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                                     .collect();
 
                                 let cols = pane.grid_cols();
-                                let mut buf = frame_pool.pop().unwrap_or_default();
-                                let ok = codec::encode_cell_delta_streaming_framed(
-                                    &mut buf,
+                                let meta = PaneFrameMeta {
                                     pane_id,
-                                    pgen,
+                                    generation: pgen,
                                     cursor_line,
                                     cursor_col,
                                     cursor_shape,
                                     mode_flags,
+                                };
+                                let mut buf = frame_pool.pop().unwrap_or_default();
+                                let ok = codec::encode_cell_delta_streaming_framed(
+                                    &mut buf,
+                                    &meta,
                                     cols,
                                     &regions,
                                     |line, left, right, enc| {

@@ -24,6 +24,8 @@ pub(crate) struct Server {
     pub(crate) session_config: ciri_config::schema::SessionConfig,
 }
 
+const CONTROL_SESSION: &str = "__control__";
+
 /// Internal response type for message handling.
 pub(crate) enum ServerResponse {
     BroadcastToSession(String, ServerMessage),
@@ -292,6 +294,64 @@ impl Server {
         Self::broadcast_layout_update(session, session_name, responses);
     }
 
+    fn session_is_control(session_name: &str) -> bool {
+        session_name == CONTROL_SESSION
+    }
+
+    fn refresh_session_attach_time(&mut self, session_name: &str) {
+        if Self::session_is_control(session_name) {
+            return;
+        }
+        if let Some(session) = self.sessions.get_mut(session_name) {
+            session.last_attached = tokio::time::Instant::now();
+        }
+    }
+
+    fn switch_client_session_affinity(&mut self, client_id: u64, session_name: &str) {
+        if let Some(client) = self.clients.get_mut(&client_id) {
+            client.session_name = session_name.to_string();
+            client.damage.clear();
+            client.history_sent.clear();
+            client.last_acked_generation = 0;
+            client.send_failures = 0;
+        }
+    }
+
+    fn prepare_full_sync_for_client(
+        &mut self,
+        client_id: u64,
+        session_name: &str,
+        responses: &mut Vec<ServerResponse>,
+    ) {
+        self.with_session(session_name, |session, clients| {
+            session.resize_all_panes(clients);
+
+            if let Some(client) = clients.get_mut(&client_id) {
+                for &pane_id in session.panes.keys() {
+                    let mut acc = DamageAccumulator::default();
+                    acc.mark_full();
+                    client.damage.insert(pane_id, acc);
+                }
+            }
+
+            let (sync_msg, pane_syncs) = session.build_state_sync();
+
+            if let Some(client) = clients.get_mut(&client_id) {
+                for (&pid, pane) in &session.panes {
+                    client.history_sent.insert(pid, pane.scrollback_total());
+                }
+                for acc in client.damage.values_mut() {
+                    *acc = DamageAccumulator::default();
+                }
+            }
+
+            responses.push(ServerResponse::SendToClient(client_id, sync_msg));
+            for sync in pane_syncs {
+                responses.push(ServerResponse::SendFullPaneSync(client_id, sync));
+            }
+        });
+    }
+
     fn close_pane_and_sync_layout(
         session: &mut Session,
         clients: &mut HashMap<u64, ClientState>,
@@ -427,7 +487,9 @@ impl Server {
                     } else {
                         responses.push(ServerResponse::SendToClient(
                             client_id,
-                            ServerMessage::BounceEdge { direction: BounceDirection::Left },
+                            ServerMessage::BounceEdge {
+                                direction: BounceDirection::Left,
+                            },
                         ));
                     }
                 }
@@ -445,7 +507,9 @@ impl Server {
                     } else {
                         responses.push(ServerResponse::SendToClient(
                             client_id,
-                            ServerMessage::BounceEdge { direction: BounceDirection::Right },
+                            ServerMessage::BounceEdge {
+                                direction: BounceDirection::Right,
+                            },
                         ));
                     }
                 }
@@ -465,7 +529,9 @@ impl Server {
                     } else {
                         responses.push(ServerResponse::SendToClient(
                             client_id,
-                            ServerMessage::BounceEdge { direction: BounceDirection::Up },
+                            ServerMessage::BounceEdge {
+                                direction: BounceDirection::Up,
+                            },
                         ));
                     }
                 }
@@ -485,7 +551,9 @@ impl Server {
                     } else {
                         responses.push(ServerResponse::SendToClient(
                             client_id,
-                            ServerMessage::BounceEdge { direction: BounceDirection::Down },
+                            ServerMessage::BounceEdge {
+                                direction: BounceDirection::Down,
+                            },
                         ));
                     }
                 }
@@ -1487,52 +1555,19 @@ impl Server {
 
                 let old_session_name = session_name.clone();
 
-                // Update client's session affinity
-                if let Some(client) = self.clients.get_mut(&client_id) {
-                    client.session_name = target.clone();
-                    client.damage.clear();
-                    client.history_sent.clear();
-                }
+                self.switch_client_session_affinity(client_id, &target);
+                self.refresh_session_attach_time(&target);
 
                 // Get or create target session
                 self.get_or_create_session(&target);
 
-                self.with_session(&target, |new_session, clients| {
-                    new_session.resize_all_panes(clients);
-
-                    // Mark all panes for full sync for this client
-                    if let Some(client) = clients.get_mut(&client_id) {
-                        for &pane_id in new_session.panes.keys() {
-                            let mut acc = DamageAccumulator::default();
-                            acc.mark_full();
-                            client.damage.insert(pane_id, acc);
-                        }
-                    }
-
-                    // Build state sync for the new session
-                    let (sync_msg, pane_syncs) = new_session.build_state_sync();
-
-                    responses.push(ServerResponse::SendToClient(
-                        client_id,
-                        ServerMessage::SessionSwitched {
-                            session_name: target.clone(),
-                        },
-                    ));
-                    responses.push(ServerResponse::SendToClient(client_id, sync_msg));
-                    for sync in pane_syncs {
-                        responses.push(ServerResponse::SendFullPaneSync(client_id, sync));
-                    }
-
-                    // Record history_sent for the new session's panes
-                    if let Some(client) = clients.get_mut(&client_id) {
-                        for (&pid, pane) in &new_session.panes {
-                            client.history_sent.insert(pid, pane.scrollback_total());
-                        }
-                        for acc in client.damage.values_mut() {
-                            *acc = DamageAccumulator::default();
-                        }
-                    }
-                });
+                responses.push(ServerResponse::SendToClient(
+                    client_id,
+                    ServerMessage::SessionSwitched {
+                        session_name: target.clone(),
+                    },
+                ));
+                self.prepare_full_sync_for_client(client_id, &target, &mut responses);
 
                 // Resize panes in old session (client left, viewport may change)
                 if old_session_name != target {
@@ -1604,6 +1639,76 @@ mod tests {
         let client = server.clients.get(&1).unwrap();
         assert_eq!(client.viewport_width, before);
         assert_eq!(client.viewport_height, 768.0);
+    }
+
+    #[test]
+    fn switch_session_resets_client_runtime_state_and_refreshes_attach_time() {
+        let mut server = Server::new("/bin/sh", 8.0);
+        let old_session = "alpha".to_string();
+        let new_session = "beta".to_string();
+        server.clients.insert(1, test_client(1, &old_session));
+        server.get_or_create_session(&old_session);
+        server.get_or_create_session(&new_session);
+
+        let stale_gen = 77;
+        let stale_pane = {
+            let session = server.sessions.get(&old_session).unwrap();
+            session.workspaces.active().active_pane_id().unwrap()
+        };
+        {
+            let client = server.clients.get_mut(&1).unwrap();
+            let mut acc = DamageAccumulator::default();
+            acc.mark_full();
+            client.damage.insert(stale_pane, acc);
+            client.history_sent.insert(stale_pane, 99);
+            client.last_acked_generation = stale_gen;
+            client.send_failures = 5;
+        }
+        let previous_attach = server.sessions.get(&new_session).unwrap().last_attached;
+        std::thread::sleep(std::time::Duration::from_millis(1));
+
+        let responses = server.handle_message(
+            ClientMessage::SwitchSession {
+                session_name: new_session.clone(),
+            },
+            1,
+        );
+
+        let client = server.clients.get(&1).unwrap();
+        assert_eq!(client.session_name, new_session);
+        assert_eq!(client.last_acked_generation, 0);
+        assert_eq!(client.send_failures, 0);
+        assert!(!client.damage.contains_key(&stale_pane));
+        assert!(!client.history_sent.contains_key(&stale_pane));
+        assert!(!client.damage.is_empty());
+        assert!(!client.history_sent.is_empty());
+        assert!(
+            client.damage.values().all(DamageAccumulator::is_empty),
+            "initial full sync should clear pending damage after queuing authoritative frames"
+        );
+
+        let refreshed_attach = server.sessions.get(&new_session).unwrap().last_attached;
+        assert!(
+            refreshed_attach > previous_attach,
+            "switching into a session should refresh last_attached ordering"
+        );
+
+        assert!(matches!(
+            responses.first(),
+            Some(ServerResponse::SendToClient(
+                1,
+                ServerMessage::SessionSwitched { session_name }
+            )) if session_name == &new_session
+        ));
+        assert!(responses.iter().any(|resp| matches!(
+            resp,
+            ServerResponse::SendToClient(1, ServerMessage::StateSync { .. })
+        )));
+        assert!(
+            responses
+                .iter()
+                .any(|resp| matches!(resp, ServerResponse::SendFullPaneSync(1, _)))
+        );
     }
 
     #[test]

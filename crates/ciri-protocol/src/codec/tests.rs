@@ -462,6 +462,49 @@ fn full_pane_sync_ignores_truncated_optional_extras() {
     assert!(decoded.hyperlink_extras.link_map.is_empty());
 }
 
+#[test]
+fn full_pane_sync_rejects_oversized_visible_metadata() {
+    let mut sync = FullPaneSync {
+        meta: PaneFrameMeta {
+            pane_id: 11,
+            generation: 7,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+        },
+        cols: 1,
+        rows: 1,
+        title: "meta".to_string(),
+        scrollback: Vec::new(),
+        scrollback_rows: 0,
+        scrollback_replace: false,
+        cells: vec![PackedCell::with_ch('A')],
+        grapheme_extras: GraphemeExtras::new(),
+        hyperlink_extras: HyperlinkExtras::new(),
+        cwd: None,
+    };
+
+    sync.grapheme_extras.push(0, &"é".repeat(128));
+    let err = encode_full_pane_sync_payload(&sync).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("grapheme extra too long"));
+
+    sync.grapheme_extras = GraphemeExtras::new();
+    sync.hyperlink_extras
+        .link_map
+        .push((1, "https://example.test/".repeat(4_000)));
+    let err = encode_full_pane_sync_payload(&sync).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("hyperlink URI too long"));
+
+    sync.hyperlink_extras = HyperlinkExtras::new();
+    sync.cwd = Some("/tmp/".repeat(20_000));
+    let err = encode_full_pane_sync_payload(&sync).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("cwd too long"));
+}
+
 // ─── Frame-level roundtrip ──────────────────────────────────────
 
 #[tokio::test]

@@ -29,6 +29,39 @@ fn validate_full_pane_sync_title(title: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
+fn validate_grapheme_extra(extra: &str) -> io::Result<()> {
+    let len = extra.len();
+    if len > u8::MAX as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "grapheme extra too long for FullPaneSync (exceeds u8::MAX)",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_hyperlink_uri(uri: &str) -> io::Result<()> {
+    let len = uri.len();
+    if len > u16::MAX as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "hyperlink URI too long for FullPaneSync (exceeds u16::MAX)",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_cwd(cwd: &str) -> io::Result<()> {
+    let len = cwd.len();
+    if len > u16::MAX as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "cwd too long for FullPaneSync (exceeds u16::MAX)",
+        ));
+    }
+    Ok(())
+}
+
 fn write_full_pane_sync_header(
     buf: &mut Vec<u8>,
     sync: &FullPaneSync,
@@ -48,18 +81,20 @@ fn write_full_pane_sync_header(
     Ok(())
 }
 
-fn write_full_pane_sync_grapheme_extras(buf: &mut Vec<u8>, sync: &FullPaneSync) {
+fn write_full_pane_sync_grapheme_extras(buf: &mut Vec<u8>, sync: &FullPaneSync) -> io::Result<()> {
     let extras = &sync.grapheme_extras.0;
     buf.extend_from_slice(&(extras.len() as u16).to_le_bytes());
     for (idx, extra) in extras {
+        validate_grapheme_extra(extra)?;
         buf.extend_from_slice(&idx.to_le_bytes());
         let bytes = extra.as_bytes();
-        buf.push(bytes.len().min(255) as u8);
-        buf.extend_from_slice(&bytes[..bytes.len().min(255)]);
+        buf.push(bytes.len() as u8);
+        buf.extend_from_slice(bytes);
     }
+    Ok(())
 }
 
-fn write_full_pane_sync_hyperlink_extras(buf: &mut Vec<u8>, sync: &FullPaneSync) {
+fn write_full_pane_sync_hyperlink_extras(buf: &mut Vec<u8>, sync: &FullPaneSync) -> io::Result<()> {
     let extras = &sync.hyperlink_extras;
     buf.extend_from_slice(&(extras.cell_links.len() as u16).to_le_bytes());
     for &(cell_idx, link_id) in &extras.cell_links {
@@ -68,26 +103,28 @@ fn write_full_pane_sync_hyperlink_extras(buf: &mut Vec<u8>, sync: &FullPaneSync)
     }
     buf.extend_from_slice(&(extras.link_map.len() as u16).to_le_bytes());
     for (link_id, uri) in &extras.link_map {
+        validate_hyperlink_uri(uri)?;
         buf.extend_from_slice(&link_id.to_le_bytes());
         let uri_bytes = uri.as_bytes();
-        let len = uri_bytes.len().min(u16::MAX as usize);
-        buf.extend_from_slice(&(len as u16).to_le_bytes());
-        buf.extend_from_slice(&uri_bytes[..len]);
+        buf.extend_from_slice(&(uri_bytes.len() as u16).to_le_bytes());
+        buf.extend_from_slice(uri_bytes);
     }
+    Ok(())
 }
 
-fn write_full_pane_sync_cwd(buf: &mut Vec<u8>, sync: &FullPaneSync) {
+fn write_full_pane_sync_cwd(buf: &mut Vec<u8>, sync: &FullPaneSync) -> io::Result<()> {
     match &sync.cwd {
         Some(cwd) => {
+            validate_cwd(cwd)?;
             let bytes = cwd.as_bytes();
-            let len = bytes.len().min(u16::MAX as usize);
-            buf.extend_from_slice(&(len as u16).to_le_bytes());
-            buf.extend_from_slice(&bytes[..len]);
+            buf.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
+            buf.extend_from_slice(bytes);
         }
         None => {
             buf.extend_from_slice(&0u16.to_le_bytes());
         }
     }
+    Ok(())
 }
 
 fn decode_cwd(payload: &[u8], offset: &mut usize) -> Option<String> {
@@ -286,9 +323,9 @@ pub fn encode_full_pane_sync_payload(sync: &FullPaneSync) -> io::Result<Vec<u8>>
     buf.extend_from_slice(&sm_scrollback);
     buf.extend_from_slice(&(sm_viewport.len() as u32).to_le_bytes());
     buf.extend_from_slice(&sm_viewport);
-    write_full_pane_sync_grapheme_extras(&mut buf, sync);
-    write_full_pane_sync_hyperlink_extras(&mut buf, sync);
-    write_full_pane_sync_cwd(&mut buf, sync);
+    write_full_pane_sync_grapheme_extras(&mut buf, sync)?;
+    write_full_pane_sync_hyperlink_extras(&mut buf, sync)?;
+    write_full_pane_sync_cwd(&mut buf, sync)?;
     Ok(buf)
 }
 
@@ -316,9 +353,9 @@ pub fn encode_full_pane_sync_framed(buf: &mut Vec<u8>, sync: &FullPaneSync) -> i
     let vp_data = encoder.finish();
     buf.extend_from_slice(&(vp_data.len() as u32).to_le_bytes());
     buf.extend_from_slice(vp_data);
-    write_full_pane_sync_grapheme_extras(buf, sync);
-    write_full_pane_sync_hyperlink_extras(buf, sync);
-    write_full_pane_sync_cwd(buf, sync);
+    write_full_pane_sync_grapheme_extras(buf, sync)?;
+    write_full_pane_sync_hyperlink_extras(buf, sync)?;
+    write_full_pane_sync_cwd(buf, sync)?;
     let payload_len = (buf.len() - payload_start) as u32;
     buf[1..5].copy_from_slice(&payload_len.to_le_bytes());
     Ok(())

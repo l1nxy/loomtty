@@ -416,54 +416,78 @@ impl Server {
             }
             ClientMessage::FocusLeft => {
                 if let Some(session) = self.sessions.get_mut(&session_name) {
-                    session.workspaces.active_mut().focus_left();
-                    Self::layout_changed(
-                        session,
-                        &mut self.clients,
-                        &session_name,
-                        false,
-                        &mut responses,
-                    );
+                    if session.workspaces.active_mut().focus_left() {
+                        Self::layout_changed(
+                            session,
+                            &mut self.clients,
+                            &session_name,
+                            false,
+                            &mut responses,
+                        );
+                    } else {
+                        responses.push(ServerResponse::SendToClient(
+                            client_id,
+                            ServerMessage::BounceEdge { direction: BounceDirection::Left },
+                        ));
+                    }
                 }
             }
             ClientMessage::FocusRight => {
                 if let Some(session) = self.sessions.get_mut(&session_name) {
-                    session.workspaces.active_mut().focus_right();
-                    Self::layout_changed(
-                        session,
-                        &mut self.clients,
-                        &session_name,
-                        false,
-                        &mut responses,
-                    );
+                    if session.workspaces.active_mut().focus_right() {
+                        Self::layout_changed(
+                            session,
+                            &mut self.clients,
+                            &session_name,
+                            false,
+                            &mut responses,
+                        );
+                    } else {
+                        responses.push(ServerResponse::SendToClient(
+                            client_id,
+                            ServerMessage::BounceEdge { direction: BounceDirection::Right },
+                        ));
+                    }
                 }
             }
             ClientMessage::FocusUp => {
                 if let Some(session) = self.sessions.get_mut(&session_name) {
-                    if !session.workspaces.active_mut().focus_tile_up() {
-                        session.workspaces.focus_up();
+                    let changed = session.workspaces.active_mut().focus_tile_up()
+                        || session.workspaces.focus_up();
+                    if changed {
+                        Self::layout_changed(
+                            session,
+                            &mut self.clients,
+                            &session_name,
+                            false,
+                            &mut responses,
+                        );
+                    } else {
+                        responses.push(ServerResponse::SendToClient(
+                            client_id,
+                            ServerMessage::BounceEdge { direction: BounceDirection::Up },
+                        ));
                     }
-                    Self::layout_changed(
-                        session,
-                        &mut self.clients,
-                        &session_name,
-                        false,
-                        &mut responses,
-                    );
                 }
             }
             ClientMessage::FocusDown => {
                 if let Some(session) = self.sessions.get_mut(&session_name) {
-                    if !session.workspaces.active_mut().focus_tile_down() {
-                        session.workspaces.focus_down();
+                    let changed = session.workspaces.active_mut().focus_tile_down()
+                        || session.workspaces.focus_down();
+                    if changed {
+                        Self::layout_changed(
+                            session,
+                            &mut self.clients,
+                            &session_name,
+                            false,
+                            &mut responses,
+                        );
+                    } else {
+                        responses.push(ServerResponse::SendToClient(
+                            client_id,
+                            ServerMessage::BounceEdge { direction: BounceDirection::Down },
+                        ));
                     }
-                    Self::layout_changed(
-                        session,
-                        &mut self.clients,
-                        &session_name,
-                        false,
-                        &mut responses,
-                    );
                 }
             }
             ClientMessage::MovePaneLeft => {

@@ -325,16 +325,20 @@ impl Workspace {
         false
     }
 
-    pub fn focus_left(&mut self) {
+    pub fn focus_left(&mut self) -> bool {
         if self.active_column_idx > 0 {
             self.active_column_idx -= 1;
+            return true;
         }
+        false
     }
 
-    pub fn focus_right(&mut self) {
+    pub fn focus_right(&mut self) -> bool {
         if self.active_column_idx + 1 < self.columns.len() {
             self.active_column_idx += 1;
+            return true;
         }
+        false
     }
 
     pub fn move_pane_left(&mut self) {

@@ -2,6 +2,7 @@ use ciri_config::config::StatusBarPosition;
 use ciri_config::theme::ThemeConfig;
 use ciri_render::glyph_cache::{GlyphCache, GlyphInstance};
 use ciri_render::rect::Rect;
+use unicode_width::UnicodeWidthStr;
 use winit::window::CursorIcon;
 
 use super::status_bar::{TextEmitParams, emit_status_text};
@@ -1010,6 +1011,10 @@ impl UiComponent for TopBarComponent {
             StatusBarPosition::Bottom => self.layout.bar_y,
         };
 
+        let separator_w = 1.0_f32;
+        let separator_color = [dim[0], dim[1], dim[2], 0.3];
+        let separator_inset = bar_height * 0.2; // vertical inset so it doesn't touch top/bottom
+
         for tab in &self.pane_tabs {
             let hovered = self.hovered_pane_tab == Some(tab.pane_id);
             let visible_left = tab.x.max(tabs_start_x);
@@ -1017,6 +1022,18 @@ impl UiComponent for TopBarComponent {
             let visible_w = (visible_right - visible_left).max(0.0);
             if visible_w <= 0.0 {
                 continue;
+            }
+
+            // Separator line at the left edge of each tab
+            let sep_x = tab.x;
+            if sep_x > tabs_start_x - 1.0 && sep_x < tabs_end_x {
+                scene.bg_rects.push(Rect {
+                    x: sep_x - separator_w * 0.5,
+                    y: self.layout.bar_y + separator_inset,
+                    w: separator_w,
+                    h: bar_height - separator_inset * 2.0,
+                    color: separator_color,
+                });
             }
 
             // Active tab: accent bottom indicator line
@@ -1968,7 +1985,7 @@ impl HintsBarComponent {
             },
             scene.glyphs,
         );
-        x += pane_text.chars().count() as f32 * cx.cell_w;
+        x += UnicodeWidthStr::width(pane_text.as_str()) as f32 * cx.cell_w;
 
         // Separator dot + active pane title
         if !self.active_pane_title.is_empty() {
@@ -1985,14 +2002,9 @@ impl HintsBarComponent {
                 },
                 scene.glyphs,
             );
-            x += sep.chars().count() as f32 * cx.cell_w;
+            x += UnicodeWidthStr::width(sep) as f32 * cx.cell_w;
 
-            let max_title_chars = 24;
-            let title: String = self
-                .active_pane_title
-                .chars()
-                .take(max_title_chars)
-                .collect();
+            let title = self.active_pane_title.clone();
             emit_status_text(
                 scene.atlas,
                 &title,
@@ -2394,18 +2406,28 @@ fn clip_tab_label(
     tabs_start_x: f32,
     tabs_end_x: f32,
 ) -> Option<(String, f32)> {
+    use unicode_width::UnicodeWidthChar;
+
     let visible_left = tab_x.max(tabs_start_x);
     let visible_right = (tab_x + tab_w).min(tabs_end_x);
     if visible_right <= visible_left {
         return None;
     }
-    let skip_left = ((visible_left - tab_x) / cw).floor().max(0.0) as usize;
-    let visible_chars = ((visible_right - visible_left) / cw).floor().max(0.0) as usize;
-    let clipped = label
-        .chars()
-        .skip(skip_left)
-        .take(visible_chars)
-        .collect::<String>();
+    let skip_cols = ((visible_left - tab_x) / cw).floor().max(0.0) as usize;
+    let visible_cols = ((visible_right - visible_left) / cw).floor().max(0.0) as usize;
+
+    let mut col = 0usize;
+    let mut clipped = String::new();
+    for ch in label.chars() {
+        let char_w = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if col + char_w > skip_cols + visible_cols {
+            break;
+        }
+        if col >= skip_cols {
+            clipped.push(ch);
+        }
+        col += char_w;
+    }
     if clipped.is_empty() {
         None
     } else {

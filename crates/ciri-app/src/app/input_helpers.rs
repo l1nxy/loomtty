@@ -1,6 +1,30 @@
 use std::time::{Duration, Instant};
 
+use unicode_width::UnicodeWidthChar;
+
 use super::{AppModel, LastLeftClick, SearchState, Selection};
+
+/// Compute the display width of a string, accounting for wide characters (CJK etc.).
+fn unicode_display_width(s: &str) -> usize {
+    s.chars()
+        .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
+        .sum()
+}
+
+/// Truncate a string to fit within `max_width` display columns.
+fn truncate_to_display_width(s: &str, max_width: usize) -> String {
+    let mut width = 0;
+    let mut out = String::new();
+    for c in s.chars() {
+        let cw = UnicodeWidthChar::width(c).unwrap_or(0);
+        if width + cw > max_width {
+            break;
+        }
+        width += cw;
+        out.push(c);
+    }
+    out
+}
 
 impl AppModel {
     /// Extract selected text from the pane grid using absolute buffer coordinates.
@@ -171,25 +195,46 @@ impl AppModel {
         panes
     }
 
-    /// Format a pane tab label with index prefix.
+    /// Format a pane tab label with index prefix, respecting display width.
     pub fn format_pane_tab_label(&self, idx: usize, title: &str) -> String {
         const PANE_TAB_WIDTH_CHARS: usize = 20;
         let prefix = format!("{:>2} ", idx + 1);
-        let max_title_chars = PANE_TAB_WIDTH_CHARS.saturating_sub(prefix.len());
-        let title: String = title.chars().take(max_title_chars).collect();
+        let prefix_width = unicode_display_width(&prefix);
+        let max_title_width = PANE_TAB_WIDTH_CHARS.saturating_sub(prefix_width);
+        let title = truncate_to_display_width(title, max_title_width);
         let label = format!("{}{}", prefix, title);
-        format!("{:<width$}", label, width = PANE_TAB_WIDTH_CHARS)
+        let label_width = unicode_display_width(&label);
+        let pad = PANE_TAB_WIDTH_CHARS.saturating_sub(label_width);
+        format!("{}{}", label, " ".repeat(pad))
     }
 
-    /// Snapshot current pane screen positions for move animation.
-    /// Uses animation target (not in-flight value) for stable snapshots.
+    /// Snapshot pane *layout* positions (using resolve_width, not rendered_width).
+    /// This gives stable positions unaffected by in-flight column width animations,
+    /// so move animations are only triggered by real structural changes.
     pub fn snapshot_pane_positions(&self) -> std::collections::HashMap<u64, (f32, f32)> {
-        let vox = self.anim_mgr.view_offset_x.target() as f32;
-        let voy = self.anim_mgr.view_offset_y.target() as f32;
-        let tiles = self.workspaces.visible_tiles_2d(vox, voy);
-        tiles
-            .into_iter()
-            .map(|(pid, rect, _)| (pid, (rect.x, rect.y)))
-            .collect()
+        let mut positions = std::collections::HashMap::new();
+        let vw = self.workspaces.view_size.width;
+        let vh = self.workspaces.view_size.height;
+        for (ws_idx, ws) in self.workspaces.workspaces.iter().enumerate() {
+            let wy = self.workspaces.workspace_y(ws_idx);
+            let mut col_x = 0.0_f32;
+            for col in &ws.columns {
+                let col_w = col.resolve_width(vw);
+                let tile_count = col.tiles.len();
+                let total_weight: f64 = col.tiles.iter().map(|t| t.height.weight() as f64).sum();
+                let mut tile_y = 0.0_f32;
+                for tile in &col.tiles {
+                    let tile_h = if total_weight > 0.0 && tile_count > 1 {
+                        (tile.height.weight() as f64 / total_weight * vh as f64) as f32
+                    } else {
+                        vh / tile_count.max(1) as f32
+                    };
+                    positions.insert(tile.pane_id, (col_x, wy + tile_y));
+                    tile_y += tile_h;
+                }
+                col_x += col_w + ws.column_gap;
+            }
+        }
+        positions
     }
 }

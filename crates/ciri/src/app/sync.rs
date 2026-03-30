@@ -304,6 +304,10 @@ impl App {
                             needs_redraw = true;
                         }
                     }
+                    ServerEvent::Control(ServerMessage::BounceEdge { direction }) => {
+                        self.core.bounce_edge(direction);
+                        needs_redraw = true;
+                    }
                     // IPC-only responses — not relevant for the GUI client
                     ServerEvent::Control(ServerMessage::SessionInfoReply { .. })
                     | ServerEvent::Control(ServerMessage::PaneListReply { .. })

@@ -472,6 +472,17 @@ pub enum ServerMessage {
     TemplateList { templates: Vec<TemplateInfo> },
     /// Template was saved successfully.
     TemplateSaved { template_name: String },
+    /// Focus hit an edge boundary (for rubber-band bounce animation).
+    BounceEdge { direction: BounceDirection },
+}
+
+/// Direction of the edge bounce.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum BounceDirection {
+    Left,
+    Right,
+    Up,
+    Down,
 }
 
 /// Session info returned in SessionList.

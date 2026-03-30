@@ -10,4 +10,5 @@ ciri-layout = { path = "../ciri-layout" }
 ciri-anim = { path = "../ciri-anim" }
 ciri-input = { path = "../ciri-input" }
 crossbeam-channel = { workspace = true }
+unicode-width = "0.2"
 log = { workspace = true }

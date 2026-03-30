@@ -5,6 +5,7 @@ use ciri_anim::manager::{
 };
 use ciri_anim::spring::SpringParams;
 use ciri_config::config::{AnimationPreset, PaneOpenStyle};
+use ciri_protocol::message::BounceDirection;
 
 use super::AppModel;
 
@@ -85,7 +86,6 @@ impl AppModel {
 
     pub fn snap_all_col_widths(&mut self) {
         let vw = self.workspaces.view_size.width;
-        self.anim_mgr.col_widths.clear();
         for ws in &mut self.workspaces.workspaces {
             for col in &mut ws.columns {
                 col.snap_width(vw);
@@ -138,25 +138,66 @@ impl AppModel {
                 ciri_layout::workspace::CenterStrategy::Never
             }
         };
-        let current_vox = self.anim_mgr.view_offset_x.value() as f32;
+        // Use the animation target (not in-flight value) so offset calculation
+        // is based on where we *intend* to be, not where we are mid-spring.
+        let intended_vox = self.anim_mgr.view_offset_x.target() as f32;
         let target_x = self
             .workspaces
             .active_mut()
-            .target_offset_for_active_with_strategy(center_strategy, current_vox);
-        if enabled {
-            self.anim_mgr.view_offset_x.animate_to(target_x as f64, sp);
-        } else {
+            .target_offset_for_active_with_strategy(center_strategy, intended_vox);
+        if !enabled {
             self.anim_mgr.view_offset_x.jump_to(target_x as f64);
+        } else if (self.anim_mgr.view_offset_x.target() - target_x as f64).abs() > 0.5 {
+            self.anim_mgr.view_offset_x.animate_to(target_x as f64, sp);
         }
 
         let target_y = self.workspaces.target_offset_y();
-        if enabled {
-            self.anim_mgr.view_offset_y.animate_to(target_y as f64, sp);
-        } else {
+        if !enabled {
             self.anim_mgr.view_offset_y.jump_to(target_y as f64);
+        } else if (self.anim_mgr.view_offset_y.target() - target_y as f64).abs() > 0.5 {
+            self.anim_mgr.view_offset_y.animate_to(target_y as f64, sp);
         }
 
         self.sync_col_animations();
+    }
+
+    /// Rubber-band bounce when focus hits an edge boundary.
+    /// Nudges the view offset slightly in the bounce direction, then springs back.
+    pub fn bounce_edge(&mut self, direction: BounceDirection) {
+        if !self.config.animation.enabled {
+            return;
+        }
+        let cw = self.workspaces.view_size.width;
+        let ch = self.workspaces.view_size.height;
+        // Nudge distance: ~3% of viewport dimension
+        let nudge = match direction {
+            BounceDirection::Left | BounceDirection::Right => cw * 0.03,
+            BounceDirection::Up | BounceDirection::Down => ch * 0.03,
+        };
+        let sp = SpringParams::new(0.7, 600.0, 0.0001);
+
+        match direction {
+            BounceDirection::Left => {
+                let target = self.anim_mgr.view_offset_x.target();
+                self.anim_mgr.view_offset_x.jump_to(target - nudge as f64);
+                self.anim_mgr.view_offset_x.animate_to(target, sp);
+            }
+            BounceDirection::Right => {
+                let target = self.anim_mgr.view_offset_x.target();
+                self.anim_mgr.view_offset_x.jump_to(target + nudge as f64);
+                self.anim_mgr.view_offset_x.animate_to(target, sp);
+            }
+            BounceDirection::Up => {
+                let target = self.anim_mgr.view_offset_y.target();
+                self.anim_mgr.view_offset_y.jump_to(target - nudge as f64);
+                self.anim_mgr.view_offset_y.animate_to(target, sp);
+            }
+            BounceDirection::Down => {
+                let target = self.anim_mgr.view_offset_y.target();
+                self.anim_mgr.view_offset_y.jump_to(target + nudge as f64);
+                self.anim_mgr.view_offset_y.animate_to(target, sp);
+            }
+        }
     }
 
     pub fn sync_col_animations(&mut self) {

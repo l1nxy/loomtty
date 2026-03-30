@@ -1,4 +1,5 @@
 use ciri_render::glyph_cache::{GlyphCache, GlyphInstance};
+use unicode_width::UnicodeWidthChar;
 
 pub(crate) struct TextEmitParams {
     pub x_start: f32,
@@ -14,12 +15,14 @@ pub(crate) fn emit_status_text(
     params: &TextEmitParams,
     glyphs: &mut Vec<GlyphInstance>,
 ) {
-    for (i, ch) in text.chars().enumerate() {
+    let mut col = 0usize;
+    for ch in text.chars() {
+        let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
         if let Some(entry) = atlas.ensure_char(ch)
             && entry.width > 0
             && entry.height > 0
         {
-            let sx = params.x_start + i as f32 * params.cell_width + entry.bearing_x;
+            let sx = params.x_start + col as f32 * params.cell_width + entry.bearing_x;
             let sy = params.y + params.baseline - entry.bearing_y;
             glyphs.push(GlyphInstance {
                 pos: [sx, sy],
@@ -29,5 +32,6 @@ pub(crate) fn emit_status_text(
                 color: params.color,
             });
         }
+        col += cw;
     }
 }

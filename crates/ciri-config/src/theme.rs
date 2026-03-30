@@ -206,7 +206,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_preset_unknown_name_falls_back_to_one_dark() {
+    fn resolve_preset_unknown_name_falls_back_to_ciri_dark() {
         let mut theme = ThemeConfig {
             preset: "unknown".to_string(),
             ..ThemeConfig::default()
@@ -214,8 +214,8 @@ mod tests {
 
         theme.resolve_preset();
 
-        assert_eq!(theme.background, "#282C34");
-        assert_eq!(theme.accent, "#6B8EC5");
+        assert_eq!(theme.background, "#1C1B1A");
+        assert_eq!(theme.accent, "#7DB4CB");
     }
 
     #[test]

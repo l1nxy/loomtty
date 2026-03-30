@@ -51,7 +51,7 @@ impl WorkspaceSet {
     }
 
     /// Move focus up one workspace. Tries to keep the same column index.
-    pub fn focus_up(&mut self) {
+    pub fn focus_up(&mut self) -> bool {
         if self.active_workspace_idx > 0 {
             let col_idx = self.active().active_column_idx;
             self.active_workspace_idx -= 1;
@@ -61,11 +61,13 @@ impl WorkspaceSet {
                 .len()
                 .saturating_sub(1);
             self.workspaces[self.active_workspace_idx].active_column_idx = col_idx.min(max);
+            return true;
         }
+        false
     }
 
     /// Move focus down one workspace. Tries to keep the same column index.
-    pub fn focus_down(&mut self) {
+    pub fn focus_down(&mut self) -> bool {
         if self.active_workspace_idx + 1 < self.workspaces.len() {
             let col_idx = self.active().active_column_idx;
             self.active_workspace_idx += 1;
@@ -74,16 +76,25 @@ impl WorkspaceSet {
                 .len()
                 .saturating_sub(1);
             self.workspaces[self.active_workspace_idx].active_column_idx = col_idx.min(max);
+            return true;
         }
+        false
     }
 
-    /// Add a new workspace below the active workspace with one pane, switch to it.
+    /// Add a pane to the next workspace below, or create one if at the bottom.
     pub fn add_workspace_below(&mut self, pane_id: PaneId) {
-        let insert_at = self.active_workspace_idx + 1;
-        let mut ws = Workspace::new_with_gap(self.view_size, self.column_gap);
-        ws.add_column_right(pane_id, ColumnWidth::Proportion(1.0));
-        self.workspaces.insert(insert_at, ws);
-        self.active_workspace_idx = insert_at;
+        let next = self.active_workspace_idx + 1;
+        if next < self.workspaces.len() {
+            // Next workspace exists — add a column there and switch to it.
+            self.workspaces[next].add_column_right(pane_id, ColumnWidth::Proportion(1.0));
+            self.active_workspace_idx = next;
+        } else {
+            // At the bottom — create a new workspace.
+            let mut ws = Workspace::new_with_gap(self.view_size, self.column_gap);
+            ws.add_column_right(pane_id, ColumnWidth::Proportion(1.0));
+            self.workspaces.push(ws);
+            self.active_workspace_idx = next;
+        }
     }
 
     /// Switch to workspace by index, creating workspaces if needed.

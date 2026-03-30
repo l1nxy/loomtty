@@ -28,6 +28,7 @@ clap = { version = "4", features = ["derive", "color"] }
 dialoguer = "0.11"
 serde_json = "1"
 arboard = { workspace = true }
+unicode-width = "0.2"
 notify = { workspace = true }
 libc = { workspace = true }
 image = { version = "0.25", default-features = false, features = ["png"] }

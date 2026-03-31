@@ -283,6 +283,7 @@ impl App {
                                 )
                             });
                         grid.apply_full_sync(&sync);
+                        self.core.prediction.on_server_sync(sync.meta.pane_id, grid);
                         self.send_lossy(ClientMessage::Ack {
                             generation: sync.meta.generation,
                         });
@@ -302,6 +303,7 @@ impl App {
                         );
                         if let Some(grid) = self.core.pane_grids.get_mut(&delta.meta.pane_id) {
                             grid.apply_delta_borrowed(&delta);
+                            self.core.prediction.on_server_sync(delta.meta.pane_id, grid);
                             self.send_lossy(ClientMessage::Ack {
                                 generation: delta.meta.generation,
                             });
@@ -312,6 +314,9 @@ impl App {
                     ServerEvent::Control(ServerMessage::BounceEdge { direction }) => {
                         self.core.bounce_edge(direction);
                         needs_redraw = true;
+                    }
+                    ServerEvent::Control(ServerMessage::Pong { seq, client_time_us }) => {
+                        self.core.prediction.on_pong(seq, client_time_us);
                     }
                     // IPC-only responses — not relevant for the GUI client
                     ServerEvent::Control(ServerMessage::SessionInfoReply { .. })
@@ -402,6 +407,11 @@ impl App {
                     });
                 }
                 log::info!("config reloaded");
+                self.core.prediction.update_config(
+                    self.core.config.prediction.mode,
+                    self.core.config.prediction.threshold_ms,
+                    self.core.config.prediction.show_underline,
+                );
             }
             Err(e) => log::warn!("config reload failed: {e}"),
         }

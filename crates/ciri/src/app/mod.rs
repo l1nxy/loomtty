@@ -30,6 +30,7 @@ use crossbeam_channel::{Receiver, Sender};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
+use winit::event_loop::EventLoopProxy;
 use winit::keyboard::ModifiersState;
 use winit::window::Window;
 
@@ -114,6 +115,8 @@ pub(crate) struct App {
     pub pending_resize: Option<(winit::dpi::PhysicalSize<u32>, Instant)>,
     /// Deferred DPI change — applied when resize settles to avoid atlas churn.
     pub pending_dpi: Option<f64>,
+    /// Proxy to wake the event loop from background IO threads.
+    pub event_loop_proxy: Option<EventLoopProxy<()>>,
 }
 
 impl App {
@@ -222,6 +225,7 @@ impl App {
             config_change_rx: None,
             pending_resize: None,
             pending_dpi: None,
+            event_loop_proxy: None,
         }
     }
 
@@ -230,10 +234,11 @@ impl App {
         &self,
         viewport: ciri_protocol::codec::ClientHello,
     ) -> std::io::Result<(Sender<ClientMessage>, Receiver<ServerEvent>)> {
+        let proxy = self.event_loop_proxy.clone();
         if let Some(ref rc) = self.core.remote_config {
-            crate::connection::connect_remote(&rc.host, rc.port, rc.ssh_port, viewport)
+            crate::connection::connect_remote(&rc.host, rc.port, rc.ssh_port, viewport, proxy)
         } else {
-            crate::connection::connect_or_spawn(&self.core.session_name, viewport)
+            crate::connection::connect_or_spawn(&self.core.session_name, viewport, proxy)
         }
     }
 

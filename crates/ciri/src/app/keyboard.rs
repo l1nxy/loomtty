@@ -340,6 +340,17 @@ impl App {
         }
 
         if let Some(pid) = self.core.workspaces.active_mut().active_pane_id() {
+            // Feed prediction engine before sending to server
+            if let Some(grid) = self.core.pane_grids.get(&pid) {
+                let info = ciri_app::prediction::GridInfo {
+                    cursor_row: grid.cursor_line,
+                    cursor_col: grid.cursor_col,
+                    cols: grid.cols,
+                    rows: grid.rows,
+                    mode_flags: grid.mode_flags,
+                };
+                self.core.prediction.new_user_input(pid, &bytes, &info);
+            }
             self.send(ClientMessage::Input {
                 pane_id: pid,
                 data: bytes,

@@ -397,6 +397,11 @@ pub enum ClientMessage {
         template_name: String,
         session_name: String,
     },
+    /// RTT measurement ping (echoed back as Pong).
+    Ping {
+        seq: u64,
+        client_time_us: u64,
+    },
 }
 
 /// Control messages from server to client (msgpack encoded, tags 0x10-0x1F).
@@ -476,6 +481,11 @@ pub enum ServerMessage {
     TemplateSaved { template_name: String },
     /// Focus hit an edge boundary (for rubber-band bounce animation).
     BounceEdge { direction: BounceDirection },
+    /// RTT measurement pong (echo of client Ping).
+    Pong {
+        seq: u64,
+        client_time_us: u64,
+    },
 }
 
 /// Direction of the edge bounce.

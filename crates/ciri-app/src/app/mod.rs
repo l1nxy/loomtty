@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 use ciri_anim::manager::AnimationManager;
 
 use crate::grid::ClientPaneGrid;
+use crate::prediction::PredictionEngine;
 
 // ---------------------------------------------------------------------------
 // AppModel — all pure-logic application state
@@ -78,10 +79,16 @@ pub struct AppModel {
     pub remote_query_rx: Option<Receiver<RemoteQueryResult>>,
 
     pub image_placements: HashMap<u64, Vec<ClientImagePlacement>>,
+    pub prediction: PredictionEngine,
 }
 
 impl AppModel {
     pub fn new(config: CiriConfig, session_name: impl Into<String>) -> Self {
+        let prediction = PredictionEngine::new(
+            config.prediction.mode,
+            config.prediction.threshold_ms,
+            config.prediction.show_underline,
+        );
         let frame_interval = Duration::from_millis(config.render.frame_interval_ms);
         let initial_view = ViewSize {
             width: config.window.width as f32,
@@ -180,6 +187,7 @@ impl AppModel {
             remote_config: None,
             remote_query_rx: None,
             image_placements: HashMap::new(),
+            prediction,
         }
     }
 

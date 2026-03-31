@@ -1603,6 +1603,13 @@ impl Server {
                     });
                 }
             }
+
+            ClientMessage::Ping { seq, client_time_us } => {
+                responses.push(ServerResponse::SendToClient(
+                    client_id,
+                    ServerMessage::Pong { seq, client_time_us },
+                ));
+            }
         }
 
         responses
@@ -1872,11 +1879,13 @@ mod tests {
             let state = Arc::new(Mutex::new(Server::new("/bin/sh", 8.0)));
             let shutdown = Arc::new(tokio::sync::Notify::new());
 
+            let input_notify = Arc::new(tokio::sync::Notify::new());
             let handle = tokio::spawn(super::super::connection::handle_client(
                 server_reader,
                 server_writer,
                 state.clone(),
                 shutdown,
+                input_notify,
             ));
 
             let hello = ciri_protocol::codec::ClientHello {

@@ -180,6 +180,7 @@ fn main() -> Result<()> {
 
         let event_loop = EventLoop::new()?;
         let mut app = App::new(config, session_name);
+        app.event_loop_proxy = Some(event_loop.create_proxy());
         app.core.remote_config = Some(app::RemoteConnectionConfig {
             host,
             port,
@@ -209,6 +210,7 @@ fn main() -> Result<()> {
 
     let event_loop = EventLoop::new()?;
     let mut app = App::new(config, session_name);
+    app.event_loop_proxy = Some(event_loop.create_proxy());
     event_loop.run_app(&mut app)?;
     Ok(())
 }

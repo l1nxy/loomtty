@@ -40,6 +40,8 @@ pub struct CiriConfig {
     pub session: SessionConfig,
     #[garde(skip)]
     pub server: ServerConfig,
+    #[garde(skip)]
+    pub prediction: PredictionConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
@@ -529,6 +531,35 @@ impl Default for ServerConfig {
     fn default() -> Self {
         ServerConfig {
             idle_timeout_secs: 300,
+        }
+    }
+}
+
+// ── Input prediction (Mosh-style speculative echo) ────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum PredictionMode {
+    #[default]
+    Never,
+    Always,
+    Adaptive,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PredictionConfig {
+    pub mode: PredictionMode,
+    pub threshold_ms: u64,
+    pub show_underline: bool,
+}
+
+impl Default for PredictionConfig {
+    fn default() -> Self {
+        PredictionConfig {
+            mode: PredictionMode::Never,
+            threshold_ms: 30,
+            show_underline: true,
         }
     }
 }

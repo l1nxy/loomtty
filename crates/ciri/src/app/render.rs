@@ -951,14 +951,33 @@ impl App {
             {
                 // Full rebuild path
                 let visible = grid.visible_cells();
-                let (cur_col, cur_line, cur_shape) =
+                // Apply prediction overlay
+                let visible_cow = if self.core.prediction.has_overlay(*pane_id) {
+                    let mut cells = visible.into_owned();
+                    for i in 0..cells.len() {
+                        let row = (i / grid.cols as usize) as u16;
+                        let col = (i % grid.cols as usize) as u16;
+                        if let Some(replacement) = self.core.prediction.get_overlay_cell(*pane_id, row, col) {
+                            cells[i] = replacement;
+                        }
+                    }
+                    std::borrow::Cow::Owned(cells)
+                } else {
+                    visible
+                };
+                let (mut cur_col, mut cur_line, cur_shape) =
                     if let Some((col, line)) = grid.cursor_in_viewport() {
                         (col, line, grid.cursor_shape)
                     } else {
                         (0, 0, CURSOR_HIDDEN)
                     };
+                // Apply prediction cursor overlay
+                if let Some((pred_line, pred_col)) = self.core.prediction.get_overlay_cursor(*pane_id) {
+                    cur_line = pred_line;
+                    cur_col = pred_col;
+                }
                 let inputs = terminal::PackedViewInputs {
-                    cells: &visible,
+                    cells: &visible_cow,
                     cols: grid.cols,
                     rows: grid.rows,
                     cursor_line: cur_line,
@@ -978,19 +997,38 @@ impl App {
             } else if has_dirty_rows && !needs_full {
                 // Incremental update path — only re-render dirty rows
                 if let Some(grid) = self.core.pane_grids.get_mut(pane_id) {
-                    let (cur_col, cur_line, cur_shape) =
+                    let (mut cur_col, mut cur_line, cur_shape) =
                         if let Some((col, line)) = grid.cursor_in_viewport() {
                             (col, line, grid.cursor_shape)
                         } else {
                             (0, 0, CURSOR_HIDDEN)
                         };
+                    // Apply prediction cursor overlay
+                    if let Some((pred_line, pred_col)) = self.core.prediction.get_overlay_cursor(*pane_id) {
+                        cur_line = pred_line;
+                        cur_col = pred_col;
+                    }
                     // Clear dirty before visible_cells() to avoid borrow conflict
                     // (clear_dirty only resets flags, not cell data)
                     grid.clear_dirty();
                     let visible = grid.visible_cells();
+                    // Apply prediction overlay
+                    let visible_final = if self.core.prediction.has_overlay(*pane_id) {
+                        let mut cells = visible.into_owned();
+                        for i in 0..cells.len() {
+                            let row = (i / grid.cols as usize) as u16;
+                            let col = (i % grid.cols as usize) as u16;
+                            if let Some(replacement) = self.core.prediction.get_overlay_cell(*pane_id, row, col) {
+                                cells[i] = replacement;
+                            }
+                        }
+                        std::borrow::Cow::Owned(cells)
+                    } else {
+                        visible
+                    };
                     if let Some(view) = self.cached_views.get_mut(pane_id) {
                         let inputs = terminal::PackedViewInputs {
-                            cells: &visible,
+                            cells: &visible_final,
                             cols: grid.cols,
                             rows: grid.rows,
                             cursor_line: cur_line,

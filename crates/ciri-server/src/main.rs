@@ -29,6 +29,18 @@ fn main() -> Result<()> {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     }
 
+    // Set environment variables BEFORE creating the tokio runtime, since
+    // Runtime::new() spawns worker threads and std::env::set_var is unsound
+    // in the presence of concurrent threads (Rust 2024 edition).
+    // SAFETY: No other threads exist yet — we are still in single-threaded main().
+    unsafe {
+        std::env::set_var("TERM_PROGRAM", "ciri");
+        std::env::set_var("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+        std::env::set_var("COLORTERM", "truecolor");
+        std::env::set_var("LC_TERMINAL", "ciri");
+        std::env::set_var("LC_TERMINAL_VERSION", env!("CARGO_PKG_VERSION"));
+    }
+
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(daemon::run_daemon())
 }

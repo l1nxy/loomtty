@@ -17,7 +17,13 @@ pub(super) const TAG_SERVER_MSG: u8 = 0x10;
 pub(super) const TAG_CELL_DELTA: u8 = 0x20;
 pub(super) const TAG_FULL_PANE_SYNC: u8 = 0x21;
 
-pub(super) const MAX_FRAME_LEN: u32 = 16 * 1024 * 1024;
+/// Maximum frame size for control messages (msgpack).  Control messages are
+/// small — 1 MiB is generous.
+pub(super) const MAX_CONTROL_FRAME_LEN: u32 = 1024 * 1024;
+
+/// Maximum frame size for data frames (CellDelta, FullPaneSync).
+/// Large grids with scrollback can legitimately reach several MiB.
+pub(super) const MAX_DATA_FRAME_LEN: u32 = 16 * 1024 * 1024;
 
 // ─── Frame format: [u8 tag][u32 LE payload_len][payload] ───────────
 
@@ -53,10 +59,15 @@ async fn read_frame_header<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<(
     reader.read_exact(&mut header).await?;
     let tag = header[0];
     let len = u32::from_le_bytes([header[1], header[2], header[3], header[4]]);
-    if len > MAX_FRAME_LEN {
+    // Apply per-tag size limits: control messages are small, data frames can be larger.
+    let limit = match tag {
+        TAG_CLIENT_MSG | TAG_SERVER_MSG => MAX_CONTROL_FRAME_LEN,
+        _ => MAX_DATA_FRAME_LEN,
+    };
+    if len > limit {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "frame too large",
+            format!("frame too large: tag=0x{tag:02x}, len={len}, limit={limit}"),
         ));
     }
     Ok((tag, len))

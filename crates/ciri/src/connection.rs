@@ -101,16 +101,12 @@ pub fn connect_or_spawn(
     session_name: &str,
     viewport: codec::ClientHello,
 ) -> io::Result<(Sender<ClientMessage>, Receiver<ServerEvent>)> {
-    // Validate session name to prevent path traversal
-    if session_name.is_empty()
-        || session_name.contains('/')
-        || session_name.contains('\\')
-        || session_name.contains("..")
-        || session_name.contains('\0')
-    {
+    // Validate session name using the same function as the server to prevent
+    // divergent validation rules (client allows what server rejects or vice versa).
+    if let Err(reason) = ciri_session::names::validate_name(session_name) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("invalid session name: {session_name:?}"),
+            format!("invalid session name: {reason}"),
         ));
     }
     let _sock_path = transport::server_socket_path();
@@ -217,6 +213,60 @@ pub fn connect_or_spawn(
     Ok((msg_tx, event_rx))
 }
 
+/// Validate an SSH hostname/address using an allowlist approach modeled on
+/// OpenSSH's `valid_domain()` from `misc.c`.  An allowlist is safer than a
+/// blocklist because it rejects unknown-dangerous characters by default.
+///
+/// Allowed forms:
+///   - Hostnames: `[a-zA-Z0-9][a-zA-Z0-9._-]*` (no consecutive dots)
+///   - user@host: `@` permitted for SSH user syntax
+///   - IPv6 literals: `[::1]` — brackets, colons, hex digits
+///   - IPv4 addresses: digits and dots
+fn validate_ssh_host(host: &str) -> io::Result<()> {
+    if host.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "SSH host cannot be empty",
+        ));
+    }
+    // Reject hosts starting with '-' (could be interpreted as SSH flags)
+    if host.starts_with('-') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "SSH host cannot start with '-'",
+        ));
+    }
+    // First char must be alphanumeric, '_', or '[' (IPv6 literal).
+    let first = host.chars().next().unwrap();
+    if !first.is_ascii_alphanumeric() && first != '_' && first != '[' {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("SSH host starts with invalid character: {first:?}"),
+        ));
+    }
+    // Allowlist: only characters that are safe in hostnames, IPv4/IPv6, and
+    // user@host syntax.  This matches OpenSSH's valid_domain() plus extensions
+    // for user@host and IPv6 brackets.
+    for ch in host.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_' | '@' | ':' | '[' | ']' | '%')
+        {
+            continue;
+        }
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("SSH host contains disallowed character: {ch:?}"),
+        ));
+    }
+    // Reject consecutive dots (invalid hostname, potential path traversal).
+    if host.contains("..") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "SSH host contains consecutive dots",
+        ));
+    }
+    Ok(())
+}
+
 /// Connect to a remote ciri-server via SSH stdio proxy tunnel.
 /// If the remote server is not running, attempts to start it via
 /// `ssh ciri-server --daemonize` before connecting.
@@ -226,6 +276,8 @@ pub fn connect_remote(
     ssh_port: u16,
     viewport: codec::ClientHello,
 ) -> io::Result<(Sender<ClientMessage>, Receiver<ServerEvent>)> {
+    validate_ssh_host(host)?;
+
     let (msg_tx, msg_rx) = crossbeam_channel::bounded::<ClientMessage>(256);
     let (event_tx, event_rx) = crossbeam_channel::bounded::<ServerEvent>(256);
 
@@ -281,7 +333,9 @@ fn spawn_ssh_tunnel(
     tokio::process::Command::new("ssh")
         .args(["-p", &ssh_port.to_string()])
         .args(["-W", &format!("localhost:{remote_port}")])
-        .args(["-o", "StrictHostKeyChecking=accept-new"])
+        // Let the user's SSH config handle host key verification.
+        // Do not override StrictHostKeyChecking — auto-accepting unknown
+        // keys enables MITM attacks on first connection.
         .arg(host)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -312,7 +366,9 @@ async fn ensure_remote_server(host: &str, remote_port: u16, ssh_port: u16) -> io
     let output = tokio::process::Command::new("ssh")
         .args(["-p", &ssh_port.to_string()])
         .args(["-o", "ConnectTimeout=10"])
-        .args(["-o", "StrictHostKeyChecking=accept-new"])
+        // Let the user's SSH config handle host key verification.
+        // Do not override StrictHostKeyChecking — auto-accepting unknown
+        // keys enables MITM attacks on first connection.
         .arg(host)
         .arg("ciri-server --daemonize")
         .stdin(std::process::Stdio::null())
@@ -408,7 +464,9 @@ async fn probe_remote(host: &str, remote_port: u16, ssh_port: u16) -> RemoteProb
         .args(["-p", &ssh_port.to_string()])
         .args(["-W", &format!("localhost:{remote_port}")])
         .args(["-o", "ConnectTimeout=4"])
-        .args(["-o", "StrictHostKeyChecking=accept-new"])
+        // Let the user's SSH config handle host key verification.
+        // Do not override StrictHostKeyChecking — auto-accepting unknown
+        // keys enables MITM attacks on first connection.
         .arg(host)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

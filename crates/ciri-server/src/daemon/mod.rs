@@ -21,19 +21,14 @@ pub async fn run_daemon() -> Result<()> {
     let config = ciri_config::config::CiriConfig::load().unwrap_or_default();
     let shell = config.terminal.shell.clone();
 
-    // Expose terminal metadata as env vars so child processes (neofetch, fastfetch,
-    // shell integrations, etc.) can detect ciri without walking the process tree.
-    // SAFETY: This runs at startup before any other threads are spawned,
-    // so modifying the process environment is safe.
-    unsafe {
-        std::env::set_var("TERM_PROGRAM", "ciri");
-        std::env::set_var("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
-        std::env::set_var("COLORTERM", "truecolor");
-        std::env::set_var("LC_TERMINAL", "ciri");
-        std::env::set_var("LC_TERMINAL_VERSION", env!("CARGO_PKG_VERSION"));
-    }
+    // Terminal metadata env vars (TERM_PROGRAM, COLORTERM, etc.) are set in
+    // main() before the tokio runtime is created to avoid data races with
+    // worker threads.  See CVE fix: std::env::set_var is unsound with threads.
 
     // Write shell integration scripts and set env var for child processes.
+    // SAFETY: This runs early in run_daemon before any tasks that read
+    // CIRI_SHELL_INTEGRATION_DIR are spawned.  The tokio worker threads do
+    // not access this variable.
     match crate::shell_integration::ensure_integration_dir() {
         Ok(dir) => {
             unsafe { std::env::set_var("CIRI_SHELL_INTEGRATION_DIR", &dir) };
@@ -55,14 +50,28 @@ pub async fn run_daemon() -> Result<()> {
     }
 
     #[cfg(unix)]
-    {
-        if sock_path.exists() {
-            std::fs::remove_file(&sock_path)?;
+    let listener = {
+        match UnixListener::bind(&sock_path) {
+            Ok(l) => l,
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                // Socket already exists.  Instead of check-then-remove (which has
+                // a TOCTOU gap allowing symlink attacks), use the OpenSSH approach:
+                // bind to a temporary path in the same directory, then rename()
+                // atomically over the target.  rename(2) atomically replaces the
+                // old entry — there is never a moment where the path is missing.
+                let tmp_path = sock_path.with_extension("tmp");
+                // Clean up any leftover temp socket from a prior crash.
+                let _ = std::fs::remove_file(&tmp_path);
+                let listener = UnixListener::bind(&tmp_path)?;
+                // rename(2) on Unix atomically replaces the target.  If the
+                // existing entry is a symlink, we overwrite it (safe: we are
+                // replacing it with our own socket, not following it).
+                std::fs::rename(&tmp_path, &sock_path)?;
+                listener
+            }
+            Err(e) => return Err(e.into()),
         }
-    }
-
-    #[cfg(unix)]
-    let listener = UnixListener::bind(&sock_path)?;
+    };
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -148,11 +157,18 @@ pub async fn run_daemon() -> Result<()> {
         }
     });
 
-    // Optionally bind TCP listener for remote connections
+    // Optionally bind TCP listener for remote connections.
+    // WARNING: The TCP listener has NO authentication — any process that can
+    // reach this port can execute commands as the current user.  It is intended
+    // to be used behind an SSH tunnel (see `connect_remote`).  Binding to
+    // 127.0.0.1 limits exposure to localhost, but any local user can connect.
     let tcp_listener = if config.remote.enabled {
         let addr = format!("127.0.0.1:{}", config.remote.port);
         let tcp = tokio::net::TcpListener::bind(&addr).await?;
-        log::info!("ciri-server TCP listener on {addr} (remote enabled)");
+        log::warn!(
+            "ciri-server TCP listener on {addr} (remote enabled) — \
+             WARNING: no authentication, intended for SSH tunnel use only"
+        );
         Some(tcp)
     } else {
         None

@@ -4,15 +4,32 @@ use super::App;
 
 static AUDIO_PLAYING: AtomicBool = AtomicBool::new(false);
 
+/// Escape the 5 XML special characters per the freedesktop Desktop Notifications
+/// Specification §Markup.  Notification daemons (GNOME, KDE, dunst) may render
+/// `<b>`, `<i>`, `<u>`, `<a>`, `<img>` tags in the body field — escaping these
+/// characters prevents a malicious terminal application from injecting markup.
+///
+/// Reference: https://specifications.freedesktop.org/notification-spec/latest/
+fn escape_notification_markup(s: &str) -> String {
+    // & must be escaped first to avoid double-escaping.
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
 impl App {
     /// Send a desktop notification (Linux/macOS only).
     pub fn send_desktop_notification(&self, summary: &str, body: &str) {
         #[cfg(unix)]
         {
             use notify_rust::Notification;
+            let safe_summary = escape_notification_markup(summary);
+            let safe_body = escape_notification_markup(body);
             let _ = Notification::new()
-                .summary(summary)
-                .body(body)
+                .summary(&safe_summary)
+                .body(&safe_body)
                 .appname("ciri")
                 .timeout(5000)
                 .show();
@@ -30,6 +47,21 @@ impl App {
         let path = &self.core.config.terminal.bell_audio;
         if path.is_empty() {
             return;
+        }
+        // Validate the path: must be an existing regular file with a sane extension.
+        // This prevents passing device files (/dev/urandom), pipes, or URIs
+        // that paplay/afplay might interpret in unexpected ways.
+        let p = std::path::Path::new(path);
+        if !p.is_absolute() {
+            log::warn!("bell_audio path must be absolute: {path}");
+            return;
+        }
+        match std::fs::symlink_metadata(p) {
+            Ok(meta) if meta.file_type().is_file() => {}
+            _ => {
+                log::warn!("bell_audio path is not a regular file: {path}");
+                return;
+            }
         }
         // Don't spawn if one is already playing
         if AUDIO_PLAYING

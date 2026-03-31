@@ -176,9 +176,9 @@ fn compute_dimensions(data: &[u8]) -> (u32, u32) {
                 }
             }
             SixelCmd::Data(_) => {
-                px += 1;
+                px = px.saturating_add(1);
                 max_x = max_x.max(px);
-                max_y = max_y.max(py + 6);
+                max_y = max_y.max(py.saturating_add(6));
             }
             SixelCmd::Repeat { count, .. } => {
                 px = px.saturating_add(count);
@@ -187,12 +187,12 @@ fn compute_dimensions(data: &[u8]) -> (u32, u32) {
             SixelCmd::CarriageReturn => px = 0,
             SixelCmd::NewLine => {
                 px = 0;
-                py += 6;
+                py = py.saturating_add(6);
             }
             _ => {}
         }
     }
-    max_y = max_y.max(py + 6);
+    max_y = max_y.max(py.saturating_add(6));
     (max_x, max_y)
 }
 
@@ -255,6 +255,7 @@ impl SixelRenderer {
                 self.x += 1;
             }
             SixelCmd::Repeat { count, sixel } => {
+                let count = count.min(self.width.saturating_sub(self.x));
                 for _ in 0..count {
                     self.put_sixel(sixel);
                     self.x += 1;

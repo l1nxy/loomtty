@@ -819,6 +819,16 @@ fn open_url(url: &str, pane_cwd: Option<&str>) -> std::io::Result<()> {
         return open_file_path(url, pane_cwd);
     }
 
+    // Only allow http/https URLs for OS handler — other schemes (file://, data:,
+    // javascript:, etc.) could be exploited by malicious terminal output.
+    let lower = url.to_ascii_lowercase();
+    if !lower.starts_with("http://") && !lower.starts_with("https://") {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("refusing to open URL with untrusted scheme: {url}"),
+        ));
+    }
+
     #[cfg(target_os = "macos")]
     {
         Command::new("open").arg(url).spawn()?;
@@ -827,7 +837,47 @@ fn open_url(url: &str, pane_cwd: Option<&str>) -> std::io::Result<()> {
 
     #[cfg(target_os = "windows")]
     {
-        Command::new("cmd").args(["/C", "start", "", url]).spawn()?;
+        // Use ShellExecuteW directly instead of `cmd /C start`.
+        // cmd.exe interprets metacharacters (& | > < ^ ( ) % ! ") in the URL,
+        // and a blocklist can never be exhaustive.  ShellExecuteW is the Windows
+        // API designed for this purpose and avoids cmd.exe entirely.
+        // This is the same approach used by WezTerm and the `open` crate.
+        use std::os::windows::ffi::OsStrExt;
+        unsafe extern "system" {
+            fn ShellExecuteW(
+                hwnd: *mut std::ffi::c_void,
+                operation: *const u16,
+                file: *const u16,
+                parameters: *const u16,
+                directory: *const u16,
+                show_cmd: i32,
+            ) -> isize;
+        }
+        let wide_open: Vec<u16> = std::ffi::OsStr::new("open")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let wide_url: Vec<u16> = std::ffi::OsStr::new(url)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let result = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                wide_open.as_ptr(),
+                wide_url.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                1, // SW_SHOWNORMAL
+            )
+        };
+        // ShellExecuteW returns > 32 on success.
+        if result <= 32 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("ShellExecuteW failed with code {result}"),
+            ));
+        }
         return Ok(());
     }
 

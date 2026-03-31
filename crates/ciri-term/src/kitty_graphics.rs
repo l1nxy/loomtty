@@ -10,6 +10,13 @@ use crate::partial_buf::PartialBuf;
 
 const MAX_APC_PARTIAL_SIZE: usize = 16 * 1024 * 1024; // 16MB
 
+/// Maximum accumulated size for multi-chunk kitty image transmissions (64 MiB).
+const MAX_IMAGE_BUF_SIZE: usize = 64 * 1024 * 1024;
+
+/// Maximum pixel dimension (width or height) for a single image.
+/// kitty (reference implementation) uses 10,000; we match that limit.
+const MAX_IMAGE_DIMENSION: u32 = 10_000;
+
 /// Kitty image metadata parsed from the first chunk of a transmission.
 #[derive(Debug, Clone)]
 struct KittyImageMeta {
@@ -184,12 +191,33 @@ impl KittyGraphicsParser {
                         if self.image_meta.is_none() {
                             self.image_meta = Some(fields.to_meta());
                         }
+                        if self.image_buf.len() + decoded.len() > MAX_IMAGE_BUF_SIZE {
+                            log::warn!(
+                                "kitty image transmission too large (>{} bytes), discarding",
+                                MAX_IMAGE_BUF_SIZE
+                            );
+                            self.image_buf.clear();
+                            self.image_meta = None;
+                            continue;
+                        }
                         self.image_buf.extend_from_slice(&decoded);
                     } else {
                         let mut full_data = std::mem::take(&mut self.image_buf);
                         full_data.extend_from_slice(&decoded);
 
                         let meta = self.image_meta.take().unwrap_or_else(|| fields.to_meta());
+
+                        // Reject images with absurd pixel dimensions (matching
+                        // kitty's MAX_IMAGE_DIMENSION = 10,000).  A small
+                        // compressed payload can decode to enormous pixel buffers.
+                        if meta.width > MAX_IMAGE_DIMENSION || meta.height > MAX_IMAGE_DIMENSION {
+                            log::warn!(
+                                "kitty image too large: {}x{} pixels (max {MAX_IMAGE_DIMENSION}), discarding",
+                                meta.width,
+                                meta.height,
+                            );
+                            continue;
+                        }
 
                         if !full_data.is_empty() {
                             let id = self.next_image_id;

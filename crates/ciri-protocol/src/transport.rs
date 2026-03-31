@@ -3,6 +3,96 @@ use std::path::PathBuf;
 /// Default TCP port for remote connections.
 pub const DEFAULT_REMOTE_PORT: u16 = 7890;
 
+/// Secure fallback directory under /tmp with a user-specific subdirectory.
+///
+/// Uses the same pattern as tmux (`/tmp/tmux-<uid>/`):
+/// 1. `mkdir(2)` is atomic and does NOT follow symlinks — safe against pre-creation.
+/// 2. On EEXIST, open with `O_DIRECTORY | O_NOFOLLOW` to get an fd that is
+///    guaranteed to refer to a real directory (not a symlink).
+/// 3. `fstat(fd)` + `fchmod(fd)` operate on the fd, eliminating any TOCTOU gap
+///    between checking and modifying.
+#[cfg(unix)]
+fn secure_tmp_fallback() -> PathBuf {
+    use nix::fcntl::{OFlag, open};
+    use nix::sys::stat::{Mode, fchmod, fstat};
+    use nix::unistd::close;
+
+    let uid = unsafe { libc::getuid() };
+    let dir = PathBuf::from(format!("/tmp/ciri-{uid}"));
+
+    // Step 1: Attempt atomic creation with restrictive permissions.
+    // mkdir(2) does not follow symlinks, so a pre-planted symlink causes EEXIST.
+    match std::fs::create_dir(&dir) {
+        Ok(()) => {
+            // Freshly created — permissions set by umask; force 0o700 below via fd.
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            // Something exists at this path — verify via fd below.
+        }
+        Err(e) => {
+            log::error!("failed to create fallback dir {}: {e}", dir.display());
+            return PathBuf::from("/nonexistent-ciri-fallback");
+        }
+    }
+
+    // Step 2: Open with O_DIRECTORY | O_NOFOLLOW.
+    // - O_NOFOLLOW: open(2) fails with ELOOP if the path is a symlink.
+    // - O_DIRECTORY: open(2) fails with ENOTDIR if the path is not a directory.
+    // Together these guarantee the fd refers to a real, non-symlink directory.
+    let fd = match open(
+        &dir,
+        OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW,
+        Mode::empty(),
+    ) {
+        Ok(fd) => fd,
+        Err(e) => {
+            log::error!(
+                "cannot open fallback dir {} (symlink or not a directory?): {e}",
+                dir.display()
+            );
+            return PathBuf::from("/nonexistent-ciri-fallback");
+        }
+    };
+
+    // Step 3: fstat(fd) — verify ownership on the actual opened directory.
+    // No TOCTOU: fstat operates on the fd, not the path.
+    let stat = match fstat(fd) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = close(fd);
+            log::error!("fstat failed on fallback dir fd: {e}");
+            return PathBuf::from("/nonexistent-ciri-fallback");
+        }
+    };
+    if stat.st_uid != uid {
+        let _ = close(fd);
+        log::error!(
+            "fallback directory {} is owned by uid {} (expected {}), refusing to use",
+            dir.display(),
+            stat.st_uid,
+            uid
+        );
+        return PathBuf::from("/nonexistent-ciri-fallback");
+    }
+
+    // Step 4: fchmod(fd) — set restrictive permissions without TOCTOU.
+    if let Err(e) = fchmod(fd, Mode::S_IRWXU) {
+        log::warn!("fchmod 0700 failed on fallback dir: {e}");
+    }
+
+    let _ = close(fd);
+    dir
+}
+
+#[cfg(not(unix))]
+fn secure_tmp_fallback() -> PathBuf {
+    PathBuf::from(if cfg!(windows) {
+        r"C:\Users\Default\AppData\Local"
+    } else {
+        "/tmp"
+    })
+}
+
 /// XDG_RUNTIME_DIR with proper fallback.
 pub fn runtime_dir() -> PathBuf {
     if let Some(rd) = dirs::runtime_dir() {
@@ -34,7 +124,7 @@ pub fn runtime_dir() -> PathBuf {
         if cfg!(windows) {
             PathBuf::from(r"C:\Users\Default\AppData\Local")
         } else {
-            PathBuf::from("/tmp")
+            secure_tmp_fallback()
         }
     })
 }
@@ -88,7 +178,7 @@ pub fn state_dir() -> PathBuf {
             if cfg!(windows) {
                 PathBuf::from(r"C:\Users\Default\AppData\Roaming")
             } else {
-                PathBuf::from("/tmp")
+                secure_tmp_fallback()
             }
         })
         .join("ciri")

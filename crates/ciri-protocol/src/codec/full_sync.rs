@@ -394,6 +394,14 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
     let (scrollback_rows, scrollback_replace, title, sections) =
         read_full_pane_sync_mandatory_sections(payload, FULL_PANE_SYNC_MIN_HEADER_LEN)?;
     let sb_expected = scrollback_rows as usize * cols as usize;
+    if sb_expected > MAX_GRID_CELLS {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "scrollback too large: {scrollback_rows} rows x {cols} cols = {sb_expected} cells (max {MAX_GRID_CELLS})"
+            ),
+        ));
+    }
     let scrollback = sm_decode_cells_vec(sections.scrollback, sb_expected)?;
     let cells = sm_decode_cells_vec(sections.viewport, total_cells)?;
     let mut extra_offset = sections.extra_offset;

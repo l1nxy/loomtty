@@ -1,4 +1,4 @@
-use super::frame::{MAX_FRAME_LEN, TAG_SERVER_MSG, build_frame};
+use super::frame::{MAX_CONTROL_FRAME_LEN, TAG_SERVER_MSG, build_frame};
 use super::handshake::{CLIENT_HELLO_HEADER_LEN, SERVER_HELLO_LEN, parse_pkg_version};
 use super::state_machine::{OP_END, OP_REPEAT, OP_RESET, OP_SET_FG, sm_encode_cells};
 use super::*;
@@ -743,7 +743,7 @@ async fn read_frame_rejects_truncated_payload() {
 #[tokio::test]
 async fn read_frame_rejects_oversized_payload() {
     let mut frame = vec![TAG_SERVER_MSG];
-    frame.extend_from_slice(&(MAX_FRAME_LEN + 1).to_le_bytes());
+    frame.extend_from_slice(&(MAX_CONTROL_FRAME_LEN + 1).to_le_bytes());
     let err = read_frame(&mut &frame[..]).await.unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("frame too large"));

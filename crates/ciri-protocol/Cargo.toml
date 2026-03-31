@@ -9,7 +9,9 @@ rmp-serde = { workspace = true }
 bytemuck = { workspace = true }
 bytes = { workspace = true }
 dirs = { workspace = true }
+log = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "net"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
+nix = { workspace = true }

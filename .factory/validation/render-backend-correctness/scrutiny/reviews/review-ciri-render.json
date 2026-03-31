@@ -1,0 +1,21 @@
+{
+  "featureId": "review-ciri-render",
+  "reviewedAt": "2026-03-31T00:00:00Z",
+  "commitId": "d1639517dd05328040eafb36ab236759ab16c9b3",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Reviewed commit d163951 for `review-ciri-render`. The change correctly fixes the packed-grid cursor bug by detecting `FLAG_WIDE_CHAR_SPACER` cells and anchoring spacer-targeted cursor geometry back to the leading wide cell, while preserving the server-side alacritty path. The new regression test exercises the previously failing packed-grid case, and the existing incremental-vs-full rebuild coverage still applies because both client rebuild paths now route cursor generation through the same spacer-aware logic.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `runtime-crate-reviewer` skill says workers should read `.factory/library/user-testing.md` before touching code, but that file is absent in this repo snapshot and the worker transcript shows the read attempt failing immediately before proceeding.",
+      "evidence": "Skill file `.factory/skills/runtime-crate-reviewer/SKILL.md` step 1 requires reading `.factory/library/user-testing.md`; transcript skeleton for worker session `2ddf628c-fbf4-4ff0-9bbb-86268e7886ff` contains `Read /home/linxy/repo/ciri/.factory/library/user-testing.md` and also shows `Read /home/linxy/repo/ciri/README.md` failing with ENOENT. The current `.factory/library` context available in this review only contains `architecture.md`."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Pass. The reviewed feature commit cleanly addresses the confirmed packed-grid wide-cell cursor anchoring bug with focused tests and no additional correctness issues found in scope."
+}

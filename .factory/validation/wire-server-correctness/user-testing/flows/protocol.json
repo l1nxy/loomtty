@@ -1,0 +1,112 @@
+{
+  "assertions": [
+    {
+      "id": "VAL-SERVER-001",
+      "status": "passed",
+      "evidence": [
+        {
+          "type": "test_name",
+          "value": "codec::tests::full_pane_sync_rejects_truncated_mandatory_sections"
+        },
+        {
+          "type": "command",
+          "value": "cargo test -p ciri-protocol full_pane_sync -- --nocapture"
+        },
+        {
+          "type": "output",
+          "value": "test codec::tests::full_pane_sync_rejects_truncated_mandatory_sections ... ok"
+        },
+        {
+          "type": "code_reference",
+          "value": "crates/ciri-protocol/src/codec/full_sync.rs:384-388 rejects oversized FullPaneSync viewport grids before decode/allocation with `grid too large: {cols}x{rows} = {total_cells} cells (max {MAX_GRID_CELLS})`."
+        }
+      ]
+    },
+    {
+      "id": "VAL-SERVER-002",
+      "status": "passed",
+      "evidence": [
+        {
+          "type": "test_name",
+          "value": "codec::tests::full_pane_sync_roundtrip"
+        },
+        {
+          "type": "test_name",
+          "value": "codec::tests::full_pane_sync_with_scrollback"
+        },
+        {
+          "type": "test_name",
+          "value": "codec::tests::sm_roundtrip_blank_line"
+        },
+        {
+          "type": "test_name",
+          "value": "codec::tests::sm_roundtrip_mixed_attributes"
+        },
+        {
+          "type": "test_name",
+          "value": "codec::tests::sm_roundtrip_repeat_run"
+        },
+        {
+          "type": "test_name",
+          "value": "codec::tests::sm_roundtrip_cjk_wide_char"
+        },
+        {
+          "type": "command",
+          "value": "cargo test -p ciri-protocol full_pane_sync -- --nocapture"
+        },
+        {
+          "type": "command",
+          "value": "cargo test -p ciri-protocol sm_roundtrip -- --nocapture"
+        },
+        {
+          "type": "output",
+          "value": "test codec::tests::full_pane_sync_roundtrip ... ok"
+        },
+        {
+          "type": "output",
+          "value": "test codec::tests::full_pane_sync_with_scrollback ... ok"
+        },
+        {
+          "type": "output",
+          "value": "test codec::tests::sm_roundtrip_blank_line ... ok"
+        },
+        {
+          "type": "output",
+          "value": "test codec::tests::sm_roundtrip_mixed_attributes ... ok"
+        },
+        {
+          "type": "output",
+          "value": "test codec::tests::sm_roundtrip_repeat_run ... ok"
+        },
+        {
+          "type": "output",
+          "value": "test codec::tests::sm_roundtrip_cjk_wide_char ... ok"
+        }
+      ]
+    }
+  ],
+  "statusPerAssertion": {
+    "VAL-SERVER-001": "passed",
+    "VAL-SERVER-002": "passed"
+  },
+  "evidence": {
+    "commands": [
+      "cargo test -p ciri-protocol full_pane_sync -- --nocapture",
+      "cargo test -p ciri-protocol sm_roundtrip -- --nocapture"
+    ],
+    "notes": [
+      "Scoped FullPaneSync tests passed (5 passed, 0 failed).",
+      "Scoped state-machine roundtrip tests passed (7 passed, 0 failed)."
+    ]
+  },
+  "toolsUsed": [
+    "Read",
+    "Grep",
+    "Execute",
+    "Create"
+  ],
+  "frictions": [
+    "Workspace root has no README.md; used CLAUDE.md/AGENTS.md from system context plus direct source inspection instead."
+  ],
+  "blockers": []
+}

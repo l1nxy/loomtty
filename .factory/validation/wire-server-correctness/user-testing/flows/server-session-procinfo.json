@@ -1,0 +1,143 @@
+{
+  "assertions": [
+    {
+      "id": "VAL-SERVER-003",
+      "status": "passed",
+      "evidence": [
+        {
+          "command": "cargo test -p ciri-server daemon::server::tests::switch_session_resets_client_runtime_state_and_refreshes_attach_time -- --exact",
+          "result": "passed",
+          "details": [
+            "test daemon::server::tests::switch_session_resets_client_runtime_state_and_refreshes_attach_time ... ok",
+            "The test asserts queued initial full sync clears pending damage after authoritative frames are queued and that switching refreshes last_attached ordering."
+          ]
+        },
+        {
+          "file": "/home/linxy/repo/ciri/crates/ciri-server/src/daemon/server.rs",
+          "details": [
+            "Test name: switch_session_resets_client_runtime_state_and_refreshes_attach_time",
+            "Checks SessionSwitched, StateSync, and SendFullPaneSync responses for the switched client."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "VAL-SERVER-004",
+      "status": "passed",
+      "evidence": [
+        {
+          "command": "cargo test -p ciri-server daemon::server::tests::control_attach_does_not_create_runtime_session -- --exact",
+          "result": "passed",
+          "details": [
+            "test daemon::server::tests::control_attach_does_not_create_runtime_session ... ok"
+          ]
+        },
+        {
+          "file": "/home/linxy/repo/ciri/crates/ciri-server/src/daemon/connection.rs",
+          "details": [
+            "Connection setup explicitly skips session creation when is_control is true.",
+            "The test verifies a control client is present while __control__ is absent from server.sessions."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "VAL-SERVER-006",
+      "status": "passed",
+      "evidence": [
+        {
+          "command": "cargo test -p ciri-session restore::tests::save_restore_list_and_delete_round_trip -- --exact",
+          "result": "passed",
+          "details": [
+            "test restore::tests::save_restore_list_and_delete_round_trip ... ok"
+          ]
+        },
+        {
+          "command": "cargo test -p ciri-session restore::tests::save_session_rejects_out_of_bounds_active_workspace_before_writing_files -- --exact",
+          "result": "passed",
+          "details": [
+            "test restore::tests::save_session_rejects_out_of_bounds_active_workspace_before_writing_files ... ok"
+          ]
+        },
+        {
+          "command": "cargo test -p ciri-session restore::tests::restore_session_rejects_out_of_bounds_active_column_from_disk -- --exact",
+          "result": "passed",
+          "details": [
+            "test restore::tests::restore_session_rejects_out_of_bounds_active_column_from_disk ... ok"
+          ]
+        },
+        {
+          "command": "cargo test -p ciri-session restore::tests::restore_session_rejects_out_of_bounds_active_tile_from_disk -- --exact",
+          "result": "passed",
+          "details": [
+            "test restore::tests::restore_session_rejects_out_of_bounds_active_tile_from_disk ... ok"
+          ]
+        },
+        {
+          "file": "/home/linxy/repo/ciri/crates/ciri-session/src/names.rs",
+          "details": [
+            "validate_name only allows lowercase letters, digits, and hyphens, forbids empty names and leading hyphens, and limits names to 64 chars."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "VAL-SERVER-007",
+      "status": "passed",
+      "evidence": [
+        {
+          "command": "cargo test -p ciri-procinfo",
+          "result": "passed",
+          "details": [
+            "test linux::tests::nonexistent_pid_returns_none ... ok",
+            "test linux::tests::read_self_cmdline ... ok",
+            "test linux::tests::read_self_cwd ... ok",
+            "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out"
+          ]
+        },
+        {
+          "file": "/home/linxy/repo/ciri/crates/ciri-procinfo/src/linux.rs",
+          "details": [
+            "foreground_process returns None when the shell is foreground or proc lookups fail.",
+            "Linux tests cover sane self exe/cmdline/cwd reads and clean None for nonexistent PIDs and invalid UTF-8."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "VAL-CROSS-001",
+      "status": "passed",
+      "evidence": [
+        {
+          "command": "cargo test -p ciri-server daemon::server::tests::switch_session_to_new_session_refreshes_attach_ordering_for_list_sessions -- --exact",
+          "result": "passed",
+          "details": [
+            "test daemon::server::tests::switch_session_to_new_session_refreshes_attach_ordering_for_list_sessions ... ok",
+            "The test asserts a newly created session becomes the most recent ListSessions entry after SwitchSession."
+          ]
+        },
+        {
+          "command": "cargo test -p ciri-session restore::tests::save_restore_list_and_delete_round_trip -- --exact",
+          "result": "passed",
+          "details": [
+            "test restore::tests::save_restore_list_and_delete_round_trip ... ok",
+            "Round-trip restore/list/delete confirms saved-session data remains restorable for later daemon use."
+          ]
+        }
+      ]
+    }
+  ],
+  "toolsUsed": [
+    "Read",
+    "Grep",
+    "Glob",
+    "LS",
+    "Execute",
+    "Create"
+  ],
+  "frictions": [
+    "cargo test accepts a single TESTNAME filter; initial attempt with multiple bare test names failed and was narrowed to fully qualified --exact invocations.",
+    "Repository README.md was not present at /home/linxy/repo/ciri/README.md, so validation guidance was taken from CLAUDE.md, AGENTS.md, and .factory/library/user-testing.md instead."
+  ],
+  "blockers": []
+}

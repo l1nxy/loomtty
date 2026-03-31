@@ -314,7 +314,7 @@ impl Pane {
                     self.write_to_pty(response.as_bytes());
                 }
                 Event::ColorRequest(index, formatter) => {
-                    // OSC 4;index;? query: look up the current color and respond.
+                    // OSC 4/10/11/12 color query: look up the current color and respond.
                     let color = match self.term.colors()[index] {
                         Some(rgb) => rgb,
                         None => default_color(index),

@@ -58,29 +58,33 @@ fn test_color_table(config: &CiriConfig) -> ColorTable {
 }
 
 fn test_view_inputs<'a>(
-    cells: &'a [PackedCell],
-    cols: u16,
-    rows: u16,
-    cursor_line: i16,
-    cursor_col: u16,
-    cursor_shape: u8,
+    frame: TestFrame<'a>,
     shaper: &'a TextShaper,
     config: &'a CiriConfig,
     ct: &'a ColorTable,
     grapheme_map: &'a HashMap<u32, String>,
 ) -> PackedViewInputs<'a> {
     PackedViewInputs {
-        cells,
-        cols,
-        rows,
-        cursor_line,
-        cursor_col,
-        cursor_shape,
+        cells: frame.cells,
+        cols: frame.cols,
+        rows: frame.rows,
+        cursor_line: frame.cursor_line,
+        cursor_col: frame.cursor_col,
+        cursor_shape: frame.cursor_shape,
         config,
         shaper,
         colors: ct,
         grapheme_map,
     }
+}
+
+struct TestFrame<'a> {
+    cells: &'a [PackedCell],
+    cols: u16,
+    rows: u16,
+    cursor_line: i16,
+    cursor_col: u16,
+    cursor_shape: u8,
 }
 
 fn grid_with_size(cols: usize, rows: usize) -> Vec<PackedCell> {
@@ -122,12 +126,14 @@ fn packed_hidden_and_wide_spacer_cells_do_not_render_text_or_decorations() {
         FLAG_WIDE_CHAR_SPACER,
     );
     let params = test_view_inputs(
-        &cells,
-        3,
-        1,
-        -1,
-        0,
-        CURSOR_HIDDEN,
+        TestFrame {
+            cells: &cells,
+            cols: 3,
+            rows: 1,
+            cursor_line: -1,
+            cursor_col: 0,
+            cursor_shape: CURSOR_HIDDEN,
+        },
         &shaper,
         &config,
         &ct,
@@ -165,12 +171,14 @@ fn packed_cursor_shapes_map_to_expected_rect_geometry() {
     let cw = atlas.cell_width;
     let ch = atlas.cell_height;
     let block_params = test_view_inputs(
-        &cells,
-        2,
-        2,
-        1,
-        1,
-        CURSOR_BLOCK,
+        TestFrame {
+            cells: &cells,
+            cols: 2,
+            rows: 2,
+            cursor_line: 1,
+            cursor_col: 1,
+            cursor_shape: CURSOR_BLOCK,
+        },
         &shaper,
         &config,
         &ct,
@@ -184,12 +192,14 @@ fn packed_cursor_shapes_map_to_expected_rect_geometry() {
     assert_eq!(block.cursor_rects[0].h, ch);
 
     let beam_params = test_view_inputs(
-        &cells,
-        2,
-        2,
-        0,
-        1,
-        CURSOR_BEAM,
+        TestFrame {
+            cells: &cells,
+            cols: 2,
+            rows: 2,
+            cursor_line: 0,
+            cursor_col: 1,
+            cursor_shape: CURSOR_BEAM,
+        },
         &shaper,
         &config,
         &ct,
@@ -201,12 +211,14 @@ fn packed_cursor_shapes_map_to_expected_rect_geometry() {
     assert_eq!(beam.cursor_rects[0].h, ch);
 
     let underline_params = test_view_inputs(
-        &cells,
-        2,
-        2,
-        0,
-        0,
-        CURSOR_UNDERLINE,
+        TestFrame {
+            cells: &cells,
+            cols: 2,
+            rows: 2,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_UNDERLINE,
+        },
         &shaper,
         &config,
         &ct,
@@ -218,12 +230,14 @@ fn packed_cursor_shapes_map_to_expected_rect_geometry() {
     assert_eq!(underline.cursor_rects[0].h, 2.0);
 
     let hollow_params = test_view_inputs(
-        &cells,
-        2,
-        2,
-        1,
-        0,
-        CURSOR_HOLLOW_BLOCK,
+        TestFrame {
+            cells: &cells,
+            cols: 2,
+            rows: 2,
+            cursor_line: 1,
+            cursor_col: 0,
+            cursor_shape: CURSOR_HOLLOW_BLOCK,
+        },
         &shaper,
         &config,
         &ct,
@@ -275,12 +289,14 @@ fn incremental_update_matches_full_rebuild_for_same_final_grid() {
 
     let mut atlas_for_incremental = test_atlas(&config, &shaper);
     let initial_params = test_view_inputs(
-        &initial_cells,
-        4,
-        2,
-        0,
-        1,
-        CURSOR_BLOCK,
+        TestFrame {
+            cells: &initial_cells,
+            cols: 4,
+            rows: 2,
+            cursor_line: 0,
+            cursor_col: 1,
+            cursor_shape: CURSOR_BLOCK,
+        },
         &shaper,
         &config,
         &ct,
@@ -288,12 +304,14 @@ fn incremental_update_matches_full_rebuild_for_same_final_grid() {
     );
     let mut incremental = build_view_from_grid(&mut atlas_for_incremental, &initial_params);
     let updated_params = test_view_inputs(
-        &full_cells,
-        4,
-        2,
-        1,
-        2,
-        CURSOR_UNDERLINE,
+        TestFrame {
+            cells: &full_cells,
+            cols: 4,
+            rows: 2,
+            cursor_line: 1,
+            cursor_col: 2,
+            cursor_shape: CURSOR_UNDERLINE,
+        },
         &shaper,
         &config,
         &ct,
@@ -308,12 +326,14 @@ fn incremental_update_matches_full_rebuild_for_same_final_grid() {
 
     let mut atlas_for_full = test_atlas(&config, &shaper);
     let rebuilt_params = test_view_inputs(
-        &full_cells,
-        4,
-        2,
-        1,
-        2,
-        CURSOR_UNDERLINE,
+        TestFrame {
+            cells: &full_cells,
+            cols: 4,
+            rows: 2,
+            cursor_line: 1,
+            cursor_col: 2,
+            cursor_shape: CURSOR_UNDERLINE,
+        },
         &shaper,
         &config,
         &ct,
@@ -349,12 +369,14 @@ fn incremental_update_only_recomputes_dirty_row_shaping() {
 
     let mut atlas = test_atlas(&config, &shaper);
     let initial_params = test_view_inputs(
-        &initial_cells,
-        4,
-        2,
-        -1,
-        0,
-        CURSOR_HIDDEN,
+        TestFrame {
+            cells: &initial_cells,
+            cols: 4,
+            rows: 2,
+            cursor_line: -1,
+            cursor_col: 0,
+            cursor_shape: CURSOR_HIDDEN,
+        },
         &shaper,
         &config,
         &ct,
@@ -374,12 +396,14 @@ fn incremental_update_only_recomputes_dirty_row_shaping() {
         PackedCell::default(),
     ];
     let updated_params = test_view_inputs(
-        &updated_cells,
-        4,
-        2,
-        -1,
-        0,
-        CURSOR_HIDDEN,
+        TestFrame {
+            cells: &updated_cells,
+            cols: 4,
+            rows: 2,
+            cursor_line: -1,
+            cursor_col: 0,
+            cursor_shape: CURSOR_HIDDEN,
+        },
         &shaper,
         &config,
         &ct,

@@ -9,7 +9,7 @@ use crate::keybind::{BindingMode, BindingSet, KeyCombo, KeybindMap};
 use super::types::*;
 
 pub struct InputHandler {
-    pub session: InputSessionState,
+    pub(crate) session: InputSessionState,
     pub leader_key: LeaderKey,
     pub input_mode: InputMode,
 
@@ -69,6 +69,8 @@ impl InputHandler {
         }
     }
 
+    // ── Public API ──
+
     pub fn process_key(
         &mut self,
         key_name: &str,
@@ -84,23 +86,15 @@ impl InputHandler {
         if !self.leader_key.is_bare_modifier() || !self.is_leader_release(key_name) {
             return;
         }
-        if matches!(self.session, InputSessionState::Leader(_)) {
-            self.session = InputSessionState::Idle;
-        } else if matches!(self.session, InputSessionState::Unlocking) {
-            self.session = InputSessionState::Locked;
-        }
+        self.session.on_leader_release();
     }
 
     pub fn toggle_lock(&mut self) {
-        self.session = if self.is_locked() {
-            InputSessionState::Idle
-        } else {
-            InputSessionState::Locked
-        };
+        self.session.on_toggle_lock();
     }
 
     pub fn is_awaiting_action(&self) -> bool {
-        matches!(self.session, InputSessionState::Leader(_)) || self.has_active_table()
+        self.session.is_in_leader() || self.has_active_table()
     }
 
     pub fn is_locked(&self) -> bool {
@@ -140,6 +134,8 @@ impl InputHandler {
         self.binding_set = set;
     }
 
+    // ── Orchestration ──
+
     pub fn process_key_event(
         &mut self,
         key_name: &str,
@@ -151,9 +147,8 @@ impl InputHandler {
     ) -> InputResult {
         self.check_timeout();
         let event = KeyEvent::new(key_name, ctrl, shift, alt, super_key);
-        let context = AppInputContext::new(app_mode);
 
-        if let Some(result) = self.handle_session_gate(event, context) {
+        if let Some(result) = self.handle_session_gate(event, app_mode) {
             return result;
         }
 
@@ -165,40 +160,40 @@ impl InputHandler {
             return result;
         }
 
-        let resolution = self.resolve_binding(event, context);
-        self.apply_resolution(resolution, context)
+        let resolution = self.resolve_binding(event, app_mode);
+        self.apply_resolution(resolution)
     }
 
     fn handle_session_gate(
         &mut self,
         event: KeyEvent<'_>,
-        context: AppInputContext,
+        app_mode: BindingMode,
     ) -> Option<InputResult> {
         if matches!(self.session, InputSessionState::Unlocking) {
             return Some(self.process_unlocking(event));
         }
 
-        if context.mode.contains(BindingMode::LOCKED) {
-            return Some(self.process_locked(event, context));
+        if app_mode.contains(BindingMode::LOCKED) {
+            return Some(self.process_locked(event, app_mode));
         }
 
-        if context.mode.contains(BindingMode::PASTE_CONFIRM) {
-            let resolution = self.resolve_binding(event, context);
-            return Some(self.apply_resolution(resolution, context));
+        if app_mode.contains(BindingMode::PASTE_CONFIRM) {
+            let resolution = self.resolve_binding(event, app_mode);
+            return Some(self.apply_resolution(resolution));
         }
 
         None
     }
 
     fn handle_leader_press(&mut self, event: KeyEvent<'_>) -> Option<InputResult> {
-        if self.is_leader_press(event) && !matches!(self.session, InputSessionState::Leader(_)) {
-            if self.detect_double_tap() {
-                return Some(InputResult::Action(Action::SendLeaderKey));
-            }
-            self.session = InputSessionState::Leader(LeaderSession::new(self.session_policy()));
-            return Some(InputResult::Consumed);
+        if !self.is_leader_press(event) || self.session.is_in_leader() {
+            return None;
         }
-        None
+        if self.detect_double_tap() {
+            return Some(InputResult::Action(Action::SendLeaderKey));
+        }
+        self.session.on_leader_press(self.input_mode);
+        Some(InputResult::Consumed)
     }
 
     fn handle_escape(&mut self, key_name: &str) -> Option<InputResult> {
@@ -206,8 +201,7 @@ impl InputHandler {
             return None;
         }
 
-        if matches!(self.session, InputSessionState::Leader(_)) {
-            self.session = InputSessionState::Idle;
+        if self.session.on_escape() {
             return Some(InputResult::Consumed);
         }
 
@@ -219,9 +213,11 @@ impl InputHandler {
         None
     }
 
-    fn resolve_binding(&self, event: KeyEvent<'_>, context: AppInputContext) -> BindingResolution {
-        let runtime_mode = self.runtime_mode(context.mode);
-        let combo = if matches!(self.session, InputSessionState::Leader(_)) {
+    // ── Binding resolution (pure) ──
+
+    fn resolve_binding(&self, event: KeyEvent<'_>, app_mode: BindingMode) -> BindingResolution {
+        let runtime_mode = self.runtime_mode(app_mode);
+        let combo = if self.session.is_in_leader() {
             self.combo_stripping_leader(event)
         } else {
             self.event_combo(event)
@@ -236,34 +232,32 @@ impl InputHandler {
             return BindingResolution::TextInput;
         }
 
-        if matches!(self.session, InputSessionState::Leader(_)) {
+        if self.session.is_in_leader() {
             return BindingResolution::Consumed;
         }
 
         BindingResolution::PassThrough
     }
 
-    fn apply_resolution(
-        &mut self,
-        resolution: BindingResolution,
-        context: AppInputContext,
-    ) -> InputResult {
+    // ── Apply resolution (effectful) ──
+
+    fn apply_resolution(&mut self, resolution: BindingResolution) -> InputResult {
         match resolution {
-            BindingResolution::Dispatch(action) => self.dispatch_action(action, context),
+            BindingResolution::Dispatch(action) => self.dispatch_action(action),
             BindingResolution::TextInput => InputResult::Action(Action::TextInput),
             BindingResolution::Consumed => {
-                self.finish_unmatched_leader();
+                self.session.on_unmatched_leader();
                 InputResult::Consumed
             }
             BindingResolution::PassThrough => InputResult::PassThrough,
         }
     }
 
-    fn dispatch_action(&mut self, action: Action, context: AppInputContext) -> InputResult {
+    fn dispatch_action(&mut self, action: Action) -> InputResult {
         match &action {
             Action::ActivateKeyTable(name) | Action::EnterMode(name) => {
                 self.activate_key_table(name);
-                self.session = InputSessionState::Idle;
+                self.session.exit_leader();
                 InputResult::Consumed
             }
             Action::DeactivateKeyTable => {
@@ -271,52 +265,29 @@ impl InputHandler {
                 InputResult::Consumed
             }
             Action::ToggleLock => {
-                self.session = InputSessionState::Idle;
+                self.session.exit_leader();
                 InputResult::Action(action)
             }
             _ => {
-                self.after_dispatched_action(&action, context);
+                self.session.on_action_dispatched(&action);
                 InputResult::Action(action)
             }
         }
     }
 
-    fn after_dispatched_action(&mut self, action: &Action, _context: AppInputContext) {
-        let Some(session) = self.session.leader_session().cloned() else {
-            return;
-        };
+    // ── Locked state handlers ──
 
-        match session.policy {
-            SessionPolicy::OneShot => self.session = InputSessionState::Idle,
-            SessionPolicy::Sticky => {
-                if action.is_repeatable() {
-                    self.session = InputSessionState::Leader(LeaderSession::new(SessionPolicy::Sticky));
-                } else {
-                    self.session = InputSessionState::Idle;
-                }
-            }
-        }
-    }
-
-    fn finish_unmatched_leader(&mut self) {
-        if matches!(self.session, InputSessionState::Leader(_))
-            && matches!(self.input_mode, InputMode::Prefix)
-        {
-            self.session = InputSessionState::Idle;
-        }
-    }
-
-    fn process_locked(&mut self, event: KeyEvent<'_>, context: AppInputContext) -> InputResult {
+    fn process_locked(&mut self, event: KeyEvent<'_>, app_mode: BindingMode) -> InputResult {
         if self.is_leader_press(event) {
-            self.session = InputSessionState::Unlocking;
+            self.session.on_leader_press(self.input_mode);
             return InputResult::Consumed;
         }
 
         let combo = self.event_combo(event);
-        if let Some(binding) = self.binding_set.lookup(context.mode, None, &combo)
+        if let Some(binding) = self.binding_set.lookup(app_mode, None, &combo)
             && matches!(binding.action, Action::ToggleLock)
         {
-            self.session = InputSessionState::Idle;
+            // Don't change state — the caller will call toggle_lock().
             return InputResult::Action(Action::ToggleLock);
         }
 
@@ -328,16 +299,18 @@ impl InputHandler {
         if let Some(binding) = self.binding_set.lookup(BindingMode::LEADER, None, &combo)
             && matches!(binding.action, Action::ToggleLock)
         {
-            self.session = InputSessionState::Idle;
-            return InputResult::Action(Action::ToggleLock);
+            self.session.on_unlock_attempt(true);
+            return InputResult::Consumed;
         }
-        self.session = InputSessionState::Idle;
+        self.session.on_unlock_attempt(false);
         InputResult::PassThrough
     }
 
+    // ── Helpers ──
+
     fn runtime_mode(&self, app_mode: BindingMode) -> BindingMode {
         let mut mode = app_mode;
-        if matches!(self.session, InputSessionState::Leader(_)) {
+        if self.session.is_in_leader() {
             mode |= BindingMode::LEADER;
         }
         if self.has_active_table() {
@@ -346,11 +319,11 @@ impl InputHandler {
         mode
     }
 
-    fn session_policy(&self) -> SessionPolicy {
-        match self.input_mode {
-            InputMode::Prefix => SessionPolicy::OneShot,
-            InputMode::Sticky => SessionPolicy::Sticky,
+    pub(super) fn check_timeout(&mut self) {
+        if self.has_active_table() {
+            return;
         }
+        self.session.on_timeout(self.leader_timeout);
     }
 
     fn combo_stripping_leader(&self, event: KeyEvent<'_>) -> KeyCombo {
@@ -391,18 +364,6 @@ impl InputHandler {
         }
         self.last_leader_press = Some(Instant::now());
         false
-    }
-
-    pub(super) fn check_timeout(&mut self) {
-        if self.input_mode == InputMode::Sticky || self.has_active_table() {
-            return;
-        }
-        let Some(session) = self.session.leader_session() else {
-            return;
-        };
-        if session.entered_at.elapsed() > self.leader_timeout {
-            self.session = InputSessionState::Idle;
-        }
     }
 
     fn strip_leader_modifier(&self, combo: &mut KeyCombo) {

@@ -1,9 +1,8 @@
 //! Public types for the leader key input system.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::action::Action;
-use crate::keybind::BindingMode;
 
 /// Input mode determines how keybindings are activated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,22 +16,16 @@ pub enum InputMode {
     Sticky,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionPolicy {
-    OneShot,
-    Sticky,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LeaderSession {
-    pub policy: SessionPolicy,
-    pub entered_at: Instant,
+    pub(crate) mode: InputMode,
+    pub(crate) entered_at: Instant,
 }
 
 impl LeaderSession {
-    pub fn new(policy: SessionPolicy) -> Self {
+    pub fn new(mode: InputMode) -> Self {
         Self {
-            policy,
+            mode,
             entered_at: Instant::now(),
         }
     }
@@ -72,6 +65,8 @@ impl KeyTableState {
     }
 }
 
+// ── Session state machine ──
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputSessionState {
     Idle,
@@ -85,21 +80,94 @@ impl InputSessionState {
         matches!(self, Self::Locked | Self::Unlocking)
     }
 
-    pub fn leader_session(&self) -> Option<&LeaderSession> {
+    pub fn is_in_leader(&self) -> bool {
+        matches!(self, Self::Leader(_))
+    }
+
+    pub fn on_leader_press(&mut self, mode: InputMode) {
         match self {
-            Self::Leader(session) => Some(session),
-            _ => None,
+            Self::Idle => *self = Self::Leader(LeaderSession::new(mode)),
+            Self::Locked => *self = Self::Unlocking,
+            _ => {}
+        }
+    }
+
+    pub fn on_leader_release(&mut self) {
+        match self {
+            Self::Leader(_) => *self = Self::Idle,
+            Self::Unlocking => *self = Self::Locked,
+            _ => {}
+        }
+    }
+
+    /// Returns true if escape was consumed (leader was active).
+    pub fn on_escape(&mut self) -> bool {
+        if matches!(self, Self::Leader(_)) {
+            *self = Self::Idle;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn on_action_dispatched(&mut self, action: &Action) {
+        let mode = match self {
+            Self::Leader(s) => s.mode,
+            _ => return,
+        };
+        match mode {
+            InputMode::Prefix => *self = Self::Idle,
+            InputMode::Sticky => {
+                if action.is_repeatable() {
+                    *self = Self::Leader(LeaderSession::new(InputMode::Sticky));
+                } else {
+                    *self = Self::Idle;
+                }
+            }
+        }
+    }
+
+    pub fn on_unmatched_leader(&mut self) {
+        if let Self::Leader(s) = self
+            && s.mode == InputMode::Prefix
+        {
+            *self = Self::Idle;
+        }
+    }
+
+    pub fn on_timeout(&mut self, limit: Duration) {
+        if let Self::Leader(s) = self
+            && s.mode != InputMode::Sticky
+            && s.entered_at.elapsed() > limit
+        {
+            *self = Self::Idle;
+        }
+    }
+
+    pub fn on_toggle_lock(&mut self) {
+        *self = if self.is_locked() {
+            Self::Idle
+        } else {
+            Self::Locked
+        };
+    }
+
+    /// Exit leader state if active. No-op otherwise.
+    pub fn exit_leader(&mut self) {
+        if matches!(self, Self::Leader(_)) {
+            *self = Self::Idle;
+        }
+    }
+
+    /// Resolve an unlock attempt: success → Idle (unlocked), failure → Locked.
+    pub fn on_unlock_attempt(&mut self, success: bool) {
+        if matches!(self, Self::Unlocking) {
+            *self = if success { Self::Idle } else { Self::Locked };
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InputDispatch {
-    Action,
-    TextInput,
-    Consumed,
-    PassThrough,
-}
+// ── Binding resolution (intermediate result) ──
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BindingResolution {
@@ -109,16 +177,7 @@ pub enum BindingResolution {
     PassThrough,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AppInputContext {
-    pub mode: BindingMode,
-}
-
-impl AppInputContext {
-    pub fn new(mode: BindingMode) -> Self {
-        Self { mode }
-    }
-}
+// ── Key event ──
 
 #[derive(Clone, Copy)]
 pub(super) struct KeyEvent<'a> {
@@ -146,6 +205,8 @@ impl<'a> KeyEvent<'a> {
         }
     }
 }
+
+// ── Leader key ──
 
 /// Parsed leader key specification (e.g. "ctrl+w", "alt", "ctrl+space").
 #[derive(Debug, Clone)]
@@ -180,7 +241,6 @@ impl LeaderKey {
         leader
     }
 
-    /// Does this key event match the leader key?
     pub fn matches(&self, key_name: &str, ctrl: bool, alt: bool, super_key: bool) -> bool {
         if self.key.is_empty() {
             let solo = |want: bool, name: &str, other1: bool, other2: bool| {
@@ -203,11 +263,15 @@ impl LeaderKey {
     }
 }
 
+// ── Output types ──
+
 pub enum InputResult {
     Action(Action),
     Consumed,
     PassThrough,
 }
+
+// ── Helpers ──
 
 pub(super) fn is_escape(key_name: &str) -> bool {
     key_name.eq_ignore_ascii_case("escape")

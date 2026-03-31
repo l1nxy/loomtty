@@ -4,7 +4,7 @@ mod handler;
 pub mod types;
 
 pub use handler::InputHandler;
-pub use types::{InputMode, InputResult, LeaderKey, State};
+pub use types::{InputMode, InputResult, InputSessionState, LeaderKey};
 
 #[cfg(test)]
 mod tests;

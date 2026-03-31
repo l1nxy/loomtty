@@ -1,151 +1,27 @@
-use ciri_input::action::Action;
 use ciri_protocol::message::ClientMessage;
-use winit::keyboard::{Key, NamedKey};
 
-use super::{App, PaletteEntry, PaletteEntryKind};
-use crate::connection::{RemoteProbeResult, RemoteQueryResult};
+use super::{App, PaletteEntryKind};
+use crate::connection::RemoteQueryResult;
 
 impl App {
+    /// Delegate: open command palette.
     pub fn open_command_palette(&mut self) {
-        let mut entries: Vec<PaletteEntry> = Action::all_with_labels()
-            .into_iter()
-            .map(|(action, label)| PaletteEntry {
-                label: label.to_string(),
-                kind: PaletteEntryKind::Action(action),
-            })
-            .collect();
-
-        // Background connection slots — quick-switch entries
-        for (id, slot) in &self.background_slots {
-            let label = match &slot.kind {
-                super::ConnectionKind::Local => {
-                    format!("Switch to: local ({})", slot.session_name)
-                }
-                super::ConnectionKind::Remote { host, .. } => {
-                    format!("Switch to: {} ({})", host, slot.session_name)
-                }
-            };
-            entries.push(PaletteEntry {
-                label,
-                kind: PaletteEntryKind::SwitchSlot(id.clone()),
-            });
-        }
-
-        // Configured remote hosts
-        for rh in &self.config.remote.hosts {
-            entries.push(PaletteEntry {
-                label: format!("Remote: {} ({})", rh.name, rh.host),
-                kind: PaletteEntryKind::RemoteHost {
-                    name: rh.name.clone(),
-                    host: rh.host.clone(),
-                    port: rh.port,
-                    ssh_port: rh.ssh_port,
-                },
-            });
-        }
-
-        let filtered: Vec<usize> = (0..entries.len()).collect();
-        self.command_palette = Some(super::CommandPaletteState {
-            query: String::new(),
-            entries,
-            filtered,
-            selected_idx: 0,
-            hovered_idx: None,
-            sessions_only: false,
-            sessions_show_all: true,
-            remote_loading: None,
-            remote_error: None,
-        });
-        self.send(ClientMessage::ListSessions { all: true });
+        self.core.open_command_palette();
     }
 
+    /// Delegate: open session palette.
     pub fn open_session_palette(&mut self) {
-        self.command_palette = Some(super::CommandPaletteState {
-            query: String::new(),
-            entries: Vec::new(),
-            filtered: Vec::new(),
-            selected_idx: 0,
-            hovered_idx: None,
-            sessions_only: true,
-            sessions_show_all: false,
-            remote_loading: None,
-            remote_error: None,
-        });
-        self.send(ClientMessage::ListSessions { all: false });
+        self.core.open_session_palette();
     }
 
+    /// Delegate: refresh session palette.
     pub fn refresh_session_palette(&mut self) {
-        if let Some(palette) = &self.command_palette
-            && palette.sessions_only
-        {
-            self.send(ClientMessage::ListSessions {
-                all: palette.sessions_show_all,
-            });
-        }
+        self.core.refresh_session_palette();
     }
 
-    pub fn handle_command_palette_key(
-        &mut self,
-        event: &winit::event::KeyEvent,
-        ctrl: bool,
-        _shift: bool,
-        _alt: bool,
-    ) {
-        let Some(palette) = &mut self.command_palette else {
-            return;
-        };
-
-        match &event.logical_key {
-            Key::Named(NamedKey::Escape) => {
-                self.command_palette = None;
-            }
-            Key::Named(NamedKey::ArrowUp) => {
-                if !palette.filtered.is_empty() {
-                    palette.selected_idx = if palette.selected_idx == 0 {
-                        palette.filtered.len() - 1
-                    } else {
-                        palette.selected_idx - 1
-                    };
-                }
-            }
-            Key::Named(NamedKey::ArrowDown) => {
-                if !palette.filtered.is_empty() {
-                    palette.selected_idx = (palette.selected_idx + 1) % palette.filtered.len();
-                }
-            }
-            Key::Named(NamedKey::Enter) => {
-                let keep_open = palette
-                    .filtered
-                    .get(palette.selected_idx)
-                    .and_then(|&idx| palette.entries.get(idx))
-                    .is_some_and(|e| matches!(e.kind, PaletteEntryKind::RemoteHost { .. }));
-
-                if let Some(&entry_idx) = palette.filtered.get(palette.selected_idx) {
-                    self.execute_palette_entry(entry_idx);
-                }
-                if !keep_open {
-                    self.command_palette = None;
-                }
-            }
-            Key::Named(NamedKey::Backspace) => {
-                palette.query.pop();
-                self.filter_palette();
-            }
-            Key::Character(c) if !ctrl => {
-                let s: &str = c.as_str();
-                let Some(palette) = &mut self.command_palette else {
-                    return;
-                };
-                palette.query.push_str(s);
-                self.filter_palette();
-            }
-            _ => {}
-        }
-    }
-
-    /// Returns true if the palette should stay open after this entry.
+    /// Execute a palette entry — some entries require shell access (clipboard, window, connection).
     pub(crate) fn execute_palette_entry(&mut self, entry_idx: usize) {
-        let Some(palette) = &self.command_palette else {
+        let Some(palette) = &self.core.command_palette else {
             return;
         };
         let Some(entry) = palette.entries.get(entry_idx) else {
@@ -156,14 +32,10 @@ impl App {
                 self.handle_action(action);
             }
             PaletteEntryKind::SwitchSession(name) => {
-                self.send(ClientMessage::SwitchSession {
-                    session_name: name,
-                });
+                self.send(ClientMessage::SwitchSession { session_name: name });
             }
             PaletteEntryKind::KillSession(name) => {
-                self.send(ClientMessage::KillSession {
-                    session_name: name,
-                });
+                self.send(ClientMessage::KillSession { session_name: name });
             }
             PaletteEntryKind::RemoteHost {
                 name,
@@ -172,13 +44,13 @@ impl App {
                 ssh_port,
             } => {
                 // Enter loading state and fire async query
-                if let Some(palette) = &mut self.command_palette {
+                if let Some(palette) = &mut self.core.command_palette {
                     palette.remote_loading = Some(name.clone());
                     palette.remote_error = None;
                 }
                 let (tx, rx) = crossbeam_channel::bounded(1);
                 crate::connection::query_remote_sessions(&name, &host, port, ssh_port, tx);
-                self.remote_query_rx = Some(rx);
+                self.core.remote_query_rx = Some(rx);
             }
             PaletteEntryKind::RemoteSession {
                 host,
@@ -199,7 +71,7 @@ impl App {
                     format!("ssh {}", host)
                 };
                 self.send(ClientMessage::RunCommand {
-                    session_name: self.session_name.clone(),
+                    session_name: self.core.session_name.clone(),
                     command,
                     cwd: None,
                 });
@@ -210,121 +82,18 @@ impl App {
         }
     }
 
-    /// Handle the result of an async remote host probe.
+    /// Delegate: handle remote query result.
     pub fn handle_remote_query_result(&mut self, result: RemoteQueryResult) {
-        let Some(palette) = &mut self.command_palette else {
-            return;
-        };
-        palette.remote_loading = None;
-
-        match result.result {
-            RemoteProbeResult::Sessions(sessions) => {
-                // Remove any previous remote session/ssh entries for this host
-                palette.entries.retain(|e| {
-                    !matches!(&e.kind,
-                        PaletteEntryKind::RemoteSession { host, .. } if *host == result.host)
-                        && !matches!(&e.kind,
-                        PaletteEntryKind::SshShell { host, .. } if *host == result.host)
-                });
-
-                if sessions.is_empty() {
-                    // Server exists but no sessions — offer to create one
-                    palette.entries.push(PaletteEntry {
-                        label: format!("  {} > (new session)", result.host_name),
-                        kind: PaletteEntryKind::RemoteSession {
-                            host: result.host.clone(),
-                            port: result.port,
-                            ssh_port: result.ssh_port,
-                            session_name: "default".to_string(),
-                        },
-                    });
-                } else {
-                    for s in &sessions {
-                        palette.entries.push(PaletteEntry {
-                            label: format!("  {} > {}", result.host_name, s.name),
-                            kind: PaletteEntryKind::RemoteSession {
-                                host: result.host.clone(),
-                                port: result.port,
-                                ssh_port: result.ssh_port,
-                                session_name: s.name.clone(),
-                            },
-                        });
-                    }
-                }
-            }
-            RemoteProbeResult::NoServer => {
-                // Remove previous entries for this host
-                palette.entries.retain(|e| {
-                    !matches!(&e.kind,
-                        PaletteEntryKind::RemoteSession { host, .. } if *host == result.host)
-                        && !matches!(&e.kind,
-                        PaletteEntryKind::SshShell { host, .. } if *host == result.host)
-                });
-
-                palette.entries.push(PaletteEntry {
-                    label: format!("  SSH: {} (no ciri-server)", result.host_name),
-                    kind: PaletteEntryKind::SshShell {
-                        name: result.host_name.clone(),
-                        host: result.host.clone(),
-                        ssh_port: result.ssh_port,
-                    },
-                });
-            }
-            RemoteProbeResult::Error(e) => {
-                palette.remote_error = Some((result.host_name, e));
-            }
-        }
-
-        self.filter_palette();
+        self.core.handle_remote_query_result(result);
     }
 
+    /// Delegate: filter palette entries.
     pub fn filter_palette(&mut self) {
-        let Some(palette) = &mut self.command_palette else {
-            return;
-        };
-        let needle = palette.query.to_lowercase();
-        palette.filtered = palette
-            .entries
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| {
-                if needle.is_empty() {
-                    true
-                } else {
-                    fuzzy_match(&e.label.to_lowercase(), &needle)
-                }
-            })
-            .map(|(i, _)| i)
-            .collect();
-        palette.selected_idx = 0;
-        palette.hovered_idx = None;
+        self.core.filter_palette();
     }
 
+    /// Delegate: palette scroll offset.
     pub(crate) fn command_palette_scroll_offset(&self, visible_rows: usize) -> usize {
-        self.command_palette
-            .as_ref()
-            .map(|palette| {
-                if palette.selected_idx >= visible_rows {
-                    palette.selected_idx - visible_rows + 1
-                } else {
-                    0
-                }
-            })
-            .unwrap_or(0)
+        self.core.command_palette_scroll_offset(visible_rows)
     }
-}
-
-fn fuzzy_match(haystack: &str, needle: &str) -> bool {
-    let mut it = needle.chars();
-    let mut current = it.next();
-    for h in haystack.chars() {
-        if let Some(n) = current {
-            if h == n {
-                current = it.next();
-            }
-        } else {
-            return true;
-        }
-    }
-    current.is_none()
 }

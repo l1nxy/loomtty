@@ -4,13 +4,7 @@ use ciri_protocol::transport;
 use crossbeam_channel::{Receiver, Sender};
 use std::io;
 
-/// Messages from server to client (received on the winit thread).
-pub enum ServerEvent {
-    Control(ServerMessage),
-    CellDelta(CellDeltaBorrowed),
-    FullPaneSync(FullPaneSync),
-    Disconnected,
-}
+pub use ciri_app::app::{RemoteProbeResult, RemoteQueryResult, ServerEvent};
 
 /// Run the protocol IO loop over any AsyncRead + AsyncWrite pair.
 /// Performs handshake, spawns writer task, runs reader loop.
@@ -41,7 +35,9 @@ async fn run_protocol_io<R, W>(
             log::warn!("server version {peer} differs from client {local} (patch mismatch)");
         }
         Ok(codec::VersionCompat::MinorMismatch { peer, local }) => {
-            log::warn!("server version {peer} differs from client {local} (minor mismatch, may be unstable)");
+            log::warn!(
+                "server version {peer} differs from client {local} (minor mismatch, may be unstable)"
+            );
         }
         Err(e) => {
             log::error!("server rejected connection: {e}");
@@ -64,7 +60,9 @@ async fn run_protocol_io<R, W>(
                 break;
             }
             use tokio::io::AsyncWriteExt;
-            if writer.flush().await.is_err() { break; }
+            if writer.flush().await.is_err() {
+                break;
+            }
         }
     });
 
@@ -72,13 +70,19 @@ async fn run_protocol_io<R, W>(
     loop {
         match codec::read_frame(&mut reader).await {
             Ok(codec::Frame::ServerMsg(msg)) => {
-                if event_tx.send(ServerEvent::Control(msg)).is_err() { break; }
+                if event_tx.send(ServerEvent::Control(msg)).is_err() {
+                    break;
+                }
             }
             Ok(codec::Frame::CellDelta(delta)) => {
-                if event_tx.send(ServerEvent::CellDelta(delta)).is_err() { break; }
+                if event_tx.send(ServerEvent::CellDelta(delta)).is_err() {
+                    break;
+                }
             }
             Ok(codec::Frame::FullPaneSync(sync)) => {
-                if event_tx.send(ServerEvent::FullPaneSync(sync)).is_err() { break; }
+                if event_tx.send(ServerEvent::FullPaneSync(sync)).is_err() {
+                    break;
+                }
             }
             Ok(codec::Frame::ClientMsg(_)) => {
                 // Shouldn't receive client messages from server
@@ -102,16 +106,12 @@ pub fn connect_or_spawn(
     session_name: &str,
     viewport: codec::ClientHello,
 ) -> io::Result<(Sender<ClientMessage>, Receiver<ServerEvent>)> {
-    // Validate session name to prevent path traversal
-    if session_name.is_empty()
-        || session_name.contains('/')
-        || session_name.contains('\\')
-        || session_name.contains("..")
-        || session_name.contains('\0')
-    {
+    // Validate session name using the same function as the server to prevent
+    // divergent validation rules (client allows what server rejects or vice versa).
+    if let Err(reason) = ciri_session::names::validate_name(session_name) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("invalid session name: {session_name:?}"),
+            format!("invalid session name: {reason}"),
         ));
     }
     let _sock_path = transport::server_socket_path();
@@ -179,12 +179,18 @@ pub fn connect_or_spawn(
                 let mut connect_result = Err(io::Error::new(io::ErrorKind::ConnectionRefused, ""));
                 for attempt in 0..50 {
                     #[cfg(unix)]
-                    { let sock_path = transport::server_socket_path();
-                      connect_result = tokio::net::UnixStream::connect(&sock_path).await; }
+                    {
+                        let sock_path = transport::server_socket_path();
+                        connect_result = tokio::net::UnixStream::connect(&sock_path).await;
+                    }
                     #[cfg(windows)]
-                    { connect_result = tokio::net::windows::named_pipe::ClientOptions::new()
-                        .open(&transport::server_pipe_name()); }
-                    if connect_result.is_ok() { break; }
+                    {
+                        connect_result = tokio::net::windows::named_pipe::ClientOptions::new()
+                            .open(&transport::server_pipe_name());
+                    }
+                    if connect_result.is_ok() {
+                        break;
+                    }
                     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                     if attempt == 0 {
                         log::debug!("waiting for server...");
@@ -267,26 +273,6 @@ pub fn connect_remote(
     Ok((msg_tx, event_rx))
 }
 
-/// Result of probing a remote host for ciri-server availability.
-pub enum RemoteProbeResult {
-    /// ciri-server is available; here are its sessions.
-    Sessions(Vec<SessionInfo>),
-    /// SSH connected but no ciri-server (handshake failed / connection refused).
-    NoServer,
-    /// SSH itself failed or timed out.
-    Error(String),
-}
-
-/// Result returned from an async remote host query.
-pub struct RemoteQueryResult {
-    /// Display name from config.
-    pub host_name: String,
-    pub host: String,
-    pub port: u16,
-    pub ssh_port: u16,
-    pub result: RemoteProbeResult,
-}
-
 /// Fire-and-forget: probe a remote host for ciri-server, query its sessions.
 /// Sends the result through `result_tx`. Runs entirely in a background thread.
 pub fn query_remote_sessions(
@@ -308,7 +294,6 @@ pub fn query_remote_sessions(
                 .expect("tokio runtime");
 
             let result = rt.block_on(async {
-                // 5-second timeout for the entire probe
                 match tokio::time::timeout(
                     std::time::Duration::from_secs(5),
                     probe_remote(&host, remote_port, ssh_port),
@@ -329,6 +314,36 @@ pub fn query_remote_sessions(
             });
         })
         .ok();
+}
+
+pub fn probe_remote_sessions_blocking(host: &str, remote_port: u16, ssh_port: u16) -> Vec<String> {
+    let rt = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            log::warn!("failed to build probe runtime: {e}");
+            return Vec::new();
+        }
+    };
+
+    let result = rt.block_on(async {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            probe_remote(host, remote_port, ssh_port),
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(_) => RemoteProbeResult::Error("Connection timed out".into()),
+        }
+    });
+
+    match result {
+        RemoteProbeResult::Sessions(sessions) => sessions.into_iter().map(|s| s.name).collect(),
+        RemoteProbeResult::NoServer | RemoteProbeResult::Error(_) => Vec::new(),
+    }
 }
 
 /// Internal: SSH tunnel → handshake → ListSessions → return result.

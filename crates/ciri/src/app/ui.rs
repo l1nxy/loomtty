@@ -362,25 +362,13 @@ impl App {
         let zoom = self.core.anim_mgr.overview_zoom.value() as f32;
         let vox = self.core.anim_mgr.view_offset_x.value() as f32;
         let voy = self.core.anim_mgr.view_offset_y.value() as f32;
-        let tiles = self.core.workspaces.all_tiles_2d(vox, voy);
+        let tiles = self.overview_visible_tiles(zoom, vox, voy);
         let (vw, vh) = self.command_palette_viewport_size();
-        let center_x = vw / 2.0;
-        let center_y = vh / 2.0;
-        let zoom_threshold = self.core.config.animation.zoom_threshold;
         for (pane_id, tile_rect, _) in &tiles {
             if *pane_id != hovered_id {
                 continue;
             }
-            let tr = if zoom < zoom_threshold {
-                ciri_layout::geometry::Rect::new(
-                    center_x + (tile_rect.x - center_x) * zoom,
-                    center_y + (tile_rect.y - center_y) * zoom,
-                    tile_rect.w * zoom,
-                    tile_rect.h * zoom,
-                )
-            } else {
-                *tile_rect
-            };
+            let tr = self.transformed_tile_rect(*tile_rect, zoom, vw, vh);
             // Need at least enough width for both labels
             let min_w = cx.cell_w * 14.0; // ~7 chars per button minimum
             if tr.w < min_w {
@@ -2198,11 +2186,8 @@ impl OverviewComponent {
         let zoom = app.core.anim_mgr.overview_zoom.value() as f32;
         let vox = app.core.anim_mgr.view_offset_x.value() as f32;
         let voy = app.core.anim_mgr.view_offset_y.value() as f32;
-        let tiles = app.core.workspaces.all_tiles_2d(vox, voy);
+        let tiles = app.overview_visible_tiles(zoom, vox, voy);
         let (vw, vh) = app.command_palette_viewport_size();
-        let center_x = vw / 2.0;
-        let center_y = vh / 2.0;
-        let zoom_threshold = app.core.config.animation.zoom_threshold;
         let cell_w = app
             .glyph_cache
             .as_ref()
@@ -2218,16 +2203,7 @@ impl OverviewComponent {
             if *pane_id != hovered_id {
                 continue;
             }
-            let tr = if zoom < zoom_threshold {
-                ciri_layout::geometry::Rect::new(
-                    center_x + (tile_rect.x - center_x) * zoom,
-                    center_y + (tile_rect.y - center_y) * zoom,
-                    tile_rect.w * zoom,
-                    tile_rect.h * zoom,
-                )
-            } else {
-                *tile_rect
-            };
+            let tr = app.transformed_tile_rect(*tile_rect, zoom, vw, vh);
             let min_w = cell_w * 14.0;
             if tr.w < min_w {
                 return None;

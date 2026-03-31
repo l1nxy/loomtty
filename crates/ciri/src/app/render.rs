@@ -68,18 +68,7 @@ impl App {
         let cache_tile_glyphs = self.pending_resize.is_none();
 
         for (pane_id, tile_rect, is_active) in tiles {
-            let tr = if zoom < zoom_threshold {
-                let cx = vw / 2.0;
-                let cy = vh / 2.0;
-                GeoRect::new(
-                    cx + (tile_rect.x - cx) * zoom,
-                    cy + (tile_rect.y - cy) * zoom,
-                    tile_rect.w * zoom,
-                    tile_rect.h * zoom,
-                )
-            } else {
-                *tile_rect
-            };
+            let tr = Self::transformed_tile_rect_for_zoom(*tile_rect, zoom, zoom_threshold, vw, vh);
             let scissor = scissor_rect(&tr, vw, vh);
             if scissor.is_none() {
                 continue;
@@ -623,18 +612,7 @@ impl App {
                 continue;
             }
             let alpha = 0.15 * intensity;
-            let tr = if zoom < zoom_threshold {
-                let cx = vw / 2.0;
-                let cy = vh / 2.0;
-                GeoRect::new(
-                    cx + (tile_rect.x - cx) * zoom,
-                    cy + (tile_rect.y - cy) * zoom,
-                    tile_rect.w * zoom,
-                    tile_rect.h * zoom,
-                )
-            } else {
-                *tile_rect
-            };
+            let tr = Self::transformed_tile_rect_for_zoom(*tile_rect, zoom, zoom_threshold, vw, vh);
             bg_rects.push(Rect {
                 x: tr.x,
                 y: tr.y,
@@ -761,18 +739,7 @@ impl App {
                 continue;
             }
 
-            let tr = if zoom < zoom_threshold {
-                let cx = vw / 2.0;
-                let cy = vh / 2.0;
-                GeoRect::new(
-                    cx + (tile_rect.x - cx) * zoom,
-                    cy + (tile_rect.y - cy) * zoom,
-                    tile_rect.w * zoom,
-                    tile_rect.h * zoom,
-                )
-            } else {
-                *tile_rect
-            };
+            let tr = Self::transformed_tile_rect_for_zoom(*tile_rect, zoom, zoom_threshold, vw, vh);
 
             let inner_x = tr.x + (border_w + padding) * zoom;
             let inner_y = tr.y + (border_w + padding) * zoom;
@@ -869,21 +836,21 @@ impl App {
         animating |= self.core.anim_mgr.advance_all(dt);
 
         let renderer = self.renderer.as_mut().unwrap();
-        let cache = self.glyph_cache.as_mut().unwrap();
-        let shaper = self.text_shaper.as_ref().unwrap();
         let (vw, vh) = renderer.surface_size();
         let vw_f = vw as f32;
         let vh_f = vh as f32;
         let zoom = self.core.anim_mgr.overview_zoom.value() as f32;
         let zoom_threshold = self.core.config.animation.zoom_threshold;
-
         let vox = self.core.anim_mgr.view_offset_x.value() as f32;
         let voy = self.core.anim_mgr.view_offset_y.value() as f32;
         let tiles = if self.core.overview.active || zoom < zoom_threshold {
-            self.core.workspaces.all_tiles_2d(vox, voy)
+            self.overview_visible_tiles(zoom, vox, voy)
         } else {
             self.core.workspaces.visible_tiles_2d(vox, voy)
         };
+
+        let cache = self.glyph_cache.as_mut().unwrap();
+        let shaper = self.text_shaper.as_ref().unwrap();
 
         // Update terminal views for dirty pane grids
         for (pane_id, tile_rect, _) in &tiles {

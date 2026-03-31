@@ -1,34 +1,21 @@
-use ciri_layout::geometry::Rect as GeoRect;
-
 use super::App;
 
 impl App {
     pub fn hit_test_overview(&self, mx: f32, my: f32) -> Option<(usize, u64)> {
         let my = self.content_y_from_screen(my)?;
         let zoom = self.core.anim_mgr.overview_zoom.value() as f32;
-        let zoom_threshold = self.core.config.animation.zoom_threshold;
         let vox = self.core.anim_mgr.view_offset_x.value() as f32;
         let voy = self.core.anim_mgr.view_offset_y.value() as f32;
-        let tiles = if self.core.overview.active || zoom < zoom_threshold {
-            self.core.workspaces.all_tiles_2d(vox, voy)
+        let tiles = if self.core.overview.active || zoom < self.core.config.animation.zoom_threshold
+        {
+            self.overview_visible_tiles(zoom, vox, voy)
         } else {
             self.core.workspaces.visible_tiles_2d(vox, voy)
         };
         let (vw, vh) = self.command_palette_viewport_size();
-        let cx = vw / 2.0;
-        let cy = vh / 2.0;
 
         for (pane_id, tile_rect, _) in &tiles {
-            let tr = if zoom < zoom_threshold {
-                GeoRect::new(
-                    cx + (tile_rect.x - cx) * zoom,
-                    cy + (tile_rect.y - cy) * zoom,
-                    tile_rect.w * zoom,
-                    tile_rect.h * zoom,
-                )
-            } else {
-                *tile_rect
-            };
+            let tr = self.transformed_tile_rect(*tile_rect, zoom, vw, vh);
             if tr.contains(mx, my) {
                 for (ws_idx, ws) in self.core.workspaces.workspaces.iter().enumerate() {
                     if ws.columns.iter().any(|c| c.contains_pane(*pane_id)) {

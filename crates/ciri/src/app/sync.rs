@@ -33,8 +33,8 @@ impl App {
         let Some(rx) = self.core.server_rx.take() else {
             return false;
         };
-        const BATCH: usize = 200;
-        const MAX_DRAIN: std::time::Duration = std::time::Duration::from_millis(50);
+        const BATCH: usize = 256;
+        const MAX_DRAIN: std::time::Duration = std::time::Duration::from_millis(12);
         let drain_start = std::time::Instant::now();
         let mut needs_redraw = false;
 

@@ -40,6 +40,7 @@ pub(crate) use ciri_app::app::{
     PendingPaste, ReconnectPlan, RemoteConnectionConfig, ScrollbarDragInfo, SearchMatch,
     SearchState, Selection, ServerEvent, TopBarHoverRegion,
 };
+use ciri_layout::geometry::Rect as GeoRect;
 
 /// Cached pre-transformed glyph instances for a pane tile.
 /// Avoids redundant pixel-position computation when content/position haven't changed.
@@ -124,6 +125,68 @@ impl App {
     const COMMAND_PALETTE_TOGGLE_RIGHT_PAD: f32 = 16.0;
     const COMMAND_PALETTE_TOGGLE_TOP_PAD: f32 = 3.0;
     const COMMAND_PALETTE_TOGGLE_SIDE_PAD: f32 = 4.0;
+
+    fn transformed_tile_rect_for_zoom(
+        tile_rect: GeoRect,
+        zoom: f32,
+        zoom_threshold: f32,
+        vw: f32,
+        vh: f32,
+    ) -> GeoRect {
+        if zoom < zoom_threshold {
+            let cx = vw / 2.0;
+            let cy = vh / 2.0;
+            GeoRect::new(
+                cx + (tile_rect.x - cx) * zoom,
+                cy + (tile_rect.y - cy) * zoom,
+                tile_rect.w * zoom,
+                tile_rect.h * zoom,
+            )
+        } else {
+            tile_rect
+        }
+    }
+
+    fn transformed_tile_rect(&self, tile_rect: GeoRect, zoom: f32, vw: f32, vh: f32) -> GeoRect {
+        Self::transformed_tile_rect_for_zoom(
+            tile_rect,
+            zoom,
+            self.core.config.animation.zoom_threshold,
+            vw,
+            vh,
+        )
+    }
+
+    fn overview_visible_tiles(
+        &self,
+        zoom: f32,
+        view_offset_x: f32,
+        view_offset_y: f32,
+    ) -> Vec<(u64, GeoRect, bool)> {
+        let tiles = self
+            .core
+            .workspaces
+            .all_tiles_2d(view_offset_x, view_offset_y);
+        let (vw, vh) = self.command_palette_viewport_size();
+        let margin_x = (vw * 0.25).max(96.0);
+        let margin_y = (vh * 0.25).max(96.0);
+        let clip = GeoRect::new(
+            -margin_x,
+            -margin_y,
+            vw + margin_x * 2.0,
+            vh + margin_y * 2.0,
+        );
+        let zoom_threshold = self.core.config.animation.zoom_threshold;
+
+        tiles
+            .into_iter()
+            .filter(|(_, rect, _)| {
+                Self::transformed_tile_rect_for_zoom(*rect, zoom, zoom_threshold, vw, vh)
+                    .intersection(&clip)
+                    .is_some()
+            })
+            .collect()
+    }
 
     pub fn new(config: CiriConfig, session_name: impl Into<String>) -> Self {
         let cached_color_table = ColorTable::new(&config);

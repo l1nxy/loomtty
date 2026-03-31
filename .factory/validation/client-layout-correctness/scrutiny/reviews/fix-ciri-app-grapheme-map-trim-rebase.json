@@ -1,0 +1,14 @@
+{
+  "featureId": "fix-ciri-app-grapheme-map-trim-rebase",
+  "reviewedAt": "2026-03-31T07:00:00Z",
+  "commitId": "d97174a6eb0bd4228d66b64728d40be9784daa05",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Reviewed the prior failing `review-ciri-app` report, the fix handoff/transcript skeleton, and commit d97174a. The new rebasing logic now accounts for scrollback trimming before retained grapheme indices are reinserted, and the added regression covers the previously missing same-width full-sync plus trim-overflow path. I did not identify any remaining high-confidence correctness issue within this fix scope.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": "/home/linxy/repo/ciri/.factory/validation/client-layout-correctness/scrutiny/reviews/review-ciri-app.json",
+  "summary": "Pass. The fix directly addresses the prior `review-ciri-app` failure by renormalizing or dropping absolute `grapheme_map` indices when full-sync scrollback overflow trims old rows, and the new targeted test demonstrates the same-width trim-overflow scenario that was previously untested. The worker transcript and handoff are consistent with the logic-crate-reviewer procedure, and I found no additional shared-state gaps from this review."}

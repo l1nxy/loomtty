@@ -6,17 +6,17 @@
   "diffReviewed": true,
   "status": "fail",
   "codeReview": {
-    "summary": "The fix correctly restores active-pane highlighting for visible/all-tile queries when a workspace remembers a stale column index, but it leaves the underlying workspace focus index invalid. Because `Workspace::target_offset_for_active_with_strategy` still reads `self.columns[self.active_column_idx]` strictly, the same stale-focus state can still break active-column viewport targeting after cleanup/focus-restoration flows.",
+    "summary": "The change fixes active-pane highlighting for visible/all-tile queries when a workspace remembers a stale column index, but it does not restore the underlying focus invariant. `Workspace::target_offset_for_active_with_strategy` still treats the same workspace as having no valid active column, so cleanup/focus-restoration flows can still mis-target the viewport even after this patch.",
     "issues": [
       {
         "file": "crates/ciri-layout/src/workspace.rs",
-        "line": 76,
+        "line": 85,
         "severity": "blocking",
-        "description": "`active_pane_id()` now falls back to the last surviving column when `active_column_idx` is stale, but `target_offset_for_active_with_strategy()` still returns `0.0` whenever `self.columns.get(self.active_column_idx)` fails. That leaves the workspace in an internally inconsistent state: visible/all-tile highlighting reports an active pane while viewport targeting behaves as if there were no active column. The new regression only checks highlighting and explicitly allows the stale index to persist, so focus-restoration/cleanup flows can still mis-center or fail to reveal the intended active column until some later mutation repairs the index." 
+        "description": "`active_pane_id()` now falls back to the last surviving column when `active_column_idx` is out of range, but `target_offset_for_active_with_strategy()` still bails out at `active_column_idx_checked()` and returns `0.0` for the same stale state. After `cleanup_empty()`/workspace focus restoration, callers can therefore observe contradictory layout state: visible/all-tile queries report pane 4 as active, while active-column viewport targeting behaves as if no column is focused at all. The new regression test only proves the highlighting path, so VAL-CLIENT-005 is still not fully met for focus clamping and visibility targeting." 
       }
     ]
   },
   "sharedStateObservations": [],
   "addressesFailureFrom": null,
-  "summary": "Reviewed the mission feature metadata, worker handoff/transcript skeleton, skill instructions, and commit `b83c341fa46de0b2de582ff3b253a42826977edc`. The change fixes one symptom of stale workspace focus, but it does not restore the actual focus invariant: `active_column_idx` may remain out of range, and other code paths such as active-column viewport targeting still treat the workspace as unfocused."
+  "summary": "Reviewed the mission feature metadata, worker transcript skeleton, logic-crate-reviewer skill, shared-state docs, and commit `b83c341fa46de0b2de582ff3b253a42826977edc`. The patch resolves one symptom of stale workspace focus but leaves `active_column_idx` invalid, so active-pane visibility and active-column viewport targeting can still disagree after cleanup/focus transitions."
 }

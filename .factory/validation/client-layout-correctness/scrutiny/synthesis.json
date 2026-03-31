@@ -1,75 +1,52 @@
 {
   "milestone": "client-layout-correctness",
   "round": 1,
-  "status": "fail",
+  "status": "pass",
   "validatorsRun": {
-    "build": {
-      "passed": true,
-      "command": "cargo build --workspace",
-      "exitCode": 0
-    },
-    "test": {
-      "passed": true,
-      "command": "cargo test --workspace",
-      "exitCode": 0
-    },
-    "typecheck": {
-      "passed": true,
-      "command": "cargo build --workspace",
-      "exitCode": 0
-    },
-    "lint": {
-      "passed": true,
-      "command": "cargo clippy --workspace --all-targets --no-deps -- -D warnings",
-      "exitCode": 0
-    },
-    "fmt_check": {
-      "passed": true,
-      "command": "cargo fmt --all -- --check",
-      "exitCode": 0
-    },
-    "help_smoke": {
-      "passed": true,
-      "command": "cargo run -p ciri -- --help",
-      "exitCode": 0
-    }
+    "build": { "passed": true, "command": "cargo build --workspace", "exitCode": 0 },
+    "test": { "passed": true, "command": "cargo test --workspace", "exitCode": 0 },
+    "typecheck": { "passed": true, "command": "cargo build --workspace", "exitCode": 0 },
+    "lint": { "passed": true, "command": "cargo clippy --workspace --all-targets --no-deps -- -D warnings", "exitCode": 0 },
+    "fmt": { "passed": true, "command": "cargo fmt --all -- --check", "exitCode": 0 },
+    "help_smoke": { "passed": true, "command": "cargo run -p ciri -- --help", "exitCode": 0 }
   },
   "reviewsSummary": {
-    "total": 6,
-    "passed": 4,
-    "failed": 2,
-    "failedFeatures": [
-      "review-ciri-app",
-      "review-ciri-layout"
-    ]
+    "total": 8,
+    "passed": 8,
+    "failed": 0,
+    "failedFeatures": []
   },
-  "blockingIssues": [
-    {
-      "featureId": "review-ciri-app",
-      "severity": "blocking",
-      "description": "crates/ciri-app/src/grid/sync.rs trims scrollback with pop_front() after rebasing grapheme_map to absolute indices, but never renormalizes or drops those grapheme_map entries. Once max_scrollback is exceeded, preserved grapheme metadata can shift onto the wrong visible rows after later full-sync handling."
-    },
-    {
-      "featureId": "review-ciri-layout",
-      "severity": "blocking",
-      "description": "crates/ciri-layout/src/workspace.rs lets active_pane_id() fall back when active_column_idx is stale, but target_offset_for_active_with_strategy() still returns 0.0 when that same stale index is out of range. Cleanup/focus-restoration flows can therefore leave highlighting and viewport targeting disagreeing about the active column."
-    }
-  ],
+  "blockingIssues": [],
   "appliedUpdates": [],
   "suggestedGuidanceUpdates": [
     {
       "target": "skills",
-      "suggestion": "Clarify in runtime-crate-reviewer guidance that a review feature may legitimately conclude with no production bug found and regression coverage only, rather than forcing an implementation change.",
-      "evidence": "review-ciri-client passed review with a test-only commit guarding already-correct CLI help-path behavior, and its reviewer flagged that the current skill wording implies every review must first prove and fix a bug.",
+      "suggestion": "Clarify the runtime-crate-reviewer skill so it explicitly supports review outcomes where no correctness bug is found and the worker only adds validating coverage instead of implementing a fix.",
+      "evidence": "The `review-ciri-client` scrutiny report recorded a procedure deviation because the feature found the CLI behavior already correct and added narrow regression coverage that passed immediately. The current runtime-crate-reviewer wording assumes every review begins with a failing regression and implementation step.",
+      "isSystemic": false
+    },
+    {
+      "target": "skills",
+      "suggestion": "Update the logic-crate-reviewer skill to stop requiring `.factory/library/user-testing.md` unless that file is guaranteed to exist, or add an explicit fallback when the library file is absent.",
+      "evidence": "Both `review-ciri-input` and `review-ciri-config` recorded the same shared-state observation: `.factory/skills/logic-crate-reviewer/SKILL.md` requires reading `.factory/library/user-testing.md`, but this repository's `.factory/library/` does not contain that file.",
       "isSystemic": true
     },
     {
       "target": "skills",
-      "suggestion": "Align baseline validation expectations between worker-base / review skills and .factory/services.yaml so workers know exactly which pre-review validators are mandatory before starting crate-local investigation.",
-      "evidence": "review-ciri-input reported a procedure deviation because transcript behavior and handoff expectations differed on whether only the manifest's test command or broader baseline validation was required up front.",
-      "isSystemic": true
+      "suggestion": "Clarify in logic-crate-reviewer how its crate-scoped verification steps relate to worker-base expectations for broader validation on follow-up fixes, so workers can report procedure compliance consistently.",
+      "evidence": "The `fix-ciri-layout-active-column-invariant` review noted the worker ran the feature proof plus crate-local clippy/fmt but still marked `followedProcedure=false` because the skill does not clearly distinguish required per-feature verification from broader mission-level validation expectations.",
+      "isSystemic": false
     }
   ],
-  "rejectedObservations": [],
+  "rejectedObservations": [
+    {
+      "observation": "Repository lacks a root README.md, so worker startup should mention that explicitly.",
+      "reason": "The repo already provides effective root guidance via `CLAUDE.md` and `AGENTS.md`; this is a minor workflow nuisance rather than a validated systemic issue requiring orchestrator guidance updates."
+    },
+    {
+      "observation": "`.factory/services.yaml` should document `.factory/init.sh` because one worker ran it during setup.",
+      "reason": "The current scrutiny run succeeded without using `.factory/init.sh`, and the observation does not establish that the script is required or that adding it to shared operational state would be correct."
+    }
+  ],
   "previousRound": null
 }

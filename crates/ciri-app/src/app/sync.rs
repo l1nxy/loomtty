@@ -71,7 +71,9 @@ impl AppModel {
 
         self.snap_all_col_widths();
 
-        // Compute new positions and start move animations for shifted panes
+        // Compute new positions and start move animations for shifted panes.
+        // In overview, switching the active workspace can update focus without any
+        // real geometry change for a pane, so suppress pure focus-only move animations.
         let new_positions = self.snapshot_pane_positions();
         if self.config.animation.enabled {
             let config = self.anim_config();
@@ -79,7 +81,18 @@ impl AppModel {
                 if let Some(&(new_x, new_y)) = new_positions.get(pane_id) {
                     let dx = old_x - new_x;
                     let dy = old_y - new_y;
-                    if dx.abs() > 1.0 || dy.abs() > 1.0 {
+                    let is_focus_only_workspace_switch = self.overview.active
+                        && self
+                            .workspaces
+                            .workspaces
+                            .iter()
+                            .enumerate()
+                            .any(|(ws_idx, ws)| {
+                                ws.active_pane_id() == Some(*pane_id)
+                                    && (old_y - self.workspaces.workspace_y(ws_idx)).abs() <= 1.0
+                                    && (new_y - self.workspaces.workspace_y(ws_idx)).abs() <= 1.0
+                            });
+                    if (dx.abs() > 1.0 || dy.abs() > 1.0) && !is_focus_only_workspace_switch {
                         self.anim_mgr.ensure_pane_registered(*pane_id);
                         self.anim_mgr
                             .start_move_animation(*pane_id, dx, dy, &config);

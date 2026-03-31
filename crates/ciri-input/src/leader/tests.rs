@@ -1,6 +1,7 @@
 use super::*;
 use crate::action::Action;
 use crate::keybind::{Binding, BindingMode, BindingSet, KeyCombo};
+use crate::leader::types::{KeyTableState, LeaderSession};
 use std::time::{Duration, Instant};
 
 fn prefix_handler() -> InputHandler {
@@ -149,6 +150,8 @@ fn make_binding_set() -> BindingSet {
     set
 }
 
+// ── Basic handler tests ──
+
 #[test]
 fn normal_key_passes_through() {
     let mut h = prefix_handler();
@@ -194,9 +197,10 @@ fn leader_then_unknown_consumed_and_exits() {
 fn leader_timeout_resets() {
     let mut h = prefix_handler();
     h.process_key("w", true, false, false, false);
-    h.state = State::AwaitingAction {
+    h.session = InputSessionState::Leader(LeaderSession {
+        mode: InputMode::Prefix,
         entered_at: Instant::now() - Duration::from_secs(2),
-    };
+    });
     h.check_timeout();
     assert!(!h.is_awaiting_action());
 }
@@ -263,9 +267,10 @@ fn sticky_unknown_stays() {
 #[test]
 fn sticky_no_timeout() {
     let mut h = sticky_handler();
-    h.state = State::AwaitingAction {
+    h.session = InputSessionState::Leader(LeaderSession {
+        mode: InputMode::Sticky,
         entered_at: Instant::now() - Duration::from_secs(100),
-    };
+    });
     h.check_timeout();
     assert!(h.is_awaiting_action());
 }
@@ -400,14 +405,15 @@ fn locked_leader_then_unlock() {
     let app_mode = BindingMode::LOCKED;
     let r = h.process_key_event("w", true, false, false, false, app_mode);
     assert!(matches!(r, InputResult::Consumed));
-    assert!(matches!(h.state, State::AwaitingUnlock));
+    assert!(matches!(h.session, InputSessionState::Unlocking));
+    // Successful unlock: handled internally, returns Consumed.
     let r = h.process_key_event("g", false, false, false, false, BindingMode::EMPTY);
-    assert!(matches!(r, InputResult::Action(Action::ToggleLock)));
+    assert!(matches!(r, InputResult::Consumed));
     assert!(!h.is_locked());
 }
 
 #[test]
-fn locked_leader_then_wrong_key_stays_locked() {
+fn locked_leader_then_wrong_key_returns_to_locked() {
     let mut h = sticky_handler();
     h.toggle_lock();
     h.process_key_event("w", true, false, false, false, BindingMode::LOCKED);
@@ -415,7 +421,8 @@ fn locked_leader_then_wrong_key_stays_locked() {
         h.process_key_event("z", false, false, false, false, BindingMode::EMPTY),
         InputResult::PassThrough
     ));
-    assert!(matches!(h.state, State::Idle));
+    assert!(h.is_locked());
+    assert!(matches!(h.session, InputSessionState::Locked));
 }
 
 #[test]
@@ -425,7 +432,7 @@ fn locked_alt_release_cancels_unlock() {
     h.toggle_lock();
     h.process_key_event("Alt", false, false, true, false, BindingMode::LOCKED);
     h.process_key_release("Alt");
-    assert!(matches!(h.state, State::Locked));
+    assert!(matches!(h.session, InputSessionState::Locked));
 }
 
 #[test]
@@ -460,12 +467,14 @@ fn direct_binding_fires_action() {
 fn locked_direct_toggle_lock() {
     let mut h = prefix_handler();
     h.toggle_lock();
-    assert!(matches!(
-        h.process_key("g", true, false, false, false),
-        InputResult::Action(Action::ToggleLock)
-    ));
+    let r = h.process_key_event("g", true, false, false, false, BindingMode::LOCKED);
+    assert!(matches!(r, InputResult::Action(Action::ToggleLock)));
+    // State is still Locked — the caller is responsible for calling toggle_lock().
+    h.toggle_lock();
     assert!(!h.is_locked());
 }
+
+// ── Unified pipeline tests ──
 
 #[test]
 fn unified_normal_passthrough() {
@@ -665,7 +674,8 @@ fn unified_locked_leader_then_unlock() {
     h.toggle_lock();
     h.process_key_event("w", true, false, false, false, BindingMode::LOCKED);
     let r = h.process_key_event("g", false, false, false, false, BindingMode::EMPTY);
-    assert!(matches!(r, InputResult::Action(Action::ToggleLock)));
+    assert!(matches!(r, InputResult::Consumed));
+    assert!(!h.is_locked());
 }
 
 #[test]
@@ -674,4 +684,225 @@ fn unified_locked_direct_toggle_lock() {
     h.toggle_lock();
     let r = h.process_key_event("g", true, false, false, false, BindingMode::LOCKED);
     assert!(matches!(r, InputResult::Action(Action::ToggleLock)));
+}
+
+// ── InputSessionState transition unit tests ──
+
+#[test]
+fn session_on_leader_press_from_idle() {
+    let mut s = InputSessionState::Idle;
+    s.on_leader_press(InputMode::Prefix);
+    assert!(s.is_in_leader());
+}
+
+#[test]
+fn session_on_leader_press_from_locked() {
+    let mut s = InputSessionState::Locked;
+    s.on_leader_press(InputMode::Prefix);
+    assert!(matches!(s, InputSessionState::Unlocking));
+}
+
+#[test]
+fn session_on_leader_press_noop_in_leader() {
+    let mut s = InputSessionState::Leader(LeaderSession::new(InputMode::Prefix));
+    s.on_leader_press(InputMode::Sticky);
+    // Should stay in leader with original mode
+    match &s {
+        InputSessionState::Leader(session) => assert_eq!(session.mode, InputMode::Prefix),
+        _ => panic!("expected Leader"),
+    }
+}
+
+#[test]
+fn session_on_leader_release_exits_leader() {
+    let mut s = InputSessionState::Leader(LeaderSession::new(InputMode::Prefix));
+    s.on_leader_release();
+    assert!(matches!(s, InputSessionState::Idle));
+}
+
+#[test]
+fn session_on_leader_release_unlocking_returns_locked() {
+    let mut s = InputSessionState::Unlocking;
+    s.on_leader_release();
+    assert!(matches!(s, InputSessionState::Locked));
+}
+
+#[test]
+fn session_on_leader_release_noop_from_idle() {
+    let mut s = InputSessionState::Idle;
+    s.on_leader_release();
+    assert!(matches!(s, InputSessionState::Idle));
+}
+
+#[test]
+fn session_on_escape_exits_leader() {
+    let mut s = InputSessionState::Leader(LeaderSession::new(InputMode::Prefix));
+    assert!(s.on_escape());
+    assert!(matches!(s, InputSessionState::Idle));
+}
+
+#[test]
+fn session_on_escape_noop_when_idle() {
+    let mut s = InputSessionState::Idle;
+    assert!(!s.on_escape());
+}
+
+#[test]
+fn session_on_escape_noop_when_locked() {
+    let mut s = InputSessionState::Locked;
+    assert!(!s.on_escape());
+}
+
+#[test]
+fn session_on_action_dispatched_prefix_exits() {
+    let mut s = InputSessionState::Leader(LeaderSession::new(InputMode::Prefix));
+    s.on_action_dispatched(&Action::FocusLeft);
+    assert!(matches!(s, InputSessionState::Idle));
+}
+
+#[test]
+fn session_on_action_dispatched_sticky_repeatable_stays() {
+    let mut s = InputSessionState::Leader(LeaderSession::new(InputMode::Sticky));
+    s.on_action_dispatched(&Action::FocusLeft);
+    assert!(s.is_in_leader());
+}
+
+#[test]
+fn session_on_action_dispatched_sticky_non_repeatable_exits() {
+    let mut s = InputSessionState::Leader(LeaderSession::new(InputMode::Sticky));
+    s.on_action_dispatched(&Action::NewColumnRight);
+    assert!(matches!(s, InputSessionState::Idle));
+}
+
+#[test]
+fn session_on_action_dispatched_noop_when_idle() {
+    let mut s = InputSessionState::Idle;
+    s.on_action_dispatched(&Action::FocusLeft);
+    assert!(matches!(s, InputSessionState::Idle));
+}
+
+#[test]
+fn session_on_unmatched_leader_prefix_exits() {
+    let mut s = InputSessionState::Leader(LeaderSession::new(InputMode::Prefix));
+    s.on_unmatched_leader();
+    assert!(matches!(s, InputSessionState::Idle));
+}
+
+#[test]
+fn session_on_unmatched_leader_sticky_stays() {
+    let mut s = InputSessionState::Leader(LeaderSession::new(InputMode::Sticky));
+    s.on_unmatched_leader();
+    assert!(s.is_in_leader());
+}
+
+#[test]
+fn session_on_timeout_expired_exits() {
+    let mut s = InputSessionState::Leader(LeaderSession {
+        mode: InputMode::Prefix,
+        entered_at: Instant::now() - Duration::from_secs(2),
+    });
+    s.on_timeout(Duration::from_secs(1));
+    assert!(matches!(s, InputSessionState::Idle));
+}
+
+#[test]
+fn session_on_timeout_not_expired_stays() {
+    let mut s = InputSessionState::Leader(LeaderSession::new(InputMode::Prefix));
+    s.on_timeout(Duration::from_secs(100));
+    assert!(s.is_in_leader());
+}
+
+#[test]
+fn session_on_timeout_sticky_never_expires() {
+    let mut s = InputSessionState::Leader(LeaderSession {
+        mode: InputMode::Sticky,
+        entered_at: Instant::now() - Duration::from_secs(1000),
+    });
+    s.on_timeout(Duration::from_secs(1));
+    assert!(s.is_in_leader());
+}
+
+#[test]
+fn session_on_toggle_lock_idle_to_locked() {
+    let mut s = InputSessionState::Idle;
+    s.on_toggle_lock();
+    assert!(matches!(s, InputSessionState::Locked));
+}
+
+#[test]
+fn session_on_toggle_lock_locked_to_idle() {
+    let mut s = InputSessionState::Locked;
+    s.on_toggle_lock();
+    assert!(matches!(s, InputSessionState::Idle));
+}
+
+#[test]
+fn session_on_toggle_lock_from_unlocking() {
+    let mut s = InputSessionState::Unlocking;
+    s.on_toggle_lock();
+    // Unlocking is_locked() == true, so toggle → Idle
+    assert!(matches!(s, InputSessionState::Idle));
+}
+
+#[test]
+fn session_on_toggle_lock_from_leader() {
+    let mut s = InputSessionState::Leader(LeaderSession::new(InputMode::Prefix));
+    s.on_toggle_lock();
+    // Leader is_locked() == false, so toggle → Locked
+    assert!(matches!(s, InputSessionState::Locked));
+}
+
+#[test]
+fn session_exit_leader_from_leader() {
+    let mut s = InputSessionState::Leader(LeaderSession::new(InputMode::Prefix));
+    s.exit_leader();
+    assert!(matches!(s, InputSessionState::Idle));
+}
+
+#[test]
+fn session_exit_leader_noop_from_idle() {
+    let mut s = InputSessionState::Idle;
+    s.exit_leader();
+    assert!(matches!(s, InputSessionState::Idle));
+}
+
+#[test]
+fn session_exit_leader_noop_from_locked() {
+    let mut s = InputSessionState::Locked;
+    s.exit_leader();
+    assert!(matches!(s, InputSessionState::Locked));
+}
+
+#[test]
+fn session_on_unlock_attempt_success() {
+    let mut s = InputSessionState::Unlocking;
+    s.on_unlock_attempt(true);
+    assert!(matches!(s, InputSessionState::Idle));
+}
+
+#[test]
+fn session_on_unlock_attempt_failure() {
+    let mut s = InputSessionState::Unlocking;
+    s.on_unlock_attempt(false);
+    assert!(matches!(s, InputSessionState::Locked));
+}
+
+// ── KeyTableState unit tests ──
+
+#[test]
+fn key_table_push_overflow() {
+    let mut kt = KeyTableState::default();
+    assert!(kt.push("a", 2));
+    assert!(kt.push("b", 2));
+    assert!(!kt.push("c", 2));
+    assert_eq!(kt.current(), Some("b"));
+}
+
+#[test]
+fn key_table_push_dedup() {
+    let mut kt = KeyTableState::default();
+    assert!(kt.push("a", 4));
+    assert!(kt.push("a", 4)); // duplicate, returns true but doesn't push
+    kt.pop();
+    assert!(!kt.is_active()); // only one was pushed
 }

@@ -1,0 +1,6 @@
+{
+  "featureId": "fix-session-state-structural-validation",
+  "status": "pass",
+  "issues": [],
+  "sharedStateObservations": []
+}

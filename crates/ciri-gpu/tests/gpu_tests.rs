@@ -131,6 +131,185 @@ fn read_buffer(buffer: &gpu::Buffer, size: usize) -> Vec<u8> {
     data
 }
 
+struct ResizeProofTarget {
+    size: (u32, u32),
+    texture: gpu::Texture,
+    view: gpu::TextureView,
+    pipeline: gpu::RenderPipeline,
+    uniform_buffer: gpu::Buffer,
+    instance_buffer: gpu::Buffer,
+}
+
+fn create_rect_pipeline(
+    context: &gpu::Context,
+    format: gpu::TextureFormat,
+    name: &'static str,
+) -> gpu::RenderPipeline {
+    let shader = context.create_shader(gpu::ShaderDesc {
+        source: TEST_RECT_SHADER,
+    });
+    let vertex_layout = gpu::VertexLayout {
+        attributes: vec![
+            (
+                "pos",
+                gpu::VertexAttribute {
+                    offset: 0,
+                    format: gpu::VertexFormat::F32Vec2,
+                },
+            ),
+            (
+                "size",
+                gpu::VertexAttribute {
+                    offset: 8,
+                    format: gpu::VertexFormat::F32Vec2,
+                },
+            ),
+            (
+                "color",
+                gpu::VertexAttribute {
+                    offset: 16,
+                    format: gpu::VertexFormat::F32Vec4,
+                },
+            ),
+        ],
+        stride: 32,
+    };
+
+    context.create_render_pipeline(gpu::RenderPipelineDesc {
+        name,
+        data_layouts: &[&TestRectData::layout()],
+        vertex: shader.at("vs_main"),
+        vertex_fetches: &[gpu::VertexFetchState {
+            layout: &vertex_layout,
+            instanced: true,
+        }],
+        primitive: gpu::PrimitiveState {
+            topology: gpu::PrimitiveTopology::TriangleStrip,
+            ..Default::default()
+        },
+        depth_stencil: None,
+        fragment: Some(shader.at("fs_main")),
+        color_targets: &[gpu::ColorTargetState {
+            format,
+            blend: None,
+            write_mask: gpu::ColorWrites::all(),
+        }],
+        multisample_state: gpu::MultisampleState::default(),
+    })
+}
+
+fn create_resize_proof_target(
+    context: &gpu::Context,
+    format: gpu::TextureFormat,
+    size: (u32, u32),
+    color: [f32; 4],
+) -> ResizeProofTarget {
+    let (texture, view) = create_render_target(context, size.0, size.1, format);
+    let pipeline = create_rect_pipeline(context, format, "resize_proof");
+    let uniform_buffer = context.create_buffer(gpu::BufferDesc {
+        name: "resize_proof_viewport",
+        size: 16,
+        memory: gpu::Memory::Shared,
+    });
+    let instance_buffer = context.create_buffer(gpu::BufferDesc {
+        name: "resize_proof_rect",
+        size: std::mem::size_of::<Rect>() as u64,
+        memory: gpu::Memory::Shared,
+    });
+
+    let viewport = [size.0 as f32, size.1 as f32, 0.0f32, 0.0f32];
+    unsafe {
+        ptr::copy_nonoverlapping(viewport.as_ptr() as *const u8, uniform_buffer.data(), 16);
+    }
+
+    let rect = Rect {
+        x: 0.0,
+        y: 0.0,
+        w: size.0 as f32,
+        h: size.1 as f32,
+        color,
+    };
+    unsafe {
+        let data = bytemuck::bytes_of(&rect);
+        ptr::copy_nonoverlapping(data.as_ptr(), instance_buffer.data(), data.len());
+    }
+
+    ResizeProofTarget {
+        size,
+        texture,
+        view,
+        pipeline,
+        uniform_buffer,
+        instance_buffer,
+    }
+}
+
+fn render_and_readback_target(context: &gpu::Context, target: &ResizeProofTarget) -> Vec<u8> {
+    let mut encoder = create_encoder(context);
+    encoder.start();
+    encoder.init_texture(target.texture);
+    {
+        let mut pass = encoder.render(
+            "resize-proof",
+            gpu::RenderTargetSet {
+                colors: &[gpu::RenderTarget {
+                    view: target.view,
+                    init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
+                    finish_op: gpu::FinishOp::Store,
+                }],
+                depth_stencil: None,
+            },
+        );
+        let mut pe = pass.with(&target.pipeline);
+        pe.bind(
+            0,
+            &TestRectData {
+                uniforms: target.uniform_buffer.at(0),
+            },
+        );
+        pe.bind_vertex(0, target.instance_buffer.at(0));
+        pe.draw(0, 4, 0, 1);
+    }
+
+    let readback = readback_texture(
+        context,
+        &mut encoder,
+        target.texture,
+        target.size.0,
+        target.size.1,
+        4,
+    );
+    submit_and_wait(context, &mut encoder);
+    let data = read_buffer(&readback, (target.size.0 * target.size.1 * 4) as usize);
+    context.destroy_buffer(readback);
+    context.destroy_command_encoder(&mut encoder);
+    data
+}
+
+fn assert_render_target_color(
+    context: &gpu::Context,
+    target: &ResizeProofTarget,
+    expected: [f32; 4],
+) {
+    let data = render_and_readback_target(context, target);
+    let expected = [
+        (expected[0] * 255.0).round() as u8,
+        (expected[1] * 255.0).round() as u8,
+        (expected[2] * 255.0).round() as u8,
+        (expected[3] * 255.0).round() as u8,
+    ];
+    assert_eq!(&data[0..4], &expected);
+    assert_eq!(&data[(data.len() - 4)..], &expected);
+}
+
+fn destroy_resize_proof_target(context: &gpu::Context, target: &mut ResizeProofTarget) {
+    context.destroy_render_pipeline(&mut target.pipeline);
+    context.destroy_buffer(target.uniform_buffer);
+    context.destroy_buffer(target.instance_buffer);
+    context.destroy_texture_view(target.view);
+    context.destroy_texture(target.texture);
+}
+
 // ─── Data layout tests (CPU-only, no GPU) ───────────────────────────
 
 #[test]
@@ -1556,28 +1735,55 @@ fn resize_behavior_contract_is_explicit() {
 }
 
 #[test]
-fn deferred_resize_keeps_old_surface_until_apply() {
+fn blade_headless_resize_behavior_contract_is_proven() {
     let initial = (80u32, 24u32);
     let requested = (132u32, 48u32);
-    let mut committed = initial;
-    let mut pending = Some(requested);
-    assert_eq!(committed, initial);
-    assert_eq!(pending, Some(requested));
+    let initial_color = [1.0, 0.0, 0.0, 1.0];
+    let resized_color = [0.25, 0.5, 0.75, 1.0];
 
-    if let Some(size) = pending.take() {
-        committed = size;
-    }
+    let ctx = create_headless_context();
+    let format = gpu::TextureFormat::Rgba8Unorm;
 
-    assert_eq!(committed, requested);
-    assert_eq!(pending, None);
+    let mut committed = create_resize_proof_target(&ctx, format, initial, initial_color);
+    assert_eq!(committed.size, initial);
+    assert_render_target_color(&ctx, &committed, initial_color);
+
+    let pending = create_resize_proof_target(&ctx, format, requested, resized_color);
+
+    // Deferred resize semantics: until apply_surface() commits the new surface,
+    // rendering still targets the old surface dimensions and content.
+    assert_eq!(committed.size, initial);
+    assert_render_target_color(&ctx, &committed, initial_color);
+
+    destroy_resize_proof_target(&ctx, &mut committed);
+    committed = pending;
+
+    assert_eq!(committed.size, requested);
+    assert_render_target_color(&ctx, &committed, resized_color);
+
+    destroy_resize_proof_target(&ctx, &mut committed);
 }
 
 #[test]
-fn immediate_resize_commits_before_next_draw() {
-    let committed = (132u32, 48u32);
+fn immediate_headless_resize_behavior_contract_is_proven() {
+    let initial = (80u32, 24u32);
     let requested = (132u32, 48u32);
+    let initial_color = [1.0, 0.0, 0.0, 1.0];
+    let resized_color = [0.25, 0.5, 0.75, 1.0];
 
-    assert_eq!(committed, requested);
+    let ctx = create_headless_context();
+    let format = gpu::TextureFormat::Rgba8Unorm;
+
+    let mut target = create_resize_proof_target(&ctx, format, initial, initial_color);
+    assert_render_target_color(&ctx, &target, initial_color);
+
+    destroy_resize_proof_target(&ctx, &mut target);
+    target = create_resize_proof_target(&ctx, format, requested, resized_color);
+
+    assert_eq!(target.size, requested);
+    assert_render_target_color(&ctx, &target, resized_color);
+
+    destroy_resize_proof_target(&ctx, &mut target);
 }
 
 #[test]

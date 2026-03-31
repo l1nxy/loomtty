@@ -341,7 +341,7 @@ impl Server {
                 }
             }
 
-            let (sync_msg, pane_syncs) = session.build_state_sync();
+            let (sync_msg, pane_syncs, image_events) = session.build_state_sync();
 
             if let Some(client) = clients.get_mut(&client_id) {
                 for (&pid, pane) in &session.panes {
@@ -355,6 +355,9 @@ impl Server {
             responses.push(ServerResponse::SendToClient(client_id, sync_msg));
             for sync in pane_syncs {
                 responses.push(ServerResponse::SendFullPaneSync(client_id, sync));
+            }
+            for msg in image_events {
+                responses.push(ServerResponse::SendToClient(client_id, msg));
             }
         });
     }
@@ -1502,7 +1505,7 @@ impl Server {
                         }
 
                         // Build state sync
-                        let (sync_msg, pane_syncs) = session.build_state_sync();
+                        let (sync_msg, pane_syncs, image_events) = session.build_state_sync();
 
                         // Record history
                         let pane_histories: Vec<(u64, usize)> = session
@@ -1532,6 +1535,9 @@ impl Server {
                         responses.push(ServerResponse::SendToClient(client_id, sync_msg));
                         for sync in pane_syncs {
                             responses.push(ServerResponse::SendFullPaneSync(client_id, sync));
+                        }
+                        for msg in image_events {
+                            responses.push(ServerResponse::SendToClient(client_id, msg));
                         }
                     }
                     Err(e) => {
@@ -1717,6 +1723,39 @@ mod tests {
                 .iter()
                 .any(|resp| matches!(resp, ServerResponse::SendFullPaneSync(1, _)))
         );
+    }
+
+    #[test]
+    fn switch_session_emits_image_deleted_for_attach_sync_after_prior_delete() {
+        let mut server = Server::new("/bin/sh", 8.0);
+        let old_session = "alpha".to_string();
+        let new_session = "beta".to_string();
+        server.clients.insert(1, test_client(1, &old_session));
+        server.get_or_create_session(&old_session);
+        server.get_or_create_session(&new_session);
+
+        let pane_id = {
+            let session = server.sessions.get_mut(&new_session).unwrap();
+            let pane_id = session.workspaces.active().active_pane_id().unwrap();
+            session
+                .panes
+                .get_mut(&pane_id)
+                .expect("pane exists")
+                .test_mark_image_deleted();
+            pane_id
+        };
+
+        let responses = server.handle_message(
+            ClientMessage::SwitchSession {
+                session_name: new_session.clone(),
+            },
+            1,
+        );
+
+        assert!(responses.iter().any(|resp| matches!(
+            resp,
+            ServerResponse::SendToClient(1, ServerMessage::ImageDeleted { pane_id: id }) if *id == pane_id
+        )));
     }
 
     #[test]

@@ -566,7 +566,9 @@ impl Session {
     }
 
     /// Build initial StateSync for a new client, including FullPaneSync for each pane.
-    pub(crate) fn build_state_sync(&self) -> (ServerMessage, Vec<FullPaneSync>) {
+    pub(crate) fn build_state_sync(
+        &self,
+    ) -> (ServerMessage, Vec<FullPaneSync>, Vec<ServerMessage>) {
         let pane_ids: Vec<u64> = self.workspaces.all_pane_ids();
 
         let syncs: Vec<FullPaneSync> = pane_ids
@@ -578,11 +580,21 @@ impl Session {
             })
             .collect();
 
+        let image_invalidations: Vec<ServerMessage> = pane_ids
+            .iter()
+            .filter_map(|&id| {
+                let pane = self.panes.get(&id)?;
+                pane.active_images()
+                    .is_empty()
+                    .then_some(ServerMessage::ImageDeleted { pane_id: id })
+            })
+            .collect();
+
         let msg = ServerMessage::StateSync {
             layout: self.layout_state(),
             pane_ids: pane_ids.clone(),
         };
-        (msg, syncs)
+        (msg, syncs, image_invalidations)
     }
 }
 
@@ -674,6 +686,50 @@ mod tests {
         let dims = Session::effective_dims_from(&clients, "alpha");
 
         assert_eq!(dims, (900.0, 700.0, 8.0, 16.0));
+    }
+
+    #[test]
+    fn build_state_sync_emits_image_deleted_for_panes_without_active_images() {
+        let mut session = Session::new("default", "/bin/sh", 8.0);
+        let mut next_pane_id = 1;
+        let mut clients = HashMap::new();
+        let pane_id = session
+            .create_pane(&mut next_pane_id, &mut clients)
+            .expect("pane");
+
+        let image = ciri_term::pane::ImagePlacement {
+            id: 42,
+            row: 1,
+            col: 2,
+            width_cells: 3,
+            height_cells: 4,
+            pixel_width: 24,
+            pixel_height: 64,
+            format: "rgb".to_string(),
+            data: std::sync::Arc::new(vec![1, 2, 3]),
+        };
+        session
+            .panes
+            .get_mut(&pane_id)
+            .expect("pane exists")
+            .test_add_active_image(image.clone());
+
+        let (_sync, _pane_syncs, image_events) = session.build_state_sync();
+        assert!(
+            image_events.is_empty(),
+            "active images should not emit deletes"
+        );
+
+        session
+            .panes
+            .get_mut(&pane_id)
+            .expect("pane exists")
+            .test_mark_image_deleted();
+        let (_sync, _pane_syncs, image_events) = session.build_state_sync();
+        assert!(matches!(
+            image_events.as_slice(),
+            [ServerMessage::ImageDeleted { pane_id: id }] if *id == pane_id
+        ));
     }
 
     #[test]

@@ -355,6 +355,10 @@ impl Pane {
         self.images.clear_on_delete();
     }
 
+    pub fn test_add_active_image(&mut self, image: ImagePlacement) {
+        self.images.active_mut().push(image);
+    }
+
     pub fn active_images(&self) -> &[ImagePlacement] {
         self.images.active()
     }

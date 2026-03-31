@@ -131,6 +131,12 @@ pub(crate) async fn handle_client<R, W>(
             },
         );
 
+        // Cancel any pending idle shutdown (real clients only — control/probe
+        // clients should not prevent the server from winding down).
+        if !is_control {
+            s.idle_deadline = None;
+        }
+
         // Skip session creation for control clients (CLI commands)
         if !is_control {
             let session = s.get_or_create_session(&requested_session);
@@ -162,12 +168,17 @@ pub(crate) async fn handle_client<R, W>(
                 requested_session
             );
 
-            let (sync_msg, pane_syncs) = session.build_state_sync();
+            let (sync_msg, pane_syncs, image_events) = session.build_state_sync();
             if let Some(frame) = codec::frame_server_msg(&sync_msg) {
                 frames.push(frame);
             }
             for sync in &pane_syncs {
                 if let Some(frame) = codec::frame_full_pane_sync(sync) {
+                    frames.push(frame);
+                }
+            }
+            for msg in &image_events {
+                if let Some(frame) = codec::frame_server_msg(msg) {
                     frames.push(frame);
                 }
             }

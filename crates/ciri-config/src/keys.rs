@@ -12,13 +12,10 @@ pub struct KeybindConfig {
     /// Direct bindings that work without leader (e.g. "ctrl+g" = "toggle_lock").
     pub direct_bindings: HashMap<String, String>,
     /// Search mode control keys (e.g. "escape" = "close_search").
-    #[serde(default)]
     pub search_bindings: HashMap<String, String>,
     /// Command palette control keys (e.g. "Up" = "palette_up").
-    #[serde(default)]
     pub palette_bindings: HashMap<String, String>,
     /// Paste confirmation dialog keys (e.g. "enter" = "confirm_paste").
-    #[serde(default)]
     pub paste_confirm_bindings: HashMap<String, String>,
 }
 
@@ -148,5 +145,42 @@ impl Default for KeybindConfig {
             palette_bindings,
             paste_confirm_bindings,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// When a user config specifies `[keys]` with only a custom leader,
+    /// omitted fields like palette_bindings must still get their defaults
+    /// from `KeybindConfig::default()` (not empty HashMaps).
+    #[test]
+    fn partial_keys_config_preserves_defaults() {
+        let toml = r#"
+            leader = "ctrl+a"
+        "#;
+
+        let config: KeybindConfig = toml::from_str(toml).unwrap();
+
+        assert_eq!(config.leader, "ctrl+a");
+
+        // palette_bindings should have defaults, not be empty
+        let defaults = KeybindConfig::default();
+        assert_eq!(config.palette_bindings, defaults.palette_bindings);
+        assert!(!config.palette_bindings.is_empty());
+        assert!(config.palette_bindings.contains_key("escape"));
+        assert!(config.palette_bindings.contains_key("enter"));
+
+        // search_bindings should also have defaults
+        assert_eq!(config.search_bindings, defaults.search_bindings);
+        assert!(!config.search_bindings.is_empty());
+
+        // paste_confirm_bindings should also have defaults
+        assert_eq!(
+            config.paste_confirm_bindings,
+            defaults.paste_confirm_bindings
+        );
+        assert!(!config.paste_confirm_bindings.is_empty());
     }
 }

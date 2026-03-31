@@ -153,10 +153,19 @@ fn main() -> Result<()> {
     } = cli
     {
         let session_name = session_name.unwrap_or_else(|| {
-            let existing =
-                ciri_session::restore::list_sessions(&ciri_protocol::transport::state_dir())
-                    .unwrap_or_default();
-            ciri_session::names::unique_name(&existing)
+            // For remote connections, probe the remote server for existing sessions
+            // and attach to the most recently active one.  Generating a random local
+            // name would create a new session on the remote every time.
+            let remote_sessions = crate::connection::probe_remote_sessions_blocking(
+                &host, port, ssh_port,
+            );
+            if let Some(first) = remote_sessions.first() {
+                log::info!("attaching to existing remote session: {}", first);
+                first.clone()
+            } else {
+                // No sessions on remote — use "default" (deterministic, not random).
+                "default".to_string()
+            }
         });
 
         let config = CiriConfig::load().unwrap_or_default();

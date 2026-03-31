@@ -530,6 +530,34 @@ async fn probe_remote(host: &str, remote_port: u16, ssh_port: u16) -> RemoteProb
     }
 }
 
+/// Synchronously probe a remote server and return session names (sorted by
+/// last_attached, most recent first — as returned by the server).
+/// Used at startup to pick a default session when the user didn't specify one.
+pub fn probe_remote_sessions_blocking(host: &str, remote_port: u16, ssh_port: u16) -> Vec<String> {
+    let rt = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(_) => return Vec::new(),
+    };
+
+    let result = rt.block_on(async {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(8),
+            probe_remote(host, remote_port, ssh_port),
+        )
+        .await
+    });
+
+    match result {
+        Ok(RemoteProbeResult::Sessions(sessions)) => {
+            sessions.into_iter().map(|s| s.name).collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
 fn spawn_server(_session_name: &str) -> io::Result<()> {
     use std::process::Command;
     // Try to find ciri-server binary next to the current executable

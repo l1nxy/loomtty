@@ -760,7 +760,13 @@ impl Server {
                     .into_iter()
                     .map(|(_ts, info)| info)
                     .collect();
-                // Sort running sessions by last_attached descending
+                // Sort: requester's current session first, then by last_attached descending.
+                // This ensures the active session is always at the top of the list.
+                let requester_session = self
+                    .clients
+                    .get(&client_id)
+                    .map(|c| c.session_name.clone())
+                    .unwrap_or_default();
                 {
                     let mut with_ts: Vec<_> = self
                         .sessions
@@ -773,7 +779,14 @@ impl Server {
                         .enumerate()
                         .map(|(i, (n, _))| (n.clone(), i))
                         .collect();
-                    sessions.sort_by_key(|s| order.get(&s.name).copied().unwrap_or(usize::MAX));
+                    sessions.sort_by_key(|s| {
+                        if s.name == requester_session {
+                            // Current session always sorts first (before any timestamp).
+                            (0, 0)
+                        } else {
+                            (1, order.get(&s.name).copied().unwrap_or(usize::MAX))
+                        }
+                    });
                 }
                 // Optionally merge saved sessions
                 if all {

@@ -88,6 +88,14 @@ impl App {
                     .stderr(std::process::Stdio::null())
                     .status();
             }
+            #[cfg(target_os = "windows")]
+            {
+                let _ = std::process::Command::new("powershell")
+                    .args(["-c", &format!("(New-Object Media.SoundPlayer '{}').PlaySync()", path)])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
             AUDIO_PLAYING.store(false, Ordering::SeqCst);
         });
     }

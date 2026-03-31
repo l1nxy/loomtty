@@ -14,7 +14,9 @@ pub mod blade;
 #[allow(unsafe_op_in_unsafe_fn)]
 pub mod gl;
 
+// DX binding layer: every function is inherently unsafe (D3D11 API).
 #[cfg(all(feature = "dx", windows))]
+#[allow(unsafe_op_in_unsafe_fn)]
 pub mod dx;
 
 use anyhow::Result;

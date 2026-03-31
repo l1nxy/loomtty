@@ -139,32 +139,34 @@ float4 ps_main(PSInput input) : SV_TARGET {
 // ─── Shader compilation ─────────────────────────────────────────────
 
 unsafe fn compile_shader(source: &str, entry: &str, target: &str) -> Result<ID3DBlob> {
-    let mut blob = None;
-    let mut errors = None;
-    let hr = D3DCompile(
-        source.as_bytes().as_ptr() as *const _,
-        source.len(),
-        None,
-        None,
-        None,
-        PCSTR::from_raw(format!("{entry}\0").as_ptr()),
-        PCSTR::from_raw(format!("{target}\0").as_ptr()),
-        D3DCOMPILE_OPTIMIZATION_LEVEL3,
-        0,
-        &mut blob,
-        Some(&mut errors),
-    );
-    if hr.is_err() {
-        let msg = if let Some(err) = errors {
-            let ptr = err.GetBufferPointer() as *const u8;
-            let len = err.GetBufferSize();
-            String::from_utf8_lossy(std::slice::from_raw_parts(ptr, len)).to_string()
-        } else {
-            format!("HRESULT: {hr:?}")
-        };
-        anyhow::bail!("shader compile failed ({entry}): {msg}");
+    unsafe {
+        let mut blob = None;
+        let mut errors = None;
+        let hr = D3DCompile(
+            source.as_bytes().as_ptr() as *const _,
+            source.len(),
+            None,
+            None,
+            None,
+            PCSTR::from_raw(format!("{entry}\0").as_ptr()),
+            PCSTR::from_raw(format!("{target}\0").as_ptr()),
+            D3DCOMPILE_OPTIMIZATION_LEVEL3,
+            0,
+            &mut blob,
+            Some(&mut errors),
+        );
+        if hr.is_err() {
+            let msg = if let Some(err) = errors {
+                let ptr = err.GetBufferPointer() as *const u8;
+                let len = err.GetBufferSize();
+                String::from_utf8_lossy(std::slice::from_raw_parts(ptr, len)).to_string()
+            } else {
+                format!("HRESULT: {hr:?}")
+            };
+            anyhow::bail!("shader compile failed ({entry}): {msg}");
+        }
+        blob.ok_or_else(|| anyhow::anyhow!("no shader blob"))
     }
-    blob.ok_or_else(|| anyhow::anyhow!("no shader blob"))
 }
 
 // ─── D3D Atlas Layer ────────────────────────────────────────────────

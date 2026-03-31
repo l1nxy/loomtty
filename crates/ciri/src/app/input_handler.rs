@@ -886,6 +886,7 @@ fn open_url(url: &str, pane_cwd: Option<&str>) -> std::io::Result<()> {
         Command::new("xdg-open").arg(url).spawn()?;
     }
 
+    #[allow(unreachable_code)]
     Ok(())
 }
 

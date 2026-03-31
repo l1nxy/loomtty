@@ -52,6 +52,9 @@ pub struct LastLeftClick {
     pub col: u16,
     pub buffer_row: usize,
     pub at: Instant,
+    /// Click streak: 1 = single, 2 = double, 3 = triple.
+    /// Advances on each press within the multi-click threshold.
+    pub count: u8,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

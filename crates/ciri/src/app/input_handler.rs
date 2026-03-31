@@ -305,26 +305,26 @@ impl App {
         self.core.extract_selected_text()
     }
 
-    /// Delegate: check for double left click.
-    pub fn is_double_left_click(
-        &self,
+    /// Delegate: advance click count and return streak (1/2/3).
+    pub fn advance_click_count(
+        &mut self,
         pane_id: u64,
         col: u16,
         buffer_row: usize,
         now: Instant,
-    ) -> bool {
+    ) -> u8 {
         self.core
-            .is_double_left_click(pane_id, col, buffer_row, now)
-    }
-
-    /// Delegate: remember left click.
-    pub fn remember_left_click(&mut self, pane_id: u64, col: u16, buffer_row: usize, now: Instant) {
-        self.core.remember_left_click(pane_id, col, buffer_row, now);
+            .advance_click_count(pane_id, col, buffer_row, now)
     }
 
     /// Delegate: select word at position.
     pub fn select_word_at(&mut self, pane_id: u64, col: u16, buffer_row: usize) -> bool {
         self.core.select_word_at(pane_id, col, buffer_row)
+    }
+
+    /// Delegate: select entire line at position.
+    pub fn select_line_at(&mut self, pane_id: u64, buffer_row: usize) {
+        self.core.select_line_at(pane_id, buffer_row)
     }
 
     /// Delegate: clear hovered link.

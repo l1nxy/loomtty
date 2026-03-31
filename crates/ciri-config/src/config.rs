@@ -100,6 +100,27 @@ mod tests {
     }
 
     #[test]
+    fn load_preserves_empty_string_theme_overrides() {
+        let path = temp_config_path("empty-theme-override");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r##"
+                [theme]
+                preset = "nord"
+                accent = ""
+            "##,
+        )
+        .unwrap();
+
+        let mut config = load_from_path(&path).unwrap();
+        config.theme.resolve_preset();
+
+        assert_eq!(config.theme.preset, "nord");
+        assert_eq!(config.theme.accent, "");
+    }
+
+    #[test]
     fn validate_rejects_invalid_values() {
         let mut config = CiriConfig::default();
         config.animation.drag_opacity = 1.5;
@@ -123,6 +144,37 @@ mod tests {
 
         let mut config = CiriConfig::default();
         config.render.frame_interval_ms = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_invalid_runtime_semantics() {
+        let mut config = CiriConfig::default();
+        config.animation.overview_zoom_fit = 0.0;
+        assert!(config.validate().is_err());
+
+        let mut config = CiriConfig::default();
+        config.animation.zoom_threshold = 0.0;
+        assert!(config.validate().is_err());
+
+        let mut config = CiriConfig::default();
+        config.statusbar.padding_ratio = -0.1;
+        assert!(config.validate().is_err());
+
+        let mut config = CiriConfig::default();
+        config.terminal.default_cols = 0;
+        assert!(config.validate().is_err());
+
+        let mut config = CiriConfig::default();
+        config.terminal.default_rows = 0;
+        assert!(config.validate().is_err());
+
+        let mut config = CiriConfig::default();
+        config.terminal.cursor_blink_interval_ms = 0;
+        assert!(config.validate().is_err());
+
+        let mut config = CiriConfig::default();
+        config.terminal.scrollback_lines = 0;
         assert!(config.validate().is_err());
     }
 

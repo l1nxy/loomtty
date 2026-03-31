@@ -19,41 +19,92 @@ pub struct ThemeConfig {
     #[serde(default)]
     pub preset: String,
     // Terminal colors
-    pub foreground: String,
-    pub background: String,
-    pub black: String,
-    pub red: String,
-    pub green: String,
-    pub yellow: String,
-    pub blue: String,
-    pub magenta: String,
-    pub cyan: String,
-    pub white: String,
-    pub bright_black: String,
-    pub bright_red: String,
-    pub bright_green: String,
-    pub bright_yellow: String,
-    pub bright_blue: String,
-    pub bright_magenta: String,
-    pub bright_cyan: String,
-    pub bright_white: String,
+    pub foreground: ThemeValue,
+    pub background: ThemeValue,
+    pub black: ThemeValue,
+    pub red: ThemeValue,
+    pub green: ThemeValue,
+    pub yellow: ThemeValue,
+    pub blue: ThemeValue,
+    pub magenta: ThemeValue,
+    pub cyan: ThemeValue,
+    pub white: ThemeValue,
+    pub bright_black: ThemeValue,
+    pub bright_red: ThemeValue,
+    pub bright_green: ThemeValue,
+    pub bright_yellow: ThemeValue,
+    pub bright_blue: ThemeValue,
+    pub bright_magenta: ThemeValue,
+    pub bright_cyan: ThemeValue,
+    pub bright_white: ThemeValue,
     // UI colors (overview, status bar, borders, etc.)
     /// Window clear / normal background color.
-    pub ui_background: String,
+    pub ui_background: ThemeValue,
     /// Overview mode background color (lighter to distinguish from pane content).
-    pub overview_background: String,
+    pub overview_background: ThemeValue,
     /// Status bar background.
-    pub statusbar_background: String,
+    pub statusbar_background: ThemeValue,
     /// Active border color.
-    pub border_active: String,
+    pub border_active: ThemeValue,
     /// Inactive border color.
-    pub border_inactive: String,
+    pub border_inactive: ThemeValue,
     /// Accent color (leader indicator, active mode text).
-    pub accent: String,
+    pub accent: ThemeValue,
     /// Status bar dim text color.
-    pub statusbar_dim: String,
+    pub statusbar_dim: ThemeValue,
     /// Broadcast mode indicator color.
-    pub mode_broadcast: String,
+    pub mode_broadcast: ThemeValue,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(from = "String")]
+pub struct ThemeValue {
+    value: String,
+    #[serde(skip)]
+    explicitly_set: bool,
+}
+
+impl From<String> for ThemeValue {
+    fn from(value: String) -> Self {
+        Self {
+            value,
+            explicitly_set: true,
+        }
+    }
+}
+
+impl ThemeValue {
+    fn apply_fallback(&mut self, fallback: ThemeValue) {
+        if !self.explicitly_set {
+            *self = fallback;
+        }
+    }
+}
+
+impl AsRef<str> for ThemeValue {
+    fn as_ref(&self) -> &str {
+        &self.value
+    }
+}
+
+impl PartialEq<&str> for ThemeValue {
+    fn eq(&self, other: &&str) -> bool {
+        self.value == *other
+    }
+}
+
+impl PartialEq<ThemeValue> for &str {
+    fn eq(&self, other: &ThemeValue) -> bool {
+        *self == other.value
+    }
+}
+
+impl std::ops::Deref for ThemeValue {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
 }
 
 impl ThemeConfig {
@@ -151,39 +202,37 @@ impl ThemeConfig {
     }
 
     fn apply_missing_fields(&mut self, base: ThemeConfig) {
-        apply_if_empty(&mut self.foreground, base.foreground);
-        apply_if_empty(&mut self.background, base.background);
-        apply_if_empty(&mut self.black, base.black);
-        apply_if_empty(&mut self.red, base.red);
-        apply_if_empty(&mut self.green, base.green);
-        apply_if_empty(&mut self.yellow, base.yellow);
-        apply_if_empty(&mut self.blue, base.blue);
-        apply_if_empty(&mut self.magenta, base.magenta);
-        apply_if_empty(&mut self.cyan, base.cyan);
-        apply_if_empty(&mut self.white, base.white);
-        apply_if_empty(&mut self.bright_black, base.bright_black);
-        apply_if_empty(&mut self.bright_red, base.bright_red);
-        apply_if_empty(&mut self.bright_green, base.bright_green);
-        apply_if_empty(&mut self.bright_yellow, base.bright_yellow);
-        apply_if_empty(&mut self.bright_blue, base.bright_blue);
-        apply_if_empty(&mut self.bright_magenta, base.bright_magenta);
-        apply_if_empty(&mut self.bright_cyan, base.bright_cyan);
-        apply_if_empty(&mut self.bright_white, base.bright_white);
-        apply_if_empty(&mut self.ui_background, base.ui_background);
-        apply_if_empty(&mut self.overview_background, base.overview_background);
-        apply_if_empty(&mut self.statusbar_background, base.statusbar_background);
-        apply_if_empty(&mut self.border_active, base.border_active);
-        apply_if_empty(&mut self.border_inactive, base.border_inactive);
-        apply_if_empty(&mut self.accent, base.accent);
-        apply_if_empty(&mut self.statusbar_dim, base.statusbar_dim);
-        apply_if_empty(&mut self.mode_broadcast, base.mode_broadcast);
+        apply_if_missing(&mut self.foreground, base.foreground);
+        apply_if_missing(&mut self.background, base.background);
+        apply_if_missing(&mut self.black, base.black);
+        apply_if_missing(&mut self.red, base.red);
+        apply_if_missing(&mut self.green, base.green);
+        apply_if_missing(&mut self.yellow, base.yellow);
+        apply_if_missing(&mut self.blue, base.blue);
+        apply_if_missing(&mut self.magenta, base.magenta);
+        apply_if_missing(&mut self.cyan, base.cyan);
+        apply_if_missing(&mut self.white, base.white);
+        apply_if_missing(&mut self.bright_black, base.bright_black);
+        apply_if_missing(&mut self.bright_red, base.bright_red);
+        apply_if_missing(&mut self.bright_green, base.bright_green);
+        apply_if_missing(&mut self.bright_yellow, base.bright_yellow);
+        apply_if_missing(&mut self.bright_blue, base.bright_blue);
+        apply_if_missing(&mut self.bright_magenta, base.bright_magenta);
+        apply_if_missing(&mut self.bright_cyan, base.bright_cyan);
+        apply_if_missing(&mut self.bright_white, base.bright_white);
+        apply_if_missing(&mut self.ui_background, base.ui_background);
+        apply_if_missing(&mut self.overview_background, base.overview_background);
+        apply_if_missing(&mut self.statusbar_background, base.statusbar_background);
+        apply_if_missing(&mut self.border_active, base.border_active);
+        apply_if_missing(&mut self.border_inactive, base.border_inactive);
+        apply_if_missing(&mut self.accent, base.accent);
+        apply_if_missing(&mut self.statusbar_dim, base.statusbar_dim);
+        apply_if_missing(&mut self.mode_broadcast, base.mode_broadcast);
     }
 }
 
-fn apply_if_empty(slot: &mut String, fallback: String) {
-    if slot.is_empty() {
-        *slot = fallback;
-    }
+fn apply_if_missing(slot: &mut ThemeValue, fallback: ThemeValue) {
+    slot.apply_fallback(fallback);
 }
 
 #[cfg(test)]
@@ -194,7 +243,7 @@ mod tests {
     fn resolve_preset_keeps_overrides_and_fills_missing_values() {
         let mut theme = ThemeConfig {
             preset: "dracula".to_string(),
-            accent: "#123456".to_string(),
+            accent: "#123456".to_string().into(),
             ..ThemeConfig::default()
         };
 

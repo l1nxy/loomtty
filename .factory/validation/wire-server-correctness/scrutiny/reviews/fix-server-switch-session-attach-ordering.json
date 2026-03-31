@@ -1,6 +1,0 @@
-{
-  "featureId": "fix-server-switch-session-attach-ordering",
-  "status": "pass",
-  "issues": [],
-  "sharedStateObservations": []
-}

@@ -510,13 +510,30 @@ impl App {
             }
         }
 
-        // Render closing panes as fading-out rects
+        // Render closing panes as fading-out rects.
+        // Apply the same center-point zoom transform used for active tiles so
+        // the close animation plays at the correct position in overview mode.
+        let zoom_threshold = self.core.config.animation.zoom_threshold;
         for (rect, opacity, _slide) in self.core.anim_mgr.closing_panes() {
+            // Apply the same center-point zoom transform used for active tiles
+            // so the close animation plays at the correct position in overview.
+            let (rx, ry, rw, rh) = if zoom < zoom_threshold {
+                let cx = vw / 2.0;
+                let cy = vh / 2.0;
+                (
+                    cx + (rect.x - cx) * zoom,
+                    cy + (rect.y - cy) * zoom,
+                    rect.w * zoom,
+                    rect.h * zoom,
+                )
+            } else {
+                (rect.x, rect.y, rect.w, rect.h)
+            };
             out.bg_rects.push(Rect {
-                x: rect.x,
-                y: rect.y,
-                w: rect.w,
-                h: rect.h,
+                x: rx,
+                y: ry,
+                w: rw,
+                h: rh,
                 color: [0.1, 0.1, 0.1, opacity * 0.5],
             });
         }

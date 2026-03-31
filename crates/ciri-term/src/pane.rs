@@ -4,7 +4,8 @@ use alacritty_terminal::index::{Column, Line, Point};
 use alacritty_terminal::term::Config as TermConfig;
 use alacritty_terminal::term::Term;
 use alacritty_terminal::term::cell::Flags as CellFlags;
-use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape, NamedColor, Processor, Rgb};
+use alacritty_terminal::term::color::COUNT as COLOR_COUNT;
+use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape, Handler, NamedColor, Processor, Rgb};
 use anyhow::Result;
 use ciri_protocol::message::*;
 use std::sync::Arc;
@@ -15,6 +16,65 @@ use crate::image_store::ImageStore;
 use crate::parser_suite::ParserSuite;
 use crate::pending_events::PendingEvents;
 use crate::pty::Pty;
+
+/// Theme colors to initialize the terminal palette.
+///
+/// Indices 0..16 map to the standard ANSI named colors (Black, Red, ... BrightWhite).
+/// `foreground`, `background`, and `cursor` map to NamedColor::Foreground/Background/Cursor.
+#[derive(Debug, Clone)]
+pub struct TerminalColors {
+    /// ANSI colors 0-15 (Black through BrightWhite).
+    pub ansi: [Rgb; 16],
+    /// Default foreground color.
+    pub foreground: Rgb,
+    /// Default background color.
+    pub background: Rgb,
+    /// Cursor color.
+    pub cursor: Rgb,
+}
+
+impl Default for TerminalColors {
+    fn default() -> Self {
+        Self {
+            ansi: [
+                Rgb { r: 0, g: 0, b: 0 },         // Black
+                Rgb { r: 205, g: 0, b: 0 },        // Red
+                Rgb { r: 0, g: 205, b: 0 },        // Green
+                Rgb { r: 205, g: 205, b: 0 },      // Yellow
+                Rgb { r: 0, g: 0, b: 238 },        // Blue
+                Rgb { r: 205, g: 0, b: 205 },      // Magenta
+                Rgb { r: 0, g: 205, b: 205 },      // Cyan
+                Rgb { r: 229, g: 229, b: 229 },    // White
+                Rgb { r: 127, g: 127, b: 127 },    // Bright Black
+                Rgb { r: 255, g: 0, b: 0 },        // Bright Red
+                Rgb { r: 0, g: 255, b: 0 },        // Bright Green
+                Rgb { r: 255, g: 255, b: 0 },      // Bright Yellow
+                Rgb { r: 92, g: 92, b: 255 },      // Bright Blue
+                Rgb { r: 255, g: 0, b: 255 },      // Bright Magenta
+                Rgb { r: 0, g: 255, b: 255 },      // Bright Cyan
+                Rgb { r: 255, g: 255, b: 255 },    // Bright White
+            ],
+            foreground: Rgb { r: 255, g: 255, b: 255 },
+            background: Rgb { r: 0, g: 0, b: 0 },
+            cursor: Rgb { r: 255, g: 255, b: 255 },
+        }
+    }
+}
+
+impl TerminalColors {
+    /// Parse a hex color string like "#RRGGBB" into an Rgb value.
+    pub fn parse_hex(hex: &str) -> Rgb {
+        let hex = hex.trim_start_matches('#');
+        if hex.len() == 6 {
+            let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0);
+            let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0);
+            let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0);
+            Rgb { r, g, b }
+        } else {
+            Rgb { r: 255, g: 255, b: 255 }
+        }
+    }
+}
 
 pub type PaneId = u64;
 
@@ -191,6 +251,22 @@ impl Pane {
         })
     }
 
+    /// Initialize the terminal color palette from theme colors.
+    ///
+    /// This sets the ANSI 16 colors plus foreground, background, and cursor
+    /// so that OSC 10/11/12 color queries return the user's theme colors
+    /// instead of falling back to xterm defaults.
+    pub fn init_colors(&mut self, colors: &TerminalColors) {
+        // Set ANSI 16 colors (indices 0..16)
+        for (i, &color) in colors.ansi.iter().enumerate() {
+            self.term.set_color(i, color);
+        }
+        // Set foreground, background, cursor
+        self.term.set_color(NamedColor::Foreground as usize, colors.foreground);
+        self.term.set_color(NamedColor::Background as usize, colors.background);
+        self.term.set_color(NamedColor::Cursor as usize, colors.cursor);
+    }
+
     // ── PTY I/O ──────────────────────────────────────────────────────
 
     pub fn process_pty_output(&mut self) -> bool {
@@ -315,8 +391,7 @@ impl Pane {
                 }
                 Event::ColorRequest(index, formatter) => {
                     // OSC 4/10/11/12 color query: look up the current color and respond.
-                    // Guard against out-of-range indices (alacritty uses 0-268).
-                    if index < 269 {
+                    if index < COLOR_COUNT {
                         let color = self.term.colors()[index]
                             .unwrap_or_else(|| default_color(index));
                         let response = formatter(color);
@@ -912,67 +987,6 @@ mod tests {
 
         assert!(pane.drain_image_deletes());
         assert!(!pane.drain_image_deletes());
-    }
-}
-
-/// Standard xterm default color for a given palette index.
-///
-/// Indices 0-15: standard ANSI colors (same as xterm defaults).
-/// Indices 16-231: 6x6x6 color cube.
-/// Indices 232-255: grayscale ramp.
-/// Index 256: foreground (white).
-/// Index 257: background (black).
-/// Index 258: cursor (white).
-/// Others: fallback to white.
-fn default_color(index: usize) -> Rgb {
-    // Standard ANSI 16 colors (xterm defaults)
-    #[rustfmt::skip]
-    const ANSI16: [(u8, u8, u8); 16] = [
-        (  0,   0,   0), // Black
-        (205,   0,   0), // Red
-        (  0, 205,   0), // Green
-        (205, 205,   0), // Yellow
-        (  0,   0, 238), // Blue
-        (205,   0, 205), // Magenta
-        (  0, 205, 205), // Cyan
-        (229, 229, 229), // White
-        (127, 127, 127), // Bright Black
-        (255,   0,   0), // Bright Red
-        (  0, 255,   0), // Bright Green
-        (255, 255,   0), // Bright Yellow
-        ( 92,  92, 255), // Bright Blue
-        (255,   0, 255), // Bright Magenta
-        (  0, 255, 255), // Bright Cyan
-        (255, 255, 255), // Bright White
-    ];
-
-    if index < 16 {
-        let (r, g, b) = ANSI16[index];
-        return Rgb { r, g, b };
-    }
-
-    // 6x6x6 color cube (indices 16-231)
-    if index < 232 {
-        let idx = (index - 16) as u8;
-        let r = idx / 36;
-        let g = (idx / 6) % 6;
-        let b = idx % 6;
-        let to_component = |v: u8| if v == 0 { 0 } else { 55 + 40 * v };
-        return Rgb { r: to_component(r), g: to_component(g), b: to_component(b) };
-    }
-
-    // Grayscale ramp (indices 232-255)
-    if index < 256 {
-        let v = (8 + 10 * (index - 232)) as u8;
-        return Rgb { r: v, g: v, b: v };
-    }
-
-    // Special indices from alacritty_terminal::term::color
-    match index {
-        256 => Rgb { r: 255, g: 255, b: 255 }, // Foreground
-        257 => Rgb { r: 0, g: 0, b: 0 },       // Background
-        258 => Rgb { r: 255, g: 255, b: 255 }, // Cursor
-        _ => Rgb { r: 255, g: 255, b: 255 },   // Fallback
     }
 }
 

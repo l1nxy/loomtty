@@ -92,7 +92,33 @@ pub async fn run_daemon() -> Result<()> {
     #[cfg(windows)]
     log::info!("ciri-server listening on {}", pipe_name);
 
-    let mut server = Server::new(&shell, config.appearance.column_gap);
+    // Build terminal palette from resolved theme.
+    let theme = &config.theme;
+    let parse = ciri_term::pane::TerminalColors::parse_hex;
+    let terminal_colors = ciri_term::pane::TerminalColors {
+        ansi: [
+            parse(&theme.black),
+            parse(&theme.red),
+            parse(&theme.green),
+            parse(&theme.yellow),
+            parse(&theme.blue),
+            parse(&theme.magenta),
+            parse(&theme.cyan),
+            parse(&theme.white),
+            parse(&theme.bright_black),
+            parse(&theme.bright_red),
+            parse(&theme.bright_green),
+            parse(&theme.bright_yellow),
+            parse(&theme.bright_blue),
+            parse(&theme.bright_magenta),
+            parse(&theme.bright_cyan),
+            parse(&theme.bright_white),
+        ],
+        foreground: parse(&theme.foreground),
+        background: parse(&theme.background),
+        cursor: parse(&theme.foreground), // cursor defaults to foreground
+    };
+    let mut server = Server::new(&shell, config.appearance.column_gap, terminal_colors);
     // Apply default_column_width from config (falls back to 0.5 proportion)
     if let Some(ref pw) = config.layout.default_column_width {
         use ciri_config::config::PresetWidth;

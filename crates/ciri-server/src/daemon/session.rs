@@ -7,7 +7,7 @@ use ciri_protocol::transport;
 use ciri_session::agent::SavedAgent;
 use ciri_session::save::save_session;
 use ciri_session::state::{SavedColumn, SavedTile, SavedWorkspace, SessionState};
-use ciri_term::pane::Pane;
+use ciri_term::pane::{Pane, TerminalColors};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::time::{Duration, Instant};
@@ -26,6 +26,8 @@ pub(crate) struct Session {
     /// Total inset per pane: (padding + border_width) * 2, subtracted from pane pixel size
     /// before computing grid cols/rows.
     pub(crate) pane_inset: f32,
+    /// Theme colors for initializing terminal palettes.
+    pub(crate) terminal_colors: TerminalColors,
     pub(crate) session_dirty: bool,
     pub(crate) last_session_change: Option<Instant>,
     /// Updated each time a client attaches to this session.
@@ -39,7 +41,7 @@ pub(crate) struct Session {
 }
 
 impl Session {
-    pub(crate) fn new(session_name: &str, shell: &str, column_gap: f32) -> Self {
+    pub(crate) fn new(session_name: &str, shell: &str, column_gap: f32, terminal_colors: TerminalColors) -> Self {
         Session {
             workspaces: WorkspaceSet::new_with_gaps(
                 ViewSize {
@@ -55,6 +57,7 @@ impl Session {
             default_shell: shell.to_string(),
             default_column_width: ColumnWidth::Proportion(0.5),
             pane_inset: 12.0, // (4.0 padding + 2.0 border) * 2 = 12.0 default
+            terminal_colors,
             session_dirty: false,
             last_session_change: None,
             last_attached: Instant::now(),
@@ -126,8 +129,9 @@ impl Session {
             None
         };
         let effective_cwd = cwd.or_else(|| inherited_cwd.as_deref().map(std::path::Path::new));
-        let pane =
+        let mut pane =
             Pane::new_with_opts(id, cols, rows, &self.default_shell, command, effective_cwd)?;
+        pane.init_colors(&self.terminal_colors);
         self.panes.insert(id, pane);
         self.generation.insert(id, 0);
         self.workspaces
@@ -151,13 +155,14 @@ impl Session {
         let vh = self.workspaces.view_size.height;
         let (_, _, cw, ch) = Self::effective_dims_from(clients, &self.session_name);
         let (cols, rows) = self.pane_grid_size_with_cells(vw, vh, cw, ch);
-        let pane = Pane::new_with_cwd(
+        let mut pane = Pane::new_with_cwd(
             id,
             cols,
             rows,
             &self.default_shell,
             cwd.as_deref().map(std::path::Path::new),
         )?;
+        pane.init_colors(&self.terminal_colors);
         self.panes.insert(id, pane);
         self.generation.insert(id, 0);
         self.workspaces.add_workspace_below(id);
@@ -625,7 +630,7 @@ mod tests {
 
     #[test]
     fn autosave_is_debounced() {
-        let mut session = Session::new("default", "/bin/sh", 8.0);
+        let mut session = Session::new("default", "/bin/sh", 8.0, TerminalColors::default());
         session.session_dirty = true;
         let changed_at = Instant::now();
         session.last_session_change = Some(changed_at);
@@ -637,7 +642,7 @@ mod tests {
 
     #[test]
     fn mark_session_dirty_sets_dirty_and_timestamp() {
-        let mut session = Session::new("default", "/bin/sh", 8.0);
+        let mut session = Session::new("default", "/bin/sh", 8.0, TerminalColors::default());
         assert!(!session.session_dirty);
         assert!(session.last_session_change.is_none());
 
@@ -709,7 +714,7 @@ mod tests {
 
     #[test]
     fn build_state_sync_emits_image_deleted_for_panes_without_active_images() {
-        let mut session = Session::new("default", "/bin/sh", 8.0);
+        let mut session = Session::new("default", "/bin/sh", 8.0, TerminalColors::default());
         let mut next_pane_id = 1;
         let mut clients = HashMap::new();
         let pane_id = session
@@ -753,7 +758,7 @@ mod tests {
 
     #[test]
     fn collect_runtime_messages_emits_image_deleted_after_clear() {
-        let mut session = Session::new("default", "/bin/sh", 8.0);
+        let mut session = Session::new("default", "/bin/sh", 8.0, TerminalColors::default());
         let mut next_pane_id = 1;
         let mut clients = HashMap::new();
         let pane_id = session

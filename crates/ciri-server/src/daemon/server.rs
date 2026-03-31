@@ -1,7 +1,7 @@
 use ciri_layout::column::ColumnWidth;
 use ciri_protocol::message::*;
 use ciri_protocol::transport;
-use ciri_term::pane::Pane;
+use ciri_term::pane::{Pane, TerminalColors};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -27,6 +27,8 @@ pub(crate) struct Server {
     pub(crate) idle_timeout: Duration,
     /// Session restore configuration.
     pub(crate) session_config: ciri_config::schema::SessionConfig,
+    /// Theme colors for initializing terminal palettes.
+    pub(crate) terminal_colors: TerminalColors,
 }
 
 const CONTROL_SESSION: &str = "__control__";
@@ -41,7 +43,7 @@ pub(crate) enum ServerResponse {
 }
 
 impl Server {
-    pub(crate) fn new(shell: &str, column_gap: f32) -> Self {
+    pub(crate) fn new(shell: &str, column_gap: f32, terminal_colors: TerminalColors) -> Self {
         Server {
             sessions: HashMap::new(),
             clients: HashMap::new(),
@@ -55,6 +57,7 @@ impl Server {
             idle_deadline: None,
             idle_timeout: Duration::from_secs(300),
             session_config: ciri_config::schema::SessionConfig::default(),
+            terminal_colors,
         }
     }
 
@@ -62,7 +65,7 @@ impl Server {
     pub(crate) fn get_or_create_session(&mut self, session_name: &str) -> &mut Session {
         if !self.sessions.contains_key(session_name) {
             self.had_session = true;
-            let mut session = Session::new(session_name, &self.default_shell, self.column_gap);
+            let mut session = Session::new(session_name, &self.default_shell, self.column_gap, self.terminal_colors.clone());
             session.default_column_width = self.default_column_width;
             session.pane_inset = self.pane_inset;
 
@@ -131,7 +134,8 @@ impl Server {
                                 resume_cmd.as_deref(),
                                 cwd,
                             ) {
-                                Ok(pane) => {
+                                Ok(mut pane) => {
+                                    pane.init_colors(&session.terminal_colors);
                                     session.panes.insert(id, pane);
                                     session.generation.insert(id, 0);
                                     if let Some(col) = &mut col_opt {
@@ -1390,7 +1394,7 @@ impl Server {
                         // Create new session
                         self.had_session = true;
                         let mut session =
-                            Session::new(&target, &self.default_shell, self.column_gap);
+                            Session::new(&target, &self.default_shell, self.column_gap, self.terminal_colors.clone());
                         session.default_column_width = self.default_column_width;
                         session.pane_inset = self.pane_inset;
 
@@ -1443,7 +1447,8 @@ impl Server {
                                         cmd,
                                         cwd,
                                     ) {
-                                        Ok(pane) => {
+                                        Ok(mut pane) => {
+                                            pane.init_colors(&session.terminal_colors);
                                             session.panes.insert(id, pane);
                                             session.generation.insert(id, 0);
                                             if let Some(col) = &mut col_opt {
@@ -1651,7 +1656,7 @@ mod tests {
 
     #[test]
     fn resize_ignores_invalid_dimensions() {
-        let mut server = Server::new("/bin/sh", 8.0);
+        let mut server = Server::new("/bin/sh", 8.0, TerminalColors::default());
         let session_name = "alpha".to_string();
         server.clients.insert(1, test_client(1, &session_name));
         server.get_or_create_session(&session_name);
@@ -1677,7 +1682,7 @@ mod tests {
 
     #[test]
     fn switch_session_resets_client_runtime_state_and_refreshes_attach_time() {
-        let mut server = Server::new("/bin/sh", 8.0);
+        let mut server = Server::new("/bin/sh", 8.0, TerminalColors::default());
         let old_session = "alpha".to_string();
         let new_session = "beta".to_string();
         server.clients.insert(1, test_client(1, &old_session));
@@ -1747,7 +1752,7 @@ mod tests {
 
     #[test]
     fn switch_session_emits_image_deleted_for_attach_sync_after_prior_delete() {
-        let mut server = Server::new("/bin/sh", 8.0);
+        let mut server = Server::new("/bin/sh", 8.0, TerminalColors::default());
         let old_session = "alpha".to_string();
         let new_session = "beta".to_string();
         server.clients.insert(1, test_client(1, &old_session));
@@ -1780,7 +1785,7 @@ mod tests {
 
     #[test]
     fn switch_session_to_new_session_refreshes_attach_ordering_for_list_sessions() {
-        let mut server = Server::new("/bin/sh", 8.0);
+        let mut server = Server::new("/bin/sh", 8.0, TerminalColors::default());
         let old_session = "alpha".to_string();
         let newer_existing_session = "beta".to_string();
         let brand_new_session = "gamma".to_string();
@@ -1824,7 +1829,7 @@ mod tests {
 
     #[test]
     fn close_pane_emits_close_then_layout_update() {
-        let mut server = Server::new("/bin/sh", 8.0);
+        let mut server = Server::new("/bin/sh", 8.0, TerminalColors::default());
         let session_name = "alpha".to_string();
         server.clients.insert(1, test_client(1, &session_name));
         let pane_id = {
@@ -1845,7 +1850,7 @@ mod tests {
 
     #[test]
     fn focus_pane_by_id_returns_layout_update_and_command_result() {
-        let mut server = Server::new("/bin/sh", 8.0);
+        let mut server = Server::new("/bin/sh", 8.0, TerminalColors::default());
         let session_name = "alpha".to_string();
         server.clients.insert(1, test_client(1, "__control__"));
         let target_pane = {
@@ -1876,7 +1881,7 @@ mod tests {
         rt.block_on(async {
             let (client_reader, server_writer) = tokio::io::duplex(4096);
             let (server_reader, client_writer) = tokio::io::duplex(4096);
-            let state = Arc::new(Mutex::new(Server::new("/bin/sh", 8.0)));
+            let state = Arc::new(Mutex::new(Server::new("/bin/sh", 8.0, TerminalColors::default())));
             let shutdown = Arc::new(tokio::sync::Notify::new());
 
             let input_notify = Arc::new(tokio::sync::Notify::new());

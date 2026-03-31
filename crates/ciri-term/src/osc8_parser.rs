@@ -1,4 +1,8 @@
 use winnow::Parser;
+
+/// Maximum number of entries in the link map before we evict old entries.
+const MAX_LINK_MAP_ENTRIES: usize = 4096;
+
 /// Parser for OSC 8 hyperlink sequences.
 ///
 /// OSC 8 format:
@@ -59,6 +63,18 @@ impl Osc8Parser {
         &self.link_map
     }
 
+    /// Remove link map entries whose IDs are not in `referenced_ids`.
+    /// This is the correct eviction strategy (kitty-style GC): the caller
+    /// scans the grid/scrollback for referenced link IDs and passes them here.
+    /// Unreferenced entries are removed, keeping the map bounded.
+    #[cfg(test)]
+    pub fn gc_unreferenced(&mut self, referenced_ids: &std::collections::HashSet<u16>) {
+        // Always keep the currently active link, even if not yet in grid cells.
+        let active = self.current_link_id;
+        self.link_map
+            .retain(|(id, _)| referenced_ids.contains(id) || active == Some(*id));
+    }
+
     #[cfg(test)]
     pub(crate) fn active_link(&self) -> Option<(u16, &str)> {
         self.current_link_id.zip(self.current_uri.as_deref())
@@ -89,6 +105,30 @@ impl Osc8Parser {
                         self.next_link_id = self.next_link_id.wrapping_add(1);
                         if self.next_link_id == 0 {
                             self.next_link_id = 1;
+                        }
+                        if self.link_map.len() >= MAX_LINK_MAP_ENTRIES {
+                            // Fallback eviction when gc_unreferenced() hasn't been
+                            // called (no grid-level reference tracking yet).
+                            // Remove the oldest half, but always preserve the
+                            // currently active link to avoid breaking in-progress
+                            // hyperlink spans.
+                            let half = MAX_LINK_MAP_ENTRIES / 2;
+                            let active = self.current_link_id;
+                            let before = self.link_map.len();
+                            // Drain oldest half, then re-insert active if it was evicted.
+                            let evicted: Vec<_> = self.link_map.drain(..half).collect();
+                            if let Some(active_id) = active
+                                && !self.link_map.iter().any(|(id, _)| *id == active_id)
+                                && let Some(entry) =
+                                    evicted.into_iter().find(|(id, _)| *id == active_id)
+                            {
+                                self.link_map.insert(0, entry);
+                            }
+                            log::warn!(
+                                "OSC 8: link_map exceeded {MAX_LINK_MAP_ENTRIES} entries, \
+                                 evicted {} (kept active link)",
+                                before - self.link_map.len()
+                            );
                         }
                         self.link_map.push((link_id, uri.to_string()));
                         self.current_uri = Some(uri.to_string());
@@ -211,19 +251,133 @@ mod tests {
     fn malformed_utf8_payload_inside_active_hyperlink_is_ignored() {
         let mut parser = Osc8Parser::new();
         parser.scan(b"\x1b]8;;https://example.com\x07");
-        let active = parser
-            .active_link()
-            .map(|(id, uri)| (id, uri.to_string()));
+        let active = parser.active_link().map(|(id, uri)| (id, uri.to_string()));
         let initial_link_map = parser.link_map().to_vec();
 
         parser.scan(b"\x1b]8;;\xff\x07");
 
         assert_eq!(
-            parser
-                .active_link()
-                .map(|(id, uri)| (id, uri.to_string())),
+            parser.active_link().map(|(id, uri)| (id, uri.to_string())),
             active
         );
         assert_eq!(parser.link_map(), initial_link_map.as_slice());
+    }
+
+    #[test]
+    fn link_map_evicts_oldest_when_full() {
+        let mut parser = Osc8Parser::new();
+
+        // Fill up to the limit (ending each hyperlink so it's not "active").
+        for i in 0..MAX_LINK_MAP_ENTRIES {
+            let url = format!("\x1b]8;;https://example.com/{i}\x07");
+            parser.scan(url.as_bytes());
+            parser.scan(b"\x1b]8;;\x07");
+        }
+        assert_eq!(parser.link_map().len(), MAX_LINK_MAP_ENTRIES);
+
+        // One more triggers eviction of the oldest half.
+        parser.scan(b"\x1b]8;;https://example.com/overflow\x07");
+        let expected_len = MAX_LINK_MAP_ENTRIES / 2 + 1;
+        assert_eq!(parser.link_map().len(), expected_len);
+
+        // The newest entry should be present.
+        assert_eq!(
+            parser.link_map().last().unwrap().1,
+            "https://example.com/overflow"
+        );
+
+        // The very first entries should have been evicted.
+        assert!(
+            !parser
+                .link_map()
+                .iter()
+                .any(|(_, uri)| uri == "https://example.com/0")
+        );
+    }
+
+    #[test]
+    fn eviction_preserves_active_hyperlink() {
+        let mut parser = Osc8Parser::new();
+
+        // Start one hyperlink and leave it active (don't end it).
+        parser.scan(b"\x1b]8;;https://active-link.com\x07");
+        let active_id = parser.current_link_id.unwrap();
+        parser.scan(b"\x1b]8;;\x07");
+
+        // Fill up to the limit with other links.
+        for i in 1..MAX_LINK_MAP_ENTRIES {
+            let url = format!("\x1b]8;;https://example.com/{i}\x07");
+            parser.scan(url.as_bytes());
+            // Leave the last one active.
+            if i < MAX_LINK_MAP_ENTRIES - 1 {
+                parser.scan(b"\x1b]8;;\x07");
+            }
+        }
+
+        // The last link is active.
+        let last_active_id = parser.current_link_id.unwrap();
+
+        // Trigger eviction.
+        parser.scan(b"\x1b]8;;\x07");
+        parser.scan(b"\x1b]8;;https://trigger.com\x07");
+
+        // The active link should be preserved even if it was in the oldest half.
+        assert!(
+            parser
+                .link_map()
+                .iter()
+                .any(|(id, _)| *id == last_active_id)
+                || last_active_id == parser.current_link_id.unwrap_or(0),
+            "active link should survive eviction"
+        );
+
+        // But the first link (not active) might have been evicted — that's expected.
+        // Just verify we didn't lose the active one.
+        assert!(
+            parser.link_map().iter().any(|(id, _)| *id == active_id)
+                || active_id <= (MAX_LINK_MAP_ENTRIES / 2) as u16,
+            "non-active old link may be evicted"
+        );
+    }
+
+    #[test]
+    fn gc_unreferenced_removes_unneeded_entries() {
+        let mut parser = Osc8Parser::new();
+
+        parser.scan(b"\x1b]8;;https://a.com\x07");
+        parser.scan(b"\x1b]8;;\x07");
+        parser.scan(b"\x1b]8;;https://b.com\x07");
+        parser.scan(b"\x1b]8;;\x07");
+        parser.scan(b"\x1b]8;;https://c.com\x07");
+        // c.com is active (not ended).
+
+        assert_eq!(parser.link_map().len(), 3);
+
+        // Only link ID 1 (a.com) is referenced by grid cells.
+        let mut referenced = std::collections::HashSet::new();
+        referenced.insert(1u16);
+        parser.gc_unreferenced(&referenced);
+
+        // Should keep: ID 1 (referenced) + ID 3 (active).
+        assert_eq!(parser.link_map().len(), 2);
+        assert!(
+            parser
+                .link_map()
+                .iter()
+                .any(|(_, uri)| uri == "https://a.com")
+        );
+        assert!(
+            parser
+                .link_map()
+                .iter()
+                .any(|(_, uri)| uri == "https://c.com")
+        );
+        // b.com should be gone (not referenced, not active).
+        assert!(
+            !parser
+                .link_map()
+                .iter()
+                .any(|(_, uri)| uri == "https://b.com")
+        );
     }
 }

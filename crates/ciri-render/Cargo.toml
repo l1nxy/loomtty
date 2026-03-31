@@ -17,3 +17,6 @@ freetype-rs = { workspace = true }
 ciri-config = { path = "../ciri-config" }
 rustybuzz = { workspace = true }
 unicode-segmentation = { workspace = true }
+
+[dev-dependencies]
+ciri-app = { workspace = true }

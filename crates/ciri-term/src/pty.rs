@@ -109,13 +109,16 @@ impl Pty {
 
         // Ensure child knows its terminal type.
         cmd.env("TERM", "xterm-256color");
-        if std::env::var_os("COLORTERM").is_none() {
-            cmd.env("COLORTERM", "truecolor");
-        }
+        cmd.env("COLORTERM", "truecolor");
 
-        // Set TERM_PROGRAM so shells can detect they are inside Ciri.
+        // Terminal identification — used by neofetch/fastfetch, shell integrations, etc.
+        let version = env!("CARGO_PKG_VERSION");
         cmd.env("TERM_PROGRAM", "ciri");
-        cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+        cmd.env("TERM_PROGRAM_VERSION", version);
+        // LC_TERMINAL / LC_TERMINAL_VERSION are respected by many tools as an
+        // alternative to TERM_PROGRAM and survive across sudo/ssh boundaries.
+        cmd.env("LC_TERMINAL", "ciri");
+        cmd.env("LC_TERMINAL_VERSION", version);
 
         // Shell integration: set env vars so shells auto-source integration scripts.
         if let Ok(integration_dir) = std::env::var("CIRI_SHELL_INTEGRATION_DIR") {

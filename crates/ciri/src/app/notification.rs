@@ -91,7 +91,10 @@ impl App {
             #[cfg(target_os = "windows")]
             {
                 let _ = std::process::Command::new("powershell")
-                    .args(["-c", &format!("(New-Object Media.SoundPlayer '{}').PlaySync()", path)])
+                    .args([
+                        "-c",
+                        &format!("(New-Object Media.SoundPlayer '{}').PlaySync()", path),
+                    ])
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
                     .status();

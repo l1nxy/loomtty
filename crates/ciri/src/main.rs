@@ -156,9 +156,8 @@ fn main() -> Result<()> {
             // For remote connections, probe the remote server for existing sessions
             // and attach to the most recently active one.  Generating a random local
             // name would create a new session on the remote every time.
-            let remote_sessions = crate::connection::probe_remote_sessions_blocking(
-                &host, port, ssh_port,
-            );
+            let remote_sessions =
+                crate::connection::probe_remote_sessions_blocking(&host, port, ssh_port);
             if let Some(first) = remote_sessions.first() {
                 log::info!("attaching to existing remote session: {}", first);
                 first.clone()

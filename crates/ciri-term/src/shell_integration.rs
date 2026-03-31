@@ -136,7 +136,7 @@ mod tests {
     fn fragmented_sequence_updates_zone_and_exit_code() {
         let mut parser = Osc133Parser::new();
         let mut shell_state = shell_state();
-        let mut duration = None;
+        let mut duration: Option<std::time::Duration> = None;
 
         parser.scan(b"prefix\x1b]133;C", &mut shell_state, &mut duration);
         assert_eq!(shell_state.zone, SemanticZone::Prompt);

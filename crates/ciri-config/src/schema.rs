@@ -24,7 +24,7 @@ pub struct CiriConfig {
     pub window: WindowConfig,
     #[garde(dive)]
     pub terminal: TerminalConfig,
-    #[garde(skip)]
+    #[garde(dive)]
     pub statusbar: StatusBarConfig,
     #[garde(skip)]
     pub input: InputConfig,
@@ -176,9 +176,9 @@ pub struct AnimationConfig {
     pub preset: AnimationPreset,
     #[garde(skip)]
     pub pane_open_style: PaneOpenStyle,
-    #[garde(skip)]
+    #[garde(range(min = 0.000_001, max = 1.0))]
     pub overview_zoom_fit: f32,
-    #[garde(skip)]
+    #[garde(range(min = 0.000_001, max = 1.0))]
     pub zoom_threshold: f32,
     #[garde(range(min = 0.0, max = 1.0))]
     pub drag_opacity: f32,
@@ -218,9 +218,9 @@ impl Default for WindowConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 #[serde(default)]
 pub struct TerminalConfig {
-    #[garde(skip)]
+    #[garde(range(min = 1))]
     pub default_cols: u16,
-    #[garde(skip)]
+    #[garde(range(min = 1))]
     pub default_rows: u16,
     #[garde(skip)]
     pub cursor_color: String,
@@ -228,11 +228,11 @@ pub struct TerminalConfig {
     pub cursor_opacity: f32,
     #[garde(skip)]
     pub cursor_blink: bool,
-    #[garde(skip)]
+    #[garde(range(min = 1))]
     pub cursor_blink_interval_ms: u64,
     #[garde(skip)]
     pub shell: String,
-    #[garde(skip)]
+    #[garde(range(min = 1))]
     pub scrollback_lines: usize,
     #[garde(skip)]
     pub copy_on_select: bool,
@@ -269,14 +269,19 @@ impl Default for TerminalConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 #[serde(default)]
 pub struct StatusBarConfig {
+    #[garde(skip)]
     pub position: StatusBarPosition,
+    #[garde(range(min = 0.0))]
     pub padding_ratio: f32,
+    #[garde(skip)]
     pub text_baseline: f32,
+    #[garde(skip)]
     pub leader_indicator_ratio: f32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[garde(skip)]
     pub height_padding: Option<f32>,
 }
 

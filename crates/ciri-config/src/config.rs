@@ -37,16 +37,17 @@ pub fn config_path() -> PathBuf {
     }
 
     dirs::config_dir()
+        .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
         .map(|d| d.join("ciri").join("config.toml"))
         .unwrap_or_else(|| {
-            log::warn!("cannot determine config directory, using fallback");
+            // No config dir and no home dir — truly degenerate environment.
+            // Use a path that won't exist, so load() returns default config.
+            log::warn!("cannot determine config directory; config will not be loaded");
             PathBuf::from(if cfg!(windows) {
-                r"C:\Users\Default\AppData\Roaming"
+                r"C:\nonexistent\.ciri\config.toml"
             } else {
-                "/tmp/.config"
+                "/nonexistent/.ciri/config.toml"
             })
-            .join("ciri")
-            .join("config.toml")
         })
 }
 

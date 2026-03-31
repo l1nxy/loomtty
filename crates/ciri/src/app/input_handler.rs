@@ -313,8 +313,7 @@ impl App {
         buffer_row: usize,
         now: Instant,
     ) -> u8 {
-        self.core
-            .advance_click_count(pane_id, col, buffer_row, now)
+        self.core.advance_click_count(pane_id, col, buffer_row, now)
     }
 
     /// Delegate: select word at position.

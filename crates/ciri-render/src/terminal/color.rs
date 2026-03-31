@@ -54,7 +54,7 @@ impl ColorTable {
         }
     }
 
-    pub(super) fn resolve_packed(&self, color: PackedColor) -> [f32; 4] {
+    pub fn resolve_packed(&self, color: PackedColor) -> [f32; 4] {
         match color.tag {
             COLOR_NAMED => {
                 let n = color.b1;

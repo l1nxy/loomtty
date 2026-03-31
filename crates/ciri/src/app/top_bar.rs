@@ -93,7 +93,8 @@ impl App {
 
     pub(crate) fn pane_tab_layouts(&self, cw: f32, tabs_area_px: f32) -> Vec<PaneTabLayout> {
         let tab_w = PANE_TAB_WIDTH_CHARS as f32 * cw;
-        let session_w = UnicodeWidthStr::width(format!(" {}  ", self.core.session_name).as_str()) as f32 * cw;
+        let session_w =
+            UnicodeWidthStr::width(format!(" {}  ", self.core.session_name).as_str()) as f32 * cw;
         let tabs_start_x = session_w;
         let tabs_end_x = tabs_start_x + tabs_area_px;
         let mut x = tabs_start_x - self.core.pane_tab_scroll;
@@ -127,7 +128,8 @@ impl App {
             layouts.push(PaneTabLayout {
                 pane_id,
                 label,
-                x: UnicodeWidthStr::width(format!(" {}  ", self.core.session_name).as_str()) as f32 * self.cell_dimensions().0
+                x: UnicodeWidthStr::width(format!(" {}  ", self.core.session_name).as_str()) as f32
+                    * self.cell_dimensions().0
                     + idx as f32 * tab_w,
                 w: tab_w,
                 active: self.core.workspaces.active().active_pane_id() == Some(pane_id),
@@ -164,7 +166,8 @@ impl App {
         };
         let bar_height = ch + padding;
         let bar_y = self.status_bar_y(vh);
-        let session_w = UnicodeWidthStr::width(format!(" {}  ", self.core.session_name).as_str()) as f32 * cw;
+        let session_w =
+            UnicodeWidthStr::width(format!(" {}  ", self.core.session_name).as_str()) as f32 * cw;
         let ws_label = self.workspace_indicator_label();
         let workspace_w = UnicodeWidthStr::width(ws_label.as_str()) as f32 * cw;
         let mode_w = UnicodeWidthStr::width(self.current_mode_label().0.as_str()) as f32 * cw;

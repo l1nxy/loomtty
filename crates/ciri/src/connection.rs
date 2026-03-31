@@ -551,9 +551,7 @@ pub fn probe_remote_sessions_blocking(host: &str, remote_port: u16, ssh_port: u1
     });
 
     match result {
-        Ok(RemoteProbeResult::Sessions(sessions)) => {
-            sessions.into_iter().map(|s| s.name).collect()
-        }
+        Ok(RemoteProbeResult::Sessions(sessions)) => sessions.into_iter().map(|s| s.name).collect(),
         _ => Vec::new(),
     }
 }

@@ -361,6 +361,27 @@ mod tests {
     }
 
     #[test]
+    fn attach_rejects_positional_session_name() {
+        let err = Cli::try_parse_from(["ciri", "attach"])
+            .expect_err("attach without a session name should fail");
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn no_args_help_flag_stays_on_safe_help_path() {
+        let cli = Cli::try_parse_from(["ciri", "--help"])
+            .expect_err("clap should exit after rendering help");
+        assert_eq!(cli.kind(), clap::error::ErrorKind::DisplayHelp);
+    }
+
+    #[test]
+    fn positional_session_name_then_help_stays_on_safe_help_path() {
+        let cli = Cli::try_parse_from(["ciri", "work", "--help"])
+            .expect_err("clap should exit after rendering help");
+        assert_eq!(cli.kind(), clap::error::ErrorKind::DisplayHelp);
+    }
+
+    #[test]
     fn list_command() {
         assert!(matches!(parse(&["list"]), CliCommand::List { all: false }));
         assert!(matches!(parse(&["ls"]), CliCommand::List { all: false }));

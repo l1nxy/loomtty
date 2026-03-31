@@ -268,6 +268,66 @@ fn full_sync_dimension_change_preserves_scrollback() {
 }
 
 #[test]
+fn full_sync_dimension_change_rebases_grapheme_indices() {
+    let mut grid = ClientPaneGrid::new(4, 2, 10);
+    let mut grapheme_extras = GraphemeExtras::new();
+    grapheme_extras.push(4, "\u{0301}");
+    let sync = FullPaneSync {
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 10,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+        },
+        cols: 4,
+        rows: 2,
+        title: String::new(),
+        scrollback: vec![PackedCell::with_ch('s'); 4],
+        scrollback_rows: 1,
+        scrollback_replace: false,
+        cells: vec![PackedCell::with_ch('A'); 8],
+        grapheme_extras,
+        hyperlink_extras: HyperlinkExtras::new(),
+        cwd: None,
+    };
+    grid.apply_full_sync(&sync);
+    assert_eq!(
+        grid.grapheme_map.get(&4).map(String::as_str),
+        Some("A\u{0301}")
+    );
+
+    let resize_sync = FullPaneSync {
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 11,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+        },
+        cols: 2,
+        rows: 2,
+        title: String::new(),
+        scrollback: vec![],
+        scrollback_rows: 0,
+        scrollback_replace: false,
+        cells: vec![PackedCell::with_ch('B'); 4],
+        grapheme_extras: GraphemeExtras(vec![(2, "\u{0301}".to_string())]),
+        hyperlink_extras: HyperlinkExtras::new(),
+        cwd: None,
+    };
+    grid.apply_full_sync(&resize_sync);
+
+    assert_eq!(
+        grid.grapheme_map.get(&2).map(String::as_str),
+        Some("B\u{0301}")
+    );
+    assert!(!grid.grapheme_map.contains_key(&4));
+}
+
+#[test]
 fn full_sync_short_cells_blanks_remainder() {
     let mut grid = ClientPaneGrid::new(4, 2, 10);
     let sync = FullPaneSync {

@@ -1,7 +1,32 @@
+use std::collections::HashMap;
+
 use ciri_protocol::message::*;
 
 use super::ClientPaneGrid;
 use super::types::ScrollbackRow;
+
+fn rebase_grapheme_lookup(
+    old_map: &HashMap<u32, String>,
+    old_viewport_len: usize,
+    old_cols: usize,
+    new_scrollback_rows: usize,
+) -> HashMap<u32, String> {
+    if old_map.is_empty() || old_cols == 0 {
+        return HashMap::new();
+    }
+
+    let mut rebased = HashMap::with_capacity(old_map.len());
+    for (&idx, grapheme) in old_map {
+        let idx = idx as usize;
+        if idx < old_viewport_len {
+            let row = idx / old_cols;
+            let col = idx % old_cols;
+            let new_idx = new_scrollback_rows * old_cols + row * old_cols + col;
+            rebased.insert(new_idx as u32, grapheme.clone());
+        }
+    }
+    rebased
+}
 
 impl ClientPaneGrid {
     /// Apply a FullPaneSync from the server.
@@ -12,6 +37,9 @@ impl ClientPaneGrid {
     ///
     /// We add scrollback rows to VecDeque, then memcpy cells directly into viewport flat buffer.
     pub fn apply_full_sync(&mut self, sync: &FullPaneSync) {
+        let old_cols = self.cols as usize;
+        let old_viewport_len = self.viewport.len();
+        let old_grapheme_map = std::mem::take(&mut self.grapheme_map);
         let new_cols = sync.cols as usize;
         let new_rows = sync.rows as usize;
 
@@ -29,12 +57,24 @@ impl ClientPaneGrid {
             self.scroll_offset = 0;
         }
 
+        let mut rebased_grapheme_map = if cols_changed {
+            HashMap::new()
+        } else {
+            rebase_grapheme_lookup(
+                &old_grapheme_map,
+                old_viewport_len,
+                old_cols,
+                self.scrollback.len(),
+            )
+        };
+
         // Step 1: Handle scrollback — replace or append
         if sync.scrollback_replace {
             self.scrollback.clear();
+            rebased_grapheme_map.clear();
         }
-        let sb_rows = sync.scrollback_rows as usize;
-        for r in 0..sb_rows {
+        let appended_scrollback_rows = sync.scrollback_rows as usize;
+        for r in 0..appended_scrollback_rows {
             let start = r * new_cols;
             let end = (start + new_cols).min(sync.scrollback.len());
             if end <= start {
@@ -42,6 +82,24 @@ impl ClientPaneGrid {
             }
             self.scrollback
                 .push_back(ScrollbackRow::from_cells(&sync.scrollback[start..end]));
+        }
+
+        if !cols_changed {
+            let scrollback_base = self
+                .scrollback
+                .len()
+                .saturating_sub(appended_scrollback_rows);
+            for (idx, extra) in &sync.grapheme_extras.0 {
+                let idx = *idx as usize;
+                if idx < sync.scrollback.len() {
+                    let ch = sync.scrollback[idx].ch();
+                    let mut grapheme = String::new();
+                    grapheme.push(ch);
+                    grapheme.push_str(extra);
+                    rebased_grapheme_map
+                        .insert((scrollback_base * new_cols + idx) as u32, grapheme);
+                }
+            }
         }
 
         // Step 2: Memcpy cells directly into viewport flat buffer
@@ -74,7 +132,11 @@ impl ClientPaneGrid {
         self.has_shell_integration = sync.meta.mode_flags & MODE_SHELL_INTEGRATION != 0;
         self.has_kitty_keyboard = sync.meta.mode_flags & MODE_KITTY_KEYBOARD != 0;
         self.title = sync.title.clone();
-        self.grapheme_map = sync.grapheme_extras.build_lookup(&sync.cells);
+        self.grapheme_map = rebased_grapheme_map;
+        let sync_grapheme_map = sync.grapheme_extras.build_lookup(&sync.cells);
+        for (idx, grapheme) in sync_grapheme_map {
+            self.grapheme_map.insert(idx, grapheme);
+        }
         self.hyperlink_map = sync.hyperlink_extras.link_map.clone();
         self.cwd = sync.cwd.clone();
         self.dirty = true;

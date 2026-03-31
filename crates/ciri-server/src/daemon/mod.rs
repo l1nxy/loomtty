@@ -109,11 +109,15 @@ pub async fn run_daemon() -> Result<()> {
     // Shutdown signal shared between tick loop, signal handler, and accept loop
     let shutdown = Arc::new(Notify::new());
 
+    // Notify to wake the tick loop immediately when client input arrives
+    let input_notify = Arc::new(Notify::new());
+
     // Spawn tick loop (16ms = ~60fps)
     let tick_state = state.clone();
     let tick_shutdown = shutdown.clone();
+    let tick_input_notify = input_notify.clone();
     tokio::spawn(async move {
-        tick::run_tick_loop(tick_state, tick_shutdown).await;
+        tick::run_tick_loop(tick_state, tick_shutdown, tick_input_notify).await;
     });
 
     // Signal handling - SIGTERM and SIGINT
@@ -183,16 +187,19 @@ pub async fn run_daemon() -> Result<()> {
                     let (stream, _) = result?;
                     let state = state.clone();
                     let client_shutdown = shutdown.clone();
+                    let client_input_notify = input_notify.clone();
                     let (reader, writer) = stream.into_split();
-                    tokio::spawn(connection::handle_client(reader, writer, state, client_shutdown));
+                    tokio::spawn(connection::handle_client(reader, writer, state, client_shutdown, client_input_notify));
                 }
                 result = tcp_accept(&tcp_listener) => {
                     let (stream, addr) = result?;
+                    stream.set_nodelay(true).ok();
                     log::info!("TCP client connected from {addr}");
                     let state = state.clone();
                     let client_shutdown = shutdown.clone();
+                    let client_input_notify = input_notify.clone();
                     let (reader, writer) = stream.into_split();
-                    tokio::spawn(connection::handle_client(reader, writer, state, client_shutdown));
+                    tokio::spawn(connection::handle_client(reader, writer, state, client_shutdown, client_input_notify));
                 }
                 _ = shutdown.notified() => {
                     log::info!("accept loop shutting down");
@@ -212,11 +219,13 @@ pub async fn run_daemon() -> Result<()> {
                 }
                 result = tcp_accept(&tcp_listener) => {
                     let (stream, addr) = result?;
+                    stream.set_nodelay(true).ok();
                     log::info!("TCP client connected from {addr}");
                     let state = state.clone();
                     let client_shutdown = shutdown.clone();
+                    let client_input_notify = input_notify.clone();
                     let (reader, writer) = stream.into_split();
-                    tokio::spawn(connection::handle_client(reader, writer, state, client_shutdown));
+                    tokio::spawn(connection::handle_client(reader, writer, state, client_shutdown, client_input_notify));
                     continue;
                 }
                 _ = shutdown.notified() => {
@@ -229,12 +238,14 @@ pub async fn run_daemon() -> Result<()> {
             pipe_server = ServerOptions::new().create(&pipe_name)?;
             let state = state.clone();
             let client_shutdown = shutdown.clone();
+            let client_input_notify = input_notify.clone();
             let (reader, writer) = tokio::io::split(connected);
             tokio::spawn(connection::handle_client(
                 reader,
                 writer,
                 state,
                 client_shutdown,
+                client_input_notify,
             ));
         }
     }

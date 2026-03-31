@@ -54,6 +54,7 @@ pub(crate) async fn handle_client<R, W>(
     writer: W,
     state: Arc<Mutex<Server>>,
     client_shutdown: Arc<tokio::sync::Notify>,
+    input_notify: Arc<tokio::sync::Notify>,
 ) where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
     W: tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -241,8 +242,12 @@ pub(crate) async fn handle_client<R, W>(
         loop {
             match codec::read_frame(&mut reader).await {
                 Ok(codec::Frame::ClientMsg(msg)) => {
+                    let is_input = matches!(msg, ClientMessage::Input { .. });
                     let mut s = state.lock().await;
                     let responses = s.handle_message(msg, client_id);
+                    if is_input {
+                        input_notify.notify_one();
+                    }
 
                     for resp in responses {
                         match resp {

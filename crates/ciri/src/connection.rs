@@ -3,6 +3,7 @@ use ciri_protocol::message::*;
 use ciri_protocol::transport;
 use crossbeam_channel::{Receiver, Sender};
 use std::io;
+use winit::event_loop::EventLoopProxy;
 
 pub use ciri_app::app::{RemoteProbeResult, RemoteQueryResult, ServerEvent};
 
@@ -14,6 +15,7 @@ async fn run_protocol_io<R, W>(
     viewport: &codec::ClientHello,
     msg_rx: crossbeam_channel::Receiver<ClientMessage>,
     event_tx: crossbeam_channel::Sender<ServerEvent>,
+    wake_proxy: Option<EventLoopProxy<()>>,
 ) where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
     W: tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -73,15 +75,24 @@ async fn run_protocol_io<R, W>(
                 if event_tx.send(ServerEvent::Control(msg)).is_err() {
                     break;
                 }
+                if let Some(ref proxy) = wake_proxy {
+                    let _ = proxy.send_event(());
+                }
             }
             Ok(codec::Frame::CellDelta(delta)) => {
                 if event_tx.send(ServerEvent::CellDelta(delta)).is_err() {
                     break;
                 }
+                if let Some(ref proxy) = wake_proxy {
+                    let _ = proxy.send_event(());
+                }
             }
             Ok(codec::Frame::FullPaneSync(sync)) => {
                 if event_tx.send(ServerEvent::FullPaneSync(sync)).is_err() {
                     break;
+                }
+                if let Some(ref proxy) = wake_proxy {
+                    let _ = proxy.send_event(());
                 }
             }
             Ok(codec::Frame::ClientMsg(_)) => {
@@ -92,6 +103,9 @@ async fn run_protocol_io<R, W>(
                     log::warn!("server read error: {e}");
                 }
                 let _ = event_tx.send(ServerEvent::Disconnected);
+                if let Some(ref proxy) = wake_proxy {
+                    let _ = proxy.send_event(());
+                }
                 break;
             }
         }
@@ -105,6 +119,7 @@ async fn run_protocol_io<R, W>(
 pub fn connect_or_spawn(
     session_name: &str,
     viewport: codec::ClientHello,
+    wake_proxy: Option<EventLoopProxy<()>>,
 ) -> io::Result<(Sender<ClientMessage>, Receiver<ServerEvent>)> {
     // Validate session name using the same function as the server to prevent
     // divergent validation rules (client allows what server rejects or vice versa).
@@ -211,7 +226,7 @@ pub fn connect_or_spawn(
                 let (reader, writer) = stream.into_split();
                 #[cfg(windows)]
                 let (reader, writer) = tokio::io::split(stream);
-                run_protocol_io(reader, writer, &viewport, msg_rx, event_tx).await;
+                run_protocol_io(reader, writer, &viewport, msg_rx, event_tx, wake_proxy).await;
             });
         })?;
 
@@ -224,9 +239,13 @@ pub fn connect_remote(
     remote_port: u16,
     ssh_port: u16,
     viewport: codec::ClientHello,
+    wake_proxy: Option<EventLoopProxy<()>>,
 ) -> io::Result<(Sender<ClientMessage>, Receiver<ServerEvent>)> {
     let (msg_tx, msg_rx) = crossbeam_channel::bounded::<ClientMessage>(256);
-    let (event_tx, event_rx) = crossbeam_channel::bounded::<ServerEvent>(256);
+    // Unbounded: reader must never block on send, otherwise it can't detect
+    // socket EOF and the TUI freezes.  Memory is bounded in practice because
+    // the main thread drains ~12 000 events/sec (budget=200 × 60 fps).
+    let (event_tx, event_rx) = crossbeam_channel::unbounded::<ServerEvent>();
 
     let host = host.to_string();
 
@@ -243,6 +262,7 @@ pub fn connect_remote(
                 let mut child = match tokio::process::Command::new("ssh")
                     .args(["-p", &ssh_port.to_string()])
                     .args(["-W", &format!("localhost:{remote_port}")])
+                    .args(["-o", "TCPNoDelay=yes"])
                     .arg(&host)
                     .stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::piped())
@@ -263,7 +283,7 @@ pub fn connect_remote(
                 // Run protocol over SSH tunnel
                 // stdout = data from remote server (reader)
                 // stdin  = data to remote server (writer)
-                run_protocol_io(stdout, stdin, &viewport, msg_rx, event_tx).await;
+                run_protocol_io(stdout, stdin, &viewport, msg_rx, event_tx, wake_proxy).await;
 
                 // Clean up SSH process
                 let _ = child.kill().await;
@@ -354,6 +374,7 @@ async fn probe_remote(host: &str, remote_port: u16, ssh_port: u16) -> RemoteProb
         .args(["-W", &format!("localhost:{remote_port}")])
         .args(["-o", "ConnectTimeout=4"])
         .args(["-o", "StrictHostKeyChecking=accept-new"])
+        .args(["-o", "TCPNoDelay=yes"])
         .arg(host)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

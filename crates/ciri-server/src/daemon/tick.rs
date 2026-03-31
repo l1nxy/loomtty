@@ -11,7 +11,11 @@ use super::server::Server;
 
 /// Spawn the tick loop (16ms = ~60fps). Processes PTY output, extracts damage,
 /// encodes frames, and sends to clients.
-pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown: Arc<Notify>) {
+pub(crate) async fn run_tick_loop(
+    tick_state: Arc<Mutex<Server>>,
+    tick_shutdown: Arc<Notify>,
+    input_notify: Arc<Notify>,
+) {
     let mut ticker = interval(Duration::from_millis(16));
 
     // ── Frame buffer pool (optimization #2) ─────────────────────
@@ -42,7 +46,10 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
     let mut session_names: Vec<String> = Vec::new();
 
     loop {
-        ticker.tick().await;
+        tokio::select! {
+            _ = ticker.tick() => {}
+            _ = input_notify.notified() => {}
+        }
 
         // ── Phase 1 (locked): process PTY, extract damage, collect snapshots ──
         //

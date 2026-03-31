@@ -109,11 +109,15 @@ impl ApplicationHandler for App {
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + self.core.frame_interval,
             ));
-        } else if wants_blink || has_server {
-            // Connected but idle: poll at reduced rate (50ms = 20fps idle)
+        } else if wants_blink {
+            // Cursor blink active: poll at blink interval
+            let blink_ms = self.core.config.terminal.cursor_blink_interval_ms;
             event_loop.set_control_flow(ControlFlow::WaitUntil(
-                Instant::now() + Duration::from_millis(50),
+                Instant::now() + Duration::from_millis(blink_ms),
             ));
+        } else if has_server {
+            // Connected but idle: sleep until woken by IO thread via EventLoopProxy
+            event_loop.set_control_flow(ControlFlow::Wait);
         } else {
             // Disconnected, no animations: fully idle
             event_loop.set_control_flow(ControlFlow::Wait);
@@ -121,7 +125,7 @@ impl ApplicationHandler for App {
 
         if matches!(
             cause,
-            StartCause::ResumeTimeReached { .. } | StartCause::Poll
+            StartCause::ResumeTimeReached { .. } | StartCause::Poll | StartCause::WaitCancelled { .. }
         ) {
             let mut needs_redraw = is_animating || is_resizing;
 
@@ -196,6 +200,14 @@ impl ApplicationHandler for App {
             }
 
             if needs_redraw && let Some(w) = &self.window {
+                w.request_redraw();
+            }
+        }
+    }
+
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: ()) {
+        if self.process_server_events() {
+            if let Some(w) = &self.window {
                 w.request_redraw();
             }
         }

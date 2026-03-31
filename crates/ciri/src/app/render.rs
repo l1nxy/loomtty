@@ -268,9 +268,12 @@ impl App {
                 }
             }
 
-            // Selection overlay
+            // Selection overlay — uses the terminal foreground color as a
+            // semi-opaque selection background (matching ghostty's default).
+            // One rect per row keeps performance at O(rows).
             if let Some(sel) = &self.core.selection
                 && sel.pane_id == *pane_id
+                && sel.start != sel.end // Don't render zero-width selection (single click anchor)
                 && let Some(grid) = self.core.pane_grids.get(pane_id)
             {
                 let (cw, ch) = self.cell_dimensions();
@@ -281,7 +284,10 @@ impl App {
                 } else {
                     (sel.end, sel.start)
                 };
-                let sel_color = [0.3, 0.5, 0.8, 0.3];
+                let fg = self
+                    .cached_color_table
+                    .resolve_packed(ciri_protocol::message::DEFAULT_FOREGROUND);
+                let sel_color = [fg[0], fg[1], fg[2], 0.35];
                 for buf_row in start.1..=end.1 {
                     let viewport_row = match grid.buffer_to_viewport_row(buf_row) {
                         Some(r) => r,

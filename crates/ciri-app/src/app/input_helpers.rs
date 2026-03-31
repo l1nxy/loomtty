@@ -34,28 +34,53 @@ impl AppModel {
         Some(grid.text_in_range(sel.start, sel.end))
     }
 
-    pub fn is_double_left_click(
-        &self,
+    /// Compute the click streak (1 = single, 2 = double, 3 = triple) and
+    /// record this click for future multi-click detection.
+    ///
+    /// The streak advances when the same button is pressed within
+    /// `double_tap_window_ms` at roughly the same position (±1 cell).
+    /// This follows the Alacritty pattern where click state advances on press.
+    pub fn advance_click_count(
+        &mut self,
         pane_id: u64,
         col: u16,
         buffer_row: usize,
         now: Instant,
-    ) -> bool {
+    ) -> u8 {
         let threshold = Duration::from_millis(self.config.input.double_tap_window_ms);
-        self.last_left_click.as_ref().is_some_and(|last| {
-            last.pane_id == pane_id
-                && last.buffer_row == buffer_row
-                && last.col.abs_diff(col) <= 1
-                && now.duration_since(last.at) <= threshold
-        })
-    }
-
-    pub fn remember_left_click(&mut self, pane_id: u64, col: u16, buffer_row: usize, now: Instant) {
+        let count = if let Some(last) = &self.last_left_click
+            && last.pane_id == pane_id
+            && last.buffer_row == buffer_row
+            && last.col.abs_diff(col) <= 1
+            && now.duration_since(last.at) <= threshold
+        {
+            // Advance streak, wrap around after triple (3 -> 1).
+            (last.count % 3) + 1
+        } else {
+            1
+        };
         self.last_left_click = Some(LastLeftClick {
             pane_id,
             col,
             buffer_row,
             at: now,
+            count,
+        });
+        count
+    }
+
+    /// Select the entire line at the given buffer row (triple-click behavior).
+    pub fn select_line_at(&mut self, pane_id: u64, buffer_row: usize) {
+        let end_col = self
+            .pane_grids
+            .get(&pane_id)
+            .map(|g| g.cols.saturating_sub(1))
+            .unwrap_or(79);
+        self.selection = Some(Selection {
+            pane_id,
+            start: (0, buffer_row),
+            end: (end_col, buffer_row),
+            active: true,
         });
     }
 

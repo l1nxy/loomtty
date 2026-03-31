@@ -102,13 +102,15 @@ impl App {
 
                     self.mouse_left_held = true;
                     let click_now = Instant::now();
-                    let is_double_click =
-                        !shift && self.is_double_left_click(pane_id, col, buf_row, click_now);
+                    let click_count = if shift {
+                        1 // shift-click is always single-click (extend selection)
+                    } else {
+                        self.advance_click_count(pane_id, col, buf_row, click_now)
+                    };
                     let ws = self.core.workspaces.active_mut();
                     for col_idx in 0..ws.columns.len() {
                         if ws.columns[col_idx].contains_pane(pane_id) {
                             ws.active_column_idx = col_idx;
-                            // Also focus the specific tile within the column
                             if let Some(tile_idx) = ws.columns[col_idx]
                                 .tiles
                                 .iter()
@@ -125,16 +127,20 @@ impl App {
                     );
                     self.send(ClientMessage::FocusPane { pane_id });
                     self.animate_to_active();
-                    self.remember_left_click(pane_id, col, buf_row, click_now);
 
                     if shift {
+                        // Shift-click: extend existing selection or start new
                         self.core.selection = Some(super::Selection {
                             pane_id,
                             start: (col, buf_row),
                             end: (col, buf_row),
                             active: true,
                         });
-                    } else if is_double_click {
+                    } else if click_count == 3 {
+                        // Triple click: select entire line
+                        self.select_line_at(pane_id, buf_row);
+                    } else if click_count == 2 {
+                        // Double click: select word
                         if !self.select_word_at(pane_id, col, buf_row) {
                             self.core.selection = Some(super::Selection {
                                 pane_id,
@@ -144,6 +150,10 @@ impl App {
                             });
                         }
                     } else {
+                        // Single click: clear selection, set anchor for potential
+                        // drag.  The selection is start==end (zero-width) and will
+                        // not be rendered until the mouse drags to a different cell.
+                        // This matches Alacritty/WezTerm/kitty behavior.
                         if let Some((_, vcol, vrow)) = self.pixel_to_viewport_cell(mx, my) {
                             self.send_lossy(ClientMessage::MouseInput {
                                 pane_id,

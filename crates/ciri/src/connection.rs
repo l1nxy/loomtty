@@ -218,6 +218,8 @@ pub fn connect_or_spawn(
 }
 
 /// Connect to a remote ciri-server via SSH stdio proxy tunnel.
+/// If the remote server is not running, attempts to start it via
+/// `ssh ciri-server --daemonize` before connecting.
 pub fn connect_remote(
     host: &str,
     remote_port: u16,
@@ -238,17 +240,16 @@ pub fn connect_remote(
                 .build()
                 .expect("tokio runtime");
             rt.block_on(async move {
+                // Try to ensure the remote server is running before connecting.
+                if let Err(e) = ensure_remote_server(&host, remote_port, ssh_port).await {
+                    log::error!("failed to ensure remote server: {e}");
+                    let _ = event_tx.send(ServerEvent::Disconnected);
+                    return;
+                }
+
                 // Spawn SSH process with -W for stdio proxy
-                let mut child = match tokio::process::Command::new("ssh")
-                    .args(["-p", &ssh_port.to_string()])
-                    .args(["-W", &format!("localhost:{remote_port}")])
-                    .arg(&host)
-                    .stdin(std::process::Stdio::piped())
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped())
-                    .spawn()
-                {
-                    Ok(child) => child,
+                let mut child = match spawn_ssh_tunnel(&host, remote_port, ssh_port) {
+                    Ok(c) => c,
                     Err(e) => {
                         log::error!("failed to spawn ssh: {e}");
                         let _ = event_tx.send(ServerEvent::Disconnected);
@@ -270,6 +271,90 @@ pub fn connect_remote(
         })?;
 
     Ok((msg_tx, event_rx))
+}
+
+fn spawn_ssh_tunnel(
+    host: &str,
+    remote_port: u16,
+    ssh_port: u16,
+) -> io::Result<tokio::process::Child> {
+    tokio::process::Command::new("ssh")
+        .args(["-p", &ssh_port.to_string()])
+        .args(["-W", &format!("localhost:{remote_port}")])
+        .args(["-o", "StrictHostKeyChecking=accept-new"])
+        .arg(host)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+}
+
+/// Ensure the remote ciri-server is running. Probes first, starts if needed.
+async fn ensure_remote_server(host: &str, remote_port: u16, ssh_port: u16) -> io::Result<()> {
+    // Quick probe: try connecting to see if server is already up.
+    let probe = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        probe_remote(host, remote_port, ssh_port),
+    )
+    .await;
+
+    match probe {
+        Ok(RemoteProbeResult::Sessions(_)) => {
+            log::info!("remote server already running");
+            return Ok(());
+        }
+        _ => {
+            log::info!("remote server not reachable, attempting to start");
+        }
+    }
+
+    // Start the server via SSH.
+    let output = tokio::process::Command::new("ssh")
+        .args(["-p", &ssh_port.to_string()])
+        .args(["-o", "ConnectTimeout=10"])
+        .args(["-o", "StrictHostKeyChecking=accept-new"])
+        .arg(host)
+        .arg("ciri-server --daemonize")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .await?;
+
+    if output.status.success() {
+        log::info!("remote ciri-server started, verifying");
+        // Wait for the server to bind its socket, then verify it's reachable.
+        for attempt in 0..5 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let verify = tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                probe_remote(host, remote_port, ssh_port),
+            )
+            .await;
+            if matches!(verify, Ok(RemoteProbeResult::Sessions(_))) {
+                log::info!("remote server verified on attempt {}", attempt + 1);
+                return Ok(());
+            }
+        }
+        return Err(io::Error::other(
+            "remote ciri-server started but not reachable after 5 attempts",
+        ));
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let code = output.status.code().unwrap_or(-1);
+
+    // Exit code 127 = command not found on most shells.
+    if code == 127 || stderr.contains("not found") || stderr.contains("No such file") {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "ciri-server not found on remote host. Install it with: cargo install ciri-server",
+        ));
+    }
+
+    Err(io::Error::other(format!(
+        "failed to start remote server (exit {code}): {stderr}"
+    )))
 }
 
 /// Fire-and-forget: probe a remote host for ciri-server, query its sessions.
@@ -345,7 +430,7 @@ async fn probe_remote(host: &str, remote_port: u16, ssh_port: u16) -> RemoteProb
         height: 600,
         cell_width: 10.0,
         cell_height: 20.0,
-        session_name: "__probe__".to_string(),
+        session_name: "__control__".to_string(),
     };
     if codec::write_client_hello(&mut writer, &hello)
         .await

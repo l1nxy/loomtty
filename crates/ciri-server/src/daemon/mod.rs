@@ -21,9 +21,19 @@ pub async fn run_daemon() -> Result<()> {
     let config = ciri_config::config::CiriConfig::load().unwrap_or_default();
     let shell = config.terminal.shell.clone();
 
-    // Write shell integration scripts and set env var for child processes.
+    // Expose terminal metadata as env vars so child processes (neofetch, fastfetch,
+    // shell integrations, etc.) can detect ciri without walking the process tree.
     // SAFETY: This runs at startup before any other threads are spawned,
     // so modifying the process environment is safe.
+    unsafe {
+        std::env::set_var("TERM_PROGRAM", "ciri");
+        std::env::set_var("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+        std::env::set_var("COLORTERM", "truecolor");
+        std::env::set_var("LC_TERMINAL", "ciri");
+        std::env::set_var("LC_TERMINAL_VERSION", env!("CARGO_PKG_VERSION"));
+    }
+
+    // Write shell integration scripts and set env var for child processes.
     match crate::shell_integration::ensure_integration_dir() {
         Ok(dir) => {
             unsafe { std::env::set_var("CIRI_SHELL_INTEGRATION_DIR", &dir) };
@@ -83,6 +93,7 @@ pub async fn run_daemon() -> Result<()> {
         };
     }
     server.pane_inset = (config.appearance.padding + config.appearance.border_width) * 2.0;
+    server.idle_timeout = std::time::Duration::from_secs(config.server.idle_timeout_secs);
     server.session_config = config.session.clone();
     let state = Arc::new(Mutex::new(server));
 
@@ -107,12 +118,22 @@ pub async fn run_daemon() -> Result<()> {
                 signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
             let mut sigint =
                 signal(SignalKind::interrupt()).expect("failed to register SIGINT handler");
-            tokio::select! {
-                _ = sigterm.recv() => {
-                    log::info!("received SIGTERM");
-                }
-                _ = sigint.recv() => {
-                    log::info!("received SIGINT");
+            let mut sighup =
+                signal(SignalKind::hangup()).expect("failed to register SIGHUP handler");
+            loop {
+                tokio::select! {
+                    _ = sigterm.recv() => {
+                        log::info!("received SIGTERM");
+                        break;
+                    }
+                    _ = sigint.recv() => {
+                        log::info!("received SIGINT");
+                        break;
+                    }
+                    _ = sighup.recv() => {
+                        // Ignore — keeps daemon alive after SSH disconnect.
+                        log::info!("received SIGHUP, ignoring");
+                    }
                 }
             }
             connection::graceful_shutdown(&signal_state).await;

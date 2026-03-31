@@ -295,10 +295,24 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                 }
             }
 
-            // Server shutdown: had sessions before but now all gone and no clients
+            // Idle shutdown: start a deadline when all sessions/clients are gone.
             if s.had_session && s.sessions.is_empty() && s.clients.is_empty() {
-                log::info!("all sessions ended and no clients, shutting down server");
-                should_shutdown = true;
+                if s.idle_deadline.is_none() {
+                    log::info!(
+                        "all sessions ended and no clients, idle shutdown in {}s",
+                        s.idle_timeout.as_secs()
+                    );
+                    s.idle_deadline = Some(std::time::Instant::now() + s.idle_timeout);
+                }
+                if s.idle_deadline
+                    .is_some_and(|d| std::time::Instant::now() >= d)
+                {
+                    log::info!("idle timeout reached, shutting down server");
+                    should_shutdown = true;
+                }
+            } else if s.idle_deadline.is_some() {
+                log::info!("idle shutdown cancelled");
+                s.idle_deadline = None;
             }
         } // lock dropped here — Phase 1 complete
 

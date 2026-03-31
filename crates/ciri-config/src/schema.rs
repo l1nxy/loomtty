@@ -38,6 +38,8 @@ pub struct CiriConfig {
     pub remote: RemoteConfig,
     #[garde(skip)]
     pub session: SessionConfig,
+    #[garde(skip)]
+    pub server: ServerConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
@@ -504,6 +506,24 @@ impl Default for SessionConfig {
         SessionConfig {
             restore_agents: true,
             agent_save_interval_secs: 30,
+        }
+    }
+}
+
+// ── Server daemon ──────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ServerConfig {
+    /// Seconds to wait before shutting down when all sessions/clients are gone.
+    /// 0 means shut down immediately (old behavior). Default: 300 (5 minutes).
+    pub idle_timeout_secs: u64,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        ServerConfig {
+            idle_timeout_secs: 300,
         }
     }
 }

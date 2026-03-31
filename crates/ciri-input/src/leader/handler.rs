@@ -209,10 +209,7 @@ impl InputHandler {
             return InputResult::Consumed;
         }
 
-        // In text-input overlays (palette/search), skip leader/key-table escape
-        // handling so the overlay's own escape binding fires instead.
-        if !mode.intersects(BindingMode::PALETTE | BindingMode::SEARCH) && is_escape(event.key_name)
-        {
+        if is_escape(event.key_name) {
             if matches!(self.state, State::AwaitingAction { .. }) {
                 self.state = State::Idle;
                 return InputResult::Consumed;

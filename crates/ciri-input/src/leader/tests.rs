@@ -547,6 +547,32 @@ fn unified_key_table_dispatches_action() {
 }
 
 #[test]
+fn unified_palette_escape_deactivates_key_table_before_overlay_binding() {
+    let mut h = make_test_handler();
+    h.process_key_event("w", true, false, false, false, BindingMode::EMPTY);
+    h.process_key_event("r", false, false, false, false, BindingMode::EMPTY);
+    assert_eq!(h.active_table_name(), Some("resize"));
+
+    let r = h.process_key_event("escape", false, false, false, false, BindingMode::PALETTE);
+
+    assert!(matches!(r, InputResult::Consumed));
+    assert!(!h.has_active_table());
+}
+
+#[test]
+fn unified_search_escape_deactivates_key_table_before_overlay_binding() {
+    let mut h = make_test_handler();
+    h.process_key_event("w", true, false, false, false, BindingMode::EMPTY);
+    h.process_key_event("r", false, false, false, false, BindingMode::EMPTY);
+    assert_eq!(h.active_table_name(), Some("resize"));
+
+    let r = h.process_key_event("escape", false, false, false, false, BindingMode::SEARCH);
+
+    assert!(matches!(r, InputResult::Consumed));
+    assert!(!h.has_active_table());
+}
+
+#[test]
 fn unified_escape_pops_key_table() {
     let mut h = make_test_handler();
     h.process_key_event("w", true, false, false, false, BindingMode::EMPTY);

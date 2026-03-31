@@ -3,6 +3,7 @@
 use std::time::Instant;
 
 use crate::action::Action;
+use crate::keybind::BindingMode;
 
 /// Input mode determines how keybindings are activated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,26 +17,107 @@ pub enum InputMode {
     Sticky,
 }
 
-/// State machine for the input handler.
-#[derive(Debug)]
-pub enum State {
-    /// Normal — keys go to the terminal.
-    Idle,
-    /// Leader was pressed, awaiting action key (prefix / sticky-combo only).
-    AwaitingAction { entered_at: Instant },
-    /// Locked — all keys pass through. Only leader+unlock exits.
-    Locked,
-    /// Leader pressed while locked, awaiting the unlock key.
-    AwaitingUnlock,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionPolicy {
+    OneShot,
+    Sticky,
 }
 
-pub enum InputResult {
-    /// A keybinding matched; the caller should execute this action.
-    Action(Action),
-    /// Key was consumed by the input system (don't forward to PTY).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeaderSession {
+    pub policy: SessionPolicy,
+    pub entered_at: Instant,
+}
+
+impl LeaderSession {
+    pub fn new(policy: SessionPolicy) -> Self {
+        Self {
+            policy,
+            entered_at: Instant::now(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KeyTableState {
+    stack: Vec<String>,
+}
+
+impl KeyTableState {
+    pub fn is_active(&self) -> bool {
+        !self.stack.is_empty()
+    }
+
+    pub fn current(&self) -> Option<&str> {
+        self.stack.last().map(|s| s.as_str())
+    }
+
+    pub fn push(&mut self, name: &str, max_depth: usize) -> bool {
+        if self.current().is_some_and(|active| active == name) {
+            return true;
+        }
+        if self.stack.len() >= max_depth {
+            return false;
+        }
+        self.stack.push(name.to_string());
+        true
+    }
+
+    pub fn pop(&mut self) -> Option<String> {
+        self.stack.pop()
+    }
+
+    pub fn clear(&mut self) {
+        self.stack.clear();
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InputSessionState {
+    Idle,
+    Leader(LeaderSession),
+    Locked,
+    Unlocking,
+}
+
+impl InputSessionState {
+    pub fn is_locked(&self) -> bool {
+        matches!(self, Self::Locked | Self::Unlocking)
+    }
+
+    pub fn leader_session(&self) -> Option<&LeaderSession> {
+        match self {
+            Self::Leader(session) => Some(session),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputDispatch {
+    Action,
+    TextInput,
     Consumed,
-    /// Not handled; the caller should forward to the PTY.
     PassThrough,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BindingResolution {
+    Dispatch(Action),
+    TextInput,
+    Consumed,
+    PassThrough,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AppInputContext {
+    pub mode: BindingMode,
+}
+
+impl AppInputContext {
+    pub fn new(mode: BindingMode) -> Self {
+        Self { mode }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -101,7 +183,6 @@ impl LeaderKey {
     /// Does this key event match the leader key?
     pub fn matches(&self, key_name: &str, ctrl: bool, alt: bool, super_key: bool) -> bool {
         if self.key.is_empty() {
-            // Bare modifier (e.g. "alt"): match when that modifier key is pressed alone.
             let solo = |want: bool, name: &str, other1: bool, other2: bool| {
                 want && key_name.eq_ignore_ascii_case(name) && !other1 && !other2
             };
@@ -110,7 +191,6 @@ impl LeaderKey {
                 || solo(self.super_key, "super", ctrl, alt)
                 || solo(self.super_key, "meta", ctrl, alt)
         } else {
-            // Combo (e.g. "ctrl+w"): exact match on key + modifiers.
             key_name.eq_ignore_ascii_case(&self.key)
                 && ctrl == self.ctrl
                 && alt == self.alt
@@ -118,10 +198,15 @@ impl LeaderKey {
         }
     }
 
-    /// Is this a bare modifier leader (empty key part)?
     pub fn is_bare_modifier(&self) -> bool {
         self.key.is_empty()
     }
+}
+
+pub enum InputResult {
+    Action(Action),
+    Consumed,
+    PassThrough,
 }
 
 pub(super) fn is_escape(key_name: &str) -> bool {

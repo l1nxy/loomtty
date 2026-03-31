@@ -9,7 +9,7 @@ use crate::keybind::{BindingMode, BindingSet, KeyCombo, KeybindMap};
 use super::types::*;
 
 pub struct InputHandler {
-    pub state: State,
+    pub session: InputSessionState,
     pub leader_key: LeaderKey,
     pub input_mode: InputMode,
 
@@ -24,17 +24,17 @@ pub struct InputHandler {
     double_tap_window: Duration,
     last_leader_press: Option<Instant>,
 
-    // ── Unified binding system ──
     /// Unified binding set (populated via `set_binding_set`).
     pub binding_set: BindingSet,
-    /// Stack of active named key tables (e.g. ["resize"]).
-    key_table_stack: Vec<String>,
+    key_tables: KeyTableState,
 }
 
 impl InputHandler {
+    const MAX_TABLE_DEPTH: usize = 4;
+
     pub fn new(leader_timeout: Duration, double_tap_window: Duration) -> Self {
         Self {
-            state: State::Idle,
+            session: InputSessionState::Idle,
             leader_key: LeaderKey::parse("ctrl+space"),
             input_mode: InputMode::Prefix,
             keybinds: KeybindMap::default(),
@@ -46,11 +46,10 @@ impl InputHandler {
             double_tap_window,
             last_leader_press: None,
             binding_set: BindingSet::new(),
-            key_table_stack: Vec::new(),
+            key_tables: KeyTableState::default(),
         }
     }
 
-    /// Reload all keybindings from config values.
     pub fn reload_bindings(
         &mut self,
         leader: &str,
@@ -70,9 +69,6 @@ impl InputHandler {
         }
     }
 
-    // ── Public API ──
-
-    /// Process a key-press event.
     pub fn process_key(
         &mut self,
         key_name: &str,
@@ -84,65 +80,47 @@ impl InputHandler {
         self.process_key_event(key_name, ctrl, shift, alt, super_key, BindingMode::EMPTY)
     }
 
-    /// Process a key-release event.
     pub fn process_key_release(&mut self, key_name: &str) {
-        if !self.leader_key.is_bare_modifier() {
+        if !self.leader_key.is_bare_modifier() || !self.is_leader_release(key_name) {
             return;
         }
-        if !self.is_leader_release(key_name) {
-            return;
-        }
-        match self.state {
-            State::AwaitingAction { .. } => self.state = State::Idle,
-            State::AwaitingUnlock => self.state = State::Locked,
-            _ => {}
+        if matches!(self.session, InputSessionState::Leader(_)) {
+            self.session = InputSessionState::Idle;
+        } else if matches!(self.session, InputSessionState::Unlocking) {
+            self.session = InputSessionState::Locked;
         }
     }
 
     pub fn toggle_lock(&mut self) {
-        self.state = if self.is_locked() {
-            State::Idle
+        self.session = if self.is_locked() {
+            InputSessionState::Idle
         } else {
-            State::Locked
+            InputSessionState::Locked
         };
     }
 
     pub fn is_awaiting_action(&self) -> bool {
-        matches!(self.state, State::AwaitingAction { .. }) || self.has_active_table()
+        matches!(self.session, InputSessionState::Leader(_)) || self.has_active_table()
     }
 
     pub fn is_locked(&self) -> bool {
-        matches!(self.state, State::Locked | State::AwaitingUnlock)
+        self.session.is_locked()
     }
 
     pub fn current_mode_name(&self) -> Option<&str> {
         self.active_table_name()
     }
 
-    // ── Unified key processing API ──
-
     pub fn has_active_table(&self) -> bool {
-        !self.key_table_stack.is_empty()
+        self.key_tables.is_active()
     }
 
     pub fn active_table_name(&self) -> Option<&str> {
-        self.key_table_stack.last().map(|s| s.as_str())
+        self.key_tables.current()
     }
 
-    const MAX_TABLE_DEPTH: usize = 4;
-
     pub fn activate_key_table(&mut self, name: &str) {
-        if self
-            .key_table_stack
-            .last()
-            .is_some_and(|active| active == name)
-        {
-            return;
-        }
-
-        if self.key_table_stack.len() < Self::MAX_TABLE_DEPTH {
-            self.key_table_stack.push(name.to_string());
-        } else {
+        if !self.key_tables.push(name, Self::MAX_TABLE_DEPTH) {
             log::warn!(
                 "key table stack depth limit ({}) reached, ignoring activate_key_table({name:?})",
                 Self::MAX_TABLE_DEPTH
@@ -151,18 +129,17 @@ impl InputHandler {
     }
 
     pub fn deactivate_key_table(&mut self) {
-        self.key_table_stack.pop();
+        self.key_tables.pop();
     }
 
     pub fn deactivate_all_key_tables(&mut self) {
-        self.key_table_stack.clear();
+        self.key_tables.clear();
     }
 
     pub fn set_binding_set(&mut self, set: BindingSet) {
         self.binding_set = set;
     }
 
-    /// Unified key processing that uses BindingSet + BindingMode.
     pub fn process_key_event(
         &mut self,
         key_name: &str,
@@ -174,42 +151,54 @@ impl InputHandler {
     ) -> InputResult {
         self.check_timeout();
         let event = KeyEvent::new(key_name, ctrl, shift, alt, super_key);
-        let mode = self.build_runtime_mode(app_mode);
+        let context = AppInputContext::new(app_mode);
 
-        if matches!(self.state, State::AwaitingUnlock) {
-            return self.process_awaiting_unlock(event);
-        }
-        if mode.contains(BindingMode::LOCKED) {
-            return self.process_locked(event, mode);
-        }
-        if mode.contains(BindingMode::PASTE_CONFIRM) {
-            return self.lookup_binding(event, mode);
+        if let Some(result) = self.handle_session_gate(event, context) {
+            return result;
         }
 
-        if self.is_leader_press(event) && !matches!(self.state, State::AwaitingAction { .. }) {
-            if self.detect_double_tap() {
-                return InputResult::Action(Action::SendLeaderKey);
-            }
-            self.enter_awaiting_action();
-            return InputResult::Consumed;
+        if let Some(result) = self.handle_leader_press(event) {
+            return result;
         }
 
         if let Some(result) = self.handle_escape(event.key_name) {
             return result;
         }
 
-        self.lookup_binding(event, mode)
+        let resolution = self.resolve_binding(event, context);
+        self.apply_resolution(resolution, context)
     }
 
-    fn build_runtime_mode(&self, app_mode: BindingMode) -> BindingMode {
-        let mut mode = app_mode;
-        if matches!(self.state, State::AwaitingAction { .. }) {
-            mode |= BindingMode::LEADER;
+    fn handle_session_gate(
+        &mut self,
+        event: KeyEvent<'_>,
+        context: AppInputContext,
+    ) -> Option<InputResult> {
+        if matches!(self.session, InputSessionState::Unlocking) {
+            return Some(self.process_unlocking(event));
         }
-        if self.has_active_table() {
-            mode |= BindingMode::KEY_TABLE;
+
+        if context.mode.contains(BindingMode::LOCKED) {
+            return Some(self.process_locked(event, context));
         }
-        mode
+
+        if context.mode.contains(BindingMode::PASTE_CONFIRM) {
+            let resolution = self.resolve_binding(event, context);
+            return Some(self.apply_resolution(resolution, context));
+        }
+
+        None
+    }
+
+    fn handle_leader_press(&mut self, event: KeyEvent<'_>) -> Option<InputResult> {
+        if self.is_leader_press(event) && !matches!(self.session, InputSessionState::Leader(_)) {
+            if self.detect_double_tap() {
+                return Some(InputResult::Action(Action::SendLeaderKey));
+            }
+            self.session = InputSessionState::Leader(LeaderSession::new(self.session_policy()));
+            return Some(InputResult::Consumed);
+        }
+        None
     }
 
     fn handle_escape(&mut self, key_name: &str) -> Option<InputResult> {
@@ -217,8 +206,8 @@ impl InputHandler {
             return None;
         }
 
-        if matches!(self.state, State::AwaitingAction { .. }) {
-            self.state = State::Idle;
+        if matches!(self.session, InputSessionState::Leader(_)) {
+            self.session = InputSessionState::Idle;
             return Some(InputResult::Consumed);
         }
 
@@ -230,94 +219,137 @@ impl InputHandler {
         None
     }
 
-    fn process_locked(&mut self, event: KeyEvent<'_>, mode: BindingMode) -> InputResult {
-        if self.is_leader_press(event) {
-            self.state = State::AwaitingUnlock;
-            return InputResult::Consumed;
-        }
-        let combo = self.event_combo(event);
-        if let Some(binding) = self.binding_set.lookup(mode, None, &combo)
-            && matches!(binding.action, Action::ToggleLock)
-        {
-            return InputResult::Action(Action::ToggleLock);
-        }
-        InputResult::PassThrough
-    }
-
-    fn process_awaiting_unlock(&mut self, event: KeyEvent<'_>) -> InputResult {
-        let combo = self.combo_stripping_leader(event);
-        if let Some(binding) = self.binding_set.lookup(BindingMode::LEADER, None, &combo)
-            && matches!(binding.action, Action::ToggleLock)
-        {
-            self.state = State::Idle;
-            return InputResult::Action(Action::ToggleLock);
-        }
-        self.state = State::Idle;
-        InputResult::PassThrough
-    }
-
-    fn lookup_binding(&mut self, event: KeyEvent<'_>, mode: BindingMode) -> InputResult {
-        let combo = if mode.contains(BindingMode::LEADER) {
+    fn resolve_binding(&self, event: KeyEvent<'_>, context: AppInputContext) -> BindingResolution {
+        let runtime_mode = self.runtime_mode(context.mode);
+        let combo = if matches!(self.session, InputSessionState::Leader(_)) {
             self.combo_stripping_leader(event)
         } else {
             self.event_combo(event)
         };
+        let active_table = self.active_table_name();
 
-        let active_table = self.key_table_stack.last().map(|s| s.as_str());
-        if let Some(binding) = self.binding_set.lookup(mode, active_table, &combo) {
-            let action = binding.action.clone();
-            return self.dispatch_action(action, mode);
+        if let Some(binding) = self.binding_set.lookup(runtime_mode, active_table, &combo) {
+            return BindingResolution::Dispatch(binding.action.clone());
         }
 
-        if mode.intersects(BindingMode::SEARCH | BindingMode::PALETTE) {
-            return InputResult::Action(Action::TextInput);
+        if runtime_mode.intersects(BindingMode::SEARCH | BindingMode::PALETTE) {
+            return BindingResolution::TextInput;
         }
 
-        if mode.contains(BindingMode::LEADER) {
-            if self.input_mode == InputMode::Prefix {
-                self.state = State::Idle;
+        if matches!(self.session, InputSessionState::Leader(_)) {
+            return BindingResolution::Consumed;
+        }
+
+        BindingResolution::PassThrough
+    }
+
+    fn apply_resolution(
+        &mut self,
+        resolution: BindingResolution,
+        context: AppInputContext,
+    ) -> InputResult {
+        match resolution {
+            BindingResolution::Dispatch(action) => self.dispatch_action(action, context),
+            BindingResolution::TextInput => InputResult::Action(Action::TextInput),
+            BindingResolution::Consumed => {
+                self.finish_unmatched_leader();
+                InputResult::Consumed
             }
+            BindingResolution::PassThrough => InputResult::PassThrough,
+        }
+    }
+
+    fn dispatch_action(&mut self, action: Action, context: AppInputContext) -> InputResult {
+        match &action {
+            Action::ActivateKeyTable(name) | Action::EnterMode(name) => {
+                self.activate_key_table(name);
+                self.session = InputSessionState::Idle;
+                InputResult::Consumed
+            }
+            Action::DeactivateKeyTable => {
+                self.deactivate_key_table();
+                InputResult::Consumed
+            }
+            Action::ToggleLock => {
+                self.session = InputSessionState::Idle;
+                InputResult::Action(action)
+            }
+            _ => {
+                self.after_dispatched_action(&action, context);
+                InputResult::Action(action)
+            }
+        }
+    }
+
+    fn after_dispatched_action(&mut self, action: &Action, _context: AppInputContext) {
+        let Some(session) = self.session.leader_session().cloned() else {
+            return;
+        };
+
+        match session.policy {
+            SessionPolicy::OneShot => self.session = InputSessionState::Idle,
+            SessionPolicy::Sticky => {
+                if action.is_repeatable() {
+                    self.session = InputSessionState::Leader(LeaderSession::new(SessionPolicy::Sticky));
+                } else {
+                    self.session = InputSessionState::Idle;
+                }
+            }
+        }
+    }
+
+    fn finish_unmatched_leader(&mut self) {
+        if matches!(self.session, InputSessionState::Leader(_))
+            && matches!(self.input_mode, InputMode::Prefix)
+        {
+            self.session = InputSessionState::Idle;
+        }
+    }
+
+    fn process_locked(&mut self, event: KeyEvent<'_>, context: AppInputContext) -> InputResult {
+        if self.is_leader_press(event) {
+            self.session = InputSessionState::Unlocking;
             return InputResult::Consumed;
+        }
+
+        let combo = self.event_combo(event);
+        if let Some(binding) = self.binding_set.lookup(context.mode, None, &combo)
+            && matches!(binding.action, Action::ToggleLock)
+        {
+            self.session = InputSessionState::Idle;
+            return InputResult::Action(Action::ToggleLock);
         }
 
         InputResult::PassThrough
     }
 
-    fn dispatch_action(&mut self, action: Action, mode: BindingMode) -> InputResult {
-        match &action {
-            Action::ActivateKeyTable(name) | Action::EnterMode(name) => {
-                self.activate_key_table(name);
-                self.state = State::Idle;
-                return InputResult::Consumed;
-            }
-            Action::DeactivateKeyTable => {
-                self.deactivate_key_table();
-                return InputResult::Consumed;
-            }
-            Action::ToggleLock => {
-                self.state = State::Idle;
-                return InputResult::Action(action);
-            }
-            _ => {}
+    fn process_unlocking(&mut self, event: KeyEvent<'_>) -> InputResult {
+        let combo = self.combo_stripping_leader(event);
+        if let Some(binding) = self.binding_set.lookup(BindingMode::LEADER, None, &combo)
+            && matches!(binding.action, Action::ToggleLock)
+        {
+            self.session = InputSessionState::Idle;
+            return InputResult::Action(Action::ToggleLock);
         }
-
-        if mode.contains(BindingMode::LEADER) {
-            self.transition_after_action(&action);
-        }
-
-        InputResult::Action(action)
+        self.session = InputSessionState::Idle;
+        InputResult::PassThrough
     }
 
-    fn transition_after_action(&mut self, action: &Action) {
+    fn runtime_mode(&self, app_mode: BindingMode) -> BindingMode {
+        let mut mode = app_mode;
+        if matches!(self.session, InputSessionState::Leader(_)) {
+            mode |= BindingMode::LEADER;
+        }
+        if self.has_active_table() {
+            mode |= BindingMode::KEY_TABLE;
+        }
+        mode
+    }
+
+    fn session_policy(&self) -> SessionPolicy {
         match self.input_mode {
-            InputMode::Prefix => self.state = State::Idle,
-            InputMode::Sticky => {
-                if action.is_repeatable() {
-                    self.enter_awaiting_action();
-                } else {
-                    self.state = State::Idle;
-                }
-            }
+            InputMode::Prefix => SessionPolicy::OneShot,
+            InputMode::Sticky => SessionPolicy::Sticky,
         }
     }
 
@@ -340,12 +372,6 @@ impl InputHandler {
     fn is_leader_press(&self, event: KeyEvent<'_>) -> bool {
         self.leader_key
             .matches(event.key_name, event.ctrl, event.alt, event.super_key)
-    }
-
-    fn enter_awaiting_action(&mut self) {
-        self.state = State::AwaitingAction {
-            entered_at: Instant::now(),
-        };
     }
 
     fn is_leader_release(&self, key_name: &str) -> bool {
@@ -371,10 +397,11 @@ impl InputHandler {
         if self.input_mode == InputMode::Sticky || self.has_active_table() {
             return;
         }
-        if let State::AwaitingAction { entered_at } = &self.state
-            && entered_at.elapsed() > self.leader_timeout
-        {
-            self.state = State::Idle;
+        let Some(session) = self.session.leader_session() else {
+            return;
+        };
+        if session.entered_at.elapsed() > self.leader_timeout {
+            self.session = InputSessionState::Idle;
         }
     }
 

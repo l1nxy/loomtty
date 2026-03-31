@@ -13,7 +13,9 @@ pub fn restore_session(name: &str, dir: &Path) -> Result<Option<SessionState>> {
     }
 
     let json = fs::read_to_string(path)?;
-    serde_json::from_str(&json).map(Some).map_err(Into::into)
+    let state: SessionState = serde_json::from_str(&json)?;
+    state.validate_structure()?;
+    Ok(Some(state))
 }
 
 pub fn list_sessions(dir: &Path) -> Result<Vec<String>> {
@@ -54,6 +56,7 @@ mod tests {
     use crate::save::save_session;
     use crate::state::{SavedColumn, SavedTile, SavedWorkspace, SessionState};
     use std::fs;
+    use std::io::ErrorKind;
     use std::os::unix::fs::PermissionsExt;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -77,6 +80,63 @@ mod tests {
         assert_eq!(list_sessions(&dir).unwrap(), vec!["beta"]);
 
         delete_session("missing", &dir).unwrap();
+    }
+
+    #[test]
+    fn save_session_rejects_out_of_bounds_active_workspace_before_writing_files() {
+        let dir = unique_test_dir("session-invalid-active-workspace");
+        let mut state = sample_session("alpha");
+        state.active_workspace_idx = 1;
+
+        let err = save_session(&state, &dir).unwrap_err();
+        let err_text = err.to_string();
+        assert!(
+            err_text.contains("active workspace 1 out of bounds"),
+            "{err_text}"
+        );
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn restore_session_rejects_out_of_bounds_active_column_from_disk() {
+        let dir = unique_test_dir("session-invalid-active-column");
+        fs::create_dir_all(&dir).unwrap();
+
+        let mut state = sample_session("alpha");
+        state.workspaces[0].active_column_idx = 1;
+        fs::write(
+            dir.join("alpha.json"),
+            serde_json::to_string_pretty(&state).unwrap(),
+        )
+        .unwrap();
+
+        let err = restore_session("alpha", &dir).unwrap_err();
+        let err_text = err.to_string();
+        assert!(
+            err_text.contains("active column 1 out of bounds"),
+            "{err_text}"
+        );
+    }
+
+    #[test]
+    fn restore_session_rejects_out_of_bounds_active_tile_from_disk() {
+        let dir = unique_test_dir("session-invalid-active-tile");
+        fs::create_dir_all(&dir).unwrap();
+
+        let mut state = sample_session("alpha");
+        state.workspaces[0].columns[0].active_tile_idx = 1;
+        fs::write(
+            dir.join("alpha.json"),
+            serde_json::to_string_pretty(&state).unwrap(),
+        )
+        .unwrap();
+
+        let err = restore_session("alpha", &dir).unwrap_err();
+        let err_text = err.to_string();
+        assert!(
+            err_text.contains("active tile 1 out of bounds"),
+            "{err_text}"
+        );
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use crate::agent::SavedAgent;
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 /// Serializable session state for persistence (2D layout).
@@ -13,11 +14,62 @@ pub struct SessionState {
     pub active_workspace_idx: usize,
 }
 
+impl SessionState {
+    pub fn validate_structure(&self) -> Result<()> {
+        if self.workspaces.is_empty() {
+            anyhow::bail!("session '{}' has no workspaces", self.name);
+        }
+
+        if self.active_workspace_idx >= self.workspaces.len() {
+            anyhow::bail!(
+                "session '{}' active workspace {} out of bounds for {} workspaces",
+                self.name,
+                self.active_workspace_idx,
+                self.workspaces.len()
+            );
+        }
+
+        for (workspace_idx, workspace) in self.workspaces.iter().enumerate() {
+            workspace.validate_structure(&self.name, workspace_idx)?;
+        }
+
+        Ok(())
+    }
+}
+
 /// One workspace in the saved layout. Previously called `SavedRow`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedWorkspace {
     pub columns: Vec<SavedColumn>,
     pub active_column_idx: usize,
+}
+
+impl SavedWorkspace {
+    fn validate_structure(&self, session_name: &str, workspace_idx: usize) -> Result<()> {
+        if self.columns.is_empty() {
+            anyhow::bail!(
+                "session '{}' workspace {} has no columns",
+                session_name,
+                workspace_idx
+            );
+        }
+
+        if self.active_column_idx >= self.columns.len() {
+            anyhow::bail!(
+                "session '{}' workspace {} active column {} out of bounds for {} columns",
+                session_name,
+                workspace_idx,
+                self.active_column_idx,
+                self.columns.len()
+            );
+        }
+
+        for (column_idx, column) in self.columns.iter().enumerate() {
+            column.validate_structure(session_name, workspace_idx, column_idx)?;
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +80,37 @@ pub struct SavedColumn {
     /// If set, column uses a fixed pixel width instead of proportion.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub width_fixed_px: Option<f64>,
+}
+
+impl SavedColumn {
+    fn validate_structure(
+        &self,
+        session_name: &str,
+        workspace_idx: usize,
+        column_idx: usize,
+    ) -> Result<()> {
+        if self.tiles.is_empty() {
+            anyhow::bail!(
+                "session '{}' workspace {} column {} has no tiles",
+                session_name,
+                workspace_idx,
+                column_idx
+            );
+        }
+
+        if self.active_tile_idx >= self.tiles.len() {
+            anyhow::bail!(
+                "session '{}' workspace {} column {} active tile {} out of bounds for {} tiles",
+                session_name,
+                workspace_idx,
+                column_idx,
+                self.active_tile_idx,
+                self.tiles.len()
+            );
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

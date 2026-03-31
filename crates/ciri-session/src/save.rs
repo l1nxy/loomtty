@@ -12,6 +12,7 @@ pub fn validate_session_name(name: &str) -> Result<()> {
 
 pub fn save_session(state: &SessionState, dir: &Path) -> Result<()> {
     validate_session_name(&state.name)?;
+    state.validate_structure()?;
     fs::create_dir_all(dir)?;
     let json = serde_json::to_string_pretty(state)?;
     let paths = session_paths(dir, &state.name);

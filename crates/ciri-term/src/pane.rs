@@ -4,7 +4,7 @@ use alacritty_terminal::index::{Column, Line, Point};
 use alacritty_terminal::term::Config as TermConfig;
 use alacritty_terminal::term::Term;
 use alacritty_terminal::term::cell::Flags as CellFlags;
-use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape, NamedColor, Processor};
+use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape, NamedColor, Processor, Rgb};
 use anyhow::Result;
 use ciri_protocol::message::*;
 use std::sync::Arc;
@@ -311,6 +311,15 @@ impl Pane {
                 Event::ClipboardStore(_, text) => self.events.clipboard.push(text),
                 Event::ClipboardLoad(_, formatter) => {
                     let response = formatter("");
+                    self.write_to_pty(response.as_bytes());
+                }
+                Event::ColorRequest(index, formatter) => {
+                    // OSC 4;index;? query: look up the current color and respond.
+                    let color = match self.term.colors()[index] {
+                        Some(rgb) => rgb,
+                        None => default_color(index),
+                    };
+                    let response = formatter(color);
                     self.write_to_pty(response.as_bytes());
                 }
                 Event::Bell => self.events.bell = true,
@@ -902,5 +911,66 @@ mod tests {
 
         assert!(pane.drain_image_deletes());
         assert!(!pane.drain_image_deletes());
+    }
+}
+
+/// Standard xterm default color for a given palette index.
+///
+/// Indices 0-15: standard ANSI colors (same as xterm defaults).
+/// Indices 16-231: 6x6x6 color cube.
+/// Indices 232-255: grayscale ramp.
+/// Index 256: foreground (white).
+/// Index 257: background (black).
+/// Index 258: cursor (white).
+/// Others: fallback to white.
+fn default_color(index: usize) -> Rgb {
+    // Standard ANSI 16 colors (xterm defaults)
+    #[rustfmt::skip]
+    const ANSI16: [(u8, u8, u8); 16] = [
+        (  0,   0,   0), // Black
+        (205,   0,   0), // Red
+        (  0, 205,   0), // Green
+        (205, 205,   0), // Yellow
+        (  0,   0, 238), // Blue
+        (205,   0, 205), // Magenta
+        (  0, 205, 205), // Cyan
+        (229, 229, 229), // White
+        (127, 127, 127), // Bright Black
+        (255,   0,   0), // Bright Red
+        (  0, 255,   0), // Bright Green
+        (255, 255,   0), // Bright Yellow
+        ( 92,  92, 255), // Bright Blue
+        (255,   0, 255), // Bright Magenta
+        (  0, 255, 255), // Bright Cyan
+        (255, 255, 255), // Bright White
+    ];
+
+    if index < 16 {
+        let (r, g, b) = ANSI16[index];
+        return Rgb { r, g, b };
+    }
+
+    // 6x6x6 color cube (indices 16-231)
+    if index < 232 {
+        let idx = (index - 16) as u8;
+        let r = idx / 36;
+        let g = (idx / 6) % 6;
+        let b = idx % 6;
+        let to_component = |v: u8| if v == 0 { 0 } else { 55 + 40 * v };
+        return Rgb { r: to_component(r), g: to_component(g), b: to_component(b) };
+    }
+
+    // Grayscale ramp (indices 232-255)
+    if index < 256 {
+        let v = (8 + 10 * (index - 232)) as u8;
+        return Rgb { r: v, g: v, b: v };
+    }
+
+    // Special indices from alacritty_terminal::term::color
+    match index {
+        256 => Rgb { r: 255, g: 255, b: 255 }, // Foreground
+        257 => Rgb { r: 0, g: 0, b: 0 },       // Background
+        258 => Rgb { r: 255, g: 255, b: 255 }, // Cursor
+        _ => Rgb { r: 255, g: 255, b: 255 },   // Fallback
     }
 }

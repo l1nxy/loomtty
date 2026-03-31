@@ -1,0 +1,28 @@
+{
+  "featureId": "review-ciri-app",
+  "reviewedAt": "2026-03-31T06:37:42.259614+00:00",
+  "commitId": "9ce43b46825327841fb5061fe4983ddd26ce0ddc",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The grapheme-preservation fix correctly addresses same-width viewport-to-scrollback rebasing, but it leaves stale scrollback grapheme indices behind when old history is trimmed to max_scrollback, so grapheme metadata can point at the wrong visible rows after subsequent full syncs.",
+    "issues": [
+      {
+        "file": "crates/ciri-app/src/grid/sync.rs",
+        "line": 119,
+        "severity": "blocking",
+        "description": "After rebasing viewport grapheme entries and adding scrollback graphemes, the code trims excess history with scrollback.pop_front() but never shifts or drops the corresponding grapheme_map indices. Because grapheme_map uses absolute buffer indices spanning scrollback plus viewport, trimming one or more oldest rows leaves every preserved scrollback entry offset too high, so a later render can attach a grapheme to the wrong row/cell. This regresses correctness whenever max_scrollback is reached during full-sync append handling."
+      },
+      {
+        "file": "crates/ciri-app/src/grid/tests.rs",
+        "line": 270,
+        "severity": "non_blocking",
+        "description": "The added regression only covers preserving a grapheme when a same-width full sync moves a viewport row into scrollback. It does not exercise the max_scrollback trimming path introduced by the fix, so the stale-index bug above remains untested and would not be caught by this feature's new coverage."
+      }
+    ]
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the review-ciri-app handoff, transcript skeleton, skill instructions, and commit 9ce43b4. The feature fixes one grapheme-loss case, but the new rebasing logic fails to renormalize grapheme_map when scrollback rows are trimmed, so the review fails on a blocking client-grid correctness bug."
+}

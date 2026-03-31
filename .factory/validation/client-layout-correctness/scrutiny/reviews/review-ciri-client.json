@@ -1,0 +1,21 @@
+{
+  "featureId": "review-ciri-client",
+  "reviewedAt": "2026-03-31T06:35:31Z",
+  "commitId": "508fbff6b4ae66d52a2c11d5517dd2a980b09d1e",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The feature commit only adds targeted CLI parser regression tests in crates/ciri/src/cli.rs. The added coverage matches the reviewed command-surface behavior in cli.rs and main.rs: help requests terminate in clap before GUI startup, and attach still requires an explicit session name. I did not find a high-confidence correctness issue in the committed change.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The runtime-crate-reviewer skill currently assumes every review feature should first prove a failing bug, but this feature correctly concluded with regression coverage only after finding no confirmed bug in the reviewed CLI/help surface.",
+      "evidence": "Worker handoff skillFeedback.followedProcedure=false with a suggested skill change; the feature commit 508fbff6b4ae66d52a2c11d5517dd2a980b09d1e adds only tests in crates/ciri/src/cli.rs:363-381 and no production fix."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed feature review-ciri-client by inspecting mission metadata, the worker transcript skeleton, handoff, and commit 508fbff6b4ae66d52a2c11d5517dd2a980b09d1e. The change is test-only, the new coverage accurately guards the safe help path and attach parsing behavior already implemented in the client, and I found no blocking or non-blocking correctness defects in the feature diff."
+}

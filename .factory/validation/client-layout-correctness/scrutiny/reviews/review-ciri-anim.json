@@ -1,0 +1,15 @@
+{
+  "featureId": "review-ciri-anim",
+  "reviewedAt": "2026-03-31T00:00:00Z",
+  "commitId": "d3896f5",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The change is tightly scoped and correctly fixes the confirmed drag-dim lifecycle discontinuity by restarting the dim animation from the current transient opacity instead of resetting to 1.0. The added regression tests cover both restart continuity and post-restart retirement back to idle, and I did not find a correctness bug in the reviewed feature diff.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the review-ciri-anim handoff, transcript skeleton, and commit d3896f5. The feature appears correct: drag-dim restart continuity now preserves transient state, cleanup still retires correctly after restore, and no additional blocking or non-blocking correctness issues were identified in scope."
+}

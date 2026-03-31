@@ -82,6 +82,8 @@ pub(crate) struct RenderBuffers {
     pub color_glyphs: Vec<GlyphInstance>,
     pub glyph_batches: Vec<ScissoredRange>,
     pub color_glyph_batches: Vec<ScissoredRange>,
+    pub active_glyph_batches: Vec<ScissoredRange>,
+    pub active_color_glyph_batches: Vec<ScissoredRange>,
 }
 
 pub(crate) struct App {
@@ -208,6 +210,8 @@ impl App {
                 color_glyphs: Vec::new(),
                 glyph_batches: Vec::new(),
                 color_glyph_batches: Vec::new(),
+                active_glyph_batches: Vec::new(),
+                active_color_glyph_batches: Vec::new(),
             },
             clipboard: arboard::Clipboard::new().ok(),
             mouse_left_held: false,

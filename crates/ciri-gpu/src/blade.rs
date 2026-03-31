@@ -885,13 +885,14 @@ impl Renderer {
                 color: scene.clear_color,
             });
             all_bg.extend_from_slice(scene.bg_rects);
+            let active_bg_idx = 1 + scene.active_bg_start;
             let overlay_bg_idx = 1 + scene.overlay_bg_start;
             let total_bg = all_bg.len().min(self.rects.max_rects);
             self.rects.upload(&all_bg, vw_f, vh_f);
 
-            // 2. Draw pane background rects.
-            let pane_bg_count = overlay_bg_idx.min(total_bg);
-            self.rects.draw_range(&mut pass, 0, pane_bg_count);
+            // 2. Draw non-focused pane background rects.
+            let inactive_bg_count = active_bg_idx.min(total_bg);
+            self.rects.draw_range(&mut pass, 0, inactive_bg_count);
 
             // 3. Pane alpha glyphs (scissored) — upload + draw batches.
             atlas_gpu.render_pane_glyphs(&mut pass, scene.glyphs, vw_f, vh_f, scene.glyph_batches);
@@ -905,7 +906,32 @@ impl Renderer {
                 scene.color_glyph_batches,
             );
 
-            // 5. Overlay background rects (rendered after pane glyphs so they
+            // 5. Focused pane background rects.
+            let active_bg_count = overlay_bg_idx.saturating_sub(active_bg_idx);
+            if active_bg_count > 0 {
+                self.rects
+                    .draw_range(&mut pass, active_bg_idx, active_bg_count);
+            }
+
+            // 6. Focused pane alpha glyphs.
+            atlas_gpu.render_pane_glyphs(
+                &mut pass,
+                scene.glyphs,
+                vw_f,
+                vh_f,
+                scene.active_glyph_batches,
+            );
+
+            // 7. Focused pane color emoji.
+            atlas_gpu.render_pane_color_glyphs(
+                &mut pass,
+                scene.color_glyphs,
+                vw_f,
+                vh_f,
+                scene.active_color_glyph_batches,
+            );
+
+            // 8. Overlay background rects (rendered after pane glyphs so they
             //    occlude terminal text underneath popups like the context menu).
             let overlay_bg_count = total_bg.saturating_sub(overlay_bg_idx);
             if overlay_bg_count > 0 {
@@ -913,10 +939,10 @@ impl Renderer {
                     .draw_range(&mut pass, overlay_bg_idx, overlay_bg_count);
             }
 
-            // 6. Overlay alpha glyphs.
+            // 9. Overlay alpha glyphs.
             atlas_gpu.render_overlay_glyphs(&mut pass, scene.glyphs, scene.pane_glyph_end, vw, vh);
 
-            // 7. Overlay color emoji.
+            // 10. Overlay color emoji.
             atlas_gpu.render_overlay_color_glyphs(
                 &mut pass,
                 scene.color_glyphs,

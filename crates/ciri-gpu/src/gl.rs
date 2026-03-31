@@ -625,13 +625,15 @@ impl Renderer {
                 color: scene.clear_color,
             });
             all_bg.extend_from_slice(scene.bg_rects);
+            let active_bg_idx = 1 + scene.active_bg_start; // +1 for clear rect
             let overlay_bg_idx = 1 + scene.overlay_bg_start; // +1 for clear rect
             let total_bg = all_bg.len().min(self.rects.max_rects);
             self.rects.upload(&self.gl, &all_bg, vw, vh);
 
-            // 2. Draw pane background rects.
-            let pane_bg_count = overlay_bg_idx.min(total_bg);
-            self.rects.draw_range(&self.gl, 0, pane_bg_count, vw, vh);
+            // 2. Draw non-focused pane background rects.
+            let inactive_bg_count = active_bg_idx.min(total_bg);
+            self.rects
+                .draw_range(&self.gl, 0, inactive_bg_count, vw, vh);
 
             let vp = crate::ViewportDims {
                 width: vw,
@@ -653,7 +655,30 @@ impl Renderer {
                 scene.color_glyph_batches,
             );
 
-            // 5. Overlay background rects (rendered after pane glyphs so they
+            // 5. Focused pane background rects.
+            let active_bg_count = overlay_bg_idx.saturating_sub(active_bg_idx);
+            if active_bg_count > 0 {
+                self.rects
+                    .draw_range(&self.gl, active_bg_idx, active_bg_count, vw, vh);
+            }
+
+            // 6. Focused pane alpha glyphs.
+            atlas_gpu.alpha.render_pane_glyphs(
+                &self.gl,
+                scene.glyphs,
+                &vp,
+                scene.active_glyph_batches,
+            );
+
+            // 7. Focused pane color emoji.
+            atlas_gpu.color.render_pane_glyphs(
+                &self.gl,
+                scene.color_glyphs,
+                &vp,
+                scene.active_color_glyph_batches,
+            );
+
+            // 8. Overlay background rects (rendered after pane glyphs so they
             //    occlude terminal text underneath popups like the context menu).
             let overlay_bg_count = total_bg.saturating_sub(overlay_bg_idx);
             if overlay_bg_count > 0 {
@@ -661,7 +686,7 @@ impl Renderer {
                     .draw_range(&self.gl, overlay_bg_idx, overlay_bg_count, vw, vh);
             }
 
-            // 6. Overlay alpha glyphs (status bar, context menu text, etc.).
+            // 9. Overlay alpha glyphs (status bar, context menu text, etc.).
             atlas_gpu.alpha.render_overlay_glyphs(
                 &self.gl,
                 scene.glyphs,
@@ -669,7 +694,7 @@ impl Renderer {
                 &vp,
             );
 
-            // 7. Overlay color emoji.
+            // 10. Overlay color emoji.
             atlas_gpu.color.render_overlay_glyphs(
                 &self.gl,
                 scene.color_glyphs,

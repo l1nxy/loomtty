@@ -75,6 +75,8 @@ impl AppModel {
         // In overview, switching the active workspace can update focus without any
         // real geometry change for a pane, so suppress pure focus-only move animations.
         let new_positions = self.snapshot_pane_positions();
+        let active_pane_id = self.workspaces.active().active_pane_id();
+        let mut has_move = false;
         if self.config.animation.enabled {
             let config = self.anim_config();
             for (pane_id, (old_x, old_y)) in &old_positions {
@@ -93,6 +95,9 @@ impl AppModel {
                                     && (new_y - self.workspaces.workspace_y(ws_idx)).abs() <= 1.0
                             });
                     if (dx.abs() > 1.0 || dy.abs() > 1.0) && !is_focus_only_workspace_switch {
+                        if active_pane_id == Some(*pane_id) {
+                            has_move = true;
+                        }
                         self.anim_mgr.ensure_pane_registered(*pane_id);
                         self.anim_mgr
                             .start_move_animation(*pane_id, dx, dy, &config);
@@ -102,5 +107,14 @@ impl AppModel {
         }
 
         self.animate_to_active();
+
+        // Niri-style move animation: jump viewport to target immediately so
+        // per-pane move_offset springs provide all the visual motion.
+        // Without this, the viewport spring and pane move springs cancel each
+        // other out for the focused pane, making the move invisible.
+        if has_move && self.config.animation.enabled {
+            let target = self.anim_mgr.view_offset_x.target();
+            self.anim_mgr.view_offset_x.jump_to(target);
+        }
     }
 }

@@ -15,6 +15,11 @@ pub struct FrameScene<'a> {
     pub color_glyphs: &'a [GlyphInstance],
     pub glyph_batches: &'a [ScissoredRange],
     pub color_glyph_batches: &'a [ScissoredRange],
+    /// Index into `bg_rects` where the focused pane begins.
+    /// This segment is rendered after non-focused panes so the focused pane stays on top.
+    pub active_bg_start: usize,
+    pub active_glyph_batches: &'a [ScissoredRange],
+    pub active_color_glyph_batches: &'a [ScissoredRange],
     pub pane_glyph_end: usize,
     pub pane_color_glyph_end: usize,
     /// Index into `bg_rects` where overlay rects begin.

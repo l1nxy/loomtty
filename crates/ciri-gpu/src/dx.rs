@@ -969,13 +969,14 @@ impl Renderer {
                 color: scene.clear_color,
             });
             all_bg.extend_from_slice(scene.bg_rects);
+            let active_bg_idx = 1 + scene.active_bg_start;
             let overlay_bg_idx = 1 + scene.overlay_bg_start;
             let total_bg = all_bg.len().min(self.rects.max_rects);
             self.rects.upload(&self.ctx, &all_bg, vw, vh);
 
-            // 2. Draw pane background rects.
-            let pane_bg_count = overlay_bg_idx.min(total_bg);
-            self.rects.draw_range(&self.ctx, 0, pane_bg_count);
+            // 2. Draw non-focused pane background rects.
+            let inactive_bg_count = active_bg_idx.min(total_bg);
+            self.rects.draw_range(&self.ctx, 0, inactive_bg_count);
 
             let vp = crate::ViewportDims {
                 width: vw,
@@ -997,7 +998,31 @@ impl Renderer {
                 scene.color_glyph_batches,
             );
 
-            // 5. Overlay background rects.
+            // 5. Focused pane background rects.
+            let active_bg_count = overlay_bg_idx.saturating_sub(active_bg_idx);
+            if active_bg_count > 0 {
+                self.ctx.RSSetScissorRects(Some(&[full_rect]));
+                self.rects
+                    .draw_range(&self.ctx, active_bg_idx, active_bg_count);
+            }
+
+            // 6. Focused pane alpha glyphs.
+            atlas_gpu.alpha.render_pane_glyphs(
+                &self.ctx,
+                scene.glyphs,
+                &vp,
+                scene.active_glyph_batches,
+            );
+
+            // 7. Focused pane color emoji.
+            atlas_gpu.color.render_pane_glyphs(
+                &self.ctx,
+                scene.color_glyphs,
+                &vp,
+                scene.active_color_glyph_batches,
+            );
+
+            // 8. Overlay background rects.
             let overlay_bg_count = total_bg.saturating_sub(overlay_bg_idx);
             if overlay_bg_count > 0 {
                 self.ctx.RSSetScissorRects(Some(&[full_rect]));
@@ -1005,7 +1030,7 @@ impl Renderer {
                     .draw_range(&self.ctx, overlay_bg_idx, overlay_bg_count);
             }
 
-            // 6. Overlay alpha glyphs.
+            // 9. Overlay alpha glyphs.
             atlas_gpu.alpha.render_overlay_glyphs(
                 &self.ctx,
                 scene.glyphs,
@@ -1013,7 +1038,7 @@ impl Renderer {
                 &vp,
             );
 
-            // 7. Overlay color emoji.
+            // 10. Overlay color emoji.
             atlas_gpu.color.render_overlay_glyphs(
                 &self.ctx,
                 scene.color_glyphs,

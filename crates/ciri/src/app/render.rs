@@ -11,12 +11,25 @@ use std::time::Instant;
 use super::App;
 use super::status_bar::{TextEmitParams, emit_status_text};
 
-pub(crate) struct RenderOutput<'a> {
-    pub bg_rects: &'a mut Vec<Rect>,
-    pub glyphs: &'a mut Vec<GlyphInstance>,
-    pub color_glyphs: &'a mut Vec<GlyphInstance>,
-    pub glyph_batches: &'a mut Vec<ScissoredRange>,
-    pub color_glyph_batches: &'a mut Vec<ScissoredRange>,
+#[derive(Clone, Copy)]
+struct TilePaintConfig {
+    border_w: f32,
+    active_border: [f32; 4],
+    inactive_border: [f32; 4],
+    bg_color: [f32; 4],
+    link_color: [f32; 4],
+    accent: [f32; 4],
+    cache_tile_glyphs: bool,
+}
+
+#[derive(Clone, Copy)]
+struct PaneVisualState {
+    tr: GeoRect,
+    scissor: (u32, u32, u32, u32),
+    inner_x: f32,
+    inner_y: f32,
+    dim: f32,
+    open_opacity: f32,
 }
 
 impl App {
@@ -40,472 +53,514 @@ impl App {
         self.core.advance_animations(dt)
     }
 
+    fn pane_visual_state(
+        &self,
+        pane_id: u64,
+        tile_rect: GeoRect,
+        zoom: f32,
+        vw: f32,
+        vh: f32,
+    ) -> Option<PaneVisualState> {
+        let zoom_threshold = self.core.config.animation.zoom_threshold;
+        let border_w = self.core.config.appearance.border_width;
+        let padding = self.core.config.appearance.padding;
+        let base_tr = Self::transformed_tile_rect_for_zoom(tile_rect, zoom, zoom_threshold, vw, vh);
+
+        let focus_opacity = self.core.anim_mgr.pane_focus_opacity(pane_id);
+        let open_opacity = self.core.anim_mgr.pane_open_opacity(pane_id);
+        let drag_dim = self.core.anim_mgr.pane_drag_dim(pane_id);
+        let dim = focus_opacity * open_opacity * drag_dim;
+
+        let slide_progress = self.core.anim_mgr.pane_open_slide(pane_id);
+        let (open_dx, open_dy) = match self.core.config.animation.pane_open_style {
+            PaneOpenStyle::SlideUp | PaneOpenStyle::FadeSlideUp => {
+                (0.0, -base_tr.h * slide_progress)
+            }
+            PaneOpenStyle::SlideDown => (0.0, base_tr.h * slide_progress),
+            PaneOpenStyle::SlideLeft => (-base_tr.w * slide_progress, 0.0),
+            PaneOpenStyle::Fade => (0.0, 0.0),
+        };
+        let (move_dx, move_dy) = self.core.anim_mgr.pane_move_offset(pane_id);
+        let tr = GeoRect::new(
+            base_tr.x + open_dx + move_dx * zoom,
+            base_tr.y + open_dy + move_dy * zoom,
+            base_tr.w,
+            base_tr.h,
+        );
+        let scissor = scissor_rect(&tr, vw, vh)?;
+        Some(PaneVisualState {
+            tr,
+            scissor,
+            inner_x: tr.x + (border_w + padding) * zoom,
+            inner_y: tr.y + (border_w + padding) * zoom,
+            dim,
+            open_opacity,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_tile(
+        &mut self,
+        pane_id: u64,
+        tile_rect: GeoRect,
+        is_active: bool,
+        zoom: f32,
+        vw: f32,
+        vh: f32,
+        paint: TilePaintConfig,
+        bg_rects: &mut Vec<Rect>,
+        glyphs: &mut Vec<GlyphInstance>,
+        color_glyphs: &mut Vec<GlyphInstance>,
+        glyph_batches: &mut Vec<ScissoredRange>,
+        color_glyph_batches: &mut Vec<ScissoredRange>,
+    ) {
+        let Some(visual) = self.pane_visual_state(pane_id, tile_rect, zoom, vw, vh) else {
+            return;
+        };
+        let tr = visual.tr;
+        let inner_x = visual.inner_x;
+        let inner_y = visual.inner_y;
+
+        if is_active {
+            match &self.core.config.appearance.focus_ring.style {
+                FocusRingStyle::Glow => {
+                    let fr = &self.core.config.appearance.focus_ring;
+                    let layers = fr.glow_layers.max(1) as usize;
+                    for layer in (0..layers).rev() {
+                        let offset = fr.glow_radius * (layer + 1) as f32 / layers as f32;
+                        let alpha =
+                            paint.active_border[3] * (1.0 - layer as f32 / layers as f32) * 0.3;
+                        bg_rects.push(Rect {
+                            x: tr.x - offset,
+                            y: tr.y - offset,
+                            w: tr.w + offset * 2.0,
+                            h: tr.h + offset * 2.0,
+                            color: [
+                                paint.active_border[0],
+                                paint.active_border[1],
+                                paint.active_border[2],
+                                alpha,
+                            ],
+                        });
+                    }
+                    bg_rects.push(Rect {
+                        x: tr.x,
+                        y: tr.y,
+                        w: tr.w,
+                        h: tr.h,
+                        color: paint.active_border,
+                    });
+                }
+                FocusRingStyle::Dashed => {
+                    let fr = &self.core.config.appearance.focus_ring;
+                    emit_dashed_border(
+                        bg_rects,
+                        &tr,
+                        paint.border_w * zoom,
+                        fr.dash_length,
+                        fr.gap_length,
+                        paint.active_border,
+                    );
+                }
+                FocusRingStyle::Solid => {
+                    bg_rects.push(Rect {
+                        x: tr.x,
+                        y: tr.y,
+                        w: tr.w,
+                        h: tr.h,
+                        color: paint.active_border,
+                    });
+                }
+            }
+        } else {
+            bg_rects.push(Rect {
+                x: tr.x,
+                y: tr.y,
+                w: tr.w,
+                h: tr.h,
+                color: paint.inactive_border,
+            });
+        }
+        bg_rects.push(Rect {
+            x: tr.x + paint.border_w * zoom,
+            y: tr.y + paint.border_w * zoom,
+            w: tr.w - paint.border_w * zoom * 2.0,
+            h: tr.h - paint.border_w * zoom * 2.0,
+            color: paint.bg_color,
+        });
+        if self.core.overview.active
+            && self
+                .core
+                .overview
+                .hovered_pane
+                .is_some_and(|(_, hovered_pane_id)| hovered_pane_id == pane_id)
+        {
+            let hover_border_w = (paint.border_w * zoom).max(1.0);
+            for layer in (1..=2).rev() {
+                let spread = layer as f32 * 2.0 * zoom.max(1.0);
+                bg_rects.push(Rect {
+                    x: tr.x - spread,
+                    y: tr.y - spread,
+                    w: tr.w + spread * 2.0,
+                    h: tr.h + spread * 2.0,
+                    color: [
+                        paint.accent[0],
+                        paint.accent[1],
+                        paint.accent[2],
+                        0.08 / layer as f32,
+                    ],
+                });
+            }
+            bg_rects.push(Rect {
+                x: tr.x,
+                y: tr.y,
+                w: tr.w,
+                h: hover_border_w,
+                color: [paint.accent[0], paint.accent[1], paint.accent[2], 0.65],
+            });
+            bg_rects.push(Rect {
+                x: tr.x,
+                y: tr.y + tr.h - hover_border_w,
+                w: tr.w,
+                h: hover_border_w,
+                color: [paint.accent[0], paint.accent[1], paint.accent[2], 0.65],
+            });
+            bg_rects.push(Rect {
+                x: tr.x,
+                y: tr.y,
+                w: hover_border_w,
+                h: tr.h,
+                color: [paint.accent[0], paint.accent[1], paint.accent[2], 0.65],
+            });
+            bg_rects.push(Rect {
+                x: tr.x + tr.w - hover_border_w,
+                y: tr.y,
+                w: hover_border_w,
+                h: tr.h,
+                color: [paint.accent[0], paint.accent[1], paint.accent[2], 0.65],
+            });
+        }
+
+        let Some(view) = self.cached_views.get(&pane_id) else {
+            return;
+        };
+
+        for r in &view.bg_rects {
+            let src = GeoRect::new(
+                inner_x + r.x * zoom,
+                inner_y + r.y * zoom,
+                r.w * zoom,
+                r.h * zoom,
+            );
+            if let Some(c) = src.intersection(&tr) {
+                bg_rects.push(Rect {
+                    x: c.x,
+                    y: c.y,
+                    w: c.w,
+                    h: c.h,
+                    color: r.color,
+                });
+            }
+        }
+
+        if self.core.cursor_blink_visible && is_active {
+            for cursor in &view.cursor_rects {
+                let src = GeoRect::new(
+                    inner_x + cursor.x * zoom,
+                    inner_y + cursor.y * zoom,
+                    cursor.w * zoom,
+                    cursor.h * zoom,
+                );
+                if let Some(c) = src.intersection(&tr) {
+                    bg_rects.push(Rect {
+                        x: c.x,
+                        y: c.y,
+                        w: c.w,
+                        h: c.h,
+                        color: cursor.color,
+                    });
+                }
+            }
+        }
+
+        if let Some(sb) = &view.scrollbar_rect {
+            let src = GeoRect::new(
+                inner_x + sb.x * zoom,
+                inner_y + sb.y * zoom,
+                sb.w * zoom,
+                sb.h * zoom,
+            );
+            if let Some(c) = src.intersection(&tr) {
+                bg_rects.push(Rect {
+                    x: c.x,
+                    y: c.y,
+                    w: c.w,
+                    h: c.h,
+                    color: sb.color,
+                });
+            }
+        }
+
+        if let Some(sel) = &self.core.selection
+            && sel.pane_id == pane_id
+            && sel.start != sel.end
+            && let Some(grid) = self.core.pane_grids.get(&pane_id)
+        {
+            let (cw, ch) = self.cell_dimensions();
+            let (start, end) = if sel.start.1 < sel.end.1
+                || (sel.start.1 == sel.end.1 && sel.start.0 <= sel.end.0)
+            {
+                (sel.start, sel.end)
+            } else {
+                (sel.end, sel.start)
+            };
+            let fg = self
+                .cached_color_table
+                .resolve_packed(ciri_protocol::message::DEFAULT_FOREGROUND);
+            let sel_color = [fg[0], fg[1], fg[2], 0.35];
+            for buf_row in start.1..=end.1 {
+                let viewport_row = match grid.buffer_to_viewport_row(buf_row) {
+                    Some(r) => r,
+                    None => continue,
+                };
+                let left = if buf_row == start.1 { start.0 } else { 0 };
+                let right = if buf_row == end.1 {
+                    end.0
+                } else {
+                    grid.cols.saturating_sub(1)
+                };
+                let sx = inner_x + left as f32 * cw * zoom;
+                let sy = inner_y + viewport_row as f32 * ch * zoom;
+                let sw = (right - left + 1) as f32 * cw * zoom;
+                let sh = ch * zoom;
+                let src = GeoRect::new(sx, sy, sw, sh);
+                if let Some(c) = src.intersection(&tr) {
+                    bg_rects.push(Rect {
+                        x: c.x,
+                        y: c.y,
+                        w: c.w,
+                        h: c.h,
+                        color: sel_color,
+                    });
+                }
+            }
+        }
+
+        if let Some(link) = &self.core.hovered_link
+            && link.pane_id == pane_id
+            && let Some(grid) = self.core.pane_grids.get(&pane_id)
+            && let Some(viewport_row) = grid.buffer_to_viewport_row(link.start.1)
+        {
+            let (cw, ch) = self.cell_dimensions();
+            let underline_h = (zoom.max(1.0)).clamp(1.0, 2.0);
+            let sx = inner_x + link.start.0 as f32 * cw * zoom;
+            let sy = inner_y + (viewport_row as f32 + 1.0) * ch * zoom - underline_h - zoom;
+            let sw = (link.end.0 - link.start.0 + 1) as f32 * cw * zoom;
+            let src = GeoRect::new(sx, sy, sw, underline_h);
+            if let Some(c) = src.intersection(&tr) {
+                bg_rects.push(Rect {
+                    x: c.x,
+                    y: c.y,
+                    w: c.w,
+                    h: c.h,
+                    color: paint.link_color,
+                });
+            }
+        }
+
+        if let Some(search) = &self.core.search_state
+            && search.pane_id == pane_id
+            && let Some(grid) = self.core.pane_grids.get(&pane_id)
+        {
+            let (cw, ch) = self.cell_dimensions();
+            let vp_top = grid.viewport_top();
+            let vp_bottom = vp_top + grid.rows as usize;
+
+            for (match_idx, m) in search.matches.iter().enumerate() {
+                if m.buffer_row < vp_top || m.buffer_row >= vp_bottom {
+                    continue;
+                }
+                let vp_row = m.buffer_row - vp_top;
+                let sx = inner_x + m.start_col as f32 * cw * zoom;
+                let sy = inner_y + vp_row as f32 * ch * zoom;
+                let sw = (m.end_col - m.start_col + 1) as f32 * cw * zoom;
+                let sh = ch * zoom;
+                let color = if match_idx == search.current_match_idx {
+                    [1.0, 0.6, 0.0, 0.5]
+                } else {
+                    [1.0, 1.0, 0.0, 0.3]
+                };
+                let src = GeoRect::new(sx, sy, sw, sh);
+                if let Some(c) = src.intersection(&tr) {
+                    bg_rects.push(Rect {
+                        x: c.x,
+                        y: c.y,
+                        w: c.w,
+                        h: c.h,
+                        color,
+                    });
+                }
+            }
+        }
+
+        let tile_key = (
+            inner_x.to_bits(),
+            inner_y.to_bits(),
+            zoom.to_bits(),
+            visual.dim.to_bits(),
+        );
+        let glyph_start = glyphs.len();
+        let color_start = color_glyphs.len();
+        let cache_hit = paint.cache_tile_glyphs
+            && self
+                .cached_tile_glyphs
+                .get(&pane_id)
+                .is_some_and(|c| c.generation == view.generation && c.key == tile_key);
+
+        if cache_hit {
+            let cached = self.cached_tile_glyphs.get(&pane_id).unwrap();
+            glyphs.extend_from_slice(&cached.glyphs);
+            color_glyphs.extend_from_slice(&cached.color_glyphs);
+        } else {
+            let make_instance =
+                |g: &terminal::RelativeGlyph, color: [f32; 4]| -> Option<GlyphInstance> {
+                    let sx = (inner_x + g.px * zoom).round();
+                    let sy = (inner_y + g.py * zoom).round();
+                    let gw = (g.glyph_w * zoom).round();
+                    let gh = (g.glyph_h * zoom).round();
+
+                    if gw <= 0.0 || gh <= 0.0 {
+                        return None;
+                    }
+
+                    Some(GlyphInstance {
+                        pos: [sx, sy],
+                        size: [gw, gh],
+                        uv_pos: [g.u0, g.v0],
+                        uv_size: [g.u1 - g.u0, g.v1 - g.v0],
+                        color,
+                    })
+                };
+
+            glyphs.extend(view.glyph_instances.iter().filter_map(|g| {
+                let color = [
+                    g.color[0] * visual.dim,
+                    g.color[1] * visual.dim,
+                    g.color[2] * visual.dim,
+                    g.color[3],
+                ];
+                make_instance(g, color)
+            }));
+
+            let emoji_color = [visual.dim, visual.dim, visual.dim, 1.0];
+            color_glyphs.extend(
+                view.color_glyph_instances
+                    .iter()
+                    .filter_map(|g| make_instance(g, emoji_color)),
+            );
+
+            if paint.cache_tile_glyphs {
+                self.cached_tile_glyphs.insert(
+                    pane_id,
+                    super::CachedTileGlyphs {
+                        generation: view.generation,
+                        key: tile_key,
+                        glyphs: glyphs[glyph_start..].to_vec(),
+                        color_glyphs: color_glyphs[color_start..].to_vec(),
+                    },
+                );
+            }
+        }
+
+        let (sx, sy, sw, sh) = visual.scissor;
+        if glyph_start < glyphs.len() {
+            glyph_batches.push(ScissoredRange {
+                x: sx,
+                y: sy,
+                w: sw,
+                h: sh,
+                start: glyph_start,
+                end: glyphs.len(),
+            });
+        }
+        if color_start < color_glyphs.len() {
+            color_glyph_batches.push(ScissoredRange {
+                x: sx,
+                y: sy,
+                w: sw,
+                h: sh,
+                start: color_start,
+                end: color_glyphs.len(),
+            });
+        }
+
+        if visual.open_opacity < 1.0 {
+            let overlay_alpha = 1.0 - visual.open_opacity;
+            bg_rects.push(Rect {
+                x: tr.x,
+                y: tr.y,
+                w: tr.w,
+                h: tr.h,
+                color: [0.0, 0.0, 0.0, overlay_alpha],
+            });
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn build_tiles(
         &mut self,
         tiles: &[(u64, GeoRect, bool)],
         zoom: f32,
         vw: f32,
         vh: f32,
-        out: &mut RenderOutput<'_>,
-    ) {
+        bg_rects: &mut Vec<Rect>,
+        glyphs: &mut Vec<GlyphInstance>,
+        color_glyphs: &mut Vec<GlyphInstance>,
+        glyph_batches: &mut Vec<ScissoredRange>,
+        color_glyph_batches: &mut Vec<ScissoredRange>,
+        active_glyph_batches: &mut Vec<ScissoredRange>,
+        active_color_glyph_batches: &mut Vec<ScissoredRange>,
+    ) -> usize {
         let zoom_threshold = self.core.config.animation.zoom_threshold;
-        let padding = self.core.config.appearance.padding;
-        let border_w = self.core.config.appearance.border_width;
-        let active_border = if self.core.config.appearance.active_border_color.is_empty() {
-            ThemeConfig::parse_color(&self.core.config.theme.border_active)
-        } else {
-            ThemeConfig::parse_color(&self.core.config.appearance.active_border_color)
-        };
-        let inactive_border = if self.core.config.appearance.inactive_border_color.is_empty() {
-            ThemeConfig::parse_color(&self.core.config.theme.border_inactive)
-        } else {
-            ThemeConfig::parse_color(&self.core.config.appearance.inactive_border_color)
-        };
-        // inactive_opacity is now handled by AnimConfig in the animation manager
-        let bg_color = ThemeConfig::parse_color(&self.core.config.theme.background);
-        let link_color = ThemeConfig::parse_color(&self.core.config.theme.accent);
-        let accent = ThemeConfig::parse_color(&self.core.config.theme.accent);
-        let cache_tile_glyphs = self.pending_resize.is_none();
-
-        for (pane_id, tile_rect, is_active) in tiles {
-            let tr = Self::transformed_tile_rect_for_zoom(*tile_rect, zoom, zoom_threshold, vw, vh);
-            let scissor = scissor_rect(&tr, vw, vh);
-            if scissor.is_none() {
-                continue;
-            }
-
-            // Focus ring: configurable style for active pane
-            if *is_active {
-                match &self.core.config.appearance.focus_ring.style {
-                    FocusRingStyle::Glow => {
-                        let fr = &self.core.config.appearance.focus_ring;
-                        let layers = fr.glow_layers.max(1) as usize;
-                        for layer in (0..layers).rev() {
-                            let offset = fr.glow_radius * (layer + 1) as f32 / layers as f32;
-                            let alpha =
-                                active_border[3] * (1.0 - layer as f32 / layers as f32) * 0.3;
-                            out.bg_rects.push(Rect {
-                                x: tr.x - offset,
-                                y: tr.y - offset,
-                                w: tr.w + offset * 2.0,
-                                h: tr.h + offset * 2.0,
-                                color: [
-                                    active_border[0],
-                                    active_border[1],
-                                    active_border[2],
-                                    alpha,
-                                ],
-                            });
-                        }
-                        out.bg_rects.push(Rect {
-                            x: tr.x,
-                            y: tr.y,
-                            w: tr.w,
-                            h: tr.h,
-                            color: active_border,
-                        });
-                    }
-                    FocusRingStyle::Dashed => {
-                        let fr = &self.core.config.appearance.focus_ring;
-                        let bw = border_w * zoom;
-                        emit_dashed_border(
-                            out.bg_rects,
-                            &tr,
-                            bw,
-                            fr.dash_length,
-                            fr.gap_length,
-                            active_border,
-                        );
-                    }
-                    FocusRingStyle::Solid => {
-                        out.bg_rects.push(Rect {
-                            x: tr.x,
-                            y: tr.y,
-                            w: tr.w,
-                            h: tr.h,
-                            color: active_border,
-                        });
-                    }
-                }
+        let paint = TilePaintConfig {
+            border_w: self.core.config.appearance.border_width,
+            active_border: if self.core.config.appearance.active_border_color.is_empty() {
+                ThemeConfig::parse_color(&self.core.config.theme.border_active)
             } else {
-                out.bg_rects.push(Rect {
-                    x: tr.x,
-                    y: tr.y,
-                    w: tr.w,
-                    h: tr.h,
-                    color: inactive_border,
-                });
-            }
-            out.bg_rects.push(Rect {
-                x: tr.x + border_w * zoom,
-                y: tr.y + border_w * zoom,
-                w: tr.w - border_w * zoom * 2.0,
-                h: tr.h - border_w * zoom * 2.0,
-                color: bg_color,
-            });
-            if self.core.overview.active
-                && self
-                    .core
-                    .overview
-                    .hovered_pane
-                    .is_some_and(|(_, hovered_pane_id)| hovered_pane_id == *pane_id)
-            {
-                let hover_border_w = (border_w * zoom).max(1.0);
-                for layer in (1..=2).rev() {
-                    let spread = layer as f32 * 2.0 * zoom.max(1.0);
-                    out.bg_rects.push(Rect {
-                        x: tr.x - spread,
-                        y: tr.y - spread,
-                        w: tr.w + spread * 2.0,
-                        h: tr.h + spread * 2.0,
-                        color: [accent[0], accent[1], accent[2], 0.08 / layer as f32],
-                    });
-                }
-                out.bg_rects.push(Rect {
-                    x: tr.x,
-                    y: tr.y,
-                    w: tr.w,
-                    h: hover_border_w,
-                    color: [accent[0], accent[1], accent[2], 0.65],
-                });
-                out.bg_rects.push(Rect {
-                    x: tr.x,
-                    y: tr.y + tr.h - hover_border_w,
-                    w: tr.w,
-                    h: hover_border_w,
-                    color: [accent[0], accent[1], accent[2], 0.65],
-                });
-                out.bg_rects.push(Rect {
-                    x: tr.x,
-                    y: tr.y,
-                    w: hover_border_w,
-                    h: tr.h,
-                    color: [accent[0], accent[1], accent[2], 0.65],
-                });
-                out.bg_rects.push(Rect {
-                    x: tr.x + tr.w - hover_border_w,
-                    y: tr.y,
-                    w: hover_border_w,
-                    h: tr.h,
-                    color: [accent[0], accent[1], accent[2], 0.65],
-                });
+                ThemeConfig::parse_color(&self.core.config.appearance.active_border_color)
+            },
+            inactive_border: if self.core.config.appearance.inactive_border_color.is_empty() {
+                ThemeConfig::parse_color(&self.core.config.theme.border_inactive)
+            } else {
+                ThemeConfig::parse_color(&self.core.config.appearance.inactive_border_color)
+            },
+            bg_color: ThemeConfig::parse_color(&self.core.config.theme.background),
+            link_color: ThemeConfig::parse_color(&self.core.config.theme.accent),
+            accent: ThemeConfig::parse_color(&self.core.config.theme.accent),
+            cache_tile_glyphs: self.pending_resize.is_none(),
+        };
 
-                // Action bar is rendered in the overlay layer (build_ui)
-                // to avoid being clipped by pane scissor rects.
-            }
-
-            let Some(view) = self.cached_views.get(pane_id) else {
+        for (pane_id, tile_rect, is_active) in tiles.iter().copied() {
+            if is_active {
                 continue;
-            };
-            let inner_x = tr.x + (border_w + padding) * zoom;
-            let inner_y = tr.y + (border_w + padding) * zoom;
-
-            for r in &view.bg_rects {
-                let src = GeoRect::new(
-                    inner_x + r.x * zoom,
-                    inner_y + r.y * zoom,
-                    r.w * zoom,
-                    r.h * zoom,
-                );
-                if let Some(c) = src.intersection(&tr) {
-                    out.bg_rects.push(Rect {
-                        x: c.x,
-                        y: c.y,
-                        w: c.w,
-                        h: c.h,
-                        color: r.color,
-                    });
-                }
             }
-
-            if self.core.cursor_blink_visible && *is_active {
-                for cursor in &view.cursor_rects {
-                    let src = GeoRect::new(
-                        inner_x + cursor.x * zoom,
-                        inner_y + cursor.y * zoom,
-                        cursor.w * zoom,
-                        cursor.h * zoom,
-                    );
-                    if let Some(c) = src.intersection(&tr) {
-                        out.bg_rects.push(Rect {
-                            x: c.x,
-                            y: c.y,
-                            w: c.w,
-                            h: c.h,
-                            color: cursor.color,
-                        });
-                    }
-                }
-            }
-
-            // Scrollbar
-            if let Some(sb) = &view.scrollbar_rect {
-                let src = GeoRect::new(
-                    inner_x + sb.x * zoom,
-                    inner_y + sb.y * zoom,
-                    sb.w * zoom,
-                    sb.h * zoom,
-                );
-                if let Some(c) = src.intersection(&tr) {
-                    out.bg_rects.push(Rect {
-                        x: c.x,
-                        y: c.y,
-                        w: c.w,
-                        h: c.h,
-                        color: sb.color,
-                    });
-                }
-            }
-
-            // Selection overlay — uses the terminal foreground color as a
-            // semi-opaque selection background (matching ghostty's default).
-            // One rect per row keeps performance at O(rows).
-            if let Some(sel) = &self.core.selection
-                && sel.pane_id == *pane_id
-                && sel.start != sel.end // Don't render zero-width selection (single click anchor)
-                && let Some(grid) = self.core.pane_grids.get(pane_id)
-            {
-                let (cw, ch) = self.cell_dimensions();
-                let (start, end) = if sel.start.1 < sel.end.1
-                    || (sel.start.1 == sel.end.1 && sel.start.0 <= sel.end.0)
-                {
-                    (sel.start, sel.end)
-                } else {
-                    (sel.end, sel.start)
-                };
-                let fg = self
-                    .cached_color_table
-                    .resolve_packed(ciri_protocol::message::DEFAULT_FOREGROUND);
-                let sel_color = [fg[0], fg[1], fg[2], 0.35];
-                for buf_row in start.1..=end.1 {
-                    let viewport_row = match grid.buffer_to_viewport_row(buf_row) {
-                        Some(r) => r,
-                        None => continue,
-                    };
-                    let left = if buf_row == start.1 { start.0 } else { 0 };
-                    let right = if buf_row == end.1 {
-                        end.0
-                    } else {
-                        grid.cols.saturating_sub(1)
-                    };
-                    let sx = inner_x + left as f32 * cw * zoom;
-                    let sy = inner_y + viewport_row as f32 * ch * zoom;
-                    let sw = (right - left + 1) as f32 * cw * zoom;
-                    let sh = ch * zoom;
-                    let src = GeoRect::new(sx, sy, sw, sh);
-                    if let Some(c) = src.intersection(&tr) {
-                        out.bg_rects.push(Rect {
-                            x: c.x,
-                            y: c.y,
-                            w: c.w,
-                            h: c.h,
-                            color: sel_color,
-                        });
-                    }
-                }
-            }
-
-            if let Some(link) = &self.core.hovered_link
-                && link.pane_id == *pane_id
-                && let Some(grid) = self.core.pane_grids.get(pane_id)
-                && let Some(viewport_row) = grid.buffer_to_viewport_row(link.start.1)
-            {
-                let (cw, ch) = self.cell_dimensions();
-                let underline_h = (zoom.max(1.0)).clamp(1.0, 2.0);
-                let sx = inner_x + link.start.0 as f32 * cw * zoom;
-                let sy = inner_y + (viewport_row as f32 + 1.0) * ch * zoom - underline_h - zoom;
-                let sw = (link.end.0 - link.start.0 + 1) as f32 * cw * zoom;
-                let src = GeoRect::new(sx, sy, sw, underline_h);
-                if let Some(c) = src.intersection(&tr) {
-                    out.bg_rects.push(Rect {
-                        x: c.x,
-                        y: c.y,
-                        w: c.w,
-                        h: c.h,
-                        color: link_color,
-                    });
-                }
-            }
-
-            // Search match highlights
-            if let Some(search) = &self.core.search_state
-                && search.pane_id == *pane_id
-                && let Some(grid) = self.core.pane_grids.get(pane_id)
-            {
-                let (cw, ch) = self.cell_dimensions();
-                let vp_top = grid.viewport_top();
-                let vp_bottom = vp_top + grid.rows as usize;
-
-                for (match_idx, m) in search.matches.iter().enumerate() {
-                    if m.buffer_row < vp_top || m.buffer_row >= vp_bottom {
-                        continue;
-                    }
-                    let vp_row = m.buffer_row - vp_top;
-
-                    let sx = inner_x + m.start_col as f32 * cw * zoom;
-                    let sy = inner_y + vp_row as f32 * ch * zoom;
-                    let sw = (m.end_col - m.start_col + 1) as f32 * cw * zoom;
-                    let sh = ch * zoom;
-
-                    let color = if match_idx == search.current_match_idx {
-                        [1.0, 0.6, 0.0, 0.5] // orange for current match
-                    } else {
-                        [1.0, 1.0, 0.0, 0.3] // yellow for other matches
-                    };
-
-                    let src = GeoRect::new(sx, sy, sw, sh);
-                    if let Some(c) = src.intersection(&tr) {
-                        out.bg_rects.push(Rect {
-                            x: c.x,
-                            y: c.y,
-                            w: c.w,
-                            h: c.h,
-                            color,
-                        });
-                    }
-                }
-            }
-
-            // Animated focus opacity (smooth transition on focus change)
-            let focus_dim = self.core.anim_mgr.pane_focus_opacity(*pane_id);
-            let open_opacity = self.core.anim_mgr.pane_open_opacity(*pane_id);
-            let drag_dim = self.core.anim_mgr.pane_drag_dim(*pane_id);
-            let dim = focus_dim * open_opacity * drag_dim;
-
-            // Combined pane offset: open slide + move animation
-            let slide_progress = self.core.anim_mgr.pane_open_slide(*pane_id);
-            let (open_dx, open_dy) = match self.core.config.animation.pane_open_style {
-                PaneOpenStyle::SlideUp | PaneOpenStyle::FadeSlideUp => {
-                    (0.0, -tr.h * slide_progress)
-                }
-                PaneOpenStyle::SlideDown => (0.0, tr.h * slide_progress),
-                PaneOpenStyle::SlideLeft => (-tr.w * slide_progress, 0.0),
-                PaneOpenStyle::Fade => (0.0, 0.0),
-            };
-            let (move_dx, move_dy) = self.core.anim_mgr.pane_move_offset(*pane_id);
-            let offset_dx = open_dx + move_dx * zoom;
-            let offset_dy = open_dy + move_dy * zoom;
-
-            // Check if cached tile out.glyphs are still valid
-            // Include slide offsets in cache key so animations invalidate the cache
-            let tile_key = (
-                (inner_x + offset_dx).to_bits(),
-                (inner_y + offset_dy).to_bits(),
-                zoom.to_bits(),
-                dim.to_bits(),
+            self.build_tile(
+                pane_id,
+                tile_rect,
+                false,
+                zoom,
+                vw,
+                vh,
+                paint,
+                bg_rects,
+                glyphs,
+                color_glyphs,
+                glyph_batches,
+                color_glyph_batches,
             );
-            let glyph_start = out.glyphs.len();
-            let color_start = out.color_glyphs.len();
-            let cache_hit = cache_tile_glyphs
-                && self
-                    .cached_tile_glyphs
-                    .get(pane_id)
-                    .is_some_and(|c| c.generation == view.generation && c.key == tile_key);
-
-            if cache_hit {
-                let cached = self.cached_tile_glyphs.get(pane_id).unwrap();
-                out.glyphs.extend_from_slice(&cached.glyphs);
-                out.color_glyphs.extend_from_slice(&cached.color_glyphs);
-            } else {
-                // Convert relative glyphs to pixel-coord GlyphInstances.
-                // Tile clipping is handled by the render-pass scissor rect.
-                let make_instance =
-                    |g: &terminal::RelativeGlyph, color: [f32; 4]| -> Option<GlyphInstance> {
-                        let sx = (inner_x + g.px * zoom + offset_dx).round();
-                        let sy = (inner_y + g.py * zoom + offset_dy).round();
-                        let gw = (g.glyph_w * zoom).round();
-                        let gh = (g.glyph_h * zoom).round();
-
-                        if gw <= 0.0 || gh <= 0.0 {
-                            return None;
-                        }
-
-                        Some(GlyphInstance {
-                            pos: [sx, sy],
-                            size: [gw, gh],
-                            uv_pos: [g.u0, g.v0],
-                            uv_size: [g.u1 - g.u0, g.v1 - g.v0],
-                            color,
-                        })
-                    };
-
-                // Regular text glyphs (alpha atlas): dim the foreground color
-                out.glyphs
-                    .extend(view.glyph_instances.iter().filter_map(|g| {
-                        let color = [
-                            g.color[0] * dim,
-                            g.color[1] * dim,
-                            g.color[2] * dim,
-                            g.color[3],
-                        ];
-                        make_instance(g, color)
-                    }));
-
-                // Color emoji glyphs (RGBA atlas)
-                let emoji_color = [dim, dim, dim, 1.0];
-                out.color_glyphs.extend(
-                    view.color_glyph_instances
-                        .iter()
-                        .filter_map(|g| make_instance(g, emoji_color)),
-                );
-
-                // Cache the result
-                if cache_tile_glyphs {
-                    self.cached_tile_glyphs.insert(
-                        *pane_id,
-                        super::CachedTileGlyphs {
-                            generation: view.generation,
-                            key: tile_key,
-                            glyphs: out.glyphs[glyph_start..].to_vec(),
-                            color_glyphs: out.color_glyphs[color_start..].to_vec(),
-                        },
-                    );
-                }
-            }
-
-            if let Some((sx, sy, sw, sh)) = scissor {
-                if glyph_start < out.glyphs.len() {
-                    out.glyph_batches.push(ScissoredRange {
-                        x: sx,
-                        y: sy,
-                        w: sw,
-                        h: sh,
-                        start: glyph_start,
-                        end: out.glyphs.len(),
-                    });
-                }
-                if color_start < out.color_glyphs.len() {
-                    out.color_glyph_batches.push(ScissoredRange {
-                        x: sx,
-                        y: sy,
-                        w: sw,
-                        h: sh,
-                        start: color_start,
-                        end: out.color_glyphs.len(),
-                    });
-                }
-            }
-
-            // Fade-in overlay for newly opened panes
-            if open_opacity < 1.0 {
-                let overlay_alpha = 1.0 - open_opacity;
-                out.bg_rects.push(Rect {
-                    x: tr.x,
-                    y: tr.y,
-                    w: tr.w,
-                    h: tr.h,
-                    color: [0.0, 0.0, 0.0, overlay_alpha],
-                });
-            }
         }
 
-        // Render closing panes as fading-out rects.
-        // Apply the same center-point zoom transform used for active tiles so
-        // the close animation plays at the correct position in overview mode.
-        let zoom_threshold = self.core.config.animation.zoom_threshold;
         for (rect, opacity, _slide) in self.core.anim_mgr.closing_panes() {
-            // Apply the same center-point zoom transform used for active tiles
-            // so the close animation plays at the correct position in overview.
             let (rx, ry, rw, rh) = if zoom < zoom_threshold {
                 let cx = vw / 2.0;
                 let cy = vh / 2.0;
@@ -518,7 +573,7 @@ impl App {
             } else {
                 (rect.x, rect.y, rect.w, rect.h)
             };
-            out.bg_rects.push(Rect {
+            bg_rects.push(Rect {
                 x: rx,
                 y: ry,
                 w: rw,
@@ -526,6 +581,30 @@ impl App {
                 color: [0.1, 0.1, 0.1, opacity * 0.5],
             });
         }
+
+        let active_bg_start = bg_rects.len();
+
+        for (pane_id, tile_rect, is_active) in tiles.iter().copied() {
+            if !is_active {
+                continue;
+            }
+            self.build_tile(
+                pane_id,
+                tile_rect,
+                true,
+                zoom,
+                vw,
+                vh,
+                paint,
+                bg_rects,
+                glyphs,
+                color_glyphs,
+                active_glyph_batches,
+                active_color_glyph_batches,
+            );
+        }
+
+        active_bg_start
     }
 
     pub fn build_search_bar(
@@ -605,14 +684,16 @@ impl App {
         vh: f32,
         bg_rects: &mut Vec<Rect>,
     ) {
-        let zoom_threshold = self.core.config.animation.zoom_threshold;
         for (pane_id, tile_rect, _) in tiles {
             let intensity = self.core.anim_mgr.bell_flash(*pane_id);
             if intensity <= 0.0 {
                 continue;
             }
             let alpha = 0.15 * intensity;
-            let tr = Self::transformed_tile_rect_for_zoom(*tile_rect, zoom, zoom_threshold, vw, vh);
+            let Some(visual) = self.pane_visual_state(*pane_id, *tile_rect, zoom, vw, vh) else {
+                continue;
+            };
+            let tr = visual.tr;
             bg_rects.push(Rect {
                 x: tr.x,
                 y: tr.y,
@@ -725,11 +806,10 @@ impl App {
         if self.core.image_placements.is_empty() {
             return;
         }
-        let atlas = self.glyph_cache.as_mut().unwrap();
-        let border_w = self.core.config.appearance.border_width;
-        let padding = self.core.config.appearance.padding;
-        let (cw, ch) = (atlas.cell_width, atlas.cell_height);
-        let zoom_threshold = self.core.config.animation.zoom_threshold;
+        let (cw, ch) = {
+            let atlas = self.glyph_cache.as_ref().unwrap();
+            (atlas.cell_width, atlas.cell_height)
+        };
 
         for (pane_id, tile_rect, _) in tiles {
             let Some(placements) = self.core.image_placements.get(pane_id) else {
@@ -739,10 +819,12 @@ impl App {
                 continue;
             }
 
-            let tr = Self::transformed_tile_rect_for_zoom(*tile_rect, zoom, zoom_threshold, vw, vh);
-
-            let inner_x = tr.x + (border_w + padding) * zoom;
-            let inner_y = tr.y + (border_w + padding) * zoom;
+            let Some(visual) = self.pane_visual_state(*pane_id, *tile_rect, zoom, vw, vh) else {
+                continue;
+            };
+            let tr = visual.tr;
+            let inner_x = visual.inner_x;
+            let inner_y = visual.inner_y;
 
             for img in placements {
                 let ix = inner_x + img.col as f32 * cw * zoom;
@@ -795,6 +877,7 @@ impl App {
                 // "IMG" label
                 let label = format!("IMG {}x{}", img.pixel_width, img.pixel_height);
                 let baseline = ch * self.core.config.statusbar.text_baseline;
+                let atlas = self.glyph_cache.as_mut().unwrap();
                 emit_status_text(
                     atlas,
                     &label,
@@ -1022,24 +1105,29 @@ impl App {
         let mut color_glyphs = std::mem::take(&mut self.render_bufs.color_glyphs);
         let mut glyph_batches = std::mem::take(&mut self.render_bufs.glyph_batches);
         let mut color_glyph_batches = std::mem::take(&mut self.render_bufs.color_glyph_batches);
+        let mut active_glyph_batches = std::mem::take(&mut self.render_bufs.active_glyph_batches);
+        let mut active_color_glyph_batches =
+            std::mem::take(&mut self.render_bufs.active_color_glyph_batches);
         bg_rects.clear();
         glyphs.clear();
         color_glyphs.clear();
         glyph_batches.clear();
         color_glyph_batches.clear();
+        active_glyph_batches.clear();
+        active_color_glyph_batches.clear();
 
-        self.build_tiles(
+        let active_bg_start = self.build_tiles(
             &offset_tiles,
             zoom,
             vw_f,
             vh_f,
-            &mut RenderOutput {
-                bg_rects: &mut bg_rects,
-                glyphs: &mut glyphs,
-                color_glyphs: &mut color_glyphs,
-                glyph_batches: &mut glyph_batches,
-                color_glyph_batches: &mut color_glyph_batches,
-            },
+            &mut bg_rects,
+            &mut glyphs,
+            &mut color_glyphs,
+            &mut glyph_batches,
+            &mut color_glyph_batches,
+            &mut active_glyph_batches,
+            &mut active_color_glyph_batches,
         );
         let pane_glyph_end = glyphs.len();
         let pane_color_glyph_end = color_glyphs.len();
@@ -1068,6 +1156,9 @@ impl App {
                 color_glyphs: &color_glyphs,
                 glyph_batches: &glyph_batches,
                 color_glyph_batches: &color_glyph_batches,
+                active_bg_start,
+                active_glyph_batches: &active_glyph_batches,
+                active_color_glyph_batches: &active_color_glyph_batches,
                 pane_glyph_end,
                 pane_color_glyph_end,
                 overlay_bg_start,
@@ -1079,6 +1170,8 @@ impl App {
         self.render_bufs.color_glyphs = color_glyphs;
         self.render_bufs.glyph_batches = glyph_batches;
         self.render_bufs.color_glyph_batches = color_glyph_batches;
+        self.render_bufs.active_glyph_batches = active_glyph_batches;
+        self.render_bufs.active_color_glyph_batches = active_color_glyph_batches;
 
         // Atlas overflow recovery: clear (CPU-only) and force rebuild on next frame.
         // The actual texture clear is deferred to next draw_frame's flush_uploads.
@@ -1153,5 +1246,76 @@ fn scissor_rect(tr: &GeoRect, viewport_w: f32, viewport_h: f32) -> Option<(u32, 
             (right - left).max(1.0) as u32,
             (bottom - top).max(1.0) as u32,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ciri_config::config::CiriConfig;
+
+    fn make_app() -> App {
+        App::new(CiriConfig::default(), "test-session")
+    }
+
+    #[test]
+    fn pane_visual_state_applies_move_offset_to_tile_rect() {
+        let mut app = make_app();
+        let config = app.anim_config();
+        app.core.anim_mgr.ensure_pane_registered(7);
+        app.core
+            .anim_mgr
+            .start_move_animation(7, 48.0, -12.0, &config);
+
+        let visual = app
+            .pane_visual_state(
+                7,
+                GeoRect::new(100.0, 80.0, 320.0, 240.0),
+                1.0,
+                1600.0,
+                900.0,
+            )
+            .unwrap();
+
+        assert!((visual.tr.x - 148.0).abs() < 0.01);
+        assert!((visual.tr.y - 68.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn build_tiles_places_focused_pane_in_late_layer() {
+        let mut app = make_app();
+        app.core.config.appearance.focus_ring.style = FocusRingStyle::Solid;
+
+        let tiles = vec![
+            (1, GeoRect::new(0.0, 0.0, 300.0, 200.0), false),
+            (2, GeoRect::new(320.0, 0.0, 300.0, 200.0), true),
+        ];
+        let mut bg_rects = Vec::new();
+        let mut glyphs = Vec::new();
+        let mut color_glyphs = Vec::new();
+        let mut glyph_batches = Vec::new();
+        let mut color_glyph_batches = Vec::new();
+        let mut active_glyph_batches = Vec::new();
+        let mut active_color_glyph_batches = Vec::new();
+
+        let active_bg_start = app.build_tiles(
+            &tiles,
+            1.0,
+            1600.0,
+            900.0,
+            &mut bg_rects,
+            &mut glyphs,
+            &mut color_glyphs,
+            &mut glyph_batches,
+            &mut color_glyph_batches,
+            &mut active_glyph_batches,
+            &mut active_color_glyph_batches,
+        );
+
+        assert_eq!(active_bg_start, 2);
+        assert!(active_bg_start < bg_rects.len());
+        assert!(bg_rects[0].x < bg_rects[active_bg_start].x);
+        assert!(glyph_batches.is_empty());
+        assert!(active_glyph_batches.is_empty());
     }
 }

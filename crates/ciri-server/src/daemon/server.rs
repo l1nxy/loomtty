@@ -3,6 +3,7 @@ use ciri_protocol::message::*;
 use ciri_protocol::transport;
 use ciri_term::pane::Pane;
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use super::client::ClientState;
 use super::damage::DamageAccumulator;
@@ -20,6 +21,10 @@ pub(crate) struct Server {
     /// True once server has had at least one session. Prevents premature
     /// shutdown on startup before any client has connected.
     pub(crate) had_session: bool,
+    /// When set, the server will shut down after this instant if still idle.
+    pub(crate) idle_deadline: Option<Instant>,
+    /// How long to wait before shutting down after all sessions/clients gone.
+    pub(crate) idle_timeout: Duration,
     /// Session restore configuration.
     pub(crate) session_config: ciri_config::schema::SessionConfig,
 }
@@ -47,6 +52,8 @@ impl Server {
             column_gap,
             pane_inset: 12.0,
             had_session: false,
+            idle_deadline: None,
+            idle_timeout: Duration::from_secs(300),
             session_config: ciri_config::schema::SessionConfig::default(),
         }
     }
@@ -1556,10 +1563,11 @@ impl Server {
                 let old_session_name = session_name.clone();
 
                 self.switch_client_session_affinity(client_id, &target);
-                self.refresh_session_attach_time(&target);
 
-                // Get or create target session
+                // Get or create target session before refreshing attach ordering so
+                // newly created sessions also receive authoritative recency metadata.
                 self.get_or_create_session(&target);
+                self.refresh_session_attach_time(&target);
 
                 responses.push(ServerResponse::SendToClient(
                     client_id,
@@ -1708,6 +1716,50 @@ mod tests {
             responses
                 .iter()
                 .any(|resp| matches!(resp, ServerResponse::SendFullPaneSync(1, _)))
+        );
+    }
+
+    #[test]
+    fn switch_session_to_new_session_refreshes_attach_ordering_for_list_sessions() {
+        let mut server = Server::new("/bin/sh", 8.0);
+        let old_session = "alpha".to_string();
+        let newer_existing_session = "beta".to_string();
+        let brand_new_session = "gamma".to_string();
+        server.clients.insert(1, test_client(1, &old_session));
+        server.get_or_create_session(&old_session);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        server.get_or_create_session(&newer_existing_session);
+
+        let switch_responses = server.handle_message(
+            ClientMessage::SwitchSession {
+                session_name: brand_new_session.clone(),
+            },
+            1,
+        );
+
+        assert!(matches!(
+            switch_responses.first(),
+            Some(ServerResponse::SendToClient(
+                1,
+                ServerMessage::SessionSwitched { session_name }
+            )) if session_name == &brand_new_session
+        ));
+
+        let list_responses = server.handle_message(ClientMessage::ListSessions { all: false }, 1);
+        assert_eq!(list_responses.len(), 1);
+        let sessions = match &list_responses[0] {
+            ServerResponse::SendToClient(1, ServerMessage::SessionList { sessions }) => sessions,
+            _ => panic!("expected a single SessionList response"),
+        };
+        let names: Vec<_> = sessions.iter().map(|info| info.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                brand_new_session.as_str(),
+                newer_existing_session.as_str(),
+                old_session.as_str(),
+            ],
+            "switching into a newly created session should make it the most recent ListSessions entry"
         );
     }
 

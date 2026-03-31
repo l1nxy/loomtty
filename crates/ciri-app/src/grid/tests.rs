@@ -392,6 +392,99 @@ fn full_sync_scrollback_trimmed_to_max() {
 }
 
 #[test]
+fn full_sync_same_width_trim_rebases_grapheme_indices() {
+    let mut grid = ClientPaneGrid::new(2, 1, 1);
+
+    let initial_sync = FullPaneSync {
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+        },
+        cols: 2,
+        rows: 1,
+        title: String::new(),
+        scrollback: vec![],
+        scrollback_rows: 0,
+        scrollback_replace: false,
+        cells: vec![PackedCell::with_ch('X'), PackedCell::with_ch('Y')],
+        grapheme_extras: GraphemeExtras(vec![(0, "\u{0301}".to_string())]),
+        hyperlink_extras: HyperlinkExtras::new(),
+        cwd: None,
+    };
+    grid.apply_full_sync(&initial_sync);
+    assert_eq!(grid.scrollback.len(), 0);
+    assert_eq!(
+        grid.grapheme_map.get(&0).map(String::as_str),
+        Some("X\u{0301}")
+    );
+    assert_eq!(
+        grid.grapheme_map.get(&0).map(String::as_str),
+        Some("X\u{0301}")
+    );
+
+    let overflow_sync = FullPaneSync {
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 2,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+        },
+        cols: 2,
+        rows: 1,
+        title: String::new(),
+        scrollback: vec![PackedCell::with_ch('q'), PackedCell::with_ch('r')],
+        scrollback_rows: 1,
+        scrollback_replace: false,
+        cells: vec![PackedCell::with_ch('m'), PackedCell::with_ch('n')],
+        grapheme_extras: GraphemeExtras::new(),
+        hyperlink_extras: HyperlinkExtras::new(),
+        cwd: None,
+    };
+    grid.apply_full_sync(&overflow_sync);
+    assert_eq!(grid.scrollback.len(), 1);
+    assert_eq!(
+        grid.grapheme_map.get(&0).map(String::as_str),
+        Some("X\u{0301}")
+    );
+
+    let trim_sync = FullPaneSync {
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 3,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+        },
+        cols: 2,
+        rows: 1,
+        title: String::new(),
+        scrollback: vec![PackedCell::with_ch('m'), PackedCell::with_ch('n')],
+        scrollback_rows: 1,
+        scrollback_replace: false,
+        cells: vec![PackedCell::with_ch('u'), PackedCell::with_ch('v')],
+        grapheme_extras: GraphemeExtras::new(),
+        hyperlink_extras: HyperlinkExtras::new(),
+        cwd: None,
+    };
+    grid.apply_full_sync(&trim_sync);
+
+    assert_eq!(grid.scrollback.len(), 1);
+    assert_eq!(grid.scrollback[0].cells[0].ch(), 'm');
+    assert_eq!(
+        grid.grapheme_map.get(&0).map(String::as_str),
+        Some("X\u{0301}")
+    );
+    assert!(!grid.grapheme_map.contains_key(&2));
+}
+
+#[test]
 fn full_sync_clamps_scroll_offset() {
     let mut grid = ClientPaneGrid::new(2, 1, 5);
     // Add some scrollback

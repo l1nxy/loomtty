@@ -10,6 +10,7 @@ fn rebase_grapheme_lookup(
     old_viewport_len: usize,
     old_cols: usize,
     new_scrollback_rows: usize,
+    trimmed_rows: usize,
 ) -> HashMap<u32, String> {
     if old_map.is_empty() || old_cols == 0 {
         return HashMap::new();
@@ -21,8 +22,20 @@ fn rebase_grapheme_lookup(
         if idx < old_viewport_len {
             let row = idx / old_cols;
             let col = idx % old_cols;
-            let new_idx = new_scrollback_rows * old_cols + row * old_cols + col;
-            rebased.insert(new_idx as u32, grapheme.clone());
+            let new_buffer_row = new_scrollback_rows + row;
+            if new_buffer_row >= trimmed_rows {
+                let rebased_row = new_buffer_row - trimmed_rows;
+                let new_idx = rebased_row * old_cols + col;
+                rebased.insert(new_idx as u32, grapheme.clone());
+            }
+        } else {
+            let row = idx / old_cols;
+            let col = idx % old_cols;
+            if row >= trimmed_rows {
+                let rebased_row = row - trimmed_rows;
+                let new_idx = rebased_row * old_cols + col;
+                rebased.insert(new_idx as u32, grapheme.clone());
+            }
         }
     }
     rebased
@@ -57,7 +70,21 @@ impl ClientPaneGrid {
             self.scroll_offset = 0;
         }
 
-        let mut rebased_grapheme_map = if cols_changed {
+        let appended_scrollback_rows = sync.scrollback_rows as usize;
+        let trim_count = if sync.scrollback_replace {
+            appended_scrollback_rows.saturating_sub(self.max_scrollback)
+        } else {
+            self.scrollback
+                .len()
+                .saturating_add(appended_scrollback_rows)
+                .saturating_sub(self.max_scrollback)
+        };
+
+        // Step 1: Handle scrollback — replace or append
+        if sync.scrollback_replace {
+            self.scrollback.clear();
+        }
+        let mut rebased_grapheme_map = if cols_changed || sync.scrollback_replace {
             HashMap::new()
         } else {
             rebase_grapheme_lookup(
@@ -65,15 +92,9 @@ impl ClientPaneGrid {
                 old_viewport_len,
                 old_cols,
                 self.scrollback.len(),
+                trim_count,
             )
         };
-
-        // Step 1: Handle scrollback — replace or append
-        if sync.scrollback_replace {
-            self.scrollback.clear();
-            rebased_grapheme_map.clear();
-        }
-        let appended_scrollback_rows = sync.scrollback_rows as usize;
         for r in 0..appended_scrollback_rows {
             let start = r * new_cols;
             let end = (start + new_cols).min(sync.scrollback.len());

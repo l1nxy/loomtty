@@ -191,6 +191,10 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
         cursor.point.line.0,
         cursor.point.column.0,
         total_rows,
+        super::cursor::CursorCellContext {
+            row_width: cols,
+            cell_flags: None,
+        },
         &m,
         config,
     );
@@ -222,6 +226,17 @@ pub fn build_view_from_grid(atlas: &mut GlyphCache, inputs: &PackedViewInputs<'_
         params.cursor_line as i32,
         params.cursor_col as usize,
         params.grid.rows as usize,
+        super::cursor::CursorCellContext {
+            row_width: params.grid.cols as usize,
+            cell_flags: Some(
+                &params
+                    .grid
+                    .cells
+                    .iter()
+                    .map(PackedCell::flags_u16)
+                    .collect::<Vec<_>>(),
+            ),
+        },
         params.grid.metrics,
         params.config,
     );
@@ -255,11 +270,21 @@ pub fn update_view_from_grid(
     update_dirty_rows(view, dirty_rows, params.grid, atlas, &rebuilt_row_lig_cache);
 
     // Rebuild cursor
+    let cell_flags = params
+        .grid
+        .cells
+        .iter()
+        .map(PackedCell::flags_u16)
+        .collect::<Vec<_>>();
     view.cursor_rects = make_cursor_rects(
         params.cursor_shape,
         params.cursor_line as i32,
         params.cursor_col as usize,
         params.grid.rows as usize,
+        super::cursor::CursorCellContext {
+            row_width: params.grid.cols as usize,
+            cell_flags: Some(&cell_flags),
+        },
         params.grid.metrics,
         params.config,
     );

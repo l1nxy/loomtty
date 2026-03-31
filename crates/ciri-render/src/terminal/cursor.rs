@@ -3,6 +3,7 @@
 use alacritty_terminal::vte::ansi::CursorShape;
 use ciri_config::config::CiriConfig;
 use ciri_config::theme::ThemeConfig;
+use ciri_protocol::message::FLAG_WIDE_CHAR_SPACER;
 use ciri_protocol::message::{
     CURSOR_BEAM, CURSOR_BLOCK, CURSOR_HIDDEN, CURSOR_HOLLOW_BLOCK, CURSOR_UNDERLINE,
 };
@@ -91,18 +92,43 @@ pub(super) fn cursor_shape_to_protocol(shape: CursorShape) -> u8 {
     }
 }
 
+pub(super) struct CursorCellContext<'a> {
+    pub(super) row_width: usize,
+    pub(super) cell_flags: Option<&'a [u16]>,
+}
+
 /// Compute cursor rects from shape, position, and config.
 pub(super) fn make_cursor_rects(
     shape: u8,
     line: i32,
     col: usize,
     total_rows: usize,
+    cell_ctx: CursorCellContext<'_>,
     m: &CellMetrics,
     config: &CiriConfig,
 ) -> Vec<Rect> {
     if shape == CURSOR_HIDDEN || line < 0 || (line as usize) >= total_rows {
         return Vec::new();
     }
+
+    let mut cursor_col = col;
+    let mut cursor_width = m.cw;
+    if let Some(cell_flags) = cell_ctx.cell_flags {
+        let row = line as usize;
+        let cell_idx = row.saturating_mul(cell_ctx.row_width).saturating_add(col);
+        if cell_ctx.row_width > 0
+            && cell_idx < cell_flags.len()
+            && cell_flags[cell_idx] & FLAG_WIDE_CHAR_SPACER != 0
+            && col > 0
+        {
+            let prev_idx = cell_idx - 1;
+            if cell_flags[prev_idx] & FLAG_WIDE_CHAR_SPACER == 0 {
+                cursor_col = col - 1;
+                cursor_width = m.cw * 2.0;
+            }
+        }
+    }
+
     let cursor_color = ThemeConfig::parse_color(&config.terminal.cursor_color);
     let color = [
         cursor_color[0],
@@ -112,9 +138,9 @@ pub(super) fn make_cursor_rects(
     ];
     build_cursor_rects(
         shape,
-        col as f32 * m.cw,
+        cursor_col as f32 * m.cw,
         line as f32 * m.ch,
-        m.cw,
+        cursor_width,
         m.ch,
         color,
     )

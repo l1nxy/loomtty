@@ -161,6 +161,70 @@ fn packed_hidden_and_wide_spacer_cells_do_not_render_text_or_decorations() {
 }
 
 #[test]
+fn cursor_on_wide_spacer_anchors_to_leading_cell() {
+    let config = test_config();
+    let shaper = test_shaper(&config);
+    let mut atlas = test_atlas(&config, &shaper);
+    let ct = test_color_table(&config);
+    let graphemes = HashMap::new();
+    let mut cells = grid_with_size(2, 1);
+    cells[0] = styled_cell(
+        '好',
+        PackedColor::rgb(255, 255, 255),
+        PackedColor::rgb(0, 0, 0),
+        FLAG_WIDE_CHAR,
+    );
+    cells[1] = styled_cell(
+        ' ',
+        PackedColor::rgb(255, 255, 255),
+        PackedColor::rgb(0, 0, 0),
+        FLAG_WIDE_CHAR_SPACER,
+    );
+
+    let lead_params = test_view_inputs(
+        TestFrame {
+            cells: &cells,
+            cols: 2,
+            rows: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+        },
+        &shaper,
+        &config,
+        &ct,
+        &graphemes,
+    );
+    let lead_view = build_view_from_grid(&mut atlas, &lead_params);
+    assert_eq!(lead_view.cursor_rects.len(), 1);
+    let lead_rect = lead_view.cursor_rects[0];
+    assert_eq!(lead_rect.x, 0.0);
+    assert_eq!(lead_rect.w, atlas.cell_width);
+
+    let spacer_params = test_view_inputs(
+        TestFrame {
+            cells: &cells,
+            cols: 2,
+            rows: 1,
+            cursor_line: 0,
+            cursor_col: 1,
+            cursor_shape: CURSOR_BLOCK,
+        },
+        &shaper,
+        &config,
+        &ct,
+        &graphemes,
+    );
+    let spacer_view = build_view_from_grid(&mut atlas, &spacer_params);
+    assert_eq!(spacer_view.cursor_rects.len(), 1);
+    assert_eq!(spacer_view.cursor_rects[0].x, 0.0);
+    assert_eq!(spacer_view.cursor_rects[0].y, lead_rect.y);
+    assert_eq!(spacer_view.cursor_rects[0].w, atlas.cell_width * 2.0);
+    assert_eq!(spacer_view.cursor_rects[0].h, lead_rect.h);
+    assert_eq!(spacer_view.cursor_rects[0].color, lead_rect.color);
+}
+
+#[test]
 fn packed_cursor_shapes_map_to_expected_rect_geometry() {
     let config = test_config();
     let shaper = test_shaper(&config);

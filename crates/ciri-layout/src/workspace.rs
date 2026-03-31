@@ -22,6 +22,16 @@ pub struct Workspace {
 }
 
 impl Workspace {
+    fn active_column_idx_checked(&self) -> Option<usize> {
+        (self.active_column_idx < self.columns.len()).then_some(self.active_column_idx)
+    }
+
+    fn clamp_active_column_idx(&mut self) {
+        self.active_column_idx = self
+            .active_column_idx
+            .min(self.columns.len().saturating_sub(1));
+    }
+
     pub fn new_with_gap(view_size: ViewSize, column_gap: f32) -> Self {
         Workspace {
             columns: Vec::new(),
@@ -42,7 +52,6 @@ impl Workspace {
     pub fn active_pane_id(&self) -> Option<PaneId> {
         self.columns
             .get(self.active_column_idx)
-            .or_else(|| self.columns.last())
             .map(|c| c.active_pane_id())
     }
 
@@ -73,12 +82,13 @@ impl Workspace {
         center: CenterStrategy,
         current_offset: f32,
     ) -> f32 {
-        let Some(col) = self.columns.get(self.active_column_idx) else {
+        let Some(active_column_idx) = self.active_column_idx_checked() else {
             return 0.0;
         };
+        let col = &self.columns[active_column_idx];
         let vw = self.view_size.width;
         let col_w = col.effective_width(vw);
-        let col_x = self.column_x(self.active_column_idx);
+        let col_x = self.column_x(active_column_idx);
         let max_offset = (self.total_width() - vw).max(0.0);
 
         let should_center = match center {
@@ -224,11 +234,7 @@ impl Workspace {
             if self.columns.is_empty() {
                 self.active_column_idx = 0;
             } else {
-                if idx < self.active_column_idx {
-                    self.active_column_idx -= 1;
-                } else if self.active_column_idx >= self.columns.len() {
-                    self.active_column_idx = self.columns.len() - 1;
-                }
+                self.clamp_active_column_idx();
                 // When only one column remains, expand to full width
                 if self.columns.len() == 1 {
                     self.columns[0].width = ColumnWidth::Proportion(1.0);

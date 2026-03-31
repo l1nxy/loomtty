@@ -249,6 +249,7 @@ impl WorkspaceSet {
 mod tests {
     use super::*;
     use crate::column::ColumnWidth;
+    use crate::workspace::CenterStrategy;
 
     const DW: ColumnWidth = ColumnWidth::Proportion(0.5);
 
@@ -372,6 +373,49 @@ mod tests {
         assert_eq!(ws.workspaces.len(), 1);
         assert_eq!(ws.active_workspace_idx, 0);
         assert_eq!(ws.active().active_pane_id(), Some(2));
+    }
+
+    #[test]
+    fn target_offset_clamps_stale_active_column_before_viewport_targeting() {
+        let mut ws = WorkspaceSet::new(ViewSize {
+            width: 1000.0,
+            height: 600.0,
+        });
+        ws.active_mut().add_column_right_test(1);
+        ws.active_mut().add_column_right_test(2);
+        ws.active_mut().add_column_right_test(3);
+        ws.active_mut().active_column_idx = 2;
+
+        ws.add_workspace_below(4);
+        assert_eq!(ws.active().active_column_idx, 0);
+        ws.active_mut().add_column_right_test(5);
+        assert_eq!(ws.active().active_column_idx, 1);
+        ws.active_mut().close_pane(5);
+
+        ws.focus_up();
+        assert_eq!(ws.active_workspace_idx, 0);
+        assert_eq!(ws.active().active_column_idx, 0);
+        assert_eq!(ws.active().active_pane_id(), Some(1));
+        assert_eq!(
+            ws.active()
+                .target_offset_for_active_with_strategy(CenterStrategy::Always, 0.0),
+            0.0
+        );
+
+        ws.add_workspace_below(6);
+        ws.active_mut().close_pane(6);
+        ws.cleanup_empty();
+
+        assert_eq!(ws.workspaces.len(), 2);
+        assert_eq!(ws.active_workspace_idx, 1);
+        assert_eq!(ws.active().columns.len(), 1);
+        assert_eq!(ws.active().active_column_idx, 0);
+        assert_eq!(ws.active().active_pane_id(), Some(4));
+        assert_eq!(
+            ws.active()
+                .target_offset_for_active_with_strategy(CenterStrategy::Always, 0.0),
+            0.0
+        );
     }
 
     #[test]

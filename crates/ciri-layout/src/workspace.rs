@@ -42,6 +42,7 @@ impl Workspace {
     pub fn active_pane_id(&self) -> Option<PaneId> {
         self.columns
             .get(self.active_column_idx)
+            .or_else(|| self.columns.last())
             .map(|c| c.active_pane_id())
     }
 

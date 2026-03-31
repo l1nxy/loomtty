@@ -373,4 +373,51 @@ mod tests {
         assert_eq!(ws.active_workspace_idx, 0);
         assert_eq!(ws.active().active_pane_id(), Some(2));
     }
+
+    #[test]
+    fn cleanup_empty_clamps_active_column_and_visible_state() {
+        let mut ws = WorkspaceSet::new(ViewSize {
+            width: 1000.0,
+            height: 600.0,
+        });
+        ws.active_mut().add_column_right_test(1);
+        ws.active_mut().add_column_right_test(2);
+        ws.active_mut().add_column_right_test(3);
+        ws.active_mut().active_column_idx = 2;
+
+        ws.add_workspace_below(4);
+        ws.active_mut().add_column_right_test(5);
+        ws.active_mut().close_pane(5);
+
+        ws.focus_up();
+        assert_eq!(ws.active_workspace_idx, 0);
+        assert_eq!(ws.active().active_column_idx, 0);
+        assert_eq!(ws.active().active_pane_id(), Some(1));
+
+        ws.add_workspace_below(6);
+        ws.active_mut().close_pane(6);
+        ws.cleanup_empty();
+
+        assert_eq!(ws.workspaces.len(), 2);
+        assert_eq!(ws.active_workspace_idx, 1);
+        assert_eq!(ws.active().columns.len(), 1);
+        assert_eq!(ws.active().active_column_idx, 0);
+        assert_eq!(ws.active().active_pane_id(), Some(4));
+
+        let visible = ws.visible_tiles_2d(0.0, ws.target_offset_y());
+        let active_visible: Vec<_> = visible
+            .iter()
+            .filter(|(_, _, is_active)| *is_active)
+            .collect();
+        assert_eq!(active_visible.len(), 1);
+        assert_eq!(active_visible[0].0, 4);
+
+        let all = ws.all_tiles_2d(0.0, ws.target_offset_y());
+        let active_tiles: Vec<_> = all
+            .into_iter()
+            .filter(|(_, _, is_active)| *is_active)
+            .collect();
+        assert_eq!(active_tiles.len(), 1);
+        assert_eq!(active_tiles[0].0, 4);
+    }
 }

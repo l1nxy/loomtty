@@ -81,16 +81,7 @@ impl InputHandler {
         alt: bool,
         super_key: bool,
     ) -> InputResult {
-        self.check_timeout();
-        let event = KeyEvent::new(key_name, ctrl, shift, alt, super_key);
-
-        match self.state {
-            State::Idle => self.process_idle(event),
-            State::AwaitingAction { .. } => self.process_awaiting_action(event),
-            State::InMode { .. } => self.process_in_mode(event),
-            State::Locked => self.process_locked_legacy(event),
-            State::AwaitingUnlock => self.process_awaiting_unlock_legacy(event),
-        }
+        self.process_key_event(key_name, ctrl, shift, alt, super_key, BindingMode::EMPTY)
     }
 
     /// Process a key-release event.
@@ -117,10 +108,7 @@ impl InputHandler {
     }
 
     pub fn is_awaiting_action(&self) -> bool {
-        matches!(
-            self.state,
-            State::AwaitingAction { .. } | State::InMode { .. }
-        )
+        matches!(self.state, State::AwaitingAction { .. }) || self.has_active_table()
     }
 
     pub fn is_locked(&self) -> bool {
@@ -128,11 +116,7 @@ impl InputHandler {
     }
 
     pub fn current_mode_name(&self) -> Option<&str> {
-        if let State::InMode { name, .. } = &self.state {
-            Some(name)
-        } else {
-            None
-        }
+        self.active_table_name()
     }
 
     // ── Unified key processing API ──
@@ -148,6 +132,14 @@ impl InputHandler {
     const MAX_TABLE_DEPTH: usize = 4;
 
     pub fn activate_key_table(&mut self, name: &str) {
+        if self
+            .key_table_stack
+            .last()
+            .is_some_and(|active| active == name)
+        {
+            return;
+        }
+
         if self.key_table_stack.len() < Self::MAX_TABLE_DEPTH {
             self.key_table_stack.push(name.to_string());
         } else {
@@ -182,14 +174,7 @@ impl InputHandler {
     ) -> InputResult {
         self.check_timeout();
         let event = KeyEvent::new(key_name, ctrl, shift, alt, super_key);
-
-        let mut mode = app_mode;
-        if matches!(self.state, State::AwaitingAction { .. }) {
-            mode |= BindingMode::LEADER;
-        }
-        if !self.key_table_stack.is_empty() {
-            mode |= BindingMode::KEY_TABLE;
-        }
+        let mode = self.build_runtime_mode(app_mode);
 
         if matches!(self.state, State::AwaitingUnlock) {
             return self.process_awaiting_unlock(event);
@@ -209,18 +194,40 @@ impl InputHandler {
             return InputResult::Consumed;
         }
 
-        if is_escape(event.key_name) {
-            if matches!(self.state, State::AwaitingAction { .. }) {
-                self.state = State::Idle;
-                return InputResult::Consumed;
-            }
-            if !self.key_table_stack.is_empty() {
-                self.key_table_stack.pop();
-                return InputResult::Consumed;
-            }
+        if let Some(result) = self.handle_escape(event.key_name) {
+            return result;
         }
 
         self.lookup_binding(event, mode)
+    }
+
+    fn build_runtime_mode(&self, app_mode: BindingMode) -> BindingMode {
+        let mut mode = app_mode;
+        if matches!(self.state, State::AwaitingAction { .. }) {
+            mode |= BindingMode::LEADER;
+        }
+        if self.has_active_table() {
+            mode |= BindingMode::KEY_TABLE;
+        }
+        mode
+    }
+
+    fn handle_escape(&mut self, key_name: &str) -> Option<InputResult> {
+        if !is_escape(key_name) {
+            return None;
+        }
+
+        if matches!(self.state, State::AwaitingAction { .. }) {
+            self.state = State::Idle;
+            return Some(InputResult::Consumed);
+        }
+
+        if self.has_active_table() {
+            self.deactivate_key_table();
+            return Some(InputResult::Consumed);
+        }
+
+        None
     }
 
     fn process_locked(&mut self, event: KeyEvent<'_>, mode: BindingMode) -> InputResult {
@@ -278,18 +285,13 @@ impl InputHandler {
 
     fn dispatch_action(&mut self, action: Action, mode: BindingMode) -> InputResult {
         match &action {
-            Action::ActivateKeyTable(name) => {
+            Action::ActivateKeyTable(name) | Action::EnterMode(name) => {
                 self.activate_key_table(name);
                 self.state = State::Idle;
                 return InputResult::Consumed;
             }
             Action::DeactivateKeyTable => {
-                self.key_table_stack.pop();
-                return InputResult::Consumed;
-            }
-            Action::EnterMode(name) => {
-                self.activate_key_table(name);
-                self.state = State::Idle;
+                self.deactivate_key_table();
                 return InputResult::Consumed;
             }
             Action::ToggleLock => {
@@ -304,112 +306,6 @@ impl InputHandler {
         }
 
         InputResult::Action(action)
-    }
-
-    // ── State handlers (legacy) ──
-
-    fn process_idle(&mut self, event: KeyEvent<'_>) -> InputResult {
-        let combo = self.event_combo(event);
-        if let Some(action) = self.direct_keybinds.lookup(&combo) {
-            return self.dispatch_immediate(action);
-        }
-
-        if self.is_leader_press(event) {
-            if self.detect_double_tap() {
-                return InputResult::Action(Action::SendLeaderKey);
-            }
-            self.enter_awaiting_action();
-            return InputResult::Consumed;
-        }
-
-        InputResult::PassThrough
-    }
-
-    fn process_awaiting_action(&mut self, event: KeyEvent<'_>) -> InputResult {
-        if self.consume_escape(event.key_name) {
-            return InputResult::Consumed;
-        }
-
-        let combo = self.combo_stripping_leader(event);
-
-        if let Some(action) = self.keybinds.lookup(&combo) {
-            if let Some(result) = self.try_dispatch_mode_entry(&action) {
-                return result;
-            }
-            self.transition_after_action(&action);
-            return InputResult::Action(action);
-        }
-
-        if self.input_mode == InputMode::Prefix {
-            self.state = State::Idle;
-        }
-        InputResult::Consumed
-    }
-
-    fn process_in_mode(&mut self, event: KeyEvent<'_>) -> InputResult {
-        if self.consume_escape(event.key_name) {
-            return InputResult::Consumed;
-        }
-
-        let combo = self.combo_stripping_leader(event);
-        self.lookup_mode_action(&combo)
-            .map(InputResult::Action)
-            .unwrap_or(InputResult::Consumed)
-    }
-
-    fn process_locked_legacy(&mut self, event: KeyEvent<'_>) -> InputResult {
-        if self.is_leader_press(event) {
-            self.state = State::AwaitingUnlock;
-            return InputResult::Consumed;
-        }
-        let combo = KeyCombo::from_modifiers(
-            event.key_name,
-            event.ctrl,
-            false,
-            event.alt,
-            event.super_key,
-        );
-        if let Some(Action::ToggleLock) = self.direct_keybinds.lookup(&combo) {
-            self.state = State::Idle;
-            return InputResult::Consumed;
-        }
-        InputResult::PassThrough
-    }
-
-    fn process_awaiting_unlock_legacy(&mut self, event: KeyEvent<'_>) -> InputResult {
-        let combo = self.combo_stripping_leader(event);
-        if let Some(Action::ToggleLock) = self.keybinds.lookup(&combo) {
-            self.state = State::Idle;
-            return InputResult::Consumed;
-        }
-        self.state = State::Locked;
-        InputResult::PassThrough
-    }
-
-    // ── Helpers ──
-
-    fn dispatch_immediate(&mut self, action: Action) -> InputResult {
-        if let Some(result) = self.try_dispatch_mode_entry(&action) {
-            return result;
-        }
-        if matches!(action, Action::ToggleLock) {
-            self.toggle_lock();
-            return InputResult::Consumed;
-        }
-        InputResult::Action(action)
-    }
-
-    fn try_enter_mode(&mut self, name: &str) -> InputResult {
-        if self.mode_keybinds.contains_key(name) {
-            self.state = State::InMode {
-                name: name.to_string(),
-            };
-            InputResult::Consumed
-        } else {
-            log::warn!("enter_mode: unknown mode {:?}", name);
-            self.state = State::Idle;
-            InputResult::Consumed
-        }
     }
 
     fn transition_after_action(&mut self, action: &Action) {
@@ -472,7 +368,7 @@ impl InputHandler {
     }
 
     pub(super) fn check_timeout(&mut self) {
-        if self.input_mode == InputMode::Sticky {
+        if self.input_mode == InputMode::Sticky || self.has_active_table() {
             return;
         }
         if let State::AwaitingAction { entered_at } = &self.state
@@ -480,31 +376,6 @@ impl InputHandler {
         {
             self.state = State::Idle;
         }
-    }
-
-    fn consume_escape(&mut self, key_name: &str) -> bool {
-        if !is_escape(key_name) {
-            return false;
-        }
-        self.state = State::Idle;
-        true
-    }
-
-    fn try_dispatch_mode_entry(&mut self, action: &Action) -> Option<InputResult> {
-        match action {
-            Action::EnterMode(name) => Some(self.try_enter_mode(name)),
-            _ => None,
-        }
-    }
-
-    fn lookup_mode_action(&self, combo: &KeyCombo) -> Option<Action> {
-        let State::InMode { name } = &self.state else {
-            return None;
-        };
-
-        self.mode_keybinds
-            .get(name)
-            .and_then(|table| table.lookup(combo))
     }
 
     fn strip_leader_modifier(&self, combo: &mut KeyCombo) {

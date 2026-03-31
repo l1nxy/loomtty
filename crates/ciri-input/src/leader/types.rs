@@ -23,8 +23,6 @@ pub enum State {
     Idle,
     /// Leader was pressed, awaiting action key (prefix / sticky-combo only).
     AwaitingAction { entered_at: Instant },
-    /// Inside a named mode (e.g. "resize", "scroll").
-    InMode { name: String },
     /// Locked — all keys pass through. Only leader+unlock exits.
     Locked,
     /// Leader pressed while locked, awaiting the unlock key.

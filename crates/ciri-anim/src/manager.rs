@@ -364,7 +364,8 @@ impl AnimationManager {
     /// Start drag dim: pane opacity fades to drag_opacity.
     pub fn start_drag_dim(&mut self, pane_id: PaneId, config: &AnimConfig) {
         if let Some(state) = self.pane_anims.get_mut(&pane_id) {
-            state.drag_dim = Some(config.drag_dim.create(1.0, config.drag_opacity as f64));
+            let current = state.drag_dim.as_ref().map_or(1.0, AnimValue::value);
+            state.drag_dim = Some(config.drag_dim.create(current, config.drag_opacity as f64));
         }
     }
 
@@ -722,6 +723,44 @@ mod tests {
             mgr.advance_all(1.0 / 60.0);
         }
         assert!(mgr.pane_open_slide(1) < 0.01);
+    }
+
+    #[test]
+    fn drag_dim_retargets_from_current_value_when_restarted() {
+        let mut mgr = AnimationManager::new();
+        let config = default_config();
+
+        mgr.ensure_pane_registered(1);
+        mgr.start_drag_dim(1, &config);
+        mgr.advance_all(0.05);
+        let mid_drag_dim = mgr.pane_drag_dim(1);
+        assert!(mid_drag_dim < 1.0 && mid_drag_dim > config.drag_opacity);
+
+        mgr.start_drag_dim(1, &config);
+
+        assert!(
+            (mgr.pane_drag_dim(1) - mid_drag_dim).abs() < 0.001,
+            "restarting drag dim should preserve current dim level"
+        );
+    }
+
+    #[test]
+    fn drag_dim_can_restore_after_restart() {
+        let mut mgr = AnimationManager::new();
+        let config = default_config();
+
+        mgr.ensure_pane_registered(1);
+        mgr.start_drag_dim(1, &config);
+        mgr.advance_all(0.05);
+        mgr.start_drag_dim(1, &config);
+        mgr.end_drag_dim(1, &config);
+
+        for _ in 0..120 {
+            mgr.advance_all(1.0 / 60.0);
+        }
+
+        assert!((mgr.pane_drag_dim(1) - 1.0).abs() < 0.01);
+        assert!(!mgr.is_animating());
     }
 
     #[test]

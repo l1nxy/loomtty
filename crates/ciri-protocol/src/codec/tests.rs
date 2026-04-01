@@ -577,18 +577,18 @@ fn sm_repeat_exceeding_u16_max() {
 #[test]
 fn decode_cell_delta_rejects_inverted_region_bounds() {
     let mut payload = Vec::new();
-    payload.extend_from_slice(&1u64.to_le_bytes());
-    payload.extend_from_slice(&2u64.to_le_bytes());
-    payload.extend_from_slice(&0i16.to_le_bytes());
-    payload.extend_from_slice(&0u16.to_le_bytes());
-    payload.push(0);
-    payload.push(0);
-    payload.extend_from_slice(&80u16.to_le_bytes());
-    payload.extend_from_slice(&1u16.to_le_bytes());
-    payload.extend_from_slice(&3u16.to_le_bytes());
-    payload.extend_from_slice(&5u16.to_le_bytes());
-    payload.extend_from_slice(&4u16.to_le_bytes());
-    payload.extend_from_slice(&0u32.to_le_bytes());
+    payload.extend_from_slice(&1u64.to_le_bytes());   // pane_id
+    payload.extend_from_slice(&2u64.to_le_bytes());   // generation
+    payload.extend_from_slice(&0i16.to_le_bytes());   // cursor_line
+    payload.extend_from_slice(&0u16.to_le_bytes());   // cursor_col
+    payload.push(0);                                   // cursor_shape
+    payload.extend_from_slice(&0u16.to_le_bytes());   // mode_flags (u16)
+    payload.extend_from_slice(&80u16.to_le_bytes());  // cols
+    payload.extend_from_slice(&1u16.to_le_bytes());   // num_regions
+    payload.extend_from_slice(&3u16.to_le_bytes());   // region: line
+    payload.extend_from_slice(&5u16.to_le_bytes());   // region: left (invalid: > right)
+    payload.extend_from_slice(&4u16.to_le_bytes());   // region: right
+    payload.extend_from_slice(&0u32.to_le_bytes());   // region: sm_data_len
 
     let err = decode_cell_delta_borrowed(payload).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
@@ -598,18 +598,18 @@ fn decode_cell_delta_rejects_inverted_region_bounds() {
 #[test]
 fn decode_cell_delta_rejects_truncated_region_data() {
     let mut payload = Vec::new();
-    payload.extend_from_slice(&1u64.to_le_bytes());
-    payload.extend_from_slice(&2u64.to_le_bytes());
-    payload.extend_from_slice(&0i16.to_le_bytes());
-    payload.extend_from_slice(&0u16.to_le_bytes());
-    payload.push(0);
-    payload.push(0);
-    payload.extend_from_slice(&80u16.to_le_bytes());
-    payload.extend_from_slice(&1u16.to_le_bytes());
-    payload.extend_from_slice(&3u16.to_le_bytes());
-    payload.extend_from_slice(&4u16.to_le_bytes());
-    payload.extend_from_slice(&6u16.to_le_bytes());
-    payload.extend_from_slice(&4u32.to_le_bytes());
+    payload.extend_from_slice(&1u64.to_le_bytes());   // pane_id
+    payload.extend_from_slice(&2u64.to_le_bytes());   // generation
+    payload.extend_from_slice(&0i16.to_le_bytes());   // cursor_line
+    payload.extend_from_slice(&0u16.to_le_bytes());   // cursor_col
+    payload.push(0);                                   // cursor_shape
+    payload.extend_from_slice(&0u16.to_le_bytes());   // mode_flags (u16)
+    payload.extend_from_slice(&80u16.to_le_bytes());  // cols
+    payload.extend_from_slice(&1u16.to_le_bytes());   // num_regions
+    payload.extend_from_slice(&3u16.to_le_bytes());   // region: line
+    payload.extend_from_slice(&4u16.to_le_bytes());   // region: left
+    payload.extend_from_slice(&6u16.to_le_bytes());   // region: right
+    payload.extend_from_slice(&4u32.to_le_bytes());   // region: sm_data_len (claims 4 but only 1 byte follows)
     payload.extend_from_slice(&[OP_END]);
 
     let err = decode_cell_delta_borrowed(payload).unwrap_err();

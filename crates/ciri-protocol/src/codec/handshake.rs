@@ -40,7 +40,10 @@ const MAX_SESSION_NAME_LEN: usize = 255;
 /// Wire protocol version. Incremented whenever the handshake or frame format
 /// changes in a backward-incompatible way.
 ///
-pub const WIRE_PROTOCOL_VERSION: u8 = 1;
+/// History:
+///   1 = initial codec layout
+///   2 = mode_flags expanded from u8 to u16 (kitty keyboard levels 1-5)
+pub const WIRE_PROTOCOL_VERSION: u8 = 2;
 
 /// Version compatibility result.
 #[derive(Debug, Clone, PartialEq, Eq)]

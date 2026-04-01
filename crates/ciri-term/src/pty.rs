@@ -250,6 +250,35 @@ impl Pty {
         self.master.as_ref().and_then(|m| m.as_raw_fd())
     }
 
+    /// Heuristic check for password input mode: canonical mode (`ICANON`) with
+    /// echo disabled (`!ECHO`).
+    ///
+    /// Programs like `sudo`, `ssh`, and `passwd` disable terminal echo when
+    /// reading passwords, which this detects.
+    ///
+    /// **Known false positives:** `read -s` in bash/zsh, explicit `stty -echo`.
+    /// **Known false negatives:** raw-mode password prompts (e.g. some TUI apps),
+    /// programs that read directly from `/dev/tty` (e.g. ssh in some
+    /// configurations).
+    /// **Windows:** Always returns `false` — ConPTY does not expose termios state.
+    #[cfg(unix)]
+    pub fn is_password_input(&self) -> bool {
+        if let Some(ref master) = self.master {
+            if let Some(termios) = master.get_termios() {
+                let bits = termios.local_flags.bits() as u64;
+                let canonical = (bits & (libc::ICANON as u64)) != 0;
+                let echo = (bits & (libc::ECHO as u64)) != 0;
+                return canonical && !echo;
+            }
+        }
+        false
+    }
+
+    #[cfg(not(unix))]
+    pub fn is_password_input(&self) -> bool {
+        false
+    }
+
     pub fn resize(&self, cols: u16, rows: u16) {
         if let Some(ref master) = self.master
             && let Err(e) = master.resize(PtySize {

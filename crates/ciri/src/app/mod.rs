@@ -22,7 +22,7 @@ use ciri_gpu::{GlyphAtlasGpu, Renderer};
 use ciri_layout::geometry::ViewSize;
 use ciri_layout::workspace_set::WorkspaceSet;
 use ciri_protocol::message::*;
-use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, ScissoredRange};
+use ciri_render::glyph_cache::{GlyphCache, GlyphEntry, GlyphInstance, ScissoredRange};
 use ciri_render::rect::Rect;
 use ciri_render::shaper::TextShaper;
 use ciri_render::terminal::{ColorTable, TerminalView};
@@ -107,6 +107,7 @@ pub(crate) struct App {
     pub cached_color_table: ColorTable,
     /// Per-pane cached glyph instances to skip redundant transformation in build_tiles.
     pub cached_tile_glyphs: HashMap<u64, CachedTileGlyphs>,
+    pub image_atlas_entries: HashMap<(u64, u64), GlyphEntry>,
     /// Whether the window currently has input focus.
     pub window_focused: bool,
     pub config_watcher: Option<notify::RecommendedWatcher>,
@@ -220,6 +221,7 @@ impl App {
             mouse_left_held: false,
             cached_color_table,
             cached_tile_glyphs: HashMap::new(),
+            image_atlas_entries: HashMap::new(),
             window_focused: true,
             config_watcher: None,
             config_change_rx: None,
@@ -316,8 +318,7 @@ impl App {
         };
 
         // Clear caches — they'll be rebuilt on next render
-        self.cached_views.clear();
-        self.cached_tile_glyphs.clear();
+        self.clear_render_caches();
 
         // Update window title
         let suffix = match &self.core.remote_config {
@@ -618,8 +619,7 @@ impl App {
 
     pub fn mark_disconnected_for_reconnect(&mut self) {
         self.core.mark_disconnected_for_reconnect();
-        self.cached_views.clear();
-        self.cached_tile_glyphs.clear();
+        self.clear_render_caches();
     }
 
     pub fn prepare_reconnect(&mut self) -> Option<ReconnectPlan> {
@@ -673,6 +673,12 @@ impl App {
         self.cached_tile_glyphs.remove(&pane_id);
     }
 
+    pub fn clear_render_caches(&mut self) {
+        self.cached_views.clear();
+        self.cached_tile_glyphs.clear();
+        self.image_atlas_entries.clear();
+    }
+
     /// Update client-side viewport/layout state immediately for interactive window resize.
     /// This keeps the UI visually in sync while deferring the expensive PTY resize.
     pub fn preview_resize(&mut self, size: winit::dpi::PhysicalSize<u32>) {
@@ -720,8 +726,7 @@ impl App {
         for grid in self.core.pane_grids.values_mut() {
             grid.dirty = true;
         }
-        self.cached_views.clear();
-        self.cached_tile_glyphs.clear();
+        self.clear_render_caches();
         let (cols, rows) = self.compute_grid_size();
         let (cw, ch) = self.cell_dimensions();
         let view = &self.core.workspaces.view_size;

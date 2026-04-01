@@ -472,6 +472,15 @@ impl App {
             }
         }
 
+        self.build_pane_images(
+            pane_id,
+            inner_x,
+            inner_y,
+            zoom,
+            visual.dim,
+            color_glyphs,
+        );
+
         let (sx, sy, sw, sh) = visual.scissor;
         if glyph_start < glyphs.len() {
             glyph_batches.push(ScissoredRange {
@@ -794,103 +803,90 @@ impl App {
         }
     }
 
-    pub fn build_image_placements(
+    fn rgb_to_rgba(width: u32, height: u32, data: &[u8]) -> Option<Vec<u8>> {
+        let rgb_len = width.checked_mul(height)?.checked_mul(3)? as usize;
+        if data.len() != rgb_len {
+            log::warn!(
+                "rejecting RGB image upload: got {} bytes, expected {rgb_len} for {width}x{height}",
+                data.len()
+            );
+            return None;
+        }
+
+        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+        for rgb in data.chunks_exact(3) {
+            rgba.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
+        }
+        Some(rgba)
+    }
+
+    fn ensure_image_atlas_entry(
         &mut self,
-        tiles: &[(u64, GeoRect, bool)],
+        pane_id: u64,
+        img: &super::ClientImagePlacement,
+    ) -> Option<ciri_render::glyph_cache::GlyphEntry> {
+        let cache_key = (pane_id, img.image_id);
+        if let Some(entry) = self.image_atlas_entries.get(&cache_key).copied() {
+            return Some(entry);
+        }
+
+        let rgba = match img.format.as_str() {
+            "rgba" => img.data.as_slice().to_vec(),
+            "rgb" => Self::rgb_to_rgba(img.pixel_width, img.pixel_height, img.data.as_slice())?,
+            other => {
+                log::warn!("unsupported inline image format {other:?} for image {}", img.image_id);
+                return None;
+            }
+        };
+
+        let entry = self
+            .glyph_cache
+            .as_mut()
+            .and_then(|cache| cache.cache_rgba_image(img.pixel_width, img.pixel_height, &rgba))?;
+        self.image_atlas_entries.insert(cache_key, entry);
+        Some(entry)
+    }
+
+    fn build_pane_images(
+        &mut self,
+        pane_id: u64,
+        inner_x: f32,
+        inner_y: f32,
         zoom: f32,
-        vw: f32,
-        vh: f32,
-        bg_rects: &mut Vec<Rect>,
-        glyphs: &mut Vec<GlyphInstance>,
+        dim: f32,
+        color_glyphs: &mut Vec<GlyphInstance>,
     ) {
-        if self.core.image_placements.is_empty() {
+        let Some(placements) = self.core.image_placements.get(&pane_id).cloned() else {
+            return;
+        };
+        if placements.is_empty() {
             return;
         }
+
         let (cw, ch) = {
-            let atlas = self.glyph_cache.as_ref().unwrap();
+            let Some(atlas) = self.glyph_cache.as_ref() else {
+                return;
+            };
             (atlas.cell_width, atlas.cell_height)
         };
 
-        for (pane_id, tile_rect, _) in tiles {
-            let Some(placements) = self.core.image_placements.get(pane_id) else {
+        for img in &placements {
+            let Some(entry) = self.ensure_image_atlas_entry(pane_id, img) else {
                 continue;
             };
-            if placements.is_empty() {
-                continue;
-            }
 
-            let Some(visual) = self.pane_visual_state(*pane_id, *tile_rect, zoom, vw, vh) else {
-                continue;
-            };
-            let tr = visual.tr;
-            let inner_x = visual.inner_x;
-            let inner_y = visual.inner_y;
+            let sx = (inner_x + img.col as f32 * cw * zoom).round();
+            let sy = (inner_y + img.row as f32 * ch * zoom).round();
+            let iw = (img.width_cells.max(1) as f32 * cw * zoom).round().max(1.0);
+            let ih = (img.height_cells.max(1) as f32 * ch * zoom).round().max(1.0);
 
-            for img in placements {
-                let ix = inner_x + img.col as f32 * cw * zoom;
-                let iy = inner_y + img.row as f32 * ch * zoom;
-                let iw = img.width_cells as f32 * cw * zoom;
-                let ih = img.height_cells as f32 * ch * zoom;
-
-                // Image placeholder: dark semi-transparent background
-                let src = GeoRect::new(ix, iy, iw, ih);
-                if let Some(c) = src.intersection(&tr) {
-                    bg_rects.push(Rect {
-                        x: c.x,
-                        y: c.y,
-                        w: c.w,
-                        h: c.h,
-                        color: [0.1, 0.1, 0.15, 0.8],
-                    });
-                    // Border
-                    let bw = (1.0 * zoom).max(1.0);
-                    bg_rects.push(Rect {
-                        x: c.x,
-                        y: c.y,
-                        w: c.w,
-                        h: bw,
-                        color: [0.4, 0.6, 0.8, 0.6],
-                    });
-                    bg_rects.push(Rect {
-                        x: c.x,
-                        y: c.y + c.h - bw,
-                        w: c.w,
-                        h: bw,
-                        color: [0.4, 0.6, 0.8, 0.6],
-                    });
-                    bg_rects.push(Rect {
-                        x: c.x,
-                        y: c.y,
-                        w: bw,
-                        h: c.h,
-                        color: [0.4, 0.6, 0.8, 0.6],
-                    });
-                    bg_rects.push(Rect {
-                        x: c.x + c.w - bw,
-                        y: c.y,
-                        w: bw,
-                        h: c.h,
-                        color: [0.4, 0.6, 0.8, 0.6],
-                    });
-                }
-
-                // "IMG" label
-                let label = format!("IMG {}x{}", img.pixel_width, img.pixel_height);
-                let baseline = ch * self.core.config.statusbar.text_baseline;
-                let atlas = self.glyph_cache.as_mut().unwrap();
-                emit_status_text(
-                    atlas,
-                    &label,
-                    &TextEmitParams {
-                        x_start: ix + 4.0 * zoom,
-                        y: iy + 2.0 * zoom,
-                        cell_width: cw * zoom,
-                        baseline: baseline * zoom,
-                        color: [0.6, 0.8, 1.0, 0.7],
-                    },
-                    glyphs,
-                );
-            }
+            color_glyphs.push(GlyphInstance {
+                pos: [sx, sy],
+                size: [iw, ih],
+                uv_pos: [entry.u0, entry.v0],
+                uv_size: [entry.u1 - entry.u0, entry.v1 - entry.v0],
+                color: [dim, dim, dim, 1.0],
+            });
         }
     }
 
@@ -1174,7 +1170,6 @@ impl App {
         self.build_search_bar(&offset_tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs);
         self.build_bell_flash(&offset_tiles, zoom, vw_f, vh_f, &mut bg_rects);
         self.build_ime_preedit(&offset_tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs);
-        self.build_image_placements(&offset_tiles, zoom, vw_f, vh_f, &mut bg_rects, &mut glyphs);
 
         let clear_color = if self.core.overview.active || zoom < zoom_threshold {
             ThemeConfig::parse_color(&self.core.config.theme.overview_background)
@@ -1216,8 +1211,7 @@ impl App {
         if cache.atlas_needs_clear {
             cache.clear_cache();
             cache.atlas_needs_clear = false;
-            self.cached_views.clear();
-            self.cached_tile_glyphs.clear();
+            self.clear_render_caches();
             for grid in self.core.pane_grids.values_mut() {
                 grid.dirty = true;
             }

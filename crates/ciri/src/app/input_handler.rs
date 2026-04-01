@@ -683,57 +683,155 @@ pub(crate) fn key_event_to_pty_bytes(event: &winit::event::KeyEvent, ctrl: bool)
 
 /// Encode a key event using the Kitty keyboard protocol (CSI u format).
 ///
-/// Format: CSI unicode-key-code [; modifier-value] u
+/// Full format: CSI unicode-key-code:shifted-key:base-layout-key ; modifiers:event-type ; text-as-codepoints u
 /// Modifier bits: shift=1, alt=2, ctrl=4, super=8 (value = bits + 1)
 ///
-/// For special keys (arrows, function keys, etc.) that have legacy encodings,
-/// we use: CSI 1 ; modifier-value <suffix>
+/// Levels:
+///   1 (DISAMBIGUATE): CSI u encoding for ambiguous keys
+///   2 (REPORT_EVENTS): Include event type (press=1, repeat=2, release=3)
+///   3 (REPORT_ALTERNATES): Include shifted/base layout key codepoints
+///   4 (REPORT_ALL): ALL keys use CSI u, no legacy sequences
+///   5 (REPORT_TEXT): Include associated text as colon-separated codepoints
 pub(crate) fn key_event_to_kitty_bytes(
     event: &winit::event::KeyEvent,
     ctrl: bool,
     shift: bool,
     alt: bool,
     super_key: bool,
+    kitty_flags: u16,
 ) -> Vec<u8> {
+    use ciri_protocol::message::{
+        MODE_KITTY_REPORT_EVENTS, MODE_KITTY_REPORT_ALTERNATES,
+        MODE_KITTY_REPORT_ALL, MODE_KITTY_REPORT_TEXT,
+    };
+
+    let report_events = kitty_flags & MODE_KITTY_REPORT_EVENTS != 0;
+    let report_alternates = kitty_flags & MODE_KITTY_REPORT_ALTERNATES != 0;
+    let report_all = kitty_flags & MODE_KITTY_REPORT_ALL != 0;
+    let report_text = kitty_flags & MODE_KITTY_REPORT_TEXT != 0;
+
     // Compute modifier value (kitty uses modifier_bits + 1)
     let mut modifier_bits: u8 = 0;
-    if shift {
-        modifier_bits |= 1;
-    }
-    if alt {
-        modifier_bits |= 2;
-    }
-    if ctrl {
-        modifier_bits |= 4;
-    }
-    if super_key {
-        modifier_bits |= 8;
-    }
+    if shift { modifier_bits |= 1; }
+    if alt { modifier_bits |= 2; }
+    if ctrl { modifier_bits |= 4; }
+    if super_key { modifier_bits |= 8; }
     let modifier_val = modifier_bits + 1; // 1 = no modifiers
 
-    // Helper: format CSI <keycode> [; modifier] u
-    let csi_u = |keycode: u32| -> Vec<u8> {
-        if modifier_val > 1 {
-            format!("\x1b[{};{}u", keycode, modifier_val).into_bytes()
+    // Determine event type for level 2+
+    let event_type: u8 = if report_events {
+        match event.state {
+            winit::event::ElementState::Pressed => {
+                if event.repeat { 2 } else { 1 }
+            }
+            winit::event::ElementState::Released => 3,
+        }
+    } else {
+        0 // not reported
+    };
+
+    // For level 2+, skip release events if the app didn't request event reporting
+    if !report_events && event.state == winit::event::ElementState::Released {
+        return vec![];
+    }
+
+    // Build the modifier+event_type parameter: "modifiers:event_type" or just "modifiers"
+    let format_modifier_param = |mod_val: u8, evt_type: u8| -> String {
+        if evt_type > 0 && (evt_type != 1 || mod_val > 1) {
+            // Include event type: either non-press event, or press with modifiers
+            format!("{mod_val}:{evt_type}")
+        } else if mod_val > 1 {
+            format!("{mod_val}")
         } else {
-            format!("\x1b[{}u", keycode).into_bytes()
+            String::new()
         }
     };
 
-    // Helper: format CSI 1 ; modifier <suffix> for special keys
-    let csi_special = |suffix: char| -> Vec<u8> {
-        if modifier_val > 1 {
-            format!("\x1b[1;{}{}", modifier_val, suffix).into_bytes()
+    // Get the text associated with the key for level 5
+    let associated_text: Option<String> = if report_text {
+        event.text_with_all_modifiers().and_then(|t| {
+            let s: &str = t;
+            if s.is_empty() || ctrl || alt || super_key {
+                None
+            } else {
+                Some(s.chars().map(|c| format!("{}", c as u32)).collect::<Vec<_>>().join(":"))
+            }
+        })
+    } else {
+        None
+    };
+
+    // Helper: get the shifted key codepoint for level 3 (from the text with shift).
+    // Only meaningful when Shift is the sole modifier; with Ctrl/Alt/Super the
+    // text_with_all_modifiers() value is not the "shifted" variant of the key.
+    let shifted_key: u32 = if report_alternates && shift && !ctrl && !alt && !super_key {
+        event.text_with_all_modifiers()
+            .and_then(|t| t.chars().next())
+            .map(|c| c as u32)
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    // Helper: get the base layout key codepoint for level 3
+    let base_layout_key: u32 = if report_alternates {
+        event.key_without_modifiers().to_text()
+            .and_then(|t| t.chars().next())
+            .map(|c| c as u32)
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    // Helper: format CSI <keycode>[:shifted[:base]] [; modifier[:event_type] [; text]] u
+    let csi_u_full = |keycode: u32| -> Vec<u8> {
+        let mod_param = format_modifier_param(modifier_val, event_type);
+        let text_param = associated_text.as_deref().unwrap_or("");
+
+        // Build the key part: keycode[:shifted_key[:base_layout_key]]
+        let key_part = if report_alternates && (shifted_key != 0 || base_layout_key != 0) {
+            if base_layout_key != 0 && base_layout_key != keycode {
+                format!("{}:{}:{}", keycode, if shifted_key != 0 && shifted_key != keycode { shifted_key.to_string() } else { String::new() }, base_layout_key)
+            } else if shifted_key != 0 && shifted_key != keycode {
+                format!("{}:{}", keycode, shifted_key)
+            } else {
+                format!("{}", keycode)
+            }
         } else {
-            // Fall back to legacy encoding when no modifiers
-            format!("\x1b[{}", suffix).into_bytes()
+            format!("{}", keycode)
+        };
+
+        if !text_param.is_empty() {
+            // Level 5: CSI key ; mod:event ; text u
+            let mod_str = if mod_param.is_empty() { "1".to_string() } else { mod_param };
+            format!("\x1b[{};{};{}u", key_part, mod_str, text_param).into_bytes()
+        } else if !mod_param.is_empty() {
+            format!("\x1b[{};{}u", key_part, mod_param).into_bytes()
+        } else {
+            format!("\x1b[{}u", key_part).into_bytes()
+        }
+    };
+
+    // Helper: format CSI 1 ; modifier <suffix> for special keys (arrows, home, end)
+    let csi_special = |suffix: char| -> Vec<u8> {
+        let mod_param = format_modifier_param(modifier_val, event_type);
+        if !mod_param.is_empty() {
+            format!("\x1b[1;{}{}", mod_param, suffix).into_bytes()
+        } else {
+            // Fall back to legacy encoding when no modifiers (unless report_all)
+            if report_all {
+                format!("\x1b[1;1{}", suffix).into_bytes()
+            } else {
+                format!("\x1b[{}", suffix).into_bytes()
+            }
         }
     };
 
     // Helper: format CSI <keycode> ; modifier ~ for tilde keys
     let csi_tilde = |keycode: u32| -> Vec<u8> {
-        if modifier_val > 1 {
-            format!("\x1b[{};{}~", keycode, modifier_val).into_bytes()
+        let mod_param = format_modifier_param(modifier_val, event_type);
+        if !mod_param.is_empty() {
+            format!("\x1b[{};{}~", keycode, mod_param).into_bytes()
         } else {
             format!("\x1b[{}~", keycode).into_bytes()
         }
@@ -741,12 +839,39 @@ pub(crate) fn key_event_to_kitty_bytes(
 
     // Named keys first
     if let Key::Named(key) = &event.logical_key {
+        // Level 4 (report_all): use CSI u for keys that normally have legacy encoding
+        let use_csi_u_for_special = report_all;
+
         return match key {
-            NamedKey::Enter => csi_u(13),
-            NamedKey::Tab => csi_u(9),
-            NamedKey::Backspace => csi_u(127),
-            NamedKey::Escape => csi_u(27),
-            NamedKey::Space => csi_u(32),
+            NamedKey::Enter => {
+                if use_csi_u_for_special || modifier_val > 1 || event_type > 0 {
+                    csi_u_full(13)
+                } else {
+                    vec![b'\r']
+                }
+            }
+            NamedKey::Tab => {
+                if use_csi_u_for_special || modifier_val > 1 || event_type > 0 {
+                    csi_u_full(9)
+                } else {
+                    vec![b'\t']
+                }
+            }
+            NamedKey::Backspace => {
+                if use_csi_u_for_special || modifier_val > 1 || event_type > 0 {
+                    csi_u_full(127)
+                } else {
+                    vec![0x7f]
+                }
+            }
+            NamedKey::Escape => {
+                if use_csi_u_for_special || modifier_val > 1 || event_type > 0 {
+                    csi_u_full(27)
+                } else {
+                    vec![0x1b]
+                }
+            }
+            NamedKey::Space => csi_u_full(32),
             NamedKey::ArrowUp => csi_special('A'),
             NamedKey::ArrowDown => csi_special('B'),
             NamedKey::ArrowRight => csi_special('C'),
@@ -769,33 +894,60 @@ pub(crate) fn key_event_to_kitty_bytes(
             NamedKey::F10 => csi_tilde(21),
             NamedKey::F11 => csi_tilde(23),
             NamedKey::F12 => csi_tilde(24),
-            // Modifier-only keys: don't send in kitty protocol unless explicitly requested
-            NamedKey::Control | NamedKey::Shift | NamedKey::Alt | NamedKey::Super => vec![],
+            NamedKey::CapsLock => csi_u_full(57358),
+            NamedKey::ScrollLock => csi_u_full(57359),
+            NamedKey::NumLock => csi_u_full(57360),
+            NamedKey::PrintScreen => csi_u_full(57361),
+            NamedKey::Pause => csi_u_full(57362),
+            NamedKey::ContextMenu => csi_u_full(57363),
+            // Modifier-only keys: send in level 4+ (report_all)
+            NamedKey::Shift => {
+                if report_all { csi_u_full(57441) } else { vec![] }
+            }
+            NamedKey::Control => {
+                if report_all { csi_u_full(57442) } else { vec![] }
+            }
+            NamedKey::Alt => {
+                if report_all { csi_u_full(57443) } else { vec![] }
+            }
+            NamedKey::Super => {
+                if report_all { csi_u_full(57444) } else { vec![] }
+            }
             _ => vec![],
         };
     }
 
     // Character keys: encode as CSI <unicode_codepoint> [; modifier] u
-    // Kitty protocol requires the *base* (unshifted) key codepoint.
-    // The modifier value separately carries shift/ctrl/alt/super info.
-    // e.g. Shift+a → CSI 97;2u (base='a'=97, modifier=2=shift)
-    //      Ctrl+a  → CSI 97;5u (base='a'=97, modifier=5=ctrl)
     if let Key::Character(c) = &event.logical_key {
         let text = c.as_str();
         if let Some(ch) = text.chars().next() {
-            // Kitty spec: plain text keys (no modifiers, or only shift)
-            // should be sent as raw text, not CSI u encoded.
-            let has_non_shift_mods = ctrl || alt || super_key;
-            if !has_non_shift_mods && ch as u32 >= 0x20 {
-                let mut buf = [0u8; 4];
-                let s = ch.encode_utf8(&mut buf);
-                return s.as_bytes().to_vec();
-            }
+            let codepoint = if ctrl && (ch as u32) < 0x20 {
+                // Recover the original letter from physical key
+                physical_key_to_base_char(event.physical_key)
+                    .map(|c| c as u32)
+                    .unwrap_or(ch as u32)
+            } else if shift && !ctrl && !alt && !super_key {
+                // Shift-only: use the base (unshifted) key
+                physical_key_to_base_char(event.physical_key)
+                    .map(|c| c as u32)
+                    .unwrap_or(ch as u32)
+            } else if alt && !ctrl && !super_key {
+                // Alt-only or Alt+Shift: use the base key
+                physical_key_to_base_char(event.physical_key)
+                    .map(|c| c as u32)
+                    .unwrap_or(ch as u32)
+            } else {
+                ch as u32
+            };
 
-            let base = physical_key_to_base_char(event.physical_key)
-                .map(|c| c as u32)
-                .unwrap_or(ch as u32);
-            return csi_u(base);
+            // Level 4: even plain printable chars use CSI u
+            // Level 1-3: only use CSI u if there are modifiers or the key is ambiguous
+            if report_all || modifier_val > 1 || event_type > 0 {
+                return csi_u_full(codepoint);
+            } else {
+                // Plain character, no modifiers, level 1-3: send as-is (legacy)
+                return text.as_bytes().to_vec();
+            }
         }
     }
 

@@ -155,7 +155,8 @@ impl ClientPaneGrid {
         self.cursor_shape = sync.meta.cursor_shape;
         self.mode_flags = sync.meta.mode_flags;
         self.has_shell_integration = sync.meta.mode_flags & MODE_SHELL_INTEGRATION != 0;
-        self.has_kitty_keyboard = sync.meta.mode_flags & MODE_KITTY_KEYBOARD != 0;
+        self.kitty_flags = sync.meta.mode_flags & MODE_KITTY_ALL;
+        self.password_input = sync.meta.mode_flags & MODE_PASSWORD_INPUT != 0;
         self.title = sync.title.clone();
         self.grapheme_map = rebased_grapheme_map;
         let sync_grapheme_map = sync.grapheme_extras.build_lookup(&sync.cells);
@@ -175,7 +176,8 @@ impl ClientPaneGrid {
         self.cursor_shape = delta.cursor_shape;
         self.mode_flags = delta.mode_flags;
         self.has_shell_integration = delta.mode_flags & MODE_SHELL_INTEGRATION != 0;
-        self.has_kitty_keyboard = delta.mode_flags & MODE_KITTY_KEYBOARD != 0;
+        self.kitty_flags = delta.mode_flags & MODE_KITTY_ALL;
+        self.password_input = delta.mode_flags & MODE_PASSWORD_INPUT != 0;
 
         let cols = self.cols as usize;
 
@@ -208,7 +210,8 @@ impl ClientPaneGrid {
         self.cursor_shape = delta.meta.cursor_shape;
         self.mode_flags = delta.meta.mode_flags;
         self.has_shell_integration = delta.meta.mode_flags & MODE_SHELL_INTEGRATION != 0;
-        self.has_kitty_keyboard = delta.meta.mode_flags & MODE_KITTY_KEYBOARD != 0;
+        self.kitty_flags = delta.meta.mode_flags & MODE_KITTY_ALL;
+        self.password_input = delta.meta.mode_flags & MODE_PASSWORD_INPUT != 0;
 
         let cols = self.cols as usize;
         let nrows = self.rows as usize;

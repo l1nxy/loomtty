@@ -1,4 +1,5 @@
 use ciri_protocol::message::*;
+use std::sync::Arc;
 
 use super::App;
 use crate::connection::ServerEvent;
@@ -143,6 +144,8 @@ impl App {
                             );
                         }
                         self.core.pane_grids.remove(&pane_id);
+                        self.core.image_placements.remove(&pane_id);
+                        self.image_atlas_entries.clear();
                         self.invalidate_pane_cache(pane_id);
                         needs_redraw = true;
                     }
@@ -221,7 +224,8 @@ impl App {
                         height_cells,
                         pixel_width,
                         pixel_height,
-                        ..
+                        format,
+                        data,
                     }) => {
                         log::debug!(
                             "image #{image_id} for pane {pane_id}: {width_cells}x{height_cells} cells"
@@ -235,11 +239,14 @@ impl App {
                             height_cells,
                             pixel_width,
                             pixel_height,
+                            format,
+                            data: Arc::new(data),
                         });
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::ImageDeleted { pane_id }) => {
                         self.core.image_placements.remove(&pane_id);
+                        self.image_atlas_entries.clear();
                         self.invalidate_pane_cache(pane_id);
                         needs_redraw = true;
                     }
@@ -401,8 +408,7 @@ impl App {
                         self.text_shaper = Some(shaper);
                     }
                 }
-                self.cached_views.clear();
-                self.cached_tile_glyphs.clear();
+                self.clear_render_caches();
                 for grid in self.core.pane_grids.values_mut() {
                     grid.dirty = true;
                 }
@@ -505,6 +511,8 @@ mod tests {
                 height_cells: 1,
                 pixel_width: 8,
                 pixel_height: 16,
+                format: "rgba".to_string(),
+                data: Arc::new(vec![1, 2, 3, 4]),
             }],
         );
         app.write_last_session();
@@ -622,6 +630,8 @@ mod tests {
                 height_cells: 1,
                 pixel_width: 8,
                 pixel_height: 16,
+                format: "rgba".to_string(),
+                data: Arc::new(vec![1, 2, 3, 4]),
             }],
         );
 

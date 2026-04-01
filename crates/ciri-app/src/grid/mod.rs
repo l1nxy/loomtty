@@ -34,8 +34,8 @@ pub struct ClientPaneGrid {
     pub cursor_line: i16,
     pub cursor_col: u16,
     pub cursor_shape: u8,
-    /// Terminal mode flags from server (mouse mode, alt screen, etc.)
-    pub mode_flags: u8,
+    /// Terminal mode flags from server (mouse mode, alt screen, kitty keyboard levels, etc.)
+    pub mode_flags: u16,
     pub title: String,
     /// True when the entire pane needs full rebuild (resize, full sync, scroll, config reload).
     pub dirty: bool,
@@ -47,8 +47,10 @@ pub struct ClientPaneGrid {
     pub(super) dirty_row_count: usize,
     /// True if shell integration (OSC 133) is active for this pane.
     pub has_shell_integration: bool,
-    /// True if kitty keyboard protocol is active for this pane.
-    pub has_kitty_keyboard: bool,
+    /// Kitty keyboard protocol flags (bitmask of MODE_KITTY_* constants).
+    pub kitty_flags: u16,
+    /// True if password input detected (PTY ECHO disabled in canonical mode).
+    pub password_input: bool,
     /// OSC 8 hyperlink map: link_id → URI (from server's HyperlinkExtras).
     pub hyperlink_map: Vec<(u16, String)>,
     /// Current working directory from OSC 7 (reported by the shell via server).
@@ -74,7 +76,8 @@ impl ClientPaneGrid {
             dirty_row_count: 0,
             grapheme_map: std::collections::HashMap::new(),
             has_shell_integration: false,
-            has_kitty_keyboard: false,
+            kitty_flags: 0,
+            password_input: false,
             hyperlink_map: Vec::new(),
             cwd: None,
         }

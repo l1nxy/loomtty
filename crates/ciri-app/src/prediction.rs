@@ -88,7 +88,7 @@ pub struct GridInfo {
     pub cursor_col: u16,
     pub cols: u16,
     pub rows: u16,
-    pub mode_flags: u8,
+    pub mode_flags: u16,
 }
 
 impl PredictionEngine {

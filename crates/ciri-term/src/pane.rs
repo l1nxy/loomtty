@@ -192,6 +192,8 @@ pub struct Pane {
     notifications_pending: Vec<(String, String)>,
     /// Last time a notification was accepted (for rate limiting).
     last_notification_time: Option<std::time::Instant>,
+    /// Cached password input state (PTY ECHO disabled in canonical mode).
+    password_input: bool,
 }
 
 impl Pane {
@@ -234,6 +236,7 @@ impl Pane {
             title: String::new(),
             notifications_pending: Vec::new(),
             last_notification_time: None,
+            password_input: false,
             shell_state: ShellState {
                 zone: SemanticZone::Prompt,
                 last_exit_code: None,
@@ -295,6 +298,17 @@ impl Pane {
             self.dirty = true;
             self.track_scrollback_growth(prev_sb_hash);
         }
+
+        // Poll PTY termios to detect password input (ECHO disabled in canonical mode).
+        // Similar to ghostty's approach but more conservative — requires both ICANON
+        // and !ECHO (ghostty only checks !ECHO). The ICANON guard reduces false
+        // positives from raw-mode TUI apps.
+        let pw = self.pty.is_password_input();
+        if pw != self.password_input {
+            self.password_input = pw;
+            self.dirty = true;
+        }
+
         data_processed
     }
 
@@ -499,6 +513,11 @@ impl Pane {
         }
     }
 
+    /// Whether the PTY is currently in password input mode (ECHO disabled).
+    pub fn is_password_input(&self) -> bool {
+        self.password_input
+    }
+
     // ── Mouse ────────────────────────────────────────────────────────
 
     pub fn has_mouse_mode(&self) -> bool {
@@ -598,7 +617,7 @@ impl Pane {
         }
     }
 
-    pub fn cursor_info(&self) -> (i16, u16, u8, u8) {
+    pub fn cursor_info(&self) -> (i16, u16, u8, u16) {
         let content = self.term.renderable_content();
         let cursor_line = content.cursor.point.line.0 as i16;
         let cursor_col = content.cursor.point.column.0 as u16;
@@ -625,10 +644,14 @@ impl Pane {
 
     // ── Mode flags ───────────────────────────────────────────────────
 
-    fn mode_flags_from_term(&self, term: &Term<PtyEventListener>) -> u8 {
+    fn mode_flags_from_term(&self, term: &Term<PtyEventListener>) -> u16 {
         use alacritty_terminal::term::TermMode;
+        use ciri_protocol::message::{
+            MODE_KITTY_REPORT_EVENTS, MODE_KITTY_REPORT_ALTERNATES,
+            MODE_KITTY_REPORT_ALL, MODE_KITTY_REPORT_TEXT,
+        };
         let mode = term.mode();
-        let mut flags = 0u8;
+        let mut flags = 0u16;
         if mode.contains(TermMode::MOUSE_REPORT_CLICK)
             || mode.contains(TermMode::MOUSE_DRAG)
             || mode.contains(TermMode::MOUSE_MOTION)
@@ -641,8 +664,21 @@ impl Pane {
         if self.shell_state.prompt_line.is_some() {
             flags |= MODE_SHELL_INTEGRATION;
         }
+        // Kitty keyboard protocol: all 5 levels
         if mode.contains(TermMode::DISAMBIGUATE_ESC_CODES) {
             flags |= MODE_KITTY_KEYBOARD;
+        }
+        if mode.contains(TermMode::REPORT_EVENT_TYPES) {
+            flags |= MODE_KITTY_REPORT_EVENTS;
+        }
+        if mode.contains(TermMode::REPORT_ALTERNATE_KEYS) {
+            flags |= MODE_KITTY_REPORT_ALTERNATES;
+        }
+        if mode.contains(TermMode::REPORT_ALL_KEYS_AS_ESC) {
+            flags |= MODE_KITTY_REPORT_ALL;
+        }
+        if mode.contains(TermMode::REPORT_ASSOCIATED_TEXT) {
+            flags |= MODE_KITTY_REPORT_TEXT;
         }
         if mode.contains(TermMode::BRACKETED_PASTE) {
             flags |= MODE_BRACKETED_PASTE;
@@ -652,6 +688,10 @@ impl Pane {
         }
         if self.parsers.dec_mode.sync_output_mode {
             flags |= MODE_SYNCHRONIZED_OUTPUT;
+        }
+        // Password input: PTY has ECHO disabled in canonical mode
+        if self.password_input {
+            flags |= MODE_PASSWORD_INPUT;
         }
         flags
     }

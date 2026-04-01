@@ -700,7 +700,7 @@ fn delta_sets_mode_flags() {
     assert_eq!(grid.cursor_col, 3);
     assert_eq!(grid.cursor_shape, CURSOR_BEAM);
     assert!(grid.has_shell_integration);
-    assert!(!grid.has_kitty_keyboard);
+    assert_eq!(grid.kitty_flags, 0);
 }
 
 // ─── text_in_range spanning scrollback + viewport ────────────────

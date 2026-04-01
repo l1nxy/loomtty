@@ -187,6 +187,7 @@ pub struct OverviewState {
 }
 
 /// Client-side image placement for rendering.
+#[derive(Clone)]
 pub struct ClientImagePlacement {
     pub image_id: u64,
     pub col: u16,
@@ -195,6 +196,8 @@ pub struct ClientImagePlacement {
     pub height_cells: u16,
     pub pixel_width: u32,
     pub pixel_height: u32,
+    pub format: String,
+    pub data: Arc<Vec<u8>>,
 }
 
 /// Pending paste that needs user confirmation.
@@ -297,3 +300,4 @@ pub enum ReconnectPlanDecision {
     Try,
     GaveUp,
 }
+use std::sync::Arc;

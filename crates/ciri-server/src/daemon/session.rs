@@ -37,7 +37,7 @@ pub(crate) struct Session {
     /// Last time agent detection ran.
     pub(crate) last_agent_save: Option<Instant>,
     /// Last-known cursor state per pane, for detecting cursor-only changes.
-    pub(crate) last_cursor: HashMap<u64, (i16, u16, u8, u8)>,
+    pub(crate) last_cursor: HashMap<u64, (i16, u16, u8, u16)>,
 }
 
 impl Session {
@@ -609,21 +609,39 @@ impl Session {
             })
             .collect();
 
-        let image_invalidations: Vec<ServerMessage> = pane_ids
+        let image_events: Vec<ServerMessage> = pane_ids
             .iter()
-            .filter_map(|&id| {
+            .flat_map(|&id| {
                 let pane = self.panes.get(&id)?;
-                pane.active_images()
-                    .is_empty()
-                    .then_some(ServerMessage::ImageDeleted { pane_id: id })
+                let mut events = Vec::new();
+                if pane.active_images().is_empty() {
+                    events.push(ServerMessage::ImageDeleted { pane_id: id });
+                } else {
+                    for img in pane.active_images() {
+                        events.push(ServerMessage::ImagePlacement {
+                            pane_id: id,
+                            image_id: img.id,
+                            col: img.col,
+                            row: img.row,
+                            width_cells: img.width_cells,
+                            height_cells: img.height_cells,
+                            pixel_width: img.pixel_width,
+                            pixel_height: img.pixel_height,
+                            format: img.format.clone(),
+                            data: img.data.as_ref().clone(),
+                        });
+                    }
+                }
+                Some(events)
             })
+            .flatten()
             .collect();
 
         let msg = ServerMessage::StateSync {
             layout: self.layout_state(),
             pane_ids: pane_ids.clone(),
         };
-        (msg, syncs, image_invalidations)
+        (msg, syncs, image_events)
     }
 }
 
@@ -744,10 +762,10 @@ mod tests {
             .test_add_active_image(image.clone());
 
         let (_sync, _pane_syncs, image_events) = session.build_state_sync();
-        assert!(
-            image_events.is_empty(),
-            "active images should not emit deletes"
-        );
+        assert!(matches!(
+            image_events.as_slice(),
+            [ServerMessage::ImagePlacement { pane_id: id, .. }] if *id == pane_id
+        ));
 
         session
             .panes
@@ -758,6 +776,51 @@ mod tests {
         assert!(matches!(
             image_events.as_slice(),
             [ServerMessage::ImageDeleted { pane_id: id }] if *id == pane_id
+        ));
+    }
+
+    #[test]
+    fn build_state_sync_replays_active_images() {
+        let mut session = Session::new("default", "/bin/sh", 8.0, TerminalColors::default());
+        let mut next_pane_id = 1;
+        let mut clients = HashMap::new();
+        let pane_id = session
+            .create_pane(&mut next_pane_id, &mut clients)
+            .expect("pane");
+
+        let image = ciri_term::pane::ImagePlacement {
+            id: 42,
+            row: 1,
+            col: 2,
+            width_cells: 3,
+            height_cells: 4,
+            pixel_width: 24,
+            pixel_height: 64,
+            format: "rgba".to_string(),
+            data: std::sync::Arc::new(vec![1, 2, 3, 4]),
+        };
+        session
+            .panes
+            .get_mut(&pane_id)
+            .expect("pane exists")
+            .test_add_active_image(image);
+
+        let (_sync, _pane_syncs, image_events) = session.build_state_sync();
+
+        assert!(matches!(
+            image_events.as_slice(),
+            [ServerMessage::ImagePlacement {
+                pane_id: id,
+                image_id: 42,
+                col: 2,
+                row: 1,
+                width_cells: 3,
+                height_cells: 4,
+                pixel_width: 24,
+                pixel_height: 64,
+                format,
+                data,
+            }] if *id == pane_id && format == "rgba" && data == &vec![1, 2, 3, 4]
         ));
     }
 

@@ -44,6 +44,50 @@ impl App {
                 self.core.input.process_key_release(key_name);
                 self.request_redraw();
             }
+
+            // Check if the active pane wants release events (kitty level 2+)
+            let kitty_flags = self.core.workspaces.active().active_pane_id()
+                .and_then(|pid| self.core.pane_grids.get(&pid))
+                .map(|grid| grid.kitty_flags)
+                .unwrap_or(0);
+            let pane_wants_release = kitty_flags & ciri_protocol::message::MODE_KITTY_REPORT_EVENTS != 0;
+
+            if pane_wants_release {
+                // Send release event directly to PTY via kitty encoder
+                let ctrl = self.modifiers.control_key();
+                let shift = self.modifiers.shift_key();
+                let alt = self.modifiers.alt_key();
+                let super_key = self.modifiers.super_key();
+                let bytes = key_event_to_kitty_bytes(event, ctrl, shift, alt, super_key, kitty_flags);
+                if !bytes.is_empty() {
+                    if self.core.broadcast_mode {
+                        let vox = self.core.anim_mgr.view_offset_x.value() as f32;
+                        let visible_pids: Vec<u64> = self.core.workspaces.active()
+                            .visible_tiles(vox)
+                            .iter()
+                            .map(|(pid, _, _)| *pid)
+                            .collect();
+                        for pid in visible_pids {
+                            let pane_kitty_flags = self.core.pane_grids.get(&pid)
+                                .map(|g| g.kitty_flags)
+                                .unwrap_or(0);
+                            let pane_wants = pane_kitty_flags & ciri_protocol::message::MODE_KITTY_REPORT_EVENTS != 0;
+                            if !pane_wants {
+                                continue;
+                            }
+                            let pane_bytes = if pane_kitty_flags == kitty_flags {
+                                bytes.clone()
+                            } else {
+                                key_event_to_kitty_bytes(event, ctrl, shift, alt, super_key, pane_kitty_flags)
+                            };
+                            self.send(ClientMessage::Input { pane_id: pid, data: pane_bytes });
+                        }
+                    } else if let Some(pid) = self.core.workspaces.active_mut().active_pane_id() {
+                        self.send(ClientMessage::Input { pane_id: pid, data: bytes });
+                    }
+                }
+                self.request_redraw();
+            }
             return;
         }
 
@@ -297,59 +341,76 @@ impl App {
     // all key processing now goes through the unified pipeline above.
 
     fn send_key_input(&mut self, event: &winit::event::KeyEvent, modifiers: KeyModifiers) {
-        let use_kitty = self
+        let active_grid = self
             .core
             .workspaces
             .active()
             .active_pane_id()
-            .and_then(|pid| self.core.pane_grids.get(&pid))
-            .is_some_and(|grid| grid.has_kitty_keyboard);
-        let bytes = self.encode_key_input(event, modifiers, use_kitty);
+            .and_then(|pid| self.core.pane_grids.get(&pid));
+        let kitty_flags = active_grid.map(|g| g.kitty_flags).unwrap_or(0);
+        let password_mode = active_grid.is_some_and(|g| g.password_input);
+        let bytes = self.encode_key_input(event, modifiers, kitty_flags);
         if bytes.is_empty() {
             return;
         }
 
         self.scroll_active_to_bottom();
         if self.core.broadcast_mode {
-            let vox = self.core.anim_mgr.view_offset_x.value() as f32;
-            let visible_pids: Vec<u64> = self
-                .core
-                .workspaces
-                .active()
-                .visible_tiles(vox)
-                .iter()
-                .map(|(pid, _, _)| *pid)
-                .collect();
-            for pid in visible_pids {
-                let pane_kitty = self
+            if password_mode {
+                // Password input detected on active pane — suppress
+                // broadcast to avoid leaking secrets to other panes.
+                log::warn!("broadcast suppressed: password input detected on active pane");
+                if let Some(pid) = self.core.workspaces.active_mut().active_pane_id() {
+                    self.send(ClientMessage::Input {
+                        pane_id: pid,
+                        data: bytes,
+                    });
+                }
+            } else {
+                let vox = self.core.anim_mgr.view_offset_x.value() as f32;
+                let visible_pids: Vec<u64> = self
                     .core
-                    .pane_grids
-                    .get(&pid)
-                    .is_some_and(|g| g.has_kitty_keyboard);
-                let pane_bytes = if pane_kitty == use_kitty {
-                    bytes.clone()
-                } else {
-                    self.encode_key_input(event, modifiers, pane_kitty)
-                };
-                self.send(ClientMessage::Input {
-                    pane_id: pid,
-                    data: pane_bytes,
-                });
+                    .workspaces
+                    .active()
+                    .visible_tiles(vox)
+                    .iter()
+                    .map(|(pid, _, _)| *pid)
+                    .collect();
+                for pid in visible_pids {
+                    let pane_kitty_flags = self
+                        .core
+                        .pane_grids
+                        .get(&pid)
+                        .map(|g| g.kitty_flags)
+                        .unwrap_or(0);
+                    let pane_bytes = if pane_kitty_flags == kitty_flags {
+                        bytes.clone()
+                    } else {
+                        self.encode_key_input(event, modifiers, pane_kitty_flags)
+                    };
+                    self.send(ClientMessage::Input {
+                        pane_id: pid,
+                        data: pane_bytes,
+                    });
+                }
             }
             return;
         }
 
         if let Some(pid) = self.core.workspaces.active_mut().active_pane_id() {
-            // Feed prediction engine before sending to server
-            if let Some(grid) = self.core.pane_grids.get(&pid) {
-                let info = ciri_app::prediction::GridInfo {
-                    cursor_row: grid.cursor_line,
-                    cursor_col: grid.cursor_col,
-                    cols: grid.cols,
-                    rows: grid.rows,
-                    mode_flags: grid.mode_flags,
-                };
-                self.core.prediction.new_user_input(pid, &bytes, &info);
+            // Skip prediction when the pane is in password input mode
+            // to avoid leaking sensitive keystrokes into the prediction engine.
+            if !password_mode {
+                if let Some(grid) = self.core.pane_grids.get(&pid) {
+                    let info = ciri_app::prediction::GridInfo {
+                        cursor_row: grid.cursor_line,
+                        cursor_col: grid.cursor_col,
+                        cols: grid.cols,
+                        rows: grid.rows,
+                        mode_flags: grid.mode_flags,
+                    };
+                    self.core.prediction.new_user_input(pid, &bytes, &info);
+                }
             }
             self.send(ClientMessage::Input {
                 pane_id: pid,
@@ -362,15 +423,16 @@ impl App {
         &self,
         event: &winit::event::KeyEvent,
         modifiers: KeyModifiers,
-        use_kitty: bool,
+        kitty_flags: u16,
     ) -> Vec<u8> {
-        if use_kitty {
+        if kitty_flags & ciri_protocol::message::MODE_KITTY_KEYBOARD != 0 {
             key_event_to_kitty_bytes(
                 event,
                 modifiers.ctrl,
                 modifiers.shift,
                 modifiers.alt,
                 modifiers.super_key,
+                kitty_flags,
             )
         } else {
             key_event_to_pty_bytes(event, modifiers.ctrl)

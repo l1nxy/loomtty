@@ -11,6 +11,8 @@ use crate::partial_buf::PartialBuf;
 const MAX_DCS_PARTIAL_SIZE: usize = 4 * 1024 * 1024;
 const MAX_PALETTE: usize = 256;
 const MAX_IMAGE_DIM: u32 = 4096;
+const DEFAULT_CELL_WIDTH: u32 = 8;
+const DEFAULT_CELL_HEIGHT: u32 = 16;
 
 // ─── Sixel command AST ───────────────────────────────────────────────
 
@@ -337,8 +339,8 @@ impl SixelParser {
                 let id = self.next_image_id;
                 self.next_image_id += 1;
 
-                let width_cells = (image.width as u16 / 8).max(1);
-                let height_cells = (image.height as u16 / 16).max(1);
+                let width_cells = image.width.div_ceil(DEFAULT_CELL_WIDTH).max(1) as u16;
+                let height_cells = image.height.div_ceil(DEFAULT_CELL_HEIGHT).max(1) as u16;
 
                 log::info!(
                     "sixel image #{id}: {}x{} pixels, {width_cells}x{height_cells} cells, {} bytes",
@@ -546,6 +548,27 @@ mod tests {
         assert_eq!(result.placements.len(), 1);
         assert_eq!(result.placements[0].format, "rgba");
         assert!(result.placements[0].pixel_width > 0);
+    }
+
+    #[test]
+    fn parser_scan_sixel_sequence_rounds_cell_size_up() {
+        let mut data = Vec::new();
+        data.extend_from_slice(b"\x1bPq");
+        data.extend_from_slice(br#""1;1;9;17#0;2;100;0;0#0@"#);
+        data.extend_from_slice(b"\x1b\\");
+
+        let mut parser = SixelParser::new();
+        let mut active = Vec::new();
+        let result = parser.scan(&data, 2, 3, &mut active);
+
+        assert_eq!(result.placements.len(), 1);
+        let placement = &result.placements[0];
+        assert_eq!(placement.col, 2);
+        assert_eq!(placement.row, 3);
+        assert_eq!(placement.pixel_width, 9);
+        assert_eq!(placement.pixel_height, 17);
+        assert_eq!(placement.width_cells, 2);
+        assert_eq!(placement.height_cells, 2);
     }
 
     #[test]

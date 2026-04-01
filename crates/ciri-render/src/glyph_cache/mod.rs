@@ -18,7 +18,9 @@ pub use types::{FontStyle, GlyphEntry, GlyphInstance, ScissoredRange};
 
 use cjk::compute_cjk_pixel_size;
 use metrics::compute_ft_metrics;
-use rasterize::{cache_rasterized_glyph, convert_crossfont_glyph, rasterize_glyph_id_ft};
+use rasterize::{
+    RasterizedGlyph, cache_rasterized_glyph, convert_crossfont_glyph, rasterize_glyph_id_ft,
+};
 use types::{FontClass, FontKeySet};
 
 use ciri_config::config::RenderConfig;
@@ -383,6 +385,35 @@ impl GlyphCache {
     /// Ensure a regular-style character is in the atlas.
     pub fn ensure_char(&mut self, ch: char) -> Option<GlyphEntry> {
         self.ensure_styled_char(ch, FontStyle::Regular)
+    }
+
+    /// Upload an arbitrary RGBA bitmap into the color atlas.
+    pub fn cache_rgba_image(&mut self, width: u32, height: u32, data: &[u8]) -> Option<GlyphEntry> {
+        let expected_len = width.checked_mul(height)?.checked_mul(4)? as usize;
+        if data.len() != expected_len {
+            log::warn!(
+                "rejecting RGBA image upload: got {} bytes, expected {expected_len} for {width}x{height}",
+                data.len()
+            );
+            return None;
+        }
+
+        cache_rasterized_glyph(
+            RasterizedGlyph {
+                width,
+                height,
+                bearing_x: 0.0,
+                bearing_y: 0.0,
+                is_color: true,
+                data: data.to_vec(),
+            },
+            &mut self.alpha_packer,
+            &mut self.color_packer,
+            &mut self.alpha_pending,
+            &mut self.color_pending,
+            self.atlas_size,
+            &mut self.atlas_needs_clear,
+        )
     }
 
     /// Drain pending glyph uploads for the GPU backend to consume.

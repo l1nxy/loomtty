@@ -64,8 +64,7 @@ impl ApplicationHandler for App {
                     self.glyph_cache = Some(cache);
                     self.glyph_atlas_gpu = Some(atlas_gpu);
                     self.text_shaper = Some(shaper);
-                    self.cached_views.clear();
-                    self.cached_tile_glyphs.clear();
+                    self.clear_render_caches();
                     for grid in self.core.pane_grids.values_mut() {
                         grid.dirty = true;
                     }
@@ -180,8 +179,7 @@ impl ApplicationHandler for App {
                     needs_redraw = true;
                 } else {
                     log::info!("server connection lost, exiting");
-                    self.cached_views.clear();
-                    self.cached_tile_glyphs.clear();
+                    self.clear_render_caches();
                     self.destroy_gpu_resources();
                     self.renderer = None;
                     self.window = None;
@@ -195,8 +193,7 @@ impl ApplicationHandler for App {
                 && self.core.pane_grids.is_empty()
                 && self.core.workspaces.active().is_empty()
             {
-                self.cached_views.clear();
-                self.cached_tile_glyphs.clear();
+                self.clear_render_caches();
                 self.destroy_gpu_resources();
                 self.renderer = None;
                 self.window = None;
@@ -360,8 +357,7 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => {
                 self.send(ClientMessage::Detach);
                 self.core.pane_grids.clear();
-                self.cached_views.clear();
-                self.cached_tile_glyphs.clear();
+                self.clear_render_caches();
                 self.destroy_gpu_resources();
                 self.renderer = None;
                 self.window = None;

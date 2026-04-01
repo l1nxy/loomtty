@@ -604,8 +604,8 @@ pub struct CellDelta {
     pub cursor_line: i16,
     pub cursor_col: u16,
     pub cursor_shape: u8,
-    /// Terminal mode flags (mouse mode, alt screen, etc.)
-    pub mode_flags: u8,
+    /// Terminal mode flags (mouse mode, alt screen, kitty keyboard levels, etc.)
+    pub mode_flags: u16,
     pub regions: Vec<DamageRegion>,
 }
 
@@ -617,8 +617,8 @@ pub struct PaneFrameMeta {
     pub cursor_line: i16,
     pub cursor_col: u16,
     pub cursor_shape: u8,
-    /// Terminal mode flags (mouse mode, alt screen, etc.)
-    pub mode_flags: u8,
+    /// Terminal mode flags (mouse mode, alt screen, kitty keyboard levels, etc.)
+    pub mode_flags: u16,
 }
 
 /// Full pane snapshot (tag 0x21).
@@ -712,19 +712,36 @@ impl CellDeltaBorrowed {
 // ─── Terminal mode flags ────────────────────────────────────────────
 
 /// Pane has mouse reporting enabled (any mouse mode).
-pub const MODE_MOUSE_REPORT: u8 = 0x01;
+pub const MODE_MOUSE_REPORT: u16 = 0x0001;
 /// Pane is in alternate screen buffer (e.g. TUI app).
-pub const MODE_ALT_SCREEN: u8 = 0x02;
+pub const MODE_ALT_SCREEN: u16 = 0x0002;
 /// Shell integration is active (OSC 133 detected).
-pub const MODE_SHELL_INTEGRATION: u8 = 0x04;
-/// Kitty keyboard protocol: disambiguate escape codes (CSI u encoding).
-pub const MODE_KITTY_KEYBOARD: u8 = 0x08;
+pub const MODE_SHELL_INTEGRATION: u16 = 0x0004;
+/// Kitty keyboard protocol level 1: disambiguate escape codes (CSI u encoding).
+pub const MODE_KITTY_KEYBOARD: u16 = 0x0008;
 /// Bracketed paste mode (DECSET 2004) is active.
-pub const MODE_BRACKETED_PASTE: u8 = 0x10;
+pub const MODE_BRACKETED_PASTE: u16 = 0x0010;
 /// Focus event reporting (DECSET 1004) is active.
-pub const MODE_FOCUS_EVENT: u8 = 0x20;
+pub const MODE_FOCUS_EVENT: u16 = 0x0020;
 /// Synchronized output (DEC 2026) is active — terminal buffers updates.
-pub const MODE_SYNCHRONIZED_OUTPUT: u8 = 0x40;
+pub const MODE_SYNCHRONIZED_OUTPUT: u16 = 0x0040;
+/// Kitty keyboard protocol level 2: report event types (press/repeat/release).
+pub const MODE_KITTY_REPORT_EVENTS: u16 = 0x0100;
+/// Kitty keyboard protocol level 3: report alternate keys (shifted/base layout).
+pub const MODE_KITTY_REPORT_ALTERNATES: u16 = 0x0200;
+/// Kitty keyboard protocol level 4: report all keys as escape codes (no legacy).
+pub const MODE_KITTY_REPORT_ALL: u16 = 0x0400;
+/// Kitty keyboard protocol level 5: report associated text as codepoints.
+pub const MODE_KITTY_REPORT_TEXT: u16 = 0x0800;
+/// Password input detected (PTY ECHO disabled in canonical mode).
+pub const MODE_PASSWORD_INPUT: u16 = 0x1000;
+
+/// Mask covering all kitty keyboard protocol flags.
+pub const MODE_KITTY_ALL: u16 = MODE_KITTY_KEYBOARD
+    | MODE_KITTY_REPORT_EVENTS
+    | MODE_KITTY_REPORT_ALTERNATES
+    | MODE_KITTY_REPORT_ALL
+    | MODE_KITTY_REPORT_TEXT;
 
 // ─── Cursor shape encoding ──────────────────────────────────────────
 

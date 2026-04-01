@@ -49,8 +49,7 @@ dependencies = [
 [[package]]
 name = "alacritty_terminal"
 version = "0.25.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46319972e74179d707445f64aaa2893bbf6a111de3a9af29b7eb382f8b39e282"
+source = "git+https://github.com/l1nxy/alacritty.git?branch=ciri-patches#ae854978137f136746c73e745e4f2a42f5b0b2dd"
 dependencies = [
  "base64",
  "bitflags 2.11.0",
@@ -3862,8 +3861,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "vte"
 version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5924018406ce0063cd67f8e008104968b74b563ee1b85dde3ed1f7cb87d3dbd"
+source = "git+https://github.com/l1nxy/vte.git?branch=ciri-patches#fc1e3052433caa63af335ff5fb827ac1181bdb1b"
 dependencies = [
  "arrayvec",
  "bitflags 2.11.0",
@@ -4656,6 +4654,7 @@ checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
 [[package]]
 name = "winit"
 version = "0.30.13"
+source = "git+https://github.com/l1nxy/winit.git?branch=ciri-patches#e70a73b0f8a756ba99f078b4a0cdd125ce1b315f"
 dependencies = [
  "ahash",
  "android-activity",

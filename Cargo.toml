@@ -66,10 +66,14 @@ nix = { version = "0.29", features = ["term", "process", "fs", "signal"] }
 libc = "0.2"
 notify-rust = "4"
 
-# Patch winit to fix Windows 11 multi-monitor DPI drag issue
-# See: https://github.com/rust-windowing/winit/issues/4041
+# Patched forks (l1nxy/*, branch: ciri-patches)
+# winit: Windows 11 multi-monitor DPI fix + Wayland DnD (https://github.com/rust-windowing/winit/issues/4041)
+# alacritty_terminal: ciri terminal integration patches
+# vte: additional ANSI escape sequence support
 [patch.crates-io]
-winit = { path = "patches/winit" }
+winit = { git = "https://github.com/l1nxy/winit.git", branch = "ciri-patches" }
+alacritty_terminal = { git = "https://github.com/l1nxy/alacritty.git", branch = "ciri-patches" }
+vte = { git = "https://github.com/l1nxy/vte.git", branch = "ciri-patches" }
 
 # Optimize deps even in dev mode for usable performance
 [profile.dev.package."*"]

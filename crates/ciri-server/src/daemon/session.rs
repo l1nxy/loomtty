@@ -512,6 +512,11 @@ impl Session {
                 clipboard_msgs.push(ServerMessage::Bell { pane_id });
             }
 
+            // Drain desktop notifications (OSC 9 / OSC 777)
+            for (title, body) in pane.drain_notifications() {
+                clipboard_msgs.push(ServerMessage::Notification { pane_id, title, body });
+            }
+
             // Drain command completion events (OSC 133;D)
             if let Some(duration) = pane.drain_command_completion() {
                 clipboard_msgs.push(ServerMessage::CommandCompleted {

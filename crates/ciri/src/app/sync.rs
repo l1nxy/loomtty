@@ -199,6 +199,19 @@ impl App {
                             );
                         }
                     }
+                    ServerEvent::Control(ServerMessage::Notification {
+                        pane_id,
+                        title,
+                        body,
+                    }) => {
+                        log::debug!("notification from pane {pane_id}: {title}: {body}");
+                        let title = if title.is_empty() {
+                            "ciri".to_string()
+                        } else {
+                            title
+                        };
+                        self.send_desktop_notification(&title, &body);
+                    }
                     ServerEvent::Control(ServerMessage::ImagePlacement {
                         pane_id,
                         image_id,

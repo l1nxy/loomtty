@@ -188,6 +188,10 @@ pub struct Pane {
     parsers: ParserSuite,
     images: ImageStore,
     events: PendingEvents,
+    /// Desktop notifications pending drain (from OSC 9 / OSC 777).
+    notifications_pending: Vec<(String, String)>,
+    /// Last time a notification was accepted (for rate limiting).
+    last_notification_time: Option<std::time::Instant>,
 }
 
 impl Pane {
@@ -228,6 +232,8 @@ impl Pane {
         Ok(Pane {
             id,
             title: String::new(),
+            notifications_pending: Vec::new(),
+            last_notification_time: None,
             shell_state: ShellState {
                 zone: SemanticZone::Prompt,
                 last_exit_code: None,
@@ -350,6 +356,7 @@ impl Pane {
                 &mut self.shell_state,
                 &mut self.events.command_completion,
             );
+            self.scan_osc_notifications(chunk);
         }
 
         // VT-parse each chunk, recording cursor position after each
@@ -426,6 +433,14 @@ impl Pane {
 
     pub fn drain_command_completion(&mut self) -> Option<std::time::Duration> {
         self.events.drain_command_completion()
+    }
+
+    /// Drain pending desktop notifications (from OSC 9 / OSC 777).
+    /// Returns at most 5 (title, body) pairs per drain; excess are discarded.
+    pub fn drain_notifications(&mut self) -> Vec<(String, String)> {
+        let mut all = std::mem::take(&mut self.notifications_pending);
+        all.truncate(5);
+        all
     }
 
     pub fn drain_images(&mut self) -> Vec<ImagePlacement> {
@@ -650,6 +665,91 @@ impl Pane {
 
     pub fn has_focus_event_mode(&self) -> bool {
         self.parsers.dec_mode.focus_event_mode
+    }
+
+    // ── OSC 9/777 notification scanning ──────────────────────────────
+
+    const NOTIFICATION_PAYLOAD_MAX: usize = 4096;
+    const NOTIFICATION_TITLE_MAX: usize = 128;
+    const NOTIFICATION_BODY_MAX: usize = 256;
+    const NOTIFICATION_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
+    fn truncate_str(s: &str, max_bytes: usize) -> String {
+        if s.len() <= max_bytes {
+            return s.to_string();
+        }
+        let mut end = max_bytes;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        s[..end].to_string()
+    }
+
+    fn rate_limit_accept(&mut self) -> bool {
+        let now = std::time::Instant::now();
+        if let Some(last) = self.last_notification_time {
+            if now.duration_since(last) < Self::NOTIFICATION_MIN_INTERVAL {
+                return false;
+            }
+        }
+        self.last_notification_time = Some(now);
+        true
+    }
+
+    /// Scan raw PTY output for OSC 9 and OSC 777 desktop notification sequences.
+    fn scan_osc_notifications(&mut self, data: &[u8]) {
+        let mut i = 0;
+        while i + 3 < data.len() {
+            if data[i] != 0x1b || data[i + 1] != b']' {
+                i += 1;
+                continue;
+            }
+            let osc_start = i + 2;
+            let mut end = osc_start;
+            while end < data.len() {
+                if data[end] == 0x07 {
+                    break;
+                }
+                if data[end] == 0x1b && end + 1 < data.len() && data[end + 1] == b'\\' {
+                    break;
+                }
+                end += 1;
+            }
+            if end >= data.len() {
+                break;
+            }
+            let payload = &data[osc_start..end];
+            if payload.len() > Self::NOTIFICATION_PAYLOAD_MAX {
+                i = if data[end] == 0x07 { end + 1 } else { end + 2 };
+                continue;
+            }
+            if payload.starts_with(b"9;") {
+                if self.rate_limit_accept() {
+                    let message = String::from_utf8_lossy(&payload[2..]);
+                    let message = Self::truncate_str(&message, Self::NOTIFICATION_BODY_MAX);
+                    self.notifications_pending.push(("Notification".to_string(), message));
+                }
+                i = if data[end] == 0x07 { end + 1 } else { end + 2 };
+                continue;
+            }
+            if payload.starts_with(b"777;notify;") {
+                if self.rate_limit_accept() {
+                    let rest = &payload[b"777;notify;".len()..];
+                    let rest_str = String::from_utf8_lossy(rest);
+                    let (title, body) = match rest_str.split_once(';') {
+                        Some((t, b)) => (
+                            Self::truncate_str(t, Self::NOTIFICATION_TITLE_MAX),
+                            Self::truncate_str(b, Self::NOTIFICATION_BODY_MAX),
+                        ),
+                        None => (Self::truncate_str(&rest_str, Self::NOTIFICATION_TITLE_MAX), String::new()),
+                    };
+                    self.notifications_pending.push((title, body));
+                }
+                i = if data[end] == 0x07 { end + 1 } else { end + 2 };
+                continue;
+            }
+            i = if data[end] == 0x07 { end + 1 } else { end + 2 };
+        }
     }
 
     pub fn is_sync_output(&self) -> bool {

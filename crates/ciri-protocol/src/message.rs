@@ -443,6 +443,8 @@ pub enum ServerMessage {
         duration_secs: u64,
         exit_code: Option<i32>,
     },
+    /// Desktop notification from a pane (OSC 9 or OSC 777).
+    Notification { pane_id: u64, title: String, body: String },
     /// Inline image placement from Kitty/Sixel protocol.
     ImagePlacement {
         pane_id: u64,

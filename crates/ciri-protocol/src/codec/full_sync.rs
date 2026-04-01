@@ -4,7 +4,9 @@ use crate::message::*;
 use std::io;
 use tokio::io::AsyncWrite;
 
-use super::frame::{TAG_FULL_PANE_SYNC, TAG_FULL_PANE_SYNC_LZ4, maybe_compress_payload, write_frame};
+use super::frame::{
+    TAG_FULL_PANE_SYNC, TAG_FULL_PANE_SYNC_LZ4, maybe_compress_payload, write_frame,
+};
 use super::state_machine::{StateEncoder, sm_decode_cells_vec, sm_encode_cells};
 use super::util::*;
 

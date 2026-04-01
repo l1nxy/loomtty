@@ -561,6 +561,143 @@ async fn frame_roundtrip_cell_delta_sm() {
     }
 }
 
+// ─── LZ4 compression roundtrip ─────────────────────────────────
+
+#[test]
+fn lz4_roundtrip_maybe_compress() {
+    use super::frame::maybe_compress_payload;
+    // Build a payload large enough to trigger LZ4 (>= 128 bytes).
+    // Repetitive data compresses well, guaranteeing the LZ4 path is taken.
+    let payload = vec![0xABu8; 512];
+    let (tag, compressed) = maybe_compress_payload(0x20, 0x22, &payload);
+    assert_eq!(tag, 0x22, "should use compressed tag");
+    assert!(
+        compressed.len() < payload.len(),
+        "compressed should be smaller"
+    );
+
+    // Decompress via the same path the reader uses.
+    let decompressed = super::frame::decompress_lz4_payload(&compressed).unwrap();
+    assert_eq!(decompressed, payload);
+}
+
+#[test]
+fn lz4_below_threshold_stays_uncompressed() {
+    use super::frame::maybe_compress_payload;
+    let payload = vec![0u8; 64]; // below 128-byte threshold
+    let (tag, data) = maybe_compress_payload(0x20, 0x22, &payload);
+    assert_eq!(tag, 0x20, "should use uncompressed tag");
+    assert_eq!(data, payload);
+}
+
+#[tokio::test]
+async fn frame_roundtrip_full_pane_sync_lz4() {
+    // Build cells with varied content so SM encoding produces a payload
+    // large enough to trigger LZ4 (>= 128 bytes).
+    let cells: Vec<PackedCell> = (0..80 * 24)
+        .map(|i| {
+            let mut c = PackedCell::with_ch(char::from(b'A' + (i % 26) as u8));
+            c.fg = PackedColor::indexed((i % 256) as u8);
+            c
+        })
+        .collect();
+    let sync = FullPaneSync {
+        meta: PaneFrameMeta {
+            pane_id: 42,
+            generation: 7,
+            cursor_line: 5,
+            cursor_col: 10,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+        },
+        cols: 80,
+        rows: 24,
+        title: "bash".to_string(),
+        scrollback: Vec::new(),
+        scrollback_rows: 0,
+        scrollback_replace: false,
+        cells,
+        grapheme_extras: GraphemeExtras::new(),
+        hyperlink_extras: HyperlinkExtras::new(),
+        cwd: Some("/home/user".to_string()),
+    };
+
+    // frame_full_pane_sync encodes + LZ4 compresses
+    let framed = frame_full_pane_sync(&sync).expect("frame encoding failed");
+    // Verify the tag is the LZ4 variant
+    assert_eq!(
+        framed[0], 0x23,
+        "expected TAG_FULL_PANE_SYNC_LZ4 (0x23), got 0x{:02x}",
+        framed[0]
+    );
+
+    // read_frame decodes + LZ4 decompresses
+    let frame = read_frame(&mut &framed[..]).await.unwrap();
+    match frame {
+        Frame::FullPaneSync(decoded) => {
+            assert_eq!(decoded.meta.pane_id, 42);
+            assert_eq!(decoded.meta.generation, 7);
+            assert_eq!(decoded.cols, 80);
+            assert_eq!(decoded.rows, 24);
+            assert_eq!(decoded.title, "bash");
+            assert_eq!(decoded.cells.len(), 80 * 24);
+            assert_eq!(decoded.cwd.as_deref(), Some("/home/user"));
+        }
+        _ => panic!("expected FullPaneSync frame, got {:?}", frame),
+    }
+}
+
+#[tokio::test]
+async fn frame_roundtrip_cell_delta_lz4() {
+    // Encode a delta with enough regions/cells to exceed the LZ4 threshold.
+    let cell = PackedCell::with_ch('Z');
+    let mut buf = Vec::new();
+    let meta = PaneFrameMeta {
+        pane_id: 99,
+        generation: 5,
+        cursor_line: 0,
+        cursor_col: 0,
+        cursor_shape: 0,
+        mode_flags: 0,
+    };
+    // 10 regions × 20 cells each — well above 128 bytes
+    let regions: Vec<(u16, u16, u16)> = (0..10).map(|line| (line, 0, 19)).collect();
+    encode_cell_delta_streaming_framed(
+        &mut buf,
+        &meta,
+        80,
+        &regions,
+        |_line, _left, _right, enc| {
+            for _ in 0..20 {
+                enc.push_cell(&cell);
+            }
+        },
+    )
+    .unwrap();
+
+    // Verify LZ4 tag was used
+    assert_eq!(
+        buf[0], 0x22,
+        "expected TAG_CELL_DELTA_LZ4 (0x22), got 0x{:02x}",
+        buf[0]
+    );
+
+    let frame = read_frame(&mut &buf[..]).await.unwrap();
+    match frame {
+        Frame::CellDelta(d) => {
+            assert_eq!(d.meta.pane_id, 99);
+            assert_eq!(d.meta.generation, 5);
+            assert_eq!(d.regions.len(), 10);
+            let sm = d.sm_data(0);
+            let mut decoded = vec![PackedCell::default(); 20];
+            let n = decode_sm_cells(sm, &mut decoded).unwrap();
+            assert_eq!(n, 20);
+            assert_eq!(decoded[0].ch(), 'Z');
+        }
+        _ => panic!("expected CellDelta frame, got {:?}", frame),
+    }
+}
+
 #[test]
 fn sm_repeat_exceeding_u16_max() {
     // 70000 identical cells — exceeds u16::MAX (65535), must not overflow
@@ -577,18 +714,18 @@ fn sm_repeat_exceeding_u16_max() {
 #[test]
 fn decode_cell_delta_rejects_inverted_region_bounds() {
     let mut payload = Vec::new();
-    payload.extend_from_slice(&1u64.to_le_bytes());   // pane_id
-    payload.extend_from_slice(&2u64.to_le_bytes());   // generation
-    payload.extend_from_slice(&0i16.to_le_bytes());   // cursor_line
-    payload.extend_from_slice(&0u16.to_le_bytes());   // cursor_col
-    payload.push(0);                                   // cursor_shape
-    payload.extend_from_slice(&0u16.to_le_bytes());   // mode_flags (u16)
-    payload.extend_from_slice(&80u16.to_le_bytes());  // cols
-    payload.extend_from_slice(&1u16.to_le_bytes());   // num_regions
-    payload.extend_from_slice(&3u16.to_le_bytes());   // region: line
-    payload.extend_from_slice(&5u16.to_le_bytes());   // region: left (invalid: > right)
-    payload.extend_from_slice(&4u16.to_le_bytes());   // region: right
-    payload.extend_from_slice(&0u32.to_le_bytes());   // region: sm_data_len
+    payload.extend_from_slice(&1u64.to_le_bytes()); // pane_id
+    payload.extend_from_slice(&2u64.to_le_bytes()); // generation
+    payload.extend_from_slice(&0i16.to_le_bytes()); // cursor_line
+    payload.extend_from_slice(&0u16.to_le_bytes()); // cursor_col
+    payload.push(0); // cursor_shape
+    payload.extend_from_slice(&0u16.to_le_bytes()); // mode_flags (u16)
+    payload.extend_from_slice(&80u16.to_le_bytes()); // cols
+    payload.extend_from_slice(&1u16.to_le_bytes()); // num_regions
+    payload.extend_from_slice(&3u16.to_le_bytes()); // region: line
+    payload.extend_from_slice(&5u16.to_le_bytes()); // region: left (invalid: > right)
+    payload.extend_from_slice(&4u16.to_le_bytes()); // region: right
+    payload.extend_from_slice(&0u32.to_le_bytes()); // region: sm_data_len
 
     let err = decode_cell_delta_borrowed(payload).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
@@ -598,18 +735,18 @@ fn decode_cell_delta_rejects_inverted_region_bounds() {
 #[test]
 fn decode_cell_delta_rejects_truncated_region_data() {
     let mut payload = Vec::new();
-    payload.extend_from_slice(&1u64.to_le_bytes());   // pane_id
-    payload.extend_from_slice(&2u64.to_le_bytes());   // generation
-    payload.extend_from_slice(&0i16.to_le_bytes());   // cursor_line
-    payload.extend_from_slice(&0u16.to_le_bytes());   // cursor_col
-    payload.push(0);                                   // cursor_shape
-    payload.extend_from_slice(&0u16.to_le_bytes());   // mode_flags (u16)
-    payload.extend_from_slice(&80u16.to_le_bytes());  // cols
-    payload.extend_from_slice(&1u16.to_le_bytes());   // num_regions
-    payload.extend_from_slice(&3u16.to_le_bytes());   // region: line
-    payload.extend_from_slice(&4u16.to_le_bytes());   // region: left
-    payload.extend_from_slice(&6u16.to_le_bytes());   // region: right
-    payload.extend_from_slice(&4u32.to_le_bytes());   // region: sm_data_len (claims 4 but only 1 byte follows)
+    payload.extend_from_slice(&1u64.to_le_bytes()); // pane_id
+    payload.extend_from_slice(&2u64.to_le_bytes()); // generation
+    payload.extend_from_slice(&0i16.to_le_bytes()); // cursor_line
+    payload.extend_from_slice(&0u16.to_le_bytes()); // cursor_col
+    payload.push(0); // cursor_shape
+    payload.extend_from_slice(&0u16.to_le_bytes()); // mode_flags (u16)
+    payload.extend_from_slice(&80u16.to_le_bytes()); // cols
+    payload.extend_from_slice(&1u16.to_le_bytes()); // num_regions
+    payload.extend_from_slice(&3u16.to_le_bytes()); // region: line
+    payload.extend_from_slice(&4u16.to_le_bytes()); // region: left
+    payload.extend_from_slice(&6u16.to_le_bytes()); // region: right
+    payload.extend_from_slice(&4u32.to_le_bytes()); // region: sm_data_len (claims 4 but only 1 byte follows)
     payload.extend_from_slice(&[OP_END]);
 
     let err = decode_cell_delta_borrowed(payload).unwrap_err();
@@ -870,6 +1007,7 @@ async fn frame_roundtrip_server_message_variants() {
             height_cells: 7,
             pixel_width: 240,
             pixel_height: 112,
+            display_mode: ImageDisplayMode::Cells,
             format: "png".to_string(),
             data: vec![1, 2, 3, 4],
         },

@@ -187,7 +187,7 @@ where
 }
 
 /// Decompress an LZ4 frame payload: [u32 LE uncompressed_len][lz4 data] → raw bytes.
-fn decompress_lz4_payload(payload: &[u8]) -> io::Result<Vec<u8>> {
+pub(crate) fn decompress_lz4_payload(payload: &[u8]) -> io::Result<Vec<u8>> {
     if payload.len() < 4 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -216,7 +216,7 @@ pub(crate) fn maybe_compress_payload(
     if payload.len() < LZ4_COMPRESS_THRESHOLD {
         return (uncompressed_tag, payload.to_vec());
     }
-    let compressed = lz4_flex::compress_prepend_size(payload);
+    let compressed = lz4_flex::compress(payload);
     // Only use compressed if it's actually smaller (+ 4 bytes for uncompressed_len header).
     let lz4_payload_len = 4 + compressed.len();
     if lz4_payload_len < payload.len() {

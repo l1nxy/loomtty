@@ -119,10 +119,7 @@ impl StateEncoder {
 
                 // Use OP_SET_FG_BG only when both are RGB (saves nothing
                 // for Named/Indexed where compact opcodes are shorter).
-                if fg_changed && bg_changed
-                    && fg.tag == COLOR_RGB
-                    && bg.tag == COLOR_RGB
-                {
+                if fg_changed && bg_changed && fg.tag == COLOR_RGB && bg.tag == COLOR_RGB {
                     self.out.push(OP_SET_FG_BG);
                     self.out.extend_from_slice(bytemuck::bytes_of(&fg));
                     self.out.extend_from_slice(bytemuck::bytes_of(&bg));

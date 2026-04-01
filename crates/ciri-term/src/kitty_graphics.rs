@@ -239,6 +239,7 @@ impl KittyGraphicsParser {
                                 height_cells: meta.rows,
                                 pixel_width: meta.width,
                                 pixel_height: meta.height,
+                                display_mode: ciri_protocol::message::ImageDisplayMode::Cells,
                                 format: meta.format.to_string(),
                                 data: Arc::new(full_data),
                             };

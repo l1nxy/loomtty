@@ -41,7 +41,12 @@ pub(crate) struct Session {
 }
 
 impl Session {
-    pub(crate) fn new(session_name: &str, shell: &str, column_gap: f32, terminal_colors: TerminalColors) -> Self {
+    pub(crate) fn new(
+        session_name: &str,
+        shell: &str,
+        column_gap: f32,
+        terminal_colors: TerminalColors,
+    ) -> Self {
         Session {
             workspaces: WorkspaceSet::new_with_gaps(
                 ViewSize {
@@ -131,6 +136,7 @@ impl Session {
         let effective_cwd = cwd.or_else(|| inherited_cwd.as_deref().map(std::path::Path::new));
         let mut pane =
             Pane::new_with_opts(id, cols, rows, &self.default_shell, command, effective_cwd)?;
+        pane.set_cell_size(cw, ch);
         pane.init_colors(&self.terminal_colors);
         self.panes.insert(id, pane);
         self.generation.insert(id, 0);
@@ -162,6 +168,7 @@ impl Session {
             &self.default_shell,
             cwd.as_deref().map(std::path::Path::new),
         )?;
+        pane.set_cell_size(cw, ch);
         pane.init_colors(&self.terminal_colors);
         self.panes.insert(id, pane);
         self.generation.insert(id, 0);
@@ -251,6 +258,7 @@ impl Session {
                     if let Some(pane) = self.panes.get_mut(pane_id) {
                         let old_cols = pane.grid_cols();
                         let old_rows = pane.grid_rows();
+                        pane.set_cell_size(cw, ch);
                         log::debug!(
                             "  pane {}: col_w={col_w:.1}px tile_h={tile_h:.1}px → {cols}x{rows} (was {old_cols}x{old_rows})",
                             pane_id
@@ -514,7 +522,11 @@ impl Session {
 
             // Drain desktop notifications (OSC 9 / OSC 777)
             for (title, body) in pane.drain_notifications() {
-                clipboard_msgs.push(ServerMessage::Notification { pane_id, title, body });
+                clipboard_msgs.push(ServerMessage::Notification {
+                    pane_id,
+                    title,
+                    body,
+                });
             }
 
             // Drain command completion events (OSC 133;D)
@@ -537,6 +549,7 @@ impl Session {
                     height_cells: img.height_cells,
                     pixel_width: img.pixel_width,
                     pixel_height: img.pixel_height,
+                    display_mode: img.display_mode,
                     format: img.format,
                     data: Arc::try_unwrap(img.data).unwrap_or_else(|arc| (*arc).clone()),
                 });
@@ -627,6 +640,7 @@ impl Session {
                             height_cells: img.height_cells,
                             pixel_width: img.pixel_width,
                             pixel_height: img.pixel_height,
+                            display_mode: img.display_mode,
                             format: img.format.clone(),
                             data: img.data.as_ref().clone(),
                         });
@@ -752,6 +766,7 @@ mod tests {
             height_cells: 4,
             pixel_width: 24,
             pixel_height: 64,
+            display_mode: ImageDisplayMode::Cells,
             format: "rgb".to_string(),
             data: std::sync::Arc::new(vec![1, 2, 3]),
         };
@@ -796,6 +811,7 @@ mod tests {
             height_cells: 4,
             pixel_width: 24,
             pixel_height: 64,
+            display_mode: ImageDisplayMode::Cells,
             format: "rgba".to_string(),
             data: std::sync::Arc::new(vec![1, 2, 3, 4]),
         };
@@ -818,6 +834,7 @@ mod tests {
                 height_cells: 4,
                 pixel_width: 24,
                 pixel_height: 64,
+                display_mode: ImageDisplayMode::Cells,
                 format,
                 data,
             }] if *id == pane_id && format == "rgba" && data == &vec![1, 2, 3, 4]

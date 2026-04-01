@@ -65,7 +65,12 @@ impl Server {
     pub(crate) fn get_or_create_session(&mut self, session_name: &str) -> &mut Session {
         if !self.sessions.contains_key(session_name) {
             self.had_session = true;
-            let mut session = Session::new(session_name, &self.default_shell, self.column_gap, self.terminal_colors.clone());
+            let mut session = Session::new(
+                session_name,
+                &self.default_shell,
+                self.column_gap,
+                self.terminal_colors.clone(),
+            );
             session.default_column_width = self.default_column_width;
             session.pane_inset = self.pane_inset;
 
@@ -135,6 +140,7 @@ impl Server {
                                 cwd,
                             ) {
                                 Ok(mut pane) => {
+                                    pane.set_cell_size(8.0, 16.0);
                                     pane.init_colors(&session.terminal_colors);
                                     session.panes.insert(id, pane);
                                     session.generation.insert(id, 0);
@@ -1393,8 +1399,12 @@ impl Server {
 
                         // Create new session
                         self.had_session = true;
-                        let mut session =
-                            Session::new(&target, &self.default_shell, self.column_gap, self.terminal_colors.clone());
+                        let mut session = Session::new(
+                            &target,
+                            &self.default_shell,
+                            self.column_gap,
+                            self.terminal_colors.clone(),
+                        );
                         session.default_column_width = self.default_column_width;
                         session.pane_inset = self.pane_inset;
 
@@ -1448,6 +1458,7 @@ impl Server {
                                         cwd,
                                     ) {
                                         Ok(mut pane) => {
+                                            pane.set_cell_size(cw, ch);
                                             pane.init_colors(&session.terminal_colors);
                                             session.panes.insert(id, pane);
                                             session.generation.insert(id, 0);
@@ -1609,10 +1620,16 @@ impl Server {
                 }
             }
 
-            ClientMessage::Ping { seq, client_time_us } => {
+            ClientMessage::Ping {
+                seq,
+                client_time_us,
+            } => {
                 responses.push(ServerResponse::SendToClient(
                     client_id,
-                    ServerMessage::Pong { seq, client_time_us },
+                    ServerMessage::Pong {
+                        seq,
+                        client_time_us,
+                    },
                 ));
             }
         }
@@ -1881,7 +1898,11 @@ mod tests {
         rt.block_on(async {
             let (client_reader, server_writer) = tokio::io::duplex(4096);
             let (server_reader, client_writer) = tokio::io::duplex(4096);
-            let state = Arc::new(Mutex::new(Server::new("/bin/sh", 8.0, TerminalColors::default())));
+            let state = Arc::new(Mutex::new(Server::new(
+                "/bin/sh",
+                8.0,
+                TerminalColors::default(),
+            )));
             let shutdown = Arc::new(tokio::sync::Notify::new());
 
             let input_notify = Arc::new(tokio::sync::Notify::new());

@@ -177,14 +177,21 @@ fn compute_dimensions(data: &[u8]) -> (u32, u32) {
                     max_y = max_y.max(height);
                 }
             }
-            SixelCmd::Data(_) => {
+            SixelCmd::Data(sixel) => {
+                let band_height = sixel_band_height(sixel);
                 px = px.saturating_add(1);
                 max_x = max_x.max(px);
-                max_y = max_y.max(py.saturating_add(6));
+                if band_height > 0 {
+                    max_y = max_y.max(py.saturating_add(band_height));
+                }
             }
-            SixelCmd::Repeat { count, .. } => {
+            SixelCmd::Repeat { count, sixel } => {
                 px = px.saturating_add(count);
                 max_x = max_x.max(px);
+                let band_height = sixel_band_height(sixel);
+                if band_height > 0 {
+                    max_y = max_y.max(py.saturating_add(band_height));
+                }
             }
             SixelCmd::CarriageReturn => px = 0,
             SixelCmd::NewLine => {
@@ -194,8 +201,15 @@ fn compute_dimensions(data: &[u8]) -> (u32, u32) {
             _ => {}
         }
     }
-    max_y = max_y.max(py.saturating_add(6));
     (max_x, max_y)
+}
+
+fn sixel_band_height(sixel: u8) -> u32 {
+    if sixel == 0 {
+        0
+    } else {
+        (u8::BITS - sixel.leading_zeros()) as u32
+    }
 }
 
 // ─── Pixel renderer (pass 2) ────────────────────────────────────────
@@ -357,6 +371,7 @@ impl SixelParser {
                     height_cells,
                     pixel_width: image.width,
                     pixel_height: image.height,
+                    display_mode: ciri_protocol::message::ImageDisplayMode::Pixels,
                     format: "rgba".to_string(),
                     data: Arc::new(image.data),
                 };
@@ -523,6 +538,14 @@ mod tests {
     }
 
     #[test]
+    fn decode_partial_band_uses_highest_set_bit() {
+        let data = b"#0;2;100;0;0#0B";
+        let img = decode_sixel(data).unwrap();
+        assert_eq!(img.width, 1);
+        assert_eq!(img.height, 2);
+    }
+
+    #[test]
     fn decode_empty_returns_none() {
         assert!(decode_sixel(b"").is_none());
     }
@@ -548,6 +571,10 @@ mod tests {
         assert_eq!(result.placements.len(), 1);
         assert_eq!(result.placements[0].format, "rgba");
         assert!(result.placements[0].pixel_width > 0);
+        assert_eq!(
+            result.placements[0].display_mode,
+            ciri_protocol::message::ImageDisplayMode::Pixels
+        );
     }
 
     #[test]

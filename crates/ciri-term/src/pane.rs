@@ -1,11 +1,13 @@
-use alacritty_terminal::event::Event;
+use alacritty_terminal::event::{Event, WindowSize};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point};
 use alacritty_terminal::term::Config as TermConfig;
 use alacritty_terminal::term::Term;
 use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::term::color::COUNT as COLOR_COUNT;
-use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape, Handler, NamedColor, Processor, Rgb};
+use alacritty_terminal::vte::ansi::{
+    Color as AnsiColor, CursorShape, Handler, NamedColor, Processor, Rgb,
+};
 use anyhow::Result;
 use ciri_protocol::message::*;
 use std::sync::Arc;
@@ -37,26 +39,74 @@ impl Default for TerminalColors {
     fn default() -> Self {
         Self {
             ansi: [
-                Rgb { r: 0, g: 0, b: 0 },         // Black
-                Rgb { r: 205, g: 0, b: 0 },        // Red
-                Rgb { r: 0, g: 205, b: 0 },        // Green
-                Rgb { r: 205, g: 205, b: 0 },      // Yellow
-                Rgb { r: 0, g: 0, b: 238 },        // Blue
-                Rgb { r: 205, g: 0, b: 205 },      // Magenta
-                Rgb { r: 0, g: 205, b: 205 },      // Cyan
-                Rgb { r: 229, g: 229, b: 229 },    // White
-                Rgb { r: 127, g: 127, b: 127 },    // Bright Black
-                Rgb { r: 255, g: 0, b: 0 },        // Bright Red
-                Rgb { r: 0, g: 255, b: 0 },        // Bright Green
-                Rgb { r: 255, g: 255, b: 0 },      // Bright Yellow
-                Rgb { r: 92, g: 92, b: 255 },      // Bright Blue
-                Rgb { r: 255, g: 0, b: 255 },      // Bright Magenta
-                Rgb { r: 0, g: 255, b: 255 },      // Bright Cyan
-                Rgb { r: 255, g: 255, b: 255 },    // Bright White
+                Rgb { r: 0, g: 0, b: 0 },   // Black
+                Rgb { r: 205, g: 0, b: 0 }, // Red
+                Rgb { r: 0, g: 205, b: 0 }, // Green
+                Rgb {
+                    r: 205,
+                    g: 205,
+                    b: 0,
+                }, // Yellow
+                Rgb { r: 0, g: 0, b: 238 }, // Blue
+                Rgb {
+                    r: 205,
+                    g: 0,
+                    b: 205,
+                }, // Magenta
+                Rgb {
+                    r: 0,
+                    g: 205,
+                    b: 205,
+                }, // Cyan
+                Rgb {
+                    r: 229,
+                    g: 229,
+                    b: 229,
+                }, // White
+                Rgb {
+                    r: 127,
+                    g: 127,
+                    b: 127,
+                }, // Bright Black
+                Rgb { r: 255, g: 0, b: 0 }, // Bright Red
+                Rgb { r: 0, g: 255, b: 0 }, // Bright Green
+                Rgb {
+                    r: 255,
+                    g: 255,
+                    b: 0,
+                }, // Bright Yellow
+                Rgb {
+                    r: 92,
+                    g: 92,
+                    b: 255,
+                }, // Bright Blue
+                Rgb {
+                    r: 255,
+                    g: 0,
+                    b: 255,
+                }, // Bright Magenta
+                Rgb {
+                    r: 0,
+                    g: 255,
+                    b: 255,
+                }, // Bright Cyan
+                Rgb {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                }, // Bright White
             ],
-            foreground: Rgb { r: 255, g: 255, b: 255 },
+            foreground: Rgb {
+                r: 255,
+                g: 255,
+                b: 255,
+            },
             background: Rgb { r: 0, g: 0, b: 0 },
-            cursor: Rgb { r: 255, g: 255, b: 255 },
+            cursor: Rgb {
+                r: 255,
+                g: 255,
+                b: 255,
+            },
         }
     }
 }
@@ -71,7 +121,11 @@ impl TerminalColors {
             let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0);
             Rgb { r, g, b }
         } else {
-            Rgb { r: 255, g: 255, b: 255 }
+            Rgb {
+                r: 255,
+                g: 255,
+                b: 255,
+            }
         }
     }
 }
@@ -96,6 +150,7 @@ pub struct ImagePlacement {
     pub height_cells: u16,
     pub pixel_width: u32,
     pub pixel_height: u32,
+    pub display_mode: ImageDisplayMode,
     pub format: String,
     pub data: Arc<Vec<u8>>,
 }
@@ -114,6 +169,9 @@ struct TermSize {
     cols: usize,
     rows: usize,
 }
+
+const DEFAULT_CELL_WIDTH: u16 = 8;
+const DEFAULT_CELL_HEIGHT: u16 = 16;
 
 impl Dimensions for TermSize {
     fn total_lines(&self) -> usize {
@@ -171,6 +229,8 @@ pub struct Pane {
     // Dimensions
     cols: u16,
     rows: u16,
+    cell_width: u16,
+    cell_height: u16,
 
     // State
     dirty: bool,
@@ -250,6 +310,8 @@ impl Pane {
             pty,
             cols,
             rows,
+            cell_width: DEFAULT_CELL_WIDTH,
+            cell_height: DEFAULT_CELL_HEIGHT,
             dirty: true,
             exited: false,
             scrollback_total: 0,
@@ -271,9 +333,12 @@ impl Pane {
             self.term.set_color(i, color);
         }
         // Set foreground, background, cursor
-        self.term.set_color(NamedColor::Foreground as usize, colors.foreground);
-        self.term.set_color(NamedColor::Background as usize, colors.background);
-        self.term.set_color(NamedColor::Cursor as usize, colors.cursor);
+        self.term
+            .set_color(NamedColor::Foreground as usize, colors.foreground);
+        self.term
+            .set_color(NamedColor::Background as usize, colors.background);
+        self.term
+            .set_color(NamedColor::Cursor as usize, colors.cursor);
     }
 
     // ── PTY I/O ──────────────────────────────────────────────────────
@@ -410,11 +475,15 @@ impl Pane {
                     let response = formatter("");
                     self.write_to_pty(response.as_bytes());
                 }
+                Event::TextAreaSizeRequest(formatter) => {
+                    let response = formatter(self.window_size());
+                    self.write_to_pty(response.as_bytes());
+                }
                 Event::ColorRequest(index, formatter) => {
                     // OSC 4/10/11/12 color query: look up the current color and respond.
                     if index < COLOR_COUNT {
-                        let color = self.term.colors()[index]
-                            .unwrap_or_else(|| default_color(index));
+                        let color =
+                            self.term.colors()[index].unwrap_or_else(|| default_color(index));
                         let response = formatter(color);
                         self.write_to_pty(response.as_bytes());
                     }
@@ -578,11 +647,29 @@ impl Pane {
         self.dirty = true;
     }
 
+    pub fn set_cell_size(&mut self, cell_width: f32, cell_height: f32) {
+        if let Some(cell_width) = round_cell_size(cell_width) {
+            self.cell_width = cell_width;
+        }
+        if let Some(cell_height) = round_cell_size(cell_height) {
+            self.cell_height = cell_height;
+        }
+    }
+
     pub fn grid_cols(&self) -> u16 {
         self.cols
     }
     pub fn grid_rows(&self) -> u16 {
         self.rows
+    }
+
+    fn window_size(&self) -> WindowSize {
+        WindowSize {
+            num_lines: self.rows,
+            num_cols: self.cols,
+            cell_width: self.cell_width,
+            cell_height: self.cell_height,
+        }
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -647,8 +734,8 @@ impl Pane {
     fn mode_flags_from_term(&self, term: &Term<PtyEventListener>) -> u16 {
         use alacritty_terminal::term::TermMode;
         use ciri_protocol::message::{
-            MODE_KITTY_REPORT_EVENTS, MODE_KITTY_REPORT_ALTERNATES,
-            MODE_KITTY_REPORT_ALL, MODE_KITTY_REPORT_TEXT,
+            MODE_KITTY_REPORT_ALL, MODE_KITTY_REPORT_ALTERNATES, MODE_KITTY_REPORT_EVENTS,
+            MODE_KITTY_REPORT_TEXT,
         };
         let mode = term.mode();
         let mut flags = 0u16;
@@ -767,7 +854,8 @@ impl Pane {
                 if self.rate_limit_accept() {
                     let message = String::from_utf8_lossy(&payload[2..]);
                     let message = Self::truncate_str(&message, Self::NOTIFICATION_BODY_MAX);
-                    self.notifications_pending.push(("Notification".to_string(), message));
+                    self.notifications_pending
+                        .push(("Notification".to_string(), message));
                 }
                 i = if data[end] == 0x07 { end + 1 } else { end + 2 };
                 continue;
@@ -781,7 +869,10 @@ impl Pane {
                             Self::truncate_str(t, Self::NOTIFICATION_TITLE_MAX),
                             Self::truncate_str(b, Self::NOTIFICATION_BODY_MAX),
                         ),
-                        None => (Self::truncate_str(&rest_str, Self::NOTIFICATION_TITLE_MAX), String::new()),
+                        None => (
+                            Self::truncate_str(&rest_str, Self::NOTIFICATION_TITLE_MAX),
+                            String::new(),
+                        ),
                     };
                     self.notifications_pending.push((title, body));
                 }
@@ -1046,6 +1137,14 @@ fn named_color_to_compact(n: NamedColor) -> u8 {
     }
 }
 
+fn round_cell_size(value: f32) -> Option<u16> {
+    if value.is_finite() && value > 0.0 {
+        Some(value.round().clamp(1.0, u16::MAX as f32) as u16)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1060,6 +1159,18 @@ mod tests {
 
     fn new_test_pane() -> Pane {
         Pane::new(7, 4, 3, shell_path()).expect("create test pane")
+    }
+
+    #[test]
+    fn set_cell_size_rounds_to_window_size_pixels() {
+        let mut pane = new_test_pane();
+        pane.set_cell_size(9.4, 17.6);
+
+        let window_size = pane.window_size();
+        assert_eq!(window_size.num_cols, 4);
+        assert_eq!(window_size.num_lines, 3);
+        assert_eq!(window_size.cell_width, 9);
+        assert_eq!(window_size.cell_height, 18);
     }
 
     #[test]
@@ -1104,6 +1215,7 @@ mod tests {
             height_cells: 5,
             pixel_width: 6,
             pixel_height: 7,
+            display_mode: ImageDisplayMode::Cells,
             format: "png".into(),
             data: Arc::new(vec![1, 2, 3]),
         };
@@ -1173,7 +1285,11 @@ fn default_color(index: usize) -> Rgb {
         let g = (idx / 6) % 6;
         let b = idx % 6;
         let to_component = |v: u8| if v == 0 { 0 } else { 55 + 40 * v };
-        return Rgb { r: to_component(r), g: to_component(g), b: to_component(b) };
+        return Rgb {
+            r: to_component(r),
+            g: to_component(g),
+            b: to_component(b),
+        };
     }
 
     // Grayscale ramp (indices 232-255)
@@ -1184,9 +1300,21 @@ fn default_color(index: usize) -> Rgb {
 
     // Special indices from alacritty_terminal::term::color
     match index {
-        256 => Rgb { r: 255, g: 255, b: 255 }, // Foreground
-        257 => Rgb { r: 0, g: 0, b: 0 },       // Background
-        258 => Rgb { r: 255, g: 255, b: 255 }, // Cursor
-        _ => Rgb { r: 255, g: 255, b: 255 },   // Fallback
+        256 => Rgb {
+            r: 255,
+            g: 255,
+            b: 255,
+        }, // Foreground
+        257 => Rgb { r: 0, g: 0, b: 0 }, // Background
+        258 => Rgb {
+            r: 255,
+            g: 255,
+            b: 255,
+        }, // Cursor
+        _ => Rgb {
+            r: 255,
+            g: 255,
+            b: 255,
+        }, // Fallback
     }
 }

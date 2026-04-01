@@ -60,6 +60,12 @@ pub const COLOR_NAMED: u8 = 0;
 pub const COLOR_RGB: u8 = 1;
 pub const COLOR_INDEXED: u8 = 2;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ImageDisplayMode {
+    Cells,
+    Pixels,
+}
+
 impl PackedColor {
     pub const fn named(n: u8) -> Self {
         PackedColor {
@@ -444,7 +450,11 @@ pub enum ServerMessage {
         exit_code: Option<i32>,
     },
     /// Desktop notification from a pane (OSC 9 or OSC 777).
-    Notification { pane_id: u64, title: String, body: String },
+    Notification {
+        pane_id: u64,
+        title: String,
+        body: String,
+    },
     /// Inline image placement from Kitty/Sixel protocol.
     ImagePlacement {
         pane_id: u64,
@@ -455,6 +465,7 @@ pub enum ServerMessage {
         height_cells: u16,
         pixel_width: u32,
         pixel_height: u32,
+        display_mode: ImageDisplayMode,
         format: String,
         data: Vec<u8>,
     },
@@ -484,10 +495,7 @@ pub enum ServerMessage {
     /// Focus hit an edge boundary (for rubber-band bounce animation).
     BounceEdge { direction: BounceDirection },
     /// RTT measurement pong (echo of client Ping).
-    Pong {
-        seq: u64,
-        client_time_us: u64,
-    },
+    Pong { seq: u64, client_time_us: u64 },
 }
 
 /// Direction of the edge bounce.

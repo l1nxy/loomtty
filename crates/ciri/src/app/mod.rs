@@ -104,6 +104,7 @@ pub(crate) struct App {
     pub render_bufs: RenderBuffers,
     pub clipboard: Option<arboard::Clipboard>,
     pub mouse_left_held: bool,
+    pub mouse_left_passthrough: bool,
     pub cached_color_table: ColorTable,
     /// Per-pane cached glyph instances to skip redundant transformation in build_tiles.
     pub cached_tile_glyphs: HashMap<u64, CachedTileGlyphs>,
@@ -219,6 +220,7 @@ impl App {
             },
             clipboard: arboard::Clipboard::new().ok(),
             mouse_left_held: false,
+            mouse_left_passthrough: false,
             cached_color_table,
             cached_tile_glyphs: HashMap::new(),
             image_atlas_entries: HashMap::new(),
@@ -411,6 +413,24 @@ impl App {
                 self.core.config.window.title, self.core.session_name, host
             ));
         }
+    }
+
+    /// Cycle to the next background connection slot.
+    /// Order: sort slot IDs lexicographically, pick the one after active_slot_id (wrapping).
+    pub fn cycle_next_slot(&mut self) {
+        if self.core.background_slots.is_empty() {
+            return;
+        }
+        let mut ids: Vec<String> = self.core.background_slots.keys().cloned().collect();
+        ids.sort();
+        // Pick the first slot (simplest: just grab the first one in sorted order
+        // that differs from current; with only 1 slot this is always it)
+        let target = ids
+            .iter()
+            .find(|id| id.as_str() > self.core.active_slot_id.as_str())
+            .unwrap_or(&ids[0])
+            .clone();
+        self.switch_to_slot(&target);
     }
 
     /// Delegate: Convert config preset_widths to layout ColumnWidth values.

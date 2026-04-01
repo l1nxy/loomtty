@@ -118,15 +118,15 @@ impl App {
             return;
         }
 
-        if let Some((pane_id, _, _)) = self.pixel_to_viewport_cell(mx, my)
-            && let Some(grid) = self.core.pane_grids.get(&pane_id)
-            && grid.mode_flags & ciri_protocol::message::MODE_MOUSE_REPORT != 0
+        if let Some((pane_id, col, row)) = self.pixel_to_viewport_cell(mx, my)
+            && self.pane_prefers_mouse_passthrough(pane_id)
         {
+            self.core.selection = None;
             self.send_lossy(ClientMessage::MouseInput {
                 pane_id,
                 button: 2,
-                col: 0,
-                row: 0,
+                col,
+                row,
                 pressed: true,
                 modifiers: 0,
             });

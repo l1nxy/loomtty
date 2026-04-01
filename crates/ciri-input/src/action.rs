@@ -61,6 +61,8 @@ pub enum Action {
     EnterMode(String),
     /// Toggle locked mode (all keys pass through to terminal).
     ToggleLock,
+    /// Cycle to the next background connection slot (local ↔ remote).
+    NextSlot,
 
     // ── Search mode ──
     /// Open the search bar.
@@ -188,6 +190,7 @@ impl Action {
             (Action::Detach, "Detach"),
             (Action::ToggleCommandPalette, "Toggle Command Palette"),
             (Action::ToggleLock, "Toggle Lock"),
+            (Action::NextSlot, "Next Connection Slot"),
             (Action::OpenSearch, "Open Search"),
             (Action::CloseSearch, "Close Search"),
             (Action::ClipboardCopy, "Copy"),
@@ -233,6 +236,7 @@ fn parse_named_action(name: &str) -> Option<Action> {
         "detach" => Some(Action::Detach),
         "toggle_command_palette" => Some(Action::ToggleCommandPalette),
         "toggle_lock" => Some(Action::ToggleLock),
+        "next_slot" => Some(Action::NextSlot),
         "open_search" => Some(Action::OpenSearch),
         "close_search" => Some(Action::CloseSearch),
         "search_next_match" => Some(Action::SearchNextMatch),

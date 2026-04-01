@@ -224,6 +224,7 @@ impl App {
                         height_cells,
                         pixel_width,
                         pixel_height,
+                        display_mode,
                         format,
                         data,
                     }) => {
@@ -239,6 +240,7 @@ impl App {
                             height_cells,
                             pixel_width,
                             pixel_height,
+                            display_mode,
                             format,
                             data: Arc::new(data),
                         });
@@ -255,9 +257,15 @@ impl App {
                             if palette.sessions_only {
                                 palette.entries.clear();
                             } else {
-                                // Remove old session entries, keep actions.
+                                // Remove old session/connection entries, keep actions
+                                // and remote probe results.
                                 palette.entries.retain(|e| {
-                                    matches!(e.kind, super::PaletteEntryKind::Action(_))
+                                    matches!(
+                                        e.kind,
+                                        super::PaletteEntryKind::Action(_)
+                                            | super::PaletteEntryKind::RemoteSession { .. }
+                                            | super::PaletteEntryKind::SshShell { .. }
+                                    )
                                 });
                             }
                             for s in &sessions {
@@ -272,8 +280,10 @@ impl App {
                                     });
                                 }
                             }
-                            self.filter_palette();
                         }
+                        // Append background slots + remote hosts, then re-filter.
+                        self.core.append_connection_entries();
+                        self.filter_palette();
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::SessionSwitched { session_name }) => {
@@ -323,7 +333,9 @@ impl App {
                         );
                         if let Some(grid) = self.core.pane_grids.get_mut(&delta.meta.pane_id) {
                             grid.apply_delta_borrowed(&delta);
-                            self.core.prediction.on_server_sync(delta.meta.pane_id, grid);
+                            self.core
+                                .prediction
+                                .on_server_sync(delta.meta.pane_id, grid);
                             self.send_lossy(ClientMessage::Ack {
                                 generation: delta.meta.generation,
                             });
@@ -335,7 +347,10 @@ impl App {
                         self.core.bounce_edge(direction);
                         needs_redraw = true;
                     }
-                    ServerEvent::Control(ServerMessage::Pong { seq, client_time_us }) => {
+                    ServerEvent::Control(ServerMessage::Pong {
+                        seq,
+                        client_time_us,
+                    }) => {
                         self.core.prediction.on_pong(seq, client_time_us);
                     }
                     // IPC-only responses — not relevant for the GUI client
@@ -511,6 +526,7 @@ mod tests {
                 height_cells: 1,
                 pixel_width: 8,
                 pixel_height: 16,
+                display_mode: ImageDisplayMode::Cells,
                 format: "rgba".to_string(),
                 data: Arc::new(vec![1, 2, 3, 4]),
             }],
@@ -630,6 +646,7 @@ mod tests {
                 height_cells: 1,
                 pixel_width: 8,
                 pixel_height: 16,
+                display_mode: ImageDisplayMode::Cells,
                 format: "rgba".to_string(),
                 data: Arc::new(vec![1, 2, 3, 4]),
             }],

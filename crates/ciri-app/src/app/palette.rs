@@ -8,7 +8,7 @@ use super::{
 
 impl AppModel {
     pub fn open_command_palette(&mut self) {
-        let mut entries: Vec<PaletteEntry> = Action::all_with_labels()
+        let entries: Vec<PaletteEntry> = Action::all_with_labels()
             .into_iter()
             .map(|(action, label)| PaletteEntry {
                 label: label.to_string(),
@@ -16,40 +16,10 @@ impl AppModel {
             })
             .collect();
 
-        // Background connection slots — quick-switch entries
-        for (id, slot) in &self.background_slots {
-            let label = match &slot.kind {
-                ConnectionKind::Local => {
-                    format!("Switch to: local ({})", slot.session_name)
-                }
-                ConnectionKind::Remote { host, .. } => {
-                    format!("Switch to: {} ({})", host, slot.session_name)
-                }
-            };
-            entries.push(PaletteEntry {
-                label,
-                kind: PaletteEntryKind::SwitchSlot(id.clone()),
-            });
-        }
-
-        // Configured remote hosts
-        for rh in &self.config.remote.hosts {
-            entries.push(PaletteEntry {
-                label: format!("Remote: {} ({})", rh.name, rh.host),
-                kind: PaletteEntryKind::RemoteHost {
-                    name: rh.name.clone(),
-                    host: rh.host.clone(),
-                    port: rh.port,
-                    ssh_port: rh.ssh_port,
-                },
-            });
-        }
-
-        let filtered: Vec<usize> = (0..entries.len()).collect();
         self.command_palette = Some(CommandPaletteState {
             query: String::new(),
             entries,
-            filtered,
+            filtered: Vec::new(),
             selected_idx: 0,
             hovered_idx: None,
             sessions_only: false,
@@ -57,6 +27,8 @@ impl AppModel {
             remote_loading: None,
             remote_error: None,
         });
+        self.append_connection_entries();
+        self.filter_palette();
         self.send(ClientMessage::ListSessions { all: true });
     }
 
@@ -72,6 +44,10 @@ impl AppModel {
             remote_loading: None,
             remote_error: None,
         });
+        // Show background slots and remote hosts immediately while waiting
+        // for the async SessionList response to populate local sessions.
+        self.append_connection_entries();
+        self.filter_palette();
         self.send(ClientMessage::ListSessions { all: false });
     }
 
@@ -186,6 +162,48 @@ impl AppModel {
         }
 
         self.filter_palette();
+    }
+
+    /// Append background connection slots and configured remote hosts to the
+    /// current palette.  Called after session entries are populated so that both
+    /// the session palette and the command palette include connection entries.
+    pub fn append_connection_entries(&mut self) {
+        // Take the palette out to avoid overlapping borrows with
+        // self.background_slots / self.config.
+        let Some(mut palette) = self.command_palette.take() else {
+            return;
+        };
+
+        // Background connection slots — quick-switch entries
+        for (id, slot) in &self.background_slots {
+            let label = match &slot.kind {
+                ConnectionKind::Local => {
+                    format!("Switch to: local ({})", slot.session_name)
+                }
+                ConnectionKind::Remote { host, .. } => {
+                    format!("Switch to: {} ({})", host, slot.session_name)
+                }
+            };
+            palette.entries.push(PaletteEntry {
+                label,
+                kind: PaletteEntryKind::SwitchSlot(id.clone()),
+            });
+        }
+
+        // Configured remote hosts
+        for rh in &self.config.remote.hosts {
+            palette.entries.push(PaletteEntry {
+                label: format!("Remote: {} ({})", rh.name, rh.host),
+                kind: PaletteEntryKind::RemoteHost {
+                    name: rh.name.clone(),
+                    host: rh.host.clone(),
+                    port: rh.port,
+                    ssh_port: rh.ssh_port,
+                },
+            });
+        }
+
+        self.command_palette = Some(palette);
     }
 }
 

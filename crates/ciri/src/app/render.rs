@@ -472,14 +472,7 @@ impl App {
             }
         }
 
-        self.build_pane_images(
-            pane_id,
-            inner_x,
-            inner_y,
-            zoom,
-            visual.dim,
-            color_glyphs,
-        );
+        self.build_pane_images(pane_id, inner_x, inner_y, zoom, visual.dim, color_glyphs);
 
         let (sx, sy, sw, sh) = visual.scissor;
         if glyph_start < glyphs.len() {
@@ -834,7 +827,10 @@ impl App {
             "rgba" => img.data.as_slice().to_vec(),
             "rgb" => Self::rgb_to_rgba(img.pixel_width, img.pixel_height, img.data.as_slice())?,
             other => {
-                log::warn!("unsupported inline image format {other:?} for image {}", img.image_id);
+                log::warn!(
+                    "unsupported inline image format {other:?} for image {}",
+                    img.image_id
+                );
                 return None;
             }
         };
@@ -877,8 +873,7 @@ impl App {
 
             let sx = (inner_x + img.col as f32 * cw * zoom).round();
             let sy = (inner_y + img.row as f32 * ch * zoom).round();
-            let iw = (img.width_cells.max(1) as f32 * cw * zoom).round().max(1.0);
-            let ih = (img.height_cells.max(1) as f32 * ch * zoom).round().max(1.0);
+            let (iw, ih) = Self::image_display_size(img, cw, ch, zoom);
 
             color_glyphs.push(GlyphInstance {
                 pos: [sx, sy],
@@ -887,6 +882,28 @@ impl App {
                 uv_size: [entry.u1 - entry.u0, entry.v1 - entry.v0],
                 color: [dim, dim, dim, 1.0],
             });
+        }
+    }
+
+    fn image_display_size(
+        img: &super::ClientImagePlacement,
+        cell_width: f32,
+        cell_height: f32,
+        zoom: f32,
+    ) -> (f32, f32) {
+        match img.display_mode {
+            ImageDisplayMode::Cells => (
+                (img.width_cells.max(1) as f32 * cell_width * zoom)
+                    .round()
+                    .max(1.0),
+                (img.height_cells.max(1) as f32 * cell_height * zoom)
+                    .round()
+                    .max(1.0),
+            ),
+            ImageDisplayMode::Pixels => (
+                (img.pixel_width.max(1) as f32 * zoom).round().max(1.0),
+                (img.pixel_height.max(1) as f32 * zoom).round().max(1.0),
+            ),
         }
     }
 
@@ -953,7 +970,9 @@ impl App {
                     for i in 0..cells.len() {
                         let row = (i / grid.cols as usize) as u16;
                         let col = (i % grid.cols as usize) as u16;
-                        if let Some(replacement) = self.core.prediction.get_overlay_cell(*pane_id, row, col) {
+                        if let Some(replacement) =
+                            self.core.prediction.get_overlay_cell(*pane_id, row, col)
+                        {
                             cells[i] = replacement;
                         }
                     }
@@ -968,7 +987,9 @@ impl App {
                         (0, 0, CURSOR_HIDDEN)
                     };
                 // Apply prediction cursor overlay
-                if let Some((pred_line, pred_col)) = self.core.prediction.get_overlay_cursor(*pane_id) {
+                if let Some((pred_line, pred_col)) =
+                    self.core.prediction.get_overlay_cursor(*pane_id)
+                {
                     cur_line = pred_line;
                     cur_col = pred_col;
                 }
@@ -1000,7 +1021,9 @@ impl App {
                             (0, 0, CURSOR_HIDDEN)
                         };
                     // Apply prediction cursor overlay
-                    if let Some((pred_line, pred_col)) = self.core.prediction.get_overlay_cursor(*pane_id) {
+                    if let Some((pred_line, pred_col)) =
+                        self.core.prediction.get_overlay_cursor(*pane_id)
+                    {
                         cur_line = pred_line;
                         cur_col = pred_col;
                     }
@@ -1014,7 +1037,9 @@ impl App {
                         for i in 0..cells.len() {
                             let row = (i / grid.cols as usize) as u16;
                             let col = (i % grid.cols as usize) as u16;
-                            if let Some(replacement) = self.core.prediction.get_overlay_cell(*pane_id, row, col) {
+                            if let Some(replacement) =
+                                self.core.prediction.get_overlay_cell(*pane_id, row, col)
+                            {
                                 cells[i] = replacement;
                             }
                         }
@@ -1285,6 +1310,7 @@ fn scissor_rect(tr: &GeoRect, viewport_w: f32, viewport_h: f32) -> Option<(u32, 
 mod tests {
     use super::*;
     use ciri_config::config::CiriConfig;
+    use std::sync::Arc;
 
     fn make_app() -> App {
         App::new(CiriConfig::default(), "test-session")
@@ -1349,5 +1375,43 @@ mod tests {
         assert!(bg_rects[0].x < bg_rects[active_bg_start].x);
         assert!(glyph_batches.is_empty());
         assert!(active_glyph_batches.is_empty());
+    }
+
+    #[test]
+    fn image_display_size_uses_pixels_for_sixel_images() {
+        let img = crate::app::ClientImagePlacement {
+            image_id: 1,
+            col: 0,
+            row: 0,
+            width_cells: 33,
+            height_cells: 17,
+            pixel_width: 260,
+            pixel_height: 260,
+            display_mode: ImageDisplayMode::Pixels,
+            format: "rgba".to_string(),
+            data: Arc::new(vec![0; 260 * 260 * 4]),
+        };
+
+        let (w, h) = App::image_display_size(&img, 9.0, 19.0, 1.0);
+        assert_eq!((w, h), (260.0, 260.0));
+    }
+
+    #[test]
+    fn image_display_size_uses_cells_for_kitty_images() {
+        let img = crate::app::ClientImagePlacement {
+            image_id: 1,
+            col: 0,
+            row: 0,
+            width_cells: 4,
+            height_cells: 3,
+            pixel_width: 200,
+            pixel_height: 150,
+            display_mode: ImageDisplayMode::Cells,
+            format: "rgba".to_string(),
+            data: Arc::new(vec![0; 200 * 150 * 4]),
+        };
+
+        let (w, h) = App::image_display_size(&img, 9.0, 19.0, 1.0);
+        assert_eq!((w, h), (36.0, 57.0));
     }
 }

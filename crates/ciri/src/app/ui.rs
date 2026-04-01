@@ -873,7 +873,7 @@ impl TopBarComponent {
         let pane_tabs = app.pane_tab_layouts(cx.cell_w, layout.tabs_area_px);
         Self {
             layout,
-            session_text: format!(" {}  ", app.core.session_name),
+            session_text: format!(" {}  ", app.session_display_name()),
             workspace_label,
             mode_label,
             mode_color,

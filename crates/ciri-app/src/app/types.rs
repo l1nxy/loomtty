@@ -196,6 +196,7 @@ pub struct ClientImagePlacement {
     pub height_cells: u16,
     pub pixel_width: u32,
     pub pixel_height: u32,
+    pub display_mode: ciri_protocol::message::ImageDisplayMode,
     pub format: String,
     pub data: Arc<Vec<u8>>,
 }

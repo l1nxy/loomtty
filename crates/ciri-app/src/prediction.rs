@@ -54,12 +54,13 @@ impl PaneOverlay {
     }
 
     fn expire_old(&mut self, now: Instant) {
-        self.cells.retain(|c| {
-            now.duration_since(c.created_at).as_secs() < PREDICTION_TIMEOUT_SECS
-        });
-        if self.cursor.as_ref().is_some_and(|c| {
-            self.cells.iter().all(|cell| cell.epoch != c.epoch)
-        }) {
+        self.cells
+            .retain(|c| now.duration_since(c.created_at).as_secs() < PREDICTION_TIMEOUT_SECS);
+        if self
+            .cursor
+            .as_ref()
+            .is_some_and(|c| self.cells.iter().all(|cell| cell.epoch != c.epoch))
+        {
             self.cursor = None;
         }
     }
@@ -168,7 +169,10 @@ impl PredictionEngine {
             return;
         }
 
-        let overlay = self.overlays.entry(pane_id).or_insert_with(PaneOverlay::new);
+        let overlay = self
+            .overlays
+            .entry(pane_id)
+            .or_insert_with(PaneOverlay::new);
         let (crow, mut ccol) = overlay
             .cursor_position()
             .unwrap_or((info.cursor_row, info.cursor_col));
@@ -327,11 +331,16 @@ impl PredictionEngine {
             return None;
         }
         let overlay = self.overlays.get(&pane_id)?;
-        overlay.cells.iter().rev().find(|c| {
-            c.row == row
-                && c.col == col
-                && (self.mode == PredictionMode::Always || c.epoch <= overlay.confirmed_epoch)
-        }).map(|c| c.replacement)
+        overlay
+            .cells
+            .iter()
+            .rev()
+            .find(|c| {
+                c.row == row
+                    && c.col == col
+                    && (self.mode == PredictionMode::Always || c.epoch <= overlay.confirmed_epoch)
+            })
+            .map(|c| c.replacement)
     }
 
     pub fn get_overlay_cursor(&self, pane_id: u64) -> Option<(i16, u16)> {

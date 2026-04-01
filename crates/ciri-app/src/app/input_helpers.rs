@@ -169,6 +169,15 @@ impl AppModel {
         (near_col_border, near_tile_border)
     }
 
+    /// Session display name for the top bar.
+    /// Shows `session` for local, `session@host` for remote connections.
+    pub fn session_display_name(&self) -> String {
+        match &self.remote_config {
+            Some(rc) => format!("{}@{}", self.session_name, rc.host),
+            None => self.session_name.clone(),
+        }
+    }
+
     /// Workspace indicator label for the top bar.
     pub fn workspace_indicator_label(&self) -> String {
         let idx = self.workspaces.active_workspace_idx + 1;

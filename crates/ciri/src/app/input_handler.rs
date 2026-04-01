@@ -210,6 +210,9 @@ impl App {
             Action::ToggleLock => {
                 self.core.input.toggle_lock();
             }
+            Action::NextSlot => {
+                self.cycle_next_slot();
+            }
             // ── Search ──
             Action::OpenSearch => {
                 self.open_search();
@@ -591,41 +594,17 @@ impl App {
     }
 }
 
-pub(crate) fn key_event_to_pty_bytes(event: &winit::event::KeyEvent, ctrl: bool) -> Vec<u8> {
-    if ctrl && let Key::Character(c) = &event.logical_key {
-        let ch = c.as_str();
-        if ch.len() == 1 {
-            let byte = ch.as_bytes()[0];
-            if byte.is_ascii_lowercase() {
-                return vec![byte - b'a' + 1];
-            }
-            if byte.is_ascii_uppercase() {
-                return vec![byte - b'A' + 1];
-            }
-            // Some Wayland compositors report the control character directly
-            // (e.g. Ctrl+A → '\x01') rather than the base letter.
-            if byte < 0x20 {
-                return vec![byte];
-            }
-            return match byte {
-                b'[' => vec![0x1b],
-                b'\\' => vec![0x1c],
-                b']' => vec![0x1d],
-                b'^' => vec![0x1e],
-                b'_' => vec![0x1f],
-                b'@' => vec![0x00],
-                _ => vec![],
-            };
-        }
-    }
-
+pub(crate) fn key_event_to_pty_bytes(
+    event: &winit::event::KeyEvent,
+    ctrl: bool,
+    shift: bool,
+    alt: bool,
+) -> Vec<u8> {
     if let Key::Named(key) = &event.logical_key {
+        if let Some(bytes) = encode_legacy_c0_key(key, ctrl, shift, alt, false) {
+            return bytes;
+        }
         match key {
-            NamedKey::Enter => return vec![b'\r'],
-            NamedKey::Backspace => return vec![0x7f],
-            NamedKey::Tab => return vec![b'\t'],
-            NamedKey::Escape => return vec![0x1b],
-            NamedKey::Space => return vec![b' '],
             NamedKey::ArrowUp => return b"\x1b[A".to_vec(),
             NamedKey::ArrowDown => return b"\x1b[B".to_vec(),
             NamedKey::ArrowRight => return b"\x1b[C".to_vec(),
@@ -652,33 +631,188 @@ pub(crate) fn key_event_to_pty_bytes(event: &winit::event::KeyEvent, ctrl: bool)
         }
     }
 
-    // event.text is winit's authoritative text for key presses — derived from
-    // xkb_state_key_get_utf8() on Wayland, so it correctly includes Shift and
-    // other modifier transformations (e.g. Shift+a → "A", Shift+1 → "!").
-    if let Some(text) = &event.text {
-        let s: &str = text;
-        if !s.is_empty() {
-            return s.as_bytes().to_vec();
-        }
+    if (ctrl || shift || alt)
+        && let Some(bytes) = encode_legacy_text_key(event, ctrl, shift, alt)
+    {
+        return bytes;
     }
 
-    // Fallback: logical_key Character — also reliable on most platforms.
-    if let Key::Character(c) = &event.logical_key {
-        let s = c.as_str();
-        if !s.is_empty() {
-            return s.as_bytes().to_vec();
-        }
-    }
-
-    // Last resort: platform extension that can return None on some Wayland setups.
-    if let Some(text) = event.text_with_all_modifiers() {
-        let s: &str = text;
-        if !s.is_empty() {
-            return s.as_bytes().to_vec();
-        }
+    if let Some(text) = key_event_text_for_input(event) {
+        return text.as_bytes().to_vec();
     }
 
     vec![]
+}
+
+pub(crate) fn key_event_text_for_input(event: &winit::event::KeyEvent) -> Option<&str> {
+    // `event.text` is the normal text payload for printable keys.
+    if let Some(text) = &event.text {
+        let s: &str = text;
+        if !s.is_empty() {
+            return Some(s);
+        }
+    }
+
+    // Some platforms are more reliable here for shifted punctuation and other
+    // keys whose printed glyph depends on modifiers.
+    if let Some(text) = event.text_with_all_modifiers()
+        && !text.is_empty()
+    {
+        return Some(text);
+    }
+
+    if let Key::Character(c) = &event.logical_key {
+        let s = c.as_str();
+        if !s.is_empty() {
+            return Some(s);
+        }
+    }
+
+    None
+}
+
+pub(crate) fn key_event_base_char(event: &winit::event::KeyEvent) -> Option<char> {
+    event
+        .key_without_modifiers()
+        .to_text()
+        .and_then(|text| text.chars().next())
+        .or_else(|| physical_key_to_base_char(event.physical_key))
+}
+
+fn with_meta_prefix(bytes: Vec<u8>, alt: bool) -> Vec<u8> {
+    if !alt {
+        return bytes;
+    }
+    let mut prefixed = Vec::with_capacity(bytes.len() + 1);
+    prefixed.push(0x1b);
+    prefixed.extend_from_slice(&bytes);
+    prefixed
+}
+
+fn encode_legacy_c0_key(
+    key: &NamedKey,
+    ctrl: bool,
+    shift: bool,
+    alt: bool,
+    disambiguate_escape: bool,
+) -> Option<Vec<u8>> {
+    match key {
+        NamedKey::Enter => Some(with_meta_prefix(vec![b'\r'], alt)),
+        NamedKey::Backspace => Some(with_meta_prefix(vec![if ctrl { 0x08 } else { 0x7f }], alt)),
+        NamedKey::Tab => {
+            let bytes = if shift {
+                b"\x1b[Z".to_vec()
+            } else {
+                vec![b'\t']
+            };
+            Some(with_meta_prefix(bytes, alt))
+        }
+        NamedKey::Escape => {
+            if disambiguate_escape {
+                None
+            } else {
+                Some(with_meta_prefix(vec![0x1b], alt))
+            }
+        }
+        NamedKey::Space => Some(with_meta_prefix(vec![if ctrl { 0x00 } else { b' ' }], alt)),
+        _ => None,
+    }
+}
+
+fn is_legacy_ascii_text_key(ch: char) -> bool {
+    matches!(
+        ch,
+        'a'..='z'
+            | '0'..='9'
+            | '`'
+            | '-'
+            | '='
+            | '['
+            | ']'
+            | '\\'
+            | ';'
+            | '\''
+            | ','
+            | '.'
+            | '/'
+    )
+}
+
+fn ctrl_mapping_for_legacy_key(ch: char) -> Option<u8> {
+    let ch = ch.to_ascii_lowercase();
+    Some(match ch {
+        'a'..='z' => ch as u8 - b'a' + 1,
+        '2' => 0x00,
+        '3' => 0x1b,
+        '4' => 0x1c,
+        '5' => 0x1d,
+        '6' => 0x1e,
+        '7' => 0x1f,
+        '8' => 0x7f,
+        '0' | '1' | '9' => ch as u8,
+        '[' => 0x1b,
+        '\\' => 0x1c,
+        ']' => 0x1d,
+        '/' => 0x1f,
+        _ => return None,
+    })
+}
+
+fn encode_legacy_ascii_text_key(
+    base_char: char,
+    text: &str,
+    ctrl: bool,
+    shift: bool,
+    alt: bool,
+) -> Option<Vec<u8>> {
+    if !is_legacy_ascii_text_key(base_char) {
+        return None;
+    }
+
+    let mut bytes = Vec::new();
+    if ctrl {
+        bytes.push(ctrl_mapping_for_legacy_key(base_char)?);
+    } else if shift {
+        if text.is_empty() {
+            return None;
+        }
+        bytes.extend_from_slice(text.as_bytes());
+    } else {
+        bytes.push(base_char as u8);
+    }
+
+    Some(with_meta_prefix(bytes, alt))
+}
+
+fn encode_legacy_text_key(
+    event: &winit::event::KeyEvent,
+    ctrl: bool,
+    shift: bool,
+    alt: bool,
+) -> Option<Vec<u8>> {
+    let base_char = key_event_base_char(event)?;
+    let text = key_event_text_for_input(event).unwrap_or_default();
+    encode_legacy_ascii_text_key(base_char, text, ctrl, shift, alt)
+}
+
+fn encode_kitty_legacy_text_bytes(
+    text: Option<&str>,
+    state: winit::event::ElementState,
+    ctrl: bool,
+    alt: bool,
+    super_key: bool,
+    report_all: bool,
+) -> Option<Vec<u8>> {
+    if report_all || ctrl || alt || super_key {
+        return None;
+    }
+
+    let text = text?;
+    if state == winit::event::ElementState::Released {
+        return Some(vec![]);
+    }
+
+    Some(text.as_bytes().to_vec())
 }
 
 /// Encode a key event using the Kitty keyboard protocol (CSI u format).
@@ -701,8 +835,8 @@ pub(crate) fn key_event_to_kitty_bytes(
     kitty_flags: u16,
 ) -> Vec<u8> {
     use ciri_protocol::message::{
-        MODE_KITTY_REPORT_EVENTS, MODE_KITTY_REPORT_ALTERNATES,
-        MODE_KITTY_REPORT_ALL, MODE_KITTY_REPORT_TEXT,
+        MODE_KITTY_REPORT_ALL, MODE_KITTY_REPORT_ALTERNATES, MODE_KITTY_REPORT_EVENTS,
+        MODE_KITTY_REPORT_TEXT,
     };
 
     let report_events = kitty_flags & MODE_KITTY_REPORT_EVENTS != 0;
@@ -712,17 +846,29 @@ pub(crate) fn key_event_to_kitty_bytes(
 
     // Compute modifier value (kitty uses modifier_bits + 1)
     let mut modifier_bits: u8 = 0;
-    if shift { modifier_bits |= 1; }
-    if alt { modifier_bits |= 2; }
-    if ctrl { modifier_bits |= 4; }
-    if super_key { modifier_bits |= 8; }
+    if shift {
+        modifier_bits |= 1;
+    }
+    if alt {
+        modifier_bits |= 2;
+    }
+    if ctrl {
+        modifier_bits |= 4;
+    }
+    if super_key {
+        modifier_bits |= 8;
+    }
     let modifier_val = modifier_bits + 1; // 1 = no modifiers
 
     // Determine event type for level 2+
     let event_type: u8 = if report_events {
         match event.state {
             winit::event::ElementState::Pressed => {
-                if event.repeat { 2 } else { 1 }
+                if event.repeat {
+                    2
+                } else {
+                    1
+                }
             }
             winit::event::ElementState::Released => 3,
         }
@@ -733,6 +879,28 @@ pub(crate) fn key_event_to_kitty_bytes(
     // For level 2+, skip release events if the app didn't request event reporting
     if !report_events && event.state == winit::event::ElementState::Released {
         return vec![];
+    }
+
+    if !report_all {
+        if let Key::Named(key) = &event.logical_key
+            && let Some(bytes) = encode_legacy_c0_key(key, ctrl, shift, alt, true)
+        {
+            if event.state == winit::event::ElementState::Released {
+                return vec![];
+            }
+            return bytes;
+        }
+
+        if let Some(bytes) = encode_kitty_legacy_text_bytes(
+            key_event_text_for_input(event),
+            event.state,
+            ctrl,
+            alt,
+            super_key,
+            report_all,
+        ) {
+            return bytes;
+        }
     }
 
     // Build the modifier+event_type parameter: "modifiers:event_type" or just "modifiers"
@@ -754,7 +922,12 @@ pub(crate) fn key_event_to_kitty_bytes(
             if s.is_empty() || ctrl || alt || super_key {
                 None
             } else {
-                Some(s.chars().map(|c| format!("{}", c as u32)).collect::<Vec<_>>().join(":"))
+                Some(
+                    s.chars()
+                        .map(|c| format!("{}", c as u32))
+                        .collect::<Vec<_>>()
+                        .join(":"),
+                )
             }
         })
     } else {
@@ -765,7 +938,8 @@ pub(crate) fn key_event_to_kitty_bytes(
     // Only meaningful when Shift is the sole modifier; with Ctrl/Alt/Super the
     // text_with_all_modifiers() value is not the "shifted" variant of the key.
     let shifted_key: u32 = if report_alternates && shift && !ctrl && !alt && !super_key {
-        event.text_with_all_modifiers()
+        event
+            .text_with_all_modifiers()
             .and_then(|t| t.chars().next())
             .map(|c| c as u32)
             .unwrap_or(0)
@@ -775,7 +949,9 @@ pub(crate) fn key_event_to_kitty_bytes(
 
     // Helper: get the base layout key codepoint for level 3
     let base_layout_key: u32 = if report_alternates {
-        event.key_without_modifiers().to_text()
+        event
+            .key_without_modifiers()
+            .to_text()
             .and_then(|t| t.chars().next())
             .map(|c| c as u32)
             .unwrap_or(0)
@@ -791,7 +967,16 @@ pub(crate) fn key_event_to_kitty_bytes(
         // Build the key part: keycode[:shifted_key[:base_layout_key]]
         let key_part = if report_alternates && (shifted_key != 0 || base_layout_key != 0) {
             if base_layout_key != 0 && base_layout_key != keycode {
-                format!("{}:{}:{}", keycode, if shifted_key != 0 && shifted_key != keycode { shifted_key.to_string() } else { String::new() }, base_layout_key)
+                format!(
+                    "{}:{}:{}",
+                    keycode,
+                    if shifted_key != 0 && shifted_key != keycode {
+                        shifted_key.to_string()
+                    } else {
+                        String::new()
+                    },
+                    base_layout_key
+                )
             } else if shifted_key != 0 && shifted_key != keycode {
                 format!("{}:{}", keycode, shifted_key)
             } else {
@@ -803,7 +988,11 @@ pub(crate) fn key_event_to_kitty_bytes(
 
         if !text_param.is_empty() {
             // Level 5: CSI key ; mod:event ; text u
-            let mod_str = if mod_param.is_empty() { "1".to_string() } else { mod_param };
+            let mod_str = if mod_param.is_empty() {
+                "1".to_string()
+            } else {
+                mod_param
+            };
             format!("\x1b[{};{};{}u", key_part, mod_str, text_param).into_bytes()
         } else if !mod_param.is_empty() {
             format!("\x1b[{};{}u", key_part, mod_param).into_bytes()
@@ -864,13 +1053,7 @@ pub(crate) fn key_event_to_kitty_bytes(
                     vec![0x7f]
                 }
             }
-            NamedKey::Escape => {
-                if use_csi_u_for_special || modifier_val > 1 || event_type > 0 {
-                    csi_u_full(27)
-                } else {
-                    vec![0x1b]
-                }
-            }
+            NamedKey::Escape => csi_u_full(27),
             NamedKey::Space => csi_u_full(32),
             NamedKey::ArrowUp => csi_special('A'),
             NamedKey::ArrowDown => csi_special('B'),
@@ -902,16 +1085,32 @@ pub(crate) fn key_event_to_kitty_bytes(
             NamedKey::ContextMenu => csi_u_full(57363),
             // Modifier-only keys: send in level 4+ (report_all)
             NamedKey::Shift => {
-                if report_all { csi_u_full(57441) } else { vec![] }
+                if report_all {
+                    csi_u_full(57441)
+                } else {
+                    vec![]
+                }
             }
             NamedKey::Control => {
-                if report_all { csi_u_full(57442) } else { vec![] }
+                if report_all {
+                    csi_u_full(57442)
+                } else {
+                    vec![]
+                }
             }
             NamedKey::Alt => {
-                if report_all { csi_u_full(57443) } else { vec![] }
+                if report_all {
+                    csi_u_full(57443)
+                } else {
+                    vec![]
+                }
             }
             NamedKey::Super => {
-                if report_all { csi_u_full(57444) } else { vec![] }
+                if report_all {
+                    csi_u_full(57444)
+                } else {
+                    vec![]
+                }
             }
             _ => vec![],
         };
@@ -923,17 +1122,17 @@ pub(crate) fn key_event_to_kitty_bytes(
         if let Some(ch) = text.chars().next() {
             let codepoint = if ctrl && (ch as u32) < 0x20 {
                 // Recover the original letter from physical key
-                physical_key_to_base_char(event.physical_key)
+                key_event_base_char(event)
                     .map(|c| c as u32)
                     .unwrap_or(ch as u32)
             } else if shift && !ctrl && !alt && !super_key {
                 // Shift-only: use the base (unshifted) key
-                physical_key_to_base_char(event.physical_key)
+                key_event_base_char(event)
                     .map(|c| c as u32)
                     .unwrap_or(ch as u32)
             } else if alt && !ctrl && !super_key {
                 // Alt-only or Alt+Shift: use the base key
-                physical_key_to_base_char(event.physical_key)
+                key_event_base_char(event)
                     .map(|c| c as u32)
                     .unwrap_or(ch as u32)
             } else {
@@ -1196,7 +1395,7 @@ fn parse_file_location(s: &str) -> (&str, Option<u32>, Option<u32>) {
 
 /// Map a physical key code to its base (unshifted, unmodified) character.
 /// Returns `None` for keys that don't have a simple character mapping.
-pub(crate) fn physical_key_to_base_char(key: winit::keyboard::PhysicalKey) -> Option<char> {
+fn physical_key_to_base_char(key: winit::keyboard::PhysicalKey) -> Option<char> {
     use winit::keyboard::{KeyCode, PhysicalKey};
     match key {
         PhysicalKey::Code(code) => match code {
@@ -1237,8 +1436,148 @@ pub(crate) fn physical_key_to_base_char(key: winit::keyboard::PhysicalKey) -> Op
             KeyCode::Digit8 => Some('8'),
             KeyCode::Digit9 => Some('9'),
             KeyCode::Space => Some(' '),
+            KeyCode::Minus => Some('-'),
+            KeyCode::Equal => Some('='),
+            KeyCode::BracketLeft => Some('['),
+            KeyCode::BracketRight => Some(']'),
+            KeyCode::Backslash => Some('\\'),
+            KeyCode::IntlBackslash => Some('\\'),
+            KeyCode::Semicolon => Some(';'),
+            KeyCode::Quote => Some('\''),
+            KeyCode::Backquote => Some('`'),
+            KeyCode::Comma => Some(','),
+            KeyCode::Period => Some('.'),
+            KeyCode::Slash => Some('/'),
             _ => None,
         },
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ctrl_mapping_for_legacy_key, encode_kitty_legacy_text_bytes, encode_legacy_ascii_text_key,
+        encode_legacy_c0_key, physical_key_to_base_char,
+    };
+    use winit::event::ElementState;
+    use winit::keyboard::NamedKey;
+    use winit::keyboard::{KeyCode, PhysicalKey};
+
+    #[test]
+    fn physical_key_to_base_char_includes_symbol_keys() {
+        assert_eq!(
+            physical_key_to_base_char(PhysicalKey::Code(KeyCode::Minus)),
+            Some('-')
+        );
+        assert_eq!(
+            physical_key_to_base_char(PhysicalKey::Code(KeyCode::Equal)),
+            Some('=')
+        );
+        assert_eq!(
+            physical_key_to_base_char(PhysicalKey::Code(KeyCode::BracketLeft)),
+            Some('[')
+        );
+        assert_eq!(
+            physical_key_to_base_char(PhysicalKey::Code(KeyCode::BracketRight)),
+            Some(']')
+        );
+        assert_eq!(
+            physical_key_to_base_char(PhysicalKey::Code(KeyCode::Semicolon)),
+            Some(';')
+        );
+        assert_eq!(
+            physical_key_to_base_char(PhysicalKey::Code(KeyCode::Quote)),
+            Some('\'')
+        );
+        assert_eq!(
+            physical_key_to_base_char(PhysicalKey::Code(KeyCode::Backquote)),
+            Some('`')
+        );
+        assert_eq!(
+            physical_key_to_base_char(PhysicalKey::Code(KeyCode::Comma)),
+            Some(',')
+        );
+        assert_eq!(
+            physical_key_to_base_char(PhysicalKey::Code(KeyCode::Period)),
+            Some('.')
+        );
+        assert_eq!(
+            physical_key_to_base_char(PhysicalKey::Code(KeyCode::Slash)),
+            Some('/')
+        );
+    }
+
+    #[test]
+    fn legacy_ascii_text_key_preserves_shifted_backslash_text() {
+        assert_eq!(
+            encode_legacy_ascii_text_key('\\', "|", false, true, false),
+            Some(vec![b'|'])
+        );
+        assert_eq!(
+            encode_legacy_ascii_text_key('\\', "|", false, true, true),
+            Some(b"\x1b|".to_vec())
+        );
+    }
+
+    #[test]
+    fn legacy_ctrl_mapping_matches_terminal_control_bytes() {
+        assert_eq!(ctrl_mapping_for_legacy_key('a'), Some(0x01));
+        assert_eq!(ctrl_mapping_for_legacy_key('3'), Some(0x1b));
+        assert_eq!(ctrl_mapping_for_legacy_key('\\'), Some(0x1c));
+        assert_eq!(ctrl_mapping_for_legacy_key('8'), Some(0x7f));
+    }
+
+    #[test]
+    fn legacy_c0_keys_follow_terminal_meta_rules() {
+        assert_eq!(
+            encode_legacy_c0_key(&NamedKey::Tab, false, true, true, false),
+            Some(b"\x1b\x1b[Z".to_vec())
+        );
+        assert_eq!(
+            encode_legacy_c0_key(&NamedKey::Backspace, true, false, true, false),
+            Some(vec![0x1b, 0x08])
+        );
+        assert_eq!(
+            encode_legacy_c0_key(&NamedKey::Escape, false, false, false, true),
+            None
+        );
+    }
+
+    #[test]
+    fn kitty_compat_mode_keeps_shifted_text_as_text() {
+        assert_eq!(
+            encode_kitty_legacy_text_bytes(
+                Some("|"),
+                ElementState::Pressed,
+                false,
+                false,
+                false,
+                false
+            ),
+            Some(vec![b'|'])
+        );
+        assert_eq!(
+            encode_kitty_legacy_text_bytes(
+                Some("|"),
+                ElementState::Released,
+                false,
+                false,
+                false,
+                false
+            ),
+            Some(vec![])
+        );
+        assert_eq!(
+            encode_kitty_legacy_text_bytes(
+                Some("|"),
+                ElementState::Pressed,
+                false,
+                true,
+                false,
+                false
+            ),
+            None
+        );
     }
 }

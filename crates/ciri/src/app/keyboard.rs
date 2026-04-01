@@ -6,7 +6,9 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, NamedKey};
 
 use super::App;
-use super::input_handler::{key_event_to_kitty_bytes, key_event_to_pty_bytes};
+use super::input_handler::{
+    key_event_base_char, key_event_text_for_input, key_event_to_kitty_bytes, key_event_to_pty_bytes,
+};
 
 #[derive(Clone, Copy)]
 struct KeyModifiers {
@@ -46,11 +48,16 @@ impl App {
             }
 
             // Check if the active pane wants release events (kitty level 2+)
-            let kitty_flags = self.core.workspaces.active().active_pane_id()
+            let kitty_flags = self
+                .core
+                .workspaces
+                .active()
+                .active_pane_id()
                 .and_then(|pid| self.core.pane_grids.get(&pid))
                 .map(|grid| grid.kitty_flags)
                 .unwrap_or(0);
-            let pane_wants_release = kitty_flags & ciri_protocol::message::MODE_KITTY_REPORT_EVENTS != 0;
+            let pane_wants_release =
+                kitty_flags & ciri_protocol::message::MODE_KITTY_REPORT_EVENTS != 0;
 
             if pane_wants_release {
                 // Send release event directly to PTY via kitty encoder
@@ -58,32 +65,54 @@ impl App {
                 let shift = self.modifiers.shift_key();
                 let alt = self.modifiers.alt_key();
                 let super_key = self.modifiers.super_key();
-                let bytes = key_event_to_kitty_bytes(event, ctrl, shift, alt, super_key, kitty_flags);
+                let bytes =
+                    key_event_to_kitty_bytes(event, ctrl, shift, alt, super_key, kitty_flags);
                 if !bytes.is_empty() {
                     if self.core.broadcast_mode {
                         let vox = self.core.anim_mgr.view_offset_x.value() as f32;
-                        let visible_pids: Vec<u64> = self.core.workspaces.active()
+                        let visible_pids: Vec<u64> = self
+                            .core
+                            .workspaces
+                            .active()
                             .visible_tiles(vox)
                             .iter()
                             .map(|(pid, _, _)| *pid)
                             .collect();
                         for pid in visible_pids {
-                            let pane_kitty_flags = self.core.pane_grids.get(&pid)
+                            let pane_kitty_flags = self
+                                .core
+                                .pane_grids
+                                .get(&pid)
                                 .map(|g| g.kitty_flags)
                                 .unwrap_or(0);
-                            let pane_wants = pane_kitty_flags & ciri_protocol::message::MODE_KITTY_REPORT_EVENTS != 0;
+                            let pane_wants = pane_kitty_flags
+                                & ciri_protocol::message::MODE_KITTY_REPORT_EVENTS
+                                != 0;
                             if !pane_wants {
                                 continue;
                             }
                             let pane_bytes = if pane_kitty_flags == kitty_flags {
                                 bytes.clone()
                             } else {
-                                key_event_to_kitty_bytes(event, ctrl, shift, alt, super_key, pane_kitty_flags)
+                                key_event_to_kitty_bytes(
+                                    event,
+                                    ctrl,
+                                    shift,
+                                    alt,
+                                    super_key,
+                                    pane_kitty_flags,
+                                )
                             };
-                            self.send(ClientMessage::Input { pane_id: pid, data: pane_bytes });
+                            self.send(ClientMessage::Input {
+                                pane_id: pid,
+                                data: pane_bytes,
+                            });
                         }
                     } else if let Some(pid) = self.core.workspaces.active_mut().active_pane_id() {
-                        self.send(ClientMessage::Input { pane_id: pid, data: bytes });
+                        self.send(ClientMessage::Input {
+                            pane_id: pid,
+                            data: bytes,
+                        });
                     }
                 }
                 self.request_redraw();
@@ -168,16 +197,15 @@ impl App {
         if modifiers.ctrl {
             return; // Don't accumulate ctrl+key as text
         }
-        let Key::Character(c) = &event.logical_key else {
+        let Some(text) = key_event_text_for_input(event) else {
             return;
         };
-        let s: &str = c.as_str();
 
         if let Some(search) = &mut self.core.search_state {
-            search.query.push_str(s);
+            search.query.push_str(text);
             self.update_search_results();
         } else if let Some(palette) = &mut self.core.command_palette {
-            palette.query.push_str(s);
+            palette.query.push_str(text);
             self.filter_palette();
         }
     }
@@ -310,7 +338,7 @@ impl App {
             Key::Character(c) => {
                 let s = c.as_str();
                 if ctrl && s.len() == 1 && s.as_bytes()[0] < 0x20 {
-                    super::input_handler::physical_key_to_base_char(event.physical_key)
+                    key_event_base_char(event)
                         .map(|ch| match ch {
                             ' ' => "space",
                             'a'..='z' => {
@@ -435,7 +463,7 @@ impl App {
                 kitty_flags,
             )
         } else {
-            key_event_to_pty_bytes(event, modifiers.ctrl)
+            key_event_to_pty_bytes(event, modifiers.ctrl, modifiers.shift, modifiers.alt)
         }
     }
 

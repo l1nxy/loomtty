@@ -1,5 +1,6 @@
 use ciri_anim::spring::SpringParams;
 use ciri_protocol::message::ClientMessage;
+use ciri_protocol::message::{MODE_ALT_SCREEN, MODE_MOUSE_REPORT};
 use std::time::Instant;
 use winit::dpi::PhysicalPosition;
 use winit::event::{MouseButton, MouseScrollDelta, TouchPhase};
@@ -7,6 +8,20 @@ use winit::event::{MouseButton, MouseScrollDelta, TouchPhase};
 use super::App;
 
 impl App {
+    pub(crate) fn pane_reports_mouse(&self, pane_id: u64) -> bool {
+        let mode_flags = self
+            .core
+            .pane_grids
+            .get(&pane_id)
+            .map(|grid| grid.mode_flags)
+            .unwrap_or(0);
+        mode_reports_mouse(mode_flags)
+    }
+
+    pub(crate) fn pane_prefers_mouse_passthrough(&self, pane_id: u64) -> bool {
+        self.pane_reports_mouse(pane_id) && !self.modifiers.shift_key()
+    }
+
     pub(crate) fn handle_cursor_moved(&mut self, position: PhysicalPosition<f64>) {
         let mx = position.x as f32;
         let my = position.y as f32;
@@ -46,6 +61,7 @@ impl App {
     }
 
     fn handle_left_mouse_pressed(&mut self, mx: f32, my: f32) {
+        self.mouse_left_passthrough = false;
         if self.core.overview.active {
             self.dispatch_ui_click(mx, my);
         } else {
@@ -88,7 +104,9 @@ impl App {
             if !started_drag {
                 let shift = self.modifiers.shift_key();
                 if let Some((pane_id, col, buf_row)) = self.pixel_to_cell(mx, my) {
+                    let passthrough = self.pane_prefers_mouse_passthrough(pane_id);
                     if !shift
+                        && !passthrough
                         && self.link_activation_modifier_active()
                         && let Some(url) = self.hovered_link_url_at(pane_id, col, buf_row)
                     {
@@ -101,6 +119,7 @@ impl App {
                     }
 
                     self.mouse_left_held = true;
+                    self.mouse_left_passthrough = passthrough;
                     let click_now = Instant::now();
                     let click_count = if shift {
                         1 // shift-click is always single-click (extend selection)
@@ -127,6 +146,21 @@ impl App {
                     );
                     self.send(ClientMessage::FocusPane { pane_id });
                     self.animate_to_active();
+
+                    if passthrough {
+                        if let Some((_, vcol, vrow)) = self.pixel_to_viewport_cell(mx, my) {
+                            self.send_lossy(ClientMessage::MouseInput {
+                                pane_id,
+                                button: 0,
+                                col: vcol,
+                                row: vrow,
+                                pressed: true,
+                                modifiers: 0,
+                            });
+                        }
+                        self.core.selection = None;
+                        return;
+                    }
 
                     if shift {
                         // Shift-click: extend existing selection or start new
@@ -183,14 +217,19 @@ impl App {
         };
 
         let had_left_hold = self.mouse_left_held;
+        let passthrough = self.mouse_left_passthrough;
         self.mouse_left_held = false;
+        self.mouse_left_passthrough = false;
         if self.finish_resize_drag() {
             return;
         }
         self.core.overview.dragging = false;
         self.core.overview.drag_last_pos = None;
 
-        if had_left_hold && let Some((pane_id, col, row)) = self.pixel_to_viewport_cell(mx, my) {
+        if had_left_hold
+            && passthrough
+            && let Some((pane_id, col, row)) = self.pixel_to_viewport_cell(mx, my)
+        {
             self.send_lossy(ClientMessage::MouseInput {
                 pane_id,
                 button: 3,
@@ -507,6 +546,23 @@ impl App {
             return;
         }
 
+        if self.mouse_left_passthrough
+            && let Some((pane_id, col, row)) = self.pixel_to_viewport_cell(mx, my)
+        {
+            if self.core.selection.take().is_some() {
+                self.request_mouse_redraw();
+            }
+            self.send_lossy(ClientMessage::MouseInput {
+                pane_id,
+                button: 32,
+                col,
+                row,
+                pressed: true,
+                modifiers: 0,
+            });
+            return;
+        }
+
         if self.core.selection.as_ref().is_some_and(|s| s.active)
             && let Some((_, col, buf_row)) = self.pixel_to_cell(mx, my)
         {
@@ -619,14 +675,14 @@ impl App {
             .active()
             .active_pane_id()
             .and_then(|pid| self.core.pane_grids.get(&pid))
-            .is_some_and(|g| g.mode_flags & ciri_protocol::message::MODE_MOUSE_REPORT != 0);
+            .is_some_and(|g| g.mode_flags & MODE_MOUSE_REPORT != 0);
         let is_alt_screen = self
             .core
             .workspaces
             .active()
             .active_pane_id()
             .and_then(|pid| self.core.pane_grids.get(&pid))
-            .is_some_and(|g| g.mode_flags & ciri_protocol::message::MODE_ALT_SCREEN != 0);
+            .is_some_and(|g| g.mode_flags & MODE_ALT_SCREEN != 0);
 
         if self.handle_workspace_row_swipe(delta, phase, gestures_enabled) {
             return;
@@ -856,5 +912,37 @@ impl App {
         if let Some(w) = &self.window {
             w.request_redraw();
         }
+    }
+}
+
+fn mode_prefers_mouse_passthrough(mode_flags: u16) -> bool {
+    mode_reports_mouse(mode_flags)
+}
+
+fn mode_reports_mouse(mode_flags: u16) -> bool {
+    mode_flags & MODE_MOUSE_REPORT != 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{mode_prefers_mouse_passthrough, mode_reports_mouse};
+    use ciri_protocol::message::{MODE_ALT_SCREEN, MODE_MOUSE_REPORT};
+
+    #[test]
+    fn mouse_reporting_is_not_implied_by_alt_screen() {
+        assert!(!mode_reports_mouse(0));
+        assert!(mode_reports_mouse(MODE_MOUSE_REPORT));
+        assert!(!mode_reports_mouse(MODE_ALT_SCREEN));
+        assert!(mode_reports_mouse(MODE_MOUSE_REPORT | MODE_ALT_SCREEN));
+    }
+
+    #[test]
+    fn passthrough_matches_mouse_reporting() {
+        assert!(!mode_prefers_mouse_passthrough(0));
+        assert!(mode_prefers_mouse_passthrough(MODE_MOUSE_REPORT));
+        assert!(!mode_prefers_mouse_passthrough(MODE_ALT_SCREEN));
+        assert!(mode_prefers_mouse_passthrough(
+            MODE_MOUSE_REPORT | MODE_ALT_SCREEN
+        ));
     }
 }

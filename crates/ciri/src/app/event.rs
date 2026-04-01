@@ -124,7 +124,9 @@ impl ApplicationHandler for App {
 
         if matches!(
             cause,
-            StartCause::ResumeTimeReached { .. } | StartCause::Poll | StartCause::WaitCancelled { .. }
+            StartCause::ResumeTimeReached { .. }
+                | StartCause::Poll
+                | StartCause::WaitCancelled { .. }
         ) {
             let mut needs_redraw = is_animating || is_resizing;
 

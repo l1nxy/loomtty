@@ -236,9 +236,14 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                                 .unwrap_or(0);
 
                             if current_total > last_sent {
-                                // New scrollback — send FullPaneSync with delta history
-                                let sync =
-                                    build_scrollback_sync(pane, pgen, last_sent, current_total);
+                                // New scrollback — send scrollback-only FullPaneSync
+                                // (rows=0, cells=[]) so viewport is not re-encoded.
+                                let sync = build_scrollback_only_sync(
+                                    pane,
+                                    pgen,
+                                    last_sent,
+                                    current_total,
+                                );
                                 pending_sends.push(PendingSend {
                                     client_id: cid,
                                     session_name: session_name.clone(),
@@ -248,6 +253,45 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
                                         pane_id,
                                     },
                                 });
+                                // Also send CellDelta for any viewport damage
+                                if !damage.line_damage.is_empty() {
+                                    let (cursor_line, cursor_col, cursor_shape, mode_flags) =
+                                        pane.cursor_info();
+                                    let regions: Vec<(u16, u16, u16)> = damage
+                                        .line_damage
+                                        .iter()
+                                        .map(|(&line, &(left, right))| (line, left, right))
+                                        .collect();
+                                    let cols = pane.grid_cols();
+                                    let meta = PaneFrameMeta {
+                                        pane_id,
+                                        generation: pgen,
+                                        cursor_line,
+                                        cursor_col,
+                                        cursor_shape,
+                                        mode_flags,
+                                    };
+                                    let mut buf = frame_pool.pop().unwrap_or_default();
+                                    let ok = codec::encode_cell_delta_streaming_framed(
+                                        &mut buf,
+                                        &meta,
+                                        cols,
+                                        &regions,
+                                        |line, left, right, enc| {
+                                            pane.write_cells_into_sm(line, left, right, enc)
+                                        },
+                                    )
+                                    .is_ok();
+                                    if ok {
+                                        pending_sends.push(PendingSend {
+                                            client_id: cid,
+                                            session_name: session_name.clone(),
+                                            snapshot: Snapshot::DeltaEncoded(buf),
+                                        });
+                                    } else if frame_pool.len() < FRAME_POOL_CAP {
+                                        frame_pool.push(buf);
+                                    }
+                                }
                             } else {
                                 // No new scrollback — send lightweight CellDelta
                                 let (cursor_line, cursor_col, cursor_shape, mode_flags) =
@@ -447,6 +491,23 @@ pub(crate) async fn run_tick_loop(tick_state: Arc<Mutex<Server>>, tick_shutdown:
             }
         }
     }
+}
+
+/// Build a scrollback-only FullPaneSync (rows=0, cells=[]).
+/// The client appends scrollback without touching the viewport.
+fn build_scrollback_only_sync(
+    pane: &ciri_term::pane::Pane,
+    generation: u64,
+    last_sent: usize,
+    current_total: usize,
+) -> FullPaneSync {
+    let mut sync = build_scrollback_sync(pane, generation, last_sent, current_total);
+    // Zero out viewport — client will skip viewport update when rows==0.
+    sync.rows = 0;
+    sync.cells.clear();
+    sync.grapheme_extras = Default::default();
+    sync.hyperlink_extras = Default::default();
+    sync
 }
 
 /// Build a FullPaneSync with the right scrollback delta, handling both the

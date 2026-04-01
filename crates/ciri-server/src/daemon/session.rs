@@ -34,6 +34,8 @@ pub(crate) struct Session {
     pub(crate) detected_agents: HashMap<u64, Option<SavedAgent>>,
     /// Last time agent detection ran.
     pub(crate) last_agent_save: Option<Instant>,
+    /// Last-known cursor state per pane, for detecting cursor-only changes.
+    pub(crate) last_cursor: HashMap<u64, (i16, u16, u8, u8)>,
 }
 
 impl Session {
@@ -58,6 +60,7 @@ impl Session {
             last_attached: Instant::now(),
             detected_agents: HashMap::new(),
             last_agent_save: None,
+            last_cursor: HashMap::new(),
         }
     }
 
@@ -531,6 +534,14 @@ impl Session {
             if pane.drain_image_deletes() {
                 clipboard_msgs.push(ServerMessage::ImageDeleted { pane_id });
             }
+            // Detect cursor-only changes (no cell damage but cursor moved).
+            let cur_cursor = pane.cursor_info();
+            let prev_cursor = self.last_cursor.get(&pane_id).copied();
+            let cursor_changed = prev_cursor.map_or(true, |prev| prev != cur_cursor);
+            if cursor_changed {
+                self.last_cursor.insert(pane_id, cur_cursor);
+            }
+
             if let Some(ranges) = pane.extract_damage() {
                 // Bump generation
                 let g = self.generation.entry(pane_id).or_insert(0);
@@ -540,6 +551,14 @@ impl Session {
                     if client.session_name == self.session_name {
                         let acc = client.damage.entry(pane_id).or_default();
                         acc.merge_ranges(&ranges);
+                        acc.cursor_dirty = true;
+                    }
+                }
+            } else if cursor_changed {
+                // No cell damage, but cursor position/shape/mode changed.
+                for client in clients.values_mut() {
+                    if client.session_name == self.session_name {
+                        let acc = client.damage.entry(pane_id).or_default();
                         acc.cursor_dirty = true;
                     }
                 }

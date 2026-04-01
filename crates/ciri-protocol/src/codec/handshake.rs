@@ -40,11 +40,7 @@ const MAX_SESSION_NAME_LEN: usize = 255;
 /// Wire protocol version. Incremented whenever the handshake or frame format
 /// changes in a backward-incompatible way.
 ///
-/// History:
-///   1 = initial fixed 24-byte ClientHello
-///   2 = variable-length ClientHello with session_name_len(u16) prefix
-///   3 = state-machine cell encoding (replaces per-cell + RLE)
-pub const WIRE_PROTOCOL_VERSION: u8 = 3;
+pub const WIRE_PROTOCOL_VERSION: u8 = 1;
 
 /// Version compatibility result.
 #[derive(Debug, Clone, PartialEq, Eq)]

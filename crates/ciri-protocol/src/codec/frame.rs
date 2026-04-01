@@ -16,6 +16,13 @@ pub(super) const TAG_SERVER_MSG: u8 = 0x10;
 // Server → Client (custom binary, hot path)
 pub(super) const TAG_CELL_DELTA: u8 = 0x20;
 pub(super) const TAG_FULL_PANE_SYNC: u8 = 0x21;
+// LZ4-compressed variants (payload is [u32 LE uncompressed_len][lz4 data])
+pub(super) const TAG_CELL_DELTA_LZ4: u8 = 0x22;
+pub(super) const TAG_FULL_PANE_SYNC_LZ4: u8 = 0x23;
+
+/// Minimum payload size before LZ4 compression kicks in (bytes).
+/// Below this threshold, compression overhead exceeds savings.
+const LZ4_COMPRESS_THRESHOLD: usize = 128;
 
 /// Maximum frame size for control messages (msgpack).  Control messages are
 /// small — 1 MiB is generous.
@@ -62,6 +69,9 @@ async fn read_frame_header<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<(
     // Apply per-tag size limits: control messages are small, data frames can be larger.
     let limit = match tag {
         TAG_CLIENT_MSG | TAG_SERVER_MSG => MAX_CONTROL_FRAME_LEN,
+        TAG_CELL_DELTA | TAG_FULL_PANE_SYNC | TAG_CELL_DELTA_LZ4 | TAG_FULL_PANE_SYNC_LZ4 => {
+            MAX_DATA_FRAME_LEN
+        }
         _ => MAX_DATA_FRAME_LEN,
     };
     if len > limit {
@@ -119,7 +129,9 @@ pub fn frame_server_msg_into(buf: &mut Vec<u8>, msg: &ServerMessage) -> bool {
 
 pub fn frame_full_pane_sync(sync: &FullPaneSync) -> Option<Vec<u8>> {
     let payload = encode_full_pane_sync_payload(sync).ok()?;
-    build_frame(TAG_FULL_PANE_SYNC, &payload).ok()
+    let (tag, compressed) =
+        maybe_compress_payload(TAG_FULL_PANE_SYNC, TAG_FULL_PANE_SYNC_LZ4, &payload);
+    build_frame(tag, &compressed).ok()
 }
 
 // ─── Unified frame reader ───────────────────────────────────────────
@@ -152,6 +164,14 @@ fn decode_frame(tag: u8, payload: Vec<u8>) -> io::Result<Frame> {
         TAG_SERVER_MSG => decode_msgpack_frame(&payload).map(Frame::ServerMsg),
         TAG_CELL_DELTA => decode_cell_delta_borrowed(payload).map(Frame::CellDelta),
         TAG_FULL_PANE_SYNC => decode_full_pane_sync(&payload).map(Frame::FullPaneSync),
+        TAG_CELL_DELTA_LZ4 => {
+            let decompressed = decompress_lz4_payload(&payload)?;
+            decode_cell_delta_borrowed(decompressed).map(Frame::CellDelta)
+        }
+        TAG_FULL_PANE_SYNC_LZ4 => {
+            let decompressed = decompress_lz4_payload(&payload)?;
+            decode_full_pane_sync(&decompressed).map(Frame::FullPaneSync)
+        }
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("unknown frame tag: 0x{tag:02x}"),
@@ -164,4 +184,47 @@ where
     T: serde::de::DeserializeOwned,
 {
     rmp_serde::from_slice(payload).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+}
+
+/// Decompress an LZ4 frame payload: [u32 LE uncompressed_len][lz4 data] → raw bytes.
+fn decompress_lz4_payload(payload: &[u8]) -> io::Result<Vec<u8>> {
+    if payload.len() < 4 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "LZ4 payload too short",
+        ));
+    }
+    let uncompressed_len =
+        u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
+    if uncompressed_len > MAX_DATA_FRAME_LEN as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "LZ4 uncompressed length exceeds limit",
+        ));
+    }
+    lz4_flex::decompress(&payload[4..], uncompressed_len)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("LZ4 decompress: {e}")))
+}
+
+/// Try to LZ4-compress a payload, returning (compressed_tag, data).
+/// Falls back to uncompressed if the payload is too small or compression doesn't help.
+pub(crate) fn maybe_compress_payload(
+    uncompressed_tag: u8,
+    compressed_tag: u8,
+    payload: &[u8],
+) -> (u8, Vec<u8>) {
+    if payload.len() < LZ4_COMPRESS_THRESHOLD {
+        return (uncompressed_tag, payload.to_vec());
+    }
+    let compressed = lz4_flex::compress_prepend_size(payload);
+    // Only use compressed if it's actually smaller (+ 4 bytes for uncompressed_len header).
+    let lz4_payload_len = 4 + compressed.len();
+    if lz4_payload_len < payload.len() {
+        let mut out = Vec::with_capacity(lz4_payload_len);
+        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        out.extend_from_slice(&compressed);
+        (compressed_tag, out)
+    } else {
+        (uncompressed_tag, payload.to_vec())
+    }
 }

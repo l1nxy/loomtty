@@ -15,6 +15,16 @@ pub(super) const OP_CHAR1: u8 = 0x10;
 pub(super) const OP_CHARS: u8 = 0x11;
 pub(super) const OP_REPEAT: u8 = 0x12;
 pub(super) const OP_CHARS_LONG: u8 = 0x13;
+/// ASCII run: 1-byte count + N raw ASCII bytes (1 byte each instead of 4).
+pub(super) const OP_ASCII: u8 = 0x14;
+/// Single ASCII repeat: 2-byte count + 1 ASCII byte.
+pub(super) const OP_ASCII_REPEAT: u8 = 0x15;
+
+/// Compact color opcodes: Named/Indexed use 2 bytes instead of 4.
+pub(super) const OP_SET_FG_NAMED: u8 = 0x06;
+pub(super) const OP_SET_BG_NAMED: u8 = 0x07;
+pub(super) const OP_SET_FG_INDEXED: u8 = 0x08;
+pub(super) const OP_SET_BG_INDEXED: u8 = 0x09;
 
 pub(super) const OP_END: u8 = 0xFF;
 
@@ -33,6 +43,46 @@ pub struct StateEncoder {
 
 fn default_cell_state() -> (PackedColor, PackedColor, u16) {
     (DEFAULT_FOREGROUND, DEFAULT_BACKGROUND, DEFAULT_CELL_FLAGS)
+}
+
+/// Check if a char encoded as [u8; 4] is a single ASCII byte (non-NUL).
+fn is_ascii_char(ch: &[u8; 4]) -> bool {
+    ch[0] > 0 && ch[0] < 0x80 && ch[1] == 0 && ch[2] == 0 && ch[3] == 0
+}
+
+/// Emit a compact color-set opcode (Named/Indexed use 2 bytes, RGB uses 5 bytes).
+fn emit_compact_fg(out: &mut Vec<u8>, color: &PackedColor) {
+    match color.tag {
+        COLOR_NAMED => {
+            out.push(OP_SET_FG_NAMED);
+            out.push(color.b1);
+        }
+        COLOR_INDEXED => {
+            out.push(OP_SET_FG_INDEXED);
+            out.push(color.b1);
+        }
+        _ => {
+            out.push(OP_SET_FG);
+            out.extend_from_slice(bytemuck::bytes_of(color));
+        }
+    }
+}
+
+fn emit_compact_bg(out: &mut Vec<u8>, color: &PackedColor) {
+    match color.tag {
+        COLOR_NAMED => {
+            out.push(OP_SET_BG_NAMED);
+            out.push(color.b1);
+        }
+        COLOR_INDEXED => {
+            out.push(OP_SET_BG_INDEXED);
+            out.push(color.b1);
+        }
+        _ => {
+            out.push(OP_SET_BG);
+            out.extend_from_slice(bytemuck::bytes_of(color));
+        }
+    }
 }
 
 impl StateEncoder {
@@ -67,16 +117,22 @@ impl StateEncoder {
                 let fg_changed = fg != self.cur_fg;
                 let bg_changed = bg != self.cur_bg;
 
-                if fg_changed && bg_changed {
+                // Use OP_SET_FG_BG only when both are RGB (saves nothing
+                // for Named/Indexed where compact opcodes are shorter).
+                if fg_changed && bg_changed
+                    && fg.tag == COLOR_RGB
+                    && bg.tag == COLOR_RGB
+                {
                     self.out.push(OP_SET_FG_BG);
                     self.out.extend_from_slice(bytemuck::bytes_of(&fg));
                     self.out.extend_from_slice(bytemuck::bytes_of(&bg));
-                } else if fg_changed {
-                    self.out.push(OP_SET_FG);
-                    self.out.extend_from_slice(bytemuck::bytes_of(&fg));
-                } else if bg_changed {
-                    self.out.push(OP_SET_BG);
-                    self.out.extend_from_slice(bytemuck::bytes_of(&bg));
+                } else {
+                    if fg_changed {
+                        emit_compact_fg(&mut self.out, &fg);
+                    }
+                    if bg_changed {
+                        emit_compact_bg(&mut self.out, &bg);
+                    }
                 }
 
                 if flags != self.cur_flags {
@@ -116,9 +172,17 @@ impl StateEncoder {
     }
 
     fn emit_repeat(&mut self, count: u16, ch: &[u8; 4]) {
-        self.out.push(OP_REPEAT);
-        self.out.extend_from_slice(&count.to_le_bytes());
-        self.out.extend_from_slice(ch);
+        if is_ascii_char(ch) {
+            // OP_ASCII_REPEAT: 1 opcode + 2 count + 1 char = 4 bytes
+            // vs OP_REPEAT:    1 opcode + 2 count + 4 char = 7 bytes
+            self.out.push(OP_ASCII_REPEAT);
+            self.out.extend_from_slice(&count.to_le_bytes());
+            self.out.push(ch[0]);
+        } else {
+            self.out.push(OP_REPEAT);
+            self.out.extend_from_slice(&count.to_le_bytes());
+            self.out.extend_from_slice(ch);
+        }
     }
 
     fn flush_run(&mut self) {
@@ -136,24 +200,64 @@ impl StateEncoder {
     }
 
     fn flush_char_buf(&mut self) {
-        let count = self.char_buf.len();
-        if count == 0 {
+        if self.char_buf.is_empty() {
             return;
         }
-        if count == 1 {
-            self.out.push(OP_CHAR1);
-            self.out.extend_from_slice(&self.char_buf[0]);
-        } else if count <= 255 {
-            self.out.push(OP_CHARS);
-            self.out.push(count as u8);
-            for ch in &self.char_buf {
-                self.out.extend_from_slice(ch);
-            }
-        } else {
-            self.out.push(OP_CHARS_LONG);
-            self.out.extend_from_slice(&(count as u16).to_le_bytes());
-            for ch in &self.char_buf {
-                self.out.extend_from_slice(ch);
+
+        // Split the buffer into ASCII and non-ASCII runs for optimal encoding.
+        let mut i = 0;
+        while i < self.char_buf.len() {
+            if is_ascii_char(&self.char_buf[i]) {
+                // Gather contiguous ASCII chars
+                let start = i;
+                while i < self.char_buf.len() && is_ascii_char(&self.char_buf[i]) {
+                    i += 1;
+                }
+                let n = i - start;
+                if n == 1 {
+                    // Single ASCII: OP_CHAR1 (5B) vs OP_ASCII (2+1=3B min)
+                    // Use OP_ASCII even for 1 char (saves 2 bytes).
+                    self.out.push(OP_ASCII);
+                    self.out.push(1);
+                    self.out.push(self.char_buf[start][0]);
+                } else {
+                    // OP_ASCII: 1 opcode + 1 count + N bytes = N+2 bytes
+                    // vs OP_CHARS: 1 opcode + 1 count + N*4 bytes
+                    let count = n.min(255);
+                    self.out.push(OP_ASCII);
+                    self.out.push(count as u8);
+                    for j in start..start + count {
+                        self.out.push(self.char_buf[j][0]);
+                    }
+                    // Handle overflow (>255 ASCII chars in a row)
+                    if n > 255 {
+                        i = start + 255; // will be picked up in next iteration
+                        continue;
+                    }
+                }
+            } else {
+                // Gather contiguous non-ASCII chars
+                let start = i;
+                while i < self.char_buf.len() && !is_ascii_char(&self.char_buf[i]) {
+                    i += 1;
+                }
+                let n = i - start;
+                if n == 1 {
+                    self.out.push(OP_CHAR1);
+                    self.out.extend_from_slice(&self.char_buf[start]);
+                } else if n <= 255 {
+                    self.out.push(OP_CHARS);
+                    self.out.push(n as u8);
+                    for j in start..start + n {
+                        self.out.extend_from_slice(&self.char_buf[j]);
+                    }
+                } else {
+                    self.out.push(OP_CHARS_LONG);
+                    self.out.extend_from_slice(&(n as u16).to_le_bytes());
+                    for j in start..start + n {
+                        self.out.extend_from_slice(&self.char_buf[j]);
+                    }
+                }
             }
         }
         self.char_buf.clear();
@@ -316,6 +420,80 @@ pub fn decode_sm_cells(data: &[u8], cells: &mut [PackedCell]) -> io::Result<usiz
                     ci += 1;
                 }
                 pos += count * 4;
+            }
+            OP_ASCII => {
+                if pos + 1 > data.len() {
+                    return Err(truncated_err("Ascii count"));
+                }
+                let count = data[pos] as usize;
+                pos += 1;
+                if pos + count > data.len() {
+                    return Err(truncated_err("Ascii data"));
+                }
+                let flags_le = flags.to_le_bytes();
+                for i in 0..count {
+                    if ci >= cells.len() {
+                        return Err(overflow_err());
+                    }
+                    cells[ci] = PackedCell {
+                        ch_bytes: [data[pos + i], 0, 0, 0],
+                        fg,
+                        bg,
+                        flags: flags_le,
+                    };
+                    ci += 1;
+                }
+                pos += count;
+            }
+            OP_ASCII_REPEAT => {
+                if pos + 3 > data.len() {
+                    return Err(truncated_err("AsciiRepeat"));
+                }
+                let count = u16::from_le_bytes([data[pos], data[pos + 1]]) as usize;
+                pos += 2;
+                let ch_byte = data[pos];
+                pos += 1;
+                let cell = PackedCell {
+                    ch_bytes: [ch_byte, 0, 0, 0],
+                    fg,
+                    bg,
+                    flags: flags.to_le_bytes(),
+                };
+                for _ in 0..count {
+                    if ci >= cells.len() {
+                        return Err(overflow_err());
+                    }
+                    cells[ci] = cell;
+                    ci += 1;
+                }
+            }
+            OP_SET_FG_NAMED => {
+                if pos + 1 > data.len() {
+                    return Err(truncated_err("SetFgNamed"));
+                }
+                fg = PackedColor::named(data[pos]);
+                pos += 1;
+            }
+            OP_SET_BG_NAMED => {
+                if pos + 1 > data.len() {
+                    return Err(truncated_err("SetBgNamed"));
+                }
+                bg = PackedColor::named(data[pos]);
+                pos += 1;
+            }
+            OP_SET_FG_INDEXED => {
+                if pos + 1 > data.len() {
+                    return Err(truncated_err("SetFgIndexed"));
+                }
+                fg = PackedColor::indexed(data[pos]);
+                pos += 1;
+            }
+            OP_SET_BG_INDEXED => {
+                if pos + 1 > data.len() {
+                    return Err(truncated_err("SetBgIndexed"));
+                }
+                bg = PackedColor::indexed(data[pos]);
+                pos += 1;
             }
             OP_END => break,
             _ => {

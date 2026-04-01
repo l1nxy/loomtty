@@ -57,8 +57,9 @@ impl ClientPaneGrid {
         let new_rows = sync.rows as usize;
 
         // If dimensions changed, reflow scrollback and resize viewport.
+        // rows==0 means scrollback-only sync — don't resize viewport.
         let cols_changed = sync.cols != self.cols;
-        if cols_changed || sync.rows != self.rows {
+        if sync.rows > 0 && (cols_changed || sync.rows != self.rows) {
             if cols_changed {
                 self.reflow_scrollback(new_cols);
             }
@@ -123,16 +124,19 @@ impl ClientPaneGrid {
             }
         }
 
-        // Step 2: Memcpy cells directly into viewport flat buffer
+        // Step 2: Memcpy cells directly into viewport flat buffer.
+        // When rows==0, this is a scrollback-only sync — skip viewport update.
         let vp_cells = new_cols * new_rows;
-        if sync.cells.len() >= vp_cells {
-            self.viewport[..vp_cells].copy_from_slice(&sync.cells[..vp_cells]);
-        } else {
-            // Partial: copy what we have, blank the rest
-            let have = sync.cells.len();
-            self.viewport[..have].copy_from_slice(&sync.cells);
-            for cell in &mut self.viewport[have..vp_cells] {
-                *cell = PackedCell::default();
+        if vp_cells > 0 {
+            if sync.cells.len() >= vp_cells {
+                self.viewport[..vp_cells].copy_from_slice(&sync.cells[..vp_cells]);
+            } else {
+                // Partial: copy what we have, blank the rest
+                let have = sync.cells.len();
+                self.viewport[..have].copy_from_slice(&sync.cells);
+                for cell in &mut self.viewport[have..vp_cells] {
+                    *cell = PackedCell::default();
+                }
             }
         }
 

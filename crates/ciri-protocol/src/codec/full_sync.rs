@@ -4,7 +4,7 @@ use crate::message::*;
 use std::io;
 use tokio::io::AsyncWrite;
 
-use super::frame::{TAG_FULL_PANE_SYNC, write_frame};
+use super::frame::{TAG_FULL_PANE_SYNC, TAG_FULL_PANE_SYNC_LZ4, maybe_compress_payload, write_frame};
 use super::state_machine::{StateEncoder, sm_decode_cells_vec, sm_encode_cells};
 use super::util::*;
 
@@ -356,8 +356,15 @@ pub fn encode_full_pane_sync_framed(buf: &mut Vec<u8>, sync: &FullPaneSync) -> i
     write_full_pane_sync_grapheme_extras(buf, sync)?;
     write_full_pane_sync_hyperlink_extras(buf, sync)?;
     write_full_pane_sync_cwd(buf, sync)?;
-    let payload_len = (buf.len() - payload_start) as u32;
+    // Try LZ4 compression on the payload.
+    let payload = &buf[payload_start..];
+    let (tag, compressed) =
+        maybe_compress_payload(TAG_FULL_PANE_SYNC, TAG_FULL_PANE_SYNC_LZ4, payload);
+    buf.truncate(payload_start);
+    buf[0] = tag;
+    let payload_len = compressed.len() as u32;
     buf[1..5].copy_from_slice(&payload_len.to_le_bytes());
+    buf.extend_from_slice(&compressed);
     Ok(())
 }
 

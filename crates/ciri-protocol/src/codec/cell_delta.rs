@@ -3,7 +3,7 @@
 use crate::message::*;
 use std::io;
 
-use super::frame::TAG_CELL_DELTA;
+use super::frame::{TAG_CELL_DELTA, TAG_CELL_DELTA_LZ4, maybe_compress_payload};
 use super::state_machine::StateEncoder;
 use super::util::*;
 
@@ -50,8 +50,14 @@ where
         buf.extend_from_slice(sm_data);
     }
 
-    let payload_len = (buf.len() - payload_start) as u32;
+    // Try LZ4 compression on the payload.
+    let payload = &buf[payload_start..];
+    let (tag, compressed) = maybe_compress_payload(TAG_CELL_DELTA, TAG_CELL_DELTA_LZ4, payload);
+    buf.truncate(payload_start);
+    buf[0] = tag;
+    let payload_len = compressed.len() as u32;
     buf[1..5].copy_from_slice(&payload_len.to_le_bytes());
+    buf.extend_from_slice(&compressed);
     Ok(())
 }
 

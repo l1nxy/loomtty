@@ -63,6 +63,27 @@ pub struct PendingUpload {
     pub data: Vec<u8>,
 }
 
+/// Queued DWrite glyph for D2D direct-to-atlas rendering (Windows DX backend).
+///
+/// Instead of CPU-side pixel extraction, this carries the glyph identity and
+/// atlas position. The DX backend renders it via `D2D DrawGlyphRun` onto the
+/// atlas texture's DXGI surface.
+#[cfg(windows)]
+pub struct PendingDwriteGlyph {
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+    pub glyph_index: u16,
+    pub pixel_size: f32,
+    /// D2D DrawGlyphRun baseline origin X within the atlas.
+    pub baseline_x: f32,
+    /// D2D DrawGlyphRun baseline origin Y within the atlas.
+    pub baseline_y: f32,
+    pub is_color: bool,
+    pub face: windows::Win32::Graphics::DirectWrite::IDWriteFontFace,
+}
+
 /// Build a `GlyphEntry` from atlas coordinates.
 pub(crate) fn make_glyph_entry(
     region: AtlasRegion,

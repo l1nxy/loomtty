@@ -18,5 +18,11 @@ ciri-config = { path = "../ciri-config" }
 rustybuzz = { workspace = true }
 unicode-segmentation = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Direct2D_Common",
+] }
+
 [dev-dependencies]
 ciri-app = { workspace = true }

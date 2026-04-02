@@ -12,13 +12,18 @@ use std::sync::Arc;
 use winit::window::Window;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use windows::Win32::Foundation::RECT;
+use windows::Win32::Foundation::{BOOL, RECT};
+use windows::Win32::Graphics::Direct2D::Common::*;
+use windows::Win32::Graphics::Direct2D::*;
 use windows::Win32::Graphics::Direct3D::Fxc::*;
 use windows::Win32::Graphics::Direct3D::*;
 use windows::Win32::Graphics::Direct3D11::*;
+use windows::Win32::Graphics::DirectWrite::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Dxgi::*;
 use windows::core::*;
+
+use ciri_render::glyph_cache::PendingDwriteGlyph;
 
 // ─── HLSL shaders ───────────────────────────────────────────────────
 
@@ -114,7 +119,7 @@ struct PSInput {
 };
 
 float4 ps_main(PSInput input) : SV_TARGET {
-    float alpha = atlas_tex.Sample(atlas_sampler, input.uv).r;
+    float alpha = atlas_tex.Sample(atlas_sampler, input.uv).a;
     float out_alpha = input.color.a * alpha;
     return float4(input.color.rgb * out_alpha, out_alpha);
 }
@@ -183,6 +188,8 @@ struct DxAtlasLayer {
     atlas_size: u32,
     bpp: u32,
     max_instances: usize,
+    /// D2D render target for direct DWrite glyph rendering to this atlas layer.
+    d2d_rt: ID2D1RenderTarget,
 }
 
 struct DxAtlasLayerConfig<'a> {
@@ -193,6 +200,9 @@ struct DxAtlasLayerConfig<'a> {
     vs_hlsl: &'a str,
     ps_hlsl: &'a str,
     filter: D3D11_FILTER,
+    d2d_factory: &'a ID2D1Factory,
+    /// D2D text antialias mode for this layer.
+    text_antialias: D2D1_TEXT_ANTIALIAS_MODE,
 }
 
 impl DxAtlasLayer {
@@ -214,7 +224,7 @@ impl DxAtlasLayer {
                 Quality: 0,
             },
             Usage: D3D11_USAGE_DEFAULT,
-            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+            BindFlags: (D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_RENDER_TARGET.0) as u32,
             CPUAccessFlags: 0,
             MiscFlags: 0,
         };
@@ -346,6 +356,24 @@ impl DxAtlasLayer {
         device.CreateBuffer(&cb_desc, None, Some(&mut cbuffer))?;
         let cbuffer = cbuffer.unwrap();
 
+        // D2D render target from the atlas texture's DXGI surface.
+        let dxgi_surface: IDXGISurface = texture.cast()?;
+        let rt_props = D2D1_RENDER_TARGET_PROPERTIES {
+            r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
+            pixelFormat: D2D1_PIXEL_FORMAT {
+                format: tex_format,
+                alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+            },
+            dpiX: 96.0,
+            dpiY: 96.0,
+            usage: D2D1_RENDER_TARGET_USAGE_NONE,
+            minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
+        };
+        let d2d_rt = cfg
+            .d2d_factory
+            .CreateDxgiSurfaceRenderTarget(&dxgi_surface, &rt_props)?;
+        d2d_rt.SetTextAntialiasMode(cfg.text_antialias);
+
         Ok(DxAtlasLayer {
             texture,
             srv,
@@ -358,6 +386,7 @@ impl DxAtlasLayer {
             atlas_size,
             bpp,
             max_instances,
+            d2d_rt,
         })
     }
 
@@ -407,6 +436,68 @@ impl DxAtlasLayer {
                 0,
             );
         }
+    }
+
+    /// Render pending DWrite glyphs to the atlas via D2D DrawGlyphRun.
+    unsafe fn flush_dwrite_glyphs(
+        &self,
+        pending: &mut Vec<PendingDwriteGlyph>,
+        pending_clear: bool,
+    ) {
+        if pending.is_empty() && !pending_clear {
+            return;
+        }
+
+        self.d2d_rt.BeginDraw();
+
+        if pending_clear {
+            let clear_color = D2D1_COLOR_F {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 0.0,
+            };
+            self.d2d_rt.Clear(Some(&clear_color));
+        }
+
+        for glyph in pending.drain(..) {
+            let white = D2D1_COLOR_F {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 1.0,
+            };
+            let brush = self
+                .d2d_rt
+                .CreateSolidColorBrush(std::ptr::from_ref(&white), None)
+                .unwrap();
+
+            let glyph_index = glyph.glyph_index;
+            let glyph_run = DWRITE_GLYPH_RUN {
+                fontFace: std::mem::ManuallyDrop::new(Some(glyph.face.clone())),
+                fontEmSize: glyph.pixel_size,
+                glyphCount: 1,
+                glyphIndices: &glyph_index,
+                glyphAdvances: std::ptr::null(),
+                glyphOffsets: std::ptr::null(),
+                isSideways: BOOL(0),
+                bidiLevel: 0,
+            };
+
+            let origin = D2D_POINT_2F {
+                x: glyph.baseline_x,
+                y: glyph.baseline_y,
+            };
+
+            self.d2d_rt
+                .DrawGlyphRun(origin, &glyph_run, &brush, DWRITE_MEASURING_MODE_NATURAL);
+
+            // Release the cloned face reference.
+            let mut glyph_run = glyph_run;
+            std::mem::ManuallyDrop::drop(&mut glyph_run.fontFace);
+        }
+
+        let _ = self.d2d_rt.EndDraw(None, None);
     }
 
     /// Upload glyph instances and render scissored pane batches only.
@@ -709,6 +800,7 @@ pub struct Renderer {
     rtv: ID3D11RenderTargetView,
     rasterizer: ID3D11RasterizerState,
     blend: ID3D11BlendState,
+    d2d_factory: ID2D1Factory,
     rects: DxRectPipeline,
     width: u32,
     height: u32,
@@ -755,7 +847,7 @@ impl Renderer {
                 None,
                 D3D_DRIVER_TYPE_HARDWARE,
                 None,
-                D3D11_CREATE_DEVICE_FLAG(0),
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                 None, // default feature levels
                 D3D11_SDK_VERSION,
                 Some(&swap_desc),
@@ -811,6 +903,9 @@ impl Renderer {
             _ => 1,
         };
 
+        let d2d_factory: ID2D1Factory =
+            unsafe { D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)? };
+
         log::info!(
             "D3D11 renderer initialized ({}x{})",
             size.width,
@@ -824,6 +919,7 @@ impl Renderer {
             rtv,
             rasterizer,
             blend,
+            d2d_factory,
             rects,
             width: size.width.max(1),
             height: size.height.max(1),
@@ -872,19 +968,23 @@ impl Renderer {
         &mut self,
         params: &ciri_render::glyph_cache::FontInitParams,
     ) -> (GlyphCache, GlyphAtlasGpu) {
-        let cache = GlyphCache::new(params);
+        let mut cache = GlyphCache::new(params);
+        cache.set_d2d_rendering(true);
 
+        // Both atlas layers use B8G8R8A8 for D2D render target compatibility.
         let alpha = unsafe {
             DxAtlasLayer::new(
                 &self.device,
                 &DxAtlasLayerConfig {
                     atlas_size: cache.atlas_size,
                     max_instances: cache.max_instances,
-                    tex_format: DXGI_FORMAT_R8_UNORM,
-                    bpp: 1,
+                    tex_format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                    bpp: 4,
                     vs_hlsl: GLYPH_HLSL,
                     ps_hlsl: ALPHA_PS_HLSL,
                     filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+                    d2d_factory: &self.d2d_factory,
+                    text_antialias: D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE,
                 },
             )
             .expect("alpha atlas creation failed")
@@ -896,11 +996,13 @@ impl Renderer {
                 &DxAtlasLayerConfig {
                     atlas_size: cache.atlas_size,
                     max_instances: cache.max_instances,
-                    tex_format: DXGI_FORMAT_R8G8B8A8_UNORM,
+                    tex_format: DXGI_FORMAT_B8G8R8A8_UNORM,
                     bpp: 4,
                     vs_hlsl: GLYPH_HLSL,
                     ps_hlsl: COLOR_PS_HLSL,
                     filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+                    d2d_factory: &self.d2d_factory,
+                    text_antialias: D2D1_TEXT_ANTIALIAS_MODE_DEFAULT,
                 },
             )
             .expect("color atlas creation failed")
@@ -923,10 +1025,15 @@ impl Renderer {
         let vh = self.height as f32;
 
         unsafe {
-            // Flush pending glyph uploads
+            // Flush pending glyph uploads (CPU path, used when D2D is off)
             let (mut ap, mut cp, ac, cc) = cache.take_pending();
             atlas_gpu.alpha.flush_uploads(&self.ctx, &mut ap, ac);
             atlas_gpu.color.flush_uploads(&self.ctx, &mut cp, cc);
+
+            // Flush DWrite glyph render commands via D2D direct-to-atlas
+            let (mut dwa, mut dwc) = cache.take_dwrite_pending();
+            atlas_gpu.alpha.flush_dwrite_glyphs(&mut dwa, ac);
+            atlas_gpu.color.flush_dwrite_glyphs(&mut dwc, cc);
 
             // Set render target
             self.ctx

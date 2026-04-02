@@ -1,10 +1,17 @@
-//! Glyph rasterization via FreeType and crossfont format conversion.
+//! Glyph rasterization and atlas caching.
+//!
+//! On non-Windows: FreeType glyph-ID rendering + crossfont character rendering.
+//! On Windows: rasterization lives in `rasterize_dwrite.rs`.
 
+#[cfg(not(windows))]
 use crossfont::BitmapBuffer;
+#[cfg(not(windows))]
 use freetype::face::LoadFlag;
 
 use super::atlas::{AtlasRegion, PendingUpload, make_glyph_entry};
-use super::types::{FontStyle, GlyphEntry};
+#[cfg(not(windows))]
+use super::types::FontStyle;
+use super::types::GlyphEntry;
 
 /// Backend-agnostic rasterized glyph data.
 pub(crate) struct RasterizedGlyph {
@@ -16,6 +23,7 @@ pub(crate) struct RasterizedGlyph {
     pub(crate) data: Vec<u8>,
 }
 
+#[cfg(not(windows))]
 /// Rasterize a glyph by ID using the thin FreeType path.
 /// Tries color bitmap first (for emoji), then falls back to grayscale outline.
 /// `pixel_size` controls the rendering size.
@@ -148,6 +156,7 @@ pub(crate) fn rasterize_glyph_id_ft(
     })
 }
 
+#[cfg(not(windows))]
 /// Convert a crossfont `RasterizedGlyph` to our internal format.
 ///
 /// - `BitmapBuffer::Rgb` → single-channel alpha: `(R + G + B) / 3`
@@ -236,6 +245,72 @@ pub(crate) fn cache_rasterized_glyph(
     Some(entry)
 }
 
+/// Allocate atlas space for a DWrite-measured glyph and queue a D2D render command.
+/// No pixel data — the DX backend renders via D2D DrawGlyphRun at flush time.
+#[cfg(windows)]
+pub(crate) fn cache_measured_dwrite_glyph(
+    measured: &super::rasterize_dwrite::MeasuredGlyph,
+    face: &windows::Win32::Graphics::DirectWrite::IDWriteFontFace,
+    glyph_index: u16,
+    pixel_size: f32,
+    alpha_packer: &mut super::atlas::ShelfPacker,
+    color_packer: &mut super::atlas::ShelfPacker,
+    dwrite_alpha_pending: &mut Vec<super::atlas::PendingDwriteGlyph>,
+    dwrite_color_pending: &mut Vec<super::atlas::PendingDwriteGlyph>,
+    atlas_size: u32,
+    atlas_needs_clear: &mut bool,
+) -> Option<GlyphEntry> {
+    let is_color = measured.is_color;
+    let pos = if is_color {
+        color_packer.allocate(measured.width, measured.height)
+    } else {
+        alpha_packer.allocate(measured.width, measured.height)
+    };
+    let (x, y) = match pos {
+        Some(pos) => pos,
+        None => {
+            let atlas_name = if is_color { "color" } else { "alpha" };
+            log::warn!("{atlas_name} atlas full, flagging for clear");
+            *atlas_needs_clear = true;
+            return None;
+        }
+    };
+    let region = AtlasRegion {
+        x,
+        y,
+        w: measured.width,
+        h: measured.height,
+    };
+    let entry = make_glyph_entry(
+        region,
+        measured.bearing_x,
+        measured.bearing_y,
+        atlas_size,
+        is_color,
+    );
+    // baseline origin: offset so the glyph renders at the correct atlas position.
+    // bearing_x = bounds.left, bearing_y = -bounds.top
+    let pending = super::atlas::PendingDwriteGlyph {
+        x,
+        y,
+        w: measured.width,
+        h: measured.height,
+        glyph_index,
+        pixel_size,
+        baseline_x: x as f32 - measured.bearing_x,
+        baseline_y: y as f32 + measured.bearing_y,
+        is_color,
+        face: face.clone(),
+    };
+    if is_color {
+        dwrite_color_pending.push(pending);
+    } else {
+        dwrite_alpha_pending.push(pending);
+    }
+    Some(entry)
+}
+
+#[cfg(not(windows))]
 /// Nearest-neighbor downscale of RGBA bitmap data.
 fn downsample_rgba(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<u8> {
     let mut out = vec![0u8; (dst_w * dst_h * 4) as usize];
@@ -255,7 +330,7 @@ fn downsample_rgba(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -
 
 // ─── Tests ───────────────────────────────────────────────────────────
 
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 mod tests {
     use super::*;
     use crossfont::BitmapBuffer;

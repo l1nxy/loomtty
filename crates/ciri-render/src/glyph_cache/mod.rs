@@ -7,24 +7,41 @@
 //! The GPU upload/rendering is handled by the backend's `GlyphAtlasGpu`.
 
 mod atlas;
+#[cfg(not(windows))]
 mod cjk;
+#[cfg(not(windows))]
 mod metrics;
 mod rasterize;
+#[cfg(windows)]
+mod rasterize_dwrite;
 pub mod types;
 
+#[cfg(windows)]
+pub use atlas::PendingDwriteGlyph;
 pub use atlas::PendingUpload;
 pub(crate) use atlas::ShelfPacker;
 pub use types::{FontStyle, GlyphEntry, GlyphInstance, ScissoredRange};
 
+#[cfg(not(windows))]
 use cjk::compute_cjk_pixel_size;
+#[cfg(not(windows))]
 use metrics::compute_ft_metrics;
-use rasterize::{
-    RasterizedGlyph, cache_rasterized_glyph, convert_crossfont_glyph, rasterize_glyph_id_ft,
-};
-use types::{FontClass, FontKeySet};
+#[cfg(windows)]
+use rasterize::cache_measured_dwrite_glyph;
+use rasterize::{RasterizedGlyph, cache_rasterized_glyph};
+#[cfg(not(windows))]
+use rasterize::{convert_crossfont_glyph, rasterize_glyph_id_ft};
+use types::FontClass;
+#[cfg(not(windows))]
+use types::FontKeySet;
+
+#[cfg(windows)]
+use rasterize_dwrite::{DWriteRasterizer, compute_cjk_pixel_size_dwrite, compute_dwrite_metrics};
 
 use ciri_config::config::RenderConfig;
+#[cfg(not(windows))]
 use crossfont::{FontDesc, GlyphKey, Rasterize, Rasterizer, Size, Slant, Style, Weight};
+#[cfg(not(windows))]
 use freetype::Library as FtLibrary;
 use std::collections::HashMap;
 
@@ -63,19 +80,41 @@ pub struct GlyphCache {
     // Caching
     cache: HashMap<(char, FontStyle), GlyphEntry>,
     glyph_id_cache: HashMap<(u32, FontClass, FontStyle, bool), GlyphEntry>,
-    // Crossfont rasterizer (character-based rendering)
+
+    // ── Platform-specific rasterizer state ──
+
+    // FreeType + crossfont (non-Windows)
+    #[cfg(not(windows))]
     rasterizer: Rasterizer,
+    #[cfg(not(windows))]
     font_keys: FontKeySet,
+    #[cfg(not(windows))]
     font_size: Size,
-    // Thin FreeType path (glyph-ID rendering for shaped glyphs)
-    // Keep library alive — ft_face borrows from it.
+    #[cfg(not(windows))]
     _ft_library: FtLibrary,
+    #[cfg(not(windows))]
     ft_face: Option<freetype::Face>,
+    #[cfg(not(windows))]
     emoji_ft_face: Option<freetype::Face>,
-    emoji_font_id: Option<fontdb::ID>,
+    #[cfg(not(windows))]
     cjk_ft_face: Option<freetype::Face>,
+
+    // DirectWrite (Windows)
+    #[cfg(windows)]
+    dwrite: DWriteRasterizer,
+    #[cfg(windows)]
+    dwrite_alpha_pending: Vec<PendingDwriteGlyph>,
+    #[cfg(windows)]
+    dwrite_color_pending: Vec<PendingDwriteGlyph>,
+    /// When true, skip CPU rasterization and queue DWrite render commands
+    /// for the DX backend to execute via D2D DrawGlyphRun.
+    #[cfg(windows)]
+    use_d2d_rendering: bool,
+
+    // ── Common state ──
+    emoji_font_id: Option<fontdb::ID>,
     cjk_font_id: Option<fontdb::ID>,
-    ft_pixel_size: f32,
+    pixel_size: f32,
     /// CJK font pixel size, adjusted so that "水" advance matches 2 * cell_width.
     cjk_pixel_size: f32,
     // Public metrics
@@ -95,98 +134,109 @@ impl GlyphCache {
     pub fn new(params: &FontInitParams) -> Self {
         let atlas_size = params.render_config.atlas_size;
         let max_instances = params.render_config.max_glyph_instances;
-
-        // ── Crossfont setup ──
-        let mut rasterizer = Rasterizer::new().expect("crossfont init failed");
-        // Convert point size to pixels: pt × (96 × scale) / 72, then use from_px
         let pixel_size = params.font_size_pt * (96.0 * params.dpi_scale as f32) / 72.0;
-        let font_size = Size::from_px(pixel_size);
 
-        let regular_desc = FontDesc::new(
-            params.family_name,
-            Style::Description {
-                slant: Slant::Normal,
-                weight: Weight::Normal,
-            },
-        );
-        let regular_key = rasterizer
-            .load_font(&regular_desc, font_size)
-            .or_else(|e| {
-                log::warn!(
-                    "font '{}' not found ({:?}), trying monospace fallback",
-                    params.family_name,
-                    e
-                );
-                rasterizer.load_font(
+        // ── Platform-specific init ──
+
+        #[cfg(not(windows))]
+        let (
+            rasterizer,
+            font_keys,
+            font_size,
+            _ft_library,
+            ft_face,
+            emoji_ft_face,
+            cjk_ft_face,
+            cell_width,
+            cell_height,
+            ascent,
+            face_width,
+            cjk_pixel_size,
+        ) = {
+            // Crossfont setup
+            let mut rasterizer = Rasterizer::new().expect("crossfont init failed");
+            let font_size = Size::from_px(pixel_size);
+
+            let regular_desc = FontDesc::new(
+                params.family_name,
+                Style::Description {
+                    slant: Slant::Normal,
+                    weight: Weight::Normal,
+                },
+            );
+            let regular_key = rasterizer
+                .load_font(&regular_desc, font_size)
+                .or_else(|e| {
+                    log::warn!(
+                        "font '{}' not found ({:?}), trying monospace fallback",
+                        params.family_name,
+                        e
+                    );
+                    rasterizer.load_font(
+                        &FontDesc::new(
+                            "monospace",
+                            Style::Description {
+                                slant: Slant::Normal,
+                                weight: Weight::Normal,
+                            },
+                        ),
+                        font_size,
+                    )
+                })
+                .expect("no usable font found (neither configured nor monospace fallback)");
+
+            let bold_key = rasterizer
+                .load_font(
                     &FontDesc::new(
-                        "monospace",
+                        params.family_name,
                         Style::Description {
                             slant: Slant::Normal,
+                            weight: Weight::Bold,
+                        },
+                    ),
+                    font_size,
+                )
+                .unwrap_or(regular_key);
+
+            let italic_key = rasterizer
+                .load_font(
+                    &FontDesc::new(
+                        params.family_name,
+                        Style::Description {
+                            slant: Slant::Italic,
                             weight: Weight::Normal,
                         },
                     ),
                     font_size,
                 )
-            })
-            .expect("no usable font found (neither configured nor monospace fallback)");
+                .unwrap_or(regular_key);
 
-        let bold_key = rasterizer
-            .load_font(
-                &FontDesc::new(
-                    params.family_name,
-                    Style::Description {
-                        slant: Slant::Normal,
-                        weight: Weight::Bold,
-                    },
-                ),
-                font_size,
-            )
-            .unwrap_or(regular_key);
+            let bold_italic_key = rasterizer
+                .load_font(
+                    &FontDesc::new(
+                        params.family_name,
+                        Style::Description {
+                            slant: Slant::Italic,
+                            weight: Weight::Bold,
+                        },
+                    ),
+                    font_size,
+                )
+                .unwrap_or(regular_key);
 
-        let italic_key = rasterizer
-            .load_font(
-                &FontDesc::new(
-                    params.family_name,
-                    Style::Description {
-                        slant: Slant::Italic,
-                        weight: Weight::Normal,
-                    },
-                ),
-                font_size,
-            )
-            .unwrap_or(regular_key);
+            // Force crossfont char size initialization
+            let _ = rasterizer.get_glyph(GlyphKey {
+                character: 'M',
+                font_key: regular_key,
+                size: font_size,
+            });
+            let crossfont_metrics = rasterizer
+                .metrics(regular_key, font_size)
+                .expect("failed to get font metrics");
 
-        let bold_italic_key = rasterizer
-            .load_font(
-                &FontDesc::new(
-                    params.family_name,
-                    Style::Description {
-                        slant: Slant::Italic,
-                        weight: Weight::Bold,
-                    },
-                ),
-                font_size,
-            )
-            .unwrap_or(regular_key);
-
-        // Force crossfont char size initialization by rasterizing a probe glyph.
-        // crossfont sets FreeType char size lazily in get_glyph(), so metrics()
-        // returns zeros if called before any glyph has been rasterized.
-        let _ = rasterizer.get_glyph(GlyphKey {
-            character: 'M',
-            font_key: regular_key,
-            size: font_size,
-        });
-        // Keep crossfont metrics as fallback only.
-        let crossfont_metrics = rasterizer
-            .metrics(regular_key, font_size)
-            .expect("failed to get font metrics");
-
-        // ── Thin FreeType path for glyph-ID rendering ──
-        let ft_library = FtLibrary::init().expect("FreeType init failed");
-        let ft_pixel_size = params.font_size_pt * (96.0 * params.dpi_scale as f32) / 72.0;
-        let mut ft_face =
-            params.primary_font_path.clone().and_then(|(path, index)| {
+            // Thin FreeType path for glyph-ID rendering
+            let ft_library = FtLibrary::init().expect("FreeType init failed");
+            let mut ft_face = params.primary_font_path.clone().and_then(|(path, index)| {
                 match ft_library.new_face(&path, index as isize) {
                     Ok(face) => {
                         log::info!("FreeType face loaded for glyph-ID path: {path}");
@@ -198,8 +248,7 @@ impl GlyphCache {
                     }
                 }
             });
-        let emoji_ft_face =
-            params.emoji_font_path.clone().and_then(|(path, index)| {
+            let emoji_ft_face = params.emoji_font_path.clone().and_then(|(path, index)| {
                 match ft_library.new_face(&path, index as isize) {
                     Ok(face) => {
                         log::info!("FreeType emoji face loaded: {path}");
@@ -211,39 +260,104 @@ impl GlyphCache {
                     }
                 }
             });
-        let cjk_ft_face = params.cjk_font_path.clone().and_then(|(path, index)| {
-            match ft_library.new_face(&path, index as isize) {
-                Ok(face) => {
-                    log::info!("FreeType CJK face loaded: {path}");
-                    Some(face)
-                }
-                Err(e) => {
-                    log::warn!("failed to load CJK FreeType face {path}: {e:?}");
-                    None
-                }
-            }
-        });
+            let cjk_ft_face =
+                params.cjk_font_path.clone().and_then(|(path, index)| {
+                    match ft_library.new_face(&path, index as isize) {
+                        Ok(face) => {
+                            log::info!("FreeType CJK face loaded: {path}");
+                            Some(face)
+                        }
+                        Err(e) => {
+                            log::warn!("failed to load CJK FreeType face {path}: {e:?}");
+                            None
+                        }
+                    }
+                });
 
-        // ── Compute metrics from FreeType directly ──
-        let (cell_width, cell_height, ascent, face_width) = if let Some(ref mut face) = ft_face {
-            compute_ft_metrics(face, ft_pixel_size)
-        } else {
-            // Fallback: use crossfont metrics (legacy behavior)
-            let cw = (crossfont_metrics.average_advance as f32).ceil();
-            let ch = (crossfont_metrics.line_height as f32).ceil();
-            let asc = (crossfont_metrics.line_height as f32 + crossfont_metrics.descent)
-                .ceil()
-                .min(ch);
-            (cw, ch, asc, cw)
+            // Compute metrics from FreeType directly
+            let (cell_width, cell_height, ascent, face_width) = if let Some(ref mut face) = ft_face
+            {
+                compute_ft_metrics(face, pixel_size)
+            } else {
+                let cw = (crossfont_metrics.average_advance as f32).ceil();
+                let ch = (crossfont_metrics.line_height as f32).ceil();
+                let asc = (crossfont_metrics.line_height as f32 + crossfont_metrics.descent)
+                    .ceil()
+                    .min(ch);
+                (cw, ch, asc, cw)
+            };
+
+            // CJK font size adjustment
+            let cjk_pixel_size = compute_cjk_pixel_size(
+                pixel_size,
+                cell_width,
+                ft_face.as_ref(),
+                cjk_ft_face.as_ref(),
+            );
+
+            let font_keys = FontKeySet {
+                regular: regular_key,
+                bold: bold_key,
+                italic: italic_key,
+                bold_italic: bold_italic_key,
+            };
+
+            (
+                rasterizer,
+                font_keys,
+                font_size,
+                ft_library,
+                ft_face,
+                emoji_ft_face,
+                cjk_ft_face,
+                cell_width,
+                cell_height,
+                ascent,
+                face_width,
+                cjk_pixel_size,
+            )
         };
 
-        // ── CJK font size adjustment (ghostty approach) ──
-        let cjk_pixel_size = compute_cjk_pixel_size(
-            ft_pixel_size,
-            cell_width,
-            ft_face.as_ref(),
-            cjk_ft_face.as_ref(),
-        );
+        #[cfg(windows)]
+        let (dwrite, cell_width, cell_height, ascent, face_width, cjk_pixel_size) = {
+            let dwrite = DWriteRasterizer::new(
+                params.family_name,
+                params
+                    .primary_font_path
+                    .as_ref()
+                    .map(|(p, i)| (p.as_str(), *i)),
+                params
+                    .emoji_font_path
+                    .as_ref()
+                    .map(|(p, i)| (p.as_str(), *i)),
+                params.cjk_font_path.as_ref().map(|(p, i)| (p.as_str(), *i)),
+            )
+            .expect("DWrite init failed");
+
+            let (cell_width, cell_height, ascent, face_width) =
+                if let Some(face) = dwrite.primary_face(FontStyle::Regular) {
+                    compute_dwrite_metrics(face, pixel_size)
+                } else {
+                    log::warn!("no primary DWrite face, using fallback metrics");
+                    (8.0, 16.0, 12.0, 8.0)
+                };
+
+            let cjk_pixel_size = compute_cjk_pixel_size_dwrite(
+                pixel_size,
+                cell_width,
+                dwrite.primary_face(FontStyle::Regular),
+                dwrite.cjk_face(FontStyle::Regular),
+            );
+
+            (
+                dwrite,
+                cell_width,
+                cell_height,
+                ascent,
+                face_width,
+                cjk_pixel_size,
+            )
+        };
 
         GlyphCache {
             alpha_packer: ShelfPacker::new(atlas_size),
@@ -256,21 +370,34 @@ impl GlyphCache {
             max_instances,
             cache: HashMap::new(),
             glyph_id_cache: HashMap::new(),
+
+            #[cfg(not(windows))]
             rasterizer,
-            font_keys: FontKeySet {
-                regular: regular_key,
-                bold: bold_key,
-                italic: italic_key,
-                bold_italic: bold_italic_key,
-            },
+            #[cfg(not(windows))]
+            font_keys,
+            #[cfg(not(windows))]
             font_size,
-            _ft_library: ft_library,
+            #[cfg(not(windows))]
+            _ft_library,
+            #[cfg(not(windows))]
             ft_face,
+            #[cfg(not(windows))]
             emoji_ft_face,
-            emoji_font_id: params.emoji_font_id,
+            #[cfg(not(windows))]
             cjk_ft_face,
+
+            #[cfg(windows)]
+            dwrite,
+            #[cfg(windows)]
+            dwrite_alpha_pending: Vec::new(),
+            #[cfg(windows)]
+            dwrite_color_pending: Vec::new(),
+            #[cfg(windows)]
+            use_d2d_rendering: false,
+
+            emoji_font_id: params.emoji_font_id,
             cjk_font_id: params.cjk_font_id,
-            ft_pixel_size,
+            pixel_size,
             cjk_pixel_size,
             cell_width,
             cell_height,
@@ -292,47 +419,133 @@ impl GlyphCache {
             return Some(GlyphEntry::EMPTY);
         }
 
-        let font_key = self.font_keys.get(style);
-        let glyph_key = GlyphKey {
-            character: ch,
-            font_key,
-            size: self.font_size,
-        };
+        // ── Rasterize (platform-specific) ──
 
-        let glyph = match self.rasterizer.get_glyph(glyph_key) {
-            Ok(g) => g,
-            Err(crossfont::Error::MissingGlyph(g)) => g,
-            Err(_) => {
+        #[cfg(not(windows))]
+        let rasterized = {
+            let font_key = self.font_keys.get(style);
+            let glyph_key = GlyphKey {
+                character: ch,
+                font_key,
+                size: self.font_size,
+            };
+            let glyph = match self.rasterizer.get_glyph(glyph_key) {
+                Ok(g) => g,
+                Err(crossfont::Error::MissingGlyph(g)) => g,
+                Err(_) => {
+                    self.cache.insert(key, GlyphEntry::EMPTY);
+                    return Some(GlyphEntry::EMPTY);
+                }
+            };
+            if glyph.width == 0 || glyph.height == 0 {
                 self.cache.insert(key, GlyphEntry::EMPTY);
                 return Some(GlyphEntry::EMPTY);
             }
+            convert_crossfont_glyph(glyph)
         };
 
-        let w = glyph.width as u32;
-        let h = glyph.height as u32;
-        if w == 0 || h == 0 {
-            self.cache.insert(key, GlyphEntry::EMPTY);
-            return Some(GlyphEntry::EMPTY);
+        #[cfg(windows)]
+        {
+            // Fallback chain: primary → CJK → emoji.
+            let candidates: [(Option<&_>, f32, bool); 3] = [
+                (self.dwrite.primary_face(style), self.pixel_size, false),
+                (self.dwrite.cjk_face(style), self.cjk_pixel_size, false),
+                (
+                    self.dwrite.emoji_face(style),
+                    self.pixel_size,
+                    self.dwrite.is_emoji_color(),
+                ),
+            ];
+
+            if self.use_d2d_rendering {
+                // D2D path: measure only, queue render command for DX backend.
+                for &(face, px, try_color) in &candidates {
+                    if let Some(face) = face {
+                        if let Some(gid) = DWriteRasterizer::char_to_glyph(face, ch) {
+                            if let Some(m) =
+                                self.dwrite.measure_glyph(face, gid as u32, px, try_color)
+                            {
+                                if m.width > 0 && m.height > 0 {
+                                    let entry = cache_measured_dwrite_glyph(
+                                        &m,
+                                        face,
+                                        gid,
+                                        px,
+                                        &mut self.alpha_packer,
+                                        &mut self.color_packer,
+                                        &mut self.dwrite_alpha_pending,
+                                        &mut self.dwrite_color_pending,
+                                        self.atlas_size,
+                                        &mut self.atlas_needs_clear,
+                                    );
+                                    if let Some(entry) = entry {
+                                        self.cache.insert(key, entry);
+                                        return Some(entry);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                self.cache.insert(key, GlyphEntry::EMPTY);
+                return Some(GlyphEntry::EMPTY);
+            }
+
+            // CPU rasterization path (GL/Blade fallback).
+            let mut result = None;
+            for &(face, px, try_color) in &candidates {
+                if let Some(face) = face {
+                    if let Some(gid) = DWriteRasterizer::char_to_glyph(face, ch) {
+                        if let Some(g) =
+                            self.dwrite.rasterize_glyph(face, gid as u32, px, try_color)
+                        {
+                            if g.width > 0 && g.height > 0 {
+                                result = Some(g);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            let rasterized = match result {
+                Some(g) => g,
+                None => {
+                    self.cache.insert(key, GlyphEntry::EMPTY);
+                    return Some(GlyphEntry::EMPTY);
+                }
+            };
+            let entry = cache_rasterized_glyph(
+                rasterized,
+                &mut self.alpha_packer,
+                &mut self.color_packer,
+                &mut self.alpha_pending,
+                &mut self.color_pending,
+                self.atlas_size,
+                &mut self.atlas_needs_clear,
+            )?;
+            self.cache.insert(key, entry);
+            return Some(entry);
         }
 
-        let rasterized = convert_crossfont_glyph(glyph);
-        let entry = cache_rasterized_glyph(
-            rasterized,
-            &mut self.alpha_packer,
-            &mut self.color_packer,
-            &mut self.alpha_pending,
-            &mut self.color_pending,
-            self.atlas_size,
-            &mut self.atlas_needs_clear,
-        )?;
-        self.cache.insert(key, entry);
-        Some(entry)
+        #[cfg(not(windows))]
+        {
+            let entry = cache_rasterized_glyph(
+                rasterized,
+                &mut self.alpha_packer,
+                &mut self.color_packer,
+                &mut self.alpha_pending,
+                &mut self.color_pending,
+                self.atlas_size,
+                &mut self.atlas_needs_clear,
+            )?;
+            self.cache.insert(key, entry);
+            Some(entry)
+        }
     }
 
     /// Ensure a glyph by its ID (from text shaping) is in the atlas.
-    /// Uses the thin FreeType path since crossfont only accepts characters.
     /// `font_id` selects between primary, CJK, and emoji font faces.
-    /// `wide` indicates the glyph may be constrained to a double-width cell (disables hinting).
+    /// `wide` indicates the glyph may be constrained to a double-width cell.
     pub fn ensure_glyph_id(
         &mut self,
         glyph_id: u32,
@@ -356,30 +569,90 @@ impl GlyphCache {
             return Some(GlyphEntry::EMPTY);
         }
 
-        let (ft_face, pixel_size) = match font_class {
-            FontClass::Emoji => (self.emoji_ft_face.as_ref(), self.ft_pixel_size),
-            FontClass::Cjk => (self.cjk_ft_face.as_ref(), self.cjk_pixel_size),
-            FontClass::Primary => (self.ft_face.as_ref(), self.ft_pixel_size),
-        };
-        let glyph =
-            rasterize_glyph_id_ft(ft_face, glyph_id, style, pixel_size, wide, self.cell_height)?;
+        // ── Rasterize (platform-specific) ──
 
-        if glyph.width == 0 || glyph.height == 0 {
-            self.glyph_id_cache.insert(key, GlyphEntry::EMPTY);
-            return Some(GlyphEntry::EMPTY);
+        #[cfg(not(windows))]
+        let glyph = {
+            let (ft_face, px) = match font_class {
+                FontClass::Emoji => (self.emoji_ft_face.as_ref(), self.pixel_size),
+                FontClass::Cjk => (self.cjk_ft_face.as_ref(), self.cjk_pixel_size),
+                FontClass::Primary => (self.ft_face.as_ref(), self.pixel_size),
+            };
+            rasterize_glyph_id_ft(ft_face, glyph_id, style, px, wide, self.cell_height)?
+        };
+
+        #[cfg(windows)]
+        {
+            let (face, px, try_color) = match font_class {
+                FontClass::Emoji => (
+                    self.dwrite.emoji_face(style)?,
+                    self.pixel_size,
+                    self.dwrite.is_emoji_color(),
+                ),
+                FontClass::Cjk => (self.dwrite.cjk_face(style)?, self.cjk_pixel_size, false),
+                FontClass::Primary => (self.dwrite.primary_face(style)?, self.pixel_size, false),
+            };
+
+            if self.use_d2d_rendering {
+                // D2D path: measure only, queue render command.
+                let m = self.dwrite.measure_glyph(face, glyph_id, px, try_color)?;
+                if m.width == 0 || m.height == 0 {
+                    self.glyph_id_cache.insert(key, GlyphEntry::EMPTY);
+                    return Some(GlyphEntry::EMPTY);
+                }
+                let entry = cache_measured_dwrite_glyph(
+                    &m,
+                    face,
+                    glyph_id as u16,
+                    px,
+                    &mut self.alpha_packer,
+                    &mut self.color_packer,
+                    &mut self.dwrite_alpha_pending,
+                    &mut self.dwrite_color_pending,
+                    self.atlas_size,
+                    &mut self.atlas_needs_clear,
+                )?;
+                self.glyph_id_cache.insert(key, entry);
+                return Some(entry);
+            }
+
+            // CPU rasterization path (GL/Blade fallback).
+            let glyph = self.dwrite.rasterize_glyph(face, glyph_id, px, try_color)?;
+            if glyph.width == 0 || glyph.height == 0 {
+                self.glyph_id_cache.insert(key, GlyphEntry::EMPTY);
+                return Some(GlyphEntry::EMPTY);
+            }
+            let entry = cache_rasterized_glyph(
+                glyph,
+                &mut self.alpha_packer,
+                &mut self.color_packer,
+                &mut self.alpha_pending,
+                &mut self.color_pending,
+                self.atlas_size,
+                &mut self.atlas_needs_clear,
+            )?;
+            self.glyph_id_cache.insert(key, entry);
+            return Some(entry);
         }
 
-        let entry = cache_rasterized_glyph(
-            glyph,
-            &mut self.alpha_packer,
-            &mut self.color_packer,
-            &mut self.alpha_pending,
-            &mut self.color_pending,
-            self.atlas_size,
-            &mut self.atlas_needs_clear,
-        )?;
-        self.glyph_id_cache.insert(key, entry);
-        Some(entry)
+        #[cfg(not(windows))]
+        {
+            if glyph.width == 0 || glyph.height == 0 {
+                self.glyph_id_cache.insert(key, GlyphEntry::EMPTY);
+                return Some(GlyphEntry::EMPTY);
+            }
+            let entry = cache_rasterized_glyph(
+                glyph,
+                &mut self.alpha_packer,
+                &mut self.color_packer,
+                &mut self.alpha_pending,
+                &mut self.color_pending,
+                self.atlas_size,
+                &mut self.atlas_needs_clear,
+            )?;
+            self.glyph_id_cache.insert(key, entry);
+            Some(entry)
+        }
     }
 
     /// Ensure a regular-style character is in the atlas.
@@ -429,6 +702,23 @@ impl GlyphCache {
         )
     }
 
+    /// Drain pending DWrite glyph render commands for the DX D2D backend.
+    #[cfg(windows)]
+    pub fn take_dwrite_pending(&mut self) -> (Vec<PendingDwriteGlyph>, Vec<PendingDwriteGlyph>) {
+        (
+            std::mem::take(&mut self.dwrite_alpha_pending),
+            std::mem::take(&mut self.dwrite_color_pending),
+        )
+    }
+
+    /// Enable D2D direct-to-atlas rendering (measure-only, no CPU pixel extraction).
+    /// Called by the DX backend at atlas creation time.
+    #[cfg(windows)]
+    pub fn set_d2d_rendering(&mut self, enabled: bool) {
+        self.use_d2d_rendering = enabled;
+        log::info!("GlyphCache: D2D direct rendering = {enabled}");
+    }
+
     /// Clear the glyph cache and reset both packers.
     /// No GPU work — the actual texture clear is deferred to next flush.
     pub fn clear_cache(&mut self) {
@@ -438,6 +728,11 @@ impl GlyphCache {
         self.color_packer = ShelfPacker::new(self.atlas_size);
         self.alpha_pending.clear();
         self.color_pending.clear();
+        #[cfg(windows)]
+        {
+            self.dwrite_alpha_pending.clear();
+            self.dwrite_color_pending.clear();
+        }
         self.alpha_pending_clear = true;
         self.color_pending_clear = true;
         log::info!(
@@ -459,6 +754,7 @@ impl GlyphCache {
 
 #[cfg(test)]
 mod tests {
+    #[allow(unused_imports)]
     use super::*;
     use ciri_config::config::CiriConfig;
 

@@ -142,11 +142,9 @@ fn apply_color_modifiers(
     dim: bool,
     inverse: bool,
 ) {
-    if bold {
-        for c in &mut fg[..3] {
-            *c = (*c * 1.3).min(1.0);
-        }
-    }
+    // Bold no longer brightens colors — font weight change is sufficient.
+    // Previous behavior (*1.3) made bold text visually heavier than expected.
+    let _ = bold;
     if dim {
         for c in &mut fg[..3] {
             *c *= 0.67;

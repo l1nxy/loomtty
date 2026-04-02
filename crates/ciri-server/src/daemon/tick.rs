@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, Notify};
 use tokio::time::{Duration, Instant, interval};
 
+use super::connection;
 use super::damage::DamageAccumulator;
 use super::server::Server;
 
@@ -381,7 +382,7 @@ pub(crate) async fn run_tick_loop(
             // Yield to the executor so writer tasks can flush pending
             // ServerShutdown frames to their sockets before we tear down.
             tokio::time::sleep(Duration::from_millis(50)).await;
-            let _ = std::fs::remove_file(transport::server_socket_path());
+            connection::graceful_shutdown(&tick_state).await;
             tick_shutdown.notify_one();
             return;
         }

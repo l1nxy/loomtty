@@ -15,8 +15,13 @@ use super::server::{Server, ServerResponse};
 const CONTROL_SESSION: &str = "__control__";
 
 /// Perform graceful shutdown: save all sessions, notify all clients, remove socket.
+/// Idempotent — safe to call multiple times (second call is a no-op).
 pub(crate) async fn graceful_shutdown(state: &Arc<Mutex<Server>>) {
     let mut s = state.lock().await;
+    if s.shut_down {
+        return;
+    }
+    s.shut_down = true;
     // Detect agents and save all sessions
     let restore_agents = s.session_config.restore_agents;
     for session in s.sessions.values_mut() {

@@ -1,13 +1,14 @@
-mod client;
+pub(crate) mod client;
 mod connection;
 mod damage;
-mod server;
-mod session;
+pub(crate) mod server;
+pub(crate) mod session;
 mod tick;
 
 use anyhow::Result;
 use ciri_layout::column::ColumnWidth;
 use ciri_protocol::transport;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 #[cfg(unix)]
 use tokio::net::UnixListener;
@@ -17,18 +18,29 @@ use tokio::sync::{Mutex, Notify};
 
 use server::Server;
 
-pub async fn run_daemon() -> Result<()> {
+/// Shared daemon state returned by `prepare_daemon`.
+pub struct DaemonState {
+    pub state: Arc<Mutex<Server>>,
+    pub shutdown: Arc<Notify>,
+    /// Set to true when the daemon loop exits (for any reason).
+    /// The tray thread checks this to know when to exit.
+    pub server_exited: Arc<AtomicBool>,
+    input_notify: Arc<Notify>,
+    #[cfg(unix)]
+    listener: UnixListener,
+    #[cfg(windows)]
+    pipe_name: String,
+    #[cfg(windows)]
+    pipe_server: tokio::net::windows::named_pipe::NamedPipeServer,
+    config: ciri_config::config::CiriConfig,
+}
+
+/// Initialize the server, bind the socket, start tick loop and signal handlers.
+/// Returns shared state that can be passed to `run_daemon_loop` or the tray.
+pub async fn prepare_daemon() -> Result<DaemonState> {
     let config = ciri_config::config::CiriConfig::load().unwrap_or_default();
     let shell = config.terminal.shell.clone();
 
-    // Terminal metadata env vars (TERM_PROGRAM, COLORTERM, etc.) are set in
-    // main() before the tokio runtime is created to avoid data races with
-    // worker threads.  See CVE fix: std::env::set_var is unsound with threads.
-
-    // Write shell integration scripts and set env var for child processes.
-    // SAFETY: This runs early in run_daemon before any tasks that read
-    // CIRI_SHELL_INTEGRATION_DIR are spawned.  The tokio worker threads do
-    // not access this variable.
     match crate::shell_integration::ensure_integration_dir() {
         Ok(dir) => {
             unsafe { std::env::set_var("CIRI_SHELL_INTEGRATION_DIR", &dir) };
@@ -54,18 +66,9 @@ pub async fn run_daemon() -> Result<()> {
         match UnixListener::bind(&sock_path) {
             Ok(l) => l,
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-                // Socket already exists.  Instead of check-then-remove (which has
-                // a TOCTOU gap allowing symlink attacks), use the OpenSSH approach:
-                // bind to a temporary path in the same directory, then rename()
-                // atomically over the target.  rename(2) atomically replaces the
-                // old entry — there is never a moment where the path is missing.
                 let tmp_path = sock_path.with_extension("tmp");
-                // Clean up any leftover temp socket from a prior crash.
                 let _ = std::fs::remove_file(&tmp_path);
                 let listener = UnixListener::bind(&tmp_path)?;
-                // rename(2) on Unix atomically replaces the target.  If the
-                // existing entry is a symlink, we overwrite it (safe: we are
-                // replacing it with our own socket, not following it).
                 std::fs::rename(&tmp_path, &sock_path)?;
                 listener
             }
@@ -83,7 +86,7 @@ pub async fn run_daemon() -> Result<()> {
     #[cfg(windows)]
     let pipe_name = transport::server_pipe_name();
     #[cfg(windows)]
-    let mut pipe_server = ServerOptions::new()
+    let pipe_server = ServerOptions::new()
         .first_pipe_instance(true)
         .create(&pipe_name)?;
 
@@ -92,7 +95,6 @@ pub async fn run_daemon() -> Result<()> {
     #[cfg(windows)]
     log::info!("ciri-server listening on {}", pipe_name);
 
-    // Build terminal palette from resolved theme.
     let theme = &config.theme;
     let parse = ciri_term::pane::TerminalColors::parse_hex;
     let terminal_colors = ciri_term::pane::TerminalColors {
@@ -116,10 +118,9 @@ pub async fn run_daemon() -> Result<()> {
         ],
         foreground: parse(&theme.foreground),
         background: parse(&theme.background),
-        cursor: parse(&theme.foreground), // cursor defaults to foreground
+        cursor: parse(&theme.foreground),
     };
     let mut server = Server::new(&shell, config.appearance.column_gap, terminal_colors);
-    // Apply default_column_width from config (falls back to 0.5 proportion)
     if let Some(ref pw) = config.layout.default_column_width {
         use ciri_config::config::PresetWidth;
         server.default_column_width = match pw {
@@ -132,11 +133,10 @@ pub async fn run_daemon() -> Result<()> {
     server.session_config = config.session.clone();
     let state = Arc::new(Mutex::new(server));
 
-    // Shutdown signal shared between tick loop, signal handler, and accept loop
     let shutdown = Arc::new(Notify::new());
     let input_notify = Arc::new(Notify::new());
 
-    // Spawn tick loop (16ms = ~60fps)
+    // Spawn tick loop
     let tick_state = state.clone();
     let tick_shutdown = shutdown.clone();
     let tick_input_notify = input_notify.clone();
@@ -144,7 +144,7 @@ pub async fn run_daemon() -> Result<()> {
         tick::run_tick_loop(tick_state, tick_shutdown, tick_input_notify).await;
     });
 
-    // Signal handling - SIGTERM and SIGINT
+    // Signal handling
     let signal_state = state.clone();
     let signal_shutdown = shutdown.clone();
     tokio::spawn(async move {
@@ -168,7 +168,6 @@ pub async fn run_daemon() -> Result<()> {
                         break;
                     }
                     _ = sighup.recv() => {
-                        // Ignore — keeps daemon alive after SSH disconnect.
                         log::info!("received SIGHUP, ignoring");
                     }
                 }
@@ -185,13 +184,36 @@ pub async fn run_daemon() -> Result<()> {
         }
     });
 
-    // Optionally bind TCP listener for remote connections.
-    // WARNING: The TCP listener has NO authentication — any process that can
-    // reach this port can execute commands as the current user.  It is intended
-    // to be used behind an SSH tunnel (see `connect_remote`).  Binding to
-    // 127.0.0.1 limits exposure to localhost, but any local user can connect.
-    let tcp_listener = if config.remote.enabled {
-        let addr = format!("127.0.0.1:{}", config.remote.port);
+    Ok(DaemonState {
+        state,
+        shutdown,
+        server_exited: Arc::new(AtomicBool::new(false)),
+        input_notify,
+        #[cfg(unix)]
+        listener,
+        #[cfg(windows)]
+        pipe_name,
+        #[cfg(windows)]
+        pipe_server,
+        config,
+    })
+}
+
+/// Run the accept loop. Call after `prepare_daemon`.
+pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
+    let state = ds.state;
+    let shutdown = ds.shutdown;
+    let server_exited = ds.server_exited;
+    let input_notify = ds.input_notify;
+    #[cfg(unix)]
+    let listener = ds.listener;
+    #[cfg(windows)]
+    let pipe_name = ds.pipe_name;
+    #[cfg(windows)]
+    let mut pipe_server = ds.pipe_server;
+
+    let tcp_listener = if ds.config.remote.enabled {
+        let addr = format!("127.0.0.1:{}", ds.config.remote.port);
         let tcp = tokio::net::TcpListener::bind(&addr).await?;
         log::warn!(
             "ciri-server TCP listener on {addr} (remote enabled) — \
@@ -202,7 +224,6 @@ pub async fn run_daemon() -> Result<()> {
         None
     };
 
-    // Accept connections, with graceful shutdown via select!
     loop {
         #[cfg(unix)]
         {
@@ -227,6 +248,7 @@ pub async fn run_daemon() -> Result<()> {
                 }
                 _ = shutdown.notified() => {
                     log::info!("accept loop shutting down");
+                    connection::graceful_shutdown(&state).await;
                     break;
                 }
             }
@@ -254,10 +276,10 @@ pub async fn run_daemon() -> Result<()> {
                 }
                 _ = shutdown.notified() => {
                     log::info!("accept loop shutting down");
+                    connection::graceful_shutdown(&state).await;
                     break;
                 }
             }
-            // After select!, the borrow from connect() is released
             let connected = pipe_server;
             pipe_server = ServerOptions::new().create(&pipe_name)?;
             let state = state.clone();
@@ -274,7 +296,15 @@ pub async fn run_daemon() -> Result<()> {
         }
     }
 
+    // Signal the tray thread that the server has exited.
+    server_exited.store(true, Ordering::Relaxed);
     Ok(())
+}
+
+/// Legacy entry point: prepare + run in one call (for headless/daemonize mode).
+pub async fn run_daemon() -> Result<()> {
+    let ds = prepare_daemon().await?;
+    run_daemon_loop(ds).await
 }
 
 /// Accept from an optional TCP listener, or pend forever if None.

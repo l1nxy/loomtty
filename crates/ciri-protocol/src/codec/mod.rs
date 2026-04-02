@@ -33,8 +33,8 @@ pub use full_sync::{
     encode_full_pane_sync_payload,
 };
 pub use handshake::{
-    ClientHello, VersionCompat, WIRE_PROTOCOL_VERSION, build_client_hello, read_client_hello,
-    read_server_hello, write_client_hello, write_server_hello,
+    ClientHello, SERVER_HELLO_LEN, VersionCompat, WIRE_PROTOCOL_VERSION, build_client_hello,
+    read_client_hello, read_server_hello, write_client_hello, write_server_hello,
 };
 pub use state_machine::{StateEncoder, decode_sm_cells};
 

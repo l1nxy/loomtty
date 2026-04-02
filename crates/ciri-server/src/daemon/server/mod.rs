@@ -35,6 +35,8 @@ pub(crate) struct Server {
     pub(crate) session_config: ciri_config::schema::SessionConfig,
     /// Theme colors for initializing terminal palettes.
     pub(crate) terminal_colors: TerminalColors,
+    /// Set to true after `graceful_shutdown` runs. Prevents double-shutdown.
+    pub(crate) shut_down: bool,
 }
 
 const CONTROL_SESSION: &str = "__control__";
@@ -72,6 +74,7 @@ impl Server {
             idle_timeout: Duration::from_secs(300),
             session_config: ciri_config::schema::SessionConfig::default(),
             terminal_colors,
+            shut_down: false,
         }
     }
 
@@ -400,6 +403,94 @@ impl Server {
         }
 
         responses
+    }
+
+    // ── Tray integration ────────────────────────────────────────────
+
+    /// Find the most recently active non-control client.
+    pub(crate) fn most_recent_client(&self) -> Option<u64> {
+        self.clients
+            .values()
+            .filter(|c| c.session_name != CONTROL_SESSION)
+            .max_by_key(|c| c.id) // Higher IDs are more recently connected
+            .map(|c| c.id)
+    }
+
+    /// Switch a client to a different session and dispatch all responses
+    /// (SessionSwitched, StateSync, FullPaneSync) immediately.
+    /// Used by the tray to switch sessions without going through IPC.
+    pub(crate) fn tray_switch_client_to_session(
+        &mut self,
+        client_id: u64,
+        target_session: &str,
+    ) {
+        if ciri_session::names::validate_name(target_session).is_err() {
+            log::warn!("tray: invalid session name: {target_session:?}");
+            return;
+        }
+
+        let old_session = match self.clients.get(&client_id) {
+            Some(c) => c.session_name.clone(),
+            None => return,
+        };
+
+        // Already on the target session — no-op.
+        if old_session == target_session {
+            return;
+        }
+
+        self.switch_client_session_affinity(client_id, target_session);
+        self.get_or_create_session(target_session);
+        self.refresh_session_attach_time(target_session);
+
+        // Build responses and apply them inline.
+        let mut responses = Vec::new();
+        responses.push(ServerResponse::SendToClient(
+            client_id,
+            ServerMessage::SessionSwitched {
+                session_name: target_session.to_string(),
+            },
+        ));
+        self.prepare_full_sync_for_client(client_id, target_session, &mut responses);
+
+        self.apply_responses(responses);
+
+        // Resize the old session's panes now that one client moved away.
+        self.with_session(&old_session, |old_session, clients| {
+            old_session.resize_all_panes(clients);
+        });
+    }
+
+    /// Generate a unique new session name that doesn't collide with existing ones.
+    pub(crate) fn generate_session_name(&self) -> String {
+        let existing: Vec<String> = self.sessions.keys().cloned().collect();
+        ciri_session::names::unique_name(&existing)
+    }
+
+    /// Apply a list of ServerResponses by dispatching messages to clients.
+    fn apply_responses(&mut self, responses: Vec<ServerResponse>) {
+        for resp in responses {
+            match resp {
+                ServerResponse::BroadcastToSession(session_name, msg) => {
+                    self.broadcast_to_session(&session_name, &msg);
+                }
+                ServerResponse::SendToClient(cid, msg) => {
+                    self.send_to_client(cid, &msg);
+                }
+                ServerResponse::SendFullPaneSync(cid, sync) => {
+                    if let (Some(client), Some(frame)) = (
+                        self.clients.get(&cid),
+                        ciri_protocol::codec::frame_full_pane_sync(&sync),
+                    ) {
+                        let _ = client.tx.try_send(bytes::Bytes::from(frame));
+                    }
+                }
+                ServerResponse::RemoveClient(cid) => {
+                    self.clients.remove(&cid);
+                }
+                ServerResponse::ShutdownServer => {}
+            }
+        }
     }
 }
 

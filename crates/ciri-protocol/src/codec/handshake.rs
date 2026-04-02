@@ -34,7 +34,7 @@ fn unpack_version(v: u32) -> String {
 const HANDSHAKE_MAGIC: [u8; 4] = *b"CIRI";
 const CLIENT_HELLO_FIXED_FIELDS_LEN: usize = 16;
 pub(super) const CLIENT_HELLO_HEADER_LEN: usize = 11;
-pub(super) const SERVER_HELLO_LEN: usize = 8;
+pub const SERVER_HELLO_LEN: usize = 8;
 const MAX_SESSION_NAME_LEN: usize = 255;
 
 /// Wire protocol version. Incremented whenever the handshake or frame format

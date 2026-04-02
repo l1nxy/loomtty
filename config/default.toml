@@ -105,7 +105,6 @@ q = "detach"
 p = "toggle_command_palette"
 i = "next_slot"
 g = "toggle_lock"
-"/" = "toggle_help"
 
 [keys.modes.resize]
 h = "column_width_decrease"

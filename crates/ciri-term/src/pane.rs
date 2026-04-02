@@ -930,6 +930,7 @@ impl Pane {
                 cursor_col: content.cursor.point.column.0 as u16,
                 cursor_shape: cursor_shape_to_u8(content.cursor.shape),
                 mode_flags: self.mode_flags_from_term(term),
+                echo_ack: 0, // filled in by tick loop per-client
             },
             cols: cols as u16,
             rows: rows as u16,

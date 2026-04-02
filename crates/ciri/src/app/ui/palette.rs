@@ -321,7 +321,7 @@ impl UiComponent for PaletteComponent {
             let track_w = 4.0;
             let track_x = self.layout.panel_x + self.layout.panel_w - 8.0;
             let track_y = self.layout.sep_y + 2.0;
-            let track_h = self.layout.entry_count as f32 * self.layout.row_h - 4.0;
+            let track_h = self.layout.visible_rows as f32 * self.layout.row_h - 4.0;
             scene.bg_rects.push(Rect {
                 x: track_x,
                 y: track_y,

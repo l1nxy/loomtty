@@ -1,6 +1,7 @@
 use ciri_config::config::StatusBarPosition;
 use ciri_config::theme::ThemeConfig;
 use ciri_render::rect::Rect;
+use unicode_width::UnicodeWidthStr;
 
 use super::types::{UiComponent, UiContext, UiScene};
 use crate::app::status_bar::{TextEmitParams, emit_status_text};
@@ -121,15 +122,15 @@ impl InfoBoxComponent {
         let row_h = cx.cell_h * 1.3;
         let key_col_chars = rows
             .iter()
-            .map(|(k, _)| k.chars().count())
+            .map(|(k, _)| UnicodeWidthStr::width(k.as_str()))
             .max()
             .unwrap_or(0);
         let val_col_chars = rows
             .iter()
-            .map(|(_, v)| v.chars().count())
+            .map(|(_, v)| UnicodeWidthStr::width(v.as_str()))
             .max()
             .unwrap_or(0);
-        let title_chars = title.chars().count() + 4;
+        let title_chars = UnicodeWidthStr::width(title.as_str()) + 4;
         let content_chars = key_col_chars + 3 + val_col_chars;
         let box_chars = content_chars.max(title_chars);
         let w = box_chars as f32 * cx.cell_w + padding * 2.0;
@@ -236,7 +237,7 @@ impl UiComponent for InfoBoxComponent {
         let key_col_chars = self
             .rows
             .iter()
-            .map(|(k, _)| k.chars().count())
+            .map(|(k, _)| UnicodeWidthStr::width(k.as_str()))
             .max()
             .unwrap_or(0);
 
@@ -245,7 +246,7 @@ impl UiComponent for InfoBoxComponent {
             let ry = content_y + i as f32 * row_h;
             let text_y = ry + (row_h - cx.cell_h) * 0.5;
 
-            let key_chars = key.chars().count();
+            let key_chars = UnicodeWidthStr::width(key.as_str());
             let key_offset = (key_col_chars - key_chars) as f32 * cx.cell_w;
             emit_status_text(
                 scene.atlas,

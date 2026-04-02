@@ -306,12 +306,18 @@ fn clip_tab_label(
 
     let mut col = 0usize;
     let mut clipped = String::new();
+    let mut clip_start_col = skip_cols;
     for ch in label.chars() {
         let char_w = UnicodeWidthChar::width(ch).unwrap_or(0);
         if col + char_w > skip_cols + visible_cols {
             break;
         }
         if col >= skip_cols {
+            if clipped.is_empty() {
+                // Record the actual column where we start clipping.
+                // For wide chars straddling the boundary, this may be > skip_cols.
+                clip_start_col = col;
+            }
             clipped.push(ch);
         }
         col += char_w;
@@ -319,6 +325,8 @@ fn clip_tab_label(
     if clipped.is_empty() {
         None
     } else {
-        Some((clipped, visible_left))
+        // Shift draw position right if a wide char was partially skipped.
+        let overhang = (clip_start_col - skip_cols) as f32 * cw;
+        Some((clipped, visible_left + overhang))
     }
 }

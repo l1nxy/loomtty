@@ -40,6 +40,7 @@ fn protocol_client_render_visible_grid_invariants_stay_aligned() {
             cursor_col: 2,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: MODE_ALT_SCREEN | MODE_MOUSE_REPORT,
+            echo_ack: 0,
         },
         cols: 4,
         rows: 2,

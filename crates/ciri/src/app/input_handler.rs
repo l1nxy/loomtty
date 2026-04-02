@@ -133,6 +133,7 @@ impl App {
                     self.send(ClientMessage::Input {
                         pane_id: pid,
                         data: vec![0x17],
+                        input_seq: 0,
                     });
                 }
             }

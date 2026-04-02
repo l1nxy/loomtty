@@ -290,6 +290,7 @@ impl Session {
             if client.session_name == self.session_name {
                 client.damage.remove(&pane_id);
                 client.history_sent.remove(&pane_id);
+                client.max_input_seq.remove(&pane_id);
             }
         }
     }
@@ -702,6 +703,7 @@ mod tests {
                 tx: tx1,
                 damage: HashMap::new(),
                 last_acked_generation: 0,
+                max_input_seq: HashMap::new(),
                 history_sent: HashMap::new(),
                 send_failures: 0,
                 cell_width: 9.0,
@@ -718,6 +720,7 @@ mod tests {
                 tx: tx2,
                 damage: HashMap::new(),
                 last_acked_generation: 0,
+                max_input_seq: HashMap::new(),
                 history_sent: HashMap::new(),
                 send_failures: 0,
                 cell_width: 8.0,
@@ -734,6 +737,7 @@ mod tests {
                 tx: tx3,
                 damage: HashMap::new(),
                 last_acked_generation: 0,
+                max_input_seq: HashMap::new(),
                 history_sent: HashMap::new(),
                 send_failures: 0,
                 cell_width: 7.0,

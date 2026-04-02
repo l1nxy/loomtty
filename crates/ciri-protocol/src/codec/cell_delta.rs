@@ -35,6 +35,7 @@ where
     buf.extend_from_slice(&meta.cursor_col.to_le_bytes());
     buf.push(meta.cursor_shape);
     buf.extend_from_slice(&meta.mode_flags.to_le_bytes());
+    buf.extend_from_slice(&meta.echo_ack.to_le_bytes());
     buf.extend_from_slice(&cols.to_le_bytes());
     buf.extend_from_slice(&(regions.len() as u16).to_le_bytes());
 
@@ -63,7 +64,7 @@ where
 
 /// Decode CellDelta: parse region metadata, store SM payload for on-demand decoding.
 pub fn decode_cell_delta_borrowed(payload: Vec<u8>) -> io::Result<CellDeltaBorrowed> {
-    if payload.len() < 27 {
+    if payload.len() < 35 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "CellDelta too short",
@@ -75,9 +76,10 @@ pub fn decode_cell_delta_borrowed(payload: Vec<u8>) -> io::Result<CellDeltaBorro
     let cursor_col = read_u16_le(&payload, 18)?;
     let cursor_shape = payload[20];
     let mode_flags = read_u16_le(&payload, 21)?;
-    let cols = read_u16_le(&payload, 23)?;
-    let num_regions = read_u16_le(&payload, 25)? as usize;
-    let mut offset = 27;
+    let echo_ack = read_u64_le(&payload, 23)?;
+    let cols = read_u16_le(&payload, 31)?;
+    let num_regions = read_u16_le(&payload, 33)? as usize;
+    let mut offset = 35;
     let mut regions = Vec::with_capacity(num_regions);
     for _ in 0..num_regions {
         if offset + 10 > payload.len() {
@@ -114,6 +116,7 @@ pub fn decode_cell_delta_borrowed(payload: Vec<u8>) -> io::Result<CellDeltaBorro
         cursor_col,
         cursor_shape,
         mode_flags,
+        echo_ack,
     };
     Ok(CellDeltaBorrowed::new(meta, cols, regions, payload))
 }

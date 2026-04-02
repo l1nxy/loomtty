@@ -43,7 +43,8 @@ const MAX_SESSION_NAME_LEN: usize = 255;
 /// History:
 ///   1 = initial codec layout
 ///   2 = mode_flags expanded from u8 to u16 (kitty keyboard levels 1-5)
-pub const WIRE_PROTOCOL_VERSION: u8 = 2;
+///   3 = echo_ack (u64) added to PaneFrameMeta for input prediction timing
+pub const WIRE_PROTOCOL_VERSION: u8 = 3;
 
 /// Version compatibility result.
 #[derive(Debug, Clone, PartialEq, Eq)]

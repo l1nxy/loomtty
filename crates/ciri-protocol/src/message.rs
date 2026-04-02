@@ -255,6 +255,9 @@ pub enum ClientMessage {
     Input {
         pane_id: u64,
         data: Vec<u8>,
+        /// Monotonic sequence number for echo-ack tracking.
+        #[serde(default)]
+        input_seq: u64,
     },
     /// Request to create a new pane (column right of active).
     CreatePane,
@@ -627,6 +630,8 @@ pub struct PaneFrameMeta {
     pub cursor_shape: u8,
     /// Terminal mode flags (mouse mode, alt screen, kitty keyboard levels, etc.)
     pub mode_flags: u16,
+    /// Highest input_seq the server has processed for this pane from this client.
+    pub echo_ack: u64,
 }
 
 /// Full pane snapshot (tag 0x21).

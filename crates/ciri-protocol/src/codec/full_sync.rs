@@ -10,7 +10,7 @@ use super::frame::{
 use super::state_machine::{StateEncoder, sm_decode_cells_vec, sm_encode_cells};
 use super::util::*;
 
-const FULL_PANE_SYNC_MIN_HEADER_LEN: usize = 29;
+const FULL_PANE_SYNC_MIN_HEADER_LEN: usize = 37;
 const FULL_PANE_SYNC_SCROLLBACK_HEADER_LEN: usize = 9; // u32 rows + u8 replace + u32 data_len
 const FULL_PANE_SYNC_VIEWPORT_HEADER_LEN: usize = 4;
 
@@ -78,6 +78,7 @@ fn write_full_pane_sync_header(
     buf.extend_from_slice(&sync.meta.cursor_col.to_le_bytes());
     buf.push(sync.meta.cursor_shape);
     buf.extend_from_slice(&sync.meta.mode_flags.to_le_bytes());
+    buf.extend_from_slice(&sync.meta.echo_ack.to_le_bytes());
     buf.extend_from_slice(&(title_bytes.len() as u16).to_le_bytes());
     buf.extend_from_slice(title_bytes);
     Ok(())
@@ -155,7 +156,7 @@ fn read_full_pane_sync_mandatory_sections(
     payload: &[u8],
     mut offset: usize,
 ) -> io::Result<(u32, bool, String, FullPaneSyncMandatorySections<'_>)> {
-    let title_len = read_u16_le(payload, 27)? as usize;
+    let title_len = read_u16_le(payload, 35)? as usize;
     if offset + title_len > payload.len() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -400,6 +401,7 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
     let cursor_col = read_u16_le(payload, 22)?;
     let cursor_shape = payload[24];
     let mode_flags = read_u16_le(payload, 25)?;
+    let echo_ack = read_u64_le(payload, 27)?;
     let (scrollback_rows, scrollback_replace, title, sections) =
         read_full_pane_sync_mandatory_sections(payload, FULL_PANE_SYNC_MIN_HEADER_LEN)?;
     let sb_expected = scrollback_rows as usize * cols as usize;
@@ -426,6 +428,7 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
             cursor_col,
             cursor_shape,
             mode_flags,
+            echo_ack,
         },
         cols,
         rows,

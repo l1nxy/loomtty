@@ -106,12 +106,14 @@ impl App {
                             self.send(ClientMessage::Input {
                                 pane_id: pid,
                                 data: pane_bytes,
+                                input_seq: 0,
                             });
                         }
                     } else if let Some(pid) = self.core.workspaces.active_mut().active_pane_id() {
                         self.send(ClientMessage::Input {
                             pane_id: pid,
                             data: bytes,
+                            input_seq: 0,
                         });
                     }
                 }
@@ -287,7 +289,7 @@ impl App {
         if bracketed {
             data.extend_from_slice(b"\x1b[201~");
         }
-        self.send(ClientMessage::Input { pane_id: pid, data });
+        self.send(ClientMessage::Input { pane_id: pid, data, input_seq: 0 });
     }
 
     fn clear_selection_on_typing(&mut self, event: &winit::event::KeyEvent) {
@@ -392,6 +394,7 @@ impl App {
                     self.send(ClientMessage::Input {
                         pane_id: pid,
                         data: bytes,
+                        input_seq: 0,
                     });
                 }
             } else {
@@ -419,6 +422,7 @@ impl App {
                     self.send(ClientMessage::Input {
                         pane_id: pid,
                         data: pane_bytes,
+                        input_seq: 0,
                     });
                 }
             }
@@ -428,21 +432,16 @@ impl App {
         if let Some(pid) = self.core.workspaces.active_mut().active_pane_id() {
             // Skip prediction when the pane is in password input mode
             // to avoid leaking sensitive keystrokes into the prediction engine.
+            let seq = self.core.prediction.next_input_seq();
             if !password_mode {
                 if let Some(grid) = self.core.pane_grids.get(&pid) {
-                    let info = ciri_app::prediction::GridInfo {
-                        cursor_row: grid.cursor_line,
-                        cursor_col: grid.cursor_col,
-                        cols: grid.cols,
-                        rows: grid.rows,
-                        mode_flags: grid.mode_flags,
-                    };
-                    self.core.prediction.new_user_input(pid, &bytes, &info);
+                    self.core.prediction.new_user_input(pid, &bytes, grid);
                 }
             }
             self.send(ClientMessage::Input {
                 pane_id: pid,
                 data: bytes,
+                input_seq: seq,
             });
         }
     }

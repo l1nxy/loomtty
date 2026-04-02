@@ -149,7 +149,7 @@ impl AppModel {
             if bracketed {
                 data.extend_from_slice(b"\x1b[201~");
             }
-            self.send(ciri_protocol::message::ClientMessage::Input { pane_id: pid, data });
+            self.send(ciri_protocol::message::ClientMessage::Input { pane_id: pid, data, input_seq: 0 });
         }
     }
 

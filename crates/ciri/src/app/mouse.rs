@@ -867,6 +867,7 @@ impl App {
             self.send(ClientMessage::Input {
                 pane_id: pid,
                 data: key.to_vec(),
+                input_seq: 0,
             });
         }
     }

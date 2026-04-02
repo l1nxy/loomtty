@@ -546,6 +546,13 @@ impl App {
             return;
         }
 
+        // Suppress selection extension while the viewport is animating (e.g. after
+        // clicking a pane in a different column).  The sliding viewport changes the
+        // pixel→cell mapping, which would otherwise look like a drag selection.
+        if self.core.anim_mgr.view_offset_x.is_animating() {
+            return;
+        }
+
         if self.mouse_left_passthrough
             && let Some((pane_id, col, row)) = self.pixel_to_viewport_cell(mx, my)
         {

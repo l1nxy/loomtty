@@ -15,6 +15,8 @@ impl App {
         self.core.expected_pane_ids = pane_ids.iter().copied().collect();
         self.write_last_session();
         self.core.command_palette = None;
+        self.core.slot_session_pending.clear();
+        self.core.slot_session_query_start = None;
         if let Some(window) = &self.window {
             window.set_title(&format!(
                 "{} [{}]",
@@ -39,11 +41,20 @@ impl App {
         let drain_start = std::time::Instant::now();
         let mut needs_redraw = false;
 
+        // Drain buffered events from restored slots first (they arrived
+        // while the slot was backgrounded and must be replayed in order).
+        let mut buffered: Vec<_> = self.core.buffered_events.drain(..).collect();
+
         loop {
-            let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok())
+            let mut events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok())
                 .take(BATCH)
                 .collect();
             let hit_budget = events.len() >= BATCH;
+            // Prepend buffered events (only on the first iteration)
+            if !buffered.is_empty() {
+                buffered.append(&mut events);
+                events = std::mem::take(&mut buffered);
+            }
             if events.is_empty() {
                 break;
             }
@@ -144,6 +155,7 @@ impl App {
                             );
                         }
                         self.core.pane_grids.remove(&pane_id);
+                        self.core.prediction.clear_pane(pane_id);
                         self.core.image_placements.remove(&pane_id);
                         self.image_atlas_entries.clear();
                         self.invalidate_pane_cache(pane_id);
@@ -255,16 +267,20 @@ impl App {
                     ServerEvent::Control(ServerMessage::SessionList { sessions }) => {
                         if let Some(palette) = &mut self.core.command_palette {
                             if palette.sessions_only {
-                                palette.entries.clear();
+                                // Keep SlotSession entries from background slot queries
+                                palette.entries.retain(|e| {
+                                    matches!(e.kind, super::PaletteEntryKind::SlotSession { .. })
+                                });
                             } else {
-                                // Remove old session/connection entries, keep actions
-                                // and remote probe results.
+                                // Remove old session/connection entries, keep actions,
+                                // remote probe results, and background slot session entries.
                                 palette.entries.retain(|e| {
                                     matches!(
                                         e.kind,
                                         super::PaletteEntryKind::Action(_)
                                             | super::PaletteEntryKind::RemoteSession { .. }
                                             | super::PaletteEntryKind::SshShell { .. }
+                                            | super::PaletteEntryKind::SlotSession { .. }
                                     )
                                 });
                             }
@@ -313,7 +329,9 @@ impl App {
                                 )
                             });
                         grid.apply_full_sync(&sync);
-                        self.core.prediction.on_server_sync(sync.meta.pane_id, grid);
+                        self.core
+                            .prediction
+                            .on_server_sync(sync.meta.pane_id, grid, sync.meta.echo_ack);
                         self.send_lossy(ClientMessage::Ack {
                             generation: sync.meta.generation,
                         });
@@ -333,9 +351,11 @@ impl App {
                         );
                         if let Some(grid) = self.core.pane_grids.get_mut(&delta.meta.pane_id) {
                             grid.apply_delta_borrowed(&delta);
-                            self.core
-                                .prediction
-                                .on_server_sync(delta.meta.pane_id, grid);
+                            self.core.prediction.on_server_sync(
+                                delta.meta.pane_id,
+                                grid,
+                                delta.meta.echo_ack,
+                            );
                             self.send_lossy(ClientMessage::Ack {
                                 generation: delta.meta.generation,
                             });
@@ -455,13 +475,16 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{AppModel, CachedTileGlyphs, ClientImagePlacement};
+    use crate::app::{AppModel, CachedTileGlyphs, ClientImagePlacement, PaletteEntryKind};
     use crate::connection::ServerEvent;
     use ciri_config::config::CiriConfig;
     use ciri_protocol::message::{
         FullPaneSync, GraphemeExtras, HyperlinkExtras, LayoutState, PackedCell, ServerMessage,
-        WorkspaceState,
+        SessionInfo, WorkspaceState,
     };
+
+    use ciri_anim::manager::AnimationManager;
+    use ciri_layout::workspace_set::WorkspaceSet;
 
     /// Tests that touch the global `last-session` file must hold this lock
     /// to prevent flaky parallel failures in CI.
@@ -490,6 +513,7 @@ mod tests {
                 cursor_col: 0,
                 cursor_shape: 0,
                 mode_flags: 0,
+                echo_ack: 0,
             },
             cols: 2,
             rows: 1,
@@ -660,6 +684,475 @@ mod tests {
 
         assert!(app.process_server_events());
         assert!(!app.core.image_placements.contains_key(&7));
+    }
+
+    /// 创建一个 mock ConnectionSlot 用于后台 slot 测试
+    pub(crate) fn make_bg_slot(
+        id: &str,
+        kind: super::super::ConnectionKind,
+        session_name: &str,
+        connected: bool,
+    ) -> (
+        super::super::ConnectionSlot,
+        crossbeam_channel::Sender<ServerEvent>,
+        crossbeam_channel::Receiver<ClientMessage>,
+    ) {
+        let (event_tx, event_rx) = crossbeam_channel::unbounded();
+        let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
+        let view = ciri_layout::geometry::ViewSize {
+            width: 800.0,
+            height: 600.0,
+        };
+        let slot = super::super::ConnectionSlot {
+            id: id.to_string(),
+            kind,
+            session_name: session_name.to_string(),
+            server_tx: cmd_tx,
+            server_rx: event_rx,
+            pane_grids: std::collections::HashMap::new(),
+            workspaces: WorkspaceSet::new(view),
+            expected_pane_ids: std::collections::HashSet::new(),
+            connected,
+            reconnect_state: None,
+            pending_session_name: None,
+            anim_mgr: AnimationManager::new(),
+            workspace_last_pane_ids: std::collections::HashMap::new(),
+            selection: None,
+            broadcast_mode: false,
+            image_placements: std::collections::HashMap::new(),
+            pending_events: std::collections::VecDeque::new(),
+        };
+        (slot, event_tx, cmd_rx)
+    }
+
+    // -----------------------------------------------------------------------
+    // buffered_events 机制测试
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn process_server_events_drains_buffered_events_first() {
+        // buffered_events 中的事件应在 server_rx 事件之前被处理
+        let mut app = make_app();
+        let (event_tx, rx) = crossbeam_channel::unbounded();
+        app.core.server_rx = Some(rx);
+
+        // 在 server_rx 中放入 PaneCreated(42)
+        event_tx
+            .send(ServerEvent::Control(ServerMessage::PaneCreated {
+                pane_id: 42,
+                column_idx: 0,
+                cols: 80,
+                rows: 24,
+            }))
+            .unwrap();
+
+        // 在 buffered_events 中放入 PaneCreated(99)（应先被处理）
+        app.core
+            .buffered_events
+            .push_back(ServerEvent::Control(ServerMessage::PaneCreated {
+                pane_id: 99,
+                column_idx: 0,
+                cols: 80,
+                rows: 24,
+            }));
+
+        app.process_server_events();
+
+        // 两个事件都应被处理（buffered 的先，但两者最终都到位）
+        assert!(
+            app.core.pane_grids.contains_key(&99),
+            "buffered_events 中的 PaneCreated 应被处理"
+        );
+        assert!(
+            app.core.pane_grids.contains_key(&42),
+            "server_rx 中的 PaneCreated 也应被处理"
+        );
+        assert!(app.core.buffered_events.is_empty(), "处理后 buffered_events 应为空");
+    }
+
+    #[test]
+    fn process_server_events_empty_buffered_events_unchanged() {
+        // buffered_events 为空时行为不变
+        let mut app = make_app();
+        let (event_tx, rx) = crossbeam_channel::unbounded();
+        app.core.server_rx = Some(rx);
+
+        assert!(app.core.buffered_events.is_empty());
+
+        event_tx
+            .send(ServerEvent::Control(ServerMessage::PaneCreated {
+                pane_id: 42,
+                column_idx: 0,
+                cols: 80,
+                rows: 24,
+            }))
+            .unwrap();
+
+        let needs_redraw = app.process_server_events();
+        assert!(needs_redraw);
+        assert!(app.core.pane_grids.contains_key(&42));
+    }
+
+    #[test]
+    fn buffered_events_order_preserved_before_server_rx() {
+        // buffered_events 中的事件顺序在 server_rx 事件之前
+        let mut app = make_app();
+        let (event_tx, rx) = crossbeam_channel::unbounded();
+        app.core.server_rx = Some(rx);
+
+        // buffered: 创建 pane 50
+        app.core
+            .buffered_events
+            .push_back(ServerEvent::Control(ServerMessage::PaneCreated {
+                pane_id: 50,
+                column_idx: 0,
+                cols: 80,
+                rows: 24,
+            }));
+        // buffered: 创建 pane 51
+        app.core
+            .buffered_events
+            .push_back(ServerEvent::Control(ServerMessage::PaneCreated {
+                pane_id: 51,
+                column_idx: 0,
+                cols: 80,
+                rows: 24,
+            }));
+
+        // server_rx: 创建 pane 60
+        event_tx
+            .send(ServerEvent::Control(ServerMessage::PaneCreated {
+                pane_id: 60,
+                column_idx: 0,
+                cols: 80,
+                rows: 24,
+            }))
+            .unwrap();
+
+        app.process_server_events();
+
+        // 所有三个 pane 都应该存在
+        assert!(app.core.pane_grids.contains_key(&50));
+        assert!(app.core.pane_grids.contains_key(&51));
+        assert!(app.core.pane_grids.contains_key(&60));
+    }
+
+    // -----------------------------------------------------------------------
+    // save/restore slot 测试
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn save_current_to_slot_preserves_buffered_events_as_pending() {
+        // save_current_to_slot 将 buffered_events 保存到 pending_events
+        let mut app = make_app();
+        let (tx, _rx_cmd) = crossbeam_channel::unbounded();
+        let (_ev_tx, rx) = crossbeam_channel::unbounded();
+        app.core.server_tx = Some(tx);
+        app.core.server_rx = Some(rx);
+        app.core.session_name = "slot-session".to_string();
+
+        // 放入一些 buffered events
+        app.core
+            .buffered_events
+            .push_back(ServerEvent::Control(ServerMessage::PaneCreated {
+                pane_id: 100,
+                column_idx: 0,
+                cols: 80,
+                rows: 24,
+            }));
+        app.core
+            .buffered_events
+            .push_back(ServerEvent::Control(ServerMessage::Bell { pane_id: 100 }));
+
+        let slot = app.save_current_to_slot().expect("应成功创建 slot");
+
+        assert_eq!(slot.pending_events.len(), 2, "buffered_events 应转移到 pending_events");
+        assert!(app.core.buffered_events.is_empty(), "save 后 buffered_events 应为空");
+    }
+
+    #[test]
+    fn restore_from_slot_puts_pending_events_into_buffered() {
+        // restore_from_slot 将 pending_events 放入 buffered_events
+        let mut app = make_app();
+
+        let (slot_tx, _slot_cmd_rx) = crossbeam_channel::unbounded();
+        let (_slot_ev_tx, slot_rx) = crossbeam_channel::unbounded();
+        let view = ciri_layout::geometry::ViewSize {
+            width: 800.0,
+            height: 600.0,
+        };
+
+        let mut pending = std::collections::VecDeque::new();
+        pending.push_back(ServerEvent::Control(ServerMessage::PaneCreated {
+            pane_id: 200,
+            column_idx: 0,
+            cols: 80,
+            rows: 24,
+        }));
+
+        let slot = super::super::ConnectionSlot {
+            id: "restored-slot".to_string(),
+            kind: super::super::ConnectionKind::Local,
+            session_name: "restored".to_string(),
+            server_tx: slot_tx,
+            server_rx: slot_rx,
+            pane_grids: std::collections::HashMap::new(),
+            workspaces: WorkspaceSet::new(view),
+            expected_pane_ids: std::collections::HashSet::new(),
+            connected: true,
+            reconnect_state: None,
+            pending_session_name: None,
+            anim_mgr: ciri_anim::manager::AnimationManager::new(),
+            workspace_last_pane_ids: std::collections::HashMap::new(),
+            selection: None,
+            broadcast_mode: false,
+            image_placements: std::collections::HashMap::new(),
+            pending_events: pending,
+        };
+
+        assert!(app.core.buffered_events.is_empty());
+        app.restore_from_slot(slot);
+
+        assert_eq!(
+            app.core.buffered_events.len(),
+            1,
+            "pending_events 应放入 buffered_events"
+        );
+    }
+
+    #[test]
+    fn finalize_authoritative_session_switch_clears_slot_query_state() {
+        // finalize_authoritative_session_switch 清理 slot_session_pending 和 query_start
+        let _lock = LAST_SESSION_LOCK.lock().unwrap();
+        let mut app = make_app();
+        let (event_tx, rx) = crossbeam_channel::unbounded();
+        app.core.server_rx = Some(rx);
+
+        // 设置 slot 查询状态
+        app.core.slot_session_pending.insert("slot-a".into());
+        app.core.slot_session_pending.insert("slot-b".into());
+        app.core.slot_session_query_start = Some(std::time::Instant::now());
+
+        // 触发 session switch 完成流程
+        event_tx
+            .send(ServerEvent::Control(ServerMessage::SessionSwitched {
+                session_name: "new-session".to_string(),
+            }))
+            .unwrap();
+        event_tx
+            .send(ServerEvent::Control(ServerMessage::StateSync {
+                layout: empty_layout(),
+                pane_ids: vec![30],
+            }))
+            .unwrap();
+
+        app.process_server_events();
+
+        assert!(
+            app.core.slot_session_pending.is_empty(),
+            "finalize 后 slot_session_pending 应为空"
+        );
+        assert!(
+            app.core.slot_session_query_start.is_none(),
+            "finalize 后 slot_session_query_start 应为 None"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // poll_slot_sessions 测试
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn poll_slot_sessions_collects_session_list_response() {
+        // 成功收到 SessionList 响应时添加 SlotSession 条目
+        let mut app = make_app();
+        let (tx, _cmd_rx) = crossbeam_channel::unbounded();
+        app.core.server_tx = Some(tx);
+
+        // 创建后台 slot 并设为 pending
+        let (slot, ev_tx, _cmd_rx) =
+            make_bg_slot("bg-slot", super::super::ConnectionKind::Local, "s", true);
+        app.core.background_slots.insert("bg-slot".into(), slot);
+        app.core.slot_session_pending.insert("bg-slot".into());
+
+        // 打开 session palette
+        app.core.open_session_palette();
+
+        // 模拟 slot 返回 SessionList
+        ev_tx
+            .send(ServerEvent::Control(ServerMessage::SessionList {
+                sessions: vec![
+                    SessionInfo {
+                        name: "alpha".into(),
+                        running: true,
+                        pane_count: 1,
+                        client_count: 1,
+                    },
+                ],
+            }))
+            .unwrap();
+
+        app.poll_slot_sessions();
+
+        // 应已移出 pending
+        assert!(!app.core.slot_session_pending.contains("bg-slot"));
+
+        // 应有 SlotSession 条目
+        let palette = app.core.command_palette.as_ref().unwrap();
+        let slot_sessions: Vec<_> = palette
+            .entries
+            .iter()
+            .filter(|e| matches!(&e.kind, PaletteEntryKind::SlotSession { .. }))
+            .collect();
+        assert!(!slot_sessions.is_empty(), "应有 SlotSession 条目");
+    }
+
+    #[test]
+    fn poll_slot_sessions_buffers_non_session_list_events() {
+        // 非 SessionList 事件应被缓冲到 slot.pending_events
+        let mut app = make_app();
+        let (tx, _cmd_rx) = crossbeam_channel::unbounded();
+        app.core.server_tx = Some(tx);
+
+        let (slot, ev_tx, _cmd_rx) =
+            make_bg_slot("bg-slot2", super::super::ConnectionKind::Local, "s", true);
+        app.core.background_slots.insert("bg-slot2".into(), slot);
+        app.core.slot_session_pending.insert("bg-slot2".into());
+
+        app.core.open_session_palette();
+
+        // 发送一个非 SessionList 事件，然后是 SessionList
+        ev_tx
+            .send(ServerEvent::Control(ServerMessage::PaneCreated {
+                pane_id: 777,
+                column_idx: 0,
+                cols: 80,
+                rows: 24,
+            }))
+            .unwrap();
+        ev_tx
+            .send(ServerEvent::Control(ServerMessage::SessionList {
+                sessions: vec![],
+            }))
+            .unwrap();
+
+        app.poll_slot_sessions();
+
+        // PaneCreated 应被缓冲
+        let slot = app.core.background_slots.get("bg-slot2").unwrap();
+        assert_eq!(
+            slot.pending_events.len(),
+            1,
+            "非 SessionList 事件应被缓冲到 pending_events"
+        );
+    }
+
+    #[test]
+    fn poll_slot_sessions_handles_disconnected_channel() {
+        // channel 断连时应从 pending 移除
+        let mut app = make_app();
+        let (tx, _cmd_rx) = crossbeam_channel::unbounded();
+        app.core.server_tx = Some(tx);
+
+        let (slot, ev_tx, _cmd_rx) =
+            make_bg_slot("dead-slot", super::super::ConnectionKind::Local, "s", true);
+        app.core.background_slots.insert("dead-slot".into(), slot);
+        app.core.slot_session_pending.insert("dead-slot".into());
+
+        app.core.open_session_palette();
+
+        // 关闭发送端模拟断连
+        drop(ev_tx);
+
+        app.poll_slot_sessions();
+
+        assert!(
+            !app.core.slot_session_pending.contains("dead-slot"),
+            "断连的 slot 应从 pending 移除"
+        );
+    }
+
+    #[test]
+    fn poll_slot_sessions_removed_slot_cleaned_up() {
+        // slot 被移除后 pending 中的条目应被清理
+        let mut app = make_app();
+        let (tx, _cmd_rx) = crossbeam_channel::unbounded();
+        app.core.server_tx = Some(tx);
+
+        // 只添加到 pending，不添加到 background_slots
+        app.core.slot_session_pending.insert("ghost-slot".into());
+
+        // 需要 palette 存在
+        app.core.open_session_palette();
+
+        app.poll_slot_sessions();
+
+        assert!(
+            !app.core.slot_session_pending.contains("ghost-slot"),
+            "不存在的 slot 应从 pending 移除"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // SessionList 响应处理（完整 App 层面）
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn session_list_in_sessions_only_keeps_slot_session_entries() {
+        // sessions_only 模式下 SessionList 响应保留 SlotSession 条目
+        let mut app = make_app();
+        let (event_tx, rx) = crossbeam_channel::unbounded();
+        let (cmd_tx, _cmd_rx) = crossbeam_channel::unbounded();
+        app.core.server_rx = Some(rx);
+        app.core.server_tx = Some(cmd_tx);
+
+        // 创建后台 slot
+        let (slot, _ev, _cmd) =
+            make_bg_slot("bg-s", super::super::ConnectionKind::Local, "sess", true);
+        app.core.background_slots.insert("bg-s".into(), slot);
+
+        // 打开 session palette 并添加 SlotSession
+        app.core.open_session_palette();
+        app.core.apply_slot_session_result(
+            "bg-s",
+            vec![SessionInfo {
+                name: "bg-alpha".into(),
+                running: true,
+                pane_count: 1,
+                client_count: 1,
+            }],
+        );
+
+        // 通过 server_rx 发送 SessionList
+        event_tx
+            .send(ServerEvent::Control(ServerMessage::SessionList {
+                sessions: vec![SessionInfo {
+                    name: "local-main".into(),
+                    running: true,
+                    pane_count: 2,
+                    client_count: 1,
+                }],
+            }))
+            .unwrap();
+
+        app.process_server_events();
+
+        let palette = app.core.command_palette.as_ref().unwrap();
+        // SlotSession 应保留
+        let slot_sess_count = palette
+            .entries
+            .iter()
+            .filter(|e| matches!(&e.kind, PaletteEntryKind::SlotSession { .. }))
+            .count();
+        assert!(slot_sess_count >= 1, "SessionList 后 SlotSession 应保留");
+
+        // SwitchSession 也应存在
+        let switch_count = palette
+            .entries
+            .iter()
+            .filter(|e| matches!(&e.kind, PaletteEntryKind::SwitchSession(_)))
+            .count();
+        assert!(switch_count >= 1, "SessionList 后 SwitchSession 应存在");
     }
 
     #[test]

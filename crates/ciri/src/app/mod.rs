@@ -284,6 +284,7 @@ impl App {
             selection: self.core.selection.take(),
             broadcast_mode: std::mem::replace(&mut self.core.broadcast_mode, false),
             image_placements: std::mem::take(&mut self.core.image_placements),
+            pending_events: std::mem::take(&mut self.core.buffered_events),
         })
     }
 
@@ -304,6 +305,9 @@ impl App {
         self.core.selection = slot.selection;
         self.core.broadcast_mode = slot.broadcast_mode;
         self.core.image_placements = slot.image_placements;
+
+        // Replay any events that were consumed while the slot was backgrounded
+        self.core.buffered_events.extend(slot.pending_events);
 
         // Set remote_config based on slot kind
         self.core.remote_config = match &slot.kind {

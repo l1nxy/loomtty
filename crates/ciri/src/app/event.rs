@@ -83,7 +83,8 @@ impl ApplicationHandler for App {
         let has_server = self.core.server_rx.is_some();
         let is_reconnecting = self.core.reconnect_state.is_some();
         let wants_blink = self.core.config.terminal.cursor_blink;
-        let has_remote_query = self.core.remote_query_rx.is_some();
+        let has_remote_query =
+            self.core.remote_query_rx.is_some() || !self.core.slot_session_pending.is_empty();
 
         let has_pending = self
             .core
@@ -146,6 +147,25 @@ impl ApplicationHandler for App {
                 self.core.remote_query_rx = None;
                 self.handle_remote_query_result(result);
                 needs_redraw = true;
+            }
+
+            // Poll background slot session queries
+            if !self.core.slot_session_pending.is_empty() {
+                let timed_out = self
+                    .core
+                    .slot_session_query_start
+                    .is_some_and(|t| t.elapsed() >= Duration::from_secs(5));
+                if self.core.command_palette.is_none() || timed_out {
+                    // Palette was closed or query timed out — stop polling
+                    if timed_out {
+                        log::warn!("slot session query timed out, giving up");
+                    }
+                    self.core.slot_session_pending.clear();
+                    self.core.slot_session_query_start = None;
+                } else {
+                    self.poll_slot_sessions();
+                    needs_redraw = true;
+                }
             }
 
             // Cursor blink

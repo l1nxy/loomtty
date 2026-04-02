@@ -1,0 +1,278 @@
+use ciri_config::config::StatusBarPosition;
+use ciri_config::theme::ThemeConfig;
+use ciri_render::rect::Rect;
+
+use super::types::{UiComponent, UiContext, UiScene};
+use crate::app::status_bar::{TextEmitParams, emit_status_text};
+use crate::app::App;
+
+pub(crate) struct InfoBoxComponent {
+    title: String,
+    rows: Vec<(String, String)>,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+}
+
+pub(super) fn action_short_label(action: &str) -> &str {
+    match action {
+        "focus_left" => "left",
+        "focus_right" => "right",
+        "focus_up" => "up",
+        "focus_down" => "down",
+        "move_pane_left" => "move \u{2190}",
+        "move_pane_right" => "move \u{2192}",
+        "new_column_right" => "new pane",
+        "new_row_below" | "new_workspace_below" | "split_down" => "split \u{2193}",
+        "close_pane" => "close",
+        "column_width_decrease" => "shrink",
+        "column_width_increase" => "grow",
+        "column_width_full" => "full",
+        "column_width_one_third" => "1/3",
+        "column_width_half" => "1/2",
+        "column_width_two_thirds" => "2/3",
+        "cycle_preset_width" => "next width",
+        "cycle_preset_width_reverse" => "prev width",
+        "equalize_adjacent_columns" => "equalize",
+        "consume_into_column" => "stack",
+        "expel_from_column" => "unstack",
+        "toggle_broadcast" => "broadcast",
+        "toggle_overview" => "overview",
+        "exit_overview" => "exit",
+        "toggle_command_palette" => "palette",
+        "toggle_lock" => "lock",
+        "detach" => "detach",
+        "scroll_line_up" => "line \u{2191}",
+        "scroll_line_down" => "line \u{2193}",
+        "scroll_half_page_up" => "half \u{2191}",
+        "scroll_half_page_down" => "half \u{2193}",
+        "scroll_page_up" => "page \u{2191}",
+        "scroll_page_down" => "page \u{2193}",
+        "scroll_top" => "top",
+        "scroll_bottom" => "bottom",
+        s if s.starts_with("enter_mode:workspace") => "workspace",
+        s if s.starts_with("enter_mode:session") => "session",
+        s if s.starts_with("enter_mode:resize") => "resize",
+        s if s.starts_with("enter_mode:move") => "move",
+        s if s.starts_with("enter_mode:scroll") => "scroll",
+        s if s.starts_with("enter_mode:") => s.strip_prefix("enter_mode:").unwrap_or(s),
+        s if s.starts_with("switch_workspace_") => {
+            s.strip_prefix("switch_workspace_").unwrap_or(s)
+        }
+        other => other,
+    }
+}
+
+fn build_infobox_rows(
+    bindings: &std::collections::HashMap<String, String>,
+) -> Vec<(String, String)> {
+    use std::collections::HashMap;
+    let mut action_to_keys: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (key, action) in bindings {
+        action_to_keys
+            .entry(action.as_str())
+            .or_default()
+            .push(key.as_str());
+    }
+    for keys in action_to_keys.values_mut() {
+        keys.sort_by_key(|k| k.len());
+    }
+    let mut entries: Vec<_> = action_to_keys.into_iter().collect();
+    entries.sort_by(|(_, a_keys), (_, b_keys)| {
+        a_keys[0]
+            .len()
+            .cmp(&b_keys[0].len())
+            .then(a_keys[0].cmp(b_keys[0]))
+    });
+
+    entries
+        .into_iter()
+        .map(|(action, keys)| {
+            let key_display = if keys.len() <= 2 {
+                keys.join("/")
+            } else {
+                keys[..2].join("/")
+            };
+            (key_display, action_short_label(action).to_string())
+        })
+        .collect()
+}
+
+impl InfoBoxComponent {
+    pub fn capture(app: &App, cx: &UiContext<'_>) -> Option<Self> {
+        if app.core.command_palette.is_some() || app.core.pending_paste.is_some() {
+            return None;
+        }
+
+        let (title, bindings) = if let Some(mode_name) = app.core.input.current_mode_name() {
+            let bindings = app.core.config.keys.modes.get(mode_name)?;
+            (mode_name.to_uppercase(), bindings.clone())
+        } else if app.core.input.is_awaiting_action() {
+            ("LEADER".to_string(), app.core.config.keys.bindings.clone())
+        } else {
+            return None;
+        };
+
+        let mut rows = build_infobox_rows(&bindings);
+        rows.push(("esc".to_string(), "exit".to_string()));
+
+        let padding = cx.cell_w;
+        let row_h = cx.cell_h * 1.3;
+        let key_col_chars = rows
+            .iter()
+            .map(|(k, _)| k.chars().count())
+            .max()
+            .unwrap_or(0);
+        let val_col_chars = rows
+            .iter()
+            .map(|(_, v)| v.chars().count())
+            .max()
+            .unwrap_or(0);
+        let title_chars = title.chars().count() + 4;
+        let content_chars = key_col_chars + 3 + val_col_chars;
+        let box_chars = content_chars.max(title_chars);
+        let w = box_chars as f32 * cx.cell_w + padding * 2.0;
+        let h = rows.len() as f32 * row_h + padding * 2.0 + cx.cell_h;
+
+        let hints_bar_h = app.hints_bar_height();
+        let status_bar_h = app.status_bar_height();
+        let margin = 8.0;
+        let x = cx.viewport_w - w - margin;
+        let bottom_chrome = match cx.config.statusbar.position {
+            StatusBarPosition::Top => hints_bar_h,
+            StatusBarPosition::Bottom => status_bar_h + hints_bar_h,
+        };
+        let y = cx.viewport_h - h - bottom_chrome - margin;
+
+        Some(Self {
+            title,
+            rows,
+            x,
+            y,
+            w,
+            h,
+        })
+    }
+}
+
+impl UiComponent for InfoBoxComponent {
+    fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        let bg = ThemeConfig::parse_color(&cx.config.theme.background);
+        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
+        let fg = [1.0f32, 1.0, 1.0, 0.9];
+        let dim = [1.0f32, 1.0, 1.0, 0.5];
+        let padding = cx.cell_w;
+        let row_h = cx.cell_h * 1.3;
+        let bw = 1.0f32;
+
+        scene.bg_rects.push(Rect {
+            x: self.x + 3.0,
+            y: self.y + 3.0,
+            w: self.w,
+            h: self.h,
+            color: [0.0, 0.0, 0.0, 0.4],
+        });
+        scene.bg_rects.push(Rect {
+            x: self.x,
+            y: self.y,
+            w: self.w,
+            h: self.h,
+            color: [bg[0] * 0.85, bg[1] * 0.85, bg[2] * 0.85, 0.97],
+        });
+        scene.bg_rects.push(Rect {
+            x: self.x,
+            y: self.y,
+            w: self.w,
+            h: bw,
+            color: accent,
+        });
+        scene.bg_rects.push(Rect {
+            x: self.x,
+            y: self.y + self.h - bw,
+            w: self.w,
+            h: bw,
+            color: accent,
+        });
+        scene.bg_rects.push(Rect {
+            x: self.x,
+            y: self.y,
+            w: bw,
+            h: self.h,
+            color: accent,
+        });
+        scene.bg_rects.push(Rect {
+            x: self.x + self.w - bw,
+            y: self.y,
+            w: bw,
+            h: self.h,
+            color: accent,
+        });
+
+        let title_h = cx.cell_h + 2.0;
+        scene.bg_rects.push(Rect {
+            x: self.x + bw,
+            y: self.y + bw,
+            w: self.w - bw * 2.0,
+            h: title_h,
+            color: [accent[0], accent[1], accent[2], 0.2],
+        });
+
+        let title_text = format!(" {} ", self.title);
+        let title_y = self.y + bw + (title_h - cx.cell_h) * 0.5;
+        emit_status_text(
+            scene.atlas,
+            &title_text,
+            &TextEmitParams {
+                x_start: self.x + padding,
+                y: title_y,
+                cell_width: cx.cell_w,
+                baseline: cx.baseline,
+                color: accent,
+            },
+            scene.glyphs,
+        );
+
+        let key_col_chars = self
+            .rows
+            .iter()
+            .map(|(k, _)| k.chars().count())
+            .max()
+            .unwrap_or(0);
+
+        let content_y = self.y + bw + title_h + 4.0;
+        for (i, (key, desc)) in self.rows.iter().enumerate() {
+            let ry = content_y + i as f32 * row_h;
+            let text_y = ry + (row_h - cx.cell_h) * 0.5;
+
+            let key_chars = key.chars().count();
+            let key_offset = (key_col_chars - key_chars) as f32 * cx.cell_w;
+            emit_status_text(
+                scene.atlas,
+                key,
+                &TextEmitParams {
+                    x_start: self.x + padding + key_offset,
+                    y: text_y,
+                    cell_width: cx.cell_w,
+                    baseline: cx.baseline,
+                    color: accent,
+                },
+                scene.glyphs,
+            );
+
+            let desc_x = self.x + padding + (key_col_chars as f32 + 2.0) * cx.cell_w;
+            emit_status_text(
+                scene.atlas,
+                desc,
+                &TextEmitParams {
+                    x_start: desc_x,
+                    y: text_y,
+                    cell_width: cx.cell_w,
+                    baseline: cx.baseline,
+                    color: if key == "esc" { dim } else { fg },
+                },
+                scene.glyphs,
+            );
+        }
+    }
+}

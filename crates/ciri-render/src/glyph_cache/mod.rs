@@ -16,9 +16,9 @@ mod rasterize;
 mod rasterize_dwrite;
 pub mod types;
 
-pub use atlas::PendingUpload;
 #[cfg(windows)]
 pub use atlas::PendingDwriteGlyph;
+pub use atlas::PendingUpload;
 pub(crate) use atlas::ShelfPacker;
 pub use types::{FontStyle, GlyphEntry, GlyphInstance, ScissoredRange};
 
@@ -26,9 +26,9 @@ pub use types::{FontStyle, GlyphEntry, GlyphInstance, ScissoredRange};
 use cjk::compute_cjk_pixel_size;
 #[cfg(not(windows))]
 use metrics::compute_ft_metrics;
-use rasterize::{RasterizedGlyph, cache_rasterized_glyph};
 #[cfg(windows)]
 use rasterize::cache_measured_dwrite_glyph;
+use rasterize::{RasterizedGlyph, cache_rasterized_glyph};
 #[cfg(not(windows))]
 use rasterize::{convert_crossfont_glyph, rasterize_glyph_id_ft};
 use types::FontClass;
@@ -36,9 +36,7 @@ use types::FontClass;
 use types::FontKeySet;
 
 #[cfg(windows)]
-use rasterize_dwrite::{
-    DWriteRasterizer, compute_cjk_pixel_size_dwrite, compute_dwrite_metrics,
-};
+use rasterize_dwrite::{DWriteRasterizer, compute_cjk_pixel_size_dwrite, compute_dwrite_metrics};
 
 use ciri_config::config::RenderConfig;
 #[cfg(not(windows))]
@@ -114,7 +112,6 @@ pub struct GlyphCache {
     use_d2d_rendering: bool,
 
     // ── Common state ──
-
     emoji_font_id: Option<fontdb::ID>,
     cjk_font_id: Option<fontdb::ID>,
     pixel_size: f32,
@@ -143,9 +140,18 @@ impl GlyphCache {
 
         #[cfg(not(windows))]
         let (
-            rasterizer, font_keys, font_size, _ft_library,
-            ft_face, emoji_ft_face, cjk_ft_face,
-            cell_width, cell_height, ascent, face_width, cjk_pixel_size,
+            rasterizer,
+            font_keys,
+            font_size,
+            _ft_library,
+            ft_face,
+            emoji_ft_face,
+            cjk_ft_face,
+            cell_width,
+            cell_height,
+            ascent,
+            face_width,
+            cjk_pixel_size,
         ) = {
             // Crossfont setup
             let mut rasterizer = Rasterizer::new().expect("crossfont init failed");
@@ -230,58 +236,56 @@ impl GlyphCache {
 
             // Thin FreeType path for glyph-ID rendering
             let ft_library = FtLibrary::init().expect("FreeType init failed");
-            let mut ft_face =
-                params.primary_font_path.clone().and_then(|(path, index)| {
-                    match ft_library.new_face(&path, index as isize) {
-                        Ok(face) => {
-                            log::info!("FreeType face loaded for glyph-ID path: {path}");
-                            Some(face)
-                        }
-                        Err(e) => {
-                            log::warn!("failed to load FreeType face {path}: {e:?}");
-                            None
-                        }
-                    }
-                });
-            let emoji_ft_face =
-                params.emoji_font_path.clone().and_then(|(path, index)| {
-                    match ft_library.new_face(&path, index as isize) {
-                        Ok(face) => {
-                            log::info!("FreeType emoji face loaded: {path}");
-                            Some(face)
-                        }
-                        Err(e) => {
-                            log::warn!("failed to load emoji FreeType face {path}: {e:?}");
-                            None
-                        }
-                    }
-                });
-            let cjk_ft_face = params.cjk_font_path.clone().and_then(|(path, index)| {
+            let mut ft_face = params.primary_font_path.clone().and_then(|(path, index)| {
                 match ft_library.new_face(&path, index as isize) {
                     Ok(face) => {
-                        log::info!("FreeType CJK face loaded: {path}");
+                        log::info!("FreeType face loaded for glyph-ID path: {path}");
                         Some(face)
                     }
                     Err(e) => {
-                        log::warn!("failed to load CJK FreeType face {path}: {e:?}");
+                        log::warn!("failed to load FreeType face {path}: {e:?}");
                         None
                     }
                 }
             });
+            let emoji_ft_face = params.emoji_font_path.clone().and_then(|(path, index)| {
+                match ft_library.new_face(&path, index as isize) {
+                    Ok(face) => {
+                        log::info!("FreeType emoji face loaded: {path}");
+                        Some(face)
+                    }
+                    Err(e) => {
+                        log::warn!("failed to load emoji FreeType face {path}: {e:?}");
+                        None
+                    }
+                }
+            });
+            let cjk_ft_face =
+                params.cjk_font_path.clone().and_then(|(path, index)| {
+                    match ft_library.new_face(&path, index as isize) {
+                        Ok(face) => {
+                            log::info!("FreeType CJK face loaded: {path}");
+                            Some(face)
+                        }
+                        Err(e) => {
+                            log::warn!("failed to load CJK FreeType face {path}: {e:?}");
+                            None
+                        }
+                    }
+                });
 
             // Compute metrics from FreeType directly
-            let (cell_width, cell_height, ascent, face_width) =
-                if let Some(ref mut face) = ft_face {
-                    compute_ft_metrics(face, pixel_size)
-                } else {
-                    let cw = (crossfont_metrics.average_advance as f32).ceil();
-                    let ch = (crossfont_metrics.line_height as f32).ceil();
-                    let asc = (crossfont_metrics.line_height as f32
-                        + crossfont_metrics.descent)
-                        .ceil()
-                        .min(ch);
-                    (cw, ch, asc, cw)
-                };
+            let (cell_width, cell_height, ascent, face_width) = if let Some(ref mut face) = ft_face
+            {
+                compute_ft_metrics(face, pixel_size)
+            } else {
+                let cw = (crossfont_metrics.average_advance as f32).ceil();
+                let ch = (crossfont_metrics.line_height as f32).ceil();
+                let asc = (crossfont_metrics.line_height as f32 + crossfont_metrics.descent)
+                    .ceil()
+                    .min(ch);
+                (cw, ch, asc, cw)
+            };
 
             // CJK font size adjustment
             let cjk_pixel_size = compute_cjk_pixel_size(
@@ -299,9 +303,18 @@ impl GlyphCache {
             };
 
             (
-                rasterizer, font_keys, font_size, ft_library,
-                ft_face, emoji_ft_face, cjk_ft_face,
-                cell_width, cell_height, ascent, face_width, cjk_pixel_size,
+                rasterizer,
+                font_keys,
+                font_size,
+                ft_library,
+                ft_face,
+                emoji_ft_face,
+                cjk_ft_face,
+                cell_width,
+                cell_height,
+                ascent,
+                face_width,
+                cjk_pixel_size,
             )
         };
 
@@ -317,10 +330,7 @@ impl GlyphCache {
                     .emoji_font_path
                     .as_ref()
                     .map(|(p, i)| (p.as_str(), *i)),
-                params
-                    .cjk_font_path
-                    .as_ref()
-                    .map(|(p, i)| (p.as_str(), *i)),
+                params.cjk_font_path.as_ref().map(|(p, i)| (p.as_str(), *i)),
             )
             .expect("DWrite init failed");
 
@@ -339,7 +349,14 @@ impl GlyphCache {
                 dwrite.cjk_face(FontStyle::Regular),
             );
 
-            (dwrite, cell_width, cell_height, ascent, face_width, cjk_pixel_size)
+            (
+                dwrite,
+                cell_width,
+                cell_height,
+                ascent,
+                face_width,
+                cjk_pixel_size,
+            )
         };
 
         GlyphCache {
@@ -573,9 +590,7 @@ impl GlyphCache {
                     self.dwrite.is_emoji_color(),
                 ),
                 FontClass::Cjk => (self.dwrite.cjk_face(style)?, self.cjk_pixel_size, false),
-                FontClass::Primary => {
-                    (self.dwrite.primary_face(style)?, self.pixel_size, false)
-                }
+                FontClass::Primary => (self.dwrite.primary_face(style)?, self.pixel_size, false),
             };
 
             if self.use_d2d_rendering {
@@ -602,9 +617,7 @@ impl GlyphCache {
             }
 
             // CPU rasterization path (GL/Blade fallback).
-            let glyph = self
-                .dwrite
-                .rasterize_glyph(face, glyph_id, px, try_color)?;
+            let glyph = self.dwrite.rasterize_glyph(face, glyph_id, px, try_color)?;
             if glyph.width == 0 || glyph.height == 0 {
                 self.glyph_id_cache.insert(key, GlyphEntry::EMPTY);
                 return Some(GlyphEntry::EMPTY);
@@ -691,9 +704,7 @@ impl GlyphCache {
 
     /// Drain pending DWrite glyph render commands for the DX D2D backend.
     #[cfg(windows)]
-    pub fn take_dwrite_pending(
-        &mut self,
-    ) -> (Vec<PendingDwriteGlyph>, Vec<PendingDwriteGlyph>) {
+    pub fn take_dwrite_pending(&mut self) -> (Vec<PendingDwriteGlyph>, Vec<PendingDwriteGlyph>) {
         (
             std::mem::take(&mut self.dwrite_alpha_pending),
             std::mem::take(&mut self.dwrite_color_pending),

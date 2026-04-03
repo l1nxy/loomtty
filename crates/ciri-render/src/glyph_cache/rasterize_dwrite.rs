@@ -44,19 +44,17 @@ impl DWriteRasterizer {
         emoji_path: Option<(&str, u32)>,
         cjk_path: Option<(&str, u32)>,
     ) -> anyhow::Result<Self> {
-        let factory: IDWriteFactory =
-            unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
+        let factory: IDWriteFactory = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
 
         // Try system font collection first for proper bold/italic variants.
         // Fall back to file-based loading with simulations if family not found.
-        let primary_faces =
-            load_styled_faces_from_collection(&factory, family_name)
-                .unwrap_or_else(|| {
-                    log::info!("DWrite: '{family_name}' not in system collection, loading from file");
-                    primary_path
-                        .map(|(p, i)| load_styled_faces_simulated(&factory, p, i))
-                        .unwrap_or([None, None, None, None])
-                });
+        let primary_faces = load_styled_faces_from_collection(&factory, family_name)
+            .unwrap_or_else(|| {
+                log::info!("DWrite: '{family_name}' not in system collection, loading from file");
+                primary_path
+                    .map(|(p, i)| load_styled_faces_simulated(&factory, p, i))
+                    .unwrap_or([None, None, None, None])
+            });
 
         let emoji_faces = emoji_path
             .map(|(p, i)| load_styled_faces_simulated(&factory, p, i))
@@ -66,9 +64,7 @@ impl DWriteRasterizer {
             .map(|(p, i)| load_styled_faces_simulated(&factory, p, i))
             .unwrap_or([None, None, None, None]);
 
-        let emoji_is_color = emoji_faces[0]
-            .as_ref()
-            .is_some_and(is_color_font);
+        let emoji_is_color = emoji_faces[0].as_ref().is_some_and(is_color_font);
 
         if emoji_is_color {
             log::info!("DWrite: emoji font detected as color (COLR/CPAL)");
@@ -158,8 +154,7 @@ impl DWriteRasterizer {
         let codepoint = ch as u32;
         let mut glyph_index = 0u16;
         unsafe {
-            face.GetGlyphIndices(&codepoint, 1, &mut glyph_index)
-                .ok()?;
+            face.GetGlyphIndices(&codepoint, 1, &mut glyph_index).ok()?;
         }
         if glyph_index == 0 {
             None
@@ -182,7 +177,10 @@ fn load_styled_faces_from_collection(
     unsafe { factory.GetSystemFontCollection(&mut collection, false) }.ok()?;
     let collection = collection?;
 
-    let wide_name: Vec<u16> = family_name.encode_utf16().chain(std::iter::once(0)).collect();
+    let wide_name: Vec<u16> = family_name
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
     let mut index = 0u32;
     let mut exists = BOOL::default();
     unsafe {
@@ -253,7 +251,8 @@ fn load_styled_faces_simulated(
         DWRITE_FONT_SIMULATIONS_NONE,    // Regular
         DWRITE_FONT_SIMULATIONS_BOLD,    // Bold
         DWRITE_FONT_SIMULATIONS_OBLIQUE, // Italic
-        DWRITE_FONT_SIMULATIONS(         // BoldItalic
+        DWRITE_FONT_SIMULATIONS(
+            // BoldItalic
             DWRITE_FONT_SIMULATIONS_BOLD.0 | DWRITE_FONT_SIMULATIONS_OBLIQUE.0,
         ),
     ];
@@ -292,12 +291,7 @@ fn load_face(
         }
 
         let face = factory
-            .CreateFontFace(
-                face_type,
-                &[Some(font_file)],
-                face_index,
-                simulations,
-            )
+            .CreateFontFace(face_type, &[Some(font_file)], face_index, simulations)
             .ok()?;
 
         log::info!(
@@ -329,7 +323,15 @@ fn is_color_glyph(
     let mut glyph_run = build_glyph_run(face, &glyph_index, pixel_size);
     let result = unsafe {
         factory2
-            .TranslateColorGlyphRun(0.0, 0.0, &glyph_run, None, DWRITE_MEASURING_MODE_NATURAL, None, 0)
+            .TranslateColorGlyphRun(
+                0.0,
+                0.0,
+                &glyph_run,
+                None,
+                DWRITE_MEASURING_MODE_NATURAL,
+                None,
+                0,
+            )
             .is_ok()
     };
     unsafe { ManuallyDrop::drop(&mut glyph_run.fontFace) };
@@ -411,9 +413,7 @@ use windows::Win32::Foundation::RECT;
 ///
 /// Tries `ALIASED_1x1` first (1 byte/pixel, produced by grayscale mode),
 /// then falls back to `CLEARTYPE_3x1` (3 bytes/pixel, averaged to 1).
-fn read_alpha_texture(
-    analysis: &IDWriteGlyphRunAnalysis,
-) -> Option<(RECT, Vec<u8>)> {
+fn read_alpha_texture(analysis: &IDWriteGlyphRunAnalysis) -> Option<(RECT, Vec<u8>)> {
     // Grayscale path: direct single-channel
     if let Ok(bounds) = unsafe { analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_ALIASED_1x1) } {
         let w = (bounds.right - bounds.left) as u32;
@@ -789,8 +789,7 @@ fn measure_char_advance(face: &IDWriteFontFace, ch: char, pixel_size: f32) -> Op
     let codepoint = ch as u32;
     let mut glyph_index = 0u16;
     unsafe {
-        face.GetGlyphIndices(&codepoint, 1, &mut glyph_index)
-            .ok()?;
+        face.GetGlyphIndices(&codepoint, 1, &mut glyph_index).ok()?;
     }
     if glyph_index == 0 {
         return None;
@@ -808,9 +807,5 @@ fn measure_char_advance(face: &IDWriteFontFace, ch: char, pixel_size: f32) -> Op
     let px_per_unit = pixel_size as f64 / font_metrics.designUnitsPerEm as f64;
     let advance = glyph_metric.advanceWidth as f64 * px_per_unit;
 
-    if advance > 0.0 {
-        Some(advance)
-    } else {
-        None
-    }
+    if advance > 0.0 { Some(advance) } else { None }
 }

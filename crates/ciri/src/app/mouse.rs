@@ -915,17 +915,13 @@ impl App {
     }
 }
 
-fn mode_prefers_mouse_passthrough(mode_flags: u16) -> bool {
-    mode_reports_mouse(mode_flags)
-}
-
 fn mode_reports_mouse(mode_flags: u16) -> bool {
     mode_flags & MODE_MOUSE_REPORT != 0
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{mode_prefers_mouse_passthrough, mode_reports_mouse};
+    use super::mode_reports_mouse;
     use ciri_protocol::message::{MODE_ALT_SCREEN, MODE_MOUSE_REPORT};
 
     #[test]
@@ -934,15 +930,5 @@ mod tests {
         assert!(mode_reports_mouse(MODE_MOUSE_REPORT));
         assert!(!mode_reports_mouse(MODE_ALT_SCREEN));
         assert!(mode_reports_mouse(MODE_MOUSE_REPORT | MODE_ALT_SCREEN));
-    }
-
-    #[test]
-    fn passthrough_matches_mouse_reporting() {
-        assert!(!mode_prefers_mouse_passthrough(0));
-        assert!(mode_prefers_mouse_passthrough(MODE_MOUSE_REPORT));
-        assert!(!mode_prefers_mouse_passthrough(MODE_ALT_SCREEN));
-        assert!(mode_prefers_mouse_passthrough(
-            MODE_MOUSE_REPORT | MODE_ALT_SCREEN
-        ));
     }
 }

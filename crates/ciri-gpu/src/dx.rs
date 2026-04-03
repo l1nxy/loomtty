@@ -369,7 +369,9 @@ impl DxAtlasLayer {
             usage: D2D1_RENDER_TARGET_USAGE_NONE,
             minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
         };
-        let d2d_rt = cfg.d2d_factory.CreateDxgiSurfaceRenderTarget(&dxgi_surface, &rt_props)?;
+        let d2d_rt = cfg
+            .d2d_factory
+            .CreateDxgiSurfaceRenderTarget(&dxgi_surface, &rt_props)?;
         d2d_rt.SetTextAntialiasMode(cfg.text_antialias);
 
         Ok(DxAtlasLayer {
@@ -487,12 +489,8 @@ impl DxAtlasLayer {
                 y: glyph.baseline_y,
             };
 
-            self.d2d_rt.DrawGlyphRun(
-                origin,
-                &glyph_run,
-                &brush,
-                DWRITE_MEASURING_MODE_NATURAL,
-            );
+            self.d2d_rt
+                .DrawGlyphRun(origin, &glyph_run, &brush, DWRITE_MEASURING_MODE_NATURAL);
 
             // Release the cloned face reference.
             let mut glyph_run = glyph_run;
@@ -905,9 +903,8 @@ impl Renderer {
             _ => 1,
         };
 
-        let d2d_factory: ID2D1Factory = unsafe {
-            D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?
-        };
+        let d2d_factory: ID2D1Factory =
+            unsafe { D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)? };
 
         log::info!(
             "D3D11 renderer initialized ({}x{})",

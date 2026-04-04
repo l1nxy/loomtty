@@ -24,20 +24,9 @@ impl Pane {
         let rows = grid.screen_lines();
         let content = term.renderable_content();
 
-        let (cells, grapheme_extras) = collect_viewport_cells(grid, rows, cols);
+        let (cells, grapheme_extras, hyperlink_extras) =
+            collect_viewport_cells(grid, rows, cols);
         let sb_cells = collect_scrollback_cells(grid, cols, scrollback.rows);
-
-        let hyperlink_extras = {
-            let link_map = self.parsers.osc8.link_map();
-            if link_map.is_empty() {
-                HyperlinkExtras::new()
-            } else {
-                HyperlinkExtras {
-                    cell_links: Vec::new(),
-                    link_map: link_map.to_vec(),
-                }
-            }
-        };
 
         FullPaneSync {
             meta: PaneFrameMeta {

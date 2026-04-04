@@ -127,16 +127,38 @@ pub(super) fn collect_viewport_cells(
     grid: &alacritty_terminal::grid::Grid<alacritty_terminal::term::cell::Cell>,
     rows: usize,
     cols: usize,
-) -> (Vec<PackedCell>, GraphemeExtras) {
+) -> (Vec<PackedCell>, GraphemeExtras, HyperlinkExtras) {
     let mut cells = Vec::with_capacity(cols * rows);
     let mut grapheme_extras = GraphemeExtras::new();
+
+    // Hyperlink dedup: URI string → link ID (1-based).
+    let mut uri_to_id: std::collections::HashMap<String, u16> = std::collections::HashMap::new();
+    let mut link_map: Vec<(u16, String)> = Vec::new();
+    let mut cell_links: Vec<(u32, u16)> = Vec::new();
+    let mut next_link_id: u16 = 1;
 
     for row in 0..rows {
         for col in 0..cols {
             let point = Point::new(Line(row as i32), Column(col));
             let cell = &grid[point];
             let cell_idx = (row * cols + col) as u32;
-            cells.push(pack_cell(cell));
+            let mut packed = pack_cell(cell);
+
+            // Extract OSC 8 hyperlink if present.
+            if let Some(hyperlink) = cell.hyperlink() {
+                let uri = hyperlink.uri();
+                let link_id = *uri_to_id.entry(uri.to_string()).or_insert_with(|| {
+                    let id = next_link_id;
+                    next_link_id = next_link_id.wrapping_add(1).max(1);
+                    link_map.push((id, uri.to_string()));
+                    id
+                });
+                let flags = packed.flags_u16() | FLAG_HYPERLINK;
+                packed.flags = flags.to_le_bytes();
+                cell_links.push((cell_idx, link_id));
+            }
+
+            cells.push(packed);
             if let Some(zw) = cell.zerowidth()
                 && !zw.is_empty()
             {
@@ -146,7 +168,12 @@ pub(super) fn collect_viewport_cells(
         }
     }
 
-    (cells, grapheme_extras)
+    let hyperlink_extras = HyperlinkExtras {
+        cell_links,
+        link_map,
+    };
+
+    (cells, grapheme_extras, hyperlink_extras)
 }
 
 pub(super) fn collect_scrollback_cells(

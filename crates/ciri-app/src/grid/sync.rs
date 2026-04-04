@@ -163,7 +163,14 @@ impl ClientPaneGrid {
         for (idx, grapheme) in sync_grapheme_map {
             self.grapheme_map.insert(idx, grapheme);
         }
-        self.hyperlink_map = sync.hyperlink_extras.link_map.clone();
+        self.hyperlink_map.clear();
+        for &(id, ref uri) in &sync.hyperlink_extras.link_map {
+            self.hyperlink_map.insert(id, uri.clone());
+        }
+        self.hyperlink_cell_map.clear();
+        for &(cell_idx, link_id) in &sync.hyperlink_extras.cell_links {
+            self.hyperlink_cell_map.insert(cell_idx, link_id);
+        }
         self.cwd = sync.cwd.clone();
         self.dirty = true;
     }
@@ -192,6 +199,10 @@ impl ClientPaneGrid {
             if copy_len > 0 {
                 let dst_start = line * cols + col_start;
                 let dst_end = line * cols + col_end;
+                // Evict stale hyperlink entries for overwritten cells
+                for idx in dst_start..dst_end {
+                    self.hyperlink_cell_map.remove(&(idx as u32));
+                }
                 self.viewport[dst_start..dst_end].copy_from_slice(&region.cells[..copy_len]);
                 self.mark_row_dirty(line);
             }
@@ -228,6 +239,10 @@ impl ClientPaneGrid {
             if copy_len > 0 {
                 let dst_start = line * cols + col_start;
                 let dst_end = dst_start + copy_len;
+                // Evict stale hyperlink entries for overwritten cells
+                for idx in dst_start..dst_end {
+                    self.hyperlink_cell_map.remove(&(idx as u32));
+                }
                 let sm_data = delta.sm_data(i);
                 match ciri_protocol::codec::decode_sm_cells(
                     sm_data,

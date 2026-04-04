@@ -1168,3 +1168,477 @@ fn reflow_preserves_unwrapped_lines() {
     assert_eq!(grid.scrollback[0].cells[0].ch(), 'A');
     assert_eq!(grid.scrollback[1].cells[0].ch(), 'X');
 }
+
+// ─── Phase 3: trailing punctuation / port preservation ──────────
+
+#[test]
+fn link_at_preserves_port_in_url() {
+    let grid = grid_with_line("visit https://example.com:8080/path please");
+    let m = grid.link_at(10, 0).unwrap();
+    assert_eq!(m.url, "https://example.com:8080/path");
+}
+
+#[test]
+fn link_at_preserves_trailing_colon_in_url() {
+    let grid = grid_with_line("see https://example.com:8080");
+    let m = grid.link_at(10, 0).unwrap();
+    assert_eq!(m.url, "https://example.com:8080");
+}
+
+// ─── Phase 4: bracket-aware boundary detection ──────────────────
+
+#[test]
+fn link_at_strips_surrounding_parens() {
+    let grid = grid_with_line("(https://example.com)");
+    let m = grid.link_at(10, 0).unwrap();
+    assert_eq!(m.url, "https://example.com");
+}
+
+#[test]
+fn link_at_keeps_parens_in_wikipedia_url() {
+    let grid = grid_with_line("https://en.wikipedia.org/wiki/Rust_(language)");
+    let m = grid.link_at(10, 0).unwrap();
+    assert_eq!(m.url, "https://en.wikipedia.org/wiki/Rust_(language)");
+}
+
+#[test]
+fn link_at_strips_surrounding_brackets() {
+    let grid = grid_with_line("[https://example.com]");
+    let m = grid.link_at(10, 0).unwrap();
+    assert_eq!(m.url, "https://example.com");
+}
+
+#[test]
+fn link_at_handles_nested_parens() {
+    let grid = grid_with_line("(https://example.com/wiki/A_(B))");
+    let m = grid.link_at(10, 0).unwrap();
+    assert_eq!(m.url, "https://example.com/wiki/A_(B)");
+}
+
+// ─── Phase 5: bare filename detection ───────────────────────────
+
+#[test]
+fn link_at_detects_cargo_toml() {
+    let grid = grid_with_line("see Cargo.toml for details");
+    let m = grid.link_at(6, 0).unwrap();
+    assert_eq!(m.url, "Cargo.toml");
+}
+
+#[test]
+fn link_at_detects_main_rs() {
+    let grid = grid_with_line("error in main.rs");
+    let m = grid.link_at(11, 0).unwrap();
+    assert_eq!(m.url, "main.rs");
+}
+
+#[test]
+fn link_at_does_not_detect_bare_word() {
+    let grid = grid_with_line("hello world");
+    assert_eq!(grid.link_at(2, 0), None);
+}
+
+#[test]
+fn link_at_does_not_detect_ambiguous() {
+    let grid = grid_with_line("version 2.0");
+    assert_eq!(grid.link_at(9, 0), None);
+}
+
+// ─── OSC 8 hyperlink detection ─────────────────────────────────
+
+#[test]
+fn osc8_link_at_basic() {
+    // 10 cols, 1 row, no scrollback
+    let mut grid = ClientPaneGrid::new(10, 1, 0);
+    // Fill viewport with "click here"
+    let text = "click here";
+    for (i, ch) in text.chars().enumerate() {
+        grid.viewport[i] = PackedCell::with_ch(ch);
+    }
+    // Set up OSC 8: cells 6..9 ("here") have link_id=1
+    grid.hyperlink_map = std::collections::HashMap::from([(1, "https://example.com".to_string())]);
+    grid.hyperlink_cell_map = std::collections::HashMap::new();
+    for col in 6u32..=9 {
+        grid.hyperlink_cell_map.insert(col, 1);
+    }
+
+    // Click on col 7 (inside "here") → should return OSC 8 link
+    let m = grid.link_at(7, 0).unwrap();
+    assert_eq!(m.url, "https://example.com");
+    assert_eq!(m.start_col, 6);
+    assert_eq!(m.end_col, 9);
+
+    // Click on col 3 (inside "ck ") → no OSC 8 link
+    // (may or may not match heuristic, but definitely not OSC 8)
+    let no_osc8 = grid.link_at(3, 0);
+    // "click" is not a URL, so should be None
+    assert_eq!(no_osc8, None);
+}
+
+#[test]
+fn osc8_link_at_priority_over_heuristic() {
+    // Create a grid where the text looks like a URL but OSC 8 points somewhere else
+    let text = "https://heuristic.com";
+    let cols = text.chars().count() as u16;
+    let mut grid = ClientPaneGrid::new(cols, 1, 0);
+    for (i, ch) in text.chars().enumerate() {
+        grid.viewport[i] = PackedCell::with_ch(ch);
+    }
+    // OSC 8 says the whole span points to a DIFFERENT URL
+    grid.hyperlink_map = std::collections::HashMap::from([(42, "https://osc8-wins.example.org".to_string())]);
+    grid.hyperlink_cell_map = std::collections::HashMap::new();
+    for col in 0..cols as u32 {
+        grid.hyperlink_cell_map.insert(col, 42);
+    }
+
+    let m = grid.link_at(5, 0).unwrap();
+    // OSC 8 should win over heuristic detection
+    assert_eq!(m.url, "https://osc8-wins.example.org");
+    assert_eq!(m.start_col, 0);
+    assert_eq!(m.end_col, cols - 1);
+}
+
+#[test]
+fn osc8_link_at_scrollback_returns_none() {
+    // OSC 8 data is viewport-only; clicking in scrollback should fall through to heuristic
+    let mut grid = ClientPaneGrid::new(10, 1, 10);
+    // Add a scrollback row
+    let sync = FullPaneSync {
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+            echo_ack: 0,
+        },
+        cols: 10,
+        rows: 1,
+        title: String::new(),
+        scrollback: vec![PackedCell::with_ch('x'); 10],
+        scrollback_rows: 1,
+        scrollback_replace: false,
+        cells: vec![PackedCell::with_ch('y'); 10],
+        grapheme_extras: GraphemeExtras::new(),
+        hyperlink_extras: HyperlinkExtras::new(),
+        cwd: None,
+    };
+    grid.apply_full_sync(&sync);
+
+    // Even if we manually poke hyperlink_cell_map with index 0, buffer_row 0
+    // is scrollback so osc8_link_at should return None
+    grid.hyperlink_map = std::collections::HashMap::from([(1, "https://nope.com".to_string())]);
+    grid.hyperlink_cell_map.insert(0, 1);
+
+    // buffer_row 0 is scrollback → OSC 8 not applicable, and 'x' is not a URL
+    assert_eq!(grid.link_at(0, 0), None);
+}
+
+// ─── Trailing colon edge cases ────────────────────────────────
+
+#[test]
+fn link_at_strips_trailing_colon_after_url() {
+    // "See https://example.com/foo:" — trailing colon is punctuation, strip it
+    let grid = grid_with_line("See https://example.com/foo:");
+    let m = grid.link_at(10, 0).unwrap();
+    assert_eq!(m.url, "https://example.com/foo");
+}
+
+#[test]
+fn link_at_preserves_port_no_path() {
+    // "https://example.com:3000" — colon is part of port, preserve
+    let grid = grid_with_line("https://example.com:3000");
+    let m = grid.link_at(5, 0).unwrap();
+    assert_eq!(m.url, "https://example.com:3000");
+}
+
+#[test]
+fn link_at_strips_trailing_period() {
+    let grid = grid_with_line("Visit https://example.com.");
+    let m = grid.link_at(10, 0).unwrap();
+    assert_eq!(m.url, "https://example.com");
+}
+
+#[test]
+fn link_at_strips_trailing_comma() {
+    let grid = grid_with_line("https://example.com, then");
+    let m = grid.link_at(5, 0).unwrap();
+    assert_eq!(m.url, "https://example.com");
+}
+
+#[test]
+fn link_at_strips_trailing_exclamation() {
+    let grid = grid_with_line("Check https://example.com!");
+    let m = grid.link_at(10, 0).unwrap();
+    assert_eq!(m.url, "https://example.com");
+}
+
+#[test]
+fn link_at_strips_trailing_semicolon() {
+    let grid = grid_with_line("see https://example.com;");
+    let m = grid.link_at(10, 0).unwrap();
+    assert_eq!(m.url, "https://example.com");
+}
+
+// ─── Bracket edge cases ───────────────────────────────────────
+
+#[test]
+fn link_at_strips_surrounding_angle_brackets() {
+    let grid = grid_with_line("<https://example.com>");
+    let m = grid.link_at(10, 0).unwrap();
+    assert_eq!(m.url, "https://example.com");
+}
+
+#[test]
+fn link_at_strips_surrounding_quotes() {
+    let grid = grid_with_line("\"https://example.com\"");
+    let m = grid.link_at(10, 0).unwrap();
+    assert_eq!(m.url, "https://example.com");
+}
+
+#[test]
+fn link_at_unbalanced_closers_stripped() {
+    // ")))" after URL — all excess closers stripped
+    let grid = grid_with_line("https://example.com)))");
+    let m = grid.link_at(5, 0).unwrap();
+    assert_eq!(m.url, "https://example.com");
+}
+
+#[test]
+fn link_at_balanced_brackets_in_url_preserved() {
+    // URL contains balanced square brackets
+    let grid = grid_with_line("https://example.com/api?ids[0]=1");
+    let m = grid.link_at(5, 0).unwrap();
+    assert_eq!(m.url, "https://example.com/api?ids[0]=1");
+}
+
+// ─── File path edge cases ─────────────────────────────────────
+
+#[test]
+fn link_at_detects_relative_dot_slash() {
+    let grid = grid_with_line("edit ./src/main.rs");
+    let m = grid.link_at(8, 0).unwrap();
+    assert_eq!(m.url, "./src/main.rs");
+}
+
+#[test]
+fn link_at_detects_parent_relative() {
+    let grid = grid_with_line("in ../Cargo.toml");
+    let m = grid.link_at(6, 0).unwrap();
+    assert_eq!(m.url, "../Cargo.toml");
+}
+
+#[test]
+fn link_at_detects_home_relative() {
+    let grid = grid_with_line("at ~/projects/ciri/src/main.rs");
+    let m = grid.link_at(8, 0).unwrap();
+    assert_eq!(m.url, "~/projects/ciri/src/main.rs");
+}
+
+#[test]
+fn link_at_detects_path_with_line_col() {
+    let grid = grid_with_line("error at src/main.rs:42:10");
+    let m = grid.link_at(12, 0).unwrap();
+    assert_eq!(m.url, "src/main.rs:42:10");
+}
+
+#[test]
+fn link_at_detects_path_with_line_only() {
+    let grid = grid_with_line("src/lib.rs:99");
+    let m = grid.link_at(5, 0).unwrap();
+    assert_eq!(m.url, "src/lib.rs:99");
+}
+
+// ─── Bare filename edge cases ─────────────────────────────────
+
+#[test]
+fn link_at_detects_makefile() {
+    let grid = grid_with_line("edit Makefile");
+    let m = grid.link_at(7, 0).unwrap();
+    assert_eq!(m.url, "Makefile");
+}
+
+#[test]
+fn link_at_detects_dockerfile() {
+    let grid = grid_with_line("see Dockerfile");
+    let m = grid.link_at(7, 0).unwrap();
+    assert_eq!(m.url, "Dockerfile");
+}
+
+#[test]
+fn link_at_detects_gitignore() {
+    let grid = grid_with_line("update .gitignore");
+    let m = grid.link_at(10, 0).unwrap();
+    assert_eq!(m.url, ".gitignore");
+}
+
+#[test]
+fn link_at_detects_case_insensitive_makefile() {
+    let grid = grid_with_line("edit makefile");
+    let m = grid.link_at(7, 0).unwrap();
+    assert_eq!(m.url, "makefile");
+}
+
+#[test]
+fn link_at_rejects_numeric_stem_bare_file() {
+    // "2.rs" looks like a bare filename but stem is all digits — reject
+    let grid = grid_with_line("I have 2.rs errors");
+    assert_eq!(grid.link_at(9, 0), None);
+}
+
+#[test]
+fn link_at_rejects_version_number() {
+    let grid = grid_with_line("version 3.14");
+    assert_eq!(grid.link_at(10, 0), None);
+}
+
+#[test]
+fn link_at_detects_readme() {
+    let grid = grid_with_line("see README");
+    let m = grid.link_at(6, 0).unwrap();
+    assert_eq!(m.url, "README");
+}
+
+// ─── URL scheme edge cases ────────────────────────────────────
+
+#[test]
+fn link_at_detects_http_url() {
+    let grid = grid_with_line("http://example.com");
+    let m = grid.link_at(5, 0).unwrap();
+    assert_eq!(m.url, "http://example.com");
+}
+
+#[test]
+fn link_at_detects_www_url() {
+    let grid = grid_with_line("visit www.example.com");
+    let m = grid.link_at(10, 0).unwrap();
+    assert_eq!(m.url, "https://www.example.com");
+}
+
+#[test]
+fn link_at_rejects_bare_text() {
+    let grid = grid_with_line("this is plain text");
+    assert_eq!(grid.link_at(5, 0), None);
+}
+
+#[test]
+fn link_at_url_with_query_and_fragment() {
+    let grid = grid_with_line("https://example.com/path?q=1&r=2#section");
+    let m = grid.link_at(5, 0).unwrap();
+    assert_eq!(m.url, "https://example.com/path?q=1&r=2#section");
+}
+
+#[test]
+fn link_at_url_with_path_slash_preserved() {
+    let grid = grid_with_line("https://example.com/a/b/c");
+    let m = grid.link_at(5, 0).unwrap();
+    assert_eq!(m.url, "https://example.com/a/b/c");
+}
+
+// ─── Delta sync evicts overwritten cells only ─────────────────
+
+#[test]
+fn delta_sync_evicts_overwritten_hyperlink_cells() {
+    use ciri_protocol::message::{
+        CellDelta, DamageRegion, FullPaneSync, GraphemeExtras, HyperlinkExtras, PaneFrameMeta,
+        CURSOR_BLOCK,
+    };
+    let mut grid = ClientPaneGrid::new(10, 2, 0);
+
+    // Full sync: cells 0..4 on row 0 have link_id=1
+    let mut cells = vec![PackedCell::default(); 20];
+    for i in 0..5 {
+        cells[i] = PackedCell::with_ch('a');
+    }
+    let sync = FullPaneSync {
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+            echo_ack: 0,
+        },
+        cols: 10,
+        rows: 2,
+        title: String::new(),
+        scrollback: vec![],
+        scrollback_rows: 0,
+        scrollback_replace: false,
+        cells,
+        grapheme_extras: GraphemeExtras::new(),
+        hyperlink_extras: HyperlinkExtras {
+            cell_links: (0..5).map(|i| (i as u32, 1u16)).collect(),
+            link_map: vec![(1, "https://linked.example.com".to_string())],
+        },
+        cwd: None,
+    };
+    grid.apply_full_sync(&sync);
+
+    // Verify OSC 8 link works
+    let m = grid.link_at(2, 0).unwrap();
+    assert_eq!(m.url, "https://linked.example.com");
+
+    // Delta: overwrite cells 0..2 on row 0 (overwrites first 3 hyperlinked cells)
+    let delta = CellDelta {
+        pane_id: 1,
+        generation: 1,
+        cursor_line: 0,
+        cursor_col: 0,
+        cursor_shape: CURSOR_BLOCK,
+        mode_flags: 0,
+        regions: vec![DamageRegion {
+            line: 0,
+            left: 0,
+            right: 2,
+            cells: vec![PackedCell::with_ch('z'); 3],
+        }],
+    };
+    grid.apply_delta(&delta);
+
+    // Cells 0..2 were overwritten — their hyperlink entries should be evicted
+    assert_eq!(grid.link_at(1, 0), None); // was hyperlinked, now overwritten
+
+    // Cells 3..4 were NOT overwritten — their hyperlink entries should survive
+    let m = grid.link_at(3, 0).unwrap();
+    assert_eq!(m.url, "https://linked.example.com");
+    assert_eq!(m.start_col, 3);
+    assert_eq!(m.end_col, 4);
+}
+
+// ─── OSC 8 multi-link on same row ─────────────────────────────
+
+#[test]
+fn osc8_multiple_links_on_same_row() {
+    let text = "foo bar baz";
+    let cols = text.chars().count() as u16;
+    let mut grid = ClientPaneGrid::new(cols, 1, 0);
+    for (i, ch) in text.chars().enumerate() {
+        grid.viewport[i] = PackedCell::with_ch(ch);
+    }
+    // link_id=1 on "foo" (0..2), link_id=2 on "baz" (8..10)
+    grid.hyperlink_map = std::collections::HashMap::from([
+        (1, "https://link-a.com".to_string()),
+        (2, "https://link-b.com".to_string()),
+    ]);
+    for col in 0..=2u32 {
+        grid.hyperlink_cell_map.insert(col, 1);
+    }
+    for col in 8..=10u32 {
+        grid.hyperlink_cell_map.insert(col, 2);
+    }
+
+    let m1 = grid.link_at(1, 0).unwrap();
+    assert_eq!(m1.url, "https://link-a.com");
+    assert_eq!(m1.start_col, 0);
+    assert_eq!(m1.end_col, 2);
+
+    let m2 = grid.link_at(9, 0).unwrap();
+    assert_eq!(m2.url, "https://link-b.com");
+    assert_eq!(m2.start_col, 8);
+    assert_eq!(m2.end_col, 10);
+
+    // "bar" has no link
+    assert_eq!(grid.link_at(5, 0), None);
+}

@@ -8,6 +8,116 @@ use winit::event::{MouseButton, MouseScrollDelta, TouchPhase};
 use super::App;
 
 impl App {
+    // ── Coordinate conversion ──
+
+    /// Convert pixel coordinates to (pane_id, col, buffer_row) using absolute buffer indices.
+    pub fn pixel_to_cell(&self, mx: f32, my: f32) -> Option<(u64, u16, usize)> {
+        let (cw, ch) = self.cell_dimensions();
+        if cw <= 0.0 || ch <= 0.0 {
+            return None;
+        }
+        let my = self.content_y_from_screen(my)?;
+        let border_w = self.core.config.appearance.border_width;
+        let padding = self.core.config.appearance.padding;
+        let vox = self.core.anim_mgr.view_offset_x.value() as f32;
+        let tiles = self.core.workspaces.active().visible_tiles(vox);
+        for (pane_id, rect, _) in &tiles {
+            if rect.contains(mx, my) {
+                let inner_x = rect.x + border_w + padding;
+                let inner_y = rect.y + border_w + padding;
+                let col = ((mx - inner_x) / cw).floor().max(0.0) as u16;
+                let viewport_row = ((my - inner_y) / ch).floor().max(0.0) as u16;
+                if let Some(grid) = self.core.pane_grids.get(pane_id) {
+                    let col = col.min(grid.cols.saturating_sub(1));
+                    let viewport_row = viewport_row.min(grid.rows.saturating_sub(1));
+                    let buffer_row = grid.viewport_to_buffer_row(viewport_row);
+                    return Some((*pane_id, col, buffer_row));
+                }
+            }
+        }
+        None
+    }
+
+    /// Convert pixel coordinates to (pane_id, col, viewport_row) for mouse forwarding.
+    pub fn pixel_to_viewport_cell(&self, mx: f32, my: f32) -> Option<(u64, u16, u16)> {
+        let (cw, ch) = self.cell_dimensions();
+        if cw <= 0.0 || ch <= 0.0 {
+            return None;
+        }
+        let my = self.content_y_from_screen(my)?;
+        let border_w = self.core.config.appearance.border_width;
+        let padding = self.core.config.appearance.padding;
+        let vox = self.core.anim_mgr.view_offset_x.value() as f32;
+        let tiles = self.core.workspaces.active().visible_tiles(vox);
+        for (pane_id, rect, _) in &tiles {
+            if rect.contains(mx, my) {
+                let inner_x = rect.x + border_w + padding;
+                let inner_y = rect.y + border_w + padding;
+                let col = ((mx - inner_x) / cw).floor().max(0.0) as u16;
+                let row = ((my - inner_y) / ch).floor().max(0.0) as u16;
+                if let Some(grid) = self.core.pane_grids.get(pane_id) {
+                    let col = col.min(grid.cols.saturating_sub(1));
+                    let row = row.min(grid.rows.saturating_sub(1));
+                    return Some((*pane_id, col, row));
+                }
+            }
+        }
+        None
+    }
+
+    // ── Selection delegates ──
+
+    pub fn extract_selected_text(&self) -> Option<String> {
+        self.core.extract_selected_text()
+    }
+
+    pub fn advance_click_count(
+        &mut self,
+        pane_id: u64,
+        col: u16,
+        buffer_row: usize,
+        now: Instant,
+    ) -> u8 {
+        self.core.advance_click_count(pane_id, col, buffer_row, now)
+    }
+
+    pub fn select_word_at(&mut self, pane_id: u64, col: u16, buffer_row: usize) -> bool {
+        self.core.select_word_at(pane_id, col, buffer_row)
+    }
+
+    pub fn select_line_at(&mut self, pane_id: u64, buffer_row: usize) {
+        self.core.select_line_at(pane_id, buffer_row)
+    }
+
+    // ── Scroll helpers ──
+
+    pub fn scroll_active_up(&mut self, lines: usize) {
+        if let Some(pid) = self.core.workspaces.active().active_pane_id()
+            && let Some(grid) = self.core.pane_grids.get_mut(&pid)
+        {
+            grid.scroll_up(lines);
+            self.invalidate_pane_cache(pid);
+        }
+    }
+
+    pub fn scroll_active_down(&mut self, lines: usize) {
+        if let Some(pid) = self.core.workspaces.active().active_pane_id()
+            && let Some(grid) = self.core.pane_grids.get_mut(&pid)
+        {
+            grid.scroll_down(lines);
+            self.invalidate_pane_cache(pid);
+        }
+    }
+
+    pub fn scroll_active_to_bottom(&mut self) {
+        if let Some(pid) = self.core.workspaces.active().active_pane_id()
+            && let Some(grid) = self.core.pane_grids.get_mut(&pid)
+        {
+            grid.scroll_to_bottom();
+            self.invalidate_pane_cache(pid);
+        }
+    }
+
     pub(crate) fn pane_reports_mouse(&self, pane_id: u64) -> bool {
         let mode_flags = self
             .core

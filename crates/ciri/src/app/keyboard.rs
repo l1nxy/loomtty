@@ -6,7 +6,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, NamedKey};
 
 use super::App;
-use super::input_handler::{
+use super::key_encode::{
     key_event_base_char, key_event_text_for_input, key_event_to_kitty_bytes, key_event_to_pty_bytes,
 };
 

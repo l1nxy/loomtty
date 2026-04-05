@@ -65,8 +65,12 @@ impl App {
                 let shift = self.modifiers.shift_key();
                 let alt = self.modifiers.alt_key();
                 let super_key = self.modifiers.super_key();
-                let bytes =
-                    key_event_to_kitty_bytes(event, ctrl, shift, alt, super_key, kitty_flags);
+                let bytes = key_event_to_kitty_bytes(
+                    event, ctrl, shift, alt, super_key,
+                    false, // TODO: caps_lock from platform
+                    false, // TODO: num_lock from platform
+                    kitty_flags,
+                );
                 if !bytes.is_empty() {
                     if self.core.broadcast_mode {
                         let vox = self.core.anim_mgr.view_offset_x.value() as f32;
@@ -100,6 +104,8 @@ impl App {
                                     shift,
                                     alt,
                                     super_key,
+                                    false, // TODO: caps_lock from platform
+                                    false, // TODO: num_lock from platform
                                     pane_kitty_flags,
                                 )
                             };
@@ -459,6 +465,8 @@ impl App {
                 modifiers.shift,
                 modifiers.alt,
                 modifiers.super_key,
+                false, // TODO: caps_lock from platform
+                false, // TODO: num_lock from platform
                 kitty_flags,
             )
         } else {

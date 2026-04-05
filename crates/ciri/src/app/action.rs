@@ -103,10 +103,26 @@ impl App {
                 });
             }
             Action::ColumnWidthIncrease => {
-                self.send(ClientMessage::AdjustColumnSplit { delta: 0.05 });
+                let ws = self.core.workspaces.active();
+                let vw = ws.view_size.width;
+                if let Some(col) = ws.columns.get(ws.active_column_idx) {
+                    let current = col.proportion(vw);
+                    self.send(ClientMessage::SetColumnWidth {
+                        proportion: current + 0.05,
+                        fixed_px: None,
+                    });
+                }
             }
             Action::ColumnWidthDecrease => {
-                self.send(ClientMessage::AdjustColumnSplit { delta: -0.05 });
+                let ws = self.core.workspaces.active();
+                let vw = ws.view_size.width;
+                if let Some(col) = ws.columns.get(ws.active_column_idx) {
+                    let current = col.proportion(vw);
+                    self.send(ClientMessage::SetColumnWidth {
+                        proportion: (current - 0.05).max(0.05),
+                        fixed_px: None,
+                    });
+                }
             }
             Action::EqualizeAdjacentColumns => {
                 self.send(ClientMessage::EqualizeColumnSplit);

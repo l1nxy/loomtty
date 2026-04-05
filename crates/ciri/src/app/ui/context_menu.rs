@@ -1,8 +1,7 @@
 use ciri_config::theme::ThemeConfig;
-use ciri_render::rect::Rect;
 
+use super::builder::UiBuilder;
 use super::types::{UiAction, UiComponent, UiContext, UiContextMenuHit, UiScene};
-use crate::app::status_bar::{TextEmitParams, emit_status_text};
 use crate::app::App;
 
 struct ContextMenuRow {
@@ -86,84 +85,51 @@ impl UiComponent for ContextMenuComponent {
 
     fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         let padding = 8.0;
-        let shadow_offset = 3.0;
-        scene.bg_rects.push(Rect {
-            x: self.x + shadow_offset,
-            y: self.y + shadow_offset,
-            w: self.menu_width,
-            h: self.menu_height,
-            color: [0.0, 0.0, 0.0, 0.4],
-        });
+        let bw = 1.0;
 
         let menu_bg = ThemeConfig::parse_color(&cx.config.theme.background);
         let bg_color = [menu_bg[0] * 0.9, menu_bg[1] * 0.9, menu_bg[2] * 0.9, 1.0];
-        scene.bg_rects.push(Rect {
-            x: self.x,
-            y: self.y,
-            w: self.menu_width,
-            h: self.menu_height,
-            color: bg_color,
-        });
-
         let border_color = ThemeConfig::parse_color(&cx.config.theme.border_active);
-        let bw = 1.0;
-        scene.bg_rects.push(Rect {
-            x: self.x,
-            y: self.y,
-            w: self.menu_width,
-            h: bw,
-            color: border_color,
-        });
-        scene.bg_rects.push(Rect {
-            x: self.x,
-            y: self.y + self.menu_height - bw,
-            w: self.menu_width,
-            h: bw,
-            color: border_color,
-        });
-        scene.bg_rects.push(Rect {
-            x: self.x,
-            y: self.y,
-            w: bw,
-            h: self.menu_height,
-            color: border_color,
-        });
-        scene.bg_rects.push(Rect {
-            x: self.x + self.menu_width - bw,
-            y: self.y,
-            w: bw,
-            h: self.menu_height,
-            color: border_color,
-        });
-
         let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
         let fg_color = ThemeConfig::parse_color(&cx.config.theme.foreground);
         let dim_base = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
         let dim_color = [dim_base[0], dim_base[1], dim_base[2], 0.75];
-        for (i, row) in self.rows.iter().enumerate() {
-            let iy = self.y + padding + i as f32 * self.item_height;
-            if row.hovered {
-                scene.bg_rects.push(Rect {
-                    x: self.x + bw,
-                    y: iy,
-                    w: self.menu_width - bw * 2.0,
-                    h: self.item_height,
-                    color: [accent[0], accent[1], accent[2], 0.12],
+        let hover_bg = [accent[0], accent[1], accent[2], 0.12];
+
+        let mut ui = UiBuilder::new_vertical(
+            self.x, self.y, self.menu_width, self.menu_height, 0.0,
+            0.0, 0.0, false, cx, scene,
+        );
+
+        // Shadow + border + background
+        ui.bordered_panel_inset(
+            self.x, self.y, self.menu_width, self.menu_height,
+            bg_color, border_color, bw, true,
+        );
+
+        // Vertical item list inside the panel (after top padding)
+        let content_w = self.menu_width - bw * 2.0;
+        let content_h = self.rows.len() as f32 * self.item_height;
+        let item_h = self.item_height;
+        let cell_h = cx.cell_h;
+        ui.vertical(content_w, Some(content_h + padding * 2.0), 0.0, |ui| {
+            ui.bg_rect(content_w, padding, [0.0, 0.0, 0.0, 0.0]); // top padding
+            for row in &self.rows {
+                ui.horizontal(Some(content_w), item_h, 0.0, |ui| {
+                    // Hover highlight (full row width)
+                    if row.hovered {
+                        let (_, ry) = ui.cursor_pos();
+                        ui.abs_rect(self.x + bw, ry, content_w, item_h, hover_bg);
+                    }
+                    // Vertically centered label
+                    let (rx, ry) = ui.cursor_pos();
+                    let text_y = ry + (item_h - cell_h) * 0.5;
+                    ui.abs_text(
+                        &row.label, rx + padding, text_y,
+                        if row.enabled { fg_color } else { dim_color },
+                    );
                 });
             }
-            let text_y = iy + (self.item_height - cx.cell_h) * 0.5;
-            emit_status_text(
-                scene.atlas,
-                &row.label,
-                &TextEmitParams {
-                    x_start: self.x + padding,
-                    y: text_y,
-                    cell_width: cx.cell_w,
-                    baseline: cx.baseline,
-                    color: if row.enabled { fg_color } else { dim_color },
-                },
-                scene.glyphs,
-            );
-        }
+        });
     }
 }

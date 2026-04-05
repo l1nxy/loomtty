@@ -1,9 +1,8 @@
 use ciri_config::theme::ThemeConfig;
-use ciri_render::rect::Rect;
 use unicode_width::UnicodeWidthStr;
 
+use super::builder::UiBuilder;
 use super::types::{UiAction, UiComponent, UiContext, UiPaletteHit, UiScene};
-use crate::app::status_bar::{TextEmitParams, emit_status_text};
 use crate::app::{App, PaletteToggleLayout};
 
 pub(super) struct PaletteRow {
@@ -30,6 +29,7 @@ pub(crate) struct PaletteComponent {
     layout: super::super::CommandPaletteLayout,
     toggle: Option<PaletteToggleLayout>,
     query: String,
+    scroll_offset: usize,
     rows: Vec<PaletteRow>,
     sessions_show_all: bool,
     total_entries: usize,
@@ -109,6 +109,7 @@ impl PaletteComponent {
             query: palette.query.clone(),
             rows,
             sessions_show_all: palette.sessions_show_all,
+            scroll_offset,
             total_entries: palette.filtered.len(),
             selected_idx: palette.selected_idx,
             show_no_matches: palette.filtered.is_empty() && !palette.query.is_empty(),
@@ -162,107 +163,6 @@ impl UiComponent for PaletteComponent {
         let border_color = ThemeConfig::parse_color(&cx.config.theme.border_active);
         let dim_color = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
         let fg_color = ThemeConfig::parse_color(&cx.config.theme.foreground);
-        let text_color = fg_color;
-
-        scene.bg_rects.push(Rect {
-            x: 0.0,
-            y: 0.0,
-            w: cx.viewport_w,
-            h: cx.viewport_h,
-            color: [bg_color[0] * 0.5, bg_color[1] * 0.5, bg_color[2] * 0.5, 0.6],
-        });
-
-        let bw = 2.0;
-        scene.bg_rects.push(Rect {
-            x: self.layout.panel_x - bw,
-            y: self.layout.panel_y - bw,
-            w: self.layout.panel_w + bw * 2.0,
-            h: self.layout.panel_h + bw * 2.0,
-            color: border_color,
-        });
-        scene.bg_rects.push(Rect {
-            x: self.layout.panel_x,
-            y: self.layout.panel_y,
-            w: self.layout.panel_w,
-            h: self.layout.panel_h,
-            color: bg_color,
-        });
-        scene.bg_rects.push(Rect {
-            x: self.layout.panel_x,
-            y: self.layout.panel_y,
-            w: self.layout.panel_w,
-            h: self.layout.input_row_h,
-            color: [
-                bg_color[0] + 0.05,
-                bg_color[1] + 0.05,
-                bg_color[2] + 0.05,
-                1.0,
-            ],
-        });
-
-        let input_text = format!("> {}", self.query);
-        emit_status_text(
-            scene.atlas,
-            &input_text,
-            &TextEmitParams {
-                x_start: self.layout.text_x,
-                y: self.layout.text_y,
-                cell_width: cx.cell_w,
-                baseline: cx.baseline,
-                color: text_color,
-            },
-            scene.glyphs,
-        );
-
-        if let Some(toggle) = self.toggle {
-            let toggle_label = if self.sessions_show_all {
-                " ALL "
-            } else {
-                " ACTIVE "
-            };
-            let toggle_bg = if self.sessions_show_all {
-                [accent[0], accent[1], accent[2], 0.22]
-            } else {
-                [accent[0], accent[1], accent[2], 0.12]
-            };
-            scene.bg_rects.push(Rect {
-                x: toggle.bg_x,
-                y: toggle.bg_y,
-                w: toggle.bg_w,
-                h: toggle.bg_h,
-                color: toggle_bg,
-            });
-            emit_status_text(
-                scene.atlas,
-                toggle_label,
-                &TextEmitParams {
-                    x_start: toggle.label_x,
-                    y: self.layout.text_y,
-                    cell_width: cx.cell_w,
-                    baseline: cx.baseline,
-                    color: text_color,
-                },
-                scene.glyphs,
-            );
-        }
-
-        let cursor_x =
-            self.layout.text_x + UnicodeWidthStr::width(input_text.as_str()) as f32 * cx.cell_w;
-        scene.bg_rects.push(Rect {
-            x: cursor_x,
-            y: self.layout.text_y,
-            w: 2.0,
-            h: cx.cell_h,
-            color: [fg_color[0], fg_color[1], fg_color[2], 0.8],
-        });
-        scene.bg_rects.push(Rect {
-            x: self.layout.panel_x,
-            y: self.layout.sep_y - 1.0,
-            w: self.layout.panel_w,
-            h: 1.0,
-            color: border_color,
-        });
-
         let selected_bg = [accent[0], accent[1], accent[2], 0.25];
         let hovered_bg = [accent[0], accent[1], accent[2], 0.14];
         let remote_host_color = ThemeConfig::parse_color(&cx.config.theme.cyan);
@@ -270,155 +170,114 @@ impl UiComponent for PaletteComponent {
         let ssh_color = ThemeConfig::parse_color(&cx.config.theme.yellow);
         let slot_color = ThemeConfig::parse_color(&cx.config.theme.green);
 
-        for (idx, row) in self.rows.iter().enumerate() {
-            let row_y = self.layout.sep_y + idx as f32 * self.layout.row_h;
-            if row.is_selected {
-                scene.bg_rects.push(Rect {
-                    x: self.layout.panel_x,
-                    y: row_y,
-                    w: self.layout.panel_w,
-                    h: self.layout.row_h,
-                    color: selected_bg,
-                });
-            } else if row.is_hovered {
-                scene.bg_rects.push(Rect {
-                    x: self.layout.panel_x,
-                    y: row_y,
-                    w: self.layout.panel_w,
-                    h: self.layout.row_h,
-                    color: hovered_bg,
-                });
+        let px = self.layout.panel_x;
+        let pw = self.layout.panel_w;
+        let text_pad = 8.0;
+
+        let mut ui = UiBuilder::new_vertical(
+            px, self.layout.panel_y, pw, self.layout.panel_h, 0.0,
+            0.0, 0.0, false, cx, scene,
+        );
+
+        // Backdrop + frame
+        ui.modal_backdrop([bg_color[0] * 0.5, bg_color[1] * 0.5, bg_color[2] * 0.5, 0.6]);
+        ui.bordered_panel(px, self.layout.panel_y, pw, self.layout.panel_h, bg_color, border_color, 2.0, false);
+
+        // Input row
+        let input_row_h = cx.cell_h + 8.0;
+        ui.horizontal(Some(pw), input_row_h, 0.0, |ui| {
+            let (rx, ry) = ui.cursor_pos();
+            // Slightly lighter bg for input row
+            ui.abs_rect(rx, ry, pw, input_row_h, [bg_color[0] + 0.05, bg_color[1] + 0.05, bg_color[2] + 0.05, 1.0]);
+            let text_y = ry + (input_row_h - cx.cell_h) * 0.5;
+
+            // "> query" text
+            let input_text = format!("> {}", self.query);
+            ui.abs_text(&input_text, rx + text_pad, text_y, fg_color);
+
+            // Cursor
+            let cursor_x = rx + text_pad + ui.text_width(&input_text);
+            ui.abs_rect(cursor_x, text_y, 2.0, cx.cell_h, [fg_color[0], fg_color[1], fg_color[2], 0.8]);
+
+            // Toggle button (ALL/ACTIVE)
+            if let Some(toggle) = self.toggle {
+                let toggle_label = if self.sessions_show_all { " ALL " } else { " ACTIVE " };
+                let toggle_bg = if self.sessions_show_all {
+                    [accent[0], accent[1], accent[2], 0.22]
+                } else {
+                    [accent[0], accent[1], accent[2], 0.12]
+                };
+                ui.abs_rect(toggle.bg_x, toggle.bg_y, toggle.bg_w, toggle.bg_h, toggle_bg);
+                ui.abs_text(toggle_label, toggle.label_x, text_y, fg_color);
             }
-            let row_color = if row.is_selected || row.is_hovered {
-                text_color
-            } else {
-                match row.style {
-                    PaletteRowStyle::Action => dim_color,
-                    PaletteRowStyle::Session => dim_color,
-                    PaletteRowStyle::RemoteHost => remote_host_color,
-                    PaletteRowStyle::RemoteSession => remote_session_color,
-                    PaletteRowStyle::SshShell => ssh_color,
-                    PaletteRowStyle::SwitchSlot => slot_color,
-                    PaletteRowStyle::DirectConnect => remote_host_color,
-                    PaletteRowStyle::SlotSession => remote_session_color,
+        });
+
+        // Separator
+        ui.separator_h(border_color, 0.0);
+
+        // Entry rows — vertical list
+        let row_h = self.layout.row_h;
+        for row in &self.rows {
+            ui.horizontal(Some(pw), row_h, 0.0, |ui| {
+                let (rx, ry) = ui.cursor_pos();
+                // Selection/hover background
+                if row.is_selected {
+                    ui.abs_rect(rx, ry, pw, row_h, selected_bg);
+                } else if row.is_hovered {
+                    ui.abs_rect(rx, ry, pw, row_h, hovered_bg);
                 }
-            };
-            emit_status_text(
-                scene.atlas,
-                &row.label,
-                &TextEmitParams {
-                    x_start: self.layout.text_x,
-                    y: row_y + 2.0,
-                    cell_width: cx.cell_w,
-                    baseline: cx.baseline,
-                    color: row_color,
-                },
-                scene.glyphs,
-            );
+                // Row label (colored by entry kind)
+                let color = if row.is_selected || row.is_hovered {
+                    fg_color
+                } else {
+                    match row.style {
+                        PaletteRowStyle::Action | PaletteRowStyle::Session => dim_color,
+                        PaletteRowStyle::RemoteHost | PaletteRowStyle::DirectConnect => remote_host_color,
+                        PaletteRowStyle::RemoteSession | PaletteRowStyle::SlotSession => remote_session_color,
+                        PaletteRowStyle::SshShell => ssh_color,
+                        PaletteRowStyle::SwitchSlot => slot_color,
+                    }
+                };
+                ui.abs_text(&row.label, rx + text_pad, ry + 2.0, color);
+            });
         }
 
+        // Scrollbar (absolute — overlays the entry list area)
         if self.total_entries > self.layout.visible_rows {
             let track_w = 4.0;
-            let track_x = self.layout.panel_x + self.layout.panel_w - 8.0;
+            let track_x = px + pw - 8.0;
             let track_y = self.layout.sep_y + 2.0;
-            let track_h = self.layout.visible_rows as f32 * self.layout.row_h - 4.0;
-            scene.bg_rects.push(Rect {
-                x: track_x,
-                y: track_y,
-                w: track_w,
-                h: track_h.max(0.0),
-                color: [border_color[0], border_color[1], border_color[2], 0.20],
-            });
+            let track_h = (self.layout.visible_rows as f32 * row_h - 4.0).max(0.0);
+            ui.abs_rect(track_x, track_y, track_w, track_h, [border_color[0], border_color[1], border_color[2], 0.20]);
 
-            let thumb_h = (track_h * (self.layout.visible_rows as f32 / self.total_entries as f32))
-                .max(self.layout.row_h * 0.75);
-            let scroll_offset = if self.selected_idx >= self.layout.visible_rows {
-                self.selected_idx - self.layout.visible_rows + 1
-            } else {
-                0
-            };
-            let thumb_y = track_y
-                + (track_h - thumb_h).max(0.0)
-                    * (scroll_offset as f32
-                        / (self.total_entries - self.layout.visible_rows) as f32);
-            scene.bg_rects.push(Rect {
-                x: track_x,
-                y: thumb_y,
-                w: track_w,
-                h: thumb_h,
-                color: [accent[0], accent[1], accent[2], 0.65],
-            });
+            let thumb_h = (track_h * (self.layout.visible_rows as f32 / self.total_entries as f32)).max(row_h * 0.75);
+            let denom = self.total_entries.saturating_sub(self.layout.visible_rows).max(1);
+            let thumb_y = track_y + (track_h - thumb_h).max(0.0) * (self.scroll_offset as f32 / denom as f32);
+            ui.abs_rect(track_x, thumb_y, track_w, thumb_h, [accent[0], accent[1], accent[2], 0.65]);
         }
 
+        // Footer counter
         let footer = if self.total_entries > 0 {
             format!("{}/{}", self.selected_idx + 1, self.total_entries)
         } else {
             "0/0".to_string()
         };
-        let footer_x =
-            self.layout.panel_x + self.layout.panel_w - (footer.len() as f32 * cx.cell_w) - 12.0;
+        let footer_x = px + pw - ui.text_width(&footer) - 12.0;
         let footer_y = self.layout.panel_y + self.layout.panel_h - cx.cell_h - 2.0;
-        emit_status_text(
-            scene.atlas,
-            &footer,
-            &TextEmitParams {
-                x_start: footer_x,
-                y: footer_y,
-                cell_width: cx.cell_w,
-                baseline: cx.baseline,
-                color: dim_color,
-            },
-            scene.glyphs,
-        );
+        ui.abs_text(&footer, footer_x, footer_y, dim_color);
 
+        // Status messages at bottom of panel
         if self.show_no_matches {
-            emit_status_text(
-                scene.atlas,
-                "No matching commands",
-                &TextEmitParams {
-                    x_start: self.layout.text_x,
-                    y: self.layout.sep_y + 4.0,
-                    cell_width: cx.cell_w,
-                    baseline: cx.baseline,
-                    color: dim_color,
-                },
-                scene.glyphs,
-            );
+            ui.abs_text("No matching commands", px + text_pad, self.layout.sep_y + 4.0, dim_color);
         }
-
         if let Some(ref loading) = self.loading_text {
-            let loading_y = self.layout.panel_y + self.layout.panel_h - cx.cell_h * 2.0 - 4.0;
-            emit_status_text(
-                scene.atlas,
-                loading,
-                &TextEmitParams {
-                    x_start: self.layout.text_x,
-                    y: loading_y,
-                    cell_width: cx.cell_w,
-                    baseline: cx.baseline,
-                    color: [accent[0], accent[1], accent[2], 0.7],
-                },
-                scene.glyphs,
-            );
+            let y = self.layout.panel_y + self.layout.panel_h - cx.cell_h * 2.0 - 4.0;
+            ui.abs_text(loading, px + text_pad, y, [accent[0], accent[1], accent[2], 0.7]);
         }
-
         if let Some(ref error) = self.error_text {
-            let error_y = self.layout.panel_y + self.layout.panel_h - cx.cell_h * 2.0 - 4.0;
-            emit_status_text(
-                scene.atlas,
-                error,
-                &TextEmitParams {
-                    x_start: self.layout.text_x,
-                    y: error_y,
-                    cell_width: cx.cell_w,
-                    baseline: cx.baseline,
-                    color: {
-                        let red = ThemeConfig::parse_color(&cx.config.theme.red);
-                        [red[0], red[1], red[2], 0.9]
-                    },
-                },
-                scene.glyphs,
-            );
+            let y = self.layout.panel_y + self.layout.panel_h - cx.cell_h * 2.0 - 4.0;
+            let red = ThemeConfig::parse_color(&cx.config.theme.red);
+            ui.abs_text(error, px + text_pad, y, [red[0], red[1], red[2], 0.9]);
         }
     }
 }

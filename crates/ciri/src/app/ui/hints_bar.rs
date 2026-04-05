@@ -1,10 +1,8 @@
 use ciri_config::theme::ThemeConfig;
-use ciri_render::rect::Rect;
-use unicode_width::UnicodeWidthStr;
 
+use super::builder::UiBuilder;
 use super::info_box::action_short_label;
 use super::types::{UiComponent, UiContext, UiScene};
-use crate::app::status_bar::{TextEmitParams, emit_status_text};
 use crate::app::App;
 
 struct HintItem {
@@ -120,141 +118,59 @@ impl UiComponent for HintsBarComponent {
         let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
         let dim = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
         let fg = ThemeConfig::parse_color(&cx.config.theme.foreground);
-
-        scene.bg_rects.push(Rect {
-            x: 0.0,
-            y: self.bar_y,
-            w: cx.viewport_w,
-            h: self.bar_h,
-            color: bar_bg,
-        });
-
-        scene.bg_rects.push(Rect {
-            x: 0.0,
-            y: self.bar_y,
-            w: cx.viewport_w,
-            h: 1.0,
-            color: [dim[0], dim[1], dim[2], 0.25],
-        });
-
-        let text_y = self.bar_y + (self.bar_h - cx.cell_h) * 0.5;
+        let sep_color = [dim[0], dim[1], dim[2], 0.25];
         let padding = cx.cell_w;
 
-        let mut x = padding;
+        // Text row is vertically centered within the bar
+        let text_y = self.bar_y + (self.bar_h - cx.cell_h) * 0.5;
 
-        emit_status_text(
-            scene.atlas,
-            "\u{25CF}",
-            &TextEmitParams {
-                x_start: x,
-                y: text_y,
-                cell_width: cx.cell_w,
-                baseline: cx.baseline,
-                color: accent,
-            },
-            scene.glyphs,
+        // Background + separator (absolute, not part of layout flow)
+        let mut ui = UiBuilder::new_horizontal(
+            padding, text_y, cx.viewport_w - padding * 2.0, cx.cell_h, 0.0,
+            0.0, 0.0, false, cx, scene,
         );
-        x += cx.cell_w * 2.0;
+        ui.abs_rect(0.0, self.bar_y, cx.viewport_w, self.bar_h, bar_bg);
+        ui.abs_rect(0.0, self.bar_y, cx.viewport_w, 1.0, sep_color);
 
-        let pane_text = if self.pane_count == 1 {
-            "1 pane".to_string()
-        } else {
-            format!("{} panes", self.pane_count)
-        };
-        emit_status_text(
-            scene.atlas,
-            &pane_text,
-            &TextEmitParams {
-                x_start: x,
-                y: text_y,
-                cell_width: cx.cell_w,
-                baseline: cx.baseline,
-                color: dim,
-            },
-            scene.glyphs,
-        );
-        x += UnicodeWidthStr::width(pane_text.as_str()) as f32 * cx.cell_w;
-
-        if !self.active_pane_title.is_empty() {
-            let sep = " \u{00B7} ";
-            emit_status_text(
-                scene.atlas,
-                sep,
-                &TextEmitParams {
-                    x_start: x,
-                    y: text_y,
-                    cell_width: cx.cell_w,
-                    baseline: cx.baseline,
-                    color: dim,
-                },
-                scene.glyphs,
-            );
-            x += UnicodeWidthStr::width(sep) as f32 * cx.cell_w;
-
-            let title = self.active_pane_title.clone();
-            emit_status_text(
-                scene.atlas,
-                &title,
-                &TextEmitParams {
-                    x_start: x,
-                    y: text_y,
-                    cell_width: cx.cell_w,
-                    baseline: cx.baseline,
-                    color: fg,
-                },
-                scene.glyphs,
-            );
-        }
-
+        // Pre-compute hints total width for right-alignment
         let hint_spacing = cx.cell_w * 2.0;
-        let mut total_hints_w = 0.0_f32;
-        for (i, item) in self.hints.iter().enumerate() {
-            if i > 0 {
-                total_hints_w += hint_spacing;
-            }
-            total_hints_w +=
-                (item.key.chars().count() + 1 + item.label.chars().count()) as f32 * cx.cell_w;
-        }
-
         let max_hints_w = cx.viewport_w * 0.6;
-        let mut rx = cx.viewport_w - padding - total_hints_w.min(max_hints_w);
-
+        let mut hints_w = 0.0_f32;
         for (i, item) in self.hints.iter().enumerate() {
-            if rx > cx.viewport_w - padding {
-                break;
-            }
             if i > 0 {
-                rx += hint_spacing;
+                hints_w += hint_spacing;
             }
-
-            emit_status_text(
-                scene.atlas,
-                &item.key,
-                &TextEmitParams {
-                    x_start: rx,
-                    y: text_y,
-                    cell_width: cx.cell_w,
-                    baseline: cx.baseline,
-                    color: accent,
-                },
-                scene.glyphs,
-            );
-            rx += item.key.chars().count() as f32 * cx.cell_w;
-
-            let label_text = format!(" {}", item.label);
-            emit_status_text(
-                scene.atlas,
-                &label_text,
-                &TextEmitParams {
-                    x_start: rx,
-                    y: text_y,
-                    cell_width: cx.cell_w,
-                    baseline: cx.baseline,
-                    color: dim,
-                },
-                scene.glyphs,
-            );
-            rx += label_text.chars().count() as f32 * cx.cell_w;
+            hints_w += ui.text_width(&item.key) + ui.text_width(&format!(" {}", item.label));
         }
+        hints_w = hints_w.min(max_hints_w);
+
+        // Left side fills remaining space after reserving hints width
+        let left_w = ui.remaining() - hints_w;
+        ui.horizontal(Some(left_w.max(0.0)), cx.cell_h, 0.0, |ui| {
+            ui.label("\u{25CF} ", accent);
+
+            let pane_text = if self.pane_count == 1 {
+                "1 pane".to_string()
+            } else {
+                format!("{} panes", self.pane_count)
+            };
+            ui.label(&pane_text, dim);
+
+            if !self.active_pane_title.is_empty() {
+                ui.label(" \u{00B7} ", dim);
+                ui.label(&self.active_pane_title, fg);
+            }
+        });
+
+        // Right side: hints (key in accent, label in dim)
+        ui.horizontal(Some(hints_w), cx.cell_h, 0.0, |ui| {
+            for (i, item) in self.hints.iter().enumerate() {
+                if i > 0 {
+                    ui.label("  ", dim);
+                }
+                ui.label(&item.key, accent);
+                ui.label(&format!(" {}", item.label), dim);
+            }
+        });
     }
 }

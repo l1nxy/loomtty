@@ -1,8 +1,7 @@
 use ciri_config::theme::ThemeConfig;
-use ciri_render::rect::Rect;
 
+use super::builder::UiBuilder;
 use super::types::{UiAction, UiComponent, UiContext, UiPasteDialogHit, UiScene};
-use crate::app::status_bar::{TextEmitParams, emit_status_text};
 use crate::app::App;
 
 pub(crate) struct PasteDialogComponent {
@@ -93,151 +92,78 @@ impl UiComponent for PasteDialogComponent {
     }
 
     fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        scene.bg_rects.push(Rect {
-            x: 0.0,
-            y: 0.0,
-            w: cx.viewport_w,
-            h: cx.viewport_h,
-            color: [0.0, 0.0, 0.0, 0.5],
-        });
-        scene.bg_rects.push(Rect {
-            x: self.dx,
-            y: self.dy,
-            w: self.dialog_w,
-            h: self.dialog_h,
-            color: [0.12, 0.12, 0.15, 1.0],
-        });
-
         let border_color = ThemeConfig::parse_color(&cx.config.theme.border_active);
-        let border = 1.0;
-        scene.bg_rects.push(Rect {
-            x: self.dx,
-            y: self.dy,
-            w: self.dialog_w,
-            h: border,
-            color: border_color,
-        });
-        scene.bg_rects.push(Rect {
-            x: self.dx,
-            y: self.dy + self.dialog_h - border,
-            w: self.dialog_w,
-            h: border,
-            color: border_color,
-        });
-        scene.bg_rects.push(Rect {
-            x: self.dx,
-            y: self.dy,
-            w: border,
-            h: self.dialog_h,
-            color: border_color,
-        });
-        scene.bg_rects.push(Rect {
-            x: self.dx + self.dialog_w - border,
-            y: self.dy,
-            w: border,
-            h: self.dialog_h,
-            color: border_color,
-        });
-
-        let text_x = self.dx + 16.0;
-        let mut text_y = self.dy + 16.0;
-        emit_status_text(
-            scene.atlas,
-            &self.title,
-            &TextEmitParams {
-                x_start: text_x,
-                y: text_y,
-                cell_width: cx.cell_w,
-                baseline: cx.baseline,
-                color: [0.9, 0.9, 0.9, 1.0],
-            },
-            scene.glyphs,
-        );
-        text_y += cx.cell_h + 12.0;
-        emit_status_text(
-            scene.atlas,
-            "Preview:",
-            &TextEmitParams {
-                x_start: text_x,
-                y: text_y,
-                cell_width: cx.cell_w,
-                baseline: cx.baseline,
-                color: [0.6, 0.6, 0.6, 1.0],
-            },
-            scene.glyphs,
-        );
-        text_y += cx.cell_h + 4.0;
-        scene.bg_rects.push(Rect {
-            x: text_x - 4.0,
-            y: text_y - 2.0,
-            w: self.dialog_w - 24.0,
-            h: cx.cell_h + 4.0,
-            color: [0.08, 0.08, 0.1, 1.0],
-        });
-        emit_status_text(
-            scene.atlas,
-            &self.preview,
-            &TextEmitParams {
-                x_start: text_x,
-                y: text_y,
-                cell_width: cx.cell_w,
-                baseline: cx.baseline,
-                color: [0.6, 0.6, 0.6, 1.0],
-            },
-            scene.glyphs,
-        );
-
         let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
-        let (paste_x, btn_y, btn_w, btn_h) = self.paste_button;
-        let (cancel_x, _, _, _) = self.cancel_button;
-        let paste_bg = if self.hovered_button == Some(super::super::PasteButton::Paste) {
-            [accent[0], accent[1], accent[2], 0.8]
-        } else {
-            [accent[0], accent[1], accent[2], 0.5]
-        };
-        scene.bg_rects.push(Rect {
-            x: paste_x,
-            y: btn_y,
-            w: btn_w,
-            h: btn_h,
-            color: paste_bg,
-        });
-        emit_status_text(
-            scene.atlas,
-            "Paste",
-            &TextEmitParams {
-                x_start: paste_x + (btn_w - cx.cell_w * 5.0) / 2.0,
-                y: btn_y + (btn_h - cx.cell_h) / 2.0,
-                cell_width: cx.cell_w,
-                baseline: cx.baseline,
-                color: [1.0, 1.0, 1.0, 1.0],
-            },
-            scene.glyphs,
+        let bw = 1.0;
+        let pad = 16.0;
+        let content_w = self.dialog_w - pad * 2.0;
+        let btn_w = 100.0;
+        let btn_h = cx.cell_h + 12.0;
+
+        let mut ui = UiBuilder::new_vertical(
+            self.dx + pad, self.dy + pad, content_w, self.dialog_h - pad * 2.0, 0.0,
+            0.0, 0.0, false, cx, scene,
         );
 
-        let cancel_bg = if self.hovered_button == Some(super::super::PasteButton::Cancel) {
-            [0.4, 0.4, 0.4, 0.8]
-        } else {
-            [0.3, 0.3, 0.3, 0.5]
-        };
-        scene.bg_rects.push(Rect {
-            x: cancel_x,
-            y: btn_y,
-            w: btn_w,
-            h: btn_h,
-            color: cancel_bg,
-        });
-        emit_status_text(
-            scene.atlas,
-            "Cancel",
-            &TextEmitParams {
-                x_start: cancel_x + (btn_w - cx.cell_w * 6.0) / 2.0,
-                y: btn_y + (btn_h - cx.cell_h) / 2.0,
-                cell_width: cx.cell_w,
-                baseline: cx.baseline,
-                color: [0.9, 0.9, 0.9, 1.0],
-            },
-            scene.glyphs,
+        // Full-screen dimmed backdrop + dialog frame
+        ui.modal_backdrop([0.0, 0.0, 0.0, 0.5]);
+        ui.bordered_panel_inset(
+            self.dx, self.dy, self.dialog_w, self.dialog_h,
+            [0.12, 0.12, 0.15, 1.0], border_color, bw, false,
         );
+
+        // Title
+        ui.label(&self.title, [0.9, 0.9, 0.9, 1.0]);
+        ui.bg_rect(content_w, 12.0, [0.0; 4]); // spacing
+
+        // "Preview:" label
+        ui.label("Preview:", [0.6, 0.6, 0.6, 1.0]);
+        ui.bg_rect(content_w, 4.0, [0.0; 4]); // spacing
+
+        // Preview box
+        let (_, preview_y) = ui.cursor_pos();
+        ui.abs_rect(
+            self.dx + pad - 4.0, preview_y - 2.0,
+            content_w + 8.0, cx.cell_h + 4.0,
+            [0.08, 0.08, 0.1, 1.0],
+        );
+        ui.label(&self.preview, [0.6, 0.6, 0.6, 1.0]);
+
+        // Push buttons to bottom
+        ui.spacer();
+
+        // Button row — centered horizontally
+        ui.horizontal(Some(content_w), btn_h, 0.0, |ui| {
+            let total_btn_w = btn_w * 2.0 + pad;
+            let left_pad = (content_w - total_btn_w) / 2.0;
+            ui.bg_rect(left_pad, btn_h, [0.0; 4]); // center offset
+
+            let paste_bg = if self.hovered_button == Some(super::super::PasteButton::Paste) {
+                [accent[0], accent[1], accent[2], 0.8]
+            } else {
+                [accent[0], accent[1], accent[2], 0.5]
+            };
+            let (px, py) = ui.cursor_pos();
+            ui.abs_rect(px, py, btn_w, btn_h, paste_bg);
+            let text_y = py + (btn_h - cx.cell_h) / 2.0;
+            let text_x = px + (btn_w - ui.text_width("Paste")) / 2.0;
+            ui.abs_text("Paste", text_x, text_y, [1.0, 1.0, 1.0, 1.0]);
+            ui.bg_rect(btn_w, btn_h, [0.0; 4]); // advance past paste button
+
+            ui.bg_rect(pad, btn_h, [0.0; 4]); // gap between buttons
+
+            let cancel_bg = if self.hovered_button == Some(super::super::PasteButton::Cancel) {
+                [0.4, 0.4, 0.4, 0.8]
+            } else {
+                [0.3, 0.3, 0.3, 0.5]
+            };
+            let (cx2, cy2) = ui.cursor_pos();
+            ui.abs_rect(cx2, cy2, btn_w, btn_h, cancel_bg);
+            let text_y = cy2 + (btn_h - cx.cell_h) / 2.0;
+            let text_x = cx2 + (btn_w - ui.text_width("Cancel")) / 2.0;
+            ui.abs_text("Cancel", text_x, text_y, [0.9, 0.9, 0.9, 1.0]);
+        });
+
+        ui.bg_rect(content_w, 8.0, [0.0; 4]); // bottom spacing
     }
 }

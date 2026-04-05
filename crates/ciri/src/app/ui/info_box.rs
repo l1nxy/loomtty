@@ -1,10 +1,9 @@
 use ciri_config::config::StatusBarPosition;
 use ciri_config::theme::ThemeConfig;
-use ciri_render::rect::Rect;
 use unicode_width::UnicodeWidthStr;
 
+use super::builder::UiBuilder;
 use super::types::{UiComponent, UiContext, UiScene};
-use crate::app::status_bar::{TextEmitParams, emit_status_text};
 use crate::app::App;
 
 pub(crate) struct InfoBoxComponent {
@@ -166,114 +165,51 @@ impl UiComponent for InfoBoxComponent {
         let padding = cx.cell_w;
         let row_h = cx.cell_h * 1.3;
         let bw = 1.0f32;
-
-        scene.bg_rects.push(Rect {
-            x: self.x + 3.0,
-            y: self.y + 3.0,
-            w: self.w,
-            h: self.h,
-            color: [0.0, 0.0, 0.0, 0.4],
-        });
-        scene.bg_rects.push(Rect {
-            x: self.x,
-            y: self.y,
-            w: self.w,
-            h: self.h,
-            color: [bg[0] * 0.85, bg[1] * 0.85, bg[2] * 0.85, 0.97],
-        });
-        scene.bg_rects.push(Rect {
-            x: self.x,
-            y: self.y,
-            w: self.w,
-            h: bw,
-            color: accent,
-        });
-        scene.bg_rects.push(Rect {
-            x: self.x,
-            y: self.y + self.h - bw,
-            w: self.w,
-            h: bw,
-            color: accent,
-        });
-        scene.bg_rects.push(Rect {
-            x: self.x,
-            y: self.y,
-            w: bw,
-            h: self.h,
-            color: accent,
-        });
-        scene.bg_rects.push(Rect {
-            x: self.x + self.w - bw,
-            y: self.y,
-            w: bw,
-            h: self.h,
-            color: accent,
-        });
-
         let title_h = cx.cell_h + 2.0;
-        scene.bg_rects.push(Rect {
-            x: self.x + bw,
-            y: self.y + bw,
-            w: self.w - bw * 2.0,
-            h: title_h,
-            color: [accent[0], accent[1], accent[2], 0.2],
-        });
+        let content_w = self.w - bw * 2.0;
 
-        let title_text = format!(" {} ", self.title);
-        let title_y = self.y + bw + (title_h - cx.cell_h) * 0.5;
-        emit_status_text(
-            scene.atlas,
-            &title_text,
-            &TextEmitParams {
-                x_start: self.x + padding,
-                y: title_y,
-                cell_width: cx.cell_w,
-                baseline: cx.baseline,
-                color: accent,
-            },
-            scene.glyphs,
+        let mut ui = UiBuilder::new_vertical(
+            self.x + bw, self.y + bw, content_w, self.h - bw * 2.0, 0.0,
+            0.0, 0.0, false, cx, scene,
         );
 
-        let key_col_chars = self
-            .rows
-            .iter()
+        // Shadow + border + background
+        let bg_color = [bg[0] * 0.85, bg[1] * 0.85, bg[2] * 0.85, 0.97];
+        ui.bordered_panel_inset(self.x, self.y, self.w, self.h, bg_color, accent, bw, true);
+
+        // Title row (tinted background + text)
+        ui.horizontal(Some(content_w), title_h, 0.0, |ui| {
+            let (rx, ry) = ui.cursor_pos();
+            ui.abs_rect(rx, ry, content_w, title_h, [accent[0], accent[1], accent[2], 0.2]);
+            let text_y = ry + (title_h - cx.cell_h) * 0.5;
+            ui.abs_text(&format!(" {} ", self.title), rx + padding, text_y, accent);
+        });
+
+        ui.bg_rect(content_w, 4.0, [0.0; 4]); // spacing after title
+
+        // Key-action rows — right-align keys within a fixed column
+        let key_col_chars = self.rows.iter()
             .map(|(k, _)| UnicodeWidthStr::width(k.as_str()))
             .max()
             .unwrap_or(0);
+        let key_col_w = (key_col_chars as f32 + 1.0) * cx.cell_w;
+        let gap_w = cx.cell_w;
 
-        let content_y = self.y + bw + title_h + 4.0;
-        for (i, (key, desc)) in self.rows.iter().enumerate() {
-            let ry = content_y + i as f32 * row_h;
-            let text_y = ry + (row_h - cx.cell_h) * 0.5;
+        for (key, desc) in &self.rows {
+            ui.horizontal(Some(content_w), row_h, 0.0, |ui| {
+                let (_, ry) = ui.cursor_pos();
+                let text_y = ry + (row_h - cx.cell_h) * 0.5;
 
-            let key_chars = UnicodeWidthStr::width(key.as_str());
-            let key_offset = (key_col_chars - key_chars) as f32 * cx.cell_w;
-            emit_status_text(
-                scene.atlas,
-                key,
-                &TextEmitParams {
-                    x_start: self.x + padding + key_offset,
-                    y: text_y,
-                    cell_width: cx.cell_w,
-                    baseline: cx.baseline,
-                    color: accent,
-                },
-                scene.glyphs,
-            );
+                // Right-align key within key column
+                let key_chars = UnicodeWidthStr::width(key.as_str());
+                let key_offset = (key_col_chars - key_chars) as f32 * cx.cell_w;
+                let key_x = ui.cursor_pos().0 + padding + key_offset;
+                ui.abs_text(key, key_x, text_y, accent);
 
-            let desc_x = self.x + padding + (key_col_chars as f32 + 2.0) * cx.cell_w;
-            emit_status_text(
-                scene.atlas,
-                desc,
-                &TextEmitParams {
-                    x_start: desc_x,
-                    y: text_y,
-                    cell_width: cx.cell_w,
-                    baseline: cx.baseline,
-                    color: if key == "esc" { dim } else { fg },
-                },
-                scene.glyphs,
-            );
+                // Description after key column + gap
+                let desc_x = ui.cursor_pos().0 + padding + key_col_w + gap_w;
+                ui.abs_text(desc, desc_x, text_y, if key == "esc" { dim } else { fg });
+            });
         }
     }
 }

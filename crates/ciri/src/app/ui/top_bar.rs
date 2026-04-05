@@ -1,9 +1,9 @@
 use ciri_config::config::StatusBarPosition;
 use ciri_config::theme::ThemeConfig;
-use ciri_render::rect::Rect;
+use unicode_width::UnicodeWidthStr;
 
+use super::builder::UiBuilder;
 use super::types::{UiAction, UiComponent, UiContext, UiScene, UiTopBarHit};
-use crate::app::status_bar::{TextEmitParams, emit_status_text};
 use crate::app::top_bar::{PaneTabLayout, TopBarLayout};
 use crate::app::{App, TopBarHoverRegion};
 
@@ -87,11 +87,8 @@ impl UiComponent for TopBarComponent {
     }
 
     fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let padding = if let Some(px) = cx.config.statusbar.height_padding {
-            px
-        } else {
-            cx.cell_h * cx.config.statusbar.padding_ratio
-        };
+        let padding = cx.config.statusbar.height_padding
+            .unwrap_or(cx.cell_h * cx.config.statusbar.padding_ratio);
         let bar_height = cx.cell_h + padding;
         let text_y = self.layout.bar_y + padding * 0.5;
         let bar_bg = ThemeConfig::parse_color(&cx.config.theme.statusbar_background);
@@ -99,189 +96,103 @@ impl UiComponent for TopBarComponent {
         let dim = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
         let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
         let broadcast_color = ThemeConfig::parse_color(&cx.config.theme.mode_broadcast);
+        let sep_color = [dim[0], dim[1], dim[2], 0.25];
+        let separator_color = [dim[0], dim[1], dim[2], 0.3];
 
-        scene.bg_rects.push(Rect {
-            x: 0.0,
-            y: self.layout.bar_y,
-            w: cx.viewport_w,
-            h: bar_height,
-            color: bar_bg,
-        });
+        // Pre-compute right side width for three-zone split
+        let mode_w = self.mode_label.chars().count() as f32 * cx.cell_w;
+        let ws_w = if self.workspace_label.is_empty() { 0.0 }
+                   else { UnicodeWidthStr::width(self.workspace_label.as_str()) as f32 * cx.cell_w };
+        let right_w = mode_w + ws_w;
+        let session_w = self.layout.session_w;
+        let tabs_area_w = (cx.viewport_w - session_w - right_w).max(0.0);
 
+        let mut ui = UiBuilder::new_horizontal(
+            0.0, text_y, cx.viewport_w, cx.cell_h, 0.0,
+            0.0, 0.0, false, cx, scene,
+        );
+
+        // Bar background + separator (absolute decorations)
+        ui.abs_rect(0.0, self.layout.bar_y, cx.viewport_w, bar_height, bar_bg);
         let sep_y = match cx.config.statusbar.position {
             StatusBarPosition::Top => self.layout.bar_y + bar_height - 1.0,
             StatusBarPosition::Bottom => self.layout.bar_y,
         };
-        scene.bg_rects.push(Rect {
-            x: 0.0,
-            y: sep_y,
-            w: cx.viewport_w,
-            h: 1.0,
-            color: [dim[0], dim[1], dim[2], 0.25],
-        });
+        ui.abs_rect(0.0, sep_y, cx.viewport_w, 1.0, sep_color);
 
-        let session_color = if self.hovered_region == Some(TopBarHoverRegion::Session) {
-            fg
-        } else {
-            dim
-        };
-        emit_status_text(
-            scene.atlas,
-            &self.session_text,
-            &TextEmitParams {
-                x_start: 0.0,
-                y: text_y,
-                cell_width: cx.cell_w,
-                baseline: cx.baseline,
-                color: session_color,
-            },
-            scene.glyphs,
-        );
+        // === Left zone: session name ===
+        let session_color = if self.hovered_region == Some(TopBarHoverRegion::Session) { fg } else { dim };
+        ui.label(&self.session_text, session_color);
 
-        if !self.workspace_label.is_empty() {
-            emit_status_text(
-                scene.atlas,
-                &self.workspace_label,
-                &TextEmitParams {
-                    x_start: self.layout.workspace_x,
-                    y: text_y,
-                    cell_width: cx.cell_w,
-                    baseline: cx.baseline,
-                    color: accent,
-                },
-                scene.glyphs,
-            );
-        }
-
+        // === Middle zone: pane tabs (scrollable, clipped) ===
+        let tabs_start_x = ui.cursor_pos().0;
+        let tabs_end_x = tabs_start_x + tabs_area_w;
         let indicator_thickness = 1.5_f32;
-        let tabs_start_x = self.layout.session_x + self.layout.session_w;
-        let tabs_end_x = tabs_start_x + self.layout.tabs_area_px;
         let indicator_y = match cx.config.statusbar.position {
             StatusBarPosition::Top => self.layout.bar_y + bar_height - indicator_thickness,
             StatusBarPosition::Bottom => self.layout.bar_y,
         };
-
-        let separator_w = 1.0_f32;
-        let separator_color = [dim[0], dim[1], dim[2], 0.3];
         let separator_inset = bar_height * 0.2;
 
+        // Reserve tab area in the layout (cursor advances past it)
+        ui.bg_rect(tabs_area_w, cx.cell_h, [0.0; 4]);
+
+        // Draw tabs with absolute positioning (they use scroll offset + clipping)
         for tab in &self.pane_tabs {
             let hovered = self.hovered_pane_tab == Some(tab.pane_id);
             let visible_left = tab.x.max(tabs_start_x);
             let visible_right = (tab.x + tab.w).min(tabs_end_x);
             let visible_w = (visible_right - visible_left).max(0.0);
-            if visible_w <= 0.0 {
-                continue;
-            }
+            if visible_w <= 0.0 { continue; }
 
-            let sep_x = tab.x;
-            if sep_x > tabs_start_x - 1.0 && sep_x < tabs_end_x {
-                scene.bg_rects.push(Rect {
-                    x: sep_x - separator_w * 0.5,
-                    y: self.layout.bar_y + separator_inset,
-                    w: separator_w,
-                    h: bar_height - separator_inset * 2.0,
-                    color: separator_color,
-                });
+            // Separator
+            if tab.x > tabs_start_x - 1.0 && tab.x < tabs_end_x {
+                ui.abs_rect(tab.x - 0.5, self.layout.bar_y + separator_inset, 1.0, bar_height - separator_inset * 2.0, separator_color);
             }
-
+            // Active indicator
             if tab.active {
-                scene.bg_rects.push(Rect {
-                    x: visible_left,
-                    y: indicator_y,
-                    w: visible_w,
-                    h: indicator_thickness,
-                    color: accent,
-                });
+                ui.abs_rect(visible_left, indicator_y, visible_w, indicator_thickness, accent);
             }
-
-            let tab_text_color = if tab.active || hovered { fg } else { dim };
-            if let Some((label, label_x)) = clip_tab_label(
-                &tab.label,
-                tab.x,
-                tab.w,
-                cx.cell_w,
-                tabs_start_x,
-                tabs_end_x,
-            ) {
-                emit_status_text(
-                    scene.atlas,
-                    &label,
-                    &TextEmitParams {
-                        x_start: label_x,
-                        y: text_y,
-                        cell_width: cx.cell_w,
-                        baseline: cx.baseline,
-                        color: tab_text_color,
-                    },
-                    scene.glyphs,
-                );
+            // Clipped label
+            let color = if tab.active || hovered { fg } else { dim };
+            if let Some((label, label_x)) = clip_tab_label(&tab.label, tab.x, tab.w, cx.cell_w, tabs_start_x, tabs_end_x) {
+                ui.abs_text(&label, label_x, text_y, color);
             }
         }
 
-        let fade_w = (cx.cell_w * 3.0).min(self.layout.tabs_area_px * 0.25);
+        // Fade gradients
+        let fade_w = (cx.cell_w * 3.0).min(tabs_area_w * 0.25);
         if fade_w > 0.0 {
             if self.tab_scroll > 0.5 {
                 for i in 0..4 {
                     let alpha = 0.22 * (1.0 - i as f32 / 4.0);
-                    let strip_w = fade_w / 4.0 + 1.0;
-                    scene.bg_rects.push(Rect {
-                        x: tabs_start_x + i as f32 * (fade_w / 4.0),
-                        y: self.layout.bar_y,
-                        w: strip_w,
-                        h: bar_height,
-                        color: [bar_bg[0], bar_bg[1], bar_bg[2], alpha],
-                    });
+                    ui.abs_rect(tabs_start_x + i as f32 * (fade_w / 4.0), self.layout.bar_y, fade_w / 4.0 + 1.0, bar_height, [bar_bg[0], bar_bg[1], bar_bg[2], alpha]);
                 }
             }
             if self.tab_scroll < self.tab_scroll_max - 0.5 {
                 for i in 0..4 {
                     let alpha = 0.22 * (i as f32 + 1.0) / 4.0;
-                    let strip_w = fade_w / 4.0 + 1.0;
-                    scene.bg_rects.push(Rect {
-                        x: tabs_end_x - fade_w + i as f32 * (fade_w / 4.0),
-                        y: self.layout.bar_y,
-                        w: strip_w,
-                        h: bar_height,
-                        color: [bar_bg[0], bar_bg[1], bar_bg[2], alpha],
-                    });
+                    ui.abs_rect(tabs_end_x - fade_w + i as f32 * (fade_w / 4.0), self.layout.bar_y, fade_w / 4.0 + 1.0, bar_height, [bar_bg[0], bar_bg[1], bar_bg[2], alpha]);
                 }
             }
         }
 
-        let mode_str = self.mode_label.as_str();
-        let mode_chars = mode_str.chars().count();
-        let rx = cx.viewport_w - mode_chars as f32 * cx.cell_w;
-        emit_status_text(
-            scene.atlas,
-            mode_str,
-            &TextEmitParams {
-                x_start: rx,
-                y: text_y,
-                cell_width: cx.cell_w,
-                baseline: cx.baseline,
-                color: self.mode_color,
-            },
-            scene.glyphs,
-        );
+        // === Right zone: workspace + mode ===
+        if !self.workspace_label.is_empty() {
+            let ws_color = if self.hovered_region == Some(TopBarHoverRegion::Workspace) { fg } else { accent };
+            ui.label(&self.workspace_label, ws_color);
+        }
+        ui.label(&self.mode_label, self.mode_color);
 
+        // Leader/broadcast/overview indicator strip (absolute, below/above bar)
         if self.is_leader || self.is_broadcast || self.is_overview {
             let indicator_h = cx.cell_h * cx.config.statusbar.leader_indicator_ratio;
-            let indicator_color = if self.is_broadcast {
-                broadcast_color
-            } else {
-                accent
+            let indicator_color = if self.is_broadcast { broadcast_color } else { accent };
+            let band_y = match cx.config.statusbar.position {
+                StatusBarPosition::Top => self.layout.bar_y + bar_height,
+                StatusBarPosition::Bottom => self.layout.bar_y - indicator_h,
             };
-            scene.bg_rects.push(Rect {
-                x: 0.0,
-                y: match cx.config.statusbar.position {
-                    StatusBarPosition::Top => self.layout.bar_y + bar_height,
-                    StatusBarPosition::Bottom => self.layout.bar_y - indicator_h,
-                },
-                w: cx.viewport_w,
-                h: indicator_h,
-                color: indicator_color,
-            });
+            ui.abs_rect(0.0, band_y, cx.viewport_w, indicator_h, indicator_color);
         }
     }
 }

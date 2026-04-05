@@ -649,7 +649,10 @@ async fn frame_roundtrip_full_pane_sync_lz4() {
             assert_eq!(decoded.cols, 80);
             assert_eq!(decoded.rows, 24);
             assert_eq!(decoded.title, "bash");
-            assert_eq!(decoded.cells.len(), 80 * 24);
+            // Verify viewport SM data can be decoded to correct cell count.
+            let mut cells = vec![PackedCell::default(); 80 * 24];
+            let n = decode_sm_cells(decoded.viewport_sm_data(), &mut cells).unwrap();
+            assert_eq!(n, 80 * 24);
             assert_eq!(decoded.cwd.as_deref(), Some("/home/user"));
         }
         _ => panic!("expected FullPaneSync frame, got {:?}", frame),
@@ -763,7 +766,7 @@ fn decode_cell_delta_rejects_truncated_region_data() {
 
     let err = decode_cell_delta_borrowed(payload).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    assert!(err.to_string().contains("truncated SM data"));
+    assert!(err.to_string().contains("truncated"));
 }
 
 #[tokio::test]

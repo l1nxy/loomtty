@@ -45,12 +45,10 @@ pub fn pack_cell(cell: &alacritty_terminal::term::cell::Cell) -> PackedCell {
     if cell.flags.contains(CellFlags::WRAPLINE) {
         flags |= FLAG_WRAPLINE;
     }
-    let mut packed = PackedCell {
-        ch_bytes: [0; 4],
-        fg,
-        bg,
-        flags: flags.to_le_bytes(),
-    };
+    let mut packed = PackedCell::default();
+    packed.fg = fg;
+    packed.bg = bg;
+    packed.flags = flags.to_le_bytes();
     packed.set_ch(cell.c);
     packed
 }

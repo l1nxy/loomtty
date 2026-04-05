@@ -97,7 +97,7 @@ fn grid_with_scrollback() -> ClientPaneGrid {
             hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
             cwd: None,
         };
-        grid.apply_full_sync(&sync);
+        grid.apply_full_sync_owned(&sync);
     }
     // scrollback: ['a'x4, 'b'x4, 'c'x4], viewport: ['C'x4, 'C'x4]
     grid
@@ -250,7 +250,7 @@ fn full_sync_dimension_change_preserves_scrollback() {
         hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
         cwd: None,
     };
-    grid.apply_full_sync(&sync);
+    grid.apply_full_sync_owned(&sync);
     assert_eq!(grid.cols, 6);
     assert_eq!(grid.rows, 3);
     assert_eq!(grid.scrollback.len(), 3); // preserved across resize
@@ -295,7 +295,7 @@ fn full_sync_dimension_change_rebases_grapheme_indices() {
         hyperlink_extras: HyperlinkExtras::new(),
         cwd: None,
     };
-    grid.apply_full_sync(&sync);
+    grid.apply_full_sync_owned(&sync);
     assert_eq!(
         grid.grapheme_map.get(&4).map(String::as_str),
         Some("A\u{0301}")
@@ -322,7 +322,7 @@ fn full_sync_dimension_change_rebases_grapheme_indices() {
         hyperlink_extras: HyperlinkExtras::new(),
         cwd: None,
     };
-    grid.apply_full_sync(&resize_sync);
+    grid.apply_full_sync_owned(&resize_sync);
 
     assert_eq!(
         grid.grapheme_map.get(&2).map(String::as_str),
@@ -355,7 +355,7 @@ fn full_sync_short_cells_blanks_remainder() {
         hyperlink_extras: HyperlinkExtras::new(),
         cwd: None,
     };
-    grid.apply_full_sync(&sync);
+    grid.apply_full_sync_owned(&sync);
     assert_eq!(grid.viewport[0].ch(), 'A');
     assert_eq!(grid.viewport[2].ch(), 'A');
     assert_eq!(grid.viewport[3].ch(), ' '); // default blank
@@ -388,7 +388,7 @@ fn full_sync_scrollback_trimmed_to_max() {
             hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
             cwd: None,
         };
-        grid.apply_full_sync(&sync);
+        grid.apply_full_sync_owned(&sync);
     }
     // Should keep only the last 3 scrollback rows
     assert_eq!(grid.scrollback.len(), 3);
@@ -422,7 +422,7 @@ fn full_sync_same_width_trim_rebases_grapheme_indices() {
         hyperlink_extras: HyperlinkExtras::new(),
         cwd: None,
     };
-    grid.apply_full_sync(&initial_sync);
+    grid.apply_full_sync_owned(&initial_sync);
     assert_eq!(grid.scrollback.len(), 0);
     assert_eq!(
         grid.grapheme_map.get(&0).map(String::as_str),
@@ -454,7 +454,7 @@ fn full_sync_same_width_trim_rebases_grapheme_indices() {
         hyperlink_extras: HyperlinkExtras::new(),
         cwd: None,
     };
-    grid.apply_full_sync(&overflow_sync);
+    grid.apply_full_sync_owned(&overflow_sync);
     assert_eq!(grid.scrollback.len(), 1);
     assert_eq!(
         grid.grapheme_map.get(&0).map(String::as_str),
@@ -482,7 +482,7 @@ fn full_sync_same_width_trim_rebases_grapheme_indices() {
         hyperlink_extras: HyperlinkExtras::new(),
         cwd: None,
     };
-    grid.apply_full_sync(&trim_sync);
+    grid.apply_full_sync_owned(&trim_sync);
 
     assert_eq!(grid.scrollback.len(), 1);
     assert_eq!(grid.scrollback[0].cells[0].ch(), 'm');
@@ -519,7 +519,7 @@ fn full_sync_clamps_scroll_offset() {
             hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
             cwd: None,
         };
-        grid.apply_full_sync(&sync);
+        grid.apply_full_sync_owned(&sync);
     }
     assert_eq!(grid.scrollback.len(), 4);
     grid.scroll_up(4); // scroll to top
@@ -547,7 +547,7 @@ fn full_sync_clamps_scroll_offset() {
         hyperlink_extras: ciri_protocol::message::HyperlinkExtras::new(),
         cwd: None,
     };
-    grid.apply_full_sync(&sync);
+    grid.apply_full_sync_owned(&sync);
     assert_eq!(grid.scroll_offset, 0); // reset by dimension change
     assert_eq!(grid.scrollback.len(), 4); // scrollback preserved
 }
@@ -557,7 +557,7 @@ fn scrollback_replace_clears_and_repopulates() {
     let mut grid = ClientPaneGrid::new(4, 2, 10);
     // Accumulate 3 scrollback rows: 'a', 'b', 'c'
     for ch in ['a', 'b', 'c'] {
-        grid.apply_full_sync(&FullPaneSync {
+        grid.apply_full_sync_owned(&FullPaneSync {
             meta: PaneFrameMeta {
                 pane_id: 1,
                 generation: 1,
@@ -583,7 +583,7 @@ fn scrollback_replace_clears_and_repopulates() {
     assert_eq!(grid.scrollback[0].cells[0].ch(), 'a');
 
     // Now apply a replace sync with 2 rows: 'X', 'Y'
-    grid.apply_full_sync(&FullPaneSync {
+    grid.apply_full_sync_owned(&FullPaneSync {
         meta: PaneFrameMeta {
             pane_id: 1,
             generation: 2,
@@ -751,7 +751,7 @@ fn text_in_range_spans_scrollback_and_viewport() {
         hyperlink_extras: HyperlinkExtras::new(),
         cwd: None,
     };
-    grid.apply_full_sync(&sync);
+    grid.apply_full_sync_owned(&sync);
     // buffer_row 0 = scrollback 'abc', buffer_row 1 = viewport 'XYZ'
     let text = grid.text_in_range((0, 0), (2, 1));
     assert_eq!(text, "abc\nXYZ");
@@ -795,7 +795,7 @@ fn search_finds_in_scrollback_and_viewport() {
         hyperlink_extras: HyperlinkExtras::new(),
         cwd: None,
     };
-    grid.apply_full_sync(&sync);
+    grid.apply_full_sync_owned(&sync);
     let results = grid.search("hello");
     assert_eq!(results.len(), 2); // found in both scrollback row 0 and viewport row 1
     assert_eq!(results[0].0, 0); // scrollback row
@@ -924,7 +924,7 @@ fn word_bounds_on_viewport_row() {
         hyperlink_extras: HyperlinkExtras::new(),
         cwd: None,
     };
-    grid.apply_full_sync(&sync);
+    grid.apply_full_sync_owned(&sync);
     // buffer_row 1 = viewport row → "ab cd"
     assert_eq!(grid.word_bounds_at(0, 1), Some((0, 1))); // "ab"
     assert_eq!(grid.word_bounds_at(3, 1), Some((3, 4))); // "cd"
@@ -992,7 +992,7 @@ fn full_sync_populates_viewport_and_scrollback() {
         hyperlink_extras: HyperlinkExtras::new(),
         cwd: None,
     };
-    grid.apply_full_sync(&sync);
+    grid.apply_full_sync_owned(&sync);
     assert_eq!(grid.scrollback.len(), 1);
     assert_eq!(grid.viewport[0].ch(), 'A');
     assert_eq!(grid.viewport[7].ch(), 'H');
@@ -1058,7 +1058,7 @@ fn reflow_widen_joins_wrapped_rows() {
         hyperlink_extras: HyperlinkExtras::new(),
         cwd: None,
     };
-    grid.apply_full_sync(&sync);
+    grid.apply_full_sync_owned(&sync);
 
     // Should reflow to 1 row: "ABCDEF  " (not wrapped)
     assert_eq!(grid.scrollback.len(), 1);
@@ -1105,7 +1105,7 @@ fn reflow_narrow_splits_long_line() {
         hyperlink_extras: HyperlinkExtras::new(),
         cwd: None,
     };
-    grid.apply_full_sync(&sync);
+    grid.apply_full_sync_owned(&sync);
 
     // Should reflow to 2 rows: "ABC" (wrapped) + "DEF" (not wrapped)
     assert_eq!(grid.scrollback.len(), 2);
@@ -1162,7 +1162,7 @@ fn reflow_preserves_unwrapped_lines() {
         hyperlink_extras: HyperlinkExtras::new(),
         cwd: None,
     };
-    grid.apply_full_sync(&sync);
+    grid.apply_full_sync_owned(&sync);
 
     assert_eq!(grid.scrollback.len(), 2);
     assert_eq!(grid.scrollback[0].cells[0].ch(), 'A');
@@ -1323,7 +1323,7 @@ fn osc8_link_at_scrollback_returns_none() {
         hyperlink_extras: HyperlinkExtras::new(),
         cwd: None,
     };
-    grid.apply_full_sync(&sync);
+    grid.apply_full_sync_owned(&sync);
 
     // Even if we manually poke hyperlink_cell_map with index 0, buffer_row 0
     // is scrollback so osc8_link_at should return None
@@ -1574,7 +1574,7 @@ fn delta_sync_evicts_overwritten_hyperlink_cells() {
         },
         cwd: None,
     };
-    grid.apply_full_sync(&sync);
+    grid.apply_full_sync_owned(&sync);
 
     // Verify OSC 8 link works
     let m = grid.link_at(2, 0).unwrap();

@@ -287,7 +287,7 @@ pub struct ConnectionSlot {
 pub enum ServerEvent {
     Control(ServerMessage),
     CellDelta(CellDeltaBorrowed),
-    FullPaneSync(FullPaneSync),
+    FullPaneSync(FullPaneSyncBorrowed),
     Disconnected,
 }
 

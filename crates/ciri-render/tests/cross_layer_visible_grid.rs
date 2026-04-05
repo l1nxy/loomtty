@@ -63,7 +63,7 @@ fn protocol_client_render_visible_grid_invariants_stay_aligned() {
         cwd: Some("/tmp/ciri".into()),
     };
 
-    grid.apply_full_sync(&sync);
+    grid.apply_full_sync_owned(&sync);
     grid.scroll_up(1);
 
     let visible = grid.visible_cells();

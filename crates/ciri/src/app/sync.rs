@@ -504,8 +504,8 @@ mod tests {
         }
     }
 
-    fn blank_full_sync(pane_id: u64, generation: u64, title: &str) -> FullPaneSync {
-        FullPaneSync {
+    fn blank_full_sync(pane_id: u64, generation: u64, title: &str) -> FullPaneSyncBorrowed {
+        let sync = FullPaneSync {
             meta: PaneFrameMeta {
                 pane_id,
                 generation,
@@ -525,7 +525,8 @@ mod tests {
             grapheme_extras: GraphemeExtras::new(),
             hyperlink_extras: HyperlinkExtras::new(),
             cwd: None,
-        }
+        };
+        ciri_protocol::codec::full_pane_sync_to_borrowed(&sync).unwrap()
     }
 
     #[test]

@@ -5,7 +5,9 @@ use std::io;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use super::cell_delta::decode_cell_delta_borrowed;
-use super::full_sync::{decode_full_pane_sync, encode_full_pane_sync_payload};
+use super::full_sync::{
+    decode_full_pane_sync, decode_full_pane_sync_borrowed, encode_full_pane_sync_payload,
+};
 
 // ─── Frame tags ─────────────────────────────────────────────────────
 
@@ -142,13 +144,32 @@ pub enum Frame {
     ClientMsg(ClientMessage),
     ServerMsg(ServerMessage),
     CellDelta(CellDeltaBorrowed),
-    FullPaneSync(FullPaneSync),
+    FullPaneSync(FullPaneSyncBorrowed),
 }
 
 pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Frame> {
     let header = read_frame_header(reader).await?;
     let payload = read_frame_payload(reader, header.1).await?;
     let tag = header.0;
+    decode_frame(tag, payload)
+}
+
+/// Read a frame, reusing an existing buffer to avoid per-frame allocation.
+///
+/// The buffer is resized (not reallocated if capacity suffices) and filled
+/// with the payload. After decoding, borrowed frame types (CellDelta,
+/// FullPaneSync) take ownership of the buffer; the caller should reclaim it
+/// via `into_payload()` and pass it back on the next call.
+pub async fn read_frame_reuse<R: AsyncRead + Unpin>(
+    reader: &mut R,
+    buf: &mut Vec<u8>,
+) -> io::Result<Frame> {
+    let (tag, len) = read_frame_header(reader).await?;
+    buf.clear();
+    buf.resize(len as usize, 0);
+    reader.read_exact(buf).await?;
+    // Take the buffer, replacing with an empty Vec (no alloc).
+    let payload = std::mem::take(buf);
     decode_frame(tag, payload)
 }
 
@@ -163,14 +184,14 @@ fn decode_frame(tag: u8, payload: Vec<u8>) -> io::Result<Frame> {
         TAG_CLIENT_MSG => decode_msgpack_frame(&payload).map(Frame::ClientMsg),
         TAG_SERVER_MSG => decode_msgpack_frame(&payload).map(Frame::ServerMsg),
         TAG_CELL_DELTA => decode_cell_delta_borrowed(payload).map(Frame::CellDelta),
-        TAG_FULL_PANE_SYNC => decode_full_pane_sync(&payload).map(Frame::FullPaneSync),
+        TAG_FULL_PANE_SYNC => decode_full_pane_sync_borrowed(payload).map(Frame::FullPaneSync),
         TAG_CELL_DELTA_LZ4 => {
             let decompressed = decompress_lz4_payload(&payload)?;
             decode_cell_delta_borrowed(decompressed).map(Frame::CellDelta)
         }
         TAG_FULL_PANE_SYNC_LZ4 => {
             let decompressed = decompress_lz4_payload(&payload)?;
-            decode_full_pane_sync(&decompressed).map(Frame::FullPaneSync)
+            decode_full_pane_sync_borrowed(decompressed).map(Frame::FullPaneSync)
         }
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -227,4 +248,39 @@ pub(crate) fn maybe_compress_payload(
     } else {
         (uncompressed_tag, payload.to_vec())
     }
+}
+
+/// Try LZ4 compression in-place on a frame buffer.
+///
+/// `buf` layout: `[tag (1B)][len placeholder (4B)][payload...]`
+/// On return, tag/len are updated and payload may be replaced with LZ4 data.
+/// Avoids the intermediate `Vec` allocation that `maybe_compress_payload` requires.
+pub(crate) fn finalize_frame_compression(
+    buf: &mut Vec<u8>,
+    payload_start: usize,
+    uncompressed_tag: u8,
+    compressed_tag: u8,
+) {
+    let payload = &buf[payload_start..];
+    let payload_len = payload.len();
+
+    if payload_len >= LZ4_COMPRESS_THRESHOLD {
+        let compressed = lz4_flex::compress(payload);
+        let lz4_total = 4 + compressed.len();
+        if lz4_total < payload_len {
+            // Compressed is smaller — replace payload with [u32 uncompressed_len][lz4 data].
+            buf.truncate(payload_start);
+            buf[0] = compressed_tag;
+            let len = lz4_total as u32;
+            buf[1..5].copy_from_slice(&len.to_le_bytes());
+            buf.extend_from_slice(&(payload_len as u32).to_le_bytes());
+            buf.extend_from_slice(&compressed);
+            return;
+        }
+    }
+
+    // No compression — just finalize tag + length in-place (zero copies).
+    buf[0] = uncompressed_tag;
+    let len = payload_len as u32;
+    buf[1..5].copy_from_slice(&len.to_le_bytes());
 }

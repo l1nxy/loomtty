@@ -188,4 +188,126 @@ mod tests {
         col.snap_width(1000.0);
         assert_eq!(col.effective_width(1000.0), 500.0);
     }
+
+    #[test]
+    fn fixed_width_independent_of_viewport() {
+        let mut col = Column::new(1);
+        col.width = ColumnWidth::Fixed(300.0);
+        assert_eq!(col.resolve_width(1000.0), 300.0);
+        assert_eq!(col.resolve_width(500.0), 300.0);
+        assert_eq!(col.resolve_width(2000.0), 300.0);
+    }
+
+    #[test]
+    fn proportion_from_fixed_width() {
+        let mut col = Column::new(1);
+        col.width = ColumnWidth::Fixed(250.0);
+        assert!((col.proportion(1000.0) - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn proportion_with_zero_viewport_returns_default() {
+        let mut col = Column::new(1);
+        col.width = ColumnWidth::Fixed(250.0);
+        assert_eq!(col.proportion(0.0), 0.5); // fallback
+    }
+
+    #[test]
+    fn tile_rects_single_tile_fills_full_height() {
+        let col = Column::new(1);
+        let rects = col.tile_rects(500.0, 600.0);
+        assert_eq!(rects.len(), 1);
+        assert_eq!(rects[0], (1, 0.0, 600.0));
+    }
+
+    #[test]
+    fn tile_rects_equal_weight_splits_evenly() {
+        let mut col = Column::new(1);
+        col.tiles.push(Tile::new(2));
+        let rects = col.tile_rects(500.0, 600.0);
+        assert_eq!(rects.len(), 2);
+        assert_eq!(rects[0], (1, 0.0, 300.0));
+        assert_eq!(rects[1], (2, 300.0, 300.0));
+    }
+
+    #[test]
+    fn tile_rects_unequal_weights() {
+        let mut col = Column::new(1);
+        col.tiles[0].height = TileHeight::Auto { weight: 3.0 };
+        col.tiles.push(Tile {
+            pane_id: 2,
+            height: TileHeight::Auto { weight: 1.0 },
+        });
+        let rects = col.tile_rects(500.0, 400.0);
+        assert_eq!(rects.len(), 2);
+        // 3/4 of 400 = 300, 1/4 of 400 = 100
+        assert!((rects[0].2 - 300.0).abs() < 1e-3);
+        assert!((rects[1].2 - 100.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn tile_rects_mixed_auto_and_fixed() {
+        let mut col = Column::new(1);
+        col.tiles[0].height = TileHeight::Auto { weight: 1.0 };
+        col.tiles.push(Tile {
+            pane_id: 2,
+            height: TileHeight::Fixed(100.0),
+        });
+        let rects = col.tile_rects(500.0, 400.0);
+        // Fixed tile takes 100px, auto tile gets remaining 300px
+        assert!((rects[0].2 - 300.0).abs() < 1e-3);
+        assert!((rects[1].2 - 100.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn tile_rects_all_fixed_exceeding_column_height() {
+        let mut col = Column::new(1);
+        col.tiles[0].height = TileHeight::Fixed(300.0);
+        col.tiles.push(Tile {
+            pane_id: 2,
+            height: TileHeight::Fixed(400.0),
+        });
+        let rects = col.tile_rects(500.0, 500.0);
+        // Both fixed, no auto tiles. total fixed = 700 > col_height 500.
+        // auto_height = max(0, 500-700) = 0. Fixed tiles keep their px.
+        assert!((rects[0].2 - 300.0).abs() < 1e-3);
+        assert!((rects[1].2 - 400.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn set_tile_weights_clamps_minimum() {
+        let mut col = Column::new(1);
+        col.tiles.push(Tile::new(2));
+        col.set_tile_weights(0, 0.01, 0.01);
+        // Both should be clamped to min 0.05
+        match col.tiles[0].height {
+            TileHeight::Auto { weight } => assert!((weight - 0.05).abs() < 1e-6),
+            _ => panic!("expected Auto"),
+        }
+        match col.tiles[1].height {
+            TileHeight::Auto { weight } => assert!((weight - 0.05).abs() < 1e-6),
+            _ => panic!("expected Auto"),
+        }
+    }
+
+    #[test]
+    fn set_tile_weights_out_of_range_noop() {
+        let mut col = Column::new(1);
+        let original = col.tiles[0].height;
+        // Only one tile, so bot_idx = 1 >= tiles.len() → noop
+        col.set_tile_weights(0, 0.5, 0.5);
+        assert_eq!(col.tiles[0].height, original);
+    }
+
+    #[test]
+    fn contains_pane_and_all_pane_ids() {
+        let mut col = Column::new(1);
+        col.tiles.push(Tile::new(2));
+        col.tiles.push(Tile::new(3));
+        assert!(col.contains_pane(1));
+        assert!(col.contains_pane(2));
+        assert!(col.contains_pane(3));
+        assert!(!col.contains_pane(4));
+        assert_eq!(col.all_pane_ids(), vec![1, 2, 3]);
+    }
 }

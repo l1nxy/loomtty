@@ -121,62 +121,36 @@ mod tests {
         assert_eq!(config.theme.accent, "");
     }
 
-    #[test]
-    fn validate_rejects_invalid_values() {
+    /// Helper: mutate one field of a default config and assert validation fails.
+    fn assert_validation_rejects(label: &str, mutate: fn(&mut CiriConfig)) {
         let mut config = CiriConfig::default();
-        config.animation.drag_opacity = 1.5;
-        assert!(config.validate().is_err());
-
-        let mut config = CiriConfig::default();
-        config.appearance.border_width = -2.0;
-        assert!(config.validate().is_err());
-
-        let mut config = CiriConfig::default();
-        config.appearance.inactive_opacity = 1.5;
-        assert!(config.validate().is_err());
-
-        let mut config = CiriConfig::default();
-        config.font.size = 0.0;
-        assert!(config.validate().is_err());
-
-        let mut config = CiriConfig::default();
-        config.terminal.cursor_opacity = -0.25;
-        assert!(config.validate().is_err());
-
-        let mut config = CiriConfig::default();
-        config.render.frame_interval_ms = 0;
-        assert!(config.validate().is_err());
+        mutate(&mut config);
+        assert!(
+            config.validate().is_err(),
+            "validation should reject {label}"
+        );
     }
 
     #[test]
-    fn validate_rejects_invalid_runtime_semantics() {
-        let mut config = CiriConfig::default();
-        config.animation.overview_zoom_fit = 0.0;
-        assert!(config.validate().is_err());
-
-        let mut config = CiriConfig::default();
-        config.animation.zoom_threshold = 0.0;
-        assert!(config.validate().is_err());
-
-        let mut config = CiriConfig::default();
-        config.statusbar.padding_ratio = -0.1;
-        assert!(config.validate().is_err());
-
-        let mut config = CiriConfig::default();
-        config.terminal.default_cols = 0;
-        assert!(config.validate().is_err());
-
-        let mut config = CiriConfig::default();
-        config.terminal.default_rows = 0;
-        assert!(config.validate().is_err());
-
-        let mut config = CiriConfig::default();
-        config.terminal.cursor_blink_interval_ms = 0;
-        assert!(config.validate().is_err());
-
-        let mut config = CiriConfig::default();
-        config.terminal.scrollback_lines = 0;
-        assert!(config.validate().is_err());
+    fn validate_rejects_out_of_range_values() {
+        let cases: &[(&str, fn(&mut CiriConfig))] = &[
+            ("drag_opacity=1.5", |c| c.animation.drag_opacity = 1.5),
+            ("border_width=-2", |c| c.appearance.border_width = -2.0),
+            ("inactive_opacity=1.5", |c| c.appearance.inactive_opacity = 1.5),
+            ("font.size=0", |c| c.font.size = 0.0),
+            ("cursor_opacity=-0.25", |c| c.terminal.cursor_opacity = -0.25),
+            ("frame_interval_ms=0", |c| c.render.frame_interval_ms = 0),
+            ("overview_zoom_fit=0", |c| c.animation.overview_zoom_fit = 0.0),
+            ("zoom_threshold=0", |c| c.animation.zoom_threshold = 0.0),
+            ("padding_ratio=-0.1", |c| c.statusbar.padding_ratio = -0.1),
+            ("default_cols=0", |c| c.terminal.default_cols = 0),
+            ("default_rows=0", |c| c.terminal.default_rows = 0),
+            ("cursor_blink_interval_ms=0", |c| c.terminal.cursor_blink_interval_ms = 0),
+            ("scrollback_lines=0", |c| c.terminal.scrollback_lines = 0),
+        ];
+        for (label, mutate) in cases {
+            assert_validation_rejects(label, *mutate);
+        }
     }
 
     #[test]
@@ -193,5 +167,231 @@ mod tests {
         std::env::temp_dir()
             .join("ciri-config-tests")
             .join(format!("{label}-{nanos}.toml"))
+    }
+
+    #[test]
+    fn load_rejects_invalid_toml_syntax() {
+        let path = temp_config_path("bad-syntax");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "this is not [valid toml ===").unwrap();
+
+        let result = load_from_path(&path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_ignores_unknown_fields() {
+        let path = temp_config_path("unknown-fields");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r#"
+                [font]
+                family = "Iosevka"
+                this_field_does_not_exist = 42
+
+                [some_future_section]
+                key = "value"
+            "#,
+        )
+        .unwrap();
+
+        let config = load_from_path(&path).unwrap();
+        assert_eq!(config.font.family, "Iosevka");
+        // All other fields should still be defaults
+        assert_eq!(config.font.size, CiriConfig::default().font.size);
+    }
+
+    #[test]
+    fn load_rejects_wrong_type_for_field() {
+        let path = temp_config_path("wrong-type");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r#"
+                [font]
+                size = "not a number"
+            "#,
+        )
+        .unwrap();
+
+        let result = load_from_path(&path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_rejects_invalid_enum_variant() {
+        let path = temp_config_path("bad-enum");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r#"
+                [render]
+                backend = "vulkan-9000"
+            "#,
+        )
+        .unwrap();
+
+        let result = load_from_path(&path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_accepts_boundary_values() {
+        // All fields at their exact minimum/maximum should pass
+        let mut config = CiriConfig::default();
+        config.font.size = 1.0;
+        config.appearance.border_width = 0.0;
+        config.appearance.inactive_opacity = 0.0;
+        config.animation.drag_opacity = 0.0;
+        config.terminal.cursor_opacity = 0.0;
+        config.render.frame_interval_ms = 1;
+        config.terminal.default_cols = 1;
+        config.terminal.default_rows = 1;
+        config.terminal.scrollback_lines = 1;
+        config.terminal.cursor_blink_interval_ms = 1;
+        config.validate().unwrap();
+
+        let mut config = CiriConfig::default();
+        config.font.size = 200.0;
+        config.appearance.inactive_opacity = 1.0;
+        config.animation.drag_opacity = 1.0;
+        config.animation.overview_zoom_fit = 1.0;
+        config.animation.zoom_threshold = 1.0;
+        config.terminal.cursor_opacity = 1.0;
+        config.validate().unwrap();
+    }
+
+    #[test]
+    fn load_partial_sections_preserve_other_defaults() {
+        let path = temp_config_path("partial-sections");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r#"
+                [terminal]
+                scrollback_lines = 50000
+
+                [animation]
+                enabled = false
+            "#,
+        )
+        .unwrap();
+
+        let config = load_from_path(&path).unwrap();
+        let defaults = CiriConfig::default();
+
+        assert_eq!(config.terminal.scrollback_lines, 50000);
+        assert!(!config.animation.enabled);
+        // Untouched sections remain default
+        assert_eq!(config.font.family, defaults.font.family);
+        assert_eq!(config.font.size, defaults.font.size);
+        assert_eq!(config.window.width, defaults.window.width);
+        assert_eq!(config.render.backend, defaults.render.backend);
+        // Untouched fields within touched sections remain default
+        assert_eq!(config.terminal.default_cols, defaults.terminal.default_cols);
+        assert_eq!(config.animation.preset, defaults.animation.preset);
+    }
+
+    #[test]
+    fn all_enum_variants_deserialize_from_toml() {
+        // Verify every kebab-case enum variant parses via toml::from_str
+        // (no disk I/O needed — this tests serde, not file loading)
+        let cases: &[(&str, &str, &str)] = &[
+            ("render", "backend", "auto"),
+            ("render", "backend", "blade"),
+            ("render", "backend", "gl"),
+            ("render", "present_mode", "fifo"),
+            ("render", "present_mode", "mailbox"),
+            ("render", "present_mode", "immediate"),
+            ("statusbar", "position", "top"),
+            ("statusbar", "position", "bottom"),
+            ("input", "mode", "prefix"),
+            ("input", "mode", "sticky"),
+            ("animation", "preset", "snappy"),
+            ("animation", "preset", "default"),
+            ("animation", "preset", "smooth"),
+            ("animation", "preset", "gentle"),
+            ("animation", "pane_open_style", "fade"),
+            ("animation", "pane_open_style", "slide-up"),
+            ("animation", "pane_open_style", "slide-down"),
+            ("animation", "pane_open_style", "slide-left"),
+            ("animation", "pane_open_style", "fade-slide-up"),
+            ("prediction", "mode", "never"),
+            ("prediction", "mode", "always"),
+            ("prediction", "mode", "adaptive"),
+        ];
+        for (section, key, value) in cases {
+            let toml_str = format!("[{section}]\n{key} = \"{value}\"");
+            let result: Result<CiriConfig, _> = toml::from_str(&toml_str);
+            result.unwrap_or_else(|e| {
+                panic!("[{section}] {key} = \"{value}\" should parse, got: {e}")
+            });
+        }
+    }
+
+    #[test]
+    fn load_remote_hosts_config() {
+        let path = temp_config_path("remote-hosts");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r#"
+                [remote]
+                enabled = true
+                port = 9999
+
+                [[remote.hosts]]
+                name = "dev-box"
+                host = "192.168.1.100"
+
+                [[remote.hosts]]
+                name = "prod"
+                host = "10.0.0.1"
+                port = 8888
+                ssh_port = 2222
+            "#,
+        )
+        .unwrap();
+
+        let config = load_from_path(&path).unwrap();
+        assert!(config.remote.enabled);
+        assert_eq!(config.remote.port, 9999);
+        assert_eq!(config.remote.hosts.len(), 2);
+        assert_eq!(config.remote.hosts[0].name, "dev-box");
+        assert_eq!(config.remote.hosts[0].port, 7890); // default
+        assert_eq!(config.remote.hosts[0].ssh_port, 22); // default
+        assert_eq!(config.remote.hosts[1].port, 8888);
+        assert_eq!(config.remote.hosts[1].ssh_port, 2222);
+    }
+
+    #[test]
+    fn load_layout_preset_widths() {
+        let path = temp_config_path("layout-presets");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r#"
+                [layout]
+                center_focused_column = "never"
+                preset_widths = [
+                    { proportion = 0.33 },
+                    { fixed = 800.0 },
+                    { proportion = 1.0 },
+                ]
+            "#,
+        )
+        .unwrap();
+
+        let config = load_from_path(&path).unwrap();
+        assert_eq!(
+            config.layout.center_focused_column,
+            CenterStrategy::Never
+        );
+        assert_eq!(config.layout.preset_widths.len(), 3);
+        match &config.layout.preset_widths[1] {
+            PresetWidth::Fixed { fixed } => assert_eq!(*fixed, 800.0),
+            _ => panic!("expected Fixed variant"),
+        }
     }
 }

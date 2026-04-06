@@ -280,4 +280,155 @@ mod tests {
             [17.0 / 255.0, 34.0 / 255.0, 51.0 / 255.0, 1.0]
         );
     }
+
+    #[test]
+    fn all_builtin_presets_fill_every_color_field() {
+        for preset in [
+            "ciri_dark",
+            "one_dark",
+            "catppuccin_mocha",
+            "tokyo_night",
+            "dracula",
+            "nord",
+            "gruvbox_dark",
+            "ghostty",
+        ] {
+            let mut theme = ThemeConfig {
+                preset: preset.to_string(),
+                ..ThemeConfig::default()
+            };
+            theme.resolve_preset();
+
+            // Check all 16 terminal colors + 8 UI colors = 24 fields
+            let fields: &[(&str, &ThemeValue)] = &[
+                ("foreground", &theme.foreground),
+                ("background", &theme.background),
+                ("black", &theme.black),
+                ("red", &theme.red),
+                ("green", &theme.green),
+                ("yellow", &theme.yellow),
+                ("blue", &theme.blue),
+                ("magenta", &theme.magenta),
+                ("cyan", &theme.cyan),
+                ("white", &theme.white),
+                ("bright_black", &theme.bright_black),
+                ("bright_red", &theme.bright_red),
+                ("bright_green", &theme.bright_green),
+                ("bright_yellow", &theme.bright_yellow),
+                ("bright_blue", &theme.bright_blue),
+                ("bright_magenta", &theme.bright_magenta),
+                ("bright_cyan", &theme.bright_cyan),
+                ("bright_white", &theme.bright_white),
+                ("ui_background", &theme.ui_background),
+                ("overview_background", &theme.overview_background),
+                ("statusbar_background", &theme.statusbar_background),
+                ("border_active", &theme.border_active),
+                ("border_inactive", &theme.border_inactive),
+                ("accent", &theme.accent),
+                ("statusbar_dim", &theme.statusbar_dim),
+                ("mode_broadcast", &theme.mode_broadcast),
+            ];
+            for (name, value) in fields {
+                assert!(
+                    !value.is_empty(),
+                    "preset {preset}: {name} is empty after resolve"
+                );
+                // Also verify each value is a parseable hex color
+                let color = ThemeConfig::parse_color(value);
+                assert_ne!(
+                    color,
+                    [0.9, 0.9, 0.9, 1.0],
+                    "preset {preset}: {name} = {:?} failed to parse as hex",
+                    value.as_ref()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn srgb_linear_round_trip() {
+        let original = [0.5, 0.2, 0.8, 1.0];
+        let linear = ThemeConfig::srgb_to_linear(original);
+        let back = ThemeConfig::linear_to_srgb(linear);
+        for i in 0..3 {
+            assert!(
+                (original[i] - back[i]).abs() < 1e-5,
+                "channel {i}: {:.6} != {:.6}",
+                original[i],
+                back[i]
+            );
+        }
+    }
+
+    #[test]
+    fn srgb_to_linear_known_values() {
+        // Pure black stays black
+        let black = ThemeConfig::srgb_to_linear([0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(black, [0.0, 0.0, 0.0, 1.0]);
+
+        // Pure white stays white
+        let white = ThemeConfig::srgb_to_linear([1.0, 1.0, 1.0, 1.0]);
+        for ch in &white[..3] {
+            assert!((*ch - 1.0).abs() < 1e-5);
+        }
+
+        // Mid-gray: sRGB 0.5 → linear ~0.214
+        let mid = ThemeConfig::srgb_to_linear([0.5, 0.5, 0.5, 1.0]);
+        assert!((mid[0] - 0.214).abs() < 0.01);
+    }
+
+    #[test]
+    fn premultiply_halves_rgb_at_half_alpha() {
+        let result = ThemeConfig::premultiply([0.8, 0.6, 0.4, 0.5]);
+        assert!((result[0] - 0.4).abs() < 1e-6);
+        assert!((result[1] - 0.3).abs() < 1e-6);
+        assert!((result[2] - 0.2).abs() < 1e-6);
+        assert!((result[3] - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn premultiply_identity_at_full_alpha() {
+        let color = [0.8, 0.6, 0.4, 1.0];
+        let result = ThemeConfig::premultiply(color);
+        assert_eq!(result, color);
+    }
+
+    #[test]
+    fn parse_color_pure_black_and_white() {
+        assert_eq!(ThemeConfig::parse_color("#000000"), [0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(ThemeConfig::parse_color("#FFFFFF"), [1.0, 1.0, 1.0, 1.0]);
+        assert_eq!(ThemeConfig::parse_color("#ffffff"), [1.0, 1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn parse_color_rejects_short_and_long_hex() {
+        // 3-digit shorthand not supported
+        assert_eq!(ThemeConfig::parse_color("#FFF"), [0.9, 0.9, 0.9, 1.0]);
+        // 8-digit (with alpha) not supported
+        assert_eq!(ThemeConfig::parse_color("#FF000080"), [0.9, 0.9, 0.9, 1.0]);
+    }
+
+    #[test]
+    fn theme_value_explicit_override_survives_fallback() {
+        let mut tv: ThemeValue = "#FF0000".to_string().into();
+        assert!(tv.explicitly_set);
+        tv.apply_fallback("#0000FF".to_string().into());
+        assert_eq!(tv, "#FF0000"); // override preserved
+
+        let mut tv = ThemeValue::default();
+        assert!(!tv.explicitly_set);
+        tv.apply_fallback("#0000FF".to_string().into());
+        assert_eq!(tv, "#0000FF"); // fallback applied
+    }
+
+    #[test]
+    fn resolve_preset_empty_string_uses_ciri_dark() {
+        let mut theme = ThemeConfig {
+            preset: "".to_string(),
+            ..ThemeConfig::default()
+        };
+        theme.resolve_preset();
+        // Should match ciri_dark preset
+        assert_eq!(theme.background, "#1C1B1A");
+    }
 }

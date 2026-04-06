@@ -644,7 +644,7 @@ fn clamped_tile_pair_height(top_height: f32, total_height: f32, delta_y: f32) ->
 mod tests {
     use super::*;
 
-    const DW: ColumnWidth = ColumnWidth::Proportion(0.5);
+    use crate::test_util::WorkspaceTestExt;
 
     fn ws() -> Workspace {
         Workspace::new(ViewSize {
@@ -653,21 +653,12 @@ mod tests {
         })
     }
 
-    trait TestHelper {
-        fn add_column_right_default(&mut self, pane_id: PaneId);
-    }
-    impl TestHelper for Workspace {
-        fn add_column_right_default(&mut self, pane_id: PaneId) {
-            self.add_column_right(pane_id, DW);
-        }
-    }
-
     #[test]
     fn add_columns() {
         let mut w = ws();
-        w.add_column_right_default(1);
-        w.add_column_right_default(2);
-        w.add_column_right_default(3);
+        w.add_test_column(1);
+        w.add_test_column(2);
+        w.add_test_column(3);
         assert_eq!(w.columns.len(), 3);
         assert_eq!(w.active_column_idx, 2);
         assert_eq!(w.active_pane_id(), Some(3));
@@ -680,9 +671,9 @@ mod tests {
     #[test]
     fn focus_navigation() {
         let mut w = ws();
-        w.add_column_right_default(1);
-        w.add_column_right_default(2);
-        w.add_column_right_default(3);
+        w.add_test_column(1);
+        w.add_test_column(2);
+        w.add_test_column(3);
         w.focus_left();
         assert_eq!(w.active_column_idx, 1);
         w.focus_left();
@@ -696,9 +687,9 @@ mod tests {
     #[test]
     fn close_pane_adjusts_index() {
         let mut w = ws();
-        w.add_column_right_default(1);
-        w.add_column_right_default(2);
-        w.add_column_right_default(3);
+        w.add_test_column(1);
+        w.add_test_column(2);
+        w.add_test_column(3);
         w.close_pane(1);
         assert_eq!(w.active_column_idx, 1);
         assert_eq!(w.active_pane_id(), Some(3));
@@ -707,7 +698,7 @@ mod tests {
     #[test]
     fn close_last_pane() {
         let mut w = ws();
-        w.add_column_right_default(1);
+        w.add_test_column(1);
         w.close_pane(1);
         assert!(w.is_empty());
     }
@@ -715,8 +706,8 @@ mod tests {
     #[test]
     fn visible_tiles() {
         let mut w = ws();
-        w.add_column_right_default(1);
-        w.add_column_right_default(2);
+        w.add_test_column(1);
+        w.add_test_column(2);
         // Both columns are half-width (500), fitting within viewport
         let tiles = w.all_tiles_unculled();
         assert_eq!(tiles.len(), 2);
@@ -725,9 +716,9 @@ mod tests {
     #[test]
     fn move_pane() {
         let mut w = ws();
-        w.add_column_right_default(1);
-        w.add_column_right_default(2);
-        w.add_column_right_default(3);
+        w.add_test_column(1);
+        w.add_test_column(2);
+        w.add_test_column(3);
         w.move_pane_left();
         assert_eq!(w.active_column_idx, 1);
         assert_eq!(w.all_pane_ids(), vec![1, 3, 2]);
@@ -736,8 +727,8 @@ mod tests {
     #[test]
     fn column_x_calculation() {
         let mut w = ws();
-        w.add_column_right_default(1);
-        w.add_column_right_default(2);
+        w.add_test_column(1);
+        w.add_test_column(2);
         // First column shrinks to 0.5 (500px), second at 500+8=508
         assert_eq!(w.column_x(0), 0.0);
         assert_eq!(w.column_x(1), 508.0);
@@ -746,8 +737,8 @@ mod tests {
     #[test]
     fn set_active_column_width_only_changes_active() {
         let mut w = ws();
-        w.add_column_right_default(1);
-        w.add_column_right_default(2);
+        w.add_test_column(1);
+        w.add_test_column(2);
         // Both columns start at 0.5 (first shrinks from 1.0 when second is added)
         let original_width_1 = w.columns[1].proportion(w.view_size.width);
         assert!((original_width_1 - 0.5).abs() < 1e-6);
@@ -767,9 +758,9 @@ mod tests {
     #[test]
     fn resize_active_with_neighbor_preserves_pair_width() {
         let mut w = ws();
-        w.add_column_right_default(1);
-        w.add_column_right_default(2);
-        w.add_column_right_default(3);
+        w.add_test_column(1);
+        w.add_test_column(2);
+        w.add_test_column(3);
         w.active_column_idx = 1;
 
         let before: Vec<f64> = w
@@ -798,8 +789,8 @@ mod tests {
     #[test]
     fn equalize_active_with_neighbor_averages_pair() {
         let mut w = ws();
-        w.add_column_right_default(1);
-        w.add_column_right_default(2);
+        w.add_test_column(1);
+        w.add_test_column(2);
         // Both columns start at 0.5; manually set col[0] to 0.8
         w.active_column_idx = 0;
         w.set_active_column_width(ColumnWidth::Proportion(0.8));
@@ -819,8 +810,8 @@ mod tests {
     #[test]
     fn cycle_preset_width_advances_from_closest_preset() {
         let mut w = ws();
-        w.add_column_right_default(1);
-        w.add_column_right_default(2);
+        w.add_test_column(1);
+        w.add_test_column(2);
         w.active_column_idx = 0;
         w.set_active_column_width(ColumnWidth::Proportion(0.68));
 
@@ -841,8 +832,8 @@ mod tests {
     #[test]
     fn set_column_width_by_index_clears_stale_preset_tracking() {
         let mut w = ws();
-        w.add_column_right_default(1);
-        w.add_column_right_default(2);
+        w.add_test_column(1);
+        w.add_test_column(2);
 
         w.columns[0].preset_width_idx = Some(1);
         w.set_column_width_by_index(0, ColumnWidth::Proportion(0.68));
@@ -854,7 +845,7 @@ mod tests {
     #[test]
     fn hit_test_tile_border_uses_screen_coordinates() {
         let mut w = ws();
-        w.add_column_right_default(1);
+        w.add_test_column(1);
         w.columns[0].tiles.push(crate::tile::Tile::new(2));
 
         let border_y = w.columns[0].tile_rects(500.0, w.view_size.height)[0].2;
@@ -872,7 +863,7 @@ mod tests {
     #[test]
     fn resize_tile_pair_preserves_pair_weight_total() {
         let mut w = ws();
-        w.add_column_right_default(1);
+        w.add_test_column(1);
         w.columns[0].tiles.push(crate::tile::Tile::new(2));
         w.columns[0].tiles.push(crate::tile::Tile::new(3));
 
@@ -887,5 +878,236 @@ mod tests {
         assert!(top_weight > bottom_weight);
         assert!(((top_weight + bottom_weight) - before_total).abs() < 1e-6);
         assert!((w.columns[0].tiles[2].height.weight() as f64 - 1.0).abs() < 1e-6);
+    }
+
+    // ── Resize / reflow tests ───────────────────────────────────────
+
+    #[test]
+    fn resize_view_updates_effective_widths() {
+        let mut w = ws();
+        w.add_test_column(1);
+        w.add_test_column(2);
+        // Both columns at 0.5 proportion
+        assert_eq!(
+            w.columns[0].effective_width(w.view_size.width),
+            500.0
+        );
+
+        w.resize_view(ViewSize {
+            width: 2000.0,
+            height: 600.0,
+        });
+
+        // Proportional widths scale with viewport
+        assert_eq!(
+            w.columns[0].effective_width(w.view_size.width),
+            1000.0
+        );
+        assert_eq!(
+            w.columns[1].effective_width(w.view_size.width),
+            1000.0
+        );
+    }
+
+    #[test]
+    fn resize_view_fixed_width_stays_constant() {
+        let mut w = ws();
+        w.add_test_column(1);
+        w.columns[0].width = ColumnWidth::Fixed(400.0);
+
+        w.resize_view(ViewSize {
+            width: 2000.0,
+            height: 600.0,
+        });
+
+        assert_eq!(
+            w.columns[0].effective_width(w.view_size.width),
+            400.0
+        );
+    }
+
+    #[test]
+    fn resize_to_tiny_viewport() {
+        let mut w = ws();
+        w.add_test_column(1);
+        w.add_test_column(2);
+
+        w.resize_view(ViewSize {
+            width: 20.0,
+            height: 20.0,
+        });
+
+        // Columns should still have valid proportional widths
+        let w0 = w.columns[0].effective_width(w.view_size.width);
+        let w1 = w.columns[1].effective_width(w.view_size.width);
+        assert!(w0 > 0.0);
+        assert!(w1 > 0.0);
+        assert!((w0 - 10.0).abs() < 1e-3); // 0.5 * 20 = 10
+        assert!((w1 - 10.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn tile_heights_adjust_on_resize() {
+        let mut w = ws();
+        w.add_test_column(1);
+        // Add a second tile
+        w.columns[0].tiles.push(crate::tile::Tile::new(2));
+
+        let rects_before = w.columns[0].tile_rects(500.0, 600.0);
+        assert!((rects_before[0].2 - 300.0).abs() < 1e-3);
+        assert!((rects_before[1].2 - 300.0).abs() < 1e-3);
+
+        w.resize_view(ViewSize {
+            width: 1000.0,
+            height: 400.0,
+        });
+
+        let rects_after = w.columns[0].tile_rects(500.0, 400.0);
+        assert!((rects_after[0].2 - 200.0).abs() < 1e-3);
+        assert!((rects_after[1].2 - 200.0).abs() < 1e-3);
+    }
+
+    // ── Consume / expel round-trip ──────────────────────────────────
+
+    #[test]
+    fn consume_from_right_merges_into_column() {
+        let mut w = ws();
+        w.add_test_column(1);
+        w.add_test_column(2);
+        w.active_column_idx = 0;
+
+        let consumed = w.consume_from_right();
+        assert_eq!(consumed, Some(2));
+        assert_eq!(w.columns.len(), 1); // second column removed
+        assert_eq!(w.columns[0].tiles.len(), 2); // stacked
+        assert_eq!(w.columns[0].tiles[0].pane_id, 1);
+        assert_eq!(w.columns[0].tiles[1].pane_id, 2);
+        // Only column expands to full width
+        assert!(matches!(w.columns[0].width, ColumnWidth::Proportion(p) if (p - 1.0).abs() < 1e-6));
+    }
+
+    #[test]
+    fn consume_from_right_nothing_to_consume() {
+        let mut w = ws();
+        w.add_test_column(1);
+        // Only one column, nothing to the right
+        assert_eq!(w.consume_from_right(), None);
+    }
+
+    #[test]
+    fn expel_from_single_tile_column_noop() {
+        let mut w = ws();
+        w.add_test_column(1);
+        assert_eq!(w.expel_active_tile(), None);
+        assert_eq!(w.columns.len(), 1);
+    }
+
+    #[test]
+    fn consume_then_expel_round_trip() {
+        let mut w = ws();
+        w.add_test_column(1);
+        w.add_test_column(2);
+        w.active_column_idx = 0;
+
+        // Consume: 2 columns → 1 column (2 tiles)
+        w.consume_from_right();
+        assert_eq!(w.columns.len(), 1);
+        assert_eq!(w.columns[0].tiles.len(), 2);
+
+        // Expel: back to 2 columns (1 tile each)
+        let expelled = w.expel_active_tile();
+        assert_eq!(expelled, Some(2));
+        assert_eq!(w.columns.len(), 2);
+        assert_eq!(w.columns[0].tiles.len(), 1);
+        assert_eq!(w.columns[1].tiles.len(), 1);
+    }
+
+    // ── Tile focus navigation ───────────────────────────────────────
+
+    #[test]
+    fn focus_tile_up_down_within_column() {
+        let mut w = ws();
+        w.add_test_column(1);
+        w.columns[0].tiles.push(crate::tile::Tile::new(2));
+        w.columns[0].tiles.push(crate::tile::Tile::new(3));
+
+        assert_eq!(w.columns[0].active_tile_idx, 0);
+        assert!(w.focus_tile_down());
+        assert_eq!(w.columns[0].active_tile_idx, 1);
+        assert!(w.focus_tile_down());
+        assert_eq!(w.columns[0].active_tile_idx, 2);
+        assert!(!w.focus_tile_down()); // at bottom
+        assert_eq!(w.columns[0].active_tile_idx, 2);
+
+        assert!(w.focus_tile_up());
+        assert_eq!(w.columns[0].active_tile_idx, 1);
+        assert!(w.focus_tile_up());
+        assert_eq!(w.columns[0].active_tile_idx, 0);
+        assert!(!w.focus_tile_up()); // at top
+    }
+
+    // ── Center strategy ─────────────────────────────────────────────
+
+    #[test]
+    fn target_offset_never_strategy_minimal_scroll() {
+        let mut w = ws();
+        w.add_test_column(1);
+        w.add_test_column(2);
+        w.add_test_column(3);
+        w.active_column_idx = 0;
+
+        // Never strategy: don't scroll if already visible
+        let offset = w.target_offset_for_active_with_strategy(CenterStrategy::Never, 0.0);
+        assert_eq!(offset, 0.0); // Column 0 at x=0 is already visible
+    }
+
+    #[test]
+    fn target_offset_always_centers_column() {
+        let mut w = ws();
+        w.add_test_column(1);
+        w.add_test_column(2);
+        w.active_column_idx = 0;
+
+        let offset = w.target_offset_for_active_with_strategy(CenterStrategy::Always, 0.0);
+        // Column 0 is 500px wide, viewport 1000px. col_center = 250, centered = 250-500 = -250 → clamped to 0
+        assert_eq!(offset, 0.0);
+    }
+
+    #[test]
+    fn close_pane_in_multi_tile_removes_only_tile() {
+        let mut w = ws();
+        w.add_test_column(1);
+        w.columns[0].tiles.push(crate::tile::Tile::new(2));
+        w.columns[0].tiles.push(crate::tile::Tile::new(3));
+        w.columns[0].active_tile_idx = 1;
+
+        w.close_pane(2); // remove middle tile
+        assert_eq!(w.columns.len(), 1); // column still exists
+        assert_eq!(w.columns[0].tiles.len(), 2); // two tiles remain
+        assert_eq!(w.columns[0].tiles[0].pane_id, 1);
+        assert_eq!(w.columns[0].tiles[1].pane_id, 3);
+    }
+
+    // ── Empty workspace ─────────────────────────────────────────────
+
+    #[test]
+    fn empty_workspace_total_width_is_zero() {
+        let w = ws();
+        assert!(w.is_empty());
+        assert_eq!(w.total_width(), 0.0);
+        assert_eq!(w.active_pane_id(), None);
+    }
+
+    #[test]
+    fn min_column_width_enforced_on_resize() {
+        let mut w = ws();
+        w.add_test_column(1);
+        w.add_test_column(2);
+        w.active_column_idx = 0;
+
+        // Try to set extremely small width
+        w.set_active_column_width(ColumnWidth::Proportion(0.001));
+        let p = w.columns[0].proportion(w.view_size.width);
+        assert!(p >= 0.05, "width {p} below minimum 0.05");
     }
 }

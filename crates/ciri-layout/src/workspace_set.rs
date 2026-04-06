@@ -248,26 +248,15 @@ impl WorkspaceSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::column::ColumnWidth;
+    use crate::test_util::WorkspaceTestExt;
     use crate::workspace::CenterStrategy;
-
-    const DW: ColumnWidth = ColumnWidth::Proportion(0.5);
-
-    trait TestHelper {
-        fn add_column_right_test(&mut self, pane_id: PaneId);
-    }
-    impl TestHelper for Workspace {
-        fn add_column_right_test(&mut self, pane_id: PaneId) {
-            self.add_column_right(pane_id, DW);
-        }
-    }
 
     fn wss() -> WorkspaceSet {
         let mut ws = WorkspaceSet::new(ViewSize {
             width: 1000.0,
             height: 600.0,
         });
-        ws.active_mut().add_column_right_test(1);
+        ws.active_mut().add_test_column(1);
         ws
     }
 
@@ -290,14 +279,14 @@ mod tests {
             height: 600.0,
         });
         // Workspace 0: 3 columns
-        ws.active_mut().add_column_right_test(1);
-        ws.active_mut().add_column_right_test(2);
-        ws.active_mut().add_column_right_test(3);
+        ws.active_mut().add_test_column(1);
+        ws.active_mut().add_test_column(2);
+        ws.active_mut().add_test_column(3);
         // active_column_idx = 2 (rightmost)
 
         // Workspace 1: 2 columns
         ws.add_workspace_below(4);
-        ws.active_mut().add_column_right_test(5);
+        ws.active_mut().add_test_column(5);
         // active_column_idx = 1
 
         // Go back to workspace 0 — should restore column 1 (clamped from 1)
@@ -335,7 +324,7 @@ mod tests {
     fn all_tiles_2d() {
         let mut ws = wss();
         ws.add_workspace_below(2);
-        ws.active_mut().add_column_right_test(3);
+        ws.active_mut().add_test_column(3);
         let all = ws.all_tiles_2d(0.0, 0.0);
         assert_eq!(all.len(), 3); // workspace 0: pane 1, workspace 1: pane 2 + pane 3
     }
@@ -364,7 +353,7 @@ mod tests {
             width: 1000.0,
             height: 600.0,
         });
-        ws.active_mut().add_column_right_test(1); // workspace 0
+        ws.active_mut().add_test_column(1); // workspace 0
         ws.add_workspace_below(2); // workspace 1, active
         ws.active_workspace_idx = 0; // switch back to workspace 0
         ws.active_mut().close_pane(1); // workspace 0 is now empty
@@ -381,14 +370,14 @@ mod tests {
             width: 1000.0,
             height: 600.0,
         });
-        ws.active_mut().add_column_right_test(1);
-        ws.active_mut().add_column_right_test(2);
-        ws.active_mut().add_column_right_test(3);
+        ws.active_mut().add_test_column(1);
+        ws.active_mut().add_test_column(2);
+        ws.active_mut().add_test_column(3);
         ws.active_mut().active_column_idx = 2;
 
         ws.add_workspace_below(4);
         assert_eq!(ws.active().active_column_idx, 0);
-        ws.active_mut().add_column_right_test(5);
+        ws.active_mut().add_test_column(5);
         assert_eq!(ws.active().active_column_idx, 1);
         ws.active_mut().close_pane(5);
 
@@ -424,13 +413,13 @@ mod tests {
             width: 1000.0,
             height: 600.0,
         });
-        ws.active_mut().add_column_right_test(1);
-        ws.active_mut().add_column_right_test(2);
-        ws.active_mut().add_column_right_test(3);
+        ws.active_mut().add_test_column(1);
+        ws.active_mut().add_test_column(2);
+        ws.active_mut().add_test_column(3);
         ws.active_mut().active_column_idx = 2;
 
         ws.add_workspace_below(4);
-        ws.active_mut().add_column_right_test(5);
+        ws.active_mut().add_test_column(5);
         ws.active_mut().close_pane(5);
 
         ws.focus_up();
@@ -463,5 +452,172 @@ mod tests {
             .collect();
         assert_eq!(active_tiles.len(), 1);
         assert_eq!(active_tiles[0].0, 4);
+    }
+
+    // ── Resize propagation ──────────────────────────────────────────
+
+    #[test]
+    fn resize_view_propagates_to_all_workspaces() {
+        let mut ws = wss();
+        ws.add_workspace_below(2);
+        ws.add_workspace_below(3);
+        assert_eq!(ws.workspaces.len(), 3);
+
+        let new_size = ViewSize {
+            width: 1920.0,
+            height: 1080.0,
+        };
+        ws.resize_view(new_size);
+
+        assert_eq!(ws.view_size, new_size);
+        for w in &ws.workspaces {
+            assert_eq!(w.view_size, new_size);
+        }
+    }
+
+    #[test]
+    fn resize_view_updates_workspace_y_positions() {
+        let mut ws = wss();
+        ws.add_workspace_below(2);
+
+        let y_before = ws.workspace_y(1);
+        ws.resize_view(ViewSize {
+            width: 1000.0,
+            height: 1200.0,
+        });
+        let y_after = ws.workspace_y(1);
+
+        // workspace_y = idx * (height + gap), so it changes with height
+        assert_ne!(y_before, y_after);
+        assert_eq!(y_after, 1200.0 + ws.workspace_gap);
+    }
+
+    #[test]
+    fn resize_view_tiny_size() {
+        let mut ws = wss();
+        ws.add_workspace_below(2);
+
+        ws.resize_view(ViewSize {
+            width: 1.0,
+            height: 1.0,
+        });
+
+        // Should not panic
+        let tiles = ws.visible_tiles_2d(0.0, ws.target_offset_y());
+        assert!(!tiles.is_empty());
+    }
+
+    // ── switch_to ───────────────────────────────────────────────────
+
+    #[test]
+    fn switch_to_creates_intermediate_workspaces() {
+        let mut ws = wss();
+        ws.switch_to(5);
+        assert_eq!(ws.workspaces.len(), 6);
+        assert_eq!(ws.active_workspace_idx, 5);
+        // Intermediate workspaces should be empty
+        for i in 1..5 {
+            assert!(ws.workspaces[i].is_empty());
+        }
+    }
+
+    #[test]
+    fn switch_to_existing_workspace() {
+        let mut ws = wss();
+        ws.add_workspace_below(2);
+        ws.add_workspace_below(3);
+        ws.switch_to(0);
+        assert_eq!(ws.active_workspace_idx, 0);
+        assert_eq!(ws.active().active_pane_id(), Some(1));
+    }
+
+    // ── Multi-workspace navigation ──────────────────────────────────
+
+    #[test]
+    fn focus_up_at_top_returns_false() {
+        let mut ws = wss();
+        assert!(!ws.focus_up());
+        assert_eq!(ws.active_workspace_idx, 0);
+    }
+
+    #[test]
+    fn focus_down_at_bottom_returns_false() {
+        let mut ws = wss();
+        assert!(!ws.focus_down());
+        assert_eq!(ws.active_workspace_idx, 0);
+    }
+
+    #[test]
+    fn add_workspace_below_reuses_existing_empty() {
+        let mut ws = wss();
+        ws.add_workspace_below(2); // ws[1]
+        ws.active_workspace_idx = 0; // go back to ws[0]
+        ws.active_mut().close_pane(1); // make ws[0] empty...wait, ws[0] still has pane 1
+
+        // Actually: let's add a workspace, go back up, then add_workspace_below
+        // should reuse the existing ws[1] if we're at ws[0]
+        let ws_count_before = ws.workspaces.len();
+        ws.add_workspace_below(3); // should add to existing ws[1]
+        assert_eq!(ws.workspaces.len(), ws_count_before); // no new workspace
+        assert_eq!(ws.active_workspace_idx, 1);
+    }
+
+    // ── Visibility culling ──────────────────────────────────────────
+
+    #[test]
+    fn visible_tiles_2d_scrolled_to_second_workspace() {
+        let mut ws = wss();
+        ws.add_workspace_below(2);
+        // Scroll to workspace 1
+        let offset_y = ws.target_offset_y();
+        let tiles = ws.visible_tiles_2d(0.0, offset_y);
+        // Should see workspace 1's tiles
+        let pane_ids: Vec<u64> = tiles.iter().map(|(id, _, _)| *id).collect();
+        assert!(pane_ids.contains(&2));
+    }
+
+    #[test]
+    fn all_pane_ids_across_workspaces() {
+        let mut ws = wss();
+        ws.add_workspace_below(2);
+        ws.active_mut().add_test_column(3);
+        let ids = ws.all_pane_ids();
+        assert_eq!(ids.len(), 3);
+        assert!(ids.contains(&1));
+        assert!(ids.contains(&2));
+        assert!(ids.contains(&3));
+    }
+
+    // ── Cleanup edge cases ──────────────────────────────────────────
+
+    #[test]
+    fn cleanup_empty_keeps_at_least_one_workspace() {
+        let mut ws = WorkspaceSet::new(ViewSize {
+            width: 1000.0,
+            height: 600.0,
+        });
+        // Don't add any panes — workspace 0 is empty
+        ws.cleanup_empty();
+        assert_eq!(ws.workspaces.len(), 1);
+    }
+
+    #[test]
+    fn cleanup_multiple_empty_workspaces() {
+        let mut ws = wss();
+        ws.add_workspace_below(2);
+        ws.add_workspace_below(3);
+        ws.add_workspace_below(4);
+        // Close panes in ws[1] and ws[2], keep ws[0] and ws[3]
+        ws.workspaces[1].close_pane(2);
+        ws.workspaces[2].close_pane(3);
+        assert!(ws.workspaces[1].is_empty());
+        assert!(ws.workspaces[2].is_empty());
+
+        ws.cleanup_empty();
+        // Only ws[0] (pane 1) and ws[3] (pane 4) should remain
+        assert_eq!(ws.workspaces.len(), 2);
+        let all_ids = ws.all_pane_ids();
+        assert!(all_ids.contains(&1));
+        assert!(all_ids.contains(&4));
     }
 }

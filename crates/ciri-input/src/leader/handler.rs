@@ -319,11 +319,27 @@ impl InputHandler {
         mode
     }
 
-    pub(super) fn check_timeout(&mut self) {
+    fn check_timeout(&mut self) {
         if self.has_active_table() {
             return;
         }
         self.session.on_timeout(self.leader_timeout);
+    }
+
+    /// Proactive timeout check for the event loop.
+    /// Idempotent and safe to call at any time — internally re-checks
+    /// elapsed time, so no external timing guard is required.
+    pub fn poll_timeout(&mut self) {
+        self.check_timeout();
+    }
+
+    /// Returns the instant at which leader state should expire.
+    /// The event loop can use this to schedule a wake-up for proactive timeout.
+    pub fn leader_deadline(&self) -> Option<std::time::Instant> {
+        if self.has_active_table() {
+            return None;
+        }
+        self.session.leader_deadline(self.leader_timeout)
     }
 
     fn combo_stripping_leader(&self, event: KeyEvent<'_>) -> KeyCombo {

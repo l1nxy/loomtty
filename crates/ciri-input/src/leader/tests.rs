@@ -201,7 +201,7 @@ fn leader_timeout_resets() {
         mode: InputMode::Prefix,
         entered_at: Instant::now() - Duration::from_secs(2),
     });
-    h.check_timeout();
+    h.poll_timeout();
     assert!(!h.is_awaiting_action());
 }
 
@@ -271,7 +271,7 @@ fn sticky_no_timeout() {
         mode: InputMode::Sticky,
         entered_at: Instant::now() - Duration::from_secs(100),
     });
-    h.check_timeout();
+    h.poll_timeout();
     assert!(h.is_awaiting_action());
 }
 
@@ -885,6 +885,265 @@ fn session_on_unlock_attempt_failure() {
     let mut s = InputSessionState::Unlocking;
     s.on_unlock_attempt(false);
     assert!(matches!(s, InputSessionState::Locked));
+}
+
+// ── leader_deadline tests (proactive timer support) ──
+
+#[test]
+fn leader_deadline_returns_some_in_prefix_leader() {
+    let mut h = prefix_handler();
+    assert!(h.leader_deadline().is_none());
+    let before = Instant::now();
+    h.process_key("w", true, false, false, false);
+    let after = Instant::now();
+    let deadline = h.leader_deadline().unwrap();
+    let timeout = Duration::from_millis(1000);
+    // entered_at is captured between `before` and `after`,
+    // so deadline must be in [before + timeout, after + timeout].
+    assert!(deadline >= before + timeout);
+    assert!(deadline <= after + timeout);
+}
+
+#[test]
+fn leader_deadline_returns_none_when_idle() {
+    let h = prefix_handler();
+    assert!(h.leader_deadline().is_none());
+}
+
+#[test]
+fn leader_deadline_returns_none_in_sticky_mode() {
+    let mut h = sticky_handler();
+    h.process_key("w", true, false, false, false);
+    assert!(h.is_awaiting_action());
+    assert!(h.leader_deadline().is_none());
+}
+
+#[test]
+fn leader_deadline_returns_none_when_locked() {
+    let mut h = prefix_handler();
+    h.toggle_lock();
+    assert!(h.leader_deadline().is_none());
+}
+
+#[test]
+fn leader_deadline_returns_none_with_active_key_table() {
+    let mut h = prefix_handler();
+    // Enter key table via normal flow: leader → mode action → exit_leader + activate table.
+    // After this, session is Idle (exit_leader was called) and table is active.
+    h.process_key("w", true, false, false, false);
+    h.process_key("r", false, false, false, false);
+    assert!(h.has_active_table());
+    assert!(!h.session.is_in_leader());
+    assert!(h.leader_deadline().is_none());
+}
+
+#[test]
+fn leader_deadline_returns_none_with_active_key_table_guard() {
+    let mut h = prefix_handler();
+    // Inject a state where both leader AND key table are active.
+    // This can't happen through the normal API (enter_mode calls exit_leader),
+    // but tests the has_active_table() guard in handler.leader_deadline().
+    h.activate_key_table("resize");
+    h.session = InputSessionState::Leader(LeaderSession {
+        mode: InputMode::Prefix,
+        entered_at: Instant::now(),
+    });
+    assert!(h.has_active_table());
+    assert!(h.session.is_in_leader());
+    // The key table guard should suppress the deadline even though leader is active.
+    assert!(h.leader_deadline().is_none());
+}
+
+#[test]
+fn leader_deadline_cleared_after_action_in_prefix() {
+    let mut h = prefix_handler();
+    h.process_key("w", true, false, false, false);
+    assert!(h.leader_deadline().is_some());
+    h.process_key("n", false, false, false, false); // action → exits leader
+    assert!(h.leader_deadline().is_none());
+}
+
+#[test]
+fn leader_deadline_cleared_after_escape() {
+    let mut h = prefix_handler();
+    h.process_key("w", true, false, false, false);
+    assert!(h.leader_deadline().is_some());
+    h.process_key("escape", false, false, false, false);
+    assert!(h.leader_deadline().is_none());
+}
+
+#[test]
+fn leader_deadline_cleared_after_unmatched_key_in_prefix() {
+    let mut h = prefix_handler();
+    h.process_key("w", true, false, false, false);
+    assert!(h.leader_deadline().is_some());
+    h.process_key("z", false, false, false, false); // unmatched → exits in prefix
+    assert!(h.leader_deadline().is_none());
+}
+
+#[test]
+fn leader_deadline_none_after_sticky_repeatable_dispatch() {
+    let mut h = sticky_handler();
+    h.process_key("w", true, false, false, false);
+    // Dispatch a repeatable action — sticky refreshes the LeaderSession
+    let r = h.process_key("h", false, false, false, false);
+    assert!(matches!(r, InputResult::Action(Action::FocusLeft)));
+    assert!(h.is_awaiting_action());
+    // Sticky mode: deadline must still be None after session refresh
+    assert!(h.leader_deadline().is_none());
+}
+
+#[test]
+fn leader_deadline_persists_after_unmatched_key_in_sticky() {
+    let mut h = sticky_handler();
+    h.process_key("w", true, false, false, false);
+    h.process_key("z", false, false, false, false); // unmatched → stays in sticky
+    assert!(h.is_awaiting_action());
+    // Sticky never has a deadline
+    assert!(h.leader_deadline().is_none());
+}
+
+#[test]
+fn leader_deadline_reflects_entered_at_timestamp() {
+    let mut h = prefix_handler();
+    // Manually set a leader session entered 500ms ago
+    let entered_at = Instant::now() - Duration::from_millis(500);
+    h.session = InputSessionState::Leader(LeaderSession {
+        mode: InputMode::Prefix,
+        entered_at,
+    });
+    let deadline = h.leader_deadline().unwrap();
+    // Deadline must be exactly entered_at + timeout (1000ms)
+    assert_eq!(deadline, entered_at + Duration::from_millis(1000));
+}
+
+#[test]
+fn leader_deadline_in_the_past_when_already_expired() {
+    let mut h = prefix_handler();
+    h.session = InputSessionState::Leader(LeaderSession {
+        mode: InputMode::Prefix,
+        entered_at: Instant::now() - Duration::from_secs(5),
+    });
+    let deadline = h.leader_deadline().unwrap();
+    // Deadline is in the past — the event loop should fire immediately
+    assert!(deadline < Instant::now());
+}
+
+#[test]
+fn check_timeout_clears_expired_leader_proactively() {
+    let mut h = prefix_handler();
+    h.session = InputSessionState::Leader(LeaderSession {
+        mode: InputMode::Prefix,
+        entered_at: Instant::now() - Duration::from_secs(2),
+    });
+    assert!(h.is_awaiting_action());
+    // Simulate event loop calling check_timeout on wake
+    h.poll_timeout();
+    assert!(!h.is_awaiting_action());
+    assert!(h.leader_deadline().is_none());
+}
+
+#[test]
+fn check_timeout_does_not_clear_fresh_leader() {
+    let mut h = prefix_handler();
+    h.process_key("w", true, false, false, false);
+    assert!(h.is_awaiting_action());
+    h.poll_timeout();
+    // Not expired yet — should still be in leader
+    assert!(h.is_awaiting_action());
+    assert!(h.leader_deadline().is_some());
+}
+
+#[test]
+fn check_timeout_skips_key_table() {
+    let mut h = prefix_handler();
+    h.activate_key_table("resize");
+    assert!(h.has_active_table());
+    // Even if we fake an expired leader session, check_timeout skips it
+    // because a key table is active.
+    h.session = InputSessionState::Leader(LeaderSession {
+        mode: InputMode::Prefix,
+        entered_at: Instant::now() - Duration::from_secs(100),
+    });
+    h.poll_timeout();
+    // Leader session untouched because key table takes priority
+    assert!(h.session.is_in_leader());
+}
+
+#[test]
+fn check_timeout_does_not_affect_sticky() {
+    let mut h = sticky_handler();
+    h.session = InputSessionState::Leader(LeaderSession {
+        mode: InputMode::Sticky,
+        entered_at: Instant::now() - Duration::from_secs(999),
+    });
+    h.poll_timeout();
+    assert!(h.is_awaiting_action());
+}
+
+#[test]
+fn process_key_event_triggers_timeout_before_processing() {
+    let mut h = prefix_handler();
+    // Simulate: leader was pressed long ago, then user presses 'a'
+    h.session = InputSessionState::Leader(LeaderSession {
+        mode: InputMode::Prefix,
+        entered_at: Instant::now() - Duration::from_secs(2),
+    });
+    // 'a' should be processed as PassThrough because check_timeout
+    // fires at the start of process_key_event and clears the leader.
+    let r = h.process_key("a", false, false, false, false);
+    assert!(matches!(r, InputResult::PassThrough));
+    assert!(!h.is_awaiting_action());
+}
+
+#[test]
+fn leader_deadline_none_during_unlocking() {
+    let mut h = prefix_handler();
+    h.toggle_lock();
+    h.process_key_event("w", true, false, false, false, BindingMode::LOCKED);
+    assert!(matches!(h.session, InputSessionState::Unlocking));
+    assert!(h.leader_deadline().is_none());
+}
+
+// ── InputSessionState::leader_deadline unit tests ──
+
+#[test]
+fn session_leader_deadline_prefix_returns_correct_instant() {
+    let entered = Instant::now() - Duration::from_millis(200);
+    let s = InputSessionState::Leader(LeaderSession {
+        mode: InputMode::Prefix,
+        entered_at: entered,
+    });
+    let limit = Duration::from_millis(1000);
+    let deadline = s.leader_deadline(limit).unwrap();
+    assert_eq!(deadline, entered + limit);
+}
+
+#[test]
+fn session_leader_deadline_sticky_returns_none() {
+    let s = InputSessionState::Leader(LeaderSession {
+        mode: InputMode::Sticky,
+        entered_at: Instant::now(),
+    });
+    assert!(s.leader_deadline(Duration::from_secs(1)).is_none());
+}
+
+#[test]
+fn session_leader_deadline_idle_returns_none() {
+    let s = InputSessionState::Idle;
+    assert!(s.leader_deadline(Duration::from_secs(1)).is_none());
+}
+
+#[test]
+fn session_leader_deadline_locked_returns_none() {
+    let s = InputSessionState::Locked;
+    assert!(s.leader_deadline(Duration::from_secs(1)).is_none());
+}
+
+#[test]
+fn session_leader_deadline_unlocking_returns_none() {
+    let s = InputSessionState::Unlocking;
+    assert!(s.leader_deadline(Duration::from_secs(1)).is_none());
 }
 
 // ── KeyTableState unit tests ──

@@ -228,6 +228,8 @@ impl App {
                         return;
                     }
 
+                    let was_already_focused =
+                        self.core.workspaces.active().active_pane_id() == Some(pane_id);
                     self.mouse_left_held = true;
                     self.mouse_left_passthrough = passthrough;
                     let click_now = Instant::now();
@@ -258,15 +260,17 @@ impl App {
                     self.animate_to_active();
 
                     if passthrough {
-                        if let Some((_, vcol, vrow)) = self.pixel_to_viewport_cell(mx, my) {
-                            self.send_lossy(ClientMessage::MouseInput {
-                                pane_id,
-                                button: 0,
-                                col: vcol,
-                                row: vrow,
-                                pressed: true,
-                                modifiers: 0,
-                            });
+                        if was_already_focused {
+                            if let Some((_, vcol, vrow)) = self.pixel_to_viewport_cell(mx, my) {
+                                self.send_lossy(ClientMessage::MouseInput {
+                                    pane_id,
+                                    button: 0,
+                                    col: vcol,
+                                    row: vrow,
+                                    pressed: true,
+                                    modifiers: 0,
+                                });
+                            }
                         }
                         self.core.selection = None;
                         return;
@@ -298,15 +302,22 @@ impl App {
                         // drag.  The selection is start==end (zero-width) and will
                         // not be rendered until the mouse drags to a different cell.
                         // This matches Alacritty/WezTerm/kitty behavior.
-                        if let Some((_, vcol, vrow)) = self.pixel_to_viewport_cell(mx, my) {
-                            self.send_lossy(ClientMessage::MouseInput {
-                                pane_id,
-                                button: 0,
-                                col: vcol,
-                                row: vrow,
-                                pressed: true,
-                                modifiers: 0,
-                            });
+                        //
+                        // Only forward the mouse event if the pane was already
+                        // focused — clicking to switch focus should not inject a
+                        // mouse press into the newly-focused application (which
+                        // would cause e.g. neovim to enter visual mode).
+                        if was_already_focused {
+                            if let Some((_, vcol, vrow)) = self.pixel_to_viewport_cell(mx, my) {
+                                self.send_lossy(ClientMessage::MouseInput {
+                                    pane_id,
+                                    button: 0,
+                                    col: vcol,
+                                    row: vrow,
+                                    pressed: true,
+                                    modifiers: 0,
+                                });
+                            }
                         }
                         self.core.selection = Some(super::Selection {
                             pane_id,

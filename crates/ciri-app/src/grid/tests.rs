@@ -1642,3 +1642,70 @@ fn osc8_multiple_links_on_same_row() {
     // "bar" has no link
     assert_eq!(grid.link_at(5, 0), None);
 }
+
+// ─── CJK / wide-character search ────────────────────────────────
+
+/// Create a grid with wide (CJK) characters properly laid out:
+/// each wide char occupies 2 columns (FLAG_WIDE_CHAR + FLAG_WIDE_CHAR_SPACER).
+fn grid_with_wide_line(text: &str) -> ClientPaneGrid {
+    use unicode_width::UnicodeWidthChar;
+    // Calculate total columns needed
+    let total_cols: usize = text
+        .chars()
+        .map(|c| c.width().unwrap_or(1))
+        .sum();
+    let cols = total_cols as u16;
+    let mut grid = ClientPaneGrid::new(cols, 1, 0);
+    let mut col = 0usize;
+    for ch in text.chars() {
+        let w = ch.width().unwrap_or(1);
+        let mut cell = PackedCell::with_ch(ch);
+        if w == 2 {
+            cell.flags = FLAG_WIDE_CHAR.to_le_bytes();
+        }
+        grid.viewport[col] = cell;
+        if w == 2 {
+            let mut spacer = PackedCell::default();
+            spacer.flags = FLAG_WIDE_CHAR_SPACER.to_le_bytes();
+            grid.viewport[col + 1] = spacer;
+        }
+        col += w;
+    }
+    grid
+}
+
+#[test]
+fn search_finds_chinese_characters() {
+    let grid = grid_with_wide_line("你好世界你好");
+    let results = grid.search("你好");
+    // "你好" appears at positions 0 and 8 (each CJK char = 2 cols)
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0], (0, 0, 3)); // cols 0..3 (2 wide chars × 2 cols)
+    assert_eq!(results[1], (0, 8, 11)); // cols 8..11
+}
+
+#[test]
+fn search_chinese_end_col_includes_wide_char_width() {
+    // Verify end_col accounts for the full width of the last CJK character
+    let grid = grid_with_wide_line("ab你cd");
+    // 'a'=col0, 'b'=col1, '你'=col2+col3, 'c'=col4, 'd'=col5
+    let results = grid.search("你");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0], (0, 2, 3)); // col 2 (start) to col 3 (end, inclusive)
+}
+
+#[test]
+fn search_mixed_ascii_and_chinese() {
+    let grid = grid_with_wide_line("hello你好world");
+    let results = grid.search("你好");
+    assert_eq!(results.len(), 1);
+    // 'h'=0, 'e'=1, 'l'=2, 'l'=3, 'o'=4, '你'=5+6, '好'=7+8, 'w'=9, ...
+    assert_eq!(results[0], (0, 5, 8));
+}
+
+#[test]
+fn search_chinese_case_insensitive_with_ascii() {
+    let grid = grid_with_wide_line("Hello你好World");
+    let results = grid.search("hello你好world");
+    assert_eq!(results.len(), 1);
+}

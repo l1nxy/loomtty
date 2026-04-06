@@ -170,7 +170,10 @@ impl PredictionEngine {
             return;
         }
 
-        let overlay = self.overlays.get_mut(&pane_id).unwrap();
+        let Some(overlay) = self.overlays.get_mut(&pane_id) else {
+            // Pane was removed concurrently (e.g. closed between event dispatch).
+            return;
+        };
         if let Some(epoch) = kill_at {
             overlay.kill_epoch(epoch);
         }

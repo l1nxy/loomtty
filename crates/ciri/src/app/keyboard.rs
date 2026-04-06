@@ -16,6 +16,8 @@ struct KeyModifiers {
     shift: bool,
     alt: bool,
     super_key: bool,
+    caps_lock: bool,
+    num_lock: bool,
 }
 
 impl KeyModifiers {
@@ -25,6 +27,8 @@ impl KeyModifiers {
             shift: modifiers.shift_key(),
             alt: modifiers.alt_key(),
             super_key: modifiers.super_key(),
+            caps_lock: modifiers.caps_lock(),
+            num_lock: modifiers.num_lock(),
         }
     }
 }
@@ -61,14 +65,10 @@ impl App {
 
             if pane_wants_release {
                 // Send release event directly to PTY via kitty encoder
-                let ctrl = self.modifiers.control_key();
-                let shift = self.modifiers.shift_key();
-                let alt = self.modifiers.alt_key();
-                let super_key = self.modifiers.super_key();
+                let mods = KeyModifiers::from_winit(self.modifiers);
                 let bytes = key_event_to_kitty_bytes(
-                    event, ctrl, shift, alt, super_key,
-                    false, // TODO: caps_lock from platform
-                    false, // TODO: num_lock from platform
+                    event, mods.ctrl, mods.shift, mods.alt, mods.super_key,
+                    mods.caps_lock, mods.num_lock,
                     kitty_flags,
                 );
                 if !bytes.is_empty() {
@@ -100,12 +100,8 @@ impl App {
                             } else {
                                 key_event_to_kitty_bytes(
                                     event,
-                                    ctrl,
-                                    shift,
-                                    alt,
-                                    super_key,
-                                    false, // TODO: caps_lock from platform
-                                    false, // TODO: num_lock from platform
+                                    mods.ctrl, mods.shift, mods.alt, mods.super_key,
+                                    mods.caps_lock, mods.num_lock,
                                     pane_kitty_flags,
                                 )
                             };
@@ -465,8 +461,8 @@ impl App {
                 modifiers.shift,
                 modifiers.alt,
                 modifiers.super_key,
-                false, // TODO: caps_lock from platform
-                false, // TODO: num_lock from platform
+                modifiers.caps_lock,
+                modifiers.num_lock,
                 kitty_flags,
             )
         } else {

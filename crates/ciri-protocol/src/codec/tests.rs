@@ -1180,3 +1180,703 @@ async fn frame_roundtrip_client_message_variants() {
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// proptest: SM codec fuzzing roundtrips
+// ═══════════════════════════════════════════════════════════════════
+
+mod proptest_roundtrips {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn arb_packed_color() -> impl Strategy<Value = PackedColor> {
+        prop_oneof![
+            (0u8..29).prop_map(PackedColor::named),
+            (any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(r, g, b)| PackedColor::rgb(r, g, b)),
+            any::<u8>().prop_map(PackedColor::indexed),
+        ]
+    }
+
+    fn arb_cell_flags() -> impl Strategy<Value = u16> {
+        prop_oneof![
+            Just(0u16),
+            Just(FLAG_BOLD),
+            Just(FLAG_ITALIC),
+            Just(FLAG_UNDERLINE),
+            Just(FLAG_INVERSE),
+            Just(FLAG_DIM),
+            Just(FLAG_STRIKEOUT),
+            Just(FLAG_HIDDEN),
+            Just(FLAG_BOLD | FLAG_ITALIC),
+            Just(FLAG_UNDERLINE | FLAG_UNDERLINE_DOUBLE),
+            Just(FLAG_UNDERLINE | FLAG_UNDERLINE_CURLY),
+            // Random combination
+            (0u16..0x1FFF),
+        ]
+    }
+
+    /// Generate a narrow (single-width) cell with arbitrary attributes.
+    fn arb_narrow_cell() -> impl Strategy<Value = PackedCell> {
+        (
+            // Heavily weight ASCII (the common fast path)
+            prop_oneof![
+                9 => (0x20u32..0x7F).prop_map(|c| char::from_u32(c).unwrap()),
+                1 => Just(' '),
+            ],
+            arb_packed_color(),
+            arb_packed_color(),
+            arb_cell_flags(),
+        )
+            .prop_map(|(ch, fg, bg, flags)| {
+                let mut c = PackedCell::with_ch(ch);
+                c.fg = fg;
+                c.bg = bg;
+                // Mask out WIDE_CHAR for narrow cells
+                c.flags = (flags & !FLAG_WIDE_CHAR).to_le_bytes();
+                c
+            })
+    }
+
+    /// Generate a wide (CJK) cell followed by its spacer.
+    fn arb_wide_cell_pair() -> impl Strategy<Value = (PackedCell, PackedCell)> {
+        (
+            prop_oneof![Just('中'), Just('日'), Just('漢'), Just('🐧')],
+            arb_packed_color(),
+            arb_packed_color(),
+            arb_cell_flags(),
+        )
+            .prop_map(|(ch, fg, bg, flags)| {
+                let mut c = PackedCell::with_ch(ch);
+                c.fg = fg;
+                c.bg = bg;
+                c.flags = (flags | FLAG_WIDE_CHAR).to_le_bytes();
+                let spacer = PackedCell {
+                    ch_bytes: [0; 4],
+                    fg,
+                    bg,
+                    flags: FLAG_WIDE_CHAR_SPACER.to_le_bytes(),
+                    ..PackedCell::default()
+                };
+                (c, spacer)
+            })
+    }
+
+    /// Generate a cell — mostly narrow, occasionally a wide+spacer pair flattened.
+    fn arb_packed_cell() -> impl Strategy<Value = Vec<PackedCell>> {
+        prop_oneof![
+            8 => arb_narrow_cell().prop_map(|c| vec![c]),
+            2 => arb_wide_cell_pair().prop_map(|(w, s)| vec![w, s]),
+        ]
+    }
+
+    /// Flat vec of cells with correct wide-char pairing.
+    fn arb_cell_vec(size: std::ops::Range<usize>) -> impl Strategy<Value = Vec<PackedCell>> {
+        prop::collection::vec(arb_packed_cell(), size)
+            .prop_map(|nested| nested.into_iter().flatten().collect())
+    }
+
+    proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(100))]
+
+        #[test]
+        fn sm_codec_roundtrip_arbitrary(cells in arb_cell_vec(1..200)) {
+            let encoded = sm_encode_cells(&cells);
+            let mut decoded = vec![PackedCell::default(); cells.len()];
+            let n = decode_sm_cells(&encoded, &mut decoded).unwrap();
+            prop_assert_eq!(n, cells.len());
+            prop_assert_eq!(&decoded[..n], &cells[..]);
+        }
+
+        #[test]
+        fn sm_codec_roundtrip_large_grid(cells in arb_cell_vec(200..2000)) {
+            let encoded = sm_encode_cells(&cells);
+            let mut decoded = vec![PackedCell::default(); cells.len()];
+            let n = decode_sm_cells(&encoded, &mut decoded).unwrap();
+            prop_assert_eq!(n, cells.len());
+            prop_assert_eq!(&decoded[..n], &cells[..]);
+        }
+
+        #[test]
+        fn sm_encoded_size_bounded(cells in arb_cell_vec(1..500)) {
+            let encoded = sm_encode_cells(&cells);
+            let raw_size = cells.len() * PACKED_CELL_SIZE;
+            // Worst case: every cell has unique attrs → ~10B opcode overhead per cell.
+            // With PACKED_CELL_SIZE=16, that gives ~26B/cell vs 16B raw = ~1.6x.
+            // Use 2x as a safe upper bound.
+            prop_assert!(
+                encoded.len() < raw_size * 2 + 16, // +16 for End/Reset overhead
+                "SM encoding {}B vs raw {}B ({} cells) — exceeds 2x bound",
+                encoded.len(), raw_size, cells.len()
+            );
+        }
+
+        #[test]
+        fn sm_uniform_cells_compress_well(
+            cell in arb_narrow_cell(),
+            count in 10usize..500,
+        ) {
+            let cells = vec![cell; count];
+            let encoded = sm_encode_cells(&cells);
+            // Uniform cells: one SetFg+SetBg+SetFlags + one Repeat + End ≈ constant
+            prop_assert!(
+                encoded.len() < 50,
+                "uniform {} cells → {}B (expected <50B)",
+                count, encoded.len()
+            );
+        }
+    }
+
+    proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(50))]
+
+        #[test]
+        fn full_pane_sync_roundtrip_with_varied_cells(
+            // Use small grids so arb_narrow_cell fills the entire grid
+            cols in 4u16..40,
+            rows in 2u16..15,
+            title in "[a-z]{0,20}",
+            cursor_line in -10i16..30,
+            mode_flags in prop_oneof![Just(0u16), Just(MODE_ALT_SCREEN), Just(MODE_MOUSE_REPORT)],
+        ) {
+            let cell_count = cols as usize * rows as usize;
+            // Generate cells that fill the grid with varied attributes per position.
+            // Using deterministic generation from grid coords to ensure every cell
+            // has non-default content (no padding with defaults).
+            let mut cells = Vec::with_capacity(cell_count);
+            for row in 0..rows {
+                for col in 0..cols {
+                    let mut c = PackedCell::with_ch(char::from(b'A' + (col % 26) as u8));
+                    c.fg = PackedColor::rgb((row as u8).wrapping_mul(17), (col as u8).wrapping_mul(7), 42);
+                    c.bg = PackedColor::named((row % 16) as u8);
+                    if col % 3 == 0 { c.flags = FLAG_BOLD.to_le_bytes(); }
+                    if col % 5 == 0 { c.flags = FLAG_ITALIC.to_le_bytes(); }
+                    cells.push(c);
+                }
+            }
+
+            let sync = FullPaneSync {
+                meta: PaneFrameMeta {
+                    pane_id: 42,
+                    generation: 99,
+                    cursor_line,
+                    cursor_col: cols.saturating_sub(1),
+                    cursor_shape: CURSOR_BEAM,
+                    mode_flags,
+                    echo_ack: 7,
+                },
+                cols,
+                rows,
+                title: title.clone(),
+                scrollback: Vec::new(),
+                scrollback_rows: 0,
+                scrollback_replace: false,
+                cells: cells.clone(),
+                grapheme_extras: GraphemeExtras::new(),
+                hyperlink_extras: HyperlinkExtras::new(),
+                cwd: Some("/tmp".to_string()),
+            };
+            let payload = encode_full_pane_sync_payload(&sync).unwrap();
+            let decoded = decode_full_pane_sync(&payload).unwrap();
+            prop_assert_eq!(decoded.cols, cols);
+            prop_assert_eq!(decoded.rows, rows);
+            prop_assert_eq!(&decoded.title, &title);
+            prop_assert_eq!(decoded.meta.cursor_line, cursor_line);
+            prop_assert_eq!(decoded.meta.mode_flags, mode_flags);
+            prop_assert_eq!(decoded.meta.echo_ack, 7);
+            prop_assert_eq!(decoded.cells.len(), cell_count);
+            prop_assert_eq!(&decoded.cells, &cells);
+            prop_assert_eq!(decoded.cwd, Some("/tmp".to_string()));
+        }
+    }
+
+    // Use a tokio runtime for async read_frame in proptest
+    fn rt() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
+    }
+
+    proptest! {
+        #[test]
+        fn cell_delta_roundtrip_with_varied_cells(
+            pane_id in 1u64..100,
+            generation in 0u64..1000,
+            cursor_line in -50i16..50,
+            cursor_col in 0u16..200,
+            echo_ack in 0u64..10000,
+            // Use narrow cells only — CellDelta regions have column-based bounds
+            // that must exactly match cell count.
+            cells_data in prop::collection::vec(arb_narrow_cell(), 1..20),
+        ) {
+            let right = cells_data.len().saturating_sub(1) as u16;
+            let line = cursor_line.unsigned_abs();
+            let meta = PaneFrameMeta {
+                pane_id,
+                generation,
+                cursor_line,
+                cursor_col,
+                cursor_shape: CURSOR_BLOCK,
+                mode_flags: 0,
+                echo_ack,
+            };
+            let mut buf = Vec::new();
+            encode_cell_delta_streaming_framed(
+                &mut buf, &meta, 80, &[(line, 0, right)],
+                |_line, _left, _right, enc| {
+                    for c in &cells_data { enc.push_cell(c); }
+                },
+            ).unwrap();
+            // Use read_frame to properly handle LZ4 decompression
+            let delta = rt().block_on(async {
+                match read_frame(&mut &buf[..]).await.unwrap() {
+                    Frame::CellDelta(d) => d,
+                    other => panic!("expected CellDelta, got {other:?}"),
+                }
+            });
+            prop_assert_eq!(delta.meta.pane_id, pane_id);
+            prop_assert_eq!(delta.meta.generation, generation);
+            prop_assert_eq!(delta.meta.cursor_line, cursor_line);
+            prop_assert_eq!(delta.meta.cursor_col, cursor_col);
+            prop_assert_eq!(delta.meta.echo_ack, echo_ack);
+            // Decode SM data and verify cell content
+            let sm_data = delta.sm_data(0);
+            let mut decoded = vec![PackedCell::default(); cells_data.len()];
+            let n = decode_sm_cells(sm_data, &mut decoded).unwrap();
+            prop_assert_eq!(n, cells_data.len());
+            prop_assert_eq!(&decoded[..n], &cells_data[..]);
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Protocol network edge cases
+// ═══════════════════════════════════════════════════════════════════
+
+mod network_edge_cases {
+    use super::*;
+
+    // ─── Handshake version mismatch ─────────────────────────────
+
+    #[tokio::test]
+    async fn handshake_rejects_wrong_magic() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"NOPE"); // wrong magic
+        buf.extend_from_slice(&parse_pkg_version().to_le_bytes());
+        buf.push(super::super::handshake::WIRE_PROTOCOL_VERSION);
+        buf.extend_from_slice(&5u16.to_le_bytes()); // session name len
+        buf.extend_from_slice(b"hello");
+        buf.extend_from_slice(&1024u32.to_le_bytes()); // width
+        buf.extend_from_slice(&768u32.to_le_bytes()); // height
+        buf.extend_from_slice(&8.0f32.to_bits().to_le_bytes());
+        buf.extend_from_slice(&16.0f32.to_bits().to_le_bytes());
+
+        let err = read_client_hello(&mut &buf[..]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("bad magic"));
+    }
+
+    #[tokio::test]
+    async fn handshake_rejects_wrong_wire_protocol_version() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"CIRI");
+        buf.extend_from_slice(&parse_pkg_version().to_le_bytes());
+        buf.push(WIRE_PROTOCOL_VERSION + 1); // wrong wire version
+        buf.extend_from_slice(&4u16.to_le_bytes());
+        buf.extend_from_slice(b"test");
+        buf.extend_from_slice(&1024u32.to_le_bytes());
+        buf.extend_from_slice(&768u32.to_le_bytes());
+        buf.extend_from_slice(&8.0f32.to_bits().to_le_bytes());
+        buf.extend_from_slice(&16.0f32.to_bits().to_le_bytes());
+
+        let err = read_client_hello(&mut &buf[..]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("incompatible wire protocol"));
+    }
+
+    #[tokio::test]
+    async fn handshake_rejects_invalid_viewport_dims() {
+        let hello = ClientHello {
+            session_name: "test".to_string(),
+            width: 0, // invalid
+            height: 768,
+            cell_width: 8.0,
+            cell_height: 16.0,
+        };
+        let buf = build_client_hello(&hello).unwrap();
+        let err = read_client_hello(&mut &buf[..]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("invalid viewport width"));
+    }
+
+    #[tokio::test]
+    async fn handshake_rejects_extreme_cell_size() {
+        let hello = ClientHello {
+            session_name: "test".to_string(),
+            width: 1024,
+            height: 768,
+            cell_width: 999.0, // too big (limit 200)
+            cell_height: 16.0,
+        };
+        let buf = build_client_hello(&hello).unwrap();
+        let err = read_client_hello(&mut &buf[..]).await.unwrap_err();
+        assert!(err.to_string().contains("invalid cell_width"));
+    }
+
+    #[tokio::test]
+    async fn handshake_rejects_oversized_session_name() {
+        let hello = ClientHello {
+            session_name: "a".repeat(256),
+            width: 1024,
+            height: 768,
+            cell_width: 8.0,
+            cell_height: 16.0,
+        };
+        let err = build_client_hello(&hello).unwrap_err();
+        assert!(err.to_string().contains("session name too long"));
+    }
+
+    #[tokio::test]
+    async fn server_hello_roundtrip() {
+        let mut buf = Vec::new();
+        write_server_hello(&mut buf).await.unwrap();
+        assert_eq!(buf.len(), SERVER_HELLO_LEN);
+        let compat = read_server_hello(&mut &buf[..]).await.unwrap();
+        assert!(matches!(compat, VersionCompat::Exact(_)));
+    }
+
+    #[tokio::test]
+    async fn server_hello_minor_mismatch_returns_minor_mismatch() {
+        // Build a ServerHello with bumped minor version
+        let local = parse_pkg_version();
+        let local_minor = (local >> 16) & 0xFF;
+        let bumped = (local & 0xFF00FFFF) | ((local_minor + 1) << 16);
+
+        let mut buf = [0u8; SERVER_HELLO_LEN];
+        buf[0..4].copy_from_slice(b"CIRI");
+        buf[4..8].copy_from_slice(&bumped.to_le_bytes());
+
+        let compat = read_server_hello(&mut &buf[..]).await.unwrap();
+        assert!(
+            matches!(compat, VersionCompat::MinorMismatch { .. }),
+            "expected MinorMismatch, got {compat:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn server_hello_patch_mismatch_returns_patch_mismatch() {
+        // Build a ServerHello with bumped patch version
+        let local = parse_pkg_version();
+        let local_patch = local & 0xFFFF;
+        let bumped = (local & 0xFFFF0000) | ((local_patch + 1) & 0xFFFF);
+
+        let mut buf = [0u8; SERVER_HELLO_LEN];
+        buf[0..4].copy_from_slice(b"CIRI");
+        buf[4..8].copy_from_slice(&bumped.to_le_bytes());
+
+        let compat = read_server_hello(&mut &buf[..]).await.unwrap();
+        assert!(
+            matches!(compat, VersionCompat::PatchMismatch { .. }),
+            "expected PatchMismatch, got {compat:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn server_hello_major_mismatch_is_rejected() {
+        let local = parse_pkg_version();
+        let local_major = (local >> 24) & 0xFF;
+        let bumped = ((local_major + 1) << 24) | (local & 0x00FFFFFF);
+
+        let mut buf = [0u8; SERVER_HELLO_LEN];
+        buf[0..4].copy_from_slice(b"CIRI");
+        buf[4..8].copy_from_slice(&bumped.to_le_bytes());
+
+        let err = read_server_hello(&mut &buf[..]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("incompatible major version"));
+    }
+
+    // ─── Frame size limits ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn frame_rejects_oversized_control_message() {
+        // Build a frame with TAG_SERVER_MSG but payload claiming > 1 MiB
+        let mut buf = Vec::new();
+        buf.push(TAG_SERVER_MSG);
+        buf.extend_from_slice(&(MAX_CONTROL_FRAME_LEN + 1).to_le_bytes());
+        // No actual payload needed — the header check should reject it
+
+        let err = read_frame(&mut &buf[..]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("frame too large"));
+    }
+
+    #[tokio::test]
+    async fn frame_rejects_unknown_tag() {
+        let frame = build_frame(0xFE, b"garbage").unwrap();
+        let err = read_frame(&mut &frame[..]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("unknown frame tag"));
+    }
+
+    #[tokio::test]
+    async fn frame_rejects_truncated_header() {
+        // Only 3 bytes — need 5 for header
+        let buf = [0x01, 0x00, 0x00];
+        let err = read_frame(&mut &buf[..]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[tokio::test]
+    async fn frame_rejects_truncated_payload() {
+        // Header says 100 bytes, but only 10 available
+        let mut buf = Vec::new();
+        buf.push(TAG_SERVER_MSG);
+        buf.extend_from_slice(&100u32.to_le_bytes());
+        buf.extend_from_slice(&[0u8; 10]); // only 10 bytes
+
+        let err = read_frame(&mut &buf[..]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[tokio::test]
+    async fn frame_rejects_corrupted_msgpack_payload() {
+        let frame = build_frame(TAG_SERVER_MSG, b"not valid msgpack").unwrap();
+        let err = read_frame(&mut &frame[..]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    // ─── Partial / split reads via tokio duplex ─────────────────
+
+    #[tokio::test]
+    async fn codec_handles_split_reads_via_scripted_io() {
+        // Use tokio_test::io::Builder for deterministic byte-level split control
+        let msg1 = ClientMessage::Ping { seq: 1, client_time_us: 100 };
+        let msg2 = ClientMessage::Ping { seq: 2, client_time_us: 200 };
+
+        let mut frame1_bytes = Vec::new();
+        encode_client_msg(&mut frame1_bytes, &msg1).await.unwrap();
+        let frame1_len = frame1_bytes.len();
+
+        let mut wire = frame1_bytes;
+        encode_client_msg(&mut wire, &msg2).await.unwrap();
+
+        // Split points: mid-header of frame 1 (3 of 5 bytes), mid-payload of frame 1,
+        // then exact frame boundary, then frame 2 in one piece.
+        let mid_payload = frame1_len / 2 + 3; // well inside frame 1's payload
+        let mut reader = tokio_test::io::Builder::new()
+            .read(&wire[..3])                       // partial header
+            .read(&wire[3..mid_payload])             // rest of header + partial payload
+            .read(&wire[mid_payload..frame1_len])    // rest of frame 1
+            .read(&wire[frame1_len..])               // all of frame 2
+            .build();
+
+        let frame1 = read_frame(&mut reader).await.unwrap();
+        let frame2 = read_frame(&mut reader).await.unwrap();
+
+        match frame1 {
+            Frame::ClientMsg(ClientMessage::Ping { seq: 1, .. }) => {}
+            other => panic!("expected Ping seq=1, got {other:?}"),
+        }
+        match frame2 {
+            Frame::ClientMsg(ClientMessage::Ping { seq: 2, .. }) => {}
+            other => panic!("expected Ping seq=2, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn codec_handles_large_full_pane_sync_split_reads() {
+        // Build a FullPaneSync with enough data to exercise LZ4 + fragmented transport
+        let mut cells = Vec::new();
+        for i in 0u8..120 {
+            for j in 0u8..40 {
+                let mut c = PackedCell::with_ch(char::from(b'A' + (i % 26)));
+                c.fg = PackedColor::rgb(i, j, 0);
+                cells.push(c);
+            }
+        }
+        let sync = FullPaneSync {
+            meta: PaneFrameMeta {
+                pane_id: 99, generation: 55, cursor_line: 10, cursor_col: 20,
+                cursor_shape: CURSOR_BLOCK, mode_flags: MODE_ALT_SCREEN, echo_ack: 42,
+            },
+            cols: 120, rows: 40,
+            title: "large-sync".to_string(),
+            scrollback: Vec::new(), scrollback_rows: 0, scrollback_replace: false,
+            cells,
+            grapheme_extras: GraphemeExtras::new(),
+            hyperlink_extras: HyperlinkExtras::new(),
+            cwd: Some("/home/test".to_string()),
+        };
+        let framed = frame_full_pane_sync(&sync).unwrap();
+        assert!(framed.len() > 200, "frame should be large enough: {}B", framed.len());
+
+        // Split into many small chunks (simulate tiny MTU / slow transport)
+        let chunk_size = 32;
+        let mut builder = tokio_test::io::Builder::new();
+        for chunk in framed.chunks(chunk_size) {
+            builder.read(chunk);
+        }
+        let mut reader = builder.build();
+
+        match read_frame(&mut reader).await.unwrap() {
+            Frame::FullPaneSync(decoded) => {
+                assert_eq!(decoded.meta.pane_id, 99);
+                assert_eq!(decoded.meta.generation, 55);
+                assert_eq!(decoded.meta.mode_flags, MODE_ALT_SCREEN);
+                assert_eq!(decoded.cols, 120);
+                assert_eq!(decoded.rows, 40);
+            }
+            other => panic!("expected FullPaneSync, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn codec_detects_eof_via_scripted_io() {
+        // Deliver exactly 3 bytes of a 5-byte header, then EOF
+        let mut reader = tokio_test::io::Builder::new()
+            .read(&[0x01, 0x00, 0x00])
+            .build();
+
+        let err = read_frame(&mut reader).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[tokio::test]
+    async fn handshake_over_duplex_roundtrip() {
+        let (client_r, server_w) = tokio::io::duplex(256);
+        let (server_r, client_w) = tokio::io::duplex(256);
+
+        let client_hello = ClientHello {
+            session_name: "integration-test".to_string(),
+            width: 1920,
+            height: 1080,
+            cell_width: 9.5,
+            cell_height: 18.0,
+        };
+
+        let hello_clone = client_hello.clone();
+        let client_task = tokio::spawn(async move {
+            let mut w = tokio::io::BufWriter::new(client_w);
+            let mut r = tokio::io::BufReader::new(client_r);
+            write_client_hello(&mut w, &hello_clone).await.unwrap();
+            use tokio::io::AsyncWriteExt;
+            w.flush().await.unwrap();
+            let compat = read_server_hello(&mut r).await.unwrap();
+            compat
+        });
+
+        let server_task = tokio::spawn(async move {
+            let mut r = tokio::io::BufReader::new(server_r);
+            let mut w = tokio::io::BufWriter::new(server_w);
+            let (compat, hello) = read_client_hello(&mut r).await.unwrap();
+            write_server_hello(&mut w).await.unwrap();
+            use tokio::io::AsyncWriteExt;
+            w.flush().await.unwrap();
+            (compat, hello)
+        });
+
+        let client_compat = client_task.await.unwrap();
+        let (server_compat, received_hello) = server_task.await.unwrap();
+
+        assert!(matches!(client_compat, VersionCompat::Exact(_)));
+        assert!(matches!(server_compat, VersionCompat::Exact(_)));
+        assert_eq!(received_hello.session_name, "integration-test");
+        assert_eq!(received_hello.width, 1920);
+        assert_eq!(received_hello.height, 1080);
+        assert!((received_hello.cell_width - 9.5).abs() < 0.01);
+        assert!((received_hello.cell_height - 18.0).abs() < 0.01);
+    }
+
+    // ─── LZ4 compression edge cases ────────────────────────────
+
+    #[test]
+    fn full_pane_sync_frame_applies_lz4_for_large_payload() {
+        let cells = vec![PackedCell::default(); 80 * 24];
+        let sync = FullPaneSync {
+            meta: PaneFrameMeta {
+                pane_id: 1,
+                generation: 1,
+                cursor_line: 0,
+                cursor_col: 0,
+                cursor_shape: CURSOR_BLOCK,
+                mode_flags: 0,
+                echo_ack: 0,
+            },
+            cols: 80,
+            rows: 24,
+            title: "test".to_string(),
+            scrollback: Vec::new(),
+            scrollback_rows: 0,
+            scrollback_replace: false,
+            cells,
+            grapheme_extras: GraphemeExtras::new(),
+            hyperlink_extras: HyperlinkExtras::new(),
+            cwd: None,
+        };
+        let framed = frame_full_pane_sync(&sync).unwrap();
+        // Verify it roundtrips through read_frame (which handles decompression)
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            match read_frame(&mut &framed[..]).await.unwrap() {
+                Frame::FullPaneSync(borrowed) => {
+                    assert_eq!(borrowed.meta.pane_id, 1);
+                    assert_eq!(borrowed.cols, 80);
+                    assert_eq!(borrowed.rows, 24);
+                }
+                other => panic!("expected FullPaneSync, got {other:?}"),
+            }
+        });
+    }
+
+    // ─── Multiple frames in sequence ────────────────────────────
+
+    #[tokio::test]
+    async fn multiple_frame_types_in_sequence() {
+        let mut wire = Vec::new();
+
+        // 1. ServerMessage
+        let msg = ServerMessage::Bell { pane_id: 1 };
+        let frame1 = frame_server_msg(&msg).unwrap();
+        wire.extend_from_slice(&frame1);
+
+        // 2. FullPaneSync
+        let sync = FullPaneSync {
+            meta: PaneFrameMeta {
+                pane_id: 1, generation: 1, cursor_line: 0, cursor_col: 0,
+                cursor_shape: CURSOR_BLOCK, mode_flags: 0, echo_ack: 0,
+            },
+            cols: 4, rows: 2, title: "t".to_string(),
+            scrollback: Vec::new(), scrollback_rows: 0, scrollback_replace: false,
+            cells: vec![PackedCell::default(); 8],
+            grapheme_extras: GraphemeExtras::new(),
+            hyperlink_extras: HyperlinkExtras::new(),
+            cwd: None,
+        };
+        let frame2 = frame_full_pane_sync(&sync).unwrap();
+        wire.extend_from_slice(&frame2);
+
+        // 3. Another ServerMessage
+        let msg2 = ServerMessage::PaneClosed { pane_id: 1 };
+        let frame3 = frame_server_msg(&msg2).unwrap();
+        wire.extend_from_slice(&frame3);
+
+        // Read all three back
+        let mut cursor = &wire[..];
+        match read_frame(&mut cursor).await.unwrap() {
+            Frame::ServerMsg(ServerMessage::Bell { pane_id: 1 }) => {}
+            other => panic!("frame 1: expected Bell, got {other:?}"),
+        }
+        match read_frame(&mut cursor).await.unwrap() {
+            Frame::FullPaneSync(borrowed) => {
+                assert_eq!(borrowed.meta.pane_id, 1);
+                assert_eq!(borrowed.cols, 4);
+            }
+            other => panic!("frame 2: expected FullPaneSync, got {other:?}"),
+        }
+        match read_frame(&mut cursor).await.unwrap() {
+            Frame::ServerMsg(ServerMessage::PaneClosed { pane_id: 1 }) => {}
+            other => panic!("frame 3: expected PaneClosed, got {other:?}"),
+        }
+    }
+}

@@ -314,7 +314,9 @@ impl AtlasLayer {
         pending_clear: bool,
     ) {
         if pending_clear {
-            let zeros_size = (self.atlas_size * self.atlas_size * self.bpp) as usize;
+            let zeros_size = (self.atlas_size as u64)
+                .saturating_mul(self.atlas_size as u64)
+                .saturating_mul(self.bpp as u64) as usize;
             unsafe {
                 ptr::write_bytes(self.staging_buffer.data(), 0, zeros_size);
             }
@@ -323,7 +325,7 @@ impl AtlasLayer {
                 let mut transfer = encoder.transfer("glyph_clear");
                 transfer.copy_buffer_to_texture(
                     self.staging_buffer.at(0),
-                    self.atlas_size * self.bpp,
+                    self.atlas_size.saturating_mul(self.bpp),
                     gpu::TexturePiece {
                         texture: self.texture,
                         mip_level: 0,
@@ -343,12 +345,14 @@ impl AtlasLayer {
             return;
         }
 
-        let staging_capacity = (self.atlas_size * self.atlas_size * self.bpp) as u64;
+        let staging_capacity = (self.atlas_size as u64)
+            .saturating_mul(self.atlas_size as u64)
+            .saturating_mul(self.bpp as u64);
         let mut cursor: u64 = 0;
 
         for upload in pending_uploads.iter() {
-            let row_bytes = upload.w * self.bpp;
-            let total_bytes = (row_bytes * upload.h) as u64;
+            let row_bytes = (upload.w as u64).saturating_mul(self.bpp as u64);
+            let total_bytes = row_bytes.saturating_mul(upload.h as u64);
 
             if cursor + total_bytes > staging_capacity {
                 log::warn!("staging buffer overflow, skipping glyph upload");
@@ -369,8 +373,8 @@ impl AtlasLayer {
 
         let mut offset: u64 = 0;
         for upload in pending_uploads.drain(..) {
-            let row_bytes = upload.w * self.bpp;
-            let total_bytes = (row_bytes * upload.h) as u64;
+            let row_bytes = (upload.w as u64).saturating_mul(self.bpp as u64);
+            let total_bytes = row_bytes.saturating_mul(upload.h as u64);
 
             if offset + total_bytes > staging_capacity {
                 break;
@@ -380,7 +384,7 @@ impl AtlasLayer {
                 let mut transfer = encoder.transfer("glyph_upload");
                 transfer.copy_buffer_to_texture(
                     self.staging_buffer.at(offset),
-                    row_bytes,
+                    row_bytes as u32,
                     gpu::TexturePiece {
                         texture: self.texture,
                         mip_level: 0,

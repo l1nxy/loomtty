@@ -52,42 +52,70 @@ pub async fn prepare_daemon() -> Result<DaemonState> {
     }
 
     let sock_path = transport::server_socket_path();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Create parent directory with restrictive permissions atomically:
+        // set umask before mkdir so the directory is never world-accessible.
+        if let Some(parent) = sock_path.parent() {
+            let old_umask = unsafe { libc::umask(0o077) };
+            let mkdir_result = std::fs::create_dir_all(parent);
+            unsafe { libc::umask(old_umask) };
+            mkdir_result?;
+
+            // Verify permissions are correct (defense-in-depth against pre-existing dirs)
+            let meta = std::fs::metadata(parent)?;
+            let mode = meta.permissions().mode() & 0o777;
+            if mode & 0o077 != 0 {
+                std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+            }
+        }
+    }
+    #[cfg(windows)]
     if let Some(parent) = sock_path.parent() {
         std::fs::create_dir_all(parent)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
-        }
     }
 
     #[cfg(unix)]
     let listener = {
-        match UnixListener::bind(&sock_path) {
-            Ok(l) => l,
+        // Set restrictive umask so the socket file is created with 0o700
+        let old_umask = unsafe { libc::umask(0o077) };
+
+        let result: Result<UnixListener> = match UnixListener::bind(&sock_path) {
+            Ok(l) => Ok(l),
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                // Symlink-safe removal: check that the existing path is a socket,
+                // not a symlink planted by an attacker.
                 let tmp_path = sock_path.with_extension("tmp");
-                let _ = std::fs::remove_file(&tmp_path);
+                if tmp_path.exists() {
+                    let meta = tmp_path.symlink_metadata()?;
+                    if meta.file_type().is_symlink() {
+                        unsafe { libc::umask(old_umask) };
+                        anyhow::bail!(
+                            "refusing to remove {}: path is a symlink (possible attack)",
+                            tmp_path.display()
+                        );
+                    }
+                    std::fs::remove_file(&tmp_path)?;
+                }
                 let listener = UnixListener::bind(&tmp_path)?;
                 std::fs::rename(&tmp_path, &sock_path)?;
-                listener
+                Ok(listener)
             }
-            Err(e) => return Err(e.into()),
-        }
+            Err(e) => Err(e.into()),
+        };
+
+        // Restore original umask regardless of outcome
+        unsafe { libc::umask(old_umask) };
+        result?
     };
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::Permissions::from_mode(0o700);
-        if let Err(e) = std::fs::set_permissions(&sock_path, perms) {
-            log::warn!("failed to set socket permissions: {e}");
-        }
-    }
     #[cfg(windows)]
     let pipe_name = transport::server_pipe_name();
     #[cfg(windows)]
     let pipe_server = ServerOptions::new()
         .first_pipe_instance(true)
+        .reject_remote_clients(true)
         .create(&pipe_name)?;
 
     #[cfg(unix)]
@@ -230,6 +258,24 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
             tokio::select! {
                 result = listener.accept() => {
                     let (stream, _) = result?;
+                    // Verify peer UID matches our UID (SO_PEERCRED / getpeereid)
+                    match stream.peer_cred() {
+                        Ok(cred) => {
+                            let my_uid = unsafe { libc::getuid() };
+                            if cred.uid() != my_uid {
+                                log::warn!(
+                                    "rejected Unix socket connection from uid {} (expected {})",
+                                    cred.uid(),
+                                    my_uid,
+                                );
+                                continue;
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("failed to get peer credentials, rejecting: {e}");
+                            continue;
+                        }
+                    }
                     let state = state.clone();
                     let client_shutdown = shutdown.clone();
                     let client_input_notify = input_notify.clone();
@@ -281,7 +327,9 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
                 }
             }
             let connected = pipe_server;
-            pipe_server = ServerOptions::new().create(&pipe_name)?;
+            pipe_server = ServerOptions::new()
+                .reject_remote_clients(true)
+                .create(&pipe_name)?;
             let state = state.clone();
             let client_shutdown = shutdown.clone();
             let client_input_notify = input_notify.clone();

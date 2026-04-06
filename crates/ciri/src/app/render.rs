@@ -1314,7 +1314,7 @@ impl App {
         let renderer = self.renderer.as_mut().unwrap();
         let cache = self.glyph_cache.as_mut().unwrap();
         let atlas_gpu = self.glyph_atlas_gpu.as_mut().unwrap();
-        renderer.draw_frame(
+        if let Err(e) = renderer.draw_frame(
             atlas_gpu,
             cache,
             FrameScene {
@@ -1331,7 +1331,12 @@ impl App {
                 pane_color_glyph_end,
                 overlay_bg_start,
             },
-        );
+        ) {
+            log::error!("draw_frame failed: {e}");
+            // Don't schedule another redraw — a failed frame will fail again,
+            // causing an infinite error loop at frame rate.
+            animating = false;
+        }
 
         self.render_bufs.bg_rects = bg_rects;
         self.render_bufs.glyphs = glyphs;

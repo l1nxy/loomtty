@@ -5,7 +5,6 @@
 //!
 //! Uses `glutin` for EGL context management and `glow` for GL calls.
 
-use anyhow::Result;
 use ciri_config::config::RenderConfig;
 use ciri_render::FrameScene;
 use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, PendingUpload, ScissoredRange};
@@ -52,21 +51,21 @@ struct GlAtlasLayerConfig<'a> {
 }
 
 impl GlAtlasLayer {
-    unsafe fn new(gl: &glow::Context, cfg: &GlAtlasLayerConfig<'_>) -> Self {
+    unsafe fn new(gl: &glow::Context, cfg: &GlAtlasLayerConfig<'_>) -> crate::Result<Self> {
         let atlas_size = cfg.atlas_size;
         let max_instances = cfg.max_instances;
         let internal_format = cfg.internal_format;
         let format = cfg.format;
         let bpp = cfg.bpp;
-        let program = compile_program(gl, cfg.vs_src, cfg.fs_src, cfg.label);
+        let program = compile_program(gl, cfg.vs_src, cfg.fs_src, cfg.label)?;
         let loc_viewport = gl
             .get_uniform_location(program, "u_viewport")
-            .expect("u_viewport uniform not found");
+            .ok_or_else(|| crate::GpuError::ShaderCompile("u_viewport uniform not found".into()))?;
         let loc_atlas = gl
             .get_uniform_location(program, "u_atlas")
-            .expect("u_atlas uniform not found");
+            .ok_or_else(|| crate::GpuError::ShaderCompile("u_atlas uniform not found".into()))?;
 
-        let texture = gl.create_texture().unwrap();
+        let texture = gl.create_texture().map_err(|e| crate::GpuError::ResourceCreate(format!("texture: {e}")))?;
         gl.bind_texture(glow::TEXTURE_2D, Some(texture));
         gl.tex_image_2d(
             glow::TEXTURE_2D,
@@ -104,8 +103,8 @@ impl GlAtlasLayer {
         );
         gl.bind_texture(glow::TEXTURE_2D, None);
 
-        let vao = gl.create_vertex_array().unwrap();
-        let instance_vbo = gl.create_buffer().unwrap();
+        let vao = gl.create_vertex_array().map_err(|e| crate::GpuError::ResourceCreate(format!("VAO: {e}")))?;
+        let instance_vbo = gl.create_buffer().map_err(|e| crate::GpuError::ResourceCreate(format!("VBO: {e}")))?;
 
         gl.bind_vertex_array(Some(vao));
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(instance_vbo));
@@ -117,7 +116,7 @@ impl GlAtlasLayer {
         setup_glyph_vertex_attribs(gl);
         gl.bind_vertex_array(None);
 
-        GlAtlasLayer {
+        Ok(GlAtlasLayer {
             texture,
             program,
             vao,
@@ -127,7 +126,7 @@ impl GlAtlasLayer {
             loc_viewport,
             loc_atlas,
             max_instances,
-        }
+        })
     }
 
     unsafe fn flush_uploads(
@@ -280,14 +279,14 @@ struct GlRectPipeline {
 }
 
 impl GlRectPipeline {
-    unsafe fn new(gl: &glow::Context, max_rects: usize) -> Self {
-        let program = compile_program(gl, RECT_VS, RECT_FS, "rect");
+    unsafe fn new(gl: &glow::Context, max_rects: usize) -> crate::Result<Self> {
+        let program = compile_program(gl, RECT_VS, RECT_FS, "rect")?;
         let loc_viewport = gl
             .get_uniform_location(program, "u_viewport")
-            .expect("u_viewport uniform not found in rect shader");
+            .ok_or_else(|| crate::GpuError::ShaderCompile("u_viewport uniform not found in rect shader".into()))?;
 
-        let vao = gl.create_vertex_array().unwrap();
-        let instance_vbo = gl.create_buffer().unwrap();
+        let vao = gl.create_vertex_array().map_err(|e| crate::GpuError::ResourceCreate(format!("rect VAO: {e}")))?;
+        let instance_vbo = gl.create_buffer().map_err(|e| crate::GpuError::ResourceCreate(format!("rect VBO: {e}")))?;
 
         gl.bind_vertex_array(Some(vao));
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(instance_vbo));
@@ -313,13 +312,13 @@ impl GlRectPipeline {
 
         gl.bind_vertex_array(None);
 
-        GlRectPipeline {
+        Ok(GlRectPipeline {
             program,
             vao,
             instance_vbo,
             loc_viewport,
             max_rects,
-        }
+        })
     }
 
     /// Upload all rect instance data to the GPU buffer.
@@ -386,7 +385,7 @@ pub struct GlyphAtlasGpu {
 }
 
 impl GlyphAtlasGpu {
-    unsafe fn new(gl: &glow::Context, atlas_size: u32, max_instances: usize) -> Self {
+    unsafe fn new(gl: &glow::Context, atlas_size: u32, max_instances: usize) -> crate::Result<Self> {
         let alpha = GlAtlasLayer::new(
             gl,
             &GlAtlasLayerConfig {
@@ -399,7 +398,7 @@ impl GlyphAtlasGpu {
                 bpp: 1,
                 label: "alpha_atlas",
             },
-        );
+        )?;
         let color = GlAtlasLayer::new(
             gl,
             &GlAtlasLayerConfig {
@@ -412,8 +411,8 @@ impl GlyphAtlasGpu {
                 bpp: 4,
                 label: "color_atlas",
             },
-        );
-        GlyphAtlasGpu { alpha, color }
+        )?;
+        Ok(GlyphAtlasGpu { alpha, color })
     }
 }
 
@@ -429,14 +428,15 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(window: Arc<Window>, _render_config: &RenderConfig) -> Result<Self> {
+    pub fn new(window: Arc<Window>, _render_config: &RenderConfig) -> crate::Result<Self> {
         #[cfg(target_os = "macos")]
         {
             // macOS deprecated OpenGL; entire GL backend is unavailable
             let _ = window;
-            Err(anyhow::anyhow!(
+            Err(crate::GpuError::DeviceInit(
                 "GL backend is not supported on macOS (OpenGL is deprecated). \
                  Use blade (Metal) instead: backend = \"blade\""
+                    .into(),
             ))
         }
 
@@ -445,7 +445,7 @@ impl Renderer {
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn new_impl(window: Arc<Window>, render_config: &RenderConfig) -> Result<Self> {
+    fn new_impl(window: Arc<Window>, render_config: &RenderConfig) -> crate::Result<Self> {
         let size = window.inner_size();
 
         // Build glutin display from existing window
@@ -538,7 +538,7 @@ impl Renderer {
             gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
         }
 
-        let rects = unsafe { GlRectPipeline::new(&gl, render_config.max_rectangles) };
+        let rects = unsafe { GlRectPipeline::new(&gl, render_config.max_rectangles)? };
 
         Ok(Renderer {
             gl,
@@ -574,11 +574,11 @@ impl Renderer {
     pub fn create_atlas(
         &mut self,
         params: &ciri_render::glyph_cache::FontInitParams,
-    ) -> (GlyphCache, GlyphAtlasGpu) {
+    ) -> crate::Result<(GlyphCache, GlyphAtlasGpu)> {
         let cache = GlyphCache::new(params);
         let atlas_gpu =
-            unsafe { GlyphAtlasGpu::new(&self.gl, cache.atlas_size, cache.max_instances) };
-        (cache, atlas_gpu)
+            unsafe { GlyphAtlasGpu::new(&self.gl, cache.atlas_size, cache.max_instances)? };
+        Ok((cache, atlas_gpu))
     }
 
     pub fn destroy_atlas(&self, atlas_gpu: &mut GlyphAtlasGpu) {
@@ -593,7 +593,7 @@ impl Renderer {
         atlas_gpu: &mut GlyphAtlasGpu,
         cache: &mut GlyphCache,
         scene: FrameScene,
-    ) {
+    ) -> crate::Result<()> {
         let vw = self.width as f32;
         let vh = self.height as f32;
 
@@ -706,7 +706,8 @@ impl Renderer {
         // Present — on Wayland EGL this implicitly handles resize
         self.gl_surface
             .swap_buffers(&self.gl_context)
-            .expect("swap_buffers failed");
+            .map_err(|e| crate::GpuError::SurfaceLost(format!("swap_buffers: {e}")))?;
+        Ok(())
     }
 }
 
@@ -755,35 +756,53 @@ unsafe fn compile_program(
     vs_src: &str,
     fs_src: &str,
     label: &str,
-) -> glow::Program {
-    let vs = gl.create_shader(glow::VERTEX_SHADER).unwrap();
+) -> std::result::Result<glow::Program, crate::GpuError> {
+    let vs = gl
+        .create_shader(glow::VERTEX_SHADER)
+        .map_err(|e| crate::GpuError::ShaderCompile(format!("[{label}] create vertex shader: {e}")))?;
     gl.shader_source(vs, vs_src);
     gl.compile_shader(vs);
     if !gl.get_shader_compile_status(vs) {
         let log = gl.get_shader_info_log(vs);
-        panic!("[{label}] vertex shader compile error: {log}");
+        gl.delete_shader(vs);
+        return Err(crate::GpuError::ShaderCompile(format!(
+            "[{label}] vertex shader compile error: {log}"
+        )));
     }
 
-    let fs = gl.create_shader(glow::FRAGMENT_SHADER).unwrap();
+    let fs = gl
+        .create_shader(glow::FRAGMENT_SHADER)
+        .map_err(|e| crate::GpuError::ShaderCompile(format!("[{label}] create fragment shader: {e}")))?;
     gl.shader_source(fs, fs_src);
     gl.compile_shader(fs);
     if !gl.get_shader_compile_status(fs) {
         let log = gl.get_shader_info_log(fs);
-        panic!("[{label}] fragment shader compile error: {log}");
+        gl.delete_shader(vs);
+        gl.delete_shader(fs);
+        return Err(crate::GpuError::ShaderCompile(format!(
+            "[{label}] fragment shader compile error: {log}"
+        )));
     }
 
-    let program = gl.create_program().unwrap();
+    let program = gl
+        .create_program()
+        .map_err(|e| crate::GpuError::ShaderCompile(format!("[{label}] create program: {e}")))?;
     gl.attach_shader(program, vs);
     gl.attach_shader(program, fs);
     gl.link_program(program);
     if !gl.get_program_link_status(program) {
         let log = gl.get_program_info_log(program);
-        panic!("[{label}] program link error: {log}");
+        gl.delete_shader(vs);
+        gl.delete_shader(fs);
+        gl.delete_program(program);
+        return Err(crate::GpuError::ShaderCompile(format!(
+            "[{label}] program link error: {log}"
+        )));
     }
 
     gl.delete_shader(vs);
     gl.delete_shader(fs);
-    program
+    Ok(program)
 }
 
 // ─── GLSL shaders ───────────────────────────────────────────────────

@@ -388,14 +388,66 @@ fn kitty_numpad_with_modifier() {
 
 #[test]
 fn kitty_caps_lock_modifier_bit() {
+    // caps_lock = bit 6 = 64, modifier_val = 64 + 1 = 65
     let e = char_key_event('a', KeyCode::KeyA, ElementState::Pressed);
     assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, true, false, LEVEL4), b"\x1b[97;65u");
 }
 
 #[test]
 fn kitty_num_lock_modifier_bit() {
+    // num_lock = bit 7 = 128, modifier_val = 128 + 1 = 129
     let e = char_key_event('a', KeyCode::KeyA, ElementState::Pressed);
     assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, false, true, LEVEL4), b"\x1b[97;129u");
+}
+
+#[test]
+fn kitty_both_locks_modifier_bits() {
+    // caps_lock + num_lock = 64 + 128 = 192, modifier_val = 193
+    let e = char_key_event('a', KeyCode::KeyA, ElementState::Pressed);
+    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, true, true, LEVEL4), b"\x1b[97;193u");
+}
+
+#[test]
+fn kitty_caps_lock_with_shift() {
+    // shift(1) + caps_lock(64) = 65, modifier_val = 66
+    let e = char_key_event('a', KeyCode::KeyA, ElementState::Pressed);
+    assert_eq!(key_event_to_kitty_bytes(&e, false, true, false, false, true, false, LEVEL4), b"\x1b[97;66u");
+}
+
+#[test]
+fn kitty_caps_lock_with_ctrl() {
+    // ctrl(4) + caps_lock(64) = 68, modifier_val = 69
+    let e = char_key_event('a', KeyCode::KeyA, ElementState::Pressed);
+    assert_eq!(key_event_to_kitty_bytes(&e, true, false, false, false, true, false, LEVEL4), b"\x1b[97;69u");
+}
+
+#[test]
+fn kitty_level1_caps_lock_plain_char_stays_legacy() {
+    // At level 1-3, plain character keys without ctrl/alt/super send as raw text
+    // even with caps_lock active — consistent with kitty behavior.
+    let e = char_key_event('a', KeyCode::KeyA, ElementState::Pressed);
+    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, true, false, LEVEL1), b"a");
+}
+
+#[test]
+fn kitty_level1_caps_lock_with_ctrl_uses_csi_u() {
+    // ctrl + caps_lock: ctrl(4) + caps_lock(64) = 68, modifier_val = 69
+    let e = char_key_event('a', KeyCode::KeyA, ElementState::Pressed);
+    assert_eq!(key_event_to_kitty_bytes(&e, true, false, false, false, true, false, LEVEL1), b"\x1b[97;69u");
+}
+
+#[test]
+fn kitty_level1_escape_with_caps_lock() {
+    // Escape always uses CSI u in kitty mode. caps_lock(64), modifier_val = 65
+    let e = named_key_event(NamedKey::Escape, ElementState::Pressed, false);
+    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, true, false, LEVEL1), b"\x1b[27;65u");
+}
+
+#[test]
+fn kitty_level1_space_with_num_lock() {
+    // Space always uses CSI u in kitty mode. num_lock(128), modifier_val = 129
+    let e = named_key_event(NamedKey::Space, ElementState::Pressed, false);
+    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, false, true, LEVEL1), b"\x1b[32;129u");
 }
 
 // ── Extended keys ───────────────────────────────────────────────────

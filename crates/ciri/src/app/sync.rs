@@ -426,8 +426,8 @@ impl App {
                     if let Some(renderer) = &mut self.renderer {
                         let shaper =
                             ciri_render::shaper::TextShaper::new(&self.core.config.font.family);
-                        let (cache, atlas_gpu) =
-                            renderer.create_atlas(&ciri_render::glyph_cache::FontInitParams {
+                        let (cache, atlas_gpu) = match renderer
+                            .create_atlas(&ciri_render::glyph_cache::FontInitParams {
                                 font_size_pt: self.core.config.font.size,
                                 dpi_scale: self.dpi_scale,
                                 family_name: &self.core.config.font.family,
@@ -437,7 +437,13 @@ impl App {
                                 cjk_font_path: shaper.cjk_font_path(),
                                 cjk_font_id: shaper.cjk_font_id(),
                                 render_config: &self.core.config.render,
-                            });
+                            }) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                log::error!("failed to recreate glyph atlas on font change: {e}");
+                                return;
+                            }
+                        };
                         self.glyph_cache = Some(cache);
                         self.glyph_atlas_gpu = Some(atlas_gpu);
                         self.text_shaper = Some(shaper);

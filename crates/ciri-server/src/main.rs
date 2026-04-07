@@ -3,6 +3,7 @@ use anyhow::Result;
 mod daemon;
 mod session;
 mod shell_integration;
+mod tray;
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -14,6 +15,8 @@ fn main() -> Result<()> {
         );
         return Ok(());
     }
+
+    let headless = args.iter().any(|a| a == "--headless");
 
     #[cfg(unix)]
     let daemonized = if args.iter().any(|a| a == "--daemonize") {
@@ -41,17 +44,37 @@ fn main() -> Result<()> {
         std::env::set_var("LC_TERMINAL_VERSION", env!("CARGO_PKG_VERSION"));
     }
 
+    // Daemonized or headless mode: run tokio on main thread (no tray).
+    if daemonized || headless {
+        let rt = tokio::runtime::Runtime::new()?;
+        return rt.block_on(daemon::run_daemon());
+    }
+
+    // Tray mode: tokio runs on a background thread, main thread runs tray event loop.
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(daemon::run_daemon())
+
+    // Prepare the server state and bind the socket.
+    let ds = rt.block_on(daemon::prepare_daemon())?;
+    let tray_state = ds.state.clone();
+    let tray_shutdown = ds.shutdown.clone();
+    let server_exited = ds.server_exited.clone();
+
+    // Spawn the daemon accept loop on the tokio runtime.
+    rt.spawn(async move {
+        if let Err(e) = daemon::run_daemon_loop(ds).await {
+            log::error!("daemon error: {e}");
+        }
+    });
+
+    // Run the tray on the main thread (returns on Quit or external shutdown).
+    tray::run_tray(tray_state, tray_shutdown, server_exited);
+
+    // Wait for tokio tasks (graceful_shutdown) to finish before exiting.
+    rt.shutdown_timeout(std::time::Duration::from_secs(10));
+    Ok(())
 }
 
 /// Fork into a background daemon.
-///
-/// Standard Unix recipe (same as tmux):
-/// 1. fork — parent exits
-/// 2. setsid — detach from controlling terminal
-/// 3. redirect stdio to /dev/null
-/// 4. init logger to file
 #[cfg(unix)]
 fn daemonize() -> Result<()> {
     use std::fs::OpenOptions;
@@ -65,11 +88,9 @@ fn daemonize() -> Result<()> {
         ));
     }
     if pid > 0 {
-        // Parent exits, child continues.
         std::process::exit(0);
     }
 
-    // New session leader — detach from terminal.
     if unsafe { libc::setsid() } == -1 {
         return Err(anyhow::anyhow!(
             "setsid failed: {}",
@@ -77,17 +98,20 @@ fn daemonize() -> Result<()> {
         ));
     }
 
-    // Redirect stdin/stdout/stderr → /dev/null
     let devnull = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .open("/dev/null")?;
-    let fd = devnull.into_raw_fd(); // prevent Drop from closing the fd
+    let fd = devnull.into_raw_fd();
     unsafe {
         if libc::dup2(fd, libc::STDIN_FILENO) == -1
             || libc::dup2(fd, libc::STDOUT_FILENO) == -1
             || libc::dup2(fd, libc::STDERR_FILENO) == -1
         {
+            // Close fd to avoid leak on error path.
+            if fd > libc::STDERR_FILENO {
+                libc::close(fd);
+            }
             return Err(anyhow::anyhow!(
                 "dup2 failed: {}",
                 std::io::Error::last_os_error()
@@ -98,7 +122,6 @@ fn daemonize() -> Result<()> {
         }
     }
 
-    // File-based logging since stdio is gone.
     let log_dir = ciri_protocol::transport::runtime_dir().join("ciri");
     std::fs::create_dir_all(&log_dir)?;
     let log_file = OpenOptions::new()

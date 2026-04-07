@@ -342,6 +342,7 @@ pub fn decode_sm_cells(data: &[u8], cells: &mut [PackedCell]) -> io::Result<usiz
                     fg,
                     bg,
                     flags: flags.to_le_bytes(),
+                    _pad: [0; 2],
                 };
                 ci += 1;
                 pos += 4;
@@ -355,20 +356,22 @@ pub fn decode_sm_cells(data: &[u8], cells: &mut [PackedCell]) -> io::Result<usiz
                 if pos + count * 4 > data.len() {
                     return Err(truncated_err("Chars data"));
                 }
+                if ci + count > cells.len() {
+                    return Err(overflow_err());
+                }
                 let flags_le = flags.to_le_bytes();
-                for i in 0..count {
-                    if ci >= cells.len() {
-                        return Err(overflow_err());
-                    }
+                let dest = &mut cells[ci..ci + count];
+                for (i, cell) in dest.iter_mut().enumerate() {
                     let off = pos + i * 4;
-                    cells[ci] = PackedCell {
+                    *cell = PackedCell {
                         ch_bytes: [data[off], data[off + 1], data[off + 2], data[off + 3]],
                         fg,
                         bg,
                         flags: flags_le,
+                        _pad: [0; 2],
                     };
-                    ci += 1;
                 }
+                ci += count;
                 pos += count * 4;
             }
             OP_REPEAT => {
@@ -379,19 +382,18 @@ pub fn decode_sm_cells(data: &[u8], cells: &mut [PackedCell]) -> io::Result<usiz
                 pos += 2;
                 let ch_bytes = [data[pos], data[pos + 1], data[pos + 2], data[pos + 3]];
                 pos += 4;
+                if ci + count > cells.len() {
+                    return Err(overflow_err());
+                }
                 let cell = PackedCell {
                     ch_bytes,
                     fg,
                     bg,
                     flags: flags.to_le_bytes(),
+                    _pad: [0; 2],
                 };
-                for _ in 0..count {
-                    if ci >= cells.len() {
-                        return Err(overflow_err());
-                    }
-                    cells[ci] = cell;
-                    ci += 1;
-                }
+                fill_cells(&mut cells[ci..ci + count], cell);
+                ci += count;
             }
             OP_CHARS_LONG => {
                 if pos + 2 > data.len() {
@@ -402,20 +404,22 @@ pub fn decode_sm_cells(data: &[u8], cells: &mut [PackedCell]) -> io::Result<usiz
                 if pos + count * 4 > data.len() {
                     return Err(truncated_err("CharsLong data"));
                 }
+                if ci + count > cells.len() {
+                    return Err(overflow_err());
+                }
                 let flags_le = flags.to_le_bytes();
-                for i in 0..count {
-                    if ci >= cells.len() {
-                        return Err(overflow_err());
-                    }
+                let dest = &mut cells[ci..ci + count];
+                for (i, cell) in dest.iter_mut().enumerate() {
                     let off = pos + i * 4;
-                    cells[ci] = PackedCell {
+                    *cell = PackedCell {
                         ch_bytes: [data[off], data[off + 1], data[off + 2], data[off + 3]],
                         fg,
                         bg,
                         flags: flags_le,
+                        _pad: [0; 2],
                     };
-                    ci += 1;
                 }
+                ci += count;
                 pos += count * 4;
             }
             OP_ASCII => {
@@ -427,19 +431,22 @@ pub fn decode_sm_cells(data: &[u8], cells: &mut [PackedCell]) -> io::Result<usiz
                 if pos + count > data.len() {
                     return Err(truncated_err("Ascii data"));
                 }
+                if ci + count > cells.len() {
+                    return Err(overflow_err());
+                }
                 let flags_le = flags.to_le_bytes();
-                for i in 0..count {
-                    if ci >= cells.len() {
-                        return Err(overflow_err());
-                    }
-                    cells[ci] = PackedCell {
-                        ch_bytes: [data[pos + i], 0, 0, 0],
+                let dest = &mut cells[ci..ci + count];
+                let src = &data[pos..pos + count];
+                for (cell, &byte) in dest.iter_mut().zip(src.iter()) {
+                    *cell = PackedCell {
+                        ch_bytes: [byte, 0, 0, 0],
                         fg,
                         bg,
                         flags: flags_le,
+                        _pad: [0; 2],
                     };
-                    ci += 1;
                 }
+                ci += count;
                 pos += count;
             }
             OP_ASCII_REPEAT => {
@@ -450,19 +457,18 @@ pub fn decode_sm_cells(data: &[u8], cells: &mut [PackedCell]) -> io::Result<usiz
                 pos += 2;
                 let ch_byte = data[pos];
                 pos += 1;
+                if ci + count > cells.len() {
+                    return Err(overflow_err());
+                }
                 let cell = PackedCell {
                     ch_bytes: [ch_byte, 0, 0, 0],
                     fg,
                     bg,
                     flags: flags.to_le_bytes(),
+                    _pad: [0; 2],
                 };
-                for _ in 0..count {
-                    if ci >= cells.len() {
-                        return Err(overflow_err());
-                    }
-                    cells[ci] = cell;
-                    ci += 1;
-                }
+                fill_cells(&mut cells[ci..ci + count], cell);
+                ci += count;
             }
             OP_SET_FG_NAMED => {
                 if pos + 1 > data.len() {
@@ -524,6 +530,15 @@ pub(super) fn sm_decode_cells_vec(data: &[u8], expected: usize) -> io::Result<Ve
         ));
     }
     Ok(cells)
+}
+
+/// Fill a cell slice using 128-bit stores (PackedCell is 16 bytes = u128).
+#[inline]
+fn fill_cells(dest: &mut [PackedCell], cell: PackedCell) {
+    // SAFETY: PackedCell is 16 bytes, Pod, align(16) — same layout as u128.
+    let val: u128 = bytemuck::cast(cell);
+    let dest_u128: &mut [u128] = bytemuck::cast_slice_mut(dest);
+    dest_u128.fill(val);
 }
 
 fn truncated_err(ctx: &str) -> io::Error {

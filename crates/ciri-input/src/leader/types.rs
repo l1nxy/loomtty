@@ -138,9 +138,20 @@ impl InputSessionState {
     pub fn on_timeout(&mut self, limit: Duration) {
         if let Self::Leader(s) = self
             && s.mode != InputMode::Sticky
-            && s.entered_at.elapsed() > limit
+            && s.entered_at.elapsed() >= limit
         {
             *self = Self::Idle;
+        }
+    }
+
+    /// Returns the deadline at which leader state should expire, if applicable.
+    pub fn leader_deadline(&self, limit: Duration) -> Option<Instant> {
+        if let Self::Leader(s) = self
+            && s.mode != InputMode::Sticky
+        {
+            Some(s.entered_at + limit)
+        } else {
+            None
         }
     }
 

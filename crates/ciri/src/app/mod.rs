@@ -1,9 +1,11 @@
+pub(crate) mod action;
 pub(crate) mod context_menu;
 pub(crate) mod event;
 pub(crate) mod ime;
-pub(crate) mod input_handler;
+pub(crate) mod key_encode;
 pub(crate) mod keyboard;
 pub(crate) mod mouse;
+pub(crate) mod open;
 pub(crate) mod notification;
 pub(crate) mod overview;
 pub(crate) mod palette;
@@ -284,6 +286,7 @@ impl App {
             selection: self.core.selection.take(),
             broadcast_mode: std::mem::replace(&mut self.core.broadcast_mode, false),
             image_placements: std::mem::take(&mut self.core.image_placements),
+            pending_events: std::mem::take(&mut self.core.buffered_events),
         })
     }
 
@@ -304,6 +307,9 @@ impl App {
         self.core.selection = slot.selection;
         self.core.broadcast_mode = slot.broadcast_mode;
         self.core.image_placements = slot.image_placements;
+
+        // Replay any events that were consumed while the slot was backgrounded
+        self.core.buffered_events.extend(slot.pending_events);
 
         // Set remote_config based on slot kind
         self.core.remote_config = match &slot.kind {

@@ -3,9 +3,9 @@
 use crate::message::*;
 use std::io;
 
-use super::frame::{TAG_CELL_DELTA, TAG_CELL_DELTA_LZ4, maybe_compress_payload};
+use super::frame::{TAG_CELL_DELTA, TAG_CELL_DELTA_LZ4, finalize_frame_compression};
 use super::state_machine::StateEncoder;
-use super::util::*;
+use super::util::SliceCursor;
 
 /// Encode a CellDelta frame by streaming cells through a StateEncoder.
 pub fn encode_cell_delta_streaming_framed<F>(
@@ -35,6 +35,7 @@ where
     buf.extend_from_slice(&meta.cursor_col.to_le_bytes());
     buf.push(meta.cursor_shape);
     buf.extend_from_slice(&meta.mode_flags.to_le_bytes());
+    buf.extend_from_slice(&meta.echo_ack.to_le_bytes());
     buf.extend_from_slice(&cols.to_le_bytes());
     buf.extend_from_slice(&(regions.len() as u16).to_le_bytes());
 
@@ -50,71 +51,46 @@ where
         buf.extend_from_slice(sm_data);
     }
 
-    // Try LZ4 compression on the payload.
-    let payload = &buf[payload_start..];
-    let (tag, compressed) = maybe_compress_payload(TAG_CELL_DELTA, TAG_CELL_DELTA_LZ4, payload);
-    buf.truncate(payload_start);
-    buf[0] = tag;
-    let payload_len = compressed.len() as u32;
-    buf[1..5].copy_from_slice(&payload_len.to_le_bytes());
-    buf.extend_from_slice(&compressed);
+    finalize_frame_compression(buf, payload_start, TAG_CELL_DELTA, TAG_CELL_DELTA_LZ4);
     Ok(())
 }
 
 /// Decode CellDelta: parse region metadata, store SM payload for on-demand decoding.
 pub fn decode_cell_delta_borrowed(payload: Vec<u8>) -> io::Result<CellDeltaBorrowed> {
-    if payload.len() < 27 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "CellDelta too short",
-        ));
-    }
-    let pane_id = read_u64_le(&payload, 0)?;
-    let generation = read_u64_le(&payload, 8)?;
-    let cursor_line = read_i16_le(&payload, 16)?;
-    let cursor_col = read_u16_le(&payload, 18)?;
-    let cursor_shape = payload[20];
-    let mode_flags = read_u16_le(&payload, 21)?;
-    let cols = read_u16_le(&payload, 23)?;
-    let num_regions = read_u16_le(&payload, 25)? as usize;
-    let mut offset = 27;
+    let mut cur = SliceCursor::new(&payload);
+
+    let hdr: &CellDeltaHeader = cur.read_ref()?;
+    let num_regions = hdr.num_regions.get() as usize;
+
+    let meta = PaneFrameMeta {
+        pane_id: hdr.pane_id.get(),
+        generation: hdr.generation.get(),
+        cursor_line: hdr.cursor_line.get(),
+        cursor_col: hdr.cursor_col.get(),
+        cursor_shape: hdr.cursor_shape,
+        mode_flags: hdr.mode_flags.get(),
+        echo_ack: hdr.echo_ack.get(),
+    };
+    let cols = hdr.cols.get();
+
     let mut regions = Vec::with_capacity(num_regions);
     for _ in 0..num_regions {
-        if offset + 10 > payload.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "truncated region header",
-            ));
-        }
-        let line = read_u16_le(&payload, offset)?;
-        let left = read_u16_le(&payload, offset + 2)?;
-        let right = read_u16_le(&payload, offset + 4)?;
-        let sm_data_len = read_u32_le(&payload, offset + 6)? as usize;
-        offset += 10;
+        let rh: &CellDeltaRegionHeader = cur.read_ref()?;
+        let left = rh.left.get();
+        let right = rh.right.get();
         validate_damage_bounds(left, right)?;
-        if offset + sm_data_len > payload.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "truncated SM data",
-            ));
-        }
+        let sm_data_len = rh.sm_data_len.get() as usize;
+        let sm_offset = cur.pos();
+        let _ = cur.read_bytes(sm_data_len)?; // advance past SM data
         regions.push(BorrowedRegionMeta {
-            line,
+            line: rh.line.get(),
             left,
             right,
-            sm_offset: offset,
+            sm_offset,
             sm_len: sm_data_len,
         });
-        offset += sm_data_len;
     }
-    let meta = PaneFrameMeta {
-        pane_id,
-        generation,
-        cursor_line,
-        cursor_col,
-        cursor_shape,
-        mode_flags,
-    };
+
     Ok(CellDeltaBorrowed::new(meta, cols, regions, payload))
 }
 

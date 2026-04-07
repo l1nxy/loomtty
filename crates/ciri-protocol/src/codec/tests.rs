@@ -254,6 +254,7 @@ fn cell_delta_sm_roundtrip() {
         cursor_col: 10,
         cursor_shape: 0,
         mode_flags: 0,
+                echo_ack: 0,
     };
     encode_cell_delta_streaming_framed(
         &mut buf,
@@ -305,6 +306,7 @@ fn full_pane_sync_roundtrip() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
+                echo_ack: 0,
         },
         cols: 80,
         rows: 24,
@@ -347,6 +349,7 @@ fn full_pane_sync_with_scrollback() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
+                echo_ack: 0,
         },
         cols: 10,
         rows: 5,
@@ -376,6 +379,7 @@ fn full_pane_sync_rejects_truncated_mandatory_sections() {
             cursor_col: 2,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
+                echo_ack: 0,
         },
         cols: 4,
         rows: 2,
@@ -417,6 +421,7 @@ fn full_pane_sync_ignores_truncated_optional_extras() {
             cursor_col: 1,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
+                echo_ack: 0,
         },
         cols: 2,
         rows: 1,
@@ -472,6 +477,7 @@ fn full_pane_sync_rejects_oversized_visible_metadata() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
+                echo_ack: 0,
         },
         cols: 1,
         rows: 1,
@@ -512,12 +518,13 @@ async fn frame_roundtrip_client_msg() {
     let msg = ClientMessage::Input {
         pane_id: 1,
         data: b"hello".to_vec(),
+        input_seq: 0,
     };
     let mut buf = Vec::new();
     encode_client_msg(&mut buf, &msg).await.unwrap();
     let frame = read_frame(&mut &buf[..]).await.unwrap();
     match frame {
-        Frame::ClientMsg(ClientMessage::Input { pane_id, data }) => {
+        Frame::ClientMsg(ClientMessage::Input { pane_id, data, .. }) => {
             assert_eq!(pane_id, 1);
             assert_eq!(data, b"hello");
         }
@@ -536,6 +543,7 @@ async fn frame_roundtrip_cell_delta_sm() {
         cursor_col: 0,
         cursor_shape: 0,
         mode_flags: 0,
+                echo_ack: 0,
     };
     encode_cell_delta_streaming_framed(
         &mut buf,
@@ -609,6 +617,7 @@ async fn frame_roundtrip_full_pane_sync_lz4() {
             cursor_col: 10,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
+                echo_ack: 0,
         },
         cols: 80,
         rows: 24,
@@ -640,7 +649,10 @@ async fn frame_roundtrip_full_pane_sync_lz4() {
             assert_eq!(decoded.cols, 80);
             assert_eq!(decoded.rows, 24);
             assert_eq!(decoded.title, "bash");
-            assert_eq!(decoded.cells.len(), 80 * 24);
+            // Verify viewport SM data can be decoded to correct cell count.
+            let mut cells = vec![PackedCell::default(); 80 * 24];
+            let n = decode_sm_cells(decoded.viewport_sm_data(), &mut cells).unwrap();
+            assert_eq!(n, 80 * 24);
             assert_eq!(decoded.cwd.as_deref(), Some("/home/user"));
         }
         _ => panic!("expected FullPaneSync frame, got {:?}", frame),
@@ -659,6 +671,7 @@ async fn frame_roundtrip_cell_delta_lz4() {
         cursor_col: 0,
         cursor_shape: 0,
         mode_flags: 0,
+                echo_ack: 0,
     };
     // 10 regions × 20 cells each — well above 128 bytes
     let regions: Vec<(u16, u16, u16)> = (0..10).map(|line| (line, 0, 19)).collect();
@@ -720,6 +733,7 @@ fn decode_cell_delta_rejects_inverted_region_bounds() {
     payload.extend_from_slice(&0u16.to_le_bytes()); // cursor_col
     payload.push(0); // cursor_shape
     payload.extend_from_slice(&0u16.to_le_bytes()); // mode_flags (u16)
+    payload.extend_from_slice(&0u64.to_le_bytes()); // echo_ack
     payload.extend_from_slice(&80u16.to_le_bytes()); // cols
     payload.extend_from_slice(&1u16.to_le_bytes()); // num_regions
     payload.extend_from_slice(&3u16.to_le_bytes()); // region: line
@@ -741,6 +755,7 @@ fn decode_cell_delta_rejects_truncated_region_data() {
     payload.extend_from_slice(&0u16.to_le_bytes()); // cursor_col
     payload.push(0); // cursor_shape
     payload.extend_from_slice(&0u16.to_le_bytes()); // mode_flags (u16)
+    payload.extend_from_slice(&0u64.to_le_bytes()); // echo_ack
     payload.extend_from_slice(&80u16.to_le_bytes()); // cols
     payload.extend_from_slice(&1u16.to_le_bytes()); // num_regions
     payload.extend_from_slice(&3u16.to_le_bytes()); // region: line
@@ -751,7 +766,7 @@ fn decode_cell_delta_rejects_truncated_region_data() {
 
     let err = decode_cell_delta_borrowed(payload).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    assert!(err.to_string().contains("truncated SM data"));
+    assert!(err.to_string().contains("truncated"));
 }
 
 #[tokio::test]
@@ -1054,6 +1069,7 @@ async fn frame_roundtrip_client_message_variants() {
         ClientMessage::Input {
             pane_id: 42,
             data: vec![0x1b, b'[', b'A'],
+            input_seq: 0,
         },
         ClientMessage::CreatePane,
         ClientMessage::SplitDown,

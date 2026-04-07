@@ -93,24 +93,27 @@ impl PackedColor {
     }
 }
 
-// ─── PackedCell (14 bytes, POD) ─────────────────────────────────────
+// ─── PackedCell (16 bytes, POD, SIMD-friendly) ─────────────────────
 //
-// Layout: [0..4] char UTF-8, [4..8] fg, [8..12] bg, [12..14] flags LE
-// `#[repr(C, packed)]` guarantees no padding → bytemuck::cast_slice works.
+// Layout: [0..4] char UTF-8, [4..8] fg, [8..12] bg, [12..14] flags LE, [14..16] pad
+// 16 bytes = 128-bit = one SSE register.  `slice::fill` and bulk copy
+// compile to vectorised 128-bit stores.  Four cells per cache line.
+// `#[repr(C)]` with explicit padding — no `packed` needed at 16 bytes.
 
-pub const PACKED_CELL_SIZE: usize = 14;
+pub const PACKED_CELL_SIZE: usize = 16;
 pub const DEFAULT_CELL_CHAR: char = ' ';
 pub const DEFAULT_CELL_FLAGS: u16 = 0;
 pub const DEFAULT_FOREGROUND: PackedColor = PackedColor::named(NAMED_FOREGROUND);
 pub const DEFAULT_BACKGROUND: PackedColor = PackedColor::named(NAMED_BACKGROUND);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
-#[repr(C, packed)]
+#[repr(C, align(16))]
 pub struct PackedCell {
     pub ch_bytes: [u8; 4],
     pub fg: PackedColor,
     pub bg: PackedColor,
     pub flags: [u8; 2], // u16 LE
+    pub(crate) _pad: [u8; 2],
 }
 
 impl PackedCell {
@@ -136,7 +139,8 @@ impl PackedCell {
     }
 }
 
-const _: () = assert!(std::mem::size_of::<PackedCell>() == PACKED_CELL_SIZE);
+const _: () = assert!(size_of::<PackedCell>() == PACKED_CELL_SIZE);
+const _: () = assert!(align_of::<PackedCell>() <= PACKED_CELL_SIZE);
 
 impl Default for PackedCell {
     fn default() -> Self {
@@ -145,6 +149,7 @@ impl Default for PackedCell {
             fg: DEFAULT_FOREGROUND,
             bg: DEFAULT_BACKGROUND,
             flags: DEFAULT_CELL_FLAGS.to_le_bytes(),
+            _pad: [0; 2],
         };
         cell.set_ch(DEFAULT_CELL_CHAR);
         cell
@@ -246,7 +251,56 @@ pub const FLAG_WRAPLINE: u16 = 1 << 12;
 /// Cell is part of an OSC 8 hyperlink. The link ID is in HyperlinkExtras.
 pub const FLAG_HYPERLINK: u16 = 1 << 13;
 
-// ─── Wire messages ──────────────────────────────────────────────────
+// ─── Zerocopy wire headers (fixed-layout decode targets) ───────────
+
+/// CellDelta fixed header (35 bytes). Matches the wire layout exactly.
+#[derive(Debug, Clone, Copy, zerocopy::FromBytes, zerocopy::KnownLayout, zerocopy::Immutable)]
+#[repr(C, packed)]
+pub struct CellDeltaHeader {
+    pub pane_id: zerocopy::little_endian::U64,
+    pub generation: zerocopy::little_endian::U64,
+    pub cursor_line: zerocopy::little_endian::I16,
+    pub cursor_col: zerocopy::little_endian::U16,
+    pub cursor_shape: u8,
+    pub mode_flags: zerocopy::little_endian::U16,
+    pub echo_ack: zerocopy::little_endian::U64,
+    pub cols: zerocopy::little_endian::U16,
+    pub num_regions: zerocopy::little_endian::U16,
+}
+
+const _: () = assert!(size_of::<CellDeltaHeader>() == 35);
+
+/// CellDelta per-region header (10 bytes).
+#[derive(Debug, Clone, Copy, zerocopy::FromBytes, zerocopy::KnownLayout, zerocopy::Immutable)]
+#[repr(C, packed)]
+pub struct CellDeltaRegionHeader {
+    pub line: zerocopy::little_endian::U16,
+    pub left: zerocopy::little_endian::U16,
+    pub right: zerocopy::little_endian::U16,
+    pub sm_data_len: zerocopy::little_endian::U32,
+}
+
+const _: () = assert!(size_of::<CellDeltaRegionHeader>() == 10);
+
+/// FullPaneSync fixed header (37 bytes). Everything before the variable-length title.
+#[derive(Debug, Clone, Copy, zerocopy::FromBytes, zerocopy::KnownLayout, zerocopy::Immutable)]
+#[repr(C, packed)]
+pub struct FullPaneSyncHeader {
+    pub pane_id: zerocopy::little_endian::U64,
+    pub generation: zerocopy::little_endian::U64,
+    pub cols: zerocopy::little_endian::U16,
+    pub rows: zerocopy::little_endian::U16,
+    pub cursor_line: zerocopy::little_endian::I16,
+    pub cursor_col: zerocopy::little_endian::U16,
+    pub cursor_shape: u8,
+    pub mode_flags: zerocopy::little_endian::U16,
+    pub echo_ack: zerocopy::little_endian::U64,
+    pub title_len: zerocopy::little_endian::U16,
+}
+
+const _: () = assert!(size_of::<FullPaneSyncHeader>() == 37);
+
+// ─── Wire messages ─���─────────────────────��──────────────────────────
 
 /// Messages sent from client to server (msgpack encoded).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -255,6 +309,9 @@ pub enum ClientMessage {
     Input {
         pane_id: u64,
         data: Vec<u8>,
+        /// Monotonic sequence number for echo-ack tracking.
+        #[serde(default)]
+        input_seq: u64,
     },
     /// Request to create a new pane (column right of active).
     CreatePane,
@@ -627,6 +684,8 @@ pub struct PaneFrameMeta {
     pub cursor_shape: u8,
     /// Terminal mode flags (mouse mode, alt screen, kitty keyboard levels, etc.)
     pub mode_flags: u16,
+    /// Highest input_seq the server has processed for this pane from this client.
+    pub echo_ack: u64,
 }
 
 /// Full pane snapshot (tag 0x21).
@@ -715,6 +774,93 @@ impl CellDeltaBorrowed {
         };
         &self.payload[meta.sm_offset..meta.sm_offset + meta.sm_len]
     }
+
+    /// Reclaim the owned payload buffer for reuse.
+    pub fn into_payload(self) -> Vec<u8> {
+        self.payload
+    }
+}
+
+// ─── Zero-copy borrowed FullPaneSync ────────────────────────────────
+
+/// Borrowed variant of `FullPaneSync`. Owns the raw payload and stores
+/// offsets into SM opcode streams. Cells are decoded on demand, allowing
+/// the client to decode directly into its viewport buffer (zero intermediate alloc).
+#[derive(Debug)]
+pub struct FullPaneSyncBorrowed {
+    pub meta: PaneFrameMeta,
+    pub cols: u16,
+    pub rows: u16,
+    pub title: String,
+    pub scrollback_rows: u32,
+    pub scrollback_replace: bool,
+    /// Grapheme extras (sparse, typically empty).
+    pub grapheme_extras: GraphemeExtras,
+    /// Hyperlink extras (sparse, typically empty).
+    pub hyperlink_extras: HyperlinkExtras,
+    /// Current working directory.
+    pub cwd: Option<String>,
+    /// SM data offset + length for scrollback cells.
+    scrollback_sm_offset: usize,
+    scrollback_sm_len: usize,
+    /// SM data offset + length for viewport cells.
+    viewport_sm_offset: usize,
+    viewport_sm_len: usize,
+    /// Raw payload bytes.
+    payload: Vec<u8>,
+}
+
+impl FullPaneSyncBorrowed {
+    /// Construct from pre-parsed metadata and the raw payload.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        meta: PaneFrameMeta,
+        cols: u16,
+        rows: u16,
+        title: String,
+        scrollback_rows: u32,
+        scrollback_replace: bool,
+        grapheme_extras: GraphemeExtras,
+        hyperlink_extras: HyperlinkExtras,
+        cwd: Option<String>,
+        scrollback_sm_offset: usize,
+        scrollback_sm_len: usize,
+        viewport_sm_offset: usize,
+        viewport_sm_len: usize,
+        payload: Vec<u8>,
+    ) -> Self {
+        Self {
+            meta,
+            cols,
+            rows,
+            title,
+            scrollback_rows,
+            scrollback_replace,
+            grapheme_extras,
+            hyperlink_extras,
+            cwd,
+            scrollback_sm_offset,
+            scrollback_sm_len,
+            viewport_sm_offset,
+            viewport_sm_len,
+            payload,
+        }
+    }
+
+    /// Access the raw SM opcode stream for scrollback cells.
+    pub fn scrollback_sm_data(&self) -> &[u8] {
+        &self.payload[self.scrollback_sm_offset..self.scrollback_sm_offset + self.scrollback_sm_len]
+    }
+
+    /// Access the raw SM opcode stream for viewport cells.
+    pub fn viewport_sm_data(&self) -> &[u8] {
+        &self.payload[self.viewport_sm_offset..self.viewport_sm_offset + self.viewport_sm_len]
+    }
+
+    /// Reclaim the owned payload buffer for reuse.
+    pub fn into_payload(self) -> Vec<u8> {
+        self.payload
+    }
 }
 
 // ─── Terminal mode flags ────────────────────────────────────────────
@@ -765,7 +911,7 @@ mod tests {
 
     #[test]
     fn packed_cell_size() {
-        assert_eq!(std::mem::size_of::<[u8; PACKED_CELL_SIZE]>(), 14);
+        assert_eq!(std::mem::size_of::<PackedCell>(), 16);
     }
 
     #[test]
@@ -775,6 +921,7 @@ mod tests {
             fg: PackedColor::rgb(255, 128, 0),
             bg: PackedColor::named(5),
             flags: (FLAG_BOLD | FLAG_WIDE_CHAR).to_le_bytes(),
+            _pad: [0; 2],
         };
         cell.set_ch('A');
         let bytes: &[u8] = bytemuck::bytes_of(&cell);
@@ -789,6 +936,7 @@ mod tests {
             fg: PackedColor::indexed(196),
             bg: PackedColor::named(0),
             flags: FLAG_WIDE_CHAR.to_le_bytes(),
+            _pad: [0; 2],
         };
         cell.set_ch('中');
         let bytes: &[u8] = bytemuck::bytes_of(&cell);

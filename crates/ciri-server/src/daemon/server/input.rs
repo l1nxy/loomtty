@@ -11,11 +11,28 @@ impl Server {
         _responses: &mut Vec<ServerResponse>,
     ) {
         match msg {
-            ClientMessage::Input { pane_id, data } => {
-                if let Some(session) = self.sessions.get_mut(session_name)
+            ClientMessage::Input {
+                pane_id,
+                data,
+                input_seq,
+            } => {
+                let pane_exists = if let Some(session) = self.sessions.get_mut(session_name)
                     && let Some(pane) = session.panes.get_mut(&pane_id)
                 {
                     pane.write_to_pty(&data);
+                    true
+                } else {
+                    false
+                };
+                // Track highest input_seq for echo-ack, only if pane exists
+                // (prevents malicious clients from bloating the HashMap).
+                if pane_exists {
+                    if let Some(client) = self.clients.get_mut(&_client_id) {
+                        let entry = client.max_input_seq.entry(pane_id).or_insert(0);
+                        if input_seq > *entry {
+                            *entry = input_seq;
+                        }
+                    }
                 }
             }
             ClientMessage::MouseInput {

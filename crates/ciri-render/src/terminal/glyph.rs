@@ -133,3 +133,164 @@ pub(super) fn emit_glyph(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_metrics() -> CellMetrics {
+        CellMetrics {
+            cw: 10.0,
+            ch: 20.0,
+            baseline: 16.0,
+            face_width: 10.0,
+            default_bg: [0.0, 0.0, 0.0, 1.0],
+        }
+    }
+
+    fn test_entry() -> GlyphEntry {
+        GlyphEntry {
+            u0: 0.0,
+            v0: 0.0,
+            u1: 0.1,
+            v1: 0.2,
+            width: 8,
+            height: 16,
+            bearing_x: 1.0,
+            bearing_y: 14.0,
+            is_color: false,
+        }
+    }
+
+    #[test]
+    fn make_relative_glyph_applies_bearing_offset() {
+        let m = test_metrics();
+        let entry = test_entry();
+        let g = make_relative_glyph(&entry, 100.0, 200.0, &m, [1.0; 4]);
+
+        // px = 100 + bearing_x(1.0) + center(0.0 since cw==face_width)
+        assert_eq!(g.px, 101.0);
+        // py = 200 + baseline(16.0) - bearing_y(14.0)
+        assert_eq!(g.py, 202.0);
+        assert_eq!(g.glyph_w, 8.0);
+        assert_eq!(g.glyph_h, 16.0);
+    }
+
+    #[test]
+    fn make_relative_glyph_centers_when_cell_wider_than_face() {
+        let mut m = test_metrics();
+        m.cw = 12.0; // 2px wider than face_width
+        m.face_width = 10.0;
+        let entry = test_entry();
+        let g = make_relative_glyph(&entry, 0.0, 0.0, &m, [1.0; 4]);
+
+        // center offset = round((12-10)/2) = round(1.0) = 1.0
+        assert_eq!(g.px, entry.bearing_x + 1.0);
+    }
+
+    #[test]
+    fn constrain_wide_glyph_fits_to_double_cell() {
+        let m = test_metrics();
+        // A 32x32 emoji glyph fitting into 2*10 x 20 cell
+        let entry = GlyphEntry {
+            width: 32,
+            height: 32,
+            bearing_x: 0.0,
+            bearing_y: 0.0,
+            is_color: true,
+            ..test_entry()
+        };
+        let g = constrain_wide_glyph(&entry, 0.0, 0.0, &m, [1.0; 4]);
+
+        // target_w = 20, target_h = 20. scale = min(20/32, 20/32) = 0.625
+        // final_w = 32 * 0.625 = 20, final_h = 32 * 0.625 = 20
+        assert!((g.glyph_w - 20.0).abs() < 1e-3);
+        assert!((g.glyph_h - 20.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn constrain_wide_glyph_preserves_aspect_ratio() {
+        let m = test_metrics();
+        // Wide glyph (40x20): aspect 2:1
+        let entry = GlyphEntry {
+            width: 40,
+            height: 20,
+            is_color: true,
+            ..test_entry()
+        };
+        let g = constrain_wide_glyph(&entry, 0.0, 0.0, &m, [1.0; 4]);
+
+        let original_ratio = 40.0 / 20.0;
+        let rendered_ratio = g.glyph_w / g.glyph_h;
+        assert!(
+            (original_ratio - rendered_ratio).abs() < 0.01,
+            "aspect ratio changed: {original_ratio} vs {rendered_ratio}"
+        );
+    }
+
+    #[test]
+    fn constrain_wide_glyph_centers_in_double_cell() {
+        let m = test_metrics();
+        // Small square glyph
+        let entry = GlyphEntry {
+            width: 10,
+            height: 10,
+            is_color: true,
+            ..test_entry()
+        };
+        let g = constrain_wide_glyph(&entry, 0.0, 0.0, &m, [1.0; 4]);
+
+        // target = 2*cw x ch = 20x20. Scale = min(20/10, 20/10) = 2.0, final = 20x20
+        // Centered: offset_x = (20-20)*0.5 = 0, offset_y = (20-20)*0.5 = 0
+        assert!((g.glyph_w - 20.0).abs() < 0.01);
+        assert_eq!(g.px, 0.0);
+        assert_eq!(g.py, 0.0);
+    }
+
+    #[test]
+    fn constrain_wide_text_glyph_uses_bearing_not_centering() {
+        let m = test_metrics();
+        let entry = GlyphEntry {
+            width: 18,
+            height: 16,
+            bearing_x: 1.0,
+            bearing_y: 14.0,
+            is_color: false,
+            ..test_entry()
+        };
+        let g = constrain_wide_text_glyph(&entry, 50.0, 100.0, &m, [1.0; 4]);
+
+        // Uses bearing positioning, not centering
+        assert_eq!(g.px, 50.0 + 1.0); // px + bearing_x
+        assert_eq!(g.py, 100.0 + 16.0 - 14.0); // py + baseline - bearing_y
+        // Width clamped to 2*cw = 20, glyph is 18 so stays 18
+        assert_eq!(g.glyph_w, 18.0);
+    }
+
+    #[test]
+    fn constrain_wide_text_glyph_clamps_overwide() {
+        let m = test_metrics();
+        // Glyph wider than 2*cw
+        let entry = GlyphEntry {
+            width: 30, // wider than 2*10=20
+            height: 16,
+            ..test_entry()
+        };
+        let g = constrain_wide_text_glyph(&entry, 0.0, 0.0, &m, [1.0; 4]);
+
+        // Should be clamped to target_w = 2*10 = 20
+        assert_eq!(g.glyph_w, 20.0);
+    }
+
+    #[test]
+    fn glyph_entry_empty_is_zero() {
+        let e = GlyphEntry::EMPTY;
+        assert_eq!(e.width, 0);
+        assert_eq!(e.height, 0);
+        assert_eq!(e.u0, 0.0);
+        assert_eq!(e.v0, 0.0);
+        assert_eq!(e.u1, 0.0);
+        assert_eq!(e.v1, 0.0);
+        assert!(!e.is_color);
+    }
+}

@@ -40,6 +40,7 @@ fn protocol_client_render_visible_grid_invariants_stay_aligned() {
             cursor_col: 2,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: MODE_ALT_SCREEN | MODE_MOUSE_REPORT,
+            echo_ack: 0,
         },
         cols: 4,
         rows: 2,
@@ -62,7 +63,7 @@ fn protocol_client_render_visible_grid_invariants_stay_aligned() {
         cwd: Some("/tmp/ciri".into()),
     };
 
-    grid.apply_full_sync(&sync);
+    grid.apply_full_sync_owned(&sync);
     grid.scroll_up(1);
 
     let visible = grid.visible_cells();

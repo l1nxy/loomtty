@@ -51,7 +51,7 @@ impl App {
                             if bracketed {
                                 data.extend_from_slice(b"\x1b[201~");
                             }
-                            self.send(ClientMessage::Input { pane_id: pid, data });
+                            self.send(ClientMessage::Input { pane_id: pid, data, input_seq: 0 });
                         }
                     }
                 }

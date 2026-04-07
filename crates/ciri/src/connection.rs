@@ -68,10 +68,13 @@ async fn run_protocol_io<R, W>(
         }
     });
 
-    // Reader loop
+    // Reader loop — reuse a single buffer across frames to avoid per-frame allocation.
+    let mut frame_buf = Vec::with_capacity(64 * 1024);
     loop {
-        match codec::read_frame(&mut reader).await {
+        match codec::read_frame_reuse(&mut reader, &mut frame_buf).await {
             Ok(codec::Frame::ServerMsg(msg)) => {
+                // Control frames decode immediately; buf was consumed by take but
+                // contained msgpack data we no longer need — just let it be empty.
                 if event_tx.send(ServerEvent::Control(msg)).is_err() {
                     break;
                 }
@@ -83,6 +86,9 @@ async fn run_protocol_io<R, W>(
                 if event_tx.send(ServerEvent::CellDelta(delta)).is_err() {
                     break;
                 }
+                // Buffer is now owned by CellDeltaBorrowed; it will be reclaimed
+                // when the consumer drops it. A new buffer will be allocated on
+                // the next read if needed (capacity 0 → resize).
                 if let Some(ref proxy) = wake_proxy {
                     let _ = proxy.send_event(());
                 }

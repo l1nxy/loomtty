@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, Notify};
 use tokio::time::{Duration, Instant, interval};
 
+use super::connection;
 use super::damage::DamageAccumulator;
 use super::server::Server;
 
@@ -199,9 +200,14 @@ pub(crate) async fn run_tick_loop(
                     // clone tx handles for deferred sending.
                     for (cid, pane_id, damage) in pending {
                         let pgen = session.generation.get(&pane_id).copied().unwrap_or(0);
-                        if !s.clients.contains_key(&cid) {
+                        let Some(client_ref) = s.clients.get(&cid) else {
                             continue;
-                        }
+                        };
+                        let client_echo_ack = client_ref
+                            .max_input_seq
+                            .get(&pane_id)
+                            .copied()
+                            .unwrap_or(0);
 
                         if damage.full {
                             if let Some(pane) = session.panes.get(&pane_id) {
@@ -217,8 +223,9 @@ pub(crate) async fn run_tick_loop(
                                 } else {
                                     pane.scrollback_total()
                                 };
-                                let sync =
+                                let mut sync =
                                     build_scrollback_sync(pane, pgen, last_sent, current_total);
+                                sync.meta.echo_ack = client_echo_ack;
                                 pending_sends.push(PendingSend {
                                     client_id: cid,
                                     session_name: session_name.clone(),
@@ -242,12 +249,13 @@ pub(crate) async fn run_tick_loop(
                             if current_total > last_sent {
                                 // New scrollback — send scrollback-only FullPaneSync
                                 // (rows=0, cells=[]) so viewport is not re-encoded.
-                                let sync = build_scrollback_only_sync(
+                                let mut sync = build_scrollback_only_sync(
                                     pane,
                                     pgen,
                                     last_sent,
                                     current_total,
                                 );
+                                sync.meta.echo_ack = client_echo_ack;
                                 pending_sends.push(PendingSend {
                                     client_id: cid,
                                     session_name: session_name.clone(),
@@ -274,6 +282,7 @@ pub(crate) async fn run_tick_loop(
                                         cursor_col,
                                         cursor_shape,
                                         mode_flags,
+                                        echo_ack: client_echo_ack,
                                     };
                                     let mut buf = frame_pool.pop().unwrap_or_default();
                                     let ok = codec::encode_cell_delta_streaming_framed(
@@ -315,6 +324,7 @@ pub(crate) async fn run_tick_loop(
                                     cursor_col,
                                     cursor_shape,
                                     mode_flags,
+                                    echo_ack: client_echo_ack,
                                 };
                                 let mut buf = frame_pool.pop().unwrap_or_default();
                                 let ok = codec::encode_cell_delta_streaming_framed(
@@ -372,7 +382,7 @@ pub(crate) async fn run_tick_loop(
             // Yield to the executor so writer tasks can flush pending
             // ServerShutdown frames to their sockets before we tear down.
             tokio::time::sleep(Duration::from_millis(50)).await;
-            let _ = std::fs::remove_file(transport::server_socket_path());
+            connection::graceful_shutdown(&tick_state).await;
             tick_shutdown.notify_one();
             return;
         }

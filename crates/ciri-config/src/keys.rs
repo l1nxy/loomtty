@@ -183,4 +183,78 @@ mod tests {
         );
         assert!(!config.paste_confirm_bindings.is_empty());
     }
+
+    #[test]
+    fn custom_bindings_override_defaults() {
+        let toml = r#"
+            [bindings]
+            n = "custom_action"
+            z = "some_new_action"
+        "#;
+
+        let config: KeybindConfig = toml::from_str(toml).unwrap();
+
+        // Overridden binding
+        assert_eq!(config.bindings["n"], "custom_action");
+        // New binding added
+        assert_eq!(config.bindings["z"], "some_new_action");
+        // Other default bindings are NOT present because TOML replaces the whole map
+        assert!(!config.bindings.contains_key("h"));
+    }
+
+    #[test]
+    fn custom_mode_replaces_entire_modes_map() {
+        // TOML replaces the whole `modes` HashMap, not individual entries
+        let toml = r#"
+            [modes.resize]
+            x = "custom_resize_action"
+        "#;
+
+        let config: KeybindConfig = toml::from_str(toml).unwrap();
+
+        assert_eq!(config.modes["resize"]["x"], "custom_resize_action");
+        // Other modes are lost because TOML replaces the whole map
+        assert!(!config.modes.contains_key("scroll"));
+        assert!(!config.modes.contains_key("move"));
+    }
+
+    #[test]
+    fn empty_bindings_map_is_valid() {
+        let toml = r#"
+            leader = "ctrl+a"
+            [bindings]
+        "#;
+
+        let config: KeybindConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.leader, "ctrl+a");
+        assert!(config.bindings.is_empty());
+        // Other binding maps still have defaults
+        assert!(!config.search_bindings.is_empty());
+    }
+
+    #[test]
+    fn default_keybinds_cover_essential_actions() {
+        let defaults = KeybindConfig::default();
+
+        // Core navigation must exist
+        assert!(defaults.bindings.contains_key("h"), "missing focus_left");
+        assert!(defaults.bindings.contains_key("l"), "missing focus_right");
+        assert!(defaults.bindings.contains_key("j"), "missing focus_down");
+        assert!(defaults.bindings.contains_key("k"), "missing focus_up");
+
+        // Core pane management must exist
+        assert!(defaults.bindings.contains_key("n"), "missing new_column");
+        assert!(defaults.bindings.contains_key("x"), "missing close_pane");
+
+        // All 3 mode tables must exist
+        assert!(defaults.modes.contains_key("resize"));
+        assert!(defaults.modes.contains_key("scroll"));
+        assert!(defaults.modes.contains_key("move"));
+
+        // Search must have escape to close
+        assert_eq!(
+            defaults.search_bindings.get("escape"),
+            Some(&"close_search".to_string())
+        );
+    }
 }

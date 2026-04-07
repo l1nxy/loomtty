@@ -135,6 +135,18 @@ pub enum PaletteEntryKind {
     },
     /// Switch to a background connection slot.
     SwitchSlot(String),
+    /// Direct-connect to a configured remote host without probing (VSCode SSH style).
+    DirectConnect {
+        name: String,
+        host: String,
+        port: u16,
+        ssh_port: u16,
+    },
+    /// Switch to a background slot and then switch session within it.
+    SlotSession {
+        slot_id: String,
+        session_name: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -264,6 +276,9 @@ pub struct ConnectionSlot {
     pub selection: Option<Selection>,
     pub broadcast_mode: bool,
     pub image_placements: HashMap<u64, Vec<ClientImagePlacement>>,
+    /// Events consumed from `server_rx` while the slot was backgrounded
+    /// (e.g. during background session queries). Replayed on restore.
+    pub pending_events: std::collections::VecDeque<ServerEvent>,
 }
 
 /// Server event forwarded from the connection thread to the application.
@@ -272,7 +287,7 @@ pub struct ConnectionSlot {
 pub enum ServerEvent {
     Control(ServerMessage),
     CellDelta(CellDeltaBorrowed),
-    FullPaneSync(FullPaneSync),
+    FullPaneSync(FullPaneSyncBorrowed),
     Disconnected,
 }
 

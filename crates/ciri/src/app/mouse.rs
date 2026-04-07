@@ -8,6 +8,116 @@ use winit::event::{MouseButton, MouseScrollDelta, TouchPhase};
 use super::App;
 
 impl App {
+    // ── Coordinate conversion ──
+
+    /// Convert pixel coordinates to (pane_id, col, buffer_row) using absolute buffer indices.
+    pub fn pixel_to_cell(&self, mx: f32, my: f32) -> Option<(u64, u16, usize)> {
+        let (cw, ch) = self.cell_dimensions();
+        if cw <= 0.0 || ch <= 0.0 {
+            return None;
+        }
+        let my = self.content_y_from_screen(my)?;
+        let border_w = self.core.config.appearance.border_width;
+        let padding = self.core.config.appearance.padding;
+        let vox = self.core.anim_mgr.view_offset_x.value() as f32;
+        let tiles = self.core.workspaces.active().visible_tiles(vox);
+        for (pane_id, rect, _) in &tiles {
+            if rect.contains(mx, my) {
+                let inner_x = rect.x + border_w + padding;
+                let inner_y = rect.y + border_w + padding;
+                let col = ((mx - inner_x) / cw).floor().max(0.0) as u16;
+                let viewport_row = ((my - inner_y) / ch).floor().max(0.0) as u16;
+                if let Some(grid) = self.core.pane_grids.get(pane_id) {
+                    let col = col.min(grid.cols.saturating_sub(1));
+                    let viewport_row = viewport_row.min(grid.rows.saturating_sub(1));
+                    let buffer_row = grid.viewport_to_buffer_row(viewport_row);
+                    return Some((*pane_id, col, buffer_row));
+                }
+            }
+        }
+        None
+    }
+
+    /// Convert pixel coordinates to (pane_id, col, viewport_row) for mouse forwarding.
+    pub fn pixel_to_viewport_cell(&self, mx: f32, my: f32) -> Option<(u64, u16, u16)> {
+        let (cw, ch) = self.cell_dimensions();
+        if cw <= 0.0 || ch <= 0.0 {
+            return None;
+        }
+        let my = self.content_y_from_screen(my)?;
+        let border_w = self.core.config.appearance.border_width;
+        let padding = self.core.config.appearance.padding;
+        let vox = self.core.anim_mgr.view_offset_x.value() as f32;
+        let tiles = self.core.workspaces.active().visible_tiles(vox);
+        for (pane_id, rect, _) in &tiles {
+            if rect.contains(mx, my) {
+                let inner_x = rect.x + border_w + padding;
+                let inner_y = rect.y + border_w + padding;
+                let col = ((mx - inner_x) / cw).floor().max(0.0) as u16;
+                let row = ((my - inner_y) / ch).floor().max(0.0) as u16;
+                if let Some(grid) = self.core.pane_grids.get(pane_id) {
+                    let col = col.min(grid.cols.saturating_sub(1));
+                    let row = row.min(grid.rows.saturating_sub(1));
+                    return Some((*pane_id, col, row));
+                }
+            }
+        }
+        None
+    }
+
+    // ── Selection delegates ──
+
+    pub fn extract_selected_text(&self) -> Option<String> {
+        self.core.extract_selected_text()
+    }
+
+    pub fn advance_click_count(
+        &mut self,
+        pane_id: u64,
+        col: u16,
+        buffer_row: usize,
+        now: Instant,
+    ) -> u8 {
+        self.core.advance_click_count(pane_id, col, buffer_row, now)
+    }
+
+    pub fn select_word_at(&mut self, pane_id: u64, col: u16, buffer_row: usize) -> bool {
+        self.core.select_word_at(pane_id, col, buffer_row)
+    }
+
+    pub fn select_line_at(&mut self, pane_id: u64, buffer_row: usize) {
+        self.core.select_line_at(pane_id, buffer_row)
+    }
+
+    // ── Scroll helpers ──
+
+    pub fn scroll_active_up(&mut self, lines: usize) {
+        if let Some(pid) = self.core.workspaces.active().active_pane_id()
+            && let Some(grid) = self.core.pane_grids.get_mut(&pid)
+        {
+            grid.scroll_up(lines);
+            self.invalidate_pane_cache(pid);
+        }
+    }
+
+    pub fn scroll_active_down(&mut self, lines: usize) {
+        if let Some(pid) = self.core.workspaces.active().active_pane_id()
+            && let Some(grid) = self.core.pane_grids.get_mut(&pid)
+        {
+            grid.scroll_down(lines);
+            self.invalidate_pane_cache(pid);
+        }
+    }
+
+    pub fn scroll_active_to_bottom(&mut self) {
+        if let Some(pid) = self.core.workspaces.active().active_pane_id()
+            && let Some(grid) = self.core.pane_grids.get_mut(&pid)
+        {
+            grid.scroll_to_bottom();
+            self.invalidate_pane_cache(pid);
+        }
+    }
+
     pub(crate) fn pane_reports_mouse(&self, pane_id: u64) -> bool {
         let mode_flags = self
             .core
@@ -118,6 +228,8 @@ impl App {
                         return;
                     }
 
+                    let was_already_focused =
+                        self.core.workspaces.active().active_pane_id() == Some(pane_id);
                     self.mouse_left_held = true;
                     self.mouse_left_passthrough = passthrough;
                     let click_now = Instant::now();
@@ -148,15 +260,17 @@ impl App {
                     self.animate_to_active();
 
                     if passthrough {
-                        if let Some((_, vcol, vrow)) = self.pixel_to_viewport_cell(mx, my) {
-                            self.send_lossy(ClientMessage::MouseInput {
-                                pane_id,
-                                button: 0,
-                                col: vcol,
-                                row: vrow,
-                                pressed: true,
-                                modifiers: 0,
-                            });
+                        if was_already_focused {
+                            if let Some((_, vcol, vrow)) = self.pixel_to_viewport_cell(mx, my) {
+                                self.send_lossy(ClientMessage::MouseInput {
+                                    pane_id,
+                                    button: 0,
+                                    col: vcol,
+                                    row: vrow,
+                                    pressed: true,
+                                    modifiers: 0,
+                                });
+                            }
                         }
                         self.core.selection = None;
                         return;
@@ -188,15 +302,22 @@ impl App {
                         // drag.  The selection is start==end (zero-width) and will
                         // not be rendered until the mouse drags to a different cell.
                         // This matches Alacritty/WezTerm/kitty behavior.
-                        if let Some((_, vcol, vrow)) = self.pixel_to_viewport_cell(mx, my) {
-                            self.send_lossy(ClientMessage::MouseInput {
-                                pane_id,
-                                button: 0,
-                                col: vcol,
-                                row: vrow,
-                                pressed: true,
-                                modifiers: 0,
-                            });
+                        //
+                        // Only forward the mouse event if the pane was already
+                        // focused — clicking to switch focus should not inject a
+                        // mouse press into the newly-focused application (which
+                        // would cause e.g. neovim to enter visual mode).
+                        if was_already_focused {
+                            if let Some((_, vcol, vrow)) = self.pixel_to_viewport_cell(mx, my) {
+                                self.send_lossy(ClientMessage::MouseInput {
+                                    pane_id,
+                                    button: 0,
+                                    col: vcol,
+                                    row: vrow,
+                                    pressed: true,
+                                    modifiers: 0,
+                                });
+                            }
                         }
                         self.core.selection = Some(super::Selection {
                             pane_id,
@@ -546,6 +667,13 @@ impl App {
             return;
         }
 
+        // Suppress selection extension while the viewport is animating (e.g. after
+        // clicking a pane in a different column).  The sliding viewport changes the
+        // pixel→cell mapping, which would otherwise look like a drag selection.
+        if self.core.anim_mgr.view_offset_x.is_animating() {
+            return;
+        }
+
         if self.mouse_left_passthrough
             && let Some((pane_id, col, row)) = self.pixel_to_viewport_cell(mx, my)
         {
@@ -867,6 +995,7 @@ impl App {
             self.send(ClientMessage::Input {
                 pane_id: pid,
                 data: key.to_vec(),
+                input_seq: 0,
             });
         }
     }

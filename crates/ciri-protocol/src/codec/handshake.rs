@@ -34,7 +34,7 @@ fn unpack_version(v: u32) -> String {
 const HANDSHAKE_MAGIC: [u8; 4] = *b"CIRI";
 const CLIENT_HELLO_FIXED_FIELDS_LEN: usize = 16;
 pub(super) const CLIENT_HELLO_HEADER_LEN: usize = 11;
-pub(super) const SERVER_HELLO_LEN: usize = 8;
+pub const SERVER_HELLO_LEN: usize = 8;
 const MAX_SESSION_NAME_LEN: usize = 255;
 
 /// Wire protocol version. Incremented whenever the handshake or frame format
@@ -43,7 +43,8 @@ const MAX_SESSION_NAME_LEN: usize = 255;
 /// History:
 ///   1 = initial codec layout
 ///   2 = mode_flags expanded from u8 to u16 (kitty keyboard levels 1-5)
-pub const WIRE_PROTOCOL_VERSION: u8 = 2;
+///   3 = echo_ack (u64) added to PaneFrameMeta for input prediction timing
+pub const WIRE_PROTOCOL_VERSION: u8 = 3;
 
 /// Version compatibility result.
 #[derive(Debug, Clone, PartialEq, Eq)]

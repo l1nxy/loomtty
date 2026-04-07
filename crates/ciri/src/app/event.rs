@@ -43,8 +43,8 @@ impl ApplicationHandler for App {
                 if let Some(renderer) = &mut self.renderer {
                     let shaper =
                         ciri_render::shaper::TextShaper::new(&self.core.config.font.family);
-                    let (cache, atlas_gpu) =
-                        renderer.create_atlas(&ciri_render::glyph_cache::FontInitParams {
+                    let (cache, atlas_gpu) = match renderer
+                        .create_atlas(&ciri_render::glyph_cache::FontInitParams {
                             font_size_pt: self.core.config.font.size,
                             dpi_scale: new_dpi,
                             family_name: &self.core.config.font.family,
@@ -54,7 +54,13 @@ impl ApplicationHandler for App {
                             cjk_font_path: shaper.cjk_font_path(),
                             cjk_font_id: shaper.cjk_font_id(),
                             render_config: &self.core.config.render,
-                        });
+                        }) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            log::error!("failed to recreate glyph atlas on DPI change: {e}");
+                            return;
+                        }
+                    };
                     log::info!(
                         "DPI changed: scale={:.2} cell={:.1}x{:.1}",
                         new_dpi,
@@ -80,10 +86,10 @@ impl ApplicationHandler for App {
         // Idle-aware event loop: only poll at frame rate when animating or
         // expecting updates. Switch to Wait when idle to save power.
         let is_animating = self.core.anim_mgr.is_animating();
-        let has_server = self.core.server_rx.is_some();
         let is_reconnecting = self.core.reconnect_state.is_some();
         let wants_blink = self.core.config.terminal.cursor_blink;
-        let has_remote_query = self.core.remote_query_rx.is_some();
+        let has_remote_query =
+            self.core.remote_query_rx.is_some() || !self.core.slot_session_pending.is_empty();
 
         let has_pending = self
             .core
@@ -97,38 +103,23 @@ impl ApplicationHandler for App {
 
         let is_resizing = resize_deadline.is_some();
 
-        if let Some(resize_deadline) = resize_deadline {
-            // During live resize: render at frame rate for a smooth preview.
-            // Surface.configure() is deferred to render time so we only
-            // rebuild the swapchain once per frame regardless of event count.
-            let frame_wake = Instant::now() + self.core.frame_interval;
-            event_loop.set_control_flow(ControlFlow::WaitUntil(frame_wake.min(resize_deadline)));
-        } else if is_animating || has_pending || is_reconnecting || has_remote_query {
-            // Active rendering or pending data: poll at frame rate
-            event_loop.set_control_flow(ControlFlow::WaitUntil(
-                Instant::now() + self.core.frame_interval,
-            ));
-        } else if wants_blink {
-            // Cursor blink: poll at blink interval
-            let blink_ms = self.core.config.terminal.cursor_blink_interval_ms;
-            event_loop.set_control_flow(ControlFlow::WaitUntil(
-                Instant::now() + Duration::from_millis(blink_ms),
-            ));
-        } else if has_server {
-            // Connected but idle: wait for wake from EventLoopProxy
-            event_loop.set_control_flow(ControlFlow::Wait);
-        } else {
-            // Disconnected, no animations: fully idle
-            event_loop.set_control_flow(ControlFlow::Wait);
-        }
-
         if matches!(
             cause,
             StartCause::ResumeTimeReached { .. }
                 | StartCause::Poll
                 | StartCause::WaitCancelled { .. }
         ) {
-            let mut needs_redraw = is_animating || is_resizing;
+            // Proactive leader timeout (tmux-style): clear expired leader
+            // state so the UI updates without waiting for the next key event.
+            let mut leader_expired = false;
+            if let Some(ld) = self.core.input.leader_deadline() {
+                if ld <= Instant::now() {
+                    self.core.input.poll_timeout();
+                    leader_expired = !self.core.input.is_awaiting_action();
+                }
+            }
+
+            let mut needs_redraw = is_animating || is_resizing || leader_expired;
 
             if self.process_server_events() {
                 needs_redraw = true;
@@ -146,6 +137,25 @@ impl ApplicationHandler for App {
                 self.core.remote_query_rx = None;
                 self.handle_remote_query_result(result);
                 needs_redraw = true;
+            }
+
+            // Poll background slot session queries
+            if !self.core.slot_session_pending.is_empty() {
+                let timed_out = self
+                    .core
+                    .slot_session_query_start
+                    .is_some_and(|t| t.elapsed() >= Duration::from_secs(5));
+                if self.core.command_palette.is_none() || timed_out {
+                    // Palette was closed or query timed out — stop polling
+                    if timed_out {
+                        log::warn!("slot session query timed out, giving up");
+                    }
+                    self.core.slot_session_pending.clear();
+                    self.core.slot_session_query_start = None;
+                } else {
+                    self.poll_slot_sessions();
+                    needs_redraw = true;
+                }
             }
 
             // Cursor blink
@@ -207,6 +217,41 @@ impl ApplicationHandler for App {
                 w.request_redraw();
             }
         }
+
+        // ── Schedule next wake ──
+        // Computed *after* tick processing so deadlines reflect post-tick
+        // state (e.g. cursor_blink_timer reset, leader state cleared).
+        let leader_deadline = self.core.input.leader_deadline();
+        let blink_deadline = if wants_blink {
+            let interval = Duration::from_millis(self.core.config.terminal.cursor_blink_interval_ms);
+            Some(self.core.cursor_blink_timer + interval)
+        } else {
+            None
+        };
+        let optional_wake = [leader_deadline, blink_deadline]
+            .into_iter()
+            .flatten()
+            .min();
+
+        if let Some(resize_deadline) = resize_deadline {
+            let frame_wake = Instant::now() + self.core.frame_interval;
+            let mut wake = frame_wake.min(resize_deadline);
+            if let Some(ow) = optional_wake {
+                wake = wake.min(ow);
+            }
+            event_loop.set_control_flow(ControlFlow::WaitUntil(wake));
+        } else if is_animating || has_pending || is_reconnecting || has_remote_query {
+            let mut wake = Instant::now() + self.core.frame_interval;
+            if let Some(ow) = optional_wake {
+                wake = wake.min(ow);
+            }
+            event_loop.set_control_flow(ControlFlow::WaitUntil(wake));
+        } else if let Some(wake) = optional_wake {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(wake));
+        } else {
+            // Fully idle: wait for EventLoopProxy wake from server thread
+            event_loop.set_control_flow(ControlFlow::Wait);
+        }
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: ()) {
@@ -262,17 +307,19 @@ impl ApplicationHandler for App {
             .expect("renderer init failed");
 
         let shaper = ciri_render::shaper::TextShaper::new(&self.core.config.font.family);
-        let (cache, atlas_gpu) = renderer.create_atlas(&ciri_render::glyph_cache::FontInitParams {
-            font_size_pt: self.core.config.font.size,
-            dpi_scale,
-            family_name: &self.core.config.font.family,
-            primary_font_path: shaper.primary_font_path(),
-            emoji_font_path: shaper.emoji_font_path(),
-            emoji_font_id: shaper.emoji_font_id(),
-            cjk_font_path: shaper.cjk_font_path(),
-            cjk_font_id: shaper.cjk_font_id(),
-            render_config: &self.core.config.render,
-        });
+        let (cache, atlas_gpu) = renderer
+            .create_atlas(&ciri_render::glyph_cache::FontInitParams {
+                font_size_pt: self.core.config.font.size,
+                dpi_scale,
+                family_name: &self.core.config.font.family,
+                primary_font_path: shaper.primary_font_path(),
+                emoji_font_path: shaper.emoji_font_path(),
+                emoji_font_id: shaper.emoji_font_id(),
+                cjk_font_path: shaper.cjk_font_path(),
+                cjk_font_id: shaper.cjk_font_id(),
+                render_config: &self.core.config.render,
+            })
+            .expect("initial glyph atlas creation failed");
 
         let (w, h) = renderer.surface_size();
         let bar_padding = self

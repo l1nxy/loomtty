@@ -141,4 +141,93 @@ mod tests {
         assert!(p.allocate(11, 5).is_none());
         assert!(p.allocate(5, 11).is_none());
     }
+
+    #[test]
+    fn shelf_packer_mixed_heights_tallest_sets_shelf() {
+        let mut p = ShelfPacker::new(100);
+        // First glyph is tall (30px), second is short (10px)
+        assert_eq!(p.allocate(10, 30), Some((0, 0)));
+        assert_eq!(p.allocate(10, 10), Some((10, 0)));
+        // Fill rest of row
+        for _ in 0..8 {
+            assert!(p.allocate(10, 10).is_some());
+        }
+        // Next shelf starts at y=30 (the tallest glyph in the shelf)
+        assert_eq!(p.allocate(10, 10), Some((0, 30)));
+    }
+
+    #[test]
+    fn shelf_packer_exact_fit_no_waste() {
+        let mut p = ShelfPacker::new(20);
+        // Exactly fill one row
+        assert_eq!(p.allocate(10, 10), Some((0, 0)));
+        assert_eq!(p.allocate(10, 10), Some((10, 0)));
+        // Exactly fill second row
+        assert_eq!(p.allocate(20, 10), Some((0, 10)));
+        // Atlas is now full (20x20)
+        assert!(p.allocate(1, 1).is_none());
+    }
+
+    #[test]
+    fn shelf_packer_zero_size_does_not_advance_cursor() {
+        let mut p = ShelfPacker::new(100);
+        // Zero-size allocation succeeds but does NOT advance cursor_x (w=0),
+        // so the next real allocation lands at the same position.
+        // This is harmless in practice: zero-size glyphs (e.g. space) never
+        // produce pixel data, so overlapping UV is irrelevant.
+        assert_eq!(p.allocate(0, 0), Some((0, 0)));
+        // Next allocation starts at (0,0) because cursor didn't move
+        assert_eq!(p.allocate(10, 10), Some((0, 0)));
+        // After a real allocation, cursor has advanced
+        assert_eq!(p.allocate(10, 10), Some((10, 0)));
+    }
+
+    #[test]
+    fn make_glyph_entry_uv_coordinates() {
+        let region = AtlasRegion {
+            x: 10,
+            y: 20,
+            w: 8,
+            h: 16,
+        };
+        let entry = make_glyph_entry(region, 1.5, 12.0, 256, false);
+
+        assert_eq!(entry.u0, 10.0 / 256.0);
+        assert_eq!(entry.v0, 20.0 / 256.0);
+        assert_eq!(entry.u1, 18.0 / 256.0); // (10+8)/256
+        assert_eq!(entry.v1, 36.0 / 256.0); // (20+16)/256
+        assert_eq!(entry.width, 8);
+        assert_eq!(entry.height, 16);
+        assert_eq!(entry.bearing_x, 1.5);
+        assert_eq!(entry.bearing_y, 12.0);
+        assert!(!entry.is_color);
+    }
+
+    #[test]
+    fn make_glyph_entry_color_flag() {
+        let region = AtlasRegion {
+            x: 0,
+            y: 0,
+            w: 32,
+            h: 32,
+        };
+        let entry = make_glyph_entry(region, 0.0, 0.0, 1024, true);
+        assert!(entry.is_color);
+    }
+
+    #[test]
+    fn make_glyph_entry_atlas_origin() {
+        // Glyph at atlas origin should have UV (0,0)→(w/s, h/s)
+        let region = AtlasRegion {
+            x: 0,
+            y: 0,
+            w: 10,
+            h: 10,
+        };
+        let entry = make_glyph_entry(region, 0.0, 0.0, 100, false);
+        assert_eq!(entry.u0, 0.0);
+        assert_eq!(entry.v0, 0.0);
+        assert_eq!(entry.u1, 0.1);
+        assert_eq!(entry.v1, 0.1);
+    }
 }

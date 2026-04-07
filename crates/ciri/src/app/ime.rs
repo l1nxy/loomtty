@@ -25,10 +25,11 @@ impl App {
                         self.send(ClientMessage::Input {
                             pane_id: pid,
                             data: data.clone(),
+                            input_seq: 0,
                         });
                     }
                 } else if let Some(pid) = self.core.workspaces.active_mut().active_pane_id() {
-                    self.send(ClientMessage::Input { pane_id: pid, data });
+                    self.send(ClientMessage::Input { pane_id: pid, data, input_seq: 0 });
                 }
                 if let Some(w) = &self.window {
                     w.request_redraw();

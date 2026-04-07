@@ -80,6 +80,14 @@ pub struct AppModel {
 
     pub image_placements: HashMap<u64, Vec<ClientImagePlacement>>,
     pub prediction: PredictionEngine,
+
+    /// Events buffered from a restored slot's `pending_events`.
+    /// Drained before reading `server_rx` in `process_server_events`.
+    pub buffered_events: std::collections::VecDeque<ServerEvent>,
+    /// Slot IDs with in-flight `ListSessions` requests for the session palette.
+    pub slot_session_pending: std::collections::HashSet<String>,
+    /// When the current batch of slot session queries was started.
+    pub slot_session_query_start: Option<Instant>,
 }
 
 impl AppModel {
@@ -188,6 +196,9 @@ impl AppModel {
             remote_query_rx: None,
             image_placements: HashMap::new(),
             prediction,
+            buffered_events: std::collections::VecDeque::new(),
+            slot_session_pending: std::collections::HashSet::new(),
+            slot_session_query_start: None,
         }
     }
 

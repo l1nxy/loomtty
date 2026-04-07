@@ -1,0 +1,32 @@
+# ciri
+
+> ciri is a GPU-accelerated terminal multiplexer written in Rust, with a client-server architecture similar to tmux/zellij. It supports Wayland/X11 (Linux), macOS (Metal), and Windows (DirectX 11). Rendering uses Vulkan/Metal/OpenGL via blade-graphics. Terminal emulation is based on alacritty_terminal with extensions for Kitty keyboard protocol, Sixel/Kitty graphics, and shell integration (OSC 133).
+
+- Rust edition 2024, requires rustc 1.82+
+- 13-crate workspace: ciri (client), ciri-server (daemon), ciri-app, ciri-render, ciri-gpu, ciri-term, ciri-protocol, ciri-config, ciri-input, ciri-layout, ciri-anim, ciri-session, ciri-procinfo
+- Uses patched forks of winit, alacritty_terminal, and vte (branch: ciri-patches)
+- Config: TOML at ~/.config/ciri/config.toml, interactive setup via `ciri init`
+- Shell integration: fish and zsh via OSC 133 + OSC 7
+
+## Installation
+
+- [AI Installation Guide](INSTALL.md): Complete step-by-step guide for AI agents to build, install, and configure ciri on any supported platform. Includes system dependency installation, build commands, shell integration setup, and verification steps.
+
+## Documentation
+
+- [README](README.md): Quick-start guide, CLI usage, keybindings reference
+- [Configuration Schema](crates/ciri-config/src/schema.rs): Full config options with defaults and validation ranges
+- [Agents Guide](AGENTS.md): Architecture overview and contribution guide for AI coding agents
+
+## Shell Integration
+
+- [Fish Integration](crates/ciri-server/shell-integration/ciri.fish): Fish shell integration script
+- [Zsh Integration](crates/ciri-server/shell-integration/ciri.zsh): Zsh shell integration script
+
+## Key Source Files
+
+- [Main Entry](crates/ciri/src/main.rs): Client binary entry point
+- [Server Entry](crates/ciri-server/src/main.rs): Server daemon entry point
+- [Key Encoding](crates/ciri/src/app/key_encode/mod.rs): Kitty keyboard protocol + legacy VT encoding
+- [Protocol Messages](crates/ciri-protocol/src/message.rs): Client-server protocol definitions
+- [Terminal Pane](crates/ciri-term/src/pane/mod.rs): PTY management, escape sequence handling, mode tracking

@@ -38,6 +38,7 @@ ciri-procinfo = { path = "crates/ciri-procinfo" }
 # External
 arboard = { version = "3", features = ["wayland-data-control"] }
 bytemuck = { version = "1", features = ["derive"] }
+zerocopy = { version = "0.8", features = ["derive"] }
 dirs = "6"
 notify = { version = "6", default-features = false, features = ["macos_kqueue"] }
 rmp-serde = "1"

@@ -42,14 +42,23 @@ fn rebase_grapheme_lookup(
 }
 
 impl ClientPaneGrid {
-    /// Apply a FullPaneSync from the server.
+    /// Convenience wrapper for tests: encode a `FullPaneSync` and apply the borrowed version.
+    pub fn apply_full_sync_owned(&mut self, sync: &FullPaneSync) {
+        match ciri_protocol::codec::full_pane_sync_to_borrowed(sync) {
+            Ok(borrowed) => self.apply_full_sync(&borrowed),
+            Err(e) => log::warn!("full_pane_sync_to_borrowed failed: {e}"),
+        }
+    }
+
+    /// Apply a FullPaneSyncBorrowed from the server.
     ///
     /// The server sends:
-    /// - `scrollback` + `scrollback_rows`: new history lines since last sync (oldest first)
-    /// - `cells` + `rows`: the current live viewport
+    /// - scrollback SM data + `scrollback_rows`: new history lines since last sync
+    /// - viewport SM data + `rows`: the current live viewport
     ///
-    /// We add scrollback rows to VecDeque, then memcpy cells directly into viewport flat buffer.
-    pub fn apply_full_sync(&mut self, sync: &FullPaneSync) {
+    /// SM data is decoded directly into the viewport buffer (no intermediate alloc).
+    /// Scrollback is decoded into a temporary buffer, then sliced into rows.
+    pub fn apply_full_sync(&mut self, sync: &FullPaneSyncBorrowed) {
         let old_cols = self.cols as usize;
         let old_viewport_len = self.viewport.len();
         let old_grapheme_map = std::mem::take(&mut self.grapheme_map);
@@ -81,7 +90,8 @@ impl ClientPaneGrid {
                 .saturating_sub(self.max_scrollback)
         };
 
-        // Step 1: Handle scrollback — replace or append
+        // Step 1: Handle scrollback — replace or append.
+        // Scrollback must be decoded into a temp buffer since rows go into VecDeque.
         if sync.scrollback_replace {
             self.scrollback.clear();
         }
@@ -96,46 +106,62 @@ impl ClientPaneGrid {
                 trim_count,
             )
         };
-        for r in 0..appended_scrollback_rows {
-            let start = r * new_cols;
-            let end = (start + new_cols).min(sync.scrollback.len());
-            if end <= start {
-                continue;
-            }
-            self.scrollback
-                .push_back(ScrollbackRow::from_cells(&sync.scrollback[start..end]));
-        }
 
-        if !cols_changed {
-            let scrollback_base = self
-                .scrollback
-                .len()
-                .saturating_sub(appended_scrollback_rows);
-            for (idx, extra) in &sync.grapheme_extras.0 {
-                let idx = *idx as usize;
-                if idx < sync.scrollback.len() {
-                    let ch = sync.scrollback[idx].ch();
-                    let mut grapheme = String::new();
-                    grapheme.push(ch);
-                    grapheme.push_str(extra);
-                    rebased_grapheme_map
-                        .insert((scrollback_base * new_cols + idx) as u32, grapheme);
+        let sb_expected = appended_scrollback_rows * new_cols;
+        if sb_expected > 0 {
+            let sb_sm_data = sync.scrollback_sm_data();
+            let mut sb_cells = vec![PackedCell::default(); sb_expected];
+            match ciri_protocol::codec::decode_sm_cells(sb_sm_data, &mut sb_cells) {
+                Ok(_) => {
+                    for r in 0..appended_scrollback_rows {
+                        let start = r * new_cols;
+                        let end = (start + new_cols).min(sb_cells.len());
+                        if end > start {
+                            self.scrollback
+                                .push_back(ScrollbackRow::from_cells(&sb_cells[start..end]));
+                        }
+                    }
+
+                    if !cols_changed {
+                        let scrollback_base = self
+                            .scrollback
+                            .len()
+                            .saturating_sub(appended_scrollback_rows);
+                        for (idx, extra) in &sync.grapheme_extras.0 {
+                            let idx = *idx as usize;
+                            if idx < sb_cells.len() {
+                                let ch = sb_cells[idx].ch();
+                                let mut grapheme = String::new();
+                                grapheme.push(ch);
+                                grapheme.push_str(extra);
+                                rebased_grapheme_map
+                                    .insert((scrollback_base * new_cols + idx) as u32, grapheme);
+                            }
+                        }
+                    }
                 }
+                Err(e) => log::warn!("scrollback SM decode error: {e}"),
             }
         }
 
-        // Step 2: Memcpy cells directly into viewport flat buffer.
-        // When rows==0, this is a scrollback-only sync — skip viewport update.
+        // Step 2: Decode viewport SM data directly into viewport buffer (zero copy).
         let vp_cells = new_cols * new_rows;
         if vp_cells > 0 {
-            if sync.cells.len() >= vp_cells {
-                self.viewport[..vp_cells].copy_from_slice(&sync.cells[..vp_cells]);
-            } else {
-                // Partial: copy what we have, blank the rest
-                let have = sync.cells.len();
-                self.viewport[..have].copy_from_slice(&sync.cells);
-                for cell in &mut self.viewport[have..vp_cells] {
-                    *cell = PackedCell::default();
+            let vp_sm_data = sync.viewport_sm_data();
+            match ciri_protocol::codec::decode_sm_cells(vp_sm_data, &mut self.viewport[..vp_cells])
+            {
+                Ok(decoded) => {
+                    // Blank any remaining cells if SM decoded fewer than expected
+                    for cell in &mut self.viewport[decoded..vp_cells] {
+                        *cell = PackedCell::default();
+                    }
+                }
+                Err(e) => {
+                    log::warn!("viewport SM decode error: {e}");
+                    // Fill viewport with defaults on error
+                    for cell in &mut self.viewport[..vp_cells] {
+                        *cell = PackedCell::default();
+                    }
                 }
             }
         }
@@ -159,11 +185,19 @@ impl ClientPaneGrid {
         self.password_input = sync.meta.mode_flags & MODE_PASSWORD_INPUT != 0;
         self.title = sync.title.clone();
         self.grapheme_map = rebased_grapheme_map;
-        let sync_grapheme_map = sync.grapheme_extras.build_lookup(&sync.cells);
+        // Build grapheme lookup from viewport cells (already decoded in place).
+        let sync_grapheme_map = sync.grapheme_extras.build_lookup(&self.viewport[..vp_cells]);
         for (idx, grapheme) in sync_grapheme_map {
             self.grapheme_map.insert(idx, grapheme);
         }
-        self.hyperlink_map = sync.hyperlink_extras.link_map.clone();
+        self.hyperlink_map.clear();
+        for &(id, ref uri) in &sync.hyperlink_extras.link_map {
+            self.hyperlink_map.insert(id, uri.clone());
+        }
+        self.hyperlink_cell_map.clear();
+        for &(cell_idx, link_id) in &sync.hyperlink_extras.cell_links {
+            self.hyperlink_cell_map.insert(cell_idx, link_id);
+        }
         self.cwd = sync.cwd.clone();
         self.dirty = true;
     }
@@ -192,6 +226,10 @@ impl ClientPaneGrid {
             if copy_len > 0 {
                 let dst_start = line * cols + col_start;
                 let dst_end = line * cols + col_end;
+                // Evict stale hyperlink entries for overwritten cells
+                for idx in dst_start..dst_end {
+                    self.hyperlink_cell_map.remove(&(idx as u32));
+                }
                 self.viewport[dst_start..dst_end].copy_from_slice(&region.cells[..copy_len]);
                 self.mark_row_dirty(line);
             }
@@ -228,6 +266,10 @@ impl ClientPaneGrid {
             if copy_len > 0 {
                 let dst_start = line * cols + col_start;
                 let dst_end = dst_start + copy_len;
+                // Evict stale hyperlink entries for overwritten cells
+                for idx in dst_start..dst_end {
+                    self.hyperlink_cell_map.remove(&(idx as u32));
+                }
                 let sm_data = delta.sm_data(i);
                 match ciri_protocol::codec::decode_sm_cells(
                     sm_data,

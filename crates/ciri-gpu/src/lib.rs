@@ -19,8 +19,31 @@ pub mod gl;
 #[allow(unsafe_op_in_unsafe_fn)]
 pub mod dx;
 
-use anyhow::Result;
 use ciri_config::config::RenderConfig;
+
+/// Structured error type for GPU operations.
+///
+/// Callers (e.g. ciri-app) can match on variants to decide whether to
+/// fallback to another backend, show a user-facing message, or abort.
+#[derive(Debug, thiserror::Error)]
+pub enum GpuError {
+    #[error("shader compilation failed: {0}")]
+    ShaderCompile(String),
+
+    #[error("GPU device initialization failed: {0}")]
+    DeviceInit(String),
+
+    #[error("GPU resource creation failed: {0}")]
+    ResourceCreate(String),
+
+    #[error("surface lost or resize failed: {0}")]
+    SurfaceLost(String),
+
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
+pub type Result<T> = std::result::Result<T, GpuError>;
 
 /// Viewport dimensions used by render functions.
 pub struct ViewportDims {
@@ -118,17 +141,13 @@ fn default_backend_for_platform() -> &'static str {
     }
 }
 
-fn log_backend_init_error(backend: &str, error: &anyhow::Error) {
+fn log_backend_init_error(backend: &str, error: &dyn std::fmt::Display) {
     match backend {
         DX_BACKEND => log::warn!("DX11 backend failed: {error:#}"),
         BLADE_BACKEND => log::warn!("blade backend failed: {error:#}"),
         GL_BACKEND => log::warn!("GL backend failed: {error:#}"),
         other => log::warn!("{other} backend failed: {error:#}"),
     }
-}
-
-fn backend_not_compiled_error(backend: &str) -> anyhow::Error {
-    anyhow::anyhow!("backend {backend:?} not compiled (available features: blade, gl, dx)")
 }
 
 pub(crate) fn log_backend_mismatch(op: BackendMismatchOp) {
@@ -170,7 +189,7 @@ impl Renderer {
                 Err(e) => {
                     log_backend_init_error(DX_BACKEND, &e);
                     if choice.is_explicit() {
-                        return Err(e);
+                        return Err(GpuError::DeviceInit(format!("{DX_BACKEND}: {e}")));
                     }
                 }
             },
@@ -183,7 +202,7 @@ impl Renderer {
                 Err(e) => {
                     log_backend_init_error(BLADE_BACKEND, &e);
                     if choice.is_explicit() {
-                        return Err(e);
+                        return Err(GpuError::DeviceInit(format!("{BLADE_BACKEND}: {e}")));
                     }
                 }
             },
@@ -202,7 +221,9 @@ impl Renderer {
             },
             other => {
                 if choice.is_explicit() {
-                    return Err(backend_not_compiled_error(other));
+                    return Err(GpuError::DeviceInit(format!(
+                        "backend '{other}' not compiled into this build"
+                    )));
                 }
             }
         }
@@ -224,7 +245,10 @@ impl Renderer {
             return Ok(Renderer::Blade(r));
         }
 
-        anyhow::bail!("no GPU backend available (tried: {})", choice.resolved)
+        Err(GpuError::DeviceInit(format!(
+            "no GPU backend available (tried: {})",
+            choice.resolved
+        )))
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -263,22 +287,22 @@ impl Renderer {
     pub fn create_atlas(
         &mut self,
         params: &ciri_render::glyph_cache::FontInitParams,
-    ) -> (GlyphCache, GlyphAtlasGpu) {
+    ) -> Result<(GlyphCache, GlyphAtlasGpu)> {
         match self {
             #[cfg(feature = "blade")]
             Renderer::Blade(r) => {
                 let (cache, atlas) = r.create_atlas(params);
-                (cache, GlyphAtlasGpu::Blade(atlas))
+                Ok((cache, GlyphAtlasGpu::Blade(atlas)))
             }
             #[cfg(feature = "gl")]
             Renderer::Gl(r) => {
-                let (cache, atlas) = r.create_atlas(params);
-                (cache, GlyphAtlasGpu::Gl(atlas))
+                let (cache, atlas) = r.create_atlas(params)?;
+                Ok((cache, GlyphAtlasGpu::Gl(atlas)))
             }
             #[cfg(all(feature = "dx", windows))]
             Renderer::Dx(r) => {
                 let (cache, atlas) = r.create_atlas(params);
-                (cache, GlyphAtlasGpu::Dx(atlas))
+                Ok((cache, GlyphAtlasGpu::Dx(atlas)))
             }
         }
     }
@@ -300,15 +324,24 @@ impl Renderer {
         atlas_gpu: &mut GlyphAtlasGpu,
         cache: &mut GlyphCache,
         scene: FrameScene,
-    ) {
+    ) -> Result<()> {
         match (self, atlas_gpu) {
             #[cfg(feature = "blade")]
-            (Renderer::Blade(r), GlyphAtlasGpu::Blade(a)) => r.draw_frame(a, cache, scene),
+            (Renderer::Blade(r), GlyphAtlasGpu::Blade(a)) => {
+                r.draw_frame(a, cache, scene);
+                Ok(())
+            }
             #[cfg(feature = "gl")]
             (Renderer::Gl(r), GlyphAtlasGpu::Gl(a)) => r.draw_frame(a, cache, scene),
             #[cfg(all(feature = "dx", windows))]
-            (Renderer::Dx(r), GlyphAtlasGpu::Dx(a)) => r.draw_frame(a, cache, scene),
-            _ => log_backend_mismatch(BackendMismatchOp::DrawFrame),
+            (Renderer::Dx(r), GlyphAtlasGpu::Dx(a)) => {
+                r.draw_frame(a, cache, scene);
+                Ok(())
+            }
+            _ => {
+                log_backend_mismatch(BackendMismatchOp::DrawFrame);
+                Ok(())
+            }
         }
     }
 }
@@ -317,7 +350,7 @@ impl Renderer {
 mod tests {
     use super::{
         AUTO_BACKEND, BLADE_BACKEND, BackendChoice, BackendMismatchOp, BackendRequest, DX_BACKEND,
-        GL_BACKEND, backend_not_compiled_error, default_backend_for_platform,
+        GL_BACKEND, default_backend_for_platform,
     };
     #[cfg(all(feature = "blade", feature = "gl"))]
     use crate::{GlyphAtlasGpu, Renderer};
@@ -363,17 +396,6 @@ mod tests {
             assert_eq!(choice.resolved, backend);
             assert!(choice.is_explicit());
         }
-    }
-
-    #[test]
-    fn backend_not_compiled_error_mentions_backend_name() {
-        let error = backend_not_compiled_error("mystery");
-        assert!(
-            error
-                .to_string()
-                .contains("backend \"mystery\" not compiled"),
-            "unexpected error: {error:#}"
-        );
     }
 
     #[test]

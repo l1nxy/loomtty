@@ -26,15 +26,15 @@ mod util;
 pub use cell_delta::{decode_cell_delta_borrowed, encode_cell_delta_streaming_framed};
 pub use frame::{
     Frame, encode_client_msg, encode_server_msg, frame_full_pane_sync, frame_server_msg,
-    frame_server_msg_into, read_frame,
+    frame_server_msg_into, read_frame, read_frame_reuse,
 };
 pub use full_sync::{
-    decode_full_pane_sync, encode_full_pane_sync, encode_full_pane_sync_framed,
-    encode_full_pane_sync_payload,
+    decode_full_pane_sync, decode_full_pane_sync_borrowed, encode_full_pane_sync,
+    encode_full_pane_sync_framed, encode_full_pane_sync_payload, full_pane_sync_to_borrowed,
 };
 pub use handshake::{
-    ClientHello, VersionCompat, WIRE_PROTOCOL_VERSION, build_client_hello, read_client_hello,
-    read_server_hello, write_client_hello, write_server_hello,
+    ClientHello, SERVER_HELLO_LEN, VersionCompat, WIRE_PROTOCOL_VERSION, build_client_hello,
+    read_client_hello, read_server_hello, write_client_hello, write_server_hello,
 };
 pub use state_machine::{StateEncoder, decode_sm_cells};
 

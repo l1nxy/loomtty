@@ -52,7 +52,9 @@ pub struct ClientPaneGrid {
     /// True if password input detected (PTY ECHO disabled in canonical mode).
     pub password_input: bool,
     /// OSC 8 hyperlink map: link_id → URI (from server's HyperlinkExtras).
-    pub hyperlink_map: Vec<(u16, String)>,
+    pub hyperlink_map: std::collections::HashMap<u16, String>,
+    /// Viewport cell index → link ID for fast OSC 8 lookup.
+    pub hyperlink_cell_map: std::collections::HashMap<u32, u16>,
     /// Current working directory from OSC 7 (reported by the shell via server).
     pub cwd: Option<String>,
 }
@@ -78,7 +80,8 @@ impl ClientPaneGrid {
             has_shell_integration: false,
             kitty_flags: 0,
             password_input: false,
-            hyperlink_map: Vec::new(),
+            hyperlink_map: std::collections::HashMap::new(),
+            hyperlink_cell_map: std::collections::HashMap::new(),
             cwd: None,
         }
     }

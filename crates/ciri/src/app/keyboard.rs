@@ -6,7 +6,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, NamedKey};
 
 use super::App;
-use super::input_handler::{
+use super::key_encode::{
     key_event_base_char, key_event_text_for_input, key_event_to_kitty_bytes, key_event_to_pty_bytes,
 };
 
@@ -16,6 +16,8 @@ struct KeyModifiers {
     shift: bool,
     alt: bool,
     super_key: bool,
+    caps_lock: bool,
+    num_lock: bool,
 }
 
 impl KeyModifiers {
@@ -25,6 +27,8 @@ impl KeyModifiers {
             shift: modifiers.shift_key(),
             alt: modifiers.alt_key(),
             super_key: modifiers.super_key(),
+            caps_lock: modifiers.caps_lock(),
+            num_lock: modifiers.num_lock(),
         }
     }
 }
@@ -61,12 +65,12 @@ impl App {
 
             if pane_wants_release {
                 // Send release event directly to PTY via kitty encoder
-                let ctrl = self.modifiers.control_key();
-                let shift = self.modifiers.shift_key();
-                let alt = self.modifiers.alt_key();
-                let super_key = self.modifiers.super_key();
-                let bytes =
-                    key_event_to_kitty_bytes(event, ctrl, shift, alt, super_key, kitty_flags);
+                let mods = KeyModifiers::from_winit(self.modifiers);
+                let bytes = key_event_to_kitty_bytes(
+                    event, mods.ctrl, mods.shift, mods.alt, mods.super_key,
+                    mods.caps_lock, mods.num_lock,
+                    kitty_flags,
+                );
                 if !bytes.is_empty() {
                     if self.core.broadcast_mode {
                         let vox = self.core.anim_mgr.view_offset_x.value() as f32;
@@ -96,22 +100,22 @@ impl App {
                             } else {
                                 key_event_to_kitty_bytes(
                                     event,
-                                    ctrl,
-                                    shift,
-                                    alt,
-                                    super_key,
+                                    mods.ctrl, mods.shift, mods.alt, mods.super_key,
+                                    mods.caps_lock, mods.num_lock,
                                     pane_kitty_flags,
                                 )
                             };
                             self.send(ClientMessage::Input {
                                 pane_id: pid,
                                 data: pane_bytes,
+                                input_seq: 0,
                             });
                         }
                     } else if let Some(pid) = self.core.workspaces.active_mut().active_pane_id() {
                         self.send(ClientMessage::Input {
                             pane_id: pid,
                             data: bytes,
+                            input_seq: 0,
                         });
                     }
                 }
@@ -287,7 +291,7 @@ impl App {
         if bracketed {
             data.extend_from_slice(b"\x1b[201~");
         }
-        self.send(ClientMessage::Input { pane_id: pid, data });
+        self.send(ClientMessage::Input { pane_id: pid, data, input_seq: 0 });
     }
 
     fn clear_selection_on_typing(&mut self, event: &winit::event::KeyEvent) {
@@ -392,6 +396,7 @@ impl App {
                     self.send(ClientMessage::Input {
                         pane_id: pid,
                         data: bytes,
+                        input_seq: 0,
                     });
                 }
             } else {
@@ -419,6 +424,7 @@ impl App {
                     self.send(ClientMessage::Input {
                         pane_id: pid,
                         data: pane_bytes,
+                        input_seq: 0,
                     });
                 }
             }
@@ -428,21 +434,16 @@ impl App {
         if let Some(pid) = self.core.workspaces.active_mut().active_pane_id() {
             // Skip prediction when the pane is in password input mode
             // to avoid leaking sensitive keystrokes into the prediction engine.
+            let seq = self.core.prediction.next_input_seq();
             if !password_mode {
                 if let Some(grid) = self.core.pane_grids.get(&pid) {
-                    let info = ciri_app::prediction::GridInfo {
-                        cursor_row: grid.cursor_line,
-                        cursor_col: grid.cursor_col,
-                        cols: grid.cols,
-                        rows: grid.rows,
-                        mode_flags: grid.mode_flags,
-                    };
-                    self.core.prediction.new_user_input(pid, &bytes, &info);
+                    self.core.prediction.new_user_input(pid, &bytes, grid);
                 }
             }
             self.send(ClientMessage::Input {
                 pane_id: pid,
                 data: bytes,
+                input_seq: seq,
             });
         }
     }
@@ -460,6 +461,8 @@ impl App {
                 modifiers.shift,
                 modifiers.alt,
                 modifiers.super_key,
+                modifiers.caps_lock,
+                modifiers.num_lock,
                 kitty_flags,
             )
         } else {

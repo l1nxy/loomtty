@@ -134,7 +134,10 @@ impl AppModel {
 
     /// Confirm pending paste — sends paste data to active pane.
     pub fn confirm_pending_paste(&mut self) {
-        let text = self.pending_paste.as_ref().unwrap().info.text.clone();
+        let Some(paste) = self.pending_paste.as_ref() else {
+            return;
+        };
+        let text = paste.info.text.clone();
         self.pending_paste = None;
         if let Some(pid) = self.workspaces.active_mut().active_pane_id() {
             let bracketed = self
@@ -149,7 +152,7 @@ impl AppModel {
             if bracketed {
                 data.extend_from_slice(b"\x1b[201~");
             }
-            self.send(ciri_protocol::message::ClientMessage::Input { pane_id: pid, data });
+            self.send(ciri_protocol::message::ClientMessage::Input { pane_id: pid, data, input_seq: 0 });
         }
     }
 

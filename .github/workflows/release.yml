@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: ciri-linux-x86_64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact: ciri-linux-aarch64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: ciri-macos-aarch64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: ciri-macos-x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: ciri-windows-x86_64
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux deps
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config libfreetype-dev libfontconfig-dev \
+            libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libwayland-dev \
+            libvulkan-dev libegl-dev
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p ${{ matrix.artifact }}
+          cp target/${{ matrix.target }}/release/ciri ${{ matrix.artifact }}/
+          cp target/${{ matrix.target }}/release/ciri-server ${{ matrix.artifact }}/
+          cp -r crates/ciri-server/shell-integration ${{ matrix.artifact }}/
+          cp -r dist ${{ matrix.artifact }}/ 2>/dev/null || true
+          cp -r assets/icons ${{ matrix.artifact }}/ 2>/dev/null || true
+          tar czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path ${{ matrix.artifact }}
+          Copy-Item target/${{ matrix.target }}/release/ciri.exe ${{ matrix.artifact }}/
+          Copy-Item target/${{ matrix.target }}/release/ciri-server.exe ${{ matrix.artifact }}/
+          Compress-Archive -Path ${{ matrix.artifact }} -DestinationPath ${{ matrix.artifact }}.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            ciri-linux-x86_64.tar.gz
+            ciri-linux-aarch64.tar.gz
+            ciri-macos-aarch64.tar.gz
+            ciri-macos-x86_64.tar.gz
+            ciri-windows-x86_64.zip

@@ -1,3 +1,4 @@
+pub mod font_resolver;
 pub mod glyph_cache;
 pub mod rect;
 pub mod shaper;

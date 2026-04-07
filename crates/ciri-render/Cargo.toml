@@ -17,6 +17,8 @@ freetype-rs = { workspace = true }
 ciri-config = { path = "../ciri-config" }
 rustybuzz = { workspace = true }
 unicode-segmentation = { workspace = true }
+unicode-properties = "0.1"
+ttf-parser = "0.24"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [

@@ -5,6 +5,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::font_resolver::{self, CmapResolver, FontResolver, ResolvedFont};
+
 /// Font data cached for text shaping.
 struct FontData {
     data: Arc<Vec<u8>>,
@@ -76,6 +78,8 @@ pub struct TextShaper {
     primary_face: Option<CachedFace>,
     cjk_face: Option<CachedFace>,
     emoji_face: Option<CachedFace>,
+    /// Determines which font to use for each character (before shaping).
+    resolver: Box<dyn FontResolver>,
     /// Cache: char → shaped (glyph_id, font_id). Avoids re-running rustybuzz per char.
     char_shape_cache: RefCell<HashMap<char, Option<(u32, fontdb::ID)>>>,
     /// Cache: grapheme cluster string → shaped (glyph_id, font_id).
@@ -97,6 +101,10 @@ impl TextShaper {
         let emoji_font_id = find_emoji_font(&db);
         let cjk_font_id = find_cjk_font(&db, primary_font_id);
 
+        // Placeholder resolver — replaced after fonts are loaded below.
+        let placeholder_resolver: Box<dyn FontResolver> =
+            Box::new(CmapResolver::new((&[], 0), None, None));
+
         let mut shaper = TextShaper {
             db,
             fonts: HashMap::new(),
@@ -106,6 +114,7 @@ impl TextShaper {
             primary_face: None,
             cjk_face: None,
             emoji_face: None,
+            resolver: placeholder_resolver,
             char_shape_cache: RefCell::new(HashMap::new()),
             grapheme_shape_cache: RefCell::new(HashMap::new()),
             ligature_cache: RefCell::new(HashMap::new()),
@@ -139,6 +148,27 @@ impl TextShaper {
         shaper.emoji_face = emoji_font_id
             .and_then(|fid| shaper.fonts.get(&fid))
             .and_then(|fd| CachedFace::new(Arc::clone(&fd.data), fd.face_index));
+
+        // Build font resolver from loaded font data
+        let primary_fd = primary_font_id.and_then(|fid| shaper.fonts.get(&fid));
+        let cjk_fd = cjk_font_id.and_then(|fid| shaper.fonts.get(&fid));
+        let emoji_fd = emoji_font_id.and_then(|fid| shaper.fonts.get(&fid));
+
+        if let Some(pfd) = primary_fd {
+            let resolver = CmapResolver::new(
+                (&pfd.data, pfd.face_index),
+                cjk_fd.map(|fd| (fd.data.as_slice(), fd.face_index)),
+                emoji_fd.map(|fd| (fd.data.as_slice(), fd.face_index)),
+            );
+            #[cfg(windows)]
+            {
+                shaper.resolver = Box::new(font_resolver::DWriteResolver::new(resolver));
+            }
+            #[cfg(not(windows))]
+            {
+                shaper.resolver = Box::new(resolver);
+            }
+        }
 
         shaper
     }
@@ -352,32 +382,55 @@ impl TextShaper {
             .map(|gi| gi.glyph_id)
     }
 
-    /// Try shaping with all faces in the set: primary → CJK → emoji.
+    /// Shape text with the font resolver determining priority order.
+    ///
+    /// The resolver picks the preferred font based on Unicode properties and
+    /// cmap coverage. If the preferred font fails, we fall through to the
+    /// remaining fonts in order.
     fn try_shape_with_face_set(
         &self,
         text: &str,
         faces: &FaceSet<'_>,
         shape: fn(&Self, &str, &rustybuzz::Face) -> Option<u32>,
     ) -> Option<(u32, fontdb::ID)> {
-        // Primary font
-        if let Some(glyph_id) = shape(self, text, faces.primary) {
-            return Some((glyph_id, faces.primary_id));
+        let first_char = text.chars().next()?;
+        let preferred = self.resolver.resolve_char(first_char);
+
+        // Try preferred font first
+        if let Some(result) = self.shape_with_resolved(text, preferred, faces, shape) {
+            return Some(result);
         }
-        // CJK fallback
-        if let Some(cjk_face) = faces.cjk
-            && let Some(cjk_id) = faces.cjk_id
-            && let Some(glyph_id) = shape(self, text, cjk_face)
-        {
-            return Some((glyph_id, cjk_id));
-        }
-        // Emoji fallback
-        if let Some(emoji_face) = faces.emoji
-            && let Some(emoji_id) = faces.emoji_id
-            && let Some(glyph_id) = shape(self, text, emoji_face)
-        {
-            return Some((glyph_id, emoji_id));
+
+        // Fall through remaining fonts in default order, skipping the one we tried
+        let fallback_order = [ResolvedFont::Primary, ResolvedFont::Cjk, ResolvedFont::Emoji];
+        for &font in &fallback_order {
+            if font == preferred {
+                continue;
+            }
+            if let Some(result) = self.shape_with_resolved(text, font, faces, shape) {
+                return Some(result);
+            }
         }
         None
+    }
+
+    /// Try shaping with a specific resolved font.
+    fn shape_with_resolved(
+        &self,
+        text: &str,
+        font: ResolvedFont,
+        faces: &FaceSet<'_>,
+        shape: fn(&Self, &str, &rustybuzz::Face) -> Option<u32>,
+    ) -> Option<(u32, fontdb::ID)> {
+        let (face, font_id) = match font {
+            ResolvedFont::Primary => (Some(faces.primary), Some(faces.primary_id)),
+            ResolvedFont::Cjk => (faces.cjk, faces.cjk_id),
+            ResolvedFont::Emoji => (faces.emoji, faces.emoji_id),
+        };
+        let face = face?;
+        let font_id = font_id?;
+        let glyph_id = shape(self, text, face)?;
+        Some((glyph_id, font_id))
     }
 
     /// Shape a grapheme cluster using a pre-created face.

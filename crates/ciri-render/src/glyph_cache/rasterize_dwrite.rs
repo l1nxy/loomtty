@@ -124,6 +124,16 @@ impl DWriteRasterizer {
         pixel_size: f32,
         try_color: bool,
     ) -> Option<MeasuredGlyph> {
+        // Detect color glyph first — color emoji have no grayscale outline,
+        // so CreateGlyphRunAnalysis returns 0-size bounds for them.
+        let is_color = try_color && is_color_glyph(&self.factory, face, glyph_id, pixel_size);
+
+        if is_color {
+            // For color glyphs, compute bounds from the font's design metrics
+            // scaled to the requested pixel size.
+            return measure_color_glyph(face, glyph_id, pixel_size);
+        }
+
         let glyph_index = glyph_id as u16;
         let mut glyph_run = build_glyph_run(face, &glyph_index, pixel_size);
         let analysis = create_analysis(&self.factory, &glyph_run, 0.0, 0.0);
@@ -133,19 +143,12 @@ impl DWriteRasterizer {
         let w = (bounds.right - bounds.left) as u32;
         let h = (bounds.bottom - bounds.top) as u32;
 
-        // Detect color glyph via TranslateColorGlyphRun
-        let is_color = if try_color {
-            is_color_glyph(&self.factory, face, glyph_id, pixel_size)
-        } else {
-            false
-        };
-
         Some(MeasuredGlyph {
             width: w,
             height: h,
             bearing_x: bounds.left as f32,
             bearing_y: -bounds.top as f32,
-            is_color,
+            is_color: false,
         })
     }
 
@@ -336,6 +339,53 @@ fn is_color_glyph(
     };
     unsafe { ManuallyDrop::drop(&mut glyph_run.fontFace) };
     result
+}
+
+/// Measure a color glyph using the font's design metrics.
+///
+/// Color emoji don't have grayscale outlines, so `CreateGlyphRunAnalysis`
+/// returns empty bounds.  Instead we read `GetDesignGlyphMetrics` and
+/// scale from design units to pixels.
+fn measure_color_glyph(
+    face: &IDWriteFontFace,
+    glyph_id: u32,
+    pixel_size: f32,
+) -> Option<MeasuredGlyph> {
+    let glyph_index = glyph_id as u16;
+    let mut metrics = DWRITE_GLYPH_METRICS::default();
+    unsafe {
+        face.GetDesignGlyphMetrics(&glyph_index, 1, &mut metrics, false)
+            .ok()?;
+    }
+    let mut font_metrics = DWRITE_FONT_METRICS::default();
+    unsafe { face.GetMetrics(&mut font_metrics) };
+    let upem = font_metrics.designUnitsPerEm as f32;
+    if upem == 0.0 {
+        return None;
+    }
+    let scale = pixel_size / upem;
+
+    let w = ((metrics.advanceWidth as i32 - metrics.leftSideBearing - metrics.rightSideBearing)
+        as f32
+        * scale)
+        .ceil() as u32;
+    let h = ((metrics.advanceHeight as i32 - metrics.topSideBearing - metrics.bottomSideBearing)
+        as f32
+        * scale)
+        .ceil() as u32;
+
+    if w == 0 || h == 0 {
+        return None;
+    }
+
+    Some(MeasuredGlyph {
+        width: w,
+        height: h,
+        bearing_x: (metrics.leftSideBearing as f32 * scale).round(),
+        bearing_y: ((metrics.advanceHeight as i32 - metrics.topSideBearing) as f32 * scale)
+            .round(),
+        is_color: true,
+    })
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────

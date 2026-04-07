@@ -14,6 +14,7 @@ pub(crate) fn emit_status_text(
     text: &str,
     params: &TextEmitParams,
     glyphs: &mut Vec<GlyphInstance>,
+    color_glyphs: &mut Vec<GlyphInstance>,
 ) {
     let mut col = 0usize;
     for ch in text.chars() {
@@ -24,13 +25,18 @@ pub(crate) fn emit_status_text(
         {
             let sx = params.x_start + col as f32 * params.cell_width + entry.bearing_x;
             let sy = params.y + params.baseline - entry.bearing_y;
-            glyphs.push(GlyphInstance {
+            let inst = GlyphInstance {
                 pos: [sx, sy],
                 size: [entry.width as f32, entry.height as f32],
                 uv_pos: [entry.u0, entry.v0],
                 uv_size: [entry.u1 - entry.u0, entry.v1 - entry.v0],
                 color: params.color,
-            });
+            };
+            if entry.is_color {
+                color_glyphs.push(inst);
+            } else {
+                glyphs.push(inst);
+            }
         }
         col += cw;
     }

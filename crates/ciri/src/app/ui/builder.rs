@@ -259,6 +259,7 @@ impl<'a, 'b> UiBuilder<'a, 'b> {
                 color,
             },
             self.scene.glyphs,
+            self.scene.color_glyphs,
         );
     }
 

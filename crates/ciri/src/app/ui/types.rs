@@ -15,6 +15,7 @@ pub(crate) struct UiScene<'a> {
     pub atlas: &'a mut GlyphCache,
     pub bg_rects: &'a mut Vec<Rect>,
     pub glyphs: &'a mut Vec<GlyphInstance>,
+    pub color_glyphs: &'a mut Vec<GlyphInstance>,
 }
 
 /// Unified component trait for all UI chrome elements.

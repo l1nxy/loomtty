@@ -56,7 +56,10 @@ impl FontResolver for CmapResolver {
     fn resolve_char(&self, ch: char) -> ResolvedFont {
         let cp = ch as u32;
 
-        // Emoji_Presentation characters should prefer the emoji font.
+        // Emoji_Presentation characters: always prefer emoji font.
+        // Many text fonts have cmap entries for emoji codepoints that map
+        // to text-style placeholders (wrong glyphs). The only reliable
+        // way to get correct emoji is to use the dedicated emoji font.
         if is_default_emoji_presentation(ch) {
             if self.emoji_cmap.as_ref().is_some_and(|c| c.contains(&cp)) {
                 return ResolvedFont::Emoji;
@@ -64,8 +67,8 @@ impl FontResolver for CmapResolver {
             // Emoji font doesn't have it — fall through to primary/CJK.
         }
 
-        // Primary font has it → use primary (most common path).
-        if self.primary_cmap.contains(&cp) {
+        // Primary font has it and it's not an emoji → use primary.
+        if !is_default_emoji_presentation(ch) && self.primary_cmap.contains(&cp) {
             return ResolvedFont::Primary;
         }
 
@@ -80,7 +83,7 @@ impl FontResolver for CmapResolver {
             return ResolvedFont::Emoji;
         }
 
-        // No font has it — return Primary and let the rasterizer produce .notdef.
+        // Last resort: primary (may produce .notdef).
         ResolvedFont::Primary
     }
 }

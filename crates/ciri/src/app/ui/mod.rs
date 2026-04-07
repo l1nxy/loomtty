@@ -31,6 +31,7 @@ impl App {
         vh: f32,
         bg_rects: &mut Vec<Rect>,
         glyphs: &mut Vec<GlyphInstance>,
+        color_glyphs: &mut Vec<GlyphInstance>,
     ) {
         let cell_h = self
             .glyph_cache
@@ -73,6 +74,7 @@ impl App {
             atlas,
             bg_rects,
             glyphs,
+            color_glyphs,
         };
 
         top_bar.paint(&cx, &mut scene);

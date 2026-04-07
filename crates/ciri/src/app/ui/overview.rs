@@ -153,6 +153,7 @@ pub(crate) fn paint_overview_action_bar(
             color: [1.0, 0.6, 0.6, 1.0],
         },
         scene.glyphs,
+        scene.color_glyphs,
     );
 
     if hover == Some(super::super::OverviewActionHover::Focus) {
@@ -176,5 +177,6 @@ pub(crate) fn paint_overview_action_bar(
             color: [1.0, 1.0, 1.0, 0.9],
         },
         scene.glyphs,
+        scene.color_glyphs,
     );
 }

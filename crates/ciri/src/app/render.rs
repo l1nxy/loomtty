@@ -726,6 +726,7 @@ impl App {
         _vh: f32,
         bg_rects: &mut Vec<Rect>,
         glyphs: &mut Vec<GlyphInstance>,
+        color_glyphs: &mut Vec<GlyphInstance>,
     ) {
         let Some(search) = &self.core.search_state else {
             return;
@@ -785,6 +786,7 @@ impl App {
                 color: text_color,
             },
             glyphs,
+            color_glyphs,
         );
     }
 
@@ -823,6 +825,7 @@ impl App {
         _vh: f32,
         bg_rects: &mut Vec<Rect>,
         glyphs: &mut Vec<GlyphInstance>,
+        color_glyphs: &mut Vec<GlyphInstance>,
     ) {
         if !self.core.ime.preedit_active || self.core.ime.preedit_text.is_empty() {
             return;
@@ -891,6 +894,7 @@ impl App {
                 color: text_color,
             },
             glyphs,
+            color_glyphs,
         );
 
         // Cursor within preedit text
@@ -1301,10 +1305,10 @@ impl App {
         let pane_glyph_end = glyphs.len();
         let pane_color_glyph_end = color_glyphs.len();
         let overlay_bg_start = bg_rects.len();
-        self.build_ui(vw_f, vh_f, &mut bg_rects, &mut glyphs);
-        self.build_search_bar(&offset_tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs);
+        self.build_ui(vw_f, vh_f, &mut bg_rects, &mut glyphs, &mut color_glyphs);
+        self.build_search_bar(&offset_tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs, &mut color_glyphs);
         self.build_bell_flash(&offset_tiles, zoom, vw_f, vh_f, &mut bg_rects);
-        self.build_ime_preedit(&offset_tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs);
+        self.build_ime_preedit(&offset_tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs, &mut color_glyphs);
 
         let clear_color = if self.core.overview.active || zoom < zoom_threshold {
             ThemeConfig::parse_color(&self.core.config.theme.overview_background)

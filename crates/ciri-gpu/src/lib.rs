@@ -440,6 +440,8 @@ mod tests {
                 font_resolver: std::sync::Arc::new(
                     ciri_render::font_resolver::CmapResolver::new((&[], 0), None, None),
                 ),
+                #[cfg(windows)]
+                dwrite_resolver: None,
             });
         let scene = ciri_render::FrameScene {
             clear_color: [0.0, 0.0, 0.0, 1.0],

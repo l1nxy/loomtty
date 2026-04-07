@@ -87,9 +87,6 @@ impl FontResolver for CmapResolver {
         ResolvedFont::Primary
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
 }
 
 /// Extract the set of codepoints covered by a font's cmap table.

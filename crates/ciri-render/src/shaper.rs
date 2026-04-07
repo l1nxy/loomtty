@@ -6,7 +6,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::font_resolver::{self, CmapResolver, FontResolver, ResolvedFont};
-use std::sync::Arc as StdArc;
 
 /// Font data cached for text shaping.
 struct FontData {
@@ -81,7 +80,10 @@ pub struct TextShaper {
     emoji_face: Option<CachedFace>,
     /// Determines which font to use for each character (before shaping).
     /// Shared with GlyphCache so both paths use the same resolution logic.
-    resolver: StdArc<dyn FontResolver>,
+    resolver: Arc<dyn FontResolver>,
+    /// Direct reference to the DWrite resolver for system font face access.
+    #[cfg(windows)]
+    dwrite_resolver: Option<Arc<font_resolver::DWriteResolver>>,
     /// Cache: char → shaped (glyph_id, font_id). Avoids re-running rustybuzz per char.
     char_shape_cache: RefCell<HashMap<char, Option<(u32, fontdb::ID)>>>,
     /// Cache: grapheme cluster string → shaped (glyph_id, font_id).
@@ -104,8 +106,8 @@ impl TextShaper {
         let cjk_font_id = find_cjk_font(&db, primary_font_id);
 
         // Placeholder resolver — replaced after fonts are loaded below.
-        let placeholder_resolver: StdArc<dyn FontResolver> =
-            StdArc::new(CmapResolver::new((&[], 0), None, None));
+        let placeholder_resolver: Arc<dyn FontResolver> =
+            Arc::new(CmapResolver::new((&[], 0), None, None));
 
         let mut shaper = TextShaper {
             db,
@@ -117,6 +119,8 @@ impl TextShaper {
             cjk_face: None,
             emoji_face: None,
             resolver: placeholder_resolver,
+            #[cfg(windows)]
+            dwrite_resolver: None,
             char_shape_cache: RefCell::new(HashMap::new()),
             grapheme_shape_cache: RefCell::new(HashMap::new()),
             ligature_cache: RefCell::new(HashMap::new()),
@@ -164,12 +168,13 @@ impl TextShaper {
             );
             #[cfg(windows)]
             {
-                shaper.resolver =
-                    StdArc::new(font_resolver::DWriteResolver::new(resolver));
+                let dw = Arc::new(font_resolver::DWriteResolver::new(resolver));
+                shaper.resolver = Arc::clone(&dw) as Arc<dyn FontResolver>;
+                shaper.dwrite_resolver = Some(dw);
             }
             #[cfg(not(windows))]
             {
-                shaper.resolver = StdArc::new(resolver);
+                shaper.resolver = Arc::new(resolver);
             }
         }
 
@@ -189,8 +194,14 @@ impl TextShaper {
     }
 
     /// Shared font resolver — can be cloned (Arc) into GlyphCache.
-    pub fn font_resolver(&self) -> StdArc<dyn FontResolver> {
-        StdArc::clone(&self.resolver)
+    pub fn font_resolver(&self) -> Arc<dyn FontResolver> {
+        Arc::clone(&self.resolver)
+    }
+
+    /// DWrite resolver for system font face access (Windows only).
+    #[cfg(windows)]
+    pub fn dwrite_resolver(&self) -> Option<Arc<font_resolver::DWriteResolver>> {
+        self.dwrite_resolver.clone()
     }
 
     /// Return the file path and face index of the primary font, for FreeType loading.

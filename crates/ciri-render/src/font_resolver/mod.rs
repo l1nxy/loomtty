@@ -43,7 +43,4 @@ pub struct FontRun {
 pub trait FontResolver: Send + Sync {
     /// Determine the preferred font for a single character.
     fn resolve_char(&self, ch: char) -> ResolvedFont;
-
-    /// Downcast helper for platform-specific initialization.
-    fn as_any(&self) -> &dyn std::any::Any;
 }

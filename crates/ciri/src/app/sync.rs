@@ -438,6 +438,8 @@ impl App {
                                 cjk_font_id: shaper.cjk_font_id(),
                                 render_config: &self.core.config.render,
                                 font_resolver: shaper.font_resolver(),
+                                #[cfg(windows)]
+                                dwrite_resolver: shaper.dwrite_resolver(),
                             }) {
                             Ok(v) => v,
                             Err(e) => {

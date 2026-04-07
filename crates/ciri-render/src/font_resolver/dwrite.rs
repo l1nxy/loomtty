@@ -22,10 +22,11 @@ pub struct DWriteResolver {
     base_family: Vec<u16>,
     base_collection: Option<IDWriteFontCollection>,
     /// Known font faces for classifying MapCharacters results.
-    /// Set later via `set_known_faces` after GlyphCache initializes DWrite.
     known_faces: RefCell<KnownFaces>,
-    /// Per-character cache to avoid repeated COM calls.
+    /// Per-character cache: resolved font class.
     cache: RefCell<HashMap<char, ResolvedFont>>,
+    /// Per-character cache: DWrite font face from MapCharacters (for system fallback).
+    face_cache: RefCell<HashMap<char, IDWriteFontFace>>,
     /// Fallback for characters MapCharacters can't handle.
     inner: super::CmapResolver,
 }
@@ -61,6 +62,7 @@ impl DWriteResolver {
                 emoji: None,
             }),
             cache: RefCell::new(HashMap::new()),
+            face_cache: RefCell::new(HashMap::new()),
             inner,
         }
     }
@@ -77,8 +79,15 @@ impl DWriteResolver {
         faces.primary = primary;
         faces.cjk = cjk;
         faces.emoji = emoji;
-        // Clear cache since classification may change with new faces
         self.cache.borrow_mut().clear();
+        self.face_cache.borrow_mut().clear();
+    }
+
+    /// Get the system fallback font face for a character (if MapCharacters
+    /// found one that's not primary/CJK/emoji). Used by GlyphCache as a
+    /// last-resort rasterization face.
+    pub fn get_system_face(&self, ch: char) -> Option<IDWriteFontFace> {
+        self.face_cache.borrow().get(&ch).cloned()
     }
 
     fn init_dwrite() -> Option<(
@@ -153,18 +162,19 @@ impl DWriteResolver {
         }
         drop(faces);
 
-        // Unknown system font — check if it's a color font (emoji)
-        if let Ok(face2) = mapped_face.cast::<IDWriteFontFace2>() {
-            if unsafe { face2.IsColorFont().as_bool() } {
-                return Some(ResolvedFont::Emoji);
-            }
-        }
+        // Unknown system font — cache the face for GlyphCache to use
+        let is_color = mapped_face
+            .cast::<IDWriteFontFace2>()
+            .ok()
+            .is_some_and(|f2| unsafe { f2.IsColorFont().as_bool() });
 
-        // Unknown non-color system font — classify as Primary.
-        // The glyph cache will try all its candidates; if none have the
-        // glyph it renders as .notdef. Full dynamic font loading is a
-        // future enhancement.
-        Some(ResolvedFont::Primary)
+        self.face_cache.borrow_mut().insert(ch, mapped_face);
+
+        Some(if is_color {
+            ResolvedFont::Emoji
+        } else {
+            ResolvedFont::Primary
+        })
     }
 }
 
@@ -182,9 +192,6 @@ impl FontResolver for DWriteResolver {
         result
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
 }
 
 fn is_same_font(a: &IDWriteFontFace, b: &Option<IDWriteFontFace>) -> bool {

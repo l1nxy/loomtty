@@ -95,6 +95,21 @@ impl DWriteRasterizer {
         self.emoji_is_color
     }
 
+    /// Clone the Regular faces for font resolver classification.
+    pub(crate) fn regular_faces(
+        &self,
+    ) -> (
+        Option<IDWriteFontFace>,
+        Option<IDWriteFontFace>,
+        Option<IDWriteFontFace>,
+    ) {
+        (
+            self.primary_faces[0].clone(),
+            self.cjk_faces[0].clone(),
+            self.emoji_faces[0].clone(),
+        )
+    }
+
     /// Rasterize a glyph by its ID.
     /// If `try_color` is true, attempts COLR layer decomposition first for RGBA output.
     /// Falls back to ClearType grayscale if color rendering is unavailable.

@@ -387,7 +387,7 @@ impl GlyphCache {
             )
         };
 
-        GlyphCache {
+        let cache = GlyphCache {
             alpha_packer: ShelfPacker::new(atlas_size),
             color_packer: ShelfPacker::new(atlas_size),
             alpha_pending: Vec::new(),
@@ -433,7 +433,19 @@ impl GlyphCache {
             ascent,
             face_width,
             atlas_needs_clear: false,
+        };
+
+        // Provide DWrite font faces to the resolver for classification.
+        #[cfg(windows)]
+        {
+            use crate::font_resolver::DWriteResolver;
+            if let Some(resolver) = cache.font_resolver.as_any().downcast_ref::<DWriteResolver>() {
+                let (primary, cjk, emoji) = cache.dwrite.regular_faces();
+                resolver.set_known_faces(primary, cjk, emoji);
+            }
         }
+
+        cache
     }
 
     /// Ensure a glyph for `ch` with the given `style` is in the atlas.

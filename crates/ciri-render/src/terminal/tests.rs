@@ -50,6 +50,7 @@ fn test_atlas(config: &CiriConfig, shaper: &TextShaper) -> GlyphCache {
         cjk_font_path: shaper.cjk_font_path(),
         cjk_font_id: shaper.cjk_font_id(),
         render_config: &config.render,
+        font_resolver: shaper.font_resolver(),
     })
 }
 

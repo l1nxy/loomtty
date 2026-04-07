@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::font_resolver::{self, CmapResolver, FontResolver, ResolvedFont};
+use std::sync::Arc as StdArc;
 
 /// Font data cached for text shaping.
 struct FontData {
@@ -79,7 +80,8 @@ pub struct TextShaper {
     cjk_face: Option<CachedFace>,
     emoji_face: Option<CachedFace>,
     /// Determines which font to use for each character (before shaping).
-    resolver: Box<dyn FontResolver>,
+    /// Shared with GlyphCache so both paths use the same resolution logic.
+    resolver: StdArc<dyn FontResolver>,
     /// Cache: char → shaped (glyph_id, font_id). Avoids re-running rustybuzz per char.
     char_shape_cache: RefCell<HashMap<char, Option<(u32, fontdb::ID)>>>,
     /// Cache: grapheme cluster string → shaped (glyph_id, font_id).
@@ -102,8 +104,8 @@ impl TextShaper {
         let cjk_font_id = find_cjk_font(&db, primary_font_id);
 
         // Placeholder resolver — replaced after fonts are loaded below.
-        let placeholder_resolver: Box<dyn FontResolver> =
-            Box::new(CmapResolver::new((&[], 0), None, None));
+        let placeholder_resolver: StdArc<dyn FontResolver> =
+            StdArc::new(CmapResolver::new((&[], 0), None, None));
 
         let mut shaper = TextShaper {
             db,
@@ -162,11 +164,12 @@ impl TextShaper {
             );
             #[cfg(windows)]
             {
-                shaper.resolver = Box::new(font_resolver::DWriteResolver::new(resolver));
+                shaper.resolver =
+                    StdArc::new(font_resolver::DWriteResolver::new(resolver));
             }
             #[cfg(not(windows))]
             {
-                shaper.resolver = Box::new(resolver);
+                shaper.resolver = StdArc::new(resolver);
             }
         }
 
@@ -183,6 +186,11 @@ impl TextShaper {
 
     pub fn cjk_font_id(&self) -> Option<fontdb::ID> {
         self.cjk_font_id
+    }
+
+    /// Shared font resolver — can be cloned (Arc) into GlyphCache.
+    pub fn font_resolver(&self) -> StdArc<dyn FontResolver> {
+        StdArc::clone(&self.resolver)
     }
 
     /// Return the file path and face index of the primary font, for FreeType loading.

@@ -37,7 +37,10 @@ pub struct FontRun {
 ///
 /// Implementations must be cheap for single-char lookups — the shaping
 /// pipeline calls `resolve_char` per cell.
-pub trait FontResolver {
+///
+/// This trait is `Send + Sync` so resolvers can be shared via `Arc`
+/// between `TextShaper` and `GlyphCache`.
+pub trait FontResolver: Send + Sync {
     /// Determine the preferred font for a single character.
     fn resolve_char(&self, ch: char) -> ResolvedFont;
 }

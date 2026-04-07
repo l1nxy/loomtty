@@ -850,6 +850,8 @@ dependencies = [
  "freetype-rs",
  "log",
  "rustybuzz",
+ "ttf-parser 0.24.1",
+ "unicode-properties",
  "unicode-segmentation",
  "windows 0.58.0",
  "winit",

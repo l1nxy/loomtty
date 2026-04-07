@@ -54,6 +54,7 @@ impl ApplicationHandler for App {
                             cjk_font_path: shaper.cjk_font_path(),
                             cjk_font_id: shaper.cjk_font_id(),
                             render_config: &self.core.config.render,
+                            font_resolver: shaper.font_resolver(),
                         }) {
                         Ok(v) => v,
                         Err(e) => {
@@ -318,6 +319,7 @@ impl ApplicationHandler for App {
                 cjk_font_path: shaper.cjk_font_path(),
                 cjk_font_id: shaper.cjk_font_id(),
                 render_config: &self.core.config.render,
+                font_resolver: shaper.font_resolver(),
             })
             .expect("initial glyph atlas creation failed");
 

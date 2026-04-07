@@ -37,13 +37,38 @@ use types::FontKeySet;
 
 #[cfg(windows)]
 use rasterize_dwrite::{DWriteRasterizer, compute_cjk_pixel_size_dwrite, compute_dwrite_metrics};
+#[cfg(windows)]
+use windows::Win32::Graphics::DirectWrite::IDWriteFontFace;
 
+use crate::font_resolver::{FontResolver, ResolvedFont};
+
+/// Given a preferred font, return the full fallback order (preferred first).
+fn resolved_font_order(preferred: ResolvedFont) -> [ResolvedFont; 3] {
+    match preferred {
+        ResolvedFont::Primary => [
+            ResolvedFont::Primary,
+            ResolvedFont::Cjk,
+            ResolvedFont::Emoji,
+        ],
+        ResolvedFont::Cjk => [
+            ResolvedFont::Cjk,
+            ResolvedFont::Primary,
+            ResolvedFont::Emoji,
+        ],
+        ResolvedFont::Emoji => [
+            ResolvedFont::Emoji,
+            ResolvedFont::Primary,
+            ResolvedFont::Cjk,
+        ],
+    }
+}
 use ciri_config::config::RenderConfig;
 #[cfg(not(windows))]
 use crossfont::{FontDesc, GlyphKey, Rasterize, Rasterizer, Size, Slant, Style, Weight};
 #[cfg(not(windows))]
 use freetype::Library as FtLibrary;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 // ─── Font init params ───────────────────────────────────────────────
 
@@ -58,6 +83,8 @@ pub struct FontInitParams<'a> {
     pub cjk_font_path: Option<(String, u32)>,
     pub cjk_font_id: Option<fontdb::ID>,
     pub render_config: &'a RenderConfig,
+    /// Shared font resolver for determining font fallback order.
+    pub font_resolver: Arc<dyn FontResolver>,
 }
 
 // ─── Glyph cache (CPU) ──────────────────────────────────────────────
@@ -112,6 +139,7 @@ pub struct GlyphCache {
     use_d2d_rendering: bool,
 
     // ── Common state ──
+    font_resolver: Arc<dyn FontResolver>,
     emoji_font_id: Option<fontdb::ID>,
     cjk_font_id: Option<fontdb::ID>,
     pixel_size: f32,
@@ -395,6 +423,7 @@ impl GlyphCache {
             #[cfg(windows)]
             use_d2d_rendering: false,
 
+            font_resolver: params.font_resolver.clone(),
             emoji_font_id: params.emoji_font_id,
             cjk_font_id: params.cjk_font_id,
             pixel_size,
@@ -446,15 +475,32 @@ impl GlyphCache {
 
         #[cfg(windows)]
         {
-            // Fallback chain: primary → CJK → emoji.
+            // Use the font resolver to determine fallback order.
+            let preferred = self.font_resolver.resolve_char(ch);
+            let order = resolved_font_order(preferred);
+            // Build candidates from the resolved order. Each entry is
+            // (face, pixel_size, try_color). Done eagerly here so we
+            // don't hold an immutable borrow of `self` into the mutable
+            // rasterization loop below.
+            let candidate = |f: ResolvedFont| -> (Option<&IDWriteFontFace>, f32, bool) {
+                match f {
+                    ResolvedFont::Primary => {
+                        (self.dwrite.primary_face(style), self.pixel_size, false)
+                    }
+                    ResolvedFont::Cjk => {
+                        (self.dwrite.cjk_face(style), self.cjk_pixel_size, false)
+                    }
+                    ResolvedFont::Emoji => (
+                        self.dwrite.emoji_face(style),
+                        self.pixel_size,
+                        self.dwrite.is_emoji_color(),
+                    ),
+                }
+            };
             let candidates: [(Option<&_>, f32, bool); 3] = [
-                (self.dwrite.primary_face(style), self.pixel_size, false),
-                (self.dwrite.cjk_face(style), self.cjk_pixel_size, false),
-                (
-                    self.dwrite.emoji_face(style),
-                    self.pixel_size,
-                    self.dwrite.is_emoji_color(),
-                ),
+                candidate(order[0]),
+                candidate(order[1]),
+                candidate(order[2]),
             ];
 
             if self.use_d2d_rendering {
@@ -540,6 +586,24 @@ impl GlyphCache {
             )?;
             self.cache.insert(key, entry);
             Some(entry)
+        }
+    }
+
+    /// Get the DWrite candidate (face, pixel_size, try_color) for a ResolvedFont.
+    #[cfg(windows)]
+    fn dwrite_candidate(
+        &self,
+        font: ResolvedFont,
+        style: FontStyle,
+    ) -> (Option<&IDWriteFontFace>, f32, bool) {
+        match font {
+            ResolvedFont::Primary => (self.dwrite.primary_face(style), self.pixel_size, false),
+            ResolvedFont::Cjk => (self.dwrite.cjk_face(style), self.cjk_pixel_size, false),
+            ResolvedFont::Emoji => (
+                self.dwrite.emoji_face(style),
+                self.pixel_size,
+                self.dwrite.is_emoji_color(),
+            ),
         }
     }
 
@@ -771,6 +835,11 @@ mod tests {
             cjk_font_path: None,
             cjk_font_id: None,
             render_config: &config.render,
+            font_resolver: Arc::new(crate::font_resolver::CmapResolver::new(
+                (&[], 0),
+                None,
+                None,
+            )),
         })
     }
 

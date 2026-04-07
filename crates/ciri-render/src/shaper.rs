@@ -1,12 +1,52 @@
 //! Text shaping via rustybuzz for ligature and complex text layout support.
 
 use fontdb;
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Font data cached for text shaping.
 struct FontData {
-    data: Vec<u8>,
+    data: Arc<Vec<u8>>,
     face_index: u32,
+}
+
+/// A `rustybuzz::Face` that owns its backing font data via `Arc`, allowing it
+/// to live independently of the `TextShaper` borrow scope.
+///
+/// # Safety
+/// The `Face<'static>` is created by transmuting the lifetime from the `Arc`'s
+/// stable pointer. The `Arc` is kept alive as long as this struct exists, so the
+/// data reference inside `Face` always points to valid memory.
+struct CachedFace {
+    face: rustybuzz::Face<'static>,
+    _data: Arc<Vec<u8>>,
+}
+
+impl CachedFace {
+    fn new(data: Arc<Vec<u8>>, face_index: u32) -> Option<Self> {
+        let face = rustybuzz::Face::from_slice(&data, face_index)?;
+        // SAFETY: `data` is an Arc that we hold onto for the lifetime of this
+        // struct. The pointer is stable (heap-allocated, ref-counted), so the
+        // Face's internal references remain valid.
+        let face: rustybuzz::Face<'static> = unsafe { std::mem::transmute(face) };
+        Some(CachedFace { face, _data: data })
+    }
+
+    fn as_face(&self) -> &rustybuzz::Face<'_> {
+        &self.face
+    }
+}
+
+/// Bundle of references to cached font faces for the primary, CJK, and emoji fonts.
+/// Cheap to create (just borrows from `TextShaper`'s long-lived `CachedFace` objects).
+pub struct FaceSet<'a> {
+    pub primary: &'a rustybuzz::Face<'a>,
+    pub primary_id: fontdb::ID,
+    pub cjk: Option<&'a rustybuzz::Face<'a>>,
+    pub cjk_id: Option<fontdb::ID>,
+    pub emoji: Option<&'a rustybuzz::Face<'a>>,
+    pub emoji_id: Option<fontdb::ID>,
 }
 
 /// Detected ligature: multiple input characters shaped into a single glyph.
@@ -32,6 +72,16 @@ pub struct TextShaper {
     primary_font_id: Option<fontdb::ID>,
     emoji_font_id: Option<fontdb::ID>,
     cjk_font_id: Option<fontdb::ID>,
+    /// Long-lived cached font faces — parsed once, reused across all frames.
+    primary_face: Option<CachedFace>,
+    cjk_face: Option<CachedFace>,
+    emoji_face: Option<CachedFace>,
+    /// Cache: char → shaped (glyph_id, font_id). Avoids re-running rustybuzz per char.
+    char_shape_cache: RefCell<HashMap<char, Option<(u32, fontdb::ID)>>>,
+    /// Cache: grapheme cluster string → shaped (glyph_id, font_id).
+    grapheme_shape_cache: RefCell<HashMap<String, Option<(u32, fontdb::ID)>>>,
+    /// Cache: (text run, font_id) → detected ligatures.
+    ligature_cache: RefCell<HashMap<(String, fontdb::ID), Vec<Ligature>>>,
 }
 
 impl TextShaper {
@@ -53,6 +103,12 @@ impl TextShaper {
             primary_font_id,
             emoji_font_id,
             cjk_font_id,
+            primary_face: None,
+            cjk_face: None,
+            emoji_face: None,
+            char_shape_cache: RefCell::new(HashMap::new()),
+            grapheme_shape_cache: RefCell::new(HashMap::new()),
+            ligature_cache: RefCell::new(HashMap::new()),
         };
 
         // Preload primary font data for shaping
@@ -72,6 +128,17 @@ impl TextShaper {
         {
             shaper.load_font(cid);
         }
+
+        // Build long-lived cached faces from preloaded font data
+        shaper.primary_face = primary_font_id
+            .and_then(|fid| shaper.fonts.get(&fid))
+            .and_then(|fd| CachedFace::new(Arc::clone(&fd.data), fd.face_index));
+        shaper.cjk_face = cjk_font_id
+            .and_then(|fid| shaper.fonts.get(&fid))
+            .and_then(|fd| CachedFace::new(Arc::clone(&fd.data), fd.face_index));
+        shaper.emoji_face = emoji_font_id
+            .and_then(|fid| shaper.fonts.get(&fid))
+            .and_then(|fd| CachedFace::new(Arc::clone(&fd.data), fd.face_index));
 
         shaper
     }
@@ -138,7 +205,8 @@ impl TextShaper {
                 data.len(),
                 face_index
             );
-            self.fonts.insert(font_id, FontData { data, face_index });
+            self.fonts
+                .insert(font_id, FontData { data: Arc::new(data), face_index });
         }
     }
 
@@ -156,8 +224,41 @@ impl TextShaper {
         rustybuzz::Face::from_slice(&font_data.data, font_data.face_index)
     }
 
+    /// Return a [`FaceSet`] referencing the long-lived cached faces.
+    /// Zero-cost: no font parsing, just borrows from `self`.
+    pub fn face_set(&self) -> Option<FaceSet<'_>> {
+        let cached = self.primary_face.as_ref()?;
+        Some(FaceSet {
+            primary: cached.as_face(),
+            primary_id: self.primary_font_id?,
+            cjk: self.cjk_face.as_ref().map(|f| f.as_face()),
+            cjk_id: self.cjk_font_id,
+            emoji: self.emoji_face.as_ref().map(|f| f.as_face()),
+            emoji_id: self.emoji_font_id,
+        })
+    }
+
     /// Detect ligatures using a pre-created face (avoids Face re-creation per call).
+    /// Results are cached by (text, font_id) to avoid re-shaping identical runs.
     pub fn detect_ligatures_with_face(
+        &self,
+        text: &str,
+        face: &rustybuzz::Face,
+        font_id: fontdb::ID,
+    ) -> Vec<Ligature> {
+        let cache_key = (text.to_string(), font_id);
+        if let Some(cached) = self.ligature_cache.borrow().get(&cache_key) {
+            return cached.clone();
+        }
+
+        let result = self.detect_ligatures_uncached(text, face, font_id);
+        self.ligature_cache
+            .borrow_mut()
+            .insert(cache_key, result.clone());
+        result
+    }
+
+    fn detect_ligatures_uncached(
         &self,
         text: &str,
         face: &rustybuzz::Face,
@@ -205,24 +306,37 @@ impl TextShaper {
     }
 
     /// Shape a grapheme cluster, trying the primary font first, then CJK, then emoji.
-    /// Returns `(glyph_id, font_id)` on success.
+    /// Results are cached. Uses pre-created [`FaceSet`] to avoid per-call font parsing.
     pub fn shape_grapheme_with_fallback(
         &self,
         cluster: &str,
-        primary_face: &rustybuzz::Face,
+        faces: &FaceSet<'_>,
     ) -> Option<(u32, fontdb::ID)> {
-        self.try_shape_with_fallback_faces(cluster, primary_face, Self::shape_grapheme_with_face)
+        if let Some(cached) = self.grapheme_shape_cache.borrow().get(cluster) {
+            return *cached;
+        }
+        let result =
+            self.try_shape_with_face_set(cluster, faces, Self::shape_grapheme_with_face);
+        self.grapheme_shape_cache
+            .borrow_mut()
+            .insert(cluster.to_string(), result);
+        result
     }
 
     /// Shape a single character with fallback through primary → CJK → emoji fonts.
-    /// Returns `(glyph_id, font_id)` on success.
+    /// Results are cached. Uses pre-created [`FaceSet`] to avoid per-call font parsing.
     pub fn shape_char_with_fallback(
         &self,
         ch: char,
-        primary_face: &rustybuzz::Face,
+        faces: &FaceSet<'_>,
     ) -> Option<(u32, fontdb::ID)> {
+        if let Some(cached) = self.char_shape_cache.borrow().get(&ch) {
+            return *cached;
+        }
         let s = String::from(ch);
-        self.try_shape_with_fallback_faces(&s, primary_face, Self::shape_single_char)
+        let result = self.try_shape_with_face_set(&s, faces, Self::shape_single_char);
+        self.char_shape_cache.borrow_mut().insert(ch, result);
+        result
     }
 
     /// Shape a single character string and return its glyph ID.
@@ -238,32 +352,32 @@ impl TextShaper {
             .map(|gi| gi.glyph_id)
     }
 
-    fn try_shape_with_fallback_faces(
+    /// Try shaping with all faces in the set: primary → CJK → emoji.
+    fn try_shape_with_face_set(
         &self,
         text: &str,
-        primary_face: &rustybuzz::Face,
+        faces: &FaceSet<'_>,
         shape: fn(&Self, &str, &rustybuzz::Face) -> Option<u32>,
     ) -> Option<(u32, fontdb::ID)> {
-        if let Some(font_id) = self.primary_font_id
-            && let Some(glyph_id) = shape(self, text, primary_face)
-        {
-            return Some((glyph_id, font_id));
+        // Primary font
+        if let Some(glyph_id) = shape(self, text, faces.primary) {
+            return Some((glyph_id, faces.primary_id));
         }
-
-        self.try_shape_with_font_id(text, self.cjk_font_id, shape)
-            .or_else(|| self.try_shape_with_font_id(text, self.emoji_font_id, shape))
-    }
-
-    fn try_shape_with_font_id(
-        &self,
-        text: &str,
-        font_id: Option<fontdb::ID>,
-        shape: fn(&Self, &str, &rustybuzz::Face) -> Option<u32>,
-    ) -> Option<(u32, fontdb::ID)> {
-        let font_id = font_id?;
-        let face = self.create_face(font_id)?;
-        let glyph_id = shape(self, text, &face)?;
-        Some((glyph_id, font_id))
+        // CJK fallback
+        if let Some(cjk_face) = faces.cjk
+            && let Some(cjk_id) = faces.cjk_id
+            && let Some(glyph_id) = shape(self, text, cjk_face)
+        {
+            return Some((glyph_id, cjk_id));
+        }
+        // Emoji fallback
+        if let Some(emoji_face) = faces.emoji
+            && let Some(emoji_id) = faces.emoji_id
+            && let Some(glyph_id) = shape(self, text, emoji_face)
+        {
+            return Some((glyph_id, emoji_id));
+        }
+        None
     }
 
     /// Shape a grapheme cluster using a pre-created face.
@@ -293,10 +407,17 @@ impl TextShaper {
     /// Detect ligatures in a line of text for the given font.
     /// Returns ligatures where multiple input characters map to a single glyph.
     pub fn detect_ligatures(&self, text: &str, font_id: fontdb::ID) -> Vec<Ligature> {
+        // Check cache first to avoid create_face overhead
+        let cache_key = (text.to_string(), font_id);
+        if let Some(cached) = self.ligature_cache.borrow().get(&cache_key) {
+            return cached.clone();
+        }
         let Some(face) = self.create_face(font_id) else {
             return Vec::new();
         };
-        self.detect_ligatures_with_face(text, &face, font_id)
+        let result = self.detect_ligatures_uncached(text, &face, font_id);
+        self.ligature_cache.borrow_mut().insert(cache_key, result.clone());
+        result
     }
 
     /// Shape a grapheme cluster (multi-codepoint string) and return the primary glyph ID.

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use winit::window::Window;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use windows::Win32::Foundation::{BOOL, RECT};
+use windows::Win32::Foundation::{BOOL, HANDLE, RECT};
 use windows::Win32::Graphics::Direct2D::Common::*;
 use windows::Win32::Graphics::Direct2D::*;
 use windows::Win32::Graphics::Direct3D::Fxc::*;
@@ -21,6 +21,7 @@ use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::DirectWrite::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Dxgi::*;
+use windows::Win32::System::Threading::WaitForSingleObjectEx;
 use windows::core::*;
 
 use ciri_render::glyph_cache::PendingDwriteGlyph;
@@ -805,6 +806,9 @@ pub struct Renderer {
     width: u32,
     height: u32,
     sync_interval: u32,
+    /// Waitable object for DXGI frame latency — lets the CPU sleep instead of
+    /// busy-waiting in `Present(1)`. `None` if the driver doesn't support it.
+    frame_waitable: Option<HANDLE>,
 }
 
 impl Renderer {
@@ -835,7 +839,7 @@ impl Renderer {
             OutputWindow: unsafe { std::mem::transmute(hwnd) },
             Windowed: true.into(),
             SwapEffect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
-            Flags: 0,
+            Flags: DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT.0 as u32,
         };
 
         let mut device = None;
@@ -861,6 +865,23 @@ impl Renderer {
         let device = device.unwrap();
         let ctx = ctx.unwrap();
         let swap_chain = swap_chain.unwrap();
+
+        // Try to get the waitable object for low-CPU vsync.
+        // IDXGISwapChain2 is available on Windows 8.1+.
+        let frame_waitable = swap_chain
+            .cast::<IDXGISwapChain2>()
+            .ok()
+            .and_then(|sc2| unsafe {
+                let _ = sc2.SetMaximumFrameLatency(render_config.frame_latency);
+                let handle = sc2.GetFrameLatencyWaitableObject();
+                if handle.is_invalid() {
+                    log::warn!("DXGI frame latency waitable object not available");
+                    None
+                } else {
+                    log::info!("using DXGI frame latency waitable object for low-CPU vsync");
+                    Some(handle)
+                }
+            });
 
         let rtv = unsafe { create_rtv(&device, &swap_chain)? };
 
@@ -924,6 +945,7 @@ impl Renderer {
             width: size.width.max(1),
             height: size.height.max(1),
             sync_interval,
+            frame_waitable,
         })
     }
 
@@ -944,7 +966,11 @@ impl Renderer {
                     width,
                     height,
                     DXGI_FORMAT_UNKNOWN,
-                    DXGI_SWAP_CHAIN_FLAG(0),
+                    if self.frame_waitable.is_some() {
+                        DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT
+                    } else {
+                        DXGI_SWAP_CHAIN_FLAG(0)
+                    },
                 )
                 .expect("ResizeBuffers failed");
 
@@ -1153,10 +1179,23 @@ impl Renderer {
                 &vp,
             );
 
-            // Present
+            // Wait for the previous frame to finish presentation before
+            // submitting the next one. With the waitable object this is a true
+            // kernel wait (CPU sleeps), not a busy-wait spin loop.
+            if let Some(handle) = self.frame_waitable {
+                WaitForSingleObjectEx(handle, 1000, false);
+            }
+
+            // Present — sync_interval=0 when using waitable object (latency
+            // is controlled by SetMaximumFrameLatency instead).
+            let interval = if self.frame_waitable.is_some() {
+                0
+            } else {
+                self.sync_interval
+            };
             let _ = self
                 .swap_chain
-                .Present(self.sync_interval, DXGI_PRESENT(0))
+                .Present(interval, DXGI_PRESENT(0))
                 .ok();
         }
     }

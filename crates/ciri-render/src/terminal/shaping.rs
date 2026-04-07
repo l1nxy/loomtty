@@ -3,7 +3,7 @@
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::glyph_cache::FontStyle;
-use crate::shaper::TextShaper;
+use crate::shaper::{FaceSet, TextShaper};
 
 use super::cell::CellProps;
 use super::view::ViewBuildParams;
@@ -22,12 +22,11 @@ pub(super) struct RowLigatureData {
 }
 
 /// Pre-compute all ligature/grapheme shaping data for a single row.
-/// Uses a pre-created Face to avoid per-row Face::from_slice overhead.
+/// Uses a pre-created [`FaceSet`] to avoid per-call Face::from_slice overhead.
 pub(super) fn precompute_row_shaping(
     params: &ViewBuildParams<'_>,
     row: usize,
-    fid: fontdb::ID,
-    face: &rustybuzz::Face,
+    faces: &FaceSet<'_>,
 ) -> RowLigatureData {
     struct LigatureRun<'a> {
         start: Option<usize>,
@@ -38,8 +37,7 @@ pub(super) fn precompute_row_shaping(
 
     fn flush_ligature_run(
         shaper: &TextShaper,
-        face: &rustybuzz::Face,
-        fid: fontdb::ID,
+        faces: &FaceSet<'_>,
         cols_usize: usize,
         run: &LigatureRun<'_>,
         skip_cols: &mut [bool],
@@ -48,7 +46,7 @@ pub(super) fn precompute_row_shaping(
         if let Some(start) = run.start
             && run.text.len() >= 2
         {
-            for lig in shaper.detect_ligatures_with_face(run.text, face, fid) {
+            for lig in shaper.detect_ligatures_with_face(run.text, faces.primary, faces.primary_id) {
                 for k in 1..lig.char_count {
                     let c = start + lig.start_col + k;
                     if c < cols_usize {
@@ -97,8 +95,7 @@ pub(super) fn precompute_row_shaping(
             }
             flush_ligature_run(
                 params.shaper,
-                face,
-                fid,
+                faces,
                 cols_usize,
                 &LigatureRun {
                     start: run_start,
@@ -117,8 +114,7 @@ pub(super) fn precompute_row_shaping(
         } else {
             flush_ligature_run(
                 params.shaper,
-                face,
-                fid,
+                faces,
                 cols_usize,
                 &LigatureRun {
                     start: run_start,
@@ -197,7 +193,7 @@ pub(super) fn precompute_row_shaping(
             && cluster_str.chars().count() > 1
             && let Some((gid, fid)) = params
                 .shaper
-                .shape_grapheme_with_fallback(&cluster_str, face)
+                .shape_grapheme_with_fallback(&cluster_str, faces)
         {
             grapheme_glyphs.push((col, gid, fid));
             // Mark consumed cells so they aren't rendered independently
@@ -240,7 +236,7 @@ pub(super) fn precompute_row_shaping(
         if props.is_hidden || props.ch == ' ' || props.ch == '\0' || props.ch.is_control() {
             continue;
         }
-        if let Some((gid, fid)) = params.shaper.shape_char_with_fallback(props.ch, face) {
+        if let Some((gid, fid)) = params.shaper.shape_char_with_fallback(props.ch, faces) {
             char_glyphs.push((col, gid, fid, props.is_wide));
         }
     }

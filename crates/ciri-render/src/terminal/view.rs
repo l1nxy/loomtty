@@ -474,15 +474,12 @@ fn flatten_view(view: &mut TerminalView) {
 }
 
 fn build_row_lig_cache(params: &ViewBuildParams<'_>) -> Vec<RowLigatureData> {
-    let Some(fid) = params.shaper.primary_font_id() else {
-        return Vec::new();
-    };
-    let Some(face) = params.shaper.create_face(fid) else {
+    let Some(faces) = params.shaper.face_set() else {
         return Vec::new();
     };
 
     (0..params.grid.rows as usize)
-        .map(|row| precompute_row_shaping(params, row, fid, &face))
+        .map(|row| precompute_row_shaping(params, row, &faces))
         .collect()
 }
 
@@ -490,10 +487,7 @@ fn precompute_dirty_row_shaping(
     params: &ViewBuildParams<'_>,
     dirty_rows: &[bool],
 ) -> Vec<Option<RowLigatureData>> {
-    let Some(fid) = params.shaper.primary_font_id() else {
-        return Vec::new();
-    };
-    let Some(face) = params.shaper.create_face(fid) else {
+    let Some(faces) = params.shaper.face_set() else {
         return Vec::new();
     };
 
@@ -501,7 +495,7 @@ fn precompute_dirty_row_shaping(
         .iter()
         .enumerate()
         .take(params.grid.rows as usize)
-        .map(|(row, dirty)| dirty.then(|| precompute_row_shaping(params, row, fid, &face)))
+        .map(|(row, dirty)| dirty.then(|| precompute_row_shaping(params, row, &faces)))
         .collect()
 }
 

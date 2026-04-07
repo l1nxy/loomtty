@@ -87,3 +87,8 @@ opt-level = 1
 debug = false
 strip = true
 lto = false
+
+[profile.profiling]
+inherits = "release"
+debug = 2
+strip = false

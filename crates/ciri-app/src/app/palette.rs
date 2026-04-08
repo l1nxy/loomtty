@@ -8,45 +8,36 @@ use super::{
 
 impl AppModel {
     pub fn open_command_palette(&mut self) {
-        let entries: Vec<PaletteEntry> = Action::all_with_labels()
-            .into_iter()
-            .map(|(action, label)| PaletteEntry {
-                label: label.to_string(),
-                kind: PaletteEntryKind::Action(action),
-            })
-            .collect();
-
+        // Clear stale probe results so hosts are re-probed on selection
+        self.cached_remote_probes.clear();
         self.command_palette = Some(CommandPaletteState {
             query: String::new(),
-            entries,
+            entries: self.build_palette_entries(false),
             filtered: Vec::new(),
             selected_idx: 0,
             hovered_idx: None,
             sessions_only: false,
-            sessions_show_all: true,
             remote_loading: None,
             remote_error: None,
+            remote_input_mode: false,
         });
-        self.append_connection_entries();
         self.filter_palette();
-        self.send(ClientMessage::ListSessions { all: true });
+        self.send(ClientMessage::ListSessions { all: false });
     }
 
     pub fn open_session_palette(&mut self) {
+        self.cached_remote_probes.clear();
         self.command_palette = Some(CommandPaletteState {
             query: String::new(),
-            entries: Vec::new(),
+            entries: self.build_palette_entries(true),
             filtered: Vec::new(),
             selected_idx: 0,
             hovered_idx: None,
             sessions_only: true,
-            sessions_show_all: false,
             remote_loading: None,
             remote_error: None,
+            remote_input_mode: false,
         });
-        // Show background slots and remote hosts immediately while waiting
-        // for the async SessionList response to populate local sessions.
-        self.append_connection_entries();
         self.filter_palette();
         self.send(ClientMessage::ListSessions { all: false });
 
@@ -57,7 +48,7 @@ impl AppModel {
             if slot.connected
                 && slot
                     .server_tx
-                    .try_send(ClientMessage::ListSessions { all: true })
+                    .try_send(ClientMessage::ListSessions { all: false })
                     .is_ok()
             {
                 self.slot_session_pending.insert(id.clone());
@@ -68,13 +59,334 @@ impl AppModel {
         }
     }
 
-    pub fn refresh_session_palette(&mut self) {
-        if let Some(palette) = &self.command_palette
-            && palette.sessions_only
-        {
-            self.send(ClientMessage::ListSessions {
-                all: palette.sessions_show_all,
+    /// Build the full palette entry list from cached data, config, and slots.
+    /// Produces entries in a deterministic, grouped order with section headers.
+    fn build_palette_entries(&self, sessions_only: bool) -> Vec<PaletteEntry> {
+        let mut entries = Vec::new();
+
+        if sessions_only {
+            self.build_session_palette_entries(&mut entries);
+        } else {
+            self.build_command_palette_entries(&mut entries);
+        }
+
+        entries
+    }
+
+    /// Session palette layout:
+    ///   ── Local ──
+    ///     session1, session2, ...
+    ///   ── slot-label ──  (per background slot, sorted by slot_id)
+    ///     session1, session2, ...
+    ///   ── Remote Hosts ──  (unconfigured remote hosts)
+    ///     DirectConnect entries
+    ///   Connect to Remote Host...
+    fn build_session_palette_entries(&self, entries: &mut Vec<PaletteEntry>) {
+        // ── Current connection sessions ──
+        // Label reflects whether we're connected locally or to a remote host.
+        let current_label = if let Some(rc) = &self.remote_config {
+            format!("{} (current)", rc.host)
+        } else {
+            "Local".to_string()
+        };
+
+        // Cache already contains only running sessions (filtered on arrival)
+        let local_sessions: Vec<_> = self.cached_local_sessions.iter().collect();
+        if !local_sessions.is_empty() {
+            entries.push(PaletteEntry {
+                label: current_label.clone(),
+                kind: PaletteEntryKind::SectionHeader(current_label),
             });
+            for s in &local_sessions {
+                entries.push(PaletteEntry {
+                    label: s.name.clone(),
+                    kind: PaletteEntryKind::SwitchSession(s.name.clone()),
+                });
+            }
+        }
+
+        // ── Per-slot groups ── (sorted by slot_id via BTreeMap iteration)
+        // Collect slot IDs sorted for deterministic order
+        let mut slot_ids: Vec<&String> = self.background_slots.keys().collect();
+        slot_ids.sort();
+
+        for slot_id in &slot_ids {
+            let slot = &self.background_slots[*slot_id];
+            let host_label = match &slot.kind {
+                ConnectionKind::Local => format!("local ({})", slot.session_name),
+                ConnectionKind::Remote { host, .. } => {
+                    format!("{} ({})", host, slot.session_name)
+                }
+            };
+
+            // Get cached sessions for this slot (if any)
+            let slot_sessions = self.cached_slot_sessions.get(*slot_id);
+            let has_sessions = slot_sessions.is_some_and(|ss| !ss.is_empty());
+
+            if has_sessions {
+                let is_remote = matches!(slot.kind, ConnectionKind::Remote { .. });
+                entries.push(PaletteEntry {
+                    label: host_label,
+                    kind: PaletteEntryKind::SectionHeader(slot_id.to_string()),
+                });
+                if let Some(sessions) = slot_sessions {
+                    for s in sessions {
+                        let tag = if is_remote { " [remote]" } else { "" };
+                        entries.push(PaletteEntry {
+                            label: format!("{}{}", s.name, tag),
+                            kind: PaletteEntryKind::SlotSession {
+                                slot_id: slot_id.to_string(),
+                                session_name: s.name.clone(),
+                            },
+                        });
+                    }
+                }
+            } else {
+                // No sessions yet — show a quick-switch entry under header
+                entries.push(PaletteEntry {
+                    label: host_label,
+                    kind: PaletteEntryKind::SectionHeader(slot_id.to_string()),
+                });
+                entries.push(PaletteEntry {
+                    label: format!("Switch to: {}", slot.session_name),
+                    kind: PaletteEntryKind::SwitchSlot(slot_id.to_string()),
+                });
+            }
+        }
+
+        // ── Remote Hosts ── (configured but not connected)
+        let remote_host_entries = self.build_remote_host_entries(true);
+        if !remote_host_entries.is_empty() {
+            entries.push(PaletteEntry {
+                label: "Remote Hosts".to_string(),
+                kind: PaletteEntryKind::SectionHeader("Remote Hosts".to_string()),
+            });
+            entries.extend(remote_host_entries);
+        }
+
+        // ── Connect to Remote Host... ── (always at the end, no header)
+        entries.push(PaletteEntry {
+            label: "Connect to Remote Host...".to_string(),
+            kind: PaletteEntryKind::ConnectRemotePrompt,
+        });
+    }
+
+    /// Command palette layout:
+    ///   ── Sessions ──
+    ///     SwitchSession / KillSession entries
+    ///   ── Connections ──
+    ///     SwitchSlot, RemoteHost, ConnectRemotePrompt
+    ///   ── Actions ──
+    ///     All action entries
+    fn build_command_palette_entries(&self, entries: &mut Vec<PaletteEntry>) {
+        // ── Sessions ──
+        let session_header = if let Some(rc) = &self.remote_config {
+            format!("Sessions ({})", rc.host)
+        } else {
+            "Sessions".to_string()
+        };
+
+        // Cache already contains only running sessions (filtered on arrival)
+        let local_sessions: Vec<_> = self.cached_local_sessions.iter().collect();
+        if !local_sessions.is_empty() {
+            entries.push(PaletteEntry {
+                label: session_header.clone(),
+                kind: PaletteEntryKind::SectionHeader(session_header),
+            });
+            for s in &local_sessions {
+                entries.push(PaletteEntry {
+                    label: format!("Switch to: {}", s.name),
+                    kind: PaletteEntryKind::SwitchSession(s.name.clone()),
+                });
+                entries.push(PaletteEntry {
+                    label: format!("Kill: {}", s.name),
+                    kind: PaletteEntryKind::KillSession(s.name.clone()),
+                });
+            }
+        }
+
+        // ── Connections ──
+        let mut conn_entries = Vec::new();
+
+        // Background slots (sorted)
+        let mut slot_ids: Vec<&String> = self.background_slots.keys().collect();
+        slot_ids.sort();
+        for slot_id in &slot_ids {
+            let slot = &self.background_slots[*slot_id];
+            let label = match &slot.kind {
+                ConnectionKind::Local => {
+                    format!("Switch to: local ({})", slot.session_name)
+                }
+                ConnectionKind::Remote { host, .. } => {
+                    format!("Switch to: {} ({}) [remote]", host, slot.session_name)
+                }
+            };
+            conn_entries.push(PaletteEntry {
+                label,
+                kind: PaletteEntryKind::SwitchSlot(slot_id.to_string()),
+            });
+        }
+
+        // Remote hosts (probe-first in command palette)
+        conn_entries.extend(self.build_remote_host_entries(false));
+
+        // Only show Connections header if there are actual connection entries
+        // (not just the ConnectRemotePrompt)
+        if !conn_entries.is_empty() {
+            entries.push(PaletteEntry {
+                label: "Connections".to_string(),
+                kind: PaletteEntryKind::SectionHeader("Connections".to_string()),
+            });
+            entries.extend(conn_entries);
+        }
+
+        // Connect to Remote Host... (always at the end, outside any section)
+        entries.push(PaletteEntry {
+            label: "Connect to Remote Host...".to_string(),
+            kind: PaletteEntryKind::ConnectRemotePrompt,
+        });
+
+        // ── Actions ──
+        let action_entries: Vec<PaletteEntry> = Action::all_with_labels()
+            .into_iter()
+            .map(|(action, label)| PaletteEntry {
+                label: label.to_string(),
+                kind: PaletteEntryKind::Action(action),
+            })
+            .collect();
+        if !action_entries.is_empty() {
+            entries.push(PaletteEntry {
+                label: "Actions".to_string(),
+                kind: PaletteEntryKind::SectionHeader("Actions".to_string()),
+            });
+            entries.extend(action_entries);
+        }
+    }
+
+    /// Build remote host entries from config, excluding hosts that already
+    /// have an active background slot or are the current connection.
+    /// Incorporates cached probe results when available.
+    fn build_remote_host_entries(&self, sessions_only: bool) -> Vec<PaletteEntry> {
+        let active_remote_hosts: std::collections::HashSet<String> = self
+            .background_slots
+            .values()
+            .filter_map(|slot| match &slot.kind {
+                ConnectionKind::Remote { host, .. } => Some(host.clone()),
+                _ => None,
+            })
+            .collect();
+        let current_remote_host = self.remote_config.as_ref().map(|rc| rc.host.clone());
+
+        let mut entries = Vec::new();
+        for rh in &self.config.remote.hosts {
+            if active_remote_hosts.contains(&rh.host)
+                || current_remote_host.as_deref() == Some(&rh.host)
+            {
+                continue;
+            }
+
+            // Check if we have a cached probe result for this host
+            if let Some(probe) = self.cached_remote_probes.get(&rh.host) {
+                match probe {
+                    RemoteProbeResult::Sessions(sessions) => {
+                        if sessions.is_empty() {
+                            entries.push(PaletteEntry {
+                                label: format!("{} > (new session)", rh.name),
+                                kind: PaletteEntryKind::RemoteSession {
+                                    host: rh.host.clone(),
+                                    port: rh.port,
+                                    ssh_port: rh.ssh_port,
+                                    session_name: "default".to_string(),
+                                },
+                            });
+                        } else {
+                            for s in sessions {
+                                entries.push(PaletteEntry {
+                                    label: format!("{} > {}", rh.name, s.name),
+                                    kind: PaletteEntryKind::RemoteSession {
+                                        host: rh.host.clone(),
+                                        port: rh.port,
+                                        ssh_port: rh.ssh_port,
+                                        session_name: s.name.clone(),
+                                    },
+                                });
+                            }
+                        }
+                    }
+                    RemoteProbeResult::NoServer => {
+                        entries.push(PaletteEntry {
+                            label: format!("SSH: {} (no ciri-server)", rh.name),
+                            kind: PaletteEntryKind::SshShell {
+                                name: rh.name.clone(),
+                                host: rh.host.clone(),
+                                ssh_port: rh.ssh_port,
+                            },
+                        });
+                    }
+                    RemoteProbeResult::Error(_) => {
+                        // Error results are shown via palette.remote_error, not as entries
+                    }
+                }
+                continue;
+            }
+
+            if sessions_only {
+                entries.push(PaletteEntry {
+                    label: format!("Connect: {} ({}) [remote]", rh.name, rh.host),
+                    kind: PaletteEntryKind::DirectConnect {
+                        name: rh.name.clone(),
+                        host: rh.host.clone(),
+                        port: rh.port,
+                        ssh_port: rh.ssh_port,
+                    },
+                });
+            } else {
+                entries.push(PaletteEntry {
+                    label: format!("Remote: {} ({})", rh.name, rh.host),
+                    kind: PaletteEntryKind::RemoteHost {
+                        name: rh.name.clone(),
+                        host: rh.host.clone(),
+                        port: rh.port,
+                        ssh_port: rh.ssh_port,
+                    },
+                });
+            }
+        }
+        entries
+    }
+
+    /// Rebuild palette entries from current cached data and re-filter.
+    /// Called when cached data changes while the palette is open.
+    /// Preserves the user's current selection when possible.
+    pub fn rebuild_palette_entries(&mut self) {
+        // Remember the currently selected entry's label to restore after rebuild
+        let prev_selected_label = self.command_palette.as_ref().and_then(|p| {
+            p.filtered
+                .get(p.selected_idx)
+                .and_then(|&i| p.entries.get(i))
+                .filter(|e| e.kind.is_selectable())
+                .map(|e| e.label.clone())
+        });
+
+        let sessions_only = self
+            .command_palette
+            .as_ref()
+            .is_some_and(|p| p.sessions_only);
+        let entries = self.build_palette_entries(sessions_only);
+        if let Some(palette) = &mut self.command_palette {
+            palette.entries = entries;
+        }
+        self.filter_palette();
+
+        // Try to restore the previous selection by matching label
+        if let Some(label) = prev_selected_label {
+            if let Some(palette) = &mut self.command_palette {
+                if let Some(pos) = palette.filtered.iter().position(|&i| {
+                    palette.entries[i].kind.is_selectable() && palette.entries[i].label == label
+                }) {
+                    palette.selected_idx = pos;
+                }
+            }
         }
     }
 
@@ -83,20 +395,48 @@ impl AppModel {
             return;
         };
         let needle = palette.query.to_lowercase();
-        palette.filtered = palette
-            .entries
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| {
-                if needle.is_empty() {
-                    true
-                } else {
-                    fuzzy_match(&e.label.to_lowercase(), &needle)
+
+        if needle.is_empty() {
+            // No filter: include all entries
+            palette.filtered = (0..palette.entries.len()).collect();
+        } else {
+            // Two-pass filter: match selectable entries, then include their headers
+            let mut matched = vec![false; palette.entries.len()];
+            for (i, e) in palette.entries.iter().enumerate() {
+                if e.kind.is_selectable() && fuzzy_match(&e.label.to_lowercase(), &needle) {
+                    matched[i] = true;
                 }
-            })
-            .map(|(i, _)| i)
-            .collect();
-        palette.selected_idx = 0;
+            }
+
+            // Include section headers that have at least one matched child after them
+            for i in 0..palette.entries.len() {
+                if matches!(palette.entries[i].kind, PaletteEntryKind::SectionHeader(_)) {
+                    // Check if any selectable entry between this header and the next header matched
+                    let has_match = palette.entries[i + 1..]
+                        .iter()
+                        .take_while(|e| !matches!(e.kind, PaletteEntryKind::SectionHeader(_)))
+                        .enumerate()
+                        .any(|(j, _)| matched[i + 1 + j]);
+                    if has_match {
+                        matched[i] = true;
+                    }
+                }
+            }
+
+            palette.filtered = matched
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| **m)
+                .map(|(i, _)| i)
+                .collect();
+        }
+
+        // Ensure selected_idx points to a selectable entry
+        palette.selected_idx = palette
+            .filtered
+            .iter()
+            .position(|&i| palette.entries[i].kind.is_selectable())
+            .unwrap_or(0);
         palette.hovered_idx = None;
     }
 
@@ -114,201 +454,44 @@ impl AppModel {
     }
 
     /// Handle the result of an async remote host probe.
+    /// Stores result in cache and rebuilds palette entries.
     pub fn handle_remote_query_result(&mut self, result: RemoteQueryResult) {
-        let Some(palette) = &mut self.command_palette else {
-            return;
-        };
-        palette.remote_loading = None;
+        if let Some(palette) = &mut self.command_palette {
+            palette.remote_loading = None;
+        }
 
-        match result.result {
-            RemoteProbeResult::Sessions(sessions) => {
-                // Remove any previous remote session/ssh entries for this host
-                palette.entries.retain(|e| {
-                    !matches!(&e.kind,
-                        PaletteEntryKind::RemoteSession { host, .. } if *host == result.host)
-                        && !matches!(&e.kind,
-                        PaletteEntryKind::SshShell { host, .. } if *host == result.host)
-                });
-
-                if sessions.is_empty() {
-                    // Server exists but no sessions — offer to create one
-                    palette.entries.push(PaletteEntry {
-                        label: format!("  {} > (new session)", result.host_name),
-                        kind: PaletteEntryKind::RemoteSession {
-                            host: result.host.clone(),
-                            port: result.port,
-                            ssh_port: result.ssh_port,
-                            session_name: "default".to_string(),
-                        },
-                    });
-                } else {
-                    for s in &sessions {
-                        palette.entries.push(PaletteEntry {
-                            label: format!("  {} > {}", result.host_name, s.name),
-                            kind: PaletteEntryKind::RemoteSession {
-                                host: result.host.clone(),
-                                port: result.port,
-                                ssh_port: result.ssh_port,
-                                session_name: s.name.clone(),
-                            },
-                        });
-                    }
-                }
-            }
-            RemoteProbeResult::NoServer => {
-                // Remove previous entries for this host
-                palette.entries.retain(|e| {
-                    !matches!(&e.kind,
-                        PaletteEntryKind::RemoteSession { host, .. } if *host == result.host)
-                        && !matches!(&e.kind,
-                        PaletteEntryKind::SshShell { host, .. } if *host == result.host)
-                });
-
-                palette.entries.push(PaletteEntry {
-                    label: format!("  SSH: {} (no ciri-server)", result.host_name),
-                    kind: PaletteEntryKind::SshShell {
-                        name: result.host_name.clone(),
-                        host: result.host.clone(),
-                        ssh_port: result.ssh_port,
-                    },
-                });
-            }
+        match &result.result {
             RemoteProbeResult::Error(e) => {
-                palette.remote_error = Some((result.host_name, e));
+                if let Some(palette) = &mut self.command_palette {
+                    palette.remote_error = Some((result.host_name.clone(), e.clone()));
+                }
+            }
+            _ => {
+                // Cache the probe result keyed by host address
+                self.cached_remote_probes
+                    .insert(result.host.clone(), result.result);
             }
         }
 
-        self.filter_palette();
+        if self.command_palette.is_some() {
+            self.rebuild_palette_entries();
+        }
     }
 
-    /// Append background connection slots and configured remote hosts to the
-    /// current palette.  Called after session entries are populated so that both
-    /// the session palette and the command palette include connection entries.
-    pub fn append_connection_entries(&mut self) {
-        // Take the palette out to avoid overlapping borrows with
-        // self.background_slots / self.config.
-        let Some(mut palette) = self.command_palette.take() else {
-            return;
-        };
-
-        // Remove previous SwitchSlot/DirectConnect entries to avoid duplicates
-        // (this method is called multiple times: on palette open and on each
-        // SessionList response).
-        palette.entries.retain(|e| {
-            !matches!(
-                e.kind,
-                PaletteEntryKind::SwitchSlot(_)
-                    | PaletteEntryKind::DirectConnect { .. }
-                    | PaletteEntryKind::RemoteHost { .. }
-            )
-        });
-
-        // Background connection slots — quick-switch entries
-        for (id, slot) in &self.background_slots {
-            let label = match &slot.kind {
-                ConnectionKind::Local => {
-                    format!("Switch to: local ({})", slot.session_name)
-                }
-                ConnectionKind::Remote { host, .. } => {
-                    format!("Switch to: {} ({}) [remote]", host, slot.session_name)
-                }
-            };
-            palette.entries.push(PaletteEntry {
-                label,
-                kind: PaletteEntryKind::SwitchSlot(id.clone()),
-            });
-        }
-
-        // Configured remote hosts — direct connect entries (VSCode SSH style)
-        // Only show hosts that don't already have an active background slot.
-        let active_remote_hosts: std::collections::HashSet<String> = self
-            .background_slots
-            .values()
-            .filter_map(|slot| match &slot.kind {
-                ConnectionKind::Remote { host, .. } => Some(host.clone()),
-                _ => None,
-            })
-            .collect();
-        // Also exclude the currently active remote connection
-        let current_remote_host = self
-            .remote_config
-            .as_ref()
-            .map(|rc| rc.host.clone());
-
-        for rh in &self.config.remote.hosts {
-            if active_remote_hosts.contains(&rh.host)
-                || current_remote_host.as_deref() == Some(&rh.host)
-            {
-                continue;
-            }
-            if palette.sessions_only {
-                // Session palette: direct connect (no probe needed)
-                palette.entries.push(PaletteEntry {
-                    label: format!("Connect: {} ({}) [remote, new session]", rh.name, rh.host),
-                    kind: PaletteEntryKind::DirectConnect {
-                        name: rh.name.clone(),
-                        host: rh.host.clone(),
-                        port: rh.port,
-                        ssh_port: rh.ssh_port,
-                    },
-                });
-            } else {
-                // Command palette: probe first (existing behavior)
-                palette.entries.push(PaletteEntry {
-                    label: format!("Remote: {} ({})", rh.name, rh.host),
-                    kind: PaletteEntryKind::RemoteHost {
-                        name: rh.name.clone(),
-                        host: rh.host.clone(),
-                        port: rh.port,
-                        ssh_port: rh.ssh_port,
-                    },
-                });
-            }
-        }
-
-        self.command_palette = Some(palette);
-    }
-
-    /// Handle a `SessionList` response from a background slot.
-    /// Inserts per-session entries into the palette so the user can switch
-    /// to a specific session on that server.
+    /// Update cached slot sessions and rebuild palette if open.
     pub fn apply_slot_session_result(
         &mut self,
         slot_id: &str,
         sessions: Vec<ciri_protocol::message::SessionInfo>,
     ) {
-        // Take palette out to avoid borrow conflict with self.background_slots
-        let Some(mut palette) = self.command_palette.take() else {
-            return;
-        };
-
-        // Remove any previous SlotSession entries for this slot
-        palette.entries.retain(|e| {
-            !matches!(&e.kind, PaletteEntryKind::SlotSession { slot_id: sid, .. } if sid == slot_id)
-        });
-
-        // Look up slot kind for labeling
-        if let Some(slot) = self.background_slots.get(slot_id) {
-            let host_label = match &slot.kind {
-                ConnectionKind::Local => "local".to_string(),
-                ConnectionKind::Remote { host, .. } => host.clone(),
-            };
-            let is_remote = matches!(slot.kind, ConnectionKind::Remote { .. });
-
-            for s in &sessions {
-                let tag = if is_remote { " [remote]" } else { "" };
-                palette.entries.push(PaletteEntry {
-                    label: format!("  {} > {}{}", host_label, s.name, tag),
-                    kind: PaletteEntryKind::SlotSession {
-                        slot_id: slot_id.to_string(),
-                        session_name: s.name.clone(),
-                    },
-                });
-            }
+        // Only cache sessions from slots that still exist
+        if self.background_slots.contains_key(slot_id) {
+            self.cached_slot_sessions
+                .insert(slot_id.to_string(), sessions);
         }
-
-        self.command_palette = Some(palette);
-        self.filter_palette();
+        if self.command_palette.is_some() {
+            self.rebuild_palette_entries();
+        }
     }
 }
 
@@ -344,10 +527,7 @@ mod tests {
     }
 
     /// 创建一个带 server channel 的 AppModel
-    fn make_model_with_tx() -> (
-        AppModel,
-        crossbeam_channel::Receiver<ClientMessage>,
-    ) {
+    fn make_model_with_tx() -> (AppModel, crossbeam_channel::Receiver<ClientMessage>) {
         let mut model = make_model();
         let (tx, rx) = crossbeam_channel::unbounded();
         model.server_tx = Some(tx);
@@ -420,7 +600,6 @@ mod tests {
 
     #[test]
     fn open_session_palette_sends_query_to_connected_slots() {
-        // 向已连接的后台 slot 发送 ListSessions，不向断连 slot 发
         let (mut model, _rx) = make_model_with_tx();
 
         let (slot_a, _ev_a, cmd_rx_a) =
@@ -432,17 +611,13 @@ mod tests {
 
         model.open_session_palette();
 
-        // connected slot 应该收到 ListSessions
         let msg = cmd_rx_a.try_recv().expect("connected slot 应收到查询");
-        assert!(matches!(msg, ClientMessage::ListSessions { all: true }));
-
-        // disconnected slot 不应该收到任何消息
+        assert!(matches!(msg, ClientMessage::ListSessions { all: false }));
         assert!(cmd_rx_b.try_recv().is_err(), "disconnected slot 不应收到查询");
     }
 
     #[test]
     fn open_session_palette_sets_query_start_time() {
-        // 有 pending slot 时应设置 slot_session_query_start
         let (mut model, _rx) = make_model_with_tx();
 
         let (slot, _ev, _cmd) = make_slot("slot-a", ConnectionKind::Local, "s", true);
@@ -456,18 +631,14 @@ mod tests {
 
     #[test]
     fn open_session_palette_no_background_slots_no_query_start() {
-        // 没有后台 slot 时 slot_session_query_start 应为 None
         let (mut model, _rx) = make_model_with_tx();
-
         model.open_session_palette();
-
         assert!(model.slot_session_query_start.is_none());
         assert!(model.slot_session_pending.is_empty());
     }
 
     #[test]
     fn open_session_palette_resets_pending_on_repeated_call() {
-        // 重复调用时 pending 集合应被正确重置
         let (mut model, _rx) = make_model_with_tx();
 
         let (slot, _ev, _cmd) = make_slot("slot-a", ConnectionKind::Local, "s", true);
@@ -476,11 +647,9 @@ mod tests {
         model.open_session_palette();
         assert_eq!(model.slot_session_pending.len(), 1);
 
-        // 手动添加一个假的 pending 条目
         model.slot_session_pending.insert("stale-slot".into());
         assert_eq!(model.slot_session_pending.len(), 2);
 
-        // 重新打开 palette 应清除旧的 pending
         model.open_session_palette();
         assert!(!model.slot_session_pending.contains("stale-slot"));
         assert!(model.slot_session_pending.contains("slot-a"));
@@ -488,13 +657,10 @@ mod tests {
 
     #[test]
     fn open_session_palette_all_slots_disconnected() {
-        // 所有 slot 都 disconnected 时不应 panic，也不应设置 query_start
         let (mut model, _rx) = make_model_with_tx();
 
-        let (slot_a, _ev_a, _cmd_a) =
-            make_slot("slot-a", ConnectionKind::Local, "s1", false);
-        let (slot_b, _ev_b, _cmd_b) =
-            make_slot("slot-b", ConnectionKind::Local, "s2", false);
+        let (slot_a, _ev_a, _cmd_a) = make_slot("slot-a", ConnectionKind::Local, "s1", false);
+        let (slot_b, _ev_b, _cmd_b) = make_slot("slot-b", ConnectionKind::Local, "s2", false);
         model.background_slots.insert("slot-a".into(), slot_a);
         model.background_slots.insert("slot-b".into(), slot_b);
 
@@ -505,40 +671,58 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // append_connection_entries 相关测试
+    // build_palette_entries 相关测试
     // -----------------------------------------------------------------------
 
     #[test]
-    fn append_connection_entries_no_duplicates_on_double_call() {
-        // 调用两次后不应有重复的 SwitchSlot/DirectConnect 条目
+    fn build_entries_includes_section_headers() {
         let (mut model, _rx) = make_model_with_tx();
-
-        let (slot, _ev, _cmd) = make_slot("slot-a", ConnectionKind::Local, "sess", true);
-        model.background_slots.insert("slot-a".into(), slot);
-        model.config.remote.hosts.push(RemoteHostConfig {
-            name: "dev".into(),
-            host: "dev.example.com".into(),
-            port: 7890,
-            ssh_port: 22,
-        });
+        model.cached_local_sessions = vec![session_info("main")];
 
         model.open_session_palette();
-        let count_before = count_entries(&model, |k| {
-            matches!(k, PaletteEntryKind::SwitchSlot(_) | PaletteEntryKind::DirectConnect { .. })
-        });
 
-        // 再次调用 append_connection_entries
-        model.append_connection_entries();
-        let count_after = count_entries(&model, |k| {
-            matches!(k, PaletteEntryKind::SwitchSlot(_) | PaletteEntryKind::DirectConnect { .. })
+        let headers = count_entries(&model, |k| {
+            matches!(k, PaletteEntryKind::SectionHeader(_))
         });
-
-        assert_eq!(count_before, count_after, "不应产生重复条目");
+        assert!(headers >= 1, "应至少有 Local section header");
     }
 
     #[test]
-    fn append_connection_entries_skips_active_remote_host() {
-        // 跳过当前活跃连接对应的 remote host
+    fn build_entries_deterministic_slot_order() {
+        let (mut model, _rx) = make_model_with_tx();
+
+        // Insert slots in non-alphabetical order
+        let (slot_c, _ev_c, _cmd_c) = make_slot("slot-c", ConnectionKind::Local, "sc", true);
+        let (slot_a, _ev_a, _cmd_a) = make_slot("slot-a", ConnectionKind::Local, "sa", true);
+        let (slot_b, _ev_b, _cmd_b) = make_slot("slot-b", ConnectionKind::Local, "sb", true);
+        model.background_slots.insert("slot-c".into(), slot_c);
+        model.background_slots.insert("slot-a".into(), slot_a);
+        model.background_slots.insert("slot-b".into(), slot_b);
+
+        model.open_session_palette();
+
+        // Collect SwitchSlot entries in order
+        let slot_order: Vec<String> = model
+            .command_palette
+            .as_ref()
+            .unwrap()
+            .entries
+            .iter()
+            .filter_map(|e| match &e.kind {
+                PaletteEntryKind::SwitchSlot(id) => Some(id.clone()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            slot_order,
+            vec!["slot-a", "slot-b", "slot-c"],
+            "Slots 应按 ID 排序"
+        );
+    }
+
+    #[test]
+    fn build_entries_skips_active_remote_host() {
         let (mut model, _rx) = make_model_with_tx();
 
         model.remote_config = Some(RemoteConnectionConfig {
@@ -555,15 +739,13 @@ mod tests {
 
         model.open_session_palette();
 
-        let direct_count = count_entries(&model, |k| {
-            matches!(k, PaletteEntryKind::DirectConnect { .. })
-        });
+        let direct_count =
+            count_entries(&model, |k| matches!(k, PaletteEntryKind::DirectConnect { .. }));
         assert_eq!(direct_count, 0, "不应为当前活跃连接创建 DirectConnect 条目");
     }
 
     #[test]
-    fn append_connection_entries_skips_background_slot_host() {
-        // 跳过已有 background slot 的 remote host
+    fn build_entries_skips_background_slot_host() {
         let (mut model, _rx) = make_model_with_tx();
 
         let (slot, _ev, _cmd) = make_slot(
@@ -588,15 +770,13 @@ mod tests {
 
         model.open_session_palette();
 
-        let direct_count = count_entries(&model, |k| {
-            matches!(k, PaletteEntryKind::DirectConnect { .. })
-        });
+        let direct_count =
+            count_entries(&model, |k| matches!(k, PaletteEntryKind::DirectConnect { .. }));
         assert_eq!(direct_count, 0, "不应为已有 background slot 的 host 创建条目");
     }
 
     #[test]
-    fn append_connection_entries_sessions_only_uses_direct_connect() {
-        // sessions_only 模式下应添加 DirectConnect 而非 RemoteHost
+    fn build_entries_sessions_only_uses_direct_connect() {
         let (mut model, _rx) = make_model_with_tx();
 
         model.config.remote.hosts.push(RemoteHostConfig {
@@ -606,7 +786,7 @@ mod tests {
             ssh_port: 22,
         });
 
-        model.open_session_palette(); // sessions_only = true
+        model.open_session_palette();
 
         let dc = count_entries(&model, |k| matches!(k, PaletteEntryKind::DirectConnect { .. }));
         let rh = count_entries(&model, |k| matches!(k, PaletteEntryKind::RemoteHost { .. }));
@@ -615,8 +795,7 @@ mod tests {
     }
 
     #[test]
-    fn append_connection_entries_command_palette_uses_remote_host() {
-        // 非 sessions_only（命令面板）模式下应添加 RemoteHost 而非 DirectConnect
+    fn build_entries_command_palette_uses_remote_host() {
         let (mut model, _rx) = make_model_with_tx();
 
         model.config.remote.hosts.push(RemoteHostConfig {
@@ -626,7 +805,7 @@ mod tests {
             ssh_port: 22,
         });
 
-        model.open_command_palette(); // sessions_only = false
+        model.open_command_palette();
 
         let dc = count_entries(&model, |k| matches!(k, PaletteEntryKind::DirectConnect { .. }));
         let rh = count_entries(&model, |k| matches!(k, PaletteEntryKind::RemoteHost { .. }));
@@ -635,10 +814,8 @@ mod tests {
     }
 
     #[test]
-    fn append_connection_entries_no_remote_hosts_config() {
-        // config 中没有 remote hosts 时不应 panic
+    fn build_entries_no_remote_hosts_config() {
         let (mut model, _rx) = make_model_with_tx();
-
         assert!(model.config.remote.hosts.is_empty());
         model.open_session_palette();
 
@@ -646,13 +823,47 @@ mod tests {
         assert_eq!(dc, 0);
     }
 
+    #[test]
+    fn build_entries_always_has_connect_prompt() {
+        let (mut model, _rx) = make_model_with_tx();
+        model.open_session_palette();
+
+        let prompt =
+            count_entries(&model, |k| matches!(k, PaletteEntryKind::ConnectRemotePrompt));
+        assert_eq!(prompt, 1, "应始终有 ConnectRemotePrompt 条目");
+    }
+
+    #[test]
+    fn build_entries_only_cached_sessions() {
+        // The cache only contains running sessions (filtered on arrival in sync.rs).
+        // Verify that all cached sessions appear in the palette.
+        let (mut model, _rx) = make_model_with_tx();
+
+        model.cached_local_sessions = vec![session_info("running1"), session_info("running2")];
+
+        model.open_session_palette();
+
+        let switch_names: Vec<String> = model
+            .command_palette
+            .as_ref()
+            .unwrap()
+            .entries
+            .iter()
+            .filter_map(|e| match &e.kind {
+                PaletteEntryKind::SwitchSession(name) => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(switch_names, vec!["running1", "running2"]);
+    }
+
     // -----------------------------------------------------------------------
     // apply_slot_session_result 相关测试
     // -----------------------------------------------------------------------
 
     #[test]
-    fn apply_slot_session_result_adds_entries_with_remote_tag() {
-        // 为远程 slot 添加 SlotSession 条目并标记 [remote]
+    fn apply_slot_session_result_updates_cache_and_rebuilds() {
         let (mut model, _rx) = make_model_with_tx();
 
         let (slot, _ev, _cmd) = make_slot(
@@ -670,12 +881,19 @@ mod tests {
             .insert("remote:dev:7890".into(), slot);
 
         model.open_session_palette();
-
         model.apply_slot_session_result(
             "remote:dev:7890",
             vec![session_info("alpha"), session_info("beta")],
         );
 
+        // Verify cache was updated
+        assert_eq!(
+            model.cached_slot_sessions["remote:dev:7890"].len(),
+            2,
+            "缓存应有 2 个 session"
+        );
+
+        // Verify palette entries were rebuilt
         let slot_sessions: Vec<_> = model
             .command_palette
             .as_ref()
@@ -684,7 +902,6 @@ mod tests {
             .iter()
             .filter(|e| matches!(&e.kind, PaletteEntryKind::SlotSession { .. }))
             .collect();
-
         assert_eq!(slot_sessions.len(), 2, "应有 2 个 SlotSession 条目");
         assert!(
             slot_sessions.iter().all(|e| e.label.contains("[remote]")),
@@ -694,7 +911,6 @@ mod tests {
 
     #[test]
     fn apply_slot_session_result_local_slot_no_remote_tag() {
-        // 本地 slot 的条目不应有 [remote] 标记
         let (mut model, _rx) = make_model_with_tx();
 
         let (slot, _ev, _cmd) = make_slot("local-bg", ConnectionKind::Local, "sess", true);
@@ -720,20 +936,21 @@ mod tests {
 
     #[test]
     fn apply_slot_session_result_replaces_old_entries() {
-        // 替换同一 slot 的旧条目
         let (mut model, _rx) = make_model_with_tx();
 
         let (slot, _ev, _cmd) = make_slot("slot-x", ConnectionKind::Local, "s", true);
         model.background_slots.insert("slot-x".into(), slot);
 
         model.open_session_palette();
-        model.apply_slot_session_result("slot-x", vec![session_info("old1"), session_info("old2")]);
+        model.apply_slot_session_result(
+            "slot-x",
+            vec![session_info("old1"), session_info("old2")],
+        );
         assert_eq!(
             count_entries(&model, |k| matches!(k, PaletteEntryKind::SlotSession { .. })),
             2
         );
 
-        // 用新列表替换
         model.apply_slot_session_result("slot-x", vec![session_info("new1")]);
         let ss: Vec<_> = model
             .command_palette
@@ -742,7 +959,9 @@ mod tests {
             .entries
             .iter()
             .filter_map(|e| match &e.kind {
-                PaletteEntryKind::SlotSession { session_name, .. } => Some(session_name.as_str()),
+                PaletteEntryKind::SlotSession { session_name, .. } => {
+                    Some(session_name.as_str())
+                }
                 _ => None,
             })
             .collect();
@@ -751,13 +970,10 @@ mod tests {
 
     #[test]
     fn apply_slot_session_result_nonexistent_slot_no_panic() {
-        // 对不存在的 slot 调用不应 panic
         let (mut model, _rx) = make_model_with_tx();
-
         model.open_session_palette();
         model.apply_slot_session_result("nonexistent", vec![session_info("x")]);
 
-        // 不存在的 slot 不会创建条目
         assert_eq!(
             count_entries(&model, |k| matches!(k, PaletteEntryKind::SlotSession { .. })),
             0
@@ -766,7 +982,6 @@ mod tests {
 
     #[test]
     fn apply_slot_session_result_empty_session_list() {
-        // 空 session 列表不应 panic
         let (mut model, _rx) = make_model_with_tx();
 
         let (slot, _ev, _cmd) = make_slot("slot-e", ConnectionKind::Local, "s", true);
@@ -778,7 +993,7 @@ mod tests {
         assert_eq!(
             count_entries(&model, |k| matches!(k, PaletteEntryKind::SlotSession { .. })),
             0,
-            "空 session 列表不应创建条目"
+            "空 session 列表不应创建 SlotSession 条目"
         );
     }
 
@@ -788,7 +1003,6 @@ mod tests {
 
     #[test]
     fn filter_palette_matches_slot_session_entries() {
-        // filter_palette 能匹配 SlotSession 条目
         let (mut model, _rx) = make_model_with_tx();
 
         let (slot, _ev, _cmd) = make_slot("slot-f", ConnectionKind::Local, "s", true);
@@ -797,7 +1011,6 @@ mod tests {
         model.open_session_palette();
         model.apply_slot_session_result("slot-f", vec![session_info("my-special-session")]);
 
-        // 用关键词过滤
         if let Some(palette) = &mut model.command_palette {
             palette.query = "special".to_string();
         }
@@ -817,7 +1030,6 @@ mod tests {
 
     #[test]
     fn filter_palette_matches_direct_connect_entries() {
-        // filter_palette 能匹配 DirectConnect 条目
         let (mut model, _rx) = make_model_with_tx();
 
         model.config.remote.hosts.push(RemoteHostConfig {
@@ -843,92 +1055,80 @@ mod tests {
         );
     }
 
+    #[test]
+    fn filter_palette_hides_empty_section_headers() {
+        let (mut model, _rx) = make_model_with_tx();
+
+        model.cached_local_sessions = vec![session_info("alpha"), session_info("beta")];
+        model.open_session_palette();
+
+        // Filter for something that only matches one session
+        if let Some(palette) = &mut model.command_palette {
+            palette.query = "alpha".to_string();
+        }
+        model.filter_palette();
+
+        let palette = model.command_palette.as_ref().unwrap();
+        // The Local header should be present (has matching child)
+        let filtered_headers: Vec<_> = palette
+            .filtered
+            .iter()
+            .filter(|&&i| matches!(palette.entries[i].kind, PaletteEntryKind::SectionHeader(_)))
+            .collect();
+        assert!(
+            !filtered_headers.is_empty(),
+            "匹配条目所在的 section header 应可见"
+        );
+    }
+
+    #[test]
+    fn filter_palette_selected_idx_skips_headers() {
+        let (mut model, _rx) = make_model_with_tx();
+
+        model.cached_local_sessions = vec![session_info("main")];
+        model.open_session_palette();
+
+        let palette = model.command_palette.as_ref().unwrap();
+        // selected_idx should point to a selectable entry, not a header
+        if !palette.filtered.is_empty() {
+            let selected_entry = &palette.entries[palette.filtered[palette.selected_idx]];
+            assert!(
+                selected_entry.kind.is_selectable(),
+                "selected_idx 应指向可选条目，而不是 SectionHeader"
+            );
+        }
+    }
+
     // -----------------------------------------------------------------------
-    // SessionList 响应处理（模拟 sync.rs 中的逻辑在 AppModel 层）
+    // rebuild_palette_entries (cache → rebuild) 测试
     // -----------------------------------------------------------------------
 
     #[test]
-    fn session_list_preserves_slot_sessions_in_sessions_only_mode() {
-        // sessions_only 模式下 SessionList 保留 SlotSession 条目
+    fn rebuild_preserves_sessions_and_slots() {
         let (mut model, _rx) = make_model_with_tx();
 
         let (slot, _ev, _cmd) = make_slot("slot-g", ConnectionKind::Local, "s", true);
         model.background_slots.insert("slot-g".into(), slot);
 
         model.open_session_palette();
+
+        // Simulate SessionList + slot sessions arriving
+        model.cached_local_sessions = vec![session_info("local-1"), session_info("local-2")];
         model.apply_slot_session_result("slot-g", vec![session_info("bg-session")]);
 
-        // 模拟 SessionList 响应：sessions_only 模式下保留 SlotSession
-        {
-            let palette = model.command_palette.as_mut().unwrap();
-            assert!(palette.sessions_only);
-            // 模拟 sync.rs 中的 SessionList 处理逻辑
-            palette
-                .entries
-                .retain(|e| matches!(e.kind, PaletteEntryKind::SlotSession { .. }));
-            for s in &[session_info("local-1"), session_info("local-2")] {
-                palette.entries.push(PaletteEntry {
-                    label: format!("Switch to: {}", s.name),
-                    kind: PaletteEntryKind::SwitchSession(s.name.clone()),
-                });
-            }
-        }
-        model.append_connection_entries();
-        model.filter_palette();
-
-        // 验证 SlotSession 条目保留
+        // Both local and slot sessions should be present
         assert!(
             count_entries(&model, |k| matches!(k, PaletteEntryKind::SlotSession { .. })) >= 1,
-            "SessionList 处理后应保留 SlotSession 条目"
+            "rebuild 后应保留 SlotSession 条目"
         );
-        // 验证本地 session 也存在
         assert!(
             count_entries(&model, |k| matches!(k, PaletteEntryKind::SwitchSession(_))) >= 1,
-            "SessionList 处理后应有 SwitchSession 条目"
+            "rebuild 后应有 SwitchSession 条目"
         );
     }
 
     #[test]
-    fn session_list_preserves_slot_sessions_in_command_palette_mode() {
-        // 非 sessions_only 模式下 SessionList 也保留 SlotSession
-        let (mut model, _rx) = make_model_with_tx();
-
-        let (slot, _ev, _cmd) = make_slot("slot-h", ConnectionKind::Local, "s", true);
-        model.background_slots.insert("slot-h".into(), slot);
-
-        model.open_command_palette();
-        model.apply_slot_session_result("slot-h", vec![session_info("bg-sess")]);
-
-        // 模拟非 sessions_only 的 SessionList 处理
-        {
-            let palette = model.command_palette.as_mut().unwrap();
-            assert!(!palette.sessions_only);
-            palette.entries.retain(|e| {
-                matches!(
-                    e.kind,
-                    PaletteEntryKind::Action(_)
-                        | PaletteEntryKind::RemoteSession { .. }
-                        | PaletteEntryKind::SshShell { .. }
-                        | PaletteEntryKind::SlotSession { .. }
-                )
-            });
-            palette.entries.push(PaletteEntry {
-                label: "Switch to: default".to_string(),
-                kind: PaletteEntryKind::SwitchSession("default".to_string()),
-            });
-        }
-        model.append_connection_entries();
-        model.filter_palette();
-
-        assert!(
-            count_entries(&model, |k| matches!(k, PaletteEntryKind::SlotSession { .. })) >= 1,
-            "command palette 的 SessionList 处理也应保留 SlotSession"
-        );
-    }
-
-    #[test]
-    fn session_list_then_append_no_duplicate_switch_slot() {
-        // SessionList 后 append_connection_entries 不产生重复 SwitchSlot
+    fn rebuild_no_duplicate_entries() {
         let (mut model, _rx) = make_model_with_tx();
 
         let (slot, _ev, _cmd) = make_slot("slot-i", ConnectionKind::Local, "s", true);
@@ -936,16 +1136,16 @@ mod tests {
 
         model.open_session_palette();
 
-        let switch_count = count_entries(&model, |k| matches!(k, PaletteEntryKind::SwitchSlot(_)));
+        // Rebuild twice
+        model.cached_local_sessions = vec![session_info("main")];
+        model.rebuild_palette_entries();
+        let count1 =
+            count_entries(&model, |k| matches!(k, PaletteEntryKind::SwitchSession(_)));
 
-        // 模拟 SessionList 后再次 append
-        model.append_connection_entries();
-        let switch_count_after =
-            count_entries(&model, |k| matches!(k, PaletteEntryKind::SwitchSlot(_)));
+        model.rebuild_palette_entries();
+        let count2 =
+            count_entries(&model, |k| matches!(k, PaletteEntryKind::SwitchSession(_)));
 
-        assert_eq!(
-            switch_count, switch_count_after,
-            "SessionList 后 append_connection_entries 不应产生重复 SwitchSlot"
-        );
+        assert_eq!(count1, count2, "多次 rebuild 不应产生重复条目");
     }
 }

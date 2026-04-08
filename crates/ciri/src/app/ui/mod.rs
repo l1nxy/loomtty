@@ -145,7 +145,6 @@ impl App {
             return (None, false);
         };
         match component.hit_test(mx, my) {
-            UiPaletteHit::Toggle => (None, true),
             UiPaletteHit::Entry(entry_idx) => {
                 let hovered =
                     self.core.command_palette.as_ref().and_then(|palette| {
@@ -314,26 +313,29 @@ impl App {
                     self.animate_to_active();
                 }
             }
-            UiAction::ToggleSessionPaletteScope => {
-                if let Some(palette) = &mut self.core.command_palette
-                    && palette.sessions_only
-                {
-                    palette.sessions_show_all = !palette.sessions_show_all;
-                    palette.entries.clear();
-                    palette.filtered.clear();
-                    palette.selected_idx = 0;
-                    palette.hovered_idx = None;
-                }
-                self.refresh_session_palette();
-            }
             UiAction::ExecutePaletteEntry(entry_idx) => {
+                // SectionHeaders should not be clickable (hit_test returns Panel),
+                // but guard defensively.
+                let is_selectable = self
+                    .core
+                    .command_palette
+                    .as_ref()
+                    .and_then(|p| p.entries.get(entry_idx))
+                    .is_some_and(|e| e.kind.is_selectable());
+                if !is_selectable {
+                    return;
+                }
                 let keep_open = self
                     .core
                     .command_palette
                     .as_ref()
                     .and_then(|p| p.entries.get(entry_idx))
                     .is_some_and(|e| {
-                        matches!(e.kind, super::PaletteEntryKind::RemoteHost { .. })
+                        matches!(
+                            e.kind,
+                            super::PaletteEntryKind::RemoteHost { .. }
+                                | super::PaletteEntryKind::ConnectRemotePrompt
+                        )
                     });
                 if let Some(palette) = &mut self.core.command_palette
                     && let Some(pos) = palette.filtered.iter().position(|&idx| idx == entry_idx)
@@ -491,27 +493,6 @@ mod tests {
     }
 
     #[test]
-    fn palette_toggle_click_maps_to_scope_toggle() {
-        let mut app = make_app();
-        app.core.command_palette = Some(CommandPaletteState {
-            query: String::new(),
-            entries: Vec::new(),
-            filtered: Vec::new(),
-            selected_idx: 0,
-            hovered_idx: None,
-            sessions_only: true,
-            sessions_show_all: false,
-            remote_loading: None,
-            remote_error: None,
-        });
-        let cx = app.ui_context();
-        let component = PaletteComponent::capture(&app, &cx).unwrap();
-        let toggle = app.command_palette_toggle_layout(app.command_palette_layout().unwrap()).unwrap();
-        let action = component.click(toggle.bg_x + 2.0, toggle.bg_y + 2.0, &cx);
-        assert_eq!(action, Some(UiAction::ToggleSessionPaletteScope));
-    }
-
-    #[test]
     fn context_menu_entry_click_maps_to_execute_entry() {
         let mut app = make_app();
         app.core.context_menu = ContextMenu {
@@ -574,9 +555,9 @@ mod tests {
             selected_idx: 0,
             hovered_idx: None,
             sessions_only: false,
-            sessions_show_all: true,
             remote_loading: None,
             remote_error: None,
+            remote_input_mode: false,
         });
         assert!(app.dispatch_ui_click(0.0, 0.0));
         assert!(app.core.command_palette.is_none());

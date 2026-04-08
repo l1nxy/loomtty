@@ -96,11 +96,13 @@ pub struct CommandPaletteState {
     pub selected_idx: usize,
     pub hovered_idx: Option<usize>,
     pub sessions_only: bool,
-    pub sessions_show_all: bool,
     /// Remote host name currently being queried (loading state).
     pub remote_loading: Option<String>,
     /// (host_name, error_message) for a failed remote query.
     pub remote_error: Option<(String, String)>,
+    /// When true, the palette is in "remote host input" mode:
+    /// the query field is used to type a `user@host[:port]` address.
+    pub remote_input_mode: bool,
 }
 
 pub struct PaletteEntry {
@@ -110,6 +112,8 @@ pub struct PaletteEntry {
 
 #[derive(Clone)]
 pub enum PaletteEntryKind {
+    /// Non-selectable section header for visual grouping.
+    SectionHeader(String),
     Action(ciri_input::action::Action),
     SwitchSession(String),
     KillSession(String),
@@ -147,6 +151,16 @@ pub enum PaletteEntryKind {
         slot_id: String,
         session_name: String,
     },
+    /// Fixed entry: "Connect to Remote Host" — switches palette to input mode.
+    ConnectRemotePrompt,
+}
+
+impl PaletteEntryKind {
+    /// Whether this entry can be selected/executed by the user.
+    /// Section headers are purely visual and cannot be selected.
+    pub fn is_selectable(&self) -> bool {
+        !matches!(self, PaletteEntryKind::SectionHeader(_))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -302,6 +316,7 @@ pub struct RemoteQueryResult {
 }
 
 /// Outcome of probing a remote host for ciri-server.
+#[derive(Clone)]
 pub enum RemoteProbeResult {
     /// ciri-server is available; here are its sessions.
     Sessions(Vec<SessionInfo>),

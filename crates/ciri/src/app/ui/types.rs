@@ -47,7 +47,6 @@ pub(crate) enum UiAction {
     ToggleOverview,
     CycleWorkspace,
     FocusPaneTab(u64),
-    ToggleSessionPaletteScope,
     ExecutePaletteEntry(usize),
     ClosePalette,
     ExecuteContextMenuEntry(usize),
@@ -71,7 +70,6 @@ pub(super) enum UiTopBarHit {
 }
 
 pub(super) enum UiPaletteHit {
-    Toggle,
     Entry(usize),
     Panel,
     None,

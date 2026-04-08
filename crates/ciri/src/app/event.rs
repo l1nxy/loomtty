@@ -156,8 +156,9 @@ impl ApplicationHandler for App {
                     self.core.slot_session_pending.clear();
                     self.core.slot_session_query_start = None;
                 } else {
-                    self.poll_slot_sessions();
-                    needs_redraw = true;
+                    if self.poll_slot_sessions() {
+                        needs_redraw = true;
+                    }
                 }
             }
 

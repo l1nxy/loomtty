@@ -3,7 +3,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::builder::UiBuilder;
 use super::types::{UiAction, UiComponent, UiContext, UiPaletteHit, UiScene};
-use crate::app::{App, PaletteToggleLayout};
+use crate::app::App;
 
 pub(super) struct PaletteRow {
     pub entry_idx: usize,
@@ -15,6 +15,7 @@ pub(super) struct PaletteRow {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum PaletteRowStyle {
+    SectionHeader,
     Action,
     Session,
     RemoteHost,
@@ -23,20 +24,23 @@ pub(super) enum PaletteRowStyle {
     SwitchSlot,
     DirectConnect,
     SlotSession,
+    ConnectRemotePrompt,
 }
 
 pub(crate) struct PaletteComponent {
     layout: super::super::CommandPaletteLayout,
-    toggle: Option<PaletteToggleLayout>,
     query: String,
     scroll_offset: usize,
     rows: Vec<PaletteRow>,
-    sessions_show_all: bool,
     total_entries: usize,
-    selected_idx: usize,
+    /// 1-based position among selectable entries (for footer display).
+    selectable_position: usize,
+    /// Total number of selectable entries (for footer display).
+    selectable_count: usize,
     show_no_matches: bool,
     loading_text: Option<String>,
     error_text: Option<String>,
+    remote_input_mode: bool,
 }
 
 fn truncate_label(label: &str, panel_w: f32, cw: f32) -> String {
@@ -55,7 +59,6 @@ impl PaletteComponent {
     pub fn capture(app: &App, cx: &UiContext<'_>) -> Option<Self> {
         let palette = app.core.command_palette.as_ref()?;
         let layout = app.command_palette_layout()?;
-        let toggle = app.command_palette_toggle_layout(layout);
         let scroll_offset = app.command_palette_scroll_offset(layout.visible_rows);
         let rows = palette
             .filtered
@@ -66,6 +69,9 @@ impl PaletteComponent {
             .map(|(vis_row, filt_idx)| {
                 let entry = &palette.entries[*filt_idx];
                 let style = match &entry.kind {
+                    super::super::PaletteEntryKind::SectionHeader(_) => {
+                        PaletteRowStyle::SectionHeader
+                    }
                     super::super::PaletteEntryKind::Action(_) => PaletteRowStyle::Action,
                     super::super::PaletteEntryKind::SwitchSession(_)
                     | super::super::PaletteEntryKind::KillSession(_) => PaletteRowStyle::Session,
@@ -82,6 +88,9 @@ impl PaletteComponent {
                     }
                     super::super::PaletteEntryKind::SlotSession { .. } => {
                         PaletteRowStyle::SlotSession
+                    }
+                    super::super::PaletteEntryKind::ConnectRemotePrompt => {
+                        PaletteRowStyle::ConnectRemotePrompt
                     }
                 };
                 PaletteRow {
@@ -103,18 +112,33 @@ impl PaletteComponent {
             .as_ref()
             .map(|(name, err)| format!("{}: {}", name, err));
 
+        // Compute selectable-only position and count for footer
+        let selectable_indices: Vec<usize> = palette
+            .filtered
+            .iter()
+            .enumerate()
+            .filter(|(_, i)| palette.entries[**i].kind.is_selectable())
+            .map(|(pos, _)| pos)
+            .collect();
+        let selectable_count = selectable_indices.len();
+        let selectable_position = selectable_indices
+            .iter()
+            .position(|&pos| pos == palette.selected_idx)
+            .map(|p| p + 1)
+            .unwrap_or(0);
+
         Some(Self {
             layout,
-            toggle,
             query: palette.query.clone(),
             rows,
-            sessions_show_all: palette.sessions_show_all,
             scroll_offset,
             total_entries: palette.filtered.len(),
-            selected_idx: palette.selected_idx,
-            show_no_matches: palette.filtered.is_empty() && !palette.query.is_empty(),
+            selectable_position,
+            selectable_count,
+            show_no_matches: palette.filtered.is_empty() && !palette.query.is_empty() && !palette.remote_input_mode,
             loading_text,
             error_text,
+            remote_input_mode: palette.remote_input_mode,
         })
     }
 
@@ -126,14 +150,6 @@ impl PaletteComponent {
         {
             return UiPaletteHit::None;
         }
-        if let Some(toggle) = self.toggle
-            && mx >= toggle.bg_x
-            && mx <= toggle.bg_x + toggle.bg_w
-            && my >= toggle.bg_y
-            && my <= toggle.bg_y + toggle.bg_h
-        {
-            return UiPaletteHit::Toggle;
-        }
         if my < self.layout.sep_y {
             return UiPaletteHit::Panel;
         }
@@ -143,6 +159,10 @@ impl PaletteComponent {
         if vis_row >= self.rows.len() {
             return UiPaletteHit::Panel;
         }
+        // Section headers are not clickable
+        if self.rows[vis_row].style == PaletteRowStyle::SectionHeader {
+            return UiPaletteHit::Panel;
+        }
         UiPaletteHit::Entry(self.rows[vis_row].entry_idx)
     }
 }
@@ -150,7 +170,6 @@ impl PaletteComponent {
 impl UiComponent for PaletteComponent {
     fn click(&self, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
         match self.hit_test(mx, my) {
-            UiPaletteHit::Toggle => Some(UiAction::ToggleSessionPaletteScope),
             UiPaletteHit::Entry(entry_idx) => Some(UiAction::ExecutePaletteEntry(entry_idx)),
             UiPaletteHit::Panel => None,
             UiPaletteHit::None => Some(UiAction::ClosePalette),
@@ -191,25 +210,23 @@ impl UiComponent for PaletteComponent {
             ui.abs_rect(rx, ry, pw, input_row_h, [bg_color[0] + 0.05, bg_color[1] + 0.05, bg_color[2] + 0.05, 1.0]);
             let text_y = ry + (input_row_h - cx.cell_h) * 0.5;
 
-            // "> query" text
-            let input_text = format!("> {}", self.query);
+            // "> query" text (with placeholder in remote input mode)
+            let input_text = if self.remote_input_mode {
+                format!("SSH> {}", self.query)
+            } else {
+                format!("> {}", self.query)
+            };
             ui.abs_text(&input_text, rx + text_pad, text_y, fg_color);
+
+            // Placeholder hint when query is empty in remote input mode
+            if self.remote_input_mode && self.query.is_empty() {
+                let hint_x = rx + text_pad + ui.text_width(&input_text);
+                ui.abs_text("user@host[:port]", hint_x, text_y, dim_color);
+            }
 
             // Cursor
             let cursor_x = rx + text_pad + ui.text_width(&input_text);
             ui.abs_rect(cursor_x, text_y, 2.0, cx.cell_h, [fg_color[0], fg_color[1], fg_color[2], 0.8]);
-
-            // Toggle button (ALL/ACTIVE)
-            if let Some(toggle) = self.toggle {
-                let toggle_label = if self.sessions_show_all { " ALL " } else { " ACTIVE " };
-                let toggle_bg = if self.sessions_show_all {
-                    [accent[0], accent[1], accent[2], 0.22]
-                } else {
-                    [accent[0], accent[1], accent[2], 0.12]
-                };
-                ui.abs_rect(toggle.bg_x, toggle.bg_y, toggle.bg_w, toggle.bg_h, toggle_bg);
-                ui.abs_text(toggle_label, toggle.label_x, text_y, fg_color);
-            }
         });
 
         // Separator
@@ -220,25 +237,34 @@ impl UiComponent for PaletteComponent {
         for row in &self.rows {
             ui.horizontal(Some(pw), row_h, 0.0, |ui| {
                 let (rx, ry) = ui.cursor_pos();
-                // Selection/hover background
-                if row.is_selected {
-                    ui.abs_rect(rx, ry, pw, row_h, selected_bg);
-                } else if row.is_hovered {
-                    ui.abs_rect(rx, ry, pw, row_h, hovered_bg);
-                }
-                // Row label (colored by entry kind)
-                let color = if row.is_selected || row.is_hovered {
-                    fg_color
+
+                if row.style == PaletteRowStyle::SectionHeader {
+                    // Section header: dim text with "── title ──" format, no selection bg
+                    let header_text = format!("── {} ──", row.label);
+                    ui.abs_text(&header_text, rx + text_pad, ry + 2.0, dim_color);
                 } else {
-                    match row.style {
-                        PaletteRowStyle::Action | PaletteRowStyle::Session => dim_color,
-                        PaletteRowStyle::RemoteHost | PaletteRowStyle::DirectConnect => remote_host_color,
-                        PaletteRowStyle::RemoteSession | PaletteRowStyle::SlotSession => remote_session_color,
-                        PaletteRowStyle::SshShell => ssh_color,
-                        PaletteRowStyle::SwitchSlot => slot_color,
+                    // Selection/hover background
+                    if row.is_selected {
+                        ui.abs_rect(rx, ry, pw, row_h, selected_bg);
+                    } else if row.is_hovered {
+                        ui.abs_rect(rx, ry, pw, row_h, hovered_bg);
                     }
-                };
-                ui.abs_text(&row.label, rx + text_pad, ry + 2.0, color);
+                    // Row label (colored by entry kind)
+                    let color = if row.is_selected || row.is_hovered {
+                        fg_color
+                    } else {
+                        match row.style {
+                            PaletteRowStyle::SectionHeader => unreachable!(),
+                            PaletteRowStyle::Action | PaletteRowStyle::Session => dim_color,
+                            PaletteRowStyle::RemoteHost | PaletteRowStyle::DirectConnect => remote_host_color,
+                            PaletteRowStyle::RemoteSession | PaletteRowStyle::SlotSession => remote_session_color,
+                            PaletteRowStyle::SshShell => ssh_color,
+                            PaletteRowStyle::SwitchSlot => slot_color,
+                            PaletteRowStyle::ConnectRemotePrompt => remote_host_color,
+                        }
+                    };
+                    ui.abs_text(&row.label, rx + text_pad, ry + 2.0, color);
+                }
             });
         }
 
@@ -256,9 +282,9 @@ impl UiComponent for PaletteComponent {
             ui.abs_rect(track_x, thumb_y, track_w, thumb_h, [accent[0], accent[1], accent[2], 0.65]);
         }
 
-        // Footer counter
-        let footer = if self.total_entries > 0 {
-            format!("{}/{}", self.selected_idx + 1, self.total_entries)
+        // Footer counter (selectable entries only, excludes section headers)
+        let footer = if self.selectable_count > 0 {
+            format!("{}/{}", self.selectable_position, self.selectable_count)
         } else {
             "0/0".to_string()
         };

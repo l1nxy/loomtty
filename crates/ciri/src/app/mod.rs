@@ -69,15 +69,6 @@ pub(crate) struct CommandPaletteLayout {
     pub sep_y: f32,
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct PaletteToggleLayout {
-    pub bg_x: f32,
-    pub bg_y: f32,
-    pub bg_w: f32,
-    pub bg_h: f32,
-    pub label_x: f32,
-}
-
 /// Reusable render buffers (cleared each frame).
 pub(crate) struct RenderBuffers {
     pub bg_rects: Vec<Rect>,
@@ -131,9 +122,6 @@ impl App {
     const COMMAND_PALETTE_INPUT_PAD_X: f32 = 8.0;
     const COMMAND_PALETTE_INPUT_PAD_Y: f32 = 4.0;
     const COMMAND_PALETTE_BOTTOM_PAD: f32 = 4.0;
-    const COMMAND_PALETTE_TOGGLE_RIGHT_PAD: f32 = 16.0;
-    const COMMAND_PALETTE_TOGGLE_TOP_PAD: f32 = 3.0;
-    const COMMAND_PALETTE_TOGGLE_SIDE_PAD: f32 = 4.0;
 
     fn transformed_tile_rect_for_zoom(
         tile_rect: GeoRect,
@@ -350,6 +338,8 @@ impl App {
                 return;
             }
         };
+        // Clean up cached session data for this slot
+        self.core.cached_slot_sessions.remove(target_id);
 
         // Save current state to background
         if let Some(current) = self.save_current_to_slot() {
@@ -419,6 +409,34 @@ impl App {
                 self.core.config.window.title, self.core.session_name, host
             ));
         }
+    }
+
+    /// Parse a `user@host[:ssh_port]` string and connect.
+    /// Uses default remote port (7890) and session name "default".
+    pub fn connect_remote_from_input(&mut self, input: &str) {
+        let input = input.trim();
+        // Parse optional :port suffix (ssh port)
+        let (host, ssh_port) = if let Some(colon) = input.rfind(':') {
+            if let Ok(port) = input[colon + 1..].parse::<u16>() {
+                (&input[..colon], port)
+            } else {
+                (input, 22)
+            }
+        } else {
+            (input, 22)
+        };
+
+        if host.is_empty() {
+            return;
+        }
+
+        let remote_port = 7890;
+        self.connect_remote_session(
+            host.to_string(),
+            remote_port,
+            ssh_port,
+            "default".to_string(),
+        );
     }
 
     /// Cycle to the next background connection slot.
@@ -519,38 +537,6 @@ impl App {
             text_x,
             text_y,
             sep_y,
-        })
-    }
-
-    pub(crate) fn command_palette_toggle_layout(
-        &self,
-        layout: CommandPaletteLayout,
-    ) -> Option<PaletteToggleLayout> {
-        let palette = self.core.command_palette.as_ref()?;
-        if !palette.sessions_only {
-            return None;
-        }
-
-        let (cw, ch) = self.cell_dimensions();
-        let active_label_w = " ACTIVE ".len() as f32 * cw;
-        let label = if palette.sessions_show_all {
-            " ALL "
-        } else {
-            " ACTIVE "
-        };
-        let label_w = label.len() as f32 * cw;
-        let bg_w = active_label_w + Self::COMMAND_PALETTE_TOGGLE_SIDE_PAD * 2.0;
-        let bg_x = layout.panel_x + layout.panel_w - bg_w - Self::COMMAND_PALETTE_TOGGLE_RIGHT_PAD;
-        let bg_y = layout.panel_y + Self::COMMAND_PALETTE_TOGGLE_TOP_PAD;
-        let label_x =
-            bg_x + Self::COMMAND_PALETTE_TOGGLE_SIDE_PAD + (active_label_w - label_w) * 0.5;
-
-        Some(PaletteToggleLayout {
-            bg_x,
-            bg_y,
-            bg_w,
-            bg_h: ch + 6.0,
-            label_x,
         })
     }
 

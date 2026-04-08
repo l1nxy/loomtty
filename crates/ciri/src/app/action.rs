@@ -254,24 +254,56 @@ impl App {
 
             // ── Command palette ──
             Action::CloseCommandPalette => {
-                self.core.command_palette = None;
+                // In remote input mode, Escape returns to the normal palette
+                if self
+                    .core
+                    .command_palette
+                    .as_ref()
+                    .is_some_and(|p| p.remote_input_mode)
+                {
+                    let sessions_only = self
+                        .core
+                        .command_palette
+                        .as_ref()
+                        .is_some_and(|p| p.sessions_only);
+                    if sessions_only {
+                        self.open_session_palette();
+                    } else {
+                        self.open_command_palette();
+                    }
+                } else {
+                    self.core.command_palette = None;
+                }
             }
             Action::PaletteUp => {
                 if let Some(palette) = &mut self.core.command_palette
                     && !palette.filtered.is_empty()
                 {
-                    palette.selected_idx = if palette.selected_idx == 0 {
-                        palette.filtered.len() - 1
-                    } else {
-                        palette.selected_idx - 1
-                    };
+                    let len = palette.filtered.len();
+                    let mut idx = palette.selected_idx;
+                    for _ in 0..len {
+                        idx = if idx == 0 { len - 1 } else { idx - 1 };
+                        if palette.entries[palette.filtered[idx]].kind.is_selectable() {
+                            palette.selected_idx = idx;
+                            break;
+                        }
+                    }
+                    // If no selectable entry found, selected_idx stays unchanged
                 }
             }
             Action::PaletteDown => {
                 if let Some(palette) = &mut self.core.command_palette
                     && !palette.filtered.is_empty()
                 {
-                    palette.selected_idx = (palette.selected_idx + 1) % palette.filtered.len();
+                    let len = palette.filtered.len();
+                    let mut idx = palette.selected_idx;
+                    for _ in 0..len {
+                        idx = (idx + 1) % len;
+                        if palette.entries[palette.filtered[idx]].kind.is_selectable() {
+                            palette.selected_idx = idx;
+                            break;
+                        }
+                    }
                 }
             }
             Action::PaletteConfirm => {
@@ -418,11 +450,33 @@ impl App {
         let Some(palette) = &self.core.command_palette else {
             return;
         };
-        let keep_open = palette
+
+        // Remote input mode: parse query as user@host[:port] and connect
+        if palette.remote_input_mode {
+            let query = palette.query.trim().to_string();
+            if query.is_empty() {
+                return;
+            }
+            self.core.command_palette = None;
+            self.connect_remote_from_input(&query);
+            return;
+        }
+
+        // Don't execute non-selectable entries (section headers)
+        let entry = palette
             .filtered
             .get(palette.selected_idx)
-            .and_then(|&idx| palette.entries.get(idx))
-            .is_some_and(|e| matches!(e.kind, super::PaletteEntryKind::RemoteHost { .. }));
+            .and_then(|&idx| palette.entries.get(idx));
+        let Some(entry) = entry else { return };
+        if !entry.kind.is_selectable() {
+            return;
+        }
+
+        let keep_open = matches!(
+            entry.kind,
+            super::PaletteEntryKind::RemoteHost { .. }
+                | super::PaletteEntryKind::ConnectRemotePrompt
+        );
         if let Some(&entry_idx) = palette.filtered.get(palette.selected_idx) {
             self.execute_palette_entry(entry_idx);
         }

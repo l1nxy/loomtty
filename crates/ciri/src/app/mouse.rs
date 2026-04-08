@@ -752,7 +752,22 @@ impl App {
         if steps != 0 {
             let len = palette.filtered.len() as isize;
             let current = palette.selected_idx as isize;
-            palette.selected_idx = (current + steps).clamp(0, len - 1) as usize;
+            let mut idx = (current + steps).clamp(0, len - 1) as usize;
+            // Skip past SectionHeader entries in the scroll direction
+            let dir: isize = if steps > 0 { 1 } else { -1 };
+            let ulen = len as usize;
+            for _ in 0..ulen {
+                if palette.entries[palette.filtered[idx]].kind.is_selectable() {
+                    break;
+                }
+                let next = idx as isize + dir;
+                if next < 0 || next >= len {
+                    idx = palette.selected_idx; // Can't skip further, stay put
+                    break;
+                }
+                idx = next as usize;
+            }
+            palette.selected_idx = idx;
             palette.hovered_idx = None;
             self.request_mouse_redraw();
         }

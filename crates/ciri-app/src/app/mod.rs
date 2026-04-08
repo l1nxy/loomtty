@@ -13,7 +13,7 @@ use ciri_layout::geometry::ViewSize;
 use ciri_layout::workspace_set::WorkspaceSet;
 use ciri_protocol::message::ClientMessage;
 use crossbeam_channel::{Receiver, Sender};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use ciri_anim::manager::AnimationManager;
@@ -88,6 +88,14 @@ pub struct AppModel {
     pub slot_session_pending: std::collections::HashSet<String>,
     /// When the current batch of slot session queries was started.
     pub slot_session_query_start: Option<Instant>,
+
+    /// Cached local sessions from the most recent SessionList response.
+    pub cached_local_sessions: Vec<ciri_protocol::message::SessionInfo>,
+    /// Cached per-slot sessions from background slot queries.
+    /// BTreeMap ensures deterministic iteration order by slot ID.
+    pub cached_slot_sessions: BTreeMap<String, Vec<ciri_protocol::message::SessionInfo>>,
+    /// Cached remote host probe results, keyed by host address.
+    pub cached_remote_probes: BTreeMap<String, RemoteProbeResult>,
 }
 
 impl AppModel {
@@ -199,6 +207,9 @@ impl AppModel {
             buffered_events: std::collections::VecDeque::new(),
             slot_session_pending: std::collections::HashSet::new(),
             slot_session_query_start: None,
+            cached_local_sessions: Vec::new(),
+            cached_slot_sessions: BTreeMap::new(),
+            cached_remote_probes: BTreeMap::new(),
         }
     }
 
@@ -278,6 +289,10 @@ impl AppModel {
     pub fn mark_disconnected_for_reconnect(&mut self) {
         log::warn!("disconnected from server");
         self.connected = false;
+        // Clear session caches — server state is unknown after disconnect
+        self.cached_local_sessions.clear();
+        self.cached_slot_sessions.clear();
+        self.cached_remote_probes.clear();
         for grid in self.pane_grids.values_mut() {
             grid.dirty = true;
         }

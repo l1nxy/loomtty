@@ -265,49 +265,30 @@ impl App {
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::SessionList { sessions }) => {
-                        if let Some(palette) = &mut self.core.command_palette {
-                            if palette.sessions_only {
-                                // Keep SlotSession entries from background slot queries
-                                palette.entries.retain(|e| {
-                                    matches!(e.kind, super::PaletteEntryKind::SlotSession { .. })
-                                });
-                            } else {
-                                // Remove old session/connection entries, keep actions,
-                                // remote probe results, and background slot session entries.
-                                palette.entries.retain(|e| {
-                                    matches!(
-                                        e.kind,
-                                        super::PaletteEntryKind::Action(_)
-                                            | super::PaletteEntryKind::RemoteSession { .. }
-                                            | super::PaletteEntryKind::SshShell { .. }
-                                            | super::PaletteEntryKind::SlotSession { .. }
-                                    )
-                                });
-                            }
-                            for s in &sessions {
-                                palette.entries.push(super::PaletteEntry {
-                                    label: format!("Switch to: {}", s.name),
-                                    kind: super::PaletteEntryKind::SwitchSession(s.name.clone()),
-                                });
-                                if !palette.sessions_only && s.running {
-                                    palette.entries.push(super::PaletteEntry {
-                                        label: format!("Kill: {}", s.name),
-                                        kind: super::PaletteEntryKind::KillSession(s.name.clone()),
-                                    });
-                                }
-                            }
+                        // Update cache with only running sessions
+                        self.core.cached_local_sessions =
+                            sessions.into_iter().filter(|s| s.running).collect();
+                        // Rebuild palette entries from cache if palette is open
+                        if self.core.command_palette.is_some() {
+                            self.core.rebuild_palette_entries();
                         }
-                        // Append background slots + remote hosts, then re-filter.
-                        self.core.append_connection_entries();
-                        self.filter_palette();
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::SessionSwitched { session_name }) => {
                         self.core.pending_session_name = Some(session_name);
                         needs_redraw = true;
                     }
-                    ServerEvent::Control(ServerMessage::SessionKilled { .. })
-                    | ServerEvent::Control(ServerMessage::TemplateApplied { .. })
+                    ServerEvent::Control(ServerMessage::SessionKilled { session_name }) => {
+                        // Remove killed session from cache and rebuild palette
+                        self.core
+                            .cached_local_sessions
+                            .retain(|s| s.name != session_name);
+                        if self.core.command_palette.is_some() {
+                            self.core.rebuild_palette_entries();
+                        }
+                        needs_redraw = true;
+                    }
+                    ServerEvent::Control(ServerMessage::TemplateApplied { .. })
                     | ServerEvent::Control(ServerMessage::TemplateList { .. })
                     | ServerEvent::Control(ServerMessage::TemplateSaved { .. })
                     | ServerEvent::Control(ServerMessage::Error { .. }) => {

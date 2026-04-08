@@ -14,11 +14,6 @@ impl App {
         self.core.open_session_palette();
     }
 
-    /// Delegate: refresh session palette.
-    pub fn refresh_session_palette(&mut self) {
-        self.core.refresh_session_palette();
-    }
-
     /// Execute a palette entry — some entries require shell access (clipboard, window, connection).
     pub(crate) fn execute_palette_entry(&mut self, entry_idx: usize) {
         let Some(palette) = &self.core.command_palette else {
@@ -28,6 +23,9 @@ impl App {
             return;
         };
         match entry.kind.clone() {
+            PaletteEntryKind::SectionHeader(_) => {
+                // Non-selectable — should never be reached
+            }
             PaletteEntryKind::Action(action) => {
                 self.handle_action(action);
             }
@@ -94,6 +92,17 @@ impl App {
                 self.switch_to_slot(&slot_id);
                 self.send(ClientMessage::SwitchSession { session_name });
             }
+            PaletteEntryKind::ConnectRemotePrompt => {
+                // Switch palette to remote input mode
+                if let Some(palette) = &mut self.core.command_palette {
+                    palette.remote_input_mode = true;
+                    palette.query.clear();
+                    palette.entries.clear();
+                    palette.filtered.clear();
+                    palette.selected_idx = 0;
+                    palette.hovered_idx = None;
+                }
+            }
         }
     }
 
@@ -104,7 +113,8 @@ impl App {
 
     /// Poll background slot `server_rx` channels for `SessionList` responses.
     /// Non-SessionList events are buffered into `slot.pending_events` for replay.
-    pub fn poll_slot_sessions(&mut self) {
+    /// Returns `true` if any results were processed (palette needs redraw).
+    pub fn poll_slot_sessions(&mut self) -> bool {
         use crate::connection::ServerEvent;
         use ciri_protocol::message::{ServerMessage, SessionInfo};
 
@@ -142,9 +152,12 @@ impl App {
             }
         }
 
-        // Clean up dead/removed slots
+        let changed = !results.is_empty() || !dead_slots.is_empty();
+
+        // Clean up dead/removed slots and their cached session data
         for slot_id in dead_slots {
             self.core.slot_session_pending.remove(&slot_id);
+            self.core.cached_slot_sessions.remove(&slot_id);
         }
 
         // Apply collected results
@@ -152,6 +165,7 @@ impl App {
             self.core.slot_session_pending.remove(&slot_id);
             self.core.apply_slot_session_result(&slot_id, sessions);
         }
+        changed
     }
 
     /// Delegate: filter palette entries.

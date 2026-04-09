@@ -1,6 +1,6 @@
 //! Legacy VT escape sequence encoding (CSI ~, SS3, etc.)
 
-use winit::keyboard::{Key, NamedKey};
+use winit::keyboard::{Key, KeyLocation, NamedKey};
 
 use super::{encode_legacy_c0_key, key_event_base_char, key_event_text_for_input};
 
@@ -9,7 +9,20 @@ pub(crate) fn key_event_to_pty_bytes(
     ctrl: bool,
     shift: bool,
     alt: bool,
+    app_cursor: bool,
+    app_keypad: bool,
 ) -> Vec<u8> {
+    // Numpad keys in application keypad mode (DECKPAM): send SS3 sequences.
+    // Must be checked before C0 / named-key handling so numpad Enter doesn't
+    // fall through to the regular Enter → CR path.
+    // Only bare keys use SS3; Ctrl/Shift modifiers fall through to the normal
+    // encoding path so the modifier semantics are preserved.
+    if app_keypad && !ctrl && !shift && event.location == KeyLocation::Numpad {
+        if let Some(ss3) = numpad_app_keypad_byte(event) {
+            return super::with_meta_prefix(format!("\x1bO{}", ss3 as char).into_bytes(), alt);
+        }
+    }
+
     if let Key::Named(key) = &event.logical_key {
         if let Some(bytes) = encode_legacy_c0_key(key, ctrl, shift, alt, false /* not kitty */) {
             return bytes;
@@ -20,12 +33,13 @@ pub(crate) fn key_event_to_pty_bytes(
 
         match key {
             // CSI 1 ; modifier letter  (arrows, Home, End)
-            NamedKey::ArrowUp => return legacy_csi_special('A', mod_val),
-            NamedKey::ArrowDown => return legacy_csi_special('B', mod_val),
-            NamedKey::ArrowRight => return legacy_csi_special('C', mod_val),
-            NamedKey::ArrowLeft => return legacy_csi_special('D', mod_val),
-            NamedKey::Home => return legacy_csi_special('H', mod_val),
-            NamedKey::End => return legacy_csi_special('F', mod_val),
+            // When DECCKM (app_cursor) is active and no modifiers, use SS3 (ESC O).
+            NamedKey::ArrowUp => return legacy_csi_special('A', mod_val, app_cursor),
+            NamedKey::ArrowDown => return legacy_csi_special('B', mod_val, app_cursor),
+            NamedKey::ArrowRight => return legacy_csi_special('C', mod_val, app_cursor),
+            NamedKey::ArrowLeft => return legacy_csi_special('D', mod_val, app_cursor),
+            NamedKey::Home => return legacy_csi_special('H', mod_val, app_cursor),
+            NamedKey::End => return legacy_csi_special('F', mod_val, app_cursor),
             // CSI number ; modifier ~  (tilde keys)
             NamedKey::PageUp => return legacy_csi_tilde(5, mod_val),
             NamedKey::PageDown => return legacy_csi_tilde(6, mod_val),
@@ -62,6 +76,35 @@ pub(crate) fn key_event_to_pty_bytes(
     vec![]
 }
 
+/// Map a numpad key event to its DECKPAM SS3 suffix byte (VT220 standard).
+/// Returns None if the key isn't a recognized numpad key.
+fn numpad_app_keypad_byte(event: &winit::event::KeyEvent) -> Option<u8> {
+    match &event.logical_key {
+        Key::Character(c) => match c.as_str() {
+            "0" => Some(b'p'),
+            "1" => Some(b'q'),
+            "2" => Some(b'r'),
+            "3" => Some(b's'),
+            "4" => Some(b't'),
+            "5" => Some(b'u'),
+            "6" => Some(b'v'),
+            "7" => Some(b'w'),
+            "8" => Some(b'x'),
+            "9" => Some(b'y'),
+            "." => Some(b'n'),
+            "/" => Some(b'o'),
+            "*" => Some(b'j'),
+            "-" => Some(b'm'),
+            "+" => Some(b'k'),
+            "," => Some(b'l'),
+            "=" => Some(b'X'),
+            _ => None,
+        },
+        Key::Named(NamedKey::Enter) => Some(b'M'),
+        _ => None,
+    }
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────
 
 /// Compute xterm-style modifier value: 1 + (shift=1 | alt=2 | ctrl=4).
@@ -81,10 +124,14 @@ pub(super) fn legacy_modifier_value(ctrl: bool, shift: bool, alt: bool) -> u8 {
 }
 
 /// CSI 1 ; modifier letter  (e.g. arrows, Home, End)
-/// Without modifiers: CSI letter
-pub(super) fn legacy_csi_special(suffix: char, mod_val: u8) -> Vec<u8> {
+/// Without modifiers: CSI letter (normal) or SS3 letter (application cursor keys).
+pub(super) fn legacy_csi_special(suffix: char, mod_val: u8, app_cursor: bool) -> Vec<u8> {
     if mod_val > 0 {
+        // Modifiers always use CSI form, even in application mode.
         format!("\x1b[1;{mod_val}{suffix}").into_bytes()
+    } else if app_cursor {
+        // DECCKM active: use SS3 (ESC O) prefix.
+        format!("\x1bO{suffix}").into_bytes()
     } else {
         format!("\x1b[{suffix}").into_bytes()
     }

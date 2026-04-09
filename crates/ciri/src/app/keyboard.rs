@@ -380,8 +380,9 @@ impl App {
             .active_pane_id()
             .and_then(|pid| self.core.pane_grids.get(&pid));
         let kitty_flags = active_grid.map(|g| g.kitty_flags).unwrap_or(0);
+        let mode_flags = active_grid.map(|g| g.mode_flags).unwrap_or(0);
         let password_mode = active_grid.is_some_and(|g| g.password_input);
-        let bytes = self.encode_key_input(event, modifiers, kitty_flags);
+        let bytes = self.encode_key_input(event, modifiers, kitty_flags, mode_flags);
         if bytes.is_empty() {
             return;
         }
@@ -416,10 +417,16 @@ impl App {
                         .get(&pid)
                         .map(|g| g.kitty_flags)
                         .unwrap_or(0);
-                    let pane_bytes = if pane_kitty_flags == kitty_flags {
+                    let pane_mode_flags = self
+                        .core
+                        .pane_grids
+                        .get(&pid)
+                        .map(|g| g.mode_flags)
+                        .unwrap_or(0);
+                    let pane_bytes = if pane_kitty_flags == kitty_flags && pane_mode_flags == mode_flags {
                         bytes.clone()
                     } else {
-                        self.encode_key_input(event, modifiers, pane_kitty_flags)
+                        self.encode_key_input(event, modifiers, pane_kitty_flags, pane_mode_flags)
                     };
                     self.send(ClientMessage::Input {
                         pane_id: pid,
@@ -453,6 +460,7 @@ impl App {
         event: &winit::event::KeyEvent,
         modifiers: KeyModifiers,
         kitty_flags: u16,
+        mode_flags: u16,
     ) -> Vec<u8> {
         if kitty_flags & ciri_protocol::message::MODE_KITTY_KEYBOARD != 0 {
             key_event_to_kitty_bytes(
@@ -466,7 +474,9 @@ impl App {
                 kitty_flags,
             )
         } else {
-            key_event_to_pty_bytes(event, modifiers.ctrl, modifiers.shift, modifiers.alt)
+            let app_cursor = mode_flags & ciri_protocol::message::MODE_APP_CURSOR != 0;
+            let app_keypad = mode_flags & ciri_protocol::message::MODE_APP_KEYPAD != 0;
+            key_event_to_pty_bytes(event, modifiers.ctrl, modifiers.shift, modifiers.alt, app_cursor, app_keypad)
         }
     }
 

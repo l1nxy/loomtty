@@ -242,6 +242,7 @@ impl ClientPaneGrid {
     pub fn apply_delta_borrowed(&mut self, delta: &CellDeltaBorrowed) {
         // Track if cursor moved (old and new cursor rows need redraw)
         let old_cursor_line = self.cursor_line;
+        let old_mode_flags = self.mode_flags;
 
         self.cursor_line = delta.meta.cursor_line;
         self.cursor_col = delta.meta.cursor_col;
@@ -286,6 +287,11 @@ impl ClientPaneGrid {
         }
         if delta.meta.cursor_line >= 0 {
             self.mark_row_dirty(delta.meta.cursor_line as usize);
+        }
+        // mode_flags change (e.g. DECCKM toggle) doesn't produce cell damage
+        // but still needs a redraw so the input encoder picks up the new state.
+        if old_mode_flags != delta.meta.mode_flags {
+            self.dirty = true;
         }
     }
 }

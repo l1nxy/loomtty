@@ -157,9 +157,22 @@ fn legacy_modifier_value_computation() {
 
 #[test]
 fn legacy_arrow_keys_with_modifiers() {
-    assert_eq!(legacy_csi_special('A', 0), b"\x1b[A");
-    assert_eq!(legacy_csi_special('A', 2), b"\x1b[1;2A");
-    assert_eq!(legacy_csi_special('C', 5), b"\x1b[1;5C");
+    assert_eq!(legacy_csi_special('A', 0, false), b"\x1b[A");
+    assert_eq!(legacy_csi_special('A', 2, false), b"\x1b[1;2A");
+    assert_eq!(legacy_csi_special('C', 5, false), b"\x1b[1;5C");
+}
+
+#[test]
+fn legacy_arrow_keys_app_cursor_mode() {
+    // DECCKM active, no modifiers → SS3 prefix
+    assert_eq!(legacy_csi_special('A', 0, true), b"\x1bOA");
+    assert_eq!(legacy_csi_special('B', 0, true), b"\x1bOB");
+    assert_eq!(legacy_csi_special('C', 0, true), b"\x1bOC");
+    assert_eq!(legacy_csi_special('D', 0, true), b"\x1bOD");
+    assert_eq!(legacy_csi_special('H', 0, true), b"\x1bOH");
+    assert_eq!(legacy_csi_special('F', 0, true), b"\x1bOF");
+    // DECCKM active + modifiers → CSI form (modifiers override)
+    assert_eq!(legacy_csi_special('A', 2, true), b"\x1b[1;2A");
 }
 
 #[test]
@@ -178,13 +191,96 @@ fn legacy_f1_f4_with_modifiers() {
 #[test]
 fn legacy_shift_up_via_pty_bytes() {
     let event = named_key_event(NamedKey::ArrowUp, ElementState::Pressed, false);
-    assert_eq!(key_event_to_pty_bytes(&event, false, true, false), b"\x1b[1;2A");
+    assert_eq!(key_event_to_pty_bytes(&event, false, true, false, false, false), b"\x1b[1;2A");
 }
 
 #[test]
 fn legacy_ctrl_delete_via_pty_bytes() {
     let event = named_key_event(NamedKey::Delete, ElementState::Pressed, false);
-    assert_eq!(key_event_to_pty_bytes(&event, true, false, false), b"\x1b[3;5~");
+    assert_eq!(key_event_to_pty_bytes(&event, true, false, false, false, false), b"\x1b[3;5~");
+}
+
+#[test]
+fn legacy_arrow_up_app_cursor_via_pty_bytes() {
+    let event = named_key_event(NamedKey::ArrowUp, ElementState::Pressed, false);
+    // DECCKM on, no modifiers → SS3
+    assert_eq!(key_event_to_pty_bytes(&event, false, false, false, true, false), b"\x1bOA");
+    // DECCKM on, with shift → CSI (modifiers override app cursor)
+    assert_eq!(key_event_to_pty_bytes(&event, false, true, false, true, false), b"\x1b[1;2A");
+}
+
+// ── Application keypad (DECKPAM) tests ─────────────────────────────
+
+#[test]
+fn legacy_numpad_enter_app_keypad() {
+    let event = numpad_named_event(NamedKey::Enter, KeyCode::NumpadEnter);
+    // DECKPAM active → SS3 M
+    assert_eq!(key_event_to_pty_bytes(&event, false, false, false, false, true), b"\x1bOM");
+    // DECKPAM inactive → regular CR
+    assert_eq!(key_event_to_pty_bytes(&event, false, false, false, false, false), b"\r");
+}
+
+#[test]
+fn legacy_numpad_digits_app_keypad() {
+    let cases = [
+        ("0", KeyCode::Numpad0, b'p'),
+        ("1", KeyCode::Numpad1, b'q'),
+        ("5", KeyCode::Numpad5, b'u'),
+        ("9", KeyCode::Numpad9, b'y'),
+    ];
+    for (ch, code, ss3_byte) in cases {
+        let event = numpad_char_event(ch, code);
+        let expected = format!("\x1bO{}", ss3_byte as char).into_bytes();
+        assert_eq!(
+            key_event_to_pty_bytes(&event, false, false, false, false, true),
+            expected,
+            "numpad {ch} should produce SS3 {}", ss3_byte as char,
+        );
+    }
+}
+
+#[test]
+fn legacy_numpad_operators_app_keypad() {
+    let cases = [
+        ("+", KeyCode::NumpadAdd, b'k'),
+        ("-", KeyCode::NumpadSubtract, b'm'),
+        ("*", KeyCode::NumpadMultiply, b'j'),
+        ("/", KeyCode::NumpadDivide, b'o'),
+        (".", KeyCode::NumpadDecimal, b'n'),
+    ];
+    for (ch, code, ss3_byte) in cases {
+        let event = numpad_char_event(ch, code);
+        let expected = format!("\x1bO{}", ss3_byte as char).into_bytes();
+        assert_eq!(
+            key_event_to_pty_bytes(&event, false, false, false, false, true),
+            expected,
+            "numpad {ch} should produce SS3 {}", ss3_byte as char,
+        );
+    }
+}
+
+#[test]
+fn legacy_numpad_normal_mode_sends_text() {
+    // Without DECKPAM, numpad sends normal characters
+    let event = numpad_char_event("5", KeyCode::Numpad5);
+    assert_eq!(key_event_to_pty_bytes(&event, false, false, false, false, false), b"5");
+}
+
+#[test]
+fn legacy_numpad_app_keypad_with_modifier_falls_through() {
+    // Ctrl+Numpad5: modifier must not be silently dropped — fall through to normal path
+    let event = numpad_char_event("5", KeyCode::Numpad5);
+    // ctrl=true → should NOT produce SS3, should produce ctrl mapping for '5' (0x1d)
+    let ctrl_result = key_event_to_pty_bytes(&event, true, false, false, false, true);
+    assert_ne!(ctrl_result, b"\x1bOu", "Ctrl+Numpad5 must not produce bare SS3");
+
+    // Shift+Numpad5: should fall through, not produce SS3
+    let shift_result = key_event_to_pty_bytes(&event, false, true, false, false, true);
+    assert_ne!(shift_result, b"\x1bOu", "Shift+Numpad5 must not produce bare SS3");
+
+    // Alt+Numpad5: Alt is handled via meta prefix, SS3 with ESC prefix is acceptable
+    let alt_result = key_event_to_pty_bytes(&event, false, false, true, false, true);
+    assert_eq!(alt_result, b"\x1b\x1bOu", "Alt+Numpad5 should be ESC-prefixed SS3");
 }
 
 // ── Kitty protocol level 1 (DISAMBIGUATE) ───────────────────────────

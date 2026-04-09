@@ -557,6 +557,15 @@ impl Pane {
         if mode.contains(TermMode::BRACKETED_PASTE) {
             flags |= MODE_BRACKETED_PASTE;
         }
+        if mode.contains(TermMode::APP_CURSOR) {
+            flags |= MODE_APP_CURSOR;
+        }
+        if mode.contains(TermMode::APP_KEYPAD) {
+            flags |= MODE_APP_KEYPAD;
+        }
+        if mode.contains(TermMode::ALTERNATE_SCROLL) {
+            flags |= MODE_ALTERNATE_SCROLL;
+        }
         if self.parsers.dec_mode.focus_event_mode {
             flags |= MODE_FOCUS_EVENT;
         }

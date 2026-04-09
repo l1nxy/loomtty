@@ -889,6 +889,12 @@ pub const MODE_KITTY_REPORT_ALL: u16 = 0x0400;
 pub const MODE_KITTY_REPORT_TEXT: u16 = 0x0800;
 /// Password input detected (PTY ECHO disabled in canonical mode).
 pub const MODE_PASSWORD_INPUT: u16 = 0x1000;
+/// Application cursor keys (DECCKM / DECSET 1) — arrows/Home/End use SS3.
+pub const MODE_APP_CURSOR: u16 = 0x2000;
+/// Application keypad mode (DECKPAM / DECSET 66) — numpad sends SS3 sequences.
+pub const MODE_APP_KEYPAD: u16 = 0x4000;
+/// Alternate scroll mode (DECSET 1007) — mouse scroll in alt screen sends arrow keys.
+pub const MODE_ALTERNATE_SCROLL: u16 = 0x8000;
 
 /// Mask covering all kitty keyboard protocol flags.
 pub const MODE_KITTY_ALL: u16 = MODE_KITTY_KEYBOARD

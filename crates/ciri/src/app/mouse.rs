@@ -1,6 +1,6 @@
 use ciri_anim::spring::SpringParams;
 use ciri_protocol::message::ClientMessage;
-use ciri_protocol::message::{MODE_ALT_SCREEN, MODE_MOUSE_REPORT};
+use ciri_protocol::message::{MODE_ALT_SCREEN, MODE_ALTERNATE_SCROLL, MODE_MOUSE_REPORT};
 use std::time::Instant;
 use winit::dpi::PhysicalPosition;
 use winit::event::{MouseButton, MouseScrollDelta, TouchPhase};
@@ -819,13 +819,15 @@ impl App {
             .active_pane_id()
             .and_then(|pid| self.core.pane_grids.get(&pid))
             .is_some_and(|g| g.mode_flags & MODE_MOUSE_REPORT != 0);
-        let is_alt_screen = self
+        let active_grid = self
             .core
             .workspaces
             .active()
             .active_pane_id()
-            .and_then(|pid| self.core.pane_grids.get(&pid))
-            .is_some_and(|g| g.mode_flags & MODE_ALT_SCREEN != 0);
+            .and_then(|pid| self.core.pane_grids.get(&pid));
+        let is_alt_screen = active_grid.is_some_and(|g| g.mode_flags & MODE_ALT_SCREEN != 0);
+        let has_alternate_scroll =
+            active_grid.is_some_and(|g| g.mode_flags & MODE_ALTERNATE_SCROLL != 0);
 
         if self.handle_workspace_row_swipe(delta, phase, gestures_enabled) {
             return;
@@ -835,7 +837,7 @@ impl App {
             return;
         }
 
-        self.handle_discrete_scroll(delta, has_mouse, is_alt_screen);
+        self.handle_discrete_scroll(delta, has_mouse, is_alt_screen, has_alternate_scroll);
         self.handle_horizontal_gesture(delta, phase);
     }
 
@@ -948,6 +950,7 @@ impl App {
         delta: MouseScrollDelta,
         has_mouse: bool,
         is_alt_screen: bool,
+        has_alternate_scroll: bool,
     ) {
         let dy = match delta {
             MouseScrollDelta::LineDelta(_, y) => y as i32 * 3,
@@ -966,7 +969,7 @@ impl App {
 
         if has_mouse {
             self.forward_scroll_to_mouse_mode(dy);
-        } else if is_alt_screen {
+        } else if is_alt_screen && has_alternate_scroll {
             self.forward_scroll_to_alt_screen(dy);
         } else if dy > 0 {
             self.scroll_active_up(dy as usize);
@@ -1004,7 +1007,17 @@ impl App {
         let Some(pid) = self.core.workspaces.active().active_pane_id() else {
             return;
         };
-        let key = if dy > 0 { b"\x1b[A" } else { b"\x1b[B" };
+        let app_cursor = self
+            .core
+            .pane_grids
+            .get(&pid)
+            .is_some_and(|g| g.mode_flags & ciri_protocol::message::MODE_APP_CURSOR != 0);
+        let key: &[u8] = match (dy > 0, app_cursor) {
+            (true, false) => b"\x1b[A",
+            (true, true) => b"\x1bOA",
+            (false, false) => b"\x1b[B",
+            (false, true) => b"\x1bOB",
+        };
         let count = dy.unsigned_abs().min(10) as usize;
         for _ in 0..count {
             self.send(ClientMessage::Input {

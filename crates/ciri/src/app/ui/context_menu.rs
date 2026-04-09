@@ -97,14 +97,28 @@ impl UiComponent for ContextMenuComponent {
         let hover_bg = [accent[0], accent[1], accent[2], 0.12];
 
         let mut ui = UiBuilder::new_vertical(
-            self.x, self.y, self.menu_width, self.menu_height, 0.0,
-            0.0, 0.0, false, cx, scene,
+            self.x,
+            self.y,
+            self.menu_width,
+            self.menu_height,
+            0.0,
+            0.0,
+            0.0,
+            false,
+            cx,
+            scene,
         );
 
         // Shadow + border + background
         ui.bordered_panel_inset(
-            self.x, self.y, self.menu_width, self.menu_height,
-            bg_color, border_color, bw, true,
+            self.x,
+            self.y,
+            self.menu_width,
+            self.menu_height,
+            bg_color,
+            border_color,
+            bw,
+            true,
         );
 
         // Vertical item list inside the panel (after top padding)
@@ -125,7 +139,9 @@ impl UiComponent for ContextMenuComponent {
                     let (rx, ry) = ui.cursor_pos();
                     let text_y = ry + (item_h - cell_h) * 0.5;
                     ui.abs_text(
-                        &row.label, rx + padding, text_y,
+                        &row.label,
+                        rx + padding,
+                        text_y,
                         if row.enabled { fg_color } else { dim_color },
                     );
                 });

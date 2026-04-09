@@ -240,7 +240,12 @@ pub fn encode_full_pane_sync_framed(buf: &mut Vec<u8>, sync: &FullPaneSync) -> i
     write_full_pane_sync_grapheme_extras(buf, sync)?;
     write_full_pane_sync_hyperlink_extras(buf, sync)?;
     write_full_pane_sync_cwd(buf, sync)?;
-    finalize_frame_compression(buf, payload_start, TAG_FULL_PANE_SYNC, TAG_FULL_PANE_SYNC_LZ4);
+    finalize_frame_compression(
+        buf,
+        payload_start,
+        TAG_FULL_PANE_SYNC,
+        TAG_FULL_PANE_SYNC_LZ4,
+    );
     Ok(())
 }
 

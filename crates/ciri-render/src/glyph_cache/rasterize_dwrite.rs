@@ -146,7 +146,7 @@ impl DWriteRasterizer {
         if is_color {
             // For color glyphs, compute bounds from the font's design metrics
             // scaled to the requested pixel size.
-            return measure_color_glyph(face, glyph_id, pixel_size);
+            return measure_color_glyph(&self.factory, face, glyph_id, pixel_size);
         }
 
         let glyph_index = glyph_id as u16;
@@ -362,10 +362,30 @@ fn is_color_glyph(
 /// returns empty bounds.  Instead we read `GetDesignGlyphMetrics` and
 /// scale from design units to pixels.
 fn measure_color_glyph(
+    factory: &IDWriteFactory,
     face: &IDWriteFontFace,
     glyph_id: u32,
     pixel_size: f32,
 ) -> Option<MeasuredGlyph> {
+    let bounds = measure_color_glyph_bounds(factory, face, glyph_id, pixel_size)
+        .or_else(|| measure_color_glyph_design_bounds(face, glyph_id, pixel_size))?;
+    let w = (bounds.right - bounds.left) as u32;
+    let h = (bounds.bottom - bounds.top) as u32;
+
+    Some(MeasuredGlyph {
+        width: w,
+        height: h,
+        bearing_x: bounds.left as f32,
+        bearing_y: -bounds.top as f32,
+        is_color: true,
+    })
+}
+
+fn measure_color_glyph_design_bounds(
+    face: &IDWriteFontFace,
+    glyph_id: u32,
+    pixel_size: f32,
+) -> Option<RECT> {
     let glyph_index = glyph_id as u16;
     let mut metrics = DWRITE_GLYPH_METRICS::default();
     unsafe {
@@ -383,23 +403,23 @@ fn measure_color_glyph(
     let w = ((metrics.advanceWidth as i32 - metrics.leftSideBearing - metrics.rightSideBearing)
         as f32
         * scale)
-        .ceil() as u32;
+        .ceil() as i32;
     let h = ((metrics.advanceHeight as i32 - metrics.topSideBearing - metrics.bottomSideBearing)
         as f32
         * scale)
-        .ceil() as u32;
-
-    if w == 0 || h == 0 {
+        .ceil() as i32;
+    if w <= 0 || h <= 0 {
         return None;
     }
 
-    Some(MeasuredGlyph {
-        width: w,
-        height: h,
-        bearing_x: (metrics.leftSideBearing as f32 * scale).round(),
-        bearing_y: ((metrics.advanceHeight as i32 - metrics.topSideBearing) as f32 * scale)
-            .round(),
-        is_color: true,
+    let left = (metrics.leftSideBearing as f32 * scale).floor() as i32;
+    let top =
+        -((metrics.advanceHeight as i32 - metrics.topSideBearing) as f32 * scale).ceil() as i32;
+    Some(RECT {
+        left,
+        top,
+        right: left + w,
+        bottom: top + h,
     })
 }
 
@@ -561,6 +581,13 @@ fn rasterize_color_glyph(
     pixel_size: f32,
 ) -> Option<RasterizedGlyph> {
     let factory2: IDWriteFactory2 = factory.cast().ok()?;
+    let bounds = measure_color_glyph_bounds(factory, face, glyph_id, pixel_size)
+        .or_else(|| measure_color_glyph_design_bounds(face, glyph_id, pixel_size))?;
+    let w = (bounds.right - bounds.left) as u32;
+    let h = (bounds.bottom - bounds.top) as u32;
+    if w == 0 || h == 0 {
+        return None;
+    }
 
     let glyph_index = glyph_id as u16;
     let mut glyph_run = build_glyph_run(face, &glyph_index, pixel_size);
@@ -578,21 +605,10 @@ fn rasterize_color_glyph(
         )
     };
 
-    // Get total glyph bounds from the base outline.
-    let base_analysis = create_analysis(factory, &glyph_run, 0.0, 0.0);
-
     // Release the glyph run face clone now — both API calls have captured what they need.
     unsafe { ManuallyDrop::drop(&mut glyph_run.fontFace) };
 
     let enumerator = enumerator.ok()?;
-    let (bounds, _) = read_alpha_texture(&base_analysis?)?;
-
-    let w = (bounds.right - bounds.left) as u32;
-    let h = (bounds.bottom - bounds.top) as u32;
-    if w == 0 || h == 0 {
-        return None;
-    }
-
     let mut rgba = vec![0u8; (w * h * 4) as usize];
 
     // Iterate COLR layers and composite.
@@ -663,6 +679,70 @@ fn rasterize_color_glyph(
         is_color: true,
         data: rgba,
     })
+}
+
+fn measure_color_glyph_bounds(
+    factory: &IDWriteFactory,
+    face: &IDWriteFontFace,
+    glyph_id: u32,
+    pixel_size: f32,
+) -> Option<RECT> {
+    let factory2: IDWriteFactory2 = factory.cast().ok()?;
+    let glyph_index = glyph_id as u16;
+    let mut glyph_run = build_glyph_run(face, &glyph_index, pixel_size);
+    let enumerator = unsafe {
+        factory2.TranslateColorGlyphRun(
+            0.0,
+            0.0,
+            &glyph_run,
+            None,
+            DWRITE_MEASURING_MODE_NATURAL,
+            None,
+            0,
+        )
+    };
+    let enumerator = enumerator.ok()?;
+    let mut bounds = None;
+
+    loop {
+        let has_next = unsafe { enumerator.MoveNext() };
+        if has_next.is_err() || !has_next.unwrap().as_bool() {
+            break;
+        }
+
+        let color_run_ptr = match unsafe { enumerator.GetCurrentRun() } {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        let color_run = unsafe { &*color_run_ptr };
+        let Some(layer_analysis) = create_analysis(
+            factory,
+            &color_run.glyphRun,
+            color_run.baselineOriginX,
+            color_run.baselineOriginY,
+        ) else {
+            continue;
+        };
+        let Some((layer_bounds, _)) = read_alpha_texture(&layer_analysis) else {
+            continue;
+        };
+        bounds = Some(match bounds {
+            Some(cur) => union_rect(cur, layer_bounds),
+            None => layer_bounds,
+        });
+    }
+
+    unsafe { ManuallyDrop::drop(&mut glyph_run.fontFace) };
+    bounds
+}
+
+fn union_rect(a: RECT, b: RECT) -> RECT {
+    RECT {
+        left: a.left.min(b.left),
+        top: a.top.min(b.top),
+        right: a.right.max(b.right),
+        bottom: a.bottom.max(b.bottom),
+    }
 }
 
 /// Alpha-over composite a single-channel alpha layer into an RGBA buffer.

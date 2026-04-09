@@ -1,11 +1,11 @@
 //! Benchmarks for protocol decode hot paths.
 
-use criterion::{Criterion, criterion_group, criterion_main};
 use ciri_protocol::codec::{
     StateEncoder, decode_cell_delta_borrowed, decode_full_pane_sync, decode_sm_cells,
     encode_cell_delta_streaming_framed, encode_full_pane_sync_payload,
 };
 use ciri_protocol::message::*;
+use criterion::{Criterion, criterion_group, criterion_main};
 
 // ─── Test data builders ─────────────────────────────────────────────
 
@@ -56,8 +56,7 @@ fn extract_payload(frame_buf: &[u8], lz4_tag: u8) -> Vec<u8> {
     let tag = frame_buf[0];
     let raw = &frame_buf[5..];
     if tag == lz4_tag {
-        let ulen =
-            u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]) as usize;
+        let ulen = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]) as usize;
         lz4_flex::decompress(&raw[4..], ulen).unwrap()
     } else {
         raw.to_vec()
@@ -101,9 +100,8 @@ fn bench_cell_delta_decode(c: &mut Criterion) {
             mode_flags: 0,
             echo_ack: 100,
         };
-        let region_list: Vec<(u16, u16, u16)> = (0..regions as u16)
-            .map(|i| (i, 0, cols - 1))
-            .collect();
+        let region_list: Vec<(u16, u16, u16)> =
+            (0..regions as u16).map(|i| (i, 0, cols - 1)).collect();
         let row_cells: Vec<PackedCell> = (0..cols)
             .map(|i| {
                 if i % 2 == 0 {

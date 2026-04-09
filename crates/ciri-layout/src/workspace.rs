@@ -888,10 +888,7 @@ mod tests {
         w.add_test_column(1);
         w.add_test_column(2);
         // Both columns at 0.5 proportion
-        assert_eq!(
-            w.columns[0].effective_width(w.view_size.width),
-            500.0
-        );
+        assert_eq!(w.columns[0].effective_width(w.view_size.width), 500.0);
 
         w.resize_view(ViewSize {
             width: 2000.0,
@@ -899,14 +896,8 @@ mod tests {
         });
 
         // Proportional widths scale with viewport
-        assert_eq!(
-            w.columns[0].effective_width(w.view_size.width),
-            1000.0
-        );
-        assert_eq!(
-            w.columns[1].effective_width(w.view_size.width),
-            1000.0
-        );
+        assert_eq!(w.columns[0].effective_width(w.view_size.width), 1000.0);
+        assert_eq!(w.columns[1].effective_width(w.view_size.width), 1000.0);
     }
 
     #[test]
@@ -920,10 +911,7 @@ mod tests {
             height: 600.0,
         });
 
-        assert_eq!(
-            w.columns[0].effective_width(w.view_size.width),
-            400.0
-        );
+        assert_eq!(w.columns[0].effective_width(w.view_size.width), 400.0);
     }
 
     #[test]

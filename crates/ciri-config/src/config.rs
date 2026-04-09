@@ -136,16 +136,24 @@ mod tests {
         let cases: &[(&str, fn(&mut CiriConfig))] = &[
             ("drag_opacity=1.5", |c| c.animation.drag_opacity = 1.5),
             ("border_width=-2", |c| c.appearance.border_width = -2.0),
-            ("inactive_opacity=1.5", |c| c.appearance.inactive_opacity = 1.5),
+            ("inactive_opacity=1.5", |c| {
+                c.appearance.inactive_opacity = 1.5
+            }),
             ("font.size=0", |c| c.font.size = 0.0),
-            ("cursor_opacity=-0.25", |c| c.terminal.cursor_opacity = -0.25),
+            ("cursor_opacity=-0.25", |c| {
+                c.terminal.cursor_opacity = -0.25
+            }),
             ("frame_interval_ms=0", |c| c.render.frame_interval_ms = 0),
-            ("overview_zoom_fit=0", |c| c.animation.overview_zoom_fit = 0.0),
+            ("overview_zoom_fit=0", |c| {
+                c.animation.overview_zoom_fit = 0.0
+            }),
             ("zoom_threshold=0", |c| c.animation.zoom_threshold = 0.0),
             ("padding_ratio=-0.1", |c| c.statusbar.padding_ratio = -0.1),
             ("default_cols=0", |c| c.terminal.default_cols = 0),
             ("default_rows=0", |c| c.terminal.default_rows = 0),
-            ("cursor_blink_interval_ms=0", |c| c.terminal.cursor_blink_interval_ms = 0),
+            ("cursor_blink_interval_ms=0", |c| {
+                c.terminal.cursor_blink_interval_ms = 0
+            }),
             ("scrollback_lines=0", |c| c.terminal.scrollback_lines = 0),
         ];
         for (label, mutate) in cases {
@@ -384,10 +392,7 @@ mod tests {
         .unwrap();
 
         let config = load_from_path(&path).unwrap();
-        assert_eq!(
-            config.layout.center_focused_column,
-            CenterStrategy::Never
-        );
+        assert_eq!(config.layout.center_focused_column, CenterStrategy::Never);
         assert_eq!(config.layout.preset_widths.len(), 3);
         match &config.layout.preset_widths[1] {
             PresetWidth::Fixed { fixed } => assert_eq!(*fixed, 800.0),

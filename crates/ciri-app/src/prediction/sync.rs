@@ -2,8 +2,8 @@ use ciri_protocol::message::PackedColor;
 use std::time::Instant;
 
 use super::{
-    GLITCH_FLAG_THRESHOLD_MS, GLITCH_REPAIR_COUNT, GLITCH_REPAIR_MIN_INTERVAL_MS,
-    GLITCH_THRESHOLD_MS, FLAG_TRIGGER_HIGH_MS, FLAG_TRIGGER_LOW_MS, PredictionEngine,
+    FLAG_TRIGGER_HIGH_MS, FLAG_TRIGGER_LOW_MS, GLITCH_FLAG_THRESHOLD_MS, GLITCH_REPAIR_COUNT,
+    GLITCH_REPAIR_MIN_INTERVAL_MS, GLITCH_THRESHOLD_MS, PredictionEngine,
 };
 use crate::grid::ClientPaneGrid;
 
@@ -90,14 +90,12 @@ impl PredictionEngine {
                 let actual_ch = actual.ch();
 
                 if pred_ch == actual_ch {
-                    if pred_ch != row.cells[col].original_ch
-                        && row.cells[col].epoch > max_confirmed
+                    if pred_ch != row.cells[col].original_ch && row.cells[col].epoch > max_confirmed
                     {
                         max_confirmed = row.cells[col].epoch;
                     }
                     // Glitch repair: quick confirmation reduces trigger.
-                    let pred_ms =
-                        now.duration_since(row.cells[col].created_at).as_millis() as u64;
+                    let pred_ms = now.duration_since(row.cells[col].created_at).as_millis() as u64;
                     if pred_ms < GLITCH_THRESHOLD_MS && self.glitch_trigger > 0 {
                         let can_repair = self.last_quick_confirm.map_or(true, |t| {
                             now.duration_since(t).as_millis() as u64

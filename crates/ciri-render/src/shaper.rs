@@ -254,8 +254,13 @@ impl TextShaper {
                 data.len(),
                 face_index
             );
-            self.fonts
-                .insert(font_id, FontData { data: Arc::new(data), face_index });
+            self.fonts.insert(
+                font_id,
+                FontData {
+                    data: Arc::new(data),
+                    face_index,
+                },
+            );
         }
     }
 
@@ -364,8 +369,7 @@ impl TextShaper {
         if let Some(cached) = self.grapheme_shape_cache.borrow().get(cluster) {
             return *cached;
         }
-        let result =
-            self.try_shape_with_face_set(cluster, faces, Self::shape_grapheme_with_face);
+        let result = self.try_shape_with_face_set(cluster, faces, Self::shape_grapheme_with_face);
         self.grapheme_shape_cache
             .borrow_mut()
             .insert(cluster.to_string(), result);
@@ -421,7 +425,11 @@ impl TextShaper {
         }
 
         // Fall through remaining fonts in default order, skipping the one we tried
-        let fallback_order = [ResolvedFont::Primary, ResolvedFont::Cjk, ResolvedFont::Emoji];
+        let fallback_order = [
+            ResolvedFont::Primary,
+            ResolvedFont::Cjk,
+            ResolvedFont::Emoji,
+        ];
         for &font in &fallback_order {
             if font == preferred {
                 continue;
@@ -488,7 +496,9 @@ impl TextShaper {
             return Vec::new();
         };
         let result = self.detect_ligatures_uncached(text, &face, font_id);
-        self.ligature_cache.borrow_mut().insert(cache_key, result.clone());
+        self.ligature_cache
+            .borrow_mut()
+            .insert(cache_key, result.clone());
         result
     }
 

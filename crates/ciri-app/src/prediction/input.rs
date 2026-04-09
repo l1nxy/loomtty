@@ -2,8 +2,8 @@ use ciri_protocol::message::*;
 use std::time::Instant;
 use unicode_width::UnicodeWidthChar;
 
-use super::overlay::{PaneOverlay, PredictedCursor};
 use super::PredictionEngine;
+use super::overlay::{PaneOverlay, PredictedCursor};
 use crate::grid::ClientPaneGrid;
 
 impl PredictionEngine {
@@ -72,8 +72,7 @@ impl PredictionEngine {
                     dc.epoch = epoch;
                     dc.created_at = now;
                     dc.min_echo_ack = min_ack;
-                    dc.original_ch =
-                        grid.viewport.get(orig_idx).map(|c| c.ch()).unwrap_or('\0');
+                    dc.original_ch = grid.viewport.get(orig_idx).map(|c| c.ch()).unwrap_or('\0');
                 }
                 orow.cells[uc as usize].unknown = true;
             }
@@ -100,8 +99,14 @@ impl PredictionEngine {
         cell.fg = inherit_from.fg;
         cell.bg = inherit_from.bg;
         let mut flags = cell.flags_u16();
-        let attr_mask = FLAG_BOLD | FLAG_ITALIC | FLAG_DIM | FLAG_STRIKEOUT | FLAG_HIDDEN
-            | FLAG_INVERSE | FLAG_UNDERLINE | FLAG_UNDERLINE_STYLE_MASK;
+        let attr_mask = FLAG_BOLD
+            | FLAG_ITALIC
+            | FLAG_DIM
+            | FLAG_STRIKEOUT
+            | FLAG_HIDDEN
+            | FLAG_INVERSE
+            | FLAG_UNDERLINE
+            | FLAG_UNDERLINE_STYLE_MASK;
         flags |= inherit_from.flags_u16() & attr_mask;
         if show_ul {
             flags |= FLAG_UNDERLINE;
@@ -123,8 +128,7 @@ impl PredictionEngine {
         // Wide char spacer.
         if char_width == 2 {
             let spacer_col = ccol + 1;
-            let spacer_orig_idx =
-                (row_idx as usize) * (cols as usize) + (spacer_col as usize);
+            let spacer_orig_idx = (row_idx as usize) * (cols as usize) + (spacer_col as usize);
             let spacer_orig = grid
                 .viewport
                 .get(spacer_orig_idx)
@@ -217,7 +221,13 @@ impl PredictionEngine {
             match byte {
                 0x20..=0x7E => {
                     let w = Self::predict_char(
-                        overlay, grid, byte as char, crow, ccol, min_ack, show_ul,
+                        overlay,
+                        grid,
+                        byte as char,
+                        crow,
+                        ccol,
+                        min_ack,
+                        show_ul,
                     );
                     if w == 0 {
                         return;
@@ -229,9 +239,7 @@ impl PredictionEngine {
                 }
                 0x80..=0xBF => {
                     if let Some(ch) = overlay.utf8.push_cont(byte) {
-                        let w = Self::predict_char(
-                            overlay, grid, ch, crow, ccol, min_ack, show_ul,
-                        );
+                        let w = Self::predict_char(overlay, grid, ch, crow, ccol, min_ack, show_ul);
                         if w == 0 {
                             return;
                         }
@@ -247,15 +255,15 @@ impl PredictionEngine {
                     let row_idx = crow as u16;
 
                     let del_cell = overlay.effective_cell(grid, row_idx, ccol);
-                    let del_width =
-                        if del_cell.flags_u16() & FLAG_WIDE_CHAR_SPACER != 0 && ccol > 0 {
-                            ccol -= 1;
-                            2u16
-                        } else if del_cell.flags_u16() & FLAG_WIDE_CHAR != 0 {
-                            2
-                        } else {
-                            1
-                        };
+                    let del_width = if del_cell.flags_u16() & FLAG_WIDE_CHAR_SPACER != 0 && ccol > 0
+                    {
+                        ccol -= 1;
+                        2u16
+                    } else if del_cell.flags_u16() & FLAG_WIDE_CHAR != 0 {
+                        2
+                    } else {
+                        1
+                    };
 
                     let epoch = overlay.prediction_epoch;
                     let now = Instant::now();
@@ -271,14 +279,11 @@ impl PredictionEngine {
                             grid.viewport.get(idx).copied().unwrap_or_default()
                         };
                         let mut shifted = src_cell;
-                        let f = shifted.flags_u16()
-                            & !(FLAG_WIDE_CHAR | FLAG_WIDE_CHAR_SPACER);
+                        let f = shifted.flags_u16() & !(FLAG_WIDE_CHAR | FLAG_WIDE_CHAR_SPACER);
                         shifted.flags = f.to_le_bytes();
 
-                        let orig_idx =
-                            (row_idx as usize) * (cols as usize) + (col as usize);
-                        let orig =
-                            grid.viewport.get(orig_idx).map(|c| c.ch()).unwrap_or('\0');
+                        let orig_idx = (row_idx as usize) * (cols as usize) + (col as usize);
+                        let orig = grid.viewport.get(orig_idx).map(|c| c.ch()).unwrap_or('\0');
 
                         let dc = &mut orow.cells[col as usize];
                         dc.active = true;
@@ -293,13 +298,11 @@ impl PredictionEngine {
                     for trail in 0..del_width {
                         let tc = (cols - 1 - trail) as usize;
                         let orig_idx = (row_idx as usize) * (cols as usize) + tc;
-                        let orig =
-                            grid.viewport.get(orig_idx).map(|c| c.ch()).unwrap_or('\0');
+                        let orig = grid.viewport.get(orig_idx).map(|c| c.ch()).unwrap_or('\0');
                         let mut blank = PackedCell::default();
                         blank.set_ch(' ');
                         if show_ul {
-                            blank.flags =
-                                (blank.flags_u16() | FLAG_UNDERLINE).to_le_bytes();
+                            blank.flags = (blank.flags_u16() | FLAG_UNDERLINE).to_le_bytes();
                         }
                         let dc = &mut orow.cells[tc];
                         dc.active = true;

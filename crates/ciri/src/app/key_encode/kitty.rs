@@ -12,7 +12,7 @@ use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
 use super::{
     encode_kitty_legacy_text_bytes, encode_legacy_c0_key, key_event_base_char,
-    key_event_text_for_input, with_meta_prefix,
+    key_event_text_for_input,
 };
 
 /// Encode a key event using the Kitty keyboard protocol.
@@ -347,7 +347,11 @@ pub(crate) fn key_event_to_kitty_bytes(
             // Left/right distinguished by KeyLocation
             NamedKey::Shift => {
                 if report_all {
-                    let code = if event.location == KeyLocation::Right { 57447 } else { 57441 };
+                    let code = if event.location == KeyLocation::Right {
+                        57447
+                    } else {
+                        57441
+                    };
                     csi_u_full(code)
                 } else {
                     vec![]
@@ -355,7 +359,11 @@ pub(crate) fn key_event_to_kitty_bytes(
             }
             NamedKey::Control => {
                 if report_all {
-                    let code = if event.location == KeyLocation::Right { 57448 } else { 57442 };
+                    let code = if event.location == KeyLocation::Right {
+                        57448
+                    } else {
+                        57442
+                    };
                     csi_u_full(code)
                 } else {
                     vec![]
@@ -363,7 +371,11 @@ pub(crate) fn key_event_to_kitty_bytes(
             }
             NamedKey::Alt => {
                 if report_all {
-                    let code = if event.location == KeyLocation::Right { 57449 } else { 57443 };
+                    let code = if event.location == KeyLocation::Right {
+                        57449
+                    } else {
+                        57443
+                    };
                     csi_u_full(code)
                 } else {
                     vec![]
@@ -371,7 +383,11 @@ pub(crate) fn key_event_to_kitty_bytes(
             }
             NamedKey::Super => {
                 if report_all {
-                    let code = if event.location == KeyLocation::Right { 57450 } else { 57444 };
+                    let code = if event.location == KeyLocation::Right {
+                        57450
+                    } else {
+                        57444
+                    };
                     csi_u_full(code)
                 } else {
                     vec![]
@@ -379,7 +395,11 @@ pub(crate) fn key_event_to_kitty_bytes(
             }
             NamedKey::Hyper => {
                 if report_all {
-                    let code = if event.location == KeyLocation::Right { 57451 } else { 57445 };
+                    let code = if event.location == KeyLocation::Right {
+                        57451
+                    } else {
+                        57445
+                    };
                     csi_u_full(code)
                 } else {
                     vec![]
@@ -387,7 +407,11 @@ pub(crate) fn key_event_to_kitty_bytes(
             }
             NamedKey::Meta => {
                 if report_all {
-                    let code = if event.location == KeyLocation::Right { 57452 } else { 57446 };
+                    let code = if event.location == KeyLocation::Right {
+                        57452
+                    } else {
+                        57446
+                    };
                     csi_u_full(code)
                 } else {
                     vec![]

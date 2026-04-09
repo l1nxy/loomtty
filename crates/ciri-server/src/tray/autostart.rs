@@ -149,8 +149,10 @@ fn set_enabled_windows(enable: bool) -> Result<()> {
     use winreg::enums::*;
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let run =
-        hkcu.open_subkey_with_flags("Software\\Microsoft\\Windows\\CurrentVersion\\Run", KEY_SET_VALUE)?;
+    let run = hkcu.open_subkey_with_flags(
+        "Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+        KEY_SET_VALUE,
+    )?;
     if enable {
         let exe = std::env::current_exe()?;
         run.set_value("CiriTray", &exe.to_string_lossy().to_string())?;

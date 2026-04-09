@@ -38,6 +38,8 @@ pub(crate) struct Session {
     pub(crate) last_agent_save: Option<Instant>,
     /// Last-known cursor state per pane, for detecting cursor-only changes.
     pub(crate) last_cursor: HashMap<u64, (i16, u16, u8, u16)>,
+    /// Fingerprint of the current cursor row as last observed by the tick loop.
+    pub(crate) last_cursor_row_hash: HashMap<u64, u64>,
 }
 
 impl Session {
@@ -69,6 +71,7 @@ impl Session {
             detected_agents: HashMap::new(),
             last_agent_save: None,
             last_cursor: HashMap::new(),
+            last_cursor_row_hash: HashMap::new(),
         }
     }
 
@@ -286,6 +289,8 @@ impl Session {
         self.panes.remove(&pane_id);
         self.generation.remove(&pane_id);
         self.detected_agents.remove(&pane_id);
+        self.last_cursor.remove(&pane_id);
+        self.last_cursor_row_hash.remove(&pane_id);
         for client in clients.values_mut() {
             if client.session_name == self.session_name {
                 client.damage.remove(&pane_id);
@@ -565,8 +570,26 @@ impl Session {
             if cursor_changed {
                 self.last_cursor.insert(pane_id, cur_cursor);
             }
+            let cur_cursor_row_hash = if cur_cursor.0 >= 0 {
+                pane.viewport_row_fingerprint(cur_cursor.0 as u16)
+            } else {
+                None
+            };
+            let prev_cursor_row_hash = match cur_cursor_row_hash {
+                Some(hash) => self.last_cursor_row_hash.insert(pane_id, hash),
+                None => self.last_cursor_row_hash.remove(&pane_id),
+            };
 
             if let Some(ranges) = pane.extract_damage() {
+                let redundant_cursor_row_damage = !cursor_changed
+                    && ranges.len() == 1
+                    && cur_cursor.0 >= 0
+                    && ranges[0].0 as i16 == cur_cursor.0
+                    && prev_cursor_row_hash == cur_cursor_row_hash;
+                if redundant_cursor_row_damage {
+                    continue;
+                }
+
                 // Bump generation
                 let g = self.generation.entry(pane_id).or_insert(0);
                 *g += 1;
@@ -666,9 +689,42 @@ mod tests {
     use crate::daemon::client::ClientState;
     use tokio::sync::mpsc;
 
+    fn test_shell() -> &'static str {
+        #[cfg(windows)]
+        {
+            "cmd.exe"
+        }
+        #[cfg(not(windows))]
+        {
+            if std::path::Path::new("/bin/sh").exists() {
+                "/bin/sh"
+            } else {
+                "sh"
+            }
+        }
+    }
+
+    fn test_client(id: u64, session_name: &str) -> ClientState {
+        let (tx, _rx) = mpsc::channel(1);
+        ClientState {
+            id,
+            tx,
+            damage: HashMap::new(),
+            last_acked_generation: 0,
+            max_input_seq: HashMap::new(),
+            history_sent: HashMap::new(),
+            send_failures: 0,
+            cell_width: 8.0,
+            cell_height: 16.0,
+            viewport_width: 900.0,
+            viewport_height: 700.0,
+            session_name: session_name.to_string(),
+        }
+    }
+
     #[test]
     fn autosave_is_debounced() {
-        let mut session = Session::new("default", "/bin/sh", 8.0, TerminalColors::default());
+        let mut session = Session::new("default", test_shell(), 8.0, TerminalColors::default());
         session.session_dirty = true;
         let changed_at = Instant::now();
         session.last_session_change = Some(changed_at);
@@ -680,7 +736,7 @@ mod tests {
 
     #[test]
     fn mark_session_dirty_sets_dirty_and_timestamp() {
-        let mut session = Session::new("default", "/bin/sh", 8.0, TerminalColors::default());
+        let mut session = Session::new("default", test_shell(), 8.0, TerminalColors::default());
         assert!(!session.session_dirty);
         assert!(session.last_session_change.is_none());
 
@@ -692,61 +748,20 @@ mod tests {
 
     #[test]
     fn effective_dims_use_smallest_attached_client() {
-        let (tx1, _rx1) = mpsc::channel(1);
-        let (tx2, _rx2) = mpsc::channel(1);
-        let (tx3, _rx3) = mpsc::channel(1);
         let mut clients = HashMap::new();
-        clients.insert(
-            1,
-            ClientState {
-                id: 1,
-                tx: tx1,
-                damage: HashMap::new(),
-                last_acked_generation: 0,
-                max_input_seq: HashMap::new(),
-                history_sent: HashMap::new(),
-                send_failures: 0,
-                cell_width: 9.0,
-                cell_height: 18.0,
-                viewport_width: 1200.0,
-                viewport_height: 900.0,
-                session_name: "alpha".to_string(),
-            },
-        );
-        clients.insert(
-            2,
-            ClientState {
-                id: 2,
-                tx: tx2,
-                damage: HashMap::new(),
-                last_acked_generation: 0,
-                max_input_seq: HashMap::new(),
-                history_sent: HashMap::new(),
-                send_failures: 0,
-                cell_width: 8.0,
-                cell_height: 16.0,
-                viewport_width: 900.0,
-                viewport_height: 700.0,
-                session_name: "alpha".to_string(),
-            },
-        );
-        clients.insert(
-            3,
-            ClientState {
-                id: 3,
-                tx: tx3,
-                damage: HashMap::new(),
-                last_acked_generation: 0,
-                max_input_seq: HashMap::new(),
-                history_sent: HashMap::new(),
-                send_failures: 0,
-                cell_width: 7.0,
-                cell_height: 14.0,
-                viewport_width: 640.0,
-                viewport_height: 480.0,
-                session_name: "beta".to_string(),
-            },
-        );
+        let mut c1 = test_client(1, "alpha");
+        c1.cell_width = 9.0;
+        c1.cell_height = 18.0;
+        c1.viewport_width = 1200.0;
+        c1.viewport_height = 900.0;
+        clients.insert(1, c1);
+        clients.insert(2, test_client(2, "alpha"));
+        let mut c3 = test_client(3, "beta");
+        c3.cell_width = 7.0;
+        c3.cell_height = 14.0;
+        c3.viewport_width = 640.0;
+        c3.viewport_height = 480.0;
+        clients.insert(3, c3);
 
         let dims = Session::effective_dims_from(&clients, "alpha");
 
@@ -754,8 +769,46 @@ mod tests {
     }
 
     #[test]
+    fn repeated_cursor_row_damage_does_not_bump_generation() {
+        let mut session = Session::new("default", test_shell(), 8.0, TerminalColors::default());
+        let mut next_pane_id = 1;
+        let mut clients = HashMap::new();
+        let pane_id = session
+            .create_pane(&mut next_pane_id, &mut clients)
+            .expect("pane");
+        clients.insert(1, test_client(1, "default"));
+
+        // First pass primes cursor state and sends the initial full damage.
+        let _ = session.process_pty_and_damage(&mut clients);
+        let gen_after_first = session.generation.get(&pane_id).copied().unwrap_or(0);
+        let first = clients
+            .get_mut(&1)
+            .expect("client")
+            .damage
+            .remove(&pane_id)
+            .expect("initial damage");
+        assert!(
+            !first.line_damage.is_empty(),
+            "first pass should still deliver pane content"
+        );
+
+        // Subsequent passes should suppress Alacritty's stable cursor-row damage.
+        let _ = session.process_pty_and_damage(&mut clients);
+        let gen_after_second = session.generation.get(&pane_id).copied().unwrap_or(0);
+        assert_eq!(gen_after_second, gen_after_first);
+        let remaining = clients.get(&1).and_then(|c| c.damage.get(&pane_id));
+        assert!(
+            match remaining {
+                None => true,
+                Some(acc) => acc.is_empty(),
+            },
+            "cursor-row noise should not accumulate damage"
+        );
+    }
+
+    #[test]
     fn build_state_sync_emits_image_deleted_for_panes_without_active_images() {
-        let mut session = Session::new("default", "/bin/sh", 8.0, TerminalColors::default());
+        let mut session = Session::new("default", test_shell(), 8.0, TerminalColors::default());
         let mut next_pane_id = 1;
         let mut clients = HashMap::new();
         let pane_id = session
@@ -800,7 +853,7 @@ mod tests {
 
     #[test]
     fn build_state_sync_replays_active_images() {
-        let mut session = Session::new("default", "/bin/sh", 8.0, TerminalColors::default());
+        let mut session = Session::new("default", test_shell(), 8.0, TerminalColors::default());
         let mut next_pane_id = 1;
         let mut clients = HashMap::new();
         let pane_id = session
@@ -847,7 +900,7 @@ mod tests {
 
     #[test]
     fn collect_runtime_messages_emits_image_deleted_after_clear() {
-        let mut session = Session::new("default", "/bin/sh", 8.0, TerminalColors::default());
+        let mut session = Session::new("default", test_shell(), 8.0, TerminalColors::default());
         let mut next_pane_id = 1;
         let mut clients = HashMap::new();
         let pane_id = session

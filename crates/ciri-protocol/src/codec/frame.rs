@@ -5,9 +5,7 @@ use std::io;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use super::cell_delta::decode_cell_delta_borrowed;
-use super::full_sync::{
-    decode_full_pane_sync, decode_full_pane_sync_borrowed, encode_full_pane_sync_payload,
-};
+use super::full_sync::{decode_full_pane_sync_borrowed, encode_full_pane_sync_payload};
 
 // ─── Frame tags ─────────────────────────────────────────────────────
 

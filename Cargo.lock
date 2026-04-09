@@ -853,6 +853,7 @@ dependencies = [
  "ttf-parser 0.24.1",
  "unicode-properties",
  "unicode-segmentation",
+ "unicode-width",
  "windows 0.58.0",
  "windows-core 0.58.0",
  "winit",

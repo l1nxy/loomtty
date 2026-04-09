@@ -27,18 +27,31 @@ pub fn build_menu(state: &TraySnapshot) -> (Menu, MenuHandles) {
     if state.server_up {
         let running: Vec<_> = state.sessions.iter().filter(|s| s.running).collect();
         if running.is_empty() {
-            let _ = menu.append(&MenuItem::with_id("_no_sessions", "No sessions", false, None));
+            let _ = menu.append(&MenuItem::with_id(
+                "_no_sessions",
+                "No sessions",
+                false,
+                None,
+            ));
         } else {
             for s in &running {
                 let id = format!("session:{}", s.name);
                 let label = if s.client_count > 0 {
                     // Attached — user clicking will switch, not open new window
-                    format!("{} ({} pane{}) - attached", s.name, s.pane_count,
-                        if s.pane_count == 1 { "" } else { "s" })
+                    format!(
+                        "{} ({} pane{}) - attached",
+                        s.name,
+                        s.pane_count,
+                        if s.pane_count == 1 { "" } else { "s" }
+                    )
                 } else {
                     // No clients — clicking will open a new window
-                    format!("{} ({} pane{})", s.name, s.pane_count,
-                        if s.pane_count == 1 { "" } else { "s" })
+                    format!(
+                        "{} ({} pane{})",
+                        s.name,
+                        s.pane_count,
+                        if s.pane_count == 1 { "" } else { "s" }
+                    )
                 };
                 let item = MenuItem::with_id(&id, &label, true, None);
                 let _ = menu.append(&item);
@@ -248,15 +261,16 @@ mod tests {
     #[test]
     fn build_menu_with_running_sessions_creates_session_entries() {
         let state = snap(
-            vec![
-                session("alpha", 2, 1, true),
-                session("beta", 1, 0, true),
-            ],
+            vec![session("alpha", 2, 1, true), session("beta", 1, 0, true)],
             true,
         );
         let (_, handles) = build_menu(&state);
         assert_eq!(handles.session_ids.len(), 2);
-        let names: Vec<&str> = handles.session_ids.iter().map(|(_, n)| n.as_str()).collect();
+        let names: Vec<&str> = handles
+            .session_ids
+            .iter()
+            .map(|(_, n)| n.as_str())
+            .collect();
         assert!(names.contains(&"alpha"));
         assert!(names.contains(&"beta"));
     }
@@ -295,7 +309,9 @@ mod tests {
     fn handle_quit_event() {
         let state = snap(vec![session("main", 1, 0, true)], true);
         let (_, handles) = build_menu(&state);
-        let event = MenuEvent { id: handles.quit_id.clone() };
+        let event = MenuEvent {
+            id: handles.quit_id.clone(),
+        };
         let action = handle_menu_event(&event, &handles);
         assert!(matches!(action, Some(TrayAction::Quit)));
     }
@@ -304,7 +320,9 @@ mod tests {
     fn handle_new_session_event() {
         let state = snap(vec![], true);
         let (_, handles) = build_menu(&state);
-        let event = MenuEvent { id: handles.new_session_id.clone() };
+        let event = MenuEvent {
+            id: handles.new_session_id.clone(),
+        };
         let action = handle_menu_event(&event, &handles);
         assert!(matches!(action, Some(TrayAction::NewSession)));
     }
@@ -313,7 +331,9 @@ mod tests {
     fn handle_autostart_event() {
         let state = snap(vec![], true);
         let (_, handles) = build_menu(&state);
-        let event = MenuEvent { id: handles.autostart_id.clone() };
+        let event = MenuEvent {
+            id: handles.autostart_id.clone(),
+        };
         let action = handle_menu_event(&event, &handles);
         assert!(matches!(action, Some(TrayAction::ToggleAutostart)));
     }
@@ -323,7 +343,9 @@ mod tests {
         let state = snap(vec![session("myapp", 3, 1, true)], true);
         let (_, handles) = build_menu(&state);
         let (session_menu_id, _) = &handles.session_ids[0];
-        let event = MenuEvent { id: session_menu_id.clone() };
+        let event = MenuEvent {
+            id: session_menu_id.clone(),
+        };
         let action = handle_menu_event(&event, &handles);
         match action {
             Some(TrayAction::AttachSession(name)) => assert_eq!(name, "myapp"),
@@ -355,7 +377,9 @@ mod tests {
     fn handle_unknown_event_returns_none() {
         let state = snap(vec![], true);
         let (_, handles) = build_menu(&state);
-        let event = MenuEvent { id: MenuId::new("unknown_id_12345") };
+        let event = MenuEvent {
+            id: MenuId::new("unknown_id_12345"),
+        };
         assert!(handle_menu_event(&event, &handles).is_none());
     }
 }

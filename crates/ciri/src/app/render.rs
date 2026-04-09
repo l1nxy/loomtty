@@ -7,6 +7,7 @@ use ciri_render::glyph_cache::{GlyphInstance, ScissoredRange};
 use ciri_render::rect::Rect;
 use ciri_render::terminal;
 use std::time::Instant;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::App;
 use super::status_bar::{TextEmitParams, emit_status_text};
@@ -33,6 +34,14 @@ struct PaneVisualState {
 }
 
 impl App {
+    fn preedit_cursor_display_cols(text: &str, cursor_byte: usize) -> usize {
+        let cursor_byte = cursor_byte.min(text.len());
+        text.char_indices()
+            .take_while(|(idx, _)| *idx < cursor_byte)
+            .map(|(_, ch)| UnicodeWidthChar::width(ch).unwrap_or(0))
+            .sum()
+    }
+
     /// Delegate: snap all column widths.
     pub fn snap_all_col_widths(&mut self) {
         self.core.snap_all_col_widths();
@@ -111,8 +120,7 @@ impl App {
                 let layers = fr.glow_layers.max(1) as usize;
                 for layer in (0..layers).rev() {
                     let offset = fr.glow_radius * (layer + 1) as f32 / layers as f32;
-                    let alpha =
-                        paint.active_border[3] * (1.0 - layer as f32 / layers as f32) * 0.3;
+                    let alpha = paint.active_border[3] * (1.0 - layer as f32 / layers as f32) * 0.3;
                     bg_rects.push(Rect {
                         x: tr.x - offset,
                         y: tr.y - offset,
@@ -790,6 +798,51 @@ impl App {
         );
     }
 
+    fn ime_input_anchor(
+        &self,
+        tiles: &[(u64, GeoRect, bool)],
+        cell_w: f32,
+        cell_h: f32,
+    ) -> Option<(f32, f32)> {
+        if let Some(palette) = &self.core.command_palette
+            && let Some(layout) = self.command_palette_layout()
+        {
+            let prefix = if palette.remote_input_mode {
+                "SSH> "
+            } else {
+                "> "
+            };
+            let cols =
+                UnicodeWidthStr::width(prefix) + UnicodeWidthStr::width(palette.query.as_str());
+            return Some((layout.text_x + cols as f32 * cell_w, layout.text_y));
+        }
+
+        if let Some(search) = &self.core.search_state
+            && let Some((_, pane_rect, _)) = tiles.iter().find(|(pid, _, _)| *pid == search.pane_id)
+        {
+            let border_w = self.core.config.appearance.border_width;
+            let padding = self.core.config.appearance.padding;
+            let bar_height = cell_h + 4.0;
+            let bar_y = pane_rect.y + pane_rect.h - border_w - bar_height;
+            let bar_x = pane_rect.x + border_w;
+            let prefix = " Search: ";
+            let cols =
+                UnicodeWidthStr::width(prefix) + UnicodeWidthStr::width(search.query.as_str());
+            return Some((bar_x + padding + cols as f32 * cell_w, bar_y + 2.0));
+        }
+
+        let active_pid = self.core.workspaces.active().active_pane_id()?;
+        let (_, tile_rect, _) = tiles.iter().find(|(id, _, _)| *id == active_pid)?;
+        let view = self.cached_views.get(&active_pid)?;
+        let cursor = view.cursor_rects.first()?;
+        let padding = self.core.config.appearance.padding;
+        let border_w = self.core.config.appearance.border_width;
+        Some((
+            tile_rect.x + border_w + padding + cursor.x,
+            tile_rect.y + border_w + padding + cursor.y,
+        ))
+    }
+
     pub fn build_bell_flash(
         &mut self,
         tiles: &[(u64, GeoRect, bool)],
@@ -830,37 +883,17 @@ impl App {
         if !self.core.ime.preedit_active || self.core.ime.preedit_text.is_empty() {
             return;
         }
+        let (cw, ch) = {
+            let atlas = self.glyph_cache.as_ref().unwrap();
+            (atlas.cell_width, atlas.cell_height)
+        };
+        let Some((base_x, base_y)) = self.ime_input_anchor(tiles, cw, ch) else {
+            return;
+        };
         let atlas = self.glyph_cache.as_mut().unwrap();
 
-        // Find active pane tile rect and cursor position
-        let active_pid = match self.core.workspaces.active().active_pane_id() {
-            Some(pid) => pid,
-            None => return,
-        };
-        let tile_rect = match tiles.iter().find(|(pid, _, _)| *pid == active_pid) {
-            Some((_, rect, _)) => *rect,
-            None => return,
-        };
-        let view = match self.cached_views.get(&active_pid) {
-            Some(v) => v,
-            None => return,
-        };
-        let cursor_rect = match view.cursor_rects.first() {
-            Some(c) => c,
-            None => return,
-        };
-
-        let border_w = self.core.config.appearance.border_width;
-        let padding = self.core.config.appearance.padding;
-        let cw = atlas.cell_width;
-        let ch = atlas.cell_height;
-
-        // Position at cursor
-        let base_x = tile_rect.x + border_w + padding + cursor_rect.x;
-        let base_y = tile_rect.y + border_w + padding + cursor_rect.y;
-
         let text = &self.core.ime.preedit_text;
-        let text_width = text.chars().count() as f32 * cw;
+        let text_width = UnicodeWidthStr::width(text.as_str()) as f32 * cw;
 
         // Background box
         bg_rects.push(Rect {
@@ -899,7 +932,8 @@ impl App {
 
         // Cursor within preedit text
         if let Some(cursor_pos) = self.core.ime.preedit_cursor {
-            let cx = base_x + 2.0 + cursor_pos as f32 * cw;
+            let cursor_cols = Self::preedit_cursor_display_cols(text, cursor_pos);
+            let cx = base_x + 2.0 + cursor_cols as f32 * cw;
             bg_rects.push(Rect {
                 x: cx,
                 y: base_y + 1.0,
@@ -1032,8 +1066,12 @@ impl App {
         }
 
         let now = Instant::now();
-        let dt = (now - self.core.last_frame).as_secs_f64();
+        let raw_dt = (now - self.core.last_frame).as_secs_f64();
         self.core.last_frame = now;
+        // When the app wakes after a long idle stretch, a large frame delta can
+        // collapse newly started focus/move animations into a single frame.
+        let max_dt = (self.core.frame_interval.as_secs_f64() * 2.0).max(1.0 / 60.0);
+        let dt = raw_dt.min(max_dt);
 
         let mut animating = self.advance_animations(dt);
 
@@ -1059,6 +1097,10 @@ impl App {
             self.core.workspaces.visible_tiles_2d(vox, voy)
         };
 
+        let (cache_cell_width, cache_cell_height) = {
+            let cache = self.glyph_cache.as_ref().unwrap();
+            (cache.cell_width, cache.cell_height)
+        };
         let cache = self.glyph_cache.as_mut().unwrap();
         let shaper = self.text_shaper.as_ref().unwrap();
 
@@ -1239,23 +1281,18 @@ impl App {
         // Update IME cursor area
         if self.pending_resize.is_none()
             && let Some(window) = &self.window
-            && let Some(active_pid) = self.core.workspaces.active().active_pane_id()
-            && let Some((_, tile_rect, _)) = tiles.iter().find(|(id, _, _)| *id == active_pid)
-            && let Some(view) = self.cached_views.get(&active_pid)
-            && let Some(cursor) = view.cursor_rects.first()
+            && let Some((x, y)) = self.ime_input_anchor(&tiles, cache_cell_width, cache_cell_height)
         {
-            let padding = self.core.config.appearance.padding;
-            let border_w = self.core.config.appearance.border_width;
-            let cx = (tile_rect.x + border_w + padding + cursor.x) as i32;
-            let cy = (tile_rect.y + border_w + padding + cursor.y) as i32;
+            let cx = x as i32;
+            let cy = y as i32;
             let pos = (cx, cy);
             if self.core.ime.last_pos != Some(pos) {
                 self.core.ime.last_pos = Some(pos);
                 window.set_ime_cursor_area(
                     winit::dpi::PhysicalPosition::new(cx as f64, cy as f64),
                     winit::dpi::PhysicalSize::new(
-                        cache.cell_width as f64,
-                        cache.cell_height as f64,
+                        cache_cell_width as f64,
+                        cache_cell_height as f64,
                     ),
                 );
             }
@@ -1306,9 +1343,23 @@ impl App {
         let pane_color_glyph_end = color_glyphs.len();
         let overlay_bg_start = bg_rects.len();
         self.build_ui(vw_f, vh_f, &mut bg_rects, &mut glyphs, &mut color_glyphs);
-        self.build_search_bar(&offset_tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs, &mut color_glyphs);
+        self.build_search_bar(
+            &offset_tiles,
+            vw_f,
+            vh_f,
+            &mut bg_rects,
+            &mut glyphs,
+            &mut color_glyphs,
+        );
         self.build_bell_flash(&offset_tiles, zoom, vw_f, vh_f, &mut bg_rects);
-        self.build_ime_preedit(&offset_tiles, vw_f, vh_f, &mut bg_rects, &mut glyphs, &mut color_glyphs);
+        self.build_ime_preedit(
+            &offset_tiles,
+            vw_f,
+            vh_f,
+            &mut bg_rects,
+            &mut glyphs,
+            &mut color_glyphs,
+        );
 
         let clear_color = if self.core.overview.active || zoom < zoom_threshold {
             ThemeConfig::parse_color(&self.core.config.theme.overview_background)
@@ -1433,6 +1484,15 @@ mod tests {
 
     fn make_app() -> App {
         App::new(CiriConfig::default(), "test-session")
+    }
+
+    #[test]
+    fn preedit_cursor_display_cols_handles_utf8_offsets_and_wide_chars() {
+        let text = "你a好";
+        assert_eq!(App::preedit_cursor_display_cols(text, 0), 0);
+        assert_eq!(App::preedit_cursor_display_cols(text, "你".len()), 2);
+        assert_eq!(App::preedit_cursor_display_cols(text, "你a".len()), 3);
+        assert_eq!(App::preedit_cursor_display_cols(text, text.len()), 5);
     }
 
     #[test]

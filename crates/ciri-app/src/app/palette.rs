@@ -602,10 +602,8 @@ mod tests {
     fn open_session_palette_sends_query_to_connected_slots() {
         let (mut model, _rx) = make_model_with_tx();
 
-        let (slot_a, _ev_a, cmd_rx_a) =
-            make_slot("slot-a", ConnectionKind::Local, "sess-a", true);
-        let (slot_b, _ev_b, cmd_rx_b) =
-            make_slot("slot-b", ConnectionKind::Local, "sess-b", false);
+        let (slot_a, _ev_a, cmd_rx_a) = make_slot("slot-a", ConnectionKind::Local, "sess-a", true);
+        let (slot_b, _ev_b, cmd_rx_b) = make_slot("slot-b", ConnectionKind::Local, "sess-b", false);
         model.background_slots.insert("slot-a".into(), slot_a);
         model.background_slots.insert("slot-b".into(), slot_b);
 
@@ -613,7 +611,10 @@ mod tests {
 
         let msg = cmd_rx_a.try_recv().expect("connected slot 应收到查询");
         assert!(matches!(msg, ClientMessage::ListSessions { all: false }));
-        assert!(cmd_rx_b.try_recv().is_err(), "disconnected slot 不应收到查询");
+        assert!(
+            cmd_rx_b.try_recv().is_err(),
+            "disconnected slot 不应收到查询"
+        );
     }
 
     #[test]
@@ -681,9 +682,7 @@ mod tests {
 
         model.open_session_palette();
 
-        let headers = count_entries(&model, |k| {
-            matches!(k, PaletteEntryKind::SectionHeader(_))
-        });
+        let headers = count_entries(&model, |k| matches!(k, PaletteEntryKind::SectionHeader(_)));
         assert!(headers >= 1, "应至少有 Local section header");
     }
 
@@ -739,8 +738,9 @@ mod tests {
 
         model.open_session_palette();
 
-        let direct_count =
-            count_entries(&model, |k| matches!(k, PaletteEntryKind::DirectConnect { .. }));
+        let direct_count = count_entries(&model, |k| {
+            matches!(k, PaletteEntryKind::DirectConnect { .. })
+        });
         assert_eq!(direct_count, 0, "不应为当前活跃连接创建 DirectConnect 条目");
     }
 
@@ -770,9 +770,13 @@ mod tests {
 
         model.open_session_palette();
 
-        let direct_count =
-            count_entries(&model, |k| matches!(k, PaletteEntryKind::DirectConnect { .. }));
-        assert_eq!(direct_count, 0, "不应为已有 background slot 的 host 创建条目");
+        let direct_count = count_entries(&model, |k| {
+            matches!(k, PaletteEntryKind::DirectConnect { .. })
+        });
+        assert_eq!(
+            direct_count, 0,
+            "不应为已有 background slot 的 host 创建条目"
+        );
     }
 
     #[test]
@@ -788,7 +792,9 @@ mod tests {
 
         model.open_session_palette();
 
-        let dc = count_entries(&model, |k| matches!(k, PaletteEntryKind::DirectConnect { .. }));
+        let dc = count_entries(&model, |k| {
+            matches!(k, PaletteEntryKind::DirectConnect { .. })
+        });
         let rh = count_entries(&model, |k| matches!(k, PaletteEntryKind::RemoteHost { .. }));
         assert_eq!(dc, 1, "sessions_only 应有 DirectConnect");
         assert_eq!(rh, 0, "sessions_only 不应有 RemoteHost");
@@ -807,7 +813,9 @@ mod tests {
 
         model.open_command_palette();
 
-        let dc = count_entries(&model, |k| matches!(k, PaletteEntryKind::DirectConnect { .. }));
+        let dc = count_entries(&model, |k| {
+            matches!(k, PaletteEntryKind::DirectConnect { .. })
+        });
         let rh = count_entries(&model, |k| matches!(k, PaletteEntryKind::RemoteHost { .. }));
         assert_eq!(dc, 0, "command palette 不应有 DirectConnect");
         assert_eq!(rh, 1, "command palette 应有 RemoteHost");
@@ -819,7 +827,9 @@ mod tests {
         assert!(model.config.remote.hosts.is_empty());
         model.open_session_palette();
 
-        let dc = count_entries(&model, |k| matches!(k, PaletteEntryKind::DirectConnect { .. }));
+        let dc = count_entries(&model, |k| {
+            matches!(k, PaletteEntryKind::DirectConnect { .. })
+        });
         assert_eq!(dc, 0);
     }
 
@@ -828,8 +838,9 @@ mod tests {
         let (mut model, _rx) = make_model_with_tx();
         model.open_session_palette();
 
-        let prompt =
-            count_entries(&model, |k| matches!(k, PaletteEntryKind::ConnectRemotePrompt));
+        let prompt = count_entries(&model, |k| {
+            matches!(k, PaletteEntryKind::ConnectRemotePrompt)
+        });
         assert_eq!(prompt, 1, "应始终有 ConnectRemotePrompt 条目");
     }
 
@@ -942,12 +953,12 @@ mod tests {
         model.background_slots.insert("slot-x".into(), slot);
 
         model.open_session_palette();
-        model.apply_slot_session_result(
-            "slot-x",
-            vec![session_info("old1"), session_info("old2")],
-        );
+        model.apply_slot_session_result("slot-x", vec![session_info("old1"), session_info("old2")]);
         assert_eq!(
-            count_entries(&model, |k| matches!(k, PaletteEntryKind::SlotSession { .. })),
+            count_entries(&model, |k| matches!(
+                k,
+                PaletteEntryKind::SlotSession { .. }
+            )),
             2
         );
 
@@ -959,9 +970,7 @@ mod tests {
             .entries
             .iter()
             .filter_map(|e| match &e.kind {
-                PaletteEntryKind::SlotSession { session_name, .. } => {
-                    Some(session_name.as_str())
-                }
+                PaletteEntryKind::SlotSession { session_name, .. } => Some(session_name.as_str()),
                 _ => None,
             })
             .collect();
@@ -975,7 +984,10 @@ mod tests {
         model.apply_slot_session_result("nonexistent", vec![session_info("x")]);
 
         assert_eq!(
-            count_entries(&model, |k| matches!(k, PaletteEntryKind::SlotSession { .. })),
+            count_entries(&model, |k| matches!(
+                k,
+                PaletteEntryKind::SlotSession { .. }
+            )),
             0
         );
     }
@@ -991,7 +1003,10 @@ mod tests {
         model.apply_slot_session_result("slot-e", vec![]);
 
         assert_eq!(
-            count_entries(&model, |k| matches!(k, PaletteEntryKind::SlotSession { .. })),
+            count_entries(&model, |k| matches!(
+                k,
+                PaletteEntryKind::SlotSession { .. }
+            )),
             0,
             "空 session 列表不应创建 SlotSession 条目"
         );
@@ -1118,7 +1133,10 @@ mod tests {
 
         // Both local and slot sessions should be present
         assert!(
-            count_entries(&model, |k| matches!(k, PaletteEntryKind::SlotSession { .. })) >= 1,
+            count_entries(&model, |k| matches!(
+                k,
+                PaletteEntryKind::SlotSession { .. }
+            )) >= 1,
             "rebuild 后应保留 SlotSession 条目"
         );
         assert!(
@@ -1139,12 +1157,10 @@ mod tests {
         // Rebuild twice
         model.cached_local_sessions = vec![session_info("main")];
         model.rebuild_palette_entries();
-        let count1 =
-            count_entries(&model, |k| matches!(k, PaletteEntryKind::SwitchSession(_)));
+        let count1 = count_entries(&model, |k| matches!(k, PaletteEntryKind::SwitchSession(_)));
 
         model.rebuild_palette_entries();
-        let count2 =
-            count_entries(&model, |k| matches!(k, PaletteEntryKind::SwitchSession(_)));
+        let count2 = count_entries(&model, |k| matches!(k, PaletteEntryKind::SwitchSession(_)));
 
         assert_eq!(count1, count2, "多次 rebuild 不应产生重复条目");
     }

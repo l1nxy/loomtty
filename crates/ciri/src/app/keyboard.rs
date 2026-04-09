@@ -34,6 +34,83 @@ impl KeyModifiers {
 }
 
 impl App {
+    fn overlay_paste_target(&self) -> Option<super::PendingPasteTarget> {
+        if self.core.pending_paste.is_some() {
+            None
+        } else if self.core.command_palette.is_some() {
+            Some(super::PendingPasteTarget::CommandPalette)
+        } else if self.core.search_state.is_some() {
+            Some(super::PendingPasteTarget::Search)
+        } else {
+            None
+        }
+    }
+
+    fn sanitize_overlay_input(text: &str) -> Option<String> {
+        let mut normalized = String::with_capacity(text.len());
+        let mut pending_space = false;
+
+        for ch in text.chars() {
+            match ch {
+                '\r' | '\n' | '\t' => {
+                    pending_space = !normalized.is_empty();
+                }
+                _ if ch.is_control() => {}
+                _ => {
+                    if pending_space && !normalized.ends_with(' ') {
+                        normalized.push(' ');
+                    }
+                    pending_space = false;
+                    normalized.push(ch);
+                }
+            }
+        }
+
+        if normalized.is_empty() {
+            None
+        } else {
+            Some(normalized)
+        }
+    }
+
+    fn normalize_overlay_paste_text(text: &str) -> Option<String> {
+        let normalized = Self::sanitize_overlay_input(text)?;
+        let trimmed = normalized.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }
+
+    fn queue_overlay_paste(&mut self, text: &str) -> bool {
+        let Some(target) = self.overlay_paste_target() else {
+            return false;
+        };
+        let Some(normalized) = Self::normalize_overlay_paste_text(text) else {
+            return true;
+        };
+
+        let threshold = self.core.config.terminal.paste_warn_threshold;
+        if let Some(info) = super::paste_guard::check_paste_size(&normalized, threshold) {
+            let preview = if normalized.len() > 200 {
+                format!("{}...", &normalized[..normalized.floor_char_boundary(200)])
+            } else {
+                normalized.clone()
+            };
+            self.core.pending_paste = Some(super::PendingPaste {
+                info,
+                preview,
+                hovered_button: None,
+                target,
+            });
+        } else {
+            let _ = self.append_text_to_overlay_input(&normalized);
+        }
+
+        true
+    }
+
     pub(crate) fn handle_keyboard_input(
         &mut self,
         event: &winit::event::KeyEvent,
@@ -49,6 +126,10 @@ impl App {
             if !key_name.is_empty() {
                 self.core.input.process_key_release(key_name);
                 self.request_redraw();
+            }
+
+            if self.modal_captures_keyboard() {
+                return;
             }
 
             // Check if the active pane wants release events (kitty level 2+)
@@ -67,8 +148,13 @@ impl App {
                 // Send release event directly to PTY via kitty encoder
                 let mods = KeyModifiers::from_winit(self.modifiers);
                 let bytes = key_event_to_kitty_bytes(
-                    event, mods.ctrl, mods.shift, mods.alt, mods.super_key,
-                    mods.caps_lock, mods.num_lock,
+                    event,
+                    mods.ctrl,
+                    mods.shift,
+                    mods.alt,
+                    mods.super_key,
+                    mods.caps_lock,
+                    mods.num_lock,
                     kitty_flags,
                 );
                 if !bytes.is_empty() {
@@ -100,8 +186,12 @@ impl App {
                             } else {
                                 key_event_to_kitty_bytes(
                                     event,
-                                    mods.ctrl, mods.shift, mods.alt, mods.super_key,
-                                    mods.caps_lock, mods.num_lock,
+                                    mods.ctrl,
+                                    mods.shift,
+                                    mods.alt,
+                                    mods.super_key,
+                                    mods.caps_lock,
+                                    mods.num_lock,
                                     pane_kitty_flags,
                                 )
                             };
@@ -166,7 +256,11 @@ impl App {
             }
             InputResult::Action(action) => self.handle_action(action),
             InputResult::Consumed => {}
-            InputResult::PassThrough => self.send_key_input(event, modifiers),
+            InputResult::PassThrough => {
+                if !self.modal_captures_keyboard() {
+                    self.send_key_input(event, modifiers);
+                }
+            }
         }
 
         self.request_redraw();
@@ -174,19 +268,7 @@ impl App {
 
     /// Compute the current binding mode from application state.
     fn compute_binding_mode(&self) -> BindingMode {
-        let mut mode = BindingMode::EMPTY;
-        if self.core.overview.active {
-            mode |= BindingMode::OVERVIEW;
-        }
-        if self.core.search_state.is_some() {
-            mode |= BindingMode::SEARCH;
-        }
-        if self.core.command_palette.is_some() {
-            mode |= BindingMode::PALETTE;
-        }
-        if self.core.pending_paste.is_some() {
-            mode |= BindingMode::PASTE_CONFIRM;
-        }
+        let mut mode = self.top_overlay_binding_mode();
         if self.core.input.is_locked() {
             mode |= BindingMode::LOCKED;
         }
@@ -194,6 +276,56 @@ impl App {
             mode |= BindingMode::KEY_TABLE;
         }
         mode
+    }
+
+    fn top_overlay_binding_mode(&self) -> BindingMode {
+        if self.core.pending_paste.is_some() {
+            BindingMode::PASTE_CONFIRM
+        } else if self.core.command_palette.is_some() {
+            BindingMode::PALETTE
+        } else if self.core.search_state.is_some() {
+            BindingMode::SEARCH
+        } else if self.core.overview.active {
+            BindingMode::OVERVIEW
+        } else {
+            BindingMode::EMPTY
+        }
+    }
+
+    pub(crate) fn modal_captures_keyboard(&self) -> bool {
+        self.core.context_menu.visible || self.top_overlay_binding_mode() != BindingMode::EMPTY
+    }
+
+    pub(crate) fn append_text_to_overlay_input(&mut self, text: &str) -> bool {
+        let Some(text) = Self::sanitize_overlay_input(text) else {
+            return false;
+        };
+
+        if let Some(palette) = &mut self.core.command_palette {
+            palette.query.push_str(&text);
+            self.filter_palette();
+            true
+        } else if let Some(search) = &mut self.core.search_state {
+            search.query.push_str(&text);
+            self.update_search_results();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn pop_text_from_overlay_input(&mut self) -> bool {
+        if let Some(palette) = &mut self.core.command_palette {
+            palette.query.pop();
+            self.filter_palette();
+            true
+        } else if let Some(search) = &mut self.core.search_state {
+            search.query.pop();
+            self.update_search_results();
+            true
+        } else {
+            false
+        }
     }
 
     /// Handle TextInput action: append character to active text buffer (search/palette).
@@ -204,14 +336,7 @@ impl App {
         let Some(text) = key_event_text_for_input(event) else {
             return;
         };
-
-        if let Some(search) = &mut self.core.search_state {
-            search.query.push_str(text);
-            self.update_search_results();
-        } else if let Some(palette) = &mut self.core.command_palette {
-            palette.query.push_str(text);
-            self.filter_palette();
-        }
+        let _ = self.append_text_to_overlay_input(text);
     }
 
     fn dismiss_context_menu_on_keypress(&mut self) -> bool {
@@ -238,6 +363,15 @@ impl App {
             Some(cb) => match cb.get_text() {
                 Err(e) => log::warn!("clipboard read failed: {e}"),
                 Ok(text) => {
+                    if self.queue_overlay_paste(&text) {
+                        log::info!("clipboard paste routed to overlay flow");
+                        return;
+                    }
+                    if self.modal_captures_keyboard() {
+                        log::debug!("clipboard paste swallowed by modal layer");
+                        return;
+                    }
+
                     log::info!("clipboard text: {} bytes", text.len());
                     let threshold = self.core.config.terminal.paste_warn_threshold;
                     if let Some(info) = super::paste_guard::check_paste_size(&text, threshold) {
@@ -251,6 +385,7 @@ impl App {
                             info,
                             preview,
                             hovered_button: None,
+                            target: super::PendingPasteTarget::Terminal,
                         });
                         log::info!("paste guard: showing confirmation ({} bytes)", text.len());
                     } else {
@@ -291,7 +426,11 @@ impl App {
         if bracketed {
             data.extend_from_slice(b"\x1b[201~");
         }
-        self.send(ClientMessage::Input { pane_id: pid, data, input_seq: 0 });
+        self.send(ClientMessage::Input {
+            pane_id: pid,
+            data,
+            input_seq: 0,
+        });
     }
 
     fn clear_selection_on_typing(&mut self, event: &winit::event::KeyEvent) {
@@ -474,5 +613,121 @@ impl App {
         if let Some(w) = &self.window {
             w.request_redraw();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{App, SearchState};
+    use ciri_config::config::CiriConfig;
+
+    fn make_app() -> App {
+        App::new(CiriConfig::default(), "test-session")
+    }
+
+    #[test]
+    fn binding_mode_prefers_palette_over_search() {
+        let mut app = make_app();
+        app.core.search_state = Some(SearchState {
+            query: "s".into(),
+            matches: Vec::new(),
+            current_match_idx: 0,
+            pane_id: 1,
+            original_scroll_offset: 0,
+        });
+        app.core.open_command_palette();
+
+        let mode = app.compute_binding_mode();
+        assert!(mode.contains(BindingMode::PALETTE));
+        assert!(!mode.contains(BindingMode::SEARCH));
+    }
+
+    #[test]
+    fn overlay_text_input_prefers_palette_over_search() {
+        let mut app = make_app();
+        app.core.search_state = Some(SearchState {
+            query: "search".into(),
+            matches: Vec::new(),
+            current_match_idx: 0,
+            pane_id: 1,
+            original_scroll_offset: 0,
+        });
+        app.core.open_command_palette();
+
+        assert!(app.append_text_to_overlay_input("x"));
+        assert_eq!(
+            app.core.command_palette.as_ref().map(|p| p.query.as_str()),
+            Some("x")
+        );
+        assert_eq!(
+            app.core.search_state.as_ref().map(|s| s.query.as_str()),
+            Some("search")
+        );
+    }
+
+    #[test]
+    fn overlay_backspace_prefers_palette_over_search() {
+        let mut app = make_app();
+        app.core.search_state = Some(SearchState {
+            query: "search".into(),
+            matches: Vec::new(),
+            current_match_idx: 0,
+            pane_id: 1,
+            original_scroll_offset: 0,
+        });
+        app.core.open_command_palette();
+        if let Some(palette) = &mut app.core.command_palette {
+            palette.query = "palette".into();
+        }
+
+        assert!(app.pop_text_from_overlay_input());
+        assert_eq!(
+            app.core.command_palette.as_ref().map(|p| p.query.as_str()),
+            Some("palett")
+        );
+        assert_eq!(
+            app.core.search_state.as_ref().map(|s| s.query.as_str()),
+            Some("search")
+        );
+    }
+
+    #[test]
+    fn overlay_paste_normalizes_multiline_text() {
+        let mut app = make_app();
+        app.core.open_command_palette();
+
+        assert!(app.queue_overlay_paste("ssh\nuser@host\r\n"));
+        assert_eq!(
+            app.core.command_palette.as_ref().map(|p| p.query.as_str()),
+            Some("ssh user@host")
+        );
+        assert!(app.core.pending_paste.is_none());
+    }
+
+    #[test]
+    fn overlay_large_paste_requires_confirmation() {
+        let mut app = make_app();
+        app.core.config.terminal.paste_warn_threshold = 3;
+        app.core.open_command_palette();
+
+        assert!(app.queue_overlay_paste("ab\ncd"));
+        let pending = app.core.pending_paste.as_ref().expect("pending paste");
+        assert_eq!(
+            pending.target,
+            crate::app::PendingPasteTarget::CommandPalette
+        );
+        assert_eq!(pending.info.text, "ab cd");
+        assert_eq!(
+            app.core.command_palette.as_ref().map(|p| p.query.as_str()),
+            Some("")
+        );
+
+        app.confirm_pending_paste();
+        assert!(app.core.pending_paste.is_none());
+        assert_eq!(
+            app.core.command_palette.as_ref().map(|p| p.query.as_str()),
+            Some("ab cd")
+        );
     }
 }

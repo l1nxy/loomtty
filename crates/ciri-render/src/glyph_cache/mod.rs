@@ -451,6 +451,71 @@ impl GlyphCache {
         cache
     }
 
+    #[cfg(windows)]
+    fn cache_windows_glyph(
+        &mut self,
+        face: &IDWriteFontFace,
+        glyph_id: u32,
+        pixel_size: f32,
+        try_color: bool,
+    ) -> Option<GlyphEntry> {
+        if self.use_d2d_rendering {
+            let measured = self
+                .dwrite
+                .measure_glyph(face, glyph_id, pixel_size, try_color)?;
+            if measured.width == 0 || measured.height == 0 {
+                return None;
+            }
+
+            if measured.is_color {
+                let glyph = self
+                    .dwrite
+                    .rasterize_glyph(face, glyph_id, pixel_size, true)?;
+                if glyph.width == 0 || glyph.height == 0 {
+                    return None;
+                }
+                return cache_rasterized_glyph(
+                    glyph,
+                    &mut self.alpha_packer,
+                    &mut self.color_packer,
+                    &mut self.alpha_pending,
+                    &mut self.color_pending,
+                    self.atlas_size,
+                    &mut self.atlas_needs_clear,
+                );
+            }
+
+            return cache_measured_dwrite_glyph(
+                &measured,
+                face,
+                glyph_id as u16,
+                pixel_size,
+                &mut self.alpha_packer,
+                &mut self.color_packer,
+                &mut self.dwrite_alpha_pending,
+                &mut self.dwrite_color_pending,
+                self.atlas_size,
+                &mut self.atlas_needs_clear,
+            );
+        }
+
+        let glyph = self
+            .dwrite
+            .rasterize_glyph(face, glyph_id, pixel_size, try_color)?;
+        if glyph.width == 0 || glyph.height == 0 {
+            return None;
+        }
+        cache_rasterized_glyph(
+            glyph,
+            &mut self.alpha_packer,
+            &mut self.color_packer,
+            &mut self.alpha_pending,
+            &mut self.color_pending,
+            self.atlas_size,
+            &mut self.atlas_needs_clear,
+        )
+    }
+
     /// Ensure a glyph for `ch` with the given `style` is in the atlas.
     pub fn ensure_styled_char(&mut self, ch: char, style: FontStyle) -> Option<GlyphEntry> {
         let key = (ch, style);
@@ -497,127 +562,59 @@ impl GlyphCache {
             // (face, pixel_size, try_color). Done eagerly here so we
             // don't hold an immutable borrow of `self` into the mutable
             // rasterization loop below.
-            let candidate = |f: ResolvedFont| -> (Option<&IDWriteFontFace>, f32, bool) {
+            let candidate = |f: ResolvedFont| -> (Option<IDWriteFontFace>, f32, bool) {
                 match f {
-                    ResolvedFont::Primary => {
-                        (self.dwrite.primary_face(style), self.pixel_size, false)
-                    }
-                    ResolvedFont::Cjk => {
-                        (self.dwrite.cjk_face(style), self.cjk_pixel_size, false)
-                    }
+                    ResolvedFont::Primary => (
+                        self.dwrite.primary_face(style).cloned(),
+                        self.pixel_size,
+                        false,
+                    ),
+                    ResolvedFont::Cjk => (
+                        self.dwrite.cjk_face(style).cloned(),
+                        self.cjk_pixel_size,
+                        false,
+                    ),
                     ResolvedFont::Emoji => (
-                        self.dwrite.emoji_face(style),
+                        self.dwrite.emoji_face(style).cloned(),
                         self.pixel_size,
                         self.dwrite.is_emoji_color(),
                     ),
                 }
             };
-            let candidates: [(Option<&_>, f32, bool); 3] = [
+            let candidates: [(Option<IDWriteFontFace>, f32, bool); 3] = [
                 candidate(order[0]),
                 candidate(order[1]),
                 candidate(order[2]),
             ];
 
-            // Helper: try rasterizing a char with a given DWrite face (D2D measure path).
-            macro_rules! try_d2d_face {
+            // Helper: try rasterizing a char with a given DWrite face.
+            macro_rules! try_dwrite_face {
                 ($face:expr, $px:expr, $try_color:expr) => {
                     if let Some(gid) = DWriteRasterizer::char_to_glyph($face, ch) {
-                        if let Some(m) =
-                            self.dwrite.measure_glyph($face, gid as u32, $px, $try_color)
+                        if let Some(entry) =
+                            self.cache_windows_glyph($face, gid as u32, $px, $try_color)
                         {
-                            if m.width > 0 && m.height > 0 {
-                                let entry = cache_measured_dwrite_glyph(
-                                    &m,
-                                    $face,
-                                    gid,
-                                    $px,
-                                    &mut self.alpha_packer,
-                                    &mut self.color_packer,
-                                    &mut self.dwrite_alpha_pending,
-                                    &mut self.dwrite_color_pending,
-                                    self.atlas_size,
-                                    &mut self.atlas_needs_clear,
-                                );
-                                if let Some(entry) = entry {
-                                    self.cache.insert(key, entry);
-                                    return Some(entry);
-                                }
-                            }
+                            self.cache.insert(key, entry);
+                            return Some(entry);
                         }
                     }
                 };
             }
 
-            if self.use_d2d_rendering {
-                // D2D path: measure only, queue render command for DX backend.
-                for &(face, px, try_color) in &candidates {
-                    if let Some(face) = face {
-                        try_d2d_face!(face, px, try_color);
-                    }
+            for (face, px, try_color) in &candidates {
+                if let Some(face) = face {
+                    try_dwrite_face!(face, *px, *try_color);
                 }
-                // System fallback: try the font that MapCharacters found
-                if let Some(ref resolver) = self.dwrite_resolver {
-                    if let Some(sys_face) = resolver.get_system_face(ch) {
-                        try_d2d_face!(&sys_face, self.pixel_size, false);
-                    }
-                }
-                self.cache.insert(key, GlyphEntry::EMPTY);
-                return Some(GlyphEntry::EMPTY);
             }
 
-            // CPU rasterization path (GL/Blade fallback).
-            let mut result = None;
-            for &(face, px, try_color) in &candidates {
-                if let Some(face) = face {
-                    if let Some(gid) = DWriteRasterizer::char_to_glyph(face, ch) {
-                        if let Some(g) =
-                            self.dwrite.rasterize_glyph(face, gid as u32, px, try_color)
-                        {
-                            if g.width > 0 && g.height > 0 {
-                                result = Some(g);
-                                break;
-                            }
-                        }
-                    }
-                }
+            if let Some(ref resolver) = self.dwrite_resolver
+                && let Some(sys_face) = resolver.get_system_face(ch)
+            {
+                try_dwrite_face!(&sys_face, self.pixel_size, false);
             }
-            // System fallback for CPU path
-            if result.is_none() {
-                if let Some(ref resolver) = self.dwrite_resolver {
-                    if let Some(sys_face) = resolver.get_system_face(ch) {
-                        if let Some(gid) = DWriteRasterizer::char_to_glyph(&sys_face, ch) {
-                            if let Some(g) = self.dwrite.rasterize_glyph(
-                                &sys_face,
-                                gid as u32,
-                                self.pixel_size,
-                                false,
-                            ) {
-                                if g.width > 0 && g.height > 0 {
-                                    result = Some(g);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            let rasterized = match result {
-                Some(g) => g,
-                None => {
-                    self.cache.insert(key, GlyphEntry::EMPTY);
-                    return Some(GlyphEntry::EMPTY);
-                }
-            };
-            let entry = cache_rasterized_glyph(
-                rasterized,
-                &mut self.alpha_packer,
-                &mut self.color_packer,
-                &mut self.alpha_pending,
-                &mut self.color_pending,
-                self.atlas_size,
-                &mut self.atlas_needs_clear,
-            )?;
-            self.cache.insert(key, entry);
-            return Some(entry);
+
+            self.cache.insert(key, GlyphEntry::EMPTY);
+            return Some(GlyphEntry::EMPTY);
         }
 
         #[cfg(not(windows))]
@@ -633,24 +630,6 @@ impl GlyphCache {
             )?;
             self.cache.insert(key, entry);
             Some(entry)
-        }
-    }
-
-    /// Get the DWrite candidate (face, pixel_size, try_color) for a ResolvedFont.
-    #[cfg(windows)]
-    fn dwrite_candidate(
-        &self,
-        font: ResolvedFont,
-        style: FontStyle,
-    ) -> (Option<&IDWriteFontFace>, f32, bool) {
-        match font {
-            ResolvedFont::Primary => (self.dwrite.primary_face(style), self.pixel_size, false),
-            ResolvedFont::Cjk => (self.dwrite.cjk_face(style), self.cjk_pixel_size, false),
-            ResolvedFont::Emoji => (
-                self.dwrite.emoji_face(style),
-                self.pixel_size,
-                self.dwrite.is_emoji_color(),
-            ),
         }
     }
 
@@ -696,52 +675,26 @@ impl GlyphCache {
         {
             let (face, px, try_color) = match font_class {
                 FontClass::Emoji => (
-                    self.dwrite.emoji_face(style)?,
+                    self.dwrite.emoji_face(style)?.clone(),
                     self.pixel_size,
                     self.dwrite.is_emoji_color(),
                 ),
-                FontClass::Cjk => (self.dwrite.cjk_face(style)?, self.cjk_pixel_size, false),
-                FontClass::Primary => (self.dwrite.primary_face(style)?, self.pixel_size, false),
+                FontClass::Cjk => (
+                    self.dwrite.cjk_face(style)?.clone(),
+                    self.cjk_pixel_size,
+                    false,
+                ),
+                FontClass::Primary => (
+                    self.dwrite.primary_face(style)?.clone(),
+                    self.pixel_size,
+                    false,
+                ),
             };
 
-            if self.use_d2d_rendering {
-                // D2D path: measure only, queue render command.
-                let m = self.dwrite.measure_glyph(face, glyph_id, px, try_color)?;
-                if m.width == 0 || m.height == 0 {
-                    self.glyph_id_cache.insert(key, GlyphEntry::EMPTY);
-                    return Some(GlyphEntry::EMPTY);
-                }
-                let entry = cache_measured_dwrite_glyph(
-                    &m,
-                    face,
-                    glyph_id as u16,
-                    px,
-                    &mut self.alpha_packer,
-                    &mut self.color_packer,
-                    &mut self.dwrite_alpha_pending,
-                    &mut self.dwrite_color_pending,
-                    self.atlas_size,
-                    &mut self.atlas_needs_clear,
-                )?;
-                self.glyph_id_cache.insert(key, entry);
-                return Some(entry);
-            }
-
-            // CPU rasterization path (GL/Blade fallback).
-            let glyph = self.dwrite.rasterize_glyph(face, glyph_id, px, try_color)?;
-            if glyph.width == 0 || glyph.height == 0 {
+            let Some(entry) = self.cache_windows_glyph(&face, glyph_id, px, try_color) else {
                 self.glyph_id_cache.insert(key, GlyphEntry::EMPTY);
                 return Some(GlyphEntry::EMPTY);
-            }
-            let entry = cache_rasterized_glyph(
-                glyph,
-                &mut self.alpha_packer,
-                &mut self.color_packer,
-                &mut self.alpha_pending,
-                &mut self.color_pending,
-                self.atlas_size,
-                &mut self.atlas_needs_clear,
-            )?;
+            };
             self.glyph_id_cache.insert(key, entry);
             return Some(entry);
         }
@@ -977,5 +930,31 @@ mod tests {
         assert!(color.is_empty());
         assert!(!alpha_clear);
         assert!(!color_clear);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn d2d_color_emoji_falls_back_to_cpu_rgba_uploads() {
+        let mut cache = test_cache(512);
+        cache.set_d2d_rendering(true);
+
+        let Some(entry) = cache.ensure_char('😀') else {
+            return;
+        };
+        if !entry.is_color {
+            return;
+        }
+
+        let (_alpha, color, _alpha_clear, _color_clear) = cache.take_pending();
+        let (_dwrite_alpha, dwrite_color) = cache.take_dwrite_pending();
+
+        assert!(
+            !color.is_empty(),
+            "color emoji should queue CPU RGBA uploads even when D2D rendering is enabled"
+        );
+        assert!(
+            dwrite_color.is_empty(),
+            "color emoji should not use D2D DrawGlyphRun pending queue"
+        );
     }
 }

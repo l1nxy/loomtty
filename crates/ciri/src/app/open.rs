@@ -65,16 +65,12 @@ impl App {
 // ── Free functions ──
 
 #[cfg(target_os = "macos")]
-pub(crate) fn link_activation_modifier_active(
-    modifiers: winit::keyboard::ModifiersState,
-) -> bool {
+pub(crate) fn link_activation_modifier_active(modifiers: winit::keyboard::ModifiersState) -> bool {
     modifiers.super_key()
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn link_activation_modifier_active(
-    modifiers: winit::keyboard::ModifiersState,
-) -> bool {
+pub(crate) fn link_activation_modifier_active(modifiers: winit::keyboard::ModifiersState) -> bool {
     modifiers.control_key()
 }
 

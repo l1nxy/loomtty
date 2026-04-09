@@ -8,8 +8,8 @@ mod tick;
 use anyhow::Result;
 use ciri_layout::column::ColumnWidth;
 use ciri_protocol::transport;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(unix)]
 use tokio::net::UnixListener;
 #[cfg(windows)]

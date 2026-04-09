@@ -138,7 +138,6 @@ impl App {
         }
     }
 
-
     pub(crate) fn ui_palette_hover(&mut self, mx: f32, my: f32) -> (Option<usize>, bool) {
         let cx = self.ui_context();
         let Some(component) = PaletteComponent::capture(self, &cx) else {
@@ -156,7 +155,6 @@ impl App {
             UiPaletteHit::None => (None, false),
         }
     }
-
 
     pub(crate) fn ui_context_menu_hover(&self, mx: f32, my: f32) -> Option<usize> {
         let cx = self.ui_context();
@@ -524,6 +522,7 @@ mod tests {
             },
             preview: "hello".into(),
             hovered_button: None,
+            target: super::super::PendingPasteTarget::Terminal,
         });
         let cx = app.ui_context();
         let component = PasteDialogComponent::capture(&app, &cx).unwrap();
@@ -588,6 +587,7 @@ mod tests {
             },
             preview: "hello".into(),
             hovered_button: None,
+            target: super::super::PendingPasteTarget::Terminal,
         });
         let cx = app.ui_context();
         let component = PasteDialogComponent::capture(&app, &cx).unwrap();

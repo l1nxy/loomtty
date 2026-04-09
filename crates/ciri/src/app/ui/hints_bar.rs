@@ -126,8 +126,16 @@ impl UiComponent for HintsBarComponent {
 
         // Background + separator (absolute, not part of layout flow)
         let mut ui = UiBuilder::new_horizontal(
-            padding, text_y, cx.viewport_w - padding * 2.0, cx.cell_h, 0.0,
-            0.0, 0.0, false, cx, scene,
+            padding,
+            text_y,
+            cx.viewport_w - padding * 2.0,
+            cx.cell_h,
+            0.0,
+            0.0,
+            0.0,
+            false,
+            cx,
+            scene,
         );
         ui.abs_rect(0.0, self.bar_y, cx.viewport_w, self.bar_h, bar_bg);
         ui.abs_rect(0.0, self.bar_y, cx.viewport_w, 1.0, sep_color);

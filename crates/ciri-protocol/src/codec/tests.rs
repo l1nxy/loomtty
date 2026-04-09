@@ -254,7 +254,7 @@ fn cell_delta_sm_roundtrip() {
         cursor_col: 10,
         cursor_shape: 0,
         mode_flags: 0,
-                echo_ack: 0,
+        echo_ack: 0,
     };
     encode_cell_delta_streaming_framed(
         &mut buf,
@@ -306,7 +306,7 @@ fn full_pane_sync_roundtrip() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
-                echo_ack: 0,
+            echo_ack: 0,
         },
         cols: 80,
         rows: 24,
@@ -349,7 +349,7 @@ fn full_pane_sync_with_scrollback() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
-                echo_ack: 0,
+            echo_ack: 0,
         },
         cols: 10,
         rows: 5,
@@ -379,7 +379,7 @@ fn full_pane_sync_rejects_truncated_mandatory_sections() {
             cursor_col: 2,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
-                echo_ack: 0,
+            echo_ack: 0,
         },
         cols: 4,
         rows: 2,
@@ -421,7 +421,7 @@ fn full_pane_sync_ignores_truncated_optional_extras() {
             cursor_col: 1,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
-                echo_ack: 0,
+            echo_ack: 0,
         },
         cols: 2,
         rows: 1,
@@ -477,7 +477,7 @@ fn full_pane_sync_rejects_oversized_visible_metadata() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
-                echo_ack: 0,
+            echo_ack: 0,
         },
         cols: 1,
         rows: 1,
@@ -543,7 +543,7 @@ async fn frame_roundtrip_cell_delta_sm() {
         cursor_col: 0,
         cursor_shape: 0,
         mode_flags: 0,
-                echo_ack: 0,
+        echo_ack: 0,
     };
     encode_cell_delta_streaming_framed(
         &mut buf,
@@ -617,7 +617,7 @@ async fn frame_roundtrip_full_pane_sync_lz4() {
             cursor_col: 10,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
-                echo_ack: 0,
+            echo_ack: 0,
         },
         cols: 80,
         rows: 24,
@@ -671,7 +671,7 @@ async fn frame_roundtrip_cell_delta_lz4() {
         cursor_col: 0,
         cursor_shape: 0,
         mode_flags: 0,
-                echo_ack: 0,
+        echo_ack: 0,
     };
     // 10 regions × 20 cells each — well above 128 bytes
     let regions: Vec<(u16, u16, u16)> = (0..10).map(|line| (line, 0, 19)).collect();

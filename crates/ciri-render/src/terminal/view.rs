@@ -15,7 +15,8 @@ use super::color::ColorTable;
 use super::cursor::{cursor_shape_to_protocol, make_cursor_rects};
 use super::decoration::{flush_bg_strip, render_cell, render_cell_decorations};
 use super::glyph::{
-    RelativeGlyph, constrain_wide_glyph, constrain_wide_text_glyph, emit_glyph, make_relative_glyph,
+    RelativeGlyph, color_glyph_cell_span, constrain_color_glyph_to_cells,
+    constrain_wide_text_glyph, emit_glyph, make_relative_glyph,
 };
 use super::shaping::{RowLigatureData, precompute_row_shaping};
 
@@ -351,10 +352,11 @@ fn render_single_row(
         if let Some(ld) = lig
             && let Ok(gi) = ld
                 .grapheme_glyphs
-                .binary_search_by_key(&col, |(c, _, _)| *c)
+                .binary_search_by_key(&col, |(c, _, _, _)| *c)
         {
             let gid = ld.grapheme_glyphs[gi].1;
             let glyph_font_id = ld.grapheme_glyphs[gi].2;
+            let display_cols = ld.grapheme_glyphs[gi].3;
             if let Some(entry) =
                 atlas.ensure_glyph_id(gid, glyph_font_id, props.style, props.is_wide)
                 && entry.width > 0
@@ -364,8 +366,15 @@ fn render_single_row(
                 let py = row as f32 * grid.metrics.ch;
                 let is_cjk_text_wide =
                     props.is_wide && !entry.is_color && Some(glyph_font_id) == grid.cjk_font_id;
-                let g = if props.is_wide && entry.is_color {
-                    constrain_wide_glyph(&entry, px, py, grid.metrics, props.fg)
+                let g = if entry.is_color && display_cols > 1 {
+                    constrain_color_glyph_to_cells(
+                        &entry,
+                        px,
+                        py,
+                        grid.metrics,
+                        props.fg,
+                        display_cols,
+                    )
                 } else if is_cjk_text_wide {
                     constrain_wide_text_glyph(&entry, px, py, grid.metrics, props.fg)
                 } else {
@@ -395,8 +404,16 @@ fn render_single_row(
                 let py = row as f32 * grid.metrics.ch;
                 let is_cjk_text_wide =
                     is_wide && !entry.is_color && Some(font_id) == grid.cjk_font_id;
-                let g = if is_wide && entry.is_color {
-                    constrain_wide_glyph(&entry, px, py, grid.metrics, props.fg)
+                let color_span = color_glyph_cell_span(props.ch, is_wide);
+                let g = if entry.is_color && color_span > 1 {
+                    constrain_color_glyph_to_cells(
+                        &entry,
+                        px,
+                        py,
+                        grid.metrics,
+                        props.fg,
+                        color_span,
+                    )
                 } else if is_cjk_text_wide {
                     constrain_wide_text_glyph(&entry, px, py, grid.metrics, props.fg)
                 } else {

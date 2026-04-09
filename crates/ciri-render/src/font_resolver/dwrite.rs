@@ -8,10 +8,9 @@
 use super::{FontResolver, ResolvedFont};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::mem::ManuallyDrop;
 
-use windows::core::*;
 use windows::Win32::Graphics::DirectWrite::*;
+use windows::core::*;
 
 /// Font resolver using DirectWrite's system font fallback.
 ///
@@ -46,11 +45,10 @@ unsafe impl Sync for DWriteResolver {}
 impl DWriteResolver {
     /// Create a DWrite resolver.
     pub fn new(inner: super::CmapResolver) -> Self {
-        let (fallback, base_family, base_collection) = Self::init_dwrite()
-            .unwrap_or_else(|| {
-                log::warn!("DWrite font fallback init failed, using CmapResolver only");
-                (None, Vec::new(), None)
-            });
+        let (fallback, base_family, base_collection) = Self::init_dwrite().unwrap_or_else(|| {
+            log::warn!("DWrite font fallback init failed, using CmapResolver only");
+            (None, Vec::new(), None)
+        });
 
         DWriteResolver {
             fallback,
@@ -96,8 +94,7 @@ impl DWriteResolver {
         Option<IDWriteFontCollection>,
     )> {
         unsafe {
-            let factory: IDWriteFactory2 =
-                DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).ok()?;
+            let factory: IDWriteFactory2 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).ok()?;
             let fallback = factory.GetSystemFontFallback().ok();
 
             let mut collection = None;
@@ -191,7 +188,6 @@ impl FontResolver for DWriteResolver {
         self.cache.borrow_mut().insert(ch, result);
         result
     }
-
 }
 
 fn is_same_font(a: &IDWriteFontFace, b: &Option<IDWriteFontFace>) -> bool {
@@ -218,7 +214,8 @@ fn get_font_files(face: &IDWriteFontFace) -> Vec<Vec<u8>> {
                 let f = f?;
                 let mut key_ptr: *const std::ffi::c_void = std::ptr::null();
                 let mut key_size = 0u32;
-                f.GetReferenceKey(&mut key_ptr as *mut _ as *mut _, &mut key_size).ok()?;
+                f.GetReferenceKey(&mut key_ptr as *mut _ as *mut _, &mut key_size)
+                    .ok()?;
                 if key_ptr.is_null() || key_size == 0 {
                     return None;
                 }

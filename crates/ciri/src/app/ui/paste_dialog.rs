@@ -101,15 +101,29 @@ impl UiComponent for PasteDialogComponent {
         let btn_h = cx.cell_h + 12.0;
 
         let mut ui = UiBuilder::new_vertical(
-            self.dx + pad, self.dy + pad, content_w, self.dialog_h - pad * 2.0, 0.0,
-            0.0, 0.0, false, cx, scene,
+            self.dx + pad,
+            self.dy + pad,
+            content_w,
+            self.dialog_h - pad * 2.0,
+            0.0,
+            0.0,
+            0.0,
+            false,
+            cx,
+            scene,
         );
 
         // Full-screen dimmed backdrop + dialog frame
         ui.modal_backdrop([0.0, 0.0, 0.0, 0.5]);
         ui.bordered_panel_inset(
-            self.dx, self.dy, self.dialog_w, self.dialog_h,
-            [0.12, 0.12, 0.15, 1.0], border_color, bw, false,
+            self.dx,
+            self.dy,
+            self.dialog_w,
+            self.dialog_h,
+            [0.12, 0.12, 0.15, 1.0],
+            border_color,
+            bw,
+            false,
         );
 
         // Title
@@ -123,8 +137,10 @@ impl UiComponent for PasteDialogComponent {
         // Preview box
         let (_, preview_y) = ui.cursor_pos();
         ui.abs_rect(
-            self.dx + pad - 4.0, preview_y - 2.0,
-            content_w + 8.0, cx.cell_h + 4.0,
+            self.dx + pad - 4.0,
+            preview_y - 2.0,
+            content_w + 8.0,
+            cx.cell_h + 4.0,
             [0.08, 0.08, 0.1, 1.0],
         );
         ui.label(&self.preview, [0.6, 0.6, 0.6, 1.0]);

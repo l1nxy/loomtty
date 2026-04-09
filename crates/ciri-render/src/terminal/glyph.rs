@@ -1,6 +1,7 @@
 //! Glyph positioning and RelativeGlyph type.
 
 use crate::glyph_cache::{GlyphCache, GlyphEntry};
+use unicode_width::UnicodeWidthChar;
 
 use super::cell::{CellMetrics, CellProps};
 
@@ -44,18 +45,19 @@ pub(super) fn make_relative_glyph(
     }
 }
 
-/// Fit a glyph into a double-width cell, preserving aspect ratio, centered.
+/// Fit a color glyph into `cols` terminal cells, preserving aspect ratio, centered.
 #[inline]
-pub(super) fn constrain_wide_glyph(
+pub(super) fn constrain_color_glyph_to_cells(
     entry: &GlyphEntry,
     px: f32,
     py: f32,
     m: &CellMetrics,
     color: [f32; 4],
+    cols: usize,
 ) -> RelativeGlyph {
     let gw = entry.width as f32;
     let gh = entry.height as f32;
-    let target_w = m.cw * 2.0;
+    let target_w = m.cw * cols.max(1) as f32;
     let target_h = m.ch;
     // Fit within target, preserving aspect ratio
     let scale = (target_w / gw).min(target_h / gh);
@@ -75,6 +77,13 @@ pub(super) fn constrain_wide_glyph(
         v1: entry.v1,
         color,
     }
+}
+
+/// Compute the display cell span for a color glyph.
+#[inline]
+pub(super) fn color_glyph_cell_span(ch: char, is_wide: bool) -> usize {
+    let flagged = if is_wide { 2 } else { 1 };
+    UnicodeWidthChar::width(ch).unwrap_or(0).max(flagged).max(1)
 }
 
 /// Place a wide CJK text glyph in a double-width cell using bearing positioning.
@@ -120,9 +129,9 @@ pub(super) fn emit_glyph(
         }
         let px = col as f32 * m.cw;
         let py = row as f32 * m.ch;
-        // Only constrain color emoji in wide cells; text glyphs use bearing positioning
-        let g = if cell.is_wide && entry.is_color {
-            constrain_wide_glyph(&entry, px, py, m, cell.fg)
+        let color_span = color_glyph_cell_span(cell.ch, cell.is_wide);
+        let g = if entry.is_color && color_span > 1 {
+            constrain_color_glyph_to_cells(&entry, px, py, m, cell.fg, color_span)
         } else {
             make_relative_glyph(&entry, px, py, m, cell.fg)
         };
@@ -200,7 +209,7 @@ mod tests {
             is_color: true,
             ..test_entry()
         };
-        let g = constrain_wide_glyph(&entry, 0.0, 0.0, &m, [1.0; 4]);
+        let g = constrain_color_glyph_to_cells(&entry, 0.0, 0.0, &m, [1.0; 4], 2);
 
         // target_w = 20, target_h = 20. scale = min(20/32, 20/32) = 0.625
         // final_w = 32 * 0.625 = 20, final_h = 32 * 0.625 = 20
@@ -218,7 +227,7 @@ mod tests {
             is_color: true,
             ..test_entry()
         };
-        let g = constrain_wide_glyph(&entry, 0.0, 0.0, &m, [1.0; 4]);
+        let g = constrain_color_glyph_to_cells(&entry, 0.0, 0.0, &m, [1.0; 4], 2);
 
         let original_ratio = 40.0 / 20.0;
         let rendered_ratio = g.glyph_w / g.glyph_h;
@@ -238,7 +247,7 @@ mod tests {
             is_color: true,
             ..test_entry()
         };
-        let g = constrain_wide_glyph(&entry, 0.0, 0.0, &m, [1.0; 4]);
+        let g = constrain_color_glyph_to_cells(&entry, 0.0, 0.0, &m, [1.0; 4], 2);
 
         // target = 2*cw x ch = 20x20. Scale = min(20/10, 20/10) = 2.0, final = 20x20
         // Centered: offset_x = (20-20)*0.5 = 0, offset_y = (20-20)*0.5 = 0
@@ -280,6 +289,13 @@ mod tests {
 
         // Should be clamped to target_w = 2*10 = 20
         assert_eq!(g.glyph_w, 20.0);
+    }
+
+    #[test]
+    fn color_glyph_cell_span_uses_unicode_width_for_emoji() {
+        assert_eq!(color_glyph_cell_span('😀', false), 2);
+        assert_eq!(color_glyph_cell_span('A', false), 1);
+        assert_eq!(color_glyph_cell_span('中', true), 2);
     }
 
     #[test]

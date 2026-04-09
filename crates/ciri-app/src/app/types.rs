@@ -233,12 +233,20 @@ pub struct PendingPaste {
     pub info: crate::paste_guard::PasteInfo,
     pub preview: String,
     pub hovered_button: Option<PasteButton>,
+    pub target: PendingPasteTarget,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PasteButton {
     Paste,
     Cancel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingPasteTarget {
+    Terminal,
+    CommandPalette,
+    Search,
 }
 
 /// Auto-reconnection state.

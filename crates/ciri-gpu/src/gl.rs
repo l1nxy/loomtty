@@ -65,7 +65,9 @@ impl GlAtlasLayer {
             .get_uniform_location(program, "u_atlas")
             .ok_or_else(|| crate::GpuError::ShaderCompile("u_atlas uniform not found".into()))?;
 
-        let texture = gl.create_texture().map_err(|e| crate::GpuError::ResourceCreate(format!("texture: {e}")))?;
+        let texture = gl
+            .create_texture()
+            .map_err(|e| crate::GpuError::ResourceCreate(format!("texture: {e}")))?;
         gl.bind_texture(glow::TEXTURE_2D, Some(texture));
         gl.tex_image_2d(
             glow::TEXTURE_2D,
@@ -103,8 +105,12 @@ impl GlAtlasLayer {
         );
         gl.bind_texture(glow::TEXTURE_2D, None);
 
-        let vao = gl.create_vertex_array().map_err(|e| crate::GpuError::ResourceCreate(format!("VAO: {e}")))?;
-        let instance_vbo = gl.create_buffer().map_err(|e| crate::GpuError::ResourceCreate(format!("VBO: {e}")))?;
+        let vao = gl
+            .create_vertex_array()
+            .map_err(|e| crate::GpuError::ResourceCreate(format!("VAO: {e}")))?;
+        let instance_vbo = gl
+            .create_buffer()
+            .map_err(|e| crate::GpuError::ResourceCreate(format!("VBO: {e}")))?;
 
         gl.bind_vertex_array(Some(vao));
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(instance_vbo));
@@ -262,10 +268,16 @@ impl GlRectPipeline {
         let program = compile_program(gl, RECT_VS, RECT_FS, "rect")?;
         let loc_viewport = gl
             .get_uniform_location(program, "u_viewport")
-            .ok_or_else(|| crate::GpuError::ShaderCompile("u_viewport uniform not found in rect shader".into()))?;
+            .ok_or_else(|| {
+                crate::GpuError::ShaderCompile("u_viewport uniform not found in rect shader".into())
+            })?;
 
-        let vao = gl.create_vertex_array().map_err(|e| crate::GpuError::ResourceCreate(format!("rect VAO: {e}")))?;
-        let instance_vbo = gl.create_buffer().map_err(|e| crate::GpuError::ResourceCreate(format!("rect VBO: {e}")))?;
+        let vao = gl
+            .create_vertex_array()
+            .map_err(|e| crate::GpuError::ResourceCreate(format!("rect VAO: {e}")))?;
+        let instance_vbo = gl
+            .create_buffer()
+            .map_err(|e| crate::GpuError::ResourceCreate(format!("rect VBO: {e}")))?;
 
         gl.bind_vertex_array(Some(vao));
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(instance_vbo));
@@ -364,7 +376,11 @@ pub struct GlyphAtlasGpu {
 }
 
 impl GlyphAtlasGpu {
-    unsafe fn new(gl: &glow::Context, atlas_size: u32, max_instances: usize) -> crate::Result<Self> {
+    unsafe fn new(
+        gl: &glow::Context,
+        atlas_size: u32,
+        max_instances: usize,
+    ) -> crate::Result<Self> {
         let alpha = GlAtlasLayer::new(
             gl,
             &GlAtlasLayerConfig {
@@ -622,7 +638,9 @@ impl Renderer {
             };
 
             // 3. Upload alpha + color glyph instances once.
-            atlas_gpu.alpha.upload_instances(&self.gl, scene.glyphs, &vp);
+            atlas_gpu
+                .alpha
+                .upload_instances(&self.gl, scene.glyphs, &vp);
             atlas_gpu
                 .color
                 .upload_instances(&self.gl, scene.color_glyphs, &vp);
@@ -742,9 +760,9 @@ unsafe fn compile_program(
     fs_src: &str,
     label: &str,
 ) -> std::result::Result<glow::Program, crate::GpuError> {
-    let vs = gl
-        .create_shader(glow::VERTEX_SHADER)
-        .map_err(|e| crate::GpuError::ShaderCompile(format!("[{label}] create vertex shader: {e}")))?;
+    let vs = gl.create_shader(glow::VERTEX_SHADER).map_err(|e| {
+        crate::GpuError::ShaderCompile(format!("[{label}] create vertex shader: {e}"))
+    })?;
     gl.shader_source(vs, vs_src);
     gl.compile_shader(vs);
     if !gl.get_shader_compile_status(vs) {
@@ -755,9 +773,9 @@ unsafe fn compile_program(
         )));
     }
 
-    let fs = gl
-        .create_shader(glow::FRAGMENT_SHADER)
-        .map_err(|e| crate::GpuError::ShaderCompile(format!("[{label}] create fragment shader: {e}")))?;
+    let fs = gl.create_shader(glow::FRAGMENT_SHADER).map_err(|e| {
+        crate::GpuError::ShaderCompile(format!("[{label}] create fragment shader: {e}"))
+    })?;
     gl.shader_source(fs, fs_src);
     gl.compile_shader(fs);
     if !gl.get_shader_compile_status(fs) {

@@ -10,8 +10,6 @@ use ciri_protocol::message::*;
 use std::collections::HashMap;
 use std::time::Instant;
 
-
-
 const PREDICTION_TIMEOUT_SECS: u64 = 8;
 const PING_INTERVAL_SECS: u64 = 2;
 

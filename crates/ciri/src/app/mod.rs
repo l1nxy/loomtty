@@ -5,8 +5,8 @@ pub(crate) mod ime;
 pub(crate) mod key_encode;
 pub(crate) mod keyboard;
 pub(crate) mod mouse;
-pub(crate) mod open;
 pub(crate) mod notification;
+pub(crate) mod open;
 pub(crate) mod overview;
 pub(crate) mod palette;
 pub(crate) mod paste_dialog;
@@ -39,8 +39,8 @@ use winit::window::Window;
 // Re-export core types so existing `use super::*` in submodules still works.
 pub(crate) use ciri_app::app::{
     AppModel, ClientImagePlacement, ConnectionKind, ConnectionSlot, ContextMenu, ContextMenuAction,
-    ContextMenuItem, HoveredLink, OverviewActionHover, PaletteEntry, PaletteEntryKind, PasteButton,
-    PendingPaste, ReconnectPlan, RemoteConnectionConfig, ScrollbarDragInfo, SearchMatch,
+    ContextMenuItem, HoveredLink, OverviewActionHover, PaletteEntryKind, PasteButton, PendingPaste,
+    PendingPasteTarget, ReconnectPlan, RemoteConnectionConfig, ScrollbarDragInfo, SearchMatch,
     SearchState, Selection, ServerEvent, TopBarHoverRegion,
 };
 use ciri_layout::geometry::Rect as GeoRect;
@@ -61,9 +61,7 @@ pub(crate) struct CommandPaletteLayout {
     pub panel_w: f32,
     pub panel_h: f32,
     pub row_h: f32,
-    pub input_row_h: f32,
     pub visible_rows: usize,
-    pub entry_count: usize,
     pub text_x: f32,
     pub text_y: f32,
     pub sep_y: f32,
@@ -531,9 +529,7 @@ impl App {
             panel_w,
             panel_h,
             row_h,
-            input_row_h,
             visible_rows,
-            entry_count,
             text_x,
             text_y,
             sep_y,

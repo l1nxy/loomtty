@@ -1,8 +1,8 @@
 use ciri_render::rect::Rect;
 
 use super::types::{UiContext, UiOverviewHit, UiScene};
-use crate::app::status_bar::{TextEmitParams, emit_status_text};
 use crate::app::App;
+use crate::app::status_bar::{TextEmitParams, emit_status_text};
 
 pub(crate) struct OverviewComponent {
     hovered_pane: Option<(usize, u64)>,

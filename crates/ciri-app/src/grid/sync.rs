@@ -186,7 +186,9 @@ impl ClientPaneGrid {
         self.title = sync.title.clone();
         self.grapheme_map = rebased_grapheme_map;
         // Build grapheme lookup from viewport cells (already decoded in place).
-        let sync_grapheme_map = sync.grapheme_extras.build_lookup(&self.viewport[..vp_cells]);
+        let sync_grapheme_map = sync
+            .grapheme_extras
+            .build_lookup(&self.viewport[..vp_cells]);
         for (idx, grapheme) in sync_grapheme_map {
             self.grapheme_map.insert(idx, grapheme);
         }

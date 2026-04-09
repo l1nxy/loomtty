@@ -856,11 +856,7 @@ impl Renderer {
 
             // 6. Draw active pane glyphs (scissored, no re-upload).
             atlas_gpu.draw_alpha_batches(&mut pass, alpha_count, scene.active_glyph_batches);
-            atlas_gpu.draw_color_batches(
-                &mut pass,
-                color_count,
-                scene.active_color_glyph_batches,
-            );
+            atlas_gpu.draw_color_batches(&mut pass, color_count, scene.active_color_glyph_batches);
 
             // 7. Overlay background rects (rendered after pane glyphs so they
             //    occlude terminal text underneath popups like the context menu).

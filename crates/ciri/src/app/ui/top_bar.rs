@@ -87,7 +87,10 @@ impl UiComponent for TopBarComponent {
     }
 
     fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let padding = cx.config.statusbar.height_padding
+        let padding = cx
+            .config
+            .statusbar
+            .height_padding
             .unwrap_or(cx.cell_h * cx.config.statusbar.padding_ratio);
         let bar_height = cx.cell_h + padding;
         let text_y = self.layout.bar_y + padding * 0.5;
@@ -101,15 +104,26 @@ impl UiComponent for TopBarComponent {
 
         // Pre-compute right side width for three-zone split
         let mode_w = self.mode_label.chars().count() as f32 * cx.cell_w;
-        let ws_w = if self.workspace_label.is_empty() { 0.0 }
-                   else { UnicodeWidthStr::width(self.workspace_label.as_str()) as f32 * cx.cell_w };
+        let ws_w = if self.workspace_label.is_empty() {
+            0.0
+        } else {
+            UnicodeWidthStr::width(self.workspace_label.as_str()) as f32 * cx.cell_w
+        };
         let right_w = mode_w + ws_w;
         let session_w = self.layout.session_w;
         let tabs_area_w = (cx.viewport_w - session_w - right_w).max(0.0);
 
         let mut ui = UiBuilder::new_horizontal(
-            0.0, text_y, cx.viewport_w, cx.cell_h, 0.0,
-            0.0, 0.0, false, cx, scene,
+            0.0,
+            text_y,
+            cx.viewport_w,
+            cx.cell_h,
+            0.0,
+            0.0,
+            0.0,
+            false,
+            cx,
+            scene,
         );
 
         // Bar background + separator (absolute decorations)
@@ -121,7 +135,11 @@ impl UiComponent for TopBarComponent {
         ui.abs_rect(0.0, sep_y, cx.viewport_w, 1.0, sep_color);
 
         // === Left zone: session name ===
-        let session_color = if self.hovered_region == Some(TopBarHoverRegion::Session) { fg } else { dim };
+        let session_color = if self.hovered_region == Some(TopBarHoverRegion::Session) {
+            fg
+        } else {
+            dim
+        };
         ui.label(&self.session_text, session_color);
 
         // === Middle zone: pane tabs (scrollable, clipped) ===
@@ -143,19 +161,40 @@ impl UiComponent for TopBarComponent {
             let visible_left = tab.x.max(tabs_start_x);
             let visible_right = (tab.x + tab.w).min(tabs_end_x);
             let visible_w = (visible_right - visible_left).max(0.0);
-            if visible_w <= 0.0 { continue; }
+            if visible_w <= 0.0 {
+                continue;
+            }
 
             // Separator
             if tab.x > tabs_start_x - 1.0 && tab.x < tabs_end_x {
-                ui.abs_rect(tab.x - 0.5, self.layout.bar_y + separator_inset, 1.0, bar_height - separator_inset * 2.0, separator_color);
+                ui.abs_rect(
+                    tab.x - 0.5,
+                    self.layout.bar_y + separator_inset,
+                    1.0,
+                    bar_height - separator_inset * 2.0,
+                    separator_color,
+                );
             }
             // Active indicator
             if tab.active {
-                ui.abs_rect(visible_left, indicator_y, visible_w, indicator_thickness, accent);
+                ui.abs_rect(
+                    visible_left,
+                    indicator_y,
+                    visible_w,
+                    indicator_thickness,
+                    accent,
+                );
             }
             // Clipped label
             let color = if tab.active || hovered { fg } else { dim };
-            if let Some((label, label_x)) = clip_tab_label(&tab.label, tab.x, tab.w, cx.cell_w, tabs_start_x, tabs_end_x) {
+            if let Some((label, label_x)) = clip_tab_label(
+                &tab.label,
+                tab.x,
+                tab.w,
+                cx.cell_w,
+                tabs_start_x,
+                tabs_end_x,
+            ) {
                 ui.abs_text(&label, label_x, text_y, color);
             }
         }
@@ -166,20 +205,36 @@ impl UiComponent for TopBarComponent {
             if self.tab_scroll > 0.5 {
                 for i in 0..4 {
                     let alpha = 0.22 * (1.0 - i as f32 / 4.0);
-                    ui.abs_rect(tabs_start_x + i as f32 * (fade_w / 4.0), self.layout.bar_y, fade_w / 4.0 + 1.0, bar_height, [bar_bg[0], bar_bg[1], bar_bg[2], alpha]);
+                    ui.abs_rect(
+                        tabs_start_x + i as f32 * (fade_w / 4.0),
+                        self.layout.bar_y,
+                        fade_w / 4.0 + 1.0,
+                        bar_height,
+                        [bar_bg[0], bar_bg[1], bar_bg[2], alpha],
+                    );
                 }
             }
             if self.tab_scroll < self.tab_scroll_max - 0.5 {
                 for i in 0..4 {
                     let alpha = 0.22 * (i as f32 + 1.0) / 4.0;
-                    ui.abs_rect(tabs_end_x - fade_w + i as f32 * (fade_w / 4.0), self.layout.bar_y, fade_w / 4.0 + 1.0, bar_height, [bar_bg[0], bar_bg[1], bar_bg[2], alpha]);
+                    ui.abs_rect(
+                        tabs_end_x - fade_w + i as f32 * (fade_w / 4.0),
+                        self.layout.bar_y,
+                        fade_w / 4.0 + 1.0,
+                        bar_height,
+                        [bar_bg[0], bar_bg[1], bar_bg[2], alpha],
+                    );
                 }
             }
         }
 
         // === Right zone: workspace + mode ===
         if !self.workspace_label.is_empty() {
-            let ws_color = if self.hovered_region == Some(TopBarHoverRegion::Workspace) { fg } else { accent };
+            let ws_color = if self.hovered_region == Some(TopBarHoverRegion::Workspace) {
+                fg
+            } else {
+                accent
+            };
             ui.label(&self.workspace_label, ws_color);
         }
         ui.label(&self.mode_label, self.mode_color);
@@ -187,7 +242,11 @@ impl UiComponent for TopBarComponent {
         // Leader/broadcast/overview indicator strip (absolute, below/above bar)
         if self.is_leader || self.is_broadcast || self.is_overview {
             let indicator_h = cx.cell_h * cx.config.statusbar.leader_indicator_ratio;
-            let indicator_color = if self.is_broadcast { broadcast_color } else { accent };
+            let indicator_color = if self.is_broadcast {
+                broadcast_color
+            } else {
+                accent
+            };
             let band_y = match cx.config.statusbar.position {
                 StatusBarPosition::Top => self.layout.bar_y + bar_height,
                 StatusBarPosition::Bottom => self.layout.bar_y - indicator_h,

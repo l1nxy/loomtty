@@ -189,6 +189,7 @@ struct DxAtlasLayer {
     atlas_size: u32,
     bpp: u32,
     max_instances: usize,
+    swizzle_rgba_to_bgra: bool,
     /// D2D render target for direct DWrite glyph rendering to this atlas layer.
     d2d_rt: ID2D1RenderTarget,
 }
@@ -198,6 +199,7 @@ struct DxAtlasLayerConfig<'a> {
     max_instances: usize,
     tex_format: DXGI_FORMAT,
     bpp: u32,
+    swizzle_rgba_to_bgra: bool,
     vs_hlsl: &'a str,
     ps_hlsl: &'a str,
     filter: D3D11_FILTER,
@@ -387,6 +389,7 @@ impl DxAtlasLayer {
             atlas_size,
             bpp,
             max_instances,
+            swizzle_rgba_to_bgra: cfg.swizzle_rgba_to_bgra,
             d2d_rt,
         })
     }
@@ -419,6 +422,11 @@ impl DxAtlasLayer {
         }
 
         for upload in pending.drain(..) {
+            let upload_data = if self.swizzle_rgba_to_bgra && self.bpp == 4 {
+                rgba_to_bgra(&upload.data)
+            } else {
+                upload.data
+            };
             let row_pitch = upload.w * self.bpp;
             let box_ = D3D11_BOX {
                 left: upload.x,
@@ -432,7 +440,7 @@ impl DxAtlasLayer {
                 &self.texture,
                 0,
                 Some(&box_),
-                upload.data.as_ptr() as *const _,
+                upload_data.as_ptr() as *const _,
                 row_pitch,
                 0,
             );
@@ -589,6 +597,14 @@ impl DxAtlasLayer {
             ctx.DrawInstanced(4, (end - start) as u32, 0, 0);
         }
     }
+}
+
+fn rgba_to_bgra(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len());
+    for px in data.chunks_exact(4) {
+        out.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
+    }
+    out
 }
 
 // ─── D3D Rect Pipeline ──────────────────────────────────────────────
@@ -973,6 +989,7 @@ impl Renderer {
                     max_instances: cache.max_instances,
                     tex_format: DXGI_FORMAT_B8G8R8A8_UNORM,
                     bpp: 4,
+                    swizzle_rgba_to_bgra: false,
                     vs_hlsl: GLYPH_HLSL,
                     ps_hlsl: ALPHA_PS_HLSL,
                     filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
@@ -991,6 +1008,7 @@ impl Renderer {
                     max_instances: cache.max_instances,
                     tex_format: DXGI_FORMAT_B8G8R8A8_UNORM,
                     bpp: 4,
+                    swizzle_rgba_to_bgra: true,
                     vs_hlsl: GLYPH_HLSL,
                     ps_hlsl: COLOR_PS_HLSL,
                     filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
@@ -1086,8 +1104,12 @@ impl Renderer {
             };
 
             // 3. Upload alpha + color glyph instances once.
-            atlas_gpu.alpha.upload_instances(&self.ctx, scene.glyphs, &vp);
-            atlas_gpu.color.upload_instances(&self.ctx, scene.color_glyphs, &vp);
+            atlas_gpu
+                .alpha
+                .upload_instances(&self.ctx, scene.glyphs, &vp);
+            atlas_gpu
+                .color
+                .upload_instances(&self.ctx, scene.color_glyphs, &vp);
             let alpha_count = scene.glyphs.len();
             let color_count = scene.color_glyphs.len();
 
@@ -1161,10 +1183,7 @@ impl Renderer {
             } else {
                 self.sync_interval
             };
-            let _ = self
-                .swap_chain
-                .Present(interval, DXGI_PRESENT(0))
-                .ok();
+            let _ = self.swap_chain.Present(interval, DXGI_PRESENT(0)).ok();
         }
     }
 }

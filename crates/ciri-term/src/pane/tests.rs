@@ -151,8 +151,7 @@ fn pty_spawn_creates_running_child() {
 
 #[test]
 fn pty_write_and_verify_grid_content() {
-    let mut pane =
-        Pane::new_with_opts(70, 80, 24, shell_path(), None, None).expect("create pane");
+    let mut pane = Pane::new_with_opts(70, 80, 24, shell_path(), None, None).expect("create pane");
 
     pane.write_to_pty(b"echo CIRI_MARKER_42\n");
 
@@ -164,8 +163,8 @@ fn pty_write_and_verify_grid_content() {
 
 #[test]
 fn pty_write_after_exit_is_silent() {
-    let mut pane = Pane::new_with_opts(98, 80, 24, shell_path(), Some("true"), None)
-        .expect("create pane");
+    let mut pane =
+        Pane::new_with_opts(98, 80, 24, shell_path(), Some("true"), None).expect("create pane");
 
     let exited = wait_until(&mut pane, Duration::from_secs(3), |p| p.is_exited());
     assert!(exited);
@@ -187,8 +186,8 @@ fn pty_child_has_valid_fd() {
 
 #[test]
 fn child_exit_zero_detected() {
-    let mut pane = Pane::new_with_opts(97, 80, 24, shell_path(), Some("exit 0"), None)
-        .expect("create pane");
+    let mut pane =
+        Pane::new_with_opts(97, 80, 24, shell_path(), Some("exit 0"), None).expect("create pane");
 
     let exited = wait_until(&mut pane, Duration::from_secs(3), |p| p.is_exited());
     assert!(exited, "should detect child exit 0");
@@ -196,8 +195,8 @@ fn child_exit_zero_detected() {
 
 #[test]
 fn child_exit_nonzero_detected() {
-    let mut pane = Pane::new_with_opts(96, 80, 24, shell_path(), Some("exit 42"), None)
-        .expect("create pane");
+    let mut pane =
+        Pane::new_with_opts(96, 80, 24, shell_path(), Some("exit 42"), None).expect("create pane");
 
     let exited = wait_until(&mut pane, Duration::from_secs(3), |p| p.is_exited());
     assert!(exited, "should detect child exit 42");
@@ -286,12 +285,13 @@ fn resize_noop_if_same_size() {
 #[cfg(unix)]
 #[test]
 fn resize_sigwinch_child_sees_new_terminal_size() {
-    let mut pane =
-        Pane::new_with_opts(93, 80, 24, shell_path(), None, None).expect("create pane");
+    let mut pane = Pane::new_with_opts(93, 80, 24, shell_path(), None, None).expect("create pane");
 
     // Wait for shell prompt to appear (any non-empty grid row)
     wait_until(&mut pane, Duration::from_secs(3), |p| {
-        grid_contains(p, "$") || grid_contains(p, "#") || grid_contains(p, "%")
+        grid_contains(p, "$")
+            || grid_contains(p, "#")
+            || grid_contains(p, "%")
             || read_grid_row(p, 0).len() > 0
     });
 
@@ -317,12 +317,12 @@ fn mouse_input_sgr_format_encoding() {
     // formula as send_mouse_input.
     let cases: &[(u8, u16, u16, bool, u8, &str)] = &[
         //                                              btn_with_mods = button | (mods << 2)
-        (0, 0, 0, true, 0, "\x1b[<0;1;1M"),           // left press, origin
-        (0, 0, 0, false, 0, "\x1b[<0;1;1m"),           // left release, origin (lowercase m)
-        (0, 79, 23, true, 0, "\x1b[<0;80;24M"),        // left press, 1-indexed coords
-        (1, 10, 5, true, 4, "\x1b[<17;11;6M"),         // middle+shift: 1|(4<<2)=17
-        (2, 0, 0, true, 8, "\x1b[<34;1;1M"),           // right+alt:   2|(8<<2)=34
-        (64, 50, 10, true, 0, "\x1b[<64;51;11M"),      // scroll wheel, no mods
+        (0, 0, 0, true, 0, "\x1b[<0;1;1M"),  // left press, origin
+        (0, 0, 0, false, 0, "\x1b[<0;1;1m"), // left release, origin (lowercase m)
+        (0, 79, 23, true, 0, "\x1b[<0;80;24M"), // left press, 1-indexed coords
+        (1, 10, 5, true, 4, "\x1b[<17;11;6M"), // middle+shift: 1|(4<<2)=17
+        (2, 0, 0, true, 8, "\x1b[<34;1;1M"), // right+alt:   2|(8<<2)=34
+        (64, 50, 10, true, 0, "\x1b[<64;51;11M"), // scroll wheel, no mods
     ];
 
     // Spawn cat so the PTY stays open for writes
@@ -363,13 +363,16 @@ fn mouse_input_sgr_format_encoding() {
 
 #[test]
 fn title_set_via_osc_sequence() {
-    let mut pane =
-        Pane::new_with_opts(91, 80, 24, shell_path(), None, None).expect("create pane");
+    let mut pane = Pane::new_with_opts(91, 80, 24, shell_path(), None, None).expect("create pane");
 
     pane.write_to_pty(b"printf '\\033]0;My Test Title\\007'\n");
 
     let found = wait_until(&mut pane, Duration::from_secs(3), |p| !p.title.is_empty());
-    assert!(found, "title should be set via OSC 0, got: {:?}", pane.title);
+    assert!(
+        found,
+        "title should be set via OSC 0, got: {:?}",
+        pane.title
+    );
     assert!(
         pane.title.contains("My Test Title"),
         "title should contain marker, got: {:?}",
@@ -431,8 +434,7 @@ fn write_focus_event_noop_when_mode_disabled() {
 
 #[test]
 fn focus_event_mode_enabled_via_dec_1004() {
-    let mut pane =
-        Pane::new_with_opts(86, 80, 24, shell_path(), None, None).expect("create pane");
+    let mut pane = Pane::new_with_opts(86, 80, 24, shell_path(), None, None).expect("create pane");
 
     assert!(!pane.has_focus_event_mode());
 
@@ -472,8 +474,7 @@ fn drain_methods_idempotent_when_empty() {
 
 #[test]
 fn bell_character_triggers_drain_bell() {
-    let mut pane =
-        Pane::new_with_opts(90, 80, 24, shell_path(), None, None).expect("create pane");
+    let mut pane = Pane::new_with_opts(90, 80, 24, shell_path(), None, None).expect("create pane");
 
     pane.write_to_pty(b"printf '\\007'\n");
 
@@ -505,8 +506,7 @@ fn scrollback_grows_when_output_exceeds_viewport() {
 #[test]
 fn resize_shrink_adjusts_scrollback_total() {
     // Start with a tall terminal, produce scrollback, then shrink
-    let mut pane =
-        Pane::new_with_opts(85, 80, 5, shell_path(), None, None).expect("create pane");
+    let mut pane = Pane::new_with_opts(85, 80, 5, shell_path(), None, None).expect("create pane");
 
     // Fill enough lines to generate scrollback
     pane.write_to_pty(b"printf 'A\\nB\\nC\\nD\\nE\\nF\\nG\\nH\\nI\\nJ\\n'\n");
@@ -529,8 +529,7 @@ fn resize_shrink_adjusts_scrollback_total() {
 
 #[test]
 fn bracketed_paste_mode_detected_via_escape_sequence() {
-    let mut pane =
-        Pane::new_with_opts(88, 80, 24, shell_path(), None, None).expect("create pane");
+    let mut pane = Pane::new_with_opts(88, 80, 24, shell_path(), None, None).expect("create pane");
 
     // Send escape sequence through printf → PTY → alacritty
     pane.write_to_pty(b"printf '\\033[?2004h'\n");
@@ -544,8 +543,7 @@ fn bracketed_paste_mode_detected_via_escape_sequence() {
 
 #[test]
 fn alt_screen_detected_via_escape_sequence() {
-    let mut pane =
-        Pane::new_with_opts(87, 80, 24, shell_path(), None, None).expect("create pane");
+    let mut pane = Pane::new_with_opts(87, 80, 24, shell_path(), None, None).expect("create pane");
 
     assert!(!pane.is_alt_screen());
 

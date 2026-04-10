@@ -207,6 +207,21 @@ fn scroll_down_returns_actual_scrolled() {
 }
 
 #[test]
+fn scroll_updates_pending_scroll_delta_directionally() {
+    let mut grid = grid_with_scrollback();
+    assert_eq!(grid.pending_scroll_delta, 0);
+
+    assert_eq!(grid.scroll_up(2), 2);
+    assert_eq!(grid.pending_scroll_delta, 2);
+
+    assert_eq!(grid.scroll_down(1), 1);
+    assert_eq!(grid.pending_scroll_delta, 1);
+
+    grid.clear_dirty();
+    assert_eq!(grid.pending_scroll_delta, 0);
+}
+
+#[test]
 fn scroll_up_no_scrollback_returns_zero() {
     let mut grid = ClientPaneGrid::new(4, 2, 0);
     assert_eq!(grid.scroll_up(10), 0);

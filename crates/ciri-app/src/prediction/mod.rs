@@ -23,10 +23,12 @@ const FLAG_TRIGGER_LOW_MS: u64 = 50;
 
 pub struct PredictionEngine {
     pub(super) overlays: HashMap<u64, overlay::PaneOverlay>,
+    pub(super) pane_visual_serials: HashMap<u64, u64>,
     pub(super) srtt_us: u64,
     pub(super) mode: PredictionMode,
     pub(super) threshold_ms: u64,
     pub(super) show_underline: bool,
+    pub(super) visual_serial: u64,
     ping_seq: u64,
     last_ping: Option<Instant>,
     pub(super) next_input_seq: u64,
@@ -40,10 +42,12 @@ impl PredictionEngine {
     pub fn new(mode: PredictionMode, threshold_ms: u64, show_underline: bool) -> Self {
         Self {
             overlays: HashMap::new(),
+            pane_visual_serials: HashMap::new(),
             srtt_us: 0,
             mode,
             threshold_ms,
             show_underline,
+            visual_serial: 1,
             ping_seq: 0,
             last_ping: None,
             next_input_seq: 1,
@@ -64,6 +68,10 @@ impl PredictionEngine {
         self.mode = mode;
         self.threshold_ms = threshold_ms;
         self.show_underline = show_underline;
+        self.bump_visual_serial();
+        for serial in self.pane_visual_serials.values_mut() {
+            *serial = serial.wrapping_add(1);
+        }
     }
 
     pub fn srtt_ms(&self) -> u64 {
@@ -149,8 +157,29 @@ impl PredictionEngine {
         self.overlays.get(&pane_id).is_some_and(|o| !o.is_empty())
     }
 
+    pub fn visual_serial(&self) -> u64 {
+        self.visual_serial
+    }
+
+    pub fn pane_visual_serial(&self, pane_id: u64) -> u64 {
+        self.pane_visual_serials.get(&pane_id).copied().unwrap_or(0)
+    }
+
     pub fn clear_pane(&mut self, pane_id: u64) {
-        self.overlays.remove(&pane_id);
+        if self.overlays.remove(&pane_id).is_some() {
+            self.bump_visual_serial();
+        }
+        self.pane_visual_serials.remove(&pane_id);
+    }
+
+    fn bump_visual_serial(&mut self) {
+        self.visual_serial = self.visual_serial.wrapping_add(1);
+    }
+
+    pub(super) fn bump_visual_serial_for_pane(&mut self, pane_id: u64) {
+        self.bump_visual_serial();
+        let entry = self.pane_visual_serials.entry(pane_id).or_insert(1);
+        *entry = entry.wrapping_add(1);
     }
 }
 

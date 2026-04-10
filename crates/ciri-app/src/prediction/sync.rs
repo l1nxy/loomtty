@@ -14,6 +14,10 @@ impl PredictionEngine {
     /// 1. Confirm correct predictions, update glitch trigger, propagate renditions
     /// 2. Detect wrong predictions — kill epoch or reset entirely
     pub fn on_server_sync(&mut self, pane_id: u64, grid: &ClientPaneGrid, echo_ack: u64) {
+        if self.overlays.contains_key(&pane_id) {
+            self.bump_visual_serial_for_pane(pane_id);
+        }
+
         // Reset on terminal resize.
         let dims = (grid.cols, grid.rows);
         let prev = self.last_dims.insert(pane_id, dims);

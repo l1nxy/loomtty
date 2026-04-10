@@ -334,6 +334,31 @@ fn ping_generation() {
     assert!(engine.maybe_send_ping().is_none());
 }
 
+#[test]
+fn visual_serial_changes_on_new_prediction_input() {
+    let mut engine = PredictionEngine::new(PredictionMode::Always, 0, false);
+    let grid = make_grid_at(80, 24, 0, 0);
+    let before = engine.visual_serial();
+    engine.new_user_input(1, b"A", &grid);
+    assert!(engine.visual_serial() > before);
+}
+
+#[test]
+fn visual_serial_changes_on_prediction_sync() {
+    let mut engine = PredictionEngine::new(PredictionMode::Always, 0, false);
+    let grid = make_grid_at(80, 24, 0, 0);
+    engine.new_user_input(1, b"A", &grid);
+    let before = engine.visual_serial();
+
+    let mut server_grid = make_grid(80, 24);
+    server_grid.viewport[0].set_ch('A');
+    server_grid.cursor_col = 1;
+    server_grid.cursor_line = 0;
+    engine.on_server_sync(1, &server_grid, 1);
+
+    assert!(engine.visual_serial() > before);
+}
+
 // ---- Rendition inheritance tests ----
 
 #[test]

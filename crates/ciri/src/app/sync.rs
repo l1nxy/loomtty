@@ -554,10 +554,8 @@ mod tests {
         app.cached_tile_glyphs.insert(
             stale.meta.pane_id,
             CachedTileGlyphs {
-                generation: 0,
                 key: (0, 0, 0, 0),
-                glyphs: Vec::new(),
-                color_glyphs: Vec::new(),
+                rows: Vec::new(),
             },
         );
 

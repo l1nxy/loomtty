@@ -31,6 +31,30 @@ fn assert_relative_glyph_lists_match(left: &[RelativeGlyph], right: &[RelativeGl
     }
 }
 
+fn flattened_bg_rects(view: &TerminalView) -> Vec<Rect> {
+    let mut rects = Vec::new();
+    for row in 0..view.row_count() {
+        rects.extend_from_slice(view.row_bg_rects(row));
+    }
+    rects
+}
+
+fn flattened_glyphs(view: &TerminalView) -> Vec<RelativeGlyph> {
+    let mut glyphs = Vec::new();
+    for row in 0..view.row_count() {
+        glyphs.extend_from_slice(view.row_glyphs(row));
+    }
+    glyphs
+}
+
+fn flattened_color_glyphs(view: &TerminalView) -> Vec<RelativeGlyph> {
+    let mut glyphs = Vec::new();
+    for row in 0..view.row_count() {
+        glyphs.extend_from_slice(view.row_color_glyphs(row));
+    }
+    glyphs
+}
+
 fn test_config() -> CiriConfig {
     CiriConfig::default()
 }
@@ -145,20 +169,23 @@ fn packed_hidden_and_wide_spacer_cells_do_not_render_text_or_decorations() {
 
     let view = build_view_from_grid(&mut atlas, &params);
 
-    let wide_background = view
-        .bg_rects
+    let bg_rects = flattened_bg_rects(&view);
+    let glyphs = flattened_glyphs(&view);
+    let color_glyphs = flattened_color_glyphs(&view);
+
+    let wide_background = bg_rects
         .iter()
         .find(|rect| rect.color == ct.resolve_packed(cells[1].bg))
         .expect("wide visible cell background should render");
     assert_eq!(wide_background.w, atlas.cell_width * 2.0);
     assert!(
-        view.bg_rects
+        bg_rects
             .iter()
             .all(|rect| rect.color != ct.resolve_packed(cells[0].fg)),
         "hidden cells should not emit underline/strikeout rects"
     );
     assert!(
-        !view.glyph_instances.is_empty() || !view.color_glyph_instances.is_empty(),
+        !glyphs.is_empty() || !color_glyphs.is_empty(),
         "visible wide cell should still render a glyph"
     );
 }
@@ -387,6 +414,7 @@ fn incremental_update_matches_full_rebuild_for_same_final_grid() {
     update_view_from_grid(
         &mut incremental,
         &[true, true],
+        0,
         &updated_params,
         &mut atlas_for_incremental,
     );
@@ -408,13 +436,17 @@ fn incremental_update_matches_full_rebuild_for_same_final_grid() {
     );
     let rebuilt = build_view_from_grid(&mut atlas_for_full, &rebuilt_params);
 
-    assert_rect_lists_match(&incremental.bg_rects, &rebuilt.bg_rects);
+    let incremental_bg = flattened_bg_rects(&incremental);
+    let rebuilt_bg = flattened_bg_rects(&rebuilt);
+    let incremental_glyphs = flattened_glyphs(&incremental);
+    let rebuilt_glyphs = flattened_glyphs(&rebuilt);
+    let incremental_color_glyphs = flattened_color_glyphs(&incremental);
+    let rebuilt_color_glyphs = flattened_color_glyphs(&rebuilt);
+
+    assert_rect_lists_match(&incremental_bg, &rebuilt_bg);
     assert_rect_lists_match(&incremental.cursor_rects, &rebuilt.cursor_rects);
-    assert_relative_glyph_lists_match(&incremental.glyph_instances, &rebuilt.glyph_instances);
-    assert_relative_glyph_lists_match(
-        &incremental.color_glyph_instances,
-        &rebuilt.color_glyph_instances,
-    );
+    assert_relative_glyph_lists_match(&incremental_glyphs, &rebuilt_glyphs);
+    assert_relative_glyph_lists_match(&incremental_color_glyphs, &rebuilt_color_glyphs);
 }
 
 #[test]
@@ -477,7 +509,7 @@ fn incremental_update_only_recomputes_dirty_row_shaping() {
         &graphemes,
     );
 
-    update_view_from_grid(&mut view, &[true, false], &updated_params, &mut atlas);
+    update_view_from_grid(&mut view, &[true, false], 0, &updated_params, &mut atlas);
 
     assert_eq!(
         view.row_lig_cache[1].skip_cols,
@@ -495,6 +527,88 @@ fn incremental_update_only_recomputes_dirty_row_shaping() {
         view.row_lig_cache[1].char_glyphs,
         original_clean_row.char_glyphs
     );
+}
+
+#[test]
+fn scroll_shift_rotates_row_cache_and_rebuilds_only_exposed_rows() {
+    let config = test_config();
+    let shaper = test_shaper(&config);
+    let ct = test_color_table(&config);
+    let graphemes = HashMap::new();
+
+    let initial_cells = vec![
+        PackedCell::with_ch('A'),
+        PackedCell::default(),
+        PackedCell::default(),
+        PackedCell::with_ch('B'),
+        PackedCell::default(),
+        PackedCell::default(),
+        PackedCell::with_ch('C'),
+        PackedCell::default(),
+        PackedCell::default(),
+    ];
+    let initial_params = test_view_inputs(
+        TestFrame {
+            cells: &initial_cells,
+            cols: 3,
+            rows: 3,
+            cursor_line: -1,
+            cursor_col: 0,
+            cursor_shape: CURSOR_HIDDEN,
+        },
+        &shaper,
+        &config,
+        &ct,
+        &graphemes,
+    );
+    let mut atlas = test_atlas(&config, &shaper);
+    let mut view = build_view_from_grid(&mut atlas, &initial_params);
+    let original_epochs = view.row_epochs.clone();
+    let original_hashes = view.row_hashes.clone();
+
+    let scrolled_cells = vec![
+        PackedCell::with_ch('B'),
+        PackedCell::default(),
+        PackedCell::default(),
+        PackedCell::with_ch('C'),
+        PackedCell::default(),
+        PackedCell::default(),
+        PackedCell::with_ch('D'),
+        PackedCell::default(),
+        PackedCell::default(),
+    ];
+    let scrolled_params = test_view_inputs(
+        TestFrame {
+            cells: &scrolled_cells,
+            cols: 3,
+            rows: 3,
+            cursor_line: -1,
+            cursor_col: 0,
+            cursor_shape: CURSOR_HIDDEN,
+        },
+        &shaper,
+        &config,
+        &ct,
+        &graphemes,
+    );
+
+    update_view_from_grid(
+        &mut view,
+        &[false, false, false],
+        -1,
+        &scrolled_params,
+        &mut atlas,
+    );
+
+    assert_eq!(view.last_scroll_shift, -1);
+    assert_eq!(view.row_hash(0), original_hashes[1]);
+    assert_eq!(view.row_hash(1), original_hashes[2]);
+    assert_eq!(view.row_epoch(0), original_epochs[1]);
+    assert_eq!(view.row_epoch(1), original_epochs[2]);
+    assert!(view.row_epoch(2) > original_epochs[0]);
+
+    let glyphs = flattened_glyphs(&view);
+    assert_eq!(glyphs.len(), 3);
 }
 
 #[test]

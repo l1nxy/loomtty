@@ -166,6 +166,8 @@ impl PredictionEngine {
             return;
         }
 
+        self.bump_visual_serial_for_pane(pane_id);
+
         let min_ack = self.next_input_seq;
         let show_ul = self.show_underline
             && (self.flagging || self.mode == ciri_config::config::PredictionMode::Always);

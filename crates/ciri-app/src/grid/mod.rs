@@ -30,6 +30,9 @@ pub struct ClientPaneGrid {
     pub(super) max_scrollback: usize,
     /// 0 = live (showing bottom), >0 = scrolled up N lines from bottom.
     pub scroll_offset: usize,
+    /// Pending viewport row shift since the last render.
+    /// Positive means existing content moved downward on screen.
+    pub pending_scroll_delta: i32,
     /// Cursor position in the live viewport (from server).
     pub cursor_line: i16,
     pub cursor_col: u16,
@@ -68,6 +71,7 @@ impl ClientPaneGrid {
             viewport: vec![PackedCell::default(); cols as usize * rows as usize],
             max_scrollback,
             scroll_offset: 0,
+            pending_scroll_delta: 0,
             cursor_line: 0,
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
@@ -135,6 +139,7 @@ impl ClientPaneGrid {
     /// Clear all dirty flags after rendering.
     pub fn clear_dirty(&mut self) {
         self.dirty = false;
+        self.pending_scroll_delta = 0;
         if self.dirty_row_count > 0 {
             self.dirty_rows.iter_mut().for_each(|d| *d = false);
             self.dirty_row_count = 0;

@@ -5,6 +5,8 @@ use alacritty_terminal::index::{Column, Line, Point};
 use alacritty_terminal::term::Term;
 use ciri_config::config::CiriConfig;
 use ciri_protocol::message::PackedCell;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use crate::glyph_cache::GlyphCache;
 use crate::rect::Rect;
@@ -23,7 +25,8 @@ use super::shaping::{RowLigatureData, precompute_row_shaping};
 // ─── Per-row cached data ─────────────────────────────────────────────
 
 /// Per-row cached rendering data for incremental updates.
-pub(super) struct RowRenderData {
+#[derive(Clone)]
+pub struct RowRenderData {
     glyphs: Vec<RelativeGlyph>,
     color_glyphs: Vec<RelativeGlyph>,
     bg_rects: Vec<Rect>,
@@ -55,9 +58,17 @@ pub struct TerminalView {
     /// Avoids redundant scrollbar recomputation when parameters haven't changed.
     pub scrollbar_key: Option<(usize, usize, u16, u32, u32, u8)>,
     /// Per-row cached rendering data for incremental rebuilds.
-    pub(super) row_data: Vec<RowRenderData>,
+    pub row_data: Vec<RowRenderData>,
     /// Per-row cached shaping data for incremental rebuilds.
-    pub(super) row_lig_cache: Vec<RowLigatureData>,
+    pub(crate) row_lig_cache: Vec<RowLigatureData>,
+    /// Per-row content version, bumped when a row is re-rendered.
+    pub row_epochs: Vec<u64>,
+    /// Per-row content hash for scroll/content reuse detection.
+    pub row_hashes: Vec<u64>,
+    /// Last detected viewport row shift. Positive means content moved downward.
+    pub last_scroll_shift: i32,
+    /// Cached cell height for row-shifted scene transforms.
+    pub cell_height: f32,
     /// Monotonically increasing generation counter. Bumped on every build/update.
     pub generation: u64,
 }
@@ -126,6 +137,41 @@ impl<'a> PackedGridContext<'a> {
         atlas: &mut GlyphCache,
     ) -> RowRenderData {
         render_single_row(self, row, row_lig_data, atlas)
+    }
+}
+
+impl TerminalView {
+    pub fn row_count(&self) -> usize {
+        self.row_data.len()
+    }
+
+    pub fn row_epoch(&self, row: usize) -> u64 {
+        self.row_epochs.get(row).copied().unwrap_or(0)
+    }
+
+    pub fn row_hash(&self, row: usize) -> u64 {
+        self.row_hashes.get(row).copied().unwrap_or(0)
+    }
+
+    pub fn row_glyphs(&self, row: usize) -> &[RelativeGlyph] {
+        self.row_data
+            .get(row)
+            .map(|row| row.glyphs.as_slice())
+            .unwrap_or(&[])
+    }
+
+    pub fn row_color_glyphs(&self, row: usize) -> &[RelativeGlyph] {
+        self.row_data
+            .get(row)
+            .map(|row| row.color_glyphs.as_slice())
+            .unwrap_or(&[])
+    }
+
+    pub fn row_bg_rects(&self, row: usize) -> &[Rect] {
+        self.row_data
+            .get(row)
+            .map(|row| row.bg_rects.as_slice())
+            .unwrap_or(&[])
     }
 }
 
@@ -209,6 +255,10 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
         scrollbar_key: None,
         row_data: Vec::new(),
         row_lig_cache: Vec::new(),
+        row_epochs: Vec::new(),
+        row_hashes: Vec::new(),
+        last_scroll_shift: 0,
+        cell_height: m.ch,
         generation: 0,
     }
 }
@@ -221,6 +271,8 @@ pub fn build_view_from_grid(atlas: &mut GlyphCache, inputs: &PackedViewInputs<'_
     let params = inputs.build_params(&metrics);
     let row_lig_data = build_row_lig_cache(&params);
     let row_data = build_row_render_cache(params.grid, &row_lig_data, atlas);
+    let row_hashes = build_row_hash_cache(&params);
+    let row_epochs = vec![1; row_data.len()];
 
     let cursor_rects = make_cursor_rects(
         params.cursor_shape,
@@ -242,7 +294,7 @@ pub fn build_view_from_grid(atlas: &mut GlyphCache, inputs: &PackedViewInputs<'_
         params.config,
     );
 
-    let mut view = TerminalView {
+    let view = TerminalView {
         glyph_instances: Vec::new(),
         color_glyph_instances: Vec::new(),
         bg_rects: Vec::new(),
@@ -251,9 +303,12 @@ pub fn build_view_from_grid(atlas: &mut GlyphCache, inputs: &PackedViewInputs<'_
         scrollbar_key: None,
         row_data,
         row_lig_cache: row_lig_data,
+        row_epochs,
+        row_hashes,
+        last_scroll_shift: 0,
+        cell_height: metrics.ch,
         generation: 1,
     };
-    flatten_view(&mut view);
     view
 }
 
@@ -262,13 +317,37 @@ pub fn build_view_from_grid(atlas: &mut GlyphCache, inputs: &PackedViewInputs<'_
 pub fn update_view_from_grid(
     view: &mut TerminalView,
     dirty_rows: &[bool],
+    scroll_shift: i32,
     inputs: &PackedViewInputs<'_>,
     atlas: &mut GlyphCache,
 ) {
     let metrics = CellMetrics::new(atlas, inputs.config);
     let params = inputs.build_params(&metrics);
-    let rebuilt_row_lig_cache = precompute_dirty_row_shaping(&params, dirty_rows);
-    update_dirty_rows(view, dirty_rows, params.grid, atlas, &rebuilt_row_lig_cache);
+    let new_row_hashes = build_row_hash_cache(&params);
+    let detected_scroll_shift =
+        detect_scroll_shift(&view.row_hashes, &new_row_hashes).unwrap_or_default();
+    let applied_scroll_shift = normalize_scroll_shift(
+        if scroll_shift != 0 {
+            scroll_shift
+        } else {
+            detected_scroll_shift
+        },
+        params.grid.rows as usize,
+    );
+
+    if applied_scroll_shift != 0 {
+        rotate_row_caches(view, applied_scroll_shift);
+    }
+
+    update_dirty_rows(
+        view,
+        dirty_rows,
+        &new_row_hashes,
+        applied_scroll_shift,
+        params.grid,
+        &params,
+        atlas,
+    );
 
     // Rebuild cursor
     let cell_flags = params
@@ -290,9 +369,13 @@ pub fn update_view_from_grid(
         params.config,
     );
 
-    // Bump generation and re-flatten
+    view.row_hashes = new_row_hashes;
+    view.last_scroll_shift = applied_scroll_shift;
     view.generation = view.generation.wrapping_add(1);
-    flatten_view(view);
+    view.cell_height = metrics.ch;
+    view.glyph_instances.clear();
+    view.color_glyph_instances.clear();
+    view.bg_rects.clear();
 }
 
 // ─── Row rendering ───────────────────────────────────────────────────
@@ -477,19 +560,6 @@ fn render_single_row(
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
-/// Flatten per-row cached data into the flat TerminalView vecs.
-fn flatten_view(view: &mut TerminalView) {
-    view.glyph_instances.clear();
-    view.color_glyph_instances.clear();
-    view.bg_rects.clear();
-    for rd in &view.row_data {
-        view.glyph_instances.extend_from_slice(&rd.glyphs);
-        view.color_glyph_instances
-            .extend_from_slice(&rd.color_glyphs);
-        view.bg_rects.extend_from_slice(&rd.bg_rects);
-    }
-}
-
 fn build_row_lig_cache(params: &ViewBuildParams<'_>) -> Vec<RowLigatureData> {
     let Some(faces) = params.shaper.face_set() else {
         return Vec::new();
@@ -500,20 +570,95 @@ fn build_row_lig_cache(params: &ViewBuildParams<'_>) -> Vec<RowLigatureData> {
         .collect()
 }
 
-fn precompute_dirty_row_shaping(
-    params: &ViewBuildParams<'_>,
-    dirty_rows: &[bool],
-) -> Vec<Option<RowLigatureData>> {
-    let Some(faces) = params.shaper.face_set() else {
-        return Vec::new();
-    };
-
-    dirty_rows
-        .iter()
-        .enumerate()
-        .take(params.grid.rows as usize)
-        .map(|(row, dirty)| dirty.then(|| precompute_row_shaping(params, row, &faces)))
+fn build_row_hash_cache(params: &ViewBuildParams<'_>) -> Vec<u64> {
+    (0..params.grid.rows as usize)
+        .map(|row| hash_row(params, row))
         .collect()
+}
+
+fn hash_row(params: &ViewBuildParams<'_>, row: usize) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    let cols = params.grid.cols as usize;
+    let start = row.saturating_mul(cols);
+    let end = (start + cols).min(params.grid.cells.len());
+    let cells = &params.grid.cells[start..end];
+    hasher.write(bytemuck::cast_slice(cells));
+    for col in 0..cols {
+        let cell_idx = start + col;
+        if let Some(grapheme) = params.grapheme_map.get(&(cell_idx as u32)) {
+            col.hash(&mut hasher);
+            grapheme.hash(&mut hasher);
+        }
+    }
+    hasher.finish()
+}
+
+fn normalize_scroll_shift(shift: i32, row_count: usize) -> i32 {
+    if row_count == 0 {
+        return 0;
+    }
+    shift.clamp(-(row_count as i32 - 1), row_count as i32 - 1)
+}
+
+fn detect_scroll_shift(old_hashes: &[u64], new_hashes: &[u64]) -> Option<i32> {
+    let row_count = old_hashes.len().min(new_hashes.len());
+    if row_count < 2 {
+        return None;
+    }
+
+    let mut best_shift = 0;
+    let mut best_matches = 0usize;
+    for shift in -(row_count as i32 - 1)..=(row_count as i32 - 1) {
+        if shift == 0 {
+            continue;
+        }
+        let overlap = row_count.saturating_sub(shift.unsigned_abs() as usize);
+        if overlap == 0 {
+            continue;
+        }
+
+        let matches = if shift > 0 {
+            (0..overlap)
+                .filter(|&row| old_hashes[row] == new_hashes[row + shift as usize])
+                .count()
+        } else {
+            let amount = (-shift) as usize;
+            (0..overlap)
+                .filter(|&row| old_hashes[row + amount] == new_hashes[row])
+                .count()
+        };
+
+        if matches == overlap && matches > best_matches {
+            best_matches = matches;
+            best_shift = shift;
+        }
+    }
+
+    (best_matches > 0).then_some(best_shift)
+}
+
+fn rotate_row_caches(view: &mut TerminalView, scroll_shift: i32) {
+    let count = view.row_data.len();
+    if count == 0 || scroll_shift == 0 {
+        return;
+    }
+
+    let amount = scroll_shift.unsigned_abs() as usize;
+    if amount >= count {
+        return;
+    }
+
+    if scroll_shift > 0 {
+        view.row_data.rotate_right(amount);
+        view.row_lig_cache.rotate_right(amount);
+        view.row_epochs.rotate_right(amount);
+        view.row_hashes.rotate_right(amount);
+    } else {
+        view.row_data.rotate_left(amount);
+        view.row_lig_cache.rotate_left(amount);
+        view.row_epochs.rotate_left(amount);
+        view.row_hashes.rotate_left(amount);
+    }
 }
 
 fn build_row_render_cache(
@@ -531,27 +676,66 @@ fn build_row_render_cache(
 fn update_dirty_rows(
     view: &mut TerminalView,
     dirty_rows: &[bool],
+    new_row_hashes: &[u64],
+    scroll_shift: i32,
     grid: PackedGridContext<'_>,
+    params: &ViewBuildParams<'_>,
     atlas: &mut GlyphCache,
-    rebuilt_row_lig_cache: &[Option<RowLigatureData>],
 ) {
-    for (row, &dirty) in dirty_rows.iter().enumerate().take(grid.rows as usize) {
-        if !dirty || row >= view.row_data.len() {
+    let Some(faces) = params.shaper.face_set() else {
+        for row in 0..grid.rows as usize {
+            if row >= view.row_data.len() {
+                continue;
+            }
+            let exposed = if scroll_shift > 0 {
+                row < scroll_shift as usize
+            } else if scroll_shift < 0 {
+                row >= grid.rows as usize - (-scroll_shift) as usize
+            } else {
+                false
+            };
+            let hash_changed =
+                view.row_hashes.get(row).copied() != new_row_hashes.get(row).copied();
+            let dirty = dirty_rows.get(row).copied().unwrap_or(false) || exposed || hash_changed;
+            if !dirty {
+                continue;
+            }
+            view.row_data[row] = grid.build_row_data(row, None, atlas);
+            if let Some(epoch) = view.row_epochs.get_mut(row) {
+                *epoch = epoch.wrapping_add(1);
+            }
+        }
+        return;
+    };
+
+    for row in 0..grid.rows as usize {
+        if row >= view.row_data.len() {
             continue;
         }
 
-        if let Some(Some(rebuilt)) = rebuilt_row_lig_cache.get(row) {
-            if row < view.row_lig_cache.len() {
-                view.row_lig_cache[row] = rebuilt.clone();
-            } else {
-                view.row_lig_cache.push(rebuilt.clone());
-            }
+        let exposed = if scroll_shift > 0 {
+            row < scroll_shift as usize
+        } else if scroll_shift < 0 {
+            row >= grid.rows as usize - (-scroll_shift) as usize
+        } else {
+            false
+        };
+        let hash_changed = view.row_hashes.get(row).copied() != new_row_hashes.get(row).copied();
+        let dirty = dirty_rows.get(row).copied().unwrap_or(false) || exposed || hash_changed;
+        if !dirty {
+            continue;
         }
 
-        view.row_data[row] = grid.build_row_data(
-            row,
-            rebuilt_row_lig_cache.get(row).and_then(Option::as_ref),
-            atlas,
-        );
+        let rebuilt = precompute_row_shaping(params, row, &faces);
+        if row < view.row_lig_cache.len() {
+            view.row_lig_cache[row] = rebuilt.clone();
+        } else {
+            view.row_lig_cache.push(rebuilt.clone());
+        }
+
+        view.row_data[row] = grid.build_row_data(row, Some(&rebuilt), atlas);
+        if let Some(epoch) = view.row_epochs.get_mut(row) {
+            *epoch = epoch.wrapping_add(1);
+        }
     }
 }

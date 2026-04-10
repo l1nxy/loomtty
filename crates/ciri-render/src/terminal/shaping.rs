@@ -11,15 +11,15 @@ use super::view::ViewBuildParams;
 
 /// Pre-computed ligature info for a single row.
 #[derive(Clone)]
-pub(super) struct RowLigatureData {
+pub(crate) struct RowLigatureData {
     /// True for columns that are continuations of a ligature (should skip normal rendering).
-    pub(super) skip_cols: Vec<bool>,
+    pub(crate) skip_cols: Vec<bool>,
     /// Ligature glyphs to render: (col, glyph_id, font_id, style, fg_color).
-    pub(super) ligature_glyphs: Vec<(usize, u32, fontdb::ID, FontStyle, [f32; 4])>,
+    pub(crate) ligature_glyphs: Vec<(usize, u32, fontdb::ID, FontStyle, [f32; 4])>,
     /// Pre-shaped grapheme clusters: (col, glyph_id, font_id, display_cols).
-    pub(super) grapheme_glyphs: Vec<(usize, u32, fontdb::ID, usize)>,
+    pub(crate) grapheme_glyphs: Vec<(usize, u32, fontdb::ID, usize)>,
     /// Per-char shaped glyph IDs for all-through-shaping path: (col, glyph_id, font_id, is_wide).
-    pub(super) char_glyphs: Vec<(usize, u32, fontdb::ID, bool)>,
+    pub(crate) char_glyphs: Vec<(usize, u32, fontdb::ID, bool)>,
 }
 
 /// Pre-compute all ligature/grapheme shaping data for a single row.

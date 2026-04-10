@@ -57,7 +57,7 @@ pub struct LastLeftClick {
     pub count: u8,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct HoveredLink {
     pub pane_id: u64,
     pub url: String,
@@ -163,7 +163,7 @@ impl PaletteEntryKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TopBarHoverRegion {
     Session,
     Workspace,
@@ -199,7 +199,7 @@ pub struct ResizeDragState {
 }
 
 /// Overview zoom mode state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OverviewActionHover {
     Close,
     Focus,
@@ -236,13 +236,13 @@ pub struct PendingPaste {
     pub target: PendingPasteTarget,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PasteButton {
     Paste,
     Cancel,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PendingPasteTarget {
     Terminal,
     CommandPalette,

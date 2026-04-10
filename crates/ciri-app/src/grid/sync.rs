@@ -180,6 +180,7 @@ impl ClientPaneGrid {
         self.cursor_col = sync.meta.cursor_col;
         self.cursor_shape = sync.meta.cursor_shape;
         self.mode_flags = sync.meta.mode_flags;
+        self.pending_scroll_delta = 0;
         self.has_shell_integration = sync.meta.mode_flags & MODE_SHELL_INTEGRATION != 0;
         self.kitty_flags = sync.meta.mode_flags & MODE_KITTY_ALL;
         self.password_input = sync.meta.mode_flags & MODE_PASSWORD_INPUT != 0;

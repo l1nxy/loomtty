@@ -1391,7 +1391,10 @@ mod proptest_roundtrips {
 
     // Use a tokio runtime for async read_frame in proptest
     fn rt() -> tokio::runtime::Runtime {
-        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
     }
 
     proptest! {
@@ -1648,8 +1651,14 @@ mod network_edge_cases {
     #[tokio::test]
     async fn codec_handles_split_reads_via_scripted_io() {
         // Use tokio_test::io::Builder for deterministic byte-level split control
-        let msg1 = ClientMessage::Ping { seq: 1, client_time_us: 100 };
-        let msg2 = ClientMessage::Ping { seq: 2, client_time_us: 200 };
+        let msg1 = ClientMessage::Ping {
+            seq: 1,
+            client_time_us: 100,
+        };
+        let msg2 = ClientMessage::Ping {
+            seq: 2,
+            client_time_us: 200,
+        };
 
         let mut frame1_bytes = Vec::new();
         encode_client_msg(&mut frame1_bytes, &msg1).await.unwrap();
@@ -1662,10 +1671,10 @@ mod network_edge_cases {
         // then exact frame boundary, then frame 2 in one piece.
         let mid_payload = frame1_len / 2 + 3; // well inside frame 1's payload
         let mut reader = tokio_test::io::Builder::new()
-            .read(&wire[..3])                       // partial header
-            .read(&wire[3..mid_payload])             // rest of header + partial payload
-            .read(&wire[mid_payload..frame1_len])    // rest of frame 1
-            .read(&wire[frame1_len..])               // all of frame 2
+            .read(&wire[..3]) // partial header
+            .read(&wire[3..mid_payload]) // rest of header + partial payload
+            .read(&wire[mid_payload..frame1_len]) // rest of frame 1
+            .read(&wire[frame1_len..]) // all of frame 2
             .build();
 
         let frame1 = read_frame(&mut reader).await.unwrap();
@@ -1694,19 +1703,31 @@ mod network_edge_cases {
         }
         let sync = FullPaneSync {
             meta: PaneFrameMeta {
-                pane_id: 99, generation: 55, cursor_line: 10, cursor_col: 20,
-                cursor_shape: CURSOR_BLOCK, mode_flags: MODE_ALT_SCREEN, echo_ack: 42,
+                pane_id: 99,
+                generation: 55,
+                cursor_line: 10,
+                cursor_col: 20,
+                cursor_shape: CURSOR_BLOCK,
+                mode_flags: MODE_ALT_SCREEN,
+                echo_ack: 42,
             },
-            cols: 120, rows: 40,
+            cols: 120,
+            rows: 40,
             title: "large-sync".to_string(),
-            scrollback: Vec::new(), scrollback_rows: 0, scrollback_replace: false,
+            scrollback: Vec::new(),
+            scrollback_rows: 0,
+            scrollback_replace: false,
             cells,
             grapheme_extras: GraphemeExtras::new(),
             hyperlink_extras: HyperlinkExtras::new(),
             cwd: Some("/home/test".to_string()),
         };
         let framed = frame_full_pane_sync(&sync).unwrap();
-        assert!(framed.len() > 200, "frame should be large enough: {}B", framed.len());
+        assert!(
+            framed.len() > 200,
+            "frame should be large enough: {}B",
+            framed.len()
+        );
 
         // Split into many small chunks (simulate tiny MTU / slow transport)
         let chunk_size = 32;
@@ -1843,11 +1864,20 @@ mod network_edge_cases {
         // 2. FullPaneSync
         let sync = FullPaneSync {
             meta: PaneFrameMeta {
-                pane_id: 1, generation: 1, cursor_line: 0, cursor_col: 0,
-                cursor_shape: CURSOR_BLOCK, mode_flags: 0, echo_ack: 0,
+                pane_id: 1,
+                generation: 1,
+                cursor_line: 0,
+                cursor_col: 0,
+                cursor_shape: CURSOR_BLOCK,
+                mode_flags: 0,
+                echo_ack: 0,
             },
-            cols: 4, rows: 2, title: "t".to_string(),
-            scrollback: Vec::new(), scrollback_rows: 0, scrollback_replace: false,
+            cols: 4,
+            rows: 2,
+            title: "t".to_string(),
+            scrollback: Vec::new(),
+            scrollback_rows: 0,
+            scrollback_replace: false,
             cells: vec![PackedCell::default(); 8],
             grapheme_extras: GraphemeExtras::new(),
             hyperlink_extras: HyperlinkExtras::new(),

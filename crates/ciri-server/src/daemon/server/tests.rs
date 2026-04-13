@@ -1,9 +1,9 @@
 use super::*;
+use rstest::*;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
-use rstest::*;
 
 fn test_client(id: u64, session_name: &str) -> ClientState {
     let (tx, _rx) = mpsc::channel(1);
@@ -331,7 +331,11 @@ fn server_with_session(mut server: Server) -> (Server, String) {
 fn session_create_populates_initial_pane(server_with_session: (Server, String)) {
     let (server, session_name) = server_with_session;
     let session = server.sessions.get(&session_name).unwrap();
-    assert_eq!(session.panes.len(), 1, "new session should have exactly one pane");
+    assert_eq!(
+        session.panes.len(),
+        1,
+        "new session should have exactly one pane"
+    );
     let pane_id = session.workspaces.active().active_pane_id().unwrap();
     assert!(session.panes.contains_key(&pane_id));
 }
@@ -384,15 +388,17 @@ fn session_save_and_restore_roundtrip(mut server_with_session: (Server, String))
             name: session_name.clone(),
             workspaces: vec![ciri_session::state::SavedWorkspace {
                 columns: vec![ciri_session::state::SavedColumn {
-                    tiles: session.panes.keys().map(|&pid| {
-                        ciri_session::state::SavedTile {
+                    tiles: session
+                        .panes
+                        .keys()
+                        .map(|&pid| ciri_session::state::SavedTile {
                             pane_id: pid,
                             weight: 1.0,
                             cwd: Some("/tmp".to_string()),
                             title: Some("test-shell".to_string()),
                             agent: None,
-                        }
-                    }).collect(),
+                        })
+                        .collect(),
                     active_tile_idx: 0,
                     width_proportion: 1.0,
                     width_fixed_px: None,
@@ -411,7 +417,10 @@ fn session_save_and_restore_roundtrip(mut server_with_session: (Server, String))
     assert_eq!(saved.name, *session_name);
     assert_eq!(saved.workspaces.len(), 1);
     assert_eq!(saved.workspaces[0].columns[0].tiles.len(), 1);
-    assert_eq!(saved.workspaces[0].columns[0].tiles[0].cwd, Some("/tmp".to_string()));
+    assert_eq!(
+        saved.workspaces[0].columns[0].tiles[0].cwd,
+        Some("/tmp".to_string())
+    );
 }
 
 #[rstest]
@@ -425,7 +434,11 @@ fn session_list_and_delete(mut server_with_session: (Server, String)) {
         workspaces: vec![ciri_session::state::SavedWorkspace {
             columns: vec![ciri_session::state::SavedColumn {
                 tiles: vec![ciri_session::state::SavedTile {
-                    pane_id: 1, weight: 1.0, cwd: None, title: None, agent: None,
+                    pane_id: 1,
+                    weight: 1.0,
+                    cwd: None,
+                    title: None,
+                    agent: None,
                 }],
                 active_tile_idx: 0,
                 width_proportion: 1.0,
@@ -466,14 +479,18 @@ fn session_kill_removes_from_server_and_disconnects_clients(mut server: Server) 
 
     // Client 1 kills session "beta"
     let responses = server.handle_message(
-        ClientMessage::KillSession { session_name: session2.clone() },
+        ClientMessage::KillSession {
+            session_name: session2.clone(),
+        },
         1,
     );
 
     // Should remove client 2 (attached to beta) and emit SessionKilled
-    assert!(responses.iter().any(|r| matches!(r,
-        ServerResponse::RemoveClient(2)
-    )));
+    assert!(
+        responses
+            .iter()
+            .any(|r| matches!(r, ServerResponse::RemoveClient(2)))
+    );
     assert!(responses.iter().any(|r| matches!(r,
         ServerResponse::SendToClient(1, ServerMessage::SessionKilled { session_name })
         if session_name == &session2
@@ -489,7 +506,9 @@ fn session_switch_creates_new_if_needed(mut server_with_session: (Server, String
     assert!(!server.sessions.contains_key(&target));
 
     let responses = server.handle_message(
-        ClientMessage::SwitchSession { session_name: target.clone() },
+        ClientMessage::SwitchSession {
+            session_name: target.clone(),
+        },
         1,
     );
 
@@ -501,7 +520,8 @@ fn session_switch_creates_new_if_needed(mut server_with_session: (Server, String
         if session_name == &target
     ));
     // Should have a state sync
-    assert!(responses.iter().any(|r| matches!(r,
+    assert!(responses.iter().any(|r| matches!(
+        r,
         ServerResponse::SendToClient(1, ServerMessage::StateSync { .. })
     )));
 }
@@ -510,7 +530,9 @@ fn session_switch_creates_new_if_needed(mut server_with_session: (Server, String
 fn session_switch_rejects_invalid_name(mut server_with_session: (Server, String)) {
     let (ref mut server, _) = server_with_session;
     let responses = server.handle_message(
-        ClientMessage::SwitchSession { session_name: "INVALID NAME!".to_string() },
+        ClientMessage::SwitchSession {
+            session_name: "INVALID NAME!".to_string(),
+        },
         1,
     );
 
@@ -534,11 +556,19 @@ fn multi_client_same_session_both_get_layout_updates(mut server: Server) {
     // Client 1 creates a pane — both clients should see the update via broadcast
     let responses = server.handle_message(ClientMessage::CreatePane, 1);
 
-    let layout_updates: Vec<_> = responses.iter().filter(|r| matches!(r,
-        ServerResponse::BroadcastToSession(name, ServerMessage::LayoutUpdate { .. })
-        if name == &session_name
-    )).collect();
-    assert!(!layout_updates.is_empty(), "layout update should be broadcast to session");
+    let layout_updates: Vec<_> = responses
+        .iter()
+        .filter(|r| {
+            matches!(r,
+                ServerResponse::BroadcastToSession(name, ServerMessage::LayoutUpdate { .. })
+                if name == &session_name
+            )
+        })
+        .collect();
+    assert!(
+        !layout_updates.is_empty(),
+        "layout update should be broadcast to session"
+    );
 }
 
 #[rstest]
@@ -571,12 +601,21 @@ fn multi_client_different_sessions_isolated(mut server: Server) {
 fn ping_pong_roundtrip(mut server_with_session: (Server, String)) {
     let (ref mut server, _) = server_with_session;
     let responses = server.handle_message(
-        ClientMessage::Ping { seq: 42, client_time_us: 1234567890 },
+        ClientMessage::Ping {
+            seq: 42,
+            client_time_us: 1234567890,
+        },
         1,
     );
     assert!(matches!(
         responses.first(),
-        Some(ServerResponse::SendToClient(1, ServerMessage::Pong { seq: 42, client_time_us: 1234567890 }))
+        Some(ServerResponse::SendToClient(
+            1,
+            ServerMessage::Pong {
+                seq: 42,
+                client_time_us: 1234567890
+            }
+        ))
     ));
 }
 
@@ -593,14 +632,20 @@ fn ack_updates_client_generation(mut server_with_session: (Server, String)) {
 fn detach_removes_client(mut server_with_session: (Server, String)) {
     let (ref mut server, _) = server_with_session;
     let responses = server.handle_message(ClientMessage::Detach, 1);
-    assert!(matches!(responses.first(), Some(ServerResponse::RemoveClient(1))));
+    assert!(matches!(
+        responses.first(),
+        Some(ServerResponse::RemoveClient(1))
+    ));
 }
 
 #[rstest]
 fn kill_server_triggers_shutdown(mut server_with_session: (Server, String)) {
     let (ref mut server, _) = server_with_session;
     let responses = server.handle_message(ClientMessage::KillServer, 1);
-    assert!(matches!(responses.first(), Some(ServerResponse::ShutdownServer)));
+    assert!(matches!(
+        responses.first(),
+        Some(ServerResponse::ShutdownServer)
+    ));
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -612,7 +657,8 @@ fn focus_at_boundary_emits_bounce_edge(mut server_with_session: (Server, String)
     let (ref mut server, _) = server_with_session;
     // Only one column, FocusLeft should bounce
     let responses = server.handle_message(ClientMessage::FocusLeft, 1);
-    assert!(responses.iter().any(|r| matches!(r,
+    assert!(responses.iter().any(|r| matches!(
+        r,
         ServerResponse::SendToClient(1, ServerMessage::BounceEdge { .. })
     )));
 }
@@ -620,13 +666,26 @@ fn focus_at_boundary_emits_bounce_edge(mut server_with_session: (Server, String)
 #[rstest]
 fn create_split_down_adds_workspace(mut server_with_session: (Server, String)) {
     let (ref mut server, ref session_name) = server_with_session;
-    let ws_count_before = server.sessions.get(session_name).unwrap().workspaces.workspaces.len();
+    let ws_count_before = server
+        .sessions
+        .get(session_name)
+        .unwrap()
+        .workspaces
+        .workspaces
+        .len();
 
     let responses = server.handle_message(ClientMessage::SplitDown, 1);
 
-    let ws_count_after = server.sessions.get(session_name).unwrap().workspaces.workspaces.len();
+    let ws_count_after = server
+        .sessions
+        .get(session_name)
+        .unwrap()
+        .workspaces
+        .workspaces
+        .len();
     assert_eq!(ws_count_after, ws_count_before + 1);
-    assert!(responses.iter().any(|r| matches!(r,
+    assert!(responses.iter().any(|r| matches!(
+        r,
         ServerResponse::BroadcastToSession(_, ServerMessage::PaneCreated { .. })
     )));
 }
@@ -638,7 +697,9 @@ fn create_split_down_adds_workspace(mut server_with_session: (Server, String)) {
 // ─── Duplex test helpers ────────────────────────────────────────
 
 /// Connect a duplex client to a server, perform handshake, return reader/writer/state/handle.
-async fn duplex_connect(session_name: &str) -> (
+async fn duplex_connect(
+    session_name: &str,
+) -> (
     tokio::io::BufReader<tokio::io::DuplexStream>,
     tokio::io::BufWriter<tokio::io::DuplexStream>,
     Arc<Mutex<Server>>,
@@ -646,25 +707,40 @@ async fn duplex_connect(session_name: &str) -> (
 ) {
     let (client_reader, server_writer) = tokio::io::duplex(8192);
     let (server_reader, client_writer) = tokio::io::duplex(8192);
-    let state = Arc::new(Mutex::new(Server::new("/bin/sh", 8.0, TerminalColors::default())));
+    let state = Arc::new(Mutex::new(Server::new(
+        "/bin/sh",
+        8.0,
+        TerminalColors::default(),
+    )));
     let shutdown = Arc::new(tokio::sync::Notify::new());
     let input_notify = Arc::new(tokio::sync::Notify::new());
 
     let handle = tokio::spawn(super::super::connection::handle_client(
-        server_reader, server_writer, state.clone(), shutdown, input_notify,
+        server_reader,
+        server_writer,
+        state.clone(),
+        shutdown,
+        input_notify,
     ));
 
     let hello = ciri_protocol::codec::ClientHello {
         session_name: session_name.to_string(),
-        width: 1024, height: 768, cell_width: 8.0, cell_height: 16.0,
+        width: 1024,
+        height: 768,
+        cell_width: 8.0,
+        cell_height: 16.0,
     };
 
     let mut cr = tokio::io::BufReader::new(client_reader);
     let mut cw = tokio::io::BufWriter::new(client_writer);
 
-    ciri_protocol::codec::write_client_hello(&mut cw, &hello).await.unwrap();
+    ciri_protocol::codec::write_client_hello(&mut cw, &hello)
+        .await
+        .unwrap();
     cw.flush().await.unwrap();
-    let _ = ciri_protocol::codec::read_server_hello(&mut cr).await.unwrap();
+    let _ = ciri_protocol::codec::read_server_hello(&mut cr)
+        .await
+        .unwrap();
     (cr, cw, state, handle)
 }
 
@@ -683,20 +759,31 @@ async fn duplex_connect_to(
     let input_notify = Arc::new(tokio::sync::Notify::new());
 
     let handle = tokio::spawn(super::super::connection::handle_client(
-        server_reader, server_writer, state, shutdown, input_notify,
+        server_reader,
+        server_writer,
+        state,
+        shutdown,
+        input_notify,
     ));
 
     let hello = ciri_protocol::codec::ClientHello {
         session_name: session_name.to_string(),
-        width: 1024, height: 768, cell_width: 8.0, cell_height: 16.0,
+        width: 1024,
+        height: 768,
+        cell_width: 8.0,
+        cell_height: 16.0,
     };
 
     let mut cr = tokio::io::BufReader::new(client_reader);
     let mut cw = tokio::io::BufWriter::new(client_writer);
 
-    ciri_protocol::codec::write_client_hello(&mut cw, &hello).await.unwrap();
+    ciri_protocol::codec::write_client_hello(&mut cw, &hello)
+        .await
+        .unwrap();
     cw.flush().await.unwrap();
-    let _ = ciri_protocol::codec::read_server_hello(&mut cr).await.unwrap();
+    let _ = ciri_protocol::codec::read_server_hello(&mut cr)
+        .await
+        .unwrap();
     (cr, cw, handle)
 }
 
@@ -711,9 +798,7 @@ async fn duplex_connect_to(
 /// FullPaneSync and ImageDeleted frames are collected by pane_id (order-independent).
 ///
 /// Returns the pane_ids from the StateSync.
-async fn drain_initial_sync(
-    cr: &mut tokio::io::BufReader<tokio::io::DuplexStream>,
-) -> Vec<u64> {
+async fn drain_initial_sync(cr: &mut tokio::io::BufReader<tokio::io::DuplexStream>) -> Vec<u64> {
     use std::collections::HashSet;
 
     let pane_ids = match ciri_protocol::codec::read_frame(cr).await.unwrap() {
@@ -736,7 +821,8 @@ async fn drain_initial_sync(
                 assert!(
                     expected.contains(&sync.meta.pane_id),
                     "unexpected FullPaneSync for pane {} (expected one of {:?})",
-                    sync.meta.pane_id, expected
+                    sync.meta.pane_id,
+                    expected
                 );
                 synced_panes.insert(sync.meta.pane_id);
             }
@@ -753,7 +839,8 @@ async fn drain_initial_sync(
                 assert!(
                     expected.contains(&pane_id),
                     "unexpected ImageDeleted for pane {} (expected one of {:?})",
-                    pane_id, expected
+                    pane_id,
+                    expected
                 );
                 deleted_panes.insert(pane_id);
             }
@@ -776,9 +863,9 @@ async fn duplex_handshake_and_list_sessions() {
     assert_eq!(pane_ids.len(), 1, "new session should have one pane");
 
     // Send ListSessions and verify response
-    ciri_protocol::codec::encode_client_msg(
-        &mut cw, &ClientMessage::ListSessions { all: false },
-    ).await.unwrap();
+    ciri_protocol::codec::encode_client_msg(&mut cw, &ClientMessage::ListSessions { all: false })
+        .await
+        .unwrap();
     cw.flush().await.unwrap();
 
     match ciri_protocol::codec::read_frame(&mut cr).await.unwrap() {
@@ -799,12 +886,21 @@ async fn duplex_ping_pong() {
     drain_initial_sync(&mut cr).await;
 
     ciri_protocol::codec::encode_client_msg(
-        &mut cw, &ClientMessage::Ping { seq: 99, client_time_us: 1_000_000 },
-    ).await.unwrap();
+        &mut cw,
+        &ClientMessage::Ping {
+            seq: 99,
+            client_time_us: 1_000_000,
+        },
+    )
+    .await
+    .unwrap();
     cw.flush().await.unwrap();
 
     match ciri_protocol::codec::read_frame(&mut cr).await.unwrap() {
-        ciri_protocol::codec::Frame::ServerMsg(ServerMessage::Pong { seq, client_time_us }) => {
+        ciri_protocol::codec::Frame::ServerMsg(ServerMessage::Pong {
+            seq,
+            client_time_us,
+        }) => {
             assert_eq!(seq, 99);
             assert_eq!(client_time_us, 1_000_000);
         }
@@ -832,7 +928,10 @@ async fn duplex_disconnect_cleanup() {
     let _ = handle.await;
 
     let s = state.lock().await;
-    assert!(s.clients.is_empty(), "client should be cleaned up after disconnect");
+    assert!(
+        s.clients.is_empty(),
+        "client should be cleaned up after disconnect"
+    );
 }
 
 #[tokio::test]
@@ -843,14 +942,16 @@ async fn duplex_reconnect_preserves_mutated_state() {
     assert_eq!(initial_panes.len(), 1);
 
     // Client A creates a second pane
-    ciri_protocol::codec::encode_client_msg(
-        &mut cw_a, &ClientMessage::CreatePane,
-    ).await.unwrap();
+    ciri_protocol::codec::encode_client_msg(&mut cw_a, &ClientMessage::CreatePane)
+        .await
+        .unwrap();
     cw_a.flush().await.unwrap();
 
     // Read PaneCreated to get the new pane ID
     let new_pane_id = match ciri_protocol::codec::read_frame(&mut cr_a).await.unwrap() {
-        ciri_protocol::codec::Frame::ServerMsg(ServerMessage::PaneCreated { pane_id, .. }) => pane_id,
+        ciri_protocol::codec::Frame::ServerMsg(ServerMessage::PaneCreated { pane_id, .. }) => {
+            pane_id
+        }
         other => panic!("expected PaneCreated, got {other:?}"),
     };
     // Drain LayoutUpdate
@@ -880,7 +981,11 @@ async fn duplex_reconnect_preserves_mutated_state() {
 
     // Client B should see BOTH panes — proving state was preserved, not recreated
     let reconnect_panes = drain_initial_sync(&mut cr_b).await;
-    assert_eq!(reconnect_panes.len(), 2, "reconnected client should see both panes");
+    assert_eq!(
+        reconnect_panes.len(),
+        2,
+        "reconnected client should see both panes"
+    );
     assert!(reconnect_panes.contains(&initial_panes[0]));
     assert!(reconnect_panes.contains(&new_pane_id));
 
@@ -897,27 +1002,34 @@ async fn duplex_two_clients_same_session() {
     // Client B connects to the same session (existing server state)
     let (mut cr_b, _cw_b, handle_b) = duplex_connect_to("shared-session", state.clone()).await;
     let pane_ids_b = drain_initial_sync(&mut cr_b).await;
-    assert_eq!(pane_ids_b, pane_ids_a, "both clients should see the same pane");
+    assert_eq!(
+        pane_ids_b, pane_ids_a,
+        "both clients should see the same pane"
+    );
 
     // Verify server tracks 2 clients
     {
         let s = state.lock().await;
-        let session_clients = s.clients.values()
+        let session_clients = s
+            .clients
+            .values()
             .filter(|c| c.session_name == "shared-session")
             .count();
         assert_eq!(session_clients, 2);
     }
 
     // Client A sends CreatePane — both should receive PaneCreated + LayoutUpdate
-    ciri_protocol::codec::encode_client_msg(
-        &mut cw_a, &ClientMessage::CreatePane,
-    ).await.unwrap();
+    ciri_protocol::codec::encode_client_msg(&mut cw_a, &ClientMessage::CreatePane)
+        .await
+        .unwrap();
     cw_a.flush().await.unwrap();
 
     // Client A reads PaneCreated
     let frame_a = ciri_protocol::codec::read_frame(&mut cr_a).await.unwrap();
     let new_pane_id = match frame_a {
-        ciri_protocol::codec::Frame::ServerMsg(ServerMessage::PaneCreated { pane_id, .. }) => pane_id,
+        ciri_protocol::codec::Frame::ServerMsg(ServerMessage::PaneCreated { pane_id, .. }) => {
+            pane_id
+        }
         other => panic!("client A: expected PaneCreated, got {other:?}"),
     };
 
@@ -934,7 +1046,9 @@ async fn duplex_two_clients_same_session() {
     let frame_a2 = ciri_protocol::codec::read_frame(&mut cr_a).await.unwrap();
     match frame_a2 {
         ciri_protocol::codec::Frame::ServerMsg(ServerMessage::LayoutUpdate { layout }) => {
-            let total_panes: usize = layout.workspaces.iter()
+            let total_panes: usize = layout
+                .workspaces
+                .iter()
                 .flat_map(|ws| &ws.columns)
                 .map(|col| col.tiles.len())
                 .sum();
@@ -946,19 +1060,25 @@ async fn duplex_two_clients_same_session() {
     let frame_b2 = ciri_protocol::codec::read_frame(&mut cr_b).await.unwrap();
     match frame_b2 {
         ciri_protocol::codec::Frame::ServerMsg(ServerMessage::LayoutUpdate { layout }) => {
-            let total_panes: usize = layout.workspaces.iter()
+            let total_panes: usize = layout
+                .workspaces
+                .iter()
                 .flat_map(|ws| &ws.columns)
                 .map(|col| col.tiles.len())
                 .sum();
             assert_eq!(total_panes, 2, "client B layout should show 2 panes");
             // Verify the new pane ID appears in the layout
-            let all_pane_ids: Vec<u64> = layout.workspaces.iter()
+            let all_pane_ids: Vec<u64> = layout
+                .workspaces
+                .iter()
                 .flat_map(|ws| &ws.columns)
                 .flat_map(|col| &col.tiles)
                 .map(|t| t.pane_id)
                 .collect();
-            assert!(all_pane_ids.contains(&new_pane_id),
-                "client B layout should contain new pane {new_pane_id}");
+            assert!(
+                all_pane_ids.contains(&new_pane_id),
+                "client B layout should contain new pane {new_pane_id}"
+            );
         }
         other => panic!("client B: expected LayoutUpdate, got {other:?}"),
     }
@@ -972,9 +1092,9 @@ async fn duplex_two_clients_same_session() {
 // ═══════════════════════════════════════════════════════════════════
 
 #[rstest]
-#[case(0, 0, 0, 768)]     // zero cols/rows/width
-#[case(80, 24, 0, 0)]     // zero pixel dimensions
-#[case(80, 24, 1024, 0)]  // zero height
+#[case(0, 0, 0, 768)] // zero cols/rows/width
+#[case(80, 24, 0, 0)] // zero pixel dimensions
+#[case(80, 24, 1024, 0)] // zero height
 #[case(80, 24, 20000, 768)] // width too large
 fn resize_rejects_invalid_combinations(
     mut server_with_session: (Server, String),
@@ -988,8 +1108,12 @@ fn resize_rejects_invalid_combinations(
 
     let responses = server.handle_message(
         ClientMessage::Resize {
-            cols: _cols, rows: _rows, width, height,
-            cell_width: 8.0, cell_height: 16.0,
+            cols: _cols,
+            rows: _rows,
+            width,
+            height,
+            cell_width: 8.0,
+            cell_height: 16.0,
         },
         1,
     );
@@ -1013,8 +1137,12 @@ fn resize_accepts_valid_dimensions(
     let (ref mut server, _) = server_with_session;
     let _responses = server.handle_message(
         ClientMessage::Resize {
-            cols: _cols, rows: _rows, width, height,
-            cell_width: cw, cell_height: ch,
+            cols: _cols,
+            rows: _rows,
+            width,
+            height,
+            cell_width: cw,
+            cell_height: ch,
         },
         1,
     );

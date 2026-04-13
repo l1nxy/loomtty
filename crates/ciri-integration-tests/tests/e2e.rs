@@ -18,15 +18,24 @@ fn layout_state_roundtrips_through_protocol_encoding() {
             columns: vec![
                 ColumnState {
                     tiles: vec![
-                        TileState { pane_id: 1, weight: 1.0 },
-                        TileState { pane_id: 2, weight: 2.0 },
+                        TileState {
+                            pane_id: 1,
+                            weight: 1.0,
+                        },
+                        TileState {
+                            pane_id: 2,
+                            weight: 2.0,
+                        },
                     ],
                     active_tile_idx: 0,
                     width_proportion: 0.5,
                     width_fixed_px: None,
                 },
                 ColumnState {
-                    tiles: vec![TileState { pane_id: 3, weight: 1.0 }],
+                    tiles: vec![TileState {
+                        pane_id: 3,
+                        weight: 1.0,
+                    }],
                     active_tile_idx: 0,
                     width_proportion: 0.5,
                     width_fixed_px: Some(400.0),
@@ -37,10 +46,15 @@ fn layout_state_roundtrips_through_protocol_encoding() {
         active_workspace_idx: 0,
     };
 
-    let msg = ServerMessage::LayoutUpdate { layout: layout.clone() };
+    let msg = ServerMessage::LayoutUpdate {
+        layout: layout.clone(),
+    };
     let frame = codec::frame_server_msg(&msg).unwrap();
 
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
     rt.block_on(async {
         match codec::read_frame(&mut &frame[..]).await.unwrap() {
             codec::Frame::ServerMsg(ServerMessage::LayoutUpdate { layout: decoded }) => {
@@ -128,7 +142,9 @@ fn agent_state_survives_session_save_and_layout_encoding() {
                     weight: 1.0,
                     cwd: Some("/home".to_string()),
                     title: None,
-                    agent: Some(SavedAgent { kind: AgentKind::ClaudeCode }),
+                    agent: Some(SavedAgent {
+                        kind: AgentKind::ClaudeCode,
+                    }),
                 }],
                 active_tile_idx: 0,
                 width_proportion: 1.0,
@@ -144,7 +160,10 @@ fn agent_state_survives_session_save_and_layout_encoding() {
     let restored = ciri_session::restore::restore_session("agent-roundtrip", tmp.path())
         .unwrap()
         .unwrap();
-    let agent = restored.workspaces[0].columns[0].tiles[0].agent.as_ref().unwrap();
+    let agent = restored.workspaces[0].columns[0].tiles[0]
+        .agent
+        .as_ref()
+        .unwrap();
     assert!(matches!(agent.kind, AgentKind::ClaudeCode));
     assert_eq!(resume_command(agent.kind), Some("claude --continue"));
 
@@ -152,7 +171,10 @@ fn agent_state_survives_session_save_and_layout_encoding() {
     let layout = LayoutState {
         workspaces: vec![WorkspaceState {
             columns: vec![ColumnState {
-                tiles: vec![TileState { pane_id: 1, weight: 1.0 }],
+                tiles: vec![TileState {
+                    pane_id: 1,
+                    weight: 1.0,
+                }],
                 active_tile_idx: 0,
                 width_proportion: 1.0,
                 width_fixed_px: None,
@@ -166,7 +188,10 @@ fn agent_state_survives_session_save_and_layout_encoding() {
         pane_ids: vec![1],
     };
     let frame = codec::frame_server_msg(&msg).unwrap();
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
     rt.block_on(async {
         match codec::read_frame(&mut &frame[..]).await.unwrap() {
             codec::Frame::ServerMsg(ServerMessage::StateSync { pane_ids, .. }) => {
@@ -192,10 +217,11 @@ async fn protocol_handshake_and_bidirectional_exchange() {
         let mut w = tokio::io::BufWriter::new(server_w);
 
         let (compat, received) = codec::read_client_hello(&mut r).await.unwrap();
-        assert!(matches!(compat,
+        assert!(matches!(
+            compat,
             codec::VersionCompat::Exact(_)
-            | codec::VersionCompat::PatchMismatch { .. }
-            | codec::VersionCompat::MinorMismatch { .. }
+                | codec::VersionCompat::PatchMismatch { .. }
+                | codec::VersionCompat::MinorMismatch { .. }
         ));
         assert_eq!(received.session_name, "e2e-bidirectional");
         assert_eq!(received.width, 1920);
@@ -206,9 +232,19 @@ async fn protocol_handshake_and_bidirectional_exchange() {
         // Echo 10 Pings
         for _ in 0..10 {
             match codec::read_frame(&mut r).await.unwrap() {
-                codec::Frame::ClientMsg(ClientMessage::Ping { seq, client_time_us }) => {
-                    codec::encode_server_msg(&mut w, &ServerMessage::Pong { seq, client_time_us })
-                        .await.unwrap();
+                codec::Frame::ClientMsg(ClientMessage::Ping {
+                    seq,
+                    client_time_us,
+                }) => {
+                    codec::encode_server_msg(
+                        &mut w,
+                        &ServerMessage::Pong {
+                            seq,
+                            client_time_us,
+                        },
+                    )
+                    .await
+                    .unwrap();
                     tokio::io::AsyncWriteExt::flush(&mut w).await.unwrap();
                 }
                 other => panic!("expected Ping, got {other:?}"),
@@ -221,25 +257,42 @@ async fn protocol_handshake_and_bidirectional_exchange() {
         let mut r = tokio::io::BufReader::new(client_r);
         let mut w = tokio::io::BufWriter::new(client_w);
 
-        codec::write_client_hello(&mut w, &codec::ClientHello {
-            session_name: "e2e-bidirectional".to_string(),
-            width: 1920, height: 1080, cell_width: 9.0, cell_height: 18.0,
-        }).await.unwrap();
+        codec::write_client_hello(
+            &mut w,
+            &codec::ClientHello {
+                session_name: "e2e-bidirectional".to_string(),
+                width: 1920,
+                height: 1080,
+                cell_width: 9.0,
+                cell_height: 18.0,
+            },
+        )
+        .await
+        .unwrap();
         tokio::io::AsyncWriteExt::flush(&mut w).await.unwrap();
         let _ = codec::read_server_hello(&mut r).await.unwrap();
 
         // Send burst
         for i in 0..10u64 {
-            codec::encode_client_msg(&mut w, &ClientMessage::Ping {
-                seq: i, client_time_us: i * 1000,
-            }).await.unwrap();
+            codec::encode_client_msg(
+                &mut w,
+                &ClientMessage::Ping {
+                    seq: i,
+                    client_time_us: i * 1000,
+                },
+            )
+            .await
+            .unwrap();
         }
         tokio::io::AsyncWriteExt::flush(&mut w).await.unwrap();
 
         // Read all Pongs
         for i in 0..10u64 {
             match codec::read_frame(&mut r).await.unwrap() {
-                codec::Frame::ServerMsg(ServerMessage::Pong { seq, client_time_us }) => {
+                codec::Frame::ServerMsg(ServerMessage::Pong {
+                    seq,
+                    client_time_us,
+                }) => {
                     assert_eq!(seq, i);
                     assert_eq!(client_time_us, i * 1000);
                 }
@@ -272,12 +325,20 @@ async fn large_full_pane_sync_through_small_duplex_buffer() {
     }
     let sync = FullPaneSync {
         meta: PaneFrameMeta {
-            pane_id: 77, generation: 33, cursor_line: 20, cursor_col: 60,
-            cursor_shape: CURSOR_UNDERLINE, mode_flags: MODE_MOUSE_REPORT, echo_ack: 42,
+            pane_id: 77,
+            generation: 33,
+            cursor_line: 20,
+            cursor_col: 60,
+            cursor_shape: CURSOR_UNDERLINE,
+            mode_flags: MODE_MOUSE_REPORT,
+            echo_ack: 42,
         },
-        cols: 120, rows: 40,
+        cols: 120,
+        rows: 40,
         title: "large-terminal".to_string(),
-        scrollback: Vec::new(), scrollback_rows: 0, scrollback_replace: false,
+        scrollback: Vec::new(),
+        scrollback_rows: 0,
+        scrollback_replace: false,
         cells: cells.clone(),
         grapheme_extras: GraphemeExtras::new(),
         hyperlink_extras: HyperlinkExtras::new(),
@@ -285,15 +346,23 @@ async fn large_full_pane_sync_through_small_duplex_buffer() {
     };
 
     let framed = codec::frame_full_pane_sync(&sync).unwrap();
-    assert!(framed.len() > 500, "frame should be sizeable: {}B", framed.len());
+    assert!(
+        framed.len() > 500,
+        "frame should be sizeable: {}B",
+        framed.len()
+    );
 
     // Send through a tiny duplex buffer to force fragmentation
     let (mut writer, reader) = tokio::io::duplex(64);
     let mut reader = tokio::io::BufReader::new(reader);
 
     let write_task = tokio::spawn(async move {
-        tokio::io::AsyncWriteExt::write_all(&mut writer, &framed).await.unwrap();
-        tokio::io::AsyncWriteExt::shutdown(&mut writer).await.unwrap();
+        tokio::io::AsyncWriteExt::write_all(&mut writer, &framed)
+            .await
+            .unwrap();
+        tokio::io::AsyncWriteExt::shutdown(&mut writer)
+            .await
+            .unwrap();
     });
 
     match codec::read_frame(&mut reader).await.unwrap() {

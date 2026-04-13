@@ -106,6 +106,31 @@ impl ApplicationHandler for App {
 
         let is_resizing = resize_deadline.is_some();
 
+        if let Some(resize_deadline) = resize_deadline {
+            // During live resize: render at frame rate for a smooth preview.
+            // Surface.configure() is deferred to render time so we only
+            // rebuild the swapchain once per frame regardless of event count.
+            let frame_wake = Instant::now() + self.core.frame_interval;
+            event_loop.set_control_flow(ControlFlow::WaitUntil(frame_wake.min(resize_deadline)));
+        } else if is_animating || has_pending || is_reconnecting || has_remote_query {
+            // Active rendering or pending data: poll at frame rate
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + self.core.frame_interval,
+            ));
+        } else if wants_blink {
+            // Cursor blink active: poll at blink interval
+            let blink_ms = self.core.config.terminal.cursor_blink_interval_ms;
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(blink_ms),
+            ));
+        } else if self.core.server_rx.is_some() {
+            // Connected but idle: sleep until woken by IO thread via EventLoopProxy
+            event_loop.set_control_flow(ControlFlow::Wait);
+        } else {
+            // Disconnected, no animations: fully idle
+            event_loop.set_control_flow(ControlFlow::Wait);
+        }
+
         if matches!(
             cause,
             StartCause::ResumeTimeReached { .. }

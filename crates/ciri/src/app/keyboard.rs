@@ -562,7 +562,9 @@ impl App {
                         .get(&pid)
                         .map(|g| g.mode_flags)
                         .unwrap_or(0);
-                    let pane_bytes = if pane_kitty_flags == kitty_flags && pane_mode_flags == mode_flags {
+                    let pane_bytes = if pane_kitty_flags == kitty_flags
+                        && pane_mode_flags == mode_flags
+                    {
                         bytes.clone()
                     } else {
                         self.encode_key_input(event, modifiers, pane_kitty_flags, pane_mode_flags)
@@ -615,7 +617,14 @@ impl App {
         } else {
             let app_cursor = mode_flags & ciri_protocol::message::MODE_APP_CURSOR != 0;
             let app_keypad = mode_flags & ciri_protocol::message::MODE_APP_KEYPAD != 0;
-            key_event_to_pty_bytes(event, modifiers.ctrl, modifiers.shift, modifiers.alt, app_cursor, app_keypad)
+            key_event_to_pty_bytes(
+                event,
+                modifiers.ctrl,
+                modifiers.shift,
+                modifiers.alt,
+                app_cursor,
+                app_keypad,
+            )
         }
     }
 

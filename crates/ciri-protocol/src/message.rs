@@ -855,7 +855,9 @@ impl FullPaneSyncBorrowed {
     /// Access the raw SM opcode stream for scrollback cells.
     /// Returns an empty slice if the stored offset/length would exceed the payload.
     pub fn scrollback_sm_data(&self) -> &[u8] {
-        let end = self.scrollback_sm_offset.saturating_add(self.scrollback_sm_len);
+        let end = self
+            .scrollback_sm_offset
+            .saturating_add(self.scrollback_sm_len);
         if end > self.payload.len() {
             return &[];
         }

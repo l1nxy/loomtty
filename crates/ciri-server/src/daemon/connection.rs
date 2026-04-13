@@ -251,6 +251,9 @@ pub(crate) async fn handle_client<R, W>(
                     let is_input = matches!(msg, ClientMessage::Input { .. });
                     let mut s = state.lock().await;
                     let responses = s.handle_message(msg, client_id);
+                    if is_input {
+                        input_notify.notify_one();
+                    }
 
                     for resp in responses {
                         match resp {

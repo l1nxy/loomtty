@@ -1666,10 +1666,7 @@ fn osc8_multiple_links_on_same_row() {
 fn grid_with_wide_line(text: &str) -> ClientPaneGrid {
     use unicode_width::UnicodeWidthChar;
     // Calculate total columns needed
-    let total_cols: usize = text
-        .chars()
-        .map(|c| c.width().unwrap_or(1))
-        .sum();
+    let total_cols: usize = text.chars().map(|c| c.width().unwrap_or(1)).sum();
     let cols = total_cols as u16;
     let mut grid = ClientPaneGrid::new(cols, 1, 0);
     let mut col = 0usize;

@@ -54,7 +54,8 @@ pub(crate) fn rasterize_glyph_id_ft(
             let pitch = bitmap.pitch().unsigned_abs();
             let raw = bitmap.buffer();
             // Convert BGRA → RGBA
-            let mut data = Vec::with_capacity((w as usize).saturating_mul(h as usize).saturating_mul(4));
+            let mut data =
+                Vec::with_capacity((w as usize).saturating_mul(h as usize).saturating_mul(4));
             for row in 0..h {
                 let start = (row as usize).saturating_mul(pitch as usize);
                 for x in 0..w as usize {
@@ -321,8 +322,14 @@ fn downsample_rgba(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -
         let sy = (dy as f32 * src_h as f32 / dst_h as f32) as usize;
         for dx in 0..dst_w {
             let sx = (dx as f32 * src_w as f32 / dst_w as f32) as usize;
-            let si = sy.saturating_mul(src_w as usize).saturating_add(sx).saturating_mul(4);
-            let di = (dy as usize).saturating_mul(dst_w as usize).saturating_add(dx as usize).saturating_mul(4);
+            let si = sy
+                .saturating_mul(src_w as usize)
+                .saturating_add(sx)
+                .saturating_mul(4);
+            let di = (dy as usize)
+                .saturating_mul(dst_w as usize)
+                .saturating_add(dx as usize)
+                .saturating_mul(4);
             if si + 4 <= src.len() && di + 4 <= out.len() {
                 out[di..di + 4].copy_from_slice(&src[si..si + 4]);
             }

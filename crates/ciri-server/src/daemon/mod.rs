@@ -284,8 +284,8 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
                 }
                 result = tcp_accept(&tcp_listener) => {
                     let (stream, addr) = result?;
-                    log::info!("TCP client connected from {addr}");
                     stream.set_nodelay(true).ok();
+                    log::info!("TCP client connected from {addr}");
                     let state = state.clone();
                     let client_shutdown = shutdown.clone();
                     let client_input_notify = input_notify.clone();
@@ -311,8 +311,8 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
                 }
                 result = tcp_accept(&tcp_listener) => {
                     let (stream, addr) = result?;
-                    log::info!("TCP client connected from {addr}");
                     stream.set_nodelay(true).ok();
+                    log::info!("TCP client connected from {addr}");
                     let state = state.clone();
                     let client_shutdown = shutdown.clone();
                     let client_input_notify = input_notify.clone();

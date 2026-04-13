@@ -602,11 +602,27 @@ impl App {
         self.hash_context_menu(&mut hasher);
         self.hash_pending_paste(&mut hasher);
 
+        // Drag state affects border/scrollbar visuals
+        self.core.drag.col_dragging.hash(&mut hasher);
+        self.core.drag.tile_dragging.hash(&mut hasher);
+        self.core.drag.scrollbar_dragging.is_some().hash(&mut hasher);
+
         tiles.len().hash(&mut hasher);
         for (pane_id, rect, is_active) in tiles {
             pane_id.hash(&mut hasher);
             Self::hash_geo_rect(&mut hasher, rect);
             is_active.hash(&mut hasher);
+            // Include animation-derived dim factor so that pane focus/open/drag
+            // opacity changes are captured even when `animating` is already false.
+            let focus_op = self.core.anim_mgr.pane_focus_opacity(*pane_id);
+            let open_op = self.core.anim_mgr.pane_open_opacity(*pane_id);
+            let drag_dim = self.core.anim_mgr.pane_drag_dim(*pane_id);
+            focus_op.to_bits().hash(&mut hasher);
+            open_op.to_bits().hash(&mut hasher);
+            drag_dim.to_bits().hash(&mut hasher);
+            let (move_dx, move_dy) = self.core.anim_mgr.pane_move_offset(*pane_id);
+            move_dx.to_bits().hash(&mut hasher);
+            move_dy.to_bits().hash(&mut hasher);
             if let Some(view) = self.cached_views.get(pane_id) {
                 view.generation.hash(&mut hasher);
                 view.scrollbar_key.hash(&mut hasher);
@@ -1239,6 +1255,11 @@ impl App {
             glyphs,
             color_glyphs,
         );
+
+        // Consume scroll shift so it isn't re-applied on subsequent frames
+        // where the view hasn't been updated.
+        let mut view = view;
+        view.last_scroll_shift = 0;
 
         // Reinsert the view
         self.cached_views.insert(pane_id, view);
@@ -1957,15 +1978,13 @@ impl App {
         let max_dt = (self.core.frame_interval.as_secs_f64() * 2.0).max(1.0 / 60.0);
         let dt = raw_dt.min(max_dt);
 
-        let mut animating = self.advance_animations(dt);
-
-        // Focus change detection → delegate to AnimationManager
+        // Focus change detection — must happen BEFORE advance so the new
+        // animation is ticked in the same frame it starts.
         let current_focus = self.core.workspaces.active().active_pane_id();
         let config = self.anim_config();
         self.core.anim_mgr.on_focus_changed(current_focus, &config);
 
-        // Advance all pane animations (open, close, focus, bell) in one call
-        animating |= self.core.anim_mgr.advance_all(dt);
+        let mut animating = self.advance_animations(dt);
 
         let renderer = self.renderer.as_mut().unwrap();
         let (vw, vh) = renderer.surface_size();

@@ -38,8 +38,6 @@ pub(crate) struct Session {
     pub(crate) last_agent_save: Option<Instant>,
     /// Last-known cursor state per pane, for detecting cursor-only changes.
     pub(crate) last_cursor: HashMap<u64, (i16, u16, u8, u16)>,
-    /// Fingerprint of the current cursor row as last observed by the tick loop.
-    pub(crate) last_cursor_row_hash: HashMap<u64, u64>,
 }
 
 impl Session {
@@ -71,7 +69,6 @@ impl Session {
             detected_agents: HashMap::new(),
             last_agent_save: None,
             last_cursor: HashMap::new(),
-            last_cursor_row_hash: HashMap::new(),
         }
     }
 
@@ -290,7 +287,6 @@ impl Session {
         self.generation.remove(&pane_id);
         self.detected_agents.remove(&pane_id);
         self.last_cursor.remove(&pane_id);
-        self.last_cursor_row_hash.remove(&pane_id);
         for client in clients.values_mut() {
             if client.session_name == self.session_name {
                 client.damage.remove(&pane_id);
@@ -570,26 +566,7 @@ impl Session {
             if cursor_changed {
                 self.last_cursor.insert(pane_id, cur_cursor);
             }
-            let cur_cursor_row_hash = if cur_cursor.0 >= 0 {
-                pane.viewport_row_fingerprint(cur_cursor.0 as u16)
-            } else {
-                None
-            };
-            let prev_cursor_row_hash = match cur_cursor_row_hash {
-                Some(hash) => self.last_cursor_row_hash.insert(pane_id, hash),
-                None => self.last_cursor_row_hash.remove(&pane_id),
-            };
-
             if let Some(ranges) = pane.extract_damage() {
-                let redundant_cursor_row_damage = !cursor_changed
-                    && ranges.len() == 1
-                    && cur_cursor.0 >= 0
-                    && ranges[0].0 as i16 == cur_cursor.0
-                    && prev_cursor_row_hash == cur_cursor_row_hash;
-                if redundant_cursor_row_damage {
-                    continue;
-                }
-
                 // Bump generation
                 let g = self.generation.entry(pane_id).or_insert(0);
                 *g += 1;

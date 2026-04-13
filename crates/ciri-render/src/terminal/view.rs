@@ -339,7 +339,7 @@ pub fn update_view_from_grid(
         rotate_row_caches(view, applied_scroll_shift);
     }
 
-    update_dirty_rows(
+    let rows_rebuilt = update_dirty_rows(
         view,
         dirty_rows,
         &new_row_hashes,
@@ -371,7 +371,13 @@ pub fn update_view_from_grid(
 
     view.row_hashes = new_row_hashes;
     view.last_scroll_shift = applied_scroll_shift;
-    view.generation = view.generation.wrapping_add(1);
+    // Only bump generation when row content actually changed.  Cursor-only
+    // changes (position/shape) are captured via grid.cursor_* in the
+    // render snapshot hash, so they still trigger redraws without a
+    // generation bump.
+    if rows_rebuilt || applied_scroll_shift != 0 {
+        view.generation = view.generation.wrapping_add(1);
+    }
     view.cell_height = metrics.ch;
     view.glyph_instances.clear();
     view.color_glyph_instances.clear();
@@ -673,15 +679,18 @@ fn build_row_render_cache(
     row_data
 }
 
+/// Returns `true` if at least one row was actually rebuilt.
 fn update_dirty_rows(
     view: &mut TerminalView,
-    dirty_rows: &[bool],
+    _dirty_rows: &[bool],
     new_row_hashes: &[u64],
     scroll_shift: i32,
     grid: PackedGridContext<'_>,
     params: &ViewBuildParams<'_>,
     atlas: &mut GlyphCache,
-) {
+) -> bool {
+    let mut any_rebuilt = false;
+
     let Some(faces) = params.shaper.face_set() else {
         for row in 0..grid.rows as usize {
             if row >= view.row_data.len() {
@@ -696,16 +705,19 @@ fn update_dirty_rows(
             };
             let hash_changed =
                 view.row_hashes.get(row).copied() != new_row_hashes.get(row).copied();
-            let dirty = dirty_rows.get(row).copied().unwrap_or(false) || exposed || hash_changed;
-            if !dirty {
+            // Only rebuild when content actually changed (hash) or scroll-
+            // exposed.  Server dirty flags alone are not sufficient — they
+            // fire for cursor-line damage even when no cell content changed.
+            if !exposed && !hash_changed {
                 continue;
             }
             view.row_data[row] = grid.build_row_data(row, None, atlas);
             if let Some(epoch) = view.row_epochs.get_mut(row) {
                 *epoch = epoch.wrapping_add(1);
             }
+            any_rebuilt = true;
         }
-        return;
+        return any_rebuilt;
     };
 
     for row in 0..grid.rows as usize {
@@ -721,8 +733,7 @@ fn update_dirty_rows(
             false
         };
         let hash_changed = view.row_hashes.get(row).copied() != new_row_hashes.get(row).copied();
-        let dirty = dirty_rows.get(row).copied().unwrap_or(false) || exposed || hash_changed;
-        if !dirty {
+        if !exposed && !hash_changed {
             continue;
         }
 
@@ -737,5 +748,7 @@ fn update_dirty_rows(
         if let Some(epoch) = view.row_epochs.get_mut(row) {
             *epoch = epoch.wrapping_add(1);
         }
+        any_rebuilt = true;
     }
+    any_rebuilt
 }

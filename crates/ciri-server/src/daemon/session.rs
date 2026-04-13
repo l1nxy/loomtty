@@ -40,6 +40,8 @@ pub(crate) struct Session {
     pub(crate) last_cursor: HashMap<u64, (i16, u16, u8, u16)>,
     /// Last-known pane title, for detecting title changes (OSC 0/2).
     pub(crate) last_title: HashMap<u64, String>,
+    /// Optional callback to wake the tick loop when PTY output is available.
+    pub(crate) pty_notify: Option<ciri_term::pty::PtyOutputNotify>,
 }
 
 impl Session {
@@ -72,6 +74,7 @@ impl Session {
             last_agent_save: None,
             last_cursor: HashMap::new(),
             last_title: HashMap::new(),
+            pty_notify: None,
         }
     }
 
@@ -137,8 +140,10 @@ impl Session {
             None
         };
         let effective_cwd = cwd.or_else(|| inherited_cwd.as_deref().map(std::path::Path::new));
-        let mut pane =
-            Pane::new_with_opts(id, cols, rows, &self.default_shell, command, effective_cwd)?;
+        let mut pane = Pane::new_with_notify(
+            id, cols, rows, &self.default_shell, command, effective_cwd,
+            self.pty_notify.clone(),
+        )?;
         pane.set_cell_size(cw, ch);
         pane.init_colors(&self.terminal_colors);
         self.panes.insert(id, pane);
@@ -164,12 +169,14 @@ impl Session {
         let vh = self.workspaces.view_size.height;
         let (_, _, cw, ch) = Self::effective_dims_from(clients, &self.session_name);
         let (cols, rows) = self.pane_grid_size_with_cells(vw, vh, cw, ch);
-        let mut pane = Pane::new_with_cwd(
+        let mut pane = Pane::new_with_notify(
             id,
             cols,
             rows,
             &self.default_shell,
+            None,
             cwd.as_deref().map(std::path::Path::new),
+            self.pty_notify.clone(),
         )?;
         pane.set_cell_size(cw, ch);
         pane.init_colors(&self.terminal_colors);

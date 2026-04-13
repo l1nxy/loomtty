@@ -37,6 +37,8 @@ pub(crate) struct Server {
     pub(crate) terminal_colors: TerminalColors,
     /// Set to true after `graceful_shutdown` runs. Prevents double-shutdown.
     pub(crate) shut_down: bool,
+    /// Callback to wake the tick loop when PTY output is available.
+    pub(crate) pty_notify: Option<ciri_term::pty::PtyOutputNotify>,
 }
 
 const CONTROL_SESSION: &str = "__control__";
@@ -75,6 +77,7 @@ impl Server {
             session_config: ciri_config::schema::SessionConfig::default(),
             terminal_colors,
             shut_down: false,
+            pty_notify: None,
         }
     }
 

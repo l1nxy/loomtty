@@ -4,7 +4,7 @@ use ciri_protocol::message::*;
 use ciri_protocol::transport;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Notify};
-use tokio::time::{Duration, Instant, interval};
+use tokio::time::{Duration, Instant};
 
 use super::connection;
 use super::damage::DamageAccumulator;
@@ -17,7 +17,11 @@ pub(crate) async fn run_tick_loop(
     tick_shutdown: Arc<Notify>,
     input_notify: Arc<Notify>,
 ) {
-    let mut ticker = interval(Duration::from_millis(16));
+    // No fixed-rate ticker: the loop wakes on input_notify which fires
+    // for both client input AND PTY output (event-driven, near-zero idle CPU).
+    // A 16ms throttle after each wake prevents busy-looping when PTY output
+    // arrives faster than frame rate.
+    let frame_interval = Duration::from_millis(16);
 
     // ── Frame buffer pool (optimization #2) ─────────────────────
     // Reusable Vec<u8> buffers to avoid per-frame allocation.
@@ -47,10 +51,8 @@ pub(crate) async fn run_tick_loop(
     let mut session_names: Vec<String> = Vec::new();
 
     loop {
-        tokio::select! {
-            _ = ticker.tick() => {}
-            _ = input_notify.notified() => {}
-        }
+        // Sleep until notified (PTY output or client input)
+        input_notify.notified().await;
 
         // ── Phase 1 (locked): process PTY, extract damage, collect snapshots ──
         //
@@ -501,6 +503,9 @@ pub(crate) async fn run_tick_loop(
                 s.clients.remove(&cid);
             }
         }
+
+        // Throttle: don't loop faster than frame rate even if notified continuously
+        tokio::time::sleep(frame_interval).await;
     }
 }
 

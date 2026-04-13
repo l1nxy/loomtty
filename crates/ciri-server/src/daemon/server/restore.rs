@@ -20,6 +20,7 @@ impl Server {
             );
             session.default_column_width = self.default_column_width;
             session.pane_inset = self.pane_inset;
+            session.pty_notify = self.pty_notify.clone();
 
             if let Some(saved) = Self::load_saved_session(session_name) {
                 self.apply_restored_session(&mut session, &saved);
@@ -121,13 +122,14 @@ impl Server {
                     }
                 });
             let cwd = saved_tile.cwd.as_deref().map(std::path::Path::new);
-            match Pane::new_with_opts(
+            match Pane::new_with_notify(
                 id,
                 cols,
                 rows,
                 &session.default_shell,
                 resume_cmd.as_deref(),
                 cwd,
+                session.pty_notify.clone(),
             ) {
                 Ok(mut pane) => {
                     pane.set_cell_size(8.0, 16.0);

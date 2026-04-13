@@ -196,6 +196,7 @@ impl Server {
         );
         session.default_column_width = self.default_column_width;
         session.pane_inset = self.pane_inset;
+        session.pty_notify = self.pty_notify.clone();
 
         let vw = session.workspaces.view_size.width;
         let vh = session.workspaces.view_size.height;
@@ -236,7 +237,7 @@ impl Server {
                         Some(std::path::Path::new(&tpl_tile.cwd))
                     };
 
-                    match Pane::new_with_opts(id, cols, rows, &session.default_shell, cmd, cwd) {
+                    match Pane::new_with_notify(id, cols, rows, &session.default_shell, cmd, cwd, session.pty_notify.clone()) {
                         Ok(mut pane) => {
                             pane.set_cell_size(cw, ch);
                             pane.init_colors(&session.terminal_colors);

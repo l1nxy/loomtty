@@ -159,10 +159,14 @@ pub async fn prepare_daemon() -> Result<DaemonState> {
     server.pane_inset = (config.appearance.padding + config.appearance.border_width) * 2.0;
     server.idle_timeout = std::time::Duration::from_secs(config.server.idle_timeout_secs);
     server.session_config = config.session.clone();
-    let state = Arc::new(Mutex::new(server));
-
     let shutdown = Arc::new(Notify::new());
     let input_notify = Arc::new(Notify::new());
+
+    // Wire PTY output → tick loop wakeup via the same Notify
+    let pty_wake = input_notify.clone();
+    server.pty_notify = Some(Arc::new(move || pty_wake.notify_one()));
+
+    let state = Arc::new(Mutex::new(server));
 
     // Spawn tick loop
     let tick_state = state.clone();

@@ -7,6 +7,10 @@ use std::sync::{Arc, Mutex};
 
 /// Cross-platform PTY wrapper using portable-pty.
 /// Uses a background reader thread because portable-pty's reader is blocking.
+/// Callback invoked by the PTY reader thread when output is available.
+/// Allows the server tick loop to wake immediately instead of polling.
+pub type PtyOutputNotify = Arc<dyn Fn() + Send + Sync>;
+
 pub struct Pty {
     /// Option so Drop can take it and control shutdown order on Windows.
     /// On Windows, MasterPty::drop calls ClosePseudoConsole which blocks until
@@ -58,6 +62,31 @@ impl Pty {
         shell: &str,
         command: Option<&str>,
         cwd: Option<&std::path::Path>,
+    ) -> Result<Self> {
+        Self::spawn_inner(cols, rows, shell, command, cwd, None)
+    }
+
+    /// Spawn a PTY with an output notification callback.
+    /// The callback fires from the reader thread whenever PTY output is available,
+    /// allowing the server tick loop to wake immediately instead of polling.
+    pub fn spawn_with_notify(
+        cols: u16,
+        rows: u16,
+        shell: &str,
+        command: Option<&str>,
+        cwd: Option<&std::path::Path>,
+        notify: PtyOutputNotify,
+    ) -> Result<Self> {
+        Self::spawn_inner(cols, rows, shell, command, cwd, Some(notify))
+    }
+
+    fn spawn_inner(
+        cols: u16,
+        rows: u16,
+        shell: &str,
+        command: Option<&str>,
+        cwd: Option<&std::path::Path>,
+        output_notify: Option<PtyOutputNotify>,
     ) -> Result<Self> {
         let pty_system = native_pty_system();
 
@@ -168,15 +197,24 @@ impl Pty {
                     match reader.read(&mut buf) {
                         Ok(0) => {
                             reader_done_clone.store(true, Ordering::Release);
+                            if let Some(ref notify) = output_notify {
+                                notify();
+                            }
                             break;
                         }
                         Ok(n) => {
                             if output_tx.send(buf[..n].to_vec()).is_err() {
                                 break; // Receiver dropped
                             }
+                            if let Some(ref notify) = output_notify {
+                                notify();
+                            }
                         }
                         Err(_) => {
                             reader_done_clone.store(true, Ordering::Release);
+                            if let Some(ref notify) = output_notify {
+                                notify();
+                            }
                             break;
                         }
                     }

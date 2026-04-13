@@ -127,7 +127,22 @@ impl Pane {
         command: Option<&str>,
         cwd: Option<&std::path::Path>,
     ) -> Result<Self> {
-        let pty = Pty::spawn_with_opts(cols, rows, shell, command, cwd)?;
+        Self::new_with_notify(id, cols, rows, shell, command, cwd, None)
+    }
+
+    pub fn new_with_notify(
+        id: PaneId,
+        cols: u16,
+        rows: u16,
+        shell: &str,
+        command: Option<&str>,
+        cwd: Option<&std::path::Path>,
+        output_notify: Option<crate::pty::PtyOutputNotify>,
+    ) -> Result<Self> {
+        let pty = match output_notify {
+            Some(notify) => Pty::spawn_with_notify(cols, rows, shell, command, cwd, notify)?,
+            None => Pty::spawn_with_opts(cols, rows, shell, command, cwd)?,
+        };
         let size = TermSize {
             cols: cols as usize,
             rows: rows as usize,

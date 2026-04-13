@@ -526,6 +526,8 @@ pub enum ServerMessage {
         format: String,
         data: Vec<u8>,
     },
+    /// Pane title changed (OSC 0 / OSC 2).
+    TitleChanged { pane_id: u64, title: String },
     /// Inline image deletion/invalidation for a pane.
     ImageDeleted { pane_id: u64 },
     /// IPC response: session detail info.

@@ -264,6 +264,12 @@ impl App {
                         self.invalidate_pane_cache(pane_id);
                         needs_redraw = true;
                     }
+                    ServerEvent::Control(ServerMessage::TitleChanged { pane_id, title }) => {
+                        if let Some(grid) = self.core.pane_grids.get_mut(&pane_id) {
+                            grid.title = title;
+                        }
+                        needs_redraw = true;
+                    }
                     ServerEvent::Control(ServerMessage::SessionList { sessions }) => {
                         // Update cache with only running sessions
                         self.core.cached_local_sessions =

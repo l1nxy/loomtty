@@ -679,17 +679,17 @@ fn build_row_render_cache(
     row_data
 }
 
-/// Returns `true` if at least one row was actually rebuilt.
+/// Returns `true` if at least one row had its content hash change.
 fn update_dirty_rows(
     view: &mut TerminalView,
-    _dirty_rows: &[bool],
+    dirty_rows: &[bool],
     new_row_hashes: &[u64],
     scroll_shift: i32,
     grid: PackedGridContext<'_>,
     params: &ViewBuildParams<'_>,
     atlas: &mut GlyphCache,
 ) -> bool {
-    let mut any_rebuilt = false;
+    let mut any_content_changed = false;
 
     let Some(faces) = params.shaper.face_set() else {
         for row in 0..grid.rows as usize {
@@ -705,19 +705,19 @@ fn update_dirty_rows(
             };
             let hash_changed =
                 view.row_hashes.get(row).copied() != new_row_hashes.get(row).copied();
-            // Only rebuild when content actually changed (hash) or scroll-
-            // exposed.  Server dirty flags alone are not sufficient — they
-            // fire for cursor-line damage even when no cell content changed.
-            if !exposed && !hash_changed {
+            let dirty = dirty_rows.get(row).copied().unwrap_or(false) || exposed || hash_changed;
+            if !dirty {
                 continue;
             }
             view.row_data[row] = grid.build_row_data(row, None, atlas);
             if let Some(epoch) = view.row_epochs.get_mut(row) {
                 *epoch = epoch.wrapping_add(1);
             }
-            any_rebuilt = true;
+            if hash_changed || exposed {
+                any_content_changed = true;
+            }
         }
-        return any_rebuilt;
+        return any_content_changed;
     };
 
     for row in 0..grid.rows as usize {
@@ -733,7 +733,8 @@ fn update_dirty_rows(
             false
         };
         let hash_changed = view.row_hashes.get(row).copied() != new_row_hashes.get(row).copied();
-        if !exposed && !hash_changed {
+        let dirty = dirty_rows.get(row).copied().unwrap_or(false) || exposed || hash_changed;
+        if !dirty {
             continue;
         }
 
@@ -748,7 +749,9 @@ fn update_dirty_rows(
         if let Some(epoch) = view.row_epochs.get_mut(row) {
             *epoch = epoch.wrapping_add(1);
         }
-        any_rebuilt = true;
+        if hash_changed || exposed {
+            any_content_changed = true;
+        }
     }
-    any_rebuilt
+    any_content_changed
 }

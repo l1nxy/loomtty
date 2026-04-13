@@ -86,7 +86,10 @@ impl App {
             bg_color: ThemeConfig::parse_color(&self.core.config.theme.background),
             link_color: ThemeConfig::parse_color(&self.core.config.theme.accent),
             accent: ThemeConfig::parse_color(&self.core.config.theme.accent),
-            cache_tile_glyphs: self.pending_resize.is_none(),
+            // Per-row tile glyph/background caching disabled — rebuild from
+            // atlas each frame (matches Ghostty / Windows Terminal approach).
+            // render_snapshot_hash still skips entire idle frames.
+            cache_tile_glyphs: false,
         }
     }
 
@@ -626,7 +629,13 @@ impl App {
             if let Some(view) = self.cached_views.get(pane_id) {
                 view.generation.hash(&mut hasher);
                 view.scrollbar_key.hash(&mut hasher);
-                view.cursor_rects.len().hash(&mut hasher);
+                // Hash full cursor rect geometry — len alone misses position changes
+                for cr in &view.cursor_rects {
+                    cr.x.to_bits().hash(&mut hasher);
+                    cr.y.to_bits().hash(&mut hasher);
+                    cr.w.to_bits().hash(&mut hasher);
+                    cr.h.to_bits().hash(&mut hasher);
+                }
             } else {
                 0u64.hash(&mut hasher);
                 Option::<(usize, usize, u16, u32, u32, u8)>::None.hash(&mut hasher);
@@ -1256,11 +1265,6 @@ impl App {
             color_glyphs,
         );
 
-        // Consume scroll shift so it isn't re-applied on subsequent frames
-        // where the view hasn't been updated.
-        let mut view = view;
-        view.last_scroll_shift = 0;
-
         // Reinsert the view
         self.cached_views.insert(pane_id, view);
 
@@ -1334,7 +1338,10 @@ impl App {
             bg_color: ThemeConfig::parse_color(&self.core.config.theme.background),
             link_color: ThemeConfig::parse_color(&self.core.config.theme.accent),
             accent: ThemeConfig::parse_color(&self.core.config.theme.accent),
-            cache_tile_glyphs: self.pending_resize.is_none(),
+            // Per-row tile glyph/background caching disabled — rebuild from
+            // atlas each frame (matches Ghostty / Windows Terminal approach).
+            // render_snapshot_hash still skips entire idle frames.
+            cache_tile_glyphs: false,
         };
 
         for (pane_id, tile_rect, is_active) in tiles.iter().copied() {

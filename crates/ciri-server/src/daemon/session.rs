@@ -38,6 +38,8 @@ pub(crate) struct Session {
     pub(crate) last_agent_save: Option<Instant>,
     /// Last-known cursor state per pane, for detecting cursor-only changes.
     pub(crate) last_cursor: HashMap<u64, (i16, u16, u8, u16)>,
+    /// Last-known pane title, for detecting title changes (OSC 0/2).
+    pub(crate) last_title: HashMap<u64, String>,
 }
 
 impl Session {
@@ -69,6 +71,7 @@ impl Session {
             detected_agents: HashMap::new(),
             last_agent_save: None,
             last_cursor: HashMap::new(),
+            last_title: HashMap::new(),
         }
     }
 
@@ -287,6 +290,7 @@ impl Session {
         self.generation.remove(&pane_id);
         self.detected_agents.remove(&pane_id);
         self.last_cursor.remove(&pane_id);
+        self.last_title.remove(&pane_id);
         for client in clients.values_mut() {
             if client.session_name == self.session_name {
                 client.damage.remove(&pane_id);
@@ -559,6 +563,22 @@ impl Session {
             if pane.drain_image_deletes() {
                 clipboard_msgs.push(ServerMessage::ImageDeleted { pane_id });
             }
+            // Detect title changes (OSC 0/2 — e.g. spinner in cargo build).
+            let prev_title = self.last_title.get(&pane_id);
+            if prev_title.map_or(true, |t| *t != pane.title) {
+                self.last_title.insert(pane_id, pane.title.clone());
+                for client in clients.values_mut() {
+                    if client.session_name == self.session_name {
+                        let acc = client.damage.entry(pane_id).or_default();
+                        acc.cursor_dirty = true; // piggyback on existing dirty flag to trigger sync
+                    }
+                }
+                clipboard_msgs.push(ServerMessage::TitleChanged {
+                    pane_id,
+                    title: pane.title.clone(),
+                });
+            }
+
             // Detect cursor-only changes (no cell damage but cursor moved).
             let cur_cursor = pane.cursor_info();
             let prev_cursor = self.last_cursor.get(&pane_id).copied();

@@ -54,11 +54,11 @@ pub(crate) fn rasterize_glyph_id_ft(
             let pitch = bitmap.pitch().unsigned_abs();
             let raw = bitmap.buffer();
             // Convert BGRA → RGBA
-            let mut data = Vec::with_capacity((w * h * 4) as usize);
+            let mut data = Vec::with_capacity((w as usize).saturating_mul(h as usize).saturating_mul(4));
             for row in 0..h {
-                let start = (row * pitch) as usize;
+                let start = (row as usize).saturating_mul(pitch as usize);
                 for x in 0..w as usize {
-                    let offset = start + x * 4;
+                    let offset = start.saturating_add(x.saturating_mul(4));
                     if offset + 3 < raw.len() {
                         data.push(raw[offset + 2]); // R
                         data.push(raw[offset + 1]); // G
@@ -137,9 +137,9 @@ pub(crate) fn rasterize_glyph_id_ft(
 
     let pitch = bitmap.pitch().unsigned_abs();
     let raw = bitmap.buffer();
-    let mut data = Vec::with_capacity((w * h) as usize);
+    let mut data = Vec::with_capacity((w as usize).saturating_mul(h as usize));
     for row in 0..h {
-        let start = (row * pitch) as usize;
+        let start = (row as usize).saturating_mul(pitch as usize);
         let end = start + w as usize;
         if end <= raw.len() {
             data.extend_from_slice(&raw[start..end]);
@@ -313,14 +313,17 @@ pub(crate) fn cache_measured_dwrite_glyph(
 #[cfg(not(windows))]
 /// Nearest-neighbor downscale of RGBA bitmap data.
 fn downsample_rgba(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<u8> {
-    let mut out = vec![0u8; (dst_w * dst_h * 4) as usize];
+    let out_len = (dst_w as usize)
+        .saturating_mul(dst_h as usize)
+        .saturating_mul(4);
+    let mut out = vec![0u8; out_len];
     for dy in 0..dst_h {
-        let sy = (dy as f32 * src_h as f32 / dst_h as f32) as u32;
+        let sy = (dy as f32 * src_h as f32 / dst_h as f32) as usize;
         for dx in 0..dst_w {
-            let sx = (dx as f32 * src_w as f32 / dst_w as f32) as u32;
-            let si = ((sy * src_w + sx) * 4) as usize;
-            let di = ((dy * dst_w + dx) * 4) as usize;
-            if si + 3 < src.len() {
+            let sx = (dx as f32 * src_w as f32 / dst_w as f32) as usize;
+            let si = sy.saturating_mul(src_w as usize).saturating_add(sx).saturating_mul(4);
+            let di = (dy as usize).saturating_mul(dst_w as usize).saturating_add(dx as usize).saturating_mul(4);
+            if si + 4 <= src.len() && di + 4 <= out.len() {
                 out[di..di + 4].copy_from_slice(&src[si..si + 4]);
             }
         }

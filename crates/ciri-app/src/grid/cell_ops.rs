@@ -200,21 +200,26 @@ impl ClientPaneGrid {
 
         let mut chars: Vec<char> = Vec::with_capacity(self.cols as usize);
         let mut col_positions: Vec<u16> = Vec::with_capacity(self.cols as usize);
+        let mut col_widths: Vec<u16> = Vec::with_capacity(self.cols as usize);
 
         for row_idx in 0..self.buffer_len() {
             let row = self.row(row_idx);
             chars.clear();
             col_positions.clear();
+            col_widths.clear();
 
             for (col, cell) in row.iter().enumerate() {
                 if cell.flags_u16() & FLAG_WIDE_CHAR_SPACER != 0 {
                     continue;
                 }
                 let ch = cell.ch();
+                let is_wide = cell.flags_u16() & FLAG_WIDE_CHAR != 0;
+                let width: u16 = if is_wide { 2 } else { 1 };
                 let lower_ch = if ch == '\0' { ' ' } else { ch };
                 for lc in lower_ch.to_lowercase() {
                     chars.push(lc);
                     col_positions.push(col as u16);
+                    col_widths.push(width);
                 }
             }
 
@@ -223,7 +228,8 @@ impl ClientPaneGrid {
                 if chars[search_from..search_from + query_chars.len()] == query_chars[..] {
                     let char_start = search_from;
                     let char_end = search_from + query_chars.len() - 1;
-                    results.push((row_idx, col_positions[char_start], col_positions[char_end]));
+                    let end_col = col_positions[char_end] + col_widths[char_end] - 1;
+                    results.push((row_idx, col_positions[char_start], end_col));
                     search_from += 1;
                 } else {
                     search_from += 1;

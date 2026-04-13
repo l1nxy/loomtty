@@ -24,6 +24,11 @@ pub(super) const TAG_FULL_PANE_SYNC_LZ4: u8 = 0x23;
 /// Below this threshold, compression overhead exceeds savings.
 const LZ4_COMPRESS_THRESHOLD: usize = 128;
 
+/// Maximum allowed ratio of uncompressed-to-compressed size for LZ4 frames.
+/// Legitimate terminal data rarely exceeds 20:1 (repeated whitespace/colors).
+/// A ratio above this strongly suggests a decompression bomb.
+const MAX_LZ4_RATIO: usize = 64;
+
 /// Maximum frame size for control messages (msgpack).  Control messages are
 /// small — 1 MiB is generous.
 pub(super) const MAX_CONTROL_FRAME_LEN: u32 = 1024 * 1024;
@@ -219,6 +224,18 @@ pub(crate) fn decompress_lz4_payload(payload: &[u8]) -> io::Result<Vec<u8>> {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "LZ4 uncompressed length exceeds limit",
+        ));
+    }
+    // Reject decompression bombs: if the claimed uncompressed size is vastly
+    // larger than the compressed data, this is likely an attack.
+    let compressed_len = payload.len() - 4;
+    if compressed_len > 0 && uncompressed_len / compressed_len > MAX_LZ4_RATIO {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "LZ4 compression ratio {:.0}:1 exceeds limit {MAX_LZ4_RATIO}:1",
+                uncompressed_len as f64 / compressed_len as f64,
+            ),
         ));
     }
     lz4_flex::decompress(&payload[4..], uncompressed_len)

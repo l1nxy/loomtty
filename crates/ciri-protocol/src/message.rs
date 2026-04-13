@@ -767,12 +767,17 @@ impl CellDeltaBorrowed {
     }
 
     /// Access the raw SM opcode stream for a given region index.
-    /// Returns an empty slice if `region_idx` is out of bounds.
+    /// Returns an empty slice if `region_idx` is out of bounds or the
+    /// stored offset/length would exceed the payload buffer.
     pub fn sm_data(&self, region_idx: usize) -> &[u8] {
         let Some(meta) = self.regions.get(region_idx) else {
             return &[];
         };
-        &self.payload[meta.sm_offset..meta.sm_offset + meta.sm_len]
+        let end = meta.sm_offset.saturating_add(meta.sm_len);
+        if end > self.payload.len() {
+            return &[];
+        }
+        &self.payload[meta.sm_offset..end]
     }
 
     /// Reclaim the owned payload buffer for reuse.
@@ -848,13 +853,23 @@ impl FullPaneSyncBorrowed {
     }
 
     /// Access the raw SM opcode stream for scrollback cells.
+    /// Returns an empty slice if the stored offset/length would exceed the payload.
     pub fn scrollback_sm_data(&self) -> &[u8] {
-        &self.payload[self.scrollback_sm_offset..self.scrollback_sm_offset + self.scrollback_sm_len]
+        let end = self.scrollback_sm_offset.saturating_add(self.scrollback_sm_len);
+        if end > self.payload.len() {
+            return &[];
+        }
+        &self.payload[self.scrollback_sm_offset..end]
     }
 
     /// Access the raw SM opcode stream for viewport cells.
+    /// Returns an empty slice if the stored offset/length would exceed the payload.
     pub fn viewport_sm_data(&self) -> &[u8] {
-        &self.payload[self.viewport_sm_offset..self.viewport_sm_offset + self.viewport_sm_len]
+        let end = self.viewport_sm_offset.saturating_add(self.viewport_sm_len);
+        if end > self.payload.len() {
+            return &[];
+        }
+        &self.payload[self.viewport_sm_offset..end]
     }
 
     /// Reclaim the owned payload buffer for reuse.

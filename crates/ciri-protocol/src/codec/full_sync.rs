@@ -266,8 +266,8 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
     let hdr: &FullPaneSyncHeader = cur.read_ref()?;
     let cols = hdr.cols.get();
     let rows = hdr.rows.get();
-    let total_cells = cols as usize * rows as usize;
-    if total_cells > MAX_GRID_CELLS {
+    let total_cells = (cols as u64).saturating_mul(rows as u64);
+    if total_cells > MAX_GRID_CELLS as u64 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("grid too large: {cols}x{rows} = {total_cells} cells (max {MAX_GRID_CELLS})"),
@@ -295,8 +295,8 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
     let scrollback_len = cur.read_u32()? as usize;
     let scrollback_data = cur.read_bytes(scrollback_len)?;
 
-    let sb_expected = scrollback_rows as usize * cols as usize;
-    if sb_expected > MAX_GRID_CELLS {
+    let sb_expected = (scrollback_rows as u64).saturating_mul(cols as u64);
+    if sb_expected > MAX_GRID_CELLS as u64 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!(
@@ -310,8 +310,8 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
     let viewport_data = cur.read_bytes(viewport_len)?;
 
     // Decode SM data into cells.
-    let scrollback = sm_decode_cells_vec(scrollback_data, sb_expected)?;
-    let cells = sm_decode_cells_vec(viewport_data, total_cells)?;
+    let scrollback = sm_decode_cells_vec(scrollback_data, sb_expected as usize)?;
+    let cells = sm_decode_cells_vec(viewport_data, total_cells as usize)?;
 
     // Optional extras.
     let grapheme_extras = decode_grapheme_extras(&mut cur);
@@ -350,8 +350,8 @@ pub fn decode_full_pane_sync_borrowed(payload: Vec<u8>) -> io::Result<FullPaneSy
     let hdr: &FullPaneSyncHeader = cur.read_ref()?;
     let cols = hdr.cols.get();
     let rows = hdr.rows.get();
-    let total_cells = cols as usize * rows as usize;
-    if total_cells > MAX_GRID_CELLS {
+    let total_cells = (cols as u64).saturating_mul(rows as u64);
+    if total_cells > MAX_GRID_CELLS as u64 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("grid too large: {cols}x{rows} = {total_cells} cells (max {MAX_GRID_CELLS})"),
@@ -379,8 +379,8 @@ pub fn decode_full_pane_sync_borrowed(payload: Vec<u8>) -> io::Result<FullPaneSy
     let scrollback_sm_offset = cur.pos();
     let _ = cur.read_bytes(scrollback_sm_len)?;
 
-    let sb_expected = scrollback_rows as usize * cols as usize;
-    if sb_expected > MAX_GRID_CELLS {
+    let sb_expected = (scrollback_rows as u64).saturating_mul(cols as u64);
+    if sb_expected > MAX_GRID_CELLS as u64 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!(

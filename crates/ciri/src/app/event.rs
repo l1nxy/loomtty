@@ -43,8 +43,8 @@ impl ApplicationHandler for App {
                 if let Some(renderer) = &mut self.renderer {
                     let shaper =
                         ciri_render::shaper::TextShaper::new(&self.core.config.font.family);
-                    let (cache, atlas_gpu) = match renderer
-                        .create_atlas(&ciri_render::glyph_cache::FontInitParams {
+                    let (cache, atlas_gpu) =
+                        match renderer.create_atlas(&ciri_render::glyph_cache::FontInitParams {
                             font_size_pt: self.core.config.font.size,
                             dpi_scale: new_dpi,
                             family_name: &self.core.config.font.family,
@@ -58,12 +58,12 @@ impl ApplicationHandler for App {
                             #[cfg(windows)]
                             dwrite_resolver: shaper.dwrite_resolver(),
                         }) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            log::error!("failed to recreate glyph atlas on DPI change: {e}");
-                            return;
-                        }
-                    };
+                            Ok(v) => v,
+                            Err(e) => {
+                                log::error!("failed to recreate glyph atlas on DPI change: {e}");
+                                return;
+                            }
+                        };
                     log::info!(
                         "DPI changed: scale={:.2} cell={:.1}x{:.1}",
                         new_dpi,
@@ -227,7 +227,8 @@ impl ApplicationHandler for App {
         // state (e.g. cursor_blink_timer reset, leader state cleared).
         let leader_deadline = self.core.input.leader_deadline();
         let blink_deadline = if wants_blink {
-            let interval = Duration::from_millis(self.core.config.terminal.cursor_blink_interval_ms);
+            let interval =
+                Duration::from_millis(self.core.config.terminal.cursor_blink_interval_ms);
             Some(self.core.cursor_blink_timer + interval)
         } else {
             None

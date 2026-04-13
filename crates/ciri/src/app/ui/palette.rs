@@ -135,7 +135,9 @@ impl PaletteComponent {
             total_entries: palette.filtered.len(),
             selectable_position,
             selectable_count,
-            show_no_matches: palette.filtered.is_empty() && !palette.query.is_empty() && !palette.remote_input_mode,
+            show_no_matches: palette.filtered.is_empty()
+                && !palette.query.is_empty()
+                && !palette.remote_input_mode,
             loading_text,
             error_text,
             remote_input_mode: palette.remote_input_mode,
@@ -194,20 +196,48 @@ impl UiComponent for PaletteComponent {
         let text_pad = 8.0;
 
         let mut ui = UiBuilder::new_vertical(
-            px, self.layout.panel_y, pw, self.layout.panel_h, 0.0,
-            0.0, 0.0, false, cx, scene,
+            px,
+            self.layout.panel_y,
+            pw,
+            self.layout.panel_h,
+            0.0,
+            0.0,
+            0.0,
+            false,
+            cx,
+            scene,
         );
 
         // Backdrop + frame
         ui.modal_backdrop([bg_color[0] * 0.5, bg_color[1] * 0.5, bg_color[2] * 0.5, 0.6]);
-        ui.bordered_panel(px, self.layout.panel_y, pw, self.layout.panel_h, bg_color, border_color, 2.0, false);
+        ui.bordered_panel(
+            px,
+            self.layout.panel_y,
+            pw,
+            self.layout.panel_h,
+            bg_color,
+            border_color,
+            2.0,
+            false,
+        );
 
         // Input row
         let input_row_h = cx.cell_h + 8.0;
         ui.horizontal(Some(pw), input_row_h, 0.0, |ui| {
             let (rx, ry) = ui.cursor_pos();
             // Slightly lighter bg for input row
-            ui.abs_rect(rx, ry, pw, input_row_h, [bg_color[0] + 0.05, bg_color[1] + 0.05, bg_color[2] + 0.05, 1.0]);
+            ui.abs_rect(
+                rx,
+                ry,
+                pw,
+                input_row_h,
+                [
+                    bg_color[0] + 0.05,
+                    bg_color[1] + 0.05,
+                    bg_color[2] + 0.05,
+                    1.0,
+                ],
+            );
             let text_y = ry + (input_row_h - cx.cell_h) * 0.5;
 
             // "> query" text (with placeholder in remote input mode)
@@ -226,7 +256,13 @@ impl UiComponent for PaletteComponent {
 
             // Cursor
             let cursor_x = rx + text_pad + ui.text_width(&input_text);
-            ui.abs_rect(cursor_x, text_y, 2.0, cx.cell_h, [fg_color[0], fg_color[1], fg_color[2], 0.8]);
+            ui.abs_rect(
+                cursor_x,
+                text_y,
+                2.0,
+                cx.cell_h,
+                [fg_color[0], fg_color[1], fg_color[2], 0.8],
+            );
         });
 
         // Separator
@@ -256,8 +292,12 @@ impl UiComponent for PaletteComponent {
                         match row.style {
                             PaletteRowStyle::SectionHeader => unreachable!(),
                             PaletteRowStyle::Action | PaletteRowStyle::Session => dim_color,
-                            PaletteRowStyle::RemoteHost | PaletteRowStyle::DirectConnect => remote_host_color,
-                            PaletteRowStyle::RemoteSession | PaletteRowStyle::SlotSession => remote_session_color,
+                            PaletteRowStyle::RemoteHost | PaletteRowStyle::DirectConnect => {
+                                remote_host_color
+                            }
+                            PaletteRowStyle::RemoteSession | PaletteRowStyle::SlotSession => {
+                                remote_session_color
+                            }
                             PaletteRowStyle::SshShell => ssh_color,
                             PaletteRowStyle::SwitchSlot => slot_color,
                             PaletteRowStyle::ConnectRemotePrompt => remote_host_color,
@@ -274,12 +314,29 @@ impl UiComponent for PaletteComponent {
             let track_x = px + pw - 8.0;
             let track_y = self.layout.sep_y + 2.0;
             let track_h = (self.layout.visible_rows as f32 * row_h - 4.0).max(0.0);
-            ui.abs_rect(track_x, track_y, track_w, track_h, [border_color[0], border_color[1], border_color[2], 0.20]);
+            ui.abs_rect(
+                track_x,
+                track_y,
+                track_w,
+                track_h,
+                [border_color[0], border_color[1], border_color[2], 0.20],
+            );
 
-            let thumb_h = (track_h * (self.layout.visible_rows as f32 / self.total_entries as f32)).max(row_h * 0.75);
-            let denom = self.total_entries.saturating_sub(self.layout.visible_rows).max(1);
-            let thumb_y = track_y + (track_h - thumb_h).max(0.0) * (self.scroll_offset as f32 / denom as f32);
-            ui.abs_rect(track_x, thumb_y, track_w, thumb_h, [accent[0], accent[1], accent[2], 0.65]);
+            let thumb_h = (track_h * (self.layout.visible_rows as f32 / self.total_entries as f32))
+                .max(row_h * 0.75);
+            let denom = self
+                .total_entries
+                .saturating_sub(self.layout.visible_rows)
+                .max(1);
+            let thumb_y =
+                track_y + (track_h - thumb_h).max(0.0) * (self.scroll_offset as f32 / denom as f32);
+            ui.abs_rect(
+                track_x,
+                thumb_y,
+                track_w,
+                thumb_h,
+                [accent[0], accent[1], accent[2], 0.65],
+            );
         }
 
         // Footer counter (selectable entries only, excludes section headers)
@@ -294,11 +351,21 @@ impl UiComponent for PaletteComponent {
 
         // Status messages at bottom of panel
         if self.show_no_matches {
-            ui.abs_text("No matching commands", px + text_pad, self.layout.sep_y + 4.0, dim_color);
+            ui.abs_text(
+                "No matching commands",
+                px + text_pad,
+                self.layout.sep_y + 4.0,
+                dim_color,
+            );
         }
         if let Some(ref loading) = self.loading_text {
             let y = self.layout.panel_y + self.layout.panel_h - cx.cell_h * 2.0 - 4.0;
-            ui.abs_text(loading, px + text_pad, y, [accent[0], accent[1], accent[2], 0.7]);
+            ui.abs_text(
+                loading,
+                px + text_pad,
+                y,
+                [accent[0], accent[1], accent[2], 0.7],
+            );
         }
         if let Some(ref error) = self.error_text {
             let y = self.layout.panel_y + self.layout.panel_h - cx.cell_h * 2.0 - 4.0;

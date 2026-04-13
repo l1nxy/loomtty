@@ -207,6 +207,21 @@ fn scroll_down_returns_actual_scrolled() {
 }
 
 #[test]
+fn scroll_updates_pending_scroll_delta_directionally() {
+    let mut grid = grid_with_scrollback();
+    assert_eq!(grid.pending_scroll_delta, 0);
+
+    assert_eq!(grid.scroll_up(2), 2);
+    assert_eq!(grid.pending_scroll_delta, 2);
+
+    assert_eq!(grid.scroll_down(1), 1);
+    assert_eq!(grid.pending_scroll_delta, 1);
+
+    grid.clear_dirty();
+    assert_eq!(grid.pending_scroll_delta, 0);
+}
+
+#[test]
 fn scroll_up_no_scrollback_returns_zero() {
     let mut grid = ClientPaneGrid::new(4, 2, 0);
     assert_eq!(grid.scroll_up(10), 0);
@@ -237,7 +252,7 @@ fn full_sync_dimension_change_preserves_scrollback() {
             cursor_col: 2,
             cursor_shape: CURSOR_BEAM,
             mode_flags: 0,
-                echo_ack: 0,
+            echo_ack: 0,
         },
         cols: 6,
         rows: 3,
@@ -282,7 +297,7 @@ fn full_sync_dimension_change_rebases_grapheme_indices() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
-                echo_ack: 0,
+            echo_ack: 0,
         },
         cols: 4,
         rows: 2,
@@ -309,7 +324,7 @@ fn full_sync_dimension_change_rebases_grapheme_indices() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
-                echo_ack: 0,
+            echo_ack: 0,
         },
         cols: 2,
         rows: 2,
@@ -342,7 +357,7 @@ fn full_sync_short_cells_blanks_remainder() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
-                echo_ack: 0,
+            echo_ack: 0,
         },
         cols: 4,
         rows: 2,
@@ -409,7 +424,7 @@ fn full_sync_same_width_trim_rebases_grapheme_indices() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
-                echo_ack: 0,
+            echo_ack: 0,
         },
         cols: 2,
         rows: 1,
@@ -441,7 +456,7 @@ fn full_sync_same_width_trim_rebases_grapheme_indices() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
-                echo_ack: 0,
+            echo_ack: 0,
         },
         cols: 2,
         rows: 1,
@@ -469,7 +484,7 @@ fn full_sync_same_width_trim_rebases_grapheme_indices() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
-                echo_ack: 0,
+            echo_ack: 0,
         },
         cols: 2,
         rows: 1,
@@ -534,7 +549,7 @@ fn full_sync_clamps_scroll_offset() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
-                echo_ack: 0,
+            echo_ack: 0,
         },
         cols: 3,
         rows: 1, // dimension change
@@ -591,7 +606,7 @@ fn scrollback_replace_clears_and_repopulates() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
-                echo_ack: 0,
+            echo_ack: 0,
         },
         cols: 4,
         rows: 2,
@@ -730,7 +745,7 @@ fn text_in_range_spans_scrollback_and_viewport() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
-                echo_ack: 0,
+            echo_ack: 0,
         },
         cols: 3,
         rows: 1,
@@ -770,7 +785,7 @@ fn search_finds_in_scrollback_and_viewport() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
-                echo_ack: 0,
+            echo_ack: 0,
         },
         cols: 5,
         rows: 1,
@@ -905,7 +920,7 @@ fn word_bounds_on_viewport_row() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
-                echo_ack: 0,
+            echo_ack: 0,
         },
         cols: 5,
         rows: 1,
@@ -970,7 +985,7 @@ fn full_sync_populates_viewport_and_scrollback() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
-                echo_ack: 0,
+            echo_ack: 0,
         },
         cols: 4,
         rows: 2,
@@ -1045,7 +1060,7 @@ fn reflow_widen_joins_wrapped_rows() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
-                echo_ack: 0,
+            echo_ack: 0,
         },
         cols: 8,
         rows: 1,
@@ -1092,7 +1107,7 @@ fn reflow_narrow_splits_long_line() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
-                echo_ack: 0,
+            echo_ack: 0,
         },
         cols: 3,
         rows: 1,
@@ -1149,7 +1164,7 @@ fn reflow_preserves_unwrapped_lines() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
-                echo_ack: 0,
+            echo_ack: 0,
         },
         cols: 8,
         rows: 1,
@@ -1284,7 +1299,8 @@ fn osc8_link_at_priority_over_heuristic() {
         grid.viewport[i] = PackedCell::with_ch(ch);
     }
     // OSC 8 says the whole span points to a DIFFERENT URL
-    grid.hyperlink_map = std::collections::HashMap::from([(42, "https://osc8-wins.example.org".to_string())]);
+    grid.hyperlink_map =
+        std::collections::HashMap::from([(42, "https://osc8-wins.example.org".to_string())]);
     grid.hyperlink_cell_map = std::collections::HashMap::new();
     for col in 0..cols as u32 {
         grid.hyperlink_cell_map.insert(col, 42);
@@ -1540,8 +1556,8 @@ fn link_at_url_with_path_slash_preserved() {
 #[test]
 fn delta_sync_evicts_overwritten_hyperlink_cells() {
     use ciri_protocol::message::{
-        CellDelta, DamageRegion, FullPaneSync, GraphemeExtras, HyperlinkExtras, PaneFrameMeta,
-        CURSOR_BLOCK,
+        CURSOR_BLOCK, CellDelta, DamageRegion, FullPaneSync, GraphemeExtras, HyperlinkExtras,
+        PaneFrameMeta,
     };
     let mut grid = ClientPaneGrid::new(10, 2, 0);
 

@@ -1,8 +1,12 @@
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point};
 use ciri_protocol::message::*;
+use std::hash::{Hash, Hasher};
 
-use super::cell::{collect_scrollback_cells, collect_viewport_cells, full_damage_rows, pack_cell, partial_damage_rows};
+use super::cell::{
+    collect_scrollback_cells, collect_viewport_cells, full_damage_rows, pack_cell,
+    partial_damage_rows,
+};
 use super::{Pane, SnapshotScrollback, cursor_shape_to_u8};
 
 impl Pane {
@@ -24,8 +28,7 @@ impl Pane {
         let rows = grid.screen_lines();
         let content = term.renderable_content();
 
-        let (cells, grapheme_extras, hyperlink_extras) =
-            collect_viewport_cells(grid, rows, cols);
+        let (cells, grapheme_extras, hyperlink_extras) = collect_viewport_cells(grid, rows, cols);
         let sb_cells = collect_scrollback_cells(grid, cols, scrollback.rows);
 
         FullPaneSync {
@@ -79,6 +82,27 @@ impl Pane {
         } else {
             Some(ranges)
         }
+    }
+
+    pub fn viewport_row_fingerprint(&self, line: u16) -> Option<u64> {
+        let grid = self.term.grid();
+        let rows = grid.screen_lines();
+        let cols = grid.columns();
+        let line = line as usize;
+        if cols == 0 || line >= rows {
+            return None;
+        }
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        for col in 0..cols {
+            let point = Point::new(Line(line as i32), Column(col));
+            let cell = pack_cell(&grid[point]);
+            cell.ch_bytes.hash(&mut hasher);
+            [cell.fg.tag, cell.fg.b1, cell.fg.b2, cell.fg.b3].hash(&mut hasher);
+            [cell.bg.tag, cell.bg.b1, cell.bg.b2, cell.bg.b3].hash(&mut hasher);
+            cell.flags.hash(&mut hasher);
+        }
+        Some(hasher.finish())
     }
 
     pub fn write_cells_into_sm(

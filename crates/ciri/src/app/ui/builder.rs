@@ -63,7 +63,16 @@ struct Region {
 
 impl Region {
     fn new(x: f32, y: f32, w: f32, h: f32, gap: f32, axis: Axis) -> Self {
-        Self { x, y, w, h, cursor_x: x, cursor_y: y, axis, gap }
+        Self {
+            x,
+            y,
+            w,
+            h,
+            cursor_x: x,
+            cursor_y: y,
+            axis,
+            gap,
+        }
     }
 
     /// Allocate `item_w × item_h` at the current cursor.
@@ -120,30 +129,48 @@ pub(crate) struct UiBuilder<'a, 'b> {
 
 impl<'a, 'b> UiBuilder<'a, 'b> {
     pub fn new_horizontal(
-        x: f32, y: f32, w: f32, h: f32, gap: f32,
-        mouse_x: f32, mouse_y: f32, mouse_pressed: bool,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        gap: f32,
+        mouse_x: f32,
+        mouse_y: f32,
+        mouse_pressed: bool,
         cx: &'a UiContext<'a>,
         scene: &'a mut UiScene<'b>,
     ) -> Self {
         Self {
-            cx, scene,
+            cx,
+            scene,
             region: Region::new(x, y, w, h, gap, Axis::Horizontal),
             hits: Vec::new(),
-            mouse_x, mouse_y, mouse_pressed,
+            mouse_x,
+            mouse_y,
+            mouse_pressed,
         }
     }
 
     pub fn new_vertical(
-        x: f32, y: f32, w: f32, h: f32, gap: f32,
-        mouse_x: f32, mouse_y: f32, mouse_pressed: bool,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        gap: f32,
+        mouse_x: f32,
+        mouse_y: f32,
+        mouse_pressed: bool,
         cx: &'a UiContext<'a>,
         scene: &'a mut UiScene<'b>,
     ) -> Self {
         Self {
-            cx, scene,
+            cx,
+            scene,
             region: Region::new(x, y, w, h, gap, Axis::Vertical),
             hits: Vec::new(),
-            mouse_x, mouse_y, mouse_pressed,
+            mouse_x,
+            mouse_y,
+            mouse_pressed,
         }
     }
 
@@ -169,7 +196,10 @@ impl<'a, 'b> UiBuilder<'a, 'b> {
 
     /// Allocate a horizontal sub-region. `w = None` fills remaining space.
     pub fn horizontal(
-        &mut self, w: Option<f32>, h: f32, gap: f32,
+        &mut self,
+        w: Option<f32>,
+        h: f32,
+        gap: f32,
         f: impl FnOnce(&mut UiBuilder<'_, 'b>),
     ) -> f32 {
         let avail_w = w.unwrap_or(self.region.remaining());
@@ -193,7 +223,10 @@ impl<'a, 'b> UiBuilder<'a, 'b> {
 
     /// Allocate a vertical sub-region. `h = None` fills remaining space.
     pub fn vertical(
-        &mut self, w: f32, h: Option<f32>, gap: f32,
+        &mut self,
+        w: f32,
+        h: Option<f32>,
+        gap: f32,
         f: impl FnOnce(&mut UiBuilder<'_, 'b>),
     ) -> f32 {
         let avail_h = h.unwrap_or(self.region.remaining());
@@ -239,7 +272,13 @@ impl<'a, 'b> UiBuilder<'a, 'b> {
     /// Background rect that participates in layout (advances cursor).
     pub fn bg_rect(&mut self, w: f32, h: f32, color: [f32; 4]) {
         if let Some((rx, ry)) = self.region.allocate(w, h) {
-            self.scene.bg_rects.push(Rect { x: rx, y: ry, w, h, color });
+            self.scene.bg_rects.push(Rect {
+                x: rx,
+                y: ry,
+                w,
+                h,
+                color,
+            });
         }
     }
 
@@ -251,9 +290,11 @@ impl<'a, 'b> UiBuilder<'a, 'b> {
     /// Emit text at absolute position (does NOT advance cursor).
     pub fn abs_text(&mut self, text: &str, x: f32, y: f32, color: [f32; 4]) {
         emit_status_text(
-            self.scene.atlas, text,
+            self.scene.atlas,
+            text,
             &TextEmitParams {
-                x_start: x, y,
+                x_start: x,
+                y,
                 cell_width: self.cx.cell_w,
                 baseline: self.cx.baseline,
                 color,
@@ -269,9 +310,19 @@ impl<'a, 'b> UiBuilder<'a, 'b> {
     }
 
     fn make_response(&self, id: u32, rx: f32, ry: f32, rw: f32, rh: f32) -> Response {
-        let hit = HitRect { id, x: rx, y: ry, w: rw, h: rh };
+        let hit = HitRect {
+            id,
+            x: rx,
+            y: ry,
+            w: rw,
+            h: rh,
+        };
         let hovered = hit.contains(self.mouse_x, self.mouse_y);
-        Response { rect: hit, hovered, clicked: hovered && self.mouse_pressed }
+        Response {
+            rect: hit,
+            hovered,
+            clicked: hovered && self.mouse_pressed,
+        }
     }
 
     // ─── Widgets ─────────────────────────────────────────────────────
@@ -294,7 +345,13 @@ impl<'a, 'b> UiBuilder<'a, 'b> {
         };
         let resp = self.make_response(id, rx, ry, tw, h);
         if resp.hovered {
-            self.scene.bg_rects.push(Rect { x: rx, y: ry, w: tw, h, color: hover_bg });
+            self.scene.bg_rects.push(Rect {
+                x: rx,
+                y: ry,
+                w: tw,
+                h,
+                color: hover_bg,
+            });
         }
         self.emit_text(text, rx, ry, color);
         self.hits.push(resp.rect);
@@ -303,9 +360,14 @@ impl<'a, 'b> UiBuilder<'a, 'b> {
 
     /// Selectable label with active indicator (underline/overline).
     pub fn selectable_label(
-        &mut self, id: u32, text: &str, selected: bool,
-        active_color: [f32; 4], inactive_color: [f32; 4],
-        indicator_color: [f32; 4], indicator_thickness: f32,
+        &mut self,
+        id: u32,
+        text: &str,
+        selected: bool,
+        active_color: [f32; 4],
+        inactive_color: [f32; 4],
+        indicator_color: [f32; 4],
+        indicator_thickness: f32,
         indicator_top: bool,
     ) -> Response {
         let tw = self.text_width(text);
@@ -315,12 +377,24 @@ impl<'a, 'b> UiBuilder<'a, 'b> {
         };
         let resp = self.make_response(id, rx, ry, tw, h);
         if selected {
-            let iy = if indicator_top { ry } else { ry + h - indicator_thickness };
+            let iy = if indicator_top {
+                ry
+            } else {
+                ry + h - indicator_thickness
+            };
             self.scene.bg_rects.push(Rect {
-                x: rx, y: iy, w: tw, h: indicator_thickness, color: indicator_color,
+                x: rx,
+                y: iy,
+                w: tw,
+                h: indicator_thickness,
+                color: indicator_color,
             });
         }
-        let color = if selected || resp.hovered { active_color } else { inactive_color };
+        let color = if selected || resp.hovered {
+            active_color
+        } else {
+            inactive_color
+        };
         self.emit_text(text, rx, ry, color);
         self.hits.push(resp.rect);
         resp
@@ -341,37 +415,63 @@ impl<'a, 'b> UiBuilder<'a, 'b> {
         let h = self.region.h;
         if let Some((rx, ry)) = self.region.allocate(w, h) {
             self.scene.bg_rects.push(Rect {
-                x: rx, y: ry + inset, w, h: h - inset * 2.0, color,
+                x: rx,
+                y: ry + inset,
+                w,
+                h: h - inset * 2.0,
+                color,
             });
         }
     }
 
     /// Thin horizontal separator line (inside vertical region).
-    pub fn separator_h(&mut self, color: [f32; 4], inset: f32) {
+    pub fn separator_h(&mut self, color: [f32; 4], _inset: f32) {
         let w = self.region.w;
         let h = 1.0_f32;
         if let Some((_rx, ry)) = self.region.allocate(w, h) {
             self.scene.bg_rects.push(Rect {
-                x: self.region.x, y: ry, w, h, color,
+                x: self.region.x,
+                y: ry,
+                w,
+                h,
+                color,
             });
         }
     }
 
     /// Text input field with prefix and cursor.
     pub fn text_input(
-        &mut self, id: u32, prefix: &str, value: &str, w: f32,
-        fg: [f32; 4], bg: [f32; 4], cursor_color: [f32; 4],
+        &mut self,
+        id: u32,
+        prefix: &str,
+        value: &str,
+        w: f32,
+        fg: [f32; 4],
+        bg: [f32; 4],
+        cursor_color: [f32; 4],
     ) -> Response {
         let h = self.cx.cell_h;
         let Some((rx, ry)) = self.region.allocate(w, h) else {
             return self.make_response(id, 0.0, 0.0, 0.0, 0.0);
         };
-        self.scene.bg_rects.push(Rect { x: rx, y: ry, w, h, color: bg });
+        self.scene.bg_rects.push(Rect {
+            x: rx,
+            y: ry,
+            w,
+            h,
+            color: bg,
+        });
         let display = format!("{}{}", prefix, value);
         self.emit_text(&display, rx, ry, fg);
         // Blinking cursor after text
         let cursor_x = rx + self.text_width(&display);
-        self.scene.bg_rects.push(Rect { x: cursor_x, y: ry, w: 2.0, h, color: cursor_color });
+        self.scene.bg_rects.push(Rect {
+            x: cursor_x,
+            y: ry,
+            w: 2.0,
+            h,
+            color: cursor_color,
+        });
         let resp = self.make_response(id, rx, ry, w, h);
         self.hits.push(resp.rect);
         resp
@@ -379,13 +479,20 @@ impl<'a, 'b> UiBuilder<'a, 'b> {
 
     /// Scrollable list. Draws `visible_count` rows via `row_fn`, plus scrollbar.
     pub fn scroll_list(
-        &mut self, w: f32, row_h: f32,
-        visible_count: usize, total_count: usize, scroll_offset: usize,
-        accent: [f32; 4], border: [f32; 4],
+        &mut self,
+        w: f32,
+        row_h: f32,
+        visible_count: usize,
+        total_count: usize,
+        scroll_offset: usize,
+        accent: [f32; 4],
+        border: [f32; 4],
         mut row_fn: impl FnMut(usize, &mut UiBuilder<'_, 'b>),
     ) {
         let total_h = visible_count as f32 * row_h;
-        let Some((rx, ry)) = self.region.allocate(w, total_h) else { return; };
+        let Some((rx, ry)) = self.region.allocate(w, total_h) else {
+            return;
+        };
 
         for vis in 0..visible_count {
             let abs_idx = scroll_offset + vis;
@@ -413,15 +520,22 @@ impl<'a, 'b> UiBuilder<'a, 'b> {
             let track_y = ry + 2.0;
             let track_h = (total_h - 4.0).max(0.0);
             self.scene.bg_rects.push(Rect {
-                x: track_x, y: track_y, w: track_w, h: track_h,
+                x: track_x,
+                y: track_y,
+                w: track_w,
+                h: track_h,
                 color: [border[0], border[1], border[2], 0.20],
             });
             let ratio = visible_count as f32 / total_count as f32;
             let thumb_h = (track_h * ratio).max(row_h * 0.75);
-            let scroll_ratio = scroll_offset as f32 / total_count.saturating_sub(visible_count).max(1) as f32;
+            let scroll_ratio =
+                scroll_offset as f32 / total_count.saturating_sub(visible_count).max(1) as f32;
             let thumb_y = track_y + (track_h - thumb_h).max(0.0) * scroll_ratio;
             self.scene.bg_rects.push(Rect {
-                x: track_x, y: thumb_y, w: track_w, h: thumb_h,
+                x: track_x,
+                y: thumb_y,
+                w: track_w,
+                h: thumb_h,
                 color: [accent[0], accent[1], accent[2], 0.65],
             });
         }
@@ -430,7 +544,11 @@ impl<'a, 'b> UiBuilder<'a, 'b> {
     /// Full-screen dimmed backdrop for modal overlays.
     pub fn modal_backdrop(&mut self, color: [f32; 4]) {
         self.scene.bg_rects.push(Rect {
-            x: 0.0, y: 0.0, w: self.cx.viewport_w, h: self.cx.viewport_h, color,
+            x: 0.0,
+            y: 0.0,
+            w: self.cx.viewport_w,
+            h: self.cx.viewport_h,
+            color,
         });
     }
 
@@ -438,18 +556,39 @@ impl<'a, 'b> UiBuilder<'a, 'b> {
     /// Total painted area is (x-bw, y-bw, w+2*bw, h+2*bw).
     /// Used by palette (which expects outer expansion).
     pub fn bordered_panel(
-        &mut self, x: f32, y: f32, w: f32, h: f32,
-        bg: [f32; 4], border: [f32; 4], bw: f32, shadow: bool,
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        bg: [f32; 4],
+        border: [f32; 4],
+        bw: f32,
+        shadow: bool,
     ) -> (f32, f32, f32, f32) {
         if shadow {
             self.scene.bg_rects.push(Rect {
-                x: x + 3.0, y: y + 3.0, w, h, color: [0.0, 0.0, 0.0, 0.4],
+                x: x + 3.0,
+                y: y + 3.0,
+                w,
+                h,
+                color: [0.0, 0.0, 0.0, 0.4],
             });
         }
         self.scene.bg_rects.push(Rect {
-            x: x - bw, y: y - bw, w: w + bw * 2.0, h: h + bw * 2.0, color: border,
+            x: x - bw,
+            y: y - bw,
+            w: w + bw * 2.0,
+            h: h + bw * 2.0,
+            color: border,
         });
-        self.scene.bg_rects.push(Rect { x, y, w, h, color: bg });
+        self.scene.bg_rects.push(Rect {
+            x,
+            y,
+            w,
+            h,
+            color: bg,
+        });
         (x, y, w, h)
     }
 
@@ -457,21 +596,62 @@ impl<'a, 'b> UiBuilder<'a, 'b> {
     /// Total painted area stays exactly (x, y, w, h).
     /// Used by context_menu, info_box, paste_dialog (which expect inset borders).
     pub fn bordered_panel_inset(
-        &mut self, x: f32, y: f32, w: f32, h: f32,
-        bg: [f32; 4], border: [f32; 4], bw: f32, shadow: bool,
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        bg: [f32; 4],
+        border: [f32; 4],
+        bw: f32,
+        shadow: bool,
     ) -> (f32, f32, f32, f32) {
         if shadow {
             self.scene.bg_rects.push(Rect {
-                x: x + 3.0, y: y + 3.0, w, h, color: [0.0, 0.0, 0.0, 0.4],
+                x: x + 3.0,
+                y: y + 3.0,
+                w,
+                h,
+                color: [0.0, 0.0, 0.0, 0.4],
             });
         }
         // Background fill
-        self.scene.bg_rects.push(Rect { x, y, w, h, color: bg });
+        self.scene.bg_rects.push(Rect {
+            x,
+            y,
+            w,
+            h,
+            color: bg,
+        });
         // 4 inset border edges
-        self.scene.bg_rects.push(Rect { x, y, w, h: bw, color: border });           // top
-        self.scene.bg_rects.push(Rect { x, y: y + h - bw, w, h: bw, color: border }); // bottom
-        self.scene.bg_rects.push(Rect { x, y, w: bw, h, color: border });           // left
-        self.scene.bg_rects.push(Rect { x: x + w - bw, y, w: bw, h, color: border }); // right
+        self.scene.bg_rects.push(Rect {
+            x,
+            y,
+            w,
+            h: bw,
+            color: border,
+        }); // top
+        self.scene.bg_rects.push(Rect {
+            x,
+            y: y + h - bw,
+            w,
+            h: bw,
+            color: border,
+        }); // bottom
+        self.scene.bg_rects.push(Rect {
+            x,
+            y,
+            w: bw,
+            h,
+            color: border,
+        }); // left
+        self.scene.bg_rects.push(Rect {
+            x: x + w - bw,
+            y,
+            w: bw,
+            h,
+            color: border,
+        }); // right
         (x + bw, y + bw, w - bw * 2.0, h - bw * 2.0)
     }
 }
@@ -535,17 +715,29 @@ mod tests {
 
     #[test]
     fn hit_rect_contains() {
-        let h = HitRect { id: 0, x: 10.0, y: 20.0, w: 30.0, h: 15.0 };
-        assert!(h.contains(10.0, 20.0));   // top-left corner
-        assert!(h.contains(25.0, 30.0));   // inside
-        assert!(!h.contains(40.0, 20.0));  // right edge (exclusive)
-        assert!(!h.contains(9.0, 20.0));   // just outside left
-        assert!(!h.contains(10.0, 35.0));  // just outside bottom
+        let h = HitRect {
+            id: 0,
+            x: 10.0,
+            y: 20.0,
+            w: 30.0,
+            h: 15.0,
+        };
+        assert!(h.contains(10.0, 20.0)); // top-left corner
+        assert!(h.contains(25.0, 30.0)); // inside
+        assert!(!h.contains(40.0, 20.0)); // right edge (exclusive)
+        assert!(!h.contains(9.0, 20.0)); // just outside left
+        assert!(!h.contains(10.0, 35.0)); // just outside bottom
     }
 
     #[test]
     fn hit_rect_zero_size_contains_nothing() {
-        let h = HitRect { id: 0, x: 5.0, y: 5.0, w: 0.0, h: 0.0 };
+        let h = HitRect {
+            id: 0,
+            x: 5.0,
+            y: 5.0,
+            w: 0.0,
+            h: 0.0,
+        };
         assert!(!h.contains(5.0, 5.0));
     }
 }

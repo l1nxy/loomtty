@@ -59,6 +59,7 @@ impl Osc8Parser {
     }
 
     /// Get the current link ID → URI mapping.
+    #[cfg(test)]
     pub fn link_map(&self) -> &[(u16, String)] {
         &self.link_map
     }

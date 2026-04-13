@@ -57,9 +57,7 @@ pub(super) fn action_short_label(action: &str) -> &str {
         s if s.starts_with("enter_mode:move") => "move",
         s if s.starts_with("enter_mode:scroll") => "scroll",
         s if s.starts_with("enter_mode:") => s.strip_prefix("enter_mode:").unwrap_or(s),
-        s if s.starts_with("switch_workspace_") => {
-            s.strip_prefix("switch_workspace_").unwrap_or(s)
-        }
+        s if s.starts_with("switch_workspace_") => s.strip_prefix("switch_workspace_").unwrap_or(s),
         other => other,
     }
 }
@@ -169,8 +167,16 @@ impl UiComponent for InfoBoxComponent {
         let content_w = self.w - bw * 2.0;
 
         let mut ui = UiBuilder::new_vertical(
-            self.x + bw, self.y + bw, content_w, self.h - bw * 2.0, 0.0,
-            0.0, 0.0, false, cx, scene,
+            self.x + bw,
+            self.y + bw,
+            content_w,
+            self.h - bw * 2.0,
+            0.0,
+            0.0,
+            0.0,
+            false,
+            cx,
+            scene,
         );
 
         // Shadow + border + background
@@ -180,7 +186,13 @@ impl UiComponent for InfoBoxComponent {
         // Title row (tinted background + text)
         ui.horizontal(Some(content_w), title_h, 0.0, |ui| {
             let (rx, ry) = ui.cursor_pos();
-            ui.abs_rect(rx, ry, content_w, title_h, [accent[0], accent[1], accent[2], 0.2]);
+            ui.abs_rect(
+                rx,
+                ry,
+                content_w,
+                title_h,
+                [accent[0], accent[1], accent[2], 0.2],
+            );
             let text_y = ry + (title_h - cx.cell_h) * 0.5;
             ui.abs_text(&format!(" {} ", self.title), rx + padding, text_y, accent);
         });
@@ -188,7 +200,9 @@ impl UiComponent for InfoBoxComponent {
         ui.bg_rect(content_w, 4.0, [0.0; 4]); // spacing after title
 
         // Key-action rows — right-align keys within a fixed column
-        let key_col_chars = self.rows.iter()
+        let key_col_chars = self
+            .rows
+            .iter()
             .map(|(k, _)| UnicodeWidthStr::width(k.as_str()))
             .max()
             .unwrap_or(0);

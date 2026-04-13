@@ -310,9 +310,11 @@ impl App {
                                 )
                             });
                         grid.apply_full_sync(&sync);
-                        self.core
-                            .prediction
-                            .on_server_sync(sync.meta.pane_id, grid, sync.meta.echo_ack);
+                        self.core.prediction.on_server_sync(
+                            sync.meta.pane_id,
+                            grid,
+                            sync.meta.echo_ack,
+                        );
                         self.send_lossy(ClientMessage::Ack {
                             generation: sync.meta.generation,
                         });
@@ -407,8 +409,8 @@ impl App {
                     if let Some(renderer) = &mut self.renderer {
                         let shaper =
                             ciri_render::shaper::TextShaper::new(&self.core.config.font.family);
-                        let (cache, atlas_gpu) = match renderer
-                            .create_atlas(&ciri_render::glyph_cache::FontInitParams {
+                        let (cache, atlas_gpu) =
+                            match renderer.create_atlas(&ciri_render::glyph_cache::FontInitParams {
                                 font_size_pt: self.core.config.font.size,
                                 dpi_scale: self.dpi_scale,
                                 family_name: &self.core.config.font.family,
@@ -422,12 +424,14 @@ impl App {
                                 #[cfg(windows)]
                                 dwrite_resolver: shaper.dwrite_resolver(),
                             }) {
-                            Ok(v) => v,
-                            Err(e) => {
-                                log::error!("failed to recreate glyph atlas on font change: {e}");
-                                return;
-                            }
-                        };
+                                Ok(v) => v,
+                                Err(e) => {
+                                    log::error!(
+                                        "failed to recreate glyph atlas on font change: {e}"
+                                    );
+                                    return;
+                                }
+                            };
                         self.glyph_cache = Some(cache);
                         self.glyph_atlas_gpu = Some(atlas_gpu);
                         self.text_shaper = Some(shaper);
@@ -550,10 +554,8 @@ mod tests {
         app.cached_tile_glyphs.insert(
             stale.meta.pane_id,
             CachedTileGlyphs {
-                generation: 0,
                 key: (0, 0, 0, 0),
-                glyphs: Vec::new(),
-                color_glyphs: Vec::new(),
+                rows: Vec::new(),
             },
         );
 
@@ -758,7 +760,10 @@ mod tests {
             app.core.pane_grids.contains_key(&42),
             "server_rx 中的 PaneCreated 也应被处理"
         );
-        assert!(app.core.buffered_events.is_empty(), "处理后 buffered_events 应为空");
+        assert!(
+            app.core.buffered_events.is_empty(),
+            "处理后 buffered_events 应为空"
+        );
     }
 
     #[test]
@@ -857,8 +862,15 @@ mod tests {
 
         let slot = app.save_current_to_slot().expect("应成功创建 slot");
 
-        assert_eq!(slot.pending_events.len(), 2, "buffered_events 应转移到 pending_events");
-        assert!(app.core.buffered_events.is_empty(), "save 后 buffered_events 应为空");
+        assert_eq!(
+            slot.pending_events.len(),
+            2,
+            "buffered_events 应转移到 pending_events"
+        );
+        assert!(
+            app.core.buffered_events.is_empty(),
+            "save 后 buffered_events 应为空"
+        );
     }
 
     #[test]
@@ -972,14 +984,12 @@ mod tests {
         // 模拟 slot 返回 SessionList
         ev_tx
             .send(ServerEvent::Control(ServerMessage::SessionList {
-                sessions: vec![
-                    SessionInfo {
-                        name: "alpha".into(),
-                        running: true,
-                        pane_count: 1,
-                        client_count: 1,
-                    },
-                ],
+                sessions: vec![SessionInfo {
+                    name: "alpha".into(),
+                    running: true,
+                    pane_count: 1,
+                    client_count: 1,
+                }],
             }))
             .unwrap();
 

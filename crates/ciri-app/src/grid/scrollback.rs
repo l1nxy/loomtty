@@ -4,6 +4,11 @@ use super::ClientPaneGrid;
 use super::types::ScrollbackRow;
 
 impl ClientPaneGrid {
+    fn accumulate_scroll_delta(&mut self, delta: i32) {
+        self.pending_scroll_delta = self.pending_scroll_delta.saturating_add(delta);
+        self.dirty = true;
+    }
+
     /// Scroll up (into history). Returns actual lines scrolled.
     pub fn scroll_up(&mut self, lines: usize) -> usize {
         let max = self.max_scroll_offset();
@@ -11,7 +16,7 @@ impl ClientPaneGrid {
         self.scroll_offset = (self.scroll_offset + lines).min(max);
         let scrolled = self.scroll_offset - old;
         if scrolled > 0 {
-            self.dirty = true;
+            self.accumulate_scroll_delta(scrolled as i32);
         }
         scrolled
     }
@@ -22,7 +27,7 @@ impl ClientPaneGrid {
         self.scroll_offset = self.scroll_offset.saturating_sub(lines);
         let scrolled = old - self.scroll_offset;
         if scrolled > 0 {
-            self.dirty = true;
+            self.accumulate_scroll_delta(-(scrolled as i32));
         }
         scrolled
     }
@@ -32,16 +37,18 @@ impl ClientPaneGrid {
         let max = self.max_scroll_offset();
         let new = offset.min(max);
         if new != self.scroll_offset {
+            let delta = new as i32 - self.scroll_offset as i32;
             self.scroll_offset = new;
-            self.dirty = true;
+            self.accumulate_scroll_delta(delta);
         }
     }
 
     /// Jump to the live viewport (bottom).
     pub fn scroll_to_bottom(&mut self) {
         if self.scroll_offset > 0 {
+            let delta = -(self.scroll_offset as i32);
             self.scroll_offset = 0;
-            self.dirty = true;
+            self.accumulate_scroll_delta(delta);
         }
     }
 

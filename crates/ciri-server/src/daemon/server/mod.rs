@@ -419,11 +419,7 @@ impl Server {
     /// Switch a client to a different session and dispatch all responses
     /// (SessionSwitched, StateSync, FullPaneSync) immediately.
     /// Used by the tray to switch sessions without going through IPC.
-    pub(crate) fn tray_switch_client_to_session(
-        &mut self,
-        client_id: u64,
-        target_session: &str,
-    ) {
+    pub(crate) fn tray_switch_client_to_session(&mut self, client_id: u64, target_session: &str) {
         if ciri_session::names::validate_name(target_session).is_err() {
             log::warn!("tray: invalid session name: {target_session:?}");
             return;

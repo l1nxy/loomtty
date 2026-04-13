@@ -2,9 +2,9 @@ mod actions;
 mod autostart;
 mod menu;
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::{Mutex, Notify};
@@ -70,10 +70,7 @@ fn snapshot_sessions(state: &Arc<Mutex<Server>>) -> Option<TraySnapshot> {
 
 /// Spawn a background thread that periodically snapshots server state
 /// and sends results to the tray event loop.
-fn spawn_poller(
-    state: Arc<Mutex<Server>>,
-    interval: Duration,
-) -> mpsc::Receiver<TraySnapshot> {
+fn spawn_poller(state: Arc<Mutex<Server>>, interval: Duration) -> mpsc::Receiver<TraySnapshot> {
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new()
         .name("tray-poller".into())
@@ -95,11 +92,7 @@ fn spawn_poller(
 
 /// Run the tray event loop on the main thread.
 /// Returns when Quit is selected or the server shuts down externally (e.g. SIGTERM).
-pub fn run_tray(
-    state: Arc<Mutex<Server>>,
-    shutdown: Arc<Notify>,
-    server_exited: Arc<AtomicBool>,
-) {
+pub fn run_tray(state: Arc<Mutex<Server>>, shutdown: Arc<Notify>, server_exited: Arc<AtomicBool>) {
     #[cfg(target_os = "linux")]
     gtk::init().expect("failed to init GTK (required for tray icon on Linux)");
 
@@ -170,7 +163,11 @@ fn pump_events() {
 fn pump_events() {
     use core_foundation::runloop::{CFRunLoopRunInMode, kCFRunLoopDefaultMode};
     unsafe {
-        CFRunLoopRunInMode(kCFRunLoopDefaultMode, TICK_INTERVAL.as_secs_f64(), false as u8);
+        CFRunLoopRunInMode(
+            kCFRunLoopDefaultMode,
+            TICK_INTERVAL.as_secs_f64(),
+            false as u8,
+        );
     }
 }
 

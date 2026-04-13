@@ -1,7 +1,7 @@
 use super::*;
 use legacy::{
-    ctrl_mapping_for_legacy_key, encode_legacy_ascii_text_key, legacy_csi_special, legacy_csi_tilde,
-    legacy_f1_f4, legacy_modifier_value,
+    ctrl_mapping_for_legacy_key, encode_legacy_ascii_text_key, legacy_csi_special,
+    legacy_csi_tilde, legacy_f1_f4, legacy_modifier_value,
 };
 use winit::event::ElementState;
 use winit::keyboard::{Key, KeyCode, KeyLocation, NamedKey, PhysicalKey};
@@ -101,24 +101,60 @@ fn numpad_named_event(key: NamedKey, physical: KeyCode) -> TestEvent {
 
 #[test]
 fn physical_key_to_base_char_includes_symbol_keys() {
-    assert_eq!(physical_key_to_base_char(PhysicalKey::Code(KeyCode::Minus)), Some('-'));
-    assert_eq!(physical_key_to_base_char(PhysicalKey::Code(KeyCode::Equal)), Some('='));
-    assert_eq!(physical_key_to_base_char(PhysicalKey::Code(KeyCode::BracketLeft)), Some('['));
-    assert_eq!(physical_key_to_base_char(PhysicalKey::Code(KeyCode::BracketRight)), Some(']'));
-    assert_eq!(physical_key_to_base_char(PhysicalKey::Code(KeyCode::Semicolon)), Some(';'));
-    assert_eq!(physical_key_to_base_char(PhysicalKey::Code(KeyCode::Quote)), Some('\''));
-    assert_eq!(physical_key_to_base_char(PhysicalKey::Code(KeyCode::Backquote)), Some('`'));
-    assert_eq!(physical_key_to_base_char(PhysicalKey::Code(KeyCode::Comma)), Some(','));
-    assert_eq!(physical_key_to_base_char(PhysicalKey::Code(KeyCode::Period)), Some('.'));
-    assert_eq!(physical_key_to_base_char(PhysicalKey::Code(KeyCode::Slash)), Some('/'));
+    assert_eq!(
+        physical_key_to_base_char(PhysicalKey::Code(KeyCode::Minus)),
+        Some('-')
+    );
+    assert_eq!(
+        physical_key_to_base_char(PhysicalKey::Code(KeyCode::Equal)),
+        Some('=')
+    );
+    assert_eq!(
+        physical_key_to_base_char(PhysicalKey::Code(KeyCode::BracketLeft)),
+        Some('[')
+    );
+    assert_eq!(
+        physical_key_to_base_char(PhysicalKey::Code(KeyCode::BracketRight)),
+        Some(']')
+    );
+    assert_eq!(
+        physical_key_to_base_char(PhysicalKey::Code(KeyCode::Semicolon)),
+        Some(';')
+    );
+    assert_eq!(
+        physical_key_to_base_char(PhysicalKey::Code(KeyCode::Quote)),
+        Some('\'')
+    );
+    assert_eq!(
+        physical_key_to_base_char(PhysicalKey::Code(KeyCode::Backquote)),
+        Some('`')
+    );
+    assert_eq!(
+        physical_key_to_base_char(PhysicalKey::Code(KeyCode::Comma)),
+        Some(',')
+    );
+    assert_eq!(
+        physical_key_to_base_char(PhysicalKey::Code(KeyCode::Period)),
+        Some('.')
+    );
+    assert_eq!(
+        physical_key_to_base_char(PhysicalKey::Code(KeyCode::Slash)),
+        Some('/')
+    );
 }
 
 // ── Legacy encoding tests ───────────────────────────────────────────
 
 #[test]
 fn legacy_ascii_text_key_preserves_shifted_backslash_text() {
-    assert_eq!(encode_legacy_ascii_text_key('\\', "|", false, true, false), Some(vec![b'|']));
-    assert_eq!(encode_legacy_ascii_text_key('\\', "|", false, true, true), Some(b"\x1b|".to_vec()));
+    assert_eq!(
+        encode_legacy_ascii_text_key('\\', "|", false, true, false),
+        Some(vec![b'|'])
+    );
+    assert_eq!(
+        encode_legacy_ascii_text_key('\\', "|", false, true, true),
+        Some(b"\x1b|".to_vec())
+    );
 }
 
 #[test]
@@ -131,18 +167,42 @@ fn legacy_ctrl_mapping_matches_terminal_control_bytes() {
 
 #[test]
 fn legacy_c0_keys_follow_terminal_meta_rules() {
-    assert_eq!(encode_legacy_c0_key(&NamedKey::Tab, false, true, true, false), Some(b"\x1b\x1b[Z".to_vec()));
-    assert_eq!(encode_legacy_c0_key(&NamedKey::Backspace, true, false, true, false), Some(vec![0x1b, 0x08]));
-    assert_eq!(encode_legacy_c0_key(&NamedKey::Escape, false, false, false, true), None);
-    assert_eq!(encode_legacy_c0_key(&NamedKey::Space, true, false, false, true), None);
-    assert_eq!(encode_legacy_c0_key(&NamedKey::Space, true, false, false, false), Some(vec![0x00]));
+    assert_eq!(
+        encode_legacy_c0_key(&NamedKey::Tab, false, true, true, false),
+        Some(b"\x1b\x1b[Z".to_vec())
+    );
+    assert_eq!(
+        encode_legacy_c0_key(&NamedKey::Backspace, true, false, true, false),
+        Some(vec![0x1b, 0x08])
+    );
+    assert_eq!(
+        encode_legacy_c0_key(&NamedKey::Escape, false, false, false, true),
+        None
+    );
+    assert_eq!(
+        encode_legacy_c0_key(&NamedKey::Space, true, false, false, true),
+        None
+    );
+    assert_eq!(
+        encode_legacy_c0_key(&NamedKey::Space, true, false, false, false),
+        Some(vec![0x00])
+    );
 }
 
 #[test]
 fn kitty_compat_mode_keeps_shifted_text_as_text() {
-    assert_eq!(encode_kitty_legacy_text_bytes(Some("|"), ElementState::Pressed, false, false, false), Some(vec![b'|']));
-    assert_eq!(encode_kitty_legacy_text_bytes(Some("|"), ElementState::Released, false, false, false), Some(vec![]));
-    assert_eq!(encode_kitty_legacy_text_bytes(Some("|"), ElementState::Pressed, false, true, false), None);
+    assert_eq!(
+        encode_kitty_legacy_text_bytes(Some("|"), ElementState::Pressed, false, false, false),
+        Some(vec![b'|'])
+    );
+    assert_eq!(
+        encode_kitty_legacy_text_bytes(Some("|"), ElementState::Released, false, false, false),
+        Some(vec![])
+    );
+    assert_eq!(
+        encode_kitty_legacy_text_bytes(Some("|"), ElementState::Pressed, false, true, false),
+        None
+    );
 }
 
 #[test]
@@ -290,85 +350,127 @@ const LEVEL1: u16 = ciri_protocol::message::MODE_KITTY_KEYBOARD;
 #[test]
 fn kitty_level1_escape_uses_csi_u() {
     let e = named_key_event(NamedKey::Escape, ElementState::Pressed, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL1), b"\x1b[27u");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL1),
+        b"\x1b[27u"
+    );
 }
 
 #[test]
 fn kitty_level1_space_uses_csi_u() {
     let e = named_key_event(NamedKey::Space, ElementState::Pressed, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL1), b"\x1b[32u");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL1),
+        b"\x1b[32u"
+    );
 }
 
 #[test]
 fn kitty_level1_ctrl_space() {
     let e = named_key_event(NamedKey::Space, ElementState::Pressed, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, true, false, false, false, false, false, LEVEL1), b"\x1b[32;5u");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, true, false, false, false, false, false, LEVEL1),
+        b"\x1b[32;5u"
+    );
 }
 
 #[test]
 fn kitty_level1_enter_stays_legacy() {
     let e = named_key_event(NamedKey::Enter, ElementState::Pressed, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL1), b"\r");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL1),
+        b"\r"
+    );
 }
 
 #[test]
 fn kitty_level1_ctrl_enter_stays_legacy() {
     let e = named_key_event(NamedKey::Enter, ElementState::Pressed, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, true, false, false, false, false, false, LEVEL1), b"\r");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, true, false, false, false, false, false, LEVEL1),
+        b"\r"
+    );
 }
 
 #[test]
 fn kitty_level1_ctrl_tab_stays_legacy() {
     let e = named_key_event(NamedKey::Tab, ElementState::Pressed, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, true, false, false, false, false, false, LEVEL1), b"\t");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, true, false, false, false, false, false, LEVEL1),
+        b"\t"
+    );
 }
 
 #[test]
 fn kitty_level1_ctrl_backspace_stays_legacy() {
     let e = named_key_event(NamedKey::Backspace, ElementState::Pressed, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, true, false, false, false, false, false, LEVEL1), b"\x08");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, true, false, false, false, false, false, LEVEL1),
+        b"\x08"
+    );
 }
 
 #[test]
 fn kitty_level1_arrow_up_with_shift() {
     let e = named_key_event(NamedKey::ArrowUp, ElementState::Pressed, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, true, false, false, false, false, LEVEL1), b"\x1b[1;2A");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, true, false, false, false, false, LEVEL1),
+        b"\x1b[1;2A"
+    );
 }
 
 #[test]
 fn kitty_level1_plain_char_stays_legacy() {
     let e = char_key_event('a', KeyCode::KeyA, ElementState::Pressed);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL1), b"a");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL1),
+        b"a"
+    );
 }
 
 #[test]
 fn kitty_level1_f1_no_mods() {
     let e = named_key_event(NamedKey::F1, ElementState::Pressed, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL1), b"\x1b[P");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL1),
+        b"\x1b[P"
+    );
 }
 
 #[test]
 fn kitty_level1_f1_with_shift() {
     let e = named_key_event(NamedKey::F1, ElementState::Pressed, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, true, false, false, false, false, LEVEL1), b"\x1b[1;2P");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, true, false, false, false, false, LEVEL1),
+        b"\x1b[1;2P"
+    );
 }
 
 #[test]
 fn kitty_level1_f3_uses_tilde() {
     let e = named_key_event(NamedKey::F3, ElementState::Pressed, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL1), b"\x1b[13~");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL1),
+        b"\x1b[13~"
+    );
 }
 
 #[test]
 fn kitty_level1_f4_with_ctrl() {
     let e = named_key_event(NamedKey::F4, ElementState::Pressed, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, true, false, false, false, false, false, LEVEL1), b"\x1b[1;5S");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, true, false, false, false, false, false, LEVEL1),
+        b"\x1b[1;5S"
+    );
 }
 
 #[test]
 fn kitty_level1_f5_with_shift() {
     let e = named_key_event(NamedKey::F5, ElementState::Pressed, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, true, false, false, false, false, LEVEL1), b"\x1b[15;2~");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, true, false, false, false, false, LEVEL1),
+        b"\x1b[15;2~"
+    );
 }
 
 // ── Kitty protocol level 2 (REPORT_EVENTS) ─────────────────────────
@@ -378,43 +480,64 @@ const LEVEL2: u16 = LEVEL1 | ciri_protocol::message::MODE_KITTY_REPORT_EVENTS;
 #[test]
 fn kitty_level2_plain_char_press_stays_legacy() {
     let e = char_key_event('a', KeyCode::KeyA, ElementState::Pressed);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL2), b"a");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL2),
+        b"a"
+    );
 }
 
 #[test]
 fn kitty_level2_escape_release() {
     let e = named_key_event(NamedKey::Escape, ElementState::Released, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL2), b"\x1b[27;1:3u");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL2),
+        b"\x1b[27;1:3u"
+    );
 }
 
 #[test]
 fn kitty_level2_escape_repeat() {
     let e = named_key_event(NamedKey::Escape, ElementState::Pressed, true);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL2), b"\x1b[27;1:2u");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL2),
+        b"\x1b[27;1:2u"
+    );
 }
 
 #[test]
 fn kitty_level2_enter_release_suppressed() {
     let e = named_key_event(NamedKey::Enter, ElementState::Released, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL2), b"");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL2),
+        b""
+    );
 }
 
 #[test]
 fn kitty_level2_ctrl_enter_release_suppressed() {
     let e = named_key_event(NamedKey::Enter, ElementState::Released, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, true, false, false, false, false, false, LEVEL2), b"");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, true, false, false, false, false, false, LEVEL2),
+        b""
+    );
 }
 
 #[test]
 fn kitty_level2_tab_release_suppressed() {
     let e = named_key_event(NamedKey::Tab, ElementState::Released, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL2), b"");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL2),
+        b""
+    );
 }
 
 #[test]
 fn kitty_level2_backspace_release_suppressed() {
     let e = named_key_event(NamedKey::Backspace, ElementState::Released, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, true, false, false, false, false, false, LEVEL2), b"");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, true, false, false, false, false, false, LEVEL2),
+        b""
+    );
 }
 
 // ── Kitty protocol level 4 (REPORT_ALL) ─────────────────────────────
@@ -427,37 +550,70 @@ const LEVEL4: u16 = LEVEL1
 #[test]
 fn kitty_level4_enter_csi_u() {
     let e = named_key_event(NamedKey::Enter, ElementState::Pressed, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL4), b"\x1b[13u");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL4),
+        b"\x1b[13u"
+    );
 }
 
 #[test]
 fn kitty_level4_enter_release_reported() {
     let e = named_key_event(NamedKey::Enter, ElementState::Released, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL4), b"\x1b[13;1:3u");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL4),
+        b"\x1b[13;1:3u"
+    );
 }
 
 #[test]
 fn kitty_level4_plain_char_csi_u() {
     let e = char_key_event('a', KeyCode::KeyA, ElementState::Pressed);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL4), b"\x1b[97u");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL4),
+        b"\x1b[97u"
+    );
 }
 
 #[test]
 fn kitty_level4_left_shift() {
-    let e = named_key_event_loc(NamedKey::Shift, ElementState::Pressed, false, KeyLocation::Left);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, true, false, false, false, false, LEVEL4), b"\x1b[57441;2u");
+    let e = named_key_event_loc(
+        NamedKey::Shift,
+        ElementState::Pressed,
+        false,
+        KeyLocation::Left,
+    );
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, true, false, false, false, false, LEVEL4),
+        b"\x1b[57441;2u"
+    );
 }
 
 #[test]
 fn kitty_level4_right_shift() {
-    let e = named_key_event_loc(NamedKey::Shift, ElementState::Pressed, false, KeyLocation::Right);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, true, false, false, false, false, LEVEL4), b"\x1b[57447;2u");
+    let e = named_key_event_loc(
+        NamedKey::Shift,
+        ElementState::Pressed,
+        false,
+        KeyLocation::Right,
+    );
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, true, false, false, false, false, LEVEL4),
+        b"\x1b[57447;2u"
+    );
 }
 
 #[test]
 fn kitty_level4_right_ctrl() {
-    let e = named_key_event_loc(NamedKey::Control, ElementState::Pressed, false, KeyLocation::Right);
-    assert_eq!(key_event_to_kitty_bytes(&e, true, false, false, false, false, false, LEVEL4), b"\x1b[57448;5u");
+    let e = named_key_event_loc(
+        NamedKey::Control,
+        ElementState::Pressed,
+        false,
+        KeyLocation::Right,
+    );
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, true, false, false, false, false, false, LEVEL4),
+        b"\x1b[57448;5u"
+    );
 }
 
 // ── Numpad ──────────────────────────────────────────────────────────
@@ -465,19 +621,28 @@ fn kitty_level4_right_ctrl() {
 #[test]
 fn kitty_numpad_digit() {
     let e = numpad_char_event("5", KeyCode::Numpad5);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL1), b"\x1b[57404u");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL1),
+        b"\x1b[57404u"
+    );
 }
 
 #[test]
 fn kitty_numpad_enter() {
     let e = numpad_named_event(NamedKey::Enter, KeyCode::NumpadEnter);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL1), b"\x1b[57414u");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL1),
+        b"\x1b[57414u"
+    );
 }
 
 #[test]
 fn kitty_numpad_with_modifier() {
     let e = numpad_char_event("5", KeyCode::Numpad5);
-    assert_eq!(key_event_to_kitty_bytes(&e, true, false, false, false, false, false, LEVEL1), b"\x1b[57404;5u");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, true, false, false, false, false, false, LEVEL1),
+        b"\x1b[57404;5u"
+    );
 }
 
 // ── Lock key modifier bits ──────────────────────────────────────────
@@ -486,35 +651,50 @@ fn kitty_numpad_with_modifier() {
 fn kitty_caps_lock_modifier_bit() {
     // caps_lock = bit 6 = 64, modifier_val = 64 + 1 = 65
     let e = char_key_event('a', KeyCode::KeyA, ElementState::Pressed);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, true, false, LEVEL4), b"\x1b[97;65u");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, true, false, LEVEL4),
+        b"\x1b[97;65u"
+    );
 }
 
 #[test]
 fn kitty_num_lock_modifier_bit() {
     // num_lock = bit 7 = 128, modifier_val = 128 + 1 = 129
     let e = char_key_event('a', KeyCode::KeyA, ElementState::Pressed);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, false, true, LEVEL4), b"\x1b[97;129u");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, false, true, LEVEL4),
+        b"\x1b[97;129u"
+    );
 }
 
 #[test]
 fn kitty_both_locks_modifier_bits() {
     // caps_lock + num_lock = 64 + 128 = 192, modifier_val = 193
     let e = char_key_event('a', KeyCode::KeyA, ElementState::Pressed);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, true, true, LEVEL4), b"\x1b[97;193u");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, true, true, LEVEL4),
+        b"\x1b[97;193u"
+    );
 }
 
 #[test]
 fn kitty_caps_lock_with_shift() {
     // shift(1) + caps_lock(64) = 65, modifier_val = 66
     let e = char_key_event('a', KeyCode::KeyA, ElementState::Pressed);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, true, false, false, true, false, LEVEL4), b"\x1b[97;66u");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, true, false, false, true, false, LEVEL4),
+        b"\x1b[97;66u"
+    );
 }
 
 #[test]
 fn kitty_caps_lock_with_ctrl() {
     // ctrl(4) + caps_lock(64) = 68, modifier_val = 69
     let e = char_key_event('a', KeyCode::KeyA, ElementState::Pressed);
-    assert_eq!(key_event_to_kitty_bytes(&e, true, false, false, false, true, false, LEVEL4), b"\x1b[97;69u");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, true, false, false, false, true, false, LEVEL4),
+        b"\x1b[97;69u"
+    );
 }
 
 #[test]
@@ -522,28 +702,40 @@ fn kitty_level1_caps_lock_plain_char_stays_legacy() {
     // At level 1-3, plain character keys without ctrl/alt/super send as raw text
     // even with caps_lock active — consistent with kitty behavior.
     let e = char_key_event('a', KeyCode::KeyA, ElementState::Pressed);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, true, false, LEVEL1), b"a");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, true, false, LEVEL1),
+        b"a"
+    );
 }
 
 #[test]
 fn kitty_level1_caps_lock_with_ctrl_uses_csi_u() {
     // ctrl + caps_lock: ctrl(4) + caps_lock(64) = 68, modifier_val = 69
     let e = char_key_event('a', KeyCode::KeyA, ElementState::Pressed);
-    assert_eq!(key_event_to_kitty_bytes(&e, true, false, false, false, true, false, LEVEL1), b"\x1b[97;69u");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, true, false, false, false, true, false, LEVEL1),
+        b"\x1b[97;69u"
+    );
 }
 
 #[test]
 fn kitty_level1_escape_with_caps_lock() {
     // Escape always uses CSI u in kitty mode. caps_lock(64), modifier_val = 65
     let e = named_key_event(NamedKey::Escape, ElementState::Pressed, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, true, false, LEVEL1), b"\x1b[27;65u");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, true, false, LEVEL1),
+        b"\x1b[27;65u"
+    );
 }
 
 #[test]
 fn kitty_level1_space_with_num_lock() {
     // Space always uses CSI u in kitty mode. num_lock(128), modifier_val = 129
     let e = named_key_event(NamedKey::Space, ElementState::Pressed, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, false, true, LEVEL1), b"\x1b[32;129u");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, false, true, LEVEL1),
+        b"\x1b[32;129u"
+    );
 }
 
 // ── Extended keys ───────────────────────────────────────────────────
@@ -551,11 +743,17 @@ fn kitty_level1_space_with_num_lock() {
 #[test]
 fn kitty_f13() {
     let e = named_key_event(NamedKey::F13, ElementState::Pressed, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL1), b"\x1b[57376u");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL1),
+        b"\x1b[57376u"
+    );
 }
 
 #[test]
 fn kitty_media_play_pause() {
     let e = named_key_event(NamedKey::MediaPlayPause, ElementState::Pressed, false);
-    assert_eq!(key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL1), b"\x1b[57430u");
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL1),
+        b"\x1b[57430u"
+    );
 }

@@ -2,8 +2,8 @@ use ciri_protocol::message::PackedColor;
 use std::time::Instant;
 
 use super::{
-    GLITCH_FLAG_THRESHOLD_MS, GLITCH_REPAIR_COUNT, GLITCH_REPAIR_MIN_INTERVAL_MS,
-    GLITCH_THRESHOLD_MS, FLAG_TRIGGER_HIGH_MS, FLAG_TRIGGER_LOW_MS, PredictionEngine,
+    FLAG_TRIGGER_HIGH_MS, FLAG_TRIGGER_LOW_MS, GLITCH_FLAG_THRESHOLD_MS, GLITCH_REPAIR_COUNT,
+    GLITCH_REPAIR_MIN_INTERVAL_MS, GLITCH_THRESHOLD_MS, PredictionEngine,
 };
 use crate::grid::ClientPaneGrid;
 
@@ -14,6 +14,10 @@ impl PredictionEngine {
     /// 1. Confirm correct predictions, update glitch trigger, propagate renditions
     /// 2. Detect wrong predictions — kill epoch or reset entirely
     pub fn on_server_sync(&mut self, pane_id: u64, grid: &ClientPaneGrid, echo_ack: u64) {
+        if self.overlays.contains_key(&pane_id) {
+            self.bump_visual_serial_for_pane(pane_id);
+        }
+
         // Reset on terminal resize.
         let dims = (grid.cols, grid.rows);
         let prev = self.last_dims.insert(pane_id, dims);
@@ -90,14 +94,12 @@ impl PredictionEngine {
                 let actual_ch = actual.ch();
 
                 if pred_ch == actual_ch {
-                    if pred_ch != row.cells[col].original_ch
-                        && row.cells[col].epoch > max_confirmed
+                    if pred_ch != row.cells[col].original_ch && row.cells[col].epoch > max_confirmed
                     {
                         max_confirmed = row.cells[col].epoch;
                     }
                     // Glitch repair: quick confirmation reduces trigger.
-                    let pred_ms =
-                        now.duration_since(row.cells[col].created_at).as_millis() as u64;
+                    let pred_ms = now.duration_since(row.cells[col].created_at).as_millis() as u64;
                     if pred_ms < GLITCH_THRESHOLD_MS && self.glitch_trigger > 0 {
                         let can_repair = self.last_quick_confirm.map_or(true, |t| {
                             now.duration_since(t).as_millis() as u64

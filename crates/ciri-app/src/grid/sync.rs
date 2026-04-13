@@ -180,13 +180,16 @@ impl ClientPaneGrid {
         self.cursor_col = sync.meta.cursor_col;
         self.cursor_shape = sync.meta.cursor_shape;
         self.mode_flags = sync.meta.mode_flags;
+        self.pending_scroll_delta = 0;
         self.has_shell_integration = sync.meta.mode_flags & MODE_SHELL_INTEGRATION != 0;
         self.kitty_flags = sync.meta.mode_flags & MODE_KITTY_ALL;
         self.password_input = sync.meta.mode_flags & MODE_PASSWORD_INPUT != 0;
         self.title = sync.title.clone();
         self.grapheme_map = rebased_grapheme_map;
         // Build grapheme lookup from viewport cells (already decoded in place).
-        let sync_grapheme_map = sync.grapheme_extras.build_lookup(&self.viewport[..vp_cells]);
+        let sync_grapheme_map = sync
+            .grapheme_extras
+            .build_lookup(&self.viewport[..vp_cells]);
         for (idx, grapheme) in sync_grapheme_map {
             self.grapheme_map.insert(idx, grapheme);
         }

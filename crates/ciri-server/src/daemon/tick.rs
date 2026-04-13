@@ -203,11 +203,8 @@ pub(crate) async fn run_tick_loop(
                         let Some(client_ref) = s.clients.get(&cid) else {
                             continue;
                         };
-                        let client_echo_ack = client_ref
-                            .max_input_seq
-                            .get(&pane_id)
-                            .copied()
-                            .unwrap_or(0);
+                        let client_echo_ack =
+                            client_ref.max_input_seq.get(&pane_id).copied().unwrap_or(0);
 
                         if damage.full {
                             if let Some(pane) = session.panes.get(&pane_id) {

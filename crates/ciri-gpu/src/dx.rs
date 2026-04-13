@@ -189,6 +189,7 @@ struct DxAtlasLayer {
     atlas_size: u32,
     bpp: u32,
     max_instances: usize,
+    swizzle_rgba_to_bgra: bool,
     /// D2D render target for direct DWrite glyph rendering to this atlas layer.
     d2d_rt: ID2D1RenderTarget,
 }
@@ -198,6 +199,7 @@ struct DxAtlasLayerConfig<'a> {
     max_instances: usize,
     tex_format: DXGI_FORMAT,
     bpp: u32,
+    swizzle_rgba_to_bgra: bool,
     vs_hlsl: &'a str,
     ps_hlsl: &'a str,
     filter: D3D11_FILTER,
@@ -387,6 +389,7 @@ impl DxAtlasLayer {
             atlas_size,
             bpp,
             max_instances,
+            swizzle_rgba_to_bgra: cfg.swizzle_rgba_to_bgra,
             d2d_rt,
         })
     }
@@ -419,6 +422,11 @@ impl DxAtlasLayer {
         }
 
         for upload in pending.drain(..) {
+            let upload_data = if self.swizzle_rgba_to_bgra && self.bpp == 4 {
+                rgba_to_bgra(&upload.data)
+            } else {
+                upload.data
+            };
             let row_pitch = upload.w * self.bpp;
             let box_ = D3D11_BOX {
                 left: upload.x,
@@ -432,7 +440,7 @@ impl DxAtlasLayer {
                 &self.texture,
                 0,
                 Some(&box_),
-                upload.data.as_ptr() as *const _,
+                upload_data.as_ptr() as *const _,
                 row_pitch,
                 0,
             );
@@ -501,13 +509,12 @@ impl DxAtlasLayer {
         let _ = self.d2d_rt.EndDraw(None, None);
     }
 
-    /// Upload glyph instances and render scissored pane batches only.
-    unsafe fn render_pane_glyphs(
+    /// Upload glyph instances to the GPU. Called once per frame per layer.
+    unsafe fn upload_instances(
         &self,
         ctx: &ID3D11DeviceContext,
         instances: &[GlyphInstance],
         vp: &crate::ViewportDims,
-        batches: &[ScissoredRange],
     ) {
         if instances.is_empty() {
             return;
@@ -541,18 +548,31 @@ impl DxAtlasLayer {
         .unwrap();
         std::ptr::copy_nonoverlapping(data.as_ptr(), mapped.pData as *mut u8, data.len());
         ctx.Unmap(&self.instance_buffer, 0);
+    }
 
-        // Bind pipeline state
+    /// Bind pipeline state and draw scissored glyph batches.
+    /// Can be called multiple times after a single `upload_instances`.
+    unsafe fn draw_batches(
+        &self,
+        ctx: &ID3D11DeviceContext,
+        instance_count: usize,
+        batches: &[ScissoredRange],
+    ) {
+        if instance_count == 0 || batches.is_empty() {
+            return;
+        }
+        let count = instance_count.min(self.max_instances);
+        let stride = std::mem::size_of::<GlyphInstance>() as u32;
+
+        // Bind pipeline state (may have been changed by rect draws between calls)
         ctx.IASetInputLayout(Some(&self.input_layout));
         ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-        let stride = std::mem::size_of::<GlyphInstance>() as u32;
         ctx.VSSetShader(Some(&self.vs), None);
         ctx.PSSetShader(Some(&self.ps), None);
         ctx.VSSetConstantBuffers(0, Some(&[Some(self.cbuffer.clone())]));
         ctx.PSSetShaderResources(0, Some(&[Some(self.srv.clone())]));
         ctx.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
 
-        // Draw each scissored batch
         for batch in batches {
             let start = batch.start.min(count);
             let end = batch.end.min(count);
@@ -577,51 +597,14 @@ impl DxAtlasLayer {
             ctx.DrawInstanced(4, (end - start) as u32, 0, 0);
         }
     }
+}
 
-    /// Render overlay glyphs (data already uploaded by `render_pane_glyphs`).
-    unsafe fn render_overlay_glyphs(
-        &self,
-        ctx: &ID3D11DeviceContext,
-        instances: &[GlyphInstance],
-        overlay_start: usize,
-        vp: &crate::ViewportDims,
-    ) {
-        if instances.is_empty() {
-            return;
-        }
-        let count = instances.len().min(self.max_instances);
-        let overlay_start = overlay_start.min(count);
-        if overlay_start >= count {
-            return;
-        }
-
-        // Re-bind pipeline state (rect pipeline may have run between calls)
-        ctx.IASetInputLayout(Some(&self.input_layout));
-        ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-        let stride = std::mem::size_of::<GlyphInstance>() as u32;
-        ctx.VSSetShader(Some(&self.vs), None);
-        ctx.PSSetShader(Some(&self.ps), None);
-        ctx.VSSetConstantBuffers(0, Some(&[Some(self.cbuffer.clone())]));
-        ctx.PSSetShaderResources(0, Some(&[Some(self.srv.clone())]));
-        ctx.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
-
-        let rect = RECT {
-            left: 0,
-            top: 0,
-            right: vp.width_px as i32,
-            bottom: vp.height_px as i32,
-        };
-        ctx.RSSetScissorRects(Some(&[rect]));
-        let offset = (overlay_start * std::mem::size_of::<GlyphInstance>()) as u32;
-        ctx.IASetVertexBuffers(
-            0,
-            1,
-            Some(&Some(self.instance_buffer.clone())),
-            Some(&stride),
-            Some(&offset),
-        );
-        ctx.DrawInstanced(4, (count - overlay_start) as u32, 0, 0);
+fn rgba_to_bgra(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len());
+    for px in data.chunks_exact(4) {
+        out.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
     }
+    out
 }
 
 // ─── D3D Rect Pipeline ──────────────────────────────────────────────
@@ -1006,6 +989,7 @@ impl Renderer {
                     max_instances: cache.max_instances,
                     tex_format: DXGI_FORMAT_B8G8R8A8_UNORM,
                     bpp: 4,
+                    swizzle_rgba_to_bgra: false,
                     vs_hlsl: GLYPH_HLSL,
                     ps_hlsl: ALPHA_PS_HLSL,
                     filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
@@ -1024,6 +1008,7 @@ impl Renderer {
                     max_instances: cache.max_instances,
                     tex_format: DXGI_FORMAT_B8G8R8A8_UNORM,
                     bpp: 4,
+                    swizzle_rgba_to_bgra: true,
                     vs_hlsl: GLYPH_HLSL,
                     ps_hlsl: COLOR_PS_HLSL,
                     filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
@@ -1118,18 +1103,23 @@ impl Renderer {
                 height_px: self.height,
             };
 
-            // 3. Pane alpha glyphs (scissored) — upload + draw batches.
+            // 3. Upload alpha + color glyph instances once.
             atlas_gpu
                 .alpha
-                .render_pane_glyphs(&self.ctx, scene.glyphs, &vp, scene.glyph_batches);
+                .upload_instances(&self.ctx, scene.glyphs, &vp);
+            atlas_gpu
+                .color
+                .upload_instances(&self.ctx, scene.color_glyphs, &vp);
+            let alpha_count = scene.glyphs.len();
+            let color_count = scene.color_glyphs.len();
 
-            // 4. Pane color emoji (scissored).
-            atlas_gpu.color.render_pane_glyphs(
-                &self.ctx,
-                scene.color_glyphs,
-                &vp,
-                scene.color_glyph_batches,
-            );
+            // 4. Draw inactive pane glyphs (scissored).
+            atlas_gpu
+                .alpha
+                .draw_batches(&self.ctx, alpha_count, scene.glyph_batches);
+            atlas_gpu
+                .color
+                .draw_batches(&self.ctx, color_count, scene.color_glyph_batches);
 
             // 5. Focused pane background rects.
             let active_bg_count = overlay_bg_idx.saturating_sub(active_bg_idx);
@@ -1139,23 +1129,15 @@ impl Renderer {
                     .draw_range(&self.ctx, active_bg_idx, active_bg_count);
             }
 
-            // 6. Focused pane alpha glyphs.
-            atlas_gpu.alpha.render_pane_glyphs(
-                &self.ctx,
-                scene.glyphs,
-                &vp,
-                scene.active_glyph_batches,
-            );
+            // 6. Draw active pane glyphs (scissored, no re-upload).
+            atlas_gpu
+                .alpha
+                .draw_batches(&self.ctx, alpha_count, scene.active_glyph_batches);
+            atlas_gpu
+                .color
+                .draw_batches(&self.ctx, color_count, scene.active_color_glyph_batches);
 
-            // 7. Focused pane color emoji.
-            atlas_gpu.color.render_pane_glyphs(
-                &self.ctx,
-                scene.color_glyphs,
-                &vp,
-                scene.active_color_glyph_batches,
-            );
-
-            // 8. Overlay background rects.
+            // 7. Overlay background rects.
             let overlay_bg_count = total_bg.saturating_sub(overlay_bg_idx);
             if overlay_bg_count > 0 {
                 self.ctx.RSSetScissorRects(Some(&[full_rect]));
@@ -1163,21 +1145,29 @@ impl Renderer {
                     .draw_range(&self.ctx, overlay_bg_idx, overlay_bg_count);
             }
 
-            // 9. Overlay alpha glyphs.
-            atlas_gpu.alpha.render_overlay_glyphs(
-                &self.ctx,
-                scene.glyphs,
-                scene.pane_glyph_end,
-                &vp,
-            );
-
-            // 10. Overlay color emoji.
-            atlas_gpu.color.render_overlay_glyphs(
-                &self.ctx,
-                scene.color_glyphs,
-                scene.pane_color_glyph_end,
-                &vp,
-            );
+            // 8. Overlay glyphs (no re-upload, just draw remaining range).
+            let overlay_alpha = ScissoredRange {
+                x: 0,
+                y: 0,
+                w: self.width,
+                h: self.height,
+                start: scene.pane_glyph_end,
+                end: scene.glyphs.len(),
+            };
+            let overlay_color = ScissoredRange {
+                x: 0,
+                y: 0,
+                w: self.width,
+                h: self.height,
+                start: scene.pane_color_glyph_end,
+                end: scene.color_glyphs.len(),
+            };
+            atlas_gpu
+                .alpha
+                .draw_batches(&self.ctx, alpha_count, &[overlay_alpha]);
+            atlas_gpu
+                .color
+                .draw_batches(&self.ctx, color_count, &[overlay_color]);
 
             // Wait for the previous frame to finish presentation before
             // submitting the next one. With the waitable object this is a true
@@ -1193,10 +1183,7 @@ impl Renderer {
             } else {
                 self.sync_interval
             };
-            let _ = self
-                .swap_chain
-                .Present(interval, DXGI_PRESENT(0))
-                .ok();
+            let _ = self.swap_chain.Present(interval, DXGI_PRESENT(0)).ok();
         }
     }
 }

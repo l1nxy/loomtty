@@ -320,9 +320,7 @@ impl App {
 
             // ── Paste confirmation ──
             Action::ConfirmPaste => {
-                if self.core.pending_paste.take().is_some() {
-                    self.handle_clipboard_paste_force();
-                }
+                self.confirm_pending_paste();
             }
             Action::DismissPasteConfirm => {
                 self.core.pending_paste = None;
@@ -334,13 +332,7 @@ impl App {
                 log::debug!("TextInput action reached handle_action (unexpected)");
             }
             Action::TextBackspace => {
-                if let Some(search) = &mut self.core.search_state {
-                    search.query.pop();
-                    self.update_search_results();
-                } else if let Some(palette) = &mut self.core.command_palette {
-                    palette.query.pop();
-                    self.filter_palette();
-                }
+                let _ = self.pop_text_from_overlay_input();
             }
 
             // ── Key table management (handled by InputHandler internally) ──
@@ -482,20 +474,6 @@ impl App {
         }
         if !keep_open {
             self.core.command_palette = None;
-        }
-    }
-
-    // ── Clipboard helpers ──
-
-    pub(super) fn handle_clipboard_paste_force(&mut self) {
-        match &mut self.clipboard {
-            None => log::warn!("clipboard not available"),
-            Some(cb) => match cb.get_text() {
-                Err(e) => log::warn!("clipboard read failed: {e}"),
-                Ok(text) => {
-                    self.send_paste_to_active_pane(text.as_bytes());
-                }
-            },
         }
     }
 }

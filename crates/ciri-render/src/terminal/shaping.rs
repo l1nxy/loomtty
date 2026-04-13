@@ -1,6 +1,7 @@
 //! Row-level text shaping: ligature detection, grapheme clustering, single-char shaping.
 
 use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::glyph_cache::FontStyle;
 use crate::shaper::{FaceSet, TextShaper};
@@ -10,15 +11,15 @@ use super::view::ViewBuildParams;
 
 /// Pre-computed ligature info for a single row.
 #[derive(Clone)]
-pub(super) struct RowLigatureData {
+pub(crate) struct RowLigatureData {
     /// True for columns that are continuations of a ligature (should skip normal rendering).
-    pub(super) skip_cols: Vec<bool>,
+    pub(crate) skip_cols: Vec<bool>,
     /// Ligature glyphs to render: (col, glyph_id, font_id, style, fg_color).
-    pub(super) ligature_glyphs: Vec<(usize, u32, fontdb::ID, FontStyle, [f32; 4])>,
-    /// Pre-shaped grapheme clusters: (col, glyph_id, font_id).
-    pub(super) grapheme_glyphs: Vec<(usize, u32, fontdb::ID)>,
+    pub(crate) ligature_glyphs: Vec<(usize, u32, fontdb::ID, FontStyle, [f32; 4])>,
+    /// Pre-shaped grapheme clusters: (col, glyph_id, font_id, display_cols).
+    pub(crate) grapheme_glyphs: Vec<(usize, u32, fontdb::ID, usize)>,
     /// Per-char shaped glyph IDs for all-through-shaping path: (col, glyph_id, font_id, is_wide).
-    pub(super) char_glyphs: Vec<(usize, u32, fontdb::ID, bool)>,
+    pub(crate) char_glyphs: Vec<(usize, u32, fontdb::ID, bool)>,
 }
 
 /// Pre-compute all ligature/grapheme shaping data for a single row.
@@ -46,7 +47,8 @@ pub(super) fn precompute_row_shaping(
         if let Some(start) = run.start
             && run.text.len() >= 2
         {
-            for lig in shaper.detect_ligatures_with_face(run.text, faces.primary, faces.primary_id) {
+            for lig in shaper.detect_ligatures_with_face(run.text, faces.primary, faces.primary_id)
+            {
                 for k in 1..lig.char_count {
                     let c = start + lig.start_col + k;
                     if c < cols_usize {
@@ -195,7 +197,12 @@ pub(super) fn precompute_row_shaping(
                 .shaper
                 .shape_grapheme_with_fallback(&cluster_str, faces)
         {
-            grapheme_glyphs.push((col, gid, fid));
+            grapheme_glyphs.push((
+                col,
+                gid,
+                fid,
+                grapheme_display_cols(&cluster_str, props.is_wide),
+            ));
             // Mark consumed cells so they aren't rendered independently
             let start = col + if props.is_wide { 2 } else { 1 };
             for k in 0..consumed_cols {
@@ -215,7 +222,7 @@ pub(super) fn precompute_row_shaping(
         }
         // Skip columns already handled by grapheme shaping
         if grapheme_glyphs
-            .binary_search_by_key(&col, |(c, _, _)| *c)
+            .binary_search_by_key(&col, |(c, _, _, _)| *c)
             .is_ok()
         {
             continue;
@@ -272,4 +279,27 @@ fn is_combining_or_modifier(c: char) -> bool {
 /// Two adjacent RIs form a single flag emoji grapheme cluster.
 fn is_regional_indicator(c: char) -> bool {
     ('\u{1F1E6}'..='\u{1F1FF}').contains(&c)
+}
+
+fn grapheme_display_cols(cluster: &str, fallback_wide: bool) -> usize {
+    UnicodeWidthStr::width(cluster)
+        .max(if fallback_wide { 2 } else { 1 })
+        .max(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::grapheme_display_cols;
+
+    #[test]
+    fn grapheme_display_cols_keeps_emoji_clusters_wide() {
+        assert_eq!(grapheme_display_cols("🇺🇸", false), 2);
+        assert_eq!(grapheme_display_cols("👨‍👩‍👧‍👦", false), 2);
+        assert_eq!(grapheme_display_cols("e\u{301}", false), 1);
+    }
+
+    #[test]
+    fn grapheme_display_cols_respects_fallback_wide_flag() {
+        assert_eq!(grapheme_display_cols("A", true), 2);
+    }
 }

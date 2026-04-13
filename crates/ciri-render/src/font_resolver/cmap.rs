@@ -86,7 +86,6 @@ impl FontResolver for CmapResolver {
         // Last resort: primary (may produce .notdef).
         ResolvedFont::Primary
     }
-
 }
 
 /// Extract the set of codepoints covered by a font's cmap table.

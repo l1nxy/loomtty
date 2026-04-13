@@ -10,6 +10,7 @@ static AUDIO_PLAYING: AtomicBool = AtomicBool::new(false);
 /// characters prevents a malicious terminal application from injecting markup.
 ///
 /// Reference: https://specifications.freedesktop.org/notification-spec/latest/
+#[cfg(unix)]
 fn escape_notification_markup(s: &str) -> String {
     // & must be escaped first to avoid double-escaping.
     s.replace('&', "&amp;")

@@ -36,6 +36,7 @@ impl App {
                                 info,
                                 preview,
                                 hovered_button: None,
+                                target: super::PendingPasteTarget::Terminal,
                             });
                         } else if let Some(pid) = self.core.workspaces.active_mut().active_pane_id()
                         {
@@ -51,7 +52,11 @@ impl App {
                             if bracketed {
                                 data.extend_from_slice(b"\x1b[201~");
                             }
-                            self.send(ClientMessage::Input { pane_id: pid, data, input_seq: 0 });
+                            self.send(ClientMessage::Input {
+                                pane_id: pid,
+                                data,
+                                input_seq: 0,
+                            });
                         }
                     }
                 }

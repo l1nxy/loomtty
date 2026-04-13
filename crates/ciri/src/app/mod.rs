@@ -5,8 +5,8 @@ pub(crate) mod ime;
 pub(crate) mod key_encode;
 pub(crate) mod keyboard;
 pub(crate) mod mouse;
-pub(crate) mod open;
 pub(crate) mod notification;
+pub(crate) mod open;
 pub(crate) mod overview;
 pub(crate) mod palette;
 pub(crate) mod paste_dialog;
@@ -39,19 +39,35 @@ use winit::window::Window;
 // Re-export core types so existing `use super::*` in submodules still works.
 pub(crate) use ciri_app::app::{
     AppModel, ClientImagePlacement, ConnectionKind, ConnectionSlot, ContextMenu, ContextMenuAction,
-    ContextMenuItem, HoveredLink, OverviewActionHover, PaletteEntry, PaletteEntryKind, PasteButton,
-    PendingPaste, ReconnectPlan, RemoteConnectionConfig, ScrollbarDragInfo, SearchMatch,
+    ContextMenuItem, HoveredLink, OverviewActionHover, PaletteEntryKind, PasteButton, PendingPaste,
+    PendingPasteTarget, ReconnectPlan, RemoteConnectionConfig, ScrollbarDragInfo, SearchMatch,
     SearchState, Selection, ServerEvent, TopBarHoverRegion,
 };
 use ciri_layout::geometry::Rect as GeoRect;
 
 /// Cached pre-transformed glyph instances for a pane tile.
-/// Avoids redundant pixel-position computation when content/position haven't changed.
-pub(crate) struct CachedTileGlyphs {
-    pub generation: u64,
-    pub key: (u32, u32, u32, u32), // (inner_x_bits, inner_y_bits, zoom_bits, dim_bits)
+/// Avoids redundant pixel-position computation when rows/position haven't changed.
+#[derive(Clone, Default)]
+pub(crate) struct CachedTileRow {
+    pub epoch: u64,
     pub glyphs: Vec<GlyphInstance>,
     pub color_glyphs: Vec<GlyphInstance>,
+}
+
+pub(crate) struct CachedTileGlyphs {
+    pub key: (u32, u32, u32, u32), // (inner_x_bits, inner_y_bits, zoom_bits, dim_bits)
+    pub rows: Vec<CachedTileRow>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct CachedTileBackgroundRow {
+    pub epoch: u64,
+    pub bg_rects: Vec<Rect>,
+}
+
+pub(crate) struct CachedTileBackgrounds {
+    pub key: (u32, u32, u32, u32),
+    pub rows: Vec<CachedTileBackgroundRow>,
 }
 
 #[derive(Clone, Copy)]
@@ -61,9 +77,7 @@ pub(crate) struct CommandPaletteLayout {
     pub panel_w: f32,
     pub panel_h: f32,
     pub row_h: f32,
-    pub input_row_h: f32,
     pub visible_rows: usize,
-    pub entry_count: usize,
     pub text_x: f32,
     pub text_y: f32,
     pub sep_y: f32,
@@ -74,10 +88,49 @@ pub(crate) struct RenderBuffers {
     pub bg_rects: Vec<Rect>,
     pub glyphs: Vec<GlyphInstance>,
     pub color_glyphs: Vec<GlyphInstance>,
+    pub dirty_bg_ranges: Vec<(usize, usize)>,
+    pub dirty_glyph_ranges: Vec<(usize, usize)>,
+    pub dirty_color_ranges: Vec<(usize, usize)>,
     pub glyph_batches: Vec<ScissoredRange>,
     pub color_glyph_batches: Vec<ScissoredRange>,
     pub active_glyph_batches: Vec<ScissoredRange>,
     pub active_color_glyph_batches: Vec<ScissoredRange>,
+    pub pane_order: Vec<u64>,
+    pub pane_regions: HashMap<u64, PaneSceneRegion>,
+    pub pane_glyph_end: usize,
+    pub pane_color_glyph_end: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct PaneSceneRegion {
+    pub glyph_offset: usize,
+    pub glyph_len: usize,
+    pub glyph_cap: usize,
+    pub color_offset: usize,
+    pub color_len: usize,
+    pub color_cap: usize,
+    pub scissor: (u32, u32, u32, u32),
+    pub is_active: bool,
+    pub snapshot: u64,
+}
+
+impl RenderBuffers {
+    pub fn clear_retained_scene(&mut self) {
+        self.bg_rects.clear();
+        self.glyphs.clear();
+        self.color_glyphs.clear();
+        self.dirty_bg_ranges.clear();
+        self.dirty_glyph_ranges.clear();
+        self.dirty_color_ranges.clear();
+        self.glyph_batches.clear();
+        self.color_glyph_batches.clear();
+        self.active_glyph_batches.clear();
+        self.active_color_glyph_batches.clear();
+        self.pane_order.clear();
+        self.pane_regions.clear();
+        self.pane_glyph_end = 0;
+        self.pane_color_glyph_end = 0;
+    }
 }
 
 pub(crate) struct App {
@@ -101,7 +154,10 @@ pub(crate) struct App {
     pub cached_color_table: ColorTable,
     /// Per-pane cached glyph instances to skip redundant transformation in build_tiles.
     pub cached_tile_glyphs: HashMap<u64, CachedTileGlyphs>,
+    pub cached_tile_backgrounds: HashMap<u64, CachedTileBackgrounds>,
     pub image_atlas_entries: HashMap<(u64, u64), GlyphEntry>,
+    /// Hash of the last successfully rendered visual state.
+    pub last_render_snapshot: Option<u64>,
     /// Whether the window currently has input focus.
     pub window_focused: bool,
     pub config_watcher: Option<notify::RecommendedWatcher>,
@@ -203,17 +259,26 @@ impl App {
                 bg_rects: Vec::new(),
                 glyphs: Vec::new(),
                 color_glyphs: Vec::new(),
+                dirty_bg_ranges: Vec::new(),
+                dirty_glyph_ranges: Vec::new(),
+                dirty_color_ranges: Vec::new(),
                 glyph_batches: Vec::new(),
                 color_glyph_batches: Vec::new(),
                 active_glyph_batches: Vec::new(),
                 active_color_glyph_batches: Vec::new(),
+                pane_order: Vec::new(),
+                pane_regions: HashMap::new(),
+                pane_glyph_end: 0,
+                pane_color_glyph_end: 0,
             },
             clipboard: arboard::Clipboard::new().ok(),
             mouse_left_held: false,
             mouse_left_passthrough: false,
             cached_color_table,
             cached_tile_glyphs: HashMap::new(),
+            cached_tile_backgrounds: HashMap::new(),
             image_atlas_entries: HashMap::new(),
+            last_render_snapshot: None,
             window_focused: true,
             config_watcher: None,
             config_change_rx: None,
@@ -531,9 +596,7 @@ impl App {
             panel_w,
             panel_h,
             row_h,
-            input_row_h,
             visible_rows,
-            entry_count,
             text_x,
             text_y,
             sep_y,
@@ -683,12 +746,16 @@ impl App {
     pub fn invalidate_pane_cache(&mut self, pane_id: u64) {
         self.cached_views.remove(&pane_id);
         self.cached_tile_glyphs.remove(&pane_id);
+        self.cached_tile_backgrounds.remove(&pane_id);
     }
 
     pub fn clear_render_caches(&mut self) {
         self.cached_views.clear();
         self.cached_tile_glyphs.clear();
+        self.cached_tile_backgrounds.clear();
         self.image_atlas_entries.clear();
+        self.render_bufs.clear_retained_scene();
+        self.last_render_snapshot = None;
     }
 
     /// Update client-side viewport/layout state immediately for interactive window resize.

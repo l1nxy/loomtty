@@ -32,7 +32,6 @@ pub(crate) trait UiComponent {
     fn click(&self, _mx: f32, _my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
         None
     }
-
 }
 
 pub(crate) struct UiHoverOutcome {

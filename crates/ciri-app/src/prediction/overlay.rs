@@ -2,8 +2,8 @@ use ciri_protocol::message::PackedCell;
 use std::collections::HashMap;
 use std::time::Instant;
 
-use super::utf8::Utf8Accum;
 use super::PREDICTION_TIMEOUT_SECS;
+use super::utf8::Utf8Accum;
 use crate::grid::ClientPaneGrid;
 
 #[derive(Clone)]

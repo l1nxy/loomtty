@@ -65,7 +65,9 @@ impl GlAtlasLayer {
             .get_uniform_location(program, "u_atlas")
             .ok_or_else(|| crate::GpuError::ShaderCompile("u_atlas uniform not found".into()))?;
 
-        let texture = gl.create_texture().map_err(|e| crate::GpuError::ResourceCreate(format!("texture: {e}")))?;
+        let texture = gl
+            .create_texture()
+            .map_err(|e| crate::GpuError::ResourceCreate(format!("texture: {e}")))?;
         gl.bind_texture(glow::TEXTURE_2D, Some(texture));
         gl.tex_image_2d(
             glow::TEXTURE_2D,
@@ -103,8 +105,12 @@ impl GlAtlasLayer {
         );
         gl.bind_texture(glow::TEXTURE_2D, None);
 
-        let vao = gl.create_vertex_array().map_err(|e| crate::GpuError::ResourceCreate(format!("VAO: {e}")))?;
-        let instance_vbo = gl.create_buffer().map_err(|e| crate::GpuError::ResourceCreate(format!("VBO: {e}")))?;
+        let vao = gl
+            .create_vertex_array()
+            .map_err(|e| crate::GpuError::ResourceCreate(format!("VAO: {e}")))?;
+        let instance_vbo = gl
+            .create_buffer()
+            .map_err(|e| crate::GpuError::ResourceCreate(format!("VBO: {e}")))?;
 
         gl.bind_vertex_array(Some(vao));
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(instance_vbo));
@@ -173,32 +179,49 @@ impl GlAtlasLayer {
         gl.bind_texture(glow::TEXTURE_2D, None);
     }
 
-    /// Upload glyph instances and render scissored pane batches only.
-    /// Data remains in the VBO for a subsequent `render_overlay` call.
-    unsafe fn render_pane_glyphs(
+    /// Upload glyph instances to the GPU. Called once per frame per layer.
+    unsafe fn upload_instances(
         &self,
         gl: &glow::Context,
         instances: &[GlyphInstance],
         vp: &crate::ViewportDims,
-        batches: &[ScissoredRange],
     ) {
         if instances.is_empty() {
             return;
         }
-
         let count = instances.len().min(self.max_instances);
 
-        gl.use_program(Some(self.program));
-        gl.uniform_2_f32(Some(&self.loc_viewport), vp.width, vp.height);
-
-        gl.active_texture(glow::TEXTURE0);
-        gl.bind_texture(glow::TEXTURE_2D, Some(self.texture));
-        gl.uniform_1_i32(Some(&self.loc_atlas), 0);
-
-        gl.bind_vertex_array(Some(self.vao));
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instance_vbo));
         let data = bytemuck::cast_slice(&instances[..count]);
         gl.buffer_sub_data_u8_slice(glow::ARRAY_BUFFER, 0, data);
+
+        // Update viewport uniform (shared across all subsequent draw_batches calls)
+        gl.use_program(Some(self.program));
+        gl.uniform_2_f32(Some(&self.loc_viewport), vp.width, vp.height);
+        gl.use_program(None);
+    }
+
+    /// Bind pipeline state and draw scissored glyph batches.
+    /// Can be called multiple times after a single `upload_instances`.
+    unsafe fn draw_batches(
+        &self,
+        gl: &glow::Context,
+        instance_count: usize,
+        vp: &crate::ViewportDims,
+        batches: &[ScissoredRange],
+    ) {
+        if instance_count == 0 || batches.is_empty() {
+            return;
+        }
+        let count = instance_count.min(self.max_instances);
+
+        // Bind pipeline state (may have been changed by rect draws between calls)
+        gl.use_program(Some(self.program));
+        gl.active_texture(glow::TEXTURE0);
+        gl.bind_texture(glow::TEXTURE_2D, Some(self.texture));
+        gl.uniform_1_i32(Some(&self.loc_atlas), 0);
+        gl.bind_vertex_array(Some(self.vao));
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instance_vbo));
 
         gl.enable(glow::SCISSOR_TEST);
 
@@ -216,44 +239,6 @@ impl GlAtlasLayer {
 
             gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, (end - start) as i32);
         }
-
-        gl.disable(glow::SCISSOR_TEST);
-        gl.bind_vertex_array(None);
-        gl.use_program(None);
-    }
-
-    /// Render overlay glyphs (data already uploaded by `render_pane_glyphs`).
-    unsafe fn render_overlay_glyphs(
-        &self,
-        gl: &glow::Context,
-        instances: &[GlyphInstance],
-        overlay_start: usize,
-        vp: &crate::ViewportDims,
-    ) {
-        if instances.is_empty() {
-            return;
-        }
-        let count = instances.len().min(self.max_instances);
-        let overlay_start = overlay_start.min(count);
-        if overlay_start >= count {
-            return;
-        }
-
-        gl.use_program(Some(self.program));
-        gl.uniform_2_f32(Some(&self.loc_viewport), vp.width, vp.height);
-
-        gl.active_texture(glow::TEXTURE0);
-        gl.bind_texture(glow::TEXTURE_2D, Some(self.texture));
-        gl.uniform_1_i32(Some(&self.loc_atlas), 0);
-
-        gl.bind_vertex_array(Some(self.vao));
-        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instance_vbo));
-
-        gl.enable(glow::SCISSOR_TEST);
-        gl.scissor(0, 0, vp.width_px.max(1) as i32, vp.height_px.max(1) as i32);
-        let base_offset = overlay_start * std::mem::size_of::<GlyphInstance>();
-        setup_glyph_vertex_attribs_offset(gl, base_offset as i32);
-        gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, (count - overlay_start) as i32);
 
         gl.disable(glow::SCISSOR_TEST);
         gl.bind_vertex_array(None);
@@ -283,10 +268,16 @@ impl GlRectPipeline {
         let program = compile_program(gl, RECT_VS, RECT_FS, "rect")?;
         let loc_viewport = gl
             .get_uniform_location(program, "u_viewport")
-            .ok_or_else(|| crate::GpuError::ShaderCompile("u_viewport uniform not found in rect shader".into()))?;
+            .ok_or_else(|| {
+                crate::GpuError::ShaderCompile("u_viewport uniform not found in rect shader".into())
+            })?;
 
-        let vao = gl.create_vertex_array().map_err(|e| crate::GpuError::ResourceCreate(format!("rect VAO: {e}")))?;
-        let instance_vbo = gl.create_buffer().map_err(|e| crate::GpuError::ResourceCreate(format!("rect VBO: {e}")))?;
+        let vao = gl
+            .create_vertex_array()
+            .map_err(|e| crate::GpuError::ResourceCreate(format!("rect VAO: {e}")))?;
+        let instance_vbo = gl
+            .create_buffer()
+            .map_err(|e| crate::GpuError::ResourceCreate(format!("rect VBO: {e}")))?;
 
         gl.bind_vertex_array(Some(vao));
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(instance_vbo));
@@ -385,7 +376,11 @@ pub struct GlyphAtlasGpu {
 }
 
 impl GlyphAtlasGpu {
-    unsafe fn new(gl: &glow::Context, atlas_size: u32, max_instances: usize) -> crate::Result<Self> {
+    unsafe fn new(
+        gl: &glow::Context,
+        atlas_size: u32,
+        max_instances: usize,
+    ) -> crate::Result<Self> {
         let alpha = GlAtlasLayer::new(
             gl,
             &GlAtlasLayerConfig {
@@ -642,18 +637,23 @@ impl Renderer {
                 height_px: self.height,
             };
 
-            // 3. Pane alpha glyphs (scissored) — upload + draw batches.
+            // 3. Upload alpha + color glyph instances once.
             atlas_gpu
                 .alpha
-                .render_pane_glyphs(&self.gl, scene.glyphs, &vp, scene.glyph_batches);
+                .upload_instances(&self.gl, scene.glyphs, &vp);
+            atlas_gpu
+                .color
+                .upload_instances(&self.gl, scene.color_glyphs, &vp);
+            let alpha_count = scene.glyphs.len();
+            let color_count = scene.color_glyphs.len();
 
-            // 4. Pane color emoji (scissored).
-            atlas_gpu.color.render_pane_glyphs(
-                &self.gl,
-                scene.color_glyphs,
-                &vp,
-                scene.color_glyph_batches,
-            );
+            // 4. Draw inactive pane glyphs (scissored).
+            atlas_gpu
+                .alpha
+                .draw_batches(&self.gl, alpha_count, &vp, scene.glyph_batches);
+            atlas_gpu
+                .color
+                .draw_batches(&self.gl, color_count, &vp, scene.color_glyph_batches);
 
             // 5. Focused pane background rects.
             let active_bg_count = overlay_bg_idx.saturating_sub(active_bg_idx);
@@ -662,23 +662,18 @@ impl Renderer {
                     .draw_range(&self.gl, active_bg_idx, active_bg_count, vw, vh);
             }
 
-            // 6. Focused pane alpha glyphs.
-            atlas_gpu.alpha.render_pane_glyphs(
+            // 6. Draw active pane glyphs (scissored, no re-upload).
+            atlas_gpu
+                .alpha
+                .draw_batches(&self.gl, alpha_count, &vp, scene.active_glyph_batches);
+            atlas_gpu.color.draw_batches(
                 &self.gl,
-                scene.glyphs,
-                &vp,
-                scene.active_glyph_batches,
-            );
-
-            // 7. Focused pane color emoji.
-            atlas_gpu.color.render_pane_glyphs(
-                &self.gl,
-                scene.color_glyphs,
+                color_count,
                 &vp,
                 scene.active_color_glyph_batches,
             );
 
-            // 8. Overlay background rects (rendered after pane glyphs so they
+            // 7. Overlay background rects (rendered after pane glyphs so they
             //    occlude terminal text underneath popups like the context menu).
             let overlay_bg_count = total_bg.saturating_sub(overlay_bg_idx);
             if overlay_bg_count > 0 {
@@ -686,21 +681,29 @@ impl Renderer {
                     .draw_range(&self.gl, overlay_bg_idx, overlay_bg_count, vw, vh);
             }
 
-            // 9. Overlay alpha glyphs (status bar, context menu text, etc.).
-            atlas_gpu.alpha.render_overlay_glyphs(
-                &self.gl,
-                scene.glyphs,
-                scene.pane_glyph_end,
-                &vp,
-            );
-
-            // 10. Overlay color emoji.
-            atlas_gpu.color.render_overlay_glyphs(
-                &self.gl,
-                scene.color_glyphs,
-                scene.pane_color_glyph_end,
-                &vp,
-            );
+            // 8. Overlay glyphs (no re-upload, just draw remaining range).
+            let overlay_alpha = ScissoredRange {
+                x: 0,
+                y: 0,
+                w: self.width,
+                h: self.height,
+                start: scene.pane_glyph_end,
+                end: scene.glyphs.len(),
+            };
+            let overlay_color = ScissoredRange {
+                x: 0,
+                y: 0,
+                w: self.width,
+                h: self.height,
+                start: scene.pane_color_glyph_end,
+                end: scene.color_glyphs.len(),
+            };
+            atlas_gpu
+                .alpha
+                .draw_batches(&self.gl, alpha_count, &vp, &[overlay_alpha]);
+            atlas_gpu
+                .color
+                .draw_batches(&self.gl, color_count, &vp, &[overlay_color]);
         }
 
         // Present — on Wayland EGL this implicitly handles resize
@@ -757,9 +760,9 @@ unsafe fn compile_program(
     fs_src: &str,
     label: &str,
 ) -> std::result::Result<glow::Program, crate::GpuError> {
-    let vs = gl
-        .create_shader(glow::VERTEX_SHADER)
-        .map_err(|e| crate::GpuError::ShaderCompile(format!("[{label}] create vertex shader: {e}")))?;
+    let vs = gl.create_shader(glow::VERTEX_SHADER).map_err(|e| {
+        crate::GpuError::ShaderCompile(format!("[{label}] create vertex shader: {e}"))
+    })?;
     gl.shader_source(vs, vs_src);
     gl.compile_shader(vs);
     if !gl.get_shader_compile_status(vs) {
@@ -770,9 +773,9 @@ unsafe fn compile_program(
         )));
     }
 
-    let fs = gl
-        .create_shader(glow::FRAGMENT_SHADER)
-        .map_err(|e| crate::GpuError::ShaderCompile(format!("[{label}] create fragment shader: {e}")))?;
+    let fs = gl.create_shader(glow::FRAGMENT_SHADER).map_err(|e| {
+        crate::GpuError::ShaderCompile(format!("[{label}] create fragment shader: {e}"))
+    })?;
     gl.shader_source(fs, fs_src);
     gl.compile_shader(fs);
     if !gl.get_shader_compile_status(fs) {

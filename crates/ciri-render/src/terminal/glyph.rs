@@ -83,7 +83,20 @@ pub(super) fn constrain_color_glyph_to_cells(
 #[inline]
 pub(super) fn color_glyph_cell_span(ch: char, is_wide: bool) -> usize {
     let flagged = if is_wide { 2 } else { 1 };
-    UnicodeWidthChar::width(ch).unwrap_or(0).max(flagged).max(1)
+    let unicode_w = UnicodeWidthChar::width(ch).unwrap_or(0);
+    let span = unicode_w.max(flagged).max(1);
+    // Log interesting width classifications (CJK/emoji)
+    if !ch.is_ascii() && (unicode_w >= 2 || is_wide) {
+        log::debug!(
+            "width calc: U+{:04X} '{}' unicode_width={} is_wide={} -> span={}",
+            ch as u32,
+            ch.escape_unicode(),
+            unicode_w,
+            is_wide,
+            span,
+        );
+    }
+    span
 }
 
 /// Place a wide CJK text glyph in a double-width cell using bearing positioning.

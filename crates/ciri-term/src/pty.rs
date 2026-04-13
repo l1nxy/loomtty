@@ -184,8 +184,10 @@ impl Pty {
 
         // Spawn background reader thread with bounded channel to prevent
         // memory spikes when PTY output exceeds processing bandwidth (e.g. cat large_file).
-        // 8 slots × 64KB buffer = ~512KB max buffered.
-        let (output_tx, output_rx) = mpsc::sync_channel(8);
+        // 64 slots × 64KB buffer = ~4MB max buffered.  The larger queue lets
+        // the reader thread keep draining the OS PTY buffer while the tick
+        // loop processes previous batches, avoiding pipeline stalls on bulk output.
+        let (output_tx, output_rx) = mpsc::sync_channel(64);
         let reader_done = Arc::new(AtomicBool::new(false));
         let reader_done_clone = reader_done.clone();
 

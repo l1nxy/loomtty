@@ -1,6 +1,6 @@
 //! Data types for the glyph cache subsystem.
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 use crossfont::FontKey;
 
 // ─── Font style ──────────────────────────────────────────────────────
@@ -29,7 +29,7 @@ impl FontStyle {
 // ─── Font key set ────────────────────────────────────────────────────
 
 /// The 4 crossfont FontKeys for regular/bold/italic/bold_italic.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub(crate) struct FontKeySet {
     pub(crate) regular: FontKey,
     pub(crate) bold: FontKey,
@@ -37,7 +37,7 @@ pub(crate) struct FontKeySet {
     pub(crate) bold_italic: FontKey,
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 impl FontKeySet {
     pub(crate) fn get(&self, style: FontStyle) -> FontKey {
         match style {

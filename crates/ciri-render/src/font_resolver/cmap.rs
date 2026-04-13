@@ -62,6 +62,10 @@ impl FontResolver for CmapResolver {
         // way to get correct emoji is to use the dedicated emoji font.
         if is_default_emoji_presentation(ch) {
             if self.emoji_cmap.as_ref().is_some_and(|c| c.contains(&cp)) {
+                log::debug!(
+                    "font resolver: U+{cp:04X} '{}' -> Emoji (emoji_presentation)",
+                    ch.escape_unicode()
+                );
                 return ResolvedFont::Emoji;
             }
             // Emoji font doesn't have it — fall through to primary/CJK.
@@ -69,21 +73,42 @@ impl FontResolver for CmapResolver {
 
         // Primary font has it and it's not an emoji → use primary.
         if !is_default_emoji_presentation(ch) && self.primary_cmap.contains(&cp) {
+            // Only log non-ASCII to avoid noise
+            if !ch.is_ascii() {
+                log::debug!(
+                    "font resolver: U+{cp:04X} '{}' -> Primary (cmap hit)",
+                    ch.escape_unicode()
+                );
+            }
             return ResolvedFont::Primary;
         }
 
         // CJK fallback.
         if self.cjk_cmap.as_ref().is_some_and(|c| c.contains(&cp)) {
+            log::debug!(
+                "font resolver: U+{cp:04X} '{}' -> Cjk (cjk cmap hit)",
+                ch.escape_unicode()
+            );
             return ResolvedFont::Cjk;
         }
 
         // Emoji fallback (for non-Emoji_Presentation characters that the
         // primary and CJK fonts lack).
         if self.emoji_cmap.as_ref().is_some_and(|c| c.contains(&cp)) {
+            log::debug!(
+                "font resolver: U+{cp:04X} '{}' -> Emoji (fallback)",
+                ch.escape_unicode()
+            );
             return ResolvedFont::Emoji;
         }
 
         // Last resort: primary (may produce .notdef).
+        if !ch.is_ascii() {
+            log::debug!(
+                "font resolver: U+{cp:04X} '{}' -> Primary (last resort, may .notdef)",
+                ch.escape_unicode()
+            );
+        }
         ResolvedFont::Primary
     }
 }

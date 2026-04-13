@@ -1,17 +1,24 @@
 //! CPU glyph cache — rasterizes and caches terminal text glyphs.
 //!
 //! Two atlas layers:
-//! - **Text** (`R8Unorm`): grayscale alpha mask via crossfont
-//! - **Color** (`Rgba8Srgb`): color emoji via crossfont
+//! - **Text** (`R8Unorm`): grayscale alpha mask
+//! - **Color** (`Rgba8Srgb`): color emoji
 //!
+//! Platform backends: FreeType (Linux), CoreText (macOS), DirectWrite (Windows).
 //! The GPU upload/rendering is handled by the backend's `GlyphAtlasGpu`.
 
 mod atlas;
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 mod cjk;
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+mod cjk_coretext;
+#[cfg(target_os = "linux")]
 mod metrics;
+#[cfg(target_os = "macos")]
+mod metrics_coretext;
 mod rasterize;
+#[cfg(target_os = "macos")]
+mod rasterize_coretext;
 #[cfg(windows)]
 mod rasterize_dwrite;
 pub mod types;
@@ -22,17 +29,23 @@ pub use atlas::PendingUpload;
 pub(crate) use atlas::ShelfPacker;
 pub use types::{FontStyle, GlyphEntry, GlyphInstance, ScissoredRange};
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 use cjk::compute_cjk_pixel_size;
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+use cjk_coretext::compute_cjk_pixel_size_ct;
+#[cfg(target_os = "linux")]
 use metrics::compute_ft_metrics;
+#[cfg(target_os = "macos")]
+use metrics_coretext::compute_ct_metrics;
 #[cfg(windows)]
 use rasterize::cache_measured_dwrite_glyph;
 use rasterize::{RasterizedGlyph, cache_rasterized_glyph};
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 use rasterize::{convert_crossfont_glyph, rasterize_glyph_id_ft};
+#[cfg(target_os = "macos")]
+use rasterize_coretext::CoreTextRasterizer;
 use types::FontClass;
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 use types::FontKeySet;
 
 #[cfg(windows)]
@@ -40,9 +53,12 @@ use rasterize_dwrite::{DWriteRasterizer, compute_cjk_pixel_size_dwrite, compute_
 #[cfg(windows)]
 use windows::Win32::Graphics::DirectWrite::IDWriteFontFace;
 
-use crate::font_resolver::{FontResolver, ResolvedFont};
+use crate::font_resolver::FontResolver;
+#[cfg(any(target_os = "macos", windows))]
+use crate::font_resolver::ResolvedFont;
 
 /// Given a preferred font, return the full fallback order (preferred first).
+#[cfg(any(target_os = "macos", windows))]
 fn resolved_font_order(preferred: ResolvedFont) -> [ResolvedFont; 3] {
     match preferred {
         ResolvedFont::Primary => [
@@ -63,9 +79,9 @@ fn resolved_font_order(preferred: ResolvedFont) -> [ResolvedFont; 3] {
     }
 }
 use ciri_config::config::RenderConfig;
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 use crossfont::{FontDesc, GlyphKey, Rasterize, Rasterizer, Size, Slant, Style, Weight};
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 use freetype::Library as FtLibrary;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -95,8 +111,8 @@ pub struct FontInitParams<'a> {
 /// CPU-side glyph cache: rasterization, packing, and caching.
 /// GPU upload/rendering is delegated to backend's `GlyphAtlasGpu`.
 ///
-/// Uses crossfont for character-based rendering and a thin FreeType path
-/// for glyph-ID rendering (ligatures from text shaping).
+/// Platform-specific rasterization: FreeType+crossfont on Linux,
+/// CoreText+Core Graphics on macOS, DirectWrite on Windows.
 pub struct GlyphCache {
     // Packing
     pub(crate) alpha_packer: ShelfPacker,
@@ -113,21 +129,25 @@ pub struct GlyphCache {
 
     // ── Platform-specific rasterizer state ──
 
-    // FreeType + crossfont (non-Windows)
-    #[cfg(not(windows))]
+    // FreeType + crossfont (Linux)
+    #[cfg(target_os = "linux")]
     rasterizer: Rasterizer,
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     font_keys: FontKeySet,
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     font_size: Size,
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     _ft_library: FtLibrary,
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     ft_face: Option<freetype::Face>,
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     emoji_ft_face: Option<freetype::Face>,
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     cjk_ft_face: Option<freetype::Face>,
+
+    // CoreText (macOS)
+    #[cfg(target_os = "macos")]
+    coretext: CoreTextRasterizer,
 
     // DirectWrite (Windows)
     #[cfg(windows)]
@@ -142,6 +162,7 @@ pub struct GlyphCache {
     use_d2d_rendering: bool,
 
     // ── Common state ──
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     font_resolver: Arc<dyn FontResolver>,
     #[cfg(windows)]
     dwrite_resolver: Option<Arc<crate::font_resolver::DWriteResolver>>,
@@ -171,7 +192,7 @@ impl GlyphCache {
 
         // ── Platform-specific init ──
 
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
         let (
             rasterizer,
             font_keys,
@@ -351,6 +372,56 @@ impl GlyphCache {
             )
         };
 
+        #[cfg(target_os = "macos")]
+        let (coretext, cell_width, cell_height, ascent, face_width, cjk_pixel_size) = {
+            log::info!(
+                "CoreText cache: initializing pixel_size={:.1} family='{}' primary_path={:?} emoji_path={:?} cjk_path={:?}",
+                pixel_size,
+                params.family_name,
+                params.primary_font_path,
+                params.emoji_font_path,
+                params.cjk_font_path,
+            );
+            let mut coretext = CoreTextRasterizer::new(
+                params.family_name,
+                params
+                    .primary_font_path
+                    .as_ref()
+                    .map(|(p, i)| (p.as_str(), *i)),
+                params
+                    .emoji_font_path
+                    .as_ref()
+                    .map(|(p, i)| (p.as_str(), *i)),
+                params.cjk_font_path.as_ref().map(|(p, i)| (p.as_str(), *i)),
+                pixel_size,
+            )
+            .expect("CoreText init failed");
+
+            let (cell_width, cell_height, ascent, face_width) =
+                compute_ct_metrics(coretext.primary_font(FontStyle::Regular));
+
+            let cjk_pixel_size = compute_cjk_pixel_size_ct(
+                pixel_size,
+                cell_width,
+                coretext.primary_font(FontStyle::Regular),
+                coretext.cjk_font(),
+            );
+
+            // Recreate CJK font at the adjusted size
+            if (cjk_pixel_size - pixel_size).abs() > 0.1 {
+                coretext.set_cjk_pixel_size(cjk_pixel_size);
+            }
+
+            (
+                coretext,
+                cell_width,
+                cell_height,
+                ascent,
+                face_width,
+                cjk_pixel_size,
+            )
+        };
+
         #[cfg(windows)]
         let (dwrite, cell_width, cell_height, ascent, face_width, cjk_pixel_size) = {
             let dwrite = DWriteRasterizer::new(
@@ -404,20 +475,23 @@ impl GlyphCache {
             cache: HashMap::new(),
             glyph_id_cache: HashMap::new(),
 
-            #[cfg(not(windows))]
+            #[cfg(target_os = "linux")]
             rasterizer,
-            #[cfg(not(windows))]
+            #[cfg(target_os = "linux")]
             font_keys,
-            #[cfg(not(windows))]
+            #[cfg(target_os = "linux")]
             font_size,
-            #[cfg(not(windows))]
+            #[cfg(target_os = "linux")]
             _ft_library,
-            #[cfg(not(windows))]
+            #[cfg(target_os = "linux")]
             ft_face,
-            #[cfg(not(windows))]
+            #[cfg(target_os = "linux")]
             emoji_ft_face,
-            #[cfg(not(windows))]
+            #[cfg(target_os = "linux")]
             cjk_ft_face,
+
+            #[cfg(target_os = "macos")]
+            coretext,
 
             #[cfg(windows)]
             dwrite,
@@ -530,7 +604,7 @@ impl GlyphCache {
 
         // ── Rasterize (platform-specific) ──
 
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
         let rasterized = {
             let font_key = self.font_keys.get(style);
             let glyph_key = GlyphKey {
@@ -551,6 +625,71 @@ impl GlyphCache {
                 return Some(GlyphEntry::EMPTY);
             }
             convert_crossfont_glyph(glyph)
+        };
+
+        #[cfg(target_os = "macos")]
+        let rasterized = {
+            // Use the font resolver to determine fallback order.
+            let preferred = self.font_resolver.resolve_char(ch);
+            let order = resolved_font_order(preferred);
+
+            log::debug!(
+                "CoreText cache: ensure_styled_char U+{:04X} '{}' style={:?} preferred={:?}",
+                ch as u32,
+                ch.escape_unicode(),
+                style,
+                preferred,
+            );
+
+            let mut result: Option<RasterizedGlyph> = None;
+            for resolved in &order {
+                let (font, _px, try_color) = match resolved {
+                    ResolvedFont::Primary => {
+                        (Some(self.coretext.primary_font(style)), self.pixel_size, false)
+                    }
+                    ResolvedFont::Cjk => {
+                        (self.coretext.cjk_font(), self.cjk_pixel_size, false)
+                    }
+                    ResolvedFont::Emoji => {
+                        (self.coretext.emoji_font(), self.pixel_size, self.coretext.is_emoji_color())
+                    }
+                };
+                if let Some(font) = font {
+                    if let Some(glyph) = self.coretext.rasterize_char(ch, style, font, try_color) {
+                        if glyph.width > 0 && glyph.height > 0 {
+                            log::debug!(
+                                "CoreText cache: U+{:04X} rasterized via {:?} ({}x{} color={})",
+                                ch as u32,
+                                resolved,
+                                glyph.width,
+                                glyph.height,
+                                glyph.is_color,
+                            );
+                            result = Some(glyph);
+                            break;
+                        }
+                    }
+                } else {
+                    log::debug!(
+                        "CoreText cache: U+{:04X} skipping {:?} (no font loaded)",
+                        ch as u32,
+                        resolved,
+                    );
+                }
+            }
+
+            match result {
+                Some(g) => g,
+                None => {
+                    log::debug!(
+                        "CoreText cache: U+{:04X} '{}' -> EMPTY (no font could rasterize)",
+                        ch as u32,
+                        ch.escape_unicode(),
+                    );
+                    self.cache.insert(key, GlyphEntry::EMPTY);
+                    return Some(GlyphEntry::EMPTY);
+                }
+            }
         };
 
         #[cfg(windows)]
@@ -617,7 +756,7 @@ impl GlyphCache {
             return Some(GlyphEntry::EMPTY);
         }
 
-        #[cfg(not(windows))]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             let entry = cache_rasterized_glyph(
                 rasterized,
@@ -661,7 +800,7 @@ impl GlyphCache {
 
         // ── Rasterize (platform-specific) ──
 
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
         let glyph = {
             let (ft_face, px) = match font_class {
                 FontClass::Emoji => (self.emoji_ft_face.as_ref(), self.pixel_size),
@@ -669,6 +808,64 @@ impl GlyphCache {
                 FontClass::Primary => (self.ft_face.as_ref(), self.pixel_size),
             };
             rasterize_glyph_id_ft(ft_face, glyph_id, style, px, wide, self.cell_height)?
+        };
+
+        #[cfg(target_os = "macos")]
+        let glyph = {
+            log::debug!(
+                "CoreText cache: ensure_glyph_id glyph={} class={:?} style={:?} wide={}",
+                glyph_id,
+                font_class,
+                style,
+                wide,
+            );
+
+            let (font, _px, try_color) = match font_class {
+                FontClass::Emoji => (
+                    self.coretext.emoji_font(),
+                    self.pixel_size,
+                    self.coretext.is_emoji_color(),
+                ),
+                FontClass::Cjk => (self.coretext.cjk_font(), self.cjk_pixel_size, false),
+                FontClass::Primary => (
+                    Some(self.coretext.primary_font(style)),
+                    self.pixel_size,
+                    false,
+                ),
+            };
+            match font {
+                Some(f) => match self.coretext.rasterize_glyph_id(f, glyph_id, style, try_color) {
+                    Some(g) => {
+                        log::debug!(
+                            "CoreText cache: glyph_id={} rasterized via {:?} ({}x{} color={})",
+                            glyph_id,
+                            font_class,
+                            g.width,
+                            g.height,
+                            g.is_color,
+                        );
+                        g
+                    }
+                    None => {
+                        log::debug!(
+                            "CoreText cache: glyph_id={} -> EMPTY (rasterize returned None for {:?})",
+                            glyph_id,
+                            font_class,
+                        );
+                        self.glyph_id_cache.insert(key, GlyphEntry::EMPTY);
+                        return Some(GlyphEntry::EMPTY);
+                    }
+                },
+                None => {
+                    log::debug!(
+                        "CoreText cache: glyph_id={} -> EMPTY (no {:?} font loaded)",
+                        glyph_id,
+                        font_class,
+                    );
+                    self.glyph_id_cache.insert(key, GlyphEntry::EMPTY);
+                    return Some(GlyphEntry::EMPTY);
+                }
+            }
         };
 
         #[cfg(windows)]
@@ -699,7 +896,7 @@ impl GlyphCache {
             return Some(entry);
         }
 
-        #[cfg(not(windows))]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             if glyph.width == 0 || glyph.height == 0 {
                 self.glyph_id_cache.insert(key, GlyphEntry::EMPTY);

@@ -96,6 +96,15 @@ pub fn run_tray(state: Arc<Mutex<Server>>, shutdown: Arc<Notify>, server_exited:
     #[cfg(target_os = "linux")]
     gtk::init().expect("failed to init GTK (required for tray icon on Linux)");
 
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+        use objc2_foundation::MainThreadMarker;
+        let mtm = MainThreadMarker::new().expect("tray must run on the main thread");
+        let app = NSApplication::sharedApplication(mtm);
+        app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    }
+
     let icon = load_icon();
 
     // Initial snapshot (may fail on contention, use empty fallback)
@@ -161,13 +170,24 @@ fn pump_events() {
 
 #[cfg(target_os = "macos")]
 fn pump_events() {
-    use core_foundation::runloop::{CFRunLoopRunInMode, kCFRunLoopDefaultMode};
-    unsafe {
-        CFRunLoopRunInMode(
-            kCFRunLoopDefaultMode,
-            TICK_INTERVAL.as_secs_f64(),
-            false as u8,
-        );
+    use objc2_app_kit::{NSApplication, NSEventMask};
+    use objc2_foundation::{MainThreadMarker, NSDate, NSDefaultRunLoopMode};
+    let mtm = MainThreadMarker::new().unwrap();
+    let app = NSApplication::sharedApplication(mtm);
+    let until = NSDate::dateWithTimeIntervalSinceNow(TICK_INTERVAL.as_secs_f64());
+    loop {
+        let event = unsafe {
+            app.nextEventMatchingMask_untilDate_inMode_dequeue(
+                NSEventMask::Any,
+                Some(&until),
+                NSDefaultRunLoopMode,
+                true,
+            )
+        };
+        match event {
+            Some(event) => app.sendEvent(&event),
+            None => break,
+        }
     }
 }
 

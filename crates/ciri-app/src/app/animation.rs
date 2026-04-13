@@ -209,11 +209,16 @@ impl AppModel {
 
         let vw = self.workspaces.active().view_size.width;
         let sp = self.scroll_spring();
+        // In overview mode, jump directly to target widths — animating column
+        // widths while zoomed out causes a visible resize when switching panels
+        // across workspaces (the col_widths array carries stale values from the
+        // previous active workspace).
+        let skip_anim = !self.config.animation.enabled || self.overview.active;
         for (i, col) in self.workspaces.active().columns.iter().enumerate() {
             let target = col.resolve_width(vw) as f64;
             let current = self.anim_mgr.col_widths[i].value();
             let anim_target = self.anim_mgr.col_widths[i].target();
-            if self.config.animation.enabled {
+            if !skip_anim {
                 if current == 0.0 {
                     // New column: animate from average neighbor width for smooth entry
                     let neighbor = if i > 0 {

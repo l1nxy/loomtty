@@ -50,7 +50,9 @@ pub(crate) async fn run_tick_loop(
     let mut pending_sends: Vec<PendingSend> = Vec::new();
     let mut session_names: Vec<String> = Vec::new();
 
+    let mut had_pty_data: bool;
     loop {
+        had_pty_data = false;
         // Sleep until notified (PTY output or client input)
         input_notify.notified().await;
 
@@ -81,6 +83,11 @@ pub(crate) async fn run_tick_loop(
 
                 // Process PTY output and extract damage
                 let clipboard_msgs = session.process_pty_and_damage(&mut s.clients);
+                // Track if any pane had PTY data this tick by checking
+                // whether drain produced any chunks (via process_pty_output return).
+                if session.last_tick_had_pty_data {
+                    had_pty_data = true;
+                }
 
                 // Send OSC 52 clipboard writes to clients of this session
                 for clip_msg in &clipboard_msgs {
@@ -504,8 +511,19 @@ pub(crate) async fn run_tick_loop(
             }
         }
 
-        // Throttle: don't loop faster than frame rate even if notified continuously
-        tokio::time::sleep(frame_interval).await;
+        // Adaptive throttle: if this tick processed PTY data, skip the sleep
+        // and loop immediately — more data is likely queued behind.
+        //
+        // IMPORTANT: do NOT consume input_notify permits here (e.g. via
+        // select! { notified => ... }) — doing so races with the PTY reader
+        // and can deadlock when the reader thread is blocked on a full channel
+        // while the tick loop waits for a notification that was already consumed.
+        if had_pty_data {
+            tokio::task::yield_now().await;
+            input_notify.notify_one();
+        } else {
+            tokio::time::sleep(frame_interval).await;
+        }
     }
 }
 

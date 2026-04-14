@@ -42,6 +42,8 @@ pub(crate) struct Session {
     pub(crate) last_title: HashMap<u64, String>,
     /// Optional callback to wake the tick loop when PTY output is available.
     pub(crate) pty_notify: Option<ciri_term::pty::PtyOutputNotify>,
+    /// Whether the last call to process_pty_and_damage() drained any PTY data.
+    pub(crate) last_tick_had_pty_data: bool,
 }
 
 impl Session {
@@ -75,6 +77,7 @@ impl Session {
             last_cursor: HashMap::new(),
             last_title: HashMap::new(),
             pty_notify: None,
+            last_tick_had_pty_data: false,
         }
     }
 
@@ -518,10 +521,13 @@ impl Session {
         clients: &mut HashMap<u64, ClientState>,
     ) -> Vec<ServerMessage> {
         let mut clipboard_msgs = Vec::new();
+        self.last_tick_had_pty_data = false;
         let pane_ids: Vec<u64> = self.panes.keys().copied().collect();
         for pane_id in pane_ids {
             let pane = self.panes.get_mut(&pane_id).unwrap();
-            pane.process_pty_output();
+            if pane.process_pty_output() {
+                self.last_tick_had_pty_data = true;
+            }
 
             // Drain OSC 52 clipboard writes
             for data in pane.drain_clipboard() {

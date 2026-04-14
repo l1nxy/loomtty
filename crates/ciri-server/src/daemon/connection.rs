@@ -231,12 +231,20 @@ pub(crate) async fn handle_client<R, W>(
     // and the socket closes so the client-side reader detects EOF.
     drop(tx);
 
-    // Spawn writer task
+    // Spawn writer task — batch multiple pending frames before flushing
+    // to reduce syscall overhead on high-throughput output.
     let write_handle = tokio::spawn(async move {
         while let Some(frame) = rx.recv().await {
             if writer.write_all(&frame).await.is_err() {
                 break;
             }
+            // Drain any additional frames that are already queued
+            while let Ok(frame) = rx.try_recv() {
+                if writer.write_all(&frame).await.is_err() {
+                    return;
+                }
+            }
+            // Single flush for the entire batch
             if writer.flush().await.is_err() {
                 break;
             }

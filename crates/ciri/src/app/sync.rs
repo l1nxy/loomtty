@@ -754,6 +754,49 @@ mod tests {
     // cycle_session 测试
     // -----------------------------------------------------------------------
 
+    /// Regression: server's SessionList comes sorted by last_attached, so the
+    /// session you just switched to bubbles to the front. With order-sensitive
+    /// cycling, pressing `i` after each switch would oscillate between the two
+    /// most-recent sessions instead of advancing to the next slot. Cycle must
+    /// use a stable order (sorted by name) regardless of cache order.
+    #[test]
+    fn cycle_session_advances_even_when_cache_reorders_after_switch() {
+        let mut app = make_app();
+        app.core.active_slot_id = "remote".to_string();
+        app.core.session_name = "alpha".to_string();
+        // Initial server response: alpha was attached most recently.
+        app.core.cached_local_sessions = vec![
+            SessionInfo { name: "alpha".into(), running: true, pane_count: 1, client_count: 1 },
+            SessionInfo { name: "beta".into(),  running: true, pane_count: 1, client_count: 1 },
+        ];
+        let (local_slot, _ev, _local_cmd_rx) =
+            make_bg_slot("local", super::super::ConnectionKind::Local, "main", true);
+        app.core.background_slots.insert("local".into(), local_slot);
+        let (cmd_tx, _remote_cmd_rx) = crossbeam_channel::unbounded();
+        app.core.server_tx = Some(cmd_tx);
+        let (_ev_tx, server_rx) = crossbeam_channel::unbounded();
+        app.core.server_rx = Some(server_rx);
+
+        // Press 1: alpha → beta
+        app.cycle_session(1);
+        // Simulate server confirming the switch + sending a fresh SessionList
+        // ordered by last_attached: beta is now first.
+        app.core.session_name = "beta".to_string();
+        app.core.pending_session_name = None;
+        app.core.cached_local_sessions = vec![
+            SessionInfo { name: "beta".into(),  running: true, pane_count: 1, client_count: 1 },
+            SessionInfo { name: "alpha".into(), running: true, pane_count: 1, client_count: 1 },
+        ];
+
+        // Press 2: must advance to the local slot — NOT loop back to alpha.
+        app.cycle_session(1);
+        assert_eq!(
+            app.core.active_slot_id, "local",
+            "press 2 must reach local; instead stayed on {}",
+            app.core.active_slot_id
+        );
+    }
+
     #[test]
     fn cycle_session_reaches_bg_slot_after_traversing_remote_sessions() {
         // Setup: on remote with multi-session cache, local in bg.

@@ -590,23 +590,38 @@ impl App {
         let mut bg_ids: Vec<String> = self.core.background_slots.keys().cloned().collect();
         bg_ids.sort();
 
-        // Current slot — use cached_local_sessions if populated.
+        // Current slot — use cached_local_sessions if populated. Sort by name
+        // for a stable cycle order: the server's SessionList response is sorted
+        // by last_attached, which means the active session bubbles to the
+        // front after each switch and the cycle would oscillate between the
+        // last two sessions instead of advancing.
         if !self.core.cached_local_sessions.is_empty() {
-            for s in &self.core.cached_local_sessions {
-                out.push((current_slot.clone(), s.name.clone()));
+            let mut names: Vec<String> = self
+                .core
+                .cached_local_sessions
+                .iter()
+                .map(|s| s.name.clone())
+                .collect();
+            names.sort();
+            for n in names {
+                out.push((current_slot.clone(), n));
             }
         } else {
             out.push((current_slot.clone(), self.core.session_name.clone()));
         }
 
         // Background slots — use cached_slot_sessions if populated, else the
-        // slot's last-active session name as a single fallback entry.
+        // slot's last-active session name as a single fallback entry. Same
+        // stable-order treatment.
         for id in &bg_ids {
             if let Some(sessions) = self.core.cached_slot_sessions.get(id)
                 && !sessions.is_empty()
             {
-                for s in sessions {
-                    out.push((id.clone(), s.name.clone()));
+                let mut names: Vec<String> =
+                    sessions.iter().map(|s| s.name.clone()).collect();
+                names.sort();
+                for n in names {
+                    out.push((id.clone(), n));
                 }
             } else if let Some(slot) = self.core.background_slots.get(id) {
                 out.push((id.clone(), slot.session_name.clone()));
@@ -622,15 +637,7 @@ impl App {
     /// connections behind the scenes when crossing slot boundaries.
     pub fn cycle_session(&mut self, direction: i32) {
         let list = self.flat_session_list();
-        log::debug!(
-            "cycle_session(dir={direction}): list={:?} active_slot={} session={} pending={:?}",
-            list,
-            self.core.active_slot_id,
-            self.core.session_name,
-            self.core.pending_session_name,
-        );
         if list.len() < 2 {
-            log::debug!("cycle_session: list len < 2, no-op");
             return;
         }
         let current_slot = self.core.active_slot_id.clone();
@@ -653,11 +660,6 @@ impl App {
         if target_slot == current_slot && target_session == current_session {
             return;
         }
-
-        log::debug!(
-            "cycle_session: cur_idx={} -> next_idx={} target=({}, {})",
-            cur_idx, next_idx, target_slot, target_session
-        );
 
         if target_slot != current_slot {
             self.switch_to_slot(&target_slot);

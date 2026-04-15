@@ -9,6 +9,7 @@ pub(crate) mod tokens;
 mod palette;
 mod paste_dialog;
 mod tab_bar;
+mod text_layout;
 mod top_bar;
 pub(crate) mod types;
 

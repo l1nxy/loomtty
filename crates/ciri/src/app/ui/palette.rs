@@ -1,7 +1,7 @@
 use ciri_config::theme::ThemeConfig;
-use unicode_width::UnicodeWidthStr;
 
 use super::builder::UiBuilder;
+use super::text_layout;
 use super::tokens;
 use super::types::{UiAction, UiComponent, UiContext, UiPaletteHit, UiScene};
 use crate::app::App;
@@ -44,33 +44,7 @@ pub(crate) struct PaletteComponent {
 
 fn truncate_label(label: &str, panel_w: f32, cx: &UiContext<'_>) -> String {
     let max_w = (panel_w - 16.0).max(0.0);
-    // Prefer shape-based width when the UI shaper has a real face; that's
-    // the only way to be correct for proportional UI fonts.
-    if let Some(cell) = cx.ui_shaper {
-        let mut shaper = cell.borrow_mut();
-        if shaper.has_face() {
-            let ellipsis = "...";
-            let full_w = shaper.measure(label);
-            if full_w <= max_w {
-                return label.to_string();
-            }
-            let ellipsis_w = shaper.measure(ellipsis);
-            let budget = (max_w - ellipsis_w).max(0.0);
-            let (prefix_bytes, _) = shaper.prefix_fit(label, budget);
-            let cut = label.floor_char_boundary(prefix_bytes.min(label.len()));
-            return format!("{}{}", &label[..cut], ellipsis);
-        }
-    }
-    // Legacy monospace-grid fallback — identical to the pre-shaper path.
-    let max_cols = (max_w / cx.cell_w).floor().max(1.0) as usize;
-    if UnicodeWidthStr::width(label) > max_cols {
-        format!(
-            "{}...",
-            &label[..label.floor_char_boundary(max_cols.saturating_sub(3))]
-        )
-    } else {
-        label.to_string()
-    }
+    text_layout::truncate_with_ellipsis(cx, label, max_w)
 }
 
 impl PaletteComponent {

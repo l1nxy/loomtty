@@ -6,22 +6,10 @@
 //! as a side-effect of layout for use in click/hover dispatch.
 
 use ciri_render::rect::Rect;
-use unicode_width::UnicodeWidthStr;
 
+use super::text_layout;
 use super::types::{UiContext, UiScene};
 use crate::app::status_bar::{TextEmitParams, emit_status_text};
-
-/// Measure `text` using `cx.ui_shaper` when available, otherwise fall back
-/// to the legacy monospace grid width. Returns pixel width.
-fn measure_ui_text(cx: &UiContext<'_>, text: &str) -> f32 {
-    if let Some(cell) = cx.ui_shaper {
-        let mut shaper = cell.borrow_mut();
-        if shaper.has_face() {
-            return shaper.measure(text);
-        }
-    }
-    UnicodeWidthStr::width(text) as f32 * cx.cell_w
-}
 
 // ─── Hit record ──────────────────────────────────────────────────────
 
@@ -271,7 +259,14 @@ impl<'a, 'b> UiBuilder<'a, 'b> {
 
     /// Pixel width of `text`, shaped with the UI font when available.
     pub fn text_width(&self, text: &str) -> f32 {
-        measure_ui_text(self.cx, text)
+        text_layout::measure(self.cx, text)
+    }
+
+    /// Truncate `text` with a trailing "…" so its shaped width fits in
+    /// `max_w` pixels. Returns the source string unchanged when it
+    /// already fits, or "" when `max_w` can't even hold the ellipsis.
+    pub fn truncate_to_width(&self, text: &str, max_w: f32) -> String {
+        text_layout::truncate_with_ellipsis(self.cx, text, max_w)
     }
 
     /// Height of one text row.

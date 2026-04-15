@@ -622,7 +622,15 @@ impl App {
     /// connections behind the scenes when crossing slot boundaries.
     pub fn cycle_session(&mut self, direction: i32) {
         let list = self.flat_session_list();
+        log::debug!(
+            "cycle_session(dir={direction}): list={:?} active_slot={} session={} pending={:?}",
+            list,
+            self.core.active_slot_id,
+            self.core.session_name,
+            self.core.pending_session_name,
+        );
         if list.len() < 2 {
+            log::debug!("cycle_session: list len < 2, no-op");
             return;
         }
         let current_slot = self.core.active_slot_id.clone();
@@ -645,6 +653,11 @@ impl App {
         if target_slot == current_slot && target_session == current_session {
             return;
         }
+
+        log::debug!(
+            "cycle_session: cur_idx={} -> next_idx={} target=({}, {})",
+            cur_idx, next_idx, target_slot, target_session
+        );
 
         if target_slot != current_slot {
             self.switch_to_slot(&target_slot);

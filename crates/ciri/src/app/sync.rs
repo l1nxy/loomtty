@@ -751,6 +751,76 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // cycle_session 测试
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cycle_session_reaches_bg_slot_after_traversing_remote_sessions() {
+        // Setup: on remote with multi-session cache, local in bg.
+        let mut app = make_app();
+        app.core.active_slot_id = "remote:host:7890".to_string();
+        app.core.session_name = "alpha".to_string();
+        app.core.cached_local_sessions = vec![
+            SessionInfo {
+                name: "alpha".into(),
+                running: true,
+                pane_count: 1,
+                client_count: 1,
+            },
+            SessionInfo {
+                name: "beta".into(),
+                running: true,
+                pane_count: 1,
+                client_count: 1,
+            },
+            SessionInfo {
+                name: "gamma".into(),
+                running: true,
+                pane_count: 1,
+                client_count: 1,
+            },
+        ];
+        let (local_slot, _ev, local_cmd_rx) =
+            make_bg_slot("default", super::super::ConnectionKind::Local, "main", true);
+        app.core
+            .background_slots
+            .insert("default".into(), local_slot);
+        // Hook current "remote" connection so cycle_session's SwitchSession
+        // sends land somewhere (we drain to verify).
+        let (cmd_tx, remote_cmd_rx) = crossbeam_channel::unbounded();
+        app.core.server_tx = Some(cmd_tx);
+        let (_ev_tx, server_rx) = crossbeam_channel::unbounded();
+        app.core.server_rx = Some(server_rx);
+
+        // Press 1: alpha → beta (within remote)
+        app.cycle_session(1);
+        let m1 = remote_cmd_rx.try_recv().unwrap();
+        assert!(matches!(m1, ClientMessage::SwitchSession { ref session_name } if session_name == "beta"),
+            "press 1 should send SwitchSession(beta), got {:?}", m1);
+
+        // Press 2: beta → gamma (within remote, using `pending` to advance)
+        app.cycle_session(1);
+        let m2 = remote_cmd_rx.try_recv().unwrap();
+        assert!(matches!(m2, ClientMessage::SwitchSession { ref session_name } if session_name == "gamma"),
+            "press 2 should send SwitchSession(gamma), got {:?}", m2);
+
+        // Press 3: gamma → (default, main) — CROSS-SLOT SWITCH expected.
+        app.cycle_session(1);
+        assert_eq!(
+            app.core.active_slot_id, "default",
+            "press 3 should switch to local slot, but active_slot_id={}",
+            app.core.active_slot_id
+        );
+        assert_eq!(
+            app.core.session_name, "main",
+            "after switching to local slot, session_name should be the slot's saved name",
+        );
+        // No further SwitchSession should have been sent on press 3 since
+        // the local slot's session already matches the cycle target.
+        let _ = local_cmd_rx; // keep alive so channels don't drop
+    }
+
+    // -----------------------------------------------------------------------
     // buffered_events 机制测试
     // -----------------------------------------------------------------------
 

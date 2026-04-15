@@ -63,9 +63,11 @@ pub enum Action {
     EnterMode(String),
     /// Toggle locked mode (all keys pass through to terminal).
     ToggleLock,
-    /// Switch to the next session on the current server.
+    /// Switch to the next connection (cycles through slots, restoring each
+    /// slot's last-active session). For within-slot session switching use the
+    /// session palette.
     NextSession,
-    /// Switch to the previous session on the current server.
+    /// Switch to the previous connection (reverse of NextSession).
     PrevSession,
     /// Create and switch to a brand-new session (auto-generated name).
     NewSession,

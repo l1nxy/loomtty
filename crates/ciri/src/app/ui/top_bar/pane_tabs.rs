@@ -3,6 +3,7 @@ use ciri_config::theme::ThemeConfig;
 
 use super::super::builder::UiBuilder;
 use super::super::layout::{Axis, SizeHint, UiElement, UiRect};
+use super::super::tokens;
 use super::super::types::{UiAction, UiContext, UiScene};
 use crate::app::top_bar::PaneTabLayout;
 
@@ -37,7 +38,7 @@ impl<'a> UiElement for PaneTabsElement<'a> {
         let fg = ThemeConfig::parse_color(&cx.config.theme.foreground);
         let dim = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
         let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
-        let separator_color = [dim[0], dim[1], dim[2], 0.3];
+        let separator_color = tokens::tint(dim, tokens::ALPHA_SEPARATOR);
         let padding = cx
             .config
             .statusbar
@@ -47,7 +48,7 @@ impl<'a> UiElement for PaneTabsElement<'a> {
 
         let tabs_start_x = rect.x;
         let tabs_end_x = rect.right();
-        let indicator_thickness = 1.5_f32;
+        let indicator_thickness = tokens::BORDER_THICK;
         // The active-tab accent strip sits on the bar edge that touches
         // the terminal viewport — opposite side from the bar's outer
         // edge. For a `Top` status bar, that is the bottom of `rect`;
@@ -56,7 +57,7 @@ impl<'a> UiElement for PaneTabsElement<'a> {
             StatusBarPosition::Top => rect.bottom() - indicator_thickness,
             StatusBarPosition::Bottom => rect.y,
         };
-        let separator_inset = rect.h * 0.2;
+        let separator_inset = tokens::SPACE_1;
 
         let mut ui = UiBuilder::new_horizontal(
             rect.x, text_y, rect.w, cx.cell_h, 0.0, 0.0, 0.0, false, cx, scene,
@@ -71,12 +72,32 @@ impl<'a> UiElement for PaneTabsElement<'a> {
                 continue;
             }
 
-            // Separator on the leading edge (skipped if scrolled off-screen).
-            if tab.x > tabs_start_x - 1.0 && tab.x < tabs_end_x {
+            // Active / hover background tint — same vocabulary as the
+            // side `tab_bar`, so integrated and side tabs read as the
+            // same component rotated onto a different axis.
+            let bg_alpha = if tab.active {
+                Some(tokens::ALPHA_TAB_ACTIVE_BG)
+            } else if hovered {
+                Some(tokens::ALPHA_HOVER_BG)
+            } else {
+                None
+            };
+            if let Some(a) = bg_alpha {
                 ui.abs_rect(
-                    tab.x - 0.5,
+                    visible_left,
+                    rect.y,
+                    visible_w,
+                    rect.h,
+                    tokens::tint(accent, a),
+                );
+            }
+
+            // Separator on the leading edge (skipped if scrolled off-screen).
+            if tab.x > tabs_start_x - tokens::BORDER_THIN && tab.x < tabs_end_x {
+                ui.abs_rect(
+                    tab.x - tokens::BORDER_THIN * 0.5,
                     rect.y + separator_inset,
-                    1.0,
+                    tokens::BORDER_THIN,
                     rect.h - separator_inset * 2.0,
                     separator_color,
                 );

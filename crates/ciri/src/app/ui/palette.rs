@@ -2,6 +2,7 @@ use ciri_config::theme::ThemeConfig;
 use unicode_width::UnicodeWidthStr;
 
 use super::builder::UiBuilder;
+use super::tokens;
 use super::types::{UiAction, UiComponent, UiContext, UiPaletteHit, UiScene};
 use crate::app::App;
 
@@ -178,15 +179,12 @@ impl UiComponent for PaletteComponent {
         let border_color = ThemeConfig::parse_color(&cx.config.theme.border_active);
         let dim_color = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
         let fg_color = ThemeConfig::parse_color(&cx.config.theme.foreground);
-        let selected_bg = [accent[0], accent[1], accent[2], 0.25];
-        let hovered_bg = [accent[0], accent[1], accent[2], 0.14];
-        let remote_host_color = ThemeConfig::parse_color(&cx.config.theme.cyan);
-        let remote_session_color = ThemeConfig::parse_color(&cx.config.theme.blue);
-        let ssh_color = ThemeConfig::parse_color(&cx.config.theme.yellow);
+        let selected_bg = tokens::tint(accent, tokens::ALPHA_SELECTED_BG);
+        let hovered_bg = tokens::tint(accent, tokens::ALPHA_HOVER_BG);
 
         let px = self.layout.panel_x;
         let pw = self.layout.panel_w;
-        let text_pad = 8.0;
+        let text_pad = tokens::SPACE_2;
 
         let mut ui = UiBuilder::new_vertical(
             px,
@@ -202,7 +200,7 @@ impl UiComponent for PaletteComponent {
         );
 
         // Backdrop + frame
-        ui.modal_backdrop([bg_color[0] * 0.5, bg_color[1] * 0.5, bg_color[2] * 0.5, 0.6]);
+        ui.modal_backdrop([0.0, 0.0, 0.0, tokens::ALPHA_BACKDROP]);
         ui.bordered_panel(
             px,
             self.layout.panel_y,
@@ -210,12 +208,12 @@ impl UiComponent for PaletteComponent {
             self.layout.panel_h,
             bg_color,
             border_color,
-            2.0,
+            tokens::BORDER_THIN,
             false,
         );
 
         // Input row
-        let input_row_h = cx.cell_h + 8.0;
+        let input_row_h = tokens::control_height_md(cx.cell_h);
         ui.horizontal(Some(pw), input_row_h, 0.0, |ui| {
             let (rx, ry) = ui.cursor_pos();
             // Slightly lighter bg for input row
@@ -254,7 +252,7 @@ impl UiComponent for PaletteComponent {
                 text_y,
                 2.0,
                 cx.cell_h,
-                [fg_color[0], fg_color[1], fg_color[2], 0.8],
+                tokens::tint(fg_color, tokens::ALPHA_CURSOR),
             );
         });
 
@@ -278,20 +276,18 @@ impl UiComponent for PaletteComponent {
                     } else if row.is_hovered {
                         ui.abs_rect(rx, ry, pw, row_h, hovered_bg);
                     }
-                    // Row label (colored by entry kind)
+                    // Row label — collapse kind-specific colors into one
+                    // visual hierarchy: foreground for content, accent only
+                    // for the "Connect to New Host..." CTA, and the accent
+                    // tint bg already carries selection state. Labels
+                    // themselves embed semantic prefixes (`+`, `●`, `Kill:`,
+                    // `[slot]`) so kind is still discoverable.
                     let color = if row.is_selected || row.is_hovered {
                         fg_color
+                    } else if row.style == PaletteRowStyle::ConnectRemotePrompt {
+                        accent
                     } else {
-                        match row.style {
-                            PaletteRowStyle::SectionHeader => unreachable!(),
-                            PaletteRowStyle::Action | PaletteRowStyle::Session => dim_color,
-                            PaletteRowStyle::RemoteHost | PaletteRowStyle::DirectConnect => {
-                                remote_host_color
-                            }
-                            PaletteRowStyle::RemoteSession => remote_session_color,
-                            PaletteRowStyle::SshShell => ssh_color,
-                            PaletteRowStyle::ConnectRemotePrompt => remote_host_color,
-                        }
+                        fg_color
                     };
                     ui.abs_text(&row.label, rx + text_pad, ry + 2.0, color);
                 }
@@ -300,16 +296,16 @@ impl UiComponent for PaletteComponent {
 
         // Scrollbar (absolute — overlays the entry list area)
         if self.total_entries > self.layout.visible_rows {
-            let track_w = 4.0;
-            let track_x = px + pw - 8.0;
+            let track_w = tokens::SPACE_1;
+            let track_x = px + pw - tokens::SPACE_2;
             let track_y = self.layout.sep_y + 2.0;
-            let track_h = (self.layout.visible_rows as f32 * row_h - 4.0).max(0.0);
+            let track_h = (self.layout.visible_rows as f32 * row_h - tokens::SPACE_1).max(0.0);
             ui.abs_rect(
                 track_x,
                 track_y,
                 track_w,
                 track_h,
-                [border_color[0], border_color[1], border_color[2], 0.20],
+                tokens::tint(border_color, tokens::ALPHA_SCROLL_TRACK),
             );
 
             let thumb_h = (track_h * (self.layout.visible_rows as f32 / self.total_entries as f32))
@@ -325,7 +321,7 @@ impl UiComponent for PaletteComponent {
                 thumb_y,
                 track_w,
                 thumb_h,
-                [accent[0], accent[1], accent[2], 0.65],
+                tokens::tint(accent, tokens::ALPHA_SCROLL_THUMB),
             );
         }
 

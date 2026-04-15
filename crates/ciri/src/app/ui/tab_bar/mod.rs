@@ -23,6 +23,7 @@ use ciri_config::theme::ThemeConfig;
 use self::truncate::truncate_to_cols;
 use super::builder::UiBuilder;
 use super::layout::{Axis, SizeHint, UiElement, UiRect};
+use super::tokens;
 use super::types::{UiAction, UiContext, UiScene};
 use crate::app::App;
 
@@ -42,6 +43,8 @@ pub(crate) struct TabBarComponent {
     bar_width: f32,
     /// Height of one tab row, from `config.tabbar.tab_height`.
     tab_height: f32,
+    /// Vertical gap between adjacent tabs, from `config.tabbar.tab_gap`.
+    tab_gap: f32,
     /// Which side the bar sits on. Used so the active-tab accent strip
     /// and the outer separator line anchor to the bar edge that touches
     /// the terminal — i.e. the *inner* edge — making the bar look
@@ -67,6 +70,7 @@ impl TabBarComponent {
             hovered_tab: app.core.hovered_pane_tab,
             bar_width: app.core.config.tabbar.width,
             tab_height: app.core.config.tabbar.tab_height,
+            tab_gap: app.core.config.tabbar.tab_gap,
             position: app.core.config.tabbar.position,
         }
     }
@@ -74,7 +78,8 @@ impl TabBarComponent {
     /// Row rect for the nth tab inside the bar's rect. Clipped at the
     /// bottom if the bar would overflow (callers should skip empty rects).
     fn row_rect(&self, rect: UiRect, idx: usize) -> UiRect {
-        let y = rect.y + idx as f32 * self.tab_height;
+        let stride = self.tab_height + self.tab_gap;
+        let y = rect.y + idx as f32 * stride;
         let max_bottom = rect.bottom();
         let h = (self.tab_height).min((max_bottom - y).max(0.0));
         UiRect::new(rect.x, y, rect.w, h)
@@ -101,9 +106,8 @@ impl UiElement for TabBarComponent {
         let fg = ThemeConfig::parse_color(&cx.config.theme.foreground);
         let dim = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
         let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
-        let sep = [dim[0], dim[1], dim[2], 0.25];
-        let row_sep = [dim[0], dim[1], dim[2], 0.15];
-        let indicator_w = 2.0_f32;
+        let sep = tokens::tint(dim, tokens::ALPHA_SEPARATOR);
+        let indicator_w = tokens::BORDER_THICK;
 
         // Absolute-coord builder anchored at the bar's top-left.
         let mut ui = UiBuilder::new_horizontal(
@@ -116,11 +120,11 @@ impl UiElement for TabBarComponent {
         // active indicator both anchor to this edge so the bar looks
         // "attached" to the terminal on either side.
         let inner_sep_x = match self.position {
-            TabBarPosition::Left => rect.right() - 1.0,
+            TabBarPosition::Left => rect.right() - tokens::BORDER_THIN,
             TabBarPosition::Right => rect.x,
             // Unreachable in paint — `TabBarComponent` is only wired in
             // for the two side positions.
-            TabBarPosition::Integrated => rect.right() - 1.0,
+            TabBarPosition::Integrated => rect.right() - tokens::BORDER_THIN,
         };
         let indicator_x = match self.position {
             TabBarPosition::Left => rect.right() - indicator_w,
@@ -137,8 +141,17 @@ impl UiElement for TabBarComponent {
 
         // Bar background + outer separator on the inner edge.
         ui.abs_rect(rect.x, rect.y, rect.w, rect.h, bar_bg);
-        ui.abs_rect(inner_sep_x, rect.y, 1.0, rect.h, sep);
+        ui.abs_rect(inner_sep_x, rect.y, tokens::BORDER_THIN, rect.h, sep);
 
+        // Shared vocabulary with integrated tabs in `top_bar::pane_tabs`:
+        //   • hairline separator between adjacent rows (SPACE_1 horizontal inset)
+        //   • active row gets a subtle accent-tint bg + accent indicator strip
+        //   • hovered row gets a lighter accent-tint bg
+        //   • inactive rows: just dim text on the bar bg
+        // The only axis-specific differences are orientation: side bar
+        // draws the separator as a horizontal hairline, integrated draws
+        // it vertical; side indicator is vertical, integrated horizontal.
+        let sep_inset_x = tokens::SPACE_1;
         for (idx, tab) in self.tabs.iter().enumerate() {
             let row = self.row_rect(rect, idx);
             if row.is_empty() {
@@ -146,10 +159,31 @@ impl UiElement for TabBarComponent {
             }
             let hovered = self.hovered_tab == Some(tab.pane_id);
 
-            // Row separator (skip above the first row).
-            if idx > 0 {
-                ui.abs_rect(row.x, row.y, row.w, 1.0, row_sep);
+            // Active / hover background tint — mirrors integrated variant.
+            let bg_alpha = if tab.active {
+                Some(tokens::ALPHA_TAB_ACTIVE_BG)
+            } else if hovered {
+                Some(tokens::ALPHA_HOVER_BG)
+            } else {
+                None
+            };
+            if let Some(a) = bg_alpha {
+                ui.abs_rect(row.x, row.y, row.w, row.h, tokens::tint(accent, a));
             }
+
+            // Inter-row separator on the leading edge of every row except
+            // the first, inset on both sides like the integrated variant's
+            // vertical separator.
+            if idx > 0 {
+                ui.abs_rect(
+                    row.x + sep_inset_x,
+                    row.y - tokens::BORDER_THIN * 0.5,
+                    row.w - sep_inset_x * 2.0,
+                    tokens::BORDER_THIN,
+                    sep,
+                );
+            }
+
             // Active-tab accent strip on the inner edge.
             if tab.active {
                 ui.abs_rect(indicator_x, row.y, indicator_w, row.h, accent);

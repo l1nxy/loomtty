@@ -5,6 +5,7 @@ mod hints_bar;
 pub(super) mod info_box;
 pub(crate) mod layout;
 mod overview;
+pub(crate) mod tokens;
 mod palette;
 mod paste_dialog;
 mod tab_bar;

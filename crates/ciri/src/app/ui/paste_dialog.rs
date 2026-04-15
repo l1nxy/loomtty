@@ -1,6 +1,7 @@
 use ciri_config::theme::ThemeConfig;
 
 use super::builder::UiBuilder;
+use super::tokens;
 use super::types::{UiAction, UiComponent, UiContext, UiPasteDialogHit, UiScene};
 use crate::app::App;
 
@@ -40,10 +41,10 @@ impl PasteDialogComponent {
             pending.preview.clone()
         };
         let btn_w = 100.0;
-        let btn_h = cx.cell_h + 12.0;
-        let btn_y = dy + dialog_h - 16.0 - btn_h;
-        let paste_x = dx + dialog_w / 2.0 - btn_w - 16.0;
-        let cancel_x = dx + dialog_w / 2.0 + 16.0;
+        let btn_h = tokens::control_height_lg(cx.cell_h);
+        let btn_y = dy + dialog_h - tokens::SPACE_4 - btn_h;
+        let paste_x = dx + dialog_w / 2.0 - btn_w - tokens::SPACE_4;
+        let cancel_x = dx + dialog_w / 2.0 + tokens::SPACE_4;
 
         Some(Self {
             dx,
@@ -94,11 +95,14 @@ impl UiComponent for PasteDialogComponent {
     fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         let border_color = ThemeConfig::parse_color(&cx.config.theme.border_active);
         let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
-        let bw = 1.0;
-        let pad = 16.0;
+        let bg = ThemeConfig::parse_color(&cx.config.theme.background);
+        let fg = ThemeConfig::parse_color(&cx.config.theme.foreground);
+        let dim = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
+        let bw = tokens::BORDER_THIN;
+        let pad = tokens::SPACE_4;
         let content_w = self.dialog_w - pad * 2.0;
         let btn_w = 100.0;
-        let btn_h = cx.cell_h + 12.0;
+        let btn_h = tokens::control_height_lg(cx.cell_h);
 
         let mut ui = UiBuilder::new_vertical(
             self.dx + pad,
@@ -114,36 +118,50 @@ impl UiComponent for PasteDialogComponent {
         );
 
         // Full-screen dimmed backdrop + dialog frame
-        ui.modal_backdrop([0.0, 0.0, 0.0, 0.5]);
+        ui.modal_backdrop([0.0, 0.0, 0.0, tokens::ALPHA_BACKDROP]);
+        // Surface = theme background nudged slightly lighter for stacking
+        // contrast against the dimmed backdrop.
+        let surface = [
+            (bg[0] + 0.03).min(1.0),
+            (bg[1] + 0.03).min(1.0),
+            (bg[2] + 0.03).min(1.0),
+            1.0,
+        ];
         ui.bordered_panel_inset(
             self.dx,
             self.dy,
             self.dialog_w,
             self.dialog_h,
-            [0.12, 0.12, 0.15, 1.0],
+            surface,
             border_color,
             bw,
             false,
         );
 
         // Title
-        ui.label(&self.title, [0.9, 0.9, 0.9, 1.0]);
-        ui.bg_rect(content_w, 12.0, [0.0; 4]); // spacing
+        ui.label(&self.title, fg);
+        ui.bg_rect(content_w, tokens::SPACE_3, [0.0; 4]); // spacing
 
         // "Preview:" label
-        ui.label("Preview:", [0.6, 0.6, 0.6, 1.0]);
-        ui.bg_rect(content_w, 4.0, [0.0; 4]); // spacing
+        ui.label("Preview:", dim);
+        ui.bg_rect(content_w, tokens::SPACE_1, [0.0; 4]); // spacing
 
-        // Preview box
+        // Preview box — recessed surface, one step darker than dialog bg.
+        let recessed = [
+            (bg[0] - 0.04).max(0.0),
+            (bg[1] - 0.04).max(0.0),
+            (bg[2] - 0.04).max(0.0),
+            1.0,
+        ];
         let (_, preview_y) = ui.cursor_pos();
         ui.abs_rect(
-            self.dx + pad - 4.0,
+            self.dx + pad - tokens::SPACE_1,
             preview_y - 2.0,
-            content_w + 8.0,
-            cx.cell_h + 4.0,
-            [0.08, 0.08, 0.1, 1.0],
+            content_w + tokens::SPACE_2,
+            cx.cell_h + tokens::SPACE_1,
+            recessed,
         );
-        ui.label(&self.preview, [0.6, 0.6, 0.6, 1.0]);
+        ui.label(&self.preview, dim);
 
         // Push buttons to bottom
         ui.spacer();
@@ -154,32 +172,34 @@ impl UiComponent for PasteDialogComponent {
             let left_pad = (content_w - total_btn_w) / 2.0;
             ui.bg_rect(left_pad, btn_h, [0.0; 4]); // center offset
 
-            let paste_bg = if self.hovered_button == Some(super::super::PasteButton::Paste) {
-                [accent[0], accent[1], accent[2], 0.8]
+            let paste_alpha = if self.hovered_button == Some(super::super::PasteButton::Paste) {
+                tokens::ALPHA_PRIMARY_HOVER
             } else {
-                [accent[0], accent[1], accent[2], 0.5]
+                tokens::ALPHA_PRIMARY_REST
             };
+            let paste_bg = tokens::tint(accent, paste_alpha);
             let (px, py) = ui.cursor_pos();
             ui.abs_rect(px, py, btn_w, btn_h, paste_bg);
             let text_y = py + (btn_h - cx.cell_h) / 2.0;
             let text_x = px + (btn_w - ui.text_width("Paste")) / 2.0;
-            ui.abs_text("Paste", text_x, text_y, [1.0, 1.0, 1.0, 1.0]);
+            ui.abs_text("Paste", text_x, text_y, fg);
             ui.bg_rect(btn_w, btn_h, [0.0; 4]); // advance past paste button
 
             ui.bg_rect(pad, btn_h, [0.0; 4]); // gap between buttons
 
-            let cancel_bg = if self.hovered_button == Some(super::super::PasteButton::Cancel) {
-                [0.4, 0.4, 0.4, 0.8]
+            let cancel_alpha = if self.hovered_button == Some(super::super::PasteButton::Cancel) {
+                tokens::ALPHA_SECONDARY_HOVER
             } else {
-                [0.3, 0.3, 0.3, 0.5]
+                tokens::ALPHA_SECONDARY_REST
             };
+            let cancel_bg = tokens::tint(fg, cancel_alpha);
             let (cx2, cy2) = ui.cursor_pos();
             ui.abs_rect(cx2, cy2, btn_w, btn_h, cancel_bg);
             let text_y = cy2 + (btn_h - cx.cell_h) / 2.0;
             let text_x = cx2 + (btn_w - ui.text_width("Cancel")) / 2.0;
-            ui.abs_text("Cancel", text_x, text_y, [0.9, 0.9, 0.9, 1.0]);
+            ui.abs_text("Cancel", text_x, text_y, fg);
         });
 
-        ui.bg_rect(content_w, 8.0, [0.0; 4]); // bottom spacing
+        ui.bg_rect(content_w, tokens::SPACE_2, [0.0; 4]); // bottom spacing
     }
 }

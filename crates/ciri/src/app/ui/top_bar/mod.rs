@@ -37,6 +37,7 @@ use self::session_label::SessionLabel;
 use self::workspace::WorkspaceIndicator;
 use super::builder::UiBuilder;
 use super::layout::{Axis, Linear, SizeHint, Spacer, UiElement, UiRect};
+use super::tokens;
 use super::types::{UiAction, UiComponent, UiContext, UiScene, UiTopBarHit};
 use crate::app::top_bar::{PaneTabLayout, TopBarLayout};
 use crate::app::{App, TopBarHoverRegion};
@@ -199,7 +200,7 @@ impl UiElement for TopBarComponent {
         let dim = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
         let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
         let broadcast_color = ThemeConfig::parse_color(&cx.config.theme.mode_broadcast);
-        let sep_color = [dim[0], dim[1], dim[2], 0.25];
+        let sep_color = tokens::tint(dim, tokens::ALPHA_SEPARATOR);
 
         // --- global decorations: bar background + separator strip ---
         {
@@ -210,10 +211,10 @@ impl UiElement for TopBarComponent {
             );
             ui.abs_rect(rect.x, rect.y, rect.w, rect.h, bar_bg);
             let sep_y = match cx.config.statusbar.position {
-                StatusBarPosition::Top => rect.bottom() - 1.0,
+                StatusBarPosition::Top => rect.bottom() - tokens::BORDER_THIN,
                 StatusBarPosition::Bottom => rect.y,
             };
-            ui.abs_rect(rect.x, sep_y, rect.w, 1.0, sep_color);
+            ui.abs_rect(rect.x, sep_y, rect.w, tokens::BORDER_THIN, sep_color);
         }
 
         // --- inner row (session | tabs | workspace | mode) ---

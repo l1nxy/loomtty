@@ -1,6 +1,7 @@
 use ciri_config::theme::ThemeConfig;
 
 use super::builder::UiBuilder;
+use super::tokens;
 use super::types::{UiAction, UiComponent, UiContext, UiContextMenuHit, UiScene};
 use crate::app::App;
 
@@ -84,17 +85,16 @@ impl UiComponent for ContextMenuComponent {
     }
 
     fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let padding = 8.0;
-        let bw = 1.0;
+        let padding = tokens::SPACE_2;
+        let bw = tokens::BORDER_THIN;
 
         let menu_bg = ThemeConfig::parse_color(&cx.config.theme.background);
         let bg_color = [menu_bg[0] * 0.9, menu_bg[1] * 0.9, menu_bg[2] * 0.9, 1.0];
         let border_color = ThemeConfig::parse_color(&cx.config.theme.border_active);
         let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
         let fg_color = ThemeConfig::parse_color(&cx.config.theme.foreground);
-        let dim_base = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
-        let dim_color = [dim_base[0], dim_base[1], dim_base[2], 0.75];
-        let hover_bg = [accent[0], accent[1], accent[2], 0.12];
+        let dim_color = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
+        let hover_bg = tokens::tint(accent, tokens::ALPHA_HOVER_BG);
 
         let mut ui = UiBuilder::new_vertical(
             self.x,

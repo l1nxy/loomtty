@@ -3,6 +3,7 @@ use ciri_config::theme::ThemeConfig;
 use unicode_width::UnicodeWidthStr;
 
 use super::builder::UiBuilder;
+use super::tokens;
 use super::types::{UiComponent, UiContext, UiScene};
 use crate::app::App;
 
@@ -116,7 +117,7 @@ impl InfoBoxComponent {
         rows.push(("esc".to_string(), "exit".to_string()));
 
         let padding = cx.cell_w;
-        let row_h = cx.cell_h * 1.3;
+        let row_h = cx.cell_h + tokens::SPACE_1 * 2.0;
         let key_col_chars = rows
             .iter()
             .map(|(k, _)| UnicodeWidthStr::width(k.as_str()))
@@ -135,7 +136,7 @@ impl InfoBoxComponent {
 
         let hints_bar_h = app.hints_bar_height();
         let status_bar_h = app.status_bar_height();
-        let margin = 8.0;
+        let margin = tokens::SPACE_2;
         let x = cx.viewport_w - w - margin;
         let bottom_chrome = match cx.config.statusbar.position {
             StatusBarPosition::Top => hints_bar_h,
@@ -158,12 +159,12 @@ impl UiComponent for InfoBoxComponent {
     fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         let bg = ThemeConfig::parse_color(&cx.config.theme.background);
         let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
-        let fg = [1.0f32, 1.0, 1.0, 0.9];
-        let dim = [1.0f32, 1.0, 1.0, 0.5];
+        let fg = ThemeConfig::parse_color(&cx.config.theme.foreground);
+        let dim = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
         let padding = cx.cell_w;
-        let row_h = cx.cell_h * 1.3;
-        let bw = 1.0f32;
-        let title_h = cx.cell_h + 2.0;
+        let row_h = cx.cell_h + tokens::SPACE_1 * 2.0;
+        let bw = tokens::BORDER_THIN;
+        let title_h = cx.cell_h + tokens::SPACE_1;
         let content_w = self.w - bw * 2.0;
 
         let mut ui = UiBuilder::new_vertical(
@@ -191,13 +192,13 @@ impl UiComponent for InfoBoxComponent {
                 ry,
                 content_w,
                 title_h,
-                [accent[0], accent[1], accent[2], 0.2],
+                tokens::tint(accent, tokens::ALPHA_TINT_HEADER),
             );
             let text_y = ry + (title_h - cx.cell_h) * 0.5;
             ui.abs_text(&format!(" {} ", self.title), rx + padding, text_y, accent);
         });
 
-        ui.bg_rect(content_w, 4.0, [0.0; 4]); // spacing after title
+        ui.bg_rect(content_w, tokens::SPACE_1, [0.0; 4]); // spacing after title
 
         // Key-action rows — right-align keys within a fixed column
         let key_col_chars = self

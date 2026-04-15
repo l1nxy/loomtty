@@ -8,6 +8,7 @@ fn row_rect_top_of_bar() {
         hovered_tab: None,
         bar_width: 200.0,
         tab_height: 28.0,
+        tab_gap: 0.0,
         position: TabBarPosition::Left,
     };
     let r0 = bar_component.row_rect(bar, 0);
@@ -26,6 +27,7 @@ fn row_rect_clips_to_bottom_edge() {
         hovered_tab: None,
         bar_width: 200.0,
         tab_height: 28.0,
+        tab_gap: 0.0,
         position: TabBarPosition::Left,
     };
     let r1 = bar_component.row_rect(bar, 1);

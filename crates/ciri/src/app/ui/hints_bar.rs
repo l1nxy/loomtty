@@ -3,6 +3,7 @@ use ciri_config::theme::ThemeConfig;
 use super::builder::UiBuilder;
 use super::info_box::action_short_label;
 use super::layout::{Axis, SizeHint, UiElement, UiRect};
+use super::tokens;
 use super::types::{UiContext, UiScene};
 use crate::app::App;
 
@@ -123,7 +124,7 @@ impl UiElement for HintsBarComponent {
         let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
         let dim = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
         let fg = ThemeConfig::parse_color(&cx.config.theme.foreground);
-        let sep_color = [dim[0], dim[1], dim[2], 0.25];
+        let sep_color = tokens::tint(dim, tokens::ALPHA_SEPARATOR);
         let padding = cx.cell_w;
 
         // Text row is vertically centered within the bar
@@ -145,7 +146,7 @@ impl UiElement for HintsBarComponent {
             scene,
         );
         ui.abs_rect(rect.x, rect.y, rect.w, rect.h, bar_bg);
-        ui.abs_rect(rect.x, rect.y, rect.w, 1.0, sep_color);
+        ui.abs_rect(rect.x, rect.y, rect.w, tokens::BORDER_THIN, sep_color);
 
         // Pre-compute hints total width for right-alignment
         let hint_spacing = cx.cell_w * 2.0;

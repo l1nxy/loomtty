@@ -637,7 +637,17 @@ impl App {
     /// connections behind the scenes when crossing slot boundaries.
     pub fn cycle_session(&mut self, direction: i32) {
         let list = self.flat_session_list();
+        log::debug!(
+            "cycle_session(dir={direction}): list={:?}\n  active_slot={} session={} pending={:?}\n  cached_local_sessions={:?}\n  bg_slots={:?}",
+            list,
+            self.core.active_slot_id,
+            self.core.session_name,
+            self.core.pending_session_name,
+            self.core.cached_local_sessions.iter().map(|s| &s.name).collect::<Vec<_>>(),
+            self.core.background_slots.keys().collect::<Vec<_>>(),
+        );
         if list.len() < 2 {
+            log::debug!("cycle_session: list len < 2, no-op");
             return;
         }
         let current_slot = self.core.active_slot_id.clone();

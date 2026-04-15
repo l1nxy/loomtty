@@ -274,9 +274,18 @@ impl App {
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::SessionList { sessions }) => {
+                        log::debug!(
+                            "SessionList received: {} entries: {:?}",
+                            sessions.len(),
+                            sessions.iter().map(|s| (&s.name, s.running)).collect::<Vec<_>>(),
+                        );
                         // Update cache with only running sessions
                         self.core.cached_local_sessions =
                             sessions.into_iter().filter(|s| s.running).collect();
+                        log::debug!(
+                            "cached_local_sessions after filter: {:?}",
+                            self.core.cached_local_sessions.iter().map(|s| &s.name).collect::<Vec<_>>(),
+                        );
                         // Rebuild palette entries from cache if palette is open
                         if self.core.command_palette.is_some() {
                             self.core.rebuild_palette_entries();

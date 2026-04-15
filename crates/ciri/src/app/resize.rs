@@ -84,10 +84,27 @@ impl App {
 
     /// Delegate: content-area resize hit test.
     pub(crate) fn content_resize_hit_test(&self, mx: f32, my: f32) -> (bool, bool) {
+        // Column/tile border geometry is in content space; convert the
+        // screen-space cursor before delegating so the side tab bar and
+        // top status bar don't offset the hit regions.
+        let (vw, _) = self.command_palette_viewport_size();
+        let Some(mx) = self.content_x_from_screen(mx, vw) else {
+            return (false, false);
+        };
+        let Some(my) = self.content_y_from_screen(my) else {
+            return (false, false);
+        };
         self.core.content_resize_hit_test(mx, my)
     }
 
     pub(crate) fn start_column_resize_drag(&mut self, mx: f32) -> bool {
+        // Keep `mx` in screen space for drag-delta math (apply_* callers
+        // pass screen coords too), but convert to content space for the
+        // column-border hit-test so the side tab bar doesn't shift it.
+        let (vw_screen, _) = self.command_palette_viewport_size();
+        let Some(content_mx) = self.content_x_from_screen(mx, vw_screen) else {
+            return false;
+        };
         let vox = self.core.anim_mgr.view_offset_x.value() as f32;
         let ws = self.core.workspaces.active();
         let vw = ws.view_size.width;
@@ -96,7 +113,7 @@ impl App {
         let mut found = None;
         for i in 1..ws.columns.len() {
             let col_x = ws.column_x(i) - vox;
-            if (mx - col_x).abs() < 4.0 {
+            if (content_mx - col_x).abs() < 4.0 {
                 let left_col_idx = i - 1;
                 let right_col_idx = i;
                 let left_col_width = ws.columns[left_col_idx].effective_width(vw);
@@ -139,10 +156,17 @@ impl App {
     }
 
     pub(crate) fn start_tile_resize_drag(&mut self, mx: f32, my: f32) -> bool {
+        let (vw_screen, _) = self.command_palette_viewport_size();
+        let Some(cx) = self.content_x_from_screen(mx, vw_screen) else {
+            return false;
+        };
+        let Some(cy) = self.content_y_from_screen(my) else {
+            return false;
+        };
         if let Some((col_idx, top_tile_idx)) = self.core.workspaces.active().hit_test_tile_border(
             self.core.anim_mgr.view_offset_x.value() as f32,
-            mx,
-            my,
+            cx,
+            cy,
             4.0,
         ) {
             if let Some(col) = self.core.workspaces.active().columns.get(col_idx)

@@ -342,6 +342,10 @@ pub struct TabBarConfig {
     /// `position == Integrated`.
     #[garde(range(min = 12.0, max = 200.0))]
     pub tab_height: f32,
+    /// Vertical gap between adjacent tabs in pixels. Ignored when
+    /// `position == Integrated`.
+    #[garde(range(min = 0.0, max = 40.0))]
+    pub tab_gap: f32,
 }
 
 impl Default for TabBarConfig {
@@ -349,7 +353,8 @@ impl Default for TabBarConfig {
         TabBarConfig {
             position: TabBarPosition::Integrated,
             width: 200.0,
-            tab_height: 28.0,
+            tab_height: 36.0,
+            tab_gap: 4.0,
         }
     }
 }

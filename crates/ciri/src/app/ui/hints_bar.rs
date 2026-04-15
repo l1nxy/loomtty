@@ -2,7 +2,8 @@ use ciri_config::theme::ThemeConfig;
 
 use super::builder::UiBuilder;
 use super::info_box::action_short_label;
-use super::types::{UiComponent, UiContext, UiScene};
+use super::layout::{Axis, SizeHint, UiElement, UiRect};
+use super::types::{UiContext, UiScene};
 use crate::app::App;
 
 struct HintItem {
@@ -11,7 +12,6 @@ struct HintItem {
 }
 
 pub(crate) struct HintsBarComponent {
-    bar_y: f32,
     bar_h: f32,
     pane_count: usize,
     active_pane_title: String,
@@ -19,9 +19,8 @@ pub(crate) struct HintsBarComponent {
 }
 
 impl HintsBarComponent {
-    pub fn capture(app: &App, cx: &UiContext<'_>) -> Self {
+    pub fn capture(app: &App, _cx: &UiContext<'_>) -> Self {
         let bar_h = app.hints_bar_height();
-        let bar_y = app.hints_bar_y(cx.viewport_h);
 
         let ws = app.core.workspaces.active();
         let pane_count = ws.columns.iter().map(|c| c.tiles.len()).sum::<usize>();
@@ -35,7 +34,6 @@ impl HintsBarComponent {
         let hints = Self::pick_hints(app);
 
         Self {
-            bar_y,
             bar_h,
             pane_count,
             active_pane_title,
@@ -112,8 +110,15 @@ impl HintsBarComponent {
     }
 }
 
-impl UiComponent for HintsBarComponent {
-    fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+impl UiElement for HintsBarComponent {
+    fn size_hint(&self, axis: Axis, _cx: &UiContext<'_>) -> SizeHint {
+        match axis {
+            Axis::Vertical => SizeHint::Fixed(self.bar_h),
+            Axis::Horizontal => SizeHint::Fill,
+        }
+    }
+
+    fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         let bar_bg = ThemeConfig::parse_color(&cx.config.theme.statusbar_background);
         let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
         let dim = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
@@ -122,13 +127,15 @@ impl UiComponent for HintsBarComponent {
         let padding = cx.cell_w;
 
         // Text row is vertically centered within the bar
-        let text_y = self.bar_y + (self.bar_h - cx.cell_h) * 0.5;
+        let text_y = rect.y + (rect.h - cx.cell_h) * 0.5;
 
-        // Background + separator (absolute, not part of layout flow)
+        // Builder is pinned to the inner (padded) content strip. Absolute
+        // rects use full rect coords so the background + separator span
+        // edge to edge.
         let mut ui = UiBuilder::new_horizontal(
-            padding,
+            rect.x + padding,
             text_y,
-            cx.viewport_w - padding * 2.0,
+            (rect.w - padding * 2.0).max(0.0),
             cx.cell_h,
             0.0,
             0.0,
@@ -137,12 +144,12 @@ impl UiComponent for HintsBarComponent {
             cx,
             scene,
         );
-        ui.abs_rect(0.0, self.bar_y, cx.viewport_w, self.bar_h, bar_bg);
-        ui.abs_rect(0.0, self.bar_y, cx.viewport_w, 1.0, sep_color);
+        ui.abs_rect(rect.x, rect.y, rect.w, rect.h, bar_bg);
+        ui.abs_rect(rect.x, rect.y, rect.w, 1.0, sep_color);
 
         // Pre-compute hints total width for right-alignment
         let hint_spacing = cx.cell_w * 2.0;
-        let max_hints_w = cx.viewport_w * 0.6;
+        let max_hints_w = rect.w * 0.6;
         let mut hints_w = 0.0_f32;
         for (i, item) in self.hints.iter().enumerate() {
             if i > 0 {

@@ -26,6 +26,8 @@ pub struct CiriConfig {
     pub terminal: TerminalConfig,
     #[garde(dive)]
     pub statusbar: StatusBarConfig,
+    #[garde(dive)]
+    pub tabbar: TabBarConfig,
     #[garde(skip)]
     pub input: InputConfig,
     #[garde(dive)]
@@ -303,6 +305,51 @@ impl Default for StatusBarConfig {
             text_baseline: 0.8,
             leader_indicator_ratio: 0.1,
             height_padding: None,
+        }
+    }
+}
+
+/// Where to draw the pane-tab list.
+///
+/// - `Integrated`: tabs sit inside the status bar (default, matches the
+///   pre-tree-layout behaviour).
+/// - `Left` / `Right`: tabs are extracted into a dedicated vertical bar
+///   on the chosen side of the terminal viewport; the status bar loses
+///   the tab strip and only shows session / workspace / mode badges.
+///
+/// Top/Bottom (as dedicated bars separate from the status bar) are not
+/// supported: the status bar already exists in those positions and
+/// embedding the tabs there is what `Integrated` means.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum TabBarPosition {
+    #[default]
+    Integrated,
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(default)]
+pub struct TabBarConfig {
+    #[garde(skip)]
+    pub position: TabBarPosition,
+    /// Horizontal width of the side tab bar in pixels. Ignored when
+    /// `position == Integrated`.
+    #[garde(range(min = 40.0, max = 800.0))]
+    pub width: f32,
+    /// Vertical height per tab in pixels. Ignored when
+    /// `position == Integrated`.
+    #[garde(range(min = 12.0, max = 200.0))]
+    pub tab_height: f32,
+}
+
+impl Default for TabBarConfig {
+    fn default() -> Self {
+        TabBarConfig {
+            position: TabBarPosition::Integrated,
+            width: 200.0,
+            tab_height: 28.0,
         }
     }
 }

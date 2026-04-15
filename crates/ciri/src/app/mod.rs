@@ -819,6 +819,17 @@ impl App {
         self.status_bar_height() + self.hints_bar_height()
     }
 
+    /// Total horizontal space consumed by the side tab bar, if any.
+    /// Matches the `Fixed` size hint used by `TabBarComponent` so that
+    /// `Border`'s `left` / `right` slot width equals this value.
+    pub fn total_chrome_width(&self) -> f32 {
+        match self.core.config.tabbar.position {
+            ciri_config::config::TabBarPosition::Integrated => 0.0,
+            ciri_config::config::TabBarPosition::Left
+            | ciri_config::config::TabBarPosition::Right => self.core.config.tabbar.width,
+        }
+    }
+
     pub fn status_bar_y(&self, window_height: f32) -> f32 {
         match self.core.config.statusbar.position {
             StatusBarPosition::Top => 0.0,
@@ -826,20 +837,19 @@ impl App {
         }
     }
 
-    /// Y position of the bottom hints bar.
-    pub fn hints_bar_y(&self, window_height: f32) -> f32 {
-        match self.core.config.statusbar.position {
-            StatusBarPosition::Top => window_height - self.hints_bar_height(),
-            StatusBarPosition::Bottom => {
-                window_height - self.status_bar_height() - self.hints_bar_height()
-            }
-        }
-    }
-
     pub fn content_origin_y(&self) -> f32 {
         match self.core.config.statusbar.position {
             StatusBarPosition::Top => self.status_bar_height(),
             StatusBarPosition::Bottom => 0.0,
+        }
+    }
+
+    /// X origin of the terminal viewport — shifted right by the side
+    /// tab bar's width when the tab bar is on the left, zero otherwise.
+    pub fn content_origin_x(&self) -> f32 {
+        match self.core.config.tabbar.position {
+            ciri_config::config::TabBarPosition::Left => self.core.config.tabbar.width,
+            _ => 0.0,
         }
     }
 
@@ -851,6 +861,60 @@ impl App {
             }
             StatusBarPosition::Bottom => Some(screen_y),
         }
+    }
+
+    /// Map an absolute screen X coordinate into terminal-local X, or
+    /// `None` if the point is inside the side tab bar (or to its left/right).
+    pub fn content_x_from_screen(&self, screen_x: f32, window_width: f32) -> Option<f32> {
+        match self.core.config.tabbar.position {
+            ciri_config::config::TabBarPosition::Integrated => Some(screen_x),
+            ciri_config::config::TabBarPosition::Left => {
+                let x = screen_x - self.core.config.tabbar.width;
+                (x >= 0.0).then_some(x)
+            }
+            ciri_config::config::TabBarPosition::Right => {
+                let bar_x = window_width - self.core.config.tabbar.width;
+                (screen_x < bar_x).then_some(screen_x)
+            }
+        }
+    }
+
+    /// Rect of the side tab bar, if there is one, given the window size.
+    ///
+    /// Computed to exactly match what `Border::layout` produces when
+    /// `build_ui` builds the chrome tree — i.e. the side bar starts
+    /// below any top edge and ends above any bottom edge. Returns
+    /// `None` when tabs are integrated into the status bar.
+    pub fn side_tab_bar_rect(
+        &self,
+        window_width: f32,
+        window_height: f32,
+    ) -> Option<(f32, f32, f32, f32)> {
+        use ciri_config::config::TabBarPosition;
+        let w = match self.core.config.tabbar.position {
+            TabBarPosition::Integrated => return None,
+            TabBarPosition::Left | TabBarPosition::Right => self.core.config.tabbar.width,
+        };
+        // Vertical extent: `Border` resolves top then bottom first, so
+        // the side edge starts after the top edge and ends before the
+        // bottom edge — exactly matching the `total_chrome_height` split.
+        let (y, h) = match self.core.config.statusbar.position {
+            StatusBarPosition::Top => {
+                let y = self.status_bar_height();
+                let h = (window_height - self.total_chrome_height()).max(0.0);
+                (y, h)
+            }
+            StatusBarPosition::Bottom => {
+                let h = (window_height - self.total_chrome_height()).max(0.0);
+                (0.0, h)
+            }
+        };
+        let x = match self.core.config.tabbar.position {
+            TabBarPosition::Left => 0.0,
+            TabBarPosition::Right => (window_width - w).max(0.0),
+            TabBarPosition::Integrated => unreachable!(),
+        };
+        Some((x, y, w, h))
     }
 
     /// Delegate: remember workspace pane.
@@ -939,9 +1003,10 @@ impl App {
     pub fn preview_resize(&mut self, size: winit::dpi::PhysicalSize<u32>) {
         log::debug!("preview_resize: {}x{}", size.width, size.height);
         let chrome_h = self.total_chrome_height();
+        let chrome_w = self.total_chrome_width();
         self.core.workspaces.resize_view(ViewSize {
-            width: size.width as f32,
-            height: size.height as f32 - chrome_h,
+            width: (size.width as f32 - chrome_w).max(0.0),
+            height: (size.height as f32 - chrome_h).max(0.0),
         });
         self.snap_all_col_widths();
         let center_strategy = match self.core.config.layout.center_focused_column {

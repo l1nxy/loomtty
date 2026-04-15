@@ -3,6 +3,8 @@ use super::App;
 impl App {
     pub fn hit_test_overview(&self, mx: f32, my: f32) -> Option<(usize, u64)> {
         let my = self.content_y_from_screen(my)?;
+        let (vw_for_x, _) = self.command_palette_viewport_size();
+        let mx = self.content_x_from_screen(mx, vw_for_x)?;
         let zoom = self.core.anim_mgr.overview_zoom.value() as f32;
         let vox = self.core.anim_mgr.view_offset_x.value() as f32;
         let voy = self.core.anim_mgr.view_offset_y.value() as f32;

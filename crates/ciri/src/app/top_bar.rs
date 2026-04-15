@@ -13,16 +13,25 @@ pub(crate) struct PaneTabLayout {
     pub active: bool,
 }
 
+/// Per-frame layout numbers needed by `TopBarComponent` *before* the
+/// `Linear` row computes its own slots.
+///
+/// We keep `bar_y` / `bar_height` / `session_w` / `tabs_area_px` because:
+/// - `bar_y` / `bar_height` are needed to position the bar rect itself
+///   (fed into `UiElement::paint(rect, ...)`).
+/// - `session_w` is the only fixed-zone width the row needs that depends
+///   on session data (length of session display name).
+/// - `tabs_area_px` is the (one-cell narrower) tab visibility window
+///   used by `pane_tab_layouts()` and `ensure_active_pane_tab_visible()`.
+///
+/// Per-zone absolute x coordinates (`session_x`, `workspace_x`, `mode_x`)
+/// were intentionally removed in the tree-layout refactor — those are now
+/// computed lazily by `Linear::layout` at paint/hit time.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TopBarLayout {
     pub bar_y: f32,
     pub bar_height: f32,
-    pub session_x: f32,
     pub session_w: f32,
-    pub workspace_x: f32,
-    pub workspace_w: f32,
-    pub mode_x: f32,
-    pub mode_w: f32,
     pub tabs_area_px: f32,
 }
 
@@ -67,6 +76,19 @@ impl App {
     }
 
     pub(crate) fn pane_tab_scroll_max(&self) -> f32 {
+        // When tabs are extracted into a dedicated side bar, the top bar
+        // holds no pane tabs, so the horizontal scroll concept is
+        // meaningless. Returning 0.0 early also prevents stale scroll
+        // state from leaking across `hit_test_top_bar`-gated mouse-wheel
+        // events (which clamp `core.pane_tab_scroll` against this max)
+        // and from flapping the render-snapshot hash that uses this
+        // value as a cache-key input.
+        if !matches!(
+            self.core.config.tabbar.position,
+            ciri_config::config::TabBarPosition::Integrated,
+        ) {
+            return 0.0;
+        }
         let ch = self
             .glyph_cache
             .as_ref()
@@ -96,6 +118,11 @@ impl App {
         let session_w =
             UnicodeWidthStr::width(format!(" {}  ", self.session_display_name()).as_str()) as f32
                 * cw;
+        // NB: tab `x` coordinates are absolute screen coordinates assuming the
+        // top bar starts at screen x=0. This holds for the current
+        // `Border { top | bottom }` chrome configurations (no `left`/`right`
+        // edges). When step 4 introduces side-tab layouts, this needs to take
+        // the bar's `rect.x` and emit `tabs_start_x = rect.x + session_w`.
         let tabs_start_x = session_w;
         let tabs_end_x = tabs_start_x + tabs_area_px;
         let mut x = tabs_start_x - self.core.pane_tab_scroll;
@@ -141,12 +168,12 @@ impl App {
     }
 
     /// Delegate: get pane tab entries.
-    fn pane_tab_entries(&self) -> Vec<(u64, String)> {
+    pub(crate) fn pane_tab_entries(&self) -> Vec<(u64, String)> {
         self.core.pane_tab_entries()
     }
 
     /// Delegate: format pane tab label.
-    fn format_pane_tab_label(&self, idx: usize, title: &str) -> String {
+    pub(crate) fn format_pane_tab_label(&self, idx: usize, title: &str) -> String {
         self.core.format_pane_tab_label(idx, title)
     }
 
@@ -179,20 +206,19 @@ impl App {
         let ws_label = self.workspace_indicator_label();
         let workspace_w = UnicodeWidthStr::width(ws_label.as_str()) as f32 * cw;
         let mode_w = UnicodeWidthStr::width(self.current_mode_label().0.as_str()) as f32 * cw;
-        // Right side: workspace + gap + mode
-        let mode_x = vw - mode_w;
-        let workspace_x = mode_x - workspace_w;
-        let tabs_area_px = (workspace_x - cw - session_w).max(0.0);
+        // tabs_area_px is the *visibility window* for tab generation: it is
+        // one cell narrower than the actual Fill slot so there is always a
+        // one-cell breathing-room gap between the right-most tab and the
+        // workspace label. The Fill slot (= vw - session_w - workspace_w
+        // - mode_w) is wider; tab snapshots constrained to tabs_area_px
+        // simply leave that last cell unpopulated. See the regression test
+        // `tab_area_preserves_one_cell_gap_to_workspace` in `ui/top_bar.rs`.
+        let tabs_area_px = (vw - mode_w - workspace_w - cw - session_w).max(0.0);
 
         TopBarLayout {
             bar_y,
             bar_height,
-            session_x: 0.0,
             session_w,
-            workspace_x,
-            workspace_w,
-            mode_x,
-            mode_w,
             tabs_area_px,
         }
     }

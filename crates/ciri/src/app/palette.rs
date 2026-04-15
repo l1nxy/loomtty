@@ -29,8 +29,17 @@ impl App {
             PaletteEntryKind::Action(action) => {
                 self.handle_action(action);
             }
-            PaletteEntryKind::SwitchSession(name) => {
-                self.send(ClientMessage::SwitchSession { session_name: name });
+            PaletteEntryKind::GoToSession {
+                slot_id,
+                session_name,
+            } => {
+                let is_current_slot = slot_id == self.core.active_slot_id;
+                if !is_current_slot {
+                    self.switch_to_slot(&slot_id);
+                }
+                if self.core.session_name != session_name {
+                    self.send(ClientMessage::SwitchSession { session_name });
+                }
             }
             PaletteEntryKind::KillSession(name) => {
                 self.send(ClientMessage::KillSession { session_name: name });
@@ -74,9 +83,6 @@ impl App {
                     cwd: None,
                 });
             }
-            PaletteEntryKind::SwitchSlot(id) => {
-                self.switch_to_slot(&id);
-            }
             PaletteEntryKind::DirectConnect {
                 name: _,
                 host,
@@ -84,13 +90,6 @@ impl App {
                 ssh_port,
             } => {
                 self.connect_remote_session(host, port, ssh_port, "default".to_string());
-            }
-            PaletteEntryKind::SlotSession {
-                slot_id,
-                session_name,
-            } => {
-                self.switch_to_slot(&slot_id);
-                self.send(ClientMessage::SwitchSession { session_name });
             }
             PaletteEntryKind::ConnectRemotePrompt => {
                 // Switch palette to remote input mode

@@ -288,13 +288,36 @@ impl App {
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::SessionKilled { session_name }) => {
-                        // Remove killed session from cache and rebuild palette
+                        // Remove killed session from cache and rebuild palette.
                         self.core
                             .cached_local_sessions
                             .retain(|s| s.name != session_name);
                         if self.core.command_palette.is_some() {
                             self.core.rebuild_palette_entries();
                         }
+
+                        // If we were on that session, the server has already
+                        // auto-switched us when possible (a SessionSwitched
+                        // arrives in this batch). If it didn't (no other
+                        // sessions on this server), gracefully fall back to
+                        // another connection slot, otherwise detach.
+                        let killed_was_ours = self.core.session_name == session_name;
+                        let server_switched_us = self.core.pending_session_name.is_some();
+                        if killed_was_ours && !server_switched_us {
+                            if !self.core.background_slots.is_empty() {
+                                let mut ids: Vec<String> =
+                                    self.core.background_slots.keys().cloned().collect();
+                                ids.sort();
+                                let target = ids[0].clone();
+                                self.switch_to_slot(&target);
+                            } else {
+                                log::info!(
+                                    "killed session '{session_name}' was active and no fallback available — detaching"
+                                );
+                                self.core.should_exit = true;
+                            }
+                        }
+
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::TemplateApplied { .. })
@@ -1007,14 +1030,14 @@ mod tests {
         // 应已移出 pending
         assert!(!app.core.slot_session_pending.contains("bg-slot"));
 
-        // 应有 SlotSession 条目
+        // 应有 background slot 的 GoToSession 条目
         let palette = app.core.command_palette.as_ref().unwrap();
         let slot_sessions: Vec<_> = palette
             .entries
             .iter()
-            .filter(|e| matches!(&e.kind, PaletteEntryKind::SlotSession { .. }))
+            .filter(|e| matches!(&e.kind, PaletteEntryKind::GoToSession { slot_id, .. } if slot_id == "bg-slot"))
             .collect();
-        assert!(!slot_sessions.is_empty(), "应有 SlotSession 条目");
+        assert!(!slot_sessions.is_empty(), "应有 bg-slot 的 GoToSession 条目");
     }
 
     #[test]
@@ -1148,21 +1171,22 @@ mod tests {
         app.process_server_events();
 
         let palette = app.core.command_palette.as_ref().unwrap();
-        // SlotSession 应保留
-        let slot_sess_count = palette
+        let active = app.core.active_slot_id.clone();
+        // bg-s slot 的 GoToSession 应保留
+        let bg_count = palette
             .entries
             .iter()
-            .filter(|e| matches!(&e.kind, PaletteEntryKind::SlotSession { .. }))
+            .filter(|e| matches!(&e.kind, PaletteEntryKind::GoToSession { slot_id, .. } if slot_id == "bg-s"))
             .count();
-        assert!(slot_sess_count >= 1, "SessionList 后 SlotSession 应保留");
+        assert!(bg_count >= 1, "SessionList 后 bg-s 的 GoToSession 应保留");
 
-        // SwitchSession 也应存在
-        let switch_count = palette
+        // 当前 slot 的 GoToSession 也应存在
+        let current_count = palette
             .entries
             .iter()
-            .filter(|e| matches!(&e.kind, PaletteEntryKind::SwitchSession(_)))
+            .filter(|e| matches!(&e.kind, PaletteEntryKind::GoToSession { slot_id, .. } if slot_id == &active))
             .count();
-        assert!(switch_count >= 1, "SessionList 后 SwitchSession 应存在");
+        assert!(current_count >= 1, "SessionList 后当前 slot 的 GoToSession 应存在");
     }
 
     #[test]

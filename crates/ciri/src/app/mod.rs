@@ -496,6 +496,10 @@ impl App {
     ) {
         let slot_id = format!("remote:{}:{}", host, port);
 
+        // Record this connection so the palette can offer it next time.
+        self.core.record_recent_host(&host, port, ssh_port);
+        crate::recent_hosts::save(&self.core.recent_hosts);
+
         // If a slot already exists for this remote, switch to it instead
         if self.core.background_slots.contains_key(&slot_id) {
             self.switch_to_slot(&slot_id);
@@ -572,20 +576,86 @@ impl App {
 
     /// Cycle to the next background connection slot.
     /// Order: sort slot IDs lexicographically, pick the one after active_slot_id (wrapping).
-    pub fn cycle_next_slot(&mut self) {
-        if self.core.background_slots.is_empty() {
+    /// Build a flat ordered list of `(slot_id, session_name)` pairs across
+    /// all connection slots (current + backgrounded). Used by `cycle_session`
+    /// so the user sees a single unified "next/prev session" cycle regardless
+    /// of which connection each session lives on.
+    ///
+    /// For slots without a cached session list, falls back to a single entry
+    /// using that slot's active `session_name`.
+    fn flat_session_list(&self) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = Vec::new();
+
+        // Collect slot ids in deterministic order: current slot first, then
+        // background slots sorted by id. This keeps cycling stable regardless
+        // of HashMap iteration order.
+        let current_slot = self.core.active_slot_id.clone();
+        let mut bg_ids: Vec<String> = self.core.background_slots.keys().cloned().collect();
+        bg_ids.sort();
+
+        // Current slot — use cached_local_sessions if populated.
+        if !self.core.cached_local_sessions.is_empty() {
+            for s in &self.core.cached_local_sessions {
+                out.push((current_slot.clone(), s.name.clone()));
+            }
+        } else {
+            out.push((current_slot.clone(), self.core.session_name.clone()));
+        }
+
+        // Background slots — use cached_slot_sessions if populated, else the
+        // slot's active session name.
+        for id in &bg_ids {
+            if let Some(sessions) = self.core.cached_slot_sessions.get(id)
+                && !sessions.is_empty()
+            {
+                for s in sessions {
+                    out.push((id.clone(), s.name.clone()));
+                }
+            } else if let Some(slot) = self.core.background_slots.get(id) {
+                out.push((id.clone(), slot.session_name.clone()));
+            }
+        }
+
+        out
+    }
+
+    /// Cycle to the next (`+1`) or previous (`-1`) session across **all**
+    /// connection slots — local sessions, remote sessions, everything.
+    /// Switches slot if necessary.
+    pub fn cycle_session(&mut self, direction: i32) {
+        let list = self.flat_session_list();
+        if list.len() < 2 {
             return;
         }
-        let mut ids: Vec<String> = self.core.background_slots.keys().cloned().collect();
-        ids.sort();
-        // Pick the first slot (simplest: just grab the first one in sorted order
-        // that differs from current; with only 1 slot this is always it)
-        let target = ids
+        let current_slot = &self.core.active_slot_id;
+        let current_session = &self.core.session_name;
+        let cur_idx = list
             .iter()
-            .find(|id| id.as_str() > self.core.active_slot_id.as_str())
-            .unwrap_or(&ids[0])
-            .clone();
-        self.switch_to_slot(&target);
+            .position(|(sid, sname)| sid == current_slot && sname == current_session)
+            .unwrap_or(0);
+        let n = list.len() as i32;
+        let next_idx = (cur_idx as i32 + direction).rem_euclid(n) as usize;
+        let (target_slot, target_session) = &list[next_idx];
+        if target_slot == current_slot && target_session == current_session {
+            return;
+        }
+
+        // Different slot → switch slot first, then send SwitchSession if the
+        // target session differs from the slot's resumed session.
+        if target_slot != current_slot {
+            let target_slot = target_slot.clone();
+            let target_session = target_session.clone();
+            self.switch_to_slot(&target_slot);
+            if self.core.session_name != target_session {
+                self.send(ClientMessage::SwitchSession {
+                    session_name: target_session,
+                });
+            }
+        } else {
+            self.send(ClientMessage::SwitchSession {
+                session_name: target_session.clone(),
+            });
+        }
     }
 
     /// Delegate: Convert config preset_widths to layout ColumnWidth values.

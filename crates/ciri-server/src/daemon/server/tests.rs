@@ -469,7 +469,7 @@ fn session_list_and_delete(mut server_with_session: (Server, String)) {
 }
 
 #[rstest]
-fn session_kill_removes_from_server_and_disconnects_clients(mut server: Server) {
+fn session_kill_auto_switches_attached_clients(mut server: Server) {
     let session1 = "alpha".to_string();
     let session2 = "beta".to_string();
     server.clients.insert(1, test_client(1, &session1));
@@ -485,12 +485,27 @@ fn session_kill_removes_from_server_and_disconnects_clients(mut server: Server) 
         1,
     );
 
-    // Should remove client 2 (attached to beta) and emit SessionKilled
+    // Client 2 (was attached to beta) should be auto-switched to alpha,
+    // not disconnected — matches tmux/zellij behavior.
     assert!(
-        responses
+        !responses
             .iter()
-            .any(|r| matches!(r, ServerResponse::RemoveClient(2)))
+            .any(|r| matches!(r, ServerResponse::RemoveClient(_))),
+        "no client should be removed; killed-session attached clients are auto-switched"
     );
+    assert!(
+        responses.iter().any(|r| matches!(r,
+            ServerResponse::SendToClient(2, ServerMessage::SessionSwitched { session_name })
+            if session_name == &session1
+        )),
+        "client 2 should be auto-switched to surviving session 'alpha'"
+    );
+    assert_eq!(
+        server.clients.get(&2).unwrap().session_name,
+        session1,
+        "client 2's session affinity moved to alpha"
+    );
+    // Client 1 (the requester) gets a SessionKilled notification.
     assert!(responses.iter().any(|r| matches!(r,
         ServerResponse::SendToClient(1, ServerMessage::SessionKilled { session_name })
         if session_name == &session2

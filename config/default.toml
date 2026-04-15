@@ -103,7 +103,10 @@ o = "toggle_overview"
 tab = "toggle_overview"
 q = "detach"
 p = "toggle_command_palette"
-i = "next_slot"
+"shift+p" = "toggle_session_palette"
+i = "next_session"
+"shift+i" = "prev_session"
+"shift+n" = "new_session"
 g = "toggle_lock"
 
 [keys.modes.resize]

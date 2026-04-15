@@ -136,7 +136,9 @@ impl BindingSet {
         // except toggle/close actions that need to work within their own overlay.
         for (combo, action) in &direct_bindings.bindings {
             let notmode = match action {
-                Action::ToggleCommandPalette | Action::CloseCommandPalette => {
+                Action::ToggleCommandPalette
+                | Action::ToggleSessionPalette
+                | Action::CloseCommandPalette => {
                     BindingMode::SEARCH | BindingMode::PASTE_CONFIRM
                 }
                 Action::OpenSearch | Action::CloseSearch => {

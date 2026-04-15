@@ -53,6 +53,31 @@ pub struct FontConfig {
     pub family: String,
     #[garde(range(min = 1.0, max = 200.0))]
     pub size: f32,
+    /// Optional UI font overrides. If `None`, UI text reuses the terminal
+    /// font. If `Some`, the UI (status bar, palette, tab bar, etc.) uses
+    /// the given font — which may be proportional (Inter, Segoe UI, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[garde(skip)]
+    pub ui: Option<UiFontConfig>,
+}
+
+/// UI-only font override. Does not have to be monospace.
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(default)]
+pub struct UiFontConfig {
+    #[garde(skip)]
+    pub family: String,
+    #[garde(range(min = 1.0, max = 200.0))]
+    pub size: f32,
+}
+
+impl Default for UiFontConfig {
+    fn default() -> Self {
+        UiFontConfig {
+            family: default_font_family().to_string(),
+            size: 10.0,
+        }
+    }
 }
 
 impl Default for FontConfig {
@@ -60,6 +85,7 @@ impl Default for FontConfig {
         FontConfig {
             family: default_font_family().to_string(),
             size: 10.0,
+            ui: None,
         }
     }
 }

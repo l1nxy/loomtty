@@ -50,7 +50,8 @@ impl App {
             .as_ref()
             .map(|c| c.cell_width)
             .unwrap_or(8.0);
-        let top_bar_layout = self.top_bar_layout(vw, vh, cell_w, cell_h);
+        let top_bar_layout =
+            self.top_bar_layout(vw, vh, cell_w, cell_h, self.ui_shaper.as_ref());
         self.ensure_active_pane_tab_visible(top_bar_layout.tabs_area_px);
         let baseline = cell_h * self.core.config.statusbar.text_baseline;
         let cx = UiContext {
@@ -178,7 +179,7 @@ impl App {
         let cx = self.ui_context();
         let component = TopBarComponent::capture(
             self,
-            self.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h),
+            self.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h, cx.ui_shaper),
             &cx,
         );
         match component.hit_test(mx, my, &cx) {
@@ -289,7 +290,7 @@ impl App {
 
         // 2. Top bar
         if self.hit_test_top_bar(mx, my) {
-            let layout = self.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h);
+            let layout = self.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h, cx.ui_shaper);
             let c = TopBarComponent::capture(self, layout, &cx);
             if let Some(action) = c.click(mx, my, &cx) {
                 self.apply_ui_action(action);
@@ -587,7 +588,7 @@ mod tests {
     fn top_bar_session_click_maps_to_open_session_palette() {
         let app = make_app();
         let cx = app.ui_context();
-        let layout = app.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h);
+        let layout = app.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h, cx.ui_shaper);
         let component = TopBarComponent::capture(&app, layout, &cx);
         // Session zone is always at x=0 in the current Linear layout
         // (`Border::top` puts the bar at the top edge, `SessionLabel` is
@@ -673,7 +674,7 @@ mod tests {
     fn dispatch_ui_hover_marks_top_bar_session_as_pointer() {
         let mut app = make_app();
         let cx = app.ui_context();
-        let layout = app.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h);
+        let layout = app.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h, cx.ui_shaper);
         let hover = app.dispatch_ui_hover(2.0, layout.bar_y + 2.0);
         assert!(hover.handled);
         assert_eq!(hover.cursor, CursorIcon::Pointer);

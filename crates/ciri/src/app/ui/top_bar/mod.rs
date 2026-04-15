@@ -29,7 +29,6 @@ mod workspace;
 
 use ciri_config::config::StatusBarPosition;
 use ciri_config::theme::ThemeConfig;
-use unicode_width::UnicodeWidthStr;
 
 use self::mode::ModeIndicator;
 use self::pane_tabs::PaneTabsElement;
@@ -37,6 +36,7 @@ use self::session_label::SessionLabel;
 use self::workspace::WorkspaceIndicator;
 use super::builder::UiBuilder;
 use super::layout::{Axis, Linear, SizeHint, Spacer, UiElement, UiRect};
+use super::text_layout;
 use super::tokens;
 use super::types::{UiAction, UiComponent, UiContext, UiScene, UiTopBarHit};
 use crate::app::top_bar::{PaneTabLayout, TopBarLayout};
@@ -74,7 +74,7 @@ impl TopBarComponent {
         // Tab snapshot is only needed when we draw them inline. Saves
         // a Vec allocation + label cloning for side-bar configs.
         let pane_tabs = if show_integrated_tabs {
-            app.pane_tab_layouts(cx.cell_w, layout.tabs_area_px)
+            app.pane_tab_layouts(cx.cell_w, layout.tabs_area_px, cx.ui_shaper)
         } else {
             Vec::new()
         };
@@ -118,17 +118,22 @@ impl TopBarComponent {
     /// The returned `Linear` borrows from `self`; no per-frame heap
     /// allocation for the tab snapshot or label strings.
     pub(super) fn build_row<'a>(&'a self, cx: &UiContext<'_>) -> Linear<'a> {
-        // Widths of the right-side fixed zones — matches the pre-split math
-        // in `top_bar_layout()`. Use `UnicodeWidthStr::width()` everywhere
-        // (matching the layout side) so multibyte mode/workspace labels
-        // align correctly with `tabs_area_px`.
+        // Widths of the right-side fixed zones. Measured via `text_layout`
+        // so proportional UI fonts get their real advance — using
+        // `unicode_width * cell_w` here would silently under-allocate wide
+        // labels and cause `UiBuilder::label` to fail its `allocate` check,
+        // leaving the mode/workspace text unpainted. The `top_bar_layout`
+        // on the `App` side measures the same way (same shaper), so the
+        // `tabs_area_px` visibility window stays in lockstep with these
+        // slot widths (invariant pinned by
+        // `pane_tabs_element_slot_is_one_cell_wider_than_tabs_area_px`).
         let session_w = self.layout.session_w;
         let workspace_w = if self.workspace_label.is_empty() {
             0.0
         } else {
-            UnicodeWidthStr::width(self.workspace_label.as_str()) as f32 * cx.cell_w
+            text_layout::measure(cx, &self.workspace_label)
         };
-        let mode_w = UnicodeWidthStr::width(self.mode_label.as_str()) as f32 * cx.cell_w;
+        let mode_w = text_layout::measure(cx, &self.mode_label);
 
         // Sub-elements borrow from `self` — no per-frame heap allocation
         // for the tab snapshot or label strings. The `'a` lifetime ties

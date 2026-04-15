@@ -877,41 +877,60 @@ pub(crate) fn load_ct_font_from_path(
 // ─── Font discovery helpers (platform-independent) ────────────────
 
 /// Find the primary font ID for the given family name.
+///
+/// When several faces share the same family (e.g. FiraCode Nerd Font has
+/// Light/Regular/Medium/Bold all listed under "FiraCode Nerd Font"), pick the
+/// one whose weight is closest to Regular (400) so we don't accidentally land
+/// on Bold just because fontdb enumerated it first.
 fn find_primary_font(db: &fontdb::Database, family_name: &str) -> Option<fontdb::ID> {
     let family_lower = family_name.to_ascii_lowercase();
 
-    // Exact match first
+    fn weight_dist(w: fontdb::Weight) -> u16 {
+        (w.0 as i32 - 400).unsigned_abs() as u16
+    }
+
+    // Exact match: pick best weight among same-family faces.
+    let mut best: Option<(fontdb::ID, u16, &str, bool)> = None;
     for face in db.faces() {
         if face.style != fontdb::Style::Normal {
             continue;
         }
         for family in &face.families {
             if family.0.eq_ignore_ascii_case(family_name) {
-                log::info!(
-                    "primary font: {} (monospaced={})",
-                    family.0,
-                    face.monospaced
-                );
-                return Some(face.id);
+                let dist = weight_dist(face.weight);
+                if best.map(|(_, d, _, _)| dist < d).unwrap_or(true) {
+                    best = Some((face.id, dist, family.0.as_str(), face.monospaced));
+                }
             }
         }
     }
+    if let Some((id, _, name, monospaced)) = best {
+        log::info!("primary font: {} (monospaced={})", name, monospaced);
+        return Some(id);
+    }
 
-    // Substring match
+    // Substring match: same — best weight wins.
+    let mut best: Option<(fontdb::ID, u16, String, bool)> = None;
     for face in db.faces() {
         if face.style != fontdb::Style::Normal {
             continue;
         }
         for family in &face.families {
             if family.0.to_ascii_lowercase().contains(&family_lower) {
-                log::info!(
-                    "primary font (substring): {} (monospaced={})",
-                    family.0,
-                    face.monospaced
-                );
-                return Some(face.id);
+                let dist = weight_dist(face.weight);
+                if best.as_ref().map(|(_, d, _, _)| dist < *d).unwrap_or(true) {
+                    best = Some((face.id, dist, family.0.clone(), face.monospaced));
+                }
             }
         }
+    }
+    if let Some((id, _, name, monospaced)) = best {
+        log::info!(
+            "primary font (substring): {} (monospaced={})",
+            name,
+            monospaced
+        );
+        return Some(id);
     }
 
     // First monospaced font

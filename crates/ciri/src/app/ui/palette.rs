@@ -42,8 +42,27 @@ pub(crate) struct PaletteComponent {
     remote_input_mode: bool,
 }
 
-fn truncate_label(label: &str, panel_w: f32, cw: f32) -> String {
-    let max_cols = ((panel_w - 16.0) / cw).floor().max(1.0) as usize;
+fn truncate_label(label: &str, panel_w: f32, cx: &UiContext<'_>) -> String {
+    let max_w = (panel_w - 16.0).max(0.0);
+    // Prefer shape-based width when the UI shaper has a real face; that's
+    // the only way to be correct for proportional UI fonts.
+    if let Some(cell) = cx.ui_shaper {
+        let mut shaper = cell.borrow_mut();
+        if shaper.has_face() {
+            let ellipsis = "...";
+            let full_w = shaper.measure(label);
+            if full_w <= max_w {
+                return label.to_string();
+            }
+            let ellipsis_w = shaper.measure(ellipsis);
+            let budget = (max_w - ellipsis_w).max(0.0);
+            let (prefix_bytes, _) = shaper.prefix_fit(label, budget);
+            let cut = label.floor_char_boundary(prefix_bytes.min(label.len()));
+            return format!("{}{}", &label[..cut], ellipsis);
+        }
+    }
+    // Legacy monospace-grid fallback — identical to the pre-shaper path.
+    let max_cols = (max_w / cx.cell_w).floor().max(1.0) as usize;
     if UnicodeWidthStr::width(label) > max_cols {
         format!(
             "{}...",
@@ -90,7 +109,7 @@ impl PaletteComponent {
                 };
                 PaletteRow {
                     entry_idx: *filt_idx,
-                    label: truncate_label(&entry.label, layout.panel_w, cx.cell_w),
+                    label: truncate_label(&entry.label, layout.panel_w, cx),
                     is_selected: scroll_offset + vis_row == palette.selected_idx,
                     is_hovered: palette.hovered_idx == Some(scroll_offset + vis_row),
                     style,

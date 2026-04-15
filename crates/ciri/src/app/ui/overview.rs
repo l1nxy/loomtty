@@ -153,8 +153,22 @@ pub(crate) fn paint_overview_action_bar(
 
     let close_label = "\u{2715} Close";
     let focus_label = "Focus";
-    let close_text_w = close_label.chars().count() as f32 * cx.cell_w;
-    let focus_text_w = focus_label.chars().count() as f32 * cx.cell_w;
+    let (close_text_w, focus_text_w) = if let Some(cell) = cx.ui_shaper {
+        let mut s = cell.borrow_mut();
+        if s.has_face() {
+            (s.measure(close_label), s.measure(focus_label))
+        } else {
+            (
+                close_label.chars().count() as f32 * cx.cell_w,
+                focus_label.chars().count() as f32 * cx.cell_w,
+            )
+        }
+    } else {
+        (
+            close_label.chars().count() as f32 * cx.cell_w,
+            focus_label.chars().count() as f32 * cx.cell_w,
+        )
+    };
 
     if close_hovered {
         scene.bg_rects.push(Rect {

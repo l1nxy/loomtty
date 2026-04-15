@@ -143,6 +143,11 @@ pub(crate) struct App {
     pub glyph_cache: Option<GlyphCache>,
     pub glyph_atlas_gpu: Option<GlyphAtlasGpu>,
     pub text_shaper: Option<TextShaper>,
+    /// Shaper for UI chrome text (palette, tab bar, status bar, …). Separate
+    /// from `text_shaper` so UI can use a proportional font while the
+    /// terminal grid stays monospaced. Stored in a `RefCell` so paint paths
+    /// that borrow `UiContext` immutably can still drive the LRU cache.
+    pub ui_shaper: Option<std::cell::RefCell<ciri_render::ui_shaper::UiTextShaper>>,
     pub dpi_scale: f64,
     pub modifiers: ModifiersState,
     pub cached_views: HashMap<u64, TerminalView>,
@@ -241,6 +246,61 @@ impl App {
             .collect()
     }
 
+    /// Resolve the UI font + pixel size from `config`, falling back to the
+    /// terminal font when `config.font.ui` is `None`. Returns the tuple
+    /// suitable for `FontInitParams` (`ui_font_path`, `ui_font_id`,
+    /// `ui_pixel_size`) plus a configured `UiTextShaper`.
+    pub(crate) fn build_ui_shaper(
+        config: &CiriConfig,
+        terminal_shaper: &TextShaper,
+        dpi_scale: f64,
+        cell_width: f32,
+        cell_height: f32,
+    ) -> (
+        Option<(String, u32)>,
+        Option<ciri_render::fontdb::ID>,
+        Option<f32>,
+        ciri_render::ui_shaper::UiTextShaper,
+    ) {
+        match &config.font.ui {
+            Some(ui_font) => {
+                let resolved = ciri_render::ui_shaper::resolve_ui_font(&ui_font.family);
+                let (path, id) = match resolved {
+                    Some((p, idx, fid)) => (Some((p, idx)), Some(fid)),
+                    None => {
+                        log::warn!(
+                            "UI font '{}' not found, falling back to terminal font",
+                            ui_font.family
+                        );
+                        (None, None)
+                    }
+                };
+                let ui_px = ui_font.size * (96.0 * dpi_scale as f32) / 72.0;
+                let shaper = ciri_render::ui_shaper::UiTextShaper::new(
+                    path.clone().or_else(|| terminal_shaper.primary_font_path()),
+                    id.or_else(|| terminal_shaper.primary_font_id()),
+                    ui_px,
+                    cell_width,
+                    cell_height,
+                );
+                (path, id, Some(ui_px), shaper)
+            }
+            None => {
+                // No override: UI shares the terminal font. Don't pass
+                // ui_font_path to the atlas — we reuse Primary class there.
+                let px = config.font.size * (96.0 * dpi_scale as f32) / 72.0;
+                let shaper = ciri_render::ui_shaper::UiTextShaper::new(
+                    terminal_shaper.primary_font_path(),
+                    terminal_shaper.primary_font_id(),
+                    px,
+                    cell_width,
+                    cell_height,
+                );
+                (None, None, None, shaper)
+            }
+        }
+    }
+
     pub fn new(config: CiriConfig, session_name: impl Into<String>) -> Self {
         let cached_color_table = ColorTable::new(&config);
         let core = AppModel::new(config, session_name);
@@ -251,6 +311,7 @@ impl App {
             glyph_cache: None,
             glyph_atlas_gpu: None,
             text_shaper: None,
+            ui_shaper: None,
             dpi_scale: 1.0,
             modifiers: ModifiersState::empty(),
             cached_views: HashMap::new(),

@@ -43,6 +43,22 @@ impl ApplicationHandler for App {
                 if let Some(renderer) = &mut self.renderer {
                     let shaper =
                         ciri_render::shaper::TextShaper::new(&self.core.config.font.family);
+                    let ui_resolved = self
+                        .core
+                        .config
+                        .font
+                        .ui
+                        .as_ref()
+                        .and_then(|u| ciri_render::ui_shaper::resolve_ui_font(&u.family));
+                    let ui_font_path = ui_resolved.as_ref().map(|(p, i, _)| (p.clone(), *i));
+                    let ui_font_id = ui_resolved.as_ref().map(|(_, _, id)| *id);
+                    let ui_pixel_size = self
+                        .core
+                        .config
+                        .font
+                        .ui
+                        .as_ref()
+                        .map(|u| u.size * (96.0 * new_dpi as f32) / 72.0);
                     let (cache, atlas_gpu) =
                         match renderer.create_atlas(&ciri_render::glyph_cache::FontInitParams {
                             font_size_pt: self.core.config.font.size,
@@ -53,6 +69,9 @@ impl ApplicationHandler for App {
                             emoji_font_id: shaper.emoji_font_id(),
                             cjk_font_path: shaper.cjk_font_path(),
                             cjk_font_id: shaper.cjk_font_id(),
+                            ui_font_path,
+                            ui_font_id,
+                            ui_pixel_size,
                             render_config: &self.core.config.render,
                             font_resolver: shaper.font_resolver(),
                             #[cfg(windows)]
@@ -70,9 +89,17 @@ impl ApplicationHandler for App {
                         cache.cell_width,
                         cache.cell_height
                     );
+                    let (_, _, _, ui_shaper) = App::build_ui_shaper(
+                        &self.core.config,
+                        &shaper,
+                        new_dpi,
+                        cache.cell_width,
+                        cache.cell_height,
+                    );
                     self.glyph_cache = Some(cache);
                     self.glyph_atlas_gpu = Some(atlas_gpu);
                     self.text_shaper = Some(shaper);
+                    self.ui_shaper = Some(std::cell::RefCell::new(ui_shaper));
                     self.clear_render_caches();
                     for grid in self.core.pane_grids.values_mut() {
                         grid.dirty = true;
@@ -313,6 +340,22 @@ impl ApplicationHandler for App {
             .expect("renderer init failed");
 
         let shaper = ciri_render::shaper::TextShaper::new(&self.core.config.font.family);
+        let ui_font_resolved = self
+            .core
+            .config
+            .font
+            .ui
+            .as_ref()
+            .and_then(|u| ciri_render::ui_shaper::resolve_ui_font(&u.family));
+        let ui_font_path = ui_font_resolved.as_ref().map(|(p, i, _)| (p.clone(), *i));
+        let ui_font_id = ui_font_resolved.as_ref().map(|(_, _, id)| *id);
+        let ui_pixel_size = self
+            .core
+            .config
+            .font
+            .ui
+            .as_ref()
+            .map(|u| u.size * (96.0 * dpi_scale as f32) / 72.0);
         let (cache, atlas_gpu) = renderer
             .create_atlas(&ciri_render::glyph_cache::FontInitParams {
                 font_size_pt: self.core.config.font.size,
@@ -323,12 +366,22 @@ impl ApplicationHandler for App {
                 emoji_font_id: shaper.emoji_font_id(),
                 cjk_font_path: shaper.cjk_font_path(),
                 cjk_font_id: shaper.cjk_font_id(),
+                ui_font_path: ui_font_path.clone(),
+                ui_font_id,
+                ui_pixel_size,
                 render_config: &self.core.config.render,
                 font_resolver: shaper.font_resolver(),
                 #[cfg(windows)]
                 dwrite_resolver: shaper.dwrite_resolver(),
             })
             .expect("initial glyph atlas creation failed");
+        let (_, _, _, ui_shaper) = App::build_ui_shaper(
+            &self.core.config,
+            &shaper,
+            dpi_scale,
+            cache.cell_width,
+            cache.cell_height,
+        );
 
         let (w, h) = renderer.surface_size();
         let bar_padding = self
@@ -399,6 +452,7 @@ impl ApplicationHandler for App {
         self.glyph_cache = Some(cache);
         self.glyph_atlas_gpu = Some(atlas_gpu);
         self.text_shaper = Some(shaper);
+        self.ui_shaper = Some(std::cell::RefCell::new(ui_shaper));
         self.snap_all_col_widths();
         self.animate_to_active();
         self.window = Some(window);

@@ -73,6 +73,9 @@ fn test_atlas(config: &CiriConfig, shaper: &TextShaper) -> GlyphCache {
         emoji_font_id: shaper.emoji_font_id(),
         cjk_font_path: shaper.cjk_font_path(),
         cjk_font_id: shaper.cjk_font_id(),
+        ui_font_path: None,
+        ui_font_id: None,
+        ui_pixel_size: None,
         render_config: &config.render,
         font_resolver: shaper.font_resolver(),
         #[cfg(windows)]

@@ -23,6 +23,27 @@ use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use core_text::font::CTFont;
 
+/// Resolve a UI font family name to a (font file path, face index, fontdb ID).
+/// Used by the app startup path to hand `ui_font_path` / `ui_font_id` into
+/// both `UiTextShaper::new` and `FontInitParams`. Returns `None` if the
+/// family can't be found on the system.
+pub fn resolve_ui_font(family: &str) -> Option<(String, u32, fontdb::ID)> {
+    let mut db = fontdb::Database::new();
+    db.load_system_fonts();
+    let query = fontdb::Query {
+        families: &[fontdb::Family::Name(family)],
+        ..Default::default()
+    };
+    let id = db.query(&query)?;
+    let face = db.face(id)?;
+    match &face.source {
+        fontdb::Source::File(path) => {
+            Some((path.to_string_lossy().to_string(), face.index, id))
+        }
+        _ => None,
+    }
+}
+
 /// Shaped glyph produced by [`UiTextShaper::shape`].
 #[derive(Debug, Clone, Copy)]
 pub struct UiShapedGlyph {

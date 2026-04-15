@@ -3,13 +3,13 @@
 //! On non-Windows: FreeType glyph-ID rendering + crossfont character rendering.
 //! On Windows: rasterization lives in `rasterize_dwrite.rs`.
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 use crossfont::BitmapBuffer;
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 use freetype::face::LoadFlag;
 
 use super::atlas::{AtlasRegion, PendingUpload, make_glyph_entry};
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 use super::types::FontStyle;
 use super::types::GlyphEntry;
 
@@ -23,7 +23,7 @@ pub(crate) struct RasterizedGlyph {
     pub(crate) data: Vec<u8>,
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 /// Rasterize a glyph by ID using the thin FreeType path.
 /// Tries color bitmap first (for emoji), then falls back to grayscale outline.
 /// `pixel_size` controls the rendering size.
@@ -157,7 +157,7 @@ pub(crate) fn rasterize_glyph_id_ft(
     })
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 /// Convert a crossfont `RasterizedGlyph` to our internal format.
 ///
 /// - `BitmapBuffer::Rgb` → single-channel alpha: `(R + G + B) / 3`
@@ -311,7 +311,7 @@ pub(crate) fn cache_measured_dwrite_glyph(
     Some(entry)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 /// Nearest-neighbor downscale of RGBA bitmap data.
 fn downsample_rgba(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<u8> {
     let out_len = (dst_w as usize)
@@ -340,7 +340,7 @@ fn downsample_rgba(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -
 
 // ─── Tests ───────────────────────────────────────────────────────────
 
-#[cfg(all(test, not(windows)))]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
     use crossfont::BitmapBuffer;

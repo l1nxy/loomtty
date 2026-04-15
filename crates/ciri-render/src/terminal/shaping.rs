@@ -282,9 +282,21 @@ fn is_regional_indicator(c: char) -> bool {
 }
 
 fn grapheme_display_cols(cluster: &str, fallback_wide: bool) -> usize {
-    UnicodeWidthStr::width(cluster)
+    let unicode_w = UnicodeWidthStr::width(cluster);
+    let cols = unicode_w
         .max(if fallback_wide { 2 } else { 1 })
-        .max(1)
+        .max(1);
+    // Log non-ASCII multi-cell graphemes for width verification
+    if cols >= 2 && !cluster.is_ascii() {
+        log::debug!(
+            "width calc: grapheme '{}' unicode_width={} fallback_wide={} -> cols={}",
+            cluster.escape_default(),
+            unicode_w,
+            fallback_wide,
+            cols,
+        );
+    }
+    cols
 }
 
 #[cfg(test)]

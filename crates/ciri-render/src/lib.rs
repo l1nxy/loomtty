@@ -2,6 +2,8 @@ pub mod font_resolver;
 pub mod glyph_cache;
 pub mod rect;
 pub mod shaper;
+#[cfg(target_os = "macos")]
+mod shaper_coretext;
 pub mod terminal;
 
 use glyph_cache::{GlyphInstance, ScissoredRange};

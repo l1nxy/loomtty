@@ -543,8 +543,10 @@ impl App {
 
         if self.core.overview.active {
             let prev = self.core.overview.hovered_pane;
+            let prev_action = self.core.overview_action_hover;
             let next = self.ui_overview_hover(mx, my);
             self.core.overview.hovered_pane = next;
+            let next_action = self.core.overview_action_hover;
             return UiHoverOutcome {
                 handled: true,
                 cursor: if next.is_some() {
@@ -552,7 +554,9 @@ impl App {
                 } else {
                     CursorIcon::Default
                 },
-                needs_redraw: had_top_bar_hover || prev != next,
+                needs_redraw: had_top_bar_hover
+                    || prev != next
+                    || prev_action != next_action,
             };
         }
 

@@ -1,3 +1,4 @@
+use ciri_layout::geometry::Rect as GeoRect;
 use ciri_render::rect::Rect;
 
 use super::tokens;
@@ -81,18 +82,27 @@ pub(crate) fn overview_action_bar_data(
         if *pane_id != hovered_id {
             continue;
         }
-        let tr = app.transformed_tile_rect(*tile_rect, zoom, vw, vh);
+        // Match the painter: apply content origin to the tile rect and
+        // then transform. Transforming first (around the window center)
+        // and offsetting afterwards shifts the result by
+        // `content_origin * (1 - zoom)` relative to where the tile is
+        // actually drawn, which misplaces the overlay.
+        let content_x = app.content_origin_x();
+        let content_y = app.content_origin_y();
+        let offset_rect = GeoRect::new(
+            tile_rect.x + content_x,
+            tile_rect.y + content_y,
+            tile_rect.w,
+            tile_rect.h,
+        );
+        let tr = app.transformed_tile_rect(offset_rect, zoom, vw, vh);
         let min_w = cell_w * 14.0;
         if tr.w < min_w {
             return None;
         }
         let bar_h = (cell_h * 2.0).max(28.0);
-        // Tile rects are in content space; offset to screen space
-        // so painting and hit-testing use consistent coordinates.
-        let content_x = app.content_origin_x();
-        let content_y = app.content_origin_y();
-        let bar_y = tr.y + content_y + tr.h - bar_h;
-        let pane_x = tr.x + content_x;
+        let bar_y = tr.y + tr.h - bar_h;
+        let pane_x = tr.x;
         let half_w = tr.w / 2.0;
         return Some(OverviewActionBarData {
             pane_x,

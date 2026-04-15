@@ -1,10 +1,14 @@
+use ciri_layout::geometry::Rect as GeoRect;
+
 use super::App;
 
 impl App {
     pub fn hit_test_overview(&self, mx: f32, my: f32) -> Option<(usize, u64)> {
-        let my = self.content_y_from_screen(my)?;
+        // Gate on content area so clicks inside the status bar / side tab
+        // bar don't fall through to overview.
         let (vw_for_x, _) = self.command_palette_viewport_size();
-        let mx = self.content_x_from_screen(mx, vw_for_x)?;
+        self.content_y_from_screen(my)?;
+        self.content_x_from_screen(mx, vw_for_x)?;
         let zoom = self.core.anim_mgr.overview_zoom.value() as f32;
         let vox = self.core.anim_mgr.view_offset_x.value() as f32;
         let voy = self.core.anim_mgr.view_offset_y.value() as f32;
@@ -15,9 +19,21 @@ impl App {
             self.core.workspaces.visible_tiles_2d(vox, voy)
         };
         let (vw, vh) = self.command_palette_viewport_size();
+        let content_x = self.content_origin_x();
+        let content_y = self.content_origin_y();
 
         for (pane_id, tile_rect, _) in &tiles {
-            let tr = self.transformed_tile_rect(*tile_rect, zoom, vw, vh);
+            // Mirror the painter: offset by content origin, then transform
+            // around the window center. Hit-testing in content space
+            // against a content-space transform drifts from the painted
+            // tile by `content_origin * (1 - zoom)`.
+            let offset_rect = GeoRect::new(
+                tile_rect.x + content_x,
+                tile_rect.y + content_y,
+                tile_rect.w,
+                tile_rect.h,
+            );
+            let tr = self.transformed_tile_rect(offset_rect, zoom, vw, vh);
             if tr.contains(mx, my) {
                 for (ws_idx, ws) in self.core.workspaces.workspaces.iter().enumerate() {
                     if ws.columns.iter().any(|c| c.contains_pane(*pane_id)) {

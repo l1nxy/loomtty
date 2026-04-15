@@ -76,9 +76,12 @@ impl App {
                             self.core.anim_mgr.ensure_pane_registered(id);
                         }
                         self.core.connected = true;
-                        // Pre-fetch session list so the palette has data
-                        // immediately when opened for the first time.
+                        // Pre-fetch session list so the palette / cycle has
+                        // data immediately. Also refresh background slot caches
+                        // so cycling across slots can see the full session list
+                        // on the other side.
                         self.send(ClientMessage::ListSessions { all: false });
+                        self.core.refresh_all_slot_session_caches();
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::LayoutUpdate { layout }) => {

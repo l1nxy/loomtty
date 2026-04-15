@@ -479,8 +479,13 @@ impl App {
             focused: self.window_focused,
         });
 
-        // Pre-fetch session list for the new connection
+        // Pre-fetch session list for the new connection, and refresh all
+        // other slot caches so cross-slot cycling has full visibility into
+        // every slot's session list (otherwise we'd fall back to "last-active
+        // session only" for the slots we're not currently on, and the cycle
+        // would skip everything else).
         self.core.send(ClientMessage::ListSessions { all: false });
+        self.core.refresh_all_slot_session_caches();
 
         // Process any events that accumulated while this slot was in the background
         self.process_server_events();

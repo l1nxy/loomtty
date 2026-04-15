@@ -40,8 +40,15 @@ impl AppModel {
         });
         self.filter_palette();
         self.send(ClientMessage::ListSessions { all: false });
+        self.refresh_all_slot_session_caches();
+    }
 
-        // Query sessions from all connected background slots for the unified list.
+    /// Send `ListSessions` to every connected background slot so
+    /// `cached_slot_sessions` stays populated. Without this, cycling between
+    /// slots cannot see *which* sessions live on the other slot — the cycle
+    /// list falls back to a single entry per slot using its last-active
+    /// session name, which makes the cycle skip every other session.
+    pub fn refresh_all_slot_session_caches(&mut self) {
         self.slot_session_pending.clear();
         self.slot_session_query_start = None;
         for (id, slot) in &self.background_slots {

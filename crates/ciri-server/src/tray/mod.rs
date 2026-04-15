@@ -201,7 +201,7 @@ mod tests {
     use tokio::sync::mpsc;
 
     fn test_server() -> Server {
-        Server::new("/bin/sh", 8.0, TerminalColors::default())
+        Server::new("", 8.0, TerminalColors::default())
     }
 
     fn test_client(id: u64, session_name: &str) -> ClientState {

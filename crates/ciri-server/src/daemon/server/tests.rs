@@ -25,7 +25,7 @@ fn test_client(id: u64, session_name: &str) -> ClientState {
 
 #[test]
 fn resize_ignores_invalid_dimensions() {
-    let mut server = Server::new("/bin/sh", 8.0, TerminalColors::default());
+    let mut server = Server::new("", 8.0, TerminalColors::default());
     let session_name = "alpha".to_string();
     server.clients.insert(1, test_client(1, &session_name));
     server.get_or_create_session(&session_name);
@@ -51,7 +51,7 @@ fn resize_ignores_invalid_dimensions() {
 
 #[test]
 fn switch_session_resets_client_runtime_state_and_refreshes_attach_time() {
-    let mut server = Server::new("/bin/sh", 8.0, TerminalColors::default());
+    let mut server = Server::new("", 8.0, TerminalColors::default());
     let old_session = "alpha".to_string();
     let new_session = "beta".to_string();
     server.clients.insert(1, test_client(1, &old_session));
@@ -121,7 +121,7 @@ fn switch_session_resets_client_runtime_state_and_refreshes_attach_time() {
 
 #[test]
 fn switch_session_emits_image_deleted_for_attach_sync_after_prior_delete() {
-    let mut server = Server::new("/bin/sh", 8.0, TerminalColors::default());
+    let mut server = Server::new("", 8.0, TerminalColors::default());
     let old_session = "alpha".to_string();
     let new_session = "beta".to_string();
     server.clients.insert(1, test_client(1, &old_session));
@@ -154,7 +154,7 @@ fn switch_session_emits_image_deleted_for_attach_sync_after_prior_delete() {
 
 #[test]
 fn switch_session_to_new_session_refreshes_attach_ordering_for_list_sessions() {
-    let mut server = Server::new("/bin/sh", 8.0, TerminalColors::default());
+    let mut server = Server::new("", 8.0, TerminalColors::default());
     let old_session = "alpha".to_string();
     let newer_existing_session = "beta".to_string();
     let brand_new_session = "gamma".to_string();
@@ -198,7 +198,7 @@ fn switch_session_to_new_session_refreshes_attach_ordering_for_list_sessions() {
 
 #[test]
 fn close_pane_emits_close_then_layout_update() {
-    let mut server = Server::new("/bin/sh", 8.0, TerminalColors::default());
+    let mut server = Server::new("", 8.0, TerminalColors::default());
     let session_name = "alpha".to_string();
     server.clients.insert(1, test_client(1, &session_name));
     let pane_id = {
@@ -219,7 +219,7 @@ fn close_pane_emits_close_then_layout_update() {
 
 #[test]
 fn focus_pane_by_id_returns_layout_update_and_command_result() {
-    let mut server = Server::new("/bin/sh", 8.0, TerminalColors::default());
+    let mut server = Server::new("", 8.0, TerminalColors::default());
     let session_name = "alpha".to_string();
     server.clients.insert(1, test_client(1, "__control__"));
     let target_pane = {
@@ -251,7 +251,7 @@ fn control_attach_does_not_create_runtime_session() {
         let (client_reader, server_writer) = tokio::io::duplex(4096);
         let (server_reader, client_writer) = tokio::io::duplex(4096);
         let state = Arc::new(Mutex::new(Server::new(
-            "/bin/sh",
+            "",
             8.0,
             TerminalColors::default(),
         )));
@@ -311,7 +311,7 @@ fn control_attach_does_not_create_runtime_session() {
 
 #[fixture]
 fn server() -> Server {
-    Server::new("/bin/sh", 8.0, TerminalColors::default())
+    Server::new("", 8.0, TerminalColors::default())
 }
 
 /// Server with one client attached to session "alpha".
@@ -708,7 +708,7 @@ async fn duplex_connect(
     let (client_reader, server_writer) = tokio::io::duplex(8192);
     let (server_reader, client_writer) = tokio::io::duplex(8192);
     let state = Arc::new(Mutex::new(Server::new(
-        "/bin/sh",
+        "",
         8.0,
         TerminalColors::default(),
     )));

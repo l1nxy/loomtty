@@ -575,31 +575,97 @@ impl App {
     }
 
     /// Cycle to the next background connection slot.
-    /// Cycle to the next (`+1`) or previous (`-1`) connection slot, restoring
-    /// that slot's last-active session. One press = one slot — the user never
-    /// has to traverse intra-slot sessions to reach a different connection.
+    /// Build a flat ordered list of `(slot_id, session_name)` across all
+    /// connection slots (current + backgrounded). Sessions are first-class
+    /// regardless of which connection they live on — local and remote are
+    /// equal citizens. Used by `cycle_session`.
     ///
-    /// Within-slot session switching is intentionally not part of this cycle —
-    /// for that, open the session palette (Ctrl+W Shift+P) and pick a session.
-    pub fn cycle_session(&mut self, direction: i32) {
+    /// For background slots without a cached session list (palette never
+    /// opened to query them), falls back to a single entry with that slot's
+    /// last-active session name.
+    fn flat_session_list(&self) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = Vec::new();
+
+        let current_slot = self.core.active_slot_id.clone();
         let mut bg_ids: Vec<String> = self.core.background_slots.keys().cloned().collect();
-        if bg_ids.is_empty() {
-            return; // nothing to cycle to — only one slot exists
-        }
         bg_ids.sort();
 
-        // Cycle order: current slot at index 0, then bg slots sorted by id.
-        let mut all_slots: Vec<String> = Vec::with_capacity(bg_ids.len() + 1);
-        all_slots.push(self.core.active_slot_id.clone());
-        all_slots.extend(bg_ids);
-
-        let n = all_slots.len() as i32;
-        let next_idx = direction.rem_euclid(n) as usize;
-        if next_idx == 0 {
-            return; // direction wrapped back to the current slot — no-op
+        // Current slot — use cached_local_sessions if populated.
+        if !self.core.cached_local_sessions.is_empty() {
+            for s in &self.core.cached_local_sessions {
+                out.push((current_slot.clone(), s.name.clone()));
+            }
+        } else {
+            out.push((current_slot.clone(), self.core.session_name.clone()));
         }
-        let target_slot = all_slots[next_idx].clone();
-        self.switch_to_slot(&target_slot);
+
+        // Background slots — use cached_slot_sessions if populated, else the
+        // slot's last-active session name as a single fallback entry.
+        for id in &bg_ids {
+            if let Some(sessions) = self.core.cached_slot_sessions.get(id)
+                && !sessions.is_empty()
+            {
+                for s in sessions {
+                    out.push((id.clone(), s.name.clone()));
+                }
+            } else if let Some(slot) = self.core.background_slots.get(id) {
+                out.push((id.clone(), slot.session_name.clone()));
+            }
+        }
+
+        out
+    }
+
+    /// Cycle to the next (`+1`) or previous (`-1`) session across **all**
+    /// connection slots. Local and remote sessions are treated equally —
+    /// the cycle visits every session in turn, transparently switching
+    /// connections behind the scenes when crossing slot boundaries.
+    pub fn cycle_session(&mut self, direction: i32) {
+        let list = self.flat_session_list();
+        if list.len() < 2 {
+            return;
+        }
+        let current_slot = self.core.active_slot_id.clone();
+        // Honor any in-flight session switch the user already requested but
+        // the server hasn't synced back yet. Otherwise rapid `i` presses keep
+        // computing the cycle position from the stale, pre-switch session_name
+        // and re-send SwitchSession to the same target indefinitely.
+        let current_session = self
+            .core
+            .pending_session_name
+            .clone()
+            .unwrap_or_else(|| self.core.session_name.clone());
+        let cur_idx = list
+            .iter()
+            .position(|(sid, sname)| sid == &current_slot && sname == &current_session)
+            .unwrap_or(0);
+        let n = list.len() as i32;
+        let next_idx = (cur_idx as i32 + direction).rem_euclid(n) as usize;
+        let (target_slot, target_session) = list[next_idx].clone();
+        if target_slot == current_slot && target_session == current_session {
+            return;
+        }
+
+        if target_slot != current_slot {
+            self.switch_to_slot(&target_slot);
+            // After restore, the slot resumes its own last-active session.
+            // If the cycle target is a *different* session on that slot, ask
+            // the server to switch within it.
+            if self.core.session_name != target_session {
+                self.core.pending_session_name = Some(target_session.clone());
+                self.send(ClientMessage::SwitchSession {
+                    session_name: target_session,
+                });
+            }
+        } else {
+            // Within the same slot — just switch the session. Mark the target
+            // as pending so a subsequent press cycles forward instead of
+            // re-asking the server for the same session.
+            self.core.pending_session_name = Some(target_session.clone());
+            self.send(ClientMessage::SwitchSession {
+                session_name: target_session,
+            });
+        }
     }
 
     /// Delegate: Convert config preset_widths to layout ColumnWidth values.

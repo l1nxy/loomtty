@@ -160,26 +160,48 @@ pub(crate) async fn run_tick_loop(
                         session_name
                     );
 
-                    // Send shutdown to clients, then drop their tx senders so
-                    // the writer tasks flush the frame and exit naturally.
-                    // handle_client detects EOF → cleanup_client removes them.
-                    let session_clients: Vec<u64> = s
-                        .clients
-                        .iter()
-                        .filter(|(_, c)| c.session_name == *session_name)
-                        .map(|(id, _)| *id)
-                        .collect();
-                    if let Some(frame) = codec::frame_server_msg(&ServerMessage::ServerShutdown) {
-                        let frame = Bytes::from(frame);
-                        for &cid in &session_clients {
-                            if let Some(client) = s.clients.get(&cid) {
-                                let _ = client.tx.try_send(frame.clone());
+                    // Release our local copy so `finalize_session_removal`
+                    // sees the session-map state it expects (target already
+                    // removed).
+                    drop(session);
+
+                    // Any other session we can fall back to? If yes, run the
+                    // same auto-switch flow as an explicit KillSession so
+                    // clients stay attached and land on a live session. If
+                    // not, this was the last session on the server — keep the
+                    // old "shut down the client" behavior.
+                    let has_fallback = s.sessions.keys().any(|n| {
+                        n.as_str() != session_name.as_str() && !n.starts_with("__")
+                    });
+
+                    if has_fallback {
+                        let mut responses = Vec::new();
+                        s.finalize_session_removal(session_name, &mut responses);
+                        s.dispatch_responses(responses);
+                    } else {
+                        // Send shutdown to clients, then drop their tx senders
+                        // so the writer tasks flush the frame and exit
+                        // naturally. handle_client detects EOF →
+                        // cleanup_client removes them.
+                        let session_clients: Vec<u64> = s
+                            .clients
+                            .iter()
+                            .filter(|(_, c)| c.session_name == *session_name)
+                            .map(|(id, _)| *id)
+                            .collect();
+                        if let Some(frame) =
+                            codec::frame_server_msg(&ServerMessage::ServerShutdown)
+                        {
+                            let frame = Bytes::from(frame);
+                            for &cid in &session_clients {
+                                if let Some(client) = s.clients.get(&cid) {
+                                    let _ = client.tx.try_send(frame.clone());
+                                }
                             }
                         }
-                    }
-                    // Remove clients: drops tx → writer flushes remaining frames → closes socket
-                    for cid in session_clients {
-                        s.clients.remove(&cid);
+                        for cid in session_clients {
+                            s.clients.remove(&cid);
+                        }
                     }
 
                     // Don't re-insert this session (already removed above)

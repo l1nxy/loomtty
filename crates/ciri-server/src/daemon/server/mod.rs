@@ -94,6 +94,41 @@ impl Server {
         }
     }
 
+    /// Dispatch a batch of responses directly onto client sockets. Used by
+    /// callers (e.g. the tick loop) that don't live on the request/response
+    /// path where `connection.rs` would normally drain them. Panics on
+    /// `ShutdownServer` — that variant needs async graceful-shutdown handling
+    /// and callers of this helper must not produce it.
+    pub(crate) fn dispatch_responses(&mut self, responses: Vec<ServerResponse>) {
+        for resp in responses {
+            match resp {
+                ServerResponse::BroadcastToSession(name, msg) => {
+                    self.broadcast_to_session(&name, &msg);
+                }
+                ServerResponse::SendToClient(cid, msg) => {
+                    self.send_to_client(cid, &msg);
+                }
+                ServerResponse::SendFullPaneSync(cid, sync) => {
+                    if let (Some(client), Some(frame)) = (
+                        self.clients.get(&cid),
+                        ciri_protocol::codec::frame_full_pane_sync(&sync),
+                    ) && let Err(e) = client.tx.try_send(bytes::Bytes::from(frame))
+                    {
+                        log::warn!(
+                            "failed to send full pane sync to client {cid}: {e}"
+                        );
+                    }
+                }
+                ServerResponse::RemoveClient(cid) => {
+                    self.clients.remove(&cid);
+                }
+                ServerResponse::ShutdownServer => {
+                    panic!("dispatch_responses cannot handle ShutdownServer");
+                }
+            }
+        }
+    }
+
     /// Broadcast a control message to all clients of a session.
     pub(crate) fn broadcast_to_session(&self, session_name: &str, msg: &ServerMessage) {
         if let Some(frame) = ciri_protocol::codec::frame_server_msg(msg) {

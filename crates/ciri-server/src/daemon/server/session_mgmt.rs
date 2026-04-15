@@ -162,47 +162,10 @@ impl Server {
         target: &str,
         responses: &mut Vec<ServerResponse>,
     ) {
-        if let Some(session) = self.sessions.remove(target) {
-            drop(session);
-            let _ = ciri_session::restore::delete_session(target, &transport::state_dir());
-
-            // Clients attached to the killed session need to go somewhere.
-            // Pick the most-recently-attached other session (matches tmux/zellij:
-            // detach but don't kill the client). If none exists, send
-            // SessionKilled and let the client decide (it may switch to a
-            // different connection slot or detach gracefully).
-            let fallback_session = self.most_recently_attached_session(target);
-            let affected_clients: Vec<u64> = self
-                .clients
-                .iter()
-                .filter(|(_, c)| c.session_name == target)
-                .map(|(id, _)| *id)
-                .collect();
-            for cid in affected_clients {
-                if let Some(ref fb) = fallback_session {
-                    // Auto-switch this client to the fallback session.
-                    self.switch_client_session_affinity(cid, fb);
-                    self.refresh_session_attach_time(fb);
-                    responses.push(ServerResponse::SendToClient(
-                        cid,
-                        ServerMessage::SessionSwitched {
-                            session_name: fb.clone(),
-                        },
-                    ));
-                    self.prepare_full_sync_for_client(cid, fb, responses);
-                } else {
-                    // No other sessions on this server — notify client; it can
-                    // try another connection slot or just detach.
-                    responses.push(ServerResponse::SendToClient(
-                        cid,
-                        ServerMessage::SessionKilled {
-                            session_name: target.to_string(),
-                        },
-                    ));
-                }
-            }
-        } else {
-            let _ = ciri_session::restore::delete_session(target, &transport::state_dir());
+        let existed = self.sessions.remove(target).is_some();
+        let _ = ciri_session::restore::delete_session(target, &transport::state_dir());
+        if existed {
+            self.finalize_session_removal(target, responses);
         }
         // Notify the requester (idempotent if they were also attached).
         responses.push(ServerResponse::SendToClient(
@@ -211,6 +174,53 @@ impl Server {
                 session_name: target.to_string(),
             },
         ));
+    }
+
+    /// Post-removal fan-out: auto-switch clients attached to the just-removed
+    /// session to a fallback, or notify them it's gone. Caller must have
+    /// already removed `target` from `self.sessions` and deleted its on-disk
+    /// state. Used by explicit `handle_kill_session` and by the tick loop
+    /// when a session dies naturally (last pane exited).
+    pub(crate) fn finalize_session_removal(
+        &mut self,
+        target: &str,
+        responses: &mut Vec<ServerResponse>,
+    ) {
+        // Clients attached to the killed session need to go somewhere.
+        // Pick the most-recently-attached other session (matches tmux/zellij:
+        // detach but don't kill the client). If none exists, send
+        // SessionKilled and let the client decide (it may switch to a
+        // different connection slot or detach gracefully).
+        let fallback_session = self.most_recently_attached_session(target);
+        let affected_clients: Vec<u64> = self
+            .clients
+            .iter()
+            .filter(|(_, c)| c.session_name == target)
+            .map(|(id, _)| *id)
+            .collect();
+        for cid in affected_clients {
+            if let Some(ref fb) = fallback_session {
+                // Auto-switch this client to the fallback session.
+                self.switch_client_session_affinity(cid, fb);
+                self.refresh_session_attach_time(fb);
+                responses.push(ServerResponse::SendToClient(
+                    cid,
+                    ServerMessage::SessionSwitched {
+                        session_name: fb.clone(),
+                    },
+                ));
+                self.prepare_full_sync_for_client(cid, fb, responses);
+            } else {
+                // No other sessions on this server — notify client; it can
+                // try another connection slot or just detach.
+                responses.push(ServerResponse::SendToClient(
+                    cid,
+                    ServerMessage::SessionKilled {
+                        session_name: target.to_string(),
+                    },
+                ));
+            }
+        }
     }
 
     fn handle_switch_session(

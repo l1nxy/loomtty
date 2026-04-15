@@ -758,7 +758,9 @@ impl App {
         let panel_x = (vw - panel_w) / 2.0;
         let panel_y = vh * Self::COMMAND_PALETTE_TOP_RATIO;
         let row_h = ch + 4.0;
-        let input_row_h = ch + 8.0;
+        // Must match the input row height used by PaletteComponent::paint
+        // (`tokens::control_height_md(cell_h)`), plus the 1px separator below it.
+        let input_row_h = crate::app::ui::tokens::control_height_md(ch) + 1.0;
         let visible_rows = ((panel_max_h - input_row_h) / row_h).floor().max(1.0) as usize;
         let entry_count = palette.filtered.len().min(visible_rows);
         let panel_h = input_row_h + entry_count as f32 * row_h + Self::COMMAND_PALETTE_BOTTOM_PAD;

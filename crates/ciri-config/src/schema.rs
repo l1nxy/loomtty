@@ -74,7 +74,7 @@ pub struct UiFontConfig {
 impl Default for UiFontConfig {
     fn default() -> Self {
         UiFontConfig {
-            family: default_font_family().to_string(),
+            family: String::new(),
             size: 10.0,
         }
     }

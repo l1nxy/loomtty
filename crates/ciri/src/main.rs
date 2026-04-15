@@ -188,9 +188,8 @@ fn main() -> Result<()> {
             port,
             ssh_port,
         });
-        // Record the explicit remote launch as a recent host.
-        app.core.record_recent_host(&host, port, ssh_port);
-        recent_hosts::save(&app.core.recent_hosts);
+        // Recent-host recording is deferred to connect_remote_session()
+        // so that only successfully initiated connections get persisted.
         event_loop.run_app(&mut app)?;
         return Ok(());
     }

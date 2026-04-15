@@ -27,11 +27,25 @@ use core_text::font::CTFont;
 /// Used by the app startup path to hand `ui_font_path` / `ui_font_id` into
 /// both `UiTextShaper::new` and `FontInitParams`. Returns `None` if the
 /// family can't be found on the system.
+///
+/// When `family` is empty, queries the platform's default sans-serif font
+/// via `fontdb::Family::SansSerif` (fontconfig `sans-serif` on Linux,
+/// system default on macOS/Windows).
 pub fn resolve_ui_font(family: &str) -> Option<(String, u32, fontdb::ID)> {
     let mut db = fontdb::Database::new();
     db.load_system_fonts();
+
+    let families: Vec<fontdb::Family<'_>> = if family.is_empty() {
+        vec![fontdb::Family::SansSerif]
+    } else {
+        vec![
+            fontdb::Family::Name(family),
+            fontdb::Family::SansSerif,
+        ]
+    };
+
     let query = fontdb::Query {
-        families: &[fontdb::Family::Name(family)],
+        families: &families,
         ..Default::default()
     };
     let id = db.query(&query)?;

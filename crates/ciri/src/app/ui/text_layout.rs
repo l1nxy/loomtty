@@ -42,11 +42,12 @@ pub(super) fn prefix_fit(cx: &UiContext<'_>, text: &str, max_w: f32) -> (usize, 
     if let Some(cell) = cx.ui_shaper {
         let mut shaper = cell.borrow_mut();
         if shaper.has_face() {
-            let (bytes, w) = shaper.prefix_fit(text, max_w);
+            let (bytes, _) = shaper.prefix_fit(text, max_w);
             // `prefix_fit` may return a cluster boundary; snap to a char
             // boundary so subsequent `&text[..bytes]` indexing is safe for
             // combining sequences.
             let bytes = text.floor_char_boundary(bytes.min(text.len()));
+            let w = shaper.measure(&text[..bytes]);
             return (bytes, w);
         }
     }

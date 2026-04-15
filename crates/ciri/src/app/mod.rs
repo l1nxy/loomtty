@@ -572,10 +572,6 @@ impl App {
     ) {
         let slot_id = format!("remote:{}:{}", host, port);
 
-        // Record this connection so the palette can offer it next time.
-        self.core.record_recent_host(&host, port, ssh_port);
-        crate::recent_hosts::save(&self.core.recent_hosts);
-
         // If a slot already exists for this remote, switch to it instead
         if self.core.background_slots.contains_key(&slot_id) {
             self.switch_to_slot(&slot_id);
@@ -606,6 +602,9 @@ impl App {
             Ok((tx, rx)) => {
                 self.core.server_tx = Some(tx);
                 self.core.server_rx = Some(rx);
+                // Record only after connection was successfully initiated.
+                self.core.record_recent_host(&host, port, ssh_port);
+                crate::recent_hosts::save(&self.core.recent_hosts);
             }
             Err(e) => {
                 log::error!("remote connection failed: {e}");
@@ -638,6 +637,14 @@ impl App {
         };
 
         if host.is_empty() {
+            return;
+        }
+
+        if let Err(reason) = validate_remote_host(host) {
+            log::warn!("invalid remote host input: {host:?} — {reason}");
+            if let Some(palette) = &mut self.core.command_palette {
+                palette.remote_error = Some(("Input".to_string(), reason));
+            }
             return;
         }
 
@@ -1135,5 +1142,78 @@ impl App {
         if let Some(w) = &self.window {
             w.request_redraw();
         }
+    }
+}
+
+/// Validate a remote host string (`user@hostname` or `user@ip`).
+/// Returns `Ok(())` if the input looks reasonable, or `Err(reason)` with a
+/// user-facing error message.
+fn validate_remote_host(host: &str) -> Result<(), String> {
+    // Must contain exactly one '@' separating user and hostname.
+    let Some(at) = host.find('@') else {
+        return Err("expected user@host format".to_string());
+    };
+    let user = &host[..at];
+    let hostname = &host[at + 1..];
+
+    if user.is_empty() {
+        return Err("username cannot be empty".to_string());
+    }
+    if hostname.is_empty() {
+        return Err("hostname cannot be empty".to_string());
+    }
+
+    // Hostname must only contain valid characters (alphanumeric, '.', '-', ':' for IPv6, '_').
+    if !hostname
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '_' | '[' | ']'))
+    {
+        return Err(format!("hostname contains invalid characters: {hostname}"));
+    }
+
+    // Hostname shouldn't start or end with '-' or '.'.
+    if hostname.starts_with('-') || hostname.starts_with('.') {
+        return Err(format!("hostname cannot start with '{}'", &hostname[..1]));
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests_validate_remote_host {
+    use super::validate_remote_host;
+
+    #[test]
+    fn valid_hosts() {
+        assert!(validate_remote_host("user@example.com").is_ok());
+        assert!(validate_remote_host("root@192.168.1.1").is_ok());
+        assert!(validate_remote_host("deploy@my-server.local").is_ok());
+        assert!(validate_remote_host("user@[::1]").is_ok());
+    }
+
+    #[test]
+    fn missing_at() {
+        assert!(validate_remote_host("ffff").is_err());
+        assert!(validate_remote_host("just-a-hostname").is_err());
+    }
+
+    #[test]
+    fn empty_parts() {
+        assert!(validate_remote_host("@host").is_err());
+        assert!(validate_remote_host("user@").is_err());
+        assert!(validate_remote_host("@").is_err());
+    }
+
+    #[test]
+    fn invalid_hostname_chars() {
+        assert!(validate_remote_host("user@host name").is_err());
+        assert!(validate_remote_host("user@host/path").is_err());
+        assert!(validate_remote_host("user@host;rm -rf").is_err());
+    }
+
+    #[test]
+    fn hostname_start() {
+        assert!(validate_remote_host("user@-bad").is_err());
+        assert!(validate_remote_host("user@.bad").is_err());
     }
 }

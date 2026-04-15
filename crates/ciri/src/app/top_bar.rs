@@ -20,6 +20,10 @@ fn measure(shaper: Option<&RefCell<UiTextShaper>>, text: &str, cell_w: f32) -> f
     UnicodeWidthStr::width(text) as f32 * cell_w
 }
 
+/// Fixed tab slot width in terminal-cell units. Deliberately NOT in UI-font
+/// advance units — tabs follow the terminal grid's cell_w so their visual
+/// rhythm stays consistent regardless of whether the UI font is proportional.
+/// Labels inside the slot are shape-truncated to fit.
 const PANE_TAB_WIDTH_CHARS: usize = 20;
 
 #[derive(Debug, Clone)]

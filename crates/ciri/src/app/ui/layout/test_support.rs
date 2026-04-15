@@ -88,5 +88,6 @@ pub(super) fn dummy_cx() -> UiContext<'static> {
         cell_w: 8.0,
         cell_h: 16.0,
         baseline: 12.0,
+        ui_shaper: None,
     }
 }

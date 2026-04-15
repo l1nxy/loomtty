@@ -1,5 +1,7 @@
 use ciri_render::glyph_cache::{GlyphCache, GlyphInstance};
 use ciri_render::rect::Rect;
+use ciri_render::ui_shaper::UiTextShaper;
+use std::cell::RefCell;
 use winit::window::CursorIcon;
 
 pub(crate) struct UiContext<'a> {
@@ -9,6 +11,10 @@ pub(crate) struct UiContext<'a> {
     pub cell_w: f32,
     pub cell_h: f32,
     pub baseline: f32,
+    /// UI text shaper (advance-based) used by all UI chrome text. `None` only
+    /// in tests or before the renderer has been set up — callers must then
+    /// use `cell_w`-based measurement as a fallback (see `UiBuilder`).
+    pub ui_shaper: Option<&'a RefCell<UiTextShaper>>,
 }
 
 pub(crate) struct UiScene<'a> {

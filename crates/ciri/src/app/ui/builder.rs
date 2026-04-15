@@ -11,6 +11,18 @@ use unicode_width::UnicodeWidthStr;
 use super::types::{UiContext, UiScene};
 use crate::app::status_bar::{TextEmitParams, emit_status_text};
 
+/// Measure `text` using `cx.ui_shaper` when available, otherwise fall back
+/// to the legacy monospace grid width. Returns pixel width.
+fn measure_ui_text(cx: &UiContext<'_>, text: &str) -> f32 {
+    if let Some(cell) = cx.ui_shaper {
+        let mut shaper = cell.borrow_mut();
+        if shaper.has_face() {
+            return shaper.measure(text);
+        }
+    }
+    UnicodeWidthStr::width(text) as f32 * cx.cell_w
+}
+
 // ─── Hit record ──────────────────────────────────────────────────────
 
 /// A named pixel-aligned clickable region produced during layout.
@@ -257,9 +269,9 @@ impl<'a, 'b> UiBuilder<'a, 'b> {
 
     // ─── Measurement ─────────────────────────────────────────────────
 
-    /// Pixel width of `text` in the monospace grid.
+    /// Pixel width of `text`, shaped with the UI font when available.
     pub fn text_width(&self, text: &str) -> f32 {
-        UnicodeWidthStr::width(text) as f32 * self.cx.cell_w
+        measure_ui_text(self.cx, text)
     }
 
     /// Height of one text row.
@@ -289,8 +301,14 @@ impl<'a, 'b> UiBuilder<'a, 'b> {
 
     /// Emit text at absolute position (does NOT advance cursor).
     pub fn abs_text(&mut self, text: &str, x: f32, y: f32, color: [f32; 4]) {
+        // Borrow the shaper mutably for the shape/measure cache. Kept in a
+        // local so we release the RefCell borrow before `emit_status_text`
+        // reads `self.scene.atlas`.
+        let mut borrowed = self.cx.ui_shaper.map(|c| c.borrow_mut());
+        let shaper = borrowed.as_deref_mut();
         emit_status_text(
             self.scene.atlas,
+            shaper,
             text,
             &TextEmitParams {
                 x_start: x,

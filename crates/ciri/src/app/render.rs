@@ -1650,6 +1650,7 @@ impl App {
             return;
         };
         let atlas = self.glyph_cache.as_mut().unwrap();
+        let mut ui_borrow = self.ui_shaper.as_ref().map(|c| c.borrow_mut());
 
         // Find the tile rect for the search pane
         let Some((_, pane_rect, _)) = tiles.iter().find(|(pid, _, _)| *pid == search.pane_id)
@@ -1695,6 +1696,7 @@ impl App {
 
         emit_status_text(
             atlas,
+            ui_borrow.as_deref_mut(),
             &bar_text,
             &TextEmitParams {
                 x_start: bar_x + padding,
@@ -1826,8 +1828,10 @@ impl App {
         // Render text
         let baseline = ch * self.core.config.statusbar.text_baseline;
         let text_color = [1.0, 1.0, 1.0, 1.0];
+        let mut ui_borrow = self.ui_shaper.as_ref().map(|c| c.borrow_mut());
         emit_status_text(
             atlas,
+            ui_borrow.as_deref_mut(),
             text,
             &TextEmitParams {
                 x_start: base_x + 2.0,

@@ -59,6 +59,7 @@ impl App {
             cell_w,
             cell_h,
             baseline,
+            ui_shaper: self.ui_shaper.as_ref(),
         };
 
         let top_bar = TopBarComponent::capture(self, top_bar_layout, &cx);
@@ -164,6 +165,7 @@ impl App {
             cell_w,
             cell_h,
             baseline: cell_h * self.core.config.statusbar.text_baseline,
+            ui_shaper: self.ui_shaper.as_ref(),
         }
     }
 

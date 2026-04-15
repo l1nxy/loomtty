@@ -2222,12 +2222,13 @@ impl App {
         }
 
         let content_y = self.content_origin_y();
+        let content_x = self.content_origin_x();
         let offset_tiles: Vec<(u64, GeoRect, bool)> = tiles
             .iter()
             .map(|(pane_id, rect, is_active)| {
                 (
                     *pane_id,
-                    GeoRect::new(rect.x, rect.y + content_y, rect.w, rect.h),
+                    GeoRect::new(rect.x + content_x, rect.y + content_y, rect.w, rect.h),
                     *is_active,
                 )
             })

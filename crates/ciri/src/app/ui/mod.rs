@@ -3,9 +3,11 @@ pub(crate) mod builder;
 mod context_menu;
 mod hints_bar;
 pub(super) mod info_box;
+pub(crate) mod layout;
 mod overview;
 mod palette;
 mod paste_dialog;
+mod tab_bar;
 mod top_bar;
 pub(crate) mod types;
 
@@ -15,13 +17,16 @@ pub(crate) use info_box::InfoBoxComponent;
 pub(crate) use overview::OverviewComponent;
 pub(crate) use palette::PaletteComponent;
 pub(crate) use paste_dialog::PasteDialogComponent;
+pub(crate) use tab_bar::TabBarComponent;
 pub(crate) use top_bar::TopBarComponent;
 pub(crate) use types::*;
 
+use ciri_config::config::{StatusBarPosition, TabBarPosition};
 use ciri_render::glyph_cache::GlyphInstance;
 use ciri_render::rect::Rect;
 use winit::window::CursorIcon;
 
+use self::layout::{Axis, Border, Linear, UiElement, UiRect};
 use super::{App, TopBarHoverRegion};
 
 impl App {
@@ -57,6 +62,12 @@ impl App {
 
         let top_bar = TopBarComponent::capture(self, top_bar_layout, &cx);
         let hints_bar = HintsBarComponent::capture(self, &cx);
+        let side_tab_bar = match cx.config.tabbar.position {
+            TabBarPosition::Left | TabBarPosition::Right => {
+                Some(TabBarComponent::capture(self, &cx))
+            }
+            TabBarPosition::Integrated => None,
+        };
         let palette = PaletteComponent::capture(self, &cx);
         let context_menu = ContextMenuComponent::capture(self, &cx);
         let paste_dialog = PasteDialogComponent::capture(self, &cx);
@@ -77,8 +88,45 @@ impl App {
             color_glyphs,
         };
 
-        top_bar.paint(&cx, &mut scene);
-        hints_bar.paint(&cx, &mut scene);
+        // ── Chrome tree ──────────────────────────────────────────────
+        //
+        // Build a `Border` whose edges contain the bars and whose center
+        // is the terminal viewport (drawn elsewhere — we don't paint it
+        // here).
+        //
+        // Horizontal edges (top / bottom) come from `statusbar.position`:
+        //   Top:    Border { top: TopBar, bottom: HintsBar, .. }
+        //   Bottom: Border { bottom: [HintsBar, TopBar] stacked, .. }
+        //
+        // Vertical edges (left / right) come from `tabbar.position`:
+        //   Integrated:  no side bar — tabs are inside the top bar.
+        //   Left / Right: a `TabBarComponent` on the matching side.
+        //
+        // `Border` resolves top → bottom → left → right → center, so the
+        // side bar always spans vertically *inside* the horizontal edges.
+        // That matches the "top bar goes edge to edge, side bar starts
+        // below it" mental model.
+        let viewport_rect = UiRect::new(0.0, 0.0, vw, vh);
+        let mut chrome: Border<'_> = match cx.config.statusbar.position {
+            StatusBarPosition::Top => Border::new().top(top_bar).bottom(hints_bar),
+            StatusBarPosition::Bottom => Border::new()
+                .bottom(Linear::new(Axis::Vertical).push(hints_bar).push(top_bar)),
+        };
+        if let Some(tab_bar) = side_tab_bar {
+            chrome = match cx.config.tabbar.position {
+                TabBarPosition::Left => chrome.left(tab_bar),
+                TabBarPosition::Right => chrome.right(tab_bar),
+                TabBarPosition::Integrated => unreachable!(
+                    "side_tab_bar is only Some for Left/Right positions",
+                ),
+            };
+        }
+        chrome.paint(viewport_rect, &cx, &mut scene);
+
+        // Modal / overlay layers — these still position themselves
+        // absolutely (centred on the viewport, etc.) and don't fit the
+        // dock-style Border model. Painted *after* the chrome tree so
+        // they sit on top.
         if let Some(d) = &overview_bar {
             overview::paint_overview_action_bar(d, overview_hover, &cx, &mut scene);
         }
@@ -246,7 +294,23 @@ impl App {
             return true; // top bar area consumed
         }
 
-        // 3. Overview (special — needs &App for tile hit test)
+        // 3. Side tab bar (when tabbar.position != Integrated)
+        if let Some((bx, by, bw, bh)) =
+            self.side_tab_bar_rect(cx.viewport_w, cx.viewport_h)
+            && mx >= bx
+            && mx < bx + bw
+            && my >= by
+            && my < by + bh
+        {
+            let tab_bar = TabBarComponent::capture(self, &cx);
+            let rect = UiRect::new(bx, by, bw, bh);
+            if let Some(action) = tab_bar.hit(rect, mx, my, &cx) {
+                self.apply_ui_action(action);
+            }
+            return true; // side tab area consumed
+        }
+
+        // 4. Overview (special — needs &App for tile hit test)
         if self.core.overview.active {
             if let Some(action) = self.ui_overview_action(mx, my) {
                 self.apply_ui_action(action);
@@ -442,6 +506,37 @@ impl App {
             };
         }
 
+        // Side tab bar hover: reuse `hovered_pane_tab` so paint logic
+        // (both integrated and side variants) shares one hovered-id
+        // state. Clearing it happens via `had_top_bar_hover` below.
+        let cx = self.ui_context();
+        if let Some((bx, by, bw, bh)) =
+            self.side_tab_bar_rect(cx.viewport_w, cx.viewport_h)
+            && mx >= bx
+            && mx < bx + bw
+            && my >= by
+            && my < by + bh
+        {
+            let tab_bar = TabBarComponent::capture(self, &cx);
+            let rect = UiRect::new(bx, by, bw, bh);
+            let hit = tab_bar.hit(rect, mx, my, &cx);
+            let next_tab = match hit {
+                Some(UiAction::FocusPaneTab(id)) => Some(id),
+                _ => None,
+            };
+            let prev_tab = self.core.hovered_pane_tab;
+            self.core.hovered_pane_tab = next_tab;
+            return UiHoverOutcome {
+                handled: true,
+                cursor: if next_tab.is_some() {
+                    CursorIcon::Pointer
+                } else {
+                    CursorIcon::Default
+                },
+                needs_redraw: prev_tab != next_tab,
+            };
+        }
+
         let had_top_bar_hover = self.core.hovered_top_bar_region.take().is_some()
             || self.core.hovered_pane_tab.take().is_some();
 
@@ -486,7 +581,11 @@ mod tests {
         let cx = app.ui_context();
         let layout = app.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h);
         let component = TopBarComponent::capture(&app, layout, &cx);
-        let action = component.click(layout.session_x + 4.0, layout.bar_y + 2.0, &cx);
+        // Session zone is always at x=0 in the current Linear layout
+        // (`Border::top` puts the bar at the top edge, `SessionLabel` is
+        // the first child of the row). Use a small positive x to land
+        // inside the zone; bar_y is read from the captured layout.
+        let action = component.click(4.0, layout.bar_y + 2.0, &cx);
         assert_eq!(action, Some(UiAction::OpenSessionPalette));
     }
 
@@ -567,7 +666,7 @@ mod tests {
         let mut app = make_app();
         let cx = app.ui_context();
         let layout = app.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h);
-        let hover = app.dispatch_ui_hover(layout.session_x + 2.0, layout.bar_y + 2.0);
+        let hover = app.dispatch_ui_hover(2.0, layout.bar_y + 2.0);
         assert!(hover.handled);
         assert_eq!(hover.cursor, CursorIcon::Pointer);
         assert_eq!(

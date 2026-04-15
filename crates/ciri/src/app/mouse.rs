@@ -17,6 +17,8 @@ impl App {
             return None;
         }
         let my = self.content_y_from_screen(my)?;
+        let (vw, _) = self.command_palette_viewport_size();
+        let mx = self.content_x_from_screen(mx, vw)?;
         let border_w = self.core.config.appearance.border_width;
         let padding = self.core.config.appearance.padding;
         let vox = self.core.anim_mgr.view_offset_x.value() as f32;
@@ -45,6 +47,8 @@ impl App {
             return None;
         }
         let my = self.content_y_from_screen(my)?;
+        let (vw, _) = self.command_palette_viewport_size();
+        let mx = self.content_x_from_screen(mx, vw)?;
         let border_w = self.core.config.appearance.border_width;
         let padding = self.core.config.appearance.padding;
         let vox = self.core.anim_mgr.view_offset_x.value() as f32;
@@ -472,6 +476,8 @@ impl App {
         let vox = self.core.anim_mgr.view_offset_x.value() as f32;
         let tiles = self.core.workspaces.active().visible_tiles(vox);
         let my = self.content_y_from_screen(my)?;
+        let (vw, _) = self.command_palette_viewport_size();
+        let mx = self.content_x_from_screen(mx, vw)?;
         // Wider hit area (8px from right edge) for comfortable clicking
         let hit_zone_width = 8.0f32;
 

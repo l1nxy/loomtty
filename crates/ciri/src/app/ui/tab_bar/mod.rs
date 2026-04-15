@@ -15,14 +15,12 @@
 //! component fully rect-local and suitable for `Border::left` or
 //! `Border::right` placement without caring which side it lives on.
 
-mod truncate;
-
 use ciri_config::config::TabBarPosition;
 use ciri_config::theme::ThemeConfig;
 
-use self::truncate::truncate_to_cols;
 use super::builder::UiBuilder;
 use super::layout::{Axis, SizeHint, UiElement, UiRect};
+use super::text_layout;
 use super::tokens;
 use super::types::{UiAction, UiContext, UiScene};
 use crate::app::App;
@@ -189,15 +187,18 @@ impl UiElement for TabBarComponent {
                 ui.abs_rect(indicator_x, row.y, indicator_w, row.h, accent);
             }
 
-            // Label.
+            // Label. Truncate with ellipsis so shaped text never overflows
+            // the row, regardless of whether the UI font is monospaced.
             let label_color = if tab.active || hovered { fg } else { dim };
             let text_y = row.y + (row.h - cx.cell_h) * 0.5;
-            // Truncate to fit in the row (subtract the indicator + one
-            // cell of padding on each side of the text).
-            let budget_cols =
-                (((row.w - indicator_w - cx.cell_w).max(0.0)) / cx.cell_w) as usize;
-            let truncated = truncate_to_cols(&tab.label, budget_cols);
-            ui.abs_text(&truncated, label_x_base, text_y, label_color);
+            // Budget = row width minus the indicator strip and one cell of
+            // padding on each side of the text.
+            let label_budget = (row.w - indicator_w - cx.cell_w).max(0.0);
+            let truncated =
+                text_layout::truncate_with_ellipsis(cx, &tab.label, label_budget);
+            if !truncated.is_empty() {
+                ui.abs_text(&truncated, label_x_base, text_y, label_color);
+            }
         }
     }
 

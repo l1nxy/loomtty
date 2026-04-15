@@ -86,7 +86,10 @@ pub(crate) fn overview_action_bar_data(
             return None;
         }
         let bar_h = (cell_h * 2.0).max(28.0);
-        let bar_y = tr.y + tr.h - bar_h;
+        // Tile rects are in content space; offset to screen space
+        // so painting and hit-testing use consistent coordinates.
+        let content_y = app.content_origin_y();
+        let bar_y = tr.y + content_y + tr.h - bar_h;
         let half_w = tr.w / 2.0;
         return Some(OverviewActionBarData {
             pane_x: tr.x,

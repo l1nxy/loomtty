@@ -58,6 +58,21 @@ impl PredictionEngine {
         }
     }
 
+    /// Clear all per-connection state while keeping config (mode, threshold, etc.).
+    pub fn reset(&mut self) {
+        self.overlays.clear();
+        self.pane_visual_serials.clear();
+        self.srtt_us = 0;
+        self.visual_serial = 1;
+        self.ping_seq = 0;
+        self.last_ping = None;
+        self.next_input_seq = 1;
+        self.last_dims.clear();
+        self.glitch_trigger = 0;
+        self.last_quick_confirm = None;
+        self.flagging = false;
+    }
+
     pub fn next_input_seq(&mut self) -> u64 {
         let seq = self.next_input_seq;
         self.next_input_seq += 1;

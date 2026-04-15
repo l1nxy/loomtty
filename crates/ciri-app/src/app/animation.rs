@@ -202,6 +202,7 @@ impl AppModel {
 
     pub fn sync_col_animations(&mut self) {
         let ncols = self.workspaces.active().columns.len();
+        let ws_idx = self.workspaces.active_workspace_idx;
         while self.anim_mgr.col_widths.len() < ncols {
             self.anim_mgr.col_widths.push(AnimValue::new(0.0));
         }
@@ -209,11 +210,13 @@ impl AppModel {
 
         let vw = self.workspaces.active().view_size.width;
         let sp = self.scroll_spring();
-        // In overview mode, jump directly to target widths — animating column
-        // widths while zoomed out causes a visible resize when switching panels
-        // across workspaces (the col_widths array carries stale values from the
-        // previous active workspace).
-        let skip_anim = !self.config.animation.enabled || self.overview.active;
+        // When the active workspace changed, col_widths carries stale values
+        // from the old workspace. Jump to correct values to avoid a spurious
+        // resize animation — regardless of how the switch happened (keyboard,
+        // tray button, overview click, etc.).
+        let ws_changed = ws_idx != self.anim_mgr.col_widths_ws_idx;
+        let skip_anim = !self.config.animation.enabled || ws_changed;
+        self.anim_mgr.col_widths_ws_idx = ws_idx;
         for (i, col) in self.workspaces.active().columns.iter().enumerate() {
             let target = col.resolve_width(vw) as f64;
             let current = self.anim_mgr.col_widths[i].value();

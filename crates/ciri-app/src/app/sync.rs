@@ -17,7 +17,6 @@ impl AppModel {
 
         // Snapshot old pane positions for move animation
         let old_positions = self.snapshot_pane_positions();
-
         let view_size = self.workspaces.view_size;
         let column_gap = self.workspaces.column_gap;
 

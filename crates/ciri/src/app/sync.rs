@@ -76,6 +76,9 @@ impl App {
                             self.core.anim_mgr.ensure_pane_registered(id);
                         }
                         self.core.connected = true;
+                        // Pre-fetch session list so the palette has data
+                        // immediately when opened for the first time.
+                        self.send(ClientMessage::ListSessions { all: false });
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::LayoutUpdate { layout }) => {

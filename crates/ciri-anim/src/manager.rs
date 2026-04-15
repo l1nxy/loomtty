@@ -205,6 +205,10 @@ pub struct AnimationManager {
     pub overview_zoom: AnimValue,
     pub gesture_row_offset: AnimValue,
     pub col_widths: Vec<AnimValue>,
+    /// Workspace index that `col_widths` was last synced for.
+    /// When the active workspace changes, `sync_col_animations` jumps
+    /// instead of animating so stale values don't cause a spurious resize.
+    pub col_widths_ws_idx: usize,
 
     // ── Per-pane animations ──
     pane_anims: HashMap<PaneId, PaneAnimState>,
@@ -223,6 +227,7 @@ impl AnimationManager {
             overview_zoom: AnimValue::new(1.0),
             gesture_row_offset: AnimValue::new(0.0),
             col_widths: Vec::new(),
+            col_widths_ws_idx: 0,
             pane_anims: HashMap::new(),
             closing: Vec::new(),
             prev_focused: None,

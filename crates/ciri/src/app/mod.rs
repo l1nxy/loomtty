@@ -39,9 +39,9 @@ use winit::window::Window;
 // Re-export core types so existing `use super::*` in submodules still works.
 pub(crate) use ciri_app::app::{
     AppModel, ClientImagePlacement, ConnectionKind, ConnectionSlot, ContextMenu, ContextMenuAction,
-    ContextMenuItem, HoveredLink, OverviewActionHover, PaletteEntryKind, PasteButton, PendingPaste,
-    PendingPasteTarget, ReconnectPlan, RemoteConnectionConfig, ScrollbarDragInfo, SearchMatch,
-    SearchState, Selection, ServerEvent, TopBarHoverRegion,
+    ContextMenuItem, GestureState, HoveredLink, OverviewActionHover, PaletteEntryKind, PasteButton,
+    PendingPaste, PendingPasteTarget, ReconnectPlan, RemoteConnectionConfig, ResizeDragState,
+    ScrollbarDragInfo, SearchMatch, SearchState, Selection, ServerEvent, TopBarHoverRegion,
 };
 use ciri_layout::geometry::Rect as GeoRect;
 
@@ -406,6 +406,16 @@ impl App {
         // Clean up cached session data for this slot
         self.core.cached_slot_sessions.remove(target_id);
 
+        // Close transient UI state before saving — these are interactive
+        // overlays that don't belong to a specific connection.
+        if self.core.overview.active {
+            self.core.exit_overview();
+        }
+        self.core.search_state = None;
+        self.core.command_palette = None;
+        self.core.context_menu = ContextMenu::default();
+        self.core.pending_paste = None;
+
         // Save current state to background
         if let Some(current) = self.save_current_to_slot() {
             self.core
@@ -415,6 +425,62 @@ impl App {
 
         // Restore target
         self.restore_from_slot(target);
+
+        // Reset transient UI/interaction state that doesn't belong to the
+        // restored slot — overview, drag, hover, gestures, etc.
+        self.core.overview.active = false;
+        self.core.overview.hovered_pane = None;
+        self.core.overview.dragging = false;
+        self.core.overview.drag_last_pos = None;
+        self.core.overview_action_hover = None;
+        self.core.anim_mgr.overview_zoom.jump_to(1.0);
+        self.core.search_state = None;
+        self.core.command_palette = None;
+        self.core.context_menu = ContextMenu::default();
+        self.core.pending_paste = None;
+        self.core.drag = ResizeDragState {
+            col_dragging: None,
+            col_right_idx: None,
+            col_start_x: 0.0,
+            col_start_width: 0.0,
+            col_delta: 0.0,
+            tile_dragging: None,
+            tile_start_y: 0.0,
+            scrollbar_dragging: None,
+        };
+        self.core.gestures = GestureState {
+            scroll_accum: 0.0,
+            row_active: false,
+            row_start: 0,
+        };
+        self.core.pane_tab_scroll = 0.0;
+        self.core.hovered_top_bar_region = None;
+        self.core.hovered_pane_tab = None;
+        self.core.last_left_click = None;
+        self.core.hovered_link = None;
+        self.core.last_focus_follows_mouse = None;
+        self.core.cached_local_sessions.clear();
+        self.core.cached_remote_probes.clear();
+        self.core.prediction.reset();
+
+        // The window may have been resized while this slot was in the background.
+        // Use apply_resize (not preview_resize) so we also send the Resize
+        // message to the server — otherwise PTY dimensions stay at the slot's
+        // save-time size and panels don't reflow.
+        if let Some(renderer) = &self.renderer {
+            let (w, h) = renderer.surface_size();
+            self.apply_resize(winit::dpi::PhysicalSize::new(w, h));
+        }
+
+        // Sync window focus state — the server tracks this per-client for
+        // DECSET 1004 PTY focus reporting, and it missed any focus changes
+        // while this slot was in the background.
+        self.core.send(ClientMessage::FocusChange {
+            focused: self.window_focused,
+        });
+
+        // Pre-fetch session list for the new connection
+        self.core.send(ClientMessage::ListSessions { all: false });
 
         // Process any events that accumulated while this slot was in the background
         self.process_server_events();

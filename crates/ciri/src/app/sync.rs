@@ -76,9 +76,12 @@ impl App {
                             self.core.anim_mgr.ensure_pane_registered(id);
                         }
                         self.core.connected = true;
-                        // Pre-fetch session list so the palette has data
-                        // immediately when opened for the first time.
+                        // Pre-fetch session list so the palette / cycle has
+                        // data immediately. Also refresh background slot caches
+                        // so cycling across slots can see the full session list
+                        // on the other side.
                         self.send(ClientMessage::ListSessions { all: false });
+                        self.core.refresh_all_slot_session_caches();
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::LayoutUpdate { layout }) => {
@@ -274,9 +277,18 @@ impl App {
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::SessionList { sessions }) => {
+                        log::debug!(
+                            "SessionList received: {} entries: {:?}",
+                            sessions.len(),
+                            sessions.iter().map(|s| (&s.name, s.running)).collect::<Vec<_>>(),
+                        );
                         // Update cache with only running sessions
                         self.core.cached_local_sessions =
                             sessions.into_iter().filter(|s| s.running).collect();
+                        log::debug!(
+                            "cached_local_sessions after filter: {:?}",
+                            self.core.cached_local_sessions.iter().map(|s| &s.name).collect::<Vec<_>>(),
+                        );
                         // Rebuild palette entries from cache if palette is open
                         if self.core.command_palette.is_some() {
                             self.core.rebuild_palette_entries();
@@ -288,13 +300,36 @@ impl App {
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::SessionKilled { session_name }) => {
-                        // Remove killed session from cache and rebuild palette
+                        // Remove killed session from cache and rebuild palette.
                         self.core
                             .cached_local_sessions
                             .retain(|s| s.name != session_name);
                         if self.core.command_palette.is_some() {
                             self.core.rebuild_palette_entries();
                         }
+
+                        // If we were on that session, the server has already
+                        // auto-switched us when possible (a SessionSwitched
+                        // arrives in this batch). If it didn't (no other
+                        // sessions on this server), gracefully fall back to
+                        // another connection slot, otherwise detach.
+                        let killed_was_ours = self.core.session_name == session_name;
+                        let server_switched_us = self.core.pending_session_name.is_some();
+                        if killed_was_ours && !server_switched_us {
+                            if !self.core.background_slots.is_empty() {
+                                let mut ids: Vec<String> =
+                                    self.core.background_slots.keys().cloned().collect();
+                                ids.sort();
+                                let target = ids[0].clone();
+                                self.switch_to_slot(&target);
+                            } else {
+                                log::info!(
+                                    "killed session '{session_name}' was active and no fallback available — detaching"
+                                );
+                                self.core.should_exit = true;
+                            }
+                        }
+
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::TemplateApplied { .. })
@@ -728,6 +763,119 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // cycle_session 测试
+    // -----------------------------------------------------------------------
+
+    /// Regression: server's SessionList comes sorted by last_attached, so the
+    /// session you just switched to bubbles to the front. With order-sensitive
+    /// cycling, pressing `i` after each switch would oscillate between the two
+    /// most-recent sessions instead of advancing to the next slot. Cycle must
+    /// use a stable order (sorted by name) regardless of cache order.
+    #[test]
+    fn cycle_session_advances_even_when_cache_reorders_after_switch() {
+        let mut app = make_app();
+        app.core.active_slot_id = "remote".to_string();
+        app.core.session_name = "alpha".to_string();
+        // Initial server response: alpha was attached most recently.
+        app.core.cached_local_sessions = vec![
+            SessionInfo { name: "alpha".into(), running: true, pane_count: 1, client_count: 1 },
+            SessionInfo { name: "beta".into(),  running: true, pane_count: 1, client_count: 1 },
+        ];
+        let (local_slot, _ev, _local_cmd_rx) =
+            make_bg_slot("local", super::super::ConnectionKind::Local, "main", true);
+        app.core.background_slots.insert("local".into(), local_slot);
+        let (cmd_tx, _remote_cmd_rx) = crossbeam_channel::unbounded();
+        app.core.server_tx = Some(cmd_tx);
+        let (_ev_tx, server_rx) = crossbeam_channel::unbounded();
+        app.core.server_rx = Some(server_rx);
+
+        // Press 1: alpha → beta
+        app.cycle_session(1);
+        // Simulate server confirming the switch + sending a fresh SessionList
+        // ordered by last_attached: beta is now first.
+        app.core.session_name = "beta".to_string();
+        app.core.pending_session_name = None;
+        app.core.cached_local_sessions = vec![
+            SessionInfo { name: "beta".into(),  running: true, pane_count: 1, client_count: 1 },
+            SessionInfo { name: "alpha".into(), running: true, pane_count: 1, client_count: 1 },
+        ];
+
+        // Press 2: must advance to the local slot — NOT loop back to alpha.
+        app.cycle_session(1);
+        assert_eq!(
+            app.core.active_slot_id, "local",
+            "press 2 must reach local; instead stayed on {}",
+            app.core.active_slot_id
+        );
+    }
+
+    #[test]
+    fn cycle_session_reaches_bg_slot_after_traversing_remote_sessions() {
+        // Setup: on remote with multi-session cache, local in bg.
+        let mut app = make_app();
+        app.core.active_slot_id = "remote:host:7890".to_string();
+        app.core.session_name = "alpha".to_string();
+        app.core.cached_local_sessions = vec![
+            SessionInfo {
+                name: "alpha".into(),
+                running: true,
+                pane_count: 1,
+                client_count: 1,
+            },
+            SessionInfo {
+                name: "beta".into(),
+                running: true,
+                pane_count: 1,
+                client_count: 1,
+            },
+            SessionInfo {
+                name: "gamma".into(),
+                running: true,
+                pane_count: 1,
+                client_count: 1,
+            },
+        ];
+        let (local_slot, _ev, local_cmd_rx) =
+            make_bg_slot("default", super::super::ConnectionKind::Local, "main", true);
+        app.core
+            .background_slots
+            .insert("default".into(), local_slot);
+        // Hook current "remote" connection so cycle_session's SwitchSession
+        // sends land somewhere (we drain to verify).
+        let (cmd_tx, remote_cmd_rx) = crossbeam_channel::unbounded();
+        app.core.server_tx = Some(cmd_tx);
+        let (_ev_tx, server_rx) = crossbeam_channel::unbounded();
+        app.core.server_rx = Some(server_rx);
+
+        // Press 1: alpha → beta (within remote)
+        app.cycle_session(1);
+        let m1 = remote_cmd_rx.try_recv().unwrap();
+        assert!(matches!(m1, ClientMessage::SwitchSession { ref session_name } if session_name == "beta"),
+            "press 1 should send SwitchSession(beta), got {:?}", m1);
+
+        // Press 2: beta → gamma (within remote, using `pending` to advance)
+        app.cycle_session(1);
+        let m2 = remote_cmd_rx.try_recv().unwrap();
+        assert!(matches!(m2, ClientMessage::SwitchSession { ref session_name } if session_name == "gamma"),
+            "press 2 should send SwitchSession(gamma), got {:?}", m2);
+
+        // Press 3: gamma → (default, main) — CROSS-SLOT SWITCH expected.
+        app.cycle_session(1);
+        assert_eq!(
+            app.core.active_slot_id, "default",
+            "press 3 should switch to local slot, but active_slot_id={}",
+            app.core.active_slot_id
+        );
+        assert_eq!(
+            app.core.session_name, "main",
+            "after switching to local slot, session_name should be the slot's saved name",
+        );
+        // No further SwitchSession should have been sent on press 3 since
+        // the local slot's session already matches the cycle target.
+        let _ = local_cmd_rx; // keep alive so channels don't drop
+    }
+
+    // -----------------------------------------------------------------------
     // buffered_events 机制测试
     // -----------------------------------------------------------------------
 
@@ -1007,14 +1155,14 @@ mod tests {
         // 应已移出 pending
         assert!(!app.core.slot_session_pending.contains("bg-slot"));
 
-        // 应有 SlotSession 条目
+        // 应有 background slot 的 GoToSession 条目
         let palette = app.core.command_palette.as_ref().unwrap();
         let slot_sessions: Vec<_> = palette
             .entries
             .iter()
-            .filter(|e| matches!(&e.kind, PaletteEntryKind::SlotSession { .. }))
+            .filter(|e| matches!(&e.kind, PaletteEntryKind::GoToSession { slot_id, .. } if slot_id == "bg-slot"))
             .collect();
-        assert!(!slot_sessions.is_empty(), "应有 SlotSession 条目");
+        assert!(!slot_sessions.is_empty(), "应有 bg-slot 的 GoToSession 条目");
     }
 
     #[test]
@@ -1148,21 +1296,22 @@ mod tests {
         app.process_server_events();
 
         let palette = app.core.command_palette.as_ref().unwrap();
-        // SlotSession 应保留
-        let slot_sess_count = palette
+        let active = app.core.active_slot_id.clone();
+        // bg-s slot 的 GoToSession 应保留
+        let bg_count = palette
             .entries
             .iter()
-            .filter(|e| matches!(&e.kind, PaletteEntryKind::SlotSession { .. }))
+            .filter(|e| matches!(&e.kind, PaletteEntryKind::GoToSession { slot_id, .. } if slot_id == "bg-s"))
             .count();
-        assert!(slot_sess_count >= 1, "SessionList 后 SlotSession 应保留");
+        assert!(bg_count >= 1, "SessionList 后 bg-s 的 GoToSession 应保留");
 
-        // SwitchSession 也应存在
-        let switch_count = palette
+        // 当前 slot 的 GoToSession 也应存在
+        let current_count = palette
             .entries
             .iter()
-            .filter(|e| matches!(&e.kind, PaletteEntryKind::SwitchSession(_)))
+            .filter(|e| matches!(&e.kind, PaletteEntryKind::GoToSession { slot_id, .. } if slot_id == &active))
             .count();
-        assert!(switch_count >= 1, "SessionList 后 SwitchSession 应存在");
+        assert!(current_count >= 1, "SessionList 后当前 slot 的 GoToSession 应存在");
     }
 
     #[test]

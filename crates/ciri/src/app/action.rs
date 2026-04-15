@@ -219,14 +219,34 @@ impl App {
                     self.open_command_palette();
                 }
             }
+            Action::ToggleSessionPalette => {
+                if self.core.command_palette.is_some() {
+                    self.core.command_palette = None;
+                } else {
+                    self.open_session_palette();
+                }
+            }
             Action::EnterMode(_) => {
                 // State transition handled by InputHandler::process_key
             }
             Action::ToggleLock => {
                 self.core.input.toggle_lock();
             }
-            Action::NextSlot => {
-                self.cycle_next_slot();
+            Action::NextSession => {
+                self.cycle_session(1);
+            }
+            Action::PrevSession => {
+                self.cycle_session(-1);
+            }
+            Action::NewSession => {
+                let existing: Vec<String> = self
+                    .core
+                    .cached_local_sessions
+                    .iter()
+                    .map(|s| s.name.clone())
+                    .collect();
+                let name = ciri_session::names::unique_name(&existing);
+                self.send(ClientMessage::SwitchSession { session_name: name });
             }
             // ── Search ──
             Action::OpenSearch => {

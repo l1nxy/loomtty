@@ -21,9 +21,7 @@ pub(super) enum PaletteRowStyle {
     RemoteHost,
     RemoteSession,
     SshShell,
-    SwitchSlot,
     DirectConnect,
-    SlotSession,
     ConnectRemotePrompt,
 }
 
@@ -73,7 +71,7 @@ impl PaletteComponent {
                         PaletteRowStyle::SectionHeader
                     }
                     super::super::PaletteEntryKind::Action(_) => PaletteRowStyle::Action,
-                    super::super::PaletteEntryKind::SwitchSession(_)
+                    super::super::PaletteEntryKind::GoToSession { .. }
                     | super::super::PaletteEntryKind::KillSession(_) => PaletteRowStyle::Session,
                     super::super::PaletteEntryKind::RemoteHost { .. } => {
                         PaletteRowStyle::RemoteHost
@@ -82,12 +80,8 @@ impl PaletteComponent {
                         PaletteRowStyle::RemoteSession
                     }
                     super::super::PaletteEntryKind::SshShell { .. } => PaletteRowStyle::SshShell,
-                    super::super::PaletteEntryKind::SwitchSlot(_) => PaletteRowStyle::SwitchSlot,
                     super::super::PaletteEntryKind::DirectConnect { .. } => {
                         PaletteRowStyle::DirectConnect
-                    }
-                    super::super::PaletteEntryKind::SlotSession { .. } => {
-                        PaletteRowStyle::SlotSession
                     }
                     super::super::PaletteEntryKind::ConnectRemotePrompt => {
                         PaletteRowStyle::ConnectRemotePrompt
@@ -189,7 +183,6 @@ impl UiComponent for PaletteComponent {
         let remote_host_color = ThemeConfig::parse_color(&cx.config.theme.cyan);
         let remote_session_color = ThemeConfig::parse_color(&cx.config.theme.blue);
         let ssh_color = ThemeConfig::parse_color(&cx.config.theme.yellow);
-        let slot_color = ThemeConfig::parse_color(&cx.config.theme.green);
 
         let px = self.layout.panel_x;
         let pw = self.layout.panel_w;
@@ -295,11 +288,8 @@ impl UiComponent for PaletteComponent {
                             PaletteRowStyle::RemoteHost | PaletteRowStyle::DirectConnect => {
                                 remote_host_color
                             }
-                            PaletteRowStyle::RemoteSession | PaletteRowStyle::SlotSession => {
-                                remote_session_color
-                            }
+                            PaletteRowStyle::RemoteSession => remote_session_color,
                             PaletteRowStyle::SshShell => ssh_color,
-                            PaletteRowStyle::SwitchSlot => slot_color,
                             PaletteRowStyle::ConnectRemotePrompt => remote_host_color,
                         }
                     };

@@ -474,15 +474,13 @@ impl App {
                 let kind = match &entry.kind {
                     super::PaletteEntryKind::SectionHeader(_) => 0u8,
                     super::PaletteEntryKind::Action(_) => 1,
-                    super::PaletteEntryKind::SwitchSession(_) => 2,
+                    super::PaletteEntryKind::GoToSession { .. } => 2,
                     super::PaletteEntryKind::KillSession(_) => 3,
                     super::PaletteEntryKind::RemoteHost { .. } => 4,
                     super::PaletteEntryKind::RemoteSession { .. } => 5,
                     super::PaletteEntryKind::SshShell { .. } => 6,
-                    super::PaletteEntryKind::SwitchSlot(_) => 7,
-                    super::PaletteEntryKind::DirectConnect { .. } => 8,
-                    super::PaletteEntryKind::SlotSession { .. } => 9,
-                    super::PaletteEntryKind::ConnectRemotePrompt => 10,
+                    super::PaletteEntryKind::DirectConnect { .. } => 7,
+                    super::PaletteEntryKind::ConnectRemotePrompt => 8,
                 };
                 kind.hash(hasher);
             }

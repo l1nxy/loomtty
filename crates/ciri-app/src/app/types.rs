@@ -115,7 +115,14 @@ pub enum PaletteEntryKind {
     /// Non-selectable section header for visual grouping.
     SectionHeader(String),
     Action(ciri_input::action::Action),
-    SwitchSession(String),
+    /// Unified session entry — navigates to the right slot + session in one click.
+    /// Replaces the old SwitchSession / SwitchSlot / SlotSession triad: from the
+    /// user's perspective there's just one concept — "go to this session".
+    GoToSession {
+        slot_id: String,
+        session_name: String,
+    },
+    /// Kill a session on the current slot (remote kill not supported via palette).
     KillSession(String),
     /// A configured remote host — selecting it triggers session probing.
     RemoteHost {
@@ -137,8 +144,6 @@ pub enum PaletteEntryKind {
         host: String,
         ssh_port: u16,
     },
-    /// Switch to a background connection slot.
-    SwitchSlot(String),
     /// Direct-connect to a configured remote host without probing (VSCode SSH style).
     DirectConnect {
         name: String,
@@ -146,12 +151,7 @@ pub enum PaletteEntryKind {
         port: u16,
         ssh_port: u16,
     },
-    /// Switch to a background slot and then switch session within it.
-    SlotSession {
-        slot_id: String,
-        session_name: String,
-    },
-    /// Fixed entry: "Connect to Remote Host" — switches palette to input mode.
+    /// Fixed entry: "Connect to New Host" — switches palette to input mode.
     ConnectRemotePrompt,
 }
 
@@ -267,6 +267,17 @@ pub struct RemoteConnectionConfig {
     pub host: String,
     pub port: u16,
     pub ssh_port: u16,
+}
+
+/// A remote host the user previously connected to. Persisted across runs so
+/// the palette can offer recent connections without re-typing the address.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RecentHost {
+    pub host: String,
+    pub port: u16,
+    pub ssh_port: u16,
+    /// Unix epoch seconds — when the user last successfully connected.
+    pub last_used: u64,
 }
 
 /// Identifies what kind of connection a slot represents.

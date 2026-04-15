@@ -4,6 +4,7 @@ mod connection;
 mod control;
 mod grid;
 mod init;
+mod recent_hosts;
 
 use anyhow::Result;
 use app::App;
@@ -181,11 +182,15 @@ fn main() -> Result<()> {
         let event_loop = EventLoop::new()?;
         let mut app = App::new(config, session_name);
         app.event_loop_proxy = Some(event_loop.create_proxy());
+        app.core.recent_hosts = recent_hosts::load();
         app.core.remote_config = Some(app::RemoteConnectionConfig {
-            host,
+            host: host.clone(),
             port,
             ssh_port,
         });
+        // Record the explicit remote launch as a recent host.
+        app.core.record_recent_host(&host, port, ssh_port);
+        recent_hosts::save(&app.core.recent_hosts);
         event_loop.run_app(&mut app)?;
         return Ok(());
     }
@@ -211,6 +216,7 @@ fn main() -> Result<()> {
     let event_loop = EventLoop::new()?;
     let mut app = App::new(config, session_name);
     app.event_loop_proxy = Some(event_loop.create_proxy());
+    app.core.recent_hosts = recent_hosts::load();
     event_loop.run_app(&mut app)?;
     Ok(())
 }

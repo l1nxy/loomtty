@@ -735,6 +735,7 @@ dependencies = [
  "ciri-protocol",
  "crossbeam-channel",
  "log",
+ "serde",
  "unicode-width",
 ]
 

@@ -96,6 +96,9 @@ pub struct AppModel {
     pub cached_slot_sessions: BTreeMap<String, Vec<ciri_protocol::message::SessionInfo>>,
     /// Cached remote host probe results, keyed by host address.
     pub cached_remote_probes: BTreeMap<String, RemoteProbeResult>,
+    /// Hosts the user has previously connected to. Loaded once at startup,
+    /// updated on successful remote connect, persisted by the platform layer.
+    pub recent_hosts: Vec<RecentHost>,
 }
 
 impl AppModel {
@@ -210,6 +213,7 @@ impl AppModel {
             cached_local_sessions: Vec::new(),
             cached_slot_sessions: BTreeMap::new(),
             cached_remote_probes: BTreeMap::new(),
+            recent_hosts: Vec::new(),
         }
     }
 

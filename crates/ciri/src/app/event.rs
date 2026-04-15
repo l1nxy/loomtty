@@ -142,23 +142,23 @@ impl ApplicationHandler for App {
                 needs_redraw = true;
             }
 
-            // Poll background slot session queries
+            // Poll background slot session queries.
+            //
+            // We poll regardless of palette state because the cycle_session
+            // path also issues `refresh_all_slot_session_caches()` to keep the
+            // cross-slot cycle complete — those responses must land in
+            // `cached_slot_sessions` even when no palette is open.
             if !self.core.slot_session_pending.is_empty() {
                 let timed_out = self
                     .core
                     .slot_session_query_start
                     .is_some_and(|t| t.elapsed() >= Duration::from_secs(5));
-                if self.core.command_palette.is_none() || timed_out {
-                    // Palette was closed or query timed out — stop polling
-                    if timed_out {
-                        log::warn!("slot session query timed out, giving up");
-                    }
+                if timed_out {
+                    log::warn!("slot session query timed out, giving up");
                     self.core.slot_session_pending.clear();
                     self.core.slot_session_query_start = None;
-                } else {
-                    if self.poll_slot_sessions() {
-                        needs_redraw = true;
-                    }
+                } else if self.poll_slot_sessions() {
+                    needs_redraw = true;
                 }
             }
 

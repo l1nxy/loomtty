@@ -57,12 +57,20 @@ pub enum Action {
     Detach,
     /// Toggle the command palette overlay.
     ToggleCommandPalette,
+    /// Toggle the session-only palette (sessions + remote hosts + connect prompt).
+    ToggleSessionPalette,
     /// Enter a named key table (e.g. "resize").
     EnterMode(String),
     /// Toggle locked mode (all keys pass through to terminal).
     ToggleLock,
-    /// Cycle to the next background connection slot (local ↔ remote).
-    NextSlot,
+    /// Switch to the next connection (cycles through slots, restoring each
+    /// slot's last-active session). For within-slot session switching use the
+    /// session palette.
+    NextSession,
+    /// Switch to the previous connection (reverse of NextSession).
+    PrevSession,
+    /// Create and switch to a brand-new session (auto-generated name).
+    NewSession,
 
     // ── Search mode ──
     /// Open the search bar.
@@ -189,8 +197,11 @@ impl Action {
             (Action::ScrollBottom, "Scroll to Bottom"),
             (Action::Detach, "Detach"),
             (Action::ToggleCommandPalette, "Toggle Command Palette"),
+            (Action::ToggleSessionPalette, "Toggle Session Palette"),
             (Action::ToggleLock, "Toggle Lock"),
-            (Action::NextSlot, "Next Connection Slot"),
+            (Action::NextSession, "Next Session"),
+            (Action::PrevSession, "Previous Session"),
+            (Action::NewSession, "New Session"),
             (Action::OpenSearch, "Open Search"),
             (Action::CloseSearch, "Close Search"),
             (Action::ClipboardCopy, "Copy"),
@@ -235,8 +246,11 @@ fn parse_named_action(name: &str) -> Option<Action> {
         "scroll_bottom" => Some(Action::ScrollBottom),
         "detach" => Some(Action::Detach),
         "toggle_command_palette" => Some(Action::ToggleCommandPalette),
+        "toggle_session_palette" => Some(Action::ToggleSessionPalette),
         "toggle_lock" => Some(Action::ToggleLock),
-        "next_slot" => Some(Action::NextSlot),
+        "next_session" => Some(Action::NextSession),
+        "prev_session" | "previous_session" => Some(Action::PrevSession),
+        "new_session" => Some(Action::NewSession),
         "open_search" => Some(Action::OpenSearch),
         "close_search" => Some(Action::CloseSearch),
         "search_next_match" => Some(Action::SearchNextMatch),

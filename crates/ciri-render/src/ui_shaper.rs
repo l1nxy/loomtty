@@ -57,12 +57,13 @@ pub struct UiShapedGlyph {
     pub cluster: u32,
 }
 
-/// Owned font data + parsed face, shared between the UI shaper and the
-/// atlas-side rasterizer (via `GlyphCache::ensure_glyph_id`).
+/// Owned font data; the face is rebuilt on each shape() call (cheap — table
+/// pointers only, no rasterization). Avoids the lifetime-erasing transmute
+/// the previous design needed to keep a `Face<'static>` alongside its bytes.
 #[cfg(not(target_os = "macos"))]
 struct UiFace {
-    face: rustybuzz::Face<'static>,
-    _data: Arc<Vec<u8>>,
+    data: Arc<Vec<u8>>,
+    index: u32,
     units_per_em: f32,
     ascent: f32,
     descent: f32,
@@ -73,20 +74,21 @@ struct UiFace {
 impl UiFace {
     fn new(data: Arc<Vec<u8>>, index: u32) -> Option<Self> {
         let face = rustybuzz::Face::from_slice(&data, index)?;
-        let upem = face.units_per_em() as f32;
-        let ascent = face.ascender() as f32;
-        let descent = face.descender() as f32;
-        let line_gap = face.line_gap() as f32;
-        // SAFETY: `data` is kept alive for the lifetime of UiFace via the Arc.
-        let face: rustybuzz::Face<'static> = unsafe { std::mem::transmute(face) };
         Some(UiFace {
-            face,
-            _data: data,
-            units_per_em: upem,
-            ascent,
-            descent,
-            line_gap,
+            units_per_em: face.units_per_em() as f32,
+            ascent: face.ascender() as f32,
+            descent: face.descender() as f32,
+            line_gap: face.line_gap() as f32,
+            data,
+            index,
         })
+    }
+
+    fn borrow_face(&self) -> rustybuzz::Face<'_> {
+        // The cached metrics above guarantee the bytes already parsed once;
+        // unwrap is safe because the same data parsed in `new`.
+        rustybuzz::Face::from_slice(&self.data, self.index)
+            .expect("UiFace data parsed once in new(), should reparse")
     }
 }
 
@@ -120,6 +122,13 @@ impl ShapeLru {
 
     fn put(&mut self, key: String, value: Vec<UiShapedGlyph>) {
         if self.map.contains_key(&key) {
+            // Duplicate insert: refresh value and promote to MRU so callers
+            // that re-shape don't surprise the eviction order.
+            if let Some(pos) = self.order.iter().position(|k| k == &key) {
+                let k = self.order.remove(pos).unwrap();
+                self.order.push_back(k);
+            }
+            self.map.insert(key, value);
             return;
         }
         if self.order.len() == self.cap
@@ -317,9 +326,10 @@ impl UiTextShaper {
         font_id: fontdb::ID,
         text: &str,
     ) -> Vec<UiShapedGlyph> {
+        let rb_face = face.borrow_face();
         let mut buffer = rustybuzz::UnicodeBuffer::new();
         buffer.push_str(text);
-        let output = rustybuzz::shape(&face.face, &[], buffer);
+        let output = rustybuzz::shape(&rb_face, &[], buffer);
         let infos = output.glyph_infos();
         let positions = output.glyph_positions();
         let scale = self.pixel_size / face.units_per_em.max(1.0);
@@ -371,39 +381,38 @@ impl UiTextShaper {
             }
         }
 
+        // Note on units: CoreText `CTFont::new(size)` returns positions in
+        // user-space units equal to the creation size. We pass `pixel_size`
+        // (already pre-multiplied by dpi_scale) as the size, so positions
+        // and run-typographic-bounds come back in device pixels — no
+        // `pixel_size / units_per_em` scaling needed (that's specific to the
+        // rustybuzz path, which works in raw font units).
         let mut out = Vec::new();
         for run in line.glyph_runs().iter() {
             let glyphs = run.glyphs();
             let positions = run.positions();
             let indices = run.string_indices();
             let n = glyphs.len();
+            // Total typesetting width of the run; needed to compute the last
+            // glyph's advance without falling back to the (possibly substituted
+            // out) primary font's advance table.
+            let run_total_w = unsafe {
+                let r = core_foundation::base::CFRange::init(0, n as core_foundation::base::CFIndex);
+                CTRunGetTypographicBounds(
+                    run.as_concrete_TypeRef(),
+                    r,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                ) as f32
+            };
             for i in 0..n {
                 let idx16 = indices[i] as usize;
-                let next_x = if i + 1 < n {
-                    positions[i + 1].x as f32
-                } else {
-                    // Last glyph in run: use typographic width.
-                    positions[i].x as f32 + 0.0
-                };
                 let advance = if i + 1 < n {
-                    next_x - positions[i].x as f32
+                    positions[i + 1].x as f32 - positions[i].x as f32
                 } else {
-                    // Query CoreText for the advance of this last glyph.
-                    let mut g = glyphs[i];
-                    let mut adv = core_graphics::geometry::CGSize {
-                        width: 0.0,
-                        height: 0.0,
-                    };
-                    unsafe {
-                        CTFontGetAdvancesForGlyphs(
-                            font.as_concrete_TypeRef(),
-                            0,
-                            &mut g,
-                            &mut adv,
-                            1,
-                        );
-                    }
-                    adv.width as f32
+                    // Last glyph: width = run total − x of last glyph.
+                    run_total_w - positions[i].x as f32
                 };
                 let cluster = utf16_to_byte.get(idx16).copied().unwrap_or(text.len());
                 out.push(UiShapedGlyph {
@@ -503,12 +512,12 @@ fn glyph_byte_len(text: &str, byte: usize) -> usize {
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
-    fn CTFontGetAdvancesForGlyphs(
-        font: core_text::font::CTFontRef,
-        orientation: u32,
-        glyphs: *const u16,
-        advances: *mut core_graphics::geometry::CGSize,
-        count: core_foundation::base::CFIndex,
+    fn CTRunGetTypographicBounds(
+        run: core_text::run::CTRunRef,
+        range: core_foundation::base::CFRange,
+        ascent: *mut core_graphics::base::CGFloat,
+        descent: *mut core_graphics::base::CGFloat,
+        leading: *mut core_graphics::base::CGFloat,
     ) -> f64;
 }
 

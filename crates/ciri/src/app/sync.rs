@@ -453,23 +453,7 @@ impl App {
                     if let Some(renderer) = &mut self.renderer {
                         let shaper =
                             ciri_render::shaper::TextShaper::new(&self.core.config.font.family);
-                        let ui_resolved = self
-                            .core
-                            .config
-                            .font
-                            .ui
-                            .as_ref()
-                            .and_then(|u| ciri_render::ui_shaper::resolve_ui_font(&u.family));
-                        let ui_font_path =
-                            ui_resolved.as_ref().map(|(p, i, _)| (p.clone(), *i));
-                        let ui_font_id = ui_resolved.as_ref().map(|(_, _, id)| *id);
-                        let ui_pixel_size = self
-                            .core
-                            .config
-                            .font
-                            .ui
-                            .as_ref()
-                            .map(|u| u.size * (96.0 * self.dpi_scale as f32) / 72.0);
+                        let ui_init = App::resolve_ui_font_init(&self.core.config, self.dpi_scale);
                         let (cache, atlas_gpu) =
                             match renderer.create_atlas(&ciri_render::glyph_cache::FontInitParams {
                                 font_size_pt: self.core.config.font.size,
@@ -480,9 +464,9 @@ impl App {
                                 emoji_font_id: shaper.emoji_font_id(),
                                 cjk_font_path: shaper.cjk_font_path(),
                                 cjk_font_id: shaper.cjk_font_id(),
-                                ui_font_path,
-                                ui_font_id,
-                                ui_pixel_size,
+                                ui_font_path: ui_init.path.clone(),
+                                ui_font_id: ui_init.id,
+                                ui_pixel_size: ui_init.pixel_size,
                                 render_config: &self.core.config.render,
                                 font_resolver: shaper.font_resolver(),
                                 #[cfg(windows)]
@@ -496,9 +480,10 @@ impl App {
                                     return;
                                 }
                             };
-                        let (_, _, _, ui_shaper) = App::build_ui_shaper(
-                            &self.core.config,
+                        let ui_shaper = App::build_ui_shaper(
+                            &ui_init,
                             &shaper,
+                            self.core.config.font.size,
                             self.dpi_scale,
                             cache.cell_width,
                             cache.cell_height,

@@ -133,6 +133,14 @@ impl RenderBuffers {
     }
 }
 
+/// Resolved UI-font inputs shared by `FontInitParams` (atlas) and the
+/// `UiTextShaper`. Produced by [`App::resolve_ui_font_init`].
+pub(crate) struct UiFontInit {
+    pub path: Option<(String, u32)>,
+    pub id: Option<ciri_render::fontdb::ID>,
+    pub pixel_size: Option<f32>,
+}
+
 pub(crate) struct App {
     /// Core logic state — platform-agnostic.
     pub core: AppModel,
@@ -246,59 +254,61 @@ impl App {
             .collect()
     }
 
-    /// Resolve the UI font + pixel size from `config`, falling back to the
-    /// terminal font when `config.font.ui` is `None`. Returns the tuple
-    /// suitable for `FontInitParams` (`ui_font_path`, `ui_font_id`,
-    /// `ui_pixel_size`) plus a configured `UiTextShaper`.
+    /// Resolve the UI font path / id / pixel size from `config`. Returns
+    /// `path: None` when no `[font.ui]` override is set (UI then shares the
+    /// terminal font and uses `FontClass::Primary` in the atlas).
+    ///
+    /// On Windows the `[font.ui]` override is silently dropped — the DWrite
+    /// rasterizer doesn't yet have a per-face glyph_id path for the UI
+    /// class, so honoring the override would paint empty glyphs.
+    pub(crate) fn resolve_ui_font_init(config: &CiriConfig, dpi_scale: f64) -> UiFontInit {
+        #[cfg(windows)]
+        if config.font.ui.is_some() {
+            log::warn!(
+                "[font.ui] override ignored on Windows (DWrite UI-font path \
+                 not yet implemented); using terminal font for UI text"
+            );
+        }
+        #[cfg(windows)]
+        let ui_override = None::<&ciri_config::schema::UiFontConfig>;
+        #[cfg(not(windows))]
+        let ui_override = config.font.ui.as_ref();
+
+        let Some(ui_font) = ui_override else {
+            return UiFontInit { path: None, id: None, pixel_size: None };
+        };
+
+        let (path, id) = match ciri_render::ui_shaper::resolve_ui_font(&ui_font.family) {
+            Some((p, idx, fid)) => (Some((p, idx)), Some(fid)),
+            None => {
+                log::warn!(
+                    "UI font '{}' not found, falling back to terminal font",
+                    ui_font.family
+                );
+                (None, None)
+            }
+        };
+        let ui_px = ui_font.size * (96.0 * dpi_scale as f32) / 72.0;
+        UiFontInit { path, id, pixel_size: Some(ui_px) }
+    }
+
+    /// Build a [`UiTextShaper`] from a resolved [`UiFontInit`]. When `init`
+    /// has no path (no override or unknown family), the shaper falls back to
+    /// the terminal font so UI text still shapes.
     pub(crate) fn build_ui_shaper(
-        config: &CiriConfig,
+        init: &UiFontInit,
         terminal_shaper: &TextShaper,
+        config_font_size_pt: f32,
         dpi_scale: f64,
         cell_width: f32,
         cell_height: f32,
-    ) -> (
-        Option<(String, u32)>,
-        Option<ciri_render::fontdb::ID>,
-        Option<f32>,
-        ciri_render::ui_shaper::UiTextShaper,
-    ) {
-        match &config.font.ui {
-            Some(ui_font) => {
-                let resolved = ciri_render::ui_shaper::resolve_ui_font(&ui_font.family);
-                let (path, id) = match resolved {
-                    Some((p, idx, fid)) => (Some((p, idx)), Some(fid)),
-                    None => {
-                        log::warn!(
-                            "UI font '{}' not found, falling back to terminal font",
-                            ui_font.family
-                        );
-                        (None, None)
-                    }
-                };
-                let ui_px = ui_font.size * (96.0 * dpi_scale as f32) / 72.0;
-                let shaper = ciri_render::ui_shaper::UiTextShaper::new(
-                    path.clone().or_else(|| terminal_shaper.primary_font_path()),
-                    id.or_else(|| terminal_shaper.primary_font_id()),
-                    ui_px,
-                    cell_width,
-                    cell_height,
-                );
-                (path, id, Some(ui_px), shaper)
-            }
-            None => {
-                // No override: UI shares the terminal font. Don't pass
-                // ui_font_path to the atlas — we reuse Primary class there.
-                let px = config.font.size * (96.0 * dpi_scale as f32) / 72.0;
-                let shaper = ciri_render::ui_shaper::UiTextShaper::new(
-                    terminal_shaper.primary_font_path(),
-                    terminal_shaper.primary_font_id(),
-                    px,
-                    cell_width,
-                    cell_height,
-                );
-                (None, None, None, shaper)
-            }
-        }
+    ) -> ciri_render::ui_shaper::UiTextShaper {
+        let path = init.path.clone().or_else(|| terminal_shaper.primary_font_path());
+        let id = init.id.or_else(|| terminal_shaper.primary_font_id());
+        let pixel_size = init
+            .pixel_size
+            .unwrap_or_else(|| config_font_size_pt * (96.0 * dpi_scale as f32) / 72.0);
+        ciri_render::ui_shaper::UiTextShaper::new(path, id, pixel_size, cell_width, cell_height)
     }
 
     pub fn new(config: CiriConfig, session_name: impl Into<String>) -> Self {

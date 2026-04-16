@@ -1719,8 +1719,28 @@ impl App {
         vw: f32,
         vh: f32,
     ) -> bool {
-        let _ = (ordered_tiles, zoom, vw, vh);
-        false
+        let _ = (vw, vh);
+        let zoom_threshold = self.core.config.animation.zoom_threshold;
+
+        // Overview and zoomed-out transitions continuously move/scale every
+        // pane, so per-pane snapshots churn and retained scene sync adds work
+        // without saving pane glyph rebuilds.
+        if self.core.overview.active
+            || zoom < zoom_threshold
+            || self.core.anim_mgr.overview_zoom.is_animating()
+            || self.core.anim_mgr.view_offset_x.is_animating()
+            || self.core.anim_mgr.view_offset_y.is_animating()
+        {
+            return false;
+        }
+
+        // Retaining pane glyph scenes only pays off once some panes can stay
+        // untouched across frames. With a single visible pane, row caches are
+        // still disabled, so content updates would rebuild the whole pane.
+        ordered_tiles.len() > 1
+            && ordered_tiles
+                .iter()
+                .all(|(pane_id, _, _)| self.cached_views.contains_key(pane_id))
     }
 
     pub fn build_search_bar(
@@ -2337,8 +2357,8 @@ impl App {
             self.should_use_retained_pane_scene(&ordered_tiles, zoom, vw_f, vh_f);
 
         let mut bg_rects = std::mem::take(&mut self.render_bufs.bg_rects);
-        let mut glyphs = std::mem::take(&mut self.render_bufs.glyphs);
-        let mut color_glyphs = std::mem::take(&mut self.render_bufs.color_glyphs);
+        let glyphs = std::mem::take(&mut self.render_bufs.glyphs);
+        let color_glyphs = std::mem::take(&mut self.render_bufs.color_glyphs);
         let glyph_batches = std::mem::take(&mut self.render_bufs.glyph_batches);
         let color_glyph_batches = std::mem::take(&mut self.render_bufs.color_glyph_batches);
         let active_glyph_batches = std::mem::take(&mut self.render_bufs.active_glyph_batches);
@@ -2347,9 +2367,18 @@ impl App {
         bg_rects.clear();
         let (active_bg_start, pane_glyph_end, pane_color_glyph_end, mut glyphs, mut color_glyphs) =
             if use_retained_panes {
+                self.render_bufs.glyphs = glyphs;
+                self.render_bufs.color_glyphs = color_glyphs;
+                self.render_bufs.glyph_batches = glyph_batches;
+                self.render_bufs.color_glyph_batches = color_glyph_batches;
+                self.render_bufs.active_glyph_batches = active_glyph_batches;
+                self.render_bufs.active_color_glyph_batches = active_color_glyph_batches;
+
                 self.sync_retained_pane_glyphs(&ordered_tiles, zoom, vw_f, vh_f, paint);
                 self.rebuild_retained_glyph_batches();
 
+                let mut glyphs = std::mem::take(&mut self.render_bufs.glyphs);
+                let mut color_glyphs = std::mem::take(&mut self.render_bufs.color_glyphs);
                 glyphs.truncate(self.render_bufs.pane_glyph_end);
                 color_glyphs.truncate(self.render_bufs.pane_color_glyph_end);
 
@@ -2612,6 +2641,7 @@ fn scissor_rect(tr: &GeoRect, viewport_w: f32, viewport_h: f32) -> Option<(u32, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ciri_anim::{anim_value::AnimValue, spring::SpringParams};
     use ciri_config::config::CiriConfig;
     use std::sync::Arc;
 
@@ -2687,6 +2717,40 @@ mod tests {
         assert!(bg_rects[0].x < bg_rects[active_bg_start].x);
         assert!(glyph_batches.is_empty());
         assert!(active_glyph_batches.is_empty());
+    }
+
+    #[test]
+    fn retained_pane_scene_stays_off_without_reusable_panes() {
+        let app = make_app();
+        let tiles = vec![
+            (1, GeoRect::new(0.0, 0.0, 300.0, 200.0), false),
+            (2, GeoRect::new(320.0, 0.0, 300.0, 200.0), true),
+        ];
+
+        assert!(!app.should_use_retained_pane_scene(&tiles, 1.0, 1600.0, 900.0));
+
+        assert!(!app.should_use_retained_pane_scene(&tiles[..1], 1.0, 1600.0, 900.0));
+    }
+
+    #[test]
+    fn retained_pane_scene_stays_off_in_overview_like_states() {
+        let mut app = make_app();
+        let tiles = vec![
+            (1, GeoRect::new(0.0, 0.0, 300.0, 200.0), false),
+            (2, GeoRect::new(320.0, 0.0, 300.0, 200.0), true),
+        ];
+
+        app.core.overview.active = true;
+        assert!(!app.should_use_retained_pane_scene(&tiles, 1.0, 1600.0, 900.0));
+        app.core.overview.active = false;
+
+        let zoom_threshold = app.core.config.animation.zoom_threshold;
+        assert!(!app.should_use_retained_pane_scene(&tiles, zoom_threshold * 0.5, 1600.0, 900.0,));
+
+        let mut anim = AnimValue::new(0.0);
+        anim.animate_to(1.0, SpringParams::snappy());
+        app.core.anim_mgr.view_offset_x = anim;
+        assert!(!app.should_use_retained_pane_scene(&tiles, 1.0, 1600.0, 900.0));
     }
 
     #[test]

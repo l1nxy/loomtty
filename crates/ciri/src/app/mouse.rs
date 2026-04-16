@@ -645,6 +645,9 @@ impl App {
     }
 
     fn hovered_pane_at(&self, mx: f32, my: f32) -> Option<u64> {
+        let my = self.content_y_from_screen(my)?;
+        let (vw, _) = self.command_palette_viewport_size();
+        let mx = self.content_x_from_screen(mx, vw)?;
         let vox = self.core.anim_mgr.view_offset_x.value() as f32;
         self.core
             .workspaces
@@ -1077,8 +1080,28 @@ fn mode_reports_mouse(mode_flags: u16) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::mode_reports_mouse;
+    use super::{App, mode_reports_mouse};
+    use ciri_config::config::{CiriConfig, StatusBarPosition, TabBarPosition};
+    use ciri_layout::column::ColumnWidth;
     use ciri_protocol::message::{MODE_ALT_SCREEN, MODE_MOUSE_REPORT};
+    use winit::dpi::PhysicalSize;
+
+    fn make_hover_app(tab_position: TabBarPosition) -> App {
+        let mut config = CiriConfig::default();
+        config.window.width = 900.0;
+        config.window.height = 700.0;
+        config.statusbar.position = StatusBarPosition::Top;
+        config.tabbar.position = tab_position;
+        config.tabbar.width = 96.0;
+
+        let mut app = App::new(config, "test-session");
+        app.preview_resize(PhysicalSize::new(900, 700));
+        app.core
+            .workspaces
+            .active_mut()
+            .add_column_right(1, ColumnWidth::Proportion(1.0));
+        app
+    }
 
     #[test]
     fn mouse_reporting_is_not_implied_by_alt_screen() {
@@ -1086,5 +1109,41 @@ mod tests {
         assert!(mode_reports_mouse(MODE_MOUSE_REPORT));
         assert!(!mode_reports_mouse(MODE_ALT_SCREEN));
         assert!(mode_reports_mouse(MODE_MOUSE_REPORT | MODE_ALT_SCREEN));
+    }
+
+    #[test]
+    fn hovered_pane_at_converts_left_tab_bar_and_top_bar_coords() {
+        let app = make_hover_app(TabBarPosition::Left);
+
+        assert_eq!(
+            app.hovered_pane_at(app.content_origin_x() + 12.0, app.content_origin_y() + 12.0),
+            Some(1)
+        );
+        assert_eq!(
+            app.hovered_pane_at(12.0, app.content_origin_y() + 12.0),
+            None
+        );
+        assert_eq!(
+            app.hovered_pane_at(app.content_origin_x() + 12.0, 12.0),
+            None
+        );
+    }
+
+    #[test]
+    fn hovered_pane_at_ignores_right_tab_bar_strip() {
+        let app = make_hover_app(TabBarPosition::Right);
+        let window_width = app.command_palette_viewport_size().0;
+
+        assert_eq!(
+            app.hovered_pane_at(12.0, app.content_origin_y() + 12.0),
+            Some(1)
+        );
+        assert_eq!(
+            app.hovered_pane_at(
+                window_width - app.core.config.tabbar.width / 2.0,
+                app.content_origin_y() + 12.0
+            ),
+            None
+        );
     }
 }

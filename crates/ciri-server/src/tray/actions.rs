@@ -49,7 +49,7 @@ fn attach_or_switch(state: &Arc<Mutex<Server>>, session_name: &str) {
         server.tray_switch_client_to_session(client_id, session_name);
     } else {
         drop(server);
-        spawn_ciri(&[session_name]);
+        spawn_client(&[session_name]);
     }
 }
 
@@ -63,25 +63,29 @@ fn new_session(state: &Arc<Mutex<Server>>) {
         server.tray_switch_client_to_session(client_id, &name);
     } else {
         drop(server);
-        spawn_ciri(&["new"]);
+        spawn_client(&["new"]);
     }
 }
 
-fn ciri_binary() -> PathBuf {
+fn client_binary() -> PathBuf {
     if let Ok(self_exe) = std::env::current_exe()
         && let Some(dir) = self_exe.parent()
     {
-        let sibling = dir.join(if cfg!(windows) { "ciri.exe" } else { "ciri" });
+        let sibling = dir.join(if cfg!(windows) {
+            "ciritty.exe"
+        } else {
+            "ciritty"
+        });
         if sibling.exists() {
             return sibling;
         }
     }
-    PathBuf::from("ciri")
+    PathBuf::from("ciritty")
 }
 
-fn spawn_ciri(args: &[&str]) {
+fn spawn_client(args: &[&str]) {
     use std::process::Stdio;
-    let exe = ciri_binary();
+    let exe = client_binary();
     log::info!("spawning: {} {}", exe.display(), args.join(" "));
     let mut cmd = std::process::Command::new(&exe);
     cmd.args(args)
@@ -94,6 +98,6 @@ fn spawn_ciri(args: &[&str]) {
         cmd.process_group(0);
     }
     if let Err(e) = cmd.spawn() {
-        log::error!("failed to spawn ciri: {e}");
+        log::error!("failed to spawn ciritty: {e}");
     }
 }

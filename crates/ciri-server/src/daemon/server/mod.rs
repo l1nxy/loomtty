@@ -114,9 +114,7 @@ impl Server {
                         ciri_protocol::codec::frame_full_pane_sync(&sync),
                     ) && let Err(e) = client.tx.try_send(bytes::Bytes::from(frame))
                     {
-                        log::warn!(
-                            "failed to send full pane sync to client {cid}: {e}"
-                        );
+                        log::warn!("failed to send full pane sync to client {cid}: {e}");
                     }
                 }
                 ServerResponse::RemoveClient(cid) => {

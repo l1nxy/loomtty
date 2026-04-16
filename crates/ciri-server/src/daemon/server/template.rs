@@ -237,7 +237,15 @@ impl Server {
                         Some(std::path::Path::new(&tpl_tile.cwd))
                     };
 
-                    match Pane::new_with_notify(id, cols, rows, &session.default_shell, cmd, cwd, session.pty_notify.clone()) {
+                    match Pane::new_with_notify(
+                        id,
+                        cols,
+                        rows,
+                        &session.default_shell,
+                        cmd,
+                        cwd,
+                        session.pty_notify.clone(),
+                    ) {
                         Ok(mut pane) => {
                             pane.set_cell_size(cw, ch);
                             pane.init_colors(&session.terminal_colors);

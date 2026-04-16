@@ -342,18 +342,19 @@ impl GlyphCache {
                     }
                 });
 
-            let ui_ft_face = params.ui_font_path.clone().and_then(|(path, index)| {
-                match ft_library.new_face(&path, index as isize) {
-                    Ok(face) => {
-                        log::info!("FreeType UI face loaded: {path}");
-                        Some(face)
+            let ui_ft_face =
+                params.ui_font_path.clone().and_then(|(path, index)| {
+                    match ft_library.new_face(&path, index as isize) {
+                        Ok(face) => {
+                            log::info!("FreeType UI face loaded: {path}");
+                            Some(face)
+                        }
+                        Err(e) => {
+                            log::warn!("failed to load UI FreeType face {path}: {e:?}");
+                            None
+                        }
                     }
-                    Err(e) => {
-                        log::warn!("failed to load UI FreeType face {path}: {e:?}");
-                        None
-                    }
-                }
-            });
+                });
 
             // Compute metrics from FreeType directly
             let (cell_width, cell_height, ascent, face_width) = if let Some(ref mut face) = ft_face
@@ -691,15 +692,17 @@ impl GlyphCache {
             let mut result: Option<RasterizedGlyph> = None;
             for resolved in &order {
                 let (font, _px, try_color) = match resolved {
-                    ResolvedFont::Primary => {
-                        (Some(self.coretext.primary_font(style)), self.pixel_size, false)
-                    }
-                    ResolvedFont::Cjk => {
-                        (self.coretext.cjk_font(), self.cjk_pixel_size, false)
-                    }
-                    ResolvedFont::Emoji => {
-                        (self.coretext.emoji_font(), self.pixel_size, self.coretext.is_emoji_color())
-                    }
+                    ResolvedFont::Primary => (
+                        Some(self.coretext.primary_font(style)),
+                        self.pixel_size,
+                        false,
+                    ),
+                    ResolvedFont::Cjk => (self.coretext.cjk_font(), self.cjk_pixel_size, false),
+                    ResolvedFont::Emoji => (
+                        self.coretext.emoji_font(),
+                        self.pixel_size,
+                        self.coretext.is_emoji_color(),
+                    ),
                 };
                 if let Some(font) = font {
                     if let Some(glyph) = self.coretext.rasterize_char(ch, style, font, try_color) {
@@ -885,7 +888,10 @@ impl GlyphCache {
                 ),
             };
             match font {
-                Some(f) => match self.coretext.rasterize_glyph_id(f, glyph_id, style, try_color) {
+                Some(f) => match self
+                    .coretext
+                    .rasterize_glyph_id(f, glyph_id, style, try_color)
+                {
                     Some(g) => {
                         log::debug!(
                             "CoreText cache: glyph_id={} rasterized via {:?} ({}x{} color={})",

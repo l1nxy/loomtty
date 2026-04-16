@@ -60,9 +60,8 @@ fn measure_max_ascii_advance(font: &CTFont) -> f64 {
     for ch_code in 0x20u16..=0x7Eu16 {
         let characters = [ch_code];
         let mut glyphs = [0u16; 1];
-        let found = unsafe {
-            font.get_glyphs_for_characters(characters.as_ptr(), glyphs.as_mut_ptr(), 1)
-        };
+        let found =
+            unsafe { font.get_glyphs_for_characters(characters.as_ptr(), glyphs.as_mut_ptr(), 1) };
         if found && glyphs[0] != 0 {
             let mut advances = [core_graphics::geometry::CGSize::new(0.0, 0.0)];
             let total = unsafe {
@@ -87,9 +86,7 @@ fn measure_max_ascii_advance(font: &CTFont) -> f64 {
         max_advance
     } else {
         let fallback = font.pt_size() * 0.6;
-        log::info!(
-            "CT metrics: no ASCII glyphs measured, fallback advance = {fallback:.4}"
-        );
+        log::info!("CT metrics: no ASCII glyphs measured, fallback advance = {fallback:.4}");
         fallback
     }
 }

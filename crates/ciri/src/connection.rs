@@ -441,12 +441,12 @@ async fn probe_remote(host: &str, remote_port: u16, ssh_port: u16) -> RemoteProb
 
 fn spawn_server(_session_name: &str) -> io::Result<()> {
     use std::process::Command;
-    // Try to find ciri-server binary next to the current executable
+    // Try to find ciritty-server binary next to the current executable
     let exe = std::env::current_exe().unwrap_or_default();
     let server_bin = if cfg!(windows) {
-        "ciri-server.exe"
+        "ciritty-server.exe"
     } else {
-        "ciri-server"
+        "ciritty-server"
     };
     let server_exe = exe
         .parent()

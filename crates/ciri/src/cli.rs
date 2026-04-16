@@ -11,7 +11,7 @@ const STYLES: Styles = Styles::styled()
     .error(AnsiColor::Red.on_default().effects(Effects::BOLD));
 
 #[derive(Parser, Debug)]
-#[command(name = "ciri", about = "GPU-accelerated terminal multiplexer")]
+#[command(name = "ciritty", about = "GPU-accelerated terminal multiplexer")]
 #[command(arg_required_else_help = false, styles = STYLES)]
 pub struct Cli {
     #[command(subcommand)]
@@ -327,7 +327,7 @@ mod tests {
     use super::*;
 
     fn parse(args: &[&str]) -> CliCommand {
-        let mut full_args = vec!["ciri"];
+        let mut full_args = vec!["ciritty"];
         full_args.extend_from_slice(args);
         let cli = Cli::try_parse_from(full_args).expect("parse should succeed");
         resolve(cli)
@@ -362,21 +362,21 @@ mod tests {
 
     #[test]
     fn attach_rejects_positional_session_name() {
-        let err = Cli::try_parse_from(["ciri", "attach"])
+        let err = Cli::try_parse_from(["ciritty", "attach"])
             .expect_err("attach without a session name should fail");
         assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
     }
 
     #[test]
     fn no_args_help_flag_stays_on_safe_help_path() {
-        let cli = Cli::try_parse_from(["ciri", "--help"])
+        let cli = Cli::try_parse_from(["ciritty", "--help"])
             .expect_err("clap should exit after rendering help");
         assert_eq!(cli.kind(), clap::error::ErrorKind::DisplayHelp);
     }
 
     #[test]
     fn positional_session_name_then_help_stays_on_safe_help_path() {
-        let cli = Cli::try_parse_from(["ciri", "work", "--help"])
+        let cli = Cli::try_parse_from(["ciritty", "work", "--help"])
             .expect_err("clap should exit after rendering help");
         assert_eq!(cli.kind(), clap::error::ErrorKind::DisplayHelp);
     }

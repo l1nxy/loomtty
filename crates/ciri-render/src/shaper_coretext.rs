@@ -121,11 +121,7 @@ pub(crate) fn ct_shape_grapheme(font: &CTFont, cluster: &str) -> Option<u32> {
 /// Compares glyph string_indices to find cases where a single glyph covers
 /// multiple input characters (ligatures like ff, fi, ffi, or programming
 /// ligatures like ==, !=, =>).
-pub(crate) fn ct_detect_ligatures(
-    font: &CTFont,
-    text: &str,
-    font_id: fontdb::ID,
-) -> Vec<Ligature> {
+pub(crate) fn ct_detect_ligatures(font: &CTFont, text: &str, font_id: fontdb::ID) -> Vec<Ligature> {
     if text.chars().count() < 2 {
         return Vec::new();
     }

@@ -40,10 +40,7 @@ pub fn resolve_ui_font(family: &str) -> Option<(String, u32, fontdb::ID)> {
     let families: Vec<fontdb::Family<'_>> = if family.is_empty() {
         vec![fontdb::Family::SansSerif]
     } else {
-        vec![
-            fontdb::Family::Name(family),
-            fontdb::Family::SansSerif,
-        ]
+        vec![fontdb::Family::Name(family), fontdb::Family::SansSerif]
     };
 
     let query = fontdb::Query {
@@ -53,9 +50,7 @@ pub fn resolve_ui_font(family: &str) -> Option<(String, u32, fontdb::ID)> {
     let id = db.query(&query)?;
     let face = db.face(id)?;
     match &face.source {
-        fontdb::Source::File(path) => {
-            Some((path.to_string_lossy().to_string(), face.index, id))
-        }
+        fontdb::Source::File(path) => Some((path.to_string_lossy().to_string(), face.index, id)),
         _ => None,
     }
 }
@@ -247,9 +242,17 @@ impl UiTextShaper {
             log::info!(
                 "UiTextShaper: primary={} terminal={} cjk={} emoji={}",
                 if face.is_some() { "loaded" } else { "NONE" },
-                if terminal_face.is_some() { "loaded" } else { "NONE" },
+                if terminal_face.is_some() {
+                    "loaded"
+                } else {
+                    "NONE"
+                },
                 if cjk_face.is_some() { "loaded" } else { "NONE" },
-                if emoji_face.is_some() { "loaded" } else { "NONE" },
+                if emoji_face.is_some() {
+                    "loaded"
+                } else {
+                    "NONE"
+                },
             );
         }
 
@@ -262,7 +265,8 @@ impl UiTextShaper {
             };
             match path_idx {
                 Some((path, idx)) => {
-                    let f = crate::shaper::load_ct_font_from_path(path, idx, params.pixel_size as f64);
+                    let f =
+                        crate::shaper::load_ct_font_from_path(path, idx, params.pixel_size as f64);
                     if let Some(f) = f {
                         let upem = f.units_per_em() as f32;
                         let asc = f.ascent() as f32;
@@ -509,8 +513,7 @@ impl UiTextShaper {
             // .notdef → try terminal primary face as last-resort fallback.
             if gid == 0 {
                 let cluster_byte = info.cluster as usize;
-                if let (Some(tf), Some(tid)) =
-                    (self.terminal_face.as_ref(), self.terminal_font_id)
+                if let (Some(tf), Some(tid)) = (self.terminal_face.as_ref(), self.terminal_font_id)
                 {
                     if let Some(ch) = text[cluster_byte..].chars().next() {
                         let mut buf2 = rustybuzz::UnicodeBuffer::new();
@@ -551,12 +554,7 @@ impl UiTextShaper {
     /// back to primary/CJK/emoji `font_id` so the glyph cache rasterizes
     /// each glyph with the correct face.
     #[cfg(target_os = "macos")]
-    fn shape_coretext(
-        &self,
-        font: &CTFont,
-        font_id: fontdb::ID,
-        text: &str,
-    ) -> Vec<UiShapedGlyph> {
+    fn shape_coretext(&self, font: &CTFont, font_id: fontdb::ID, text: &str) -> Vec<UiShapedGlyph> {
         use core_foundation::attributed_string::CFMutableAttributedString;
         use core_foundation::base::{CFRange, TCFType};
         use core_foundation::string::CFString;
@@ -599,7 +597,8 @@ impl UiTextShaper {
             let run_font_id = self.classify_ct_run_font(&run, &primary_ps, font_id);
 
             let run_total_w = unsafe {
-                let r = core_foundation::base::CFRange::init(0, n as core_foundation::base::CFIndex);
+                let r =
+                    core_foundation::base::CFRange::init(0, n as core_foundation::base::CFIndex);
                 CTRunGetTypographicBounds(
                     run.as_concrete_TypeRef(),
                     r,
@@ -673,8 +672,7 @@ impl UiTextShaper {
             // Check if it matches known CJK or emoji fonts by name heuristics.
             let run_ps_lower = run_ps.to_lowercase();
             if self.emoji_font_id.is_some()
-                && (run_ps_lower.contains("emoji")
-                    || run_ps_lower.contains("color"))
+                && (run_ps_lower.contains("emoji") || run_ps_lower.contains("color"))
             {
                 return self.emoji_font_id.unwrap();
             }

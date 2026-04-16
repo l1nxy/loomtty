@@ -686,38 +686,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ciri"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arboard",
- "ciri-anim",
- "ciri-app",
- "ciri-config",
- "ciri-gpu",
- "ciri-input",
- "ciri-layout",
- "ciri-protocol",
- "ciri-render",
- "ciri-session",
- "clap",
- "crossbeam-channel",
- "dialoguer",
- "env_logger",
- "image",
- "libc",
- "log",
- "notify",
- "notify-rust",
- "rmp-serde",
- "serde_json",
- "tokio",
- "unicode-width",
- "winit",
- "winres",
-]
-
-[[package]]
 name = "ciri-anim"
 version = "0.1.0"
 dependencies = [
@@ -864,7 +832,67 @@ dependencies = [
 ]
 
 [[package]]
-name = "ciri-server"
+name = "ciri-session"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log",
+ "serde",
+ "serde_json",
+ "toml 0.8.2",
+]
+
+[[package]]
+name = "ciri-term"
+version = "0.1.0"
+dependencies = [
+ "alacritty_terminal",
+ "anyhow",
+ "base64",
+ "ciri-protocol",
+ "colorsys",
+ "gethostname",
+ "libc",
+ "log",
+ "percent-encoding",
+ "portable-pty",
+ "winnow 0.7.15",
+]
+
+[[package]]
+name = "ciritty"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "ciri-anim",
+ "ciri-app",
+ "ciri-config",
+ "ciri-gpu",
+ "ciri-input",
+ "ciri-layout",
+ "ciri-protocol",
+ "ciri-render",
+ "ciri-session",
+ "clap",
+ "crossbeam-channel",
+ "dialoguer",
+ "env_logger",
+ "image",
+ "libc",
+ "log",
+ "notify",
+ "notify-rust",
+ "rmp-serde",
+ "serde_json",
+ "tokio",
+ "unicode-width",
+ "winit",
+ "winres",
+]
+
+[[package]]
+name = "ciritty-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -891,34 +919,6 @@ dependencies = [
  "tray-icon",
  "windows-sys 0.59.0",
  "winreg 0.55.0",
-]
-
-[[package]]
-name = "ciri-session"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "log",
- "serde",
- "serde_json",
- "toml 0.8.2",
-]
-
-[[package]]
-name = "ciri-term"
-version = "0.1.0"
-dependencies = [
- "alacritty_terminal",
- "anyhow",
- "base64",
- "ciri-protocol",
- "colorsys",
- "gethostname",
- "libc",
- "log",
- "percent-encoding",
- "portable-pty",
- "winnow 0.7.15",
 ]
 
 [[package]]

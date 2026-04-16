@@ -119,9 +119,9 @@ pub async fn prepare_daemon() -> Result<DaemonState> {
         .create(&pipe_name)?;
 
     #[cfg(unix)]
-    log::info!("ciri-server listening on {}", sock_path.display());
+    log::info!("ciritty-server listening on {}", sock_path.display());
     #[cfg(windows)]
-    log::info!("ciri-server listening on {}", pipe_name);
+    log::info!("ciritty-server listening on {}", pipe_name);
 
     let theme = &config.theme;
     let parse = ciri_term::pane::TerminalColors::parse_hex;
@@ -248,7 +248,7 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
         let addr = format!("127.0.0.1:{}", ds.config.remote.port);
         let tcp = tokio::net::TcpListener::bind(&addr).await?;
         log::warn!(
-            "ciri-server TCP listener on {addr} (remote enabled) — \
+            "ciritty-server TCP listener on {addr} (remote enabled) — \
              WARNING: no authentication, intended for SSH tunnel use only"
         );
         Some(tcp)

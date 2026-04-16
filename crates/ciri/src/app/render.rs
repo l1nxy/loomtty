@@ -1740,28 +1740,8 @@ impl App {
         vw: f32,
         vh: f32,
     ) -> bool {
-        let _ = (vw, vh);
-        let zoom_threshold = self.core.config.animation.zoom_threshold;
-
-        // Overview and zoomed-out transitions continuously move/scale every
-        // pane, so per-pane snapshots churn and retained scene sync adds work
-        // without saving pane glyph rebuilds.
-        if self.core.overview.active
-            || zoom < zoom_threshold
-            || self.core.anim_mgr.overview_zoom.is_animating()
-            || self.core.anim_mgr.view_offset_x.is_animating()
-            || self.core.anim_mgr.view_offset_y.is_animating()
-        {
-            return false;
-        }
-
-        // Retaining pane glyph scenes only pays off once some panes can stay
-        // untouched across frames. With a single visible pane, row caches are
-        // still disabled, so content updates would rebuild the whole pane.
-        ordered_tiles.len() > 1
-            && ordered_tiles
-                .iter()
-                .all(|(pane_id, _, _)| self.cached_views.contains_key(pane_id))
+        let _ = (ordered_tiles, zoom, vw, vh);
+        false
     }
 
     pub fn build_search_bar(
@@ -2666,7 +2646,6 @@ fn scissor_rect(tr: &GeoRect, viewport_w: f32, viewport_h: f32) -> Option<(u32, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ciri_anim::{anim_value::AnimValue, spring::SpringParams};
     use ciri_config::config::{CiriConfig, StatusBarPosition, TabBarPosition};
     use std::sync::Arc;
     use winit::dpi::PhysicalSize;
@@ -2756,40 +2735,6 @@ mod tests {
         assert!(bg_rects[0].x < bg_rects[active_bg_start].x);
         assert!(glyph_batches.is_empty());
         assert!(active_glyph_batches.is_empty());
-    }
-
-    #[test]
-    fn retained_pane_scene_stays_off_without_reusable_panes() {
-        let app = make_app();
-        let tiles = vec![
-            (1, GeoRect::new(0.0, 0.0, 300.0, 200.0), false),
-            (2, GeoRect::new(320.0, 0.0, 300.0, 200.0), true),
-        ];
-
-        assert!(!app.should_use_retained_pane_scene(&tiles, 1.0, 1600.0, 900.0));
-
-        assert!(!app.should_use_retained_pane_scene(&tiles[..1], 1.0, 1600.0, 900.0));
-    }
-
-    #[test]
-    fn retained_pane_scene_stays_off_in_overview_like_states() {
-        let mut app = make_app();
-        let tiles = vec![
-            (1, GeoRect::new(0.0, 0.0, 300.0, 200.0), false),
-            (2, GeoRect::new(320.0, 0.0, 300.0, 200.0), true),
-        ];
-
-        app.core.overview.active = true;
-        assert!(!app.should_use_retained_pane_scene(&tiles, 1.0, 1600.0, 900.0));
-        app.core.overview.active = false;
-
-        let zoom_threshold = app.core.config.animation.zoom_threshold;
-        assert!(!app.should_use_retained_pane_scene(&tiles, zoom_threshold * 0.5, 1600.0, 900.0,));
-
-        let mut anim = AnimValue::new(0.0);
-        anim.animate_to(1.0, SpringParams::snappy());
-        app.core.anim_mgr.view_offset_x = anim;
-        assert!(!app.should_use_retained_pane_scene(&tiles, 1.0, 1600.0, 900.0));
     }
 
     #[test]

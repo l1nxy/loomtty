@@ -62,10 +62,7 @@ fn load_plugins_from_dir(lua: &Lua, dir: &Path) -> anyhow::Result<()> {
 
     for plugin_dir in entries {
         let init_lua = plugin_dir.join("init.lua");
-        let plugin_name = plugin_dir
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy();
+        let plugin_name = plugin_dir.file_name().unwrap_or_default().to_string_lossy();
         log::info!("[plugin] loading plugin: {plugin_name}");
         if let Err(e) = load_file(lua, &init_lua) {
             log::error!("[plugin] failed to load plugin '{plugin_name}': {e}");

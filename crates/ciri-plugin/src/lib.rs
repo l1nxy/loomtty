@@ -69,9 +69,11 @@ impl PluginEngine {
             }
         };
 
-        let result: Option<Table> = self
-            .registry
-            .dispatch_first(&self.lua, "detect-agent", (exe_name.to_string(), argv_table));
+        let result: Option<Table> = self.registry.dispatch_first(
+            &self.lua,
+            "detect-agent",
+            (exe_name.to_string(), argv_table),
+        );
 
         result.and_then(|t| {
             let name: String = t.get("name").ok()?;

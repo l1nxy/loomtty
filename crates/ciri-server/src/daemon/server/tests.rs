@@ -250,11 +250,7 @@ fn control_attach_does_not_create_runtime_session() {
     rt.block_on(async {
         let (client_reader, server_writer) = tokio::io::duplex(4096);
         let (server_reader, client_writer) = tokio::io::duplex(4096);
-        let state = Arc::new(Mutex::new(Server::new(
-            "",
-            8.0,
-            TerminalColors::default(),
-        )));
+        let state = Arc::new(Mutex::new(Server::new("", 8.0, TerminalColors::default())));
         let shutdown = Arc::new(tokio::sync::Notify::new());
 
         let input_notify = Arc::new(tokio::sync::Notify::new());
@@ -722,11 +718,7 @@ async fn duplex_connect(
 ) {
     let (client_reader, server_writer) = tokio::io::duplex(8192);
     let (server_reader, client_writer) = tokio::io::duplex(8192);
-    let state = Arc::new(Mutex::new(Server::new(
-        "",
-        8.0,
-        TerminalColors::default(),
-    )));
+    let state = Arc::new(Mutex::new(Server::new("", 8.0, TerminalColors::default())));
     let shutdown = Arc::new(tokio::sync::Notify::new());
     let input_notify = Arc::new(tokio::sync::Notify::new());
 

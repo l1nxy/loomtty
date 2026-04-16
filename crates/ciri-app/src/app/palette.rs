@@ -110,7 +110,8 @@ impl AppModel {
         }
 
         // Sort by recency (most recent first) and cap.
-        self.recent_hosts.sort_by(|a, b| b.last_used.cmp(&a.last_used));
+        self.recent_hosts
+            .sort_by(|a, b| b.last_used.cmp(&a.last_used));
         self.recent_hosts.truncate(Self::RECENT_HOSTS_MAX);
     }
 
@@ -180,7 +181,11 @@ impl AppModel {
         let current_loc = self.current_location_label();
         if !self.cached_local_sessions.is_empty() {
             for s in &self.cached_local_sessions {
-                let marker = if &s.name == active_session { "● " } else { "  " };
+                let marker = if &s.name == active_session {
+                    "● "
+                } else {
+                    "  "
+                };
                 entries.push(PaletteEntry {
                     label: format!("{}{}  [{}]", marker, s.name, current_loc),
                     kind: PaletteEntryKind::GoToSession {
@@ -346,7 +351,7 @@ impl AppModel {
                     }
                     RemoteProbeResult::NoServer => {
                         entries.push(PaletteEntry {
-                            label: format!("SSH: {} (no ciri-server)", rh.name),
+                            label: format!("SSH: {} (no ciritty-server)", rh.name),
                             kind: PaletteEntryKind::SshShell {
                                 name: rh.name.clone(),
                                 host: rh.host.clone(),
@@ -1004,9 +1009,15 @@ mod tests {
             .iter()
             .filter(|e| matches!(&e.kind, PaletteEntryKind::GoToSession { slot_id, .. } if slot_id != &active))
             .collect();
-        assert_eq!(slot_sessions.len(), 2, "应有 2 个 background GoToSession 条目");
+        assert_eq!(
+            slot_sessions.len(),
+            2,
+            "应有 2 个 background GoToSession 条目"
+        );
         assert!(
-            slot_sessions.iter().all(|e| e.label.contains("[dev.example.com]")),
+            slot_sessions
+                .iter()
+                .all(|e| e.label.contains("[dev.example.com]")),
             "远程 slot 的条目应包含主机名标签"
         );
     }
@@ -1031,10 +1042,7 @@ mod tests {
             .find(|e| matches!(&e.kind, PaletteEntryKind::GoToSession { slot_id, .. } if slot_id != &active))
             .expect("应有 background GoToSession 条目");
 
-        assert!(
-            entry.label.contains("[local]"),
-            "本地 slot 应标记 [local]"
-        );
+        assert!(entry.label.contains("[local]"), "本地 slot 应标记 [local]");
     }
 
     #[test]
@@ -1062,9 +1070,10 @@ mod tests {
             .entries
             .iter()
             .filter_map(|e| match &e.kind {
-                PaletteEntryKind::GoToSession { slot_id, session_name } if slot_id == "slot-x" => {
-                    Some(session_name.as_str())
-                }
+                PaletteEntryKind::GoToSession {
+                    slot_id,
+                    session_name,
+                } if slot_id == "slot-x" => Some(session_name.as_str()),
                 _ => None,
             })
             .collect();
@@ -1257,10 +1266,14 @@ mod tests {
         // Rebuild twice
         model.cached_local_sessions = vec![session_info("main")];
         model.rebuild_palette_entries();
-        let count1 = count_entries(&model, |k| matches!(k, PaletteEntryKind::GoToSession { .. }));
+        let count1 = count_entries(&model, |k| {
+            matches!(k, PaletteEntryKind::GoToSession { .. })
+        });
 
         model.rebuild_palette_entries();
-        let count2 = count_entries(&model, |k| matches!(k, PaletteEntryKind::GoToSession { .. }));
+        let count2 = count_entries(&model, |k| {
+            matches!(k, PaletteEntryKind::GoToSession { .. })
+        });
 
         assert_eq!(count1, count2, "多次 rebuild 不应产生重复条目");
     }

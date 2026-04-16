@@ -170,9 +170,10 @@ pub(crate) async fn run_tick_loop(
                     // clients stay attached and land on a live session. If
                     // not, this was the last session on the server — keep the
                     // old "shut down the client" behavior.
-                    let has_fallback = s.sessions.keys().any(|n| {
-                        n.as_str() != session_name.as_str() && !n.starts_with("__")
-                    });
+                    let has_fallback = s
+                        .sessions
+                        .keys()
+                        .any(|n| n.as_str() != session_name.as_str() && !n.starts_with("__"));
 
                     if has_fallback {
                         let mut responses = Vec::new();
@@ -189,8 +190,7 @@ pub(crate) async fn run_tick_loop(
                             .filter(|(_, c)| c.session_name == *session_name)
                             .map(|(id, _)| *id)
                             .collect();
-                        if let Some(frame) =
-                            codec::frame_server_msg(&ServerMessage::ServerShutdown)
+                        if let Some(frame) = codec::frame_server_msg(&ServerMessage::ServerShutdown)
                         {
                             let frame = Bytes::from(frame);
                             for &cid in &session_clients {

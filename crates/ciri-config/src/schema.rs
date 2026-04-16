@@ -240,7 +240,7 @@ impl Default for WindowConfig {
         WindowConfig {
             width: 1024.0,
             height: 768.0,
-            title: "ciri".to_string(),
+            title: "ciritty".to_string(),
         }
     }
 }

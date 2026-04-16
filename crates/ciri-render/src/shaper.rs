@@ -212,7 +212,11 @@ impl TextShaper {
             shaper.primary_ct_font = primary_font_id
                 .and_then(|fid| shaper.font_path(fid))
                 .and_then(|(path, index)| {
-                    log::info!("CoreText discovery: loading primary CTFont from '{}' face_index={}", path, index);
+                    log::info!(
+                        "CoreText discovery: loading primary CTFont from '{}' face_index={}",
+                        path,
+                        index
+                    );
                     let ct = load_ct_font_for_shaping(&path, index);
                     if let Some(ref f) = ct {
                         log::info!(
@@ -225,26 +229,35 @@ impl TextShaper {
                     }
                     ct
                 });
-            shaper.cjk_ct_font = cjk_font_id
-                .and_then(|fid| shaper.font_path(fid))
-                .and_then(|(path, index)| {
-                    log::info!("CoreText discovery: loading CJK CTFont from '{}' face_index={}", path, index);
-                    let ct = load_ct_font_for_shaping(&path, index);
-                    if let Some(ref f) = ct {
+            shaper.cjk_ct_font =
+                cjk_font_id
+                    .and_then(|fid| shaper.font_path(fid))
+                    .and_then(|(path, index)| {
                         log::info!(
-                            "CoreText discovery: CJK CTFont ps_name='{}' family='{}'",
-                            f.postscript_name(),
-                            f.family_name(),
+                            "CoreText discovery: loading CJK CTFont from '{}' face_index={}",
+                            path,
+                            index
                         );
-                    } else {
-                        log::warn!("CoreText discovery: failed to load CJK CTFont");
-                    }
-                    ct
-                });
+                        let ct = load_ct_font_for_shaping(&path, index);
+                        if let Some(ref f) = ct {
+                            log::info!(
+                                "CoreText discovery: CJK CTFont ps_name='{}' family='{}'",
+                                f.postscript_name(),
+                                f.family_name(),
+                            );
+                        } else {
+                            log::warn!("CoreText discovery: failed to load CJK CTFont");
+                        }
+                        ct
+                    });
             shaper.emoji_ct_font = emoji_font_id
                 .and_then(|fid| shaper.font_path(fid))
                 .and_then(|(path, index)| {
-                    log::info!("CoreText discovery: loading emoji CTFont from '{}' face_index={}", path, index);
+                    log::info!(
+                        "CoreText discovery: loading emoji CTFont from '{}' face_index={}",
+                        path,
+                        index
+                    );
                     let ct = load_ct_font_for_shaping(&path, index);
                     if let Some(ref f) = ct {
                         log::info!(

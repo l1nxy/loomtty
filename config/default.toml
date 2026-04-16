@@ -1,5 +1,5 @@
 # Ciri default configuration
-# Copy to ~/.config/ciri/config.toml and customize.
+# Copy to ~/.config/ciri/config.toml and customize for ciritty.
 
 [font]
 family = "Google Sans Code NF"
@@ -34,7 +34,7 @@ focus_transition_speed = 15.0
 [window]
 width = 1024.0
 height = 768.0
-title = "ciri"
+title = "ciritty"
 
 [terminal]
 default_cols = 80

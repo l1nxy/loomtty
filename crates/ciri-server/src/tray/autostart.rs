@@ -45,7 +45,7 @@ pub fn set_enabled(enable: bool) -> Result<()> {
 
 #[cfg(target_os = "linux")]
 fn desktop_entry_path() -> Option<std::path::PathBuf> {
-    dirs::config_dir().map(|d| d.join("autostart").join("ciri-tray.desktop"))
+    dirs::config_dir().map(|d| d.join("autostart").join("ciritty-tray.desktop"))
 }
 
 #[cfg(target_os = "linux")]
@@ -59,8 +59,8 @@ fn set_enabled_linux(enable: bool) -> Result<()> {
         let content = format!(
             "[Desktop Entry]\n\
              Type=Application\n\
-             Name=Ciri Tray\n\
-             Comment=System tray for ciri terminal multiplexer\n\
+             Name=Ciritty Tray\n\
+             Comment=System tray for ciritty terminal multiplexer\n\
              Exec={}\n\
              Hidden=false\n\
              NoDisplay=false\n\
@@ -80,7 +80,7 @@ fn set_enabled_linux(enable: bool) -> Result<()> {
 
 #[cfg(target_os = "macos")]
 fn launchd_plist_path() -> Option<std::path::PathBuf> {
-    dirs::home_dir().map(|d| d.join("Library/LaunchAgents/dev.ciri.tray.plist"))
+    dirs::home_dir().map(|d| d.join("Library/LaunchAgents/dev.ciritty.tray.plist"))
 }
 
 #[cfg(target_os = "macos")]
@@ -106,7 +106,7 @@ fn set_enabled_macos(enable: bool) -> Result<()> {
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>dev.ciri.tray</string>
+    <string>dev.ciritty.tray</string>
     <key>ProgramArguments</key>
     <array>
         <string>{}</string>
@@ -133,20 +133,20 @@ fn set_enabled_macos(enable: bool) -> Result<()> {
 
 #[cfg(windows)]
 fn is_enabled_windows() -> bool {
-    use winreg::RegKey;
     use winreg::enums::*;
+    use winreg::RegKey;
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let Ok(run) = hkcu.open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Run") else {
         return false;
     };
-    run.get_value::<String, _>("CiriTray").is_ok()
+    run.get_value::<String, _>("CirittyTray").is_ok()
 }
 
 #[cfg(windows)]
 fn set_enabled_windows(enable: bool) -> Result<()> {
-    use winreg::RegKey;
     use winreg::enums::*;
+    use winreg::RegKey;
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let run = hkcu.open_subkey_with_flags(
@@ -155,10 +155,10 @@ fn set_enabled_windows(enable: bool) -> Result<()> {
     )?;
     if enable {
         let exe = std::env::current_exe()?;
-        run.set_value("CiriTray", &exe.to_string_lossy().to_string())?;
+        run.set_value("CirittyTray", &exe.to_string_lossy().to_string())?;
         log::info!("wrote registry autostart entry");
     } else {
-        let _ = run.delete_value("CiriTray");
+        let _ = run.delete_value("CirittyTray");
         log::info!("removed registry autostart entry");
     }
     Ok(())

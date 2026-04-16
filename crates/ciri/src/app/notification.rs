@@ -31,7 +31,7 @@ impl App {
             let _ = Notification::new()
                 .summary(&safe_summary)
                 .body(&safe_body)
-                .appname("ciri")
+                .appname("ciritty")
                 .timeout(5000)
                 .show();
         }

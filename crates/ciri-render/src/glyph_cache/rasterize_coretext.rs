@@ -69,8 +69,7 @@ impl CoreTextRasterizer {
         let (italic, italic_synth) = create_variant(&regular, kCTFontItalicTrait, true, false);
         let (bold_italic, bold_italic_synth) = {
             // Try to get a native bold-italic from the bold face
-            let (bi, synth) =
-                create_variant(&bold, kCTFontItalicTrait, true, bold_synth.bold);
+            let (bi, synth) = create_variant(&bold, kCTFontItalicTrait, true, bold_synth.bold);
             (bi, synth)
         };
 
@@ -184,10 +183,7 @@ impl CoreTextRasterizer {
     pub(crate) fn set_cjk_pixel_size(&mut self, cjk_pixel_size: f32) {
         if let Some(ref cjk) = self.cjk_font {
             self.cjk_font = Some(cjk.clone_with_font_size(cjk_pixel_size as f64));
-            log::info!(
-                "CoreText: CJK font resized to {:.1}px",
-                cjk_pixel_size
-            );
+            log::info!("CoreText: CJK font resized to {:.1}px", cjk_pixel_size);
         }
     }
 
@@ -334,11 +330,7 @@ fn char_to_glyph(font: &CTFont, ch: char) -> Option<u16> {
     let utf16: &[u16] = ch.encode_utf16(&mut buf);
     let mut glyphs = vec![0u16; utf16.len()];
     let success = unsafe {
-        font.get_glyphs_for_characters(
-            utf16.as_ptr(),
-            glyphs.as_mut_ptr(),
-            utf16.len() as isize,
-        )
+        font.get_glyphs_for_characters(utf16.as_ptr(), glyphs.as_mut_ptr(), utf16.len() as isize)
     };
     if success && glyphs[0] != 0 {
         Some(glyphs[0])
@@ -376,11 +368,11 @@ fn render_grayscale_glyph(
     // Create grayscale bitmap context (alpha-only, 1 byte per pixel)
     let color_space = CGColorSpace::create_device_gray();
     let mut ctx = CGContext::create_bitmap_context(
-        None,        // auto-allocate buffer
+        None, // auto-allocate buffer
         w as usize,
         h as usize,
-        8,           // bits per component
-        w as usize,  // bytes per row
+        8,          // bits per component
+        w as usize, // bytes per row
         &color_space,
         core_graphics::image::CGImageAlphaInfo::CGImageAlphaOnly as u32,
     );
@@ -472,7 +464,8 @@ fn render_color_glyph(font: &CTFont, glyph: u16) -> Option<RasterizedGlyph> {
         8,
         bytes_per_row,
         &color_space,
-        core_graphics::base::kCGImageAlphaPremultipliedFirst | core_graphics::base::kCGBitmapByteOrder32Host,
+        core_graphics::base::kCGImageAlphaPremultipliedFirst
+            | core_graphics::base::kCGBitmapByteOrder32Host,
     );
 
     ctx.set_allows_font_smoothing(true);

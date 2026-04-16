@@ -1,4 +1,4 @@
-# ciri
+# ciritty
 
 GPU-accelerated terminal multiplexer with column-based layouts, workspaces, and remote support.
 
@@ -6,16 +6,16 @@ GPU-accelerated terminal multiplexer with column-based layouts, workspaces, and 
 
 ```bash
 # Launch (auto-attach to last session or create new)
-ciri
+ciritty
 
 # Named session
-ciri my-project
+ciritty my-project
 
 # List sessions
-ciri ls
+ciritty ls
 
 # Attach to existing session
-ciri a my-project
+ciritty a my-project
 ```
 
 ## Keybindings
@@ -93,37 +93,37 @@ Resize mode (`Leader` `r`):
 
 ```bash
 # Session management
-ciri new                           # New session
-ciri ls [-a]                       # List sessions (--all includes saved)
-ciri a SESSION                     # Attach to session
-ciri kill SESSION                  # Kill session
-ciri kill-server                   # Kill server daemon
-ciri rm SESSION                    # Delete saved session state
+ciritty new                        # New session
+ciritty ls [-a]                    # List sessions (--all includes saved)
+ciritty a SESSION                  # Attach to session
+ciritty kill SESSION               # Kill session
+ciritty kill-server                # Kill server daemon
+ciritty rm SESSION                 # Delete saved session state
 
 # Remote
-ciri remote HOST [SESSION] [--port PORT] [--ssh-port SSH_PORT]
+ciritty remote HOST [SESSION] [--port PORT] [--ssh-port SSH_PORT]
 
 # IPC scripting
-ciri msg send-keys SESSION PANE_ID KEYS
-ciri msg list-panes SESSION [--json]
-ciri msg run-command SESSION COMMAND
-ciri msg info SESSION
-ciri msg focus-pane SESSION PANE_ID
-ciri msg close-pane SESSION PANE_ID
-ciri msg create-pane SESSION
-ciri msg get-layout SESSION
+ciritty msg send-keys SESSION PANE_ID KEYS
+ciritty msg list-panes SESSION [--json]
+ciritty msg run-command SESSION COMMAND
+ciritty msg info SESSION
+ciritty msg focus-pane SESSION PANE_ID
+ciritty msg close-pane SESSION PANE_ID
+ciritty msg create-pane SESSION
+ciritty msg get-layout SESSION
 
 # Templates
-ciri tpl ls                        # List templates
-ciri tpl save NAME SESSION         # Save layout as template
-ciri tpl apply NAME [SESSION]      # Apply template
+ciritty tpl ls                     # List templates
+ciritty tpl save NAME SESSION      # Save layout as template
+ciritty tpl apply NAME [SESSION]   # Apply template
 ```
 
 ## Configuration
 
 Config file: `~/.config/ciri/config.toml`
 
-Run `ciri init` for interactive setup.
+Run `ciritty init` for interactive setup.
 
 ```toml
 [font]
@@ -178,4 +178,3 @@ host = "user@example.com"
 port = 7890
 ssh_port = 22
 ```
-

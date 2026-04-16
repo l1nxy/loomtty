@@ -144,7 +144,12 @@ impl Session {
         };
         let effective_cwd = cwd.or_else(|| inherited_cwd.as_deref().map(std::path::Path::new));
         let mut pane = Pane::new_with_notify(
-            id, cols, rows, &self.default_shell, command, effective_cwd,
+            id,
+            cols,
+            rows,
+            &self.default_shell,
+            command,
+            effective_cwd,
             self.pty_notify.clone(),
         )?;
         pane.set_cell_size(cw, ch);

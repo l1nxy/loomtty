@@ -227,7 +227,7 @@ impl App {
                     }) => {
                         log::debug!("notification from pane {pane_id}: {title}: {body}");
                         let title = if title.is_empty() {
-                            "ciri".to_string()
+                            "ciritty".to_string()
                         } else {
                             title
                         };

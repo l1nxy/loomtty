@@ -1,96 +1,33 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0.4" y2="1">
-      <stop offset="0%" stop-color="#0A0E14"/>
-      <stop offset="100%" stop-color="#070A0F"/>
-    </linearGradient>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" style="stop-color:#1E1E20" />
+                        <stop offset="100%" style="stop-color:#09090B" />
+                    </linearGradient>
+                    <linearGradient id="primaryGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" style="stop-color:#00FBFF" />
+                        <stop offset="100%" style="stop-color:#007AFF" />
+                    </linearGradient>
+                    <filter id="glow">
+                        <feGaussianBlur stdDeviation="15" result="blur" />
+                        <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                    </filter>
+                </defs>
 
-    <!-- Back ribbon: deep navy -->
-    <linearGradient id="g1" x1="0" y1="0.3" x2="1" y2="0.7">
-      <stop offset="0%" stop-color="#1A3550"/>
-      <stop offset="100%" stop-color="#163050"/>
-    </linearGradient>
+                <!-- Icon Background -->
+                <rect x="128" y="128" width="768" height="768" rx="180" fill="url(#bgGradient)" stroke="#FFFFFF" stroke-opacity="0.05" stroke-width="2" />
 
-    <!-- Front ribbon: blue accent gradient -->
-    <linearGradient id="g2" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#9DD0E2"/>
-      <stop offset="50%" stop-color="#6AB4D0"/>
-      <stop offset="100%" stop-color="#4A8EAE"/>
-    </linearGradient>
+                <!-- The Prompt (>) -->
+                <g filter="url(#glow)">
+                    <!-- Base Shape -->
+                    <path d="M360 340 L620 512 L360 684 L410 512 Z" fill="url(#primaryGradient)" />
+                    <!-- Highlight Edge -->
+                    <path d="M360 340 L620 512 L560 512 L360 380 Z" fill="white" opacity="0.3" />
+                </g>
 
-    <!-- Highlight -->
-    <linearGradient id="hi" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#FFF" stop-opacity="0.75"/>
-      <stop offset="100%" stop-color="#FFF" stop-opacity="0"/>
-    </linearGradient>
+                <!-- Cursor (_) -->
+                <rect x="620" y="630" width="130" height="50" rx="8" fill="white" opacity="0.9" />
 
-    <!-- Glow -->
-    <filter id="glow">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="18"/>
-      <feColorMatrix type="matrix"
-        values="0 0 0 0 0.38
-                0 0 0 0 0.65
-                0 0 0 0 0.78
-                0 0 0 0.35 0"/>
-    </filter>
-    <filter id="glowSub">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="22"/>
-      <feColorMatrix type="matrix"
-        values="0 0 0 0 0.10
-                0 0 0 0 0.21
-                0 0 0 0 0.32
-                0 0 0 0.3 0"/>
-    </filter>
-
-    <clipPath id="clip">
-      <rect width="512" height="512" rx="112" ry="112"/>
-    </clipPath>
-  </defs>
-
-  <rect width="512" height="512" rx="112" ry="112" fill="url(#bg)"/>
-
-  <g clip-path="url(#clip)">
-
-    <!-- === GLOW === -->
-    <path d="M 70 390 C 120 280, 210 235, 320 198 C 390 175, 430 165, 460 155
-             L 460 250 C 420 260, 370 275, 310 295 C 200 330, 120 375, 80 470 Z"
-          filter="url(#glowSub)"/>
-    <path d="M 52 300 C 110 215, 210 175, 320 145 C 385 128, 430 118, 460 108
-             L 460 170 C 430 178, 385 190, 325 208 C 218 240, 125 282, 68 365 Z"
-          filter="url(#glow)"/>
-
-    <!-- === Back ribbon (deep navy, wide) === -->
-    <path d="
-      M 40 430
-      C 85 320, 175 265, 290 225
-      C 370 198, 420 185, 470 175
-      L 470 260
-      C 420 270, 360 285, 290 308
-      C 178 348, 100 395, 58 490
-      Z
-    " fill="url(#g1)" opacity="0.9"/>
-
-    <!-- === Front ribbon (bright blue, the star) === -->
-    <path d="
-      M 42 310
-      C 105 218, 210 175, 325 142
-      C 392 123, 432 114, 465 104
-      L 465 172
-      C 435 180, 392 192, 330 210
-      C 215 245, 118 290, 60 378
-      Z
-    " fill="url(#g2)" opacity="0.92"/>
-
-    <!-- === Highlight edge on front ribbon === -->
-    <path d="
-      M 42 310
-      C 105 218, 210 175, 325 142
-      C 392 123, 432 114, 465 104
-    " fill="none" stroke="url(#hi)" stroke-width="1.5" opacity="0.55"/>
-
-    <!-- === Specular === -->
-    <circle cx="345" cy="152" r="2" fill="#fff" opacity="0.45"/>
-    <circle cx="250" cy="192" r="1.5" fill="#fff" opacity="0.3"/>
-
-  </g>
-</svg>
+                <!-- Subsurface Detail -->
+                <circle cx="800" cy="224" r="40" fill="url(#primaryGradient)" opacity="0.1" />
+            </svg>

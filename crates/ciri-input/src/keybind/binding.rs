@@ -138,9 +138,7 @@ impl BindingSet {
             let notmode = match action {
                 Action::ToggleCommandPalette
                 | Action::ToggleSessionPalette
-                | Action::CloseCommandPalette => {
-                    BindingMode::SEARCH | BindingMode::PASTE_CONFIRM
-                }
+                | Action::CloseCommandPalette => BindingMode::SEARCH | BindingMode::PASTE_CONFIRM,
                 Action::OpenSearch | Action::CloseSearch => {
                     BindingMode::PALETTE | BindingMode::PASTE_CONFIRM
                 }

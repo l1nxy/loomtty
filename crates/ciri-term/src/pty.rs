@@ -142,11 +142,11 @@ impl Pty {
 
         // Terminal identification — used by neofetch/fastfetch, shell integrations, etc.
         let version = env!("CARGO_PKG_VERSION");
-        cmd.env("TERM_PROGRAM", "ciri");
+        cmd.env("TERM_PROGRAM", "ciritty");
         cmd.env("TERM_PROGRAM_VERSION", version);
         // LC_TERMINAL / LC_TERMINAL_VERSION are respected by many tools as an
         // alternative to TERM_PROGRAM and survive across sudo/ssh boundaries.
-        cmd.env("LC_TERMINAL", "ciri");
+        cmd.env("LC_TERMINAL", "ciritty");
         cmd.env("LC_TERMINAL_VERSION", version);
 
         // Shell integration: set env vars so shells auto-source integration scripts.

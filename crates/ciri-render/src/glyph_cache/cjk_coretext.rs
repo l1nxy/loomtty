@@ -40,9 +40,7 @@ pub(crate) fn compute_cjk_pixel_size_ct(
     let primary_ic = measure_char_advance(primary_font, '水').unwrap_or_else(|| {
         // Primary font lacks "水" — estimate from cell_width
         let est = (cell_width as f64 * 2.0).min(pixel_size as f64 * 1.5);
-        log::info!(
-            "CJK sizing: primary font lacks '水', estimating advance = {est:.4}"
-        );
+        log::info!("CJK sizing: primary font lacks '水', estimating advance = {est:.4}");
         est
     });
     if measure_char_advance(primary_font, '水').is_some() {
@@ -76,11 +74,7 @@ fn measure_char_advance(font: &CTFont, ch: char) -> Option<f64> {
     let utf16 = ch.encode_utf16(&mut buf);
     let mut glyphs = vec![0u16; utf16.len()];
     let success = unsafe {
-        font.get_glyphs_for_characters(
-            utf16.as_ptr(),
-            glyphs.as_mut_ptr(),
-            utf16.len() as isize,
-        )
+        font.get_glyphs_for_characters(utf16.as_ptr(), glyphs.as_mut_ptr(), utf16.len() as isize)
     };
     if !success || glyphs[0] == 0 {
         return None;
@@ -95,9 +89,5 @@ fn measure_char_advance(font: &CTFont, ch: char) -> Option<f64> {
             1,
         )
     };
-    if total > 0.0 {
-        Some(total)
-    } else {
-        None
-    }
+    if total > 0.0 { Some(total) } else { None }
 }

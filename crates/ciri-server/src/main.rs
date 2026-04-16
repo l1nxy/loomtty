@@ -1,9 +1,23 @@
 use anyhow::Result;
 
+#[cfg(target_os = "linux")]
+use std::ffi::CString;
+
 mod daemon;
 mod session;
 mod shell_integration;
 mod tray;
+
+#[cfg(target_os = "linux")]
+fn set_process_name(name: &str) {
+    let Ok(name) = CString::new(name) else {
+        return;
+    };
+
+    unsafe {
+        libc::prctl(libc::PR_SET_NAME, name.as_ptr() as libc::c_ulong, 0, 0, 0);
+    }
+}
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -32,15 +46,18 @@ fn main() -> Result<()> {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     }
 
+    #[cfg(target_os = "linux")]
+    set_process_name("ciritty");
+
     // Set environment variables BEFORE creating the tokio runtime, since
     // Runtime::new() spawns worker threads and std::env::set_var is unsound
     // in the presence of concurrent threads (Rust 2024 edition).
     // SAFETY: No other threads exist yet — we are still in single-threaded main().
     unsafe {
-        std::env::set_var("TERM_PROGRAM", "ciri");
+        std::env::set_var("TERM_PROGRAM", "ciritty");
         std::env::set_var("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
         std::env::set_var("COLORTERM", "truecolor");
-        std::env::set_var("LC_TERMINAL", "ciri");
+        std::env::set_var("LC_TERMINAL", "ciritty");
         std::env::set_var("LC_TERMINAL_VERSION", env!("CARGO_PKG_VERSION"));
     }
 

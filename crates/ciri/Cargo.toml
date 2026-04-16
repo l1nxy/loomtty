@@ -1,10 +1,10 @@
 [package]
-name = "ciri"
+name = "ciritty"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "ciri"
+name = "ciritty"
 path = "src/main.rs"
 
 [dependencies]

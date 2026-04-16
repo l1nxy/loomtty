@@ -199,7 +199,9 @@ fn main() -> Result<()> {
     let session_name = launch.session_name;
 
     if !ciri_config::config::config_path().exists() {
-        eprintln!("warning: No config file found. Run `ciri init` to set up your configuration.");
+        eprintln!(
+            "warning: No config file found. Run `ciritty init` to set up your configuration."
+        );
     }
     let config = CiriConfig::load().unwrap_or_default();
     log::info!(
@@ -285,7 +287,7 @@ fn choose_existing_session(session_name: String) -> SessionLaunchChoice {
     let has_running = !has_saved && session_is_running(&session_name);
     if !has_saved && !has_running {
         eprintln!(
-            "session '{}' does not exist.\nUse `ciri ls` to list sessions, or `ciri {}` to create it.",
+            "session '{}' does not exist.\nUse `ciritty ls` to list sessions, or `ciritty {}` to create it.",
             session_name, session_name
         );
         std::process::exit(1);

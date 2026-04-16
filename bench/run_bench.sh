@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Launch fresh ciri and ghostty instances, run benchmark in each,
+# Launch fresh ciritty and ghostty instances, run benchmark in each,
 # then compare results.
 #
 # Usage: ./run_bench.sh
@@ -36,26 +36,26 @@ kill $GHOSTTY_PID 2>/dev/null || true
 sleep 1
 echo ""
 
-# ---- Ciri ----
-echo "[2/4] Launching fresh ciri instance with benchmark..."
-# Create a new ciri session and run bench inside it
+# ---- Ciritty ----
+echo "[2/4] Launching fresh ciritty instance with benchmark..."
+# Create a new ciritty session and run bench inside it
 SESSION_NAME="bench_$(date +%s)"
-ciri new &
+ciritty new &
 CIRI_PID=$!
-sleep 3  # wait for ciri to start
+sleep 3  # wait for ciritty to start
 
 # Run the benchmark via msg run-command
-ciri msg run-command "$SESSION_NAME" "bash '$BENCH_SCRIPT' ciri"
-echo "  Ciri session: $SESSION_NAME"
-echo "  Waiting for ciri bench to complete..."
+ciritty msg run-command "$SESSION_NAME" "bash '$BENCH_SCRIPT' ciritty"
+echo "  Ciritty session: $SESSION_NAME"
+echo "  Waiting for ciritty bench to complete..."
 
 while [ ! -f "$RESULT_CIRI" ] || ! grep -q "Benchmark Complete" "$RESULT_CIRI" 2>/dev/null; do
     sleep 2
 done
-echo "  Ciri benchmark done."
+echo "  Ciritty benchmark done."
 
-# Kill ciri bench session
-ciri kill "$SESSION_NAME" 2>/dev/null || true
+# Kill ciritty bench session
+ciritty kill "$SESSION_NAME" 2>/dev/null || true
 kill $CIRI_PID 2>/dev/null || true
 sleep 1
 echo ""

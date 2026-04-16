@@ -1024,13 +1024,9 @@ impl App {
     }
 
     pub fn content_y_from_screen(&self, screen_y: f32) -> Option<f32> {
-        match self.core.config.statusbar.position {
-            StatusBarPosition::Top => {
-                let y = screen_y - self.status_bar_height();
-                (y >= 0.0).then_some(y)
-            }
-            StatusBarPosition::Bottom => Some(screen_y),
-        }
+        let y = screen_y - self.content_origin_y();
+        let content_h = self.core.workspaces.view_size.height;
+        (y >= 0.0 && y < content_h).then_some(y)
     }
 
     /// Map an absolute screen X coordinate into terminal-local X, or
@@ -1284,7 +1280,20 @@ fn validate_remote_host(host: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests_validate_remote_host {
-    use super::validate_remote_host;
+    use super::{App, validate_remote_host};
+    use ciri_config::config::{CiriConfig, StatusBarPosition};
+    use winit::dpi::PhysicalSize;
+
+    fn make_app(statusbar_position: StatusBarPosition) -> App {
+        let mut config = CiriConfig::default();
+        config.window.width = 900.0;
+        config.window.height = 700.0;
+        config.statusbar.position = statusbar_position;
+
+        let mut app = App::new(config, "test-session");
+        app.preview_resize(PhysicalSize::new(900, 700));
+        app
+    }
 
     #[test]
     fn valid_hosts() {
@@ -1318,5 +1327,33 @@ mod tests_validate_remote_host {
     fn hostname_start() {
         assert!(validate_remote_host("user@-bad").is_err());
         assert!(validate_remote_host("user@.bad").is_err());
+    }
+
+    #[test]
+    fn content_y_from_screen_excludes_top_and_bottom_chrome() {
+        let app = make_app(StatusBarPosition::Top);
+        let top_bar_h = app.status_bar_height();
+        let content_h = app.core.workspaces.view_size.height;
+
+        assert_eq!(app.content_y_from_screen(top_bar_h + 10.0), Some(10.0));
+        assert_eq!(app.content_y_from_screen(top_bar_h - 1.0), None);
+        assert_eq!(
+            app.content_y_from_screen(top_bar_h + content_h - 1.0),
+            Some(content_h - 1.0)
+        );
+        assert_eq!(app.content_y_from_screen(top_bar_h + content_h + 1.0), None);
+    }
+
+    #[test]
+    fn content_y_from_screen_excludes_bottom_status_and_hints_bars() {
+        let app = make_app(StatusBarPosition::Bottom);
+        let content_h = app.core.workspaces.view_size.height;
+
+        assert_eq!(app.content_y_from_screen(10.0), Some(10.0));
+        assert_eq!(
+            app.content_y_from_screen(content_h - 1.0),
+            Some(content_h - 1.0)
+        );
+        assert_eq!(app.content_y_from_screen(content_h + 1.0), None);
     }
 }

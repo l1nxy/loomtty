@@ -812,6 +812,27 @@ impl App {
         })
     }
 
+    fn mouse_over_scrollbar(
+        mouse_content_pos: Option<(f32, f32)>,
+        tile_rect: GeoRect,
+        scrollbar_rect: &Rect,
+        border_w: f32,
+        padding: f32,
+    ) -> bool {
+        let Some((mx, my)) = mouse_content_pos else {
+            return false;
+        };
+        if !tile_rect.contains(mx, my) {
+            return false;
+        }
+
+        let inner_x = tile_rect.x + border_w + padding;
+        let inner_y = tile_rect.y + border_w + padding;
+        let sx = inner_x + scrollbar_rect.x;
+        let sy = inner_y + scrollbar_rect.y;
+        mx >= sx && mx <= sx + scrollbar_rect.w && my >= sy && my <= sy + scrollbar_rect.h
+    }
+
     fn emit_focus_ring(
         &self,
         tr: &GeoRect,
@@ -2114,6 +2135,11 @@ impl App {
         } else {
             self.core.workspaces.visible_tiles_2d(vox, voy)
         };
+        let mouse_content_pos = self.last_mouse_pos.and_then(|(mx, my)| {
+            let my = self.content_y_from_screen(my)?;
+            let mx = self.content_x_from_screen(mx, vw_f)?;
+            Some((mx, my))
+        });
 
         let (cache_cell_width, cache_cell_height) = {
             let cache = self.glyph_cache.as_ref().unwrap();
@@ -2270,15 +2296,14 @@ impl App {
                     .is_some_and(|info| info.pane_id == *pane_id)
                 {
                     terminal::ScrollbarState::Pressed
-                } else if let Some((mx, my)) = self.last_mouse_pos
-                    && tile_rect.contains(mx, my)
-                    && let Some(sb) = &view.scrollbar_rect
-                {
-                    let ix = tile_rect.x + border_w + padding;
-                    let iy = tile_rect.y + border_w + padding;
-                    let sx = ix + sb.x;
-                    let sy = iy + sb.y;
-                    if mx >= sx && mx <= sx + sb.w && my >= sy && my <= sy + sb.h {
+                } else if let Some(sb) = &view.scrollbar_rect {
+                    if Self::mouse_over_scrollbar(
+                        mouse_content_pos,
+                        *tile_rect,
+                        sb,
+                        border_w,
+                        padding,
+                    ) {
                         terminal::ScrollbarState::Hovered
                     } else {
                         terminal::ScrollbarState::Idle
@@ -2642,11 +2667,25 @@ fn scissor_rect(tr: &GeoRect, viewport_w: f32, viewport_h: f32) -> Option<(u32, 
 mod tests {
     use super::*;
     use ciri_anim::{anim_value::AnimValue, spring::SpringParams};
-    use ciri_config::config::CiriConfig;
+    use ciri_config::config::{CiriConfig, StatusBarPosition, TabBarPosition};
     use std::sync::Arc;
+    use winit::dpi::PhysicalSize;
 
     fn make_app() -> App {
         App::new(CiriConfig::default(), "test-session")
+    }
+
+    fn make_content_app(tab_position: TabBarPosition) -> App {
+        let mut config = CiriConfig::default();
+        config.window.width = 900.0;
+        config.window.height = 700.0;
+        config.statusbar.position = StatusBarPosition::Top;
+        config.tabbar.position = tab_position;
+        config.tabbar.width = 96.0;
+
+        let mut app = App::new(config, "test-session");
+        app.preview_resize(PhysicalSize::new(900, 700));
+        app
     }
 
     #[test]
@@ -2751,6 +2790,74 @@ mod tests {
         anim.animate_to(1.0, SpringParams::snappy());
         app.core.anim_mgr.view_offset_x = anim;
         assert!(!app.should_use_retained_pane_scene(&tiles, 1.0, 1600.0, 900.0));
+    }
+
+    #[test]
+    fn mouse_over_scrollbar_converts_left_tab_bar_and_top_bar_coords() {
+        let mut app = make_content_app(TabBarPosition::Left);
+        let tile_rect = GeoRect::new(0.0, 0.0, 300.0, 200.0);
+        let scrollbar = Rect {
+            x: 280.0,
+            y: 20.0,
+            w: 8.0,
+            h: 32.0,
+            color: [1.0, 1.0, 1.0, 1.0],
+        };
+        let screen_x = app.content_origin_x()
+            + tile_rect.x
+            + app.core.config.appearance.border_width
+            + app.core.config.appearance.padding
+            + scrollbar.x
+            + 2.0;
+        let screen_y = app.content_origin_y()
+            + tile_rect.y
+            + app.core.config.appearance.border_width
+            + app.core.config.appearance.padding
+            + scrollbar.y
+            + 2.0;
+        app.last_mouse_pos = Some((screen_x, screen_y));
+        let mouse_content_pos = Some((
+            app.content_x_from_screen(screen_x, 900.0).unwrap(),
+            app.content_y_from_screen(screen_y).unwrap(),
+        ));
+
+        assert!(App::mouse_over_scrollbar(
+            mouse_content_pos,
+            tile_rect,
+            &scrollbar,
+            app.core.config.appearance.border_width,
+            app.core.config.appearance.padding,
+        ));
+    }
+
+    #[test]
+    fn mouse_over_scrollbar_rejects_right_tab_bar_strip() {
+        let mut app = make_content_app(TabBarPosition::Right);
+        let tile_rect = GeoRect::new(0.0, 0.0, 300.0, 200.0);
+        let scrollbar = Rect {
+            x: 280.0,
+            y: 20.0,
+            w: 8.0,
+            h: 32.0,
+            color: [1.0, 1.0, 1.0, 1.0],
+        };
+        app.last_mouse_pos = Some((
+            900.0 - app.core.config.tabbar.width / 2.0,
+            app.content_origin_y() + 24.0,
+        ));
+        let mouse_content_pos = app.last_mouse_pos.and_then(|(mx, my)| {
+            let my = app.content_y_from_screen(my)?;
+            let mx = app.content_x_from_screen(mx, 900.0)?;
+            Some((mx, my))
+        });
+
+        assert!(!App::mouse_over_scrollbar(
+            mouse_content_pos,
+            tile_rect,
+            &scrollbar,
+            app.core.config.appearance.border_width,
+            app.core.config.appearance.padding,
+        ));
     }
 
     #[test]

@@ -25,13 +25,7 @@ pub(crate) trait UiElement {
     /// This is deliberate: mid-animation clicks always go to where the
     /// element logically sits, not to the interpolated visual position.
     #[allow(dead_code)]
-    fn hit(
-        &self,
-        rect: UiRect,
-        mx: f32,
-        my: f32,
-        cx: &UiContext<'_>,
-    ) -> Option<UiAction> {
+    fn hit(&self, rect: UiRect, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<UiAction> {
         let _ = (rect, mx, my, cx);
         None
     }

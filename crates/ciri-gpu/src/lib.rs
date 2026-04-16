@@ -55,6 +55,7 @@ pub struct ViewportDims {
 use ciri_render::FrameScene;
 use ciri_render::glyph_cache::GlyphCache;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use winit::window::Window;
 
 const AUTO_BACKEND: &str = "auto";
@@ -147,6 +148,75 @@ fn log_backend_init_error(backend: &str, error: &dyn std::fmt::Display) {
         BLADE_BACKEND => log::warn!("blade backend failed: {error:#}"),
         GL_BACKEND => log::warn!("GL backend failed: {error:#}"),
         other => log::warn!("{other} backend failed: {error:#}"),
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct DrawFrameTimings {
+    pub cpu_upload: Duration,
+    pub draw: Duration,
+    pub sync_wait: Duration,
+    pub present: Duration,
+}
+
+pub(crate) struct DrawFrameProfiler {
+    backend: &'static str,
+    started_at: Instant,
+    timings: DrawFrameTimings,
+}
+
+impl DrawFrameProfiler {
+    pub fn begin(backend: &'static str) -> Option<Self> {
+        if !log::log_enabled!(log::Level::Debug) {
+            return None;
+        }
+        Some(Self {
+            backend,
+            started_at: Instant::now(),
+            timings: DrawFrameTimings::default(),
+        })
+    }
+
+    pub fn record_cpu_upload(&mut self, started_at: Instant) {
+        self.timings.cpu_upload += started_at.elapsed();
+    }
+
+    pub fn record_draw(&mut self, started_at: Instant) {
+        self.timings.draw += started_at.elapsed();
+    }
+
+    pub fn record_sync_wait(&mut self, started_at: Instant) {
+        self.timings.sync_wait += started_at.elapsed();
+    }
+
+    pub fn record_present(&mut self, started_at: Instant) {
+        self.timings.present += started_at.elapsed();
+    }
+
+    pub fn finish(self, bg_rects: usize, glyphs: usize, color_glyphs: usize) {
+        const FRAME_LOG_THRESHOLD: Duration = Duration::from_millis(2);
+
+        let total = self.started_at.elapsed();
+        if total < FRAME_LOG_THRESHOLD
+            && self.timings.sync_wait < FRAME_LOG_THRESHOLD
+            && self.timings.present < FRAME_LOG_THRESHOLD
+        {
+            return;
+        }
+
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+        log::debug!(
+            "draw_frame backend={} total={:.2}ms upload={:.2}ms draw={:.2}ms wait={:.2}ms present={:.2}ms bg={} glyph={} color={}",
+            self.backend,
+            ms(total),
+            ms(self.timings.cpu_upload),
+            ms(self.timings.draw),
+            ms(self.timings.sync_wait),
+            ms(self.timings.present),
+            bg_rects,
+            glyphs,
+            color_glyphs,
+        );
     }
 }
 

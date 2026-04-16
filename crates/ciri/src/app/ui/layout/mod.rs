@@ -48,9 +48,9 @@ mod test_support;
 pub(crate) use border::Border;
 pub(crate) use element::UiElement;
 pub(crate) use hint::{Axis, SizeHint};
+pub(crate) use linear::Linear;
 pub(crate) use rect::UiRect;
 pub(crate) use spacer::Spacer;
-pub(crate) use linear::Linear;
 // `BorderSlots` is the return type of `Border::layout` and `Offset` is
 // the return type of `UiElement::render_offset` — kept re-exported for
 // API completeness, but external callers usually access them via type

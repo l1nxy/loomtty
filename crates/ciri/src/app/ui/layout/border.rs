@@ -60,11 +60,7 @@ impl<'a> Border<'a> {
     /// regression in offset wiring fails the unit test, not just an
     /// integration test that may not exist. See [`super::Linear::child_paint_rects`]
     /// for the rationale.
-    pub(super) fn child_paint_slots(
-        &self,
-        rect: UiRect,
-        cx: &UiContext<'_>,
-    ) -> BorderSlots {
+    pub(super) fn child_paint_slots(&self, rect: UiRect, cx: &UiContext<'_>) -> BorderSlots {
         let slots = self.layout(rect, cx);
         let apply = |maybe: Option<&Box<dyn UiElement + 'a>>, slot: UiRect| {
             if let Some(e) = maybe {
@@ -93,11 +89,7 @@ impl<'a> Border<'a> {
     ///
     /// Public so callers that need to know "where does the terminal go"
     /// can query the center rect without painting.
-    pub fn layout(
-        &self,
-        rect: UiRect,
-        cx: &UiContext<'_>,
-    ) -> BorderSlots {
+    pub fn layout(&self, rect: UiRect, cx: &UiContext<'_>) -> BorderSlots {
         let main_h = |e: &Box<dyn UiElement + 'a>| match e.size_hint(Axis::Vertical, cx) {
             SizeHint::Fixed(px) => px.max(0.0),
             SizeHint::Fill => 0.0, // edges are not allowed to Fill
@@ -187,13 +179,7 @@ impl<'a> UiElement for Border<'a> {
         }
     }
 
-    fn hit(
-        &self,
-        rect: UiRect,
-        mx: f32,
-        my: f32,
-        cx: &UiContext<'_>,
-    ) -> Option<UiAction> {
+    fn hit(&self, rect: UiRect, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<UiAction> {
         if !rect.contains(mx, my) {
             return None;
         }

@@ -22,6 +22,28 @@ pub(crate) struct RowLigatureData {
     pub(crate) char_glyphs: Vec<(usize, u32, fontdb::ID, bool)>,
 }
 
+impl RowLigatureData {
+    fn with_row_capacity(cols: usize) -> Self {
+        Self {
+            skip_cols: vec![false; cols],
+            ligature_glyphs: Vec::with_capacity((cols / 8).max(4)),
+            grapheme_glyphs: Vec::with_capacity((cols / 8).max(4)),
+            char_glyphs: Vec::with_capacity(cols),
+        }
+    }
+
+    fn reset(&mut self, cols: usize) {
+        if self.skip_cols.len() != cols {
+            self.skip_cols = vec![false; cols];
+        } else {
+            self.skip_cols.fill(false);
+        }
+        self.ligature_glyphs.clear();
+        self.grapheme_glyphs.clear();
+        self.char_glyphs.clear();
+    }
+}
+
 /// Pre-compute all ligature/grapheme shaping data for a single row.
 /// Uses a pre-created [`FaceSet`] to avoid per-call Face::from_slice overhead.
 pub(super) fn precompute_row_shaping(
@@ -29,9 +51,22 @@ pub(super) fn precompute_row_shaping(
     row: usize,
     faces: &FaceSet<'_>,
 ) -> RowLigatureData {
+    let cols = params.grid.cols as usize;
+    let mut data = RowLigatureData::with_row_capacity(cols);
+    precompute_row_shaping_into(params, row, faces, &mut data);
+    data
+}
+
+pub(super) fn precompute_row_shaping_into(
+    params: &ViewBuildParams<'_>,
+    row: usize,
+    faces: &FaceSet<'_>,
+    data: &mut RowLigatureData,
+) {
     struct LigatureRun<'a> {
         start: Option<usize>,
         text: &'a str,
+        char_count: usize,
         style: FontStyle,
         fg: [f32; 4],
     }
@@ -45,7 +80,7 @@ pub(super) fn precompute_row_shaping(
         ligature_glyphs: &mut Vec<(usize, u32, fontdb::ID, FontStyle, [f32; 4])>,
     ) {
         if let Some(start) = run.start
-            && run.text.len() >= 2
+            && run.char_count >= 2
         {
             for lig in shaper.detect_ligatures_with_face(run.text, faces.primary, faces.primary_id)
             {
@@ -67,13 +102,12 @@ pub(super) fn precompute_row_shaping(
     }
 
     let cols_usize = params.grid.cols as usize;
-    let mut skip_cols = vec![false; cols_usize];
-    let mut ligature_glyphs = Vec::new();
-    let mut grapheme_glyphs = Vec::new();
+    data.reset(cols_usize);
 
     // ── Detect ligatures via text shaping ──
     let mut run_start = None;
-    let mut run_text = String::new();
+    let mut run_text = String::with_capacity(cols_usize);
+    let mut run_char_count = 0usize;
     let mut run_style = FontStyle::Regular;
     let mut run_fg = [1.0f32; 4];
 
@@ -102,15 +136,17 @@ pub(super) fn precompute_row_shaping(
                 &LigatureRun {
                     start: run_start,
                     text: &run_text,
+                    char_count: run_char_count,
                     style: run_style,
                     fg: run_fg,
                 },
-                &mut skip_cols,
-                &mut ligature_glyphs,
+                &mut data.skip_cols,
+                &mut data.ligature_glyphs,
             );
             run_start = Some(col);
             run_text.clear();
             run_text.push(props.ch);
+            run_char_count = 1;
             run_style = props.style;
             run_fg = props.fg;
         } else {
@@ -121,19 +157,32 @@ pub(super) fn precompute_row_shaping(
                 &LigatureRun {
                     start: run_start,
                     text: &run_text,
+                    char_count: run_char_count,
                     style: run_style,
                     fg: run_fg,
                 },
-                &mut skip_cols,
-                &mut ligature_glyphs,
+                &mut data.skip_cols,
+                &mut data.ligature_glyphs,
             );
             run_start = None;
             run_text.clear();
+            run_char_count = 0;
         }
     }
 
-    // ── Detect grapheme clusters ──
+    // ── Detect grapheme clusters + single-char shaping ──
+    let mut ligature_idx = 0usize;
     for col in 0..cols_usize {
+        while ligature_idx < data.ligature_glyphs.len()
+            && data.ligature_glyphs[ligature_idx].0 < col
+        {
+            ligature_idx += 1;
+        }
+        if ligature_idx < data.ligature_glyphs.len() && data.ligature_glyphs[ligature_idx].0 == col
+        {
+            continue;
+        }
+
         let idx = row * cols_usize + col;
         if idx >= params.grid.cells.len() {
             break;
@@ -146,114 +195,129 @@ pub(super) fn precompute_row_shaping(
         if props.is_hidden || props.ch == ' ' || props.ch == '\0' || props.ch.is_control() {
             continue;
         }
-        if skip_cols[col] {
+        if data.skip_cols[col] {
             continue;
         }
 
-        // Check if the grapheme extras map has multi-codepoint data for this cell
-        let (cluster_str, consumed_cols) =
-            if let Some(full_grapheme) = params.grapheme_map.get(&(idx as u32)) {
-                (full_grapheme.clone(), 0usize)
-            } else if is_regional_indicator(props.ch) {
-                // Regional Indicator: pair with the next cell if it's also an RI
-                let mut s = String::from(props.ch);
-                let next_col = col + 1;
-                if next_col < cols_usize {
-                    let li = row * cols_usize + next_col;
-                    if li < params.grid.cells.len() {
-                        let next_ch = params.grid.cells[li].ch();
-                        if is_regional_indicator(next_ch) {
-                            s.push(next_ch);
+        if let Some(full_grapheme) = params.grapheme_map.get(&(idx as u32))
+            && push_shaped_grapheme(
+                params.shaper,
+                faces,
+                full_grapheme,
+                col,
+                &props,
+                0,
+                cols_usize,
+                &mut data.skip_cols,
+                &mut data.grapheme_glyphs,
+            )
+        {
+            continue;
+        }
+
+        if is_regional_indicator(props.ch) {
+            let next_col = col + 1;
+            if next_col < cols_usize {
+                let li = row * cols_usize + next_col;
+                if li < params.grid.cells.len() {
+                    let next_ch = params.grid.cells[li].ch();
+                    if is_regional_indicator(next_ch) {
+                        let mut cluster =
+                            String::with_capacity(props.ch.len_utf8() + next_ch.len_utf8());
+                        cluster.push(props.ch);
+                        cluster.push(next_ch);
+                        if push_shaped_grapheme(
+                            params.shaper,
+                            faces,
+                            &cluster,
+                            col,
+                            &props,
+                            1,
+                            cols_usize,
+                            &mut data.skip_cols,
+                            &mut data.grapheme_glyphs,
+                        ) {
+                            continue;
                         }
                     }
                 }
-                let consumed = s.chars().count() - 1;
-                (s, consumed)
-            } else {
-                // Look ahead for combining/modifier characters in adjacent cells
-                let mut s = String::from(props.ch);
-                let mut look = col + if props.is_wide { 2 } else { 1 };
-                let mut consumed = 0usize;
-                while look < cols_usize {
-                    let li = row * cols_usize + look;
-                    if li >= params.grid.cells.len() {
-                        break;
-                    }
-                    let next_ch = params.grid.cells[li].ch();
-                    if is_combining_or_modifier(next_ch) {
-                        s.push(next_ch);
-                        consumed += 1;
-                        look += 1;
-                    } else {
-                        break;
-                    }
-                }
-                (s, consumed)
-            };
+            }
+        }
 
-        if cluster_str.graphemes(true).count() == 1
-            && cluster_str.chars().count() > 1
-            && let Some((gid, fid)) = params
-                .shaper
-                .shape_grapheme_with_fallback(&cluster_str, faces)
-        {
-            grapheme_glyphs.push((
-                col,
-                gid,
-                fid,
-                grapheme_display_cols(&cluster_str, props.is_wide),
-            ));
-            // Mark consumed cells so they aren't rendered independently
-            let start = col + if props.is_wide { 2 } else { 1 };
-            for k in 0..consumed_cols {
-                let c = start + k;
-                if c < cols_usize {
-                    skip_cols[c] = true;
+        let mut look = col + if props.is_wide { 2 } else { 1 };
+        if look < cols_usize {
+            let li = row * cols_usize + look;
+            if li < params.grid.cells.len() {
+                let next_ch = params.grid.cells[li].ch();
+                if is_combining_or_modifier(next_ch) {
+                    let mut cluster = String::new();
+                    cluster.push(props.ch);
+                    cluster.push(next_ch);
+                    look += 1;
+                    let mut consumed = 1usize;
+                    while look < cols_usize {
+                        let li = row * cols_usize + look;
+                        if li >= params.grid.cells.len() {
+                            break;
+                        }
+                        let next_ch = params.grid.cells[li].ch();
+                        if is_combining_or_modifier(next_ch) {
+                            cluster.push(next_ch);
+                            consumed += 1;
+                            look += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if push_shaped_grapheme(
+                        params.shaper,
+                        faces,
+                        &cluster,
+                        col,
+                        &props,
+                        consumed,
+                        cols_usize,
+                        &mut data.skip_cols,
+                        &mut data.grapheme_glyphs,
+                    ) {
+                        continue;
+                    }
                 }
             }
         }
-    }
 
-    // ── Single-char shaping for all remaining characters ──
-    let mut char_glyphs = Vec::new();
-    for (col, should_skip) in skip_cols.iter().enumerate().take(cols_usize) {
-        if *should_skip {
-            continue;
-        }
-        // Skip columns already handled by grapheme shaping
-        if grapheme_glyphs
-            .binary_search_by_key(&col, |(c, _, _, _)| *c)
-            .is_ok()
-        {
-            continue;
-        }
-        // Skip columns handled by ligatures
-        if ligature_glyphs.iter().any(|(c, _, _, _, _)| *c == col) {
-            continue;
-        }
-        let idx = row * cols_usize + col;
-        if idx >= params.grid.cells.len() {
-            break;
-        }
-        let Some(props) =
-            CellProps::from_packed_cell_fast(&params.grid.cells[idx], params.grid.colors)
-        else {
-            continue;
-        };
-        if props.is_hidden || props.ch == ' ' || props.ch == '\0' || props.ch.is_control() {
-            continue;
-        }
         if let Some((gid, fid)) = params.shaper.shape_char_with_fallback(props.ch, faces) {
-            char_glyphs.push((col, gid, fid, props.is_wide));
+            data.char_glyphs.push((col, gid, fid, props.is_wide));
         }
     }
+}
 
-    RowLigatureData {
-        skip_cols,
-        ligature_glyphs,
-        grapheme_glyphs,
-        char_glyphs,
+fn push_shaped_grapheme(
+    shaper: &TextShaper,
+    faces: &FaceSet<'_>,
+    cluster: &str,
+    col: usize,
+    props: &CellProps,
+    consumed_cols: usize,
+    cols_usize: usize,
+    skip_cols: &mut [bool],
+    grapheme_glyphs: &mut Vec<(usize, u32, fontdb::ID, usize)>,
+) -> bool {
+    if cluster.chars().count() <= 1 || cluster.graphemes(true).count() != 1 {
+        return false;
     }
+    let Some((gid, fid)) = shaper.shape_grapheme_with_fallback(cluster, faces) else {
+        return false;
+    };
+    grapheme_glyphs.push((col, gid, fid, grapheme_display_cols(cluster, props.is_wide)));
+    let start = col + if props.is_wide { 2 } else { 1 };
+    for k in 0..consumed_cols {
+        let c = start + k;
+        if c < cols_usize {
+            skip_cols[c] = true;
+        }
+    }
+    true
 }
 
 // ─── Unicode helpers ─────────────────────────────────────────────────
@@ -283,9 +347,7 @@ fn is_regional_indicator(c: char) -> bool {
 
 fn grapheme_display_cols(cluster: &str, fallback_wide: bool) -> usize {
     let unicode_w = UnicodeWidthStr::width(cluster);
-    let cols = unicode_w
-        .max(if fallback_wide { 2 } else { 1 })
-        .max(1);
+    let cols = unicode_w.max(if fallback_wide { 2 } else { 1 }).max(1);
     // Log non-ASCII multi-cell graphemes for width verification
     if cols >= 2 && !cluster.is_ascii() {
         log::debug!(

@@ -101,6 +101,23 @@ pub(crate) struct RenderBuffers {
     pub pane_color_glyph_end: usize,
 }
 
+#[derive(Default)]
+pub(crate) struct CachedUiScene {
+    pub key: Option<u64>,
+    pub bg_rects: Vec<Rect>,
+    pub glyphs: Vec<GlyphInstance>,
+    pub color_glyphs: Vec<GlyphInstance>,
+}
+
+impl CachedUiScene {
+    pub fn clear(&mut self) {
+        self.key = None;
+        self.bg_rects.clear();
+        self.glyphs.clear();
+        self.color_glyphs.clear();
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct PaneSceneRegion {
     pub glyph_offset: usize,
@@ -169,6 +186,7 @@ pub(crate) struct App {
     pub cached_tile_glyphs: HashMap<u64, CachedTileGlyphs>,
     pub cached_tile_backgrounds: HashMap<u64, CachedTileBackgrounds>,
     pub image_atlas_entries: HashMap<(u64, u64), GlyphEntry>,
+    pub cached_ui_scene: CachedUiScene,
     /// Hash of the last successfully rendered visual state.
     pub last_render_snapshot: Option<u64>,
     /// Whether the window currently has input focus.
@@ -181,6 +199,8 @@ pub(crate) struct App {
     pub pending_dpi: Option<f64>,
     /// Proxy to wake the event loop from background IO threads.
     pub event_loop_proxy: Option<EventLoopProxy<()>>,
+    /// Coalesced redraw request latched until the event loop reaches AboutToWait.
+    pub pending_redraw: bool,
 }
 
 impl App {
@@ -272,7 +292,15 @@ impl App {
 
         let (path, id) = match ciri_render::ui_shaper::resolve_ui_font(family) {
             Some((p, idx, fid)) => {
-                log::info!("UI font resolved: '{}' → {}", if family.is_empty() { "(system sans-serif)" } else { family }, p);
+                log::info!(
+                    "UI font resolved: '{}' → {}",
+                    if family.is_empty() {
+                        "(system sans-serif)"
+                    } else {
+                        family
+                    },
+                    p
+                );
                 (Some((p, idx)), Some(fid))
             }
             None => {
@@ -286,7 +314,11 @@ impl App {
             }
         };
         let ui_px = size_pt * (96.0 * dpi_scale as f32) / 72.0;
-        UiFontInit { path, id, pixel_size: Some(ui_px) }
+        UiFontInit {
+            path,
+            id,
+            pixel_size: Some(ui_px),
+        }
     }
 
     /// Build a [`UiTextShaper`] from a resolved [`UiFontInit`]. When `init`
@@ -316,11 +348,7 @@ impl App {
             // Try to share data if it's the terminal font, otherwise read path.
             id.and_then(|fid| terminal_shaper.font_data_arc(fid))
                 .map(|(data, idx)| UiFontData::Shared(data, idx))
-                .or_else(|| {
-                    init.path
-                        .clone()
-                        .map(|(p, i)| UiFontData::Path(p, i))
-                })
+                .or_else(|| init.path.clone().map(|(p, i)| UiFontData::Path(p, i)))
         } else {
             // No override — use terminal primary font data.
             id.and_then(|fid| terminal_shaper.font_data_arc(fid))
@@ -401,6 +429,7 @@ impl App {
             cached_tile_glyphs: HashMap::new(),
             cached_tile_backgrounds: HashMap::new(),
             image_atlas_entries: HashMap::new(),
+            cached_ui_scene: CachedUiScene::default(),
             last_render_snapshot: None,
             window_focused: true,
             config_watcher: None,
@@ -408,6 +437,7 @@ impl App {
             pending_resize: None,
             pending_dpi: None,
             event_loop_proxy: None,
+            pending_redraw: false,
         }
     }
 
@@ -752,8 +782,7 @@ impl App {
             if let Some(sessions) = self.core.cached_slot_sessions.get(id)
                 && !sessions.is_empty()
             {
-                let mut names: Vec<String> =
-                    sessions.iter().map(|s| s.name.clone()).collect();
+                let mut names: Vec<String> = sessions.iter().map(|s| s.name.clone()).collect();
                 names.sort();
                 for n in names {
                     out.push((id.clone(), n));
@@ -778,7 +807,11 @@ impl App {
             self.core.active_slot_id,
             self.core.session_name,
             self.core.pending_session_name,
-            self.core.cached_local_sessions.iter().map(|s| &s.name).collect::<Vec<_>>(),
+            self.core
+                .cached_local_sessions
+                .iter()
+                .map(|s| &s.name)
+                .collect::<Vec<_>>(),
             self.core.background_slots.keys().collect::<Vec<_>>(),
         );
         if list.len() < 2 {
@@ -1131,8 +1164,23 @@ impl App {
         self.cached_tile_glyphs.clear();
         self.cached_tile_backgrounds.clear();
         self.image_atlas_entries.clear();
+        self.cached_ui_scene.clear();
         self.render_bufs.clear_retained_scene();
         self.last_render_snapshot = None;
+    }
+
+    pub fn schedule_redraw(&mut self) {
+        self.pending_redraw = true;
+    }
+
+    pub fn flush_pending_redraw(&mut self) {
+        if !self.pending_redraw {
+            return;
+        }
+        self.pending_redraw = false;
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
     }
 
     /// Update client-side viewport/layout state immediately for interactive window resize.
@@ -1196,9 +1244,7 @@ impl App {
             cell_width: cw,
             cell_height: ch,
         });
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+        self.schedule_redraw();
     }
 }
 

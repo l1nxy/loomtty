@@ -5,11 +5,11 @@ mod hints_bar;
 pub(super) mod info_box;
 pub(crate) mod layout;
 mod overview;
-pub(crate) mod tokens;
 mod palette;
 mod paste_dialog;
 mod tab_bar;
 mod text_layout;
+pub(crate) mod tokens;
 mod top_bar;
 pub(crate) mod types;
 
@@ -50,8 +50,7 @@ impl App {
             .as_ref()
             .map(|c| c.cell_width)
             .unwrap_or(8.0);
-        let top_bar_layout =
-            self.top_bar_layout(vw, vh, cell_w, cell_h, self.ui_shaper.as_ref());
+        let top_bar_layout = self.top_bar_layout(vw, vh, cell_w, cell_h, self.ui_shaper.as_ref());
         self.ensure_active_pane_tab_visible(top_bar_layout.tabs_area_px);
         let baseline = cell_h * self.core.config.statusbar.text_baseline;
         let ui_line_h = self
@@ -59,6 +58,13 @@ impl App {
             .as_ref()
             .map(|s| s.borrow().line_height())
             .unwrap_or(cell_h);
+        let cache_key = self.ui_scene_hash(vw, vh, cell_w, cell_h, ui_line_h);
+        if self.cached_ui_scene.key == Some(cache_key) {
+            bg_rects.extend_from_slice(&self.cached_ui_scene.bg_rects);
+            glyphs.extend_from_slice(&self.cached_ui_scene.glyphs);
+            color_glyphs.extend_from_slice(&self.cached_ui_scene.color_glyphs);
+            return;
+        }
         let cx = UiContext {
             config: &self.core.config,
             viewport_w: vw,
@@ -90,14 +96,6 @@ impl App {
         };
         let overview_hover = self.core.overview_action_hover;
 
-        let atlas = self.glyph_cache.as_mut().unwrap();
-        let mut scene = UiScene {
-            atlas,
-            bg_rects,
-            glyphs,
-            color_glyphs,
-        };
-
         // ── Chrome tree ──────────────────────────────────────────────
         //
         // Build a `Border` whose edges contain the bars and whose center
@@ -119,39 +117,60 @@ impl App {
         let viewport_rect = UiRect::new(0.0, 0.0, vw, vh);
         let mut chrome: Border<'_> = match cx.config.statusbar.position {
             StatusBarPosition::Top => Border::new().top(top_bar).bottom(hints_bar),
-            StatusBarPosition::Bottom => Border::new()
-                .bottom(Linear::new(Axis::Vertical).push(hints_bar).push(top_bar)),
+            StatusBarPosition::Bottom => {
+                Border::new().bottom(Linear::new(Axis::Vertical).push(hints_bar).push(top_bar))
+            }
         };
         if let Some(tab_bar) = side_tab_bar {
             chrome = match cx.config.tabbar.position {
                 TabBarPosition::Left => chrome.left(tab_bar),
                 TabBarPosition::Right => chrome.right(tab_bar),
-                TabBarPosition::Integrated => unreachable!(
-                    "side_tab_bar is only Some for Left/Right positions",
-                ),
+                TabBarPosition::Integrated => {
+                    unreachable!("side_tab_bar is only Some for Left/Right positions",)
+                }
             };
         }
-        chrome.paint(viewport_rect, &cx, &mut scene);
+        {
+            let cached_ui = &mut self.cached_ui_scene;
+            cached_ui.key = Some(cache_key);
+            cached_ui.bg_rects.clear();
+            cached_ui.glyphs.clear();
+            cached_ui.color_glyphs.clear();
 
-        // Modal / overlay layers — these still position themselves
-        // absolutely (centred on the viewport, etc.) and don't fit the
-        // dock-style Border model. Painted *after* the chrome tree so
-        // they sit on top.
-        if let Some(d) = &overview_bar {
-            overview::paint_overview_action_bar(d, overview_hover, &cx, &mut scene);
+            let atlas = self.glyph_cache.as_mut().unwrap();
+            let mut scene = UiScene {
+                atlas,
+                bg_rects: &mut cached_ui.bg_rects,
+                glyphs: &mut cached_ui.glyphs,
+                color_glyphs: &mut cached_ui.color_glyphs,
+            };
+
+            chrome.paint(viewport_rect, &cx, &mut scene);
+
+            // Modal / overlay layers — these still position themselves
+            // absolutely (centred on the viewport, etc.) and don't fit the
+            // dock-style Border model. Painted *after* the chrome tree so
+            // they sit on top.
+            if let Some(d) = &overview_bar {
+                overview::paint_overview_action_bar(d, overview_hover, &cx, &mut scene);
+            }
+            if let Some(component) = infobox {
+                component.paint(&cx, &mut scene);
+            }
+            if let Some(component) = palette {
+                component.paint(&cx, &mut scene);
+            }
+            if let Some(component) = paste_dialog {
+                component.paint(&cx, &mut scene);
+            }
+            if let Some(component) = context_menu {
+                component.paint(&cx, &mut scene);
+            }
         }
-        if let Some(component) = infobox {
-            component.paint(&cx, &mut scene);
-        }
-        if let Some(component) = palette {
-            component.paint(&cx, &mut scene);
-        }
-        if let Some(component) = paste_dialog {
-            component.paint(&cx, &mut scene);
-        }
-        if let Some(component) = context_menu {
-            component.paint(&cx, &mut scene);
-        }
+
+        bg_rects.extend_from_slice(&self.cached_ui_scene.bg_rects);
+        glyphs.extend_from_slice(&self.cached_ui_scene.glyphs);
+        color_glyphs.extend_from_slice(&self.cached_ui_scene.color_glyphs);
     }
 
     pub(crate) fn ui_context(&self) -> UiContext<'_> {
@@ -191,7 +210,13 @@ impl App {
         let cx = self.ui_context();
         let component = TopBarComponent::capture(
             self,
-            self.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h, cx.ui_shaper),
+            self.top_bar_layout(
+                cx.viewport_w,
+                cx.viewport_h,
+                cx.cell_w,
+                cx.cell_h,
+                cx.ui_shaper,
+            ),
             &cx,
         );
         match component.hit_test(mx, my, &cx) {
@@ -302,7 +327,13 @@ impl App {
 
         // 2. Top bar
         if self.hit_test_top_bar(mx, my) {
-            let layout = self.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h, cx.ui_shaper);
+            let layout = self.top_bar_layout(
+                cx.viewport_w,
+                cx.viewport_h,
+                cx.cell_w,
+                cx.cell_h,
+                cx.ui_shaper,
+            );
             let c = TopBarComponent::capture(self, layout, &cx);
             if let Some(action) = c.click(mx, my, &cx) {
                 self.apply_ui_action(action);
@@ -312,8 +343,7 @@ impl App {
         }
 
         // 3. Side tab bar (when tabbar.position != Integrated)
-        if let Some((bx, by, bw, bh)) =
-            self.side_tab_bar_rect(cx.viewport_w, cx.viewport_h)
+        if let Some((bx, by, bw, bh)) = self.side_tab_bar_rect(cx.viewport_w, cx.viewport_h)
             && mx >= bx
             && mx < bx + bw
             && my >= by
@@ -527,8 +557,7 @@ impl App {
         // (both integrated and side variants) shares one hovered-id
         // state. Clearing it happens via `had_top_bar_hover` below.
         let cx = self.ui_context();
-        if let Some((bx, by, bw, bh)) =
-            self.side_tab_bar_rect(cx.viewport_w, cx.viewport_h)
+        if let Some((bx, by, bw, bh)) = self.side_tab_bar_rect(cx.viewport_w, cx.viewport_h)
             && mx >= bx
             && mx < bx + bw
             && my >= by
@@ -570,9 +599,7 @@ impl App {
                 } else {
                     CursorIcon::Default
                 },
-                needs_redraw: had_top_bar_hover
-                    || prev != next
-                    || prev_action != next_action,
+                needs_redraw: had_top_bar_hover || prev != next || prev_action != next_action,
             };
         }
 
@@ -600,7 +627,13 @@ mod tests {
     fn top_bar_session_click_maps_to_open_session_palette() {
         let app = make_app();
         let cx = app.ui_context();
-        let layout = app.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h, cx.ui_shaper);
+        let layout = app.top_bar_layout(
+            cx.viewport_w,
+            cx.viewport_h,
+            cx.cell_w,
+            cx.cell_h,
+            cx.ui_shaper,
+        );
         let component = TopBarComponent::capture(&app, layout, &cx);
         // Session zone is always at x=0 in the current Linear layout
         // (`Border::top` puts the bar at the top edge, `SessionLabel` is
@@ -686,7 +719,13 @@ mod tests {
     fn dispatch_ui_hover_marks_top_bar_session_as_pointer() {
         let mut app = make_app();
         let cx = app.ui_context();
-        let layout = app.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h, cx.ui_shaper);
+        let layout = app.top_bar_layout(
+            cx.viewport_w,
+            cx.viewport_h,
+            cx.cell_w,
+            cx.cell_h,
+            cx.ui_shaper,
+        );
         let hover = app.dispatch_ui_hover(2.0, layout.bar_y + 2.0);
         assert!(hover.handled);
         assert_eq!(hover.cursor, CursorIcon::Pointer);

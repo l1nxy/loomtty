@@ -1,6 +1,6 @@
-use super::*;
 use super::super::offset::Offset;
 use super::super::test_support::{OffsetProbe, Probe, dummy_cx};
+use super::*;
 
 #[test]
 fn border_center_fills_when_no_edges() {

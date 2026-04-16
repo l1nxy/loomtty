@@ -38,13 +38,7 @@ impl<'a> UiElement for WorkspaceIndicator<'a> {
         ui.label(self.label, color);
     }
 
-    fn hit(
-        &self,
-        rect: UiRect,
-        mx: f32,
-        my: f32,
-        _cx: &UiContext<'_>,
-    ) -> Option<UiAction> {
+    fn hit(&self, rect: UiRect, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
         // Match the pre-split semantics: empty workspace label → not
         // clickable, even though Linear still hands us a zero-width rect.
         if self.width <= 0.0 || self.label.is_empty() {

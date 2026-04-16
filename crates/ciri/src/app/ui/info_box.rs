@@ -135,8 +135,7 @@ impl InfoBoxComponent {
             .map(|(_, v)| text_layout::measure(cx, v))
             .fold(0.0_f32, f32::max);
         // Title row: ` {title} ` with an extra cell of padding either side.
-        let title_box_w =
-            text_layout::measure(cx, &title) + cx.cell_w * 4.0;
+        let title_box_w = text_layout::measure(cx, &title) + cx.cell_w * 4.0;
         // Content row: key-col + 2 cells of gap (matches `gap_w` in
         // `paint`) + val-col.
         let content_box_w = key_col_w + cx.cell_w * 2.0 + val_col_w;

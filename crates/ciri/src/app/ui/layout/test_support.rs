@@ -63,13 +63,7 @@ impl UiElement for OffsetProbe {
         SizeHint::Fixed(50.0)
     }
     fn paint(&self, _rect: UiRect, _cx: &UiContext<'_>, _scene: &mut UiScene<'_>) {}
-    fn hit(
-        &self,
-        _rect: UiRect,
-        _mx: f32,
-        _my: f32,
-        _cx: &UiContext<'_>,
-    ) -> Option<UiAction> {
+    fn hit(&self, _rect: UiRect, _mx: f32, _my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
         Some(UiAction::CycleWorkspace)
     }
     fn render_offset(&self) -> Offset {

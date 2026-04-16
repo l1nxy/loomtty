@@ -517,6 +517,88 @@ impl App {
         }
     }
 
+    pub(crate) fn ui_scene_hash(
+        &self,
+        vw: f32,
+        vh: f32,
+        cell_w: f32,
+        cell_h: f32,
+        ui_line_h: f32,
+    ) -> u64 {
+        let mut hasher = DefaultHasher::new();
+
+        vw.to_bits().hash(&mut hasher);
+        vh.to_bits().hash(&mut hasher);
+        cell_w.to_bits().hash(&mut hasher);
+        cell_h.to_bits().hash(&mut hasher);
+        ui_line_h.to_bits().hash(&mut hasher);
+
+        self.core.workspaces.active_workspace_idx.hash(&mut hasher);
+        self.core.workspaces.workspaces.len().hash(&mut hasher);
+        self.window_focused.hash(&mut hasher);
+        self.core.broadcast_mode.hash(&mut hasher);
+        self.core.input.is_locked().hash(&mut hasher);
+        self.core.input.is_awaiting_action().hash(&mut hasher);
+        self.core.input.current_mode_name().hash(&mut hasher);
+        self.core.hovered_top_bar_region.hash(&mut hasher);
+        self.core.hovered_pane_tab.hash(&mut hasher);
+        self.core.pane_tab_scroll.to_bits().hash(&mut hasher);
+        self.pane_tab_scroll_max().to_bits().hash(&mut hasher);
+        self.core.overview.active.hash(&mut hasher);
+        self.core.overview.hovered_pane.hash(&mut hasher);
+        self.core.overview_action_hover.hash(&mut hasher);
+
+        let zoom = self.core.anim_mgr.overview_zoom.value();
+        let vox = self.core.anim_mgr.view_offset_x.value();
+        let voy = self.core.anim_mgr.view_offset_y.value();
+        zoom.to_bits().hash(&mut hasher);
+        vox.to_bits().hash(&mut hasher);
+        voy.to_bits().hash(&mut hasher);
+
+        self.session_display_name().hash(&mut hasher);
+        self.workspace_indicator_label().hash(&mut hasher);
+        let (mode_label, mode_color) = self.current_mode_label();
+        mode_label.hash(&mut hasher);
+        for c in mode_color {
+            c.to_bits().hash(&mut hasher);
+        }
+
+        let ws = self.core.workspaces.active();
+        let pane_count = ws.columns.iter().map(|c| c.tiles.len()).sum::<usize>();
+        pane_count.hash(&mut hasher);
+        let active_pane_id = ws.active_pane_id();
+        active_pane_id.hash(&mut hasher);
+        if let Some(pid) = active_pane_id {
+            self.core
+                .pane_grids
+                .get(&pid)
+                .map(|grid| grid.title.trim())
+                .unwrap_or_default()
+                .hash(&mut hasher);
+        }
+
+        for (pane_id, title) in self.pane_tab_entries() {
+            pane_id.hash(&mut hasher);
+            title.hash(&mut hasher);
+        }
+
+        if self.core.overview.active {
+            for (pane_id, rect, is_active) in
+                self.core.workspaces.all_tiles_2d(vox as f32, voy as f32)
+            {
+                pane_id.hash(&mut hasher);
+                Self::hash_geo_rect(&mut hasher, &rect);
+                is_active.hash(&mut hasher);
+            }
+        }
+
+        self.hash_command_palette(&mut hasher);
+        self.hash_context_menu(&mut hasher);
+        self.hash_pending_paste(&mut hasher);
+
+        hasher.finish()
+    }
+
     fn hash_images_for_pane(&self, pane_id: u64, hasher: &mut DefaultHasher) {
         if let Some(images) = self.core.image_placements.get(&pane_id) {
             images.len().hash(hasher);
@@ -606,7 +688,11 @@ impl App {
         // Drag state affects border/scrollbar visuals
         self.core.drag.col_dragging.hash(&mut hasher);
         self.core.drag.tile_dragging.hash(&mut hasher);
-        self.core.drag.scrollbar_dragging.is_some().hash(&mut hasher);
+        self.core
+            .drag
+            .scrollbar_dragging
+            .is_some()
+            .hash(&mut hasher);
 
         tiles.len().hash(&mut hasher);
         for (pane_id, rect, is_active) in tiles {
@@ -2461,8 +2547,8 @@ impl App {
             log::info!("atlas overflow: cleared cache, will rebuild next frame");
         }
 
-        if animating && let Some(w) = &self.window {
-            w.request_redraw();
+        if animating {
+            self.schedule_redraw();
         }
     }
 }

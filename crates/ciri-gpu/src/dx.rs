@@ -923,8 +923,7 @@ impl Renderer {
         // Obtain system default text rendering params for D2D render targets.
         let dwrite_factory: IDWriteFactory =
             unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
-        let text_rendering_params =
-            unsafe { dwrite_factory.CreateRenderingParams().ok() };
+        let text_rendering_params = unsafe { dwrite_factory.CreateRenderingParams().ok() };
 
         log::info!(
             "D3D11 renderer initialized ({}x{})",
@@ -1053,8 +1052,10 @@ impl Renderer {
     ) {
         let vw = self.width as f32;
         let vh = self.height as f32;
+        let mut profiler = crate::DrawFrameProfiler::begin("dx");
 
         unsafe {
+            let upload_start = std::time::Instant::now();
             // Flush pending glyph uploads (CPU path, used when D2D is off)
             let (mut ap, mut cp, ac, cc) = cache.take_pending();
             atlas_gpu.alpha.flush_uploads(&self.ctx, &mut ap, ac);
@@ -1131,8 +1132,12 @@ impl Renderer {
                 .upload_instances(&self.ctx, scene.color_glyphs, &vp);
             let alpha_count = scene.glyphs.len();
             let color_count = scene.color_glyphs.len();
+            if let Some(profiler) = profiler.as_mut() {
+                profiler.record_cpu_upload(upload_start);
+            }
 
             // 4. Draw inactive pane glyphs (scissored).
+            let draw_start = std::time::Instant::now();
             atlas_gpu
                 .alpha
                 .draw_batches(&self.ctx, alpha_count, scene.glyph_batches);
@@ -1187,12 +1192,19 @@ impl Renderer {
             atlas_gpu
                 .color
                 .draw_batches(&self.ctx, color_count, &[overlay_color]);
+            if let Some(profiler) = profiler.as_mut() {
+                profiler.record_draw(draw_start);
+            }
 
             // Wait for the previous frame to finish presentation before
             // submitting the next one. With the waitable object this is a true
             // kernel wait (CPU sleeps), not a busy-wait spin loop.
             if let Some(handle) = self.frame_waitable {
+                let wait_start = std::time::Instant::now();
                 WaitForSingleObjectEx(handle, 1000, false);
+                if let Some(profiler) = profiler.as_mut() {
+                    profiler.record_sync_wait(wait_start);
+                }
             }
 
             // Present — sync_interval=0 when using waitable object (latency
@@ -1202,7 +1214,19 @@ impl Renderer {
             } else {
                 self.sync_interval
             };
+            let present_start = std::time::Instant::now();
             let _ = self.swap_chain.Present(interval, DXGI_PRESENT(0)).ok();
+            if let Some(profiler) = profiler.as_mut() {
+                profiler.record_present(present_start);
+            }
+        }
+
+        if let Some(profiler) = profiler {
+            profiler.finish(
+                scene.bg_rects.len(),
+                scene.glyphs.len(),
+                scene.color_glyphs.len(),
+            );
         }
     }
 }

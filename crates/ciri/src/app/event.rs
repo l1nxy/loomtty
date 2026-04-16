@@ -230,8 +230,8 @@ impl ApplicationHandler for App {
                 return;
             }
 
-            if needs_redraw && let Some(w) = &self.window {
-                w.request_redraw();
+            if needs_redraw {
+                self.schedule_redraw();
             }
         }
 
@@ -275,9 +275,7 @@ impl ApplicationHandler for App {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: ()) {
         // Woken by EventLoopProxy from the reader thread — process pending server events.
         if self.process_server_events() {
-            if let Some(w) = &self.window {
-                w.request_redraw();
-            }
+            self.schedule_redraw();
         }
     }
 
@@ -431,7 +429,7 @@ impl ApplicationHandler for App {
         self.renderer = Some(renderer);
         self.core.last_frame = Instant::now();
 
-        self.window.as_ref().unwrap().request_redraw();
+        self.schedule_redraw();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -493,9 +491,7 @@ impl ApplicationHandler for App {
                     } else {
                         self.handle_mouse_released(winit::event::MouseButton::Left);
                     }
-                    if let Some(w) = &self.window {
-                        w.request_redraw();
-                    }
+                    self.schedule_redraw();
                 }
             }
 
@@ -549,14 +545,16 @@ impl ApplicationHandler for App {
                 };
                 let text = format!("{quoted} ");
                 self.send_paste_to_active_pane(text.as_bytes());
-                if let Some(w) = &self.window {
-                    w.request_redraw();
-                }
+                self.schedule_redraw();
             }
 
             WindowEvent::RedrawRequested => self.render(),
 
             _ => {}
         }
+    }
+
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        self.flush_pending_redraw();
     }
 }

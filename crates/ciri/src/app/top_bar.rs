@@ -148,11 +148,7 @@ impl App {
         shaper: Option<&RefCell<UiTextShaper>>,
     ) -> Vec<PaneTabLayout> {
         let tab_w = PANE_TAB_WIDTH_CHARS as f32 * cw;
-        let session_w = measure(
-            shaper,
-            &format!(" {}  ", self.session_display_name()),
-            cw,
-        );
+        let session_w = measure(shaper, &format!(" {}  ", self.session_display_name()), cw);
         // NB: tab `x` coordinates are absolute screen coordinates assuming the
         // top bar starts at screen x=0. This holds for the current
         // `Border { top | bottom }` chrome configurations (no `left`/`right`
@@ -247,11 +243,7 @@ impl App {
         // than the unicode-width estimate. Without this, proportional UI
         // fonts desync the `Linear` slots from the shaped text and either
         // clip the right-side zones or leave them entirely unpainted.
-        let session_w = measure(
-            shaper,
-            &format!(" {}  ", self.session_display_name()),
-            cw,
-        );
+        let session_w = measure(shaper, &format!(" {}  ", self.session_display_name()), cw);
         let ws_label = self.workspace_indicator_label();
         let workspace_w = measure(shaper, &ws_label, cw);
         let mode_w = measure(shaper, &self.current_mode_label().0, cw);

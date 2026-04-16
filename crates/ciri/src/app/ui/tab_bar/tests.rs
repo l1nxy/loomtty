@@ -64,10 +64,7 @@ fn border_places_left_tab_bar_between_top_and_hints() {
     let hints_bar = HintsBarComponent::capture(&app, &cx);
     let tab_bar = TabBarComponent::capture(&app, &cx);
 
-    let chrome = Border::new()
-        .top(top_bar)
-        .bottom(hints_bar)
-        .left(tab_bar);
+    let chrome = Border::new().top(top_bar).bottom(hints_bar).left(tab_bar);
     let slots = chrome.layout(UiRect::new(0.0, 0.0, vw, vh), &cx);
 
     // Left slot: x=0, y=top_bar_h, w=tabbar_w, h = vh - chrome_h
@@ -111,7 +108,15 @@ fn top_bar_owns_pixels_above_side_bar_for_left_position() {
     cfg.statusbar.position = StatusBarPosition::Top;
     let app = App::new(cfg, "test-session");
     let cx = app.ui_context();
-    let bar_h = app.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h, cx.ui_shaper).bar_height;
+    let bar_h = app
+        .top_bar_layout(
+            cx.viewport_w,
+            cx.viewport_h,
+            cx.cell_w,
+            cx.cell_h,
+            cx.ui_shaper,
+        )
+        .bar_height;
 
     // A click inside the side bar's x column but at y well above
     // bar_height is in *top bar* territory — `hit_test_top_bar`
@@ -121,7 +126,10 @@ fn top_bar_owns_pixels_above_side_bar_for_left_position() {
     assert!(my_in_top_bar_strip < bar_h);
     assert!(app.hit_test_top_bar(mx, my_in_top_bar_strip));
     let (_, by, _, bh) = app.side_tab_bar_rect(cx.viewport_w, cx.viewport_h).unwrap();
-    assert!(my_in_top_bar_strip < by, "side bar must start at or below bar_height");
+    assert!(
+        my_in_top_bar_strip < by,
+        "side bar must start at or below bar_height"
+    );
     assert!(
         !(my_in_top_bar_strip >= by && my_in_top_bar_strip < by + bh),
         "side bar rect must not include top-bar y range",
@@ -173,7 +181,10 @@ fn content_origin_x_reflects_tab_bar_position() {
     let app_right = App::new(cfg_right, "test-session");
     // Right: terminal starts at x=0 (tabs are on the right edge).
     assert_eq!(app_right.content_origin_x(), 0.0);
-    assert_eq!(app_right.total_chrome_width(), app_right.core.config.tabbar.width);
+    assert_eq!(
+        app_right.total_chrome_width(),
+        app_right.core.config.tabbar.width
+    );
 
     let app_int = App::new(CiriConfig::default(), "test-session");
     assert_eq!(app_int.content_origin_x(), 0.0);

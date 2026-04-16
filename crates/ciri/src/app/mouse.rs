@@ -149,9 +149,7 @@ impl App {
         match button {
             MouseButton::Left => {
                 if self.dispatch_ui_click(mx, my) {
-                    if let Some(w) = &self.window {
-                        w.request_redraw();
-                    }
+                    self.schedule_redraw();
                     return;
                 }
 
@@ -204,9 +202,7 @@ impl App {
                     }
                 }
                 started_drag = true;
-                if let Some(w) = &self.window {
-                    w.request_redraw();
-                }
+                self.schedule_redraw();
             }
 
             if !started_drag {
@@ -220,9 +216,7 @@ impl App {
                     {
                         self.core.selection = None;
                         self.open_url(&url);
-                        if let Some(w) = &self.window {
-                            w.request_redraw();
-                        }
+                        self.schedule_redraw();
                         return;
                     }
 
@@ -458,9 +452,7 @@ impl App {
                 }
             }
         }
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+        self.schedule_redraw();
     }
 
     /// Result of a scrollbar hit-test.
@@ -543,9 +535,9 @@ impl App {
         let ui_hover = self.dispatch_ui_hover(mx, my);
         if let Some(w) = &self.window {
             w.set_cursor(ui_hover.cursor);
-            if ui_hover.needs_redraw {
-                w.request_redraw();
-            }
+        }
+        if ui_hover.needs_redraw {
+            self.schedule_redraw();
         }
         ui_hover.handled
     }
@@ -941,7 +933,9 @@ impl App {
                 self.core.gestures.scroll_accum += py;
                 let ppl = self.core.config.gesture.scroll_pixels_per_line;
                 let lines = (self.core.gestures.scroll_accum / ppl) as i64;
-                if lines != 0 && let Some(pid) = target_pid {
+                if lines != 0
+                    && let Some(pid) = target_pid
+                {
                     self.core.gestures.scroll_accum -= lines as f64 * ppl;
                     if lines > 0 {
                         self.scroll_pane_up(pid, lines as usize);
@@ -1072,10 +1066,8 @@ impl App {
         }
     }
 
-    fn request_mouse_redraw(&self) {
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+    fn request_mouse_redraw(&mut self) {
+        self.schedule_redraw();
     }
 }
 

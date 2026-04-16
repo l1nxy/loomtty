@@ -109,7 +109,12 @@ impl TopBarComponent {
     /// `UiElement::paint(rect)` / `::hit(rect)` with the rect that
     /// `Border::layout` produced from the same `vw`.
     pub(super) fn bar_rect(&self, cx: &UiContext<'_>) -> UiRect {
-        UiRect::new(0.0, self.layout.bar_y, cx.viewport_w, self.layout.bar_height)
+        UiRect::new(
+            0.0,
+            self.layout.bar_y,
+            cx.viewport_w,
+            self.layout.bar_height,
+        )
     }
 
     /// Build the inner [`Linear`] row. Extracted so both paint and hit
@@ -244,13 +249,7 @@ impl UiElement for TopBarComponent {
         }
     }
 
-    fn hit(
-        &self,
-        rect: UiRect,
-        mx: f32,
-        my: f32,
-        cx: &UiContext<'_>,
-    ) -> Option<UiAction> {
+    fn hit(&self, rect: UiRect, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<UiAction> {
         if !rect.contains(mx, my) {
             return None;
         }

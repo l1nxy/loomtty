@@ -1,6 +1,6 @@
-use super::*;
 use super::super::offset::Offset;
 use super::super::test_support::{OffsetProbe, Probe, dummy_cx};
+use super::*;
 use crate::app::ui::types::UiAction;
 
 #[test]
@@ -55,17 +55,13 @@ fn linear_hit_finds_child_slot() {
             SizeHint::Fixed(10.0)
         }
         fn paint(&self, _r: UiRect, _cx: &UiContext<'_>, _s: &mut UiScene<'_>) {}
-        fn hit(
-            &self,
-            _rect: UiRect,
-            _mx: f32,
-            _my: f32,
-            _cx: &UiContext<'_>,
-        ) -> Option<UiAction> {
+        fn hit(&self, _rect: UiRect, _mx: f32, _my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
             Some(UiAction::CycleWorkspace)
         }
     }
-    let linear = Linear::new(Axis::Horizontal).push(ClickProbe).push(ClickProbe);
+    let linear = Linear::new(Axis::Horizontal)
+        .push(ClickProbe)
+        .push(ClickProbe);
     let cx = dummy_cx();
     let action = linear.hit(UiRect::new(0.0, 0.0, 20.0, 10.0), 5.0, 5.0, &cx);
     assert_eq!(action, Some(UiAction::CycleWorkspace));

@@ -11,9 +11,7 @@ impl App {
                 self.core.ime.preedit_text.clear();
                 self.core.ime.preedit_cursor = None;
                 if self.append_text_to_overlay_input(&text) || self.modal_captures_keyboard() {
-                    if let Some(w) = &self.window {
-                        w.request_redraw();
-                    }
+                    self.schedule_redraw();
                     return;
                 }
 
@@ -42,17 +40,13 @@ impl App {
                         input_seq: 0,
                     });
                 }
-                if let Some(w) = &self.window {
-                    w.request_redraw();
-                }
+                self.schedule_redraw();
             }
             Ime::Preedit(text, cursor) => {
                 self.core.ime.preedit_active = !text.is_empty();
                 self.core.ime.preedit_text = text;
                 self.core.ime.preedit_cursor = cursor.map(|(start, _)| start);
-                if let Some(w) = &self.window {
-                    w.request_redraw();
-                }
+                self.schedule_redraw();
             }
             Ime::Enabled | Ime::Disabled => {}
         }

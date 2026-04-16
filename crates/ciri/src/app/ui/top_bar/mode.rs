@@ -33,13 +33,7 @@ impl<'a> UiElement for ModeIndicator<'a> {
         ui.label(self.label, self.color);
     }
 
-    fn hit(
-        &self,
-        rect: UiRect,
-        mx: f32,
-        my: f32,
-        _cx: &UiContext<'_>,
-    ) -> Option<UiAction> {
+    fn hit(&self, rect: UiRect, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
         rect.contains(mx, my).then_some(UiAction::ToggleOverview)
     }
 }

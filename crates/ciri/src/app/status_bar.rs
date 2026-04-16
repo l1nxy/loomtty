@@ -62,9 +62,8 @@ fn emit_text_via_shaper(
                     if let Some(entry) = atlas.ensure_char(ch) {
                         if entry.width > 0 && entry.height > 0 {
                             let cw = UnicodeWidthChar::width(ch).unwrap_or(1).max(1);
-                            let inst = make_text_glyph_instance(
-                                &entry, params, 0, atlas.cell_height, cw,
-                            );
+                            let inst =
+                                make_text_glyph_instance(&entry, params, 0, atlas.cell_height, cw);
                             // Reposition to pen_x instead of col-based x.
                             let mut inst = inst;
                             let sx = pen_x + entry.bearing_x;

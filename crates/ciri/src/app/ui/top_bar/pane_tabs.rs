@@ -122,11 +122,7 @@ impl<'a> UiElement for PaneTabsElement<'a> {
             let label_right = (tab.x + tab.w - pad).min(tabs_end_x);
             let label_budget = (label_right - label_left).max(0.0);
             if label_budget > 0.0 {
-                let truncated = text_layout::truncate_with_ellipsis(
-                    cx,
-                    &tab.label,
-                    label_budget,
-                );
+                let truncated = text_layout::truncate_with_ellipsis(cx, &tab.label, label_budget);
                 if !truncated.is_empty() {
                     ui.abs_text(&truncated, label_left, text_y, color);
                 }
@@ -163,13 +159,7 @@ impl<'a> UiElement for PaneTabsElement<'a> {
         }
     }
 
-    fn hit(
-        &self,
-        rect: UiRect,
-        mx: f32,
-        my: f32,
-        _cx: &UiContext<'_>,
-    ) -> Option<UiAction> {
+    fn hit(&self, rect: UiRect, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
         if !rect.contains(mx, my) {
             return None;
         }
@@ -185,4 +175,3 @@ impl<'a> UiElement for PaneTabsElement<'a> {
         None
     }
 }
-

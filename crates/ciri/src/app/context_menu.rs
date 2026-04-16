@@ -117,9 +117,7 @@ impl App {
     pub(crate) fn open_context_menu(&mut self, mx: f32, my: f32) {
         if self.core.context_menu.visible {
             self.core.context_menu.visible = false;
-            if let Some(w) = &self.window {
-                w.request_redraw();
-            }
+            self.schedule_redraw();
             return;
         }
 
@@ -213,8 +211,6 @@ impl App {
             hovered_index: None,
         };
 
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+        self.schedule_redraw();
     }
 }

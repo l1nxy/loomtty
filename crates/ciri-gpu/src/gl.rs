@@ -591,8 +591,10 @@ impl Renderer {
     ) -> crate::Result<()> {
         let vw = self.width as f32;
         let vh = self.height as f32;
+        let mut profiler = crate::DrawFrameProfiler::begin("gl");
 
         unsafe {
+            let upload_start = std::time::Instant::now();
             self.gl
                 .viewport(0, 0, self.width as i32, self.height as i32);
 
@@ -646,8 +648,12 @@ impl Renderer {
                 .upload_instances(&self.gl, scene.color_glyphs, &vp);
             let alpha_count = scene.glyphs.len();
             let color_count = scene.color_glyphs.len();
+            if let Some(profiler) = profiler.as_mut() {
+                profiler.record_cpu_upload(upload_start);
+            }
 
             // 4. Draw inactive pane glyphs (scissored).
+            let draw_start = std::time::Instant::now();
             atlas_gpu
                 .alpha
                 .draw_batches(&self.gl, alpha_count, &vp, scene.glyph_batches);
@@ -704,12 +710,26 @@ impl Renderer {
             atlas_gpu
                 .color
                 .draw_batches(&self.gl, color_count, &vp, &[overlay_color]);
+            if let Some(profiler) = profiler.as_mut() {
+                profiler.record_draw(draw_start);
+            }
         }
 
         // Present — on Wayland EGL this implicitly handles resize
+        let present_start = std::time::Instant::now();
         self.gl_surface
             .swap_buffers(&self.gl_context)
             .map_err(|e| crate::GpuError::SurfaceLost(format!("swap_buffers: {e}")))?;
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.record_present(present_start);
+        }
+        if let Some(profiler) = profiler {
+            profiler.finish(
+                scene.bg_rects.len(),
+                scene.glyphs.len(),
+                scene.color_glyphs.len(),
+            );
+        }
         Ok(())
     }
 }

@@ -630,10 +630,8 @@ impl App {
         }
     }
 
-    fn request_redraw(&self) {
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+    fn request_redraw(&mut self) {
+        self.schedule_redraw();
     }
 }
 

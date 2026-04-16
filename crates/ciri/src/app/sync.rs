@@ -280,14 +280,21 @@ impl App {
                         log::debug!(
                             "SessionList received: {} entries: {:?}",
                             sessions.len(),
-                            sessions.iter().map(|s| (&s.name, s.running)).collect::<Vec<_>>(),
+                            sessions
+                                .iter()
+                                .map(|s| (&s.name, s.running))
+                                .collect::<Vec<_>>(),
                         );
                         // Update cache with only running sessions
                         self.core.cached_local_sessions =
                             sessions.into_iter().filter(|s| s.running).collect();
                         log::debug!(
                             "cached_local_sessions after filter: {:?}",
-                            self.core.cached_local_sessions.iter().map(|s| &s.name).collect::<Vec<_>>(),
+                            self.core
+                                .cached_local_sessions
+                                .iter()
+                                .map(|s| &s.name)
+                                .collect::<Vec<_>>(),
                         );
                         // Rebuild palette entries from cache if palette is open
                         if self.core.command_palette.is_some() {
@@ -791,8 +798,18 @@ mod tests {
         app.core.session_name = "alpha".to_string();
         // Initial server response: alpha was attached most recently.
         app.core.cached_local_sessions = vec![
-            SessionInfo { name: "alpha".into(), running: true, pane_count: 1, client_count: 1 },
-            SessionInfo { name: "beta".into(),  running: true, pane_count: 1, client_count: 1 },
+            SessionInfo {
+                name: "alpha".into(),
+                running: true,
+                pane_count: 1,
+                client_count: 1,
+            },
+            SessionInfo {
+                name: "beta".into(),
+                running: true,
+                pane_count: 1,
+                client_count: 1,
+            },
         ];
         let (local_slot, _ev, _local_cmd_rx) =
             make_bg_slot("local", super::super::ConnectionKind::Local, "main", true);
@@ -809,8 +826,18 @@ mod tests {
         app.core.session_name = "beta".to_string();
         app.core.pending_session_name = None;
         app.core.cached_local_sessions = vec![
-            SessionInfo { name: "beta".into(),  running: true, pane_count: 1, client_count: 1 },
-            SessionInfo { name: "alpha".into(), running: true, pane_count: 1, client_count: 1 },
+            SessionInfo {
+                name: "beta".into(),
+                running: true,
+                pane_count: 1,
+                client_count: 1,
+            },
+            SessionInfo {
+                name: "alpha".into(),
+                running: true,
+                pane_count: 1,
+                client_count: 1,
+            },
         ];
 
         // Press 2: must advance to the local slot — NOT loop back to alpha.
@@ -863,14 +890,20 @@ mod tests {
         // Press 1: alpha → beta (within remote)
         app.cycle_session(1);
         let m1 = remote_cmd_rx.try_recv().unwrap();
-        assert!(matches!(m1, ClientMessage::SwitchSession { ref session_name } if session_name == "beta"),
-            "press 1 should send SwitchSession(beta), got {:?}", m1);
+        assert!(
+            matches!(m1, ClientMessage::SwitchSession { ref session_name } if session_name == "beta"),
+            "press 1 should send SwitchSession(beta), got {:?}",
+            m1
+        );
 
         // Press 2: beta → gamma (within remote, using `pending` to advance)
         app.cycle_session(1);
         let m2 = remote_cmd_rx.try_recv().unwrap();
-        assert!(matches!(m2, ClientMessage::SwitchSession { ref session_name } if session_name == "gamma"),
-            "press 2 should send SwitchSession(gamma), got {:?}", m2);
+        assert!(
+            matches!(m2, ClientMessage::SwitchSession { ref session_name } if session_name == "gamma"),
+            "press 2 should send SwitchSession(gamma), got {:?}",
+            m2
+        );
 
         // Press 3: gamma → (default, main) — CROSS-SLOT SWITCH expected.
         app.cycle_session(1);
@@ -1175,7 +1208,10 @@ mod tests {
             .iter()
             .filter(|e| matches!(&e.kind, PaletteEntryKind::GoToSession { slot_id, .. } if slot_id == "bg-slot"))
             .collect();
-        assert!(!slot_sessions.is_empty(), "应有 bg-slot 的 GoToSession 条目");
+        assert!(
+            !slot_sessions.is_empty(),
+            "应有 bg-slot 的 GoToSession 条目"
+        );
     }
 
     #[test]
@@ -1324,7 +1360,10 @@ mod tests {
             .iter()
             .filter(|e| matches!(&e.kind, PaletteEntryKind::GoToSession { slot_id, .. } if slot_id == &active))
             .count();
-        assert!(current_count >= 1, "SessionList 后当前 slot 的 GoToSession 应存在");
+        assert!(
+            current_count >= 1,
+            "SessionList 后当前 slot 的 GoToSession 应存在"
+        );
     }
 
     #[test]

@@ -5,8 +5,7 @@ use alacritty_terminal::index::{Column, Line, Point};
 use alacritty_terminal::term::Term;
 use ciri_config::config::CiriConfig;
 use ciri_protocol::message::PackedCell;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::hash::Hasher;
 
 use crate::glyph_cache::GlyphCache;
 use crate::rect::Rect;
@@ -20,7 +19,7 @@ use super::glyph::{
     RelativeGlyph, color_glyph_cell_span, constrain_color_glyph_to_cells,
     constrain_wide_text_glyph, emit_glyph, make_relative_glyph,
 };
-use super::shaping::{RowLigatureData, precompute_row_shaping};
+use super::shaping::{RowLigatureData, precompute_row_shaping, precompute_row_shaping_into};
 
 // ─── Per-row cached data ─────────────────────────────────────────────
 
@@ -30,6 +29,62 @@ pub struct RowRenderData {
     glyphs: Vec<RelativeGlyph>,
     color_glyphs: Vec<RelativeGlyph>,
     bg_rects: Vec<Rect>,
+}
+
+impl RowRenderData {
+    fn with_row_capacity(cols: usize) -> Self {
+        Self {
+            glyphs: Vec::with_capacity(cols),
+            color_glyphs: Vec::with_capacity((cols / 8).max(2)),
+            bg_rects: Vec::with_capacity((cols / 4).max(4)),
+        }
+    }
+}
+
+const ROW_HASH_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+const ROW_HASH_PRIME: u64 = 0x100000001b3;
+
+struct RowHasher(u64);
+
+impl RowHasher {
+    fn new() -> Self {
+        Self(ROW_HASH_OFFSET_BASIS)
+    }
+}
+
+impl Hasher for RowHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        let mut hash = self.0;
+        for &byte in bytes {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(ROW_HASH_PRIME);
+        }
+        self.0 = hash;
+    }
+
+    fn write_u8(&mut self, i: u8) {
+        self.write(&[i]);
+    }
+
+    fn write_u16(&mut self, i: u16) {
+        self.write(&i.to_le_bytes());
+    }
+
+    fn write_u32(&mut self, i: u32) {
+        self.write(&i.to_le_bytes());
+    }
+
+    fn write_u64(&mut self, i: u64) {
+        self.write(&i.to_le_bytes());
+    }
+
+    fn write_usize(&mut self, i: usize) {
+        self.write(&i.to_le_bytes());
+    }
 }
 
 pub(super) struct CellRenderer<'a> {
@@ -240,7 +295,7 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
         total_rows,
         super::cursor::CursorCellContext {
             row_width: cols,
-            cell_flags: None,
+            cells: None,
         },
         &m,
         config,
@@ -273,6 +328,7 @@ pub fn build_view_from_grid(atlas: &mut GlyphCache, inputs: &PackedViewInputs<'_
     let row_data = build_row_render_cache(params.grid, &row_lig_data, atlas);
     let row_hashes = build_row_hash_cache(&params);
     let row_epochs = vec![1; row_data.len()];
+    let (glyph_instances, color_glyph_instances, bg_rects) = flatten_row_render_data(&row_data);
 
     let cursor_rects = make_cursor_rects(
         params.cursor_shape,
@@ -281,23 +337,16 @@ pub fn build_view_from_grid(atlas: &mut GlyphCache, inputs: &PackedViewInputs<'_
         params.grid.rows as usize,
         super::cursor::CursorCellContext {
             row_width: params.grid.cols as usize,
-            cell_flags: Some(
-                &params
-                    .grid
-                    .cells
-                    .iter()
-                    .map(PackedCell::flags_u16)
-                    .collect::<Vec<_>>(),
-            ),
+            cells: Some(params.grid.cells),
         },
         params.grid.metrics,
         params.config,
     );
 
     let view = TerminalView {
-        glyph_instances: Vec::new(),
-        color_glyph_instances: Vec::new(),
-        bg_rects: Vec::new(),
+        glyph_instances,
+        color_glyph_instances,
+        bg_rects,
         cursor_rects,
         scrollbar_rect: None,
         scrollbar_key: None,
@@ -323,17 +372,26 @@ pub fn update_view_from_grid(
 ) {
     let metrics = CellMetrics::new(atlas, inputs.config);
     let params = inputs.build_params(&metrics);
-    let new_row_hashes = build_row_hash_cache(&params);
-    let detected_scroll_shift =
-        detect_scroll_shift(&view.row_hashes, &new_row_hashes).unwrap_or_default();
-    let applied_scroll_shift = normalize_scroll_shift(
-        if scroll_shift != 0 {
-            scroll_shift
-        } else {
-            detected_scroll_shift
-        },
-        params.grid.rows as usize,
-    );
+    let row_count = params.grid.rows as usize;
+    let has_dirty_rows = dirty_rows.iter().any(|dirty| *dirty);
+    let mut applied_scroll_shift = normalize_scroll_shift(scroll_shift, row_count);
+    let new_row_hashes = if view.row_hashes.len() != row_count {
+        build_row_hash_cache(&params)
+    } else if applied_scroll_shift == 0 && !has_dirty_rows {
+        let full_hashes = build_row_hash_cache(&params);
+        applied_scroll_shift = normalize_scroll_shift(
+            detect_scroll_shift(&view.row_hashes, &full_hashes).unwrap_or_default(),
+            row_count,
+        );
+        full_hashes
+    } else {
+        build_incremental_row_hash_cache(
+            &params,
+            &view.row_hashes,
+            dirty_rows,
+            applied_scroll_shift,
+        )
+    };
 
     if applied_scroll_shift != 0 {
         rotate_row_caches(view, applied_scroll_shift);
@@ -350,12 +408,6 @@ pub fn update_view_from_grid(
     );
 
     // Rebuild cursor
-    let cell_flags = params
-        .grid
-        .cells
-        .iter()
-        .map(PackedCell::flags_u16)
-        .collect::<Vec<_>>();
     view.cursor_rects = make_cursor_rects(
         params.cursor_shape,
         params.cursor_line as i32,
@@ -363,7 +415,7 @@ pub fn update_view_from_grid(
         params.grid.rows as usize,
         super::cursor::CursorCellContext {
             row_width: params.grid.cols as usize,
-            cell_flags: Some(&cell_flags),
+            cells: Some(params.grid.cells),
         },
         params.grid.metrics,
         params.config,
@@ -393,12 +445,30 @@ fn render_single_row(
     lig: Option<&RowLigatureData>,
     atlas: &mut GlyphCache,
 ) -> RowRenderData {
-    let mut glyphs = Vec::new();
-    let mut color_glyphs = Vec::new();
-    let mut bg_rects = Vec::new();
+    let mut row_data = RowRenderData::with_row_capacity(grid.cols as usize);
+    rebuild_row_render_data(&mut row_data, grid, row, lig, atlas);
+    row_data
+}
+
+fn rebuild_row_render_data(
+    row_data: &mut RowRenderData,
+    grid: PackedGridContext<'_>,
+    row: usize,
+    lig: Option<&RowLigatureData>,
+    atlas: &mut GlyphCache,
+) {
+    row_data.glyphs.clear();
+    row_data.color_glyphs.clear();
+    row_data.bg_rects.clear();
+
+    let glyphs = &mut row_data.glyphs;
+    let color_glyphs = &mut row_data.color_glyphs;
+    let bg_rects = &mut row_data.bg_rects;
 
     let mut strip_color: Option<[f32; 4]> = None;
     let mut strip_start: usize = 0;
+    let mut grapheme_idx = 0usize;
+    let mut char_idx = 0usize;
 
     for col in 0..grid.cols as usize {
         let idx = row * grid.cols as usize + col;
@@ -413,7 +483,7 @@ fn render_single_row(
         if props.bg != grid.metrics.default_bg {
             if let Some(sc) = strip_color {
                 if sc != props.bg {
-                    flush_bg_strip(&mut bg_rects, sc, strip_start, col, row, grid.metrics);
+                    flush_bg_strip(bg_rects, sc, strip_start, col, row, grid.metrics);
                     strip_color = Some(props.bg);
                     strip_start = col;
                 }
@@ -422,10 +492,10 @@ fn render_single_row(
                 strip_start = col;
             }
         } else if let Some(sc) = strip_color.take() {
-            flush_bg_strip(&mut bg_rects, sc, strip_start, col, row, grid.metrics);
+            flush_bg_strip(bg_rects, sc, strip_start, col, row, grid.metrics);
         }
 
-        render_cell_decorations(row, col, &props, grid.metrics, &mut bg_rects);
+        render_cell_decorations(row, col, &props, grid.metrics, bg_rects);
 
         if props.is_hidden || props.ch == ' ' || props.ch == '\0' || props.ch.is_control() {
             continue;
@@ -438,99 +508,100 @@ fn render_single_row(
             continue;
         }
 
-        if let Some(ld) = lig
-            && let Ok(gi) = ld
-                .grapheme_glyphs
-                .binary_search_by_key(&col, |(c, _, _, _)| *c)
-        {
-            let gid = ld.grapheme_glyphs[gi].1;
-            let glyph_font_id = ld.grapheme_glyphs[gi].2;
-            let display_cols = ld.grapheme_glyphs[gi].3;
-            if let Some(entry) =
-                atlas.ensure_glyph_id(gid, glyph_font_id, props.style, props.is_wide)
-                && entry.width > 0
-                && entry.height > 0
+        if let Some(ld) = lig {
+            while grapheme_idx < ld.grapheme_glyphs.len()
+                && ld.grapheme_glyphs[grapheme_idx].0 < col
             {
-                let px = col as f32 * grid.metrics.cw;
-                let py = row as f32 * grid.metrics.ch;
-                let is_cjk_text_wide =
-                    props.is_wide && !entry.is_color && Some(glyph_font_id) == grid.cjk_font_id;
-                let g = if entry.is_color && display_cols > 1 {
-                    constrain_color_glyph_to_cells(
-                        &entry,
-                        px,
-                        py,
-                        grid.metrics,
-                        props.fg,
-                        display_cols,
-                    )
-                } else if is_cjk_text_wide {
-                    constrain_wide_text_glyph(&entry, px, py, grid.metrics, props.fg)
-                } else {
-                    make_relative_glyph(&entry, px, py, grid.metrics, props.fg)
-                };
-                if entry.is_color {
-                    color_glyphs.push(g);
-                } else {
-                    glyphs.push(g);
-                }
-                continue;
+                grapheme_idx += 1;
             }
-            // Rasterization failed — fall through to emit_glyph
-            // so the base character is still visible.
+            if grapheme_idx < ld.grapheme_glyphs.len() && ld.grapheme_glyphs[grapheme_idx].0 == col
+            {
+                let (_, gid, glyph_font_id, display_cols) = ld.grapheme_glyphs[grapheme_idx];
+                if let Some(entry) =
+                    atlas.ensure_glyph_id(gid, glyph_font_id, props.style, props.is_wide)
+                    && entry.width > 0
+                    && entry.height > 0
+                {
+                    let px = col as f32 * grid.metrics.cw;
+                    let py = row as f32 * grid.metrics.ch;
+                    let is_cjk_text_wide =
+                        props.is_wide && !entry.is_color && Some(glyph_font_id) == grid.cjk_font_id;
+                    let g = if entry.is_color && display_cols > 1 {
+                        constrain_color_glyph_to_cells(
+                            &entry,
+                            px,
+                            py,
+                            grid.metrics,
+                            props.fg,
+                            display_cols,
+                        )
+                    } else if is_cjk_text_wide {
+                        constrain_wide_text_glyph(&entry, px, py, grid.metrics, props.fg)
+                    } else {
+                        make_relative_glyph(&entry, px, py, grid.metrics, props.fg)
+                    };
+                    if entry.is_color {
+                        color_glyphs.push(g);
+                    } else {
+                        glyphs.push(g);
+                    }
+                    grapheme_idx += 1;
+                    continue;
+                }
+                // Rasterization failed — fall through to emit_glyph
+                // so the base character is still visible.
+                grapheme_idx += 1;
+            }
         }
 
         // Try single-char shaping path (glyph-ID based, all-through-shaping)
-        if let Some(ld) = lig
-            && let Ok(ci) = ld.char_glyphs.binary_search_by_key(&col, |(c, _, _, _)| *c)
-        {
-            let (_, gid, font_id, is_wide) = ld.char_glyphs[ci];
-            if let Some(entry) = atlas.ensure_glyph_id(gid, font_id, props.style, is_wide)
-                && entry.width > 0
-                && entry.height > 0
-            {
-                let px = col as f32 * grid.metrics.cw;
-                let py = row as f32 * grid.metrics.ch;
-                let is_cjk_text_wide =
-                    is_wide && !entry.is_color && Some(font_id) == grid.cjk_font_id;
-                let color_span = color_glyph_cell_span(props.ch, is_wide);
-                let g = if entry.is_color && color_span > 1 {
-                    constrain_color_glyph_to_cells(
-                        &entry,
-                        px,
-                        py,
-                        grid.metrics,
-                        props.fg,
-                        color_span,
-                    )
-                } else if is_cjk_text_wide {
-                    constrain_wide_text_glyph(&entry, px, py, grid.metrics, props.fg)
-                } else {
-                    make_relative_glyph(&entry, px, py, grid.metrics, props.fg)
-                };
-                if entry.is_color {
-                    color_glyphs.push(g);
-                } else {
-                    glyphs.push(g);
+        if let Some(ld) = lig {
+            while char_idx < ld.char_glyphs.len() && ld.char_glyphs[char_idx].0 < col {
+                char_idx += 1;
+            }
+            if char_idx < ld.char_glyphs.len() && ld.char_glyphs[char_idx].0 == col {
+                let (_, gid, font_id, is_wide) = ld.char_glyphs[char_idx];
+                if let Some(entry) = atlas.ensure_glyph_id(gid, font_id, props.style, is_wide)
+                    && entry.width > 0
+                    && entry.height > 0
+                {
+                    let px = col as f32 * grid.metrics.cw;
+                    let py = row as f32 * grid.metrics.ch;
+                    let is_cjk_text_wide =
+                        is_wide && !entry.is_color && Some(font_id) == grid.cjk_font_id;
+                    let color_span = color_glyph_cell_span(props.ch, is_wide);
+                    let g = if entry.is_color && color_span > 1 {
+                        constrain_color_glyph_to_cells(
+                            &entry,
+                            px,
+                            py,
+                            grid.metrics,
+                            props.fg,
+                            color_span,
+                        )
+                    } else if is_cjk_text_wide {
+                        constrain_wide_text_glyph(&entry, px, py, grid.metrics, props.fg)
+                    } else {
+                        make_relative_glyph(&entry, px, py, grid.metrics, props.fg)
+                    };
+                    if entry.is_color {
+                        color_glyphs.push(g);
+                    } else {
+                        glyphs.push(g);
+                    }
+                    char_idx += 1;
+                    continue;
                 }
-                continue;
+                char_idx += 1;
             }
         }
 
         // Fallback: crossfont character-based path
-        emit_glyph(
-            col,
-            row,
-            &props,
-            grid.metrics,
-            atlas,
-            &mut glyphs,
-            &mut color_glyphs,
-        );
+        emit_glyph(col, row, &props, grid.metrics, atlas, glyphs, color_glyphs);
     }
     if let Some(sc) = strip_color {
         flush_bg_strip(
-            &mut bg_rects,
+            bg_rects,
             sc,
             strip_start,
             grid.cols as usize,
@@ -556,12 +627,6 @@ fn render_single_row(
             }
         }
     }
-
-    RowRenderData {
-        glyphs,
-        color_glyphs,
-        bg_rects,
-    }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -577,26 +642,78 @@ fn build_row_lig_cache(params: &ViewBuildParams<'_>) -> Vec<RowLigatureData> {
 }
 
 fn build_row_hash_cache(params: &ViewBuildParams<'_>) -> Vec<u64> {
-    (0..params.grid.rows as usize)
-        .map(|row| hash_row(params, row))
-        .collect()
+    let row_count = params.grid.rows as usize;
+    let mut hashes = Vec::with_capacity(row_count);
+    for row in 0..row_count {
+        hashes.push(hash_row(params, row));
+    }
+    hashes
+}
+
+fn build_incremental_row_hash_cache(
+    params: &ViewBuildParams<'_>,
+    previous_hashes: &[u64],
+    dirty_rows: &[bool],
+    scroll_shift: i32,
+) -> Vec<u64> {
+    let row_count = params.grid.rows as usize;
+    let mut hashes = Vec::with_capacity(row_count);
+    for row in 0..row_count {
+        let dirty = dirty_rows.get(row).copied().unwrap_or(false);
+        let exposed = row_exposed_by_scroll_shift(row, scroll_shift, row_count);
+        if !dirty
+            && !exposed
+            && let Some(src_row) = shifted_source_row(row, scroll_shift, row_count)
+            && let Some(hash) = previous_hashes.get(src_row)
+        {
+            hashes.push(*hash);
+            continue;
+        }
+        hashes.push(hash_row(params, row));
+    }
+    hashes
 }
 
 fn hash_row(params: &ViewBuildParams<'_>, row: usize) -> u64 {
-    let mut hasher = DefaultHasher::new();
+    let mut hasher = RowHasher::new();
     let cols = params.grid.cols as usize;
     let start = row.saturating_mul(cols);
     let end = (start + cols).min(params.grid.cells.len());
     let cells = &params.grid.cells[start..end];
     hasher.write(bytemuck::cast_slice(cells));
+    if params.grapheme_map.is_empty() {
+        return hasher.finish();
+    }
     for col in 0..cols {
         let cell_idx = start + col;
         if let Some(grapheme) = params.grapheme_map.get(&(cell_idx as u32)) {
-            col.hash(&mut hasher);
-            grapheme.hash(&mut hasher);
+            hasher.write_usize(col);
+            hasher.write_usize(grapheme.len());
+            hasher.write(grapheme.as_bytes());
         }
     }
     hasher.finish()
+}
+
+fn shifted_source_row(row: usize, scroll_shift: i32, row_count: usize) -> Option<usize> {
+    if scroll_shift > 0 {
+        row.checked_sub(scroll_shift as usize)
+    } else if scroll_shift < 0 {
+        let src = row + (-scroll_shift) as usize;
+        (src < row_count).then_some(src)
+    } else {
+        Some(row)
+    }
+}
+
+fn row_exposed_by_scroll_shift(row: usize, scroll_shift: i32, row_count: usize) -> bool {
+    if scroll_shift > 0 {
+        row < scroll_shift as usize
+    } else if scroll_shift < 0 {
+        row >= row_count.saturating_sub((-scroll_shift) as usize)
+    } else {
+        false
+    }
 }
 
 fn normalize_scroll_shift(shift: i32, row_count: usize) -> i32 {
@@ -679,6 +796,24 @@ fn build_row_render_cache(
     row_data
 }
 
+fn flatten_row_render_data(
+    row_data: &[RowRenderData],
+) -> (Vec<RelativeGlyph>, Vec<RelativeGlyph>, Vec<Rect>) {
+    let glyph_cap = row_data.iter().map(|row| row.glyphs.len()).sum();
+    let color_cap = row_data.iter().map(|row| row.color_glyphs.len()).sum();
+    let bg_cap = row_data.iter().map(|row| row.bg_rects.len()).sum();
+
+    let mut glyphs = Vec::with_capacity(glyph_cap);
+    let mut color_glyphs = Vec::with_capacity(color_cap);
+    let mut bg_rects = Vec::with_capacity(bg_cap);
+    for row in row_data {
+        glyphs.extend_from_slice(&row.glyphs);
+        color_glyphs.extend_from_slice(&row.color_glyphs);
+        bg_rects.extend_from_slice(&row.bg_rects);
+    }
+    (glyphs, color_glyphs, bg_rects)
+}
+
 /// Returns `true` if at least one row had its content hash change.
 fn update_dirty_rows(
     view: &mut TerminalView,
@@ -696,20 +831,14 @@ fn update_dirty_rows(
             if row >= view.row_data.len() {
                 continue;
             }
-            let exposed = if scroll_shift > 0 {
-                row < scroll_shift as usize
-            } else if scroll_shift < 0 {
-                row >= grid.rows as usize - (-scroll_shift) as usize
-            } else {
-                false
-            };
+            let exposed = row_exposed_by_scroll_shift(row, scroll_shift, grid.rows as usize);
             let hash_changed =
                 view.row_hashes.get(row).copied() != new_row_hashes.get(row).copied();
             let dirty = dirty_rows.get(row).copied().unwrap_or(false) || exposed || hash_changed;
             if !dirty {
                 continue;
             }
-            view.row_data[row] = grid.build_row_data(row, None, atlas);
+            rebuild_row_render_data(&mut view.row_data[row], grid, row, None, atlas);
             if let Some(epoch) = view.row_epochs.get_mut(row) {
                 *epoch = epoch.wrapping_add(1);
             }
@@ -725,27 +854,27 @@ fn update_dirty_rows(
             continue;
         }
 
-        let exposed = if scroll_shift > 0 {
-            row < scroll_shift as usize
-        } else if scroll_shift < 0 {
-            row >= grid.rows as usize - (-scroll_shift) as usize
-        } else {
-            false
-        };
+        let exposed = row_exposed_by_scroll_shift(row, scroll_shift, grid.rows as usize);
         let hash_changed = view.row_hashes.get(row).copied() != new_row_hashes.get(row).copied();
         let dirty = dirty_rows.get(row).copied().unwrap_or(false) || exposed || hash_changed;
         if !dirty {
             continue;
         }
 
-        let rebuilt = precompute_row_shaping(params, row, &faces);
         if row < view.row_lig_cache.len() {
-            view.row_lig_cache[row] = rebuilt.clone();
+            precompute_row_shaping_into(params, row, &faces, &mut view.row_lig_cache[row]);
         } else {
-            view.row_lig_cache.push(rebuilt.clone());
+            view.row_lig_cache
+                .push(precompute_row_shaping(params, row, &faces));
         }
 
-        view.row_data[row] = grid.build_row_data(row, Some(&rebuilt), atlas);
+        rebuild_row_render_data(
+            &mut view.row_data[row],
+            grid,
+            row,
+            view.row_lig_cache.get(row),
+            atlas,
+        );
         if let Some(epoch) = view.row_epochs.get_mut(row) {
             *epoch = epoch.wrapping_add(1);
         }

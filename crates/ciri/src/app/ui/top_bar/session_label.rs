@@ -35,13 +35,8 @@ impl<'a> UiElement for SessionLabel<'a> {
         ui.label(self.text, color);
     }
 
-    fn hit(
-        &self,
-        rect: UiRect,
-        mx: f32,
-        my: f32,
-        _cx: &UiContext<'_>,
-    ) -> Option<UiAction> {
-        rect.contains(mx, my).then_some(UiAction::OpenSessionPalette)
+    fn hit(&self, rect: UiRect, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
+        rect.contains(mx, my)
+            .then_some(UiAction::OpenSessionPalette)
     }
 }

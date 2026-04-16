@@ -5,7 +5,7 @@ use ciri_config::config::CiriConfig;
 use ciri_config::theme::ThemeConfig;
 use ciri_protocol::message::FLAG_WIDE_CHAR_SPACER;
 use ciri_protocol::message::{
-    CURSOR_BEAM, CURSOR_BLOCK, CURSOR_HIDDEN, CURSOR_HOLLOW_BLOCK, CURSOR_UNDERLINE,
+    CURSOR_BEAM, CURSOR_BLOCK, CURSOR_HIDDEN, CURSOR_HOLLOW_BLOCK, CURSOR_UNDERLINE, PackedCell,
 };
 
 use crate::rect::Rect;
@@ -94,7 +94,7 @@ pub(super) fn cursor_shape_to_protocol(shape: CursorShape) -> u8 {
 
 pub(super) struct CursorCellContext<'a> {
     pub(super) row_width: usize,
-    pub(super) cell_flags: Option<&'a [u16]>,
+    pub(super) cells: Option<&'a [PackedCell]>,
 }
 
 /// Compute cursor rects from shape, position, and config.
@@ -113,16 +113,16 @@ pub(super) fn make_cursor_rects(
 
     let mut cursor_col = col;
     let mut cursor_width = m.cw;
-    if let Some(cell_flags) = cell_ctx.cell_flags {
+    if let Some(cells) = cell_ctx.cells {
         let row = line as usize;
         let cell_idx = row.saturating_mul(cell_ctx.row_width).saturating_add(col);
         if cell_ctx.row_width > 0
-            && cell_idx < cell_flags.len()
-            && cell_flags[cell_idx] & FLAG_WIDE_CHAR_SPACER != 0
+            && cell_idx < cells.len()
+            && cells[cell_idx].flags_u16() & FLAG_WIDE_CHAR_SPACER != 0
             && col > 0
         {
             let prev_idx = cell_idx - 1;
-            if cell_flags[prev_idx] & FLAG_WIDE_CHAR_SPACER == 0 {
+            if cells[prev_idx].flags_u16() & FLAG_WIDE_CHAR_SPACER == 0 {
                 cursor_col = col - 1;
                 cursor_width = m.cw * 2.0;
             }

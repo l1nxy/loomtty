@@ -27,7 +27,13 @@ fn make_cx(app: &App) -> UiContext<'_> {
 fn pane_tabs_element_slot_is_one_cell_wider_than_tabs_area_px() {
     let app = App::new(CiriConfig::default(), "test-session");
     let cx = make_cx(&app);
-    let layout = app.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h, cx.ui_shaper);
+    let layout = app.top_bar_layout(
+        cx.viewport_w,
+        cx.viewport_h,
+        cx.cell_w,
+        cx.cell_h,
+        cx.ui_shaper,
+    );
     let component = TopBarComponent::capture(&app, layout, &cx);
 
     // Use a *synthetic* bar rect of a hand-picked width so the
@@ -72,8 +78,7 @@ fn pane_tabs_element_slot_is_one_cell_wider_than_tabs_area_px() {
     // `top_bar_layout`. If `Linear::layout`'s Fill computation drifted
     // (e.g. allocated zero or twice the budget), this would fail
     // even if `tabs_area_px` had drifted by the same amount.
-    let expected_fill_w =
-        synthetic_w - session_slot.w - workspace_slot.w - mode_slot.w;
+    let expected_fill_w = synthetic_w - session_slot.w - workspace_slot.w - mode_slot.w;
     assert!(
         (pane_tabs_slot.w - expected_fill_w).abs() < 0.01,
         "Fill slot width ({}) must equal bar_w - sum(fixed slots) ({expected_fill_w})",
@@ -101,7 +106,8 @@ fn pane_tabs_element_slot_is_one_cell_wider_than_tabs_area_px() {
         (gap_diff - cw).abs() < 0.01,
         "Fill slot ({}) must be exactly one cell ({cw}) wider than tabs_area_px ({}); got diff={gap_diff}. \
          A change to either the Linear Fill arithmetic OR the top_bar_layout formula would trip this.",
-        real_pane_tabs_slot.w, layout.tabs_area_px,
+        real_pane_tabs_slot.w,
+        layout.tabs_area_px,
     );
 }
 

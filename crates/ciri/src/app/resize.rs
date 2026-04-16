@@ -34,9 +34,7 @@ impl App {
             grid.scroll_offset = new_offset;
             grid.dirty = true;
             self.invalidate_pane_cache(pane_id);
-            if let Some(w) = &self.window {
-                w.request_redraw();
-            }
+            self.schedule_redraw();
         }
         true
     }
@@ -51,9 +49,7 @@ impl App {
             .active_mut()
             .resize_tile_pair(col_idx, top_tile_idx, delta_y);
         self.core.drag.tile_start_y = my;
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+        self.schedule_redraw();
         true
     }
 
@@ -76,9 +72,7 @@ impl App {
             self.core.drag.col_start_x = mx;
         }
         self.snap_all_col_widths();
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+        self.schedule_redraw();
         true
     }
 

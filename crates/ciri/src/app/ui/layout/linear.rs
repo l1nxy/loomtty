@@ -33,11 +33,7 @@ impl<'a> Linear<'a> {
     /// also call it without needing a `UiScene`/`GlyphCache`. Sharing
     /// the helper means a regression in offset wiring fails the unit
     /// test, not just an integration test that may not exist.
-    pub(crate) fn child_paint_rects(
-        &self,
-        rect: UiRect,
-        cx: &UiContext<'_>,
-    ) -> Vec<UiRect> {
+    pub(crate) fn child_paint_rects(&self, rect: UiRect, cx: &UiContext<'_>) -> Vec<UiRect> {
         let slots = self.layout(rect, cx);
         self.children
             .iter()
@@ -143,13 +139,7 @@ impl<'a> UiElement for Linear<'a> {
         }
     }
 
-    fn hit(
-        &self,
-        rect: UiRect,
-        mx: f32,
-        my: f32,
-        cx: &UiContext<'_>,
-    ) -> Option<UiAction> {
+    fn hit(&self, rect: UiRect, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<UiAction> {
         if !rect.contains(mx, my) {
             return None;
         }

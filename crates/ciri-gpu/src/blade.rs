@@ -790,12 +790,17 @@ impl Renderer {
         cache: &mut GlyphCache,
         scene: FrameScene,
     ) {
+        let mut profiler = crate::DrawFrameProfiler::begin("blade");
         // Wait for the previous frame to finish before writing to shared
         // instance buffers.  Without this the GPU may still be reading
         // from the buffers we are about to overwrite, which causes
         // ERROR_DEVICE_LOST on Windows / NVIDIA Vulkan.
         if let Some(ref sp) = self.last_sync {
+            let wait_start = std::time::Instant::now();
             self.context.wait_for(sp, 5000);
+            if let Some(profiler) = profiler.as_mut() {
+                profiler.record_sync_wait(wait_start);
+            }
         }
 
         let (vw, vh) = self.surface_size();
@@ -805,9 +810,13 @@ impl Renderer {
         self.encoder.start();
 
         // Flush deferred glyph uploads
-        atlas_gpu.flush_uploads(&self.context, &mut self.encoder, cache);
-
+        let acquire_start = std::time::Instant::now();
         let frame = self.surface.acquire_frame();
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.record_sync_wait(acquire_start);
+        }
+        let upload_start = std::time::Instant::now();
+        atlas_gpu.flush_uploads(&self.context, &mut self.encoder, cache);
 
         {
             let mut pass = self.encoder.render(
@@ -846,8 +855,12 @@ impl Renderer {
             atlas_gpu.upload_color_instances(scene.color_glyphs, vw_f, vh_f);
             let alpha_count = scene.glyphs.len();
             let color_count = scene.color_glyphs.len();
+            if let Some(profiler) = profiler.as_mut() {
+                profiler.record_cpu_upload(upload_start);
+            }
 
             // 4. Draw inactive pane glyphs (scissored).
+            let draw_start = std::time::Instant::now();
             atlas_gpu.draw_alpha_batches(&mut pass, alpha_count, scene.glyph_batches);
             atlas_gpu.draw_color_batches(&mut pass, color_count, scene.color_glyph_batches);
 
@@ -889,11 +902,25 @@ impl Renderer {
             };
             atlas_gpu.draw_alpha_batches(&mut pass, alpha_count, &[overlay_alpha]);
             atlas_gpu.draw_color_batches(&mut pass, color_count, &[overlay_color]);
+            if let Some(profiler) = profiler.as_mut() {
+                profiler.record_draw(draw_start);
+            }
         }
 
+        let present_start = std::time::Instant::now();
         self.encoder.present(frame);
         let sp = self.context.submit(&mut self.encoder);
         self.last_sync = Some(sp);
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.record_present(present_start);
+        }
+        if let Some(profiler) = profiler {
+            profiler.finish(
+                scene.bg_rects.len(),
+                scene.glyphs.len(),
+                scene.color_glyphs.len(),
+            );
+        }
     }
 }
 

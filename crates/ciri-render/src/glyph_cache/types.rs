@@ -86,6 +86,10 @@ pub(crate) enum FontClass {
     Primary,
     Emoji,
     Cjk,
+    /// UI chrome font (palette, tab bar, status bar…). Proportional fonts
+    /// end up here so their glyph-id atlas entries don't collide with the
+    /// monospace terminal face under `Primary`.
+    Ui,
 }
 
 // ─── Per-instance data ───────────────────────────────────────────────

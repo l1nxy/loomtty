@@ -1,8 +1,8 @@
 use ciri_config::config::StatusBarPosition;
 use ciri_config::theme::ThemeConfig;
-use unicode_width::UnicodeWidthStr;
 
 use super::builder::UiBuilder;
+use super::text_layout;
 use super::tokens;
 use super::types::{UiComponent, UiContext, UiScene};
 use crate::app::App;
@@ -14,6 +14,10 @@ pub(crate) struct InfoBoxComponent {
     y: f32,
     w: f32,
     h: f32,
+    /// Shape-measured pixel width of the widest key; reused by `paint()`
+    /// so key-column right-alignment matches the shaped glyph advance
+    /// rather than a cell-grid estimate.
+    key_col_w: f32,
 }
 
 pub(super) fn action_short_label(action: &str) -> &str {
@@ -118,20 +122,26 @@ impl InfoBoxComponent {
 
         let padding = cx.cell_w;
         let row_h = cx.cell_h + tokens::SPACE_1 * 2.0;
-        let key_col_chars = rows
+        // All column widths are measured from the shaped glyph advance;
+        // this is what the renderer will actually draw, so the box is
+        // always wide enough and the key column's right-edge alignment
+        // holds on proportional UI fonts too.
+        let key_col_w = rows
             .iter()
-            .map(|(k, _)| UnicodeWidthStr::width(k.as_str()))
-            .max()
-            .unwrap_or(0);
-        let val_col_chars = rows
+            .map(|(k, _)| text_layout::measure(cx, k))
+            .fold(0.0_f32, f32::max);
+        let val_col_w = rows
             .iter()
-            .map(|(_, v)| UnicodeWidthStr::width(v.as_str()))
-            .max()
-            .unwrap_or(0);
-        let title_chars = UnicodeWidthStr::width(title.as_str()) + 4;
-        let content_chars = key_col_chars + 3 + val_col_chars;
-        let box_chars = content_chars.max(title_chars);
-        let w = box_chars as f32 * cx.cell_w + padding * 2.0;
+            .map(|(_, v)| text_layout::measure(cx, v))
+            .fold(0.0_f32, f32::max);
+        // Title row: ` {title} ` with an extra cell of padding either side.
+        let title_box_w =
+            text_layout::measure(cx, &title) + cx.cell_w * 4.0;
+        // Content row: key-col + 2 cells of gap (matches `gap_w` in
+        // `paint`) + val-col.
+        let content_box_w = key_col_w + cx.cell_w * 2.0 + val_col_w;
+        let inner_w = content_box_w.max(title_box_w);
+        let w = inner_w + padding * 2.0;
         let h = rows.len() as f32 * row_h + padding * 2.0 + cx.cell_h;
 
         let hints_bar_h = app.hints_bar_height();
@@ -151,6 +161,7 @@ impl InfoBoxComponent {
             y,
             w,
             h,
+            key_col_w,
         })
     }
 }
@@ -200,28 +211,25 @@ impl UiComponent for InfoBoxComponent {
 
         ui.bg_rect(content_w, tokens::SPACE_1, [0.0; 4]); // spacing after title
 
-        // Key-action rows — right-align keys within a fixed column
-        let key_col_chars = self
-            .rows
-            .iter()
-            .map(|(k, _)| UnicodeWidthStr::width(k.as_str()))
-            .max()
-            .unwrap_or(0);
-        let key_col_w = (key_col_chars as f32 + 1.0) * cx.cell_w;
-        let gap_w = cx.cell_w;
+        // Key-action rows — right-align keys within the shape-measured
+        // key column. `self.key_col_w` is the widest shaped key; using
+        // it here guarantees every key fits and the "esc" alignment
+        // matches the widest entry on proportional UI fonts.
+        let key_col_w = self.key_col_w;
+        let gap_w = cx.cell_w * 2.0;
 
         for (key, desc) in &self.rows {
             ui.horizontal(Some(content_w), row_h, 0.0, |ui| {
                 let (_, ry) = ui.cursor_pos();
                 let text_y = ry + (row_h - cx.cell_h) * 0.5;
 
-                // Right-align key within key column
-                let key_chars = UnicodeWidthStr::width(key.as_str());
-                let key_offset = (key_col_chars - key_chars) as f32 * cx.cell_w;
+                // Right-align key within key column.
+                let key_w = ui.text_width(key);
+                let key_offset = (key_col_w - key_w).max(0.0);
                 let key_x = ui.cursor_pos().0 + padding + key_offset;
                 ui.abs_text(key, key_x, text_y, accent);
 
-                // Description after key column + gap
+                // Description after key column + gap.
                 let desc_x = ui.cursor_pos().0 + padding + key_col_w + gap_w;
                 ui.abs_text(desc, desc_x, text_y, if key == "esc" { dim } else { fg });
             });

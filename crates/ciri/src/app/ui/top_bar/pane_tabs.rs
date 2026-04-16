@@ -3,6 +3,7 @@ use ciri_config::theme::ThemeConfig;
 
 use super::super::builder::UiBuilder;
 use super::super::layout::{Axis, SizeHint, UiElement, UiRect};
+use super::super::text_layout;
 use super::super::tokens;
 use super::super::types::{UiAction, UiContext, UiScene};
 use crate::app::top_bar::PaneTabLayout;
@@ -112,12 +113,23 @@ impl<'a> UiElement for PaneTabsElement<'a> {
                     accent,
                 );
             }
-            // Clipped label.
+            // Clipped label. Truncate with ellipsis so shaped text never
+            // overflows the tab slot on proportional UI fonts. One cell of
+            // padding on each side keeps the text off the separator edge.
             let color = if tab.active || hovered { fg } else { dim };
-            if let Some((label, label_x)) =
-                clip_tab_label(&tab.label, tab.x, tab.w, cx.cell_w, tabs_start_x, tabs_end_x)
-            {
-                ui.abs_text(&label, label_x, text_y, color);
+            let pad = cx.cell_w * 0.5;
+            let label_left = (tab.x + pad).max(tabs_start_x);
+            let label_right = (tab.x + tab.w - pad).min(tabs_end_x);
+            let label_budget = (label_right - label_left).max(0.0);
+            if label_budget > 0.0 {
+                let truncated = text_layout::truncate_with_ellipsis(
+                    cx,
+                    &tab.label,
+                    label_budget,
+                );
+                if !truncated.is_empty() {
+                    ui.abs_text(&truncated, label_left, text_y, color);
+                }
             }
         }
 
@@ -174,47 +186,3 @@ impl<'a> UiElement for PaneTabsElement<'a> {
     }
 }
 
-fn clip_tab_label(
-    label: &str,
-    tab_x: f32,
-    tab_w: f32,
-    cw: f32,
-    tabs_start_x: f32,
-    tabs_end_x: f32,
-) -> Option<(String, f32)> {
-    use unicode_width::UnicodeWidthChar;
-
-    let visible_left = tab_x.max(tabs_start_x);
-    let visible_right = (tab_x + tab_w).min(tabs_end_x);
-    if visible_right <= visible_left {
-        return None;
-    }
-    let skip_cols = ((visible_left - tab_x) / cw).floor().max(0.0) as usize;
-    let visible_cols = ((visible_right - visible_left) / cw).floor().max(0.0) as usize;
-
-    let mut col = 0usize;
-    let mut clipped = String::new();
-    let mut clip_start_col = skip_cols;
-    for ch in label.chars() {
-        let char_w = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if col + char_w > skip_cols + visible_cols {
-            break;
-        }
-        if col >= skip_cols {
-            if clipped.is_empty() {
-                // Record the actual column where we start clipping.
-                // For wide chars straddling the boundary, this may be > skip_cols.
-                clip_start_col = col;
-            }
-            clipped.push(ch);
-        }
-        col += char_w;
-    }
-    if clipped.is_empty() {
-        None
-    } else {
-        // Shift draw position right if a wide char was partially skipped.
-        let overhang = (clip_start_col - skip_cols) as f32 * cw;
-        Some((clipped, visible_left + overhang))
-    }
-}

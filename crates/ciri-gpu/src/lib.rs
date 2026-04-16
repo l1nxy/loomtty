@@ -436,6 +436,9 @@ mod tests {
                 emoji_font_id: None,
                 cjk_font_path: None,
                 cjk_font_id: None,
+                ui_font_path: None,
+                ui_font_id: None,
+                ui_pixel_size: None,
                 render_config: &render_config,
                 font_resolver: std::sync::Arc::new(ciri_render::font_resolver::CmapResolver::new(
                     (&[], 0),

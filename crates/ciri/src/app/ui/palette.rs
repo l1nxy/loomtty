@@ -1,7 +1,7 @@
 use ciri_config::theme::ThemeConfig;
-use unicode_width::UnicodeWidthStr;
 
 use super::builder::UiBuilder;
+use super::text_layout;
 use super::tokens;
 use super::types::{UiAction, UiComponent, UiContext, UiPaletteHit, UiScene};
 use crate::app::App;
@@ -42,16 +42,9 @@ pub(crate) struct PaletteComponent {
     remote_input_mode: bool,
 }
 
-fn truncate_label(label: &str, panel_w: f32, cw: f32) -> String {
-    let max_cols = ((panel_w - 16.0) / cw).floor().max(1.0) as usize;
-    if UnicodeWidthStr::width(label) > max_cols {
-        format!(
-            "{}...",
-            &label[..label.floor_char_boundary(max_cols.saturating_sub(3))]
-        )
-    } else {
-        label.to_string()
-    }
+fn truncate_label(label: &str, panel_w: f32, cx: &UiContext<'_>) -> String {
+    let max_w = (panel_w - 16.0).max(0.0);
+    text_layout::truncate_with_ellipsis(cx, label, max_w)
 }
 
 impl PaletteComponent {
@@ -90,7 +83,7 @@ impl PaletteComponent {
                 };
                 PaletteRow {
                     entry_idx: *filt_idx,
-                    label: truncate_label(&entry.label, layout.panel_w, cx.cell_w),
+                    label: truncate_label(&entry.label, layout.panel_w, cx),
                     is_selected: scroll_offset + vis_row == palette.selected_idx,
                     is_hovered: palette.hovered_idx == Some(scroll_offset + vis_row),
                     style,

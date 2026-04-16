@@ -153,8 +153,8 @@ pub(crate) fn paint_overview_action_bar(
 
     let close_label = "\u{2715} Close";
     let focus_label = "Focus";
-    let close_text_w = close_label.chars().count() as f32 * cx.cell_w;
-    let focus_text_w = focus_label.chars().count() as f32 * cx.cell_w;
+    let close_text_w = super::text_layout::measure(cx, close_label);
+    let focus_text_w = super::text_layout::measure(cx, focus_label);
 
     if close_hovered {
         scene.bg_rects.push(Rect {
@@ -173,8 +173,10 @@ pub(crate) fn paint_overview_action_bar(
     } else {
         tokens::tint(red, 1.0)
     };
+    let mut ui_borrow = cx.ui_shaper.map(|c| c.borrow_mut());
     emit_status_text(
         scene.atlas,
+        ui_borrow.as_deref_mut(),
         close_label,
         &TextEmitParams {
             x_start: close_text_x,
@@ -199,6 +201,7 @@ pub(crate) fn paint_overview_action_bar(
     let focus_text_x = d.focus_x + (d.focus_w - focus_text_w) * 0.5;
     emit_status_text(
         scene.atlas,
+        ui_borrow.as_deref_mut(),
         focus_label,
         &TextEmitParams {
             x_start: focus_text_x,

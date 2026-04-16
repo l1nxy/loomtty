@@ -96,20 +96,14 @@ impl App {
     // ── Scroll helpers ──
 
     pub fn scroll_active_up(&mut self, lines: usize) {
-        if let Some(pid) = self.core.workspaces.active().active_pane_id()
-            && let Some(grid) = self.core.pane_grids.get_mut(&pid)
-        {
-            grid.scroll_up(lines);
-            self.invalidate_pane_cache(pid);
+        if let Some(pid) = self.core.workspaces.active().active_pane_id() {
+            self.scroll_pane_up(pid, lines);
         }
     }
 
     pub fn scroll_active_down(&mut self, lines: usize) {
-        if let Some(pid) = self.core.workspaces.active().active_pane_id()
-            && let Some(grid) = self.core.pane_grids.get_mut(&pid)
-        {
-            grid.scroll_down(lines);
-            self.invalidate_pane_cache(pid);
+        if let Some(pid) = self.core.workspaces.active().active_pane_id() {
+            self.scroll_pane_down(pid, lines);
         }
     }
 
@@ -818,32 +812,40 @@ impl App {
     fn handle_main_wheel(&mut self, delta: MouseScrollDelta, phase: TouchPhase) {
         let gestures_enabled = self.core.config.gesture.enabled;
         let smooth_scroll = gestures_enabled && self.core.config.gesture.smooth_scroll;
-        let has_mouse = self
-            .core
-            .workspaces
-            .active()
-            .active_pane_id()
-            .and_then(|pid| self.core.pane_grids.get(&pid))
-            .is_some_and(|g| g.mode_flags & MODE_MOUSE_REPORT != 0);
-        let active_grid = self
-            .core
-            .workspaces
-            .active()
-            .active_pane_id()
-            .and_then(|pid| self.core.pane_grids.get(&pid));
-        let is_alt_screen = active_grid.is_some_and(|g| g.mode_flags & MODE_ALT_SCREEN != 0);
+        // Route the wheel to the pane currently under the cursor, even if it's
+        // not the active pane — feels natural and doesn't steal focus.
+        let target_pid = self
+            .last_mouse_pos
+            .and_then(|(mx, my)| self.hovered_pane_at(mx, my))
+            .or_else(|| self.core.workspaces.active().active_pane_id());
+        let target_grid = target_pid.and_then(|pid| self.core.pane_grids.get(&pid));
+        let has_mouse = target_grid.is_some_and(|g| g.mode_flags & MODE_MOUSE_REPORT != 0);
+        let is_alt_screen = target_grid.is_some_and(|g| g.mode_flags & MODE_ALT_SCREEN != 0);
         let has_alternate_scroll =
-            active_grid.is_some_and(|g| g.mode_flags & MODE_ALTERNATE_SCROLL != 0);
+            target_grid.is_some_and(|g| g.mode_flags & MODE_ALTERNATE_SCROLL != 0);
 
         if self.handle_workspace_row_swipe(delta, phase, gestures_enabled) {
             return;
         }
-        if self.handle_smooth_scrollback(delta, phase, smooth_scroll, has_mouse, is_alt_screen) {
+        if self.handle_smooth_scrollback(
+            delta,
+            phase,
+            smooth_scroll,
+            has_mouse,
+            is_alt_screen,
+            target_pid,
+        ) {
             self.handle_horizontal_gesture(delta, phase);
             return;
         }
 
-        self.handle_discrete_scroll(delta, has_mouse, is_alt_screen, has_alternate_scroll);
+        self.handle_discrete_scroll(
+            delta,
+            has_mouse,
+            is_alt_screen,
+            has_alternate_scroll,
+            target_pid,
+        );
         self.handle_horizontal_gesture(delta, phase);
     }
 
@@ -912,6 +914,7 @@ impl App {
         smooth_scroll: bool,
         has_mouse: bool,
         is_alt_screen: bool,
+        target_pid: Option<u64>,
     ) -> bool {
         if !smooth_scroll
             || !matches!(delta, MouseScrollDelta::PixelDelta(_))
@@ -938,12 +941,12 @@ impl App {
                 self.core.gestures.scroll_accum += py;
                 let ppl = self.core.config.gesture.scroll_pixels_per_line;
                 let lines = (self.core.gestures.scroll_accum / ppl) as i64;
-                if lines != 0 {
+                if lines != 0 && let Some(pid) = target_pid {
                     self.core.gestures.scroll_accum -= lines as f64 * ppl;
                     if lines > 0 {
-                        self.scroll_active_up(lines as usize);
+                        self.scroll_pane_up(pid, lines as usize);
                     } else {
-                        self.scroll_active_down((-lines) as usize);
+                        self.scroll_pane_down(pid, (-lines) as usize);
                     }
                 }
             }
@@ -957,6 +960,7 @@ impl App {
         has_mouse: bool,
         is_alt_screen: bool,
         has_alternate_scroll: bool,
+        target_pid: Option<u64>,
     ) {
         let dy = match delta {
             MouseScrollDelta::LineDelta(_, y) => y as i32 * 3,
@@ -972,22 +976,22 @@ impl App {
         if dy == 0 {
             return;
         }
+        let Some(pid) = target_pid else {
+            return;
+        };
 
         if has_mouse {
-            self.forward_scroll_to_mouse_mode(dy);
+            self.forward_scroll_to_mouse_mode(dy, pid);
         } else if is_alt_screen && has_alternate_scroll {
-            self.forward_scroll_to_alt_screen(dy);
+            self.forward_scroll_to_alt_screen(dy, pid);
         } else if dy > 0 {
-            self.scroll_active_up(dy as usize);
+            self.scroll_pane_up(pid, dy as usize);
         } else {
-            self.scroll_active_down((-dy) as usize);
+            self.scroll_pane_down(pid, (-dy) as usize);
         }
     }
 
-    fn forward_scroll_to_mouse_mode(&mut self, dy: i32) {
-        let Some(pid) = self.core.workspaces.active().active_pane_id() else {
-            return;
-        };
+    fn forward_scroll_to_mouse_mode(&mut self, dy: i32, pid: u64) {
         let Some((_, col, row)) = self
             .last_mouse_pos
             .and_then(|(mx, my)| self.pixel_to_viewport_cell(mx, my))
@@ -1009,10 +1013,7 @@ impl App {
         }
     }
 
-    fn forward_scroll_to_alt_screen(&mut self, dy: i32) {
-        let Some(pid) = self.core.workspaces.active().active_pane_id() else {
-            return;
-        };
+    fn forward_scroll_to_alt_screen(&mut self, dy: i32, pid: u64) {
         let app_cursor = self
             .core
             .pane_grids

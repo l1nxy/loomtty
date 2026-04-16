@@ -133,6 +133,14 @@ impl RenderBuffers {
     }
 }
 
+/// Resolved UI-font inputs shared by `FontInitParams` (atlas) and the
+/// `UiTextShaper`. Produced by [`App::resolve_ui_font_init`].
+pub(crate) struct UiFontInit {
+    pub path: Option<(String, u32)>,
+    pub id: Option<ciri_render::fontdb::ID>,
+    pub pixel_size: Option<f32>,
+}
+
 pub(crate) struct App {
     /// Core logic state — platform-agnostic.
     pub core: AppModel,
@@ -143,6 +151,11 @@ pub(crate) struct App {
     pub glyph_cache: Option<GlyphCache>,
     pub glyph_atlas_gpu: Option<GlyphAtlasGpu>,
     pub text_shaper: Option<TextShaper>,
+    /// Shaper for UI chrome text (palette, tab bar, status bar, …). Separate
+    /// from `text_shaper` so UI can use a proportional font while the
+    /// terminal grid stays monospaced. Stored in a `RefCell` so paint paths
+    /// that borrow `UiContext` immutably can still drive the LRU cache.
+    pub ui_shaper: Option<std::cell::RefCell<ciri_render::ui_shaper::UiTextShaper>>,
     pub dpi_scale: f64,
     pub modifiers: ModifiersState,
     pub cached_views: HashMap<u64, TerminalView>,
@@ -241,6 +254,63 @@ impl App {
             .collect()
     }
 
+    /// Resolve the UI font path / id / pixel size from `config`. Returns
+    /// `path: None` when no `[font.ui]` override is set (UI then shares the
+    /// terminal font and uses `FontClass::Primary` in the atlas).
+    ///
+    /// On Windows the `[font.ui]` override is silently dropped — the DWrite
+    /// rasterizer doesn't yet have a per-face glyph_id path for the UI
+    /// class, so honoring the override would paint empty glyphs.
+    pub(crate) fn resolve_ui_font_init(config: &CiriConfig, dpi_scale: f64) -> UiFontInit {
+        #[cfg(windows)]
+        if config.font.ui.is_some() {
+            log::warn!(
+                "[font.ui] override ignored on Windows (DWrite UI-font path \
+                 not yet implemented); using terminal font for UI text"
+            );
+        }
+        #[cfg(windows)]
+        let ui_override = None::<&ciri_config::schema::UiFontConfig>;
+        #[cfg(not(windows))]
+        let ui_override = config.font.ui.as_ref();
+
+        let Some(ui_font) = ui_override else {
+            return UiFontInit { path: None, id: None, pixel_size: None };
+        };
+
+        let (path, id) = match ciri_render::ui_shaper::resolve_ui_font(&ui_font.family) {
+            Some((p, idx, fid)) => (Some((p, idx)), Some(fid)),
+            None => {
+                log::warn!(
+                    "UI font '{}' not found, falling back to terminal font",
+                    ui_font.family
+                );
+                (None, None)
+            }
+        };
+        let ui_px = ui_font.size * (96.0 * dpi_scale as f32) / 72.0;
+        UiFontInit { path, id, pixel_size: Some(ui_px) }
+    }
+
+    /// Build a [`UiTextShaper`] from a resolved [`UiFontInit`]. When `init`
+    /// has no path (no override or unknown family), the shaper falls back to
+    /// the terminal font so UI text still shapes.
+    pub(crate) fn build_ui_shaper(
+        init: &UiFontInit,
+        terminal_shaper: &TextShaper,
+        config_font_size_pt: f32,
+        dpi_scale: f64,
+        cell_width: f32,
+        cell_height: f32,
+    ) -> ciri_render::ui_shaper::UiTextShaper {
+        let path = init.path.clone().or_else(|| terminal_shaper.primary_font_path());
+        let id = init.id.or_else(|| terminal_shaper.primary_font_id());
+        let pixel_size = init
+            .pixel_size
+            .unwrap_or_else(|| config_font_size_pt * (96.0 * dpi_scale as f32) / 72.0);
+        ciri_render::ui_shaper::UiTextShaper::new(path, id, pixel_size, cell_width, cell_height)
+    }
+
     pub fn new(config: CiriConfig, session_name: impl Into<String>) -> Self {
         let cached_color_table = ColorTable::new(&config);
         let core = AppModel::new(config, session_name);
@@ -251,6 +321,7 @@ impl App {
             glyph_cache: None,
             glyph_atlas_gpu: None,
             text_shaper: None,
+            ui_shaper: None,
             dpi_scale: 1.0,
             modifiers: ModifiersState::empty(),
             cached_views: HashMap::new(),
@@ -501,10 +572,6 @@ impl App {
     ) {
         let slot_id = format!("remote:{}:{}", host, port);
 
-        // Record this connection so the palette can offer it next time.
-        self.core.record_recent_host(&host, port, ssh_port);
-        crate::recent_hosts::save(&self.core.recent_hosts);
-
         // If a slot already exists for this remote, switch to it instead
         if self.core.background_slots.contains_key(&slot_id) {
             self.switch_to_slot(&slot_id);
@@ -535,6 +602,9 @@ impl App {
             Ok((tx, rx)) => {
                 self.core.server_tx = Some(tx);
                 self.core.server_rx = Some(rx);
+                // Record only after connection was successfully initiated.
+                self.core.record_recent_host(&host, port, ssh_port);
+                crate::recent_hosts::save(&self.core.recent_hosts);
             }
             Err(e) => {
                 log::error!("remote connection failed: {e}");
@@ -567,6 +637,14 @@ impl App {
         };
 
         if host.is_empty() {
+            return;
+        }
+
+        if let Err(reason) = validate_remote_host(host) {
+            log::warn!("invalid remote host input: {host:?} — {reason}");
+            if let Some(palette) = &mut self.core.command_palette {
+                palette.remote_error = Some(("Input".to_string(), reason));
+            }
             return;
         }
 
@@ -1064,5 +1142,78 @@ impl App {
         if let Some(w) = &self.window {
             w.request_redraw();
         }
+    }
+}
+
+/// Validate a remote host string (`user@hostname` or `user@ip`).
+/// Returns `Ok(())` if the input looks reasonable, or `Err(reason)` with a
+/// user-facing error message.
+fn validate_remote_host(host: &str) -> Result<(), String> {
+    // Must contain exactly one '@' separating user and hostname.
+    let Some(at) = host.find('@') else {
+        return Err("expected user@host format".to_string());
+    };
+    let user = &host[..at];
+    let hostname = &host[at + 1..];
+
+    if user.is_empty() {
+        return Err("username cannot be empty".to_string());
+    }
+    if hostname.is_empty() {
+        return Err("hostname cannot be empty".to_string());
+    }
+
+    // Hostname must only contain valid characters (alphanumeric, '.', '-', ':' for IPv6, '_').
+    if !hostname
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '_' | '[' | ']'))
+    {
+        return Err(format!("hostname contains invalid characters: {hostname}"));
+    }
+
+    // Hostname shouldn't start or end with '-' or '.'.
+    if hostname.starts_with('-') || hostname.starts_with('.') {
+        return Err(format!("hostname cannot start with '{}'", &hostname[..1]));
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests_validate_remote_host {
+    use super::validate_remote_host;
+
+    #[test]
+    fn valid_hosts() {
+        assert!(validate_remote_host("user@example.com").is_ok());
+        assert!(validate_remote_host("root@192.168.1.1").is_ok());
+        assert!(validate_remote_host("deploy@my-server.local").is_ok());
+        assert!(validate_remote_host("user@[::1]").is_ok());
+    }
+
+    #[test]
+    fn missing_at() {
+        assert!(validate_remote_host("ffff").is_err());
+        assert!(validate_remote_host("just-a-hostname").is_err());
+    }
+
+    #[test]
+    fn empty_parts() {
+        assert!(validate_remote_host("@host").is_err());
+        assert!(validate_remote_host("user@").is_err());
+        assert!(validate_remote_host("@").is_err());
+    }
+
+    #[test]
+    fn invalid_hostname_chars() {
+        assert!(validate_remote_host("user@host name").is_err());
+        assert!(validate_remote_host("user@host/path").is_err());
+        assert!(validate_remote_host("user@host;rm -rf").is_err());
+    }
+
+    #[test]
+    fn hostname_start() {
+        assert!(validate_remote_host("user@-bad").is_err());
+        assert!(validate_remote_host("user@.bad").is_err());
     }
 }

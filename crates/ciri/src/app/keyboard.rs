@@ -303,6 +303,7 @@ impl App {
 
         if let Some(palette) = &mut self.core.command_palette {
             palette.query.push_str(&text);
+            palette.remote_error = None;
             self.filter_palette();
             true
         } else if let Some(search) = &mut self.core.search_state {
@@ -317,6 +318,7 @@ impl App {
     pub(crate) fn pop_text_from_overlay_input(&mut self) -> bool {
         if let Some(palette) = &mut self.core.command_palette {
             palette.query.pop();
+            palette.remote_error = None;
             self.filter_palette();
             true
         } else if let Some(search) = &mut self.core.search_state {

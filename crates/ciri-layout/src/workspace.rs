@@ -422,7 +422,9 @@ impl Workspace {
         let p2 = self.columns[neighbor_idx].proportion(vw);
         let avg = (p1 + p2) / 2.0;
         self.columns[idx].width = ColumnWidth::Proportion(avg);
+        self.columns[idx].preset_width_idx = None;
         self.columns[neighbor_idx].width = ColumnWidth::Proportion(avg);
+        self.columns[neighbor_idx].preset_width_idx = None;
     }
 
     /// Cycle the active column's width through the given presets.

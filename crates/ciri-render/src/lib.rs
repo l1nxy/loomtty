@@ -5,6 +5,9 @@ pub mod shaper;
 #[cfg(target_os = "macos")]
 mod shaper_coretext;
 pub mod terminal;
+pub mod ui_shaper;
+
+pub use fontdb;
 
 use glyph_cache::{GlyphInstance, ScissoredRange};
 use rect::Rect;

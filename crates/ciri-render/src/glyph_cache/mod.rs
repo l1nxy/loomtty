@@ -98,6 +98,12 @@ pub struct FontInitParams<'a> {
     pub emoji_font_id: Option<fontdb::ID>,
     pub cjk_font_path: Option<(String, u32)>,
     pub cjk_font_id: Option<fontdb::ID>,
+    /// UI font (optional). `None` → UI text reuses the primary font path.
+    pub ui_font_path: Option<(String, u32)>,
+    pub ui_font_id: Option<fontdb::ID>,
+    /// UI font pixel size (pre-computed from UiFontConfig.size × dpi_scale).
+    /// Ignored if `ui_font_path` is `None`.
+    pub ui_pixel_size: Option<f32>,
     pub render_config: &'a RenderConfig,
     /// Shared font resolver for determining font fallback order.
     pub font_resolver: Arc<dyn FontResolver>,
@@ -144,10 +150,14 @@ pub struct GlyphCache {
     emoji_ft_face: Option<freetype::Face>,
     #[cfg(target_os = "linux")]
     cjk_ft_face: Option<freetype::Face>,
+    #[cfg(target_os = "linux")]
+    ui_ft_face: Option<freetype::Face>,
 
     // CoreText (macOS)
     #[cfg(target_os = "macos")]
     coretext: CoreTextRasterizer,
+    #[cfg(target_os = "macos")]
+    ui_ct_font: Option<core_text::font::CTFont>,
 
     // DirectWrite (Windows)
     #[cfg(windows)]
@@ -168,9 +178,12 @@ pub struct GlyphCache {
     dwrite_resolver: Option<Arc<crate::font_resolver::DWriteResolver>>,
     emoji_font_id: Option<fontdb::ID>,
     cjk_font_id: Option<fontdb::ID>,
+    ui_font_id: Option<fontdb::ID>,
     pixel_size: f32,
     /// CJK font pixel size, adjusted so that "水" advance matches 2 * cell_width.
     cjk_pixel_size: f32,
+    /// UI font pixel size. Falls back to `pixel_size` when no UI font is set.
+    ui_pixel_size: f32,
     // Public metrics
     pub cell_width: f32,
     pub cell_height: f32,
@@ -201,6 +214,7 @@ impl GlyphCache {
             ft_face,
             emoji_ft_face,
             cjk_ft_face,
+            ui_ft_face,
             cell_width,
             cell_height,
             ascent,
@@ -328,6 +342,19 @@ impl GlyphCache {
                     }
                 });
 
+            let ui_ft_face = params.ui_font_path.clone().and_then(|(path, index)| {
+                match ft_library.new_face(&path, index as isize) {
+                    Ok(face) => {
+                        log::info!("FreeType UI face loaded: {path}");
+                        Some(face)
+                    }
+                    Err(e) => {
+                        log::warn!("failed to load UI FreeType face {path}: {e:?}");
+                        None
+                    }
+                }
+            });
+
             // Compute metrics from FreeType directly
             let (cell_width, cell_height, ascent, face_width) = if let Some(ref mut face) = ft_face
             {
@@ -364,6 +391,7 @@ impl GlyphCache {
                 ft_face,
                 emoji_ft_face,
                 cjk_ft_face,
+                ui_ft_face,
                 cell_width,
                 cell_height,
                 ascent,
@@ -373,7 +401,7 @@ impl GlyphCache {
         };
 
         #[cfg(target_os = "macos")]
-        let (coretext, cell_width, cell_height, ascent, face_width, cjk_pixel_size) = {
+        let (coretext, ui_ct_font, cell_width, cell_height, ascent, face_width, cjk_pixel_size) = {
             log::info!(
                 "CoreText cache: initializing pixel_size={:.1} family='{}' primary_path={:?} emoji_path={:?} cjk_path={:?}",
                 pixel_size,
@@ -412,8 +440,16 @@ impl GlyphCache {
                 coretext.set_cjk_pixel_size(cjk_pixel_size);
             }
 
+            let ui_ct_font = match (&params.ui_font_path, params.ui_pixel_size) {
+                (Some((path, idx)), Some(px)) => {
+                    crate::shaper::load_ct_font_from_path(path, *idx, px as f64)
+                }
+                _ => None,
+            };
+
             (
                 coretext,
+                ui_ct_font,
                 cell_width,
                 cell_height,
                 ascent,
@@ -489,9 +525,13 @@ impl GlyphCache {
             emoji_ft_face,
             #[cfg(target_os = "linux")]
             cjk_ft_face,
+            #[cfg(target_os = "linux")]
+            ui_ft_face,
 
             #[cfg(target_os = "macos")]
             coretext,
+            #[cfg(target_os = "macos")]
+            ui_ct_font,
 
             #[cfg(windows)]
             dwrite,
@@ -507,8 +547,10 @@ impl GlyphCache {
             dwrite_resolver: params.dwrite_resolver.clone(),
             emoji_font_id: params.emoji_font_id,
             cjk_font_id: params.cjk_font_id,
+            ui_font_id: params.ui_font_id,
             pixel_size,
             cjk_pixel_size,
+            ui_pixel_size: params.ui_pixel_size.unwrap_or(pixel_size),
             cell_width,
             cell_height,
             ascent,
@@ -786,6 +828,8 @@ impl GlyphCache {
             FontClass::Emoji
         } else if Some(font_id) == self.cjk_font_id {
             FontClass::Cjk
+        } else if self.ui_font_id.is_some() && Some(font_id) == self.ui_font_id {
+            FontClass::Ui
         } else {
             FontClass::Primary
         };
@@ -805,6 +849,7 @@ impl GlyphCache {
             let (ft_face, px) = match font_class {
                 FontClass::Emoji => (self.emoji_ft_face.as_ref(), self.pixel_size),
                 FontClass::Cjk => (self.cjk_ft_face.as_ref(), self.cjk_pixel_size),
+                FontClass::Ui => (self.ui_ft_face.as_ref(), self.ui_pixel_size),
                 FontClass::Primary => (self.ft_face.as_ref(), self.pixel_size),
             };
             rasterize_glyph_id_ft(ft_face, glyph_id, style, px, wide, self.cell_height)?
@@ -827,6 +872,7 @@ impl GlyphCache {
                     self.coretext.is_emoji_color(),
                 ),
                 FontClass::Cjk => (self.coretext.cjk_font(), self.cjk_pixel_size, false),
+                FontClass::Ui => (self.ui_ct_font.as_ref(), self.ui_pixel_size, false),
                 FontClass::Primary => (
                     Some(self.coretext.primary_font(style)),
                     self.pixel_size,
@@ -881,6 +927,14 @@ impl GlyphCache {
                     self.cjk_pixel_size,
                     false,
                 ),
+                // TODO(windows UI font): load a dedicated DWrite face for
+                // the UI font family. Until then, return EMPTY — rasterizing
+                // a UI-shaped glyph_id against the primary face would paint
+                // the wrong glyph (glyph IDs are per-face).
+                FontClass::Ui => {
+                    self.glyph_id_cache.insert(key, GlyphEntry::EMPTY);
+                    return Some(GlyphEntry::EMPTY);
+                }
                 FontClass::Primary => (
                     self.dwrite.primary_face(style)?.clone(),
                     self.pixel_size,
@@ -1031,6 +1085,9 @@ mod tests {
             emoji_font_id: None,
             cjk_font_path: None,
             cjk_font_id: None,
+            ui_font_path: None,
+            ui_font_id: None,
+            ui_pixel_size: None,
             render_config: &config.render,
             font_resolver: Arc::new(crate::font_resolver::CmapResolver::new(
                 (&[], 0),

@@ -1,7 +1,29 @@
+use std::cell::RefCell;
+
+use ciri_render::ui_shaper::UiTextShaper;
 use unicode_width::UnicodeWidthStr;
 
 use super::App;
 
+/// Shape-aware pixel width with a cell-grid fallback. Kept here (rather
+/// than pulling `ui::text_layout` into the non-UI `top_bar` module) so
+/// layout math stays consistent whether measured from UI components (which
+/// have a `UiContext`) or from the chrome layer (which only has a shaper
+/// handle threaded through from the renderer).
+fn measure(shaper: Option<&RefCell<UiTextShaper>>, text: &str, cell_w: f32) -> f32 {
+    if let Some(cell) = shaper {
+        let mut s = cell.borrow_mut();
+        if s.has_face() {
+            return s.measure(text);
+        }
+    }
+    UnicodeWidthStr::width(text) as f32 * cell_w
+}
+
+/// Fixed tab slot width in terminal-cell units. Deliberately NOT in UI-font
+/// advance units — tabs follow the terminal grid's cell_w so their visual
+/// rhythm stays consistent regardless of whether the UI font is proportional.
+/// Labels inside the slot are shape-truncated to fit.
 const PANE_TAB_WIDTH_CHARS: usize = 20;
 
 #[derive(Debug, Clone)]
@@ -38,11 +60,16 @@ pub(crate) struct TopBarLayout {
 impl App {
     pub(crate) fn hit_test_top_bar(&self, mx: f32, my: f32) -> bool {
         let (cell_w, cell_h) = self.cell_dimensions();
+        // `bar_y`/`bar_height` depend only on cell metrics, not on shaped
+        // text widths — a `None` shaper here just falls back to the
+        // cell-grid estimate for `session_w`/`tabs_area_px`, which we
+        // ignore anyway.
         let layout = self.top_bar_layout(
             self.core.workspaces.view_size.width,
             self.core.workspaces.view_size.height + self.total_chrome_height(),
             cell_w,
             cell_h,
+            None,
         );
         mx >= 0.0 && my >= layout.bar_y && my <= layout.bar_y + layout.bar_height
     }
@@ -105,6 +132,7 @@ impl App {
                 self.core.workspaces.view_size.height + self.total_chrome_height(),
                 cw,
                 ch,
+                None,
             )
             .tabs_area_px;
 
@@ -113,11 +141,18 @@ impl App {
         (total_w - tab_area_px).max(0.0)
     }
 
-    pub(crate) fn pane_tab_layouts(&self, cw: f32, tabs_area_px: f32) -> Vec<PaneTabLayout> {
+    pub(crate) fn pane_tab_layouts(
+        &self,
+        cw: f32,
+        tabs_area_px: f32,
+        shaper: Option<&RefCell<UiTextShaper>>,
+    ) -> Vec<PaneTabLayout> {
         let tab_w = PANE_TAB_WIDTH_CHARS as f32 * cw;
-        let session_w =
-            UnicodeWidthStr::width(format!(" {}  ", self.session_display_name()).as_str()) as f32
-                * cw;
+        let session_w = measure(
+            shaper,
+            &format!(" {}  ", self.session_display_name()),
+            cw,
+        );
         // NB: tab `x` coordinates are absolute screen coordinates assuming the
         // top bar starts at screen x=0. This holds for the current
         // `Border { top | bottom }` chrome configurations (no `left`/`right`
@@ -192,7 +227,14 @@ impl App {
         self.core.current_mode_label()
     }
 
-    pub(crate) fn top_bar_layout(&self, vw: f32, vh: f32, cw: f32, ch: f32) -> TopBarLayout {
+    pub(crate) fn top_bar_layout(
+        &self,
+        vw: f32,
+        vh: f32,
+        cw: f32,
+        ch: f32,
+        shaper: Option<&RefCell<UiTextShaper>>,
+    ) -> TopBarLayout {
         let padding = if let Some(px) = self.core.config.statusbar.height_padding {
             px
         } else {
@@ -200,12 +242,19 @@ impl App {
         };
         let bar_height = ch + padding;
         let bar_y = self.status_bar_y(vh);
-        let session_w =
-            UnicodeWidthStr::width(format!(" {}  ", self.session_display_name()).as_str()) as f32
-                * cw;
+        // Shape-based widths so the tabs_area_px visibility window and the
+        // session label's Fixed slot both reflect real glyph advance rather
+        // than the unicode-width estimate. Without this, proportional UI
+        // fonts desync the `Linear` slots from the shaped text and either
+        // clip the right-side zones or leave them entirely unpainted.
+        let session_w = measure(
+            shaper,
+            &format!(" {}  ", self.session_display_name()),
+            cw,
+        );
         let ws_label = self.workspace_indicator_label();
-        let workspace_w = UnicodeWidthStr::width(ws_label.as_str()) as f32 * cw;
-        let mode_w = UnicodeWidthStr::width(self.current_mode_label().0.as_str()) as f32 * cw;
+        let workspace_w = measure(shaper, &ws_label, cw);
+        let mode_w = measure(shaper, &self.current_mode_label().0, cw);
         // tabs_area_px is the *visibility window* for tab generation: it is
         // one cell narrower than the actual Fill slot so there is always a
         // one-cell breathing-room gap between the right-most tab and the

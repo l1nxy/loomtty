@@ -469,8 +469,19 @@ impl App {
             if query.is_empty() {
                 return;
             }
-            self.core.command_palette = None;
+            // Try to connect — if validation fails, connect_remote_from_input
+            // sets palette.remote_error and we keep the palette open so the
+            // user can fix their input.
             self.connect_remote_from_input(&query);
+            if self
+                .core
+                .command_palette
+                .as_ref()
+                .is_some_and(|p| p.remote_error.is_some())
+            {
+                return;
+            }
+            self.core.command_palette = None;
             return;
         }
 

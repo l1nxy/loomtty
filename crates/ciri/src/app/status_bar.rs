@@ -1,4 +1,5 @@
-use ciri_render::glyph_cache::{GlyphCache, GlyphEntry, GlyphInstance};
+use ciri_render::glyph_cache::{FontStyle, GlyphCache, GlyphEntry, GlyphInstance};
+use ciri_render::ui_shaper::{UiShapedGlyph, UiTextShaper};
 use unicode_width::UnicodeWidthChar;
 
 pub(crate) struct TextEmitParams {
@@ -9,7 +10,65 @@ pub(crate) struct TextEmitParams {
     pub color: [f32; 4],
 }
 
+/// Emit glyph instances for UI text.
+///
+/// Two paths:
+/// - Shaper path (preferred): hand `text` to `UiTextShaper::shape` to get
+///   `glyph_id` + `x_advance` in pixels, then rasterize via
+///   `GlyphCache::ensure_glyph_id`. Pen advances by the actual shaped
+///   advance, so proportional fonts, ligatures, and kerning all work.
+/// - Legacy char path (fallback): used when the shaper has no loaded face
+///   (e.g. pre-init in tests). Keeps the old `cell_width × unicode_width`
+///   layout so status bar still renders something reasonable.
 pub(crate) fn emit_status_text(
+    atlas: &mut GlyphCache,
+    shaper: Option<&mut UiTextShaper>,
+    text: &str,
+    params: &TextEmitParams,
+    glyphs: &mut Vec<GlyphInstance>,
+    color_glyphs: &mut Vec<GlyphInstance>,
+) {
+    if let Some(s) = shaper
+        && s.has_face()
+    {
+        emit_text_via_shaper(atlas, s, text, params, glyphs, color_glyphs);
+        return;
+    }
+    emit_text_legacy_chars(atlas, text, params, glyphs, color_glyphs);
+}
+
+fn emit_text_via_shaper(
+    atlas: &mut GlyphCache,
+    shaper: &mut UiTextShaper,
+    text: &str,
+    params: &TextEmitParams,
+    glyphs: &mut Vec<GlyphInstance>,
+    color_glyphs: &mut Vec<GlyphInstance>,
+) {
+    let Some(font_id) = shaper.font_id() else {
+        emit_text_legacy_chars(atlas, text, params, glyphs, color_glyphs);
+        return;
+    };
+    let shaped = shaper.shape(text);
+    let mut pen_x = params.x_start;
+    for g in &shaped {
+        if g.glyph_id != 0
+            && let Some(entry) = atlas.ensure_glyph_id(g.glyph_id, font_id, FontStyle::Regular, false)
+            && entry.width > 0
+            && entry.height > 0
+        {
+            let inst = make_shaped_glyph_instance(&entry, params, pen_x, g);
+            if entry.is_color {
+                color_glyphs.push(inst);
+            } else {
+                glyphs.push(inst);
+            }
+        }
+        pen_x += g.x_advance;
+    }
+}
+
+fn emit_text_legacy_chars(
     atlas: &mut GlyphCache,
     text: &str,
     params: &TextEmitParams,
@@ -31,6 +90,23 @@ pub(crate) fn emit_status_text(
             }
         }
         col += cw;
+    }
+}
+
+fn make_shaped_glyph_instance(
+    entry: &GlyphEntry,
+    params: &TextEmitParams,
+    pen_x: f32,
+    g: &UiShapedGlyph,
+) -> GlyphInstance {
+    let sx = pen_x + g.x_offset + entry.bearing_x;
+    let sy = params.y + params.baseline - entry.bearing_y + g.y_offset;
+    GlyphInstance {
+        pos: [sx, sy],
+        size: [entry.width as f32, entry.height as f32],
+        uv_pos: [entry.u0, entry.v0],
+        uv_size: [entry.u1 - entry.u0, entry.v1 - entry.v0],
+        color: params.color,
     }
 }
 
@@ -129,5 +205,33 @@ mod tests {
         assert_eq!(inst.pos[0], 36.0);
         assert_eq!(inst.pos[1], 9.0);
         assert_eq!(inst.size, [8.0, 16.0]);
+    }
+
+    #[test]
+    fn shaped_glyph_places_at_pen_with_offsets() {
+        let entry = test_entry(false, 8, 16);
+        let inst = make_shaped_glyph_instance(
+            &entry,
+            &TextEmitParams {
+                x_start: 0.0,
+                y: 0.0,
+                cell_width: 10.0,
+                baseline: 14.0,
+                color: [1.0; 4],
+            },
+            100.0,
+            &UiShapedGlyph {
+                glyph_id: 1,
+                font_id: ciri_render::fontdb::ID::dummy(),
+                x_advance: 8.0,
+                x_offset: 0.5,
+                y_offset: -1.0,
+                cluster: 0,
+            },
+        );
+        // pen_x 100 + x_offset 0.5 + bearing_x 1.0 = 101.5
+        assert!((inst.pos[0] - 101.5).abs() < 0.01);
+        // y 0 + baseline 14 - bearing_y 14 + y_offset -1 = -1
+        assert!((inst.pos[1] + 1.0).abs() < 0.01);
     }
 }

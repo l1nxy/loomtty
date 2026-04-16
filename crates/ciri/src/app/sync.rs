@@ -453,6 +453,7 @@ impl App {
                     if let Some(renderer) = &mut self.renderer {
                         let shaper =
                             ciri_render::shaper::TextShaper::new(&self.core.config.font.family);
+                        let ui_init = App::resolve_ui_font_init(&self.core.config, self.dpi_scale);
                         let (cache, atlas_gpu) =
                             match renderer.create_atlas(&ciri_render::glyph_cache::FontInitParams {
                                 font_size_pt: self.core.config.font.size,
@@ -463,6 +464,9 @@ impl App {
                                 emoji_font_id: shaper.emoji_font_id(),
                                 cjk_font_path: shaper.cjk_font_path(),
                                 cjk_font_id: shaper.cjk_font_id(),
+                                ui_font_path: ui_init.path.clone(),
+                                ui_font_id: ui_init.id,
+                                ui_pixel_size: ui_init.pixel_size,
                                 render_config: &self.core.config.render,
                                 font_resolver: shaper.font_resolver(),
                                 #[cfg(windows)]
@@ -476,9 +480,18 @@ impl App {
                                     return;
                                 }
                             };
+                        let ui_shaper = App::build_ui_shaper(
+                            &ui_init,
+                            &shaper,
+                            self.core.config.font.size,
+                            self.dpi_scale,
+                            cache.cell_width,
+                            cache.cell_height,
+                        );
                         self.glyph_cache = Some(cache);
                         self.glyph_atlas_gpu = Some(atlas_gpu);
                         self.text_shaper = Some(shaper);
+                        self.ui_shaper = Some(std::cell::RefCell::new(ui_shaper));
                     }
                 }
                 self.clear_render_caches();

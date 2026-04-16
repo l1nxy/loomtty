@@ -27,7 +27,7 @@ fn make_cx(app: &App) -> UiContext<'_> {
 fn pane_tabs_element_slot_is_one_cell_wider_than_tabs_area_px() {
     let app = App::new(CiriConfig::default(), "test-session");
     let cx = make_cx(&app);
-    let layout = app.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h);
+    let layout = app.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h, cx.ui_shaper);
     let component = TopBarComponent::capture(&app, layout, &cx);
 
     // Use a *synthetic* bar rect of a hand-picked width so the
@@ -117,7 +117,7 @@ fn border_chrome_places_top_bar_and_hints_bar_at_legacy_y_for_top_position() {
     let cx = make_cx(&app);
     let vw = cx.viewport_w;
     let vh = cx.viewport_h;
-    let top_bar_layout = app.top_bar_layout(vw, vh, cx.cell_w, cx.cell_h);
+    let top_bar_layout = app.top_bar_layout(vw, vh, cx.cell_w, cx.cell_h, cx.ui_shaper);
     let top_bar = TopBarComponent::capture(&app, top_bar_layout, &cx);
     let hints_bar = HintsBarComponent::capture(&app, &cx);
 
@@ -147,7 +147,7 @@ fn border_chrome_places_top_bar_and_hints_bar_at_legacy_y_for_bottom_position() 
     let cx = make_cx(&app);
     let vw = cx.viewport_w;
     let vh = cx.viewport_h;
-    let top_bar_layout = app.top_bar_layout(vw, vh, cx.cell_w, cx.cell_h);
+    let top_bar_layout = app.top_bar_layout(vw, vh, cx.cell_w, cx.cell_h, cx.ui_shaper);
     let top_bar = TopBarComponent::capture(&app, top_bar_layout, &cx);
     let hints_bar = HintsBarComponent::capture(&app, &cx);
     let bar_h = top_bar_layout.bar_height;

@@ -59,7 +59,7 @@ fn border_places_left_tab_bar_between_top_and_hints() {
     let vw = cx.viewport_w;
     let vh = cx.viewport_h;
 
-    let top_bar_layout = app.top_bar_layout(vw, vh, cx.cell_w, cx.cell_h);
+    let top_bar_layout = app.top_bar_layout(vw, vh, cx.cell_w, cx.cell_h, cx.ui_shaper);
     let top_bar = TopBarComponent::capture(&app, top_bar_layout, &cx);
     let hints_bar = HintsBarComponent::capture(&app, &cx);
     let tab_bar = TabBarComponent::capture(&app, &cx);
@@ -111,7 +111,7 @@ fn top_bar_owns_pixels_above_side_bar_for_left_position() {
     cfg.statusbar.position = StatusBarPosition::Top;
     let app = App::new(cfg, "test-session");
     let cx = app.ui_context();
-    let bar_h = app.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h).bar_height;
+    let bar_h = app.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h, cx.ui_shaper).bar_height;
 
     // A click inside the side bar's x column but at y well above
     // bar_height is in *top bar* territory — `hit_test_top_bar`

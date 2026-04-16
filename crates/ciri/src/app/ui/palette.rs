@@ -205,11 +205,10 @@ impl UiComponent for PaletteComponent {
             false,
         );
 
-        // Input row
-        let input_row_h = tokens::control_height_md(cx.cell_h);
+        // Input row — sized by UI font line height, not terminal cell_h.
+        let input_row_h = tokens::control_height_md(cx.ui_line_h);
         ui.horizontal(Some(pw), input_row_h, 0.0, |ui| {
             let (rx, ry) = ui.cursor_pos();
-            // Slightly lighter bg for input row
             ui.abs_rect(
                 rx,
                 ry,
@@ -222,7 +221,7 @@ impl UiComponent for PaletteComponent {
                     1.0,
                 ],
             );
-            let text_y = ry + (input_row_h - cx.cell_h) * 0.5;
+            let text_y = ry + (input_row_h - cx.ui_line_h) * 0.5;
 
             // "> query" text (with placeholder in remote input mode)
             let input_text = if self.remote_input_mode {
@@ -244,7 +243,7 @@ impl UiComponent for PaletteComponent {
                 cursor_x,
                 text_y,
                 2.0,
-                cx.cell_h,
+                cx.ui_line_h,
                 tokens::tint(fg_color, tokens::ALPHA_CURSOR),
             );
         });
@@ -258,23 +257,16 @@ impl UiComponent for PaletteComponent {
             ui.horizontal(Some(pw), row_h, 0.0, |ui| {
                 let (rx, ry) = ui.cursor_pos();
 
+                let text_y = ry + (row_h - cx.ui_line_h) * 0.5;
                 if row.style == PaletteRowStyle::SectionHeader {
-                    // Section header: dim text with "── title ──" format, no selection bg
                     let header_text = format!("── {} ──", row.label);
-                    ui.abs_text(&header_text, rx + text_pad, ry + 2.0, dim_color);
+                    ui.abs_text(&header_text, rx + text_pad, text_y, dim_color);
                 } else {
-                    // Selection/hover background
                     if row.is_selected {
                         ui.abs_rect(rx, ry, pw, row_h, selected_bg);
                     } else if row.is_hovered {
                         ui.abs_rect(rx, ry, pw, row_h, hovered_bg);
                     }
-                    // Row label — collapse kind-specific colors into one
-                    // visual hierarchy: foreground for content, accent only
-                    // for the "Connect to New Host..." CTA, and the accent
-                    // tint bg already carries selection state. Labels
-                    // themselves embed semantic prefixes (`+`, `●`, `Kill:`,
-                    // `[slot]`) so kind is still discoverable.
                     let color = if row.is_selected || row.is_hovered {
                         fg_color
                     } else if row.style == PaletteRowStyle::ConnectRemotePrompt {
@@ -282,7 +274,7 @@ impl UiComponent for PaletteComponent {
                     } else {
                         fg_color
                     };
-                    ui.abs_text(&row.label, rx + text_pad, ry + 2.0, color);
+                    ui.abs_text(&row.label, rx + text_pad, text_y, color);
                 }
             });
         }
@@ -325,7 +317,7 @@ impl UiComponent for PaletteComponent {
             "0/0".to_string()
         };
         let footer_x = px + pw - ui.text_width(&footer) - 12.0;
-        let footer_y = self.layout.panel_y + self.layout.panel_h - cx.cell_h - 2.0;
+        let footer_y = self.layout.panel_y + self.layout.panel_h - cx.ui_line_h - 2.0;
         ui.abs_text(&footer, footer_x, footer_y, dim_color);
 
         // Status messages at bottom of panel
@@ -338,7 +330,7 @@ impl UiComponent for PaletteComponent {
             );
         }
         if let Some(ref loading) = self.loading_text {
-            let y = self.layout.panel_y + self.layout.panel_h - cx.cell_h * 2.0 - 4.0;
+            let y = self.layout.panel_y + self.layout.panel_h - cx.ui_line_h * 2.0 - 4.0;
             ui.abs_text(
                 loading,
                 px + text_pad,
@@ -347,7 +339,7 @@ impl UiComponent for PaletteComponent {
             );
         }
         if let Some(ref error) = self.error_text {
-            let y = self.layout.panel_y + self.layout.panel_h - cx.cell_h * 2.0 - 4.0;
+            let y = self.layout.panel_y + self.layout.panel_h - cx.ui_line_h * 2.0 - 4.0;
             let red = ThemeConfig::parse_color(&cx.config.theme.red);
             ui.abs_text(error, px + text_pad, y, [red[0], red[1], red[2], 0.9]);
         }

@@ -45,15 +45,44 @@ fn emit_text_via_shaper(
     glyphs: &mut Vec<GlyphInstance>,
     color_glyphs: &mut Vec<GlyphInstance>,
 ) {
-    let Some(font_id) = shaper.font_id() else {
+    if !shaper.has_face() {
         emit_text_legacy_chars(atlas, text, params, glyphs, color_glyphs);
         return;
-    };
+    }
     let shaped = shaper.shape(text);
     let mut pen_x = params.x_start;
     for g in &shaped {
-        if g.glyph_id != 0
-            && let Some(entry) = atlas.ensure_glyph_id(g.glyph_id, font_id, FontStyle::Regular, false)
+        // .notdef from shaper — fall back to ensure_char which uses the
+        // full terminal font resolution (including DWrite system fallback
+        // for Braille, symbols, etc. that the UI font lacks).
+        if g.glyph_id == 0 {
+            let byte = g.cluster as usize;
+            if byte < text.len() {
+                if let Some(ch) = text[byte..].chars().next() {
+                    if let Some(entry) = atlas.ensure_char(ch) {
+                        if entry.width > 0 && entry.height > 0 {
+                            let cw = UnicodeWidthChar::width(ch).unwrap_or(1).max(1);
+                            let inst = make_text_glyph_instance(
+                                &entry, params, 0, atlas.cell_height, cw,
+                            );
+                            // Reposition to pen_x instead of col-based x.
+                            let mut inst = inst;
+                            let sx = pen_x + entry.bearing_x;
+                            let sy = params.y + params.baseline - entry.bearing_y;
+                            inst.pos = [sx, sy];
+                            if entry.is_color {
+                                color_glyphs.push(inst);
+                            } else {
+                                glyphs.push(inst);
+                            }
+                        }
+                    }
+                }
+            }
+            pen_x += g.x_advance;
+            continue;
+        }
+        if let Some(entry) = atlas.ensure_glyph_id(g.glyph_id, g.font_id, FontStyle::Regular, false)
             && entry.width > 0
             && entry.height > 0
         {

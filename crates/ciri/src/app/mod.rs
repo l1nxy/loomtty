@@ -262,39 +262,40 @@ impl App {
     /// rasterizer doesn't yet have a per-face glyph_id path for the UI
     /// class, so honoring the override would paint empty glyphs.
     pub(crate) fn resolve_ui_font_init(config: &CiriConfig, dpi_scale: f64) -> UiFontInit {
-        #[cfg(windows)]
-        if config.font.ui.is_some() {
-            log::warn!(
-                "[font.ui] override ignored on Windows (DWrite UI-font path \
-                 not yet implemented); using terminal font for UI text"
-            );
-        }
-        #[cfg(windows)]
-        let ui_override = None::<&ciri_config::schema::UiFontConfig>;
-        #[cfg(not(windows))]
         let ui_override = config.font.ui.as_ref();
 
-        let Some(ui_font) = ui_override else {
-            return UiFontInit { path: None, id: None, pixel_size: None };
-        };
+        // Resolve the family name. When no `[font.ui]` is configured, use
+        // the system default sans-serif (Segoe UI on Windows, system sans
+        // on Linux, SF Pro on macOS) so UI chrome gets a proportional font.
+        let family = ui_override.map(|u| u.family.as_str()).unwrap_or("");
+        let size_pt = ui_override.map(|u| u.size).unwrap_or(config.font.size);
 
-        let (path, id) = match ciri_render::ui_shaper::resolve_ui_font(&ui_font.family) {
-            Some((p, idx, fid)) => (Some((p, idx)), Some(fid)),
+        let (path, id) = match ciri_render::ui_shaper::resolve_ui_font(family) {
+            Some((p, idx, fid)) => {
+                log::info!("UI font resolved: '{}' → {}", if family.is_empty() { "(system sans-serif)" } else { family }, p);
+                (Some((p, idx)), Some(fid))
+            }
             None => {
-                log::warn!(
-                    "UI font '{}' not found, falling back to terminal font",
-                    ui_font.family
-                );
+                if !family.is_empty() {
+                    log::warn!(
+                        "UI font '{}' not found, falling back to terminal font",
+                        family
+                    );
+                }
                 (None, None)
             }
         };
-        let ui_px = ui_font.size * (96.0 * dpi_scale as f32) / 72.0;
+        let ui_px = size_pt * (96.0 * dpi_scale as f32) / 72.0;
         UiFontInit { path, id, pixel_size: Some(ui_px) }
     }
 
     /// Build a [`UiTextShaper`] from a resolved [`UiFontInit`]. When `init`
     /// has no path (no override or unknown family), the shaper falls back to
     /// the terminal font so UI text still shapes.
+    ///
+    /// CJK/emoji fallback fonts and the font resolver are always taken from
+    /// the terminal shaper — they're the same system fonts regardless of
+    /// whether the UI uses a proportional or the terminal's monospaced font.
     pub(crate) fn build_ui_shaper(
         init: &UiFontInit,
         terminal_shaper: &TextShaper,
@@ -303,12 +304,63 @@ impl App {
         cell_width: f32,
         cell_height: f32,
     ) -> ciri_render::ui_shaper::UiTextShaper {
-        let path = init.path.clone().or_else(|| terminal_shaper.primary_font_path());
+        use ciri_render::ui_shaper::UiFontData;
+
         let id = init.id.or_else(|| terminal_shaper.primary_font_id());
+
+        // Prefer shared font data from the terminal shaper (avoids re-reading
+        // multi-MB font files from disk). Fall back to file path for UI font
+        // overrides whose data isn't in the terminal shaper.
+        let primary = if init.path.is_some() {
+            // UI font override — may differ from terminal font.
+            // Try to share data if it's the terminal font, otherwise read path.
+            id.and_then(|fid| terminal_shaper.font_data_arc(fid))
+                .map(|(data, idx)| UiFontData::Shared(data, idx))
+                .or_else(|| {
+                    init.path
+                        .clone()
+                        .map(|(p, i)| UiFontData::Path(p, i))
+                })
+        } else {
+            // No override — use terminal primary font data.
+            id.and_then(|fid| terminal_shaper.font_data_arc(fid))
+                .map(|(data, idx)| UiFontData::Shared(data, idx))
+        };
+
+        let cjk = terminal_shaper
+            .cjk_font_id()
+            .and_then(|fid| terminal_shaper.font_data_arc(fid))
+            .map(|(data, idx)| UiFontData::Shared(data, idx));
+
+        let emoji = terminal_shaper
+            .emoji_font_id()
+            .and_then(|fid| terminal_shaper.font_data_arc(fid))
+            .map(|(data, idx)| UiFontData::Shared(data, idx));
+
         let pixel_size = init
             .pixel_size
             .unwrap_or_else(|| config_font_size_pt * (96.0 * dpi_scale as f32) / 72.0);
-        ciri_render::ui_shaper::UiTextShaper::new(path, id, pixel_size, cell_width, cell_height)
+        // Terminal primary font as last-resort fallback — covers Braille,
+        // box drawing, Nerd Font icons that the proportional UI font lacks.
+        let terminal_primary = terminal_shaper
+            .primary_font_id()
+            .and_then(|fid| terminal_shaper.font_data_arc(fid))
+            .map(|(data, idx)| UiFontData::Shared(data, idx));
+
+        ciri_render::ui_shaper::UiTextShaper::new(ciri_render::ui_shaper::UiShaperParams {
+            primary,
+            primary_id: id,
+            terminal_primary,
+            terminal_primary_id: terminal_shaper.primary_font_id(),
+            cjk,
+            cjk_id: terminal_shaper.cjk_font_id(),
+            emoji,
+            emoji_id: terminal_shaper.emoji_font_id(),
+            resolver: Some(terminal_shaper.font_resolver()),
+            pixel_size,
+            fallback_advance: cell_width,
+            fallback_line_height: cell_height,
+        })
     }
 
     pub fn new(config: CiriConfig, session_name: impl Into<String>) -> Self {
@@ -835,10 +887,15 @@ impl App {
         let panel_max_h = vh * Self::COMMAND_PALETTE_MAX_HEIGHT_RATIO;
         let panel_x = (vw - panel_w) / 2.0;
         let panel_y = vh * Self::COMMAND_PALETTE_TOP_RATIO;
-        let row_h = ch + 4.0;
+        let ui_line_h = self
+            .ui_shaper
+            .as_ref()
+            .map(|s| s.borrow().line_height())
+            .unwrap_or(ch);
+        let row_h = ui_line_h + 4.0;
         // Must match the input row height used by PaletteComponent::paint
-        // (`tokens::control_height_md(cell_h)`), plus the 1px separator below it.
-        let input_row_h = crate::app::ui::tokens::control_height_md(ch) + 1.0;
+        // (`tokens::control_height_md(ui_line_h)`), plus the 1px separator below it.
+        let input_row_h = crate::app::ui::tokens::control_height_md(ui_line_h) + 1.0;
         let visible_rows = ((panel_max_h - input_row_h) / row_h).floor().max(1.0) as usize;
         let entry_count = palette.filtered.len().min(visible_rows);
         let panel_h = input_row_h + entry_count as f32 * row_h + Self::COMMAND_PALETTE_BOTTOM_PAD;

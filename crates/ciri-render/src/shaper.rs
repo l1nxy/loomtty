@@ -373,6 +373,13 @@ impl TextShaper {
         self.fonts.contains_key(&font_id)
     }
 
+    /// Return a shared reference to the raw font data for `id`. Used by the
+    /// UI shaper to avoid re-reading font files from disk.
+    pub fn font_data_arc(&self, id: fontdb::ID) -> Option<(Arc<Vec<u8>>, u32)> {
+        let fd = self.fonts.get(&id)?;
+        Some((Arc::clone(&fd.data), fd.face_index))
+    }
+
     /// Create a reusable Face from cached font data (non-macOS only).
     #[cfg(not(target_os = "macos"))]
     pub fn create_face(&self, font_id: fontdb::ID) -> Option<rustybuzz::Face<'_>> {

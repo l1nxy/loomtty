@@ -33,6 +33,7 @@ pub(crate) struct DWriteRasterizer {
     primary_faces: [Option<IDWriteFontFace>; 4],
     emoji_faces: [Option<IDWriteFontFace>; 4],
     cjk_faces: [Option<IDWriteFontFace>; 4],
+    ui_faces: [Option<IDWriteFontFace>; 4],
     /// True if the emoji font has color glyph layers (COLR/CPAL).
     emoji_is_color: bool,
 }
@@ -75,6 +76,7 @@ impl DWriteRasterizer {
             primary_faces,
             emoji_faces,
             cjk_faces,
+            ui_faces: [None, None, None, None],
             emoji_is_color,
         })
     }
@@ -89,6 +91,20 @@ impl DWriteRasterizer {
 
     pub(crate) fn cjk_face(&self, style: FontStyle) -> Option<&IDWriteFontFace> {
         self.cjk_faces[style as usize].as_ref()
+    }
+
+    pub(crate) fn ui_face(&self, style: FontStyle) -> Option<&IDWriteFontFace> {
+        self.ui_faces[style as usize].as_ref()
+    }
+
+    /// Load a UI font from a file path. Called after construction when
+    /// `[font.ui]` or system default sans-serif is resolved.
+    pub(crate) fn load_ui_font(&mut self, path: &str, face_index: u32) {
+        self.ui_faces = load_styled_faces_simulated(&self.factory, path, face_index);
+        log::info!(
+            "DWrite UI font loaded: {path} (index={face_index}, ok={})",
+            self.ui_faces[0].is_some(),
+        );
     }
 
     pub(crate) fn is_emoji_color(&self) -> bool {

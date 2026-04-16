@@ -110,6 +110,7 @@ mod tests {
             cell_w: cw,
             cell_h: cw * 2.0,
             baseline: cw * 1.6,
+            ui_line_h: cw * 2.0,
             ui_shaper: None,
         };
         (cx, CiriConfig::default())

@@ -23,23 +23,30 @@ impl ShelfPacker {
         }
     }
 
+    /// 1px gutter between glyphs prevents bilinear sampling bleed.
+    const GUTTER: u32 = 1;
+
     /// Try to allocate a `w×h` region. Returns `(x, y)` origin or `None` if full.
+    /// A 1px gutter is added around each glyph so that bilinear texture
+    /// sampling doesn't bleed into adjacent atlas entries.
     pub(crate) fn allocate(&mut self, w: u32, h: u32) -> Option<(u32, u32)> {
-        if w > self.size || h > self.size {
+        let padded_w = w + Self::GUTTER;
+        let padded_h = h + Self::GUTTER;
+        if padded_w > self.size || padded_h > self.size {
             return None;
         }
         // Wrap to next shelf if current row is too narrow
-        if self.cursor_x + w > self.size {
+        if self.cursor_x + padded_w > self.size {
             self.shelf_y += self.shelf_height;
             self.shelf_height = 0;
             self.cursor_x = 0;
         }
-        if self.shelf_y + h > self.size {
+        if self.shelf_y + padded_h > self.size {
             return None; // atlas full
         }
         let (x, y) = (self.cursor_x, self.shelf_y);
-        self.cursor_x += w;
-        self.shelf_height = self.shelf_height.max(h);
+        self.cursor_x += padded_w;
+        self.shelf_height = self.shelf_height.max(padded_h);
         Some((x, y))
     }
 }
@@ -112,74 +119,65 @@ pub(crate) fn make_glyph_entry(
 mod tests {
     use super::*;
 
+    /// Gutter constant for readability in tests.
+    const G: u32 = ShelfPacker::GUTTER;
+
     #[test]
     fn shelf_packer_basic() {
         let mut p = ShelfPacker::new(100);
         assert_eq!(p.allocate(10, 10), Some((0, 0)));
-        assert_eq!(p.allocate(10, 10), Some((10, 0)));
+        // Second glyph starts after 10 + gutter
+        assert_eq!(p.allocate(10, 10), Some((10 + G, 0)));
     }
 
     #[test]
     fn shelf_packer_wrap() {
         let mut p = ShelfPacker::new(100);
-        for _ in 0..10 {
+        // Each 10-wide glyph takes 10+G columns; fit as many as possible
+        let per_row = 100 / (10 + G);
+        for _ in 0..per_row {
             assert!(p.allocate(10, 20).is_some());
         }
-        assert_eq!(p.allocate(10, 15), Some((0, 20)));
+        // Next row starts at y = 20 + G (shelf height includes gutter)
+        assert_eq!(p.allocate(10, 15), Some((0, 20 + G)));
     }
 
     #[test]
     fn shelf_packer_full() {
+        // 19+G=20 exactly fills the row, 19+G=20 exactly fills the column
         let mut p = ShelfPacker::new(20);
-        assert!(p.allocate(20, 20).is_some());
+        assert!(p.allocate(19, 19).is_some());
         assert!(p.allocate(1, 1).is_none());
     }
 
     #[test]
     fn shelf_packer_oversized() {
         let mut p = ShelfPacker::new(10);
-        assert!(p.allocate(11, 5).is_none());
-        assert!(p.allocate(5, 11).is_none());
+        // 10+G > 10 → won't fit
+        assert!(p.allocate(10, 5).is_none());
+        assert!(p.allocate(5, 10).is_none());
     }
 
     #[test]
     fn shelf_packer_mixed_heights_tallest_sets_shelf() {
-        let mut p = ShelfPacker::new(100);
+        let mut p = ShelfPacker::new(200);
         // First glyph is tall (30px), second is short (10px)
         assert_eq!(p.allocate(10, 30), Some((0, 0)));
-        assert_eq!(p.allocate(10, 10), Some((10, 0)));
-        // Fill rest of row
-        for _ in 0..8 {
+        assert_eq!(p.allocate(10, 10), Some((10 + G, 0)));
+        // Next shelf starts at y = 30 + G
+        let per_row = 200 / (10 + G);
+        for _ in 2..per_row {
             assert!(p.allocate(10, 10).is_some());
         }
-        // Next shelf starts at y=30 (the tallest glyph in the shelf)
-        assert_eq!(p.allocate(10, 10), Some((0, 30)));
-    }
-
-    #[test]
-    fn shelf_packer_exact_fit_no_waste() {
-        let mut p = ShelfPacker::new(20);
-        // Exactly fill one row
-        assert_eq!(p.allocate(10, 10), Some((0, 0)));
-        assert_eq!(p.allocate(10, 10), Some((10, 0)));
-        // Exactly fill second row
-        assert_eq!(p.allocate(20, 10), Some((0, 10)));
-        // Atlas is now full (20x20)
-        assert!(p.allocate(1, 1).is_none());
+        assert_eq!(p.allocate(10, 10), Some((0, 30 + G)));
     }
 
     #[test]
     fn shelf_packer_zero_size_does_not_advance_cursor() {
         let mut p = ShelfPacker::new(100);
-        // Zero-size allocation succeeds but does NOT advance cursor_x (w=0),
-        // so the next real allocation lands at the same position.
-        // This is harmless in practice: zero-size glyphs (e.g. space) never
-        // produce pixel data, so overlapping UV is irrelevant.
+        // Zero-size allocation: padded size is 0+G=G, cursor advances by G.
         assert_eq!(p.allocate(0, 0), Some((0, 0)));
-        // Next allocation starts at (0,0) because cursor didn't move
-        assert_eq!(p.allocate(10, 10), Some((0, 0)));
-        // After a real allocation, cursor has advanced
-        assert_eq!(p.allocate(10, 10), Some((10, 0)));
+        assert_eq!(p.allocate(10, 10), Some((G, 0)));
     }
 
     #[test]

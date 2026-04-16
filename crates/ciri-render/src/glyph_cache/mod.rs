@@ -460,7 +460,7 @@ impl GlyphCache {
 
         #[cfg(windows)]
         let (dwrite, cell_width, cell_height, ascent, face_width, cjk_pixel_size) = {
-            let dwrite = DWriteRasterizer::new(
+            let mut dwrite = DWriteRasterizer::new(
                 params.family_name,
                 params
                     .primary_font_path
@@ -488,6 +488,11 @@ impl GlyphCache {
                 dwrite.primary_face(FontStyle::Regular),
                 dwrite.cjk_face(FontStyle::Regular),
             );
+
+            // Load UI font into DWrite if configured.
+            if let Some((ref path, idx)) = params.ui_font_path {
+                dwrite.load_ui_font(path, idx);
+            }
 
             (
                 dwrite,
@@ -927,13 +932,13 @@ impl GlyphCache {
                     self.cjk_pixel_size,
                     false,
                 ),
-                // TODO(windows UI font): load a dedicated DWrite face for
-                // the UI font family. Until then, return EMPTY — rasterizing
-                // a UI-shaped glyph_id against the primary face would paint
-                // the wrong glyph (glyph IDs are per-face).
                 FontClass::Ui => {
-                    self.glyph_id_cache.insert(key, GlyphEntry::EMPTY);
-                    return Some(GlyphEntry::EMPTY);
+                    if let Some(face) = self.dwrite.ui_face(style) {
+                        (face.clone(), self.ui_pixel_size, false)
+                    } else {
+                        self.glyph_id_cache.insert(key, GlyphEntry::EMPTY);
+                        return Some(GlyphEntry::EMPTY);
+                    }
                 }
                 FontClass::Primary => (
                     self.dwrite.primary_face(style)?.clone(),
@@ -1139,7 +1144,7 @@ mod tests {
 
     #[test]
     fn atlas_full_sets_needs_clear_without_queueing_uploads() {
-        let mut cache = test_cache(4);
+        let mut cache = test_cache(5);
         let glyph = rasterize::RasterizedGlyph {
             width: 4,
             height: 4,

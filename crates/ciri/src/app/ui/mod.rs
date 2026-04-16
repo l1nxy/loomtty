@@ -54,6 +54,11 @@ impl App {
             self.top_bar_layout(vw, vh, cell_w, cell_h, self.ui_shaper.as_ref());
         self.ensure_active_pane_tab_visible(top_bar_layout.tabs_area_px);
         let baseline = cell_h * self.core.config.statusbar.text_baseline;
+        let ui_line_h = self
+            .ui_shaper
+            .as_ref()
+            .map(|s| s.borrow().line_height())
+            .unwrap_or(cell_h);
         let cx = UiContext {
             config: &self.core.config,
             viewport_w: vw,
@@ -61,6 +66,7 @@ impl App {
             cell_w,
             cell_h,
             baseline,
+            ui_line_h,
             ui_shaper: self.ui_shaper.as_ref(),
         };
 
@@ -160,6 +166,11 @@ impl App {
             .map(|c| c.cell_width)
             .unwrap_or(8.0);
         let (viewport_w, viewport_h) = self.command_palette_viewport_size();
+        let ui_line_h = self
+            .ui_shaper
+            .as_ref()
+            .map(|s| s.borrow().line_height())
+            .unwrap_or(cell_h);
         UiContext {
             config: &self.core.config,
             viewport_w,
@@ -167,6 +178,7 @@ impl App {
             cell_w,
             cell_h,
             baseline: cell_h * self.core.config.statusbar.text_baseline,
+            ui_line_h,
             ui_shaper: self.ui_shaper.as_ref(),
         }
     }

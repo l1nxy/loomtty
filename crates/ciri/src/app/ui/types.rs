@@ -11,6 +11,10 @@ pub(crate) struct UiContext<'a> {
     pub cell_w: f32,
     pub cell_h: f32,
     pub baseline: f32,
+    /// Line height of the UI font in pixels. Derived from the UI shaper's
+    /// font metrics (ascent − descent + line gap). Falls back to `cell_h`
+    /// when no UI shaper is available.
+    pub ui_line_h: f32,
     /// UI text shaper (advance-based) used by all UI chrome text. `None` only
     /// in tests or before the renderer has been set up — callers must then
     /// use `cell_w`-based measurement as a fallback (see `UiBuilder`).

@@ -206,6 +206,8 @@ struct DxAtlasLayerConfig<'a> {
     d2d_factory: &'a ID2D1Factory,
     /// D2D text antialias mode for this layer.
     text_antialias: D2D1_TEXT_ANTIALIAS_MODE,
+    /// System text rendering params (gamma / enhanced contrast).
+    text_rendering_params: Option<IDWriteRenderingParams>,
 }
 
 impl DxAtlasLayer {
@@ -376,6 +378,13 @@ impl DxAtlasLayer {
             .d2d_factory
             .CreateDxgiSurfaceRenderTarget(&dxgi_surface, &rt_props)?;
         d2d_rt.SetTextAntialiasMode(cfg.text_antialias);
+
+        // Apply system default text rendering params (gamma, enhanced contrast).
+        // Without this, D2D uses built-in defaults that can produce visible
+        // fringe artifacts, especially on proportional UI fonts like Segoe UI.
+        if let Some(ref params) = cfg.text_rendering_params {
+            d2d_rt.SetTextRenderingParams(params);
+        }
 
         Ok(DxAtlasLayer {
             texture,
@@ -785,6 +794,7 @@ pub struct Renderer {
     rasterizer: ID3D11RasterizerState,
     blend: ID3D11BlendState,
     d2d_factory: ID2D1Factory,
+    text_rendering_params: Option<IDWriteRenderingParams>,
     rects: DxRectPipeline,
     width: u32,
     height: u32,
@@ -910,6 +920,12 @@ impl Renderer {
         let d2d_factory: ID2D1Factory =
             unsafe { D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)? };
 
+        // Obtain system default text rendering params for D2D render targets.
+        let dwrite_factory: IDWriteFactory =
+            unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
+        let text_rendering_params =
+            unsafe { dwrite_factory.CreateRenderingParams().ok() };
+
         log::info!(
             "D3D11 renderer initialized ({}x{})",
             size.width,
@@ -924,6 +940,7 @@ impl Renderer {
             rasterizer,
             blend,
             d2d_factory,
+            text_rendering_params,
             rects,
             width: size.width.max(1),
             height: size.height.max(1),
@@ -995,6 +1012,7 @@ impl Renderer {
                     filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
                     d2d_factory: &self.d2d_factory,
                     text_antialias: D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE,
+                    text_rendering_params: self.text_rendering_params.clone(),
                 },
             )
             .expect("alpha atlas creation failed")
@@ -1014,6 +1032,7 @@ impl Renderer {
                     filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
                     d2d_factory: &self.d2d_factory,
                     text_antialias: D2D1_TEXT_ANTIALIAS_MODE_DEFAULT,
+                    text_rendering_params: self.text_rendering_params.clone(),
                 },
             )
             .expect("color atlas creation failed")

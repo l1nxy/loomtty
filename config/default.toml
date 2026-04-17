@@ -65,6 +65,12 @@ frame_latency = 2
 # GPU backend: "auto" (platform default), "gl", "vulkan", "dx"
 # auto = GL on Linux, Metal on macOS, DX11 on Windows
 backend = "auto"
+# Alpha blending mode: "native", "linear", "linear-corrected"
+# native = sRGB-space blend (fast, slightly brighter text)
+# linear = linear-light blend (correct, text may appear thinner)
+# linear-corrected = linear + weight correction (recommended)
+# Default: "linear-corrected" on Linux/Windows, "native" on macOS
+alpha_blending = "linear-corrected"
 
 [theme]
 # Available presets: "ciri_dark", "one_dark", "catppuccin_mocha", "tokyo_night", "dracula", "nord", "gruvbox_dark", "ghostty"

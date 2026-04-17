@@ -135,6 +135,7 @@ fn make_shaped_glyph_instance(
         uv_pos: [entry.u0, entry.v0],
         uv_size: [entry.u1 - entry.u0, entry.v1 - entry.v0],
         color: params.color,
+        bg_color: [0.0, 0.0, 0.0, 0.0],
     }
 }
 
@@ -162,6 +163,7 @@ fn make_text_glyph_instance(
             uv_pos: [entry.u0, entry.v0],
             uv_size: [entry.u1 - entry.u0, entry.v1 - entry.v0],
             color: params.color,
+            bg_color: [0.0, 0.0, 0.0, 0.0],
         }
     } else {
         let sx = base_x + entry.bearing_x;
@@ -172,6 +174,7 @@ fn make_text_glyph_instance(
             uv_pos: [entry.u0, entry.v0],
             uv_size: [entry.u1 - entry.u0, entry.v1 - entry.v0],
             color: params.color,
+            bg_color: [0.0, 0.0, 0.0, 0.0],
         }
     }
 }

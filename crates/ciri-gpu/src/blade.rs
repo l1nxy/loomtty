@@ -183,6 +183,8 @@ struct AtlasLayer {
     /// Bytes per pixel (1 for R8Unorm, 4 for Rgba8UnormSrgb).
     bpp: u32,
     atlas_size: u32,
+    /// Packed blending flags: bit 0 = use_linear_blending, bit 1 = use_linear_correction.
+    blending_flags: u32,
 }
 
 struct AtlasLayerConfig<'a> {
@@ -194,6 +196,7 @@ struct AtlasLayerConfig<'a> {
     shader_source: &'a str,
     blend: gpu::BlendState,
     label: &'a str,
+    blending_flags: u32,
 }
 
 impl AtlasLayer {
@@ -246,7 +249,7 @@ impl AtlasLayer {
 
         let uniform_buffer = context.create_buffer(gpu::BufferDesc {
             name: "glyph_viewport_uniform",
-            size: 16,
+            size: 32, // vec4 size + u32 flags + 3xu32 padding
             memory: gpu::Memory::Shared,
         });
 
@@ -302,6 +305,7 @@ impl AtlasLayer {
             staging_buffer,
             bpp,
             atlas_size,
+            blending_flags: cfg.blending_flags,
         }
     }
 
@@ -414,12 +418,25 @@ impl AtlasLayer {
             return;
         }
         let count = instances.len().min(max_instances);
+        // Write viewport size + blending flags to uniform buffer (32 bytes).
         let viewport = [viewport_w, viewport_h, 0.0f32, 0.0f32];
         unsafe {
             ptr::copy_nonoverlapping(
                 viewport.as_ptr() as *const u8,
                 self.uniform_buffer.data(),
                 16,
+            );
+            let flags = self.blending_flags;
+            ptr::copy_nonoverlapping(
+                &flags as *const u32 as *const u8,
+                self.uniform_buffer.data().add(16),
+                4,
+            );
+            let pad = [0u32; 3];
+            ptr::copy_nonoverlapping(
+                pad.as_ptr() as *const u8,
+                self.uniform_buffer.data().add(20),
+                12,
             );
         }
         let data = bytemuck::cast_slice(&instances[..count]);
@@ -496,8 +513,14 @@ impl GlyphAtlasGpu {
         surface_format: gpu::TextureFormat,
         atlas_size: u32,
         max_instances: usize,
+        blending_flags: u32,
     ) -> Self {
-        let alpha_shader_src = format!("{VERTEX_SHADER}\n{ALPHA_FRAGMENT}");
+        // Inject shared color functions into alpha fragment shader.
+        let alpha_fragment = ALPHA_FRAGMENT.replace(
+            "// WGSL_COLOR_FUNCS_PLACEHOLDER",
+            WGSL_COLOR_FUNCS,
+        );
+        let alpha_shader_src = format!("{VERTEX_SHADER}\n{alpha_fragment}");
         let alpha = AtlasLayer::new(
             context,
             &AtlasLayerConfig {
@@ -516,6 +539,7 @@ impl GlyphAtlasGpu {
                     alpha: gpu::BlendComponent::OVER,
                 },
                 label: "glyph_atlas",
+                blending_flags,
             },
         );
 
@@ -531,6 +555,7 @@ impl GlyphAtlasGpu {
                 shader_source: &color_shader_src,
                 blend: gpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
                 label: "color_emoji_atlas",
+                blending_flags,
             },
         );
 
@@ -629,6 +654,8 @@ pub struct Renderer {
     /// not these pending values, so rendering stays consistent during
     /// deferred live resize.
     pending_size: Option<(u32, u32)>,
+    /// Packed blending flags: bit 0 = use_linear_blending, bit 1 = use_linear_correction.
+    blending_flags: u32,
 }
 
 impl Renderer {
@@ -700,6 +727,9 @@ impl Renderer {
 
         let rects = RectPipeline::new(&context, surface_format, render_config.max_rectangles);
 
+        let blending_flags = (render_config.alpha_blending.is_linear() as u32)
+            | ((render_config.alpha_blending.use_correction() as u32) << 1);
+
         Ok(Renderer {
             context,
             surface,
@@ -710,6 +740,7 @@ impl Renderer {
             window,
             last_sync: None,
             pending_size: None,
+            blending_flags,
         })
     }
 
@@ -767,6 +798,7 @@ impl Renderer {
             self.surface_format,
             cache.atlas_size,
             cache.max_instances,
+            self.blending_flags,
         );
 
         // Initialize atlas textures on GPU
@@ -972,6 +1004,13 @@ fn glyph_vertex_layout() -> gpu::VertexLayout {
                     format: gpu::VertexFormat::F32Vec4,
                 },
             ),
+            (
+                "bg_color",
+                gpu::VertexAttribute {
+                    offset: 48,
+                    format: gpu::VertexFormat::F32Vec4,
+                },
+            ),
         ],
         stride: std::mem::size_of::<GlyphInstance>() as u32,
     }
@@ -1023,6 +1062,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 const VERTEX_SHADER: &str = r#"
 struct Viewport {
     size: vec4<f32>,
+    // flags: bit 0 = use_linear_blending, bit 1 = use_linear_correction
+    flags: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 };
 
 var<uniform> viewport: Viewport;
@@ -1033,12 +1077,14 @@ struct Instance {
     uv_pos: vec2<f32>,
     uv_size: vec2<f32>,
     color: vec4<f32>,
+    bg_color: vec4<f32>,
 };
 
 struct VsOut {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) color: vec4<f32>,
+    @location(2) bg_color: vec4<f32>,
 };
 
 @vertex
@@ -1049,6 +1095,7 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: Instance) -> VsOut {
     var out: VsOut;
     out.uv = inst.uv_pos + vec2<f32>(x, y) * inst.uv_size;
     out.color = inst.color;
+    out.bg_color = inst.bg_color;
     let px = inst.pos + vec2<f32>(x, y) * inst.size;
     let ndc = vec2<f32>(
         px.x / viewport.size.x * 2.0 - 1.0,
@@ -1059,15 +1106,67 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: Instance) -> VsOut {
 }
 "#;
 
+// ─── Shared WGSL functions for sRGB ↔ linear conversion ────────────
+const WGSL_COLOR_FUNCS: &str = r#"
+fn linearize_f(v: f32) -> f32 {
+    return select(pow((v + 0.055) / 1.055, 2.4), v / 12.92, v <= 0.04045);
+}
+
+fn linearize_v3(srgb: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(linearize_f(srgb.x), linearize_f(srgb.y), linearize_f(srgb.z));
+}
+
+fn linearize_v4(srgb: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(linearize_v3(srgb.rgb), srgb.a);
+}
+
+fn unlinearize_f(v: f32) -> f32 {
+    return select(pow(v, 1.0 / 2.4) * 1.055 - 0.055, v * 12.92, v <= 0.0031308);
+}
+
+fn unlinearize_v3(lin: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(unlinearize_f(lin.x), unlinearize_f(lin.y), unlinearize_f(lin.z));
+}
+
+fn unlinearize_v4(lin: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(unlinearize_v3(lin.rgb), lin.a);
+}
+
+fn luminance_linear(col: vec3<f32>) -> f32 {
+    return dot(col, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+"#;
+
 const ALPHA_FRAGMENT: &str = r#"
 var atlas_tex: texture_2d<f32>;
 var atlas_sampler: sampler;
 
+// WGSL_COLOR_FUNCS_PLACEHOLDER
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let a = textureSample(atlas_tex, atlas_sampler, in.uv).r;
-    let alpha = in.color.a * a;
-    return vec4<f32>(in.color.rgb * alpha, alpha);
+    let use_linear_correction = (viewport.flags & 2u) != 0u;
+
+    var a = textureSample(atlas_tex, atlas_sampler, in.uv).r;
+
+    // Weight correction: linearize to compute luminance, adjust alpha
+    // so sRGB-space hardware blending approximates linear compositing.
+    if (use_linear_correction) {
+        let fg_linear = linearize_v4(in.color);
+        let bg_linear = linearize_v4(in.bg_color);
+        let fg_l = luminance_linear(fg_linear.rgb);
+        let bg_l = luminance_linear(bg_linear.rgb);
+        if (abs(fg_l - bg_l) > 0.001) {
+            let blend_l = linearize_f(
+                unlinearize_f(fg_l) * a + unlinearize_f(bg_l) * (1.0 - a)
+            );
+            a = clamp((blend_l - bg_l) / (fg_l - bg_l), 0.0, 1.0);
+        }
+    }
+
+    // Output sRGB premultiplied with corrected alpha.
+    let out_alpha = in.color.a * a;
+    return vec4<f32>(in.color.rgb * out_alpha, out_alpha);
 }
 "#;
 

@@ -99,11 +99,12 @@ pub(crate) enum FontClass {
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck_derive::Pod, bytemuck_derive::Zeroable)]
 pub struct GlyphInstance {
-    pub pos: [f32; 2],     // pixel position (top-left of glyph quad)
-    pub size: [f32; 2],    // pixel size
-    pub uv_pos: [f32; 2],  // atlas UV top-left
-    pub uv_size: [f32; 2], // atlas UV size
-    pub color: [f32; 4],   // RGBA color
+    pub pos: [f32; 2],      // pixel position (top-left of glyph quad)
+    pub size: [f32; 2],     // pixel size
+    pub uv_pos: [f32; 2],   // atlas UV top-left
+    pub uv_size: [f32; 2],  // atlas UV size
+    pub color: [f32; 4],    // RGBA foreground color (sRGB)
+    pub bg_color: [f32; 4], // RGBA background color (sRGB, for weight correction)
 }
 
 /// Draw range clipped to a scissor rect.

@@ -531,6 +531,7 @@ mod tests {
             pane_glyph_end: 0,
             pane_color_glyph_end: 0,
             overlay_bg_start: 0,
+            sdf_rects: &[],
         };
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             renderer.draw_frame(&mut atlas, &mut cache, scene);

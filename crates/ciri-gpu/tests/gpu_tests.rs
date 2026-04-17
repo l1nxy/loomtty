@@ -390,6 +390,7 @@ fn frame_scene_construction() {
         pane_glyph_end: 0,
         pane_color_glyph_end: 0,
         overlay_bg_start: 0,
+        sdf_rects: &[],
     };
     assert_eq!(scene.bg_rects.len(), 1);
     assert_eq!(scene.clear_color[0], 0.1);

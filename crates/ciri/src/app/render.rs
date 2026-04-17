@@ -2579,6 +2579,10 @@ impl App {
                 pane_glyph_end,
                 pane_color_glyph_end,
                 overlay_bg_start,
+                // SDF chrome is emitted by ciri-ui; wiring lands with the
+                // Element-tree integration. For now the slice is empty,
+                // so flat rects continue to carry all chrome.
+                sdf_rects: &[],
             },
         ) {
             log::error!("draw_frame failed: {e}");

@@ -230,15 +230,15 @@ impl Pane {
     }
 
     fn hash_scrollback_top(&self) -> u64 {
+        // Hash the row just above the viewport so `track_scrollback_growth`
+        // can detect ring-buffer rotation once `history_size` has saturated.
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        let cols = self.term.grid().columns();
-        let step = (cols / 8).max(1);
-        let mut col = 0;
-        while col < cols {
-            let cell = &self.term.grid()[Point::new(Line(-1), Column(col))];
+        let grid = self.term.grid();
+        let cols = grid.columns();
+        for col in 0..cols {
+            let cell = &grid[Point::new(Line(-1), Column(col))];
             cell.c.hash(&mut hasher);
-            col += step;
         }
         hasher.finish()
     }

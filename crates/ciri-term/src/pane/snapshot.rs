@@ -13,15 +13,31 @@ impl Pane {
     pub fn snapshot_incremental(&self, generation: u64, history_sent: usize) -> FullPaneSync {
         let scrollback =
             SnapshotScrollback::incremental(self.term.grid().history_size(), history_sent);
-        self.build_snapshot(generation, scrollback)
+        // Tick layer owns the incremental `scrollback_replace` decision (it
+        // knows the watermark delta vs history_size) and overwrites this.
+        self.build_snapshot(generation, scrollback, false)
     }
 
     pub fn snapshot(&self, generation: u64) -> FullPaneSync {
         let scrollback = SnapshotScrollback::full(self.term.grid().history_size());
-        self.build_snapshot(generation, scrollback)
+        // Full snapshots happen on attach / session switch; clients must
+        // discard stale scrollback before appending to avoid duplication.
+        //
+        // Exception: in alt-screen `history_size()` reflects only the alt
+        // buffer (always 0) and does not describe the primary-screen history
+        // the client may already hold. Telling the client to replace would
+        // permanently drop that history, because `history_sent` is then
+        // advanced to `scrollback_total` and the rows are never resent.
+        let replace = !self.is_alt_screen();
+        self.build_snapshot(generation, scrollback, replace)
     }
 
-    fn build_snapshot(&self, generation: u64, scrollback: SnapshotScrollback) -> FullPaneSync {
+    fn build_snapshot(
+        &self,
+        generation: u64,
+        scrollback: SnapshotScrollback,
+        scrollback_replace: bool,
+    ) -> FullPaneSync {
         let term = &self.term;
         let grid = term.grid();
         let cols = grid.columns();
@@ -46,7 +62,7 @@ impl Pane {
             title: self.title.clone(),
             scrollback: sb_cells,
             scrollback_rows: scrollback.rows as u32,
-            scrollback_replace: false,
+            scrollback_replace,
             cells,
             grapheme_extras,
             hyperlink_extras,

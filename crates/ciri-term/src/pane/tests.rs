@@ -504,6 +504,41 @@ fn scrollback_grows_when_output_exceeds_viewport() {
 }
 
 #[test]
+fn scrollback_total_counts_saturated_rotations_exactly() {
+    // Default alacritty `scrolling_history` is 10_000 rows. Push well past
+    // that in a single PTY burst and verify `scrollback_total` keeps
+    // growing past the ring-buffer cap.
+    //
+    // Regression test: the previous hash-based detector could observe many
+    // rotations between `process_pty_output` calls but only incremented by
+    // +1, so `scrollback_total` would stall just above 10_000 instead of
+    // reaching the true emitted-row count. The fix routes the count through
+    // alacritty's `scrolled_past_limit`, which increments by the exact
+    // number of rows evicted per `scroll_up` call.
+    let mut pane = Pane::new_with_opts(86, 80, 3, shell_path(), None, None).expect("create pane");
+    let n_lines: usize = 12_000;
+
+    // `seq N` emits N newline-terminated numbers; available on /bin/sh and
+    // mingw/git-bash on Windows (where shell_path() resolves to sh.exe).
+    pane.write_to_pty(format!("seq 1 {n_lines}\n").as_bytes());
+
+    // Allow some slack: the shell prompt, its echoed command, and a few
+    // trailing rows remain in the viewport rather than scrollback.
+    let target = (n_lines - 50) as usize;
+    let reached = wait_until(&mut pane, Duration::from_secs(60), |p| {
+        p.scrollback_total() >= target
+    });
+    assert!(
+        reached,
+        "scrollback_total stalled at {}; expected >= {} after emitting {} rows \
+         (saturated rotations were undercounted)",
+        pane.scrollback_total(),
+        target,
+        n_lines,
+    );
+}
+
+#[test]
 fn resize_shrink_adjusts_scrollback_total() {
     // Start with a tall terminal, produce scrollback, then shrink
     let mut pane = Pane::new_with_opts(85, 80, 5, shell_path(), None, None).expect("create pane");

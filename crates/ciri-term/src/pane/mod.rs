@@ -10,7 +10,6 @@ pub use types::{ImagePlacement, PaneId, SemanticZone, ShellState};
 
 use alacritty_terminal::event::{Event, WindowSize};
 use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::index::{Column, Line, Point};
 use alacritty_terminal::term::Config as TermConfig;
 use alacritty_terminal::term::Term;
 use alacritty_terminal::term::color::COUNT as COLOR_COUNT;
@@ -93,9 +92,6 @@ pub struct Pane {
     dirty: bool,
     exited: bool,
 
-    scrollback_total: usize,
-    prev_history_size: usize,
-
     parsers: ParserSuite,
     images: ImageStore,
     events: PendingEvents,
@@ -177,8 +173,6 @@ impl Pane {
             cell_height: DEFAULT_CELL_HEIGHT,
             dirty: true,
             exited: false,
-            scrollback_total: 0,
-            prev_history_size: 0,
             parsers: ParserSuite::new(),
             images: ImageStore::new(),
             events: PendingEvents::new(),
@@ -205,19 +199,12 @@ impl Pane {
             return false;
         }
 
-        let prev_sb_hash = if self.prev_history_size > 0 && !self.is_alt_screen() {
-            Some(self.hash_scrollback_top())
-        } else {
-            None
-        };
-
         let data_processed = self.drain_and_parse_pty();
         self.process_terminal_events();
         self.check_pty_exit();
 
         if data_processed {
             self.dirty = true;
-            self.track_scrollback_growth(prev_sb_hash);
         }
 
         let pw = self.pty.is_password_input();
@@ -227,36 +214,6 @@ impl Pane {
         }
 
         data_processed
-    }
-
-    fn hash_scrollback_top(&self) -> u64 {
-        // Hash the row just above the viewport so `track_scrollback_growth`
-        // can detect ring-buffer rotation once `history_size` has saturated.
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        let grid = self.term.grid();
-        let cols = grid.columns();
-        for col in 0..cols {
-            let cell = &grid[Point::new(Line(-1), Column(col))];
-            cell.c.hash(&mut hasher);
-        }
-        hasher.finish()
-    }
-
-    fn track_scrollback_growth(&mut self, prev_sb_hash: Option<u64>) {
-        if self.is_alt_screen() {
-            return;
-        }
-        let hs = self.term.grid().history_size();
-        if hs > self.prev_history_size {
-            self.scrollback_total += hs - self.prev_history_size;
-        } else if hs > 0 && hs == self.prev_history_size {
-            let cur_hash = self.hash_scrollback_top();
-            if prev_sb_hash.is_some_and(|prev| prev != cur_hash) {
-                self.scrollback_total += 1;
-            }
-        }
-        self.prev_history_size = hs;
     }
 
     fn drain_and_parse_pty(&mut self) -> bool {
@@ -458,18 +415,10 @@ impl Pane {
         self.cols = cols;
         self.rows = rows;
         self.pty.resize(cols, rows);
-        let hs_before = self.term.grid().history_size();
         self.term.resize(TermSize {
             cols: cols as usize,
             rows: rows as usize,
         });
-        let hs_after = self.term.grid().history_size();
-        if hs_after > hs_before {
-            self.scrollback_total += hs_after - hs_before;
-        } else if hs_after < hs_before {
-            self.scrollback_total = self.scrollback_total.saturating_sub(hs_before - hs_after);
-        }
-        self.prev_history_size = hs_after;
         self.dirty = true;
     }
 
@@ -523,8 +472,13 @@ impl Pane {
         self.term.grid().history_size()
     }
 
+    /// Monotonic count of rows that have ever entered primary-screen
+    /// scrollback: current `history_size` + rows evicted by ring-buffer
+    /// saturation (`scrolled_past_limit`), read from the primary grid even
+    /// while alt-screen is active. Used as the watermark for per-client
+    /// incremental scrollback delivery.
     pub fn scrollback_total(&self) -> usize {
-        self.scrollback_total
+        self.term.primary_scrollback_total()
     }
 
     pub fn is_alt_screen(&self) -> bool {

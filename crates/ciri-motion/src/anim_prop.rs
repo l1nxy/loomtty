@@ -1,10 +1,17 @@
 //! `AnimProp<T>` — a single animated property slot.
 //!
-//! Holds the currently displayed value plus an optional in-flight animation.
+//! Holds the currently displayed value, an optional in-flight animation,
+//! and an optional weak reference to a shared [`Ticker`]. When present,
+//! the ticker is notified on every state transition so the host can
+//! decide whether another frame is needed without walking the element
+//! tree to poll `is_animating()` per-node.
+//!
 //! Used by `ciri-ui`'s `AnimatedStyle` to interpolate between old and new
 //! style-property targets over time.
 
-use crate::{Lerp, Transition};
+use std::sync::Weak;
+
+use crate::{Lerp, Ticker, Transition};
 
 /// One property's in-flight animation state.
 #[derive(Clone, Copy, Debug)]
@@ -16,10 +23,16 @@ pub struct InFlight<T: Lerp> {
 }
 
 /// A property that can be animated between values.
-#[derive(Clone, Copy, Debug)]
+///
+/// Not `Copy` (the `Weak<Ticker>` isn't), but `Clone` — every clone gets
+/// the same ticker handle. The counter is balanced per-prop: each prop
+/// calls `wake` at most once at a time and the matching `sleep` is
+/// guaranteed by either a state transition or `Drop`.
+#[derive(Clone, Debug, Default)]
 pub struct AnimProp<T: Lerp> {
     current: T,
     anim: Option<InFlight<T>>,
+    ticker: Option<Weak<Ticker>>,
 }
 
 impl<T: Lerp> AnimProp<T> {
@@ -27,6 +40,31 @@ impl<T: Lerp> AnimProp<T> {
         Self {
             current: v,
             anim: None,
+            ticker: None,
+        }
+    }
+
+    /// Attach a shared ticker. Returns self for builder-style chaining.
+    ///
+    /// When a ticker is attached, every `animate_to` / `advance` /
+    /// `jump_to` call that changes `is_animating()` calls `wake` or
+    /// `sleep` on it, so `ticker.is_animating()` is a correct global
+    /// redraw predicate.
+    pub fn with_ticker(mut self, ticker: &std::sync::Arc<Ticker>) -> Self {
+        self.ticker = Some(std::sync::Arc::downgrade(ticker));
+        self
+    }
+
+    /// Attach (or replace) the ticker on an existing prop.
+    pub fn set_ticker(&mut self, ticker: &std::sync::Arc<Ticker>) {
+        // Sleep the old ticker if we were mid-animation on it, so its
+        // counter doesn't leak when the tickers switch.
+        if self.anim.is_some() {
+            self.sleep_ticker();
+        }
+        self.ticker = Some(std::sync::Arc::downgrade(ticker));
+        if self.anim.is_some() {
+            self.wake_ticker();
         }
     }
 
@@ -50,8 +88,12 @@ impl<T: Lerp> AnimProp<T> {
 
     /// Jump immediately to `v` — cancels any in-flight animation.
     pub fn jump_to(&mut self, v: T) {
+        let was_animating = self.anim.is_some();
         self.current = v;
         self.anim = None;
+        if was_animating {
+            self.sleep_ticker();
+        }
     }
 
     /// Start animating from the current displayed value to `target` using
@@ -71,12 +113,16 @@ impl<T: Lerp> AnimProp<T> {
             self.jump_to(target);
             return;
         }
+        let was_animating = self.anim.is_some();
         self.anim = Some(InFlight {
             from: self.current,
             to: target,
             transition,
             elapsed: 0.0,
         });
+        if !was_animating {
+            self.wake_ticker();
+        }
     }
 
     /// If `new_target` differs from the current `target()`, smoothly retarget
@@ -100,17 +146,40 @@ impl<T: Lerp> AnimProp<T> {
         if a.transition.is_settled(a.elapsed) {
             self.current = a.to;
             self.anim = None;
+            self.sleep_ticker();
             false
         } else {
             self.anim = Some(a);
             true
         }
     }
+
+    fn wake_ticker(&self) {
+        if let Some(w) = &self.ticker
+            && let Some(t) = w.upgrade()
+        {
+            t.wake();
+        }
+    }
+
+    fn sleep_ticker(&self) {
+        if let Some(w) = &self.ticker
+            && let Some(t) = w.upgrade()
+        {
+            t.sleep();
+        }
+    }
 }
 
-impl<T: Lerp + Default> Default for AnimProp<T> {
-    fn default() -> Self {
-        Self::new(T::default())
+impl<T: Lerp> Drop for AnimProp<T> {
+    /// If we were animating when dropped, balance the ticker counter. A
+    /// sleep without a matching wake is benign (the ticker saturates at
+    /// zero), but leaking a wake would freeze `is_animating()` high and
+    /// force permanent redraws.
+    fn drop(&mut self) {
+        if self.anim.is_some() {
+            self.sleep_ticker();
+        }
     }
 }
 
@@ -118,6 +187,7 @@ impl<T: Lerp + Default> Default for AnimProp<T> {
 mod tests {
     use super::*;
     use crate::EasingCurve;
+    use std::sync::Arc;
 
     fn linear(dur: f64) -> Transition {
         Transition::Timed {
@@ -183,5 +253,75 @@ mod tests {
         assert_eq!(p.current(), 10.0);
         assert!(!p.is_animating());
         assert_eq!(p.target(), 10.0);
+    }
+
+    /// Regression for Codex P2: without ticker wake-up on animate_to, the
+    /// host's redraw predicate would never observe a newly-started
+    /// animation, so transitions freeze after the first frame.
+    #[test]
+    fn animate_to_wakes_ticker() {
+        let ticker = Arc::new(Ticker::new());
+        let mut p = AnimProp::new(0.0_f32).with_ticker(&ticker);
+        assert_eq!(ticker.active(), 0);
+        assert!(!ticker.is_animating());
+
+        p.animate_to(10.0, linear(1.0));
+        assert_eq!(ticker.active(), 1);
+        assert!(ticker.is_animating());
+    }
+
+    #[test]
+    fn advance_to_settle_sleeps_ticker() {
+        let ticker = Arc::new(Ticker::new());
+        let mut p = AnimProp::new(0.0_f32).with_ticker(&ticker);
+        p.animate_to(10.0, linear(1.0));
+        assert_eq!(ticker.active(), 1);
+        assert!(p.advance(0.5));
+        assert_eq!(ticker.active(), 1, "mid-flight should keep wake");
+        assert!(!p.advance(0.6));
+        assert_eq!(ticker.active(), 0);
+        assert!(!ticker.is_animating());
+    }
+
+    #[test]
+    fn jump_to_mid_flight_sleeps_ticker() {
+        let ticker = Arc::new(Ticker::new());
+        let mut p = AnimProp::new(0.0_f32).with_ticker(&ticker);
+        p.animate_to(10.0, linear(1.0));
+        p.jump_to(7.0);
+        assert_eq!(ticker.active(), 0);
+    }
+
+    /// Zero-duration animate_to takes the synchronous snap path. It must
+    /// not leave the ticker held awake.
+    #[test]
+    fn zero_duration_animate_does_not_leak_ticker_wake() {
+        let ticker = Arc::new(Ticker::new());
+        let mut p = AnimProp::new(0.0_f32).with_ticker(&ticker);
+        p.animate_to(10.0, linear(0.0));
+        assert_eq!(ticker.active(), 0);
+    }
+
+    /// Retargeting mid-flight (is_animating stays true) must not double-wake.
+    #[test]
+    fn retarget_keeps_ticker_balanced() {
+        let ticker = Arc::new(Ticker::new());
+        let mut p = AnimProp::new(0.0_f32).with_ticker(&ticker);
+        p.animate_to(10.0, linear(1.0));
+        assert_eq!(ticker.active(), 1);
+        p.diff_and_animate(20.0, linear(1.0));
+        assert_eq!(ticker.active(), 1, "retarget must not increment");
+    }
+
+    /// Dropping a prop mid-animation must release its ticker wake.
+    #[test]
+    fn drop_mid_flight_sleeps_ticker() {
+        let ticker = Arc::new(Ticker::new());
+        {
+            let mut p = AnimProp::new(0.0_f32).with_ticker(&ticker);
+            p.animate_to(10.0, linear(1.0));
+            assert_eq!(ticker.active(), 1);
+        }
+        assert_eq!(ticker.active(), 0);
     }
 }

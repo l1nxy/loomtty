@@ -8,8 +8,19 @@
 //! than terminal-centric so plugin UIs and future theme-aware widgets can
 //! read one stable API.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::color::{mul_alpha, scale_rgb, Color};
 use ciri_config::theme::ThemeConfig;
+
+/// Monotonic counter backing [`ResolvedTheme::version`]. Bumped on every
+/// `from_config` call so cache keys stay sound regardless of whether the
+/// caller uses `reload()` or constructs a fresh theme.
+static THEME_VERSION: AtomicU64 = AtomicU64::new(1);
+
+fn next_theme_version() -> u64 {
+    THEME_VERSION.fetch_add(1, Ordering::Relaxed)
+}
 
 /// Spacing scale — roughly a 4pt grid. Units are logical px at DPR = 1.0.
 #[derive(Clone, Copy, Debug)]
@@ -109,7 +120,12 @@ pub struct ResolvedTheme {
     pub space: SpaceScale,
     pub radius: RadiusScale,
     pub typography: TypeScale,
-    /// Monotonically bumped on reload — useful as a cache-key component.
+    /// Unique, monotonically increasing id bumped by every `from_config`
+    /// call (via a global counter). Stable to use as a cache-key component:
+    /// two resolved themes with the same `version` are the same instance,
+    /// and every constructor call produces a fresh `version` — including
+    /// when the caller rebuilds the struct themselves rather than going
+    /// through `reload()`.
     pub version: u64,
 }
 
@@ -154,15 +170,14 @@ impl ResolvedTheme {
             space: SpaceScale::default(),
             radius: RadiusScale::default(),
             typography: TypeScale::default(),
-            version: 1,
+            version: next_theme_version(),
         }
     }
 
-    /// Rebuild from a new config and bump `version`.
+    /// Rebuild from a new config. `version` is fresh — callers can compare
+    /// `theme.version` before and after to detect that the theme changed.
     pub fn reload(&mut self, cfg: &ThemeConfig) {
-        let next = Self::from_config(cfg);
-        let version = self.version.wrapping_add(1);
-        *self = Self { version, ..next };
+        *self = Self::from_config(cfg);
     }
 }
 
@@ -192,6 +207,9 @@ impl Default for ResolvedTheme {
             space: SpaceScale::default(),
             radius: RadiusScale::default(),
             typography: TypeScale::default(),
+            // 0 is reserved for "synthetic / never constructed from a
+            // real config" so production cache keys can't collide with
+            // the test-only Default themes.
             version: 0,
         }
     }
@@ -217,6 +235,26 @@ mod tests {
         cfg.resolve_preset();
         t.reload(&cfg);
         assert_ne!(t.version, v0);
+    }
+
+    /// Regression for Codex P3: two successive `from_config` calls must
+    /// produce distinct versions so callers that key caches off
+    /// `theme.version` (without going through `reload()`) don't miss
+    /// the first theme change.
+    #[test]
+    fn from_config_bumps_version_on_each_call() {
+        let mut cfg = ciri_config::theme::ThemeConfig::default();
+        cfg.resolve_preset();
+        let a = ResolvedTheme::from_config(&cfg);
+        let b = ResolvedTheme::from_config(&cfg);
+        assert_ne!(a.version, b.version);
+        assert!(b.version > a.version, "version must be monotonic");
+    }
+
+    #[test]
+    fn default_theme_uses_sentinel_version_zero() {
+        let t = ResolvedTheme::default();
+        assert_eq!(t.version, 0);
     }
 
     #[test]

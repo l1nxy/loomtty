@@ -13,7 +13,7 @@
 //! into its own emitted primitive.
 
 use crate::color::{mul_alpha, Color, TRANSPARENT};
-use crate::element::{Element, Layer, PaintCtx};
+use crate::element::{Element, EventCtx, Layer, PaintCtx, UiEvent};
 use crate::layout::to_taffy_style;
 use crate::scene::SdfRect;
 use crate::style::{Shadow, Style};
@@ -121,6 +121,42 @@ impl Element for Div {
         (op, tr)
     }
 
+    fn text_color_override(&self) -> Option<Color> {
+        self.style.text_color
+    }
+
+    /// Fire stored click / hover handlers. Host code is responsible for
+    /// hit-testing before calling this — we only see an event if it was
+    /// already routed here. `on_hover(false)` must be delivered via
+    /// `FocusLost` by the host's dispatch walker; this element doesn't
+    /// track its own enter/leave state.
+    fn on_event(&mut self, event: &UiEvent, cx: &mut EventCtx) -> bool {
+        match event {
+            UiEvent::PointerDown { .. } => {
+                if let Some(cb) = self.style.on_click.clone() {
+                    cb();
+                    cx.request_redraw();
+                    return true;
+                }
+            }
+            UiEvent::PointerMove { .. } => {
+                if let Some(cb) = self.style.on_hover.clone() {
+                    cb(true);
+                    cx.request_redraw();
+                    return true;
+                }
+            }
+            UiEvent::FocusLost => {
+                if let Some(cb) = self.style.on_hover.clone() {
+                    cb(false);
+                    cx.request_redraw();
+                }
+            }
+            _ => {}
+        }
+        false
+    }
+
     fn paint(&self, cx: &mut PaintCtx<'_>) {
         if !has_visual(&self.style) {
             return;
@@ -136,10 +172,22 @@ impl Element for Div {
         let bg = self.style.background.unwrap_or(TRANSPARENT);
         let border_c = self.style.border_color.unwrap_or(TRANSPARENT);
         let border_w = self.style.border_width.unwrap_or(0.0).max(0.0);
-        let radii = self.style.corner_radii.unwrap_or([0.0; 4]);
         let (shadow_blur, shadow_color, shadow_offset) = resolve_shadow(self.style.shadow);
 
         let [x, y, w, h] = cx.bounds;
+        // The rounded-box SDF is only well-defined when every radius is
+        // ≤ half the shorter side. Without this, `.rounded_full()`
+        // (radii = [9999.0; 4]) on a non-square box produces a positive
+        // distance even at the centre and the fill vanishes. Clamp so
+        // semantic sugar like "full = capsule" behaves correctly.
+        let max_r = (w.min(h)).max(0.0) * 0.5;
+        let raw_radii = self.style.corner_radii.unwrap_or([0.0; 4]);
+        let radii = [
+            raw_radii[0].clamp(0.0, max_r),
+            raw_radii[1].clamp(0.0, max_r),
+            raw_radii[2].clamp(0.0, max_r),
+            raw_radii[3].clamp(0.0, max_r),
+        ];
         cx.push_sdf(SdfRect {
             pos: [x + own_translate[0], y + own_translate[1]],
             size: [w, h],
@@ -210,21 +258,31 @@ mod tests {
         assert_eq!(d.children().len(), 2);
     }
 
+    fn make_pcx<'a>(
+        theme: &'a ResolvedTheme,
+        scene: &'a mut Scene,
+        shaper: &'a mut crate::shaper::NullShaper,
+        bounds: [f32; 4],
+    ) -> PaintCtx<'a> {
+        PaintCtx {
+            theme,
+            bounds,
+            scene,
+            text_shaper: shaper,
+            scale: 1.0,
+            element_id: Default::default(),
+            inherited_opacity: 1.0,
+            inherited_text_color: None,
+            layer: Layer::Chrome,
+        }
+    }
+
     #[test]
     fn paint_with_no_visual_emits_nothing() {
         let theme = ResolvedTheme::default();
         let mut scene = Scene::new();
         let mut shaper = crate::shaper::NullShaper;
-        let mut pcx = PaintCtx {
-            theme: &theme,
-            bounds: [0.0, 0.0, 100.0, 40.0],
-            scene: &mut scene,
-            text_shaper: &mut shaper,
-            scale: 1.0,
-            element_id: Default::default(),
-            inherited_opacity: 1.0,
-            layer: Layer::Chrome,
-        };
+        let mut pcx = make_pcx(&theme, &mut scene, &mut shaper, [0.0, 0.0, 100.0, 40.0]);
         div().paint(&mut pcx);
         assert!(scene.is_empty());
     }
@@ -248,5 +306,101 @@ mod tests {
     #[test]
     fn paint_transform_identity_when_unset() {
         assert_eq!(div().paint_transform(), (1.0, [0.0, 0.0]));
+    }
+
+    /// Regression for Codex P2: `.rounded_full()` sets radii to 9999 as
+    /// sugar for "capsule". Before the clamp, the SDF saw radii larger
+    /// than half the box and the fill disappeared. Each radius must
+    /// clamp down to min(w, h) / 2 before the GPU instance is uploaded.
+    #[test]
+    fn rounded_full_clamps_to_capsule_radius() {
+        let theme = ResolvedTheme::default();
+        let mut scene = Scene::new();
+        let mut shaper = crate::shaper::NullShaper;
+        // 200 × 40 pill: max radius = 20.
+        let mut pcx = make_pcx(&theme, &mut scene, &mut shaper, [0.0, 0.0, 200.0, 40.0]);
+        div().bg([1.0, 0.0, 0.0, 1.0]).rounded_full().paint(&mut pcx);
+        let r = &scene.sdf_in_layer(Layer::Chrome)[0];
+        for c in r.radii {
+            assert!(
+                (c - 20.0).abs() < 1e-3,
+                "corner radius must clamp to 20 (min(w,h)/2), got {c}"
+            );
+        }
+    }
+
+    /// Negative or NaN-ish sizes should clamp radii to 0 without panic.
+    #[test]
+    fn zero_size_clamps_radii_to_zero() {
+        let theme = ResolvedTheme::default();
+        let mut scene = Scene::new();
+        let mut shaper = crate::shaper::NullShaper;
+        let mut pcx = make_pcx(&theme, &mut scene, &mut shaper, [0.0, 0.0, 0.0, 0.0]);
+        // `bg` forces emission; box has zero area so radii collapse to 0.
+        div().bg([1.0, 0.0, 0.0, 1.0]).rounded_full().paint(&mut pcx);
+        let r = &scene.sdf_in_layer(Layer::Chrome)[0];
+        assert_eq!(r.radii, [0.0; 4]);
+    }
+
+    /// Regression for Codex P2: `text_color_override` must surface the
+    /// style's text_color so the walker can propagate it to Text children.
+    #[test]
+    fn text_color_override_exposes_style_value() {
+        let d = div().text_color([1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(
+            <Div as Element>::text_color_override(&d),
+            Some([1.0, 0.0, 0.0, 1.0])
+        );
+    }
+
+    #[test]
+    fn text_color_override_none_when_unset() {
+        assert_eq!(<Div as Element>::text_color_override(&div()), None);
+    }
+
+    /// Regression for Codex P2: `.on_click(...)` and `.on_hover(...)`
+    /// must actually fire when the element receives events. Before the
+    /// fix, Div inherited the default no-op `on_event` and the builders
+    /// just stashed closures into `Style` that nothing ever invoked.
+    #[test]
+    fn on_click_fires_on_pointer_down() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hc = hits.clone();
+        let mut d = div().on_click(move || {
+            hc.fetch_add(1, Ordering::Relaxed);
+        });
+        let mut ecx = EventCtx::new();
+        let consumed = d.on_event(&UiEvent::PointerDown { x: 0.0, y: 0.0 }, &mut ecx);
+        assert!(consumed);
+        assert_eq!(hits.load(Ordering::Relaxed), 1);
+        assert!(ecx.needs_redraw());
+    }
+
+    #[test]
+    fn on_hover_fires_true_on_move_and_false_on_focus_lost() {
+        use std::sync::atomic::{AtomicI32, Ordering};
+        use std::sync::Arc;
+        // +1 for hover-in, -1 for hover-out
+        let state = Arc::new(AtomicI32::new(0));
+        let s = state.clone();
+        let mut d = div().on_hover(move |over| {
+            s.fetch_add(if over { 1 } else { -1 }, Ordering::Relaxed);
+        });
+        let mut ecx = EventCtx::new();
+        d.on_event(&UiEvent::PointerMove { x: 0.0, y: 0.0 }, &mut ecx);
+        assert_eq!(state.load(Ordering::Relaxed), 1);
+        d.on_event(&UiEvent::FocusLost, &mut ecx);
+        assert_eq!(state.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn events_on_div_without_handlers_are_ignored() {
+        let mut d = div();
+        let mut ecx = EventCtx::new();
+        let consumed = d.on_event(&UiEvent::PointerDown { x: 0.0, y: 0.0 }, &mut ecx);
+        assert!(!consumed);
+        assert!(!ecx.needs_redraw());
     }
 }

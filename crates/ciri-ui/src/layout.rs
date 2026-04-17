@@ -71,6 +71,7 @@ pub fn paint_tree_into(
         /* inherited_translate */ [0.0, 0.0],
         /* inherited_opacity */ 1.0,
         /* inherited_layer */ Layer::Chrome,
+        /* inherited_text_color */ None,
         theme,
         scale,
         text_shaper,
@@ -103,6 +104,7 @@ fn paint_node(
     inherited_translate: [f32; 2],
     inherited_opacity: f32,
     inherited_layer: Layer,
+    inherited_text_color: Option<crate::color::Color>,
     theme: &ResolvedTheme,
     scale: f32,
     text_shaper: &mut dyn TextShaper,
@@ -137,6 +139,7 @@ fn paint_node(
         scale,
         element_id: Default::default(),
         inherited_opacity,
+        inherited_text_color,
         layer: effective_layer,
     };
     el.paint(&mut ctx);
@@ -151,6 +154,10 @@ fn paint_node(
         inherited_translate[0] + own_translate[0],
         inherited_translate[1] + own_translate[1],
     ];
+    // Text colour inherits nearest-ancestor-set-wins, so own override
+    // beats parent; if neither sets it, descendants see the same `None`
+    // and fall through to the theme default at text-paint time.
+    let child_inherited_text_color = el.text_color_override().or(inherited_text_color);
 
     let children = el.children();
     if children.is_empty() {
@@ -166,6 +173,7 @@ fn paint_node(
             child_inherited_translate,
             child_inherited_opacity,
             effective_layer,
+            child_inherited_text_color,
             theme,
             scale,
             text_shaper,
@@ -494,6 +502,59 @@ mod tests {
         let flat = scene.sdf_rects();
         assert_eq!(flat[0].color, [0.0, 1.0, 0.0, 1.0], "chrome first");
         assert_eq!(flat[1].color, [1.0, 0.0, 0.0, 1.0], "modal last");
+    }
+
+    /// Regression for Codex P2: wrapper `text_color(...)` must cascade
+    /// through the walker into `Text` descendants so themed label trees
+    /// paint with the right foreground. Before the fix, `Text::paint`
+    /// jumped straight to `theme.on_surface` regardless of any ancestor
+    /// `text_color`. We verify end-to-end by recording the color the
+    /// shaper was asked to emit with.
+    #[test]
+    fn wrapper_text_color_cascades_to_text_descendants() {
+        use crate::shaper::RecordingShaper;
+
+        const RED: Color = [1.0, 0.0, 0.0, 1.0];
+        let mut shaper = RecordingShaper::default();
+        let root = div().w(200.0).h(40.0).text_color(RED).child(text("hello"));
+        let _ = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut shaper);
+        assert_eq!(shaper.calls.len(), 1);
+        assert_eq!(shaper.calls[0].color, RED);
+    }
+
+    /// Nearest-ancestor wins: a `text_color` closer to the Text
+    /// overrides a farther ancestor's setting.
+    #[test]
+    fn nearest_ancestor_text_color_wins() {
+        use crate::shaper::RecordingShaper;
+
+        const RED: Color = [1.0, 0.0, 0.0, 1.0];
+        const BLUE: Color = [0.0, 0.0, 1.0, 1.0];
+        let mut shaper = RecordingShaper::default();
+        let root = div()
+            .w(200.0)
+            .h(40.0)
+            .text_color(RED)
+            .child(div().text_color(BLUE).child(text("hi")));
+        let _ = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut shaper);
+        assert_eq!(shaper.calls[0].color, BLUE);
+    }
+
+    /// Own `.color(...)` on the Text itself wins over any inherited colour.
+    #[test]
+    fn text_own_color_wins_over_inherited() {
+        use crate::shaper::RecordingShaper;
+
+        const RED: Color = [1.0, 0.0, 0.0, 1.0];
+        const GREEN: Color = [0.0, 1.0, 0.0, 1.0];
+        let mut shaper = RecordingShaper::default();
+        let root = div()
+            .w(200.0)
+            .h(40.0)
+            .text_color(RED)
+            .child(text("hi").color(GREEN));
+        let _ = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut shaper);
+        assert_eq!(shaper.calls[0].color, GREEN);
     }
 
     /// Modal subtree inheritance: descendants of a `Modal` element must

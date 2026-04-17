@@ -98,6 +98,10 @@ pub struct PaintCtx<'a> {
     /// Cumulative opacity from the walker. Multiply this with the
     /// element's own `opacity` before emitting.
     pub inherited_opacity: f32,
+    /// Inherited text colour from the nearest ancestor whose style set
+    /// `text_color`. `None` = fall back to `theme.on_surface`. Elements
+    /// that render text consult this (own color → inherited → theme).
+    pub inherited_text_color: Option<Color>,
     /// Effective layer for the emitted primitive. Already resolved by
     /// the walker (own `in_layer` → parent's inherited layer → default).
     pub layer: Layer,
@@ -191,6 +195,14 @@ pub trait Element: 'static {
     /// and translate so transitions propagate through the subtree.
     fn paint_transform(&self) -> (f32, [f32; 2]) {
         (1.0, [0.0, 0.0])
+    }
+
+    /// Text colour this element wants to impose on its descendants, if
+    /// any. Returning `Some(c)` makes the walker thread `c` through the
+    /// subtree as the inherited text colour; returning `None` keeps the
+    /// ancestor's value. Div overrides to return its `style.text_color`.
+    fn text_color_override(&self) -> Option<crate::color::Color> {
+        None
     }
 
     /// Paint this element using `cx.bounds`. Children paint themselves

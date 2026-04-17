@@ -97,7 +97,13 @@ impl Element for Text {
         if self.content.is_empty() {
             return;
         }
-        let color = self.color.unwrap_or(cx.theme.on_surface);
+        // Resolution order: own `.color(...)` override → nearest ancestor
+        // `text_color(...)` → theme default. Without the middle step a
+        // container-level `text_color` would never affect descendants.
+        let color = self
+            .color
+            .or(cx.inherited_text_color)
+            .unwrap_or(cx.theme.on_surface);
         let font_size = self.font_size_px.unwrap_or(cx.theme.typography.md);
         let pos = [cx.bounds[0], cx.bounds[1]];
         cx.emit_text(&self.content, pos, color, font_size);
@@ -125,6 +131,7 @@ mod tests {
             scale: 1.0,
             element_id: Default::default(),
             inherited_opacity: 1.0,
+            inherited_text_color: None,
             layer: Layer::Chrome,
         }
     }

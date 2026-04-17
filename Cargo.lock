@@ -765,6 +765,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ciri-motion"
+version = "0.1.0"
+dependencies = [
+ "ciri-anim",
+ "log",
+]
+
+[[package]]
 name = "ciri-plugin"
 version = "0.1.0"
 dependencies = [
@@ -857,6 +865,15 @@ dependencies = [
  "percent-encoding",
  "portable-pty",
  "winnow 0.7.15",
+]
+
+[[package]]
+name = "ciri-ui"
+version = "0.1.0"
+dependencies = [
+ "ciri-config",
+ "ciri-motion",
+ "log",
 ]
 
 [[package]]

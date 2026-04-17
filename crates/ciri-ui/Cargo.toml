@@ -1,0 +1,9 @@
+[package]
+name = "ciri-ui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ciri-motion = { workspace = true }
+ciri-config = { workspace = true }
+log = { workspace = true }

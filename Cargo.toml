@@ -7,6 +7,8 @@ members = [
     "crates/ciri-protocol",
     "crates/ciri-layout",
     "crates/ciri-anim",
+    "crates/ciri-motion",
+    "crates/ciri-ui",
     "crates/ciri-render",
     "crates/ciri-gpu",
     "crates/ciri-term",
@@ -31,6 +33,8 @@ ciri-gpu = { path = "crates/ciri-gpu" }
 ciri-term = { path = "crates/ciri-term" }
 ciri-layout = { path = "crates/ciri-layout" }
 ciri-anim = { path = "crates/ciri-anim" }
+ciri-motion = { path = "crates/ciri-motion" }
+ciri-ui = { path = "crates/ciri-ui" }
 ciri-protocol = { path = "crates/ciri-protocol" }
 ciri-input = { path = "crates/ciri-input" }
 ciri-config = { path = "crates/ciri-config" }

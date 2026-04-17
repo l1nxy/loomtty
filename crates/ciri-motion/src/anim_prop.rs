@@ -24,15 +24,37 @@ pub struct InFlight<T: Lerp> {
 
 /// A property that can be animated between values.
 ///
-/// Not `Copy` (the `Weak<Ticker>` isn't), but `Clone` — every clone gets
-/// the same ticker handle. The counter is balanced per-prop: each prop
-/// calls `wake` at most once at a time and the matching `sleep` is
-/// guaranteed by either a state transition or `Drop`.
-#[derive(Clone, Debug, Default)]
+/// Not `Copy` (the `Weak<Ticker>` isn't) but [`Clone`]. The counter is
+/// balanced per-prop: each prop calls `wake` at most once at a time and
+/// the matching `sleep` is guaranteed by either a state transition or
+/// `Drop`. Cloning a prop that is **currently animating** issues an
+/// extra `wake` on the shared ticker so the clone's eventual `Drop` /
+/// settle has a matching `sleep` — otherwise one drop could drive the
+/// ticker to zero while the other clone is still in flight, and the
+/// host would stop scheduling redraws.
+#[derive(Debug, Default)]
 pub struct AnimProp<T: Lerp> {
     current: T,
     anim: Option<InFlight<T>>,
     ticker: Option<Weak<Ticker>>,
+}
+
+impl<T: Lerp> Clone for AnimProp<T> {
+    fn clone(&self) -> Self {
+        let cloned = Self {
+            current: self.current,
+            anim: self.anim,
+            ticker: self.ticker.clone(),
+        };
+        if cloned.anim.is_some() {
+            // Balance the Drop-side sleep the clone is now promising.
+            // If the upgrade fails (host already tore down the ticker),
+            // there's nothing to balance — matches the original's
+            // best-effort wake_ticker behaviour.
+            cloned.wake_ticker();
+        }
+        cloned
+    }
 }
 
 impl<T: Lerp> AnimProp<T> {
@@ -322,6 +344,35 @@ mod tests {
             p.animate_to(10.0, linear(1.0));
             assert_eq!(ticker.active(), 1);
         }
+        assert_eq!(ticker.active(), 0);
+    }
+
+    /// Regression for Codex P2: cloning an in-flight AnimProp must not
+    /// leave the ticker counter unbalanced. If the naive `#[derive]`
+    /// shallow-clone is in effect, the second drop drives the counter
+    /// to zero while a live clone is still animating — the host stops
+    /// scheduling redraws and the other clone later underflows.
+    #[test]
+    fn clone_mid_flight_wakes_ticker_once_per_clone() {
+        let ticker = Arc::new(Ticker::new());
+        let mut p = AnimProp::new(0.0_f32).with_ticker(&ticker);
+        p.animate_to(10.0, linear(1.0));
+        assert_eq!(ticker.active(), 1);
+        let q = p.clone();
+        assert_eq!(ticker.active(), 2, "clone of animating prop must wake");
+        drop(p);
+        assert_eq!(ticker.active(), 1, "one drop, one sleep");
+        assert!(ticker.is_animating(), "clone still animating");
+        drop(q);
+        assert_eq!(ticker.active(), 0);
+    }
+
+    /// A clone of a settled prop must not wake the ticker.
+    #[test]
+    fn clone_of_idle_does_not_wake() {
+        let ticker = Arc::new(Ticker::new());
+        let p = AnimProp::new(0.0_f32).with_ticker(&ticker);
+        let _q = p.clone();
         assert_eq!(ticker.active(), 0);
     }
 }

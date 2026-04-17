@@ -4,6 +4,11 @@
 //! and a flat `children()` list that the paint walker turns into a Taffy
 //! tree before `compute_layout`. The walker then calls `paint(&self, cx)`
 //! on each element with its computed bounds filled into `PaintCtx`.
+//!
+//! Paint-time inheritance — opacity, translate and layer — is propagated
+//! by the walker. Elements can therefore compose transforms across parent
+//! boundaries cleanly: a fading/sliding wrapper visibly affects every
+//! descendant, and `in_layer(Modal)` wins z-order for its entire subtree.
 
 use crate::scene::Scene;
 use crate::theme::ResolvedTheme;
@@ -66,21 +71,40 @@ impl<'a> UiCtx<'a> {
     }
 }
 
-/// Paint-time context. Carries the element's laid-out bounds plus the
-/// scene accumulator the paint pass emits into.
+/// Paint-time context. Carries the element's laid-out bounds, the scene
+/// accumulator, and the paint-time transforms the walker has inherited
+/// from ancestors.
+///
+/// Elements fold `inherited_opacity` into their own opacity, emit into
+/// `scene` via `push_sdf(layer, ...)` using `layer`, and trust that the
+/// walker has already added the inherited translate into `bounds`. An
+/// element's own translate/opacity affect only self and descendants —
+/// the walker passes them on via fresh inherited state.
 pub struct PaintCtx<'a> {
     pub theme: &'a ResolvedTheme,
-    /// `[x, y, w, h]` in logical (device-independent) pixels, already
-    /// resolved by the paint walker from the element's Taffy layout.
+    /// `[x, y, w, h]` in logical pixels. Already includes the inherited
+    /// paint-time translate from ancestors; the element only needs to
+    /// add its own `translate` (if any) when emitting its primitive.
     pub bounds: [f32; 4],
     pub scene: &'a mut Scene,
     pub scale: f32,
     pub element_id: ElementId,
+    /// Cumulative opacity from the walker. Multiply this with the
+    /// element's own `opacity` before emitting.
+    pub inherited_opacity: f32,
+    /// Effective layer for the emitted primitive. Already resolved by
+    /// the walker (own `in_layer` → parent's inherited layer → default).
+    pub layer: Layer,
 }
 
 impl<'a> PaintCtx<'a> {
     pub fn theme(&self) -> &ResolvedTheme {
         self.theme
+    }
+
+    /// Convenience: push an SDF rect into the effective layer.
+    pub fn push_sdf(&mut self, rect: crate::scene::SdfRect) {
+        self.scene.push_sdf(self.layer, rect);
     }
 }
 
@@ -112,7 +136,7 @@ impl Default for EventCtx {
 
 /// The core trait. Everything in the retained tree is an `Element`.
 ///
-/// The default bodies are intentionally no-ops so leaves like `Text` can
+/// Default bodies are intentionally no-ops so leaves like `Text` can
 /// implement only `paint`.
 pub trait Element: 'static {
     /// Layout style for this element as a Taffy `Style`. Called by the
@@ -128,13 +152,31 @@ pub trait Element: 'static {
         &[]
     }
 
-    /// Which layer this element belongs to. Dispatch and paint order.
-    fn layer(&self) -> Layer {
-        Layer::Chrome
+    /// Optional z-layer override for this element and its descendants.
+    /// Returning `None` means "inherit from parent" — the walker tracks
+    /// the running inherited layer and only concrete overrides change it.
+    ///
+    /// This differs from the pre-review signature (which returned a
+    /// default `Chrome` concretely) — that made `in_layer(Modal)`
+    /// effectively an every-child no-op, since default descendants would
+    /// silently reset back to `Chrome`.
+    fn layer(&self) -> Option<Layer> {
+        None
     }
 
     /// Stable type identifier (used by plugin hosts + debug logs).
     fn type_id(&self) -> &'static str;
+
+    /// Paint-time transform this element contributes to its descendants.
+    /// `(opacity_multiplier, translate_delta)` — the walker multiplies /
+    /// adds these into the inherited state when recursing into children.
+    ///
+    /// Default: identity (does nothing). Containers that support
+    /// animated styles override this to return their own current opacity
+    /// and translate so transitions propagate through the subtree.
+    fn paint_transform(&self) -> (f32, [f32; 2]) {
+        (1.0, [0.0, 0.0])
+    }
 
     /// Paint this element using `cx.bounds`. Children paint themselves
     /// via the walker; `paint` only emits primitives for `self`.
@@ -164,8 +206,10 @@ mod tests {
     }
 
     #[test]
-    fn default_layer_is_chrome() {
-        assert_eq!(Dummy.layer(), Layer::Chrome);
+    fn default_layer_is_inherit() {
+        // Default (`None`) means "inherit from parent"; the walker starts
+        // the root at Chrome and threads that through.
+        assert_eq!(Dummy.layer(), None);
     }
 
     #[test]
@@ -183,11 +227,7 @@ mod tests {
     }
 
     #[test]
-    fn default_taffy_style_and_children() {
-        let d = Dummy;
-        assert_eq!(d.children().len(), 0);
-        // Taffy's Default is Block layout — paint walker interprets it as
-        // "no flex container", perfectly valid for leaves.
-        let _ = d.taffy_style();
+    fn default_paint_transform_is_identity() {
+        assert_eq!(Dummy.paint_transform(), (1.0, [0.0, 0.0]));
     }
 }

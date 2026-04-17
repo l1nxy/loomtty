@@ -1,13 +1,21 @@
 //! `Div` — the canonical container element.
 //!
-//! A styled box with ordered children. Layout is flex by default (matches
-//! gpui's shape). Implements [`Styled`] so every builder method in that
-//! trait chains here: `div().flex_col().gap_1().bg(theme.surface).child(...)`.
+//! A styled box with ordered children. Layout defaults to **flex row**
+//! so `gap_*`, `items_*` and `justify_*` helpers work on a plain `div()`
+//! without an explicit `.flex()` call. Implements [`Styled`] so every
+//! builder method in that trait chains here:
+//!
+//! `div().flex_col().gap_1().bg(theme.surface).child(...)`.
+//!
+//! Paint-time transforms (opacity, translate) compose through the
+//! subtree via [`Element::paint_transform`] — the walker threads the
+//! inherited state, so `Div::paint` only has to fold its own values
+//! into its own emitted primitive.
 
 use crate::color::{mul_alpha, Color, TRANSPARENT};
 use crate::element::{Element, Layer, PaintCtx};
 use crate::layout::to_taffy_style;
-use crate::scene::{Scene, SdfRect};
+use crate::scene::SdfRect;
 use crate::style::{Shadow, Style};
 use crate::styled::Styled;
 
@@ -62,7 +70,8 @@ impl Div {
         self
     }
 
-    /// Override the layer this element belongs to. Default: `Chrome`.
+    /// Override the layer this element — and, via walker inheritance,
+    /// its descendants — belongs to. Default: inherit from parent.
     /// Named `in_layer` to avoid shadowing [`Element::layer`].
     pub fn in_layer(mut self, l: Layer) -> Self {
         self.layer_override = Some(l);
@@ -96,19 +105,52 @@ impl Element for Div {
         &self.children
     }
 
-    fn layer(&self) -> Layer {
-        self.layer_override.unwrap_or(Layer::Chrome)
+    fn layer(&self) -> Option<Layer> {
+        self.layer_override
     }
 
     fn type_id(&self) -> &'static str {
         "ciri.div"
     }
 
+    /// Opacity cascades multiplicatively and translate adds. These are
+    /// the values the walker threads into descendants' inherited state.
+    fn paint_transform(&self) -> (f32, [f32; 2]) {
+        let op = self.style.opacity.unwrap_or(1.0).clamp(0.0, 1.0);
+        let tr = self.style.translate.unwrap_or([0.0, 0.0]);
+        (op, tr)
+    }
+
     fn paint(&self, cx: &mut PaintCtx<'_>) {
         if !has_visual(&self.style) {
             return;
         }
-        emit_sdf_rect(&self.style, cx.bounds, cx.scene);
+
+        // Own opacity folded with whatever the walker inherited. The
+        // walker has already baked inherited translate into cx.bounds;
+        // we only add our own translate.
+        let own_opacity = self.style.opacity.unwrap_or(1.0).clamp(0.0, 1.0);
+        let effective_opacity = (cx.inherited_opacity * own_opacity).clamp(0.0, 1.0);
+        let own_translate = self.style.translate.unwrap_or([0.0, 0.0]);
+
+        let bg = self.style.background.unwrap_or(TRANSPARENT);
+        let border_c = self.style.border_color.unwrap_or(TRANSPARENT);
+        let border_w = self.style.border_width.unwrap_or(0.0).max(0.0);
+        let radii = self.style.corner_radii.unwrap_or([0.0; 4]);
+        let (shadow_blur, shadow_color, shadow_offset) = resolve_shadow(self.style.shadow);
+
+        let [x, y, w, h] = cx.bounds;
+        cx.push_sdf(SdfRect {
+            pos: [x + own_translate[0], y + own_translate[1]],
+            size: [w, h],
+            color: mul_alpha(bg, effective_opacity),
+            radii,
+            border_color: mul_alpha(border_c, effective_opacity),
+            border_width: border_w,
+            shadow_blur,
+            shadow_offset,
+            shadow_color: mul_alpha(shadow_color, effective_opacity),
+        });
     }
 }
 
@@ -120,35 +162,9 @@ fn has_visual(s: &Style) -> bool {
         || s.corner_radii.map_or(false, |r| r.iter().any(|v| *v > 0.0))
 }
 
-/// Collapse a styled Div into a single SDF instance. Transforms and
-/// opacity are folded into the geometry / color here so the shader has
-/// one uniform code path.
-fn emit_sdf_rect(s: &Style, bounds: [f32; 4], scene: &mut Scene) {
-    let opacity = s.opacity.unwrap_or(1.0).clamp(0.0, 1.0);
-    let translate = s.translate.unwrap_or([0.0, 0.0]);
-    let bg = s.background.unwrap_or(TRANSPARENT);
-    let border_c = s.border_color.unwrap_or(TRANSPARENT);
-    let border_w = s.border_width.unwrap_or(0.0).max(0.0);
-    let radii = s.corner_radii.unwrap_or([0.0; 4]);
-    let (shadow_blur, shadow_color, shadow_offset) = resolve_shadow(s.shadow);
-
-    scene.sdf_rects.push(SdfRect {
-        pos: [bounds[0] + translate[0], bounds[1] + translate[1]],
-        size: [bounds[2], bounds[3]],
-        color: mul_alpha(bg, opacity),
-        radii,
-        border_color: mul_alpha(border_c, opacity),
-        border_width: border_w,
-        shadow_blur,
-        shadow_offset,
-        shadow_color: mul_alpha(shadow_color, opacity),
-    });
-}
-
 /// Map the semantic `Shadow` enum to concrete (blur, color, offset).
-/// Kept tiny on purpose: these match the conventional Tailwind steps
-/// closely enough for ciri's chrome without shipping a design-token
-/// table yet.
+/// Values track Tailwind's steps closely enough for chrome without
+/// shipping a full design-token table yet.
 fn resolve_shadow(s: Option<Shadow>) -> (f32, Color, [f32; 2]) {
     match s {
         Some(Shadow::Sm) => (4.0, [0.0, 0.0, 0.0, 0.15], [0.0, 2.0]),
@@ -162,6 +178,7 @@ fn resolve_shadow(s: Option<Shadow>) -> (f32, Color, [f32; 2]) {
 mod tests {
     use super::*;
     use crate::elements::text;
+    use crate::scene::Scene;
     use crate::theme::ResolvedTheme;
 
     #[test]
@@ -176,9 +193,15 @@ mod tests {
     }
 
     #[test]
-    fn layer_override_sticks() {
+    fn layer_override_returns_some() {
         let d = div().in_layer(Layer::Modal);
-        assert_eq!(<Div as Element>::layer(&d), Layer::Modal);
+        assert_eq!(<Div as Element>::layer(&d), Some(Layer::Modal));
+    }
+
+    #[test]
+    fn layer_default_is_none_inherit() {
+        let d = div();
+        assert_eq!(<Div as Element>::layer(&d), None);
     }
 
     #[test]
@@ -189,9 +212,6 @@ mod tests {
 
     #[test]
     fn paint_with_no_visual_emits_nothing() {
-        // A bare `div()` with no bg / border / shadow / radius is purely a
-        // layout container. The paint pass must skip emission so layout-only
-        // containers don't pile up zero-alpha instances in the GPU buffer.
         let theme = ResolvedTheme::default();
         let mut scene = Scene::new();
         let mut pcx = PaintCtx {
@@ -200,6 +220,8 @@ mod tests {
             scene: &mut scene,
             scale: 1.0,
             element_id: Default::default(),
+            inherited_opacity: 1.0,
+            layer: Layer::Chrome,
         };
         div().paint(&mut pcx);
         assert!(scene.is_empty());
@@ -211,5 +233,18 @@ mod tests {
         assert!(blur > 0.0);
         assert!(color[3] > 0.0);
         assert_ne!(off, [0.0, 0.0]);
+    }
+
+    #[test]
+    fn paint_transform_reports_style_values() {
+        let d = div().opacity(0.5).translate(10.0, 20.0);
+        let (op, tr) = d.paint_transform();
+        assert!((op - 0.5).abs() < 1e-6);
+        assert_eq!(tr, [10.0, 20.0]);
+    }
+
+    #[test]
+    fn paint_transform_identity_when_unset() {
+        assert_eq!(div().paint_transform(), (1.0, [0.0, 0.0]));
     }
 }

@@ -797,8 +797,17 @@ impl App {
     }
 
     /// Delegate: advance all animations by dt seconds.
+    ///
+    /// Returns `true` if either the core `AnimationManager` (pane
+    /// compositor state) **or** the new `ciri-motion::Ticker` (chrome
+    /// widget animations via `AnimProp`) still has in-flight work.
+    /// Callers use this to decide whether to schedule another frame.
     pub fn advance_animations(&mut self, dt: f64) -> bool {
-        self.core.advance_animations(dt)
+        let core_animating = self.core.advance_animations(dt);
+        // AnimProp advances itself when its host calls `prop.advance(dt)`;
+        // the ticker just reports aggregate state, so there's nothing to
+        // tick here. Just OR the bool.
+        core_animating || self.motion_ticker.is_animating()
     }
 
     fn pane_visual_state(

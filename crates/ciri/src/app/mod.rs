@@ -206,6 +206,16 @@ pub(crate) struct App {
     /// can trigger `Cancelled` mid-connect. Exists only while the active slot
     /// is still in a transient `!connected` state — slot switches drop it.
     pub connection_cancel: Option<Arc<tokio::sync::Notify>>,
+
+    /// Redraw-gating ticker for the new `ciri-ui` animation layer.
+    ///
+    /// `ciri-motion::AnimProp` instances call `wake()` / `sleep()` on
+    /// this shared counter as they transition, so `advance_animations`
+    /// can OR `motion_ticker.is_animating()` with `AnimationManager`'s
+    /// bool to decide whether to schedule another frame. Distinct from
+    /// `core.anim_mgr` (which animates pane compositor state); the two
+    /// tickers coexist while widgets migrate over one at a time.
+    pub motion_ticker: Arc<ciri_motion::Ticker>,
 }
 
 impl App {
@@ -444,6 +454,7 @@ impl App {
             event_loop_proxy: None,
             pending_redraw: false,
             connection_cancel: None,
+            motion_ticker: Arc::new(ciri_motion::Ticker::new()),
         }
     }
 

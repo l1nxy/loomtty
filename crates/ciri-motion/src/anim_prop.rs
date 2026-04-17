@@ -56,8 +56,19 @@ impl<T: Lerp> AnimProp<T> {
 
     /// Start animating from the current displayed value to `target` using
     /// `transition`. If `target == target()` this is a no-op.
+    ///
+    /// A transition that is already settled at `elapsed = 0` (e.g. a
+    /// `Timed` with `duration_secs == 0.0`, or a `Spring` with
+    /// effectively-instant parameters) snaps synchronously: `current` is
+    /// updated in place and no in-flight animation is recorded. This
+    /// matches the caller's obvious intent ("no animation") and avoids a
+    /// stale frame plus a sticky `is_animating()` flag until the next tick.
     pub fn animate_to(&mut self, target: T, transition: Transition) {
         if self.target() == target {
+            return;
+        }
+        if transition.is_settled(0.0) {
+            self.jump_to(target);
             return;
         }
         self.anim = Some(InFlight {
@@ -161,5 +172,16 @@ mod tests {
         let mut p = AnimProp::new(7.0_f32);
         p.animate_to(7.0, linear(1.0));
         assert!(!p.is_animating());
+    }
+
+    #[test]
+    fn zero_duration_snaps_synchronously() {
+        let mut p = AnimProp::new(0.0_f32);
+        p.animate_to(10.0, linear(0.0));
+        // Caller's intent with a zero-duration transition is "no animation":
+        // current must update immediately, and is_animating must stay false.
+        assert_eq!(p.current(), 10.0);
+        assert!(!p.is_animating());
+        assert_eq!(p.target(), 10.0);
     }
 }

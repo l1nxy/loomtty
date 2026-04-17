@@ -1,5 +1,6 @@
 #[allow(dead_code)] // cursor-based widgets available for future component migration
 pub(crate) mod builder;
+mod connection_status;
 mod context_menu;
 mod hints_bar;
 pub(super) mod info_box;
@@ -13,6 +14,7 @@ pub(crate) mod tokens;
 mod top_bar;
 pub(crate) mod types;
 
+pub(crate) use connection_status::ConnectionStatusComponent;
 pub(crate) use context_menu::ContextMenuComponent;
 pub(crate) use hints_bar::HintsBarComponent;
 pub(crate) use info_box::InfoBoxComponent;
@@ -88,6 +90,7 @@ impl App {
         let context_menu = ContextMenuComponent::capture(self, &cx);
         let paste_dialog = PasteDialogComponent::capture(self, &cx);
         let infobox = InfoBoxComponent::capture(self, &cx);
+        let connection_status = ConnectionStatusComponent::capture(self, &cx);
         let overview_bar = if self.core.overview.active && self.core.overview.hovered_pane.is_some()
         {
             overview::overview_action_bar_data(self, self.core.overview.hovered_pane)
@@ -155,6 +158,11 @@ impl App {
                 overview::paint_overview_action_bar(d, overview_hover, &cx, &mut scene);
             }
             if let Some(component) = infobox {
+                component.paint(&cx, &mut scene);
+            }
+            // Banner sits above panes but below fully modal chrome (palette,
+            // paste-dialog, context-menu) so modals stay authoritative.
+            if let Some(component) = connection_status {
                 component.paint(&cx, &mut scene);
             }
             if let Some(component) = palette {

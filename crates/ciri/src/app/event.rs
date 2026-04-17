@@ -102,7 +102,10 @@ impl ApplicationHandler for App {
         // Idle-aware event loop: only poll at frame rate when animating or
         // expecting updates. Switch to Wait when idle to save power.
         let is_animating = self.core.anim_mgr.is_animating();
-        let is_reconnecting = self.core.reconnect_state.is_some();
+        // Treat both "backing off" and "parked on a permanent failure" as
+        // reasons to keep the event loop driving redraws — the banner counts
+        // up elapsed time and the spinner animates.
+        let is_reconnecting = self.core.reconnect_state.is_some() || self.core.is_halted();
         let wants_blink = self.core.config.terminal.cursor_blink;
         let has_remote_query =
             self.core.remote_query_rx.is_some() || !self.core.slot_session_pending.is_empty();
@@ -197,6 +200,7 @@ impl ApplicationHandler for App {
             // Auto-reconnect
             if !self.core.connected && self.core.server_rx.is_none() {
                 let has_reconnect = self.core.reconnect_state.is_some();
+                let halted = self.core.is_halted();
                 if let Some(plan) = self.prepare_reconnect() {
                     if plan.should_exit {
                         event_loop.exit();
@@ -204,7 +208,9 @@ impl ApplicationHandler for App {
                     }
                     self.finish_reconnect_attempt(self.connect(plan.viewport));
                     needs_redraw = true;
-                } else if has_reconnect {
+                } else if has_reconnect || halted {
+                    // Either backing off between retries or parked on a
+                    // permanent failure — render the banner and wait.
                     needs_redraw = true;
                 } else {
                     log::info!("server connection lost, exiting");
@@ -385,9 +391,10 @@ impl ApplicationHandler for App {
         };
         log::info!("connecting to session '{}'", self.core.session_name);
         match self.connect(viewport) {
-            Ok((tx, rx)) => {
+            Ok((tx, rx, cancel)) => {
                 self.core.server_tx = Some(tx);
                 self.core.server_rx = Some(rx);
+                self.connection_cancel = Some(cancel);
             }
             Err(e) => {
                 log::error!("failed to connect to server: {e}");

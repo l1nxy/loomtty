@@ -72,10 +72,26 @@ impl App {
                 host,
                 ssh_port,
             } => {
+                // The command is sent as a shell string that the server will
+                // eventually feed to `sh -c`. A host that passed validation
+                // is drawn from [A-Za-z0-9._-] (or a bracketed IPv6 literal),
+                // none of which are shell-active — but we re-check here so a
+                // poisoned config entry can't reach the shell.
+                if let Err(e) = crate::remote_validate::validate_fields(
+                    &host,
+                    ciri_protocol::transport::DEFAULT_REMOTE_PORT,
+                    ssh_port,
+                ) {
+                    log::warn!("refusing SSH shell to {host:?}: {e}");
+                    if let Some(palette) = &mut self.core.command_palette {
+                        palette.remote_error = Some(("SSH".to_string(), e.to_string()));
+                    }
+                    return;
+                }
                 let command = if ssh_port != 22 {
-                    format!("ssh -p {} {}", ssh_port, host)
+                    format!("ssh -p {} -- {}", ssh_port, host)
                 } else {
-                    format!("ssh {}", host)
+                    format!("ssh -- {}", host)
                 };
                 self.send(ClientMessage::RunCommand {
                     session_name: self.core.session_name.clone(),

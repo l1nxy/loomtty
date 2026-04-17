@@ -321,7 +321,82 @@ pub enum ServerEvent {
     Control(ServerMessage),
     CellDelta(CellDeltaBorrowed),
     FullPaneSync(FullPaneSyncBorrowed),
-    Disconnected,
+    Disconnected(DisconnectReason),
+}
+
+/// Why a server connection ended. Each emission point in the connection
+/// thread classifies the failure so the UI can distinguish "fix your config"
+/// from "just reconnect" and skip backoff on permanent errors.
+#[derive(Debug, Clone)]
+pub enum DisconnectReason {
+    // ── Permanent: don't retry ──
+    /// `ssh` binary missing from PATH.
+    SshNotFound,
+    /// `Command::spawn` failed for some other reason (e.g. fork).
+    SshSpawnFailed(String),
+    /// ssh: Could not resolve hostname …
+    DnsFailure(String),
+    /// ssh: Permission denied (publickey,…)
+    PermissionDenied(String),
+    /// known_hosts mismatch / man-in-the-middle warning.
+    HostKeyChanged(String),
+    /// ssh: connect to host X port Y: Connection refused
+    ConnectionRefused(String),
+    /// Protocol handshake rejected (version mismatch, bad magic, …).
+    HandshakeFailed(String),
+    /// Input validation bounced this target.
+    InvalidTarget(String),
+    /// User cancelled via Esc while connecting.
+    Cancelled,
+
+    // ── Transient: reconnect makes sense ──
+    /// No bytes received within the startup grace window.
+    Timeout,
+    /// Stream closed cleanly mid-session.
+    RemoteEof,
+    /// Unclassified IO error (retry with backoff).
+    Other(String),
+}
+
+impl DisconnectReason {
+    /// Permanent failures short-circuit the reconnect loop so the user sees
+    /// the error banner instead of 10 attempts of the same typo.
+    pub fn is_permanent(&self) -> bool {
+        use DisconnectReason::*;
+        matches!(
+            self,
+            SshNotFound
+                | SshSpawnFailed(_)
+                | DnsFailure(_)
+                | PermissionDenied(_)
+                | HostKeyChanged(_)
+                | ConnectionRefused(_)
+                | HandshakeFailed(_)
+                | InvalidTarget(_)
+                | Cancelled
+        )
+    }
+
+}
+
+impl std::fmt::Display for DisconnectReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use DisconnectReason::*;
+        match self {
+            SshNotFound => write!(f, "ssh binary not found in PATH"),
+            SshSpawnFailed(e) => write!(f, "failed to launch ssh: {e}"),
+            DnsFailure(s) => write!(f, "could not resolve hostname: {s}"),
+            PermissionDenied(s) => write!(f, "permission denied: {s}"),
+            HostKeyChanged(s) => write!(f, "host key changed: {s}"),
+            ConnectionRefused(s) => write!(f, "connection refused: {s}"),
+            HandshakeFailed(s) => write!(f, "handshake failed: {s}"),
+            InvalidTarget(s) => write!(f, "invalid target: {s}"),
+            Cancelled => write!(f, "cancelled"),
+            Timeout => write!(f, "connection timed out"),
+            RemoteEof => write!(f, "connection closed"),
+            Other(s) => write!(f, "{s}"),
+        }
+    }
 }
 
 /// Result returned from an async remote host query.

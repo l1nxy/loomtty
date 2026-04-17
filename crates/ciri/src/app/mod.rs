@@ -201,6 +201,10 @@ pub(crate) struct App {
     pub event_loop_proxy: Option<EventLoopProxy<()>>,
     /// Coalesced redraw request latched until the event loop reaches AboutToWait.
     pub pending_redraw: bool,
+    /// Notify handle shared with the active connection's IO thread so the UI
+    /// can trigger `Cancelled` mid-connect. Exists only while the active slot
+    /// is still in a transient `!connected` state — slot switches drop it.
+    pub connection_cancel: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl App {
@@ -438,26 +442,54 @@ impl App {
             pending_dpi: None,
             event_loop_proxy: None,
             pending_redraw: false,
+            connection_cancel: None,
         }
     }
 
     /// Connect to the server, either locally or via remote SSH tunnel.
+    ///
+    /// Returns the message/event channels and a `Notify` handle the caller
+    /// should stash in `App::connection_cancel`. Signalling that handle tears
+    /// the tunnel down and surfaces `DisconnectReason::Cancelled`.
     pub fn connect(
         &self,
         viewport: ciri_protocol::codec::ClientHello,
-    ) -> std::io::Result<(Sender<ClientMessage>, Receiver<ServerEvent>)> {
+    ) -> std::io::Result<(
+        Sender<ClientMessage>,
+        Receiver<ServerEvent>,
+        Arc<tokio::sync::Notify>,
+    )> {
         let proxy = self.event_loop_proxy.clone();
-        if let Some(ref rc) = self.core.remote_config {
-            crate::connection::connect_remote(&rc.host, rc.port, rc.ssh_port, viewport, proxy)
+        let cancel = Arc::new(tokio::sync::Notify::new());
+        let (tx, rx) = if let Some(ref rc) = self.core.remote_config {
+            crate::connection::connect_remote(
+                &rc.host,
+                rc.port,
+                rc.ssh_port,
+                viewport,
+                proxy,
+                cancel.clone(),
+            )?
         } else {
-            crate::connection::connect_or_spawn(&self.core.session_name, viewport, proxy)
-        }
+            crate::connection::connect_or_spawn(
+                &self.core.session_name,
+                viewport,
+                proxy,
+                cancel.clone(),
+            )?
+        };
+        Ok((tx, rx, cancel))
     }
 
     /// Save the current per-connection state into a ConnectionSlot and reset App fields.
     fn save_current_to_slot(&mut self) -> Option<ConnectionSlot> {
         let server_tx = self.core.server_tx.take()?;
         let server_rx = self.core.server_rx.take()?;
+        // Cancel handle is tied to the active slot only — if the user
+        // backgrounds a still-connecting slot, they can't Esc-cancel it from
+        // the background. Dropping the handle is safe because the IO thread
+        // keeps its own clone.
+        self.connection_cancel = None;
 
         let kind = if let Some(ref rc) = self.core.remote_config {
             ConnectionKind::Remote {
@@ -652,7 +684,21 @@ impl App {
         ssh_port: u16,
         session_name: String,
     ) {
+        // Defence-in-depth: every upstream caller is supposed to have
+        // validated already, but bypassing this gate would reach `ssh` with
+        // untrusted bytes, so we re-check before spawning.
+        if let Err(e) = crate::remote_validate::validate_fields(&host, port, ssh_port) {
+            log::error!("refusing to connect to {host:?}: {e}");
+            if let Some(palette) = &mut self.core.command_palette {
+                palette.remote_error = Some(("Remote".to_string(), e.to_string()));
+            }
+            return;
+        }
+
         let slot_id = format!("remote:{}:{}", host, port);
+
+        // Fresh attempt starts with no stale error hanging over the UI.
+        self.core.last_disconnect_reason = None;
 
         // If a slot already exists for this remote, switch to it instead
         if self.core.background_slots.contains_key(&slot_id) {
@@ -681,16 +727,27 @@ impl App {
 
         let viewport = self.current_viewport();
         match self.connect(viewport) {
-            Ok((tx, rx)) => {
+            Ok((tx, rx, cancel)) => {
                 self.core.server_tx = Some(tx);
                 self.core.server_rx = Some(rx);
+                self.connection_cancel = Some(cancel);
                 // Record only after connection was successfully initiated.
                 self.core.record_recent_host(&host, port, ssh_port);
                 crate::recent_hosts::save(&self.core.recent_hosts);
             }
             Err(e) => {
                 log::error!("remote connection failed: {e}");
-                self.mark_disconnected_for_reconnect();
+                // The IO error text from `connect()` already carries the
+                // validation / spawn detail; preserve it as the reason so the
+                // banner can show it instead of a generic "disconnected".
+                let reason = if e.kind() == std::io::ErrorKind::InvalidInput {
+                    ciri_app::app::DisconnectReason::InvalidTarget(e.to_string())
+                } else if e.kind() == std::io::ErrorKind::NotFound {
+                    ciri_app::app::DisconnectReason::SshNotFound
+                } else {
+                    ciri_app::app::DisconnectReason::SshSpawnFailed(e.to_string())
+                };
+                self.mark_disconnected_for_reconnect(reason);
             }
         }
 
@@ -703,40 +760,44 @@ impl App {
         }
     }
 
-    /// Parse a `user@host[:ssh_port]` string and connect.
-    /// Uses default remote port (7890) and session name "default".
+    /// Parse a `[user@]host[:ssh_port]` string and connect.
+    /// Uses the protocol's default remote port and session name "default".
     pub fn connect_remote_from_input(&mut self, input: &str) {
-        let input = input.trim();
-        // Parse optional :port suffix (ssh port)
-        let (host, ssh_port) = if let Some(colon) = input.rfind(':') {
-            if let Ok(port) = input[colon + 1..].parse::<u16>() {
-                (&input[..colon], port)
-            } else {
-                (input, 22)
+        let target = match crate::remote_validate::parse_input(input, 22) {
+            Ok(t) => t,
+            Err(e) => {
+                log::warn!("invalid remote host input: {input:?} — {e}");
+                if let Some(palette) = &mut self.core.command_palette {
+                    palette.remote_error = Some(("Input".to_string(), e.to_string()));
+                }
+                return;
             }
-        } else {
-            (input, 22)
         };
 
-        if host.is_empty() {
-            return;
-        }
-
-        if let Err(reason) = validate_remote_host(host) {
-            log::warn!("invalid remote host input: {host:?} — {reason}");
-            if let Some(palette) = &mut self.core.command_palette {
-                palette.remote_error = Some(("Input".to_string(), reason));
-            }
-            return;
-        }
-
-        let remote_port = 7890;
+        // Preserve the user@ prefix when the user supplied one, otherwise pass
+        // the bare host to ssh (it will use the current OS username).
+        let host_arg = match target.user {
+            Some(u) => format!("{u}@{}", target.host),
+            None => target.host,
+        };
         self.connect_remote_session(
-            host.to_string(),
-            remote_port,
-            ssh_port,
+            host_arg,
+            ciri_protocol::transport::DEFAULT_REMOTE_PORT,
+            target.ssh_port,
             "default".to_string(),
         );
+
+        // If the connect attempt failed synchronously with a permanent reason
+        // (bad ssh binary, validation bounce, etc.), mirror it into the
+        // palette footer so the user sees the error before the palette closes.
+        // Transient async failures are surfaced later by the banner/reconnect
+        // machinery in batch 2; here we only cover the immediate-fail path.
+        if let Some(reason) = self.core.last_disconnect_reason.as_ref()
+            && reason.is_permanent()
+            && let Some(palette) = &mut self.core.command_palette
+        {
+            palette.remote_error = Some(("Connection".to_string(), reason.to_string()));
+        }
     }
 
     /// Cycle to the next background connection slot.
@@ -1098,9 +1159,50 @@ impl App {
         self.core.write_last_session();
     }
 
-    pub fn mark_disconnected_for_reconnect(&mut self) {
-        self.core.mark_disconnected_for_reconnect();
+    pub fn mark_disconnected_for_reconnect(
+        &mut self,
+        reason: ciri_app::app::DisconnectReason,
+    ) {
+        self.core.mark_disconnected_for_reconnect(reason);
+        // The IO thread is gone — its cancel endpoint has no listener.
+        self.connection_cancel = None;
         self.clear_render_caches();
+    }
+
+    /// User pressed Esc while a connection is still pending ("Connecting…"
+    /// or "Reconnecting…"). Signals the IO thread to stop, clears any
+    /// outstanding retry schedule, and falls back to a background slot if
+    /// one exists so the app doesn't exit out from under the user.
+    pub fn cancel_connection_attempt(&mut self) {
+        if let Some(cancel) = &self.connection_cancel {
+            cancel.notify_one();
+        }
+        // Whatever Disconnected(Cancelled) the IO thread will eventually
+        // send lands on the old slot's channel — harmless either way — but
+        // we short-circuit the retry loop now so the user doesn't see
+        // "Reconnecting (2/10)" flash after they cancelled.
+        self.core.reconnect_state = None;
+        self.dismiss_halted_connection();
+    }
+
+    /// User pressed Esc on the halted-connection banner. Prefer to fall back
+    /// to an existing background slot so a bad remote attempt doesn't take
+    /// the whole app with it; only let the event loop wind down when there's
+    /// nothing else to show.
+    pub fn dismiss_halted_connection(&mut self) {
+        self.core.last_disconnect_reason = None;
+        if self.core.background_slots.is_empty() {
+            return;
+        }
+        // Pick the most-recently-seen background slot. `background_slots` is
+        // a HashMap so we sort the ids for determinism across runs, matching
+        // how `flat_session_list` already orders them.
+        let mut ids: Vec<String> = self.core.background_slots.keys().cloned().collect();
+        ids.sort();
+        if let Some(id) = ids.first() {
+            let id = id.clone();
+            self.switch_to_slot(&id);
+        }
     }
 
     pub fn prepare_reconnect(&mut self) -> Option<ReconnectPlan> {
@@ -1125,10 +1227,14 @@ impl App {
         result: std::io::Result<(
             crossbeam_channel::Sender<ClientMessage>,
             crossbeam_channel::Receiver<ServerEvent>,
+            Arc<tokio::sync::Notify>,
         )>,
     ) {
         match result {
-            Ok((tx, rx)) => self.core.finish_reconnect_ok(tx, rx),
+            Ok((tx, rx, cancel)) => {
+                self.core.finish_reconnect_ok(tx, rx);
+                self.connection_cancel = Some(cancel);
+            }
             Err(e) => {
                 log::warn!("reconnect failed: {e}");
                 self.core.finish_reconnect_err();
@@ -1244,43 +1350,9 @@ impl App {
     }
 }
 
-/// Validate a remote host string (`user@hostname` or `user@ip`).
-/// Returns `Ok(())` if the input looks reasonable, or `Err(reason)` with a
-/// user-facing error message.
-fn validate_remote_host(host: &str) -> Result<(), String> {
-    // Must contain exactly one '@' separating user and hostname.
-    let Some(at) = host.find('@') else {
-        return Err("expected user@host format".to_string());
-    };
-    let user = &host[..at];
-    let hostname = &host[at + 1..];
-
-    if user.is_empty() {
-        return Err("username cannot be empty".to_string());
-    }
-    if hostname.is_empty() {
-        return Err("hostname cannot be empty".to_string());
-    }
-
-    // Hostname must only contain valid characters (alphanumeric, '.', '-', ':' for IPv6, '_').
-    if !hostname
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '_' | '[' | ']'))
-    {
-        return Err(format!("hostname contains invalid characters: {hostname}"));
-    }
-
-    // Hostname shouldn't start or end with '-' or '.'.
-    if hostname.starts_with('-') || hostname.starts_with('.') {
-        return Err(format!("hostname cannot start with '{}'", &hostname[..1]));
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
-mod tests_validate_remote_host {
-    use super::{App, validate_remote_host};
+mod tests_app_layout {
+    use super::App;
     use ciri_config::config::{CiriConfig, StatusBarPosition};
     use winit::dpi::PhysicalSize;
 
@@ -1293,40 +1365,6 @@ mod tests_validate_remote_host {
         let mut app = App::new(config, "test-session");
         app.preview_resize(PhysicalSize::new(900, 700));
         app
-    }
-
-    #[test]
-    fn valid_hosts() {
-        assert!(validate_remote_host("user@example.com").is_ok());
-        assert!(validate_remote_host("root@192.168.1.1").is_ok());
-        assert!(validate_remote_host("deploy@my-server.local").is_ok());
-        assert!(validate_remote_host("user@[::1]").is_ok());
-    }
-
-    #[test]
-    fn missing_at() {
-        assert!(validate_remote_host("ffff").is_err());
-        assert!(validate_remote_host("just-a-hostname").is_err());
-    }
-
-    #[test]
-    fn empty_parts() {
-        assert!(validate_remote_host("@host").is_err());
-        assert!(validate_remote_host("user@").is_err());
-        assert!(validate_remote_host("@").is_err());
-    }
-
-    #[test]
-    fn invalid_hostname_chars() {
-        assert!(validate_remote_host("user@host name").is_err());
-        assert!(validate_remote_host("user@host/path").is_err());
-        assert!(validate_remote_host("user@host;rm -rf").is_err());
-    }
-
-    #[test]
-    fn hostname_start() {
-        assert!(validate_remote_host("user@-bad").is_err());
-        assert!(validate_remote_host("user@.bad").is_err());
     }
 
     #[test]

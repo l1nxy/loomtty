@@ -218,6 +218,28 @@ impl App {
             return;
         }
 
+        // Esc during any `!connected` state takes priority over every other
+        // binding so the user can always bail:
+        //   - halted (permanent failure) → dismiss banner, fall back slot
+        //   - connecting / reconnecting  → cancel in-flight attempt
+        // Other `!connected` shapes (no cancel handle, no reconnect state)
+        // mean nothing is in flight — let Esc fall through to the normal
+        // binding pipeline.
+        if !self.core.connected
+            && matches!(&event.logical_key, Key::Named(NamedKey::Escape))
+        {
+            if self.core.is_halted() {
+                self.dismiss_halted_connection();
+                self.request_redraw();
+                return;
+            }
+            if self.connection_cancel.is_some() || self.core.reconnect_state.is_some() {
+                self.cancel_connection_attempt();
+                self.request_redraw();
+                return;
+            }
+        }
+
         self.reset_cursor_blink_on_input();
         let modifiers = KeyModifiers::from_winit(self.modifiers);
 

@@ -5,6 +5,7 @@ mod control;
 mod grid;
 mod init;
 mod recent_hosts;
+mod remote_validate;
 
 use anyhow::Result;
 use app::App;
@@ -153,6 +154,11 @@ fn main() -> Result<()> {
         ssh_port,
     } = cli
     {
+        if let Err(e) = remote_validate::validate_fields(&host, port, ssh_port) {
+            eprintln!("error: invalid remote target: {e}");
+            std::process::exit(2);
+        }
+
         let session_name = session_name.unwrap_or_else(|| {
             // For remote connections, probe the remote server for existing sessions
             // and attach to the most recently active one.  Generating a random local
@@ -168,7 +174,8 @@ fn main() -> Result<()> {
             }
         });
 
-        let config = CiriConfig::load().unwrap_or_default();
+        let mut config = CiriConfig::load().unwrap_or_default();
+        sanitize_remote_hosts(&mut config);
         log::info!(
             "config: font={} size={}, remote={}:{}, session={}",
             config.font.family,
@@ -203,7 +210,8 @@ fn main() -> Result<()> {
             "warning: No config file found. Run `ciritty init` to set up your configuration."
         );
     }
-    let config = CiriConfig::load().unwrap_or_default();
+    let mut config = CiriConfig::load().unwrap_or_default();
+    sanitize_remote_hosts(&mut config);
     log::info!(
         "config: font={} size={}, session={}",
         config.font.family,
@@ -224,6 +232,26 @@ fn main() -> Result<()> {
 
 fn last_session_path() -> PathBuf {
     ciri_protocol::transport::state_dir().join("last-session")
+}
+
+/// Drop any `[[remote.hosts]]` entries whose fields would be rejected at
+/// connect time. We log a warning per bad entry but never refuse to start —
+/// a broken config section shouldn't prevent local sessions from working.
+fn sanitize_remote_hosts(config: &mut CiriConfig) {
+    config.remote.hosts.retain(|h| {
+        match remote_validate::validate_fields(&h.host, h.port, h.ssh_port) {
+            Ok(()) => true,
+            Err(e) => {
+                log::warn!(
+                    "config: dropping invalid [[remote.hosts]] entry {:?} ({}:{}): {e}",
+                    h.name,
+                    h.host,
+                    h.port
+                );
+                false
+            }
+        }
+    });
 }
 
 fn resolve_session_launch(cli: CliCommand) -> SessionLaunchChoice {

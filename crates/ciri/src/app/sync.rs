@@ -412,10 +412,20 @@ impl App {
                     | ServerEvent::Control(ServerMessage::PaneListReply { .. })
                     | ServerEvent::Control(ServerMessage::CommandResult { .. })
                     | ServerEvent::Control(ServerMessage::LayoutReply { .. }) => {}
-                    ServerEvent::Disconnected => {
+                    ServerEvent::Disconnected(reason) => {
+                        // If the text-input palette is still open (async failure
+                        // arrived before the user closed it), mirror the reason
+                        // into the footer so they see DNS/auth errors instead of
+                        // the palette just vanishing.
+                        if let Some(palette) = &mut self.core.command_palette
+                            && palette.remote_input_mode
+                        {
+                            palette.remote_error =
+                                Some(("Connection".to_string(), reason.to_string()));
+                        }
                         // Preserve pane_grids for scrollback history — they'll be
                         // validated against server state on reconnect via FullPaneSync.
-                        self.mark_disconnected_for_reconnect();
+                        self.mark_disconnected_for_reconnect(reason);
                         return true;
                     }
                 }

@@ -40,6 +40,9 @@ pub struct AppModel {
 
     pub connected: bool,
     pub reconnect_state: Option<ReconnectState>,
+    /// Why the most recent connection ended. Drives banner text and the
+    /// decision to short-circuit reconnect for permanent failures.
+    pub last_disconnect_reason: Option<DisconnectReason>,
 
     pub input: InputHandler,
     pub anim_mgr: AnimationManager,
@@ -154,6 +157,7 @@ impl AppModel {
             server_rx: None,
             connected: false,
             reconnect_state: None,
+            last_disconnect_reason: None,
             input,
             anim_mgr: AnimationManager::new(),
             overview: OverviewState {
@@ -290,10 +294,9 @@ impl AppModel {
         let _ = std::fs::write(path, &self.session_name);
     }
 
-    pub fn mark_disconnected_for_reconnect(&mut self) {
-        log::warn!("disconnected from server");
+    pub fn mark_disconnected_for_reconnect(&mut self, reason: DisconnectReason) {
+        log::warn!("disconnected: {reason}");
         self.connected = false;
-        // Clear session caches — server state is unknown after disconnect
         self.cached_local_sessions.clear();
         self.cached_slot_sessions.clear();
         self.cached_remote_probes.clear();
@@ -302,16 +305,33 @@ impl AppModel {
         }
         self.server_tx = None;
         self.server_rx = None;
-        self.reconnect_state = Some(ReconnectState {
-            attempt: 0,
-            max_attempts: 10,
-            next_retry: Instant::now() + Duration::from_millis(500),
-            backoff: Duration::from_millis(500),
-        });
+        let permanent = reason.is_permanent();
+        self.last_disconnect_reason = Some(reason);
+        if permanent {
+            // Short-circuit the backoff loop. `prepare_reconnect_plan` will
+            // see `reconnect_state = None` + permanent reason and give up,
+            // so the user gets a banner instead of 10 doomed retries.
+            self.reconnect_state = None;
+        } else {
+            self.reconnect_state = Some(ReconnectState {
+                attempt: 0,
+                max_attempts: 10,
+                next_retry: Instant::now() + Duration::from_millis(500),
+                backoff: Duration::from_millis(500),
+            });
+        }
     }
 
     pub fn prepare_reconnect_plan(&self) -> Option<ReconnectPlanDecision> {
         if self.connected || self.server_rx.is_some() {
+            return None;
+        }
+
+        // Permanent failure → halted: no further action, just keep the event
+        // loop alive so the banner stays visible until the user dismisses it.
+        // `is_halted()` drives both the UI and the event loop's shouldn't-
+        // exit decision.
+        if self.is_halted() {
             return None;
         }
 
@@ -320,7 +340,7 @@ impl AppModel {
             .as_ref()
             .is_some_and(|state| state.attempt >= state.max_attempts);
         if gave_up {
-            log::error!("max reconnect attempts reached, exiting");
+            log::error!("max reconnect attempts reached");
             return Some(ReconnectPlanDecision::GaveUp);
         }
 
@@ -335,6 +355,19 @@ impl AppModel {
         Some(ReconnectPlanDecision::Try)
     }
 
+    /// True when the connection ended with a permanent failure and we're
+    /// parked waiting for the user to dismiss the banner. In this state the
+    /// event loop must keep rendering (for the banner) and must not exit.
+    pub fn is_halted(&self) -> bool {
+        !self.connected
+            && self.server_rx.is_none()
+            && self.reconnect_state.is_none()
+            && self
+                .last_disconnect_reason
+                .as_ref()
+                .is_some_and(|r| r.is_permanent())
+    }
+
     pub fn bump_reconnect_attempt(&mut self) {
         if let Some(state) = &mut self.reconnect_state {
             state.attempt += 1;
@@ -346,6 +379,8 @@ impl AppModel {
         self.server_tx = Some(tx);
         self.server_rx = Some(rx);
         self.reconnect_state = None;
+        // Don't let a successful reconnect keep the old failure banner around.
+        self.last_disconnect_reason = None;
     }
 
     pub fn finish_reconnect_err(&mut self) {

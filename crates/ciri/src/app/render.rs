@@ -596,6 +596,29 @@ impl App {
         self.hash_context_menu(&mut hasher);
         self.hash_pending_paste(&mut hasher);
 
+        // Connection-status banner — hash everything its `capture` reads so
+        // state transitions trigger a redraw. `server_rx.is_some()` matters
+        // because the "Connecting" arm flips on that signal alone, even when
+        // `connected` stays false.
+        self.core.connected.hash(&mut hasher);
+        self.core.server_rx.is_some().hash(&mut hasher);
+        if let Some(state) = &self.core.reconnect_state {
+            state.attempt.hash(&mut hasher);
+            state.max_attempts.hash(&mut hasher);
+        } else {
+            u32::MAX.hash(&mut hasher);
+        }
+        if let Some(reason) = &self.core.last_disconnect_reason {
+            reason.to_string().hash(&mut hasher);
+        } else {
+            "".hash(&mut hasher);
+        }
+        // `target` comes from remote_config.host or session_name; session_name
+        // is already hashed above, so we only need the remote host here.
+        if let Some(rc) = &self.core.remote_config {
+            rc.host.hash(&mut hasher);
+        }
+
         hasher.finish()
     }
 

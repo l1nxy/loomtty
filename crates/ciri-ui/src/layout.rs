@@ -20,21 +20,26 @@ use taffy::TraversePartialTree;
 
 use crate::element::{Element, Layer, PaintCtx};
 use crate::scene::Scene;
+use crate::shaper::TextShaper;
 use crate::style::{
     AlignItems as UiAlignItems, Display as UiDisplay, FlexDirection as UiFlexDirection,
     JustifyContent as UiJustifyContent, Length,
 };
 use crate::theme::ResolvedTheme;
 
-/// Layout and paint an element tree into a [`Scene`].
+/// Layout and paint an element tree into a fresh [`Scene`].
+///
+/// `text_shaper` is the host's bridge for measuring + emitting text;
+/// tests can pass [`crate::shaper::NullShaper`].
 pub fn paint_tree(
     root: &dyn Element,
     theme: &ResolvedTheme,
     viewport: [f32; 2],
     scale: f32,
+    text_shaper: &mut dyn TextShaper,
 ) -> Scene {
     let mut scene = Scene::new();
-    paint_tree_into(root, theme, viewport, scale, &mut scene);
+    paint_tree_into(root, theme, viewport, scale, text_shaper, &mut scene);
     scene
 }
 
@@ -44,6 +49,7 @@ pub fn paint_tree_into(
     theme: &ResolvedTheme,
     viewport: [f32; 2],
     scale: f32,
+    text_shaper: &mut dyn TextShaper,
     scene: &mut Scene,
 ) {
     let mut tree = taffy::TaffyTree::<()>::new();
@@ -67,6 +73,7 @@ pub fn paint_tree_into(
         /* inherited_layer */ Layer::Chrome,
         theme,
         scale,
+        text_shaper,
         scene,
     );
 }
@@ -98,6 +105,7 @@ fn paint_node(
     inherited_layer: Layer,
     theme: &ResolvedTheme,
     scale: f32,
+    text_shaper: &mut dyn TextShaper,
     scene: &mut Scene,
 ) {
     let layout = match tree.layout(node) {
@@ -125,6 +133,7 @@ fn paint_node(
         theme,
         bounds: [paint_x, paint_y, layout.size.width, layout.size.height],
         scene,
+        text_shaper,
         scale,
         element_id: Default::default(),
         inherited_opacity,
@@ -159,6 +168,7 @@ fn paint_node(
             effective_layer,
             theme,
             scale,
+            text_shaper,
             scene,
         );
     }
@@ -285,19 +295,19 @@ mod tests {
     }
 
     fn first_chrome(scene: &Scene) -> &crate::scene::SdfRect {
-        &scene.layer(Layer::Chrome)[0]
+        &scene.sdf_in_layer(Layer::Chrome)[0]
     }
 
     #[test]
     fn empty_div_produces_no_sdf_rects() {
-        let scene = paint_tree(&div(), &theme(), [800.0, 600.0], 1.0);
+        let scene = paint_tree(&div(), &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
         assert!(scene.is_empty());
     }
 
     #[test]
     fn div_with_bg_emits_one_sdf_rect() {
         let root = div().w(100.0).h(40.0).bg(ACCENT);
-        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0);
+        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
         assert_eq!(scene.len(), 1);
         let q = first_chrome(&scene);
         assert_eq!(q.size, [100.0, 40.0]);
@@ -316,8 +326,8 @@ mod tests {
             .gap(10.0) // gap only works on flex containers
             .child(div().w(100.0).h(40.0).bg(ACCENT))
             .child(div().w(100.0).h(40.0).bg(ACCENT));
-        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0);
-        let rects = scene.layer(Layer::Chrome);
+        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
+        let rects = scene.sdf_in_layer(Layer::Chrome);
         assert_eq!(rects.len(), 2);
         assert_eq!(rects[0].pos[1], rects[1].pos[1], "must be same row");
         assert!(
@@ -334,8 +344,8 @@ mod tests {
             .flex_col()
             .child(div().w(100.0).h(40.0).bg(ACCENT))
             .child(div().w(100.0).h(40.0).bg(ACCENT));
-        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0);
-        let rects = scene.layer(Layer::Chrome);
+        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
+        let rects = scene.sdf_in_layer(Layer::Chrome);
         assert_eq!(rects.len(), 2);
         assert!((rects[0].pos[1] - 0.0).abs() < 0.5);
         assert!((rects[1].pos[1] - 40.0).abs() < 0.5);
@@ -349,8 +359,8 @@ mod tests {
             .p(8.0)
             .flex_col()
             .child(div().w(40.0).h(40.0).bg(ACCENT));
-        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0);
-        let c = &scene.layer(Layer::Chrome)[0];
+        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
+        let c = &scene.sdf_in_layer(Layer::Chrome)[0];
         assert!((c.pos[0] - 8.0).abs() < 0.5);
         assert!((c.pos[1] - 8.0).abs() < 0.5);
     }
@@ -364,8 +374,8 @@ mod tests {
             .gap(12.0)
             .child(div().w(100.0).h(40.0).bg(ACCENT))
             .child(div().w(100.0).h(40.0).bg(ACCENT));
-        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0);
-        let rects = scene.layer(Layer::Chrome);
+        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
+        let rects = scene.sdf_in_layer(Layer::Chrome);
         let a = &rects[0];
         let b = &rects[1];
         assert!((b.pos[0] - (a.pos[0] + 100.0 + 12.0)).abs() < 0.5);
@@ -373,7 +383,7 @@ mod tests {
 
     #[test]
     fn text_leaf_does_not_emit_sdf() {
-        let scene = paint_tree(&text("hello"), &theme(), [800.0, 600.0], 1.0);
+        let scene = paint_tree(&text("hello"), &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
         assert!(scene.is_empty());
     }
 
@@ -381,7 +391,7 @@ mod tests {
     fn display_none_removes_element() {
         let mut root = div().w(100.0).h(100.0).bg(ACCENT);
         root.style_mut().display = Some(Display::None);
-        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0);
+        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
         assert!(scene.is_empty());
     }
 
@@ -398,8 +408,8 @@ mod tests {
             .bg(ACCENT)
             .opacity(0.5)
             .child(div().w(50.0).h(50.0).bg(ACCENT));
-        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0);
-        let rects = scene.layer(Layer::Chrome);
+        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
+        let rects = scene.sdf_in_layer(Layer::Chrome);
         assert_eq!(rects.len(), 2);
         // Wrapper: 0.5 opacity applied to ACCENT.alpha (1.0) → 0.5
         assert!((rects[0].color[3] - 0.5).abs() < 1e-3, "wrapper alpha");
@@ -422,8 +432,8 @@ mod tests {
             .bg(ACCENT)
             .translate(10.0, 20.0)
             .child(div().w(50.0).h(50.0).bg(ACCENT));
-        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0);
-        let rects = scene.layer(Layer::Chrome);
+        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
+        let rects = scene.sdf_in_layer(Layer::Chrome);
         assert_eq!(rects.len(), 2);
         let wrapper = &rects[0];
         let child = &rects[1];
@@ -451,8 +461,8 @@ mod tests {
                     .translate(5.0, 0.0)
                     .child(div().w(20.0).h(20.0).bg(ACCENT)),
             );
-        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0);
-        let rects = scene.layer(Layer::Chrome);
+        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
+        let rects = scene.sdf_in_layer(Layer::Chrome);
         // grand-child: 0 layout + 10 + 5 = 15
         let gc = &rects[2];
         assert!((gc.pos[0] - 15.0).abs() < 0.5, "grandchild.x={}", gc.pos[0]);
@@ -475,11 +485,11 @@ mod tests {
                     .bg([1.0, 0.0, 0.0, 1.0]),
             )
             .child(div().w(100.0).h(100.0).bg([0.0, 1.0, 0.0, 1.0]));
-        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0);
+        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
         // Modal bucket gets the red rect even though it was the first
         // child; chrome bucket gets the green one.
-        assert_eq!(scene.layer(Layer::Modal).len(), 1);
-        assert_eq!(scene.layer(Layer::Chrome).len(), 1);
+        assert_eq!(scene.sdf_in_layer(Layer::Modal).len(), 1);
+        assert_eq!(scene.sdf_in_layer(Layer::Chrome).len(), 1);
         // Flattened paint order: Chrome before Modal → modal paints last.
         let flat = scene.sdf_rects();
         assert_eq!(flat[0].color, [0.0, 1.0, 0.0, 1.0], "chrome first");
@@ -499,8 +509,8 @@ mod tests {
                 .bg([1.0, 0.0, 0.0, 1.0])
                 .child(div().w(50.0).h(50.0).bg([0.5, 0.0, 0.0, 1.0])),
         );
-        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0);
-        assert_eq!(scene.layer(Layer::Modal).len(), 2);
-        assert_eq!(scene.layer(Layer::Chrome).len(), 0);
+        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
+        assert_eq!(scene.sdf_in_layer(Layer::Modal).len(), 2);
+        assert_eq!(scene.sdf_in_layer(Layer::Chrome).len(), 0);
     }
 }

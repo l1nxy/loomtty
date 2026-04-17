@@ -10,7 +10,9 @@
 //! boundaries cleanly: a fading/sliding wrapper visibly affects every
 //! descendant, and `in_layer(Modal)` wins z-order for its entire subtree.
 
+use crate::color::Color;
 use crate::scene::Scene;
+use crate::shaper::TextShaper;
 use crate::theme::ResolvedTheme;
 
 /// Opaque identifier for a single element in the retained tree. The ID
@@ -87,6 +89,10 @@ pub struct PaintCtx<'a> {
     /// add its own `translate` (if any) when emitting its primitive.
     pub bounds: [f32; 4],
     pub scene: &'a mut Scene,
+    /// Text shaper for glyph measurement + emission. Provided by the
+    /// host (ciri-app wraps `UiTextShaper` + `GlyphCache`); tests use
+    /// [`crate::shaper::NullShaper`].
+    pub text_shaper: &'a mut dyn TextShaper,
     pub scale: f32,
     pub element_id: ElementId,
     /// Cumulative opacity from the walker. Multiply this with the
@@ -105,6 +111,15 @@ impl<'a> PaintCtx<'a> {
     /// Convenience: push an SDF rect into the effective layer.
     pub fn push_sdf(&mut self, rect: crate::scene::SdfRect) {
         self.scene.push_sdf(self.layer, rect);
+    }
+
+    /// Convenience: shape `content` through the host shaper into the
+    /// current layer. Folds in `inherited_opacity` on the alpha channel
+    /// so text fades with its wrapper.
+    pub fn emit_text(&mut self, content: &str, pos: [f32; 2], color: Color, font_size_px: f32) {
+        let faded = [color[0], color[1], color[2], color[3] * self.inherited_opacity];
+        self.text_shaper
+            .emit(content, pos, faded, font_size_px, self.layer, self.scene);
     }
 }
 

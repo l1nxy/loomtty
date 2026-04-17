@@ -214,10 +214,12 @@ mod tests {
     fn paint_with_no_visual_emits_nothing() {
         let theme = ResolvedTheme::default();
         let mut scene = Scene::new();
+        let mut shaper = crate::shaper::NullShaper;
         let mut pcx = PaintCtx {
             theme: &theme,
             bounds: [0.0, 0.0, 100.0, 40.0],
             scene: &mut scene,
+            text_shaper: &mut shaper,
             scale: 1.0,
             element_id: Default::default(),
             inherited_opacity: 1.0,

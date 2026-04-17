@@ -1,20 +1,22 @@
 //! `Text` — leaf element for a single string of chrome text.
 //!
 //! Carries content, an optional colour override, and an optional
-//! font-size override. Layout size is computed at `taffy_style()` time
-//! via a heuristic (real shaper measurement happens during paint
-//! through the injected [`crate::shaper::TextShaper`]). Paint emits
-//! glyph instances into the host-provided shaper, which turns them
-//! into GPU draws.
+//! font-size override. Layout is driven by the host `TextShaper`
+//! through Taffy's `compute_layout_with_measure` (via
+//! [`crate::layout::NodeContext::Text`]) so proportional fonts, CJK,
+//! and emoji all size correctly. Paint emits glyphs through the same
+//! shaper so the layout and paint paths never disagree.
 
 use crate::color::Color;
 use crate::element::{Element, PaintCtx};
+use crate::layout::NodeContext;
 
-/// Heuristic logical-px advance ratio used when the element is built
-/// without access to a shaper. Matches the NullShaper ratio so tests
-/// get consistent numbers regardless of which shaper's measure is
-/// consulted.
-const HEURISTIC_ADVANCE_RATIO: f32 = 0.5;
+/// Default logical-px font size when no `.size(..)` override is set.
+/// Matches `ResolvedTheme::typography.md` so most chrome reads like a
+/// medium UI label without the caller threading a theme reference
+/// into every Text constructor. Callers that want Title-sized text
+/// call `.size(theme.typography.lg)` explicitly.
+pub const DEFAULT_FONT_SIZE_PX: f32 = 13.0;
 
 /// Free constructor: `text("hi")` reads better than `Text::new("hi")`.
 pub fn text(s: impl Into<String>) -> Text {
@@ -65,28 +67,27 @@ impl Text {
         self.font_size_px
     }
 
-    /// Effective font size used by `taffy_style`. Falls back to a
-    /// "looks like medium UI text" constant when no override is set,
-    /// because `taffy_style` has no access to the theme.
-    fn heuristic_font_size(&self) -> f32 {
-        self.font_size_px.unwrap_or(13.0)
+    /// Effective font size for both layout and paint. Falling back to
+    /// a single constant (matching `typography.md`) keeps `taffy_style`
+    /// — which has no theme access — and `paint` agreeing without
+    /// needing to thread a theme reference through layout.
+    pub fn effective_font_size(&self) -> f32 {
+        self.font_size_px.unwrap_or(DEFAULT_FONT_SIZE_PX)
     }
 }
 
 impl Element for Text {
     fn taffy_style(&self) -> taffy::Style {
-        let fs = self.heuristic_font_size();
-        let w = fs * HEURISTIC_ADVANCE_RATIO * self.content.chars().count() as f32;
-        // Fixed-size leaf. Real font metrics flow in once Taffy's
-        // measure_function is wired to the shaper; at that point the
-        // width-estimator becomes irrelevant.
-        taffy::Style {
-            size: taffy::Size {
-                width: taffy::Dimension::Length(w),
-                height: taffy::Dimension::Length(fs),
-            },
-            ..Default::default()
-        }
+        // Size stays `Auto` — the real values come from the host shaper
+        // via `compute_layout_with_measure` + our `taffy_context` below.
+        taffy::Style::default()
+    }
+
+    fn taffy_context(&self) -> Option<NodeContext> {
+        Some(NodeContext::Text {
+            content: self.content.clone(),
+            font_size_px: self.effective_font_size(),
+        })
     }
 
     fn type_id(&self) -> &'static str {
@@ -104,9 +105,8 @@ impl Element for Text {
             .color
             .or(cx.inherited_text_color)
             .unwrap_or(cx.theme.on_surface);
-        let font_size = self.font_size_px.unwrap_or(cx.theme.typography.md);
         let pos = [cx.bounds[0], cx.bounds[1]];
-        cx.emit_text(&self.content, pos, color, font_size);
+        cx.emit_text(&self.content, pos, color, self.effective_font_size());
     }
 }
 

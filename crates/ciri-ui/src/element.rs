@@ -171,6 +171,17 @@ pub trait Element: 'static {
         &[]
     }
 
+    /// Taffy node context for layout-time measurement.
+    ///
+    /// Leaves that need shaper-driven sizing (Text, eventually Image)
+    /// return `Some(NodeContext::Text { .. })` so the paint walker's
+    /// `compute_layout_with_measure` callback can ask the host shaper
+    /// for an exact `[w, h]`. Returning `None` (the default) makes
+    /// Taffy honour `taffy_style().size`.
+    fn taffy_context(&self) -> Option<crate::layout::NodeContext> {
+        None
+    }
+
     /// Optional z-layer override for this element and its descendants.
     /// Returning `None` means "inherit from parent" — the walker tracks
     /// the running inherited layer and only concrete overrides change it.

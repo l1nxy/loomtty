@@ -78,6 +78,14 @@ pub(crate) struct ConnectionStatusComponent {
     y: f32,
     w: f32,
     h: f32,
+    /// Pre-measured width of the primary line *without* the animated
+    /// ellipsis. Captured here so `build_tree` can reserve the suffix
+    /// slot separately and the headline stays stationary while dots
+    /// cycle through "", ".", "..", "...".
+    primary_w: f32,
+    /// Width of "..." in the current font — zero when the banner does
+    /// not animate, so the reservation collapses for static states.
+    suffix_w: f32,
 }
 
 impl ConnectionStatusComponent {
@@ -128,14 +136,15 @@ impl ConnectionStatusComponent {
         let has_secondary = !secondary.is_empty();
         // Measure with the animated line at its widest (3 dots) so the box
         // doesn't resize every 300ms as dots cycle.
-        let primary_w = text_layout::measure(cx, &primary)
-            + if kind.animates() {
-                text_layout::measure(cx, "...")
-            } else {
-                0.0
-            };
+        let primary_w = text_layout::measure(cx, &primary);
+        let suffix_w = if kind.animates() {
+            text_layout::measure(cx, "...")
+        } else {
+            0.0
+        };
+        let primary_block_w = primary_w + suffix_w;
         let secondary_w = text_layout::measure(cx, &secondary);
-        let widest = primary_w.max(secondary_w);
+        let widest = primary_block_w.max(secondary_w);
         let side_pad = cx.cell_w * 2.0;
         let w = (widest + side_pad * 2.0).max(cx.cell_w * 28.0);
         // UI chrome uses the proportional UI shaper, not the terminal grid,
@@ -162,6 +171,8 @@ impl ConnectionStatusComponent {
             y,
             w,
             h,
+            primary_w,
+            suffix_w,
         })
     }
 }
@@ -222,22 +233,30 @@ impl ConnectionStatusComponent {
             StatusKind::Failed { .. } => theme.on_surface,
             _ => theme.on_surface_muted,
         };
-        // Slightly darken + slightly transparent — matches the legacy
-        // "bg × 0.85, alpha 0.97" recipe so theming stays visually
-        // consistent across the migration.
-        let panel_bg = with_alpha(
-            ciri_ui::color::scale_rgb(theme.surface, 0.85),
-            0.97,
-        );
+        // Tint derived from the terminal `background`, not the UI
+        // `surface`, so themes that set the two distinctly (e.g.
+        // a darker pane bg with a lighter chrome bg) still get the
+        // legacy "darkened pane colour with slight transparency"
+        // recipe rather than a chrome-coloured overlay that no longer
+        // matches the pane it covers.
+        let panel_bg = with_alpha(ciri_ui::color::scale_rgb(theme.term_bg, 0.85), 0.97);
 
         let (primary, secondary) = banner_lines(&self.kind, &self.target);
         let animates = self.kind.animates();
         let dots = if animates { dot_suffix(dot_phase()) } else { "" };
-        let primary_line = if animates && !dots.is_empty() {
-            format!("{primary}{dots}")
-        } else {
-            primary
-        };
+
+        // Primary line: fix the combined block width to
+        // `primary_w + suffix_w` so the column's `items_center`
+        // centres the reserved block, not the currently-rendered
+        // substring. Dots then grow inside the reserved slot without
+        // shifting the headline every 300 ms. This restores the
+        // stationary-centre behaviour the legacy imperative path had.
+        let primary_block_w = self.primary_w + self.suffix_w;
+        let primary_block = div()
+            .flex_row()
+            .w(primary_block_w)
+            .child(text(primary).color(head_color))
+            .child(text(dots).color(head_color));
 
         let mut panel = div()
             .in_layer(Layer::Overlay)
@@ -253,7 +272,7 @@ impl ConnectionStatusComponent {
             .px(tokens::SPACE_2)
             .py(tokens::SPACE_2)
             .gap(tokens::SPACE_1)
-            .child(text(primary_line).color(head_color));
+            .child(primary_block);
 
         if !secondary.is_empty() {
             panel = panel.child(text(secondary).color(secondary_color));

@@ -29,6 +29,7 @@ license = "MIT"
 # Internal crates
 ciri-app = { path = "crates/ciri-app" }
 ciri-render = { path = "crates/ciri-render" }
+# (ciri-ui adds `taffy` directly — pinned to 0.7 in the crate for now)
 ciri-gpu = { path = "crates/ciri-gpu" }
 ciri-term = { path = "crates/ciri-term" }
 ciri-layout = { path = "crates/ciri-layout" }

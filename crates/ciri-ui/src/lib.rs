@@ -24,6 +24,8 @@
 pub mod color;
 pub mod element;
 pub mod elements;
+pub mod layout;
+pub mod scene;
 pub mod style;
 pub mod styled;
 pub mod theme;
@@ -31,6 +33,8 @@ pub mod theme;
 pub use color::Color;
 pub use element::{Element, ElementId, EventCtx, Layer, PaintCtx, UiCtx, UiEvent};
 pub use elements::{div, text, Div, Text};
+pub use layout::{paint_tree, paint_tree_into};
+pub use scene::{Scene, SdfRect};
 pub use style::{
     AlignItems, CursorStyle, Display, FlexDirection, JustifyContent, Length, Shadow, Style,
 };

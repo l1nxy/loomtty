@@ -1,10 +1,11 @@
 //! Core `Element` trait and the contexts passed through its lifecycle.
 //!
-//! This is the foundation surface; the concrete Taffy + GPU integrations
-//! that actually fill in `UiCtx` / `PaintCtx` / `EventCtx` land with the
-//! renderer wiring in a follow-up change. The traits below are stable and
-//! safe to implement now.
+//! Layout is driven by [`taffy`] — each element exposes a `taffy_style()`
+//! and a flat `children()` list that the paint walker turns into a Taffy
+//! tree before `compute_layout`. The walker then calls `paint(&self, cx)`
+//! on each element with its computed bounds filled into `PaintCtx`.
 
+use crate::scene::Scene;
 use crate::theme::ResolvedTheme;
 
 /// Opaque identifier for a single element in the retained tree. The ID
@@ -36,27 +37,12 @@ impl Default for Layer {
 }
 
 /// Input events routed to elements by the dispatch tree.
-///
-/// Defined here (not in a separate `event.rs`) so the `Element` trait can
-/// reference it without a circular import in the foundation crate.
 #[derive(Clone, Debug)]
 pub enum UiEvent {
-    PointerDown {
-        x: f32,
-        y: f32,
-    },
-    PointerUp {
-        x: f32,
-        y: f32,
-    },
-    PointerMove {
-        x: f32,
-        y: f32,
-    },
-    Scroll {
-        dx: f32,
-        dy: f32,
-    },
+    PointerDown { x: f32, y: f32 },
+    PointerUp { x: f32, y: f32 },
+    PointerMove { x: f32, y: f32 },
+    Scroll { dx: f32, dy: f32 },
     FocusGained,
     FocusLost,
 }
@@ -64,10 +50,6 @@ pub enum UiEvent {
 /// Read-only context threaded through layout + paint. Holds the theme, the
 /// viewport, and scaling info — things every element wants and no element
 /// should mutate.
-///
-/// Renderer integration (PR-3) fills in the `'a` lifetime holders with real
-/// references into the app; today this is a placeholder so the `Element`
-/// trait is stable.
 pub struct UiCtx<'a> {
     pub theme: &'a ResolvedTheme,
     pub viewport: [f32; 2],
@@ -84,27 +66,21 @@ impl<'a> UiCtx<'a> {
     }
 }
 
-/// Paint-time context. Carries the laid-out bounds plus whatever scene
-/// accumulators the renderer chooses to expose (SDF rect vec, glyph vec,
-/// clip stack, …). This version holds only bounds; the renderer PR extends
-/// it with the real emit methods.
+/// Paint-time context. Carries the element's laid-out bounds plus the
+/// scene accumulator the paint pass emits into.
 pub struct PaintCtx<'a> {
-    pub ui: UiCtx<'a>,
+    pub theme: &'a ResolvedTheme,
+    /// `[x, y, w, h]` in logical (device-independent) pixels, already
+    /// resolved by the paint walker from the element's Taffy layout.
     pub bounds: [f32; 4],
+    pub scene: &'a mut Scene,
+    pub scale: f32,
     pub element_id: ElementId,
 }
 
 impl<'a> PaintCtx<'a> {
-    pub fn new(ui: UiCtx<'a>, bounds: [f32; 4], element_id: ElementId) -> Self {
-        Self {
-            ui,
-            bounds,
-            element_id,
-        }
-    }
-
     pub fn theme(&self) -> &ResolvedTheme {
-        self.ui.theme
+        self.theme
     }
 }
 
@@ -134,13 +110,24 @@ impl Default for EventCtx {
     }
 }
 
-/// The core trait. Everything in the retained tree is an `Element` —
-/// builtin widgets, containers, plugin-authored nodes, legacy `UiComponent`
-/// shims.
+/// The core trait. Everything in the retained tree is an `Element`.
 ///
-/// The default method bodies are intentionally no-ops so leaf elements like
-/// `Text` can implement only `paint`.
+/// The default bodies are intentionally no-ops so leaves like `Text` can
+/// implement only `paint`.
 pub trait Element: 'static {
+    /// Layout style for this element as a Taffy `Style`. Called by the
+    /// paint walker when it builds the Taffy tree.
+    fn taffy_style(&self) -> taffy::Style {
+        taffy::Style::default()
+    }
+
+    /// Direct children in paint order. The Taffy tree's children are
+    /// built from this slice in the same order so the post-layout walker
+    /// can zip them together.
+    fn children(&self) -> &[Box<dyn Element>] {
+        &[]
+    }
+
     /// Which layer this element belongs to. Dispatch and paint order.
     fn layer(&self) -> Layer {
         Layer::Chrome
@@ -149,7 +136,8 @@ pub trait Element: 'static {
     /// Stable type identifier (used by plugin hosts + debug logs).
     fn type_id(&self) -> &'static str;
 
-    /// Paint this element using its laid-out `cx.bounds`.
+    /// Paint this element using `cx.bounds`. Children paint themselves
+    /// via the walker; `paint` only emits primitives for `self`.
     fn paint(&self, cx: &mut PaintCtx<'_>);
 
     /// True if `(x, y)` (screen px) lies within the element's interactive area.
@@ -192,5 +180,14 @@ mod tests {
         assert!(Layer::Chrome < Layer::Overlay);
         assert!(Layer::Overlay < Layer::Modal);
         assert!(Layer::Modal < Layer::Tooltip);
+    }
+
+    #[test]
+    fn default_taffy_style_and_children() {
+        let d = Dummy;
+        assert_eq!(d.children().len(), 0);
+        // Taffy's Default is Block layout — paint walker interprets it as
+        // "no flex container", perfectly valid for leaves.
+        let _ = d.taffy_style();
     }
 }

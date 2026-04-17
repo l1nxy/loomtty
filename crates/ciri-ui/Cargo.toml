@@ -6,4 +6,6 @@ edition.workspace = true
 [dependencies]
 ciri-motion = { workspace = true }
 ciri-config = { workspace = true }
+ciri-render = { workspace = true }
 log = { workspace = true }
+taffy = "0.7"

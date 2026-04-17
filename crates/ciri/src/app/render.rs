@@ -2588,10 +2588,10 @@ impl App {
                 pane_glyph_end,
                 pane_color_glyph_end,
                 overlay_bg_start,
-                // SDF chrome is emitted by ciri-ui; wiring lands with the
-                // Element-tree integration. For now the slice is empty,
-                // so flat rects continue to carry all chrome.
-                sdf_rects: &[],
+                // SDF chrome emitted by ciri-ui widgets during build_ui.
+                // Empty when no migrated widget is visible, so the flat
+                // rect path still carries legacy chrome unchanged.
+                sdf_rects: &self.cached_ui_scene.sdf_rects,
             },
         ) {
             log::error!("draw_frame failed: {e}");

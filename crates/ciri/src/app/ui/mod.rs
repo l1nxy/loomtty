@@ -28,9 +28,11 @@ pub(crate) use types::*;
 use ciri_config::config::{StatusBarPosition, TabBarPosition};
 use ciri_render::glyph_cache::GlyphInstance;
 use ciri_render::rect::Rect;
+use ciri_ui::ResolvedTheme;
 use winit::window::CursorIcon;
 
 use self::layout::{Axis, Border, Linear, UiElement, UiRect};
+use super::ciri_ui_bridge::{merge_ui_scene, HostTextShaper};
 use super::{App, TopBarHoverRegion};
 
 impl App {
@@ -139,6 +141,7 @@ impl App {
             cached_ui.bg_rects.clear();
             cached_ui.glyphs.clear();
             cached_ui.color_glyphs.clear();
+            cached_ui.sdf_rects.clear();
 
             let atlas = self.glyph_cache.as_mut().unwrap();
             let mut scene = UiScene {
@@ -162,8 +165,44 @@ impl App {
             }
             // Banner sits above panes but below fully modal chrome (palette,
             // paste-dialog, context-menu) so modals stay authoritative.
-            if let Some(component) = connection_status {
-                component.paint(&cx, &mut scene);
+            //
+            // Painted via the new `ciri-ui` pipeline: the captured
+            // component snapshot is turned into a `Div` tree, Taffy lays
+            // it out, the paint walker emits SDF + glyphs through the
+            // `HostTextShaper` adapter (shares the atlas + UI shaper
+            // with the rest of the chrome paint), and the flat
+            // per-layer output is appended into the cached accumulators.
+            // This is the first widget on the new API — see PR-3d.
+            if let Some(component) = &connection_status {
+                let resolved = ResolvedTheme::from_config(&cx.config.theme);
+                let tree = component.build_tree(&resolved);
+
+                // Borrow the UI shaper mutably via the RefCell only for
+                // the duration of this paint — matches the existing
+                // pattern in `UiBuilder::abs_text`. `scene.atlas` is a
+                // reborrow of the same GlyphCache `UiScene` uses, so
+                // emitted glyphs land in the shared atlas.
+                let mut shaper_borrow = cx.ui_shaper.map(|s| s.borrow_mut());
+                let mut host_shaper = HostTextShaper {
+                    atlas: scene.atlas,
+                    shaper: shaper_borrow.as_deref_mut(),
+                    cell_width: cx.cell_w,
+                    baseline: cx.baseline,
+                };
+                let ui_scene = ciri_ui::paint_tree(
+                    &tree,
+                    &resolved,
+                    [vw, vh],
+                    self.dpi_scale as f32,
+                    &mut host_shaper,
+                );
+                drop(shaper_borrow);
+                merge_ui_scene(
+                    &ui_scene,
+                    &mut cached_ui.sdf_rects,
+                    scene.glyphs,
+                    scene.color_glyphs,
+                );
             }
             if let Some(component) = palette {
                 component.paint(&cx, &mut scene);

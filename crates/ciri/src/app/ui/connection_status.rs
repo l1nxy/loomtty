@@ -12,13 +12,16 @@
 //!   - **Failed** — `is_halted()` is true (permanent reason, no retry
 //!     scheduled). Shows the reason and a dismiss hint.
 
-use ciri_config::theme::ThemeConfig;
+use ciri_ui::color::with_alpha;
+use ciri_ui::{div, text, Div, Layer, ResolvedTheme, Styled};
 
-use super::builder::UiBuilder;
 use super::text_layout;
 use super::tokens;
-use super::types::{UiComponent, UiContext, UiScene};
+use super::types::UiContext;
 use crate::app::App;
+
+// `UiContext` is still consumed by `capture` for sizing; the paint path
+// is the only thing that moved to `ciri-ui`.
 
 /// Bouncing-dots animation cadence. 300ms/step × 4 frames = a full cycle in
 /// ~1.2s; slow enough not to distract, fast enough to read as "working".
@@ -201,78 +204,62 @@ fn banner_lines(kind: &StatusKind, target: &str) -> (String, String) {
     }
 }
 
-impl UiComponent for ConnectionStatusComponent {
-    fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let bg = ThemeConfig::parse_color(&cx.config.theme.background);
-        let fg = ThemeConfig::parse_color(&cx.config.theme.foreground);
-        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
-        let dim = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
-        let red = ThemeConfig::parse_color(&cx.config.theme.red);
-
-        // The colour of the primary text and border hints at severity.
+impl ConnectionStatusComponent {
+    /// Build the ciri-ui tree for this captured banner snapshot.
+    ///
+    /// The tree is a single flex-column panel positioned absolutely at
+    /// the component's `(x, y)` via a paint-time `translate` on the
+    /// root — Taffy lays it out at the origin, the paint walker adds
+    /// the translate into the emitted SdfRect + glyph positions, and
+    /// `in_layer(Overlay)` plants it above pane content but below
+    /// modal UI (palette / context-menu / paste-dialog).
+    pub(crate) fn build_tree(&self, theme: &ResolvedTheme) -> Div {
         let head_color = match &self.kind {
-            StatusKind::Failed { .. } => red,
-            StatusKind::Reconnecting { .. } => accent,
-            StatusKind::Connecting => accent,
+            StatusKind::Failed { .. } => theme.error,
+            StatusKind::Reconnecting { .. } | StatusKind::Connecting => theme.accent,
         };
-
-        let bw = tokens::BORDER_THIN;
-        let row_h = cx.ui_line_h + tokens::SPACE_1 * 2.0;
-        let v_pad = tokens::SPACE_2;
-        let content_w = self.w - bw * 2.0;
-
-        let mut ui = UiBuilder::new_vertical(
-            self.x + bw,
-            self.y + bw,
-            content_w,
-            self.h - bw * 2.0,
-            0.0,
-            0.0,
-            0.0,
-            false,
-            cx,
-            scene,
+        let secondary_color = match &self.kind {
+            StatusKind::Failed { .. } => theme.on_surface,
+            _ => theme.on_surface_muted,
+        };
+        // Slightly darken + slightly transparent — matches the legacy
+        // "bg × 0.85, alpha 0.97" recipe so theming stays visually
+        // consistent across the migration.
+        let panel_bg = with_alpha(
+            ciri_ui::color::scale_rgb(theme.surface, 0.85),
+            0.97,
         );
-
-        let bg_color = [bg[0] * 0.85, bg[1] * 0.85, bg[2] * 0.85, 0.97];
-        ui.bordered_panel_inset(self.x, self.y, self.w, self.h, bg_color, head_color, bw, true);
 
         let (primary, secondary) = banner_lines(&self.kind, &self.target);
         let animates = self.kind.animates();
         let dots = if animates { dot_suffix(dot_phase()) } else { "" };
+        let primary_line = if animates && !dots.is_empty() {
+            format!("{primary}{dots}")
+        } else {
+            primary
+        };
 
-        ui.bg_rect(content_w, v_pad, [0.0; 4]);
-
-        // Primary line: reserve room for the full "..." suffix so the
-        // centred head text doesn't shift every 300ms; paint the current
-        // dot frame immediately after it.
-        ui.horizontal(Some(content_w), row_h, 0.0, |ui| {
-            let (rx, ry) = ui.cursor_pos();
-            let text_y = ry + (row_h - cx.ui_line_h) * 0.5;
-            let head_w = ui.text_width(&primary);
-            let suffix_w = if animates { ui.text_width("...") } else { 0.0 };
-            let tx = rx + (content_w - head_w - suffix_w) * 0.5;
-            ui.abs_text(&primary, tx, text_y, head_color);
-            if animates && !dots.is_empty() {
-                ui.abs_text(dots, tx + head_w, text_y, head_color);
-            }
-        });
+        let mut panel = div()
+            .in_layer(Layer::Overlay)
+            .flex_col()
+            .items_center()
+            .w(self.w)
+            .h(self.h)
+            .translate(self.x, self.y)
+            .bg(panel_bg)
+            .border(tokens::BORDER_THIN, head_color)
+            .rounded_md()
+            .shadow_md()
+            .px(tokens::SPACE_2)
+            .py(tokens::SPACE_2)
+            .gap(tokens::SPACE_1)
+            .child(text(primary_line).color(head_color));
 
         if !secondary.is_empty() {
-            ui.bg_rect(content_w, tokens::SPACE_1, [0.0; 4]);
-            ui.horizontal(Some(content_w), row_h, 0.0, |ui| {
-                let (rx, ry) = ui.cursor_pos();
-                let text_y = ry + (row_h - cx.ui_line_h) * 0.5;
-                let color = match &self.kind {
-                    StatusKind::Failed { .. } => fg,
-                    _ => dim,
-                };
-                let tw = ui.text_width(&secondary);
-                let tx = rx + (content_w - tw) * 0.5;
-                ui.abs_text(&secondary, tx, text_y, color);
-            });
+            panel = panel.child(text(secondary).color(secondary_color));
         }
 
-        ui.bg_rect(content_w, v_pad, [0.0; 4]);
+        panel
     }
 }
+

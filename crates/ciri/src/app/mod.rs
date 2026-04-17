@@ -108,6 +108,10 @@ pub(crate) struct CachedUiScene {
     pub bg_rects: Vec<Rect>,
     pub glyphs: Vec<GlyphInstance>,
     pub color_glyphs: Vec<GlyphInstance>,
+    /// SDF-shader chrome rects emitted by ciri-ui-painted widgets
+    /// (rounded / bordered / shadowed). Flat rects still live in
+    /// `bg_rects`; the two streams are drawn by separate GPU passes.
+    pub sdf_rects: Vec<ciri_render::sdf_rect::SdfRect>,
 }
 
 impl CachedUiScene {
@@ -116,6 +120,7 @@ impl CachedUiScene {
         self.bg_rects.clear();
         self.glyphs.clear();
         self.color_glyphs.clear();
+        self.sdf_rects.clear();
     }
 }
 

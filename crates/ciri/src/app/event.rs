@@ -102,10 +102,13 @@ impl ApplicationHandler for App {
         // Idle-aware event loop: only poll at frame rate when animating or
         // expecting updates. Switch to Wait when idle to save power.
         let is_animating = self.core.anim_mgr.is_animating();
-        // Treat both "backing off" and "parked on a permanent failure" as
-        // reasons to keep the event loop driving redraws — the banner counts
-        // up elapsed time and the spinner animates.
-        let is_reconnecting = self.core.reconnect_state.is_some() || self.core.is_halted();
+        // The connection banner needs the event loop to tick so the dot
+        // spinner can animate. Covers three states: backing off between
+        // retries, initial pre-handshake "Connecting…", and the halted
+        // banner (stays alive so the user can press Esc to dismiss).
+        let is_reconnecting = self.core.reconnect_state.is_some()
+            || self.core.is_halted()
+            || (!self.core.connected && self.core.server_rx.is_some());
         let wants_blink = self.core.config.terminal.cursor_blink;
         let has_remote_query =
             self.core.remote_query_rx.is_some() || !self.core.slot_session_pending.is_empty();

@@ -20,6 +20,33 @@ use super::tokens;
 use super::types::{UiComponent, UiContext, UiScene};
 use crate::app::App;
 
+/// Bouncing-dots animation cadence. 300ms/step × 4 frames = a full cycle in
+/// ~1.2s; slow enough not to distract, fast enough to read as "working".
+const DOT_PHASE_MS: u128 = 300;
+const DOT_PHASES: u32 = 4;
+
+/// Anchor for the banner's animation clock. Lazily set on first access so
+/// the first visible phase is `0` regardless of how long the process has
+/// been running before the banner appeared.
+static ANIM_EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+/// Current dot-animation phase in `0..DOT_PHASES`. Same function is called
+/// from `capture` (for the scene hash) and `paint` (for the rendered
+/// string) so both agree in a single frame.
+pub(crate) fn dot_phase() -> u32 {
+    let epoch = ANIM_EPOCH.get_or_init(std::time::Instant::now);
+    ((epoch.elapsed().as_millis() / DOT_PHASE_MS) as u32) % DOT_PHASES
+}
+
+fn dot_suffix(phase: u32) -> &'static str {
+    match phase % DOT_PHASES {
+        0 => "",
+        1 => ".",
+        2 => "..",
+        _ => "...",
+    }
+}
+
 /// What the banner is saying right now. One snapshot per frame.
 pub(crate) enum StatusKind {
     Connecting,
@@ -31,6 +58,12 @@ pub(crate) enum StatusKind {
     Failed {
         reason: String,
     },
+}
+
+impl StatusKind {
+    fn animates(&self) -> bool {
+        matches!(self, StatusKind::Connecting | StatusKind::Reconnecting { .. })
+    }
 }
 
 pub(crate) struct ConnectionStatusComponent {
@@ -89,12 +122,30 @@ impl ConnectionStatusComponent {
             .unwrap_or_else(|| app.core.session_name.clone());
 
         let (primary, secondary) = banner_lines(&kind, &target);
-        let padding = cx.cell_w;
-        let widest = text_layout::measure(cx, &primary)
-            .max(text_layout::measure(cx, &secondary));
-        let w = (widest + padding * 4.0).max(cx.cell_w * 28.0);
-        let row_h = cx.cell_h + tokens::SPACE_1 * 2.0;
-        let h = row_h * 2.0 + padding * 2.0;
+        let has_secondary = !secondary.is_empty();
+        // Measure with the animated line at its widest (3 dots) so the box
+        // doesn't resize every 300ms as dots cycle.
+        let primary_w = text_layout::measure(cx, &primary)
+            + if kind.animates() {
+                text_layout::measure(cx, "...")
+            } else {
+                0.0
+            };
+        let secondary_w = text_layout::measure(cx, &secondary);
+        let widest = primary_w.max(secondary_w);
+        let side_pad = cx.cell_w * 2.0;
+        let w = (widest + side_pad * 2.0).max(cx.cell_w * 28.0);
+        // UI chrome uses the proportional UI shaper, not the terminal grid,
+        // so row height must come from `ui_line_h` — `cell_h` leaves the
+        // text unbalanced inside the row whenever the UI font differs from
+        // the monospaced one.
+        let row_h = cx.ui_line_h + tokens::SPACE_1 * 2.0;
+        let v_pad = tokens::SPACE_2;
+        let h = if has_secondary {
+            v_pad * 2.0 + row_h * 2.0 + tokens::SPACE_1
+        } else {
+            v_pad * 2.0 + row_h
+        };
 
         // Centre horizontally; sit a comfortable distance above the vertical
         // centre so the eye lands on it immediately without blocking panes.
@@ -112,15 +163,18 @@ impl ConnectionStatusComponent {
     }
 }
 
+/// Primary + secondary lines *without* trailing ellipsis. Connecting /
+/// Reconnecting render animated dots on top at paint time; keeping the
+/// static "…" out of the measured text lets the box width stay stable.
 fn banner_lines(kind: &StatusKind, target: &str) -> (String, String) {
     match kind {
         StatusKind::Connecting => (
             if target.is_empty() {
-                "Connecting…".to_string()
+                "Connecting".to_string()
             } else {
-                format!("Connecting to {target}…")
+                format!("Connecting to {target}")
             },
-            "".to_string(),
+            String::new(),
         ),
         StatusKind::Reconnecting {
             attempt,
@@ -133,10 +187,10 @@ fn banner_lines(kind: &StatusKind, target: &str) -> (String, String) {
             // semantics: 1/N in initial backoff and during the first retry,
             // 2/N during the second, and so on.
             let shown = (*attempt).max(1).min(*max_attempts);
-            let head = format!("Reconnecting to {target}… ({shown}/{max_attempts})");
+            let head = format!("Reconnecting to {target} ({shown}/{max_attempts})");
             let tail = match last_reason {
                 Some(r) => format!("last error: {r}"),
-                None => "".to_string(),
+                None => String::new(),
             };
             (head, tail)
         }
@@ -163,12 +217,14 @@ impl UiComponent for ConnectionStatusComponent {
         };
 
         let bw = tokens::BORDER_THIN;
-        let row_h = cx.cell_h + tokens::SPACE_1 * 2.0;
+        let row_h = cx.ui_line_h + tokens::SPACE_1 * 2.0;
+        let v_pad = tokens::SPACE_2;
+        let content_w = self.w - bw * 2.0;
 
         let mut ui = UiBuilder::new_vertical(
             self.x + bw,
             self.y + bw,
-            self.w - bw * 2.0,
+            content_w,
             self.h - bw * 2.0,
             0.0,
             0.0,
@@ -182,34 +238,41 @@ impl UiComponent for ConnectionStatusComponent {
         ui.bordered_panel_inset(self.x, self.y, self.w, self.h, bg_color, head_color, bw, true);
 
         let (primary, secondary) = banner_lines(&self.kind, &self.target);
+        let animates = self.kind.animates();
+        let dots = if animates { dot_suffix(dot_phase()) } else { "" };
 
-        // Primary line: centred, in the severity colour.
-        ui.horizontal(Some(self.w - bw * 2.0), row_h, 0.0, |ui| {
+        ui.bg_rect(content_w, v_pad, [0.0; 4]);
+
+        // Primary line: reserve room for the full "..." suffix so the
+        // centred head text doesn't shift every 300ms; paint the current
+        // dot frame immediately after it.
+        ui.horizontal(Some(content_w), row_h, 0.0, |ui| {
             let (rx, ry) = ui.cursor_pos();
-            let text_y = ry + (row_h - cx.cell_h) * 0.5;
-            let tw = ui.text_width(&primary);
-            let tx = rx + ((self.w - bw * 2.0) - tw) * 0.5;
+            let text_y = ry + (row_h - cx.ui_line_h) * 0.5;
+            let head_w = ui.text_width(&primary);
+            let suffix_w = if animates { ui.text_width("...") } else { 0.0 };
+            let tx = rx + (content_w - head_w - suffix_w) * 0.5;
             ui.abs_text(&primary, tx, text_y, head_color);
+            if animates && !dots.is_empty() {
+                ui.abs_text(dots, tx + head_w, text_y, head_color);
+            }
         });
 
-        ui.bg_rect(self.w - bw * 2.0, tokens::SPACE_1, [0.0; 4]);
-
-        // Secondary line: dim/fg, same centring, may be blank.
         if !secondary.is_empty() {
-            ui.horizontal(Some(self.w - bw * 2.0), row_h, 0.0, |ui| {
+            ui.bg_rect(content_w, tokens::SPACE_1, [0.0; 4]);
+            ui.horizontal(Some(content_w), row_h, 0.0, |ui| {
                 let (rx, ry) = ui.cursor_pos();
-                let text_y = ry + (row_h - cx.cell_h) * 0.5;
+                let text_y = ry + (row_h - cx.ui_line_h) * 0.5;
                 let color = match &self.kind {
                     StatusKind::Failed { .. } => fg,
                     _ => dim,
                 };
                 let tw = ui.text_width(&secondary);
-                let tx = rx + ((self.w - bw * 2.0) - tw) * 0.5;
+                let tx = rx + (content_w - tw) * 0.5;
                 ui.abs_text(&secondary, tx, text_y, color);
             });
-        } else {
-            // Keep the height predictable whether or not we have a sub-line.
-            ui.bg_rect(self.w - bw * 2.0, row_h, [0.0; 4]);
         }
+
+        ui.bg_rect(content_w, v_pad, [0.0; 4]);
     }
 }

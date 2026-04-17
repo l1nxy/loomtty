@@ -1,6 +1,6 @@
 #[allow(dead_code)] // cursor-based widgets available for future component migration
 pub(crate) mod builder;
-mod connection_status;
+pub(crate) mod connection_status;
 mod context_menu;
 mod hints_bar;
 pub(super) mod info_box;

@@ -618,6 +618,17 @@ impl App {
         if let Some(rc) = &self.core.remote_config {
             rc.host.hash(&mut hasher);
         }
+        // Bouncing-dot animation phase — only relevant when the banner is
+        // actually animating, otherwise we'd invalidate the cache needlessly
+        // every 300ms during normal idle connected state.
+        let banner_animating = !self.core.connected
+            && (self.core.reconnect_state.is_some()
+                || self.core.server_rx.is_some()
+                || self.core.server_tx.is_some())
+            && !self.core.is_halted();
+        if banner_animating {
+            super::ui::connection_status::dot_phase().hash(&mut hasher);
+        }
 
         hasher.finish()
     }

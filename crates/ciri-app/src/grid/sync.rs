@@ -7,9 +7,8 @@ use super::types::ScrollbackRow;
 
 fn rebase_grapheme_lookup(
     old_map: &HashMap<u32, String>,
-    old_viewport_len: usize,
+    old_scrollback_rows: usize,
     old_cols: usize,
-    new_scrollback_rows: usize,
     trimmed_rows: usize,
 ) -> HashMap<u32, String> {
     if old_map.is_empty() || old_cols == 0 {
@@ -19,24 +18,14 @@ fn rebase_grapheme_lookup(
     let mut rebased = HashMap::with_capacity(old_map.len());
     for (&idx, grapheme) in old_map {
         let idx = idx as usize;
-        if idx < old_viewport_len {
-            let row = idx / old_cols;
-            let col = idx % old_cols;
-            let new_buffer_row = new_scrollback_rows + row;
-            if new_buffer_row >= trimmed_rows {
-                let rebased_row = new_buffer_row - trimmed_rows;
-                let new_idx = rebased_row * old_cols + col;
-                rebased.insert(new_idx as u32, grapheme.clone());
-            }
-        } else {
-            let row = idx / old_cols;
-            let col = idx % old_cols;
-            if row >= trimmed_rows {
-                let rebased_row = row - trimmed_rows;
-                let new_idx = rebased_row * old_cols + col;
-                rebased.insert(new_idx as u32, grapheme.clone());
-            }
+        let row = idx / old_cols;
+        let col = idx % old_cols;
+        if row >= old_scrollback_rows || row < trimmed_rows {
+            continue;
         }
+        let rebased_row = row - trimmed_rows;
+        let new_idx = rebased_row * old_cols + col;
+        rebased.insert(new_idx as u32, grapheme.clone());
     }
     rebased
 }
@@ -60,10 +49,11 @@ impl ClientPaneGrid {
     /// Scrollback is decoded into a temporary buffer, then sliced into rows.
     pub fn apply_full_sync(&mut self, sync: &FullPaneSyncBorrowed) {
         let old_cols = self.cols as usize;
-        let old_viewport_len = self.viewport.len();
+        let old_scrollback_rows = self.scrollback.len();
         let old_grapheme_map = std::mem::take(&mut self.grapheme_map);
         let new_cols = sync.cols as usize;
         let new_rows = sync.rows as usize;
+        let old_scroll_offset = self.scroll_offset;
 
         // If dimensions changed, reflow scrollback and resize viewport.
         // rows==0 means scrollback-only sync — don't resize viewport.
@@ -100,9 +90,8 @@ impl ClientPaneGrid {
         } else {
             rebase_grapheme_lookup(
                 &old_grapheme_map,
-                old_viewport_len,
+                old_scrollback_rows,
                 old_cols,
-                self.scrollback.len(),
                 trim_count,
             )
         };
@@ -122,21 +111,17 @@ impl ClientPaneGrid {
                         }
                     }
 
-                    if !cols_changed {
-                        let scrollback_base = self
-                            .scrollback
-                            .len()
-                            .saturating_sub(appended_scrollback_rows);
-                        for (idx, extra) in &sync.grapheme_extras.0 {
-                            let idx = *idx as usize;
-                            if idx < sb_cells.len() {
-                                let ch = sb_cells[idx].ch();
-                                let mut grapheme = String::new();
-                                grapheme.push(ch);
-                                grapheme.push_str(extra);
-                                rebased_grapheme_map
-                                    .insert((scrollback_base * new_cols + idx) as u32, grapheme);
-                            }
+                    let scrollback_base = self
+                        .scrollback
+                        .len()
+                        .saturating_sub(appended_scrollback_rows);
+                    let sb_grapheme_map =
+                        sync.grapheme_extras.build_lookup_with_offset(&sb_cells, 0);
+                    for (idx, grapheme) in sb_grapheme_map {
+                        let idx = idx as usize;
+                        if idx < sb_cells.len() {
+                            rebased_grapheme_map
+                                .insert((scrollback_base * new_cols + idx) as u32, grapheme);
                         }
                     }
                 }
@@ -170,6 +155,11 @@ impl ClientPaneGrid {
         while self.scrollback.len() > self.max_scrollback {
             self.scrollback.pop_front();
         }
+        if !sync.scrollback_replace && old_scroll_offset > 0 {
+            self.scroll_offset = old_scroll_offset
+                .saturating_add(appended_scrollback_rows)
+                .saturating_sub(trim_count);
+        }
         // Clamp scroll_offset
         let max_off = self.max_scroll_offset();
         if self.scroll_offset > max_off {
@@ -189,9 +179,10 @@ impl ClientPaneGrid {
         // Build grapheme lookup from viewport cells (already decoded in place).
         let sync_grapheme_map = sync
             .grapheme_extras
-            .build_lookup(&self.viewport[..vp_cells]);
+            .build_lookup_with_offset(&self.viewport[..vp_cells], sb_expected);
         for (idx, grapheme) in sync_grapheme_map {
-            self.grapheme_map.insert(idx, grapheme);
+            let buffer_idx = (self.scrollback.len() * new_cols + idx as usize) as u32;
+            self.grapheme_map.insert(buffer_idx, grapheme);
         }
         self.hyperlink_map.clear();
         for &(id, ref uri) in &sync.hyperlink_extras.link_map {

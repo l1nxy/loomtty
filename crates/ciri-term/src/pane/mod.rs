@@ -472,11 +472,13 @@ impl Pane {
         self.term.grid().history_size()
     }
 
-    /// Monotonic count of rows that have ever entered primary-screen
-    /// scrollback: current `history_size` + rows evicted by ring-buffer
+    /// Count of rows currently represented by the primary screen's scrollback
+    /// history: current `history_size` + rows evicted by ring-buffer
     /// saturation (`scrolled_past_limit`), read from the primary grid even
-    /// while alt-screen is active. Used as the watermark for per-client
-    /// incremental scrollback delivery.
+    /// while alt-screen is active.
+    ///
+    /// This increases with new primary-screen output, but can decrease when a
+    /// resize reabsorbs rows from history back into the viewport.
     pub fn scrollback_total(&self) -> usize {
         self.term.primary_scrollback_total()
     }

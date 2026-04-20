@@ -71,24 +71,30 @@ const GLYPH_HLSL: &str = r#"
 cbuffer Viewport : register(b0) {
     float2 viewport_size;
     float2 _pad;
+    uint blending_flags; // bit 0 = linear, bit 1 = correction
+    uint _pad1;
+    uint _pad2;
+    uint _pad3;
 };
 
 Texture2D atlas_tex : register(t0);
 SamplerState atlas_sampler : register(s0);
 
 struct VSInput {
-    float2 pos     : POS;
-    float2 size    : SIZE;
-    float2 uv_pos  : UVPOS;
-    float2 uv_size : UVSIZE;
-    float4 color   : COLOR;
-    uint vid       : SV_VertexID;
+    float2 pos      : POS;
+    float2 size     : SIZE;
+    float2 uv_pos   : UVPOS;
+    float2 uv_size  : UVSIZE;
+    float4 color    : COLOR;
+    float4 bg_color : BGCOL;
+    uint vid        : SV_VertexID;
 };
 
 struct PSInput {
     float4 position : SV_POSITION;
     float2 uv       : TEXCOORD0;
     float4 color    : COLOR;
+    float4 bg_color : BGCOL;
 };
 
 PSInput vs_main(VSInput input) {
@@ -98,6 +104,7 @@ PSInput vs_main(VSInput input) {
     PSInput output;
     output.uv = input.uv_pos + float2(x, y) * input.uv_size;
     output.color = input.color;
+    output.bg_color = input.bg_color;
 
     float2 px = input.pos + float2(x, y) * input.size;
     float2 ndc = float2(
@@ -109,19 +116,68 @@ PSInput vs_main(VSInput input) {
 }
 "#;
 
+const HLSL_COLOR_FUNCS: &str = r#"
+float linearize_f(float v) {
+    return (v <= 0.04045) ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4);
+}
+float4 linearize_v4(float4 srgb) {
+    return float4(linearize_f(srgb.r), linearize_f(srgb.g), linearize_f(srgb.b), srgb.a);
+}
+float unlinearize_f(float v) {
+    return (v <= 0.0031308) ? v * 12.92 : pow(v, 1.0 / 2.4) * 1.055 - 0.055;
+}
+float4 unlinearize_v4(float4 lin) {
+    return float4(unlinearize_f(lin.r), unlinearize_f(lin.g), unlinearize_f(lin.b), lin.a);
+}
+float luminance_linear(float3 col) {
+    return dot(col, float3(0.2126, 0.7152, 0.0722));
+}
+"#;
+
 const ALPHA_PS_HLSL: &str = r#"
 Texture2D atlas_tex : register(t0);
 SamplerState atlas_sampler : register(s0);
+
+cbuffer Viewport : register(b0) {
+    float2 viewport_size;
+    float2 _pad;
+    uint blending_flags;
+    uint _pad1;
+    uint _pad2;
+    uint _pad3;
+};
 
 struct PSInput {
     float4 position : SV_POSITION;
     float2 uv       : TEXCOORD0;
     float4 color    : COLOR;
+    float4 bg_color : BGCOL;
 };
 
+// HLSL_COLOR_FUNCS_PLACEHOLDER
+
 float4 ps_main(PSInput input) : SV_TARGET {
-    float alpha = atlas_tex.Sample(atlas_sampler, input.uv).a;
-    float out_alpha = input.color.a * alpha;
+    bool use_linear_correction = (blending_flags & 2u) != 0u;
+
+    float a = atlas_tex.Sample(atlas_sampler, input.uv).a;
+
+    // Weight correction: linearize to compute luminance, adjust alpha
+    // so sRGB-space hardware blending approximates linear compositing.
+    if (use_linear_correction) {
+        float4 fg_linear = linearize_v4(input.color);
+        float4 bg_linear = linearize_v4(input.bg_color);
+        float fg_l = luminance_linear(fg_linear.rgb);
+        float bg_l = luminance_linear(bg_linear.rgb);
+        if (abs(fg_l - bg_l) > 0.001) {
+            float blend_l = linearize_f(
+                unlinearize_f(fg_l) * a + unlinearize_f(bg_l) * (1.0 - a)
+            );
+            a = clamp((blend_l - bg_l) / (fg_l - bg_l), 0.0, 1.0);
+        }
+    }
+
+    // Output sRGB premultiplied with corrected alpha.
+    float out_alpha = input.color.a * a;
     return float4(input.color.rgb * out_alpha, out_alpha);
 }
 "#;
@@ -134,6 +190,7 @@ struct PSInput {
     float4 position : SV_POSITION;
     float2 uv       : TEXCOORD0;
     float4 color    : COLOR;
+    float4 bg_color : BGCOL;
 };
 
 float4 ps_main(PSInput input) : SV_TARGET {
@@ -192,6 +249,8 @@ struct DxAtlasLayer {
     swizzle_rgba_to_bgra: bool,
     /// D2D render target for direct DWrite glyph rendering to this atlas layer.
     d2d_rt: ID2D1RenderTarget,
+    /// Packed blending flags: bit 0 = use_linear_blending, bit 1 = use_linear_correction.
+    blending_flags: u32,
 }
 
 struct DxAtlasLayerConfig<'a> {
@@ -208,6 +267,7 @@ struct DxAtlasLayerConfig<'a> {
     text_antialias: D2D1_TEXT_ANTIALIAS_MODE,
     /// System text rendering params (gamma / enhanced contrast).
     text_rendering_params: Option<IDWriteRenderingParams>,
+    blending_flags: u32,
 }
 
 impl DxAtlasLayer {
@@ -332,6 +392,15 @@ impl DxAtlasLayer {
                 InputSlotClass: D3D11_INPUT_PER_INSTANCE_DATA,
                 InstanceDataStepRate: 1,
             },
+            D3D11_INPUT_ELEMENT_DESC {
+                SemanticName: PCSTR::from_raw(b"BGCOL\0".as_ptr()),
+                SemanticIndex: 0,
+                Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
+                InputSlot: 0,
+                AlignedByteOffset: 48,
+                InputSlotClass: D3D11_INPUT_PER_INSTANCE_DATA,
+                InstanceDataStepRate: 1,
+            },
         ];
         let mut input_layout = None;
         device.CreateInputLayout(&layout_desc, vs_code, Some(&mut input_layout))?;
@@ -349,9 +418,9 @@ impl DxAtlasLayer {
         device.CreateBuffer(&buf_desc, None, Some(&mut instance_buffer))?;
         let instance_buffer = instance_buffer.unwrap();
 
-        // Constant buffer (viewport)
+        // Constant buffer (viewport + blending flags)
         let cb_desc = D3D11_BUFFER_DESC {
-            ByteWidth: 16, // vec4 (viewport_size + pad)
+            ByteWidth: 32, // float2 viewport_size + float2 pad + uint flags + 3x uint pad
             Usage: D3D11_USAGE_DYNAMIC,
             BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
             CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
@@ -400,6 +469,7 @@ impl DxAtlasLayer {
             max_instances,
             swizzle_rgba_to_bgra: cfg.swizzle_rgba_to_bgra,
             d2d_rt,
+            blending_flags: cfg.blending_flags,
         })
     }
 
@@ -530,7 +600,7 @@ impl DxAtlasLayer {
         }
         let count = instances.len().min(self.max_instances);
 
-        // Update viewport cbuffer
+        // Update viewport cbuffer (32 bytes: float2 size + float2 pad + uint flags + 3x uint pad)
         let viewport = [vp.width, vp.height, 0.0f32, 0.0f32];
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
         ctx.Map(
@@ -542,6 +612,12 @@ impl DxAtlasLayer {
         )
         .unwrap();
         std::ptr::copy_nonoverlapping(viewport.as_ptr() as *const u8, mapped.pData as *mut u8, 16);
+        let flags_data: [u32; 4] = [self.blending_flags, 0, 0, 0];
+        std::ptr::copy_nonoverlapping(
+            flags_data.as_ptr() as *const u8,
+            (mapped.pData as *mut u8).add(16),
+            16,
+        );
         ctx.Unmap(&self.cbuffer, 0);
 
         // Update instance buffer
@@ -579,6 +655,7 @@ impl DxAtlasLayer {
         ctx.VSSetShader(Some(&self.vs), None);
         ctx.PSSetShader(Some(&self.ps), None);
         ctx.VSSetConstantBuffers(0, Some(&[Some(self.cbuffer.clone())]));
+        ctx.PSSetConstantBuffers(0, Some(&[Some(self.cbuffer.clone())]));
         ctx.PSSetShaderResources(0, Some(&[Some(self.srv.clone())]));
         ctx.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
 
@@ -802,6 +879,7 @@ pub struct Renderer {
     /// Waitable object for DXGI frame latency — lets the CPU sleep instead of
     /// busy-waiting in `Present(1)`. `None` if the driver doesn't support it.
     frame_waitable: Option<HANDLE>,
+    blending_flags: u32,
 }
 
 impl Renderer {
@@ -931,6 +1009,9 @@ impl Renderer {
             size.height
         );
 
+        let blending_flags = (render_config.alpha_blending.is_linear() as u32)
+            | ((render_config.alpha_blending.use_correction() as u32) << 1);
+
         Ok(Renderer {
             device,
             ctx,
@@ -945,6 +1026,7 @@ impl Renderer {
             height: size.height.max(1),
             sync_interval,
             frame_waitable,
+            blending_flags,
         })
     }
 
@@ -997,6 +1079,9 @@ impl Renderer {
         cache.set_d2d_rendering(true);
 
         // Both atlas layers use B8G8R8A8 for D2D render target compatibility.
+        // Inject color functions into the alpha pixel shader.
+        let alpha_ps = ALPHA_PS_HLSL.replace("// HLSL_COLOR_FUNCS_PLACEHOLDER", HLSL_COLOR_FUNCS);
+
         let alpha = unsafe {
             DxAtlasLayer::new(
                 &self.device,
@@ -1007,11 +1092,12 @@ impl Renderer {
                     bpp: 4,
                     swizzle_rgba_to_bgra: false,
                     vs_hlsl: GLYPH_HLSL,
-                    ps_hlsl: ALPHA_PS_HLSL,
+                    ps_hlsl: &alpha_ps,
                     filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
                     d2d_factory: &self.d2d_factory,
                     text_antialias: D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE,
                     text_rendering_params: self.text_rendering_params.clone(),
+                    blending_flags: self.blending_flags,
                 },
             )
             .expect("alpha atlas creation failed")
@@ -1032,6 +1118,7 @@ impl Renderer {
                     d2d_factory: &self.d2d_factory,
                     text_antialias: D2D1_TEXT_ANTIALIAS_MODE_DEFAULT,
                     text_rendering_params: self.text_rendering_params.clone(),
+                    blending_flags: self.blending_flags,
                 },
             )
             .expect("color atlas creation failed")

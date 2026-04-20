@@ -25,6 +25,83 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 use winit::window::Window;
 
+// ─── sRGB render target (FBO) ───────────────────────────────────────
+
+/// Offscreen sRGB renderbuffer-backed FBO for linear-correct alpha blending.
+/// When `use_linear_blending` is true, all rendering targets this FBO
+/// (format `GL_SRGB8_ALPHA8`), so the GPU automatically linearises reads
+/// and gamma-encodes writes. The final image is blitted to the default
+/// framebuffer with `GL_FRAMEBUFFER_SRGB` disabled to avoid double gamma.
+struct GlSrgbTarget {
+    framebuffer: glow::Framebuffer,
+    renderbuffer: glow::Renderbuffer,
+    width: u32,
+    height: u32,
+}
+
+impl GlSrgbTarget {
+    unsafe fn new(gl: &glow::Context, width: u32, height: u32) -> crate::Result<Self> {
+        let framebuffer = gl
+            .create_framebuffer()
+            .map_err(|e| crate::GpuError::ResourceCreate(format!("sRGB FBO: {e}")))?;
+        let renderbuffer = gl
+            .create_renderbuffer()
+            .map_err(|e| crate::GpuError::ResourceCreate(format!("sRGB RBO: {e}")))?;
+
+        gl.bind_renderbuffer(glow::RENDERBUFFER, Some(renderbuffer));
+        gl.renderbuffer_storage(
+            glow::RENDERBUFFER,
+            glow::SRGB8_ALPHA8,
+            width.max(1) as i32,
+            height.max(1) as i32,
+        );
+        gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
+        gl.framebuffer_renderbuffer(
+            glow::FRAMEBUFFER,
+            glow::COLOR_ATTACHMENT0,
+            glow::RENDERBUFFER,
+            Some(renderbuffer),
+        );
+        let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+
+        if status != glow::FRAMEBUFFER_COMPLETE {
+            gl.delete_framebuffer(framebuffer);
+            gl.delete_renderbuffer(renderbuffer);
+            return Err(crate::GpuError::ResourceCreate(format!(
+                "sRGB FBO incomplete: status 0x{status:04X}"
+            )));
+        }
+
+        Ok(GlSrgbTarget {
+            framebuffer,
+            renderbuffer,
+            width: width.max(1),
+            height: height.max(1),
+        })
+    }
+
+    unsafe fn resize(&mut self, gl: &glow::Context, width: u32, height: u32) {
+        let w = width.max(1);
+        let h = height.max(1);
+        if w == self.width && h == self.height {
+            return;
+        }
+        gl.bind_renderbuffer(glow::RENDERBUFFER, Some(self.renderbuffer));
+        gl.renderbuffer_storage(glow::RENDERBUFFER, glow::SRGB8_ALPHA8, w as i32, h as i32);
+        gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+        self.width = w;
+        self.height = h;
+    }
+
+    unsafe fn destroy(&self, gl: &glow::Context) {
+        gl.delete_framebuffer(self.framebuffer);
+        gl.delete_renderbuffer(self.renderbuffer);
+    }
+}
+
 // ─── GL atlas layer ─────────────────────────────────────────────────
 
 struct GlAtlasLayer {
@@ -36,6 +113,8 @@ struct GlAtlasLayer {
     bpp: u32,
     loc_viewport: glow::UniformLocation,
     loc_atlas: glow::UniformLocation,
+    loc_use_linear_blending: Option<glow::UniformLocation>,
+    loc_use_linear_correction: Option<glow::UniformLocation>,
     max_instances: usize,
 }
 
@@ -64,6 +143,8 @@ impl GlAtlasLayer {
         let loc_atlas = gl
             .get_uniform_location(program, "u_atlas")
             .ok_or_else(|| crate::GpuError::ShaderCompile("u_atlas uniform not found".into()))?;
+        let loc_use_linear_blending = gl.get_uniform_location(program, "u_use_linear_blending");
+        let loc_use_linear_correction = gl.get_uniform_location(program, "u_use_linear_correction");
 
         let texture = gl
             .create_texture()
@@ -131,6 +212,8 @@ impl GlAtlasLayer {
             bpp,
             loc_viewport,
             loc_atlas,
+            loc_use_linear_blending,
+            loc_use_linear_correction,
             max_instances,
         })
     }
@@ -209,6 +292,8 @@ impl GlAtlasLayer {
         instance_count: usize,
         vp: &crate::ViewportDims,
         batches: &[ScissoredRange],
+        use_linear_blending: bool,
+        use_linear_correction: bool,
     ) {
         if instance_count == 0 || batches.is_empty() {
             return;
@@ -220,6 +305,12 @@ impl GlAtlasLayer {
         gl.active_texture(glow::TEXTURE0);
         gl.bind_texture(glow::TEXTURE_2D, Some(self.texture));
         gl.uniform_1_i32(Some(&self.loc_atlas), 0);
+        if let Some(ref loc) = self.loc_use_linear_blending {
+            gl.uniform_1_i32(Some(loc), use_linear_blending as i32);
+        }
+        if let Some(ref loc) = self.loc_use_linear_correction {
+            gl.uniform_1_i32(Some(loc), use_linear_correction as i32);
+        }
         gl.bind_vertex_array(Some(self.vao));
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instance_vbo));
 
@@ -260,17 +351,20 @@ struct GlRectPipeline {
     vao: glow::VertexArray,
     instance_vbo: glow::Buffer,
     loc_viewport: glow::UniformLocation,
+    loc_use_linear_blending: Option<glow::UniformLocation>,
     max_rects: usize,
 }
 
 impl GlRectPipeline {
     unsafe fn new(gl: &glow::Context, max_rects: usize) -> crate::Result<Self> {
-        let program = compile_program(gl, RECT_VS, RECT_FS, "rect")?;
+        let rect_fs = RECT_FS.replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS);
+        let program = compile_program(gl, RECT_VS, &rect_fs, "rect")?;
         let loc_viewport = gl
             .get_uniform_location(program, "u_viewport")
             .ok_or_else(|| {
                 crate::GpuError::ShaderCompile("u_viewport uniform not found in rect shader".into())
             })?;
+        let loc_use_linear_blending = gl.get_uniform_location(program, "u_use_linear_blending");
 
         let vao = gl
             .create_vertex_array()
@@ -308,6 +402,7 @@ impl GlRectPipeline {
             vao,
             instance_vbo,
             loc_viewport,
+            loc_use_linear_blending,
             max_rects,
         })
     }
@@ -334,12 +429,16 @@ impl GlRectPipeline {
         count: usize,
         viewport_w: f32,
         viewport_h: f32,
+        use_linear_blending: bool,
     ) {
         if count == 0 {
             return;
         }
         gl.use_program(Some(self.program));
         gl.uniform_2_f32(Some(&self.loc_viewport), viewport_w, viewport_h);
+        if let Some(ref loc) = self.loc_use_linear_blending {
+            gl.uniform_1_i32(Some(loc), use_linear_blending as i32);
+        }
         gl.bind_vertex_array(Some(self.vao));
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instance_vbo));
 
@@ -381,6 +480,10 @@ impl GlyphAtlasGpu {
         atlas_size: u32,
         max_instances: usize,
     ) -> crate::Result<Self> {
+        // Inject shared color functions into fragment shaders.
+        let alpha_fs = ALPHA_FS.replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS);
+        let color_fs = COLOR_FS.replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS);
+
         let alpha = GlAtlasLayer::new(
             gl,
             &GlAtlasLayerConfig {
@@ -389,20 +492,23 @@ impl GlyphAtlasGpu {
                 internal_format: glow::R8,
                 format: glow::RED,
                 vs_src: GLYPH_VS,
-                fs_src: ALPHA_FS,
+                fs_src: &alpha_fs,
                 bpp: 1,
                 label: "alpha_atlas",
             },
         )?;
+        // Use SRGB8_ALPHA8 for the color atlas so the GPU auto-linearizes
+        // on texture sample. This prevents double gamma when writing to
+        // the sRGB FBO. In native mode the shader unlinearizes before output.
         let color = GlAtlasLayer::new(
             gl,
             &GlAtlasLayerConfig {
                 atlas_size,
                 max_instances,
-                internal_format: glow::RGBA8,
+                internal_format: glow::SRGB8_ALPHA8,
                 format: glow::RGBA,
                 vs_src: GLYPH_VS,
-                fs_src: COLOR_FS,
+                fs_src: &color_fs,
                 bpp: 4,
                 label: "color_atlas",
             },
@@ -420,6 +526,10 @@ pub struct Renderer {
     rects: GlRectPipeline,
     width: u32,
     height: u32,
+    use_linear_blending: bool,
+    use_linear_correction: bool,
+    /// sRGB FBO for linear-correct blending. `None` in native mode.
+    srgb_target: Option<GlSrgbTarget>,
 }
 
 impl Renderer {
@@ -528,12 +638,36 @@ impl Renderer {
                 glow::ONE_MINUS_SRC_ALPHA,
             );
             gl.disable(glow::DEPTH_TEST);
-            // No GL_FRAMEBUFFER_SRGB — colors are passed as sRGB directly,
-            // matching ghostty's non-linear-blending pipeline.
+            // GL_FRAMEBUFFER_SRGB is enabled later if linear blending is on
+            // (after sRGB FBO creation). When rendering to a SRGB8_ALPHA8 FBO,
+            // the GPU auto-linearises blending and auto-encodes writes.
             gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
         }
 
         let rects = unsafe { GlRectPipeline::new(&gl, render_config.max_rectangles)? };
+
+        let use_linear_blending = render_config.alpha_blending.is_linear();
+        let use_linear_correction = render_config.alpha_blending.use_correction();
+
+        // Create sRGB FBO for linear-correct blending.
+        let (use_linear_blending, use_linear_correction, srgb_target) = if use_linear_blending {
+            unsafe {
+                gl.enable(glow::FRAMEBUFFER_SRGB);
+            }
+            match unsafe { GlSrgbTarget::new(&gl, size.width.max(1), size.height.max(1)) } {
+                Ok(target) => {
+                    log::info!("sRGB FBO created for linear blending");
+                    (use_linear_blending, use_linear_correction, Some(target))
+                }
+                Err(e) => {
+                    log::warn!("Failed to create sRGB FBO, falling back to native blending: {e}");
+                    unsafe { gl.disable(glow::FRAMEBUFFER_SRGB); }
+                    (false, false, None)
+                }
+            }
+        } else {
+            (use_linear_blending, use_linear_correction, None)
+        };
 
         Ok(Renderer {
             gl,
@@ -542,6 +676,9 @@ impl Renderer {
             rects,
             width: size.width.max(1),
             height: size.height.max(1),
+            use_linear_blending,
+            use_linear_correction,
+            srgb_target,
         })
     }
 
@@ -598,18 +735,26 @@ impl Renderer {
             self.gl
                 .viewport(0, 0, self.width as i32, self.height as i32);
 
+            // Resize sRGB FBO if needed, then bind it as render target.
+            if let Some(ref mut target) = self.srgb_target {
+                target.resize(&self.gl, self.width, self.height);
+                self.gl
+                    .bind_framebuffer(glow::FRAMEBUFFER, Some(target.framebuffer));
+            }
+
             // Flush pending glyph uploads
             let (mut ap, mut cp, ac, cc) = cache.take_pending();
             atlas_gpu.alpha.flush_uploads(&self.gl, &mut ap, ac);
             atlas_gpu.color.flush_uploads(&self.gl, &mut cp, cc);
 
-            // Clear
-            self.gl.clear_color(
-                scene.clear_color[0],
-                scene.clear_color[1],
-                scene.clear_color[2],
-                scene.clear_color[3],
-            );
+            // Clear — linearize when rendering to sRGB FBO so the GPU's
+            // automatic sRGB encoding produces the correct sRGB value.
+            let cc = if self.use_linear_blending {
+                ciri_config::theme::ThemeConfig::srgb_to_linear(scene.clear_color)
+            } else {
+                scene.clear_color
+            };
+            self.gl.clear_color(cc[0], cc[1], cc[2], cc[3]);
             self.gl.clear(glow::COLOR_BUFFER_BIT);
 
             // 1. Upload all background rects (clear + pane + overlay) once.
@@ -627,10 +772,14 @@ impl Renderer {
             let total_bg = all_bg.len().min(self.rects.max_rects);
             self.rects.upload(&self.gl, &all_bg, vw, vh);
 
+            // Blending flags for the frame.
+            let lb = self.use_linear_blending;
+            let lc = self.use_linear_correction;
+
             // 2. Draw non-focused pane background rects.
             let inactive_bg_count = active_bg_idx.min(total_bg);
             self.rects
-                .draw_range(&self.gl, 0, inactive_bg_count, vw, vh);
+                .draw_range(&self.gl, 0, inactive_bg_count, vw, vh, lb);
 
             let vp = crate::ViewportDims {
                 width: vw,
@@ -656,27 +805,29 @@ impl Renderer {
             let draw_start = std::time::Instant::now();
             atlas_gpu
                 .alpha
-                .draw_batches(&self.gl, alpha_count, &vp, scene.glyph_batches);
+                .draw_batches(&self.gl, alpha_count, &vp, scene.glyph_batches, lb, lc);
             atlas_gpu
                 .color
-                .draw_batches(&self.gl, color_count, &vp, scene.color_glyph_batches);
+                .draw_batches(&self.gl, color_count, &vp, scene.color_glyph_batches, lb, lc);
 
             // 5. Focused pane background rects.
             let active_bg_count = overlay_bg_idx.saturating_sub(active_bg_idx);
             if active_bg_count > 0 {
                 self.rects
-                    .draw_range(&self.gl, active_bg_idx, active_bg_count, vw, vh);
+                    .draw_range(&self.gl, active_bg_idx, active_bg_count, vw, vh, lb);
             }
 
             // 6. Draw active pane glyphs (scissored, no re-upload).
             atlas_gpu
                 .alpha
-                .draw_batches(&self.gl, alpha_count, &vp, scene.active_glyph_batches);
+                .draw_batches(&self.gl, alpha_count, &vp, scene.active_glyph_batches, lb, lc);
             atlas_gpu.color.draw_batches(
                 &self.gl,
                 color_count,
                 &vp,
                 scene.active_color_glyph_batches,
+                lb,
+                lc,
             );
 
             // 7. Overlay background rects (rendered after pane glyphs so they
@@ -684,7 +835,7 @@ impl Renderer {
             let overlay_bg_count = total_bg.saturating_sub(overlay_bg_idx);
             if overlay_bg_count > 0 {
                 self.rects
-                    .draw_range(&self.gl, overlay_bg_idx, overlay_bg_count, vw, vh);
+                    .draw_range(&self.gl, overlay_bg_idx, overlay_bg_count, vw, vh, lb);
             }
 
             // 8. Overlay glyphs (no re-upload, just draw remaining range).
@@ -706,12 +857,35 @@ impl Renderer {
             };
             atlas_gpu
                 .alpha
-                .draw_batches(&self.gl, alpha_count, &vp, &[overlay_alpha]);
+                .draw_batches(&self.gl, alpha_count, &vp, &[overlay_alpha], lb, lc);
             atlas_gpu
                 .color
-                .draw_batches(&self.gl, color_count, &vp, &[overlay_color]);
+                .draw_batches(&self.gl, color_count, &vp, &[overlay_color], lb, lc);
             if let Some(profiler) = profiler.as_mut() {
                 profiler.record_draw(draw_start);
+            }
+
+            // Blit sRGB FBO → default framebuffer (if using sRGB target).
+            if let Some(ref target) = self.srgb_target {
+                // Disable GL_FRAMEBUFFER_SRGB during blit to avoid double gamma.
+                self.gl.disable(glow::FRAMEBUFFER_SRGB);
+                self.gl
+                    .bind_framebuffer(glow::READ_FRAMEBUFFER, Some(target.framebuffer));
+                self.gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
+                self.gl.blit_framebuffer(
+                    0,
+                    0,
+                    target.width as i32,
+                    target.height as i32,
+                    0,
+                    0,
+                    self.width as i32,
+                    self.height as i32,
+                    glow::COLOR_BUFFER_BIT,
+                    glow::NEAREST,
+                );
+                self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+                self.gl.enable(glow::FRAMEBUFFER_SRGB);
             }
         }
 
@@ -737,6 +911,9 @@ impl Renderer {
 impl Drop for Renderer {
     fn drop(&mut self) {
         unsafe {
+            if let Some(ref target) = self.srgb_target {
+                target.destroy(&self.gl);
+            }
             self.rects.destroy(&self.gl);
         }
     }
@@ -770,6 +947,10 @@ unsafe fn setup_glyph_vertex_attribs_offset(gl: &glow::Context, base_offset: i32
     gl.enable_vertex_attrib_array(4);
     gl.vertex_attrib_pointer_f32(4, 4, glow::FLOAT, false, stride, base_offset + 32);
     gl.vertex_attrib_divisor(4, 1);
+    // bg_color
+    gl.enable_vertex_attrib_array(5);
+    gl.vertex_attrib_pointer_f32(5, 4, glow::FLOAT, false, stride, base_offset + 48);
+    gl.vertex_attrib_divisor(5, 1);
 }
 
 // ─── Shader compilation ─────────────────────────────────────────────
@@ -858,10 +1039,19 @@ void main() {
 const RECT_FS: &str = r#"#version 330 core
 
 in vec4 v_color;
+uniform bool u_use_linear_blending;
 out vec4 frag_color;
 
+// COLOR_FUNCS_PLACEHOLDER
+
 void main() {
-    frag_color = vec4(v_color.rgb * v_color.a, v_color.a);
+    vec4 color = v_color;
+    // When linear blending is on, linearize sRGB input so the
+    // sRGB FBO + GL_FRAMEBUFFER_SRGB auto-encodes correctly.
+    if (u_use_linear_blending) {
+        color = linearize(color);
+    }
+    frag_color = vec4(color.rgb * color.a, color.a);
 }
 "#;
 
@@ -872,11 +1062,13 @@ layout(location = 1) in vec2 a_size;
 layout(location = 2) in vec2 a_uv_pos;
 layout(location = 3) in vec2 a_uv_size;
 layout(location = 4) in vec4 a_color;
+layout(location = 5) in vec4 a_bg_color;
 
 uniform vec2 u_viewport;
 
 out vec2 v_uv;
 out vec4 v_color;
+out vec4 v_bg_color;
 
 void main() {
     float x = float(gl_VertexID & 1);
@@ -884,6 +1076,7 @@ void main() {
 
     v_uv = a_uv_pos + vec2(x, y) * a_uv_size;
     v_color = a_color;
+    v_bg_color = a_bg_color;
 
     vec2 px = a_pos + vec2(x, y) * a_size;
     vec2 ndc = vec2(
@@ -894,19 +1087,92 @@ void main() {
 }
 "#;
 
+// ─── Shared GLSL functions for sRGB ↔ linear conversion ────────────
+const GLSL_COLOR_FUNCS: &str = r#"
+vec4 linearize(vec4 srgb) {
+    bvec3 c = lessThanEqual(srgb.rgb, vec3(0.04045));
+    vec3 hi = pow((srgb.rgb + vec3(0.055)) / vec3(1.055), vec3(2.4));
+    vec3 lo = srgb.rgb / vec3(12.92);
+    return vec4(mix(hi, lo, c), srgb.a);
+}
+
+float linearize_f(float v) {
+    return v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4);
+}
+
+vec4 unlinearize(vec4 lin) {
+    bvec3 c = lessThanEqual(lin.rgb, vec3(0.0031308));
+    vec3 hi = pow(lin.rgb, vec3(1.0 / 2.4)) * vec3(1.055) - vec3(0.055);
+    vec3 lo = lin.rgb * vec3(12.92);
+    return vec4(mix(hi, lo, c), lin.a);
+}
+
+float unlinearize_f(float v) {
+    return v <= 0.0031308 ? v * 12.92 : pow(v, 1.0 / 2.4) * 1.055 - 0.055;
+}
+
+float luminance(vec3 col) {
+    return dot(col, vec3(0.2126, 0.7152, 0.0722));
+}
+"#;
+
 const ALPHA_FS: &str = r#"#version 330 core
 
 in vec2 v_uv;
 in vec4 v_color;
+in vec4 v_bg_color;
 
 uniform sampler2D u_atlas;
+uniform bool u_use_linear_blending;
+uniform bool u_use_linear_correction;
 
 out vec4 frag_color;
 
+// COLOR_FUNCS_PLACEHOLDER
+
 void main() {
-    float alpha = texture(u_atlas, v_uv).r;
-    float out_alpha = v_color.a * alpha;
-    frag_color = vec4(v_color.rgb * out_alpha, out_alpha);
+    // Input color is sRGB non-premultiplied. Always linearize first.
+    vec4 color = linearize(v_color);
+    // Premultiply in linear space.
+    color.rgb *= color.a;
+
+    // When NOT using linear blending (native mode, RGBA8 FBO):
+    // un-premultiply, convert back to sRGB, re-premultiply.
+    // GPU writes these sRGB values directly (no auto-encode).
+    if (!u_use_linear_blending) {
+        color.rgb /= max(color.a, 0.00001);
+        color = unlinearize(color);
+        color.rgb *= color.a;
+    }
+
+    // Fetch alpha mask from atlas.
+    float a = texture(u_atlas, v_uv).r;
+
+    // Weight correction: adjust alpha so that linear-space hardware
+    // blending (via sRGB FBO) produces stroke weight matching
+    // gamma-space rendering. Uses premultiplied linear luminance
+    // (matching Ghostty's approach).
+    if (u_use_linear_correction) {
+        vec4 bg_linear = linearize(v_bg_color);
+        // Premultiplied linear luminances — Ghostty uses luminance(color.rgb)
+        // directly on the premultiplied linear color.
+        vec4 fg_linear_premul = linearize(v_color);
+        fg_linear_premul.rgb *= fg_linear_premul.a;
+        float fg_l = luminance(fg_linear_premul.rgb);
+        float bg_l = luminance(bg_linear.rgb);
+        if (abs(fg_l - bg_l) > 0.001) {
+            float blend_l = linearize_f(
+                unlinearize_f(fg_l) * a + unlinearize_f(bg_l) * (1.0 - a)
+            );
+            a = clamp((blend_l - bg_l) / (fg_l - bg_l), 0.0, 1.0);
+        }
+    }
+
+    // Apply alpha mask. Output is:
+    // - linear premultiplied (when use_linear_blending) → GPU auto sRGB-encodes via SRGB8_ALPHA8 FBO
+    // - sRGB premultiplied (when native) → written directly to RGBA8 FBO
+    color *= a;
+    frag_color = color;
 }
 "#;
 
@@ -914,13 +1180,30 @@ const COLOR_FS: &str = r#"#version 330 core
 
 in vec2 v_uv;
 in vec4 v_color;
+in vec4 v_bg_color;
 
 uniform sampler2D u_atlas;
+uniform bool u_use_linear_blending;
+uniform bool u_use_linear_correction;
 
 out vec4 frag_color;
 
+// COLOR_FUNCS_PLACEHOLDER
+
 void main() {
+    // Atlas is SRGB8_ALPHA8 — GPU auto-linearizes on sample.
+    // texel is now linear premultiplied.
     vec4 texel = texture(u_atlas, v_uv);
-    frag_color = vec4(texel.rgb * v_color.rgb, texel.a * v_color.a);
+
+    if (u_use_linear_blending) {
+        // Output linear premultiplied → GPU auto sRGB-encodes to FBO.
+        frag_color = vec4(texel.rgb * v_color.rgb, texel.a * v_color.a);
+    } else {
+        // Native mode: unlinearize back to sRGB before output.
+        vec3 unpre = texel.rgb / max(texel.a, 0.00001);
+        vec4 srgb_texel = unlinearize(vec4(unpre, texel.a));
+        srgb_texel.rgb *= srgb_texel.a; // re-premultiply
+        frag_color = vec4(srgb_texel.rgb * v_color.rgb, srgb_texel.a * v_color.a);
+    }
 }
 "#;

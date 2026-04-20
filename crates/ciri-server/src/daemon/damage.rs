@@ -3,6 +3,9 @@ use std::collections::HashMap;
 #[derive(Default)]
 pub(crate) struct DamageAccumulator {
     pub(crate) full: bool,
+    /// Force the next full sync to rebuild visible scrollback from the server
+    /// instead of treating it as an incremental watermark update.
+    pub(crate) replace_scrollback: bool,
     /// Indexed by line. Some((left, right)) = dirty range for that line.
     pub(crate) line_damage: HashMap<u16, (u16, u16)>,
     /// Whether the cursor has moved since last send.
@@ -13,6 +16,11 @@ impl DamageAccumulator {
     pub(crate) fn mark_full(&mut self) {
         self.full = true;
         self.line_damage.clear();
+    }
+
+    pub(crate) fn mark_full_with_scrollback_replace(&mut self) {
+        self.mark_full();
+        self.replace_scrollback = true;
     }
 
     /// Merge damage metadata (line, left, right) tuples into the accumulator.

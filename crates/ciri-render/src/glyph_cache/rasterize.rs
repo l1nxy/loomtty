@@ -8,7 +8,7 @@ use crossfont::BitmapBuffer;
 #[cfg(target_os = "linux")]
 use freetype::face::LoadFlag;
 
-use super::atlas::{AtlasRegion, PendingUpload, make_glyph_entry};
+use super::atlas::{make_glyph_entry, AtlasRegion, PendingUpload};
 #[cfg(target_os = "linux")]
 use super::types::FontStyle;
 use super::types::GlyphEntry;
@@ -168,7 +168,9 @@ pub(crate) fn convert_crossfont_glyph(glyph: crossfont::RasterizedGlyph) -> Rast
 
     match glyph.buffer {
         BitmapBuffer::Rgb(rgb_data) => {
-            // Collapse RGB to single-channel alpha: (R + G + B) / 3
+            // crossfont's RGB bitmap contains LCD coverage, not sRGB color.
+            // Collapse the subpixel coverage back to a single-channel mask
+            // without applying color-space transforms.
             let alpha_data: Vec<u8> = rgb_data
                 .chunks(3)
                 .map(|rgb| ((rgb[0] as u16 + rgb[1] as u16 + rgb[2] as u16) / 3) as u8)
@@ -354,11 +356,11 @@ mod tests {
             top: 0,
             left: 0,
             advance: (0, 0),
-            buffer: BitmapBuffer::Rgb(vec![128, 128, 128]),
+            buffer: BitmapBuffer::Rgb(vec![255, 0, 0]),
         };
         let converted = convert_crossfont_glyph(glyph);
         assert!(!converted.is_color);
-        assert_eq!(converted.data, vec![128]);
+        assert_eq!(converted.data, vec![85]);
     }
 
     #[test]

@@ -7,6 +7,7 @@ mod template;
 
 use ciri_layout::column::ColumnWidth;
 use ciri_protocol::message::*;
+use ciri_term::pane::Pane;
 use ciri_term::pane::TerminalColors;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -219,6 +220,22 @@ impl Server {
         Self::broadcast_layout_update(session, session_name, responses);
     }
 
+    pub(super) fn history_sent_after_full_sync(pane: &Pane) -> usize {
+        if pane.is_alt_screen() {
+            0
+        } else {
+            pane.scrollback_total()
+        }
+    }
+
+    pub(super) fn visible_scrollback_total(pane: &Pane, last_sent: usize) -> usize {
+        if pane.is_alt_screen() {
+            last_sent
+        } else {
+            pane.scrollback_total()
+        }
+    }
+
     pub(super) fn close_pane_and_sync_layout(
         session: &mut Session,
         clients: &mut HashMap<u64, ClientState>,
@@ -302,7 +319,9 @@ impl Server {
 
             if let Some(client) = clients.get_mut(&client_id) {
                 for (&pid, pane) in &session.panes {
-                    client.history_sent.insert(pid, pane.scrollback_total());
+                    client
+                        .history_sent
+                        .insert(pid, Self::history_sent_after_full_sync(pane));
                 }
                 for acc in client.damage.values_mut() {
                     *acc = DamageAccumulator::default();

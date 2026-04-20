@@ -1,6 +1,8 @@
 use super::*;
+use ciri_term::pane::Pane;
 use rstest::*;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
@@ -21,6 +23,37 @@ fn test_client(id: u64, session_name: &str) -> ClientState {
         viewport_height: 768.0,
         session_name: session_name.to_string(),
     }
+}
+
+fn test_shell() -> &'static str {
+    #[cfg(windows)]
+    {
+        "powershell.exe"
+    }
+    #[cfg(not(windows))]
+    {
+        if std::path::Path::new("/bin/sh").exists() {
+            "/bin/sh"
+        } else {
+            "sh"
+        }
+    }
+}
+
+fn wait_until(
+    pane: &mut Pane,
+    timeout: Duration,
+    mut predicate: impl FnMut(&Pane) -> bool,
+) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        let _ = pane.process_pty_output();
+        if predicate(pane) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    false
 }
 
 #[test]
@@ -193,6 +226,32 @@ fn switch_session_to_new_session_refreshes_attach_ordering_for_list_sessions() {
             old_session.as_str(),
         ],
         "switching into a newly created session should make it the most recent ListSessions entry"
+    );
+}
+
+#[test]
+fn alt_screen_full_sync_keeps_primary_scrollback_watermark_unsent() {
+    let mut pane = Pane::new_with_opts(1, 80, 5, test_shell(), None, None).expect("create pane");
+
+    pane.write_to_pty(b"printf 'A\\nB\\nC\\nD\\nE\\nF\\nG\\nH\\nI\\nJ\\n'\n");
+    let grew = wait_until(&mut pane, Duration::from_secs(3), |p| {
+        p.scrollback_total() > 0
+    });
+    assert!(
+        grew,
+        "pane should accumulate primary scrollback before alt-screen"
+    );
+    let primary_total = pane.scrollback_total();
+
+    pane.write_to_pty(b"printf '\\033[?1049h'\n");
+    let entered_alt = wait_until(&mut pane, Duration::from_secs(3), |p| p.is_alt_screen());
+    assert!(entered_alt, "pane should enter alt-screen");
+
+    assert_eq!(Server::history_sent_after_full_sync(&pane), 0);
+    assert_eq!(Server::visible_scrollback_total(&pane, 17), 17);
+    assert!(
+        primary_total > 0,
+        "test setup should preserve hidden primary scrollback while in alt-screen"
     );
 }
 
@@ -1159,4 +1218,38 @@ fn resize_accepts_valid_dimensions(
     assert_eq!(client.viewport_height, height as f32);
     assert_eq!(client.cell_width, cw);
     assert_eq!(client.cell_height, ch);
+}
+
+#[test]
+fn resize_marks_next_full_sync_to_replace_scrollback() {
+    let mut server = Server::new("", 8.0, TerminalColors::default());
+    let session_name = "alpha".to_string();
+    server.clients.insert(1, test_client(1, &session_name));
+    let pane_id = {
+        let session = server.get_or_create_session(&session_name);
+        session.workspaces.active().active_pane_id().unwrap()
+    };
+
+    let _ = server.handle_message(
+        ClientMessage::Resize {
+            cols: 120,
+            rows: 40,
+            width: 1920,
+            height: 1080,
+            cell_width: 8.0,
+            cell_height: 16.0,
+        },
+        1,
+    );
+
+    let damage = server
+        .clients
+        .get(&1)
+        .and_then(|client| client.damage.get(&pane_id))
+        .expect("resize should enqueue full damage for the pane");
+    assert!(damage.full, "resize should require a full sync");
+    assert!(
+        damage.replace_scrollback,
+        "resize full sync should rebuild visible scrollback instead of appending by watermark"
+    );
 }

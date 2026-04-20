@@ -35,6 +35,7 @@ pub(crate) async fn run_tick_loop(
             sync: FullPaneSync,
             current_history: usize,
             pane_id: u64,
+            force_scrollback_replace: bool,
         },
         /// Pre-encoded delta frame (cells streamed directly into frame buffer).
         DeltaEncoded(Vec<u8>),
@@ -244,15 +245,19 @@ pub(crate) async fn run_tick_loop(
                                     .get(&cid)
                                     .and_then(|c| c.history_sent.get(&pane_id).copied())
                                     .unwrap_or(0);
+                                let force_scrollback_replace =
+                                    damage.replace_scrollback && !pane.is_alt_screen();
                                 // When pane is in alt screen, preserve history_sent
                                 // (alt buffer has no scrollback — history_size() returns 0).
-                                let current_total = if pane.is_alt_screen() {
-                                    last_sent
+                                let current_total =
+                                    Server::visible_scrollback_total(pane, last_sent);
+                                let mut sync = if force_scrollback_replace {
+                                    let mut sync = pane.snapshot_incremental(pgen, 0);
+                                    sync.scrollback_replace = true;
+                                    sync
                                 } else {
-                                    pane.scrollback_total()
+                                    build_scrollback_sync(pane, pgen, last_sent, current_total)
                                 };
-                                let mut sync =
-                                    build_scrollback_sync(pane, pgen, last_sent, current_total);
                                 sync.meta.echo_ack = client_echo_ack;
                                 pending_sends.push(PendingSend {
                                     client_id: cid,
@@ -261,20 +266,23 @@ pub(crate) async fn run_tick_loop(
                                         sync,
                                         current_history: current_total,
                                         pane_id,
+                                        force_scrollback_replace,
                                     },
                                 });
                             }
                         } else if let Some(pane) = session.panes.get(&pane_id) {
-                            // Use monotonic scrollback_total to detect new scrollback,
-                            // including ring buffer rotations after the buffer is full.
-                            let current_total = pane.scrollback_total();
+                            // Track the primary-screen scrollback watermark
+                            // visible to this client. It advances with new
+                            // output, stays pinned while alt-screen is active,
+                            // and may rewind after a resize reabsorbs history.
                             let last_sent = s
                                 .clients
                                 .get(&cid)
                                 .and_then(|c| c.history_sent.get(&pane_id).copied())
                                 .unwrap_or(0);
+                            let current_total = Server::visible_scrollback_total(pane, last_sent);
 
-                            if current_total > last_sent {
+                            if current_total != last_sent {
                                 // New scrollback — send scrollback-only FullPaneSync
                                 // (rows=0, cells=[]) so viewport is not re-encoded.
                                 let mut sync = build_scrollback_only_sync(
@@ -291,6 +299,7 @@ pub(crate) async fn run_tick_loop(
                                         sync,
                                         current_history: current_total,
                                         pane_id,
+                                        force_scrollback_replace: false,
                                     },
                                 });
                                 // Also send CellDelta for any viewport damage
@@ -430,6 +439,7 @@ pub(crate) async fn run_tick_loop(
                 session_name: String,
                 buf: Vec<u8>,
                 history_update: Option<(u64, usize)>,
+                force_scrollback_replace: bool,
             }
             let mut encoded: Vec<EncodedFrame> = Vec::new();
 
@@ -444,6 +454,7 @@ pub(crate) async fn run_tick_loop(
                         sync,
                         current_history,
                         pane_id,
+                        force_scrollback_replace,
                     } => {
                         let mut buf = frame_pool.pop().unwrap_or_default();
                         if codec::encode_full_pane_sync_framed(&mut buf, &sync).is_ok() {
@@ -452,6 +463,7 @@ pub(crate) async fn run_tick_loop(
                                 session_name,
                                 buf,
                                 history_update: Some((pane_id, current_history)),
+                                force_scrollback_replace,
                             });
                         } else if frame_pool.len() < FRAME_POOL_CAP {
                             frame_pool.push(buf);
@@ -464,6 +476,7 @@ pub(crate) async fn run_tick_loop(
                             session_name,
                             buf,
                             history_update: None,
+                            force_scrollback_replace: false,
                         });
                     }
                 }
@@ -477,6 +490,7 @@ pub(crate) async fn run_tick_loop(
                 session_name,
                 buf,
                 history_update,
+                force_scrollback_replace,
             } in encoded.drain(..)
             {
                 if let Some(client) = s.clients.get_mut(&client_id) {
@@ -515,7 +529,12 @@ pub(crate) async fn run_tick_loop(
                             }
                             // On failure for FullPaneSync, re-mark full so it retries next tick
                             if let Some((pid, _)) = history_update {
-                                client.damage.entry(pid).or_default().mark_full();
+                                let damage = client.damage.entry(pid).or_default();
+                                if force_scrollback_replace {
+                                    damage.mark_full_with_scrollback_replace();
+                                } else {
+                                    damage.mark_full();
+                                }
                             }
                             // Bytes consumed the Vec; cannot recover for pool
                             drop(e);
@@ -572,6 +591,11 @@ fn build_scrollback_only_sync(
 /// - `last_sent`: the client's `scrollback_total` watermark
 /// - `current_total`: the pane's current `scrollback_total()`
 ///
+/// When `current_total < last_sent`, the server's visible primary scrollback
+/// rewound (for example after a grow-resize reabsorbed rows from history into
+/// the viewport). In that case we must resend the full current history with
+/// `scrollback_replace = true` so the client discards stale rows.
+///
 /// When `delta > history_size()`, the server has rotated past what the client
 /// has: send ALL current scrollback with `scrollback_replace = true`.
 /// Otherwise, send only the new rows (incremental append).
@@ -582,14 +606,46 @@ fn build_scrollback_sync(
     current_total: usize,
 ) -> FullPaneSync {
     let hs = pane.history_size();
-    let delta = current_total.saturating_sub(last_sent);
-    let rows_to_send = delta.min(hs);
-    let replace = delta > hs;
+    let (adjusted_sent, replace) = scrollback_sync_plan(hs, last_sent, current_total);
 
     // Compute the `history_sent` value that snapshot_incremental expects:
     // it will send `history_size - adjusted_sent` rows from the end.
-    let adjusted_sent = hs.saturating_sub(rows_to_send);
     let mut sync = pane.snapshot_incremental(generation, adjusted_sent);
     sync.scrollback_replace = replace;
     sync
+}
+
+fn scrollback_sync_plan(
+    history_size: usize,
+    last_sent: usize,
+    current_total: usize,
+) -> (usize, bool) {
+    if current_total < last_sent {
+        return (0, true);
+    }
+
+    let delta = current_total - last_sent;
+    let rows_to_send = delta.min(history_size);
+    let replace = delta > history_size;
+    (history_size.saturating_sub(rows_to_send), replace)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scrollback_sync_plan;
+
+    #[test]
+    fn scrollback_sync_plan_rewinds_with_replace_when_total_drops() {
+        assert_eq!(scrollback_sync_plan(80, 120, 95), (0, true));
+    }
+
+    #[test]
+    fn scrollback_sync_plan_replaces_when_delta_exceeds_history() {
+        assert_eq!(scrollback_sync_plan(80, 10, 120), (0, true));
+    }
+
+    #[test]
+    fn scrollback_sync_plan_appends_tail_when_delta_fits_history() {
+        assert_eq!(scrollback_sync_plan(80, 60, 75), (65, false));
+    }
 }

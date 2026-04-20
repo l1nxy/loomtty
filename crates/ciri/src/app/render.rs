@@ -51,6 +51,7 @@ impl App {
             uv_pos: [0.0, 0.0],
             uv_size: [0.0, 0.0],
             color: [0.0, 0.0, 0.0, 0.0],
+            bg_color: [0.0, 0.0, 0.0, 0.0],
         }
     }
 
@@ -162,6 +163,7 @@ impl App {
             visual.inner_y,
             zoom,
             visual.dim,
+            paint.bg_color,
             tile_key,
             paint.cache_tile_glyphs,
             &mut dirty_glyph_ranges,
@@ -1130,6 +1132,7 @@ impl App {
         inner_y: f32,
         zoom: f32,
         dim: f32,
+        bg_color: [f32; 4],
         tile_key: (u32, u32, u32, u32),
         cache_tile_glyphs: bool,
         dirty_glyph_ranges: &mut Vec<(usize, usize)>,
@@ -1154,6 +1157,7 @@ impl App {
                     uv_pos: [g.u0, g.v0],
                     uv_size: [g.u1 - g.u0, g.v1 - g.v0],
                     color,
+                    bg_color,
                 })
             };
 
@@ -1396,6 +1400,7 @@ impl App {
             inner_y,
             zoom,
             visual.dim,
+            paint.bg_color,
             tile_key,
             paint.cache_tile_glyphs,
             &mut self.render_bufs.dirty_glyph_ranges,
@@ -2084,6 +2089,7 @@ impl App {
                 uv_pos: [entry.u0, entry.v0],
                 uv_size: [entry.u1 - entry.u0, entry.v1 - entry.v0],
                 color: [dim, dim, dim, 1.0],
+                bg_color: [0.0, 0.0, 0.0, 0.0],
             });
         }
     }
@@ -2201,6 +2207,7 @@ impl App {
                 } else {
                     visible
                 };
+                let visible_grapheme_map = grid.visible_grapheme_map();
                 let (mut cur_col, mut cur_line, cur_shape) =
                     if let Some((col, line)) = grid.cursor_in_viewport() {
                         (col, line, grid.cursor_shape)
@@ -2224,7 +2231,7 @@ impl App {
                     config: &self.core.config,
                     shaper,
                     colors: &self.cached_color_table,
-                    grapheme_map: &grid.grapheme_map,
+                    grapheme_map: &visible_grapheme_map,
                 };
                 let view = terminal::build_view_from_grid(cache, &inputs);
                 grid.clear_dirty();
@@ -2252,6 +2259,7 @@ impl App {
                     // (clear_dirty only resets flags, not cell data)
                     grid.clear_dirty();
                     let visible = grid.visible_cells();
+                    let visible_grapheme_map = grid.visible_grapheme_map();
                     // Apply prediction overlay
                     let visible_final = if self.core.prediction.has_overlay(*pane_id) {
                         let mut cells = visible.into_owned();
@@ -2279,7 +2287,7 @@ impl App {
                             config: &self.core.config,
                             shaper,
                             colors: &self.cached_color_table,
-                            grapheme_map: &grid.grapheme_map,
+                            grapheme_map: &visible_grapheme_map,
                         };
                         terminal::update_view_from_grid(
                             view,

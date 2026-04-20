@@ -90,6 +90,24 @@ impl Session {
         }
     }
 
+    /// Mark a pane as fully damaged and require the next full sync to rebuild
+    /// the client's visible scrollback from the server copy.
+    fn mark_resize_damage(
+        clients: &mut HashMap<u64, ClientState>,
+        session_name: &str,
+        pane_id: u64,
+    ) {
+        for client in clients.values_mut() {
+            if client.session_name == session_name {
+                client
+                    .damage
+                    .entry(pane_id)
+                    .or_default()
+                    .mark_full_with_scrollback_replace();
+            }
+        }
+    }
+
     /// Get the CWD of the active pane (from OSC 7), if available.
     pub(crate) fn active_pane_cwd(&self) -> Option<String> {
         let pane_id = self.workspaces.active().active_pane_id()?;
@@ -285,7 +303,7 @@ impl Session {
                             pane.resize(cols, rows);
                             let g = self.generation.entry(*pane_id).or_insert(0);
                             *g += 1;
-                            Self::mark_full_damage(clients, &self.session_name, *pane_id);
+                            Self::mark_resize_damage(clients, &self.session_name, *pane_id);
                             changed = true;
                         }
                     }

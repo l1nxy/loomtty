@@ -11,7 +11,12 @@ pub(crate) struct ClientState {
     pub(crate) last_acked_generation: u64,
     /// Per-pane: highest input_seq received from this client (for echo-ack).
     pub(crate) max_input_seq: HashMap<u64, u64>,
-    /// Per-pane: how many history lines this client has received.
+    /// Per-pane: primary-screen scrollback watermark mirrored to this client.
+    ///
+    /// This only advances when the client actually receives primary-screen
+    /// scrollback. While a pane is in alt-screen, the watermark is preserved
+    /// so the server can resend the hidden primary history after alt-screen
+    /// exits.
     pub(crate) history_sent: HashMap<u64, usize>,
     /// Consecutive try_send failures; used to detect slow clients.
     pub(crate) send_failures: u32,

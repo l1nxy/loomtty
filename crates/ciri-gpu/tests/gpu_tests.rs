@@ -337,7 +337,7 @@ fn rect_bytemuck_layout() {
 #[test]
 fn glyph_instance_bytemuck_layout() {
     // GlyphInstance: 2+2+2+2+4 = 12 f32 = 48 bytes
-    assert_eq!(std::mem::size_of::<GlyphInstance>(), 48);
+    assert_eq!(std::mem::size_of::<GlyphInstance>(), 64);
     assert_eq!(std::mem::align_of::<GlyphInstance>(), 4);
 
     let inst = GlyphInstance {
@@ -346,14 +346,15 @@ fn glyph_instance_bytemuck_layout() {
         uv_pos: [0.0, 0.0],
         uv_size: [0.1, 0.2],
         color: [1.0, 1.0, 1.0, 1.0],
+        bg_color: [0.0, 0.0, 0.0, 1.0],
     };
     let bytes: &[u8] = bytemuck::bytes_of(&inst);
-    assert_eq!(bytes.len(), 48);
+    assert_eq!(bytes.len(), 64);
 
     // Verify cast_slice works for GPU upload
     let instances = [inst; 4];
     let slice: &[u8] = bytemuck::cast_slice(&instances);
-    assert_eq!(slice.len(), 48 * 4);
+    assert_eq!(slice.len(), 64 * 4);
 }
 
 #[test]
@@ -533,6 +534,7 @@ fn buffer_glyph_instance_upload() {
             uv_pos: [0.0, 0.0],
             uv_size: [0.01, 0.02],
             color: [1.0, 1.0, 1.0, 1.0],
+            bg_color: [0.0, 0.0, 0.0, 1.0],
         })
         .collect();
 

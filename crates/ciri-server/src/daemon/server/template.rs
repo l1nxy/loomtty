@@ -322,7 +322,7 @@ impl Server {
         let pane_histories: Vec<(u64, usize)> = session
             .panes
             .iter()
-            .map(|(&pid, pane): (&u64, &Pane)| (pid, pane.scrollback_total()))
+            .map(|(&pid, pane): (&u64, &Pane)| (pid, Server::history_sent_after_full_sync(pane)))
             .collect();
         if let Some(client) = self.clients.get_mut(&client_id) {
             for (pane_id, history) in pane_histories {

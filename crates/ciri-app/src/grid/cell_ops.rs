@@ -33,6 +33,22 @@ impl ClientPaneGrid {
         Cow::Owned(cells)
     }
 
+    /// Grapheme extras rebased to the currently visible grid.
+    pub fn visible_grapheme_map(&self) -> std::collections::HashMap<u32, String> {
+        let cols = self.cols as usize;
+        let rows = self.rows as usize;
+        let start = self.viewport_top().saturating_mul(cols);
+        let end = start.saturating_add(rows.saturating_mul(cols));
+        let mut visible = std::collections::HashMap::with_capacity(self.grapheme_map.len());
+        for (&idx, grapheme) in &self.grapheme_map {
+            let idx = idx as usize;
+            if idx >= start && idx < end {
+                visible.insert((idx - start) as u32, grapheme.clone());
+            }
+        }
+        visible
+    }
+
     /// Get cursor position in viewport coordinates, or None if cursor is not visible
     /// (e.g., when scrolled away from live viewport).
     pub fn cursor_in_viewport(&self) -> Option<(u16, i16)> {

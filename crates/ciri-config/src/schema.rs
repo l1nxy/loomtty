@@ -436,6 +436,42 @@ pub enum RenderBackend {
     Gl,
 }
 
+/// Alpha blending color space.
+///
+/// Controls how anti-aliased text is composited onto the background:
+/// - `native`: blend in sRGB (gamma-encoded) space — fastest, but text appears
+///   slightly brighter/thicker than perceptually correct.
+/// - `linear`: blend in linear light — correct compositing, but dark-on-light
+///   text can appear thinner than expected.
+/// - `linear-corrected`: linear blend with a per-pixel weight correction that
+///   preserves the stroke weight of gamma-space rendering while eliminating
+///   brightness artifacts. Recommended default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AlphaBlending {
+    Native,
+    Linear,
+    LinearCorrected,
+}
+
+impl AlphaBlending {
+    pub fn is_linear(self) -> bool {
+        matches!(self, Self::Linear | Self::LinearCorrected)
+    }
+
+    pub fn use_correction(self) -> bool {
+        matches!(self, Self::LinearCorrected)
+    }
+}
+
+fn default_alpha_blending() -> AlphaBlending {
+    if cfg!(target_os = "macos") {
+        AlphaBlending::Native
+    } else {
+        AlphaBlending::LinearCorrected
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 #[serde(default)]
 pub struct RenderConfig {
@@ -453,6 +489,9 @@ pub struct RenderConfig {
     pub present_mode: PresentMode,
     #[garde(skip)]
     pub backend: RenderBackend,
+    #[garde(skip)]
+    #[serde(default = "default_alpha_blending")]
+    pub alpha_blending: AlphaBlending,
 }
 
 impl Default for RenderConfig {
@@ -465,6 +504,7 @@ impl Default for RenderConfig {
             frame_latency: 2,
             present_mode: PresentMode::Fifo,
             backend: RenderBackend::Auto,
+            alpha_blending: default_alpha_blending(),
         }
     }
 }

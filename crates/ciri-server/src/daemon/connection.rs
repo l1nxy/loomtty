@@ -193,7 +193,12 @@ pub(crate) async fn handle_client<R, W>(
             let pane_histories: Vec<(u64, usize)> = session
                 .panes
                 .iter()
-                .map(|(&pid, pane)| (pid, pane.scrollback_total()))
+                .map(|(&pid, pane)| {
+                    (
+                        pid,
+                        super::server::Server::history_sent_after_full_sync(pane),
+                    )
+                })
                 .collect();
 
             if let Some(client) = s.clients.get_mut(&client_id) {

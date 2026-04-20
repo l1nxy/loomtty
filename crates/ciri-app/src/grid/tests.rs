@@ -288,7 +288,7 @@ fn full_sync_dimension_change_preserves_scrollback() {
 fn full_sync_dimension_change_rebases_grapheme_indices() {
     let mut grid = ClientPaneGrid::new(4, 2, 10);
     let mut grapheme_extras = GraphemeExtras::new();
-    grapheme_extras.push(4, "\u{0301}");
+    grapheme_extras.push(8, "\u{0301}");
     let sync = FullPaneSync {
         meta: PaneFrameMeta {
             pane_id: 1,
@@ -312,7 +312,7 @@ fn full_sync_dimension_change_rebases_grapheme_indices() {
     };
     grid.apply_full_sync_owned(&sync);
     assert_eq!(
-        grid.grapheme_map.get(&4).map(String::as_str),
+        grid.grapheme_map.get(&8).map(String::as_str),
         Some("A\u{0301}")
     );
 
@@ -340,10 +340,10 @@ fn full_sync_dimension_change_rebases_grapheme_indices() {
     grid.apply_full_sync_owned(&resize_sync);
 
     assert_eq!(
-        grid.grapheme_map.get(&2).map(String::as_str),
+        grid.grapheme_map.get(&6).map(String::as_str),
         Some("B\u{0301}")
     );
-    assert!(!grid.grapheme_map.contains_key(&4));
+    assert!(!grid.grapheme_map.contains_key(&8));
 }
 
 #[test]
@@ -414,7 +414,7 @@ fn full_sync_scrollback_trimmed_to_max() {
 
 #[test]
 fn full_sync_same_width_trim_rebases_grapheme_indices() {
-    let mut grid = ClientPaneGrid::new(2, 1, 1);
+    let mut grid = ClientPaneGrid::new(2, 1, 2);
 
     let initial_sync = FullPaneSync {
         meta: PaneFrameMeta {
@@ -429,20 +429,16 @@ fn full_sync_same_width_trim_rebases_grapheme_indices() {
         cols: 2,
         rows: 1,
         title: String::new(),
-        scrollback: vec![],
-        scrollback_rows: 0,
+        scrollback: vec![PackedCell::with_ch('X'), PackedCell::with_ch('Y')],
+        scrollback_rows: 1,
         scrollback_replace: false,
-        cells: vec![PackedCell::with_ch('X'), PackedCell::with_ch('Y')],
+        cells: vec![PackedCell::with_ch('A'), PackedCell::with_ch('B')],
         grapheme_extras: GraphemeExtras(vec![(0, "\u{0301}".to_string())]),
         hyperlink_extras: HyperlinkExtras::new(),
         cwd: None,
     };
     grid.apply_full_sync_owned(&initial_sync);
-    assert_eq!(grid.scrollback.len(), 0);
-    assert_eq!(
-        grid.grapheme_map.get(&0).map(String::as_str),
-        Some("X\u{0301}")
-    );
+    assert_eq!(grid.scrollback.len(), 1);
     assert_eq!(
         grid.grapheme_map.get(&0).map(String::as_str),
         Some("X\u{0301}")
@@ -470,7 +466,7 @@ fn full_sync_same_width_trim_rebases_grapheme_indices() {
         cwd: None,
     };
     grid.apply_full_sync_owned(&overflow_sync);
-    assert_eq!(grid.scrollback.len(), 1);
+    assert_eq!(grid.scrollback.len(), 2);
     assert_eq!(
         grid.grapheme_map.get(&0).map(String::as_str),
         Some("X\u{0301}")
@@ -499,13 +495,10 @@ fn full_sync_same_width_trim_rebases_grapheme_indices() {
     };
     grid.apply_full_sync_owned(&trim_sync);
 
-    assert_eq!(grid.scrollback.len(), 1);
-    assert_eq!(grid.scrollback[0].cells[0].ch(), 'm');
-    assert_eq!(
-        grid.grapheme_map.get(&0).map(String::as_str),
-        Some("X\u{0301}")
-    );
-    assert!(!grid.grapheme_map.contains_key(&2));
+    assert_eq!(grid.scrollback.len(), 2);
+    assert_eq!(grid.scrollback[0].cells[0].ch(), 'q');
+    assert_eq!(grid.scrollback[1].cells[0].ch(), 'm');
+    assert!(!grid.grapheme_map.contains_key(&0));
 }
 
 #[test]
@@ -565,6 +558,61 @@ fn full_sync_clamps_scroll_offset() {
     grid.apply_full_sync_owned(&sync);
     assert_eq!(grid.scroll_offset, 0); // reset by dimension change
     assert_eq!(grid.scrollback.len(), 4); // scrollback preserved
+}
+
+#[test]
+fn full_sync_append_while_scrolled_preserves_viewport_top() {
+    let mut grid = ClientPaneGrid::new(2, 1, 6);
+    for ch in ['a', 'b', 'c', 'd'] {
+        grid.apply_full_sync_owned(&FullPaneSync {
+            meta: PaneFrameMeta {
+                pane_id: 1,
+                generation: 1,
+                cursor_line: 0,
+                cursor_col: 0,
+                cursor_shape: CURSOR_BLOCK,
+                mode_flags: 0,
+                echo_ack: 0,
+            },
+            cols: 2,
+            rows: 1,
+            title: String::new(),
+            scrollback: vec![PackedCell::with_ch(ch); 2],
+            scrollback_rows: 1,
+            scrollback_replace: false,
+            cells: vec![PackedCell::default(); 2],
+            grapheme_extras: GraphemeExtras::new(),
+            hyperlink_extras: HyperlinkExtras::new(),
+            cwd: None,
+        });
+    }
+    grid.scroll_up(2);
+    let top_before = grid.viewport_top();
+
+    grid.apply_full_sync_owned(&FullPaneSync {
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 2,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+            echo_ack: 0,
+        },
+        cols: 2,
+        rows: 1,
+        title: String::new(),
+        scrollback: vec![PackedCell::with_ch('e'); 2],
+        scrollback_rows: 1,
+        scrollback_replace: false,
+        cells: vec![PackedCell::default(); 2],
+        grapheme_extras: GraphemeExtras::new(),
+        hyperlink_extras: HyperlinkExtras::new(),
+        cwd: None,
+    });
+
+    assert_eq!(grid.viewport_top(), top_before);
+    assert_eq!(grid.scroll_offset, 3);
 }
 
 #[test]
@@ -632,6 +680,88 @@ fn scrollback_replace_clears_and_repopulates() {
     assert_eq!(grid.scrollback.len(), 2);
     assert_eq!(grid.scrollback[0].cells[0].ch(), 'X');
     assert_eq!(grid.scrollback[1].cells[0].ch(), 'Y');
+}
+
+#[test]
+fn full_sync_applies_scrollback_grapheme_extras_without_polluting_viewport() {
+    let mut grid = ClientPaneGrid::new(2, 1, 5);
+    let mut grapheme_extras = GraphemeExtras::new();
+    grapheme_extras.push(0, "\u{0301}");
+    grapheme_extras.push(2, "\u{0302}");
+
+    grid.apply_full_sync_owned(&FullPaneSync {
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+            echo_ack: 0,
+        },
+        cols: 2,
+        rows: 1,
+        title: String::new(),
+        scrollback: vec![PackedCell::with_ch('s'), PackedCell::with_ch('t')],
+        scrollback_rows: 1,
+        scrollback_replace: false,
+        cells: vec![PackedCell::with_ch('V'), PackedCell::with_ch('W')],
+        grapheme_extras,
+        hyperlink_extras: HyperlinkExtras::new(),
+        cwd: None,
+    });
+
+    assert_eq!(
+        grid.grapheme_map.get(&0).map(String::as_str),
+        Some("s\u{0301}")
+    );
+    assert_eq!(
+        grid.grapheme_map.get(&2).map(String::as_str),
+        Some("V\u{0302}")
+    );
+    assert!(!grid.grapheme_map.contains_key(&1));
+    assert!(!grid.grapheme_map.contains_key(&3));
+}
+
+#[test]
+fn full_sync_dimension_change_keeps_scrollback_grapheme_extras() {
+    let mut grid = ClientPaneGrid::new(4, 1, 5);
+    let mut grapheme_extras = GraphemeExtras::new();
+    grapheme_extras.push(0, "\u{0301}");
+    grapheme_extras.push(2, "\u{0302}");
+
+    grid.apply_full_sync_owned(&FullPaneSync {
+        meta: PaneFrameMeta {
+            pane_id: 1,
+            generation: 1,
+            cursor_line: 0,
+            cursor_col: 0,
+            cursor_shape: CURSOR_BLOCK,
+            mode_flags: 0,
+            echo_ack: 0,
+        },
+        cols: 2,
+        rows: 1,
+        title: String::new(),
+        scrollback: vec![PackedCell::with_ch('s'), PackedCell::with_ch('t')],
+        scrollback_rows: 1,
+        scrollback_replace: false,
+        cells: vec![PackedCell::with_ch('V'), PackedCell::with_ch('W')],
+        grapheme_extras,
+        hyperlink_extras: HyperlinkExtras::new(),
+        cwd: None,
+    });
+
+    assert_eq!(
+        grid.grapheme_map.get(&0).map(String::as_str),
+        Some("s\u{0301}")
+    );
+    assert_eq!(
+        grid.grapheme_map.get(&2).map(String::as_str),
+        Some("V\u{0302}")
+    );
+    assert!(!grid.grapheme_map.contains_key(&1));
+    assert!(!grid.grapheme_map.contains_key(&3));
 }
 
 // ─── apply_delta edge cases ─────────────────────────────────────

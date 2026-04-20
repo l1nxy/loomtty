@@ -183,15 +183,30 @@ impl GraphemeExtras {
     /// Build a lookup: cell_index → full grapheme string (primary char + extras).
     /// Call once per frame, then look up by index in the render loop.
     pub fn build_lookup(&self, cells: &[PackedCell]) -> std::collections::HashMap<u32, String> {
+        self.build_lookup_with_offset(cells, 0)
+    }
+
+    /// Build a lookup for a slice that starts at `start_index` within the
+    /// full cell stream represented by these extras. Returned indices are
+    /// rebased to the local slice (0-based within `cells`).
+    pub fn build_lookup_with_offset(
+        &self,
+        cells: &[PackedCell],
+        start_index: usize,
+    ) -> std::collections::HashMap<u32, String> {
         let mut map = std::collections::HashMap::with_capacity(self.0.len());
         for (idx, extra) in &self.0 {
             let i = *idx as usize;
-            if i < cells.len() {
+            if i < start_index {
+                continue;
+            }
+            let local = i - start_index;
+            if local < cells.len() {
                 let mut s = String::new();
-                let ch = cells[i].ch();
+                let ch = cells[local].ch();
                 s.push(ch);
                 s.push_str(extra);
-                map.insert(*idx, s);
+                map.insert(local as u32, s);
             }
         }
         map
@@ -708,7 +723,8 @@ pub struct FullPaneSync {
     pub scrollback_replace: bool,
     pub cells: Vec<PackedCell>, // row-major, rows * cols (viewport)
     /// Sparse grapheme overflow for multi-codepoint clusters (emoji, etc.).
-    /// Empty for >99.9% of frames.
+    /// Indices are over the concatenated FullPaneSync cell stream:
+    /// `scrollback` first, then `cells`.
     pub grapheme_extras: GraphemeExtras,
     /// Sparse hyperlink data from OSC 8 sequences.
     /// Empty unless the terminal application uses explicit hyperlinks.
@@ -801,7 +817,7 @@ pub struct FullPaneSyncBorrowed {
     pub title: String,
     pub scrollback_rows: u32,
     pub scrollback_replace: bool,
-    /// Grapheme extras (sparse, typically empty).
+    /// Grapheme extras over the concatenated scrollback + viewport cell stream.
     pub grapheme_extras: GraphemeExtras,
     /// Hyperlink extras (sparse, typically empty).
     pub hyperlink_extras: HyperlinkExtras,

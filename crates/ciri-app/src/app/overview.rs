@@ -18,7 +18,22 @@ impl AppModel {
             self.context_menu.visible = false;
             self.overview.hovered_pane = None;
             self.refresh_overview_zoom();
-            let target_x = self.workspaces.active().target_offset_for_active() as f64;
+            let center = match self.config.layout.center_focused_column {
+                ciri_config::config::CenterStrategy::Always => {
+                    ciri_layout::workspace::CenterStrategy::Always
+                }
+                ciri_config::config::CenterStrategy::OnOverflow => {
+                    ciri_layout::workspace::CenterStrategy::OnOverflow
+                }
+                ciri_config::config::CenterStrategy::Never => {
+                    ciri_layout::workspace::CenterStrategy::Never
+                }
+            };
+            let current_x = self.anim_mgr.view_offset_x.value() as f32;
+            let target_x = self
+                .workspaces
+                .active()
+                .target_offset_for_active_with_strategy(center, current_x) as f64;
             let target_y = self.workspaces.target_offset_y() as f64;
             self.anim_mgr.view_offset_x.animate_to(target_x, sp);
             self.anim_mgr.view_offset_y.animate_to(target_y, sp);

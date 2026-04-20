@@ -233,7 +233,7 @@ impl App {
                     let ws = self.core.workspaces.active_mut();
                     for col_idx in 0..ws.columns.len() {
                         if ws.columns[col_idx].contains_pane(pane_id) {
-                            ws.active_column_idx = col_idx;
+                            ws.focus_column(col_idx);
                             if let Some(tile_idx) = ws.columns[col_idx]
                                 .tiles
                                 .iter()

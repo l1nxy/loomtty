@@ -522,6 +522,11 @@ pub enum PresetWidth {
 pub struct LayoutConfig {
     pub default_column_width: Option<PresetWidth>,
     pub preset_widths: Vec<PresetWidth>,
+    /// How the viewport centers on the focused column.
+    /// "never" (default) = minimal scroll, keep neighbors visible when possible
+    /// "on-overflow" = center only when the focused column and the one we came
+    ///   from don't fit on-screen together (PaperWM-style)
+    /// "always" = always center the focused column
     pub center_focused_column: CenterStrategy,
 }
 
@@ -538,7 +543,7 @@ impl Default for LayoutConfig {
     fn default() -> Self {
         LayoutConfig {
             default_column_width: None,
-            center_focused_column: CenterStrategy::Always,
+            center_focused_column: CenterStrategy::Never,
             preset_widths: vec![
                 PresetWidth::Proportion {
                     proportion: 1.0 / 3.0,

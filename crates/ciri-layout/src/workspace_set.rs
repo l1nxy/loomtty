@@ -60,7 +60,9 @@ impl WorkspaceSet {
                 .columns
                 .len()
                 .saturating_sub(1);
-            self.workspaces[self.active_workspace_idx].active_column_idx = col_idx.min(max);
+            let dst = &mut self.workspaces[self.active_workspace_idx];
+            dst.active_column_idx = col_idx.min(max);
+            dst.prev_active_column_idx = None;
             return true;
         }
         false
@@ -75,7 +77,9 @@ impl WorkspaceSet {
                 .columns
                 .len()
                 .saturating_sub(1);
-            self.workspaces[self.active_workspace_idx].active_column_idx = col_idx.min(max);
+            let dst = &mut self.workspaces[self.active_workspace_idx];
+            dst.active_column_idx = col_idx.min(max);
+            dst.prev_active_column_idx = None;
             return true;
         }
         false

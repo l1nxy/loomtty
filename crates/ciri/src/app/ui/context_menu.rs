@@ -1,8 +1,16 @@
-use ciri_config::theme::ThemeConfig;
+//! Right-click context menu.
+//!
+//! A small modal popup anchored at the click point. Rows show the
+//! menu item label; enabled rows highlight on hover. Capture clamps
+//! the anchor point so the menu stays inside the viewport, so the
+//! paint path just needs to position a styled panel at `(x, y)` with
+//! the rows flex-stacked inside.
 
-use super::builder::UiBuilder;
+use ciri_ui::color::{scale_rgb, TRANSPARENT};
+use ciri_ui::{div, text, Div, Layer, ResolvedTheme, Styled};
+
 use super::tokens;
-use super::types::{UiAction, UiComponent, UiContext, UiContextMenuHit, UiScene};
+use super::types::{UiAction, UiContext, UiContextMenuHit};
 use crate::app::App;
 
 struct ContextMenuRow {
@@ -73,79 +81,67 @@ impl ContextMenuComponent {
             UiContextMenuHit::Menu
         }
     }
-}
 
-impl UiComponent for ContextMenuComponent {
-    fn click(&self, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
+    /// Map a click to a `UiAction`. Preserves the legacy semantics:
+    /// clicking an enabled entry fires it, clicking on disabled rows
+    /// or the panel padding is a no-op, and clicking outside closes
+    /// the menu.
+    pub(crate) fn click(&self, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
         match self.hit_test(mx, my) {
             UiContextMenuHit::Entry(idx) => Some(UiAction::ExecuteContextMenuEntry(idx)),
             UiContextMenuHit::Menu => None,
             UiContextMenuHit::None => Some(UiAction::CloseContextMenu),
         }
     }
+}
 
-    fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+impl ContextMenuComponent {
+    /// Build the ciri-ui tree for this captured menu snapshot.
+    ///
+    /// The root is an absolutely-positioned `Modal`-layer panel at
+    /// `(self.x, self.y)` driven by `translate` — menus are small
+    /// and anchored exactly where the user right-clicked, so
+    /// flex-based centring doesn't apply here the way it does for
+    /// the paste dialog.
+    pub(crate) fn build_tree(&self, theme: &ResolvedTheme) -> Div {
+        // Legacy recipe: `background * 0.9` — one step darker than the
+        // terminal background so the menu reads as a raised surface
+        // against the pane content.
+        let bg_color = scale_rgb(theme.term_bg, 0.9);
+        let hover_bg = ciri_ui::color::with_alpha(theme.accent, tokens::ALPHA_HOVER_BG);
+
         let padding = tokens::SPACE_2;
-        let bw = tokens::BORDER_THIN;
 
-        let menu_bg = ThemeConfig::parse_color(&cx.config.theme.background);
-        let bg_color = [menu_bg[0] * 0.9, menu_bg[1] * 0.9, menu_bg[2] * 0.9, 1.0];
-        let border_color = ThemeConfig::parse_color(&cx.config.theme.border_active);
-        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
-        let fg_color = ThemeConfig::parse_color(&cx.config.theme.foreground);
-        let dim_color = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
-        let hover_bg = tokens::tint(accent, tokens::ALPHA_HOVER_BG);
+        let mut panel = div()
+            .in_layer(Layer::Modal)
+            .translate(self.x, self.y)
+            .w(self.menu_width)
+            .h(self.menu_height)
+            .flex_col()
+            .bg(bg_color)
+            .border(tokens::BORDER_THIN, theme.border_focus)
+            .shadow_md()
+            .pt(padding)
+            .pb(padding);
 
-        let mut ui = UiBuilder::new_vertical(
-            self.x,
-            self.y,
-            self.menu_width,
-            self.menu_height,
-            0.0,
-            0.0,
-            0.0,
-            false,
-            cx,
-            scene,
-        );
-
-        // Shadow + border + background
-        ui.bordered_panel_inset(
-            self.x,
-            self.y,
-            self.menu_width,
-            self.menu_height,
-            bg_color,
-            border_color,
-            bw,
-            true,
-        );
-
-        // Vertical item list inside the panel (after top padding)
-        let content_w = self.menu_width - bw * 2.0;
-        let content_h = self.rows.len() as f32 * self.item_height;
-        let item_h = self.item_height;
-        let cell_h = cx.cell_h;
-        ui.vertical(content_w, Some(content_h + padding * 2.0), 0.0, |ui| {
-            ui.bg_rect(content_w, padding, [0.0, 0.0, 0.0, 0.0]); // top padding
-            for row in &self.rows {
-                ui.horizontal(Some(content_w), item_h, 0.0, |ui| {
-                    // Hover highlight (full row width)
-                    if row.hovered {
-                        let (_, ry) = ui.cursor_pos();
-                        ui.abs_rect(self.x + bw, ry, content_w, item_h, hover_bg);
-                    }
-                    // Vertically centered label
-                    let (rx, ry) = ui.cursor_pos();
-                    let text_y = ry + (item_h - cell_h) * 0.5;
-                    ui.abs_text(
-                        &row.label,
-                        rx + padding,
-                        text_y,
-                        if row.enabled { fg_color } else { dim_color },
-                    );
-                });
-            }
-        });
+        for row in &self.rows {
+            let text_color = if row.enabled {
+                theme.on_surface
+            } else {
+                theme.on_surface_muted
+            };
+            let row_bg = if row.hovered { hover_bg } else { TRANSPARENT };
+            panel = panel.child(
+                div()
+                    .flex_row()
+                    .items_center()
+                    .w_full()
+                    .h(self.item_height)
+                    .px(padding)
+                    .bg(row_bg)
+                    .child(text(&row.label).color(text_color)),
+            );
+        }
+        panel
     }
 }

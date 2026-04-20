@@ -179,7 +179,9 @@ impl App {
             // repeated widgets (connection_status + paste_dialog in
             // the same frame) don't each bump the theme-version
             // counter.
-            let has_ciri_ui_widget = connection_status.is_some() || paste_dialog.is_some();
+            let has_ciri_ui_widget = connection_status.is_some()
+                || paste_dialog.is_some()
+                || context_menu.is_some();
             if has_ciri_ui_widget {
                 let resolved = ResolvedTheme::from_config(&cx.config.theme);
                 let dpi_scale = self.dpi_scale as f32;
@@ -227,13 +229,25 @@ impl App {
                         scene.color_glyphs,
                     );
                 }
+                // Context menu paints last inside the ciri-ui block
+                // so its Modal-layer SDF lands above connection_status'
+                // Overlay layer (the ciri-ui scene flattens by layer,
+                // but the caller still emits in tree order, so keeping
+                // it last matches its modal z-order intent).
+                if let Some(component) = &context_menu {
+                    let tree = component.build_tree(&resolved);
+                    paint_tree(
+                        &tree,
+                        &mut host_shaper,
+                        &mut cached_ui.sdf_rects,
+                        scene.glyphs,
+                        scene.color_glyphs,
+                    );
+                }
 
                 drop(shaper_borrow);
             }
             if let Some(component) = palette {
-                component.paint(&cx, &mut scene);
-            }
-            if let Some(component) = context_menu {
                 component.paint(&cx, &mut scene);
             }
         }

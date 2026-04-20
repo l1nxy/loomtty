@@ -13,7 +13,7 @@
 //! emits into the shared `Modal` layer, so layer bucketing keeps the
 //! final z-order stable.
 
-use ciri_ui::color::{scale_rgb, with_alpha};
+use ciri_ui::color::with_alpha;
 use ciri_ui::{div, text, Div, Layer, ResolvedTheme, Styled};
 
 use super::text_layout;
@@ -242,17 +242,18 @@ impl PaletteComponent {
     }
 
     fn panel(&self, theme: &ResolvedTheme) -> Div {
-        // Surface is lifted one step over `term_bg` so the panel reads
-        // as a raised rectangle over the dimmed backdrop. The legacy
-        // path fed raw sRGB hex into the flat-rect pipeline which got
-        // a "free" double-gamma lift on write, making the panel visibly
-        // brighter than the terminal bg by accident. ciri-ui is
-        // gamma-correct (linear values → sRGB on write), so when we
-        // used `theme.term_bg` directly the panel painted the exact
-        // same colour as the pane content and looked transparent.
-        // `scale_rgb(term_bg, 1.15)` matches paste_dialog's surface.
-        let bg_color = scale_rgb(theme.term_bg, 1.15);
-        let input_bg = scale_rgb(theme.term_bg, 1.35);
+        // `term_bg` matches the legacy palette's panel colour exactly
+        // (see `ResolvedTheme::from_config` — now kept in sRGB space so
+        // SDF chrome matches what the flat-rect pipeline has always
+        // been painting). Input row lifts by a flat 5% additive step
+        // to echo the legacy `bg + 0.05` recipe.
+        let bg_color = theme.term_bg;
+        let input_bg = [
+            (bg_color[0] + 0.05).min(1.0),
+            (bg_color[1] + 0.05).min(1.0),
+            (bg_color[2] + 0.05).min(1.0),
+            1.0,
+        ];
         let selected_bg = with_alpha(theme.accent, tokens::ALPHA_SELECTED_BG);
         let hovered_bg = with_alpha(theme.accent, tokens::ALPHA_HOVER_BG);
         let cursor_color = with_alpha(theme.on_surface, tokens::ALPHA_CURSOR);

@@ -130,23 +130,33 @@ pub struct ResolvedTheme {
 }
 
 impl ResolvedTheme {
-    /// Convert a `ThemeConfig` (hex strings) into resolved linear tokens.
+    /// Convert a `ThemeConfig` (hex strings) into resolved tokens.
+    ///
+    /// Values are kept in sRGB space (no gamma-decode) to match the
+    /// existing ciri-gpu blend / shader path, which renders hex-coded
+    /// theme colors directly to the swapchain without sRGB encoding on
+    /// write. Going through `parse_color_linear` here produced values
+    /// ~20× darker than what the legacy rect pipeline puts on screen,
+    /// so SDF-backed widgets (palette panel, etc.) ended up darker
+    /// than the backdrop-dimmed pane and looked transparent. When the
+    /// GPU pipeline grows an sRGB-aware surface format this is the one
+    /// spot that should flip back to linear.
     ///
     /// Derived tokens (`surface_elevated`, `accent_muted`, etc.) are
     /// computed mechanically from base fields so theme authors only need to
     /// set the handful of colors that exist in `ThemeConfig` today.
     pub fn from_config(cfg: &ThemeConfig) -> Self {
-        let surface = ThemeConfig::parse_color_linear(cfg.ui_background.as_ref());
-        let bg_term = ThemeConfig::parse_color_linear(cfg.background.as_ref());
-        let on_surface = ThemeConfig::parse_color_linear(cfg.foreground.as_ref());
-        let muted = ThemeConfig::parse_color_linear(cfg.statusbar_dim.as_ref());
-        let accent = ThemeConfig::parse_color_linear(cfg.accent.as_ref());
-        let err = ThemeConfig::parse_color_linear(cfg.red.as_ref());
-        let warn = ThemeConfig::parse_color_linear(cfg.yellow.as_ref());
-        let ok = ThemeConfig::parse_color_linear(cfg.green.as_ref());
-        let info = ThemeConfig::parse_color_linear(cfg.blue.as_ref());
-        let border_a = ThemeConfig::parse_color_linear(cfg.border_active.as_ref());
-        let border_i = ThemeConfig::parse_color_linear(cfg.border_inactive.as_ref());
+        let surface = ThemeConfig::parse_color(cfg.ui_background.as_ref());
+        let bg_term = ThemeConfig::parse_color(cfg.background.as_ref());
+        let on_surface = ThemeConfig::parse_color(cfg.foreground.as_ref());
+        let muted = ThemeConfig::parse_color(cfg.statusbar_dim.as_ref());
+        let accent = ThemeConfig::parse_color(cfg.accent.as_ref());
+        let err = ThemeConfig::parse_color(cfg.red.as_ref());
+        let warn = ThemeConfig::parse_color(cfg.yellow.as_ref());
+        let ok = ThemeConfig::parse_color(cfg.green.as_ref());
+        let info = ThemeConfig::parse_color(cfg.blue.as_ref());
+        let border_a = ThemeConfig::parse_color(cfg.border_active.as_ref());
+        let border_i = ThemeConfig::parse_color(cfg.border_inactive.as_ref());
 
         Self {
             surface,
@@ -265,8 +275,11 @@ mod tests {
         };
         cfg.resolve_preset();
         let theme = ResolvedTheme::from_config(&cfg);
-        // Dracula background "#282A36" → linear-ish dark. Just check it's dark.
+        // Dracula ui_background "#282A36" → sRGB-normalised dark
+        // colour. Summing channels stays well under 1.0 for any dark
+        // theme, which is enough to assert we actually loaded the
+        // preset rather than hitting the magenta parse fallback.
         let lum = theme.surface[0] + theme.surface[1] + theme.surface[2];
-        assert!(lum < 0.3, "surface should be dark in dracula: {:?}", theme.surface);
+        assert!(lum < 1.0, "surface should be dark in dracula: {:?}", theme.surface);
     }
 }

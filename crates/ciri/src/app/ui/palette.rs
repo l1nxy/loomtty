@@ -242,8 +242,17 @@ impl PaletteComponent {
     }
 
     fn panel(&self, theme: &ResolvedTheme) -> Div {
-        let bg_color = theme.term_bg;
-        let input_bg = scale_rgb(bg_color, 1.2);
+        // Surface is lifted one step over `term_bg` so the panel reads
+        // as a raised rectangle over the dimmed backdrop. The legacy
+        // path fed raw sRGB hex into the flat-rect pipeline which got
+        // a "free" double-gamma lift on write, making the panel visibly
+        // brighter than the terminal bg by accident. ciri-ui is
+        // gamma-correct (linear values → sRGB on write), so when we
+        // used `theme.term_bg` directly the panel painted the exact
+        // same colour as the pane content and looked transparent.
+        // `scale_rgb(term_bg, 1.15)` matches paste_dialog's surface.
+        let bg_color = scale_rgb(theme.term_bg, 1.15);
+        let input_bg = scale_rgb(theme.term_bg, 1.35);
         let selected_bg = with_alpha(theme.accent, tokens::ALPHA_SELECTED_BG);
         let hovered_bg = with_alpha(theme.accent, tokens::ALPHA_HOVER_BG);
         let cursor_color = with_alpha(theme.on_surface, tokens::ALPHA_CURSOR);

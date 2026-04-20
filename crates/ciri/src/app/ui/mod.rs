@@ -181,7 +181,8 @@ impl App {
             // counter.
             let has_ciri_ui_widget = connection_status.is_some()
                 || paste_dialog.is_some()
-                || context_menu.is_some();
+                || context_menu.is_some()
+                || palette.is_some();
             if has_ciri_ui_widget {
                 let resolved = ResolvedTheme::from_config(&cx.config.theme);
                 let dpi_scale = self.dpi_scale as f32;
@@ -229,6 +230,23 @@ impl App {
                         scene.color_glyphs,
                     );
                 }
+                // Palette uses multiple sibling trees (backdrop, panel,
+                // scrollbar, footer, status) because ciri-ui has no
+                // CSS-style absolute positioning yet. Iterating here
+                // keeps each overlay pinned to its own viewport origin;
+                // layer bucketing in `Scene` still composes them
+                // correctly with the other Modal-layer widgets below.
+                if let Some(component) = &palette {
+                    for tree in component.build_trees(&resolved) {
+                        paint_tree(
+                            &tree,
+                            &mut host_shaper,
+                            &mut cached_ui.sdf_rects,
+                            scene.glyphs,
+                            scene.color_glyphs,
+                        );
+                    }
+                }
                 // Context menu paints last inside the ciri-ui block
                 // so its Modal-layer SDF lands above connection_status'
                 // Overlay layer (the ciri-ui scene flattens by layer,
@@ -246,9 +264,6 @@ impl App {
                 }
 
                 drop(shaper_borrow);
-            }
-            if let Some(component) = palette {
-                component.paint(&cx, &mut scene);
             }
         }
 

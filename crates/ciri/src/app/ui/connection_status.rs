@@ -99,7 +99,19 @@ impl ConnectionStatusComponent {
         // Don't compete with modal UI. The palette has its own footer line
         // for remote errors, so hiding the banner underneath it keeps a
         // single authoritative error surface while the palette is open.
-        if app.core.command_palette.is_some() || app.core.pending_paste.is_some() {
+        //
+        // `context_menu.visible` is included because the context menu is
+        // still painted on the legacy flat-rect path while this banner
+        // emits SDF. The GPU pipeline draws streams back-to-back rather
+        // than interleaved by UI layer, so without this check a banner
+        // that happens to overlap the context menu would render on top
+        // of it even though the menu is the higher-priority modal
+        // surface. Remove this gate once the context menu migrates to
+        // ciri-ui (see Codex review on PR-3e).
+        if app.core.command_palette.is_some()
+            || app.core.pending_paste.is_some()
+            || app.core.context_menu.visible
+        {
             return None;
         }
 

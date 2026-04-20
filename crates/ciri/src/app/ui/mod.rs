@@ -163,25 +163,32 @@ impl App {
             if let Some(component) = infobox {
                 component.paint(&cx, &mut scene);
             }
-            // Banner sits above panes but below fully modal chrome (palette,
-            // paste-dialog, context-menu) so modals stay authoritative.
+            // Banner sits above panes but below fully modal chrome
+            // (palette, context-menu) so modals stay authoritative.
+            // Paste-dialog is modal itself and hides the banner via
+            // `connection_status::capture` early-returning.
             //
-            // Painted via the new `ciri-ui` pipeline: the captured
-            // component snapshot is turned into a `Div` tree, Taffy lays
-            // it out, the paint walker emits SDF + glyphs through the
-            // `HostTextShaper` adapter (shares the atlas + UI shaper
-            // with the rest of the chrome paint), and the flat
+            // Painted via the new `ciri-ui` pipeline: each captured
+            // component snapshot is turned into a `Div` tree, Taffy
+            // lays it out, the paint walker emits SDF + glyphs through
+            // the `HostTextShaper` adapter (shares the atlas + UI
+            // shaper with the rest of the chrome paint), and the flat
             // per-layer output is appended into the cached accumulators.
-            // This is the first widget on the new API — see PR-3d.
-            if let Some(component) = &connection_status {
+            //
+            // The theme is resolved once per frame for this block so
+            // repeated widgets (connection_status + paste_dialog in
+            // the same frame) don't each bump the theme-version
+            // counter.
+            let has_ciri_ui_widget = connection_status.is_some() || paste_dialog.is_some();
+            if has_ciri_ui_widget {
                 let resolved = ResolvedTheme::from_config(&cx.config.theme);
-                let tree = component.build_tree(&resolved);
+                let dpi_scale = self.dpi_scale as f32;
 
                 // Borrow the UI shaper mutably via the RefCell only for
-                // the duration of this paint — matches the existing
-                // pattern in `UiBuilder::abs_text`. `scene.atlas` is a
-                // reborrow of the same GlyphCache `UiScene` uses, so
-                // emitted glyphs land in the shared atlas.
+                // the duration of the ciri-ui paint block — matches the
+                // existing pattern in `UiBuilder::abs_text`. `scene.atlas`
+                // is a reborrow of the same GlyphCache `UiScene` uses,
+                // so emitted glyphs land in the shared atlas.
                 let mut shaper_borrow = cx.ui_shaper.map(|s| s.borrow_mut());
                 let mut host_shaper = HostTextShaper {
                     atlas: scene.atlas,
@@ -189,25 +196,41 @@ impl App {
                     cell_width: cx.cell_w,
                     baseline: cx.baseline,
                 };
-                let ui_scene = ciri_ui::paint_tree(
-                    &tree,
-                    &resolved,
-                    [vw, vh],
-                    self.dpi_scale as f32,
-                    &mut host_shaper,
-                );
+
+                let paint_tree = |tree: &ciri_ui::Div,
+                                      shaper: &mut HostTextShaper<'_>,
+                                      sdf_out: &mut Vec<ciri_render::sdf_rect::SdfRect>,
+                                      g_out: &mut Vec<ciri_render::glyph_cache::GlyphInstance>,
+                                      cg_out: &mut Vec<ciri_render::glyph_cache::GlyphInstance>| {
+                    let ui_scene =
+                        ciri_ui::paint_tree(tree, &resolved, [vw, vh], dpi_scale, shaper);
+                    merge_ui_scene(&ui_scene, sdf_out, g_out, cg_out);
+                };
+
+                if let Some(component) = &connection_status {
+                    let tree = component.build_tree(&resolved);
+                    paint_tree(
+                        &tree,
+                        &mut host_shaper,
+                        &mut cached_ui.sdf_rects,
+                        scene.glyphs,
+                        scene.color_glyphs,
+                    );
+                }
+                if let Some(component) = &paste_dialog {
+                    let tree = component.build_tree(&resolved);
+                    paint_tree(
+                        &tree,
+                        &mut host_shaper,
+                        &mut cached_ui.sdf_rects,
+                        scene.glyphs,
+                        scene.color_glyphs,
+                    );
+                }
+
                 drop(shaper_borrow);
-                merge_ui_scene(
-                    &ui_scene,
-                    &mut cached_ui.sdf_rects,
-                    scene.glyphs,
-                    scene.color_glyphs,
-                );
             }
             if let Some(component) = palette {
-                component.paint(&cx, &mut scene);
-            }
-            if let Some(component) = paste_dialog {
                 component.paint(&cx, &mut scene);
             }
             if let Some(component) = context_menu {

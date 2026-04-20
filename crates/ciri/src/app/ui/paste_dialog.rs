@@ -1,8 +1,23 @@
-use ciri_config::theme::ThemeConfig;
+//! Paste-guard confirmation dialog.
+//!
+//! A modal overlay that appears when the user tries to paste content the
+//! paste-guard considers risky (large, multi-line, password-shaped). The
+//! backdrop dims the entire viewport and a centred panel shows the size
+//! summary, a one-line preview, and two buttons (Paste / Cancel).
+//!
+//! Lifecycle:
+//!   - `App.core.pending_paste = Some(..)` — dialog is visible.
+//!   - Button clicks produce `UiAction::ConfirmPaste` / `CancelPaste`;
+//!     the hovered button is read from `pending.hovered_button` so hover
+//!     state survives full repaints.
+//!   - Any click outside the dialog cancels, matching the old legacy
+//!     path (see `click` below).
 
-use super::builder::UiBuilder;
+use ciri_ui::color::{scale_rgb, with_alpha};
+use ciri_ui::{div, text, Div, Layer, ResolvedTheme, Styled};
+
 use super::tokens;
-use super::types::{UiAction, UiComponent, UiContext, UiPasteDialogHit, UiScene};
+use super::types::{UiAction, UiContext, UiPasteDialogHit};
 use crate::app::App;
 
 pub(crate) struct PasteDialogComponent {
@@ -13,6 +28,18 @@ pub(crate) struct PasteDialogComponent {
     title: String,
     preview: String,
     hovered_button: Option<super::super::PasteButton>,
+    /// Viewport size — captured so `build_tree` can paint the modal
+    /// backdrop at full size without re-reading `UiContext`.
+    viewport_w: f32,
+    viewport_h: f32,
+    /// Button dimensions — `btn_w` is the constant `100.0`, `btn_h`
+    /// derives from `cx.cell_h` via `control_height_lg`. Stored so
+    /// `build_tree` doesn't need the ui-chrome-specific `UiContext`.
+    btn_w: f32,
+    btn_h: f32,
+    /// Height of the recessed preview row. `cx.cell_h + SPACE_1` in
+    /// the legacy layout; captured here for the same reason as `btn_h`.
+    preview_h: f32,
     pub paste_button: (f32, f32, f32, f32),
     pub cancel_button: (f32, f32, f32, f32),
 }
@@ -54,6 +81,11 @@ impl PasteDialogComponent {
             title,
             preview,
             hovered_button: pending.hovered_button,
+            viewport_w: cx.viewport_w,
+            viewport_h: cx.viewport_h,
+            btn_w,
+            btn_h,
+            preview_h: cx.cell_h + tokens::SPACE_1,
             paste_button: (paste_x, btn_y, btn_w, btn_h),
             cancel_button: (cancel_x, btn_y, btn_w, btn_h),
         })
@@ -81,125 +113,111 @@ impl PasteDialogComponent {
         }
         UiPasteDialogHit::None
     }
-}
 
-impl UiComponent for PasteDialogComponent {
-    fn click(&self, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
+    /// Map a click to a `UiAction`. Preserves the legacy semantics:
+    /// clicking outside the panel cancels, clicking on the panel body
+    /// (but not on a button) is a no-op, and clicking a button fires
+    /// the matching action.
+    pub(crate) fn click(&self, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
         match self.hit_test(mx, my) {
             UiPasteDialogHit::Paste => Some(UiAction::ConfirmPaste),
             UiPasteDialogHit::Cancel | UiPasteDialogHit::None => Some(UiAction::CancelPaste),
             UiPasteDialogHit::Dialog => None,
         }
     }
+}
 
-    fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let border_color = ThemeConfig::parse_color(&cx.config.theme.border_active);
-        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
-        let bg = ThemeConfig::parse_color(&cx.config.theme.background);
-        let fg = ThemeConfig::parse_color(&cx.config.theme.foreground);
-        let dim = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
-        let bw = tokens::BORDER_THIN;
-        let pad = tokens::SPACE_4;
-        let content_w = self.dialog_w - pad * 2.0;
-        let btn_w = 100.0;
-        let btn_h = tokens::control_height_lg(cx.cell_h);
+impl PasteDialogComponent {
+    /// Build the ciri-ui tree for this captured dialog snapshot.
+    ///
+    /// The tree is a full-viewport modal root whose own background is
+    /// the dim backdrop; a centred panel sits inside via
+    /// `items_center`/`justify_center`. All emission happens on
+    /// `Layer::Modal` so the dialog out-z-orders any non-modal chrome.
+    pub(crate) fn build_tree(&self, theme: &ResolvedTheme) -> Div {
+        // Surface is nudged slightly brighter than the terminal
+        // background so it reads as a raised panel over the dimmed
+        // viewport — matches the legacy `bg + 0.03` recipe closely
+        // enough using the multiplicative helper on the theme.
+        let surface = scale_rgb(theme.term_bg, 1.15);
+        // Recessed preview slot is one step darker than the panel.
+        let recessed = scale_rgb(theme.term_bg, 0.85);
 
-        let mut ui = UiBuilder::new_vertical(
-            self.dx + pad,
-            self.dy + pad,
-            content_w,
-            self.dialog_h - pad * 2.0,
-            0.0,
-            0.0,
-            0.0,
-            false,
-            cx,
-            scene,
-        );
+        let paste_alpha = if self.hovered_button == Some(super::super::PasteButton::Paste) {
+            tokens::ALPHA_PRIMARY_HOVER
+        } else {
+            tokens::ALPHA_PRIMARY_REST
+        };
+        let cancel_alpha = if self.hovered_button == Some(super::super::PasteButton::Cancel) {
+            tokens::ALPHA_SECONDARY_HOVER
+        } else {
+            tokens::ALPHA_SECONDARY_REST
+        };
+        let paste_bg = with_alpha(theme.accent, paste_alpha);
+        let cancel_bg = with_alpha(theme.on_surface, cancel_alpha);
 
-        // Full-screen dimmed backdrop + dialog frame
-        ui.modal_backdrop([0.0, 0.0, 0.0, tokens::ALPHA_BACKDROP]);
-        // Surface = theme background nudged slightly lighter for stacking
-        // contrast against the dimmed backdrop.
-        let surface = [
-            (bg[0] + 0.03).min(1.0),
-            (bg[1] + 0.03).min(1.0),
-            (bg[2] + 0.03).min(1.0),
-            1.0,
-        ];
-        ui.bordered_panel_inset(
-            self.dx,
-            self.dy,
-            self.dialog_w,
-            self.dialog_h,
-            surface,
-            border_color,
-            bw,
-            false,
-        );
+        // Button row: `justify_center` with `gap = 2 × SPACE_4` places
+        // the two buttons at the exact x-offsets `capture` wrote into
+        // `paste_button` / `cancel_button`, so the visible tree and
+        // the hit-test rects stay in lockstep.
+        let button = |label: &'static str, bg: ciri_ui::Color| {
+            div()
+                .flex_row()
+                .items_center()
+                .justify_center()
+                .w(self.btn_w)
+                .h(self.btn_h)
+                .bg(bg)
+                .child(text(label).color(theme.on_surface))
+        };
+        let button_row = div()
+            .flex_row()
+            .justify_center()
+            .gap(tokens::SPACE_4 * 2.0)
+            .w(self.dialog_w - tokens::SPACE_4 * 2.0)
+            .child(button("Paste", paste_bg))
+            .child(button("Cancel", cancel_bg));
 
-        // Title
-        ui.label(&self.title, fg);
-        ui.bg_rect(content_w, tokens::SPACE_3, [0.0; 4]); // spacing
+        let preview_box = div()
+            .flex_row()
+            .items_center()
+            .w(self.dialog_w - tokens::SPACE_4 * 2.0)
+            .h(self.preview_h)
+            .bg(recessed)
+            .child(text(&self.preview).color(theme.on_surface_muted));
 
-        // "Preview:" label
-        ui.label("Preview:", dim);
-        ui.bg_rect(content_w, tokens::SPACE_1, [0.0; 4]); // spacing
+        // Panel placement is driven by the parent flex (`items_center`
+        // + `justify_center`): at `viewport_w × viewport_h` with a
+        // `dialog_w × dialog_h` child this yields exactly the `(dx, dy)`
+        // top-left that `capture` computed — no manual `translate` is
+        // needed, and adding one would double-offset the panel.
+        let panel = div()
+            .flex_col()
+            .w(self.dialog_w)
+            .h(self.dialog_h)
+            .bg(surface)
+            .border(tokens::BORDER_THIN, theme.border_focus)
+            .p(tokens::SPACE_4)
+            .gap(tokens::SPACE_1)
+            .child(text(&self.title).color(theme.on_surface))
+            .child(div().h(tokens::SPACE_2)) // spacer between title and Preview:
+            .child(text("Preview:").color(theme.on_surface_muted))
+            .child(preview_box)
+            .child(div().flex_1()) // push button row to the bottom
+            .child(button_row);
 
-        // Preview box — recessed surface, one step darker than dialog bg.
-        let recessed = [
-            (bg[0] - 0.04).max(0.0),
-            (bg[1] - 0.04).max(0.0),
-            (bg[2] - 0.04).max(0.0),
-            1.0,
-        ];
-        let (_, preview_y) = ui.cursor_pos();
-        ui.abs_rect(
-            self.dx + pad - tokens::SPACE_1,
-            preview_y - 2.0,
-            content_w + tokens::SPACE_2,
-            cx.cell_h + tokens::SPACE_1,
-            recessed,
-        );
-        ui.label(&self.preview, dim);
-
-        // Push buttons to bottom
-        ui.spacer();
-
-        // Button row — centered horizontally
-        ui.horizontal(Some(content_w), btn_h, 0.0, |ui| {
-            let total_btn_w = btn_w * 2.0 + pad;
-            let left_pad = (content_w - total_btn_w) / 2.0;
-            ui.bg_rect(left_pad, btn_h, [0.0; 4]); // center offset
-
-            let paste_alpha = if self.hovered_button == Some(super::super::PasteButton::Paste) {
-                tokens::ALPHA_PRIMARY_HOVER
-            } else {
-                tokens::ALPHA_PRIMARY_REST
-            };
-            let paste_bg = tokens::tint(accent, paste_alpha);
-            let (px, py) = ui.cursor_pos();
-            ui.abs_rect(px, py, btn_w, btn_h, paste_bg);
-            let text_y = py + (btn_h - cx.cell_h) / 2.0;
-            let text_x = px + (btn_w - ui.text_width("Paste")) / 2.0;
-            ui.abs_text("Paste", text_x, text_y, fg);
-            ui.bg_rect(btn_w, btn_h, [0.0; 4]); // advance past paste button
-
-            ui.bg_rect(pad, btn_h, [0.0; 4]); // gap between buttons
-
-            let cancel_alpha = if self.hovered_button == Some(super::super::PasteButton::Cancel) {
-                tokens::ALPHA_SECONDARY_HOVER
-            } else {
-                tokens::ALPHA_SECONDARY_REST
-            };
-            let cancel_bg = tokens::tint(fg, cancel_alpha);
-            let (cx2, cy2) = ui.cursor_pos();
-            ui.abs_rect(cx2, cy2, btn_w, btn_h, cancel_bg);
-            let text_y = cy2 + (btn_h - cx.cell_h) / 2.0;
-            let text_x = cx2 + (btn_w - ui.text_width("Cancel")) / 2.0;
-            ui.abs_text("Cancel", text_x, text_y, fg);
-        });
-
-        ui.bg_rect(content_w, tokens::SPACE_2, [0.0; 4]); // bottom spacing
+        // Modal root = full-viewport backdrop + centred panel. Putting
+        // the backdrop on the root's own `bg` saves one child element
+        // and avoids a stacking-order footgun (the panel is a sibling
+        // of the backdrop in flex order).
+        div()
+            .in_layer(Layer::Modal)
+            .w(self.viewport_w)
+            .h(self.viewport_h)
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .bg([0.0, 0.0, 0.0, tokens::ALPHA_BACKDROP])
+            .child(panel)
     }
 }

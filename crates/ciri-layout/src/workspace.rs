@@ -17,6 +17,12 @@ pub enum CenterStrategy {
 pub struct Workspace {
     pub columns: Vec<Column>,
     pub active_column_idx: usize,
+    /// The column we focused *before* `active_column_idx`, if any. Used by
+    /// `CenterStrategy::OnOverflow` to decide whether the target and its
+    /// direction-of-travel neighbor fit together without centering.
+    /// `None` means no known previous focus (fresh state, after column
+    /// removal, etc.) — the strategy falls back to minimal-scroll fit.
+    pub prev_active_column_idx: Option<usize>,
     pub view_size: ViewSize,
     pub column_gap: f32,
 }
@@ -26,9 +32,21 @@ impl Workspace {
         Workspace {
             columns: Vec::new(),
             active_column_idx: 0,
+            prev_active_column_idx: None,
             view_size,
             column_gap,
         }
+    }
+
+    /// Focus a column by index, recording the outgoing column as `prev` so
+    /// that `CenterStrategy::OnOverflow` can make a direction-aware decision.
+    /// No-op if `idx` is out of range or already active.
+    pub fn focus_column(&mut self, idx: usize) {
+        if idx >= self.columns.len() || idx == self.active_column_idx {
+            return;
+        }
+        self.prev_active_column_idx = Some(self.active_column_idx);
+        self.active_column_idx = idx;
     }
 
     pub fn new(view_size: ViewSize) -> Self {
@@ -76,7 +94,7 @@ impl Workspace {
 
         let should_center = match center {
             CenterStrategy::Always => true,
-            CenterStrategy::OnOverflow => col_w > vw,
+            CenterStrategy::OnOverflow => self.should_center_on_overflow(),
             CenterStrategy::Never => false,
         };
 
@@ -99,12 +117,50 @@ impl Workspace {
         }
     }
 
-    /// Backward-compatible: always center.
-    pub fn target_offset_for_active(&self) -> f32 {
-        self.target_offset_for_active_with_strategy(CenterStrategy::Always, 0.0)
+    /// Decide whether `OnOverflow` should center the active column.
+    ///
+    /// Mirrors niri's direction-aware semantics: center only when the active
+    /// column and the neighbor on the side we came from cannot fit on-screen
+    /// together. If `prev_active_column_idx` is unknown (fresh state), or we
+    /// came from the same column, fall back to minimal-scroll fit. A column
+    /// wider than the viewport always centers.
+    fn should_center_on_overflow(&self) -> bool {
+        let vw = self.view_size.width;
+        let idx = self.active_column_idx;
+        let col_w = self.columns[idx].effective_width(vw);
+        if col_w > vw {
+            return true;
+        }
+        let Some(prev_idx) = self.prev_active_column_idx else {
+            return false;
+        };
+        if prev_idx == idx || self.columns.len() < 2 {
+            return false;
+        }
+        // Neighbor of the target on the side we came from (niri's "source").
+        let source_idx = if prev_idx > idx {
+            (idx + 1).min(self.columns.len() - 1)
+        } else {
+            idx.saturating_sub(1)
+        };
+        if source_idx == idx {
+            return false;
+        }
+        let source_x = self.column_x(source_idx);
+        let source_w = self.columns[source_idx].effective_width(vw);
+        let target_x = self.column_x(idx);
+        // Include the gaps on both outer sides, mirroring niri's
+        // `+ gaps * 2.` — without this we claim a pair "fits" when it
+        // actually overflows by up to one gap.
+        let span = if source_x < target_x {
+            (target_x - source_x) + col_w
+        } else {
+            (source_x - target_x) + source_w
+        } + 2.0 * self.column_gap;
+        span > vw
     }
 
-    /// Get visible tiles as (pane_id, screen_rect, is_active).
+/// Get visible tiles as (pane_id, screen_rect, is_active).
     /// Multi-tile columns return one entry per tile, splitting column height by weight.
     pub fn visible_tiles(&self, view_offset_x: f32) -> Vec<(PaneId, Rect, bool)> {
         self.collect_tiles(true, view_offset_x)
@@ -157,6 +213,10 @@ impl Workspace {
         let mut col = Column::new(pane_id);
         col.width = width;
         self.columns.insert(insert_at, col);
+        // The new column takes focus. Structural change invalidates any
+        // recorded `prev`; reset so OnOverflow falls back to minimal-scroll
+        // fit rather than comparing against a stale index.
+        self.prev_active_column_idx = None;
         self.active_column_idx = insert_at;
     }
 
@@ -181,6 +241,9 @@ impl Workspace {
         } else {
             // Single-tile column: remove entire column
             self.columns.remove(idx);
+            // Column indices shift on removal; any recorded `prev` is no
+            // longer trustworthy.
+            self.prev_active_column_idx = None;
             if self.columns.is_empty() {
                 self.active_column_idx = 0;
             } else if idx < self.active_column_idx {
@@ -241,6 +304,7 @@ impl Workspace {
         let mut new_col = Column::new_with_tile(tile);
         new_col.width = width;
         self.columns.insert(insert_at, new_col);
+        self.prev_active_column_idx = None;
         self.active_column_idx = insert_at;
 
         Some(pane_id)
@@ -272,12 +336,14 @@ impl Workspace {
 
     pub fn focus_left(&mut self) {
         if self.active_column_idx > 0 {
+            self.prev_active_column_idx = Some(self.active_column_idx);
             self.active_column_idx -= 1;
         }
     }
 
     pub fn focus_right(&mut self) {
         if self.active_column_idx + 1 < self.columns.len() {
+            self.prev_active_column_idx = Some(self.active_column_idx);
             self.active_column_idx += 1;
         }
     }
@@ -285,6 +351,9 @@ impl Workspace {
     pub fn move_pane_left(&mut self) {
         if self.active_column_idx > 0 {
             self.columns.swap(self.active_column_idx, self.active_column_idx - 1);
+            // The moved column follows focus; clear prev so OnOverflow doesn't
+            // try to fit against a neighbor whose index just shifted.
+            self.prev_active_column_idx = None;
             self.active_column_idx -= 1;
         }
     }
@@ -292,6 +361,7 @@ impl Workspace {
     pub fn move_pane_right(&mut self) {
         if self.active_column_idx + 1 < self.columns.len() {
             self.columns.swap(self.active_column_idx, self.active_column_idx + 1);
+            self.prev_active_column_idx = None;
             self.active_column_idx += 1;
         }
     }
@@ -622,6 +692,117 @@ mod tests {
         assert!(after[2] < before[2]);
         // Pair total preserved
         assert!((pair_after - pair_before).abs() < 1e-6);
+    }
+
+    // View = 1000px, gap = 8px. `add_column_right` forces the first column's
+    // width to Proportion(1.0); we override widths directly after setup so we
+    // can construct targeted overflow/fit scenarios.
+    fn set_all_widths(w: &mut Workspace, p: f64) {
+        for col in &mut w.columns {
+            col.width = ColumnWidth::Proportion(p);
+        }
+    }
+
+    #[test]
+    fn on_overflow_fits_adjacent_pair_with_minimal_scroll() {
+        let mut w = ws();
+        w.add_column_right_default(1);
+        w.add_column_right_default(2);
+        w.add_column_right_default(3);
+        // Force all three columns to 0.4 * 1000 = 400px. Any adjacent pair
+        // spans 400 + 8 + 400 = 808px, comfortably under 1000.
+        set_all_widths(&mut w, 0.4);
+        // Focus 3 → 2 (came from the right).
+        w.active_column_idx = 2;
+        w.prev_active_column_idx = None;
+        w.focus_left();
+        assert_eq!(w.active_column_idx, 1);
+        assert_eq!(w.prev_active_column_idx, Some(2));
+        // col 2 x=408, width=400 → right edge = 808 < 1000: already fully
+        // visible at offset 0, no scroll needed.
+        let t = w.target_offset_for_active_with_strategy(CenterStrategy::OnOverflow, 0.0);
+        assert!((t - 0.0).abs() < 1e-3, "expected fit (no scroll), got {t}");
+    }
+
+    #[test]
+    fn on_overflow_centers_when_neighbor_does_not_fit() {
+        let mut w = ws();
+        w.add_column_right_default(1);
+        w.add_column_right_default(2);
+        w.add_column_right_default(3);
+        // 0.7 * 1000 = 700px. Adjacent pair spans 700 + 8 + 700 = 1408 > 1000.
+        set_all_widths(&mut w, 0.7);
+        w.active_column_idx = 2;
+        w.prev_active_column_idx = None;
+        w.focus_left();
+        assert_eq!(w.active_column_idx, 1);
+        let t = w.target_offset_for_active_with_strategy(CenterStrategy::OnOverflow, 0.0);
+        // col 2 at x=708, width=700; center=1058; target offset = 1058-500=558.
+        let col_x = w.column_x(1);
+        let max_offset = (w.total_width() - 1000.0).max(0.0);
+        let expected = (col_x + 700.0 / 2.0 - 500.0).clamp(0.0, max_offset);
+        assert!((t - expected).abs() < 1e-3, "expected centered ({expected}), got {t}");
+    }
+
+    #[test]
+    fn on_overflow_falls_back_to_fit_without_prev() {
+        let mut w = ws();
+        w.add_column_right_default(1);
+        w.add_column_right_default(2);
+        w.add_column_right_default(3);
+        set_all_widths(&mut w, 0.7);
+        // add_column_right cleared prev → no recorded transition.
+        assert_eq!(w.prev_active_column_idx, None);
+        w.active_column_idx = 2;
+        // No prev → minimal-scroll fit.
+        let t = w.target_offset_for_active_with_strategy(CenterStrategy::OnOverflow, 0.0);
+        let col_x = w.column_x(2);
+        let max_offset = (w.total_width() - 1000.0).max(0.0);
+        let expected = ((col_x + 700.0) - 1000.0).max(0.0).clamp(0.0, max_offset);
+        assert!((t - expected).abs() < 1e-3, "expected fit ({expected}), got {t}");
+    }
+
+    #[test]
+    fn on_overflow_centers_when_column_wider_than_viewport() {
+        let mut w = ws();
+        w.add_column_right(1, ColumnWidth::Proportion(1.5));
+        w.columns[0].width = ColumnWidth::Proportion(1.5); // override first-col-is-1.0 rule
+        // prev is None, but column > viewport still forces centering.
+        let t = w.target_offset_for_active_with_strategy(CenterStrategy::OnOverflow, 0.0);
+        // total_width = 1500; centered = 1500/2 - 500 = 250; max_offset = 500.
+        assert!((t - 250.0).abs() < 1e-3, "expected centered (250), got {t}");
+    }
+
+    #[test]
+    fn close_pane_column_removal_resets_prev() {
+        // Removing a column shifts indices; a stale `prev` would point at
+        // the wrong column (or out of bounds). close_pane's single-tile
+        // branch must reset it.
+        let mut w = ws();
+        w.add_column_right_default(1);
+        w.add_column_right_default(2);
+        w.add_column_right_default(3);
+        w.focus_left(); // active=1, prev=Some(2)
+        assert_eq!(w.prev_active_column_idx, Some(2));
+        w.close_pane(3); // removes col 3 (index 2)
+        assert_eq!(w.prev_active_column_idx, None);
+        // Must not panic regardless of strategy.
+        let _ = w.target_offset_for_active_with_strategy(CenterStrategy::OnOverflow, 0.0);
+    }
+
+    #[test]
+    fn focus_column_sets_prev() {
+        let mut w = ws();
+        w.add_column_right_default(1);
+        w.add_column_right_default(2);
+        w.add_column_right_default(3);
+        assert_eq!(w.active_column_idx, 2);
+        w.focus_column(0);
+        assert_eq!(w.active_column_idx, 0);
+        assert_eq!(w.prev_active_column_idx, Some(2));
+        // Same-column re-focus is a no-op.
+        w.focus_column(0);
+        assert_eq!(w.prev_active_column_idx, Some(2));
     }
 
     #[test]

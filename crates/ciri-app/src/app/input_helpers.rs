@@ -1,30 +1,6 @@
 use std::time::{Duration, Instant};
 
-use unicode_width::UnicodeWidthChar;
-
 use super::{AppModel, LastLeftClick, SearchState, Selection};
-
-/// Compute the display width of a string, accounting for wide characters (CJK etc.).
-fn unicode_display_width(s: &str) -> usize {
-    s.chars()
-        .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
-        .sum()
-}
-
-/// Truncate a string to fit within `max_width` display columns.
-fn truncate_to_display_width(s: &str, max_width: usize) -> String {
-    let mut width = 0;
-    let mut out = String::new();
-    for c in s.chars() {
-        let cw = UnicodeWidthChar::width(c).unwrap_or(0);
-        if width + cw > max_width {
-            break;
-        }
-        width += cw;
-        out.push(c);
-    }
-    out
-}
 
 impl AppModel {
     /// Extract selected text from the pane grid using absolute buffer coordinates.
@@ -236,17 +212,18 @@ impl AppModel {
         panes
     }
 
-    /// Format a pane tab label with index prefix, respecting display width.
+    /// Format a pane tab label as `"{idx} {title}"`.
+    ///
+    /// Returns the natural label without truncation or trailing padding.
+    /// Slot sizing and ellipsis truncation happen downstream in the UI
+    /// layer (`pane_tab_layouts` measures each tab's fixed pixel budget
+    /// from `tabbar.pane_tab_width_chars`; `truncate_with_ellipsis`
+    /// appends `…` at paint time for anything that overruns the budget).
+    /// Pre-padding with trailing spaces here would measure wider than
+    /// the title alone and cause ellipsis to land inside the padding,
+    /// producing labels like `"1 vim     …"`.
     pub fn format_pane_tab_label(&self, idx: usize, title: &str) -> String {
-        const PANE_TAB_WIDTH_CHARS: usize = 20;
-        let prefix = format!("{:>2} ", idx + 1);
-        let prefix_width = unicode_display_width(&prefix);
-        let max_title_width = PANE_TAB_WIDTH_CHARS.saturating_sub(prefix_width);
-        let title = truncate_to_display_width(title, max_title_width);
-        let label = format!("{}{}", prefix, title);
-        let label_width = unicode_display_width(&label);
-        let pad = PANE_TAB_WIDTH_CHARS.saturating_sub(label_width);
-        format!("{}{}", label, " ".repeat(pad))
+        format!("{:>2} {}", idx + 1, title)
     }
 
     /// Snapshot pane *layout* positions (using resolve_width, not rendered_width).

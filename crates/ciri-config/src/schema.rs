@@ -372,6 +372,16 @@ pub struct TabBarConfig {
     /// `position == Integrated`.
     #[garde(range(min = 0.0, max = 40.0))]
     pub tab_gap: f32,
+    /// Fixed per-tab width for `position = Integrated`, expressed in
+    /// characters. The actual pixel width is measured through the UI
+    /// shaper (≈ `N * ui_font_char_advance`) so the slot matches what
+    /// an `N`-char label renders to in the UI font — otherwise the old
+    /// `N * terminal_cell_w` formula over-allocates when the UI font
+    /// is narrower than the terminal monospace cell. Labels longer than
+    /// the slot are ellipsized; shorter ones leave background on the
+    /// trailing edge (same as an at-max label that just reached the cap).
+    #[garde(range(min = 4, max = 80))]
+    pub pane_tab_width_chars: usize,
 }
 
 impl Default for TabBarConfig {
@@ -381,6 +391,7 @@ impl Default for TabBarConfig {
             width: 200.0,
             tab_height: 36.0,
             tab_gap: 4.0,
+            pane_tab_width_chars: 25,
         }
     }
 }

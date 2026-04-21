@@ -20,11 +20,13 @@ fn measure(shaper: Option<&RefCell<UiTextShaper>>, text: &str, cell_w: f32) -> f
     UnicodeWidthStr::width(text) as f32 * cell_w
 }
 
-/// Fixed tab slot width in terminal-cell units. Deliberately NOT in UI-font
-/// advance units — tabs follow the terminal grid's cell_w so their visual
-/// rhythm stays consistent regardless of whether the UI font is proportional.
-/// Labels inside the slot are shape-truncated to fit.
-const PANE_TAB_WIDTH_CHARS: usize = 20;
+/// Reference character used to size pane-tab slots in UI-font advance
+/// units. Width is `config.tabbar.pane_tab_width_chars` × `measure(REF)`,
+/// so an `N`-char label rendered in the UI font actually fills the tab
+/// rather than occupying a fraction of a terminal-cell-sized slot. `'0'`
+/// is a reasonable proxy for typical label content — most UI fonts make
+/// digits tabular and close to the average alphabetic-glyph advance.
+const TAB_SLOT_REF_CHAR: &str = "0";
 
 #[derive(Debug, Clone)]
 pub(crate) struct PaneTabLayout {
@@ -80,17 +82,23 @@ impl App {
             return;
         }
 
-        let tabs = self.pane_tab_layouts_raw();
-        if tabs.is_empty() {
+        let tab_count = self.pane_tab_entries().len();
+        if tab_count == 0 {
             self.core.pane_tab_scroll = 0.0;
             return;
         }
 
-        let tab_w = PANE_TAB_WIDTH_CHARS as f32 * self.cell_dimensions().0;
-        let total_w = tabs.len() as f32 * tab_w;
+        let cw = self.cell_dimensions().0;
+        let tab_w = self.pane_tab_slot_width(cw, self.ui_shaper.as_ref());
+        let total_w = tab_count as f32 * tab_w;
         let max_scroll = (total_w - tab_area_px).max(0.0);
 
-        let active_idx = tabs.iter().position(|t| t.active).unwrap_or(0);
+        let active_pane = self.core.workspaces.active().active_pane_id();
+        let active_idx = self
+            .pane_tab_entries()
+            .iter()
+            .position(|(id, _)| Some(*id) == active_pane)
+            .unwrap_or(0);
         let active_start = active_idx as f32 * tab_w;
         let active_end = active_start + tab_w;
         let mut scroll = self.core.pane_tab_scroll.clamp(0.0, max_scroll);
@@ -132,13 +140,31 @@ impl App {
                 self.core.workspaces.view_size.height + self.total_chrome_height(),
                 cw,
                 ch,
-                None,
+                self.ui_shaper.as_ref(),
             )
             .tabs_area_px;
 
         let tab_count = self.pane_tab_entries().len() as f32;
-        let total_w = tab_count * PANE_TAB_WIDTH_CHARS as f32 * cw;
+        let tab_w = self.pane_tab_slot_width(cw, self.ui_shaper.as_ref());
+        let total_w = tab_count * tab_w;
         (total_w - tab_area_px).max(0.0)
+    }
+
+    /// Fixed per-tab slot width in UI-font-advance units.
+    ///
+    /// Returns `pane_tab_width_chars × measure(shaper, TAB_SLOT_REF_CHAR)`
+    /// when the UI shaper has a face loaded, falling back to the legacy
+    /// `N × terminal_cell_w` when it doesn't (tests, pre-init). Called from
+    /// all three callers that compute pane-tab geometry so they stay in
+    /// sync — the `render_snapshot_hash` caching in `render.rs` depends on
+    /// `pane_tab_scroll_max` agreeing with what `pane_tab_layouts` paints.
+    fn pane_tab_slot_width(
+        &self,
+        cw: f32,
+        shaper: Option<&RefCell<UiTextShaper>>,
+    ) -> f32 {
+        let n = self.core.config.tabbar.pane_tab_width_chars;
+        measure(shaper, &TAB_SLOT_REF_CHAR.repeat(n), cw)
     }
 
     pub(crate) fn pane_tab_layouts(
@@ -147,13 +173,12 @@ impl App {
         tabs_area_px: f32,
         shaper: Option<&RefCell<UiTextShaper>>,
     ) -> Vec<PaneTabLayout> {
-        let tab_w = PANE_TAB_WIDTH_CHARS as f32 * cw;
+        let tab_w = self.pane_tab_slot_width(cw, shaper);
         let session_w = measure(shaper, &format!(" {}  ", self.session_display_name()), cw);
         // NB: tab `x` coordinates are absolute screen coordinates assuming the
         // top bar starts at screen x=0. This holds for the current
         // `Border { top | bottom }` chrome configurations (no `left`/`right`
-        // edges). When step 4 introduces side-tab layouts, this needs to take
-        // the bar's `rect.x` and emit `tabs_start_x = rect.x + session_w`.
+        // edges).
         let tabs_start_x = session_w;
         let tabs_end_x = tabs_start_x + tabs_area_px;
         let mut x = tabs_start_x - self.core.pane_tab_scroll;
@@ -176,25 +201,6 @@ impl App {
             x += tab_w;
         }
 
-        layouts
-    }
-
-    fn pane_tab_layouts_raw(&self) -> Vec<PaneTabLayout> {
-        let tab_w = PANE_TAB_WIDTH_CHARS as f32 * self.cell_dimensions().0;
-        let mut layouts = Vec::new();
-        for (idx, (pane_id, title)) in self.pane_tab_entries().into_iter().enumerate() {
-            let label = self.format_pane_tab_label(idx, &title);
-            layouts.push(PaneTabLayout {
-                pane_id,
-                label,
-                x: UnicodeWidthStr::width(format!(" {}  ", self.session_display_name()).as_str())
-                    as f32
-                    * self.cell_dimensions().0
-                    + idx as f32 * tab_w,
-                w: tab_w,
-                active: self.core.workspaces.active().active_pane_id() == Some(pane_id),
-            });
-        }
         layouts
     }
 

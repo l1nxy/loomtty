@@ -66,8 +66,8 @@ fn emit_text_via_shaper(
                                 make_text_glyph_instance(&entry, params, 0, atlas.cell_height, cw);
                             // Reposition to pen_x instead of col-based x.
                             let mut inst = inst;
-                            let sx = pen_x + entry.bearing_x;
-                            let sy = params.y + params.baseline - entry.bearing_y;
+                            let sx = (pen_x + entry.bearing_x).round();
+                            let sy = (params.y + params.baseline - entry.bearing_y).round();
                             inst.pos = [sx, sy];
                             if entry.is_color {
                                 color_glyphs.push(inst);
@@ -127,8 +127,12 @@ fn make_shaped_glyph_instance(
     pen_x: f32,
     g: &UiShapedGlyph,
 ) -> GlyphInstance {
-    let sx = pen_x + g.x_offset + entry.bearing_x;
-    let sy = params.y + params.baseline - entry.bearing_y + g.y_offset;
+    // Snap to pixel grid — matches the terminal render path in
+    // `app::render::make_instance`. DirectWrite bearings and rustybuzz
+    // offsets are fractional, and the atlas sampler is LINEAR, so
+    // fractional positions blur across texel boundaries.
+    let sx = (pen_x + g.x_offset + entry.bearing_x).round();
+    let sy = (params.y + params.baseline - entry.bearing_y + g.y_offset).round();
     GlyphInstance {
         pos: [sx, sy],
         size: [entry.width as f32, entry.height as f32],
@@ -166,8 +170,8 @@ fn make_text_glyph_instance(
             bg_color: [0.0, 0.0, 0.0, 0.0],
         }
     } else {
-        let sx = base_x + entry.bearing_x;
-        let sy = params.y + params.baseline - entry.bearing_y;
+        let sx = (base_x + entry.bearing_x).round();
+        let sy = (params.y + params.baseline - entry.bearing_y).round();
         GlyphInstance {
             pos: [sx, sy],
             size: [entry.width as f32, entry.height as f32],
@@ -260,9 +264,9 @@ mod tests {
                 cluster: 0,
             },
         );
-        // pen_x 100 + x_offset 0.5 + bearing_x 1.0 = 101.5
-        assert!((inst.pos[0] - 101.5).abs() < 0.01);
+        // pen_x 100 + x_offset 0.5 + bearing_x 1.0 = 101.5 → snapped to 102
+        assert_eq!(inst.pos[0], 102.0);
         // y 0 + baseline 14 - bearing_y 14 + y_offset -1 = -1
-        assert!((inst.pos[1] + 1.0).abs() < 0.01);
+        assert_eq!(inst.pos[1], -1.0);
     }
 }

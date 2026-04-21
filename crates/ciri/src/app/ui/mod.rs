@@ -376,6 +376,48 @@ impl App {
         false
     }
 
+    /// Route a middle-mouse click. Currently the only middle-click handler
+    /// is tab close — browsers and most tab-bearing apps treat MMB on a
+    /// tab as "close this tab", so we mirror that. Modal overlays and the
+    /// overview deliberately don't react to middle-click: they're focus
+    /// surfaces where MMB has no meaning, and routing it there would swallow
+    /// the event when the user expects it to pass through to the underlying
+    /// tab strip (e.g. clicking through a dismissible tooltip).
+    pub(crate) fn dispatch_ui_middle_click(&mut self, mx: f32, my: f32) -> bool {
+        let cx = self.ui_context();
+
+        if self.hit_test_top_bar(mx, my) {
+            let layout = self.top_bar_layout(
+                cx.viewport_w,
+                cx.viewport_h,
+                cx.cell_w,
+                cx.cell_h,
+                cx.ui_shaper,
+            );
+            let c = TopBarComponent::capture(self, layout, &cx);
+            if let Some(UiTopBarHit::PaneTab(id)) = c.hit_test(mx, my, &cx) {
+                self.apply_ui_action(UiAction::ClosePaneTab(id));
+            }
+            return true; // top bar area always consumed to suppress pass-through
+        }
+
+        if let Some((bx, by, bw, bh)) = self.side_tab_bar_rect(cx.viewport_w, cx.viewport_h)
+            && mx >= bx
+            && mx < bx + bw
+            && my >= by
+            && my < by + bh
+        {
+            let tab_bar = TabBarComponent::capture(self, &cx);
+            let rect = UiRect::new(bx, by, bw, bh);
+            if let Some(UiAction::FocusPaneTab(id)) = tab_bar.hit(rect, mx, my, &cx) {
+                self.apply_ui_action(UiAction::ClosePaneTab(id));
+            }
+            return true;
+        }
+
+        false
+    }
+
     pub(crate) fn apply_ui_action(&mut self, action: UiAction) {
         match action {
             UiAction::OpenSessionPalette => self.open_session_palette(),
@@ -429,6 +471,10 @@ impl App {
                     self.send(ciri_protocol::message::ClientMessage::FocusPane { pane_id });
                     self.animate_to_active();
                 }
+            }
+            UiAction::ClosePaneTab(pane_id) => {
+                self.core.hovered_pane_tab = None;
+                self.send(ciri_protocol::message::ClientMessage::ClosePane { pane_id });
             }
             UiAction::ExecutePaletteEntry(entry_idx) => {
                 // SectionHeaders should not be clickable (hit_test returns Panel),

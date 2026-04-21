@@ -515,6 +515,16 @@ impl ApplicationHandler for App {
                 }
             }
 
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: winit::event::MouseButton::Middle,
+                ..
+            } => {
+                if let Some((mx, my)) = self.last_mouse_pos {
+                    self.handle_mouse_pressed(winit::event::MouseButton::Middle, mx, my);
+                }
+            }
+
             WindowEvent::MouseWheel { delta, phase, .. } => {
                 self.handle_mouse_wheel(delta, phase);
             }

@@ -56,6 +56,10 @@ pub(crate) enum UiAction {
     ToggleOverview,
     CycleWorkspace,
     FocusPaneTab(u64),
+    /// Close the pane backing a tab (middle-click). Sent as
+    /// `ClientMessage::ClosePane` to the server, same as the overview's
+    /// close-icon path and the context menu's "Close pane" entry.
+    ClosePaneTab(u64),
     ExecutePaletteEntry(usize),
     ClosePalette,
     ExecuteContextMenuEntry(usize),

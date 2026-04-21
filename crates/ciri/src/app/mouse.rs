@@ -155,6 +155,15 @@ impl App {
 
                 self.handle_left_mouse_pressed(mx, my);
             }
+            MouseButton::Middle => {
+                if self.dispatch_ui_middle_click(mx, my) {
+                    self.schedule_redraw();
+                }
+                // Terminals don't have a meaningful middle-button action
+                // outside a tab close, so swallow it entirely when the UI
+                // doesn't claim it — avoids accidental paste on platforms
+                // that map MMB to clipboard.
+            }
             MouseButton::Right => self.handle_right_mouse_pressed(mx, my),
             _ => {}
         }

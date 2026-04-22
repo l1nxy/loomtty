@@ -231,21 +231,22 @@ impl AppModel {
     /// so move animations are only triggered by real structural changes.
     pub fn snapshot_pane_positions(&self) -> std::collections::HashMap<u64, (f32, f32)> {
         let mut positions = std::collections::HashMap::new();
-        let vw = self.workspaces.view_size.width;
-        let vh = self.workspaces.view_size.height;
         for (ws_idx, ws) in self.workspaces.workspaces.iter().enumerate() {
             let wy = self.workspaces.workspace_y(ws_idx);
-            let mut col_x = 0.0_f32;
+            let inner_h = ws.inner_height();
+            let inner_vw = ws.inner_viewport_width();
+            let top = ws.inner_top();
+            let mut col_x = ws.column_gap;
             for col in &ws.columns {
-                let col_w = col.resolve_width(vw);
+                let col_w = col.resolve_width(inner_vw);
                 let tile_count = col.tiles.len();
                 let total_weight: f64 = col.tiles.iter().map(|t| t.height.weight() as f64).sum();
-                let mut tile_y = 0.0_f32;
+                let mut tile_y = top;
                 for tile in &col.tiles {
                     let tile_h = if total_weight > 0.0 && tile_count > 1 {
-                        (tile.height.weight() as f64 / total_weight * vh as f64) as f32
+                        (tile.height.weight() as f64 / total_weight * inner_h as f64) as f32
                     } else {
-                        vh / tile_count.max(1) as f32
+                        inner_h / tile_count.max(1) as f32
                     };
                     positions.insert(tile.pane_id, (col_x, wy + tile_y));
                     tile_y += tile_h;

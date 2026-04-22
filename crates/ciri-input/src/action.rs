@@ -31,6 +31,10 @@ pub enum Action {
     ColumnWidthIncrease,
     /// Decrease the active column's width proportion.
     ColumnWidthDecrease,
+    /// Grow the active stacked tile's height (shrinking its neighbour).
+    TileHeightIncrease,
+    /// Shrink the active stacked tile's height (growing its neighbour).
+    TileHeightDecrease,
     /// Equalize active column and its right neighbor to the same width.
     EqualizeAdjacentColumns,
     /// Consume the right neighbor column's active pane into the current column as a new tile.
@@ -138,6 +142,8 @@ impl Action {
                 | Action::ColumnWidthFull
                 | Action::ColumnWidthIncrease
                 | Action::ColumnWidthDecrease
+                | Action::TileHeightIncrease
+                | Action::TileHeightDecrease
                 | Action::EqualizeAdjacentColumns
                 | Action::ScrollPageUp
                 | Action::ScrollPageDown
@@ -182,6 +188,8 @@ impl Action {
             (Action::ColumnWidthFull, "Column Width Full"),
             (Action::ColumnWidthIncrease, "Increase Column Width"),
             (Action::ColumnWidthDecrease, "Decrease Column Width"),
+            (Action::TileHeightIncrease, "Increase Tile Height"),
+            (Action::TileHeightDecrease, "Decrease Tile Height"),
             (Action::EqualizeAdjacentColumns, "Equalize Adjacent Columns"),
             (Action::ConsumeIntoColumn, "Consume Into Column"),
             (Action::ExpelFromColumn, "Expel From Column"),
@@ -229,6 +237,8 @@ fn parse_named_action(name: &str) -> Option<Action> {
         "column_width_full" => Some(Action::ColumnWidthFull),
         "column_width_increase" => Some(Action::ColumnWidthIncrease),
         "column_width_decrease" => Some(Action::ColumnWidthDecrease),
+        "tile_height_increase" => Some(Action::TileHeightIncrease),
+        "tile_height_decrease" => Some(Action::TileHeightDecrease),
         "equalize_adjacent_columns" => Some(Action::EqualizeAdjacentColumns),
         "consume_into_column" => Some(Action::ConsumeIntoColumn),
         "expel_from_column" => Some(Action::ExpelFromColumn),

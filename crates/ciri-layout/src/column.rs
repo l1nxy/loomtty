@@ -120,7 +120,13 @@ impl Column {
     }
 
     /// Compute (pane_id, y_offset, height) for each tile based on weights.
-    pub fn tile_rects(&self, _col_width: f32, col_height: f32) -> Vec<(PaneId, f32, f32)> {
+    /// `tile_gap` is the vertical gap inserted between adjacent tiles.
+    pub fn tile_rects(
+        &self,
+        _col_width: f32,
+        col_height: f32,
+        tile_gap: f32,
+    ) -> Vec<(PaneId, f32, f32)> {
         if self.tiles.len() == 1 {
             return vec![(self.tiles[0].pane_id, 0.0, col_height)];
         }
@@ -143,11 +149,13 @@ impl Column {
             })
             .sum();
 
-        let auto_height = (col_height - fixed_total).max(0.0);
+        let gaps_total = (self.tiles.len() - 1) as f32 * tile_gap;
+        let auto_height = (col_height - fixed_total - gaps_total).max(0.0);
 
         let mut result = Vec::with_capacity(self.tiles.len());
         let mut y = 0.0f32;
-        for tile in &self.tiles {
+        let last = self.tiles.len() - 1;
+        for (i, tile) in self.tiles.iter().enumerate() {
             let h = match tile.height {
                 TileHeight::Auto { weight } => {
                     if total_weight > 0.0 {
@@ -160,6 +168,9 @@ impl Column {
             };
             result.push((tile.pane_id, y, h));
             y += h;
+            if i != last {
+                y += tile_gap;
+            }
         }
         result
     }
@@ -215,7 +226,7 @@ mod tests {
     #[test]
     fn tile_rects_single_tile_fills_full_height() {
         let col = Column::new(1);
-        let rects = col.tile_rects(500.0, 600.0);
+        let rects = col.tile_rects(500.0, 600.0, 0.0);
         assert_eq!(rects.len(), 1);
         assert_eq!(rects[0], (1, 0.0, 600.0));
     }
@@ -224,7 +235,7 @@ mod tests {
     fn tile_rects_equal_weight_splits_evenly() {
         let mut col = Column::new(1);
         col.tiles.push(Tile::new(2));
-        let rects = col.tile_rects(500.0, 600.0);
+        let rects = col.tile_rects(500.0, 600.0, 0.0);
         assert_eq!(rects.len(), 2);
         assert_eq!(rects[0], (1, 0.0, 300.0));
         assert_eq!(rects[1], (2, 300.0, 300.0));
@@ -238,7 +249,7 @@ mod tests {
             pane_id: 2,
             height: TileHeight::Auto { weight: 1.0 },
         });
-        let rects = col.tile_rects(500.0, 400.0);
+        let rects = col.tile_rects(500.0, 400.0, 0.0);
         assert_eq!(rects.len(), 2);
         // 3/4 of 400 = 300, 1/4 of 400 = 100
         assert!((rects[0].2 - 300.0).abs() < 1e-3);
@@ -253,7 +264,7 @@ mod tests {
             pane_id: 2,
             height: TileHeight::Fixed(100.0),
         });
-        let rects = col.tile_rects(500.0, 400.0);
+        let rects = col.tile_rects(500.0, 400.0, 0.0);
         // Fixed tile takes 100px, auto tile gets remaining 300px
         assert!((rects[0].2 - 300.0).abs() < 1e-3);
         assert!((rects[1].2 - 100.0).abs() < 1e-3);
@@ -267,7 +278,7 @@ mod tests {
             pane_id: 2,
             height: TileHeight::Fixed(400.0),
         });
-        let rects = col.tile_rects(500.0, 500.0);
+        let rects = col.tile_rects(500.0, 500.0, 0.0);
         // Both fixed, no auto tiles. total fixed = 700 > col_height 500.
         // auto_height = max(0, 500-700) = 0. Fixed tiles keep their px.
         assert!((rects[0].2 - 300.0).abs() < 1e-3);

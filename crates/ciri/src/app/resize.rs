@@ -61,13 +61,13 @@ impl App {
             return false;
         };
         let delta_px = mx - self.core.drag.col_start_x;
-        let vw = self.core.workspaces.active().view_size.width;
-        if vw > 0.0 {
-            let delta_proportion = delta_px as f64 / vw as f64;
+        let inner_vw = self.core.workspaces.active().inner_viewport_width();
+        if inner_vw > 0.0 {
+            let delta_proportion = delta_px as f64 / inner_vw as f64;
             let ws = self.core.workspaces.active_mut();
-            let before = ws.columns[left_idx].proportion(vw);
+            let before = ws.columns[left_idx].proportion(inner_vw);
             ws.resize_column_pair(left_idx, right_idx, delta_proportion);
-            let after = ws.columns[left_idx].proportion(vw);
+            let after = ws.columns[left_idx].proportion(inner_vw);
             self.core.drag.col_delta += after - before;
             self.core.drag.col_start_x = mx;
         }
@@ -101,7 +101,7 @@ impl App {
         };
         let vox = self.core.anim_mgr.view_offset_x.value() as f32;
         let ws = self.core.workspaces.active();
-        let vw = ws.view_size.width;
+        let inner_vw = ws.inner_viewport_width();
 
         // Find matching column border and collect info before mutating
         let mut found = None;
@@ -110,7 +110,7 @@ impl App {
             if (content_mx - col_x).abs() < 4.0 {
                 let left_col_idx = i - 1;
                 let right_col_idx = i;
-                let left_col_width = ws.columns[left_col_idx].effective_width(vw);
+                let left_col_width = ws.columns[left_col_idx].effective_width(inner_vw);
                 let pane_id = ws.columns[left_col_idx].active_pane_id();
                 let dim_panes: Vec<_> = ws.columns[left_col_idx]
                     .tiles

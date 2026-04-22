@@ -58,7 +58,8 @@ impl ClientPaneGrid {
         // If dimensions changed, reflow scrollback and resize viewport.
         // rows==0 means scrollback-only sync — don't resize viewport.
         let cols_changed = sync.cols != self.cols;
-        if sync.rows > 0 && (cols_changed || sync.rows != self.rows) {
+        let dimensions_changed = sync.rows > 0 && (cols_changed || sync.rows != self.rows);
+        if dimensions_changed {
             if cols_changed {
                 self.reflow_scrollback(new_cols);
             }
@@ -155,7 +156,7 @@ impl ClientPaneGrid {
         while self.scrollback.len() > self.max_scrollback {
             self.scrollback.pop_front();
         }
-        if !sync.scrollback_replace && old_scroll_offset > 0 {
+        if !dimensions_changed && !sync.scrollback_replace && old_scroll_offset > 0 {
             self.scroll_offset = old_scroll_offset
                 .saturating_add(appended_scrollback_rows)
                 .saturating_sub(trim_count);

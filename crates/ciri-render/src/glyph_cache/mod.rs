@@ -1028,6 +1028,27 @@ impl GlyphCache {
         )
     }
 
+    /// Put leftover uploads back at the front of the pending queue so
+    /// they are retried on the next `take_pending` / `flush`. GPU
+    /// backends call this with whatever the staging buffer could not fit
+    /// in a single frame, so glyphs aren't silently dropped on overflow.
+    /// Ordering is preserved: the tail goes *before* any new uploads
+    /// pushed since the backend drained the queue.
+    pub fn restore_pending(
+        &mut self,
+        mut alpha_tail: Vec<PendingUpload>,
+        mut color_tail: Vec<PendingUpload>,
+    ) {
+        if !alpha_tail.is_empty() {
+            alpha_tail.extend(std::mem::take(&mut self.alpha_pending));
+            self.alpha_pending = alpha_tail;
+        }
+        if !color_tail.is_empty() {
+            color_tail.extend(std::mem::take(&mut self.color_pending));
+            self.color_pending = color_tail;
+        }
+    }
+
     /// Drain pending DWrite glyph render commands for the DX D2D backend.
     #[cfg(windows)]
     pub fn take_dwrite_pending(&mut self) -> (Vec<PendingDwriteGlyph>, Vec<PendingDwriteGlyph>) {

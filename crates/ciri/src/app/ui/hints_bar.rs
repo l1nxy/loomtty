@@ -1,4 +1,3 @@
-use ciri_config::theme::ThemeConfig;
 
 use super::builder::UiBuilder;
 use super::info_box::action_short_label;
@@ -120,10 +119,10 @@ impl UiElement for HintsBarComponent {
     }
 
     fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let bar_bg = ThemeConfig::parse_color(&cx.config.theme.statusbar_background);
-        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
-        let dim = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
-        let fg = ThemeConfig::parse_color(&cx.config.theme.foreground);
+        let bar_bg = cx.theme.statusbar_bg;
+        let accent = cx.theme.accent;
+        let dim = cx.theme.on_surface_muted;
+        let fg = cx.theme.on_surface;
         let sep_color = tokens::tint(dim, tokens::ALPHA_SEPARATOR);
         let padding = cx.cell_w;
 

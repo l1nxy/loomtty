@@ -1,5 +1,4 @@
 use ciri_config::config::StatusBarPosition;
-use ciri_config::theme::ThemeConfig;
 
 use super::super::builder::UiBuilder;
 use super::super::layout::{Axis, SizeHint, UiElement, UiRect};
@@ -35,10 +34,10 @@ impl<'a> UiElement for PaneTabsElement<'a> {
         if rect.is_empty() {
             return;
         }
-        let bar_bg = ThemeConfig::parse_color(&cx.config.theme.statusbar_background);
-        let fg = ThemeConfig::parse_color(&cx.config.theme.foreground);
-        let dim = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
-        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
+        let bar_bg = cx.theme.statusbar_bg;
+        let fg = cx.theme.on_surface;
+        let dim = cx.theme.on_surface_muted;
+        let accent = cx.theme.accent;
         let separator_color = tokens::tint(dim, tokens::ALPHA_SEPARATOR);
         let padding = cx
             .config

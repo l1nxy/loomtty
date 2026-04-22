@@ -28,7 +28,6 @@ mod session_label;
 mod workspace;
 
 use ciri_config::config::StatusBarPosition;
-use ciri_config::theme::ThemeConfig;
 
 use self::mode::ModeIndicator;
 use self::pane_tabs::PaneTabsElement;
@@ -206,10 +205,10 @@ impl UiElement for TopBarComponent {
     }
 
     fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let bar_bg = ThemeConfig::parse_color(&cx.config.theme.statusbar_background);
-        let dim = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
-        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
-        let broadcast_color = ThemeConfig::parse_color(&cx.config.theme.mode_broadcast);
+        let bar_bg = cx.theme.statusbar_bg;
+        let dim = cx.theme.on_surface_muted;
+        let accent = cx.theme.accent;
+        let broadcast_color = cx.theme.broadcast;
         let sep_color = tokens::tint(dim, tokens::ALPHA_SEPARATOR);
 
         // --- global decorations: bar background + separator strip ---

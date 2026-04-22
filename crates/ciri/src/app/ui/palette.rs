@@ -1,9 +1,13 @@
-use ciri_config::theme::ThemeConfig;
+//! Command palette (session switcher, actions, remote host list).
+//!
+//! Layout is pre-computed by `App::command_palette_layout` so capture
+//! only has to read it and translate per-entry state into `PaletteRow`s`.
+
 
 use super::builder::UiBuilder;
 use super::text_layout;
 use super::tokens;
-use super::types::{UiAction, UiComponent, UiContext, UiPaletteHit, UiScene};
+use super::types::{UiAction, UiContext, UiPaletteHit, UiScene};
 use crate::app::App;
 
 pub(super) struct PaletteRow {
@@ -155,10 +159,12 @@ impl PaletteComponent {
         }
         UiPaletteHit::Entry(self.rows[vis_row].entry_idx)
     }
-}
 
-impl UiComponent for PaletteComponent {
-    fn click(&self, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
+    /// Map a click to a `UiAction`. Preserves the legacy semantics:
+    /// clicking an entry runs it, clicking on the panel body (between
+    /// rows, on section headers, or on the input row) is a no-op, and
+    /// clicking outside the panel closes the palette.
+    pub(crate) fn click(&self, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
         match self.hit_test(mx, my) {
             UiPaletteHit::Entry(entry_idx) => Some(UiAction::ExecutePaletteEntry(entry_idx)),
             UiPaletteHit::Panel => None,
@@ -166,18 +172,40 @@ impl UiComponent for PaletteComponent {
         }
     }
 
-    fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let bg_color = ThemeConfig::parse_color(&cx.config.theme.background);
-        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
-        let border_color = ThemeConfig::parse_color(&cx.config.theme.border_active);
-        let dim_color = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
-        let fg_color = ThemeConfig::parse_color(&cx.config.theme.foreground);
+    pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        let bg_color = cx.theme.surface;
+        let accent = cx.theme.accent;
+        let border_color = cx.theme.border_focus;
+        let dim_color = cx.theme.on_surface_muted;
+        let fg_color = cx.theme.on_surface;
         let selected_bg = tokens::tint(accent, tokens::ALPHA_SELECTED_BG);
         let hovered_bg = tokens::tint(accent, tokens::ALPHA_HOVER_BG);
 
         let px = self.layout.panel_x;
         let pw = self.layout.panel_w;
         let text_pad = tokens::SPACE_2;
+
+        // Outer panel via SDF: rounded bg + hairline border + drop
+        // shadow. Panel bg is `surface` *lifted one step* so it reads
+        // as raised above the (dimmed) terminal backdrop — with the
+        // sRGB-passthrough pipeline there's no accidental gamma lift
+        // to rely on (commit 003b123). The input row below stacks a
+        // second raise on top of this to keep the visual hierarchy.
+        let panel_bg = tokens::surface_raise(
+            [bg_color[0], bg_color[1], bg_color[2], 1.0],
+            tokens::SURFACE_LIFT,
+        );
+        scene.sdf_rects.push(ciri_render::sdf_rect::SdfRect {
+            pos: [px, self.layout.panel_y],
+            size: [pw, self.layout.panel_h],
+            color: panel_bg,
+            radii: [tokens::SPACE_1; 4],
+            border_color,
+            border_width: tokens::BORDER_THIN,
+            shadow_blur: tokens::SPACE_3,
+            shadow_offset: [0.0, tokens::SPACE_1],
+            shadow_color: [0.0, 0.0, 0.0, 0.35],
+        });
 
         let mut ui = UiBuilder::new_vertical(
             px,
@@ -192,20 +220,9 @@ impl UiComponent for PaletteComponent {
             scene,
         );
 
-        // Backdrop + frame
         ui.modal_backdrop([0.0, 0.0, 0.0, tokens::ALPHA_BACKDROP]);
-        ui.bordered_panel(
-            px,
-            self.layout.panel_y,
-            pw,
-            self.layout.panel_h,
-            bg_color,
-            border_color,
-            tokens::BORDER_THIN,
-            false,
-        );
+        // (Panel bg/border/shadow already emitted as SdfRect above.)
 
-        // Input row — sized by UI font line height, not terminal cell_h.
         let input_row_h = tokens::control_height_md(cx.ui_line_h);
         ui.horizontal(Some(pw), input_row_h, 0.0, |ui| {
             let (rx, ry) = ui.cursor_pos();
@@ -214,16 +231,13 @@ impl UiComponent for PaletteComponent {
                 ry,
                 pw,
                 input_row_h,
-                [
-                    bg_color[0] + 0.05,
-                    bg_color[1] + 0.05,
-                    bg_color[2] + 0.05,
-                    1.0,
-                ],
+                tokens::surface_raise(
+                    [bg_color[0], bg_color[1], bg_color[2], 1.0],
+                    tokens::SURFACE_LIFT_HIGH,
+                ),
             );
             let text_y = ry + (input_row_h - cx.ui_line_h) * 0.5;
 
-            // "> query" text (with placeholder in remote input mode)
             let input_text = if self.remote_input_mode {
                 format!("SSH> {}", self.query)
             } else {
@@ -231,13 +245,11 @@ impl UiComponent for PaletteComponent {
             };
             ui.abs_text(&input_text, rx + text_pad, text_y, fg_color);
 
-            // Placeholder hint when query is empty in remote input mode
             if self.remote_input_mode && self.query.is_empty() {
                 let hint_x = rx + text_pad + ui.text_width(&input_text);
                 ui.abs_text("user@host[:port]", hint_x, text_y, dim_color);
             }
 
-            // Cursor
             let cursor_x = rx + text_pad + ui.text_width(&input_text);
             ui.abs_rect(
                 cursor_x,
@@ -248,15 +260,12 @@ impl UiComponent for PaletteComponent {
             );
         });
 
-        // Separator
         ui.separator_h(border_color, 0.0);
 
-        // Entry rows — vertical list
         let row_h = self.layout.row_h;
         for row in &self.rows {
             ui.horizontal(Some(pw), row_h, 0.0, |ui| {
                 let (rx, ry) = ui.cursor_pos();
-
                 let text_y = ry + (row_h - cx.ui_line_h) * 0.5;
                 if row.style == PaletteRowStyle::SectionHeader {
                     let header_text = format!("── {} ──", row.label);
@@ -267,9 +276,7 @@ impl UiComponent for PaletteComponent {
                     } else if row.is_hovered {
                         ui.abs_rect(rx, ry, pw, row_h, hovered_bg);
                     }
-                    let color = if row.is_selected || row.is_hovered {
-                        fg_color
-                    } else if row.style == PaletteRowStyle::ConnectRemotePrompt {
+                    let color = if row.style == PaletteRowStyle::ConnectRemotePrompt {
                         accent
                     } else {
                         fg_color
@@ -279,7 +286,6 @@ impl UiComponent for PaletteComponent {
             });
         }
 
-        // Scrollbar (absolute — overlays the entry list area)
         if self.total_entries > self.layout.visible_rows {
             let track_w = tokens::SPACE_1;
             let track_x = px + pw - tokens::SPACE_2;
@@ -310,7 +316,6 @@ impl UiComponent for PaletteComponent {
             );
         }
 
-        // Footer counter (selectable entries only, excludes section headers)
         let footer = if self.selectable_count > 0 {
             format!("{}/{}", self.selectable_position, self.selectable_count)
         } else {
@@ -320,7 +325,6 @@ impl UiComponent for PaletteComponent {
         let footer_y = self.layout.panel_y + self.layout.panel_h - cx.ui_line_h - 2.0;
         ui.abs_text(&footer, footer_x, footer_y, dim_color);
 
-        // Status messages at bottom of panel
         if self.show_no_matches {
             ui.abs_text(
                 "No matching commands",
@@ -329,6 +333,9 @@ impl UiComponent for PaletteComponent {
                 dim_color,
             );
         }
+        // Loading takes precedence over a stale error so the two strings
+        // can't paint at the same Y. The `else if` in `capture` already
+        // enforces this, but guard defensively here.
         if let Some(ref loading) = self.loading_text {
             let y = self.layout.panel_y + self.layout.panel_h - cx.ui_line_h * 2.0 - 4.0;
             ui.abs_text(
@@ -337,10 +344,9 @@ impl UiComponent for PaletteComponent {
                 y,
                 [accent[0], accent[1], accent[2], 0.7],
             );
-        }
-        if let Some(ref error) = self.error_text {
+        } else if let Some(ref error) = self.error_text {
             let y = self.layout.panel_y + self.layout.panel_h - cx.ui_line_h * 2.0 - 4.0;
-            let red = ThemeConfig::parse_color(&cx.config.theme.red);
+            let red = cx.theme.error;
             ui.abs_text(error, px + text_pad, y, [red[0], red[1], red[2], 0.9]);
         }
     }

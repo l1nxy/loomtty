@@ -81,9 +81,6 @@ preset = "ciri_dark"
 leader = "ctrl+w"
 
 # Direct bindings: work without leader key (e.g. Ctrl+key to enter modes directly)
-[keys.direct_bindings]
-"ctrl+g" = "toggle_lock"
-
 [keys.bindings]
 n = "new_column_right"
 d = "new_row_below"

@@ -56,7 +56,9 @@ mod tests {
     use crate::save::save_session;
     use crate::state::{SavedColumn, SavedTile, SavedWorkspace, SessionState};
     use std::fs;
+    #[cfg(unix)]
     use std::io::ErrorKind;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -139,6 +141,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn list_sessions_propagates_directory_entry_errors() {
         let dir = unique_test_dir("session-entry-errors");

@@ -1,5 +1,4 @@
 use ciri_config::config::StatusBarPosition;
-use ciri_config::theme::ThemeConfig;
 
 use super::builder::UiBuilder;
 use super::text_layout;
@@ -167,10 +166,10 @@ impl InfoBoxComponent {
 
 impl UiComponent for InfoBoxComponent {
     fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let bg = ThemeConfig::parse_color(&cx.config.theme.background);
-        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
-        let fg = ThemeConfig::parse_color(&cx.config.theme.foreground);
-        let dim = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
+        let bg = cx.theme.surface;
+        let accent = cx.theme.accent;
+        let fg = cx.theme.on_surface;
+        let dim = cx.theme.on_surface_muted;
         let padding = cx.cell_w;
         let row_h = cx.cell_h + tokens::SPACE_1 * 2.0;
         let bw = tokens::BORDER_THIN;
@@ -190,8 +189,12 @@ impl UiComponent for InfoBoxComponent {
             scene,
         );
 
-        // Shadow + border + background
-        let bg_color = [bg[0] * 0.85, bg[1] * 0.85, bg[2] * 0.85, 0.97];
+        // Shadow + border + background — sink below `bg` with a flat sRGB
+        // delta instead of a raw channel multiply, matching `context_menu.rs`
+        // and `connection_status.rs` (see the note on gamma-incorrect darken
+        // in `context_menu.rs`).
+        let sunk = tokens::surface_sink([bg[0], bg[1], bg[2], 1.0], tokens::SURFACE_SINK);
+        let bg_color = [sunk[0], sunk[1], sunk[2], 0.97];
         ui.bordered_panel_inset(self.x, self.y, self.w, self.h, bg_color, accent, bw, true);
 
         // Title row (tinted background + text)

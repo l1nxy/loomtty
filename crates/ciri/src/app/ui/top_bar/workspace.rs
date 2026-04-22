@@ -1,4 +1,3 @@
-use ciri_config::theme::ThemeConfig;
 
 use super::super::builder::UiBuilder;
 use super::super::layout::{Axis, SizeHint, UiElement, UiRect};
@@ -22,8 +21,8 @@ impl<'a> UiElement for WorkspaceIndicator<'a> {
         if self.label.is_empty() || rect.is_empty() {
             return;
         }
-        let fg = ThemeConfig::parse_color(&cx.config.theme.foreground);
-        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
+        let fg = cx.theme.on_surface;
+        let accent = cx.theme.accent;
         let color = if self.hovered { fg } else { accent };
         let padding = cx
             .config

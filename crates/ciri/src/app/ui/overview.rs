@@ -125,9 +125,9 @@ pub(crate) fn paint_overview_action_bar(
     cx: &UiContext<'_>,
     scene: &mut UiScene<'_>,
 ) {
-    let accent = ciri_config::theme::ThemeConfig::parse_color(&cx.config.theme.accent);
-    let red = ciri_config::theme::ThemeConfig::parse_color(&cx.config.theme.red);
-    let fg = ciri_config::theme::ThemeConfig::parse_color(&cx.config.theme.foreground);
+    let accent = cx.theme.accent;
+    let red = cx.theme.error;
+    let fg = cx.theme.on_surface;
     let text_y = d.bar_y + (d.bar_h - cx.cell_h) * 0.5;
 
     let close_hovered = hover == Some(super::super::OverviewActionHover::Close);
@@ -184,6 +184,7 @@ pub(crate) fn paint_overview_action_bar(
             cell_width: cx.cell_w,
             baseline: cx.baseline,
             color: close_text_color,
+            scale: 1.0,
         },
         scene.glyphs,
         scene.color_glyphs,
@@ -209,6 +210,7 @@ pub(crate) fn paint_overview_action_bar(
             cell_width: cx.cell_w,
             baseline: cx.baseline,
             color: fg,
+            scale: 1.0,
         },
         scene.glyphs,
         scene.color_glyphs,

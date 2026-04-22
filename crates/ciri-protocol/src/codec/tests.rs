@@ -1780,8 +1780,7 @@ mod network_edge_cases {
             write_client_hello(&mut w, &hello_clone).await.unwrap();
             use tokio::io::AsyncWriteExt;
             w.flush().await.unwrap();
-            let compat = read_server_hello(&mut r).await.unwrap();
-            compat
+            read_server_hello(&mut r).await.unwrap()
         });
 
         let server_task = tokio::spawn(async move {

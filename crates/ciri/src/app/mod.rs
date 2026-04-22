@@ -1,4 +1,5 @@
 pub(crate) mod action;
+pub(crate) mod ciri_ui_bridge;
 pub(crate) mod context_menu;
 pub(crate) mod event;
 pub(crate) mod ime;
@@ -107,6 +108,10 @@ pub(crate) struct CachedUiScene {
     pub bg_rects: Vec<Rect>,
     pub glyphs: Vec<GlyphInstance>,
     pub color_glyphs: Vec<GlyphInstance>,
+    /// SDF-shader chrome rects emitted by ciri-ui-painted widgets
+    /// (rounded / bordered / shadowed). Flat rects still live in
+    /// `bg_rects`; the two streams are drawn by separate GPU passes.
+    pub sdf_rects: Vec<ciri_render::sdf_rect::SdfRect>,
 }
 
 impl CachedUiScene {
@@ -115,6 +120,7 @@ impl CachedUiScene {
         self.bg_rects.clear();
         self.glyphs.clear();
         self.color_glyphs.clear();
+        self.sdf_rects.clear();
     }
 }
 
@@ -182,6 +188,9 @@ pub(crate) struct App {
     pub mouse_left_held: bool,
     pub mouse_left_passthrough: bool,
     pub cached_color_table: ColorTable,
+    /// Resolved theme tokens — pre-parsed once per config change so paint
+    /// paths can read colors by token instead of hex-parsing every frame.
+    pub cached_resolved_theme: ciri_ui::ResolvedTheme,
     /// Per-pane cached glyph instances to skip redundant transformation in build_tiles.
     pub cached_tile_glyphs: HashMap<u64, CachedTileGlyphs>,
     pub cached_tile_backgrounds: HashMap<u64, CachedTileBackgrounds>,
@@ -205,6 +214,16 @@ pub(crate) struct App {
     /// can trigger `Cancelled` mid-connect. Exists only while the active slot
     /// is still in a transient `!connected` state — slot switches drop it.
     pub connection_cancel: Option<Arc<tokio::sync::Notify>>,
+
+    /// Redraw-gating ticker for the new `ciri-ui` animation layer.
+    ///
+    /// `ciri-motion::AnimProp` instances call `wake()` / `sleep()` on
+    /// this shared counter as they transition, so `advance_animations`
+    /// can OR `motion_ticker.is_animating()` with `AnimationManager`'s
+    /// bool to decide whether to schedule another frame. Distinct from
+    /// `core.anim_mgr` (which animates pane compositor state); the two
+    /// tickers coexist while widgets migrate over one at a time.
+    pub motion_ticker: Arc<ciri_motion::Ticker>,
 }
 
 impl App {
@@ -397,6 +416,7 @@ impl App {
 
     pub fn new(config: CiriConfig, session_name: impl Into<String>) -> Self {
         let cached_color_table = ColorTable::new(&config);
+        let cached_resolved_theme = ciri_ui::ResolvedTheme::from_config(&config.theme);
         let core = AppModel::new(config, session_name);
         App {
             core,
@@ -430,6 +450,7 @@ impl App {
             mouse_left_held: false,
             mouse_left_passthrough: false,
             cached_color_table,
+            cached_resolved_theme,
             cached_tile_glyphs: HashMap::new(),
             cached_tile_backgrounds: HashMap::new(),
             image_atlas_entries: HashMap::new(),
@@ -443,6 +464,7 @@ impl App {
             event_loop_proxy: None,
             pending_redraw: false,
             connection_cancel: None,
+            motion_ticker: Arc::new(ciri_motion::Ticker::new()),
         }
     }
 

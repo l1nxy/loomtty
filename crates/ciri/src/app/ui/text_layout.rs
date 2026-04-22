@@ -103,8 +103,11 @@ mod tests {
         // matches `UiContext<'static>` in tests. This is fine for the
         // shape-less fallback path we exercise here.
         let cfg: &'static CiriConfig = Box::leak(Box::new(CiriConfig::default()));
+        let theme: &'static ciri_ui::ResolvedTheme =
+            Box::leak(Box::new(ciri_ui::ResolvedTheme::default()));
         let cx = UiContext {
             config: cfg,
+            theme,
             viewport_w: 800.0,
             viewport_h: 600.0,
             cell_w: cw,

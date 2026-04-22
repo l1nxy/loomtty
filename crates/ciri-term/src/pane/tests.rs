@@ -310,6 +310,9 @@ fn resize_sigwinch_child_sees_new_terminal_size() {
 
 // ── Mouse input SGR format ──────────────────────────────────────────
 
+// Depends on piping through `sh -c cat` to echo back mouse sequences;
+// Windows `sh.EXE` + ConPTY has the same flakes as the OSC title test.
+#[cfg(unix)]
 #[test]
 fn mouse_input_sgr_format_encoding() {
     // Verify SGR extended mouse encoding: CSI < Btn_with_mods ; Col+1 ; Row+1 M/m
@@ -361,6 +364,11 @@ fn mouse_input_sgr_format_encoding() {
 
 // ── Title via OSC ───────────────────────────────────────────────────
 
+// Windows `sh.EXE` (from Scoop/MSYS) reports its executable path as the
+// initial title and doesn't reliably forward OSC 0 through ConPTY — the
+// same environmental flake that 9e5d317 addressed for other ConPTY
+// tests. Gate to Unix where `/bin/sh` behaves predictably.
+#[cfg(unix)]
 #[test]
 fn title_set_via_osc_sequence() {
     let mut pane = Pane::new_with_opts(91, 80, 24, shell_path(), None, None).expect("create pane");

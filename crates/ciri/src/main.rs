@@ -174,7 +174,7 @@ fn main() -> Result<()> {
             }
         });
 
-        let mut config = CiriConfig::load().unwrap_or_default();
+        let mut config = CiriConfig::load()?;
         sanitize_remote_hosts(&mut config);
         log::info!(
             "config: font={} size={}, remote={}:{}, session={}",
@@ -210,7 +210,7 @@ fn main() -> Result<()> {
             "warning: No config file found. Run `ciritty init` to set up your configuration."
         );
     }
-    let mut config = CiriConfig::load().unwrap_or_default();
+    let mut config = CiriConfig::load()?;
     sanitize_remote_hosts(&mut config);
     log::info!(
         "config: font={} size={}, session={}",

@@ -38,7 +38,7 @@ pub struct DaemonState {
 /// Initialize the server, bind the socket, start tick loop and signal handlers.
 /// Returns shared state that can be passed to `run_daemon_loop` or the tray.
 pub async fn prepare_daemon() -> Result<DaemonState> {
-    let config = ciri_config::config::CiriConfig::load().unwrap_or_default();
+    let config = ciri_config::config::CiriConfig::load()?;
     let shell = config.terminal.shell.clone();
 
     match crate::shell_integration::ensure_integration_dir() {

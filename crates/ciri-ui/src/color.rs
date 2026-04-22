@@ -1,15 +1,21 @@
-//! Colors, as linear-RGBA premultiplied-on-upload `[f32; 4]` tuples.
+//! Colors, as sRGB-passthrough `[f32; 4]` tuples.
 //!
-//! The GPU layer (`ciri-gpu`) expects linear RGBA; hex is sRGB. Always go
-//! through `from_srgb_hex` or `from_srgb_arr` when the input is sRGB.
+//! To match the legacy `Rect` / glyph rendering pipeline the rest of the
+//! client uses, ciri-ui keeps color channels in the same sRGB space the
+//! hex strings in `ThemeConfig` parse into — no gamma decode, no
+//! pre-multiplication. The GPU blend state is configured to treat these
+//! values as-is; switching to a linear workflow is a separate project.
+//!
+//! Alpha is straight (not pre-multiplied). Pre-multiplication, when
+//! needed, happens inside the SDF shader.
 
-/// Linear RGBA in `[0.0, 1.0]`. Alpha is straight, not pre-multiplied.
+/// sRGB RGBA in `[0.0, 1.0]`. Alpha is straight.
 pub type Color = [f32; 4];
 
-/// Parse `#rrggbb` (sRGB) → linear RGBA. Invalid input falls back to a
-/// bright magenta so misses are obvious on screen rather than silent.
+/// Parse `#rrggbb` → sRGB RGBA (no gamma decode). Invalid input falls back
+/// to a bright magenta so misses are obvious on screen rather than silent.
 pub fn from_srgb_hex(hex: &str) -> Color {
-    ciri_config::theme::ThemeConfig::parse_color_linear(hex)
+    ciri_config::theme::ThemeConfig::parse_color(hex)
 }
 
 /// Return `c` with its alpha replaced by `a`.

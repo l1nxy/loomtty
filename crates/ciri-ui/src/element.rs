@@ -94,7 +94,11 @@ pub struct PaintCtx<'a> {
     /// [`crate::shaper::NullShaper`].
     pub text_shaper: &'a mut dyn TextShaper,
     pub scale: f32,
-    pub element_id: ElementId,
+    /// Stable element identity for event dispatch / plugin hosts. `None`
+    /// when the walker hasn't assigned an ID (current scaffolding state);
+    /// making this explicit keeps consumers from treating a zero value
+    /// as a real identity.
+    pub element_id: Option<ElementId>,
     /// Cumulative opacity from the walker. Multiply this with the
     /// element's own `opacity` before emitting.
     pub inherited_opacity: f32,

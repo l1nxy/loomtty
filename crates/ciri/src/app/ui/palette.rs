@@ -1,24 +1,14 @@
 //! Command palette (session switcher, actions, remote host list).
 //!
-//! A full-viewport modal with a search input at the top, a scrollable
-//! list of entries, an optional scrollbar, a footer counter, and
-//! transient status messages (no-matches / loading / error). The
-//! layout is pre-computed by `App::command_palette_layout` so capture
-//! only has to read it and translate per-entry state into `PaletteRow`s.
-//!
-//! Paint goes through several sibling ciri-ui trees rather than one
-//! nested tree because ciri-ui has no `position: absolute` yet and the
-//! scrollbar / footer / status messages sit on top of the row list
-//! area in viewport coordinates. Each is a small translated root that
-//! emits into the shared `Modal` layer, so layer bucketing keeps the
-//! final z-order stable.
+//! Layout is pre-computed by `App::command_palette_layout` so capture
+//! only has to read it and translate per-entry state into `PaletteRow`s`.
 
-use ciri_ui::color::with_alpha;
-use ciri_ui::{div, text, Div, Layer, ResolvedTheme, Styled};
+use ciri_config::theme::ThemeConfig;
 
+use super::builder::UiBuilder;
 use super::text_layout;
 use super::tokens;
-use super::types::{UiAction, UiContext, UiPaletteHit};
+use super::types::{UiAction, UiContext, UiPaletteHit, UiScene};
 use crate::app::App;
 
 pub(super) struct PaletteRow {
@@ -55,11 +45,6 @@ pub(crate) struct PaletteComponent {
     loading_text: Option<String>,
     error_text: Option<String>,
     remote_input_mode: bool,
-    // ── Captured from UiContext so build_trees can draw without needing it ──
-    viewport_w: f32,
-    viewport_h: f32,
-    ui_line_h: f32,
-    input_row_h: f32,
 }
 
 fn truncate_label(label: &str, panel_w: f32, cx: &UiContext<'_>) -> String {
@@ -149,10 +134,6 @@ impl PaletteComponent {
             loading_text,
             error_text,
             remote_input_mode: palette.remote_input_mode,
-            viewport_w: cx.viewport_w,
-            viewport_h: cx.viewport_h,
-            ui_line_h: cx.ui_line_h,
-            input_row_h: tokens::control_height_md(cx.ui_line_h),
         })
     }
 
@@ -191,237 +172,183 @@ impl PaletteComponent {
             UiPaletteHit::None => Some(UiAction::ClosePalette),
         }
     }
-}
 
-impl PaletteComponent {
-    /// Build the set of ciri-ui trees for this palette snapshot.
-    ///
-    /// Returns one tree per logical overlay — backdrop, panel (frame
-    /// + input + rows), scrollbar, footer, status message. Each is
-    /// positioned in viewport coords via `translate` on its root and
-    /// rendered onto `Layer::Modal`; paint order within that layer is
-    /// Vec order, so callers should iterate in sequence.
-    ///
-    /// Splitting into multiple trees rather than a single nested one
-    /// sidesteps the lack of CSS-style absolute positioning in ciri-ui:
-    /// each overlay just anchors at its own absolute origin and its
-    /// internals compose via flex.
-    pub(crate) fn build_trees(&self, theme: &ResolvedTheme) -> Vec<Div> {
-        let mut trees = Vec::with_capacity(6);
+    pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        let bg_color = ThemeConfig::parse_color(&cx.config.theme.background);
+        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
+        let border_color = ThemeConfig::parse_color(&cx.config.theme.border_active);
+        let dim_color = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
+        let fg_color = ThemeConfig::parse_color(&cx.config.theme.foreground);
+        let selected_bg = tokens::tint(accent, tokens::ALPHA_SELECTED_BG);
+        let hovered_bg = tokens::tint(accent, tokens::ALPHA_HOVER_BG);
 
-        trees.push(self.backdrop());
-        trees.push(self.panel(theme));
+        let px = self.layout.panel_x;
+        let pw = self.layout.panel_w;
+        let text_pad = tokens::SPACE_2;
 
-        if self.total_entries > self.layout.visible_rows {
-            trees.push(self.scrollbar(theme));
-        }
-        trees.push(self.footer(theme));
+        // Outer panel via SDF: rounded bg + hairline border + drop
+        // shadow. Panel bg is `term_bg` *lifted one step* so it reads
+        // as raised above the (dimmed) terminal backdrop — with the
+        // sRGB-passthrough pipeline there's no accidental gamma lift
+        // to rely on (commit 003b123). The input row below stacks a
+        // second raise on top of this to keep the visual hierarchy.
+        let panel_bg = tokens::surface_raise(
+            [bg_color[0], bg_color[1], bg_color[2], 1.0],
+            tokens::SURFACE_LIFT,
+        );
+        scene.sdf_rects.push(ciri_render::sdf_rect::SdfRect {
+            pos: [px, self.layout.panel_y],
+            size: [pw, self.layout.panel_h],
+            color: panel_bg,
+            radii: [tokens::SPACE_1; 4],
+            border_color,
+            border_width: tokens::BORDER_THIN,
+            shadow_blur: tokens::SPACE_3,
+            shadow_offset: [0.0, tokens::SPACE_1],
+            shadow_color: [0.0, 0.0, 0.0, 0.35],
+        });
 
-        if self.show_no_matches {
-            trees.push(self.no_matches(theme));
-        }
-        // Loading and error are mutually exclusive in practice (set by
-        // different remote-fetch phases) but the legacy path painted
-        // whichever was Some in the same bottom slot — preserve that.
-        if let Some(ref msg) = self.loading_text {
-            trees.push(self.bottom_status(msg, with_alpha(theme.accent, 0.7)));
-        }
-        if let Some(ref msg) = self.error_text {
-            trees.push(self.bottom_status(msg, with_alpha(theme.error, 0.9)));
-        }
-
-        trees
-    }
-
-    fn backdrop(&self) -> Div {
-        div()
-            .in_layer(Layer::Modal)
-            .w(self.viewport_w)
-            .h(self.viewport_h)
-            .bg([0.0, 0.0, 0.0, tokens::ALPHA_BACKDROP])
-    }
-
-    fn panel(&self, theme: &ResolvedTheme) -> Div {
-        // `term_bg` matches the legacy palette's panel colour exactly
-        // (see `ResolvedTheme::from_config` — now kept in sRGB space so
-        // SDF chrome matches what the flat-rect pipeline has always
-        // been painting). Input row lifts by a flat 5% additive step
-        // to echo the legacy `bg + 0.05` recipe.
-        let bg_color = theme.term_bg;
-        let input_bg = [
-            (bg_color[0] + 0.05).min(1.0),
-            (bg_color[1] + 0.05).min(1.0),
-            (bg_color[2] + 0.05).min(1.0),
-            1.0,
-        ];
-        let selected_bg = with_alpha(theme.accent, tokens::ALPHA_SELECTED_BG);
-        let hovered_bg = with_alpha(theme.accent, tokens::ALPHA_HOVER_BG);
-        let cursor_color = with_alpha(theme.on_surface, tokens::ALPHA_CURSOR);
-        let pad = tokens::SPACE_2;
-
-        // ── Input row: "> query" (or "SSH> query" + placeholder) + cursor.
-        // Flex-row lays text then cursor in sequence; text-first /
-        // placeholder-between ordering is handled by conditional
-        // children so the cursor always sits after the typed text
-        // regardless of which mode we're in.
-        let input_text = if self.remote_input_mode {
-            format!("SSH> {}", self.query)
-        } else {
-            format!("> {}", self.query)
-        };
-
-        let mut input_row = div()
-            .flex_row()
-            .items_center()
-            .w(self.layout.panel_w)
-            .h(self.input_row_h)
-            .px(pad)
-            .bg(input_bg)
-            .child(text(input_text).color(theme.on_surface));
-        if self.remote_input_mode && self.query.is_empty() {
-            input_row =
-                input_row.child(text("user@host[:port]").color(theme.on_surface_muted));
-        }
-        input_row = input_row.child(
-            div()
-                .w(2.0)
-                .h(self.ui_line_h)
-                .bg(cursor_color),
+        let mut ui = UiBuilder::new_vertical(
+            px,
+            self.layout.panel_y,
+            pw,
+            self.layout.panel_h,
+            0.0,
+            0.0,
+            0.0,
+            false,
+            cx,
+            scene,
         );
 
-        // ── Separator — a 1px line under the input row.
-        let separator = div()
-            .w(self.layout.panel_w)
-            .h(tokens::BORDER_THIN)
-            .bg(theme.border_focus);
+        ui.modal_backdrop([0.0, 0.0, 0.0, tokens::ALPHA_BACKDROP]);
+        // (Panel bg/border/shadow already emitted as SdfRect above.)
 
-        // ── Row list.
-        let mut row_list = div().flex_col().w(self.layout.panel_w);
-        for row in &self.rows {
-            let row_h = self.layout.row_h;
-            let row_div = if row.style == PaletteRowStyle::SectionHeader {
-                div()
-                    .flex_row()
-                    .items_center()
-                    .w(self.layout.panel_w)
-                    .h(row_h)
-                    .px(pad)
-                    .child(
-                        text(format!("── {} ──", row.label)).color(theme.on_surface_muted),
-                    )
+        let input_row_h = tokens::control_height_md(cx.ui_line_h);
+        ui.horizontal(Some(pw), input_row_h, 0.0, |ui| {
+            let (rx, ry) = ui.cursor_pos();
+            ui.abs_rect(
+                rx,
+                ry,
+                pw,
+                input_row_h,
+                tokens::surface_raise(
+                    [bg_color[0], bg_color[1], bg_color[2], 1.0],
+                    tokens::SURFACE_LIFT_HIGH,
+                ),
+            );
+            let text_y = ry + (input_row_h - cx.ui_line_h) * 0.5;
+
+            let input_text = if self.remote_input_mode {
+                format!("SSH> {}", self.query)
             } else {
-                let (bg, label_color) = if row.is_selected {
-                    (selected_bg, theme.on_surface)
-                } else if row.is_hovered {
-                    (hovered_bg, theme.on_surface)
-                } else if row.style == PaletteRowStyle::ConnectRemotePrompt {
-                    ([0.0; 4], theme.accent)
-                } else {
-                    ([0.0; 4], theme.on_surface)
-                };
-                div()
-                    .flex_row()
-                    .items_center()
-                    .w(self.layout.panel_w)
-                    .h(row_h)
-                    .px(pad)
-                    .bg(bg)
-                    .child(text(&row.label).color(label_color))
+                format!("> {}", self.query)
             };
-            row_list = row_list.child(row_div);
+            ui.abs_text(&input_text, rx + text_pad, text_y, fg_color);
+
+            if self.remote_input_mode && self.query.is_empty() {
+                let hint_x = rx + text_pad + ui.text_width(&input_text);
+                ui.abs_text("user@host[:port]", hint_x, text_y, dim_color);
+            }
+
+            let cursor_x = rx + text_pad + ui.text_width(&input_text);
+            ui.abs_rect(
+                cursor_x,
+                text_y,
+                2.0,
+                cx.ui_line_h,
+                tokens::tint(fg_color, tokens::ALPHA_CURSOR),
+            );
+        });
+
+        ui.separator_h(border_color, 0.0);
+
+        let row_h = self.layout.row_h;
+        for row in &self.rows {
+            ui.horizontal(Some(pw), row_h, 0.0, |ui| {
+                let (rx, ry) = ui.cursor_pos();
+                let text_y = ry + (row_h - cx.ui_line_h) * 0.5;
+                if row.style == PaletteRowStyle::SectionHeader {
+                    let header_text = format!("── {} ──", row.label);
+                    ui.abs_text(&header_text, rx + text_pad, text_y, dim_color);
+                } else {
+                    if row.is_selected {
+                        ui.abs_rect(rx, ry, pw, row_h, selected_bg);
+                    } else if row.is_hovered {
+                        ui.abs_rect(rx, ry, pw, row_h, hovered_bg);
+                    }
+                    let color = if row.style == PaletteRowStyle::ConnectRemotePrompt {
+                        accent
+                    } else {
+                        fg_color
+                    };
+                    ui.abs_text(&row.label, rx + text_pad, text_y, color);
+                }
+            });
         }
 
-        // ── Panel frame: input + separator + rows stacked inside a
-        // bordered container anchored at `(panel_x, panel_y)`.
-        div()
-            .in_layer(Layer::Modal)
-            .translate(self.layout.panel_x, self.layout.panel_y)
-            .w(self.layout.panel_w)
-            .h(self.layout.panel_h)
-            .flex_col()
-            .bg(bg_color)
-            .border(tokens::BORDER_THIN, theme.border_focus)
-            .child(input_row)
-            .child(separator)
-            .child(row_list)
-    }
+        if self.total_entries > self.layout.visible_rows {
+            let track_w = tokens::SPACE_1;
+            let track_x = px + pw - tokens::SPACE_2;
+            let track_y = self.layout.sep_y + 2.0;
+            let track_h = (self.layout.visible_rows as f32 * row_h - tokens::SPACE_1).max(0.0);
+            ui.abs_rect(
+                track_x,
+                track_y,
+                track_w,
+                track_h,
+                tokens::tint(border_color, tokens::ALPHA_SCROLL_TRACK),
+            );
 
-    fn scrollbar(&self, theme: &ResolvedTheme) -> Div {
-        let track_w = tokens::SPACE_1;
-        let track_x = self.layout.panel_x + self.layout.panel_w - tokens::SPACE_2;
-        let track_y = self.layout.sep_y + 2.0;
-        let track_h = (self.layout.visible_rows as f32 * self.layout.row_h - tokens::SPACE_1)
-            .max(0.0);
-        let thumb_h = (track_h * (self.layout.visible_rows as f32 / self.total_entries as f32))
-            .max(self.layout.row_h * 0.75);
-        let denom = self
-            .total_entries
-            .saturating_sub(self.layout.visible_rows)
-            .max(1);
-        let thumb_offset =
-            (track_h - thumb_h).max(0.0) * (self.scroll_offset as f32 / denom as f32);
-        let track_color = with_alpha(theme.border_focus, tokens::ALPHA_SCROLL_TRACK);
-        let thumb_color = with_alpha(theme.accent, tokens::ALPHA_SCROLL_THUMB);
+            let thumb_h = (track_h * (self.layout.visible_rows as f32 / self.total_entries as f32))
+                .max(row_h * 0.75);
+            let denom = self
+                .total_entries
+                .saturating_sub(self.layout.visible_rows)
+                .max(1);
+            let thumb_y =
+                track_y + (track_h - thumb_h).max(0.0) * (self.scroll_offset as f32 / denom as f32);
+            ui.abs_rect(
+                track_x,
+                thumb_y,
+                track_w,
+                thumb_h,
+                tokens::tint(accent, tokens::ALPHA_SCROLL_THUMB),
+            );
+        }
 
-        // Track is the container's own bg; thumb is a single child
-        // whose translate offsets it inside the track.
-        div()
-            .in_layer(Layer::Modal)
-            .translate(track_x, track_y)
-            .w(track_w)
-            .h(track_h)
-            .bg(track_color)
-            .child(
-                div()
-                    .w(track_w)
-                    .h(thumb_h)
-                    .translate(0.0, thumb_offset)
-                    .bg(thumb_color),
-            )
-    }
-
-    fn footer(&self, theme: &ResolvedTheme) -> Div {
-        let footer_str = if self.selectable_count > 0 {
+        let footer = if self.selectable_count > 0 {
             format!("{}/{}", self.selectable_position, self.selectable_count)
         } else {
             "0/0".to_string()
         };
-        // `justify_end` right-aligns the text inside a panel-wide row;
-        // `pr(12.0)` replicates the legacy 12px right inset.
-        let row_y = self.layout.panel_y + self.layout.panel_h - self.ui_line_h - 2.0;
-        div()
-            .in_layer(Layer::Modal)
-            .translate(self.layout.panel_x, row_y)
-            .w(self.layout.panel_w)
-            .h(self.ui_line_h)
-            .flex_row()
-            .justify_end()
-            .pr(12.0)
-            .child(text(footer_str).color(theme.on_surface_muted))
-    }
+        let footer_x = px + pw - ui.text_width(&footer) - 12.0;
+        let footer_y = self.layout.panel_y + self.layout.panel_h - cx.ui_line_h - 2.0;
+        ui.abs_text(&footer, footer_x, footer_y, dim_color);
 
-    fn no_matches(&self, theme: &ResolvedTheme) -> Div {
-        div()
-            .in_layer(Layer::Modal)
-            .translate(self.layout.panel_x, self.layout.sep_y + 4.0)
-            .w(self.layout.panel_w)
-            .h(self.ui_line_h)
-            .flex_row()
-            .items_center()
-            .px(tokens::SPACE_2)
-            .child(text("No matching commands").color(theme.on_surface_muted))
-    }
-
-    fn bottom_status(&self, msg: &str, color: ciri_ui::Color) -> Div {
-        let y = self.layout.panel_y + self.layout.panel_h - self.ui_line_h * 2.0 - 4.0;
-        div()
-            .in_layer(Layer::Modal)
-            .translate(self.layout.panel_x, y)
-            .w(self.layout.panel_w)
-            .h(self.ui_line_h)
-            .flex_row()
-            .items_center()
-            .px(tokens::SPACE_2)
-            .child(text(msg.to_string()).color(color))
+        if self.show_no_matches {
+            ui.abs_text(
+                "No matching commands",
+                px + text_pad,
+                self.layout.sep_y + 4.0,
+                dim_color,
+            );
+        }
+        // Loading takes precedence over a stale error so the two strings
+        // can't paint at the same Y. The `else if` in `capture` already
+        // enforces this, but guard defensively here.
+        if let Some(ref loading) = self.loading_text {
+            let y = self.layout.panel_y + self.layout.panel_h - cx.ui_line_h * 2.0 - 4.0;
+            ui.abs_text(
+                loading,
+                px + text_pad,
+                y,
+                [accent[0], accent[1], accent[2], 0.7],
+            );
+        } else if let Some(ref error) = self.error_text {
+            let y = self.layout.panel_y + self.layout.panel_h - cx.ui_line_h * 2.0 - 4.0;
+            let red = ThemeConfig::parse_color(&cx.config.theme.red);
+            ui.abs_text(error, px + text_pad, y, [red[0], red[1], red[2], 0.9]);
+        }
     }
 }

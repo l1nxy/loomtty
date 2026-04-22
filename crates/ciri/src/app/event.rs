@@ -101,7 +101,12 @@ impl ApplicationHandler for App {
 
         // Idle-aware event loop: only poll at frame rate when animating or
         // expecting updates. Switch to Wait when idle to save power.
-        let is_animating = self.core.anim_mgr.is_animating();
+        // The motion_ticker tracks ciri-ui chrome animations (banner dots,
+        // palette fades, hover transitions); without it in this OR the
+        // event loop goes to Wait as soon as anim_mgr settles and chrome
+        // animations freeze mid-flight.
+        let is_animating = self.core.anim_mgr.is_animating()
+            || self.motion_ticker.is_animating();
         // The connection banner needs the event loop to tick so the dot
         // spinner can animate. Covers three states: backing off between
         // retries, initial pre-handshake "Connecting…", and the halted

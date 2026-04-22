@@ -33,13 +33,22 @@ impl Ticker {
     }
 
     /// Register that one property settled.
+    ///
+    /// Uses `fetch_update` so an imbalanced `sleep()` can never wrap to
+    /// `usize::MAX` even transiently — another thread calling `is_animating()`
+    /// between a naive `fetch_sub` and a compensating `store(0)` would
+    /// briefly see a huge active count and mistakenly keep requesting
+    /// redraws.
     pub fn sleep(&self) {
-        let prev = self.active.fetch_sub(1, Ordering::Relaxed);
-        if prev == 0 {
-            // Saturate at zero in the extremely unlikely case of imbalance
-            // rather than panic; still log so drift is caught in testing.
-            self.active.store(0, Ordering::Relaxed);
-            log::debug!("ciri-motion: Ticker::sleep underflow — resetting to 0");
+        let result = self.active.fetch_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            |v| if v == 0 { None } else { Some(v - 1) },
+        );
+        if result.is_err() {
+            // Imbalanced wake/sleep — a programming error. Surface in
+            // release logs so it doesn't stay invisible.
+            log::warn!("ciri-motion: Ticker::sleep called while active == 0");
         }
     }
 

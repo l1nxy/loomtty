@@ -314,11 +314,24 @@ pub trait Styled: Sized {
         self.cursor(CursorStyle::Pointer)
     }
 
+    /// Attach a click handler to this element.
+    ///
+    /// **Not yet dispatched in production.** The current client's real
+    /// event dispatcher (`app::ui::dispatch_ui_click`) drives clicks
+    /// through per-component `capture()` / `hit_test()` methods on the
+    /// legacy chrome widgets — it does not walk the ciri-ui Element tree
+    /// to invoke `Element::on_event`. Handlers attached via this builder
+    /// will fire for in-crate tests (see `Div`'s `on_click_fires_on_pointer_down`
+    /// regression) but not for real clicks on migrated chrome yet. Wiring
+    /// the walker into the host dispatcher lands with a future migration.
     fn on_click(mut self, f: impl Fn() + Send + Sync + 'static) -> Self {
         self.style().on_click = Some(Arc::new(f));
         self
     }
 
+    /// Attach a hover handler to this element.
+    ///
+    /// **Not yet dispatched in production** — see `on_click` for details.
     fn on_hover(mut self, f: impl Fn(bool) + Send + Sync + 'static) -> Self {
         self.style().on_hover = Some(Arc::new(f));
         self

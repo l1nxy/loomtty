@@ -1,5 +1,6 @@
 use ciri_render::glyph_cache::{GlyphCache, GlyphInstance};
 use ciri_render::rect::Rect;
+use ciri_render::sdf_rect::SdfRect;
 use ciri_render::ui_shaper::UiTextShaper;
 use std::cell::RefCell;
 use winit::window::CursorIcon;
@@ -26,6 +27,10 @@ pub(crate) struct UiScene<'a> {
     pub bg_rects: &'a mut Vec<Rect>,
     pub glyphs: &'a mut Vec<GlyphInstance>,
     pub color_glyphs: &'a mut Vec<GlyphInstance>,
+    /// SDF rounded-chrome primitives. Emitted by components that want
+    /// rounded corners, shadows, or AA'd borders without building a full
+    /// ciri-ui Element tree; paired 1:1 with the blade SDF pipeline.
+    pub sdf_rects: &'a mut Vec<SdfRect>,
 }
 
 /// Unified component trait for all UI chrome elements.

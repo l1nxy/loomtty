@@ -1,7 +1,10 @@
 //! Pre-resolved theme tokens.
 //!
-//! Turns `ciri_config::theme::ThemeConfig` (hex strings) into linear RGBA
-//! ready for the GPU, computed once per theme change. Fixes the
+//! Turns `ciri_config::theme::ThemeConfig` (hex strings) into sRGB-encoded
+//! RGBA ready for the GPU, computed once per theme change. sRGB — not
+//! linear — to match the existing ciri-gpu pipeline, which does not
+//! gamma-decode its inputs before blending (see `ResolvedTheme`'s doc
+//! comment for the rationale and the regression this fixes). Fixes the
 //! parse-hex-per-frame smell in the current chrome path.
 //!
 //! The token schema is semantic (surface / on-surface / accent / …) rather
@@ -86,7 +89,10 @@ impl Default for TypeScale {
     }
 }
 
-/// Fully-resolved theme tokens. All colors are linear RGBA.
+/// Fully-resolved theme tokens. All colors are sRGB-encoded RGBA (straight
+/// alpha) — the same space `ThemeConfig` hex strings parse into. This
+/// matches the existing `Rect` / glyph pipeline, which does not gamma-decode
+/// its inputs. Consumers that want linear blending must decode themselves.
 ///
 /// Construct via [`ResolvedTheme::from_config`] whenever the `ThemeConfig`
 /// changes (startup + config reload). Never parse hex inside `paint`.
@@ -265,6 +271,33 @@ mod tests {
     fn default_theme_uses_sentinel_version_zero() {
         let t = ResolvedTheme::default();
         assert_eq!(t.version, 0);
+    }
+
+    #[test]
+    fn from_config_keeps_widget_theme_colors_in_srgb_space() {
+        let mut cfg = ciri_config::theme::ThemeConfig {
+            preset: "dracula".into(),
+            ..Default::default()
+        };
+        cfg.resolve_preset();
+
+        let theme = ResolvedTheme::from_config(&cfg);
+
+        assert_eq!(
+            theme.term_bg,
+            ThemeConfig::parse_color(cfg.background.as_ref()),
+            "SDF-backed widgets share the same color space as the legacy rect pipeline",
+        );
+        assert_eq!(
+            theme.border_focus,
+            ThemeConfig::parse_color(cfg.border_active.as_ref()),
+            "focused borders must not be gamma-decoded before the current GPU pipeline",
+        );
+        assert_ne!(
+            theme.term_bg,
+            ThemeConfig::parse_color_linear(cfg.background.as_ref()),
+            "linear-decoding the theme would darken palette panels enough to read as transparent",
+        );
     }
 
     #[test]

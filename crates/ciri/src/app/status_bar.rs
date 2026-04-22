@@ -8,6 +8,7 @@ pub(crate) struct TextEmitParams {
     pub cell_width: f32,
     pub baseline: f32,
     pub color: [f32; 4],
+    pub scale: f32,
 }
 
 /// Emit glyph instances for UI text.
@@ -127,11 +128,12 @@ fn make_shaped_glyph_instance(
     pen_x: f32,
     g: &UiShapedGlyph,
 ) -> GlyphInstance {
-    let sx = pen_x + g.x_offset + entry.bearing_x;
-    let sy = params.y + params.baseline - entry.bearing_y + g.y_offset;
+    let scale = params.scale.max(0.0);
+    let sx = pen_x + (g.x_offset + entry.bearing_x) * scale;
+    let sy = params.y + params.baseline * scale - entry.bearing_y * scale + g.y_offset * scale;
     GlyphInstance {
         pos: [sx, sy],
-        size: [entry.width as f32, entry.height as f32],
+        size: [entry.width as f32 * scale, entry.height as f32 * scale],
         uv_pos: [entry.u0, entry.v0],
         uv_size: [entry.u1 - entry.u0, entry.v1 - entry.v0],
         color: params.color,
@@ -145,12 +147,13 @@ fn make_text_glyph_instance(
     cell_height: f32,
     display_cols: usize,
 ) -> GlyphInstance {
-    let base_x = params.x_start + col as f32 * params.cell_width;
+    let scale = params.scale.max(0.0);
+    let base_x = params.x_start + col as f32 * params.cell_width * scale;
     if entry.is_color && display_cols > 1 {
         let gw = entry.width as f32;
         let gh = entry.height as f32;
-        let target_w = params.cell_width * display_cols as f32;
-        let target_h = cell_height;
+        let target_w = params.cell_width * display_cols as f32 * scale;
+        let target_h = cell_height * scale;
         let scale = (target_w / gw).min(target_h / gh);
         let final_w = gw * scale;
         let final_h = gh * scale;
@@ -164,11 +167,11 @@ fn make_text_glyph_instance(
             color: params.color,
         }
     } else {
-        let sx = base_x + entry.bearing_x;
-        let sy = params.y + params.baseline - entry.bearing_y;
+        let sx = base_x + entry.bearing_x * scale;
+        let sy = params.y + params.baseline * scale - entry.bearing_y * scale;
         GlyphInstance {
             pos: [sx, sy],
-            size: [entry.width as f32, entry.height as f32],
+            size: [entry.width as f32 * scale, entry.height as f32 * scale],
             uv_pos: [entry.u0, entry.v0],
             uv_size: [entry.u1 - entry.u0, entry.v1 - entry.v0],
             color: params.color,
@@ -204,6 +207,7 @@ mod tests {
                 cell_width: 10.0,
                 baseline: 16.0,
                 color: [1.0; 4],
+                scale: 1.0,
             },
             0,
             20.0,
@@ -225,6 +229,7 @@ mod tests {
                 cell_width: 10.0,
                 baseline: 16.0,
                 color: [1.0; 4],
+                scale: 1.0,
             },
             3,
             20.0,
@@ -246,6 +251,7 @@ mod tests {
                 cell_width: 10.0,
                 baseline: 14.0,
                 color: [1.0; 4],
+                scale: 1.0,
             },
             100.0,
             &UiShapedGlyph {
@@ -261,5 +267,33 @@ mod tests {
         assert!((inst.pos[0] - 101.5).abs() < 0.01);
         // y 0 + baseline 14 - bearing_y 14 + y_offset -1 = -1
         assert!((inst.pos[1] + 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn shaped_glyph_scales_geometry() {
+        let entry = test_entry(false, 8, 16);
+        let inst = make_shaped_glyph_instance(
+            &entry,
+            &TextEmitParams {
+                x_start: 0.0,
+                y: 10.0,
+                cell_width: 10.0,
+                baseline: 14.0,
+                color: [1.0; 4],
+                scale: 1.5,
+            },
+            20.0,
+            &UiShapedGlyph {
+                glyph_id: 1,
+                font_id: ciri_render::fontdb::ID::dummy(),
+                x_advance: 8.0,
+                x_offset: 0.0,
+                y_offset: 0.0,
+                cluster: 0,
+            },
+        );
+        assert_eq!(inst.size, [12.0, 24.0]);
+        assert!((inst.pos[0] - 21.5).abs() < 0.01);
+        assert!((inst.pos[1] - 10.0).abs() < 0.01);
     }
 }

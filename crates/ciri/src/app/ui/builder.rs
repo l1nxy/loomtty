@@ -311,6 +311,7 @@ impl<'a, 'b> UiBuilder<'a, 'b> {
                 cell_width: self.cx.cell_w,
                 baseline: self.cx.baseline,
                 color,
+                scale: 1.0,
             },
             self.scene.glyphs,
             self.scene.color_glyphs,

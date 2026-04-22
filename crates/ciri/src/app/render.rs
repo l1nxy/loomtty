@@ -533,6 +533,13 @@ impl App {
         cell_h.to_bits().hash(&mut hasher);
         ui_line_h.to_bits().hash(&mut hasher);
 
+        // Motion ticker frame counter — `AnimProp::advance` bumps this
+        // on every frame where it actually moves a value, so folding it
+        // in here invalidates the cache exactly while any ciri-motion
+        // animation is in flight. Idle frames don't bump, so cache hits
+        // still work when nothing animates.
+        self.motion_ticker.frame().hash(&mut hasher);
+
         self.core.workspaces.active_workspace_idx.hash(&mut hasher);
         self.core.workspaces.workspaces.len().hash(&mut hasher);
         self.window_focused.hash(&mut hasher);
@@ -602,6 +609,7 @@ impl App {
         // `connected` stays false.
         self.core.connected.hash(&mut hasher);
         self.core.server_rx.is_some().hash(&mut hasher);
+        self.core.server_tx.is_some().hash(&mut hasher);
         if let Some(state) = &self.core.reconnect_state {
             state.attempt.hash(&mut hasher);
             state.max_attempts.hash(&mut hasher);
@@ -802,11 +810,24 @@ impl App {
     /// compositor state) **or** the new `ciri-motion::Ticker` (chrome
     /// widget animations via `AnimProp`) still has in-flight work.
     /// Callers use this to decide whether to schedule another frame.
+    ///
+    /// **Contract for future AnimProp users (today there are none):**
+    /// `AnimProp` is owned per-host — there is no central registry this
+    /// function could iterate. Any component that stores an `AnimProp`
+    /// MUST:
+    ///   1. Call `prop.with_ticker(&app.motion_ticker)` at construction
+    ///      so settle / wake are balanced on the shared counter.
+    ///   2. Call `prop.advance(dt)` once per frame from its own capture
+    ///      or paint path with the same `dt` this function receives.
+    /// Without (2) the ticker stays awake forever once any animation
+    /// starts and `motion_ticker.is_animating()` wedges at `true`,
+    /// pegging the event loop at frame rate indefinitely. Without (1)
+    /// the loop goes idle mid-animation.
+    ///
+    /// `motion_ticker` reports aggregate state only; it cannot tick
+    /// individual props, so this function has no work to do on them.
     pub fn advance_animations(&mut self, dt: f64) -> bool {
         let core_animating = self.core.advance_animations(dt);
-        // AnimProp advances itself when its host calls `prop.advance(dt)`;
-        // the ticker just reports aggregate state, so there's nothing to
-        // tick here. Just OR the bool.
         core_animating || self.motion_ticker.is_animating()
     }
 
@@ -1854,6 +1875,7 @@ impl App {
                 cell_width: cw,
                 baseline,
                 color: text_color,
+                scale: 1.0,
             },
             glyphs,
             color_glyphs,
@@ -1989,6 +2011,7 @@ impl App {
                 cell_width: cw,
                 baseline,
                 color: text_color,
+                scale: 1.0,
             },
             glyphs,
             color_glyphs,

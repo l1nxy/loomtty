@@ -7,8 +7,11 @@
 //! `bytemuck::Pod` and the matching blade vertex layout.
 //!
 //! Units: `pos` / `size` / `border_width` / `shadow_blur` / `shadow_offset`
-//! are in screen (logical) pixels; `color`, `border_color`, and
-//! `shadow_color` are premultiplied-on-upload linear RGBA.
+//! are in screen (logical) pixels. `color`, `border_color`, and
+//! `shadow_color` are sRGB-encoded RGBA with straight alpha — the same
+//! convention `ciri-ui`'s `ResolvedTheme` stores, matching the existing
+//! rect pipeline (no gamma decode). Pre-multiplication happens inside
+//! the SDF shader, not at upload time.
 //!
 //! Zero-valued visuals are cheap and well-defined: `border_width = 0.0`
 //! disables the border (regardless of `border_color`); `shadow_blur = 0.0`
@@ -22,11 +25,11 @@ pub struct SdfRect {
     pub pos: [f32; 2],
     /// Width, height in logical pixels.
     pub size: [f32; 2],
-    /// Fill color (linear RGBA, alpha is pre-multiplied in the shader).
+    /// Fill color (sRGB RGBA, straight alpha; shader pre-multiplies).
     pub color: [f32; 4],
     /// Per-corner radii: `[tl, tr, br, bl]` in logical pixels.
     pub radii: [f32; 4],
-    /// Border color (linear RGBA); ignored when `border_width == 0`.
+    /// Border color (sRGB RGBA); ignored when `border_width == 0`.
     pub border_color: [f32; 4],
     /// Border width in logical pixels; `0` disables the border.
     pub border_width: f32,
@@ -34,7 +37,7 @@ pub struct SdfRect {
     pub shadow_blur: f32,
     /// Shadow offset `(x, y)` in logical pixels.
     pub shadow_offset: [f32; 2],
-    /// Shadow color (linear RGBA); ignored when `shadow_blur == 0`.
+    /// Shadow color (sRGB RGBA); ignored when `shadow_blur == 0`.
     pub shadow_color: [f32; 4],
 }
 

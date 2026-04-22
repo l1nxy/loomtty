@@ -127,6 +127,14 @@ impl<T: Lerp> AnimProp<T> {
     /// updated in place and no in-flight animation is recorded. This
     /// matches the caller's obvious intent ("no animation") and avoids a
     /// stale frame plus a sticky `is_animating()` flag until the next tick.
+    ///
+    /// Note on `Transition::Spring`: progress here tracks the
+    /// *decay envelope* (`1 − exp(−β·t)`), not the raw damped-oscillator
+    /// position, so even underdamped presets (`SpringParams::bouncy()`)
+    /// interpolate monotonically from `from` to `to` in value space.
+    /// Visual overshoot must come from the values themselves (e.g. a
+    /// translate target sequenced past the rest point and back) — the
+    /// scalar progress delivered by this API does not overshoot 1.0.
     pub fn animate_to(&mut self, target: T, transition: Transition) {
         if self.target() == target {
             return;
@@ -136,11 +144,25 @@ impl<T: Lerp> AnimProp<T> {
             return;
         }
         let was_animating = self.anim.is_some();
+        // Preserve `elapsed` when retargeting a spring with identical
+        // params so a hover that toggles on/off rapidly doesn't restart
+        // the decay envelope from zero on every toggle. `from` still
+        // updates to the current displayed value, so visual continuity
+        // holds. Timed transitions always reset — a tween retarget that
+        // inherited elapsed would skip part of its easing curve.
+        let elapsed = match (self.anim, transition) {
+            (Some(prev), Transition::Spring(new_params))
+                if matches!(prev.transition, Transition::Spring(p) if p == new_params) =>
+            {
+                prev.elapsed
+            }
+            _ => 0.0,
+        };
         self.anim = Some(InFlight {
             from: self.current,
             to: target,
             transition,
-            elapsed: 0.0,
+            elapsed,
         });
         if !was_animating {
             self.wake_ticker();
@@ -158,13 +180,22 @@ impl<T: Lerp> AnimProp<T> {
 
     /// Advance the animation by `dt` seconds. Returns true if the property
     /// is still animating after this step.
+    ///
+    /// Negative `dt` is clamped to zero — a debugger-paused frame or a
+    /// clock-skew glitch must not roll `elapsed` backwards (which would
+    /// snap the displayed value back toward `from`).
     pub fn advance(&mut self, dt: f64) -> bool {
+        let dt = dt.max(0.0);
         let Some(mut a) = self.anim else {
             return false;
         };
         a.elapsed += dt;
         let t = a.transition.eval(a.elapsed);
         self.current = T::lerp(a.from, a.to, t);
+        // Bump the ticker's frame counter so any `ui_scene_hash` that
+        // folds it in invalidates on animated frames. Callers that don't
+        // care pay nothing (`frame()` is never read).
+        self.bump_ticker_frame();
         if a.transition.is_settled(a.elapsed) {
             self.current = a.to;
             self.anim = None;
@@ -189,6 +220,14 @@ impl<T: Lerp> AnimProp<T> {
             && let Some(t) = w.upgrade()
         {
             t.sleep();
+        }
+    }
+
+    fn bump_ticker_frame(&self) {
+        if let Some(w) = &self.ticker
+            && let Some(t) = w.upgrade()
+        {
+            t.bump_frame();
         }
     }
 }
@@ -374,5 +413,47 @@ mod tests {
         let p = AnimProp::new(0.0_f32).with_ticker(&ticker);
         let _q = p.clone();
         assert_eq!(ticker.active(), 0);
+    }
+
+    /// A negative `dt` (clock skew, paused debugger) must not roll
+    /// elapsed backwards and snap the value toward `from`.
+    #[test]
+    fn negative_dt_is_clamped() {
+        let mut p = AnimProp::new(0.0_f32);
+        p.animate_to(10.0, linear(1.0));
+        assert!(p.advance(0.5));
+        let mid = p.current();
+        assert!(p.advance(-5.0));
+        // Value held; negative dt didn't rewind the animation.
+        assert_eq!(p.current(), mid);
+    }
+
+    /// `advance` bumps the shared ticker's frame counter on every frame
+    /// where it actually moves a value, so `ui_scene_hash` consumers can
+    /// fold `ticker.frame()` in to invalidate cached scenes during
+    /// animation. Settled / idle props must not bump.
+    #[test]
+    fn advance_bumps_ticker_frame_while_animating() {
+        let ticker = Arc::new(Ticker::new());
+        let mut p = AnimProp::new(0.0_f32).with_ticker(&ticker);
+        let before = ticker.frame();
+
+        // Idle prop must not bump.
+        assert!(!p.advance(0.016));
+        assert_eq!(ticker.frame(), before, "idle advance must not bump frame");
+
+        p.animate_to(10.0, linear(1.0));
+        assert!(p.advance(0.1));
+        let after_tick = ticker.frame();
+        assert!(after_tick > before, "mid-flight advance bumps frame");
+
+        // Settle: one more bump on the step that settles, then none.
+        assert!(!p.advance(2.0));
+        let after_settle = ticker.frame();
+        assert!(after_settle > after_tick);
+
+        // Post-settle advance stays quiet — cache hits must resume.
+        assert!(!p.advance(0.016));
+        assert_eq!(ticker.frame(), after_settle);
     }
 }

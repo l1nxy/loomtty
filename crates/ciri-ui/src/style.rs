@@ -149,6 +149,18 @@ impl Style {
     }
 
     /// Merge `other` on top of `self`: every `Some` in `other` overrides.
+    ///
+    /// Semantics are **last-Some-wins** on a per-field basis — the same
+    /// mental model as a CSS-style override layer. This is *not* the same
+    /// as the paint walker's cascading semantics, which:
+    ///   - multiplies `opacity` through the ancestor chain, and
+    ///   - adds `translate` through the ancestor chain.
+    ///
+    /// `merge` is appropriate for stacking style overrides (e.g. "base
+    /// style + theme tweak + caller override"). It is **not** correct for
+    /// simulating nested-parent effects on `opacity` or `translate` — use
+    /// the walker's `inherited_opacity` / `inherited_translate` fields for
+    /// those.
     pub fn merge(&mut self, other: &Style) {
         macro_rules! take_some {
             ($field:ident) => {

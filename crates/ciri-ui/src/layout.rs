@@ -65,7 +65,26 @@ pub fn paint_tree_into(
     scene: &mut Scene,
 ) {
     let mut tree = taffy::TaffyTree::<NodeContext>::new();
-    let root_node = build_taffy(&mut tree, root);
+    paint_tree_into_with(root, theme, viewport, scale, text_shaper, scene, &mut tree);
+}
+
+/// Retained-tree variant of [`paint_tree_into`]. The caller owns a
+/// `TaffyTree` that survives across frames; this function `clear()`s
+/// and rebuilds it each call, reusing the allocator instead of freeing
+/// and re-allocating dozens of SlotMap slots per frame. Prefer this in
+/// the live render path; the one-shot `paint_tree[_into]` remains for
+/// tests and unit calls.
+pub fn paint_tree_into_with(
+    root: &dyn Element,
+    theme: &ResolvedTheme,
+    viewport: [f32; 2],
+    scale: f32,
+    text_shaper: &mut dyn TextShaper,
+    scene: &mut Scene,
+    tree: &mut taffy::TaffyTree<NodeContext>,
+) {
+    tree.clear();
+    let root_node = build_taffy(tree, root);
 
     let available = taffy::Size {
         width: taffy::AvailableSpace::Definite(viewport[0].max(0.0)),
@@ -76,6 +95,16 @@ pub fn paint_tree_into(
     // leaves would mis-centre inside flex/justify parents once real
     // chrome text runs through the pipeline — proportional fonts, CJK
     // and emoji all behave differently under the heuristic.
+    //
+    // Single-line only: `known_dimensions` and `available_space` are
+    // intentionally ignored because every chrome Text today is a
+    // single-line run (banners, palette rows, hints, labels). Adding
+    // wrapping requires an extended `TextShaper::measure_constrained`
+    // API that reshapes against a max width and returns the wrapped
+    // `(width, height)`. Until that lands, a Text node placed in a
+    // container narrower than its natural line will overflow rather
+    // than wrap — callers should truncate at the application layer
+    // (see `app::ui::text_layout::truncate_to_width`).
     let layout_result = tree.compute_layout_with_measure(
         root_node,
         available,
@@ -103,7 +132,7 @@ pub fn paint_tree_into(
         return;
     }
     paint_node(
-        &tree,
+        tree,
         root_node,
         root,
         /* parent_local */ [0.0, 0.0],
@@ -181,7 +210,7 @@ fn paint_node(
         scene,
         text_shaper,
         scale,
-        element_id: Default::default(),
+        element_id: None,
         inherited_opacity,
         inherited_text_color,
         layer: effective_layer,
@@ -208,6 +237,13 @@ fn paint_node(
         return;
     }
     let taffy_children: Vec<_> = tree.child_ids(node).collect();
+    // Silent length mismatch between the Taffy tree and `Element::children()`
+    // would drop layout-owned nodes (or paint-only ones) — catch in debug.
+    debug_assert_eq!(
+        taffy_children.len(),
+        children.len(),
+        "Taffy child count disagrees with Element::children()",
+    );
     for (child_node, child_el) in taffy_children.iter().zip(children.iter()) {
         paint_node(
             tree,
@@ -543,7 +579,7 @@ mod tests {
         assert_eq!(scene.sdf_in_layer(Layer::Modal).len(), 1);
         assert_eq!(scene.sdf_in_layer(Layer::Chrome).len(), 1);
         // Flattened paint order: Chrome before Modal → modal paints last.
-        let flat = scene.sdf_rects();
+        let flat: Vec<_> = scene.sdf_rects_iter().copied().collect();
         assert_eq!(flat[0].color, [0.0, 1.0, 0.0, 1.0], "chrome first");
         assert_eq!(flat[1].color, [1.0, 0.0, 0.0, 1.0], "modal last");
     }
@@ -600,7 +636,9 @@ mod tests {
                     .child(div().w(0.0).h(0.0).bg([0.0, 1.0, 0.0, 1.0])),
             );
         let _: Vec<SdfRect> = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut FixedShaper)
-            .sdf_rects();
+            .sdf_rects_iter()
+            .copied()
+            .collect();
         // The size contract we actually care about for this regression
         // is that the two Text leaves measure the *same* 42px under
         // FixedShaper — layout must not have "short" vs "long" behaviour.

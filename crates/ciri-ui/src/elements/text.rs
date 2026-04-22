@@ -129,7 +129,7 @@ mod tests {
             scene,
             text_shaper: shaper,
             scale: 1.0,
-            element_id: Default::default(),
+            element_id: None,
             inherited_opacity: 1.0,
             inherited_text_color: None,
             layer: Layer::Chrome,

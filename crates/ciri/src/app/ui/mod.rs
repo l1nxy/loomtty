@@ -28,11 +28,9 @@ pub(crate) use types::*;
 use ciri_config::config::{StatusBarPosition, TabBarPosition};
 use ciri_render::glyph_cache::GlyphInstance;
 use ciri_render::rect::Rect;
-use ciri_ui::ResolvedTheme;
 use winit::window::CursorIcon;
 
 use self::layout::{Axis, Border, Linear, UiElement, UiRect};
-use super::ciri_ui_bridge::{merge_ui_scene, HostTextShaper};
 use super::{App, TopBarHoverRegion};
 
 impl App {
@@ -44,6 +42,13 @@ impl App {
         glyphs: &mut Vec<GlyphInstance>,
         color_glyphs: &mut Vec<GlyphInstance>,
     ) {
+        // Hover/click dispatch can reach build_ui before the atlas is
+        // populated (e.g. mouse events during the initial connection
+        // phase before renderer init). Return an empty contribution
+        // rather than unwrap-panicking on `glyph_cache`.
+        if self.glyph_cache.is_none() {
+            return;
+        }
         let cell_h = self
             .glyph_cache
             .as_ref()
@@ -149,6 +154,7 @@ impl App {
                 bg_rects: &mut cached_ui.bg_rects,
                 glyphs: &mut cached_ui.glyphs,
                 color_glyphs: &mut cached_ui.color_glyphs,
+                sdf_rects: &mut cached_ui.sdf_rects,
             };
 
             chrome.paint(viewport_rect, &cx, &mut scene);
@@ -163,107 +169,17 @@ impl App {
             if let Some(component) = infobox {
                 component.paint(&cx, &mut scene);
             }
-            // Banner sits above panes but below fully modal chrome
-            // (palette, context-menu) so modals stay authoritative.
-            // Paste-dialog is modal itself and hides the banner via
-            // `connection_status::capture` early-returning.
-            //
-            // Painted via the new `ciri-ui` pipeline: each captured
-            // component snapshot is turned into a `Div` tree, Taffy
-            // lays it out, the paint walker emits SDF + glyphs through
-            // the `HostTextShaper` adapter (shares the atlas + UI
-            // shaper with the rest of the chrome paint), and the flat
-            // per-layer output is appended into the cached accumulators.
-            //
-            // The theme is resolved once per frame for this block so
-            // repeated widgets (connection_status + paste_dialog in
-            // the same frame) don't each bump the theme-version
-            // counter.
-            let has_ciri_ui_widget = connection_status.is_some()
-                || paste_dialog.is_some()
-                || context_menu.is_some()
-                || palette.is_some();
-            if has_ciri_ui_widget {
-                let resolved = ResolvedTheme::from_config(&cx.config.theme);
-                let dpi_scale = self.dpi_scale as f32;
-
-                // Borrow the UI shaper mutably via the RefCell only for
-                // the duration of the ciri-ui paint block — matches the
-                // existing pattern in `UiBuilder::abs_text`. `scene.atlas`
-                // is a reborrow of the same GlyphCache `UiScene` uses,
-                // so emitted glyphs land in the shared atlas.
-                let mut shaper_borrow = cx.ui_shaper.map(|s| s.borrow_mut());
-                let mut host_shaper = HostTextShaper {
-                    atlas: scene.atlas,
-                    shaper: shaper_borrow.as_deref_mut(),
-                    cell_width: cx.cell_w,
-                    baseline: cx.baseline,
-                };
-
-                let paint_tree = |tree: &ciri_ui::Div,
-                                      shaper: &mut HostTextShaper<'_>,
-                                      sdf_out: &mut Vec<ciri_render::sdf_rect::SdfRect>,
-                                      g_out: &mut Vec<ciri_render::glyph_cache::GlyphInstance>,
-                                      cg_out: &mut Vec<ciri_render::glyph_cache::GlyphInstance>| {
-                    let ui_scene =
-                        ciri_ui::paint_tree(tree, &resolved, [vw, vh], dpi_scale, shaper);
-                    merge_ui_scene(&ui_scene, sdf_out, g_out, cg_out);
-                };
-
-                if let Some(component) = &connection_status {
-                    let tree = component.build_tree(&resolved);
-                    paint_tree(
-                        &tree,
-                        &mut host_shaper,
-                        &mut cached_ui.sdf_rects,
-                        scene.glyphs,
-                        scene.color_glyphs,
-                    );
-                }
-                if let Some(component) = &paste_dialog {
-                    let tree = component.build_tree(&resolved);
-                    paint_tree(
-                        &tree,
-                        &mut host_shaper,
-                        &mut cached_ui.sdf_rects,
-                        scene.glyphs,
-                        scene.color_glyphs,
-                    );
-                }
-                // Palette uses multiple sibling trees (backdrop, panel,
-                // scrollbar, footer, status) because ciri-ui has no
-                // CSS-style absolute positioning yet. Iterating here
-                // keeps each overlay pinned to its own viewport origin;
-                // layer bucketing in `Scene` still composes them
-                // correctly with the other Modal-layer widgets below.
-                if let Some(component) = &palette {
-                    for tree in component.build_trees(&resolved) {
-                        paint_tree(
-                            &tree,
-                            &mut host_shaper,
-                            &mut cached_ui.sdf_rects,
-                            scene.glyphs,
-                            scene.color_glyphs,
-                        );
-                    }
-                }
-                // Context menu paints last inside the ciri-ui block
-                // so its Modal-layer SDF lands above connection_status'
-                // Overlay layer (the ciri-ui scene flattens by layer,
-                // but the caller still emits in tree order, so keeping
-                // it last matches its modal z-order intent).
-                if let Some(component) = &context_menu {
-                    let tree = component.build_tree(&resolved);
-                    paint_tree(
-                        &tree,
-                        &mut host_shaper,
-                        &mut cached_ui.sdf_rects,
-                        scene.glyphs,
-                        scene.color_glyphs,
-                    );
-                }
-
-                drop(shaper_borrow);
+            if let Some(component) = &palette {
+                component.paint(&cx, &mut scene);
+            }
+            if let Some(component) = &connection_status {
+                component.paint(&cx, &mut scene);
+            }
+            if let Some(component) = &paste_dialog {
+                component.paint(&cx, &mut scene);
+            }
+            if let Some(component) = &context_menu {
+                component.paint(&cx, &mut scene);
             }
         }
 
@@ -403,8 +319,24 @@ impl App {
 
         // Components are checked in z-order (highest priority first).
         // The FIRST component that handles the click wins — no further checks.
+        //
+        // Order MUST match the paint order in `build_ui` (palette →
+        // connection_status → paste_dialog → context_menu, i.e. context
+        // menu is painted last / on top). Reversing that for dispatch
+        // means topmost gets first crack at clicks: ContextMenu →
+        // PasteDialog → Palette. Previously PasteDialog was dispatched
+        // first; if both `pending_paste` and `context_menu.visible` were
+        // somehow true at once (e.g. a paste raced with a context menu
+        // opening), the paste dialog swallowed clicks meant for the
+        // visually topmost context menu.
 
         // 1. Modal overlays (consume ALL input when active)
+        if let Some(c) = ContextMenuComponent::capture(self, &cx) {
+            if let Some(action) = c.click(mx, my, &cx) {
+                self.apply_ui_action(action);
+            }
+            return true; // modal: always consumed
+        }
         if let Some(c) = PasteDialogComponent::capture(self, &cx) {
             if let Some(action) = c.click(mx, my, &cx) {
                 self.apply_ui_action(action);
@@ -412,12 +344,6 @@ impl App {
             return true; // modal: always consumed
         }
         if let Some(c) = PaletteComponent::capture(self, &cx) {
-            if let Some(action) = c.click(mx, my, &cx) {
-                self.apply_ui_action(action);
-            }
-            return true; // modal: always consumed
-        }
-        if let Some(c) = ContextMenuComponent::capture(self, &cx) {
             if let Some(action) = c.click(mx, my, &cx) {
                 self.apply_ui_action(action);
             }
@@ -578,16 +504,15 @@ impl App {
     }
 
     pub(crate) fn dispatch_ui_hover(&mut self, mx: f32, my: f32) -> UiHoverOutcome {
-        if self.core.pending_paste.is_some() {
-            let prev = self
-                .core
-                .pending_paste
-                .as_ref()
-                .and_then(|p| p.hovered_button);
-            let next = self.ui_paste_dialog_hover(mx, my);
-            if let Some(pending) = &mut self.core.pending_paste {
-                pending.hovered_button = next;
-            }
+        // Hover Z-order must match click Z-order (and paint Z-order in
+        // `build_ui`): ContextMenu → PasteDialog → Palette. Previously
+        // PasteDialog ran before ContextMenu, which meant a paste
+        // opened concurrently with a context menu claimed hover events
+        // meant for the visually topmost menu.
+        if self.core.context_menu.visible {
+            let prev = self.core.context_menu.hovered_index;
+            let next = self.ui_context_menu_hover(mx, my);
+            self.core.context_menu.hovered_index = next;
             return UiHoverOutcome {
                 handled: true,
                 cursor: if next.is_some() {
@@ -599,10 +524,16 @@ impl App {
             };
         }
 
-        if self.core.context_menu.visible {
-            let prev = self.core.context_menu.hovered_index;
-            let next = self.ui_context_menu_hover(mx, my);
-            self.core.context_menu.hovered_index = next;
+        if self.core.pending_paste.is_some() {
+            let prev = self
+                .core
+                .pending_paste
+                .as_ref()
+                .and_then(|p| p.hovered_button);
+            let next = self.ui_paste_dialog_hover(mx, my);
+            if let Some(pending) = &mut self.core.pending_paste {
+                pending.hovered_button = next;
+            }
             return UiHoverOutcome {
                 handled: true,
                 cursor: if next.is_some() {

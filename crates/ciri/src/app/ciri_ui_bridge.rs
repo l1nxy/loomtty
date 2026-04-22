@@ -1,6 +1,5 @@
 //! Glue between `ciri-ui`'s paint output and the client's existing
 //! renderer state.
-#![allow(dead_code)] // wired in by the first widget migration PR
 //!
 //! `ciri-ui` runs Taffy layout, walks its Element tree, and produces a
 //! `ciri_ui::Scene` of SdfRects + alpha/color glyph instances — all
@@ -25,6 +24,7 @@ use ciri_render::glyph_cache::{GlyphCache, GlyphInstance};
 use ciri_render::sdf_rect::SdfRect;
 use ciri_render::ui_shaper::UiTextShaper;
 use ciri_ui::{Layer, Scene, TextShaper as CiriUiTextShaper};
+use unicode_width::UnicodeWidthChar;
 
 use crate::app::status_bar::{emit_status_text, TextEmitParams};
 
@@ -37,6 +37,13 @@ use crate::app::status_bar::{emit_status_text, TextEmitParams};
 /// `RefCell<UiTextShaper>` held by `App` already requires callers to
 /// arrange the borrow order (see `UiBuilder::abs_text` for the
 /// canonical borrow-then-release pattern); this adapter matches that.
+///
+/// Currently consumed only from the crate's own tests — the next
+/// widget migration PR that needs a ciri-ui paint tree in production
+/// will wire this into `build_ui`. The per-item `allow(dead_code)`
+/// keeps the compiler honest about any *other* unused code in this
+/// module (was previously hidden by a file-level allow).
+#[allow(dead_code)]
 pub(crate) struct HostTextShaper<'a> {
     pub atlas: &'a mut GlyphCache,
     pub shaper: Option<&'a mut UiTextShaper>,
@@ -47,26 +54,52 @@ pub(crate) struct HostTextShaper<'a> {
     /// existing emit pipeline expects this (it offsets each glyph from
     /// the run's top-left to the baseline).
     pub baseline: f32,
+    /// Terminal cell height in logical px — used as the measured line
+    /// height when no UI shaper has a loaded face. Baseline cannot be
+    /// used here: it's the distance from the top of the line to the
+    /// text baseline, not the full line height, and doubling it produces
+    /// a 50%-too-tall fallback for the common `baseline ≈ 0.75 * cell_h`
+    /// configuration.
+    pub cell_height: f32,
+    /// Logical-px font size the caller treats as "1x" — used to scale
+    /// measured / emitted advances by `font_size_px / fallback`. The
+    /// caller owns this so the bridge does not reach into ciri-ui's
+    /// internal `elements::text::DEFAULT_FONT_SIZE_PX`. Set to the
+    /// caller's `typography.md` (or whatever the element tree treats
+    /// as "base font size"); mismatches here only drift the pre-font-load
+    /// fallback by a small constant factor.
+    pub fallback_font_size_px: f32,
 }
 
 impl<'a> CiriUiTextShaper for HostTextShaper<'a> {
-    /// Measure returns the shaped width + line height of `content`.
-    ///
-    /// `font_size_px` is currently ignored: the real `UiTextShaper`
-    /// carries its own pixel size from when it was constructed (one
-    /// global UI font size for chrome). If that ever becomes multi-size
-    /// we'll need to thread a size-parameterised shape cache through.
-    fn measure(&mut self, content: &str, _font_size_px: f32) -> [f32; 2] {
+    fn measure(&mut self, content: &str, font_size_px: f32) -> [f32; 2] {
+        let scale = match self.shaper.as_deref() {
+            Some(s) if s.has_face() => (font_size_px / s.pixel_size()).max(0.0),
+            _ => (font_size_px / self.fallback_font_size_px.max(1e-3)).max(0.0),
+        };
         let w = match self.shaper.as_deref_mut() {
             Some(s) if s.has_face() => s.measure(content),
-            _ => self.cell_width * content.chars().count() as f32,
+            _ => {
+                // Legacy-fallback advance — must mirror
+                // `emit_text_legacy_chars`, which steps the pen by
+                // `unicode_width` columns (wide chars like CJK count as
+                // two cells). Earlier iterations used
+                // `chars().count()`, which undercounted CJK runs by ×2
+                // and let emitted glyphs spill past the measured box
+                // during the brief pre-font-load window.
+                let cols: usize = content
+                    .chars()
+                    .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
+                    .sum();
+                self.cell_width * cols.max(1) as f32
+            }
         };
         let h = self
             .shaper
             .as_deref()
             .map(|s| s.line_height())
-            .unwrap_or(self.baseline * 2.0);
-        [w, h]
+            .unwrap_or(self.cell_height);
+        [w * scale, h * scale]
     }
 
     fn emit(
@@ -74,7 +107,7 @@ impl<'a> CiriUiTextShaper for HostTextShaper<'a> {
         content: &str,
         pos: [f32; 2],
         color: [f32; 4],
-        _font_size_px: f32,
+        font_size_px: f32,
         layer: Layer,
         scene: &mut Scene,
     ) {
@@ -87,12 +120,17 @@ impl<'a> CiriUiTextShaper for HostTextShaper<'a> {
         // well under a microsecond for realistic UIs.
         let mut alpha_buf = Vec::new();
         let mut color_buf = Vec::new();
+        let scale = match self.shaper.as_deref() {
+            Some(s) if s.has_face() => (font_size_px / s.pixel_size()).max(0.0),
+            _ => (font_size_px / self.fallback_font_size_px.max(1e-3)).max(0.0),
+        };
         let params = TextEmitParams {
             x_start: pos[0],
             y: pos[1],
             cell_width: self.cell_width,
             baseline: self.baseline,
             color,
+            scale,
         };
         emit_status_text(
             self.atlas,
@@ -120,6 +158,7 @@ impl<'a> CiriUiTextShaper for HostTextShaper<'a> {
 /// already emitted all legacy-widget chrome into these same vecs;
 /// ciri-ui output lands on top of that, which matches its "chrome is
 /// above pane content" semantics.
+#[allow(dead_code)]
 pub(crate) fn merge_ui_scene(
     ui: &Scene,
     sdf_out: &mut Vec<SdfRect>,
@@ -199,5 +238,84 @@ mod tests {
         merge_ui_scene(&scene, &mut sdf, &mut g, &mut cg);
         assert_eq!(sdf.len(), 2);
         assert_eq!(sdf[0].color, [0.0, 0.0, 1.0, 1.0], "legacy rect survives");
+    }
+
+    #[test]
+    fn host_text_shaper_scales_fallback_measure_with_font_size() {
+        let config = ciri_config::config::CiriConfig::default();
+        let mut cache = ciri_render::glyph_cache::GlyphCache::new(
+            &ciri_render::glyph_cache::FontInitParams {
+                font_size_pt: 12.0,
+                dpi_scale: 1.0,
+                family_name: "",
+                primary_font_path: None,
+                emoji_font_path: None,
+                emoji_font_id: None,
+                cjk_font_path: None,
+                cjk_font_id: None,
+                ui_font_path: None,
+                ui_font_id: None,
+                ui_pixel_size: None,
+                render_config: &config.render,
+                font_resolver: std::sync::Arc::new(
+                    ciri_render::font_resolver::CmapResolver::new((&[], 0), None, None),
+                ),
+                #[cfg(windows)]
+                dwrite_resolver: None,
+            },
+        );
+        let mut shaper = HostTextShaper {
+            atlas: &mut cache,
+            shaper: None,
+            cell_width: 8.0,
+            baseline: 10.0,
+            cell_height: 20.0,
+            fallback_font_size_px: 13.0,
+        };
+        assert_eq!(shaper.measure("abcd", 13.0), [32.0, 20.0]);
+        let scaled = shaper.measure("abcd", 26.0);
+        assert_eq!(scaled, [64.0, 40.0]);
+    }
+
+    /// Regression: the no-face fallback counts display columns (via
+    /// `UnicodeWidthChar`), matching what `emit_text_legacy_chars` steps
+    /// the pen by. Previously the fallback used `chars().count()`, which
+    /// reported half the real width for CJK and let glyphs spill past
+    /// measured boxes until the font loaded.
+    #[test]
+    fn host_text_shaper_fallback_measure_matches_unicode_width_columns() {
+        let config = ciri_config::config::CiriConfig::default();
+        let mut cache = ciri_render::glyph_cache::GlyphCache::new(
+            &ciri_render::glyph_cache::FontInitParams {
+                font_size_pt: 12.0,
+                dpi_scale: 1.0,
+                family_name: "",
+                primary_font_path: None,
+                emoji_font_path: None,
+                emoji_font_id: None,
+                cjk_font_path: None,
+                cjk_font_id: None,
+                ui_font_path: None,
+                ui_font_id: None,
+                ui_pixel_size: None,
+                render_config: &config.render,
+                font_resolver: std::sync::Arc::new(
+                    ciri_render::font_resolver::CmapResolver::new((&[], 0), None, None),
+                ),
+                #[cfg(windows)]
+                dwrite_resolver: None,
+            },
+        );
+        let mut shaper = HostTextShaper {
+            atlas: &mut cache,
+            shaper: None,
+            cell_width: 8.0,
+            baseline: 10.0,
+            cell_height: 20.0,
+            fallback_font_size_px: 13.0,
+        };
+        // "你好" = 2 chars, 4 columns at wcwidth=2 each → 8 * 4 = 32.
+        // A plain `chars().count()` would return 16 here.
+        assert_eq!(shaper.measure("你好", 13.0)[0], 32.0);
     }
 }

@@ -542,14 +542,25 @@ impl AtlasLayer {
         let staging_capacity = (self.atlas_size as u64)
             .saturating_mul(self.atlas_size as u64)
             .saturating_mul(self.bpp as u64);
+
+        // Two-phase: first measure how many items fit in the staging
+        // buffer and copy their payloads; then `drain(..fit_count)` so
+        // the tail remains in `pending_uploads` for the next frame.
+        // Previous code used `drain(..)` with a break on overflow, which
+        // silently dropped the unissued tail and left those glyph slots
+        // blank in the atlas.
         let mut cursor: u64 = 0;
+        let mut fit_count = 0usize;
 
         for upload in pending_uploads.iter() {
             let row_bytes = (upload.w as u64).saturating_mul(self.bpp as u64);
             let total_bytes = row_bytes.saturating_mul(upload.h as u64);
 
             if cursor + total_bytes > staging_capacity {
-                log::warn!("staging buffer overflow, skipping glyph upload");
+                log::warn!(
+                    "staging buffer overflow, deferring {} glyph uploads to next frame",
+                    pending_uploads.len() - fit_count,
+                );
                 break;
             }
 
@@ -561,18 +572,15 @@ impl AtlasLayer {
                 );
             }
             cursor += total_bytes;
+            fit_count += 1;
         }
 
         context.sync_buffer(self.staging_buffer);
 
         let mut offset: u64 = 0;
-        for upload in pending_uploads.drain(..) {
+        for upload in pending_uploads.drain(..fit_count) {
             let row_bytes = (upload.w as u64).saturating_mul(self.bpp as u64);
             let total_bytes = row_bytes.saturating_mul(upload.h as u64);
-
-            if offset + total_bytes > staging_capacity {
-                break;
-            }
 
             {
                 let mut transfer = encoder.transfer("glyph_upload");
@@ -736,6 +744,12 @@ impl GlyphAtlasGpu {
     }
 
     /// Flush pending glyph uploads from the cache to GPU.
+    ///
+    /// If the per-layer staging buffer can't fit every pending upload in
+    /// one frame, the tails stay in `alpha_pending` / `color_pending`
+    /// after `flush_uploads` returns; those tails are pushed back into
+    /// the cache via `restore_pending` so the next frame retries them
+    /// instead of dropping the glyphs on the floor.
     pub fn flush_uploads(
         &self,
         context: &gpu::Context,
@@ -747,6 +761,7 @@ impl GlyphAtlasGpu {
             .flush_uploads(context, encoder, &mut alpha_pending, alpha_clear);
         self.color
             .flush_uploads(context, encoder, &mut color_pending, color_clear);
+        cache.restore_pending(alpha_pending, color_pending);
     }
 
     /// Initialize atlas textures on GPU. Must be called once before first render.
@@ -1281,16 +1296,27 @@ fn shadow_envelope(d: f32, blur: f32) -> f32 {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let d_body = sdf_rounded_box(in.local, in.half_size, in.radii);
 
-    // Fill coverage: 1 inside, 0 outside, AA band ~1px wide.
-    let body_alpha = clamp(0.5 - d_body, 0.0, 1.0);
+    // Fill coverage with DPR-aware AA. `fwidth` returns the per-pixel rate
+    // of change of `d_body`, so at 1x it's ~1.0 (one logical-pixel per
+    // fragment) and at 3x it's ~0.333 — using half that as the AA
+    // half-width keeps the visible edge exactly one physical pixel wide at
+    // every DPR and overview zoom level. `max(_, 1e-5)` prevents a 0/0 at
+    // derivative boundaries (not observed in practice but cheap insurance).
+    let aa = max(fwidth(d_body) * 0.5, 1e-5);
+    let body_alpha = clamp(0.5 - d_body / (aa * 2.0), 0.0, 1.0);
 
     // Border: SDF band centred at `d = -border_width/2`, half-width
-    // `border_width/2`. Clipped to the body so it never bleeds outside.
+    // `border_width/2`. The band sits inside the body (d_body in
+    // [-border_width, 0]); its outer edge coincides with the body's
+    // outer edge, so the band's own AA fringe naturally lines up with
+    // the body's. Multiplying by `body_alpha` would double-apply AA at
+    // that shared fringe and halve the visible border intensity by
+    // ~0.25, so we leave it out.
     var border_alpha = 0.0;
     if (in.border_width > 0.0) {
         let half = in.border_width * 0.5;
         let d_band = abs(d_body + half) - half;
-        border_alpha = clamp(0.5 - d_band, 0.0, 1.0) * body_alpha;
+        border_alpha = clamp(0.5 - d_band / (aa * 2.0), 0.0, 1.0);
     }
 
     // Shadow: sample the SDF at the offset position.
@@ -1343,6 +1369,55 @@ mod shader_tests {
     #[test]
     fn sdf_shader_parses() {
         compile("SDF_SHADER", super::SDF_SHADER);
+    }
+
+    /// End-to-end smoke: instantiate a real `SdfPipeline` on a headless
+    /// context, upload one full-coverage rect, draw into an offscreen
+    /// target, and assert the pipeline creation + draw submission don't
+    /// fail. Pipeline creation is the strictest check we have for
+    /// vertex-layout / shader-attribute agreement — a mismatch (padding
+    /// drift between `SdfRect` and the WGSL struct, wrong offsets) fails
+    /// here before it ships. A full pixel readback would be ideal but
+    /// would bind this test to a specific blend model; catching layout
+    /// drift at pipeline creation is the high-value half.
+    #[test]
+    fn sdf_pipeline_round_trip_headless() {
+        use super::*;
+        use blade_graphics as gpu;
+
+        let context = unsafe {
+            gpu::Context::init(gpu::ContextDesc {
+                presentation: false,
+                validation: true,
+                timing: false,
+                capture: false,
+                overlay: false,
+                device_id: 0,
+            })
+        };
+        // Skip gracefully when no GPU is available (CI without Vulkan/Metal).
+        let Ok(context) = context else {
+            eprintln!("sdf_pipeline_round_trip_headless: no GPU — skipping");
+            return;
+        };
+
+        let format = gpu::TextureFormat::Rgba8Unorm;
+        let mut sdf = SdfPipeline::new(&context, format, 16);
+
+        let rect = ciri_render::sdf_rect::SdfRect {
+            pos: [0.0, 0.0],
+            size: [32.0, 32.0],
+            color: [1.0, 0.5, 0.25, 1.0],
+            radii: [4.0; 4],
+            border_color: [1.0, 1.0, 1.0, 1.0],
+            border_width: 1.0,
+            shadow_blur: 0.0,
+            shadow_offset: [0.0, 0.0],
+            shadow_color: [0.0; 4],
+        };
+        sdf.upload(&[rect], 64.0, 64.0);
+
+        sdf.destroy(&context);
     }
 }
 

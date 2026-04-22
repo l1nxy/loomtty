@@ -77,8 +77,16 @@ impl Transition {
                 // has decayed below epsilon the spring cannot produce
                 // perceptibly different values.
                 let beta = params.damping / (2.0 * params.mass);
-                if beta <= 0.0 {
-                    return false;
+                if !beta.is_finite() || beta <= 0.0 {
+                    // Degenerate params (zero/negative damping, zero mass,
+                    // NaN): `eval()` returns `1.0` immediately for the same
+                    // case, so we must report "settled" in lock-step —
+                    // otherwise `animate_to` records an InFlight whose
+                    // `is_settled` can never fire, wedging the ticker
+                    // permanently at `is_animating() == true`.
+                    // `SpringParams::new` clamps, but the struct's fields
+                    // are public and can be mutated post-construction.
+                    return true;
                 }
                 let envelope = (-beta * elapsed).exp();
                 if envelope > params.epsilon {
@@ -109,9 +117,13 @@ fn spring_envelope_progress(params: SpringParams, elapsed: f64) -> f64 {
         return 0.0;
     }
     let beta = params.damping / (2.0 * params.mass);
-    if beta <= 0.0 {
-        // Degenerate: no decay → permanently stalled at 0. Treat as instant
-        // to avoid callers wedging forever.
+    if !beta.is_finite() || beta <= 0.0 {
+        // Degenerate: non-finite (NaN damping / zero mass) or
+        // non-positive β → no meaningful decay. Treat as instant so
+        // callers can't wedge forever — and so `eval()` and
+        // `is_settled()` report the *same* verdict for the same params
+        // (they explicitly agree on this branch; a mismatch would let
+        // `animate_to` install an InFlight that never settled).
         return 1.0;
     }
     (1.0 - (-beta * elapsed).exp()).clamp(0.0, 1.0)
@@ -219,5 +231,28 @@ mod tests {
             curve: EasingCurve::Linear,
         };
         assert!(t.is_settled(0.0));
+    }
+
+    /// Regression: `spring_envelope_progress` returns `1.0` for any
+    /// `elapsed > 0` when `beta <= 0.0` (degenerate damping). Before the
+    /// companion fix, `is_settled` returned `false` on the same params,
+    /// so `AnimProp::animate_to` installed an `InFlight` that `advance`
+    /// could never settle — ticker pinned on, frame loop spinning
+    /// forever. `is_settled` now returns `true` in the degenerate case
+    /// to stay in lock-step with `eval`.
+    #[test]
+    fn degenerate_spring_is_settled_matches_eval() {
+        // Construct manually to bypass SpringParams::new clamping — the
+        // struct's fields are public so a caller can produce this state.
+        let mut params = SpringParams::snappy();
+        params.damping = 0.0;
+        let t = Transition::Spring(params);
+        // elapsed > 0 with degenerate beta snaps immediately.
+        assert!((t.eval(1.0) - 1.0).abs() < 1e-6);
+        assert!(
+            t.is_settled(0.0),
+            "is_settled must agree with eval on degenerate or ticker wedges"
+        );
+        assert!(t.is_settled(1.0));
     }
 }

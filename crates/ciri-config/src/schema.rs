@@ -492,6 +492,13 @@ pub struct RenderConfig {
     #[garde(skip)]
     #[serde(default = "default_alpha_blending")]
     pub alpha_blending: AlphaBlending,
+    /// Post-process softness strength applied to the final image, in `[0, 1]`.
+    /// `0` disables the pass entirely (no overhead). `1` fully replaces the
+    /// image with a 5-tap separable Gaussian. Only honoured by the GL backend
+    /// when linear blending is enabled.
+    #[garde(range(min = 0.0, max = 1.0))]
+    #[serde(default)]
+    pub softness: f32,
 }
 
 impl Default for RenderConfig {
@@ -505,6 +512,7 @@ impl Default for RenderConfig {
             present_mode: PresentMode::Fifo,
             backend: RenderBackend::Auto,
             alpha_blending: default_alpha_blending(),
+            softness: 0.0,
         }
     }
 }

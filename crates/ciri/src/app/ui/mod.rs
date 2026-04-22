@@ -42,6 +42,13 @@ impl App {
         glyphs: &mut Vec<GlyphInstance>,
         color_glyphs: &mut Vec<GlyphInstance>,
     ) {
+        // Hover/click dispatch can reach build_ui before the atlas is
+        // populated (e.g. mouse events during the initial connection
+        // phase before renderer init). Return an empty contribution
+        // rather than unwrap-panicking on `glyph_cache`.
+        if self.glyph_cache.is_none() {
+            return;
+        }
         let cell_h = self
             .glyph_cache
             .as_ref()
@@ -69,6 +76,7 @@ impl App {
         }
         let cx = UiContext {
             config: &self.core.config,
+            theme: &self.cached_resolved_theme,
             viewport_w: vw,
             viewport_h: vh,
             cell_w,
@@ -139,6 +147,7 @@ impl App {
             cached_ui.bg_rects.clear();
             cached_ui.glyphs.clear();
             cached_ui.color_glyphs.clear();
+            cached_ui.sdf_rects.clear();
 
             let atlas = self.glyph_cache.as_mut().unwrap();
             let mut scene = UiScene {
@@ -146,6 +155,7 @@ impl App {
                 bg_rects: &mut cached_ui.bg_rects,
                 glyphs: &mut cached_ui.glyphs,
                 color_glyphs: &mut cached_ui.color_glyphs,
+                sdf_rects: &mut cached_ui.sdf_rects,
             };
 
             chrome.paint(viewport_rect, &cx, &mut scene);
@@ -160,18 +170,16 @@ impl App {
             if let Some(component) = infobox {
                 component.paint(&cx, &mut scene);
             }
-            // Banner sits above panes but below fully modal chrome (palette,
-            // paste-dialog, context-menu) so modals stay authoritative.
-            if let Some(component) = connection_status {
+            if let Some(component) = &palette {
                 component.paint(&cx, &mut scene);
             }
-            if let Some(component) = palette {
+            if let Some(component) = &connection_status {
                 component.paint(&cx, &mut scene);
             }
-            if let Some(component) = paste_dialog {
+            if let Some(component) = &paste_dialog {
                 component.paint(&cx, &mut scene);
             }
-            if let Some(component) = context_menu {
+            if let Some(component) = &context_menu {
                 component.paint(&cx, &mut scene);
             }
         }
@@ -200,6 +208,7 @@ impl App {
             .unwrap_or(cell_h);
         UiContext {
             config: &self.core.config,
+            theme: &self.cached_resolved_theme,
             viewport_w,
             viewport_h,
             cell_w,
@@ -312,8 +321,24 @@ impl App {
 
         // Components are checked in z-order (highest priority first).
         // The FIRST component that handles the click wins — no further checks.
+        //
+        // Order MUST match the paint order in `build_ui` (palette →
+        // connection_status → paste_dialog → context_menu, i.e. context
+        // menu is painted last / on top). Reversing that for dispatch
+        // means topmost gets first crack at clicks: ContextMenu →
+        // PasteDialog → Palette. Previously PasteDialog was dispatched
+        // first; if both `pending_paste` and `context_menu.visible` were
+        // somehow true at once (e.g. a paste raced with a context menu
+        // opening), the paste dialog swallowed clicks meant for the
+        // visually topmost context menu.
 
         // 1. Modal overlays (consume ALL input when active)
+        if let Some(c) = ContextMenuComponent::capture(self, &cx) {
+            if let Some(action) = c.click(mx, my, &cx) {
+                self.apply_ui_action(action);
+            }
+            return true; // modal: always consumed
+        }
         if let Some(c) = PasteDialogComponent::capture(self, &cx) {
             if let Some(action) = c.click(mx, my, &cx) {
                 self.apply_ui_action(action);
@@ -321,12 +346,6 @@ impl App {
             return true; // modal: always consumed
         }
         if let Some(c) = PaletteComponent::capture(self, &cx) {
-            if let Some(action) = c.click(mx, my, &cx) {
-                self.apply_ui_action(action);
-            }
-            return true; // modal: always consumed
-        }
-        if let Some(c) = ContextMenuComponent::capture(self, &cx) {
             if let Some(action) = c.click(mx, my, &cx) {
                 self.apply_ui_action(action);
             }
@@ -533,16 +552,15 @@ impl App {
     }
 
     pub(crate) fn dispatch_ui_hover(&mut self, mx: f32, my: f32) -> UiHoverOutcome {
-        if self.core.pending_paste.is_some() {
-            let prev = self
-                .core
-                .pending_paste
-                .as_ref()
-                .and_then(|p| p.hovered_button);
-            let next = self.ui_paste_dialog_hover(mx, my);
-            if let Some(pending) = &mut self.core.pending_paste {
-                pending.hovered_button = next;
-            }
+        // Hover Z-order must match click Z-order (and paint Z-order in
+        // `build_ui`): ContextMenu → PasteDialog → Palette. Previously
+        // PasteDialog ran before ContextMenu, which meant a paste
+        // opened concurrently with a context menu claimed hover events
+        // meant for the visually topmost menu.
+        if self.core.context_menu.visible {
+            let prev = self.core.context_menu.hovered_index;
+            let next = self.ui_context_menu_hover(mx, my);
+            self.core.context_menu.hovered_index = next;
             return UiHoverOutcome {
                 handled: true,
                 cursor: if next.is_some() {
@@ -554,10 +572,16 @@ impl App {
             };
         }
 
-        if self.core.context_menu.visible {
-            let prev = self.core.context_menu.hovered_index;
-            let next = self.ui_context_menu_hover(mx, my);
-            self.core.context_menu.hovered_index = next;
+        if self.core.pending_paste.is_some() {
+            let prev = self
+                .core
+                .pending_paste
+                .as_ref()
+                .and_then(|p| p.hovered_button);
+            let next = self.ui_paste_dialog_hover(mx, my);
+            if let Some(pending) = &mut self.core.pending_paste {
+                pending.hovered_button = next;
+            }
             return UiHoverOutcome {
                 handled: true,
                 cursor: if next.is_some() {

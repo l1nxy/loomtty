@@ -473,6 +473,7 @@ impl App {
                     || (new_config.font.size - self.core.config.font.size).abs() > 0.01;
                 self.core.config = new_config;
                 self.cached_color_table = ciri_render::terminal::ColorTable::new(&self.core.config);
+                self.cached_resolved_theme.reload(&self.core.config.theme);
                 self.core.input.reload_bindings(
                     &self.core.config.keys.leader,
                     match self.core.config.input.mode {

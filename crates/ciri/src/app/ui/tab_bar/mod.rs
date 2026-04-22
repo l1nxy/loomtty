@@ -16,7 +16,6 @@
 //! `Border::right` placement without caring which side it lives on.
 
 use ciri_config::config::TabBarPosition;
-use ciri_config::theme::ThemeConfig;
 
 use super::builder::UiBuilder;
 use super::layout::{Axis, SizeHint, UiElement, UiRect};
@@ -100,10 +99,10 @@ impl UiElement for TabBarComponent {
         if rect.is_empty() {
             return;
         }
-        let bar_bg = ThemeConfig::parse_color(&cx.config.theme.statusbar_background);
-        let fg = ThemeConfig::parse_color(&cx.config.theme.foreground);
-        let dim = ThemeConfig::parse_color(&cx.config.theme.statusbar_dim);
-        let accent = ThemeConfig::parse_color(&cx.config.theme.accent);
+        let bar_bg = cx.theme.statusbar_bg;
+        let fg = cx.theme.on_surface;
+        let dim = cx.theme.on_surface_muted;
+        let accent = cx.theme.accent;
         let sep = tokens::tint(dim, tokens::ALPHA_SEPARATOR);
         let indicator_w = tokens::BORDER_THICK;
 

@@ -170,6 +170,7 @@ fn validate_workspace(
 mod tests {
     use super::*;
     use std::fs;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
@@ -233,6 +234,7 @@ mod tests {
         assert!(err.to_string().contains("has no workspaces"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn list_templates_propagates_directory_entry_errors() {
         let config_home = unique_config_home("template-entry-errors");

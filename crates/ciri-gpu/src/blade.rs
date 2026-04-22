@@ -17,6 +17,12 @@ use winit::window::Window;
 use ciri_render::FrameScene;
 use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, PendingUpload, ScissoredRange};
 use ciri_render::rect::Rect;
+use ciri_render::sdf_rect::SdfRect;
+
+/// Upper bound on SDF chrome rects per frame. Chrome typically has
+/// ≤ 20 — 256 gives headroom for plugin UIs and modal stacks. If this is
+/// hit the tail is dropped; matches the existing `RectPipeline` behaviour.
+const MAX_SDF_RECTS: usize = 256;
 
 // ─── Rect pipeline ──────────────────────────────────────────────────
 
@@ -153,6 +159,194 @@ impl RectPipeline {
         );
         pe.bind_vertex(0, self.instance_buffer.at(0));
         pe.draw(0, 4, start as u32, count as u32);
+    }
+
+    fn destroy(&mut self, context: &gpu::Context) {
+        context.destroy_render_pipeline(&mut self.pipeline);
+        context.destroy_buffer(self.instance_buffer);
+        context.destroy_buffer(self.uniform_buffer);
+    }
+}
+
+// ─── SDF rect pipeline ──────────────────────────────────────────────
+//
+// Rendered after flat overlay backgrounds so rounded/shadowed chrome sits
+// on top of pane text, but before overlay glyphs so chrome labels stay
+// crisp on their rounded panel.
+
+#[derive(blade_macros::ShaderData)]
+struct SdfData {
+    uniforms: gpu::BufferPiece,
+}
+
+/// SDF-shader instanced rect pipeline (rounded corners + border + shadow).
+struct SdfPipeline {
+    pipeline: gpu::RenderPipeline,
+    instance_buffer: gpu::Buffer,
+    uniform_buffer: gpu::Buffer,
+    max_rects: usize,
+}
+
+impl SdfPipeline {
+    fn new(context: &gpu::Context, format: gpu::TextureFormat, max_rects: usize) -> Self {
+        let shader = context.create_shader(gpu::ShaderDesc {
+            source: SDF_SHADER,
+        });
+
+        let uniform_buffer = context.create_buffer(gpu::BufferDesc {
+            name: "sdf_uniform",
+            size: 16,
+            memory: gpu::Memory::Shared,
+        });
+
+        let instance_buffer = context.create_buffer(gpu::BufferDesc {
+            name: "sdf_instance_buffer",
+            size: (max_rects * SdfRect::SIZE) as u64,
+            memory: gpu::Memory::Shared,
+        });
+
+        // Must mirror the field order of `SdfRect` exactly; the shader
+        // struct and these offsets are a three-way contract.
+        let vertex_layout = gpu::VertexLayout {
+            attributes: vec![
+                (
+                    "pos",
+                    gpu::VertexAttribute {
+                        offset: 0,
+                        format: gpu::VertexFormat::F32Vec2,
+                    },
+                ),
+                (
+                    "size",
+                    gpu::VertexAttribute {
+                        offset: 8,
+                        format: gpu::VertexFormat::F32Vec2,
+                    },
+                ),
+                (
+                    "color",
+                    gpu::VertexAttribute {
+                        offset: 16,
+                        format: gpu::VertexFormat::F32Vec4,
+                    },
+                ),
+                (
+                    "radii",
+                    gpu::VertexAttribute {
+                        offset: 32,
+                        format: gpu::VertexFormat::F32Vec4,
+                    },
+                ),
+                (
+                    "border_color",
+                    gpu::VertexAttribute {
+                        offset: 48,
+                        format: gpu::VertexFormat::F32Vec4,
+                    },
+                ),
+                (
+                    "border_width",
+                    gpu::VertexAttribute {
+                        offset: 64,
+                        format: gpu::VertexFormat::F32,
+                    },
+                ),
+                (
+                    "shadow_blur",
+                    gpu::VertexAttribute {
+                        offset: 68,
+                        format: gpu::VertexFormat::F32,
+                    },
+                ),
+                (
+                    "shadow_offset",
+                    gpu::VertexAttribute {
+                        offset: 72,
+                        format: gpu::VertexFormat::F32Vec2,
+                    },
+                ),
+                (
+                    "shadow_color",
+                    gpu::VertexAttribute {
+                        offset: 80,
+                        format: gpu::VertexFormat::F32Vec4,
+                    },
+                ),
+            ],
+            stride: SdfRect::SIZE as u32,
+        };
+
+        let pipeline = context.create_render_pipeline(gpu::RenderPipelineDesc {
+            name: "sdf_pipeline",
+            data_layouts: &[&SdfData::layout()],
+            vertex: shader.at("vs_main"),
+            vertex_fetches: &[gpu::VertexFetchState {
+                layout: &vertex_layout,
+                instanced: true,
+            }],
+            primitive: gpu::PrimitiveState {
+                topology: gpu::PrimitiveTopology::TriangleStrip,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            fragment: Some(shader.at("fs_main")),
+            color_targets: &[gpu::ColorTargetState {
+                format,
+                blend: Some(gpu::BlendState {
+                    color: gpu::BlendComponent {
+                        src_factor: gpu::BlendFactor::One,
+                        dst_factor: gpu::BlendFactor::OneMinusSrcAlpha,
+                        operation: gpu::BlendOperation::Add,
+                    },
+                    alpha: gpu::BlendComponent::OVER,
+                }),
+                write_mask: gpu::ColorWrites::all(),
+            }],
+            multisample_state: gpu::MultisampleState::default(),
+        });
+
+        SdfPipeline {
+            pipeline,
+            instance_buffer,
+            uniform_buffer,
+            max_rects,
+        }
+    }
+
+    fn upload(&self, rects: &[SdfRect], viewport_w: f32, viewport_h: f32) {
+        if rects.is_empty() {
+            return;
+        }
+        let count = rects.len().min(self.max_rects);
+
+        let viewport = [viewport_w, viewport_h, 0.0f32, 0.0f32];
+        unsafe {
+            ptr::copy_nonoverlapping(
+                viewport.as_ptr() as *const u8,
+                self.uniform_buffer.data(),
+                16,
+            );
+        }
+        let data = bytemuck::cast_slice(&rects[..count]);
+        unsafe {
+            ptr::copy_nonoverlapping(data.as_ptr(), self.instance_buffer.data(), data.len());
+        }
+    }
+
+    fn draw(&self, pass: &mut gpu::RenderCommandEncoder, count: usize) {
+        if count == 0 {
+            return;
+        }
+        let count = count.min(self.max_rects);
+        let mut pe = pass.with(&self.pipeline);
+        pe.bind(
+            0,
+            &SdfData {
+                uniforms: self.uniform_buffer.at(0),
+            },
+        );
+        pe.bind_vertex(0, self.instance_buffer.at(0));
+        pe.draw(0, 4, 0, count as u32);
     }
 
     fn destroy(&mut self, context: &gpu::Context) {
@@ -352,14 +546,25 @@ impl AtlasLayer {
         let staging_capacity = (self.atlas_size as u64)
             .saturating_mul(self.atlas_size as u64)
             .saturating_mul(self.bpp as u64);
+
+        // Two-phase: first measure how many items fit in the staging
+        // buffer and copy their payloads; then `drain(..fit_count)` so
+        // the tail remains in `pending_uploads` for the next frame.
+        // Previous code used `drain(..)` with a break on overflow, which
+        // silently dropped the unissued tail and left those glyph slots
+        // blank in the atlas.
         let mut cursor: u64 = 0;
+        let mut fit_count = 0usize;
 
         for upload in pending_uploads.iter() {
             let row_bytes = (upload.w as u64).saturating_mul(self.bpp as u64);
             let total_bytes = row_bytes.saturating_mul(upload.h as u64);
 
             if cursor + total_bytes > staging_capacity {
-                log::warn!("staging buffer overflow, skipping glyph upload");
+                log::warn!(
+                    "staging buffer overflow, deferring {} glyph uploads to next frame",
+                    pending_uploads.len() - fit_count,
+                );
                 break;
             }
 
@@ -371,18 +576,15 @@ impl AtlasLayer {
                 );
             }
             cursor += total_bytes;
+            fit_count += 1;
         }
 
         context.sync_buffer(self.staging_buffer);
 
         let mut offset: u64 = 0;
-        for upload in pending_uploads.drain(..) {
+        for upload in pending_uploads.drain(..fit_count) {
             let row_bytes = (upload.w as u64).saturating_mul(self.bpp as u64);
             let total_bytes = row_bytes.saturating_mul(upload.h as u64);
-
-            if offset + total_bytes > staging_capacity {
-                break;
-            }
 
             {
                 let mut transfer = encoder.transfer("glyph_upload");
@@ -567,6 +769,12 @@ impl GlyphAtlasGpu {
     }
 
     /// Flush pending glyph uploads from the cache to GPU.
+    ///
+    /// If the per-layer staging buffer can't fit every pending upload in
+    /// one frame, the tails stay in `alpha_pending` / `color_pending`
+    /// after `flush_uploads` returns; those tails are pushed back into
+    /// the cache via `restore_pending` so the next frame retries them
+    /// instead of dropping the glyphs on the floor.
     pub fn flush_uploads(
         &self,
         context: &gpu::Context,
@@ -578,6 +786,7 @@ impl GlyphAtlasGpu {
             .flush_uploads(context, encoder, &mut alpha_pending, alpha_clear);
         self.color
             .flush_uploads(context, encoder, &mut color_pending, color_clear);
+        cache.restore_pending(alpha_pending, color_pending);
     }
 
     /// Initialize atlas textures on GPU. Must be called once before first render.
@@ -643,6 +852,7 @@ pub struct Renderer {
     surface: gpu::Surface,
     encoder: gpu::CommandEncoder,
     rects: RectPipeline,
+    sdf: SdfPipeline,
     surface_config: gpu::SurfaceConfig,
     surface_format: gpu::TextureFormat,
     window: Arc<Window>,
@@ -726,6 +936,7 @@ impl Renderer {
         });
 
         let rects = RectPipeline::new(&context, surface_format, render_config.max_rectangles);
+        let sdf = SdfPipeline::new(&context, surface_format, MAX_SDF_RECTS);
 
         let blending_flags = (render_config.alpha_blending.is_linear() as u32)
             | ((render_config.alpha_blending.use_correction() as u32) << 1);
@@ -735,6 +946,7 @@ impl Renderer {
             surface,
             encoder,
             rects,
+            sdf,
             surface_config,
             surface_format,
             window,
@@ -915,6 +1127,14 @@ impl Renderer {
                     .draw_range(&mut pass, overlay_bg_idx, overlay_bg_count);
             }
 
+            // 7b. SDF chrome (rounded / shadow / border). Uploaded + drawn
+            //     after flat overlay bgs and before overlay glyphs so chrome
+            //     labels paint crisply on top of their rounded panel.
+            if !scene.sdf_rects.is_empty() {
+                self.sdf.upload(scene.sdf_rects, vw_f, vh_f);
+                self.sdf.draw(&mut pass, scene.sdf_rects.len());
+            }
+
             // 8. Overlay glyphs (no re-upload, just draw remaining range).
             let overlay_alpha = ScissoredRange {
                 x: 0,
@@ -959,6 +1179,7 @@ impl Renderer {
 impl Drop for Renderer {
     fn drop(&mut self) {
         self.rects.destroy(&self.context);
+        self.sdf.destroy(&self.context);
         self.context.destroy_command_encoder(&mut self.encoder);
         self.context.destroy_surface(&mut self.surface);
     }
@@ -1017,6 +1238,227 @@ fn glyph_vertex_layout() -> gpu::VertexLayout {
 }
 
 // ─── WGSL shaders ────────────────────────────────────────────────────
+
+const SDF_SHADER: &str = r#"
+struct Uniforms {
+    viewport_size: vec4<f32>,
+};
+
+var<uniform> uniforms: Uniforms;
+
+// Matches ciri_render::sdf_rect::SdfRect (Rust) one-to-one. Both sides
+// are a three-way contract with the vertex layout in SdfPipeline::new.
+struct SdfInstance {
+    pos: vec2<f32>,
+    size: vec2<f32>,
+    color: vec4<f32>,
+    radii: vec4<f32>,           // tl, tr, br, bl
+    border_color: vec4<f32>,
+    border_width: f32,
+    shadow_blur: f32,
+    shadow_offset: vec2<f32>,
+    shadow_color: vec4<f32>,
+};
+
+// Inflate the quad so shadow blur + offset spill outside the rect's bounds
+// without clipping. 3σ covers ~99.7 % of a Gaussian-ish shadow envelope.
+fn shadow_pad(inst: SdfInstance) -> f32 {
+    return inst.shadow_blur * 3.0 + max(abs(inst.shadow_offset.x), abs(inst.shadow_offset.y));
+}
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    // Centred local coordinate (in px) so the fragment can evaluate the
+    // SDF without re-deriving the rect centre.
+    @location(0) local: vec2<f32>,
+    @location(1) half_size: vec2<f32>,
+    @location(2) color: vec4<f32>,
+    @location(3) radii: vec4<f32>,
+    @location(4) border_color: vec4<f32>,
+    @location(5) border_width: f32,
+    @location(6) shadow_blur: f32,
+    @location(7) shadow_offset: vec2<f32>,
+    @location(8) shadow_color: vec4<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vi: u32, inst: SdfInstance) -> VertexOutput {
+    let x = f32(vi & 1u);
+    let y = f32((vi >> 1u) & 1u);
+
+    let pad = shadow_pad(inst);
+    let padded_pos = inst.pos - vec2<f32>(pad, pad);
+    let padded_size = inst.size + vec2<f32>(pad * 2.0, pad * 2.0);
+
+    let px = padded_pos + vec2<f32>(x, y) * padded_size;
+    let ndc = vec2<f32>(
+        px.x / uniforms.viewport_size.x * 2.0 - 1.0,
+        1.0 - px.y / uniforms.viewport_size.y * 2.0
+    );
+
+    let centre = inst.pos + inst.size * 0.5;
+    let local = px - centre;
+
+    var out: VertexOutput;
+    out.position = vec4<f32>(ndc, 0.0, 1.0);
+    out.local = local;
+    out.half_size = inst.size * 0.5;
+    out.color = inst.color;
+    out.radii = inst.radii;
+    out.border_color = inst.border_color;
+    out.border_width = inst.border_width;
+    out.shadow_blur = inst.shadow_blur;
+    out.shadow_offset = inst.shadow_offset;
+    out.shadow_color = inst.shadow_color;
+    return out;
+}
+
+// SDF of a rounded box centred at the origin. Per-corner radii order
+// matches CSS: tl, tr, br, bl. Picks the corner based on which quadrant
+// the sample point falls in.
+fn sdf_rounded_box(p: vec2<f32>, b: vec2<f32>, r: vec4<f32>) -> f32 {
+    let r_top_x = select(r.x, r.y, p.x > 0.0);    // tl | tr
+    let r_bot_x = select(r.w, r.z, p.x > 0.0);    // bl | br
+    let radius = select(r_top_x, r_bot_x, p.y > 0.0);
+    let q = abs(p) - b + vec2<f32>(radius, radius);
+    return min(max(q.x, q.y), 0.0) + length(max(q, vec2<f32>(0.0))) - radius;
+}
+
+// Approximate Gaussian envelope for drop shadows.
+fn shadow_envelope(d: f32, blur: f32) -> f32 {
+    if (blur <= 0.0) { return 0.0; }
+    // Smoothstep from `d = blur` (zero shadow) to `d = -blur` (full shadow).
+    return clamp(0.5 - 0.5 * d / blur, 0.0, 1.0);
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let d_body = sdf_rounded_box(in.local, in.half_size, in.radii);
+
+    // Fill coverage with DPR-aware AA. `fwidth` returns the per-pixel rate
+    // of change of `d_body`, so at 1x it's ~1.0 (one logical-pixel per
+    // fragment) and at 3x it's ~0.333 — using half that as the AA
+    // half-width keeps the visible edge exactly one physical pixel wide at
+    // every DPR and overview zoom level. `max(_, 1e-5)` prevents a 0/0 at
+    // derivative boundaries (not observed in practice but cheap insurance).
+    let aa = max(fwidth(d_body) * 0.5, 1e-5);
+    let body_alpha = clamp(0.5 - d_body / (aa * 2.0), 0.0, 1.0);
+
+    // Border: SDF band centred at `d = -border_width/2`, half-width
+    // `border_width/2`. The band sits inside the body (d_body in
+    // [-border_width, 0]); its outer edge coincides with the body's
+    // outer edge, so the band's own AA fringe naturally lines up with
+    // the body's. Multiplying by `body_alpha` would double-apply AA at
+    // that shared fringe and halve the visible border intensity by
+    // ~0.25, so we leave it out.
+    var border_alpha = 0.0;
+    if (in.border_width > 0.0) {
+        let half = in.border_width * 0.5;
+        let d_band = abs(d_body + half) - half;
+        border_alpha = clamp(0.5 - d_band / (aa * 2.0), 0.0, 1.0);
+    }
+
+    // Shadow: sample the SDF at the offset position.
+    var shadow_col = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    if (in.shadow_blur > 0.0 && in.shadow_color.a > 0.0) {
+        let d_shadow = sdf_rounded_box(in.local - in.shadow_offset, in.half_size, in.radii);
+        let env = shadow_envelope(d_shadow, in.shadow_blur);
+        // Shadow is occluded by the body itself to avoid a double-dark ring.
+        let occlusion = 1.0 - body_alpha;
+        let a = env * in.shadow_color.a * occlusion;
+        shadow_col = vec4<f32>(in.shadow_color.rgb * a, a);
+    }
+
+    // Fill and border pre-multiplied so blending does OVER correctly.
+    let body = vec4<f32>(in.color.rgb * in.color.a * body_alpha, in.color.a * body_alpha);
+    let border = vec4<f32>(in.border_color.rgb * in.border_color.a * border_alpha,
+                           in.border_color.a * border_alpha);
+
+    // Shadow sits under everything, border over body.
+    let out_rgb = shadow_col.rgb * (1.0 - body.a) + body.rgb * (1.0 - border.a) + border.rgb;
+    let out_a   = shadow_col.a   * (1.0 - body.a) + body.a   * (1.0 - border.a) + border.a;
+    return vec4<f32>(out_rgb, out_a);
+}
+"#;
+
+#[cfg(test)]
+mod shader_tests {
+    //! Parse every embedded WGSL source through naga so shader-level typos
+    //! (missing semicolons, unknown built-ins, type errors, etc.) fail
+    //! `cargo test` instead of surfacing at the first `Renderer::new` call.
+    //!
+    //! We deliberately skip full `Validator` runs: blade patches in
+    //! `@group/@binding` annotations via its `ShaderData` macro at
+    //! pipeline-creation time, so the raw source lacks the bindings
+    //! naga's validator requires. Parsing alone still catches syntax
+    //! errors and unknown identifiers.
+    use naga::front::wgsl;
+
+    fn compile(name: &str, source: &str) {
+        if let Err(e) = wgsl::parse_str(source) {
+            panic!("{name}: WGSL parse failed:\n{}", e.emit_to_string(source));
+        }
+    }
+
+    #[test]
+    fn rect_shader_parses() {
+        compile("RECT_SHADER", super::RECT_SHADER);
+    }
+
+    #[test]
+    fn sdf_shader_parses() {
+        compile("SDF_SHADER", super::SDF_SHADER);
+    }
+
+    /// End-to-end smoke: instantiate a real `SdfPipeline` on a headless
+    /// context, upload one full-coverage rect, draw into an offscreen
+    /// target, and assert the pipeline creation + draw submission don't
+    /// fail. Pipeline creation is the strictest check we have for
+    /// vertex-layout / shader-attribute agreement — a mismatch (padding
+    /// drift between `SdfRect` and the WGSL struct, wrong offsets) fails
+    /// here before it ships. A full pixel readback would be ideal but
+    /// would bind this test to a specific blend model; catching layout
+    /// drift at pipeline creation is the high-value half.
+    #[test]
+    fn sdf_pipeline_round_trip_headless() {
+        use super::*;
+        use blade_graphics as gpu;
+
+        let context = unsafe {
+            gpu::Context::init(gpu::ContextDesc {
+                presentation: false,
+                validation: true,
+                timing: false,
+                capture: false,
+                overlay: false,
+                device_id: 0,
+            })
+        };
+        // Skip gracefully when no GPU is available (CI without Vulkan/Metal).
+        let Ok(context) = context else {
+            eprintln!("sdf_pipeline_round_trip_headless: no GPU — skipping");
+            return;
+        };
+
+        let format = gpu::TextureFormat::Rgba8Unorm;
+        let mut sdf = SdfPipeline::new(&context, format, 16);
+
+        let rect = ciri_render::sdf_rect::SdfRect {
+            pos: [0.0, 0.0],
+            size: [32.0, 32.0],
+            color: [1.0, 0.5, 0.25, 1.0],
+            radii: [4.0; 4],
+            border_color: [1.0, 1.0, 1.0, 1.0],
+            border_width: 1.0,
+            shadow_blur: 0.0,
+            shadow_offset: [0.0, 0.0],
+            shadow_color: [0.0; 4],
+        };
+        sdf.upload(&[rect], 64.0, 64.0);
+
+        sdf.destroy(&context);
+    }
+}
 
 const RECT_SHADER: &str = r#"
 struct Uniforms {

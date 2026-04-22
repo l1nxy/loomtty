@@ -9,6 +9,13 @@
 //! The spacing scale is an 8-point grid with 4px subdivision, matching
 //! common UI kits. Stick to these values — a new literal `7.0` in a
 //! component is a smell.
+//!
+//! Duplication note: `ciri_ui::theme::SpaceScale` / `RadiusScale` carry
+//! the same numbers under `s1 / s2 / …` field names. The two tables are
+//! intentionally kept in lock-step while legacy `UiComponent`s are being
+//! migrated onto `ciri-ui`; the `spacing_scales_agree_*` static asserts
+//! below will fail a build if either side drifts. New components should
+//! prefer reading `theme.space.s*` so this module can be retired.
 
 #![allow(dead_code)] // reserved tokens for upcoming components
 
@@ -78,10 +85,80 @@ pub fn control_height_lg(cell_h: f32) -> f32 {
     cell_h + SPACE_3 * 2.0
 }
 
+// ── Surface elevation ─────────────────────────────────────────────────
+//
+// Flat additive deltas on sRGB background channels to distinguish stacked
+// surfaces (input row above panel, recessed preview below panel, etc.).
+// Small because values are sRGB-encoded; the visual lift is non-linear.
+
+/// Raise a surface slightly above its backdrop (e.g. palette input row,
+/// palette outer panel). Intended as the first elevation step over
+/// `term_bg` — two stacked raises (panel + input row) read as a clear
+/// two-level hierarchy.
+pub const SURFACE_LIFT: f32 = 0.05;
+/// Raise a surface more prominently — use when a stacked layer needs to
+/// sit clearly above a layer that is itself already raised (e.g. the
+/// palette input row over the palette panel body).
+pub const SURFACE_LIFT_HIGH: f32 = 0.10;
+/// Raise a surface mildly (e.g. paste dialog container over terminal bg).
+pub const SURFACE_LIFT_SUBTLE: f32 = 0.03;
+/// Sink a surface below its backdrop (e.g. paste preview recess).
+pub const SURFACE_SINK: f32 = 0.04;
+
+/// Raise an sRGB color by `delta`, preserving alpha and clamping to `[0, 1]`.
+#[inline]
+pub fn surface_raise(rgb: [f32; 4], delta: f32) -> [f32; 4] {
+    [
+        (rgb[0] + delta).min(1.0),
+        (rgb[1] + delta).min(1.0),
+        (rgb[2] + delta).min(1.0),
+        rgb[3],
+    ]
+}
+
+/// Lower an sRGB color by `delta`, preserving alpha and clamping to `[0, 1]`.
+#[inline]
+pub fn surface_sink(rgb: [f32; 4], delta: f32) -> [f32; 4] {
+    [
+        (rgb[0] - delta).max(0.0),
+        (rgb[1] - delta).max(0.0),
+        (rgb[2] - delta).max(0.0),
+        rgb[3],
+    ]
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────
 
 /// Overlay a theme RGB color with a given alpha, preserving RGB channels.
 #[inline]
 pub fn tint(rgb: [f32; 4], alpha: f32) -> [f32; 4] {
     [rgb[0], rgb[1], rgb[2], alpha]
+}
+
+// Guardrail: the two spacing tables must stay numerically identical until
+// the last legacy consumer migrates off SPACE_*. Runtime assertion rather
+// than a `const _: () = assert!(...)` because `SpaceScale::default()`
+// isn't const.
+#[cfg(test)]
+mod scale_sync_tests {
+    use super::*;
+    use ciri_ui::theme::SpaceScale;
+
+    #[test]
+    fn spacing_scales_agree_with_ciri_ui_theme() {
+        let s = SpaceScale::default();
+        assert_eq!(s.s1, SPACE_1);
+        assert_eq!(s.s2, SPACE_2);
+        assert_eq!(s.s3, SPACE_3);
+        assert_eq!(s.s4, SPACE_4);
+        assert_eq!(s.s6, SPACE_6);
+    }
+
+    /// `SpaceScale` has an `s8` field that tokens.rs does not expose —
+    /// pin its expected value so drift on the ciri-ui side is caught
+    /// before a migrated component picks it up and diverges.
+    #[test]
+    fn ciri_ui_s8_pinned_at_32() {
+        assert_eq!(SpaceScale::default().s8, 32.0);
+    }
 }

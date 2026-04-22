@@ -6,7 +6,7 @@
 /// - `damping_ratio < 1.0`: underdamped (bouncy, overshoots target)
 /// - `damping_ratio = 1.0`: critically damped (fastest without overshoot)
 /// - `damping_ratio > 1.0`: overdamped (slow, no overshoot)
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpringParams {
     /// Damping coefficient (computed from damping_ratio and stiffness).
     pub damping: f64,
@@ -25,6 +25,14 @@ impl SpringParams {
     /// `stiffness`: spring constant (higher = snappier)
     /// `epsilon`: convergence threshold for settling detection
     pub fn new(damping_ratio: f64, stiffness: f64, epsilon: f64) -> Self {
+        // NaN inputs would produce NaN fields that bitwise-compare unequal
+        // to themselves, silently defeating callers that rely on
+        // `PartialEq` (e.g. `AnimProp::animate_to` preserves spring elapsed
+        // only when params match — NaN in any field retargets every time).
+        debug_assert!(damping_ratio.is_finite(), "SpringParams: damping_ratio must be finite");
+        debug_assert!(stiffness.is_finite(), "SpringParams: stiffness must be finite");
+        debug_assert!(epsilon.is_finite(), "SpringParams: epsilon must be finite");
+
         let damping_ratio = damping_ratio.max(0.001);
         let stiffness = stiffness.max(0.001);
         let epsilon = epsilon.max(0.0001);

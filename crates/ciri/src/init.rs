@@ -167,10 +167,11 @@ fn detect_font_family() -> String {
 
     #[cfg(windows)]
     {
-        for candidate in ["Cascadia Mono", "Cascadia Code", "Consolas"] {
-            return candidate.to_string();
-        }
-        "Consolas".to_string()
+        // Cascadia Mono ships with Windows 10+ and is our preferred default;
+        // `Consolas` remains the final fallback for the `#[cfg(not(any(...)))]`
+        // arm. The original `for ... { return candidate }` loop was a no-op
+        // that always returned the first entry, so collapse it.
+        "Cascadia Mono".to_string()
     }
 
     #[cfg(not(any(unix, windows)))]

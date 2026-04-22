@@ -75,8 +75,11 @@ impl UiElement for OffsetProbe {
 /// Leaks a default `CiriConfig` for `'static` borrow.
 pub(super) fn dummy_cx() -> UiContext<'static> {
     let cfg = Box::leak(Box::new(ciri_config::config::CiriConfig::default()));
+    let theme: &'static ciri_ui::ResolvedTheme =
+        Box::leak(Box::new(ciri_ui::ResolvedTheme::default()));
     UiContext {
         config: cfg,
+        theme,
         viewport_w: 0.0,
         viewport_h: 0.0,
         cell_w: 8.0,

@@ -209,6 +209,11 @@ pub struct AnimationManager {
     /// When the active workspace changes, `sync_col_animations` jumps
     /// instead of animating so stale values don't cause a spurious resize.
     pub col_widths_ws_idx: usize,
+    /// Request a one-shot "equalize then settle" animation on the next
+    /// `sync_col_animations`. Set on authoritative session switches so the
+    /// new layout springs from a uniform average width rather than from
+    /// the previous session's unrelated column widths.
+    pub col_widths_equalize_pending: bool,
 
     // ── Per-pane animations ──
     pane_anims: HashMap<PaneId, PaneAnimState>,
@@ -228,6 +233,7 @@ impl AnimationManager {
             gesture_row_offset: AnimValue::new(0.0),
             col_widths: Vec::new(),
             col_widths_ws_idx: 0,
+            col_widths_equalize_pending: false,
             pane_anims: HashMap::new(),
             closing: Vec::new(),
             prev_focused: None,

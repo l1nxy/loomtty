@@ -38,9 +38,7 @@ pub struct ThemeConfig {
     pub bright_cyan: ThemeValue,
     pub bright_white: ThemeValue,
     // UI colors (overview, status bar, borders, etc.)
-    /// Window clear / normal background color.
-    pub ui_background: ThemeValue,
-    /// Overview mode background color (lighter to distinguish from pane content).
+    /// Background color shown behind panes and in the overview backdrop.
     pub overview_background: ThemeValue,
     /// Status bar background.
     pub statusbar_background: ThemeValue,
@@ -220,7 +218,6 @@ impl ThemeConfig {
         apply_if_missing(&mut self.bright_magenta, base.bright_magenta);
         apply_if_missing(&mut self.bright_cyan, base.bright_cyan);
         apply_if_missing(&mut self.bright_white, base.bright_white);
-        apply_if_missing(&mut self.ui_background, base.ui_background);
         apply_if_missing(&mut self.overview_background, base.overview_background);
         apply_if_missing(&mut self.statusbar_background, base.statusbar_background);
         apply_if_missing(&mut self.border_active, base.border_active);
@@ -319,7 +316,6 @@ mod tests {
                 ("bright_magenta", &theme.bright_magenta),
                 ("bright_cyan", &theme.bright_cyan),
                 ("bright_white", &theme.bright_white),
-                ("ui_background", &theme.ui_background),
                 ("overview_background", &theme.overview_background),
                 ("statusbar_background", &theme.statusbar_background),
                 ("border_active", &theme.border_active),

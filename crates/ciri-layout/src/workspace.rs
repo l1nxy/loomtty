@@ -3,6 +3,8 @@ use crate::geometry::{Rect, ViewSize};
 use crate::tile::{PaneId, TileHeight};
 
 const MIN_COLUMN_PROPORTION: f64 = 0.05;
+/// One outer gap on each side (left+right, or top+bottom) frames the content.
+const OUTER_GAP_SIDES: f32 = 2.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CenterStrategy {
@@ -74,9 +76,10 @@ impl Workspace {
     }
 
     pub fn column_x(&self, idx: usize) -> f32 {
-        let mut x = 0.0;
+        let inner_vw = self.inner_viewport_width();
+        let mut x = self.column_gap;
         for i in 0..idx.min(self.columns.len()) {
-            x += self.columns[i].effective_width(self.view_size.width) + self.column_gap;
+            x += self.columns[i].effective_width(inner_vw) + self.column_gap;
         }
         x
     }
@@ -85,12 +88,35 @@ impl Workspace {
         if self.columns.is_empty() {
             return 0.0;
         }
+        let inner_vw = self.inner_viewport_width();
         let mut w = 0.0;
         for col in &self.columns {
-            w += col.effective_width(self.view_size.width);
+            w += col.effective_width(inner_vw);
         }
         w += (self.columns.len() - 1) as f32 * self.column_gap;
+        w += OUTER_GAP_SIDES * self.column_gap;
         w
+    }
+
+    /// Y coordinate of the top edge of tiles inside a column (outer gap).
+    #[inline]
+    pub fn inner_top(&self) -> f32 {
+        self.column_gap
+    }
+
+    /// Height available for tiles inside a column, excluding top/bottom outer gap.
+    #[inline]
+    pub fn inner_height(&self) -> f32 {
+        (self.view_size.height - OUTER_GAP_SIDES * self.column_gap).max(0.0)
+    }
+
+    /// Usable horizontal area for sizing columns, excluding left/right outer gap.
+    /// Column width proportions are interpreted relative to this value so that
+    /// "1.0" fills the space between outer gaps and preset halves/thirds are
+    /// laid out against the same frame.
+    #[inline]
+    pub fn inner_viewport_width(&self) -> f32 {
+        (self.view_size.width - OUTER_GAP_SIDES * self.column_gap).max(0.0)
     }
 
     /// Compute target viewport offset for the active column.
@@ -105,7 +131,9 @@ impl Workspace {
         };
         let col = &self.columns[active_column_idx];
         let vw = self.view_size.width;
-        let col_w = col.effective_width(vw);
+        let outer_gap = self.column_gap;
+        let inner_vw = self.inner_viewport_width();
+        let col_w = col.effective_width(inner_vw);
         let col_x = self.column_x(active_column_idx);
         let max_offset = (self.total_width() - vw).max(0.0);
 
@@ -115,12 +143,14 @@ impl Workspace {
             CenterStrategy::Never => false,
         };
 
-        if should_center {
-            let col_center = col_x + col_w / 2.0;
-            let centered = col_center - vw / 2.0;
-            centered.clamp(0.0, max_offset)
+        // Clamp so rendered edges don't invade the outer gap when the column
+        // fits inside `inner_vw`. When it can't fit both gaps, left-anchor.
+        let left_limit = col_x - outer_gap;
+        let right_limit = col_x + col_w - vw + outer_gap;
+
+        let raw = if should_center {
+            col_x + col_w / 2.0 - vw / 2.0
         } else {
-            // Ensure the active column is fully visible, minimal scrolling.
             let left = col_x;
             let right = col_x + col_w;
             let mut offset = current_offset;
@@ -130,8 +160,22 @@ impl Workspace {
             if left < offset {
                 offset = left;
             }
-            offset.clamp(0.0, max_offset)
-        }
+            offset
+        };
+
+        let fit_clamped = if col_w <= inner_vw {
+            // Fits with both outer gaps — keep them visible.
+            raw.clamp(right_limit, left_limit)
+        } else if col_w <= vw {
+            // Wider than inner area but still fits the raw viewport; anchor
+            // to the left outer gap so the pane doesn't touch the edge.
+            left_limit
+        } else {
+            // Overflows the viewport entirely — defer to raw (centering or
+            // minimal-scroll) since no clamping can preserve gaps.
+            raw
+        };
+        fit_clamped.clamp(0.0, max_offset)
     }
 
     /// Decide whether `OnOverflow` should center the active column.
@@ -143,8 +187,9 @@ impl Workspace {
     /// wider than the viewport always centers.
     fn should_center_on_overflow(&self) -> bool {
         let vw = self.view_size.width;
+        let inner_vw = self.inner_viewport_width();
         let idx = self.active_column_idx;
-        let col_w = self.columns[idx].effective_width(vw);
+        let col_w = self.columns[idx].effective_width(inner_vw);
         if col_w > vw {
             return true;
         }
@@ -164,7 +209,7 @@ impl Workspace {
             return false;
         }
         let source_x = self.column_x(source_idx);
-        let source_w = self.columns[source_idx].effective_width(vw);
+        let source_w = self.columns[source_idx].effective_width(inner_vw);
         let target_x = self.column_x(idx);
         // Include the gaps on both outer sides, mirroring niri's
         // `+ gaps * 2.` — without this we claim a pair "fits" when it
@@ -173,7 +218,7 @@ impl Workspace {
             (target_x - source_x) + col_w
         } else {
             (source_x - target_x) + source_w
-        } + 2.0 * self.column_gap;
+        } + OUTER_GAP_SIDES * self.column_gap;
         span > vw
     }
 
@@ -195,19 +240,21 @@ impl Workspace {
         let vp_right = vp_left + self.view_size.width;
         let active_pane = self.active_pane_id();
 
+        let inner_vw = self.inner_viewport_width();
         for (col_idx, col) in self.columns.iter().enumerate() {
             let col_x = self.column_x(col_idx);
-            let col_w = col.effective_width(self.view_size.width);
+            let col_w = col.effective_width(inner_vw);
 
             if cull && (col_x + col_w < vp_left || col_x > vp_right) {
                 continue;
             }
 
             let screen_x = col_x - view_offset_x;
-            let tile_rects = col.tile_rects(col_w, self.view_size.height);
+            let tile_rects = col.tile_rects(col_w, self.inner_height(), self.column_gap);
+            let top = self.inner_top();
             for (pane_id, y, h) in &tile_rects {
                 let is_active = Some(*pane_id) == active_pane;
-                result.push((*pane_id, Rect::new(screen_x, *y, col_w, *h), is_active));
+                result.push((*pane_id, Rect::new(screen_x, top + *y, col_w, *h), is_active));
             }
         }
         result
@@ -219,6 +266,7 @@ impl Workspace {
     pub fn add_column_right(&mut self, pane_id: PaneId, default_width: ColumnWidth) {
         let vw = self.view_size.width;
         let vh = self.view_size.height;
+        let inner_vw = self.inner_viewport_width();
         log::info!(
             "add_column_right: pane={pane_id} viewport={vw}x{vh} existing_cols={} default_width={default_width:?}",
             self.columns.len()
@@ -227,7 +275,7 @@ impl Workspace {
             log::info!(
                 "  before: col[{i}] width={:?} effective={:.1}px",
                 col.width,
-                col.effective_width(vw)
+                col.effective_width(inner_vw)
             );
         }
 
@@ -265,7 +313,7 @@ impl Workspace {
             log::info!(
                 "  after: col[{i}] width={:?} effective={:.1}px",
                 col.width,
-                col.effective_width(vw)
+                col.effective_width(inner_vw)
             );
         }
     }
@@ -480,20 +528,23 @@ impl Workspace {
         }
     }
 
-    /// Equalize the active column and its right neighbor (or left if no right).
-    /// Both columns get the average of their current proportions.
+    /// Equalize the active column and its neighbor: each ends up exactly half
+    /// of the raw viewport (proportions are stored relative to inner_vw, so
+    /// the stored value is `0.5 * vw / inner_vw`).
     pub fn equalize_active_with_neighbor(&mut self) {
         let Some(neighbor_idx) = self.active_neighbor_idx() else {
             return;
         };
         let idx = self.active_column_idx;
-        let vw = self.view_size.width;
-        let p1 = self.columns[idx].proportion(vw);
-        let p2 = self.columns[neighbor_idx].proportion(vw);
-        let avg = (p1 + p2) / 2.0;
-        self.columns[idx].width = ColumnWidth::Proportion(avg);
+        let inner_vw = self.inner_viewport_width();
+        if inner_vw <= 0.0 {
+            return;
+        }
+        let target_px = self.view_size.width / 2.0;
+        let target_p = (target_px as f64 / inner_vw as f64).max(MIN_COLUMN_PROPORTION);
+        self.columns[idx].width = ColumnWidth::Proportion(target_p);
         self.columns[idx].preset_width_idx = None;
-        self.columns[neighbor_idx].width = ColumnWidth::Proportion(avg);
+        self.columns[neighbor_idx].width = ColumnWidth::Proportion(target_p);
         self.columns[neighbor_idx].preset_width_idx = None;
     }
 
@@ -508,9 +559,9 @@ impl Workspace {
             return None;
         }
         let active_idx = self.active_column_idx;
+        let inner_vw = self.inner_viewport_width();
         let current_width = self.columns[active_idx].width;
-        let current_effective_width =
-            self.columns[active_idx].effective_width(self.view_size.width);
+        let current_effective_width = self.columns[active_idx].effective_width(inner_vw);
         let current_idx = self.columns[active_idx].preset_width_idx;
         let vw_for_log = self.view_size.width;
         log::info!(
@@ -531,7 +582,7 @@ impl Workspace {
             }
             None => {
                 // No preset selected: find the closest preset to current width, then advance
-                let current_p = self.columns[active_idx].proportion(self.view_size.width);
+                let current_p = self.columns[active_idx].proportion(inner_vw);
                 let closest = self.closest_preset_width_index(presets, current_p);
                 if reverse {
                     if closest == 0 {
@@ -555,7 +606,7 @@ impl Workspace {
         log::info!(
             "  after cycle: col width={:?} effective={:.1}px",
             self.columns[active_idx].width,
-            self.columns[active_idx].effective_width(self.view_size.width)
+            self.columns[active_idx].effective_width(inner_vw)
         );
         Some(new_width)
     }
@@ -574,14 +625,16 @@ impl Workspace {
                 continue;
             }
             let col_x = self.column_x(col_idx) - view_offset_x;
-            let col_w = col.effective_width(self.view_size.width);
+            let col_w = col.effective_width(self.inner_viewport_width());
             if mx < col_x || mx > col_x + col_w {
                 continue;
             }
 
-            let border_ys = tile_border_positions(col, col_w, self.view_size.height);
+            let border_ys =
+                tile_border_positions(col, col_w, self.inner_height(), self.column_gap);
+            let top = self.inner_top();
             for (tile_idx, border_y) in border_ys.into_iter().enumerate() {
-                if (my - border_y).abs() < threshold {
+                if (my - (top + border_y)).abs() < threshold {
                     return Some((col_idx, tile_idx));
                 }
             }
@@ -592,6 +645,9 @@ impl Workspace {
     /// Resize two adjacent tiles within a column by pixel delta.
     /// Preserves the pair's combined weight so other tiles in the column are unaffected.
     pub fn resize_tile_pair(&mut self, col_idx: usize, top_tile_idx: usize, delta_y: f32) {
+        let column_gap = self.column_gap;
+        let inner_h = self.inner_height();
+        let inner_vw = self.inner_viewport_width();
         let Some(col) = self.columns.get_mut(col_idx) else {
             return;
         };
@@ -600,8 +656,8 @@ impl Workspace {
             return;
         }
 
-        let col_w = col.effective_width(self.view_size.width);
-        let rects = col.tile_rects(col_w, self.view_size.height);
+        let col_w = col.effective_width(inner_vw);
+        let rects = col.tile_rects(col_w, inner_h, column_gap);
         let top_h = rects[top_tile_idx].2;
         let bot_h = rects[bot_tile_idx].2;
         let total_h = top_h + bot_h;
@@ -648,9 +704,9 @@ impl Workspace {
         match width {
             ColumnWidth::Proportion(p) => p.max(MIN_COLUMN_PROPORTION),
             ColumnWidth::Fixed(px) => {
-                let vw = self.view_size.width;
-                if vw > 0.0 {
-                    (px / vw as f64).max(MIN_COLUMN_PROPORTION)
+                let inner_vw = self.inner_viewport_width();
+                if inner_vw > 0.0 {
+                    (px / inner_vw as f64).max(MIN_COLUMN_PROPORTION)
                 } else {
                     0.5
                 }
@@ -664,9 +720,9 @@ impl Workspace {
         second_idx: usize,
         delta: f64,
     ) -> (f64, f64) {
-        let vw = self.view_size.width;
-        let first_width = self.columns[first_idx].proportion(vw);
-        let second_width = self.columns[second_idx].proportion(vw);
+        let inner_vw = self.inner_viewport_width();
+        let first_width = self.columns[first_idx].proportion(inner_vw);
+        let second_width = self.columns[second_idx].proportion(inner_vw);
         let total = first_width + second_width;
         let min_width = MIN_COLUMN_PROPORTION.min(total / 2.0);
         let new_first = (first_width + delta).clamp(min_width, total - min_width);
@@ -678,16 +734,15 @@ impl Workspace {
         presets: &[ColumnWidth],
         current_proportion: f64,
     ) -> usize {
-        let viewport_width = self.view_size.width;
+        let inner_vw = self.inner_viewport_width();
         presets
             .iter()
             .enumerate()
             .min_by(|(_, left), (_, right)| {
                 let left_distance =
-                    (column_width_to_proportion(**left, viewport_width) - current_proportion).abs();
-                let right_distance = (column_width_to_proportion(**right, viewport_width)
-                    - current_proportion)
-                    .abs();
+                    (column_width_to_proportion(**left, inner_vw) - current_proportion).abs();
+                let right_distance =
+                    (column_width_to_proportion(**right, inner_vw) - current_proportion).abs();
                 left_distance.partial_cmp(&right_distance).unwrap()
             })
             .map(|(idx, _)| idx)
@@ -702,8 +757,13 @@ fn column_width_to_proportion(width: ColumnWidth, viewport_width: f32) -> f64 {
     }
 }
 
-fn tile_border_positions(col: &Column, col_width: f32, column_height: f32) -> Vec<f32> {
-    let rects = col.tile_rects(col_width, column_height);
+fn tile_border_positions(
+    col: &Column,
+    col_width: f32,
+    column_height: f32,
+    tile_gap: f32,
+) -> Vec<f32> {
+    let rects = col.tile_rects(col_width, column_height, tile_gap);
     rects.windows(2).map(|pair| pair[0].1 + pair[0].2).collect()
 }
 
@@ -801,8 +861,9 @@ mod tests {
         let mut w = ws();
         w.add_test_column(1);
         w.add_test_column(2);
-        // First column shrinks to 0.5 (500px), second at 500+8=508
-        assert_eq!(w.column_x(0), 0.0);
+        // Proportions resolve against inner_vw (vw - 2*gap = 984), so each
+        // 0.5-wide column is 492px; column_x spans outer_gap + col_w + gap.
+        assert_eq!(w.column_x(0), 8.0);
         assert_eq!(w.column_x(1), 508.0);
     }
 
@@ -894,17 +955,17 @@ mod tests {
         w.add_test_column(1);
         w.add_test_column(2);
         w.add_test_column(3);
-        // 0.7 * 1000 = 700px. Adjacent pair spans 700 + 8 + 700 = 1408 > 1000.
+        // 0.7 of inner_vw per column. Adjacent pair + inter/outer gaps overflows 1000.
         set_all_widths(&mut w, 0.7);
         w.active_column_idx = 2;
         w.prev_active_column_idx = None;
         w.focus_left();
         assert_eq!(w.active_column_idx, 1);
         let t = w.target_offset_for_active_with_strategy(CenterStrategy::OnOverflow, 0.0);
-        // col 2 at x=708, width=700; center=1058; target offset = 1058-500=558.
+        let col_w = 0.7 * w.inner_viewport_width();
         let col_x = w.column_x(1);
         let max_offset = (w.total_width() - 1000.0).max(0.0);
-        let expected = (col_x + 700.0 / 2.0 - 500.0).clamp(0.0, max_offset);
+        let expected = (col_x + col_w / 2.0 - 500.0).clamp(0.0, max_offset);
         assert!((t - expected).abs() < 1e-3, "expected centered ({expected}), got {t}");
     }
 
@@ -933,8 +994,9 @@ mod tests {
         w.columns[0].width = ColumnWidth::Proportion(1.5); // override first-col-is-1.0 rule
         // prev is None, but column > viewport still forces centering.
         let t = w.target_offset_for_active_with_strategy(CenterStrategy::OnOverflow, 0.0);
-        // total_width = 1500; centered = 1500/2 - 500 = 250; max_offset = 500.
-        assert!((t - 250.0).abs() < 1e-3, "expected centered (250), got {t}");
+        // Proportions resolve against inner_vw (984); col_w = 1476, col_x = 8,
+        // centered = (8 + 738) - 500 = 246, max_offset = 1492 - 1000 = 492.
+        assert!((t - 246.0).abs() < 1e-3, "expected centered (246), got {t}");
     }
 
     #[test]
@@ -970,24 +1032,20 @@ mod tests {
     }
 
     #[test]
-    fn equalize_active_with_neighbor_averages_pair() {
+    fn equalize_active_with_neighbor_splits_viewport_in_half() {
         let mut w = ws();
         w.add_test_column(1);
         w.add_test_column(2);
-        // Both columns start at 0.5; manually set col[0] to 0.8
         w.active_column_idx = 0;
         w.set_active_column_width(ColumnWidth::Proportion(0.8));
-        // col[0]=0.8, col[1]=0.5
         w.equalize_active_with_neighbor();
 
-        let widths: Vec<f64> = w
-            .columns
-            .iter()
-            .map(|c| c.proportion(w.view_size.width))
-            .collect();
-        let expected = (0.8 + 0.5) / 2.0;
-        assert!((widths[0] - expected).abs() < 1e-6);
-        assert!((widths[1] - expected).abs() < 1e-6);
+        let inner_vw = w.inner_viewport_width();
+        let col0_px = w.columns[0].resolve_width(inner_vw);
+        let col1_px = w.columns[1].resolve_width(inner_vw);
+        // Each column should render at exactly half of the raw viewport width.
+        assert!((col0_px - col1_px).abs() < 1e-3);
+        assert!((col0_px - w.view_size.width / 2.0).abs() < 1e-3);
     }
 
     #[test]
@@ -1031,7 +1089,7 @@ mod tests {
         w.add_test_column(1);
         w.columns[0].tiles.push(crate::tile::Tile::new(2));
 
-        let border_y = w.columns[0].tile_rects(500.0, w.view_size.height)[0].2;
+        let border_y = w.columns[0].tile_rects(500.0, w.view_size.height, w.column_gap)[0].2;
 
         assert_eq!(
             w.hit_test_tile_border(0.0, 250.0, border_y + 1.0, 4.0),
@@ -1124,7 +1182,7 @@ mod tests {
         // Add a second tile
         w.columns[0].tiles.push(crate::tile::Tile::new(2));
 
-        let rects_before = w.columns[0].tile_rects(500.0, 600.0);
+        let rects_before = w.columns[0].tile_rects(500.0, 600.0, 0.0);
         assert!((rects_before[0].2 - 300.0).abs() < 1e-3);
         assert!((rects_before[1].2 - 300.0).abs() < 1e-3);
 
@@ -1133,7 +1191,7 @@ mod tests {
             height: 400.0,
         });
 
-        let rects_after = w.columns[0].tile_rects(500.0, 400.0);
+        let rects_after = w.columns[0].tile_rects(500.0, 400.0, 0.0);
         assert!((rects_after[0].2 - 200.0).abs() < 1e-3);
         assert!((rects_after[1].2 - 200.0).abs() < 1e-3);
     }

@@ -62,6 +62,8 @@ impl Default for KeybindConfig {
         let mut resize = HashMap::new();
         resize.insert("h".to_string(), "column_width_decrease".to_string());
         resize.insert("l".to_string(), "column_width_increase".to_string());
+        resize.insert("j".to_string(), "tile_height_increase".to_string());
+        resize.insert("k".to_string(), "tile_height_decrease".to_string());
         resize.insert("[".to_string(), "column_width_decrease".to_string());
         resize.insert("]".to_string(), "column_width_increase".to_string());
         resize.insert("r".to_string(), "cycle_preset_width".to_string());

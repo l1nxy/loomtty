@@ -2563,11 +2563,7 @@ impl App {
             &mut color_glyphs,
         );
 
-        let clear_color = if self.core.overview.active || zoom < zoom_threshold {
-            ThemeConfig::parse_color(&self.core.config.theme.overview_background)
-        } else {
-            ThemeConfig::parse_color(&self.core.config.theme.ui_background)
-        };
+        let clear_color = ThemeConfig::parse_color(&self.core.config.theme.overview_background);
         let renderer = self.renderer.as_mut().unwrap();
         let cache = self.glyph_cache.as_mut().unwrap();
         let atlas_gpu = self.glyph_atlas_gpu.as_mut().unwrap();

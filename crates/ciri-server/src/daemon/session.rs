@@ -286,9 +286,10 @@ impl Session {
             self.pane_inset
         );
         for ws in &self.workspaces.workspaces {
+            let inner_vw = ws.inner_viewport_width();
             for col in &ws.columns {
-                let col_w = col.effective_width(vw);
-                let tile_rects = col.tile_rects(col_w, vh);
+                let col_w = col.effective_width(inner_vw);
+                let tile_rects = col.tile_rects(col_w, ws.inner_height(), ws.column_gap);
                 for (pane_id, _y, tile_h) in &tile_rects {
                     let (cols, rows) = self.pane_grid_size_with_cells(col_w, *tile_h, cw, ch);
                     if let Some(pane) = self.panes.get_mut(pane_id) {
@@ -379,7 +380,7 @@ impl Session {
                                 })
                                 .collect(),
                             active_tile_idx: c.active_tile_idx,
-                            width_proportion: c.proportion(self.workspaces.view_size.width),
+                            width_proportion: c.proportion(ws.inner_viewport_width()),
                             width_fixed_px: match c.width {
                                 ColumnWidth::Fixed(px) => Some(px),
                                 _ => None,

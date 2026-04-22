@@ -17,6 +17,13 @@ impl App {
         self.core.command_palette = None;
         self.core.slot_session_pending.clear();
         self.core.slot_session_query_start = None;
+        // The incoming layout is unrelated to the previous session's columns.
+        // Instead of letting stale col_widths spring into the new targets,
+        // request an "equalize then settle" pass: all columns start at the
+        // viewport's average width and spring to their real targets. Subtle
+        // when the new layout is near-uniform, gives a clear "re-layout"
+        // beat when it isn't.
+        self.core.anim_mgr.col_widths_equalize_pending = true;
         if let Some(window) = &self.window {
             window.set_title(&format!(
                 "{} [{}]",
@@ -107,8 +114,20 @@ impl App {
                             }
                         }
                         self.apply_layout(&layout);
-                        // Cancel any active tile drag — layout indices may have changed
-                        self.core.drag.tile_dragging = None;
+                        // Only cancel an in-flight tile drag if indices became
+                        // invalid; focus-only syncs must not abort it.
+                        if let Some((col_idx, top_tile_idx)) = self.core.drag.tile_dragging {
+                            let still_valid = self
+                                .core
+                                .workspaces
+                                .active()
+                                .columns
+                                .get(col_idx)
+                                .is_some_and(|col| top_tile_idx + 1 < col.tiles.len());
+                            if !still_valid {
+                                self.core.drag.tile_dragging = None;
+                            }
+                        }
                         needs_redraw = true;
                     }
                     ServerEvent::Control(ServerMessage::PaneCreated {

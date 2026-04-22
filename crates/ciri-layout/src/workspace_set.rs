@@ -137,21 +137,28 @@ impl WorkspaceSet {
             let vp_left = view_offset_x;
             let vp_right = vp_left + self.view_size.width;
 
+            let inner_vw = ws.inner_viewport_width();
             for (col_idx, col) in ws.columns.iter().enumerate() {
                 let col_x = ws.column_x(col_idx);
-                let col_w = col.effective_width(self.view_size.width);
+                let col_w = col.effective_width(inner_vw);
 
                 if col_x + col_w < vp_left || col_x > vp_right {
                     continue;
                 }
 
-                let tile_rects = col.tile_rects(col_w, ws_h);
+                let tile_rects = col.tile_rects(col_w, ws.inner_height(), ws.column_gap);
+                let top = ws.inner_top();
                 for (pane_id, tile_y, tile_h) in &tile_rects {
                     let is_active =
                         ws_idx == self.active_workspace_idx && Some(*pane_id) == active_pane;
                     result.push((
                         *pane_id,
-                        Rect::new(col_x - view_offset_x, screen_y + *tile_y, col_w, *tile_h),
+                        Rect::new(
+                            col_x - view_offset_x,
+                            screen_y + top + *tile_y,
+                            col_w,
+                            *tile_h,
+                        ),
                         is_active,
                     ));
                 }
@@ -173,18 +180,19 @@ impl WorkspaceSet {
 
         for (ws_idx, ws) in self.workspaces.iter().enumerate() {
             let wy = self.workspace_y(ws_idx) - view_offset_y;
-            let ws_h = self.view_size.height;
 
+            let inner_vw = ws.inner_viewport_width();
             for (col_idx, col) in ws.columns.iter().enumerate() {
                 let col_x = ws.column_x(col_idx) - view_offset_x;
-                let col_w = col.effective_width(self.view_size.width);
-                let tile_rects = col.tile_rects(col_w, ws_h);
+                let col_w = col.effective_width(inner_vw);
+                let tile_rects = col.tile_rects(col_w, ws.inner_height(), ws.column_gap);
+                let top = ws.inner_top();
                 for (pane_id, tile_y, tile_h) in &tile_rects {
                     let is_active =
                         ws_idx == self.active_workspace_idx && Some(*pane_id) == active_pane;
                     result.push((
                         *pane_id,
-                        Rect::new(col_x, wy + *tile_y, col_w, *tile_h),
+                        Rect::new(col_x, wy + top + *tile_y, col_w, *tile_h),
                         is_active,
                     ));
                 }
@@ -506,9 +514,9 @@ mod tests {
             height: 1.0,
         });
 
-        // Should not panic
-        let tiles = ws.visible_tiles_2d(0.0, ws.target_offset_y());
-        assert!(!tiles.is_empty());
+        // Inner viewport collapses to zero at this extreme; we only require
+        // that layout queries stay well-defined and don't panic.
+        let _tiles = ws.visible_tiles_2d(0.0, ws.target_offset_y());
     }
 
     // ── switch_to ───────────────────────────────────────────────────

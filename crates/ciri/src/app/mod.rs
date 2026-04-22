@@ -541,6 +541,11 @@ impl App {
         self.core.reconnect_state = slot.reconnect_state;
         self.core.pending_session_name = slot.pending_session_name;
         self.core.anim_mgr = slot.anim_mgr;
+        // Same rationale as finalize_authoritative_session_switch: the
+        // incoming anim_mgr's col_widths reflect the restored slot's own
+        // layout, but switching slots is visually a full re-layout from
+        // the user's perspective — trigger the same equalize animation.
+        self.core.anim_mgr.col_widths_equalize_pending = true;
         self.core.workspace_last_pane_ids = slot.workspace_last_pane_ids;
         self.core.selection = slot.selection;
         self.core.broadcast_mode = slot.broadcast_mode;

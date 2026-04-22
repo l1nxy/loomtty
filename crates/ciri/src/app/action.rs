@@ -65,8 +65,9 @@ impl App {
                     let (proportion, fixed_px) = match w {
                         ciri_layout::column::ColumnWidth::Proportion(p) => (p, None),
                         ciri_layout::column::ColumnWidth::Fixed(px) => {
-                            let vw = self.core.workspaces.view_size.width as f64;
-                            let p = if vw > 0.0 { px / vw } else { 0.5 };
+                            let inner_vw =
+                                self.core.workspaces.active().inner_viewport_width() as f64;
+                            let p = if inner_vw > 0.0 { px / inner_vw } else { 0.5 };
                             (p, Some(px))
                         }
                     };
@@ -104,9 +105,9 @@ impl App {
             }
             Action::ColumnWidthIncrease => {
                 let ws = self.core.workspaces.active();
-                let vw = ws.view_size.width;
+                let inner_vw = ws.inner_viewport_width();
                 if let Some(col) = ws.columns.get(ws.active_column_idx) {
-                    let current = col.proportion(vw);
+                    let current = col.proportion(inner_vw);
                     self.send(ClientMessage::SetColumnWidth {
                         proportion: current + 0.05,
                         fixed_px: None,
@@ -115,15 +116,17 @@ impl App {
             }
             Action::ColumnWidthDecrease => {
                 let ws = self.core.workspaces.active();
-                let vw = ws.view_size.width;
+                let inner_vw = ws.inner_viewport_width();
                 if let Some(col) = ws.columns.get(ws.active_column_idx) {
-                    let current = col.proportion(vw);
+                    let current = col.proportion(inner_vw);
                     self.send(ClientMessage::SetColumnWidth {
                         proportion: (current - 0.05).max(0.05),
                         fixed_px: None,
                     });
                 }
             }
+            Action::TileHeightIncrease => self.adjust_active_tile_height(1),
+            Action::TileHeightDecrease => self.adjust_active_tile_height(-1),
             Action::EqualizeAdjacentColumns => {
                 self.send(ClientMessage::EqualizeColumnSplit);
             }
@@ -380,6 +383,50 @@ impl App {
             self.invalidate_pane_cache(pane_id);
         }
         self.core.search_state = None;
+    }
+
+    /// Grow (`direction > 0`) or shrink (`direction < 0`) the active tile's
+    /// height by ~5% of the column's inner height, pairing it with its
+    /// downstairs neighbour (or upstairs when the active tile is at the bottom).
+    fn adjust_active_tile_height(&mut self, direction: i32) {
+        let ws = self.core.workspaces.active();
+        let col_idx = ws.active_column_idx;
+        let Some(col) = ws.columns.get(col_idx) else {
+            return;
+        };
+        if col.tiles.len() < 2 {
+            return;
+        }
+        let active_tile_idx = col.active_tile_idx;
+        let (top_tile_idx, delta_sign) = if active_tile_idx + 1 < col.tiles.len() {
+            (active_tile_idx, direction as f32)
+        } else {
+            (active_tile_idx - 1, -(direction as f32))
+        };
+        let step = (ws.inner_height() * 0.05).max(10.0);
+        let delta_y = delta_sign * step;
+
+        let column_idx = col_idx;
+        self.core
+            .workspaces
+            .active_mut()
+            .resize_tile_pair(column_idx, top_tile_idx, delta_y);
+
+        let ws = self.core.workspaces.active();
+        if let Some(col) = ws.columns.get(column_idx) {
+            let bot_idx = top_tile_idx + 1;
+            if bot_idx < col.tiles.len() {
+                let top_weight = col.tiles[top_tile_idx].height.weight() as f64;
+                let bottom_weight = col.tiles[bot_idx].height.weight() as f64;
+                self.send(ClientMessage::SetTileWeights {
+                    column_idx,
+                    top_tile_idx,
+                    top_weight,
+                    bottom_weight,
+                });
+            }
+        }
+        self.schedule_redraw();
     }
 
     pub(crate) fn update_search_results(&mut self) {

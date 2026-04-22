@@ -85,10 +85,10 @@ impl AppModel {
     }
 
     pub fn snap_all_col_widths(&mut self) {
-        let vw = self.workspaces.view_size.width;
         for ws in &mut self.workspaces.workspaces {
+            let inner_vw = ws.inner_viewport_width();
             for col in &mut ws.columns {
-                col.snap_width(vw);
+                col.snap_width(inner_vw);
             }
         }
     }
@@ -208,21 +208,50 @@ impl AppModel {
         }
         self.anim_mgr.col_widths.truncate(ncols);
 
-        let vw = self.workspaces.active().view_size.width;
+        let inner_vw = self.workspaces.active().inner_viewport_width();
         let sp = self.scroll_spring();
         // When the active workspace changed, col_widths carries stale values
         // from the old workspace. Jump to correct values to avoid a spurious
         // resize animation — regardless of how the switch happened (keyboard,
         // tray button, overview click, etc.).
         let ws_changed = ws_idx != self.anim_mgr.col_widths_ws_idx;
-        let skip_anim = !self.config.animation.enabled || ws_changed;
         self.anim_mgr.col_widths_ws_idx = ws_idx;
+
+        // Session-switch "expand to layout": every column jumps to 70% of
+        // its own target width, then springs out to target. Each column
+        // performs the same proportional expansion so a narrow right-side
+        // column animates just as visibly as a wide left-side one.
+        // Skipped when there's only one column since a full-width pane
+        // has no sibling layout to redistribute against. Overrides
+        // ws_changed's skip-anim path — the flag is only set after an
+        // authoritative session switch.
+        let equalize = self.anim_mgr.col_widths_equalize_pending
+            && self.config.animation.enabled
+            && ncols > 1;
+        self.anim_mgr.col_widths_equalize_pending = false;
+        let skip_anim = !self.config.animation.enabled || (ws_changed && !equalize);
+        let spring = if equalize {
+            let active_cols = &self.workspaces.active().columns;
+            for (i, col_w) in self.anim_mgr.col_widths.iter_mut().enumerate() {
+                let target = active_cols[i].resolve_width(inner_vw) as f64;
+                col_w.jump_to((target * 0.5).max(1.0));
+            }
+            SpringParams::new(0.86, 80.0, 0.0001) // ~0.7s
+        } else {
+            sp
+        };
+
         for (i, col) in self.workspaces.active().columns.iter().enumerate() {
-            let target = col.resolve_width(vw) as f64;
+            let target = col.resolve_width(inner_vw) as f64;
             let current = self.anim_mgr.col_widths[i].value();
             let anim_target = self.anim_mgr.col_widths[i].target();
             if !skip_anim {
-                if current == 0.0 {
+                if equalize {
+                    // All col_widths were just jumped to avg above — spring
+                    // every one to its real target. Skip the neighbor
+                    // heuristic; it's for incremental column insertions.
+                    self.anim_mgr.col_widths[i].animate_to(target, spring);
+                } else if current == 0.0 {
                     // New column: animate from average neighbor width for smooth entry
                     let neighbor = if i > 0 {
                         self.anim_mgr.col_widths[i - 1].target()
@@ -232,15 +261,15 @@ impl AppModel {
                             .active()
                             .columns
                             .get(i + 1)
-                            .map(|c| c.resolve_width(vw) as f64)
+                            .map(|c| c.resolve_width(inner_vw) as f64)
                             .unwrap_or(target)
                     } else {
                         target
                     };
                     self.anim_mgr.col_widths[i].jump_to(neighbor);
-                    self.anim_mgr.col_widths[i].animate_to(target, sp);
+                    self.anim_mgr.col_widths[i].animate_to(target, spring);
                 } else if (anim_target - target).abs() > 1.0 {
-                    self.anim_mgr.col_widths[i].animate_to(target, sp);
+                    self.anim_mgr.col_widths[i].animate_to(target, spring);
                 }
             } else {
                 self.anim_mgr.col_widths[i].jump_to(target);

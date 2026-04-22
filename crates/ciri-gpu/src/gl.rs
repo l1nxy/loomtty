@@ -102,6 +102,187 @@ impl GlSrgbTarget {
     }
 }
 
+// ─── Softness (post-process blur) ───────────────────────────────────
+
+/// Texture-backed sRGB FBO used as ping-pong target for the blur pass.
+/// Sampling reads auto-linearise; writes auto-encode (`GL_FRAMEBUFFER_SRGB`).
+struct GlBlurTarget {
+    framebuffer: glow::Framebuffer,
+    texture: glow::Texture,
+    width: u32,
+    height: u32,
+}
+
+impl GlBlurTarget {
+    unsafe fn new(gl: &glow::Context, width: u32, height: u32) -> crate::Result<Self> {
+        let w = width.max(1);
+        let h = height.max(1);
+        let texture = gl
+            .create_texture()
+            .map_err(|e| crate::GpuError::ResourceCreate(format!("blur tex: {e}")))?;
+        gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+        gl.tex_image_2d(
+            glow::TEXTURE_2D,
+            0,
+            glow::SRGB8_ALPHA8 as i32,
+            w as i32,
+            h as i32,
+            0,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            glow::PixelUnpackData::Slice(None),
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_MIN_FILTER,
+            glow::LINEAR as i32,
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_MAG_FILTER,
+            glow::LINEAR as i32,
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_WRAP_S,
+            glow::CLAMP_TO_EDGE as i32,
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_WRAP_T,
+            glow::CLAMP_TO_EDGE as i32,
+        );
+        gl.bind_texture(glow::TEXTURE_2D, None);
+
+        let framebuffer = gl
+            .create_framebuffer()
+            .map_err(|e| crate::GpuError::ResourceCreate(format!("blur FBO: {e}")))?;
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
+        gl.framebuffer_texture_2d(
+            glow::FRAMEBUFFER,
+            glow::COLOR_ATTACHMENT0,
+            glow::TEXTURE_2D,
+            Some(texture),
+            0,
+        );
+        let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        if status != glow::FRAMEBUFFER_COMPLETE {
+            gl.delete_framebuffer(framebuffer);
+            gl.delete_texture(texture);
+            return Err(crate::GpuError::ResourceCreate(format!(
+                "blur FBO incomplete: status 0x{status:04X}"
+            )));
+        }
+
+        Ok(GlBlurTarget {
+            framebuffer,
+            texture,
+            width: w,
+            height: h,
+        })
+    }
+
+    unsafe fn resize(&mut self, gl: &glow::Context, width: u32, height: u32) {
+        let w = width.max(1);
+        let h = height.max(1);
+        if w == self.width && h == self.height {
+            return;
+        }
+        gl.bind_texture(glow::TEXTURE_2D, Some(self.texture));
+        gl.tex_image_2d(
+            glow::TEXTURE_2D,
+            0,
+            glow::SRGB8_ALPHA8 as i32,
+            w as i32,
+            h as i32,
+            0,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            glow::PixelUnpackData::Slice(None),
+        );
+        gl.bind_texture(glow::TEXTURE_2D, None);
+        self.width = w;
+        self.height = h;
+    }
+
+    unsafe fn destroy(&self, gl: &glow::Context) {
+        gl.delete_framebuffer(self.framebuffer);
+        gl.delete_texture(self.texture);
+    }
+}
+
+/// Separable Gaussian blur pipeline. Runs twice per frame (horizontal + vertical)
+/// when softness > 0. Strength controls the per-axis tap offset in texels
+/// (0 = identity, up to ~2 texels at strength=1).
+struct GlBlurPipeline {
+    program: glow::Program,
+    vao: glow::VertexArray,
+    loc_tex: glow::UniformLocation,
+    loc_direction: glow::UniformLocation,
+    loc_strength: glow::UniformLocation,
+}
+
+impl GlBlurPipeline {
+    unsafe fn new(gl: &glow::Context) -> crate::Result<Self> {
+        let program = compile_program(gl, BLUR_VS, BLUR_FS, "blur")?;
+        let loc_tex = gl
+            .get_uniform_location(program, "u_tex")
+            .ok_or_else(|| crate::GpuError::ShaderCompile("u_tex uniform not found".into()))?;
+        let loc_direction = gl
+            .get_uniform_location(program, "u_direction")
+            .ok_or_else(|| {
+                crate::GpuError::ShaderCompile("u_direction uniform not found".into())
+            })?;
+        let loc_strength = gl
+            .get_uniform_location(program, "u_strength")
+            .ok_or_else(|| crate::GpuError::ShaderCompile("u_strength uniform not found".into()))?;
+        let vao = gl
+            .create_vertex_array()
+            .map_err(|e| crate::GpuError::ResourceCreate(format!("blur VAO: {e}")))?;
+        Ok(GlBlurPipeline {
+            program,
+            vao,
+            loc_tex,
+            loc_direction,
+            loc_strength,
+        })
+    }
+
+    unsafe fn pass(
+        &self,
+        gl: &glow::Context,
+        src_texture: glow::Texture,
+        dst_framebuffer: glow::Framebuffer,
+        dst_width: u32,
+        dst_height: u32,
+        direction: (f32, f32),
+        strength: f32,
+    ) {
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(dst_framebuffer));
+        gl.viewport(0, 0, dst_width as i32, dst_height as i32);
+        gl.disable(glow::BLEND);
+        gl.use_program(Some(self.program));
+        gl.bind_vertex_array(Some(self.vao));
+        gl.active_texture(glow::TEXTURE0);
+        gl.bind_texture(glow::TEXTURE_2D, Some(src_texture));
+        gl.uniform_1_i32(Some(&self.loc_tex), 0);
+        // Direction is expressed in texel units (1.0 = one texel in the axis).
+        // The shader divides by textureSize to get normalized UV offsets.
+        gl.uniform_2_f32(Some(&self.loc_direction), direction.0, direction.1);
+        gl.uniform_1_f32(Some(&self.loc_strength), strength);
+        gl.draw_arrays(glow::TRIANGLES, 0, 3);
+        gl.bind_texture(glow::TEXTURE_2D, None);
+        gl.bind_vertex_array(None);
+        gl.enable(glow::BLEND);
+    }
+
+    unsafe fn destroy(&self, gl: &glow::Context) {
+        gl.delete_program(self.program);
+        gl.delete_vertex_array(self.vao);
+    }
+}
+
 // ─── GL atlas layer ─────────────────────────────────────────────────
 
 struct GlAtlasLayer {
@@ -530,6 +711,18 @@ pub struct Renderer {
     use_linear_correction: bool,
     /// sRGB FBO for linear-correct blending. `None` in native mode.
     srgb_target: Option<GlSrgbTarget>,
+    /// Post-process softness pass. Populated when
+    /// `render.softness > 0` and the sRGB FBO is available.
+    softness: f32,
+    blur: Option<GlBlurResources>,
+}
+
+struct GlBlurResources {
+    pipeline: GlBlurPipeline,
+    /// Horizontal-pass target: written after the H pass, read by the V pass.
+    ping: GlBlurTarget,
+    /// Vertical-pass target: written after the V pass, blitted to the screen.
+    pong: GlBlurTarget,
 }
 
 impl Renderer {
@@ -669,6 +862,48 @@ impl Renderer {
             (use_linear_blending, use_linear_correction, None)
         };
 
+        // Softness post-process: needs a sampleable sRGB texture, i.e. a
+        // sRGB FBO must already exist (linear blending enabled).
+        let softness = render_config.softness.clamp(0.0, 1.0);
+        let blur = if softness > 0.0 && srgb_target.is_some() {
+            let w = size.width.max(1);
+            let h = size.height.max(1);
+            match (unsafe { GlBlurTarget::new(&gl, w, h) }, unsafe {
+                GlBlurTarget::new(&gl, w, h)
+            }) {
+                (Ok(ping), Ok(pong)) => match unsafe { GlBlurPipeline::new(&gl) } {
+                    Ok(pipeline) => {
+                        log::info!("softness pass enabled: strength={softness:.2}");
+                        Some(GlBlurResources {
+                            pipeline,
+                            ping,
+                            pong,
+                        })
+                    }
+                    Err(e) => {
+                        log::warn!("softness pipeline init failed, disabling: {e}");
+                        unsafe {
+                            ping.destroy(&gl);
+                            pong.destroy(&gl);
+                        }
+                        None
+                    }
+                },
+                (ping_res, pong_res) => {
+                    log::warn!("softness FBO init failed, disabling");
+                    if let Ok(t) = ping_res {
+                        unsafe { t.destroy(&gl) }
+                    }
+                    if let Ok(t) = pong_res {
+                        unsafe { t.destroy(&gl) }
+                    }
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Ok(Renderer {
             gl,
             gl_surface,
@@ -679,6 +914,8 @@ impl Renderer {
             use_linear_blending,
             use_linear_correction,
             srgb_target,
+            softness,
+            blur,
         })
     }
 
@@ -866,23 +1103,63 @@ impl Renderer {
             }
 
             // Blit sRGB FBO → default framebuffer (if using sRGB target).
+            // When the softness post-process is active, first run two blur
+            // passes into the ping-pong textures, then blit from the final
+            // pass's target.
             if let Some(ref target) = self.srgb_target {
+                let w = self.width as i32;
+                let h = self.height as i32;
+
+                let read_fb = if let Some(ref mut blur) = self.blur {
+                    blur.ping.resize(&self.gl, self.width, self.height);
+                    blur.pong.resize(&self.gl, self.width, self.height);
+
+                    // 1. Copy sRGB renderbuffer into blur.ping texture so it
+                    //    becomes sampleable. Both are SRGB8_ALPHA8 → no gamma
+                    //    conversion happens in the blit.
+                    self.gl
+                        .bind_framebuffer(glow::READ_FRAMEBUFFER, Some(target.framebuffer));
+                    self.gl
+                        .bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(blur.ping.framebuffer));
+                    self.gl.blit_framebuffer(
+                        0, 0, w, h, 0, 0, w, h,
+                        glow::COLOR_BUFFER_BIT, glow::NEAREST,
+                    );
+
+                    // 2. Horizontal pass: ping.texture → pong.framebuffer.
+                    blur.pipeline.pass(
+                        &self.gl,
+                        blur.ping.texture,
+                        blur.pong.framebuffer,
+                        blur.pong.width,
+                        blur.pong.height,
+                        (1.0, 0.0),
+                        self.softness,
+                    );
+
+                    // 3. Vertical pass: pong.texture → ping.framebuffer.
+                    blur.pipeline.pass(
+                        &self.gl,
+                        blur.pong.texture,
+                        blur.ping.framebuffer,
+                        blur.ping.width,
+                        blur.ping.height,
+                        (0.0, 1.0),
+                        self.softness,
+                    );
+
+                    blur.ping.framebuffer
+                } else {
+                    target.framebuffer
+                };
+
                 // Disable GL_FRAMEBUFFER_SRGB during blit to avoid double gamma.
                 self.gl.disable(glow::FRAMEBUFFER_SRGB);
-                self.gl
-                    .bind_framebuffer(glow::READ_FRAMEBUFFER, Some(target.framebuffer));
+                self.gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(read_fb));
                 self.gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
                 self.gl.blit_framebuffer(
-                    0,
-                    0,
-                    target.width as i32,
-                    target.height as i32,
-                    0,
-                    0,
-                    self.width as i32,
-                    self.height as i32,
-                    glow::COLOR_BUFFER_BIT,
-                    glow::NEAREST,
+                    0, 0, w, h, 0, 0, w, h,
+                    glow::COLOR_BUFFER_BIT, glow::NEAREST,
                 );
                 self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
                 self.gl.enable(glow::FRAMEBUFFER_SRGB);
@@ -911,6 +1188,11 @@ impl Renderer {
 impl Drop for Renderer {
     fn drop(&mut self) {
         unsafe {
+            if let Some(ref blur) = self.blur {
+                blur.pipeline.destroy(&self.gl);
+                blur.ping.destroy(&self.gl);
+                blur.pong.destroy(&self.gl);
+            }
             if let Some(ref target) = self.srgb_target {
                 target.destroy(&self.gl);
             }
@@ -1205,5 +1487,50 @@ void main() {
         srgb_texel.rgb *= srgb_texel.a; // re-premultiply
         frag_color = vec4(srgb_texel.rgb * v_color.rgb, srgb_texel.a * v_color.a);
     }
+}
+"#;
+
+// Fullscreen triangle — no VBO needed.
+const BLUR_VS: &str = r#"#version 330 core
+out vec2 v_uv;
+void main() {
+    // Large triangle that covers the viewport (-1,-1) to (+3,+3 or -1,+3 etc.)
+    // Tap the three corners so v_uv interpolates 0..1 across the visible area.
+    float x = float((gl_VertexID & 1) << 2);  // 0, 4, 0
+    float y = float((gl_VertexID & 2) << 1);  // 0, 0, 4
+    gl_Position = vec4(x - 1.0, y - 1.0, 0.0, 1.0);
+    v_uv = vec2(x, y) * 0.5;
+}
+"#;
+
+// 5-tap separable Gaussian. Runs once horizontally then once vertically.
+// When `u_strength` is 0, all five samples collapse onto v_uv and weights
+// sum to 1.0 — so the output equals the input (identity). As strength
+// grows, taps spread out in the chosen direction up to ~2 texels.
+//
+// The shader works in the sRGB FBO pipeline: sampling a GL_SRGB8_ALPHA8
+// texture auto-linearises, writing with GL_FRAMEBUFFER_SRGB auto-encodes,
+// so the blur is physically correct (linear-space filtering).
+const BLUR_FS: &str = r#"#version 330 core
+in vec2 v_uv;
+out vec4 frag_color;
+
+uniform sampler2D u_tex;
+uniform vec2  u_direction;   // (1,0) for H pass, (0,1) for V pass
+uniform float u_strength;    // 0..1
+
+void main() {
+    vec2 texel = 1.0 / vec2(textureSize(u_tex, 0));
+    // Offset per tap, in texels, scaled by strength. Max 2 texels → ~σ=1.2.
+    vec2 off = u_direction * texel * (u_strength * 2.0);
+
+    vec4 s0 = texture(u_tex, v_uv - 2.0 * off);
+    vec4 s1 = texture(u_tex, v_uv -       off);
+    vec4 s2 = texture(u_tex, v_uv            );
+    vec4 s3 = texture(u_tex, v_uv +       off);
+    vec4 s4 = texture(u_tex, v_uv + 2.0 * off);
+
+    // Binomial weights: 1, 4, 6, 4, 1 / 16.
+    frag_color = s0 * 0.0625 + s1 * 0.25 + s2 * 0.375 + s3 * 0.25 + s4 * 0.0625;
 }
 "#;

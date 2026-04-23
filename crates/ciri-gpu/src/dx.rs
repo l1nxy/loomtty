@@ -8,6 +8,10 @@ use ciri_config::config::RenderConfig;
 use ciri_render::FrameScene;
 use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, PendingUpload, ScissoredRange};
 use ciri_render::rect::Rect;
+use ciri_render::sdf_rect::SdfRect;
+
+/// Upper bound on SDF chrome rects per frame. Mirrors the blade backend.
+const MAX_SDF_RECTS: usize = 256;
 use std::sync::Arc;
 use winit::window::Window;
 
@@ -64,6 +68,137 @@ PSInput vs_main(VSInput input) {
 
 float4 ps_main(PSInput input) : SV_TARGET {
     return float4(input.color.rgb * input.color.a, input.color.a);
+}
+"#;
+
+const SDF_HLSL: &str = r#"
+cbuffer Viewport : register(b0) {
+    float2 viewport_size;
+    float2 _pad;
+};
+
+// Matches ciri_render::sdf_rect::SdfRect; offsets mirror the blade
+// WGSL SdfInstance struct (pos@0, size@8, color@16, radii@32,
+// border_color@48, border_width@64, shadow_blur@68, shadow_offset@72,
+// shadow_color@80).
+struct VSInput {
+    float2 pos            : POS;
+    float2 size           : SIZE;
+    float4 color          : COL;
+    float4 radii          : RADII;
+    float4 border_color   : BCOL;
+    float  border_width   : BW;
+    float  shadow_blur    : SBLUR;
+    float2 shadow_offset  : SOFF;
+    float4 shadow_color   : SCOL;
+    uint   vid            : SV_VertexID;
+};
+
+struct PSInput {
+    float4 position       : SV_POSITION;
+    float2 local          : LOCAL;
+    float2 half_size      : HALFSIZE;
+    float4 color          : COL;
+    float4 radii          : RADII;
+    float4 border_color   : BCOL;
+    float  border_width   : BW;
+    float  shadow_blur    : SBLUR;
+    float2 shadow_offset  : SOFF;
+    float4 shadow_color   : SCOL;
+};
+
+float shadow_pad(float shadow_blur, float2 shadow_offset) {
+    return shadow_blur * 3.0 + max(abs(shadow_offset.x), abs(shadow_offset.y));
+}
+
+PSInput vs_main(VSInput input) {
+    float x = float(input.vid & 1);
+    float y = float((input.vid >> 1) & 1);
+
+    // Inflate the quad so shadow blur + offset spill outside the rect's
+    // bounds without clipping. 3σ covers ~99.7% of a Gaussian envelope.
+    float pad = shadow_pad(input.shadow_blur, input.shadow_offset);
+    float2 padded_pos = input.pos - float2(pad, pad);
+    float2 padded_size = input.size + float2(pad * 2.0, pad * 2.0);
+
+    float2 px = padded_pos + float2(x, y) * padded_size;
+    float2 ndc = float2(
+        px.x / viewport_size.x * 2.0 - 1.0,
+        1.0 - px.y / viewport_size.y * 2.0
+    );
+
+    float2 centre = input.pos + input.size * 0.5;
+    float2 local = px - centre;
+
+    PSInput output;
+    output.position = float4(ndc, 0.0, 1.0);
+    output.local = local;
+    output.half_size = input.size * 0.5;
+    output.color = input.color;
+    output.radii = input.radii;
+    output.border_color = input.border_color;
+    output.border_width = input.border_width;
+    output.shadow_blur = input.shadow_blur;
+    output.shadow_offset = input.shadow_offset;
+    output.shadow_color = input.shadow_color;
+    return output;
+}
+
+// SDF of a rounded box centred at the origin. Per-corner radii order
+// matches CSS: tl, tr, br, bl. Picks the corner based on which quadrant
+// the sample point falls in.
+float sdf_rounded_box(float2 p, float2 b, float4 r) {
+    float r_top_x = p.x > 0.0 ? r.y : r.x;   // tl | tr
+    float r_bot_x = p.x > 0.0 ? r.z : r.w;   // bl | br
+    float radius = p.y > 0.0 ? r_bot_x : r_top_x;
+    float2 q = abs(p) - b + float2(radius, radius);
+    return min(max(q.x, q.y), 0.0) + length(max(q, float2(0.0, 0.0))) - radius;
+}
+
+float shadow_envelope(float d, float blur) {
+    if (blur <= 0.0) { return 0.0; }
+    return clamp(0.5 - 0.5 * d / blur, 0.0, 1.0);
+}
+
+float4 ps_main(PSInput input) : SV_TARGET {
+    float d_body = sdf_rounded_box(input.local, input.half_size, input.radii);
+
+    // DPR-aware one-pixel AA via fwidth — matches blade WGSL.
+    float aa = max(fwidth(d_body) * 0.5, 1e-5);
+    float body_alpha = clamp(0.5 - d_body / (aa * 2.0), 0.0, 1.0);
+
+    float border_alpha = 0.0;
+    if (input.border_width > 0.0) {
+        float half_bw = input.border_width * 0.5;
+        float d_band = abs(d_body + half_bw) - half_bw;
+        border_alpha = clamp(0.5 - d_band / (aa * 2.0), 0.0, 1.0);
+    }
+
+    float4 shadow_col = float4(0.0, 0.0, 0.0, 0.0);
+    if (input.shadow_blur > 0.0 && input.shadow_color.a > 0.0) {
+        float d_shadow = sdf_rounded_box(input.local - input.shadow_offset,
+                                         input.half_size, input.radii);
+        float env = shadow_envelope(d_shadow, input.shadow_blur);
+        // Shadow occluded by the body itself to avoid a double-dark ring.
+        float occlusion = 1.0 - body_alpha;
+        float a = env * input.shadow_color.a * occlusion;
+        shadow_col = float4(input.shadow_color.rgb * a, a);
+    }
+
+    // Pre-multiply so the backend's OVER blend composites correctly.
+    float4 body = float4(input.color.rgb * input.color.a * body_alpha,
+                         input.color.a * body_alpha);
+    float4 border = float4(input.border_color.rgb * input.border_color.a * border_alpha,
+                           input.border_color.a * border_alpha);
+
+    // Shadow under everything, border over body.
+    float3 out_rgb = shadow_col.rgb * (1.0 - body.a)
+                   + body.rgb * (1.0 - border.a)
+                   + border.rgb;
+    float  out_a   = shadow_col.a   * (1.0 - body.a)
+                   + body.a   * (1.0 - border.a)
+                   + border.a;
+    return float4(out_rgb, out_a);
 }
 "#;
 
@@ -854,6 +989,224 @@ impl DxRectPipeline {
     }
 }
 
+// ─── D3D SDF rect Pipeline ──────────────────────────────────────────
+//
+// Drawn after flat overlay backgrounds and before overlay glyphs so
+// rounded chrome sits on top of pane text while its labels stay crisp.
+// Mirrors the blade SdfPipeline in crates/ciri-gpu/src/blade.rs.
+
+struct DxSdfPipeline {
+    vs: ID3D11VertexShader,
+    ps: ID3D11PixelShader,
+    input_layout: ID3D11InputLayout,
+    instance_buffer: ID3D11Buffer,
+    cbuffer: ID3D11Buffer,
+    max_rects: usize,
+}
+
+impl DxSdfPipeline {
+    unsafe fn new(device: &ID3D11Device, max_rects: usize) -> Result<Self> {
+        let vs_blob = compile_shader(SDF_HLSL, "vs_main", "vs_5_0")?;
+        let vs_code = std::slice::from_raw_parts(
+            vs_blob.GetBufferPointer() as *const u8,
+            vs_blob.GetBufferSize(),
+        );
+        let mut vs = None;
+        device.CreateVertexShader(vs_code, None, Some(&mut vs))?;
+        let vs = vs.unwrap();
+
+        let ps_blob = compile_shader(SDF_HLSL, "ps_main", "ps_5_0")?;
+        let ps_code = std::slice::from_raw_parts(
+            ps_blob.GetBufferPointer() as *const u8,
+            ps_blob.GetBufferSize(),
+        );
+        let mut ps = None;
+        device.CreatePixelShader(ps_code, None, Some(&mut ps))?;
+        let ps = ps.unwrap();
+
+        // Offsets mirror `SdfRect` exactly — the three-way Rust ⇄ vertex
+        // layout ⇄ HLSL contract enforced by `sdf_rect.rs` tests.
+        let layout_desc = [
+            D3D11_INPUT_ELEMENT_DESC {
+                SemanticName: PCSTR::from_raw(b"POS\0".as_ptr()),
+                SemanticIndex: 0,
+                Format: DXGI_FORMAT_R32G32_FLOAT,
+                InputSlot: 0,
+                AlignedByteOffset: 0,
+                InputSlotClass: D3D11_INPUT_PER_INSTANCE_DATA,
+                InstanceDataStepRate: 1,
+            },
+            D3D11_INPUT_ELEMENT_DESC {
+                SemanticName: PCSTR::from_raw(b"SIZE\0".as_ptr()),
+                SemanticIndex: 0,
+                Format: DXGI_FORMAT_R32G32_FLOAT,
+                InputSlot: 0,
+                AlignedByteOffset: 8,
+                InputSlotClass: D3D11_INPUT_PER_INSTANCE_DATA,
+                InstanceDataStepRate: 1,
+            },
+            D3D11_INPUT_ELEMENT_DESC {
+                SemanticName: PCSTR::from_raw(b"COL\0".as_ptr()),
+                SemanticIndex: 0,
+                Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
+                InputSlot: 0,
+                AlignedByteOffset: 16,
+                InputSlotClass: D3D11_INPUT_PER_INSTANCE_DATA,
+                InstanceDataStepRate: 1,
+            },
+            D3D11_INPUT_ELEMENT_DESC {
+                SemanticName: PCSTR::from_raw(b"RADII\0".as_ptr()),
+                SemanticIndex: 0,
+                Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
+                InputSlot: 0,
+                AlignedByteOffset: 32,
+                InputSlotClass: D3D11_INPUT_PER_INSTANCE_DATA,
+                InstanceDataStepRate: 1,
+            },
+            D3D11_INPUT_ELEMENT_DESC {
+                SemanticName: PCSTR::from_raw(b"BCOL\0".as_ptr()),
+                SemanticIndex: 0,
+                Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
+                InputSlot: 0,
+                AlignedByteOffset: 48,
+                InputSlotClass: D3D11_INPUT_PER_INSTANCE_DATA,
+                InstanceDataStepRate: 1,
+            },
+            D3D11_INPUT_ELEMENT_DESC {
+                SemanticName: PCSTR::from_raw(b"BW\0".as_ptr()),
+                SemanticIndex: 0,
+                Format: DXGI_FORMAT_R32_FLOAT,
+                InputSlot: 0,
+                AlignedByteOffset: 64,
+                InputSlotClass: D3D11_INPUT_PER_INSTANCE_DATA,
+                InstanceDataStepRate: 1,
+            },
+            D3D11_INPUT_ELEMENT_DESC {
+                SemanticName: PCSTR::from_raw(b"SBLUR\0".as_ptr()),
+                SemanticIndex: 0,
+                Format: DXGI_FORMAT_R32_FLOAT,
+                InputSlot: 0,
+                AlignedByteOffset: 68,
+                InputSlotClass: D3D11_INPUT_PER_INSTANCE_DATA,
+                InstanceDataStepRate: 1,
+            },
+            D3D11_INPUT_ELEMENT_DESC {
+                SemanticName: PCSTR::from_raw(b"SOFF\0".as_ptr()),
+                SemanticIndex: 0,
+                Format: DXGI_FORMAT_R32G32_FLOAT,
+                InputSlot: 0,
+                AlignedByteOffset: 72,
+                InputSlotClass: D3D11_INPUT_PER_INSTANCE_DATA,
+                InstanceDataStepRate: 1,
+            },
+            D3D11_INPUT_ELEMENT_DESC {
+                SemanticName: PCSTR::from_raw(b"SCOL\0".as_ptr()),
+                SemanticIndex: 0,
+                Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
+                InputSlot: 0,
+                AlignedByteOffset: 80,
+                InputSlotClass: D3D11_INPUT_PER_INSTANCE_DATA,
+                InstanceDataStepRate: 1,
+            },
+        ];
+        let mut input_layout = None;
+        device.CreateInputLayout(&layout_desc, vs_code, Some(&mut input_layout))?;
+        let input_layout = input_layout.unwrap();
+
+        let buf_desc = D3D11_BUFFER_DESC {
+            ByteWidth: (max_rects * SdfRect::SIZE) as u32,
+            Usage: D3D11_USAGE_DYNAMIC,
+            BindFlags: D3D11_BIND_VERTEX_BUFFER.0 as u32,
+            CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+            ..Default::default()
+        };
+        let mut instance_buffer = None;
+        device.CreateBuffer(&buf_desc, None, Some(&mut instance_buffer))?;
+        let instance_buffer = instance_buffer.unwrap();
+
+        let cb_desc = D3D11_BUFFER_DESC {
+            ByteWidth: 16,
+            Usage: D3D11_USAGE_DYNAMIC,
+            BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
+            CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+            ..Default::default()
+        };
+        let mut cbuffer = None;
+        device.CreateBuffer(&cb_desc, None, Some(&mut cbuffer))?;
+        let cbuffer = cbuffer.unwrap();
+
+        Ok(DxSdfPipeline {
+            vs,
+            ps,
+            input_layout,
+            instance_buffer,
+            cbuffer,
+            max_rects,
+        })
+    }
+
+    unsafe fn upload(
+        &self,
+        ctx: &ID3D11DeviceContext,
+        rects: &[SdfRect],
+        viewport_w: f32,
+        viewport_h: f32,
+    ) {
+        if rects.is_empty() {
+            return;
+        }
+        let count = rects.len().min(self.max_rects);
+
+        let viewport = [viewport_w, viewport_h, 0.0f32, 0.0f32];
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        ctx.Map(
+            &self.cbuffer,
+            0,
+            D3D11_MAP_WRITE_DISCARD,
+            0,
+            Some(&mut mapped),
+        )
+        .unwrap();
+        std::ptr::copy_nonoverlapping(viewport.as_ptr() as *const u8, mapped.pData as *mut u8, 16);
+        ctx.Unmap(&self.cbuffer, 0);
+
+        let data = bytemuck::cast_slice(&rects[..count]);
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        ctx.Map(
+            &self.instance_buffer,
+            0,
+            D3D11_MAP_WRITE_DISCARD,
+            0,
+            Some(&mut mapped),
+        )
+        .unwrap();
+        std::ptr::copy_nonoverlapping(data.as_ptr(), mapped.pData as *mut u8, data.len());
+        ctx.Unmap(&self.instance_buffer, 0);
+    }
+
+    unsafe fn draw(&self, ctx: &ID3D11DeviceContext, count: usize) {
+        if count == 0 {
+            return;
+        }
+        let count = count.min(self.max_rects);
+        ctx.IASetInputLayout(Some(&self.input_layout));
+        ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+        let stride = SdfRect::SIZE as u32;
+        let offset = 0u32;
+        ctx.IASetVertexBuffers(
+            0,
+            1,
+            Some(&Some(self.instance_buffer.clone())),
+            Some(&stride),
+            Some(&offset),
+        );
+        ctx.VSSetShader(Some(&self.vs), None);
+        ctx.PSSetShader(Some(&self.ps), None);
+        ctx.VSSetConstantBuffers(0, Some(&[Some(self.cbuffer.clone())]));
+        ctx.DrawInstanced(4, count as u32, 0, 0);
+    }
+}
+
 // ─── GlyphAtlasGpu ─────────────────────────────────────────────────
 
 pub struct GlyphAtlasGpu {
@@ -873,6 +1226,7 @@ pub struct Renderer {
     d2d_factory: ID2D1Factory,
     text_rendering_params: Option<IDWriteRenderingParams>,
     rects: DxRectPipeline,
+    sdf: DxSdfPipeline,
     width: u32,
     height: u32,
     sync_interval: u32,
@@ -988,6 +1342,7 @@ impl Renderer {
         };
 
         let rects = unsafe { DxRectPipeline::new(&device, render_config.max_rectangles)? };
+        let sdf = unsafe { DxSdfPipeline::new(&device, MAX_SDF_RECTS)? };
 
         let sync_interval = match render_config.present_mode {
             ciri_config::config::PresentMode::Immediate
@@ -1022,6 +1377,7 @@ impl Renderer {
             d2d_factory,
             text_rendering_params,
             rects,
+            sdf,
             width: size.width.max(1),
             height: size.height.max(1),
             sync_interval,
@@ -1254,6 +1610,15 @@ impl Renderer {
                 self.ctx.RSSetScissorRects(Some(&[full_rect]));
                 self.rects
                     .draw_range(&self.ctx, overlay_bg_idx, overlay_bg_count);
+            }
+
+            // 7b. SDF chrome (rounded / shadow / border). Drawn after flat
+            //     overlay bgs and before overlay glyphs so chrome labels
+            //     paint crisply on top of their rounded panel.
+            if !scene.sdf_rects.is_empty() {
+                self.ctx.RSSetScissorRects(Some(&[full_rect]));
+                self.sdf.upload(&self.ctx, scene.sdf_rects, vw, vh);
+                self.sdf.draw(&self.ctx, scene.sdf_rects.len());
             }
 
             // 8. Overlay glyphs (no re-upload, just draw remaining range).

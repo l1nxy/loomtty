@@ -143,7 +143,7 @@ fn hit_test_uses_ciri_ui_layout_snapshot() {
 /// End-to-end check that chrome rect composition reproduces the expected bar
 /// y-positions for `StatusBarPosition::Top`.
 #[test]
-fn chrome_rects_place_top_bar_and_hints_bar_at_legacy_y_for_top_position() {
+fn chrome_rects_place_top_bar_and_hints_bar_at_expected_y_for_top_position() {
     let mut cfg = CiriConfig::default();
     cfg.statusbar.position = StatusBarPosition::Top;
     let app = App::new(cfg, "test-session");
@@ -163,7 +163,7 @@ fn chrome_rects_place_top_bar_and_hints_bar_at_legacy_y_for_top_position() {
 /// Same end-to-end check for `StatusBarPosition::Bottom`, where HintsBar sits
 /// above TopBar in the bottom chrome strip.
 #[test]
-fn chrome_rects_place_top_bar_and_hints_bar_at_legacy_y_for_bottom_position() {
+fn chrome_rects_place_top_bar_and_hints_bar_at_expected_y_for_bottom_position() {
     let mut cfg = CiriConfig::default();
     cfg.statusbar.position = StatusBarPosition::Bottom;
     let app = App::new(cfg, "test-session");

@@ -57,28 +57,22 @@ impl App {
         let top_bar_layout = self.top_bar_layout(vw, vh, cell_w, cell_h, self.ui_shaper.as_ref());
         self.ensure_active_pane_tab_visible(top_bar_layout.tabs_area_px);
         let baseline = cell_h * self.core.config.statusbar.text_baseline;
-        let ui_line_h = self
-            .ui_shaper
-            .as_ref()
-            .map(|s| s.borrow().line_height())
-            .unwrap_or(cell_h);
-        let cache_key = self.ui_scene_hash(vw, vh, cell_w, cell_h, ui_line_h);
+        let cx = ui_context_from_metrics(
+            &self.core.config,
+            &self.cached_resolved_theme,
+            self.ui_shaper.as_ref(),
+            vw,
+            vh,
+            cell_w,
+            cell_h,
+            baseline,
+        );
+        let cache_key = self.ui_scene_hash(vw, vh, cell_w, cell_h, cx.ui_line_h);
         if self.cached_ui_scene.key == Some(cache_key) {
             glyphs.extend_from_slice(&self.cached_ui_scene.glyphs);
             color_glyphs.extend_from_slice(&self.cached_ui_scene.color_glyphs);
             return;
         }
-        let cx = UiContext {
-            config: &self.core.config,
-            theme: &self.cached_resolved_theme,
-            viewport_w: vw,
-            viewport_h: vh,
-            cell_w,
-            cell_h,
-            baseline,
-            ui_line_h,
-            ui_shaper: self.ui_shaper.as_ref(),
-        };
 
         let top_bar_h = top_bar_layout.bar_height;
         let hints_bar_h = self.hints_bar_height();
@@ -117,22 +111,16 @@ impl App {
             .map(|c| c.cell_width)
             .unwrap_or(8.0);
         let (viewport_w, viewport_h) = self.command_palette_viewport_size();
-        let ui_line_h = self
-            .ui_shaper
-            .as_ref()
-            .map(|s| s.borrow().line_height())
-            .unwrap_or(cell_h);
-        UiContext {
-            config: &self.core.config,
-            theme: &self.cached_resolved_theme,
+        ui_context_from_metrics(
+            &self.core.config,
+            &self.cached_resolved_theme,
+            self.ui_shaper.as_ref(),
             viewport_w,
             viewport_h,
             cell_w,
             cell_h,
-            baseline: cell_h * self.core.config.statusbar.text_baseline,
-            ui_line_h,
-            ui_shaper: self.ui_shaper.as_ref(),
-        }
+            cell_h * self.core.config.statusbar.text_baseline,
+        )
     }
 
     pub(crate) fn dispatch_ui_click(&mut self, mx: f32, my: f32) -> bool {

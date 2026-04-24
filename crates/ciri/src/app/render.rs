@@ -1841,48 +1841,7 @@ impl App {
             return;
         };
 
-        let border_w = self.core.config.appearance.border_width;
-        let padding = self.core.config.appearance.padding;
-        let bar_height = ch + 4.0;
-        let bar_y = pane_rect.y + pane_rect.h - border_w - bar_height;
-        let bar_x = pane_rect.x + border_w;
-        let bar_w = pane_rect.w - border_w * 2.0;
-
-        let match_info = if search.matches.is_empty() {
-            if search.query.is_empty() {
-                String::new()
-            } else {
-                " [no matches]".to_string()
-            }
-        } else {
-            format!(
-                " [{}/{}]",
-                search.current_match_idx + 1,
-                search.matches.len()
-            )
-        };
-        let bar_text = format!(" Search: {}{}", search.query, match_info);
-
         let baseline = ch * self.core.config.statusbar.text_baseline;
-        let root = div().w(vw).h(vh).child(
-            div()
-                .in_layer(Layer::Overlay)
-                .absolute()
-                .left(bar_x)
-                .top(bar_y)
-                .w(bar_w)
-                .h(bar_height)
-                .bg([0.15, 0.15, 0.2, 0.95])
-                .child(
-                    div()
-                        .absolute()
-                        .left(padding)
-                        .top(2.0)
-                        .w((bar_w - padding * 2.0).max(0.0))
-                        .h(ch)
-                        .child(text(bar_text).color([1.0, 1.0, 1.0, 1.0])),
-                ),
-        );
         let atlas = self.glyph_cache.as_mut().unwrap();
         let cx = render_ui_context(
             &self.core.config,
@@ -1900,7 +1859,7 @@ impl App {
             color_glyphs,
             sdf_rects,
         };
-        paint_ui_tree(&root, &cx, &mut scene);
+        super::ui::paint_search_bar(search, *pane_rect, &cx, &mut scene);
     }
 
     fn ime_input_anchor(
@@ -1958,33 +1917,23 @@ impl App {
         glyphs: &mut Vec<GlyphInstance>,
         color_glyphs: &mut Vec<GlyphInstance>,
     ) {
-        let mut root = div().w(vw).h(vh);
-        let mut has_flash = false;
+        let mut flashes = Vec::new();
 
         for (pane_id, tile_rect, _) in tiles {
             let intensity = self.core.anim_mgr.bell_flash(*pane_id);
             if intensity <= 0.0 {
                 continue;
             }
-            let alpha = 0.15 * intensity;
             let Some(visual) = self.pane_visual_state(*pane_id, *tile_rect, zoom, vw, vh) else {
                 continue;
             };
-            let tr = visual.tr;
-            has_flash = true;
-            root = root.child(
-                div()
-                    .in_layer(Layer::Overlay)
-                    .absolute()
-                    .left(tr.x)
-                    .top(tr.y)
-                    .w(tr.w)
-                    .h(tr.h)
-                    .bg([1.0, 0.9, 0.5, alpha]),
-            );
+            flashes.push(super::ui::BellFlashRect {
+                rect: visual.tr,
+                intensity,
+            });
         }
 
-        if !has_flash {
+        if flashes.is_empty() {
             return;
         }
 
@@ -2010,7 +1959,7 @@ impl App {
             ch,
             baseline,
         );
-        paint_ui_tree(&root, &cx, &mut scene);
+        super::ui::paint_bell_flash(&flashes, &cx, &mut scene);
     }
 
     fn build_ime_preedit(

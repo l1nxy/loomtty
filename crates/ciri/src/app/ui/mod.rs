@@ -1,3 +1,4 @@
+mod bell_flash;
 pub(crate) mod connection_status;
 mod context_menu;
 mod hints_bar;
@@ -5,12 +6,14 @@ pub(super) mod info_box;
 mod overview;
 mod palette;
 mod paste_dialog;
+mod search_bar;
 mod tab_bar;
 mod text_layout;
 pub(crate) mod tokens;
 mod top_bar;
 pub(crate) mod types;
 
+pub(crate) use bell_flash::{BellFlashRect, paint_bell_flash};
 pub(crate) use connection_status::ConnectionStatusComponent;
 pub(crate) use context_menu::ContextMenuComponent;
 pub(crate) use hints_bar::HintsBarComponent;
@@ -18,6 +21,7 @@ pub(crate) use info_box::InfoBoxComponent;
 pub(crate) use overview::OverviewComponent;
 pub(crate) use palette::PaletteComponent;
 pub(crate) use paste_dialog::PasteDialogComponent;
+pub(crate) use search_bar::paint_search_bar;
 pub(crate) use tab_bar::TabBarComponent;
 pub(crate) use top_bar::TopBarComponent;
 pub(crate) use types::*;

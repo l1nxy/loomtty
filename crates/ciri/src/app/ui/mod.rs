@@ -20,7 +20,6 @@ pub(crate) mod types;
 #[cfg(test)]
 pub(crate) use frame::chrome_rects;
 use frame::UiFrame;
-pub(crate) use transient::TransientOverlayFrame;
 pub(crate) use types::*;
 
 use ciri_render::glyph_cache::GlyphInstance;

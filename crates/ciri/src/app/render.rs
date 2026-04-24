@@ -5,16 +5,13 @@ use ciri_protocol::message::*;
 use ciri_render::FrameScene;
 use ciri_render::glyph_cache::{GlyphInstance, ScissoredRange};
 use ciri_render::rect::Rect;
-use ciri_render::sdf_rect::SdfRect;
 use ciri_render::terminal;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::Instant;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthChar;
 
 use super::App;
-use super::ui::{UiContext, UiScene, ui_context_from_metrics};
-
 #[derive(Clone, Copy)]
 struct TilePaintConfig {
     border_w: f32,
@@ -784,7 +781,7 @@ impl App {
         hasher.finish()
     }
 
-    fn preedit_cursor_display_cols(text: &str, cursor_byte: usize) -> usize {
+    pub(in crate::app) fn preedit_cursor_display_cols(text: &str, cursor_byte: usize) -> usize {
         let cursor_byte = cursor_byte.min(text.len());
         text.char_indices()
             .take_while(|(idx, _)| *idx < cursor_byte)
@@ -1815,108 +1812,13 @@ impl App {
     }
 
     #[cfg(test)]
-    fn build_search_bar(
-        &mut self,
-        tiles: &[(u64, GeoRect, bool)],
-        vw: f32,
-        vh: f32,
-        sdf_rects: &mut Vec<SdfRect>,
-        glyphs: &mut Vec<GlyphInstance>,
-        color_glyphs: &mut Vec<GlyphInstance>,
-    ) {
-        let (cw, ch) = self.ui_cell_metrics();
-        let Some(component) = self.search_bar_component(tiles) else {
-            return;
-        };
-        self.paint_transient_ui_with_metrics(
-            vw,
-            vh,
-            cw,
-            ch,
-            sdf_rects,
-            glyphs,
-            color_glyphs,
-            |cx, scene| {
-                component.paint(cx, scene);
-            },
-        );
-    }
-
-    fn search_bar_component(
-        &self,
-        tiles: &[(u64, GeoRect, bool)],
-    ) -> Option<super::ui::search_bar::SearchBarComponent> {
-        let Some(search) = &self.core.search_state else {
-            return None;
-        };
-
-        // Find the tile rect for the search pane
-        let Some((_, pane_rect, _)) = tiles.iter().find(|(pid, _, _)| *pid == search.pane_id)
-        else {
-            return None;
-        };
-
-        Some(super::ui::search_bar::SearchBarComponent {
-            query: search.query.clone(),
-            matches_len: search.matches.len(),
-            current_match_idx: search.current_match_idx,
-            pane_rect: *pane_rect,
-        })
-    }
-
-    fn ime_input_anchor(
-        &self,
-        tiles: &[(u64, GeoRect, bool)],
-        cell_w: f32,
-        cell_h: f32,
-    ) -> Option<(f32, f32)> {
-        if let Some(palette) = &self.core.command_palette
-            && let Some(layout) = self.command_palette_layout()
-        {
-            let prefix = if palette.remote_input_mode {
-                "SSH> "
-            } else {
-                "> "
-            };
-            let cols =
-                UnicodeWidthStr::width(prefix) + UnicodeWidthStr::width(palette.query.as_str());
-            return Some((layout.text_x + cols as f32 * cell_w, layout.text_y));
-        }
-
-        if let Some(search) = &self.core.search_state
-            && let Some((_, pane_rect, _)) = tiles.iter().find(|(pid, _, _)| *pid == search.pane_id)
-        {
-            let border_w = self.core.config.appearance.border_width;
-            let padding = self.core.config.appearance.padding;
-            let bar_height = cell_h + 4.0;
-            let bar_y = pane_rect.y + pane_rect.h - border_w - bar_height;
-            let bar_x = pane_rect.x + border_w;
-            let prefix = " Search: ";
-            let cols =
-                UnicodeWidthStr::width(prefix) + UnicodeWidthStr::width(search.query.as_str());
-            return Some((bar_x + padding + cols as f32 * cell_w, bar_y + 2.0));
-        }
-
-        let active_pid = self.core.workspaces.active().active_pane_id()?;
-        let (_, tile_rect, _) = tiles.iter().find(|(id, _, _)| *id == active_pid)?;
-        let view = self.cached_views.get(&active_pid)?;
-        let cursor = view.cursor_rects.first()?;
-        let padding = self.core.config.appearance.padding;
-        let border_w = self.core.config.appearance.border_width;
-        Some((
-            tile_rect.x + border_w + padding + cursor.x,
-            tile_rect.y + border_w + padding + cursor.y,
-        ))
-    }
-
-    #[cfg(test)]
     pub fn build_bell_flash(
         &mut self,
         tiles: &[(u64, GeoRect, bool)],
         zoom: f32,
         vw: f32,
         vh: f32,
-        sdf_rects: &mut Vec<SdfRect>,
+        sdf_rects: &mut Vec<ciri_render::sdf_rect::SdfRect>,
         glyphs: &mut Vec<GlyphInstance>,
         color_glyphs: &mut Vec<GlyphInstance>,
     ) {
@@ -1938,7 +1840,7 @@ impl App {
         );
     }
 
-    fn bell_flash_component(
+    pub(in crate::app) fn bell_flash_component(
         &self,
         tiles: &[(u64, GeoRect, bool)],
         zoom: f32,
@@ -1962,127 +1864,6 @@ impl App {
         }
 
         (!flashes.is_empty()).then_some(super::ui::bell_flash::BellFlashComponent { flashes })
-    }
-
-    #[cfg(test)]
-    fn build_ime_preedit(
-        &mut self,
-        tiles: &[(u64, GeoRect, bool)],
-        vw: f32,
-        vh: f32,
-        sdf_rects: &mut Vec<SdfRect>,
-        glyphs: &mut Vec<GlyphInstance>,
-        color_glyphs: &mut Vec<GlyphInstance>,
-    ) {
-        let (cw, ch) = self.ui_cell_metrics();
-        let Some(component) = self.ime_preedit_component(tiles, cw, ch) else {
-            return;
-        };
-        self.paint_transient_ui_with_metrics(
-            vw,
-            vh,
-            cw,
-            ch,
-            sdf_rects,
-            glyphs,
-            color_glyphs,
-            |cx, scene| {
-                component.paint(cx, scene);
-            },
-        );
-    }
-
-    fn ime_preedit_component(
-        &self,
-        tiles: &[(u64, GeoRect, bool)],
-        cw: f32,
-        ch: f32,
-    ) -> Option<super::ui::ime_preedit::ImePreeditComponent> {
-        if !self.core.ime.preedit_active || self.core.ime.preedit_text.is_empty() {
-            return None;
-        }
-        let Some((base_x, base_y)) = self.ime_input_anchor(tiles, cw, ch) else {
-            return None;
-        };
-        let preedit_text = self.core.ime.preedit_text.clone();
-        let cursor_cols = self
-            .core
-            .ime
-            .preedit_cursor
-            .map(|cursor_pos| Self::preedit_cursor_display_cols(&preedit_text, cursor_pos));
-
-        Some(super::ui::ime_preedit::ImePreeditComponent {
-            text: preedit_text,
-            base_x,
-            base_y,
-            cursor_cols,
-        })
-    }
-
-    fn build_transient_ui(
-        &mut self,
-        tiles: &[(u64, GeoRect, bool)],
-        zoom: f32,
-        vw: f32,
-        vh: f32,
-        sdf_rects: &mut Vec<SdfRect>,
-        glyphs: &mut Vec<GlyphInstance>,
-        color_glyphs: &mut Vec<GlyphInstance>,
-    ) {
-        let (cw, ch) = self.ui_cell_metrics();
-        let frame = super::ui::TransientOverlayFrame::new(
-            self.search_bar_component(tiles),
-            self.bell_flash_component(tiles, zoom, vw, vh),
-            self.ime_preedit_component(tiles, cw, ch),
-        );
-        if frame.is_empty() {
-            return;
-        }
-
-        self.paint_transient_ui_with_metrics(
-            vw,
-            vh,
-            cw,
-            ch,
-            sdf_rects,
-            glyphs,
-            color_glyphs,
-            |cx, scene| {
-                frame.paint(cx, scene);
-            },
-        );
-    }
-
-    fn paint_transient_ui_with_metrics(
-        &mut self,
-        vw: f32,
-        vh: f32,
-        cell_w: f32,
-        cell_h: f32,
-        sdf_rects: &mut Vec<SdfRect>,
-        glyphs: &mut Vec<GlyphInstance>,
-        color_glyphs: &mut Vec<GlyphInstance>,
-        paint: impl FnOnce(&UiContext<'_>, &mut UiScene<'_>),
-    ) {
-        let baseline = cell_h * self.core.config.statusbar.text_baseline;
-        let atlas = self.glyph_cache.as_mut().unwrap();
-        let mut scene = UiScene {
-            atlas,
-            glyphs,
-            color_glyphs,
-            sdf_rects,
-        };
-        let cx = ui_context_from_metrics(
-            &self.core.config,
-            &self.cached_resolved_theme,
-            self.ui_shaper.as_ref(),
-            vw,
-            vh,
-            cell_w,
-            cell_h,
-            baseline,
-        );
-        paint(&cx, &mut scene);
     }
 
     fn rgb_to_rgba(width: u32, height: u32, data: &[u8]) -> Option<Vec<u8>> {

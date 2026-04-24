@@ -1,5 +1,5 @@
 use super::super::types::{UiContext, UiRect, UiScene};
-use crate::app::ciri_ui_bridge::paint_ui_tree;
+use crate::app::ciri_ui_adapter::paint_ui_tree;
 use ciri_ui::{Div, Layer, Styled, div, text};
 
 pub(super) struct SessionLabel<'a> {

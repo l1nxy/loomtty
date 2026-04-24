@@ -1814,6 +1814,7 @@ impl App {
         false
     }
 
+    #[cfg(test)]
     fn build_search_bar(
         &mut self,
         tiles: &[(u64, GeoRect, bool)],
@@ -1823,29 +1824,12 @@ impl App {
         glyphs: &mut Vec<GlyphInstance>,
         color_glyphs: &mut Vec<GlyphInstance>,
     ) {
-        let Some(search) = &self.core.search_state else {
-            return;
-        };
         let (cw, ch) = {
             let atlas = self.glyph_cache.as_ref().unwrap();
             (atlas.cell_width, atlas.cell_height)
         };
-
-        // Find the tile rect for the search pane
-        let Some((_, pane_rect, _)) = tiles.iter().find(|(pid, _, _)| *pid == search.pane_id)
-        else {
+        let Some(component) = self.search_bar_component(tiles) else {
             return;
-        };
-
-        let query = search.query.clone();
-        let matches_len = search.matches.len();
-        let current_match_idx = search.current_match_idx;
-        let pane_rect = *pane_rect;
-        let component = super::ui::SearchBarComponent {
-            query,
-            matches_len,
-            current_match_idx,
-            pane_rect,
         };
         self.paint_transient_ui_with_metrics(
             vw,
@@ -1859,6 +1843,28 @@ impl App {
                 component.paint(cx, scene);
             },
         );
+    }
+
+    fn search_bar_component(
+        &self,
+        tiles: &[(u64, GeoRect, bool)],
+    ) -> Option<super::ui::SearchBarComponent> {
+        let Some(search) = &self.core.search_state else {
+            return None;
+        };
+
+        // Find the tile rect for the search pane
+        let Some((_, pane_rect, _)) = tiles.iter().find(|(pid, _, _)| *pid == search.pane_id)
+        else {
+            return None;
+        };
+
+        Some(super::ui::SearchBarComponent {
+            query: search.query.clone(),
+            matches_len: search.matches.len(),
+            current_match_idx: search.current_match_idx,
+            pane_rect: *pane_rect,
+        })
     }
 
     fn ime_input_anchor(
@@ -1906,6 +1912,7 @@ impl App {
         ))
     }
 
+    #[cfg(test)]
     pub fn build_bell_flash(
         &mut self,
         tiles: &[(u64, GeoRect, bool)],
@@ -1916,6 +1923,34 @@ impl App {
         glyphs: &mut Vec<GlyphInstance>,
         color_glyphs: &mut Vec<GlyphInstance>,
     ) {
+        let (cw, ch) = {
+            let atlas = self.glyph_cache.as_ref().unwrap();
+            (atlas.cell_width, atlas.cell_height)
+        };
+        let Some(component) = self.bell_flash_component(tiles, zoom, vw, vh) else {
+            return;
+        };
+        self.paint_transient_ui_with_metrics(
+            vw,
+            vh,
+            cw,
+            ch,
+            sdf_rects,
+            glyphs,
+            color_glyphs,
+            |cx, scene| {
+                component.paint(cx, scene);
+            },
+        );
+    }
+
+    fn bell_flash_component(
+        &self,
+        tiles: &[(u64, GeoRect, bool)],
+        zoom: f32,
+        vw: f32,
+        vh: f32,
+    ) -> Option<super::ui::BellFlashComponent> {
         let mut flashes = Vec::new();
 
         for (pane_id, tile_rect, _) in tiles {
@@ -1932,15 +1967,26 @@ impl App {
             });
         }
 
-        if flashes.is_empty() {
-            return;
-        }
+        (!flashes.is_empty()).then_some(super::ui::BellFlashComponent { flashes })
+    }
 
+    #[cfg(test)]
+    fn build_ime_preedit(
+        &mut self,
+        tiles: &[(u64, GeoRect, bool)],
+        vw: f32,
+        vh: f32,
+        sdf_rects: &mut Vec<SdfRect>,
+        glyphs: &mut Vec<GlyphInstance>,
+        color_glyphs: &mut Vec<GlyphInstance>,
+    ) {
         let (cw, ch) = {
             let atlas = self.glyph_cache.as_ref().unwrap();
             (atlas.cell_width, atlas.cell_height)
         };
-        let component = super::ui::BellFlashComponent { flashes };
+        let Some(component) = self.ime_preedit_component(tiles, cw, ch) else {
+            return;
+        };
         self.paint_transient_ui_with_metrics(
             vw,
             vh,
@@ -1955,24 +2001,17 @@ impl App {
         );
     }
 
-    fn build_ime_preedit(
-        &mut self,
+    fn ime_preedit_component(
+        &self,
         tiles: &[(u64, GeoRect, bool)],
-        vw: f32,
-        vh: f32,
-        sdf_rects: &mut Vec<SdfRect>,
-        glyphs: &mut Vec<GlyphInstance>,
-        color_glyphs: &mut Vec<GlyphInstance>,
-    ) {
+        cw: f32,
+        ch: f32,
+    ) -> Option<super::ui::ImePreeditComponent> {
         if !self.core.ime.preedit_active || self.core.ime.preedit_text.is_empty() {
-            return;
+            return None;
         }
-        let (cw, ch) = {
-            let atlas = self.glyph_cache.as_ref().unwrap();
-            (atlas.cell_width, atlas.cell_height)
-        };
         let Some((base_x, base_y)) = self.ime_input_anchor(tiles, cw, ch) else {
-            return;
+            return None;
         };
         let preedit_text = self.core.ime.preedit_text.clone();
         let cursor_cols = self
@@ -1980,12 +2019,38 @@ impl App {
             .ime
             .preedit_cursor
             .map(|cursor_pos| Self::preedit_cursor_display_cols(&preedit_text, cursor_pos));
-        let component = super::ui::ImePreeditComponent {
+
+        Some(super::ui::ImePreeditComponent {
             text: preedit_text,
             base_x,
             base_y,
             cursor_cols,
+        })
+    }
+
+    fn build_transient_ui(
+        &mut self,
+        tiles: &[(u64, GeoRect, bool)],
+        zoom: f32,
+        vw: f32,
+        vh: f32,
+        sdf_rects: &mut Vec<SdfRect>,
+        glyphs: &mut Vec<GlyphInstance>,
+        color_glyphs: &mut Vec<GlyphInstance>,
+    ) {
+        let (cw, ch) = {
+            let atlas = self.glyph_cache.as_ref().unwrap();
+            (atlas.cell_width, atlas.cell_height)
         };
+        let frame = super::ui::TransientOverlayFrame {
+            search_bar: self.search_bar_component(tiles),
+            bell_flash: self.bell_flash_component(tiles, zoom, vw, vh),
+            ime_preedit: self.ime_preedit_component(tiles, cw, ch),
+        };
+        if frame.is_empty() {
+            return;
+        }
+
         self.paint_transient_ui_with_metrics(
             vw,
             vh,
@@ -1995,7 +2060,7 @@ impl App {
             glyphs,
             color_glyphs,
             |cx, scene| {
-                component.paint(cx, scene);
+                frame.paint(cx, scene);
             },
         );
     }
@@ -2574,25 +2639,9 @@ impl App {
         let overlay_bg_start = bg_rects.len();
         self.build_ui(vw_f, vh_f, &mut glyphs, &mut color_glyphs);
         let mut ui_sdf_rects = self.cached_ui_scene.sdf_rects.clone();
-        self.build_search_bar(
-            &offset_tiles,
-            vw_f,
-            vh_f,
-            &mut ui_sdf_rects,
-            &mut glyphs,
-            &mut color_glyphs,
-        );
-        self.build_bell_flash(
+        self.build_transient_ui(
             &offset_tiles,
             zoom,
-            vw_f,
-            vh_f,
-            &mut ui_sdf_rects,
-            &mut glyphs,
-            &mut color_glyphs,
-        );
-        self.build_ime_preedit(
-            &offset_tiles,
             vw_f,
             vh_f,
             &mut ui_sdf_rects,

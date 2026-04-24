@@ -1,10 +1,10 @@
-//! Glue between `ciri-ui`'s paint output and the client's existing
-//! renderer state.
+//! Renderer adapter between `ciri-ui` and the client's existing render
+//! primitives.
 //!
 //! `ciri-ui` runs Taffy layout, walks its Element tree, and produces a
 //! `ciri_ui::Scene` of SdfRects + alpha/color glyph instances — all
-//! keyed by semantic `Layer`. This module is what lets the client's
-//! `App::render` actually consume that output:
+//! keyed by semantic `Layer`. This module is the stable boundary that lets
+//! the client's `App::render` consume that output:
 //!
 //! - [`HostTextShaper`] implements `ciri_ui::TextShaper` by delegating
 //!   to the existing `emit_status_text` pipeline (UiTextShaper +
@@ -26,7 +26,7 @@ use unicode_width::UnicodeWidthChar;
 use crate::app::status_bar::{TextEmitParams, emit_status_text};
 use crate::app::ui::types::{UiContext, UiScene};
 
-/// Bridge implementing [`ciri_ui::TextShaper`] on top of the client's
+/// Adapter implementing [`ciri_ui::TextShaper`] on top of the client's
 /// existing `UiTextShaper` + `GlyphCache` pair.
 ///
 /// Borrowed for the duration of a single `paint_tree` call — the caller

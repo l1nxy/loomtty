@@ -1,5 +1,5 @@
 pub(crate) mod action;
-pub(crate) mod ciri_ui_bridge;
+pub(crate) mod ciri_ui_adapter;
 pub(crate) mod context_menu;
 pub(crate) mod event;
 pub(crate) mod ime;
@@ -1130,6 +1130,7 @@ impl App {
     /// `build_ui` builds the chrome tree — i.e. the side bar starts
     /// below any top edge and ends above any bottom edge. Returns
     /// `None` when tabs are integrated into the status bar.
+    #[cfg(test)]
     pub fn side_tab_bar_rect(
         &self,
         window_width: f32,

@@ -41,6 +41,285 @@ struct ChromeRects {
     side_tab_bar: Option<UiRect>,
 }
 
+struct UiFrame {
+    chrome: ChromeRects,
+    top_bar: TopBarComponent,
+    hints_bar: HintsBarComponent,
+    side_tab_bar: Option<TabBarComponent>,
+    overview: OverviewComponent,
+    overview_bar: Option<overview::OverviewActionBarData>,
+    overview_hover: Option<super::OverviewActionHover>,
+    infobox: Option<InfoBoxComponent>,
+    palette: Option<PaletteComponent>,
+    connection_status: Option<ConnectionStatusComponent>,
+    paste_dialog: Option<PasteDialogComponent>,
+    context_menu: Option<ContextMenuComponent>,
+}
+
+enum UiFrameHover {
+    ContextMenu {
+        hovered: Option<usize>,
+    },
+    PasteDialog {
+        button: Option<super::PasteButton>,
+    },
+    Palette {
+        hovered: Option<usize>,
+        pointer: bool,
+    },
+    TopBar {
+        region: Option<TopBarHoverRegion>,
+        tab: Option<u64>,
+    },
+    SideTab {
+        tab: Option<u64>,
+    },
+    Overview {
+        target: Option<(usize, u64)>,
+        action_hover: Option<super::OverviewActionHover>,
+    },
+    None,
+}
+
+impl UiFrame {
+    fn capture(
+        app: &App,
+        cx: &UiContext<'_>,
+        top_bar_layout: super::top_bar::TopBarLayout,
+        top_bar_h: f32,
+        hints_bar_h: f32,
+    ) -> Self {
+        let top_bar = TopBarComponent::capture(app, top_bar_layout, cx);
+        let hints_bar = HintsBarComponent::capture(app, cx);
+        let side_tab_bar = match cx.config.tabbar.position {
+            TabBarPosition::Left | TabBarPosition::Right => Some(TabBarComponent::capture(app, cx)),
+            TabBarPosition::Integrated => None,
+        };
+        let overview_bar = if app.core.overview.active && app.core.overview.hovered_pane.is_some() {
+            overview::overview_action_bar_data(app, app.core.overview.hovered_pane)
+        } else {
+            None
+        };
+
+        Self {
+            chrome: chrome_rects(app, cx.viewport_w, cx.viewport_h, top_bar_h, hints_bar_h),
+            top_bar,
+            hints_bar,
+            side_tab_bar,
+            overview: OverviewComponent::capture(app, cx),
+            overview_bar,
+            overview_hover: app.core.overview_action_hover,
+            infobox: InfoBoxComponent::capture(app, cx),
+            palette: PaletteComponent::capture(app, cx),
+            connection_status: ConnectionStatusComponent::capture(app, cx),
+            paste_dialog: PasteDialogComponent::capture(app, cx),
+            context_menu: ContextMenuComponent::capture(app, cx),
+        }
+    }
+
+    fn capture_current(app: &App, cx: &UiContext<'_>) -> Self {
+        let top_bar_layout = app.top_bar_layout(
+            cx.viewport_w,
+            cx.viewport_h,
+            cx.cell_w,
+            cx.cell_h,
+            cx.ui_shaper,
+        );
+        let top_bar_h = top_bar_layout.bar_height;
+        Self::capture(app, cx, top_bar_layout, top_bar_h, app.hints_bar_height())
+    }
+
+    fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        self.top_bar.paint(self.chrome.top_bar, cx, scene);
+        self.hints_bar.paint(self.chrome.hints_bar, cx, scene);
+        if let (Some(tab_bar), Some(rect)) = (&self.side_tab_bar, self.chrome.side_tab_bar) {
+            tab_bar.paint(rect, cx, scene);
+        }
+
+        // Modal / overlay layers position themselves absolutely and are
+        // painted after chrome so they sit on top.
+        if let Some(d) = &self.overview_bar {
+            overview::paint_overview_action_bar(d, self.overview_hover, cx, scene);
+        }
+        if let Some(component) = &self.infobox {
+            component.paint(cx, scene);
+        }
+        if let Some(component) = &self.palette {
+            component.paint(cx, scene);
+        }
+        if let Some(component) = &self.connection_status {
+            component.paint(cx, scene);
+        }
+        if let Some(component) = &self.paste_dialog {
+            component.paint(cx, scene);
+        }
+        if let Some(component) = &self.context_menu {
+            component.paint(cx, scene);
+        }
+    }
+
+    fn click(&self, app: &App, mx: f32, my: f32, cx: &UiContext<'_>) -> (Option<UiAction>, bool) {
+        // Components are checked in reverse paint order: topmost first.
+        if let Some(c) = &self.context_menu {
+            return (c.click(mx, my, cx), true);
+        }
+        if let Some(c) = &self.paste_dialog {
+            return (c.click(mx, my, cx), true);
+        }
+        if let Some(c) = &self.palette {
+            return (c.click(mx, my, cx), true);
+        }
+
+        if self.chrome.top_bar.contains(mx, my) {
+            return (self.top_bar.click(mx, my, cx), true);
+        }
+
+        if let (Some(tab_bar), Some(rect)) = (&self.side_tab_bar, self.chrome.side_tab_bar)
+            && rect.contains(mx, my)
+        {
+            return (tab_bar.hit(rect, mx, my, cx), true);
+        }
+
+        if app.core.overview.active {
+            let action = match self.overview.hit_test(app, mx, my) {
+                UiOverviewHit::Pane(ws_idx, pane_id) => {
+                    Some(UiAction::FocusOverviewPane(ws_idx, pane_id))
+                }
+                UiOverviewHit::FocusPane(ws_idx, pane_id) => {
+                    Some(UiAction::FocusOverviewPane(ws_idx, pane_id))
+                }
+                UiOverviewHit::ClosePane(pane_id) => Some(UiAction::CloseOverviewPane(pane_id)),
+                UiOverviewHit::Background => Some(UiAction::StartOverviewDrag),
+                UiOverviewHit::None => None,
+            };
+            return (action, true);
+        }
+
+        (None, false)
+    }
+
+    fn middle_click(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> (Option<UiAction>, bool) {
+        if self.chrome.top_bar.contains(mx, my) {
+            let action = match self.top_bar.hit_test(mx, my, cx) {
+                Some(UiTopBarHit::PaneTab(id)) => Some(UiAction::ClosePaneTab(id)),
+                _ => None,
+            };
+            return (action, true);
+        }
+
+        if let (Some(tab_bar), Some(rect)) = (&self.side_tab_bar, self.chrome.side_tab_bar)
+            && rect.contains(mx, my)
+        {
+            let action = match tab_bar.hit(rect, mx, my, cx) {
+                Some(UiAction::FocusPaneTab(id)) => Some(UiAction::ClosePaneTab(id)),
+                _ => None,
+            };
+            return (action, true);
+        }
+
+        (None, false)
+    }
+
+    fn hover(&self, app: &App, mx: f32, my: f32, cx: &UiContext<'_>) -> UiFrameHover {
+        if let Some(component) = &self.context_menu {
+            let hovered = match component.hit_test(mx, my, cx) {
+                UiContextMenuHit::Entry(idx) => Some(idx),
+                UiContextMenuHit::Menu | UiContextMenuHit::None => None,
+            };
+            return UiFrameHover::ContextMenu { hovered };
+        }
+
+        if let Some(component) = &self.paste_dialog {
+            let button = match component.hit_test(mx, my, cx) {
+                UiPasteDialogHit::Paste => Some(super::PasteButton::Paste),
+                UiPasteDialogHit::Cancel => Some(super::PasteButton::Cancel),
+                UiPasteDialogHit::Dialog | UiPasteDialogHit::None => None,
+            };
+            return UiFrameHover::PasteDialog { button };
+        }
+
+        if let Some(component) = &self.palette {
+            let (hovered, pointer) = match component.hit_test(mx, my, cx) {
+                UiPaletteHit::Entry(entry_idx) => {
+                    let hovered = app.core.command_palette.as_ref().and_then(|palette| {
+                        palette.filtered.iter().position(|&idx| idx == entry_idx)
+                    });
+                    (hovered, true)
+                }
+                UiPaletteHit::Panel => (None, false),
+                UiPaletteHit::None => (None, false),
+            };
+            return UiFrameHover::Palette { hovered, pointer };
+        }
+
+        if self.chrome.top_bar.contains(mx, my) {
+            let (region, tab) = match self.top_bar.hit_test(mx, my, cx) {
+                Some(UiTopBarHit::Session) => (Some(TopBarHoverRegion::Session), None),
+                Some(UiTopBarHit::Workspace) => (Some(TopBarHoverRegion::Workspace), None),
+                Some(UiTopBarHit::Mode) => (Some(TopBarHoverRegion::Mode), None),
+                Some(UiTopBarHit::PaneTab(pane_id)) => (None, Some(pane_id)),
+                Some(UiTopBarHit::Background) | None => (None, None),
+            };
+            return UiFrameHover::TopBar { region, tab };
+        }
+
+        if let (Some(tab_bar), Some(rect)) = (&self.side_tab_bar, self.chrome.side_tab_bar)
+            && rect.contains(mx, my)
+        {
+            let tab = match tab_bar.hit(rect, mx, my, cx) {
+                Some(UiAction::FocusPaneTab(id)) => Some(id),
+                _ => None,
+            };
+            return UiFrameHover::SideTab { tab };
+        }
+
+        if app.core.overview.active {
+            let hit = self.overview.hit_test(app, mx, my);
+            let action_hover = match &hit {
+                UiOverviewHit::ClosePane(_) => Some(super::OverviewActionHover::Close),
+                UiOverviewHit::FocusPane(_, _) => Some(super::OverviewActionHover::Focus),
+                _ => None,
+            };
+            let target = match hit {
+                UiOverviewHit::Pane(ws_idx, pane_id)
+                | UiOverviewHit::FocusPane(ws_idx, pane_id) => Some((ws_idx, pane_id)),
+                UiOverviewHit::ClosePane(_) => app.core.overview.hovered_pane,
+                UiOverviewHit::Background | UiOverviewHit::None => None,
+            };
+            return UiFrameHover::Overview {
+                target,
+                action_hover,
+            };
+        }
+
+        UiFrameHover::None
+    }
+}
+
+pub(crate) struct TransientOverlayFrame {
+    pub(crate) search_bar: Option<SearchBarComponent>,
+    pub(crate) bell_flash: Option<BellFlashComponent>,
+    pub(crate) ime_preedit: Option<ImePreeditComponent>,
+}
+
+impl TransientOverlayFrame {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.search_bar.is_none() && self.bell_flash.is_none() && self.ime_preedit.is_none()
+    }
+
+    pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        if let Some(component) = &self.search_bar {
+            component.paint(cx, scene);
+        }
+        if let Some(component) = &self.bell_flash {
+            component.paint(cx, scene);
+        }
+        if let Some(component) = &self.ime_preedit {
+            component.paint(cx, scene);
+        }
+    }
+}
+
 fn chrome_rects(app: &App, vw: f32, vh: f32, top_bar_h: f32, hints_bar_h: f32) -> ChromeRects {
     let top_bar = match app.core.config.statusbar.position {
         StatusBarPosition::Top => UiRect::new(0.0, 0.0, vw, top_bar_h),
@@ -131,39 +410,9 @@ impl App {
             ui_shaper: self.ui_shaper.as_ref(),
         };
 
-        let top_bar = TopBarComponent::capture(self, top_bar_layout, &cx);
-        let hints_bar = HintsBarComponent::capture(self, &cx);
-        let side_tab_bar = match cx.config.tabbar.position {
-            TabBarPosition::Left | TabBarPosition::Right => {
-                Some(TabBarComponent::capture(self, &cx))
-            }
-            TabBarPosition::Integrated => None,
-        };
-        let palette = PaletteComponent::capture(self, &cx);
-        let context_menu = ContextMenuComponent::capture(self, &cx);
-        let paste_dialog = PasteDialogComponent::capture(self, &cx);
-        let infobox = InfoBoxComponent::capture(self, &cx);
-        let connection_status = ConnectionStatusComponent::capture(self, &cx);
-        let overview_bar = if self.core.overview.active && self.core.overview.hovered_pane.is_some()
-        {
-            overview::overview_action_bar_data(self, self.core.overview.hovered_pane)
-        } else {
-            None
-        };
-        let overview_hover = self.core.overview_action_hover;
-
-        // ── Chrome rects ─────────────────────────────────────────────
-        //
-        // Production chrome is now composed directly from captured
-        // components and explicit viewport rects. This keeps paint order
-        // and hit-test geometry in the same coordinate model as ciri-ui.
-        let chrome = chrome_rects(
-            self,
-            vw,
-            vh,
-            top_bar_layout.bar_height,
-            self.hints_bar_height(),
-        );
+        let top_bar_h = top_bar_layout.bar_height;
+        let hints_bar_h = self.hints_bar_height();
+        let frame = UiFrame::capture(self, &cx, top_bar_layout, top_bar_h, hints_bar_h);
         {
             let cached_ui = &mut self.cached_ui_scene;
             cached_ui.key = Some(cache_key);
@@ -179,32 +428,7 @@ impl App {
                 sdf_rects: &mut cached_ui.sdf_rects,
             };
 
-            top_bar.paint(chrome.top_bar, &cx, &mut scene);
-            hints_bar.paint(chrome.hints_bar, &cx, &mut scene);
-            if let (Some(tab_bar), Some(rect)) = (side_tab_bar, chrome.side_tab_bar) {
-                tab_bar.paint(rect, &cx, &mut scene);
-            }
-
-            // Modal / overlay layers position themselves absolutely and are
-            // painted after chrome so they sit on top.
-            if let Some(d) = &overview_bar {
-                overview::paint_overview_action_bar(d, overview_hover, &cx, &mut scene);
-            }
-            if let Some(component) = infobox {
-                component.paint(&cx, &mut scene);
-            }
-            if let Some(component) = &palette {
-                component.paint(&cx, &mut scene);
-            }
-            if let Some(component) = &connection_status {
-                component.paint(&cx, &mut scene);
-            }
-            if let Some(component) = &paste_dialog {
-                component.paint(&cx, &mut scene);
-            }
-            if let Some(component) = &context_menu {
-                component.paint(&cx, &mut scene);
-            }
+            frame.paint(&cx, &mut scene);
         }
 
         glyphs.extend_from_slice(&self.cached_ui_scene.glyphs);
@@ -241,180 +465,16 @@ impl App {
         }
     }
 
-    pub(crate) fn ui_top_bar_hover(
-        &self,
-        mx: f32,
-        my: f32,
-    ) -> (Option<TopBarHoverRegion>, Option<u64>) {
-        let cx = self.ui_context();
-        let component = TopBarComponent::capture(
-            self,
-            self.top_bar_layout(
-                cx.viewport_w,
-                cx.viewport_h,
-                cx.cell_w,
-                cx.cell_h,
-                cx.ui_shaper,
-            ),
-            &cx,
-        );
-        match component.hit_test(mx, my, &cx) {
-            Some(UiTopBarHit::Session) => (Some(TopBarHoverRegion::Session), None),
-            Some(UiTopBarHit::Workspace) => (Some(TopBarHoverRegion::Workspace), None),
-            Some(UiTopBarHit::Mode) => (Some(TopBarHoverRegion::Mode), None),
-            Some(UiTopBarHit::PaneTab(pane_id)) => (None, Some(pane_id)),
-            Some(UiTopBarHit::Background) | None => (None, None),
-        }
-    }
-
-    pub(crate) fn ui_palette_hover(&mut self, mx: f32, my: f32) -> (Option<usize>, bool) {
-        let cx = self.ui_context();
-        let Some(component) = PaletteComponent::capture(self, &cx) else {
-            return (None, false);
-        };
-        match component.hit_test(mx, my, &cx) {
-            UiPaletteHit::Entry(entry_idx) => {
-                let hovered =
-                    self.core.command_palette.as_ref().and_then(|palette| {
-                        palette.filtered.iter().position(|&idx| idx == entry_idx)
-                    });
-                (hovered, true)
-            }
-            UiPaletteHit::Panel => (None, false),
-            UiPaletteHit::None => (None, false),
-        }
-    }
-
-    pub(crate) fn ui_context_menu_hover(&self, mx: f32, my: f32) -> Option<usize> {
-        let cx = self.ui_context();
-        let component = ContextMenuComponent::capture(self, &cx)?;
-        match component.hit_test(mx, my, &cx) {
-            UiContextMenuHit::Entry(idx) => Some(idx),
-            UiContextMenuHit::Menu | UiContextMenuHit::None => None,
-        }
-    }
-
-    pub(crate) fn ui_paste_dialog_hover(&self, mx: f32, my: f32) -> Option<super::PasteButton> {
-        let cx = self.ui_context();
-        let component = PasteDialogComponent::capture(self, &cx)?;
-        match component.hit_test(mx, my, &cx) {
-            UiPasteDialogHit::Paste => Some(super::PasteButton::Paste),
-            UiPasteDialogHit::Cancel => Some(super::PasteButton::Cancel),
-            UiPasteDialogHit::Dialog | UiPasteDialogHit::None => None,
-        }
-    }
-
-    pub(crate) fn ui_overview_hover(&mut self, mx: f32, my: f32) -> Option<(usize, u64)> {
-        let cx = self.ui_context();
-        let component = OverviewComponent::capture(self, &cx);
-        let hit = component.hit_test(self, mx, my);
-        self.core.overview_action_hover = match &hit {
-            UiOverviewHit::ClosePane(_) => Some(super::OverviewActionHover::Close),
-            UiOverviewHit::FocusPane(_, _) => Some(super::OverviewActionHover::Focus),
-            _ => None,
-        };
-        match hit {
-            UiOverviewHit::Pane(ws_idx, pane_id) | UiOverviewHit::FocusPane(ws_idx, pane_id) => {
-                Some((ws_idx, pane_id))
-            }
-            UiOverviewHit::ClosePane(_) => self.core.overview.hovered_pane,
-            UiOverviewHit::Background | UiOverviewHit::None => None,
-        }
-    }
-
-    fn ui_overview_action(&self, mx: f32, my: f32) -> Option<UiAction> {
-        let cx = self.ui_context();
-        let component = OverviewComponent::capture(self, &cx);
-        match component.hit_test(self, mx, my) {
-            UiOverviewHit::Pane(ws_idx, pane_id) => {
-                Some(UiAction::FocusOverviewPane(ws_idx, pane_id))
-            }
-            UiOverviewHit::FocusPane(ws_idx, pane_id) => {
-                Some(UiAction::FocusOverviewPane(ws_idx, pane_id))
-            }
-            UiOverviewHit::ClosePane(pane_id) => Some(UiAction::CloseOverviewPane(pane_id)),
-            UiOverviewHit::Background => Some(UiAction::StartOverviewDrag),
-            UiOverviewHit::None => None,
-        }
-    }
-
     pub(crate) fn dispatch_ui_click(&mut self, mx: f32, my: f32) -> bool {
-        let cx = self.ui_context();
-
-        // Components are checked in z-order (highest priority first).
-        // The FIRST component that handles the click wins — no further checks.
-        //
-        // Order MUST match the paint order in `build_ui` (palette →
-        // connection_status → paste_dialog → context_menu, i.e. context
-        // menu is painted last / on top). Reversing that for dispatch
-        // means topmost gets first crack at clicks: ContextMenu →
-        // PasteDialog → Palette. Previously PasteDialog was dispatched
-        // first; if both `pending_paste` and `context_menu.visible` were
-        // somehow true at once (e.g. a paste raced with a context menu
-        // opening), the paste dialog swallowed clicks meant for the
-        // visually topmost context menu.
-
-        // 1. Modal overlays (consume ALL input when active)
-        if let Some(c) = ContextMenuComponent::capture(self, &cx) {
-            if let Some(action) = c.click(mx, my, &cx) {
-                self.apply_ui_action(action);
-            }
-            return true; // modal: always consumed
+        let (action, consumed) = {
+            let cx = self.ui_context();
+            let frame = UiFrame::capture_current(self, &cx);
+            frame.click(self, mx, my, &cx)
+        };
+        if let Some(action) = action {
+            self.apply_ui_action(action);
         }
-        if let Some(c) = PasteDialogComponent::capture(self, &cx) {
-            if let Some(action) = c.click(mx, my, &cx) {
-                self.apply_ui_action(action);
-            }
-            return true; // modal: always consumed
-        }
-        if let Some(c) = PaletteComponent::capture(self, &cx) {
-            if let Some(action) = c.click(mx, my, &cx) {
-                self.apply_ui_action(action);
-            }
-            return true; // modal: always consumed
-        }
-
-        // 2. Top bar
-        if self.hit_test_top_bar(mx, my) {
-            let layout = self.top_bar_layout(
-                cx.viewport_w,
-                cx.viewport_h,
-                cx.cell_w,
-                cx.cell_h,
-                cx.ui_shaper,
-            );
-            let c = TopBarComponent::capture(self, layout, &cx);
-            if let Some(action) = c.click(mx, my, &cx) {
-                self.apply_ui_action(action);
-                return true;
-            }
-            return true; // top bar area consumed
-        }
-
-        // 3. Side tab bar (when tabbar.position != Integrated)
-        if let Some((bx, by, bw, bh)) = self.side_tab_bar_rect(cx.viewport_w, cx.viewport_h)
-            && mx >= bx
-            && mx < bx + bw
-            && my >= by
-            && my < by + bh
-        {
-            let tab_bar = TabBarComponent::capture(self, &cx);
-            let rect = UiRect::new(bx, by, bw, bh);
-            if let Some(action) = tab_bar.hit(rect, mx, my, &cx) {
-                self.apply_ui_action(action);
-            }
-            return true; // side tab area consumed
-        }
-
-        // 4. Overview (special — needs &App for tile hit test)
-        if self.core.overview.active {
-            if let Some(action) = self.ui_overview_action(mx, my) {
-                self.apply_ui_action(action);
-            }
-            return true; // overview consumes all clicks when active
-        }
-
-        false
+        consumed
     }
 
     /// Route a middle-mouse click. Currently the only middle-click handler
@@ -425,38 +485,15 @@ impl App {
     /// the event when the user expects it to pass through to the underlying
     /// tab strip (e.g. clicking through a dismissible tooltip).
     pub(crate) fn dispatch_ui_middle_click(&mut self, mx: f32, my: f32) -> bool {
-        let cx = self.ui_context();
-
-        if self.hit_test_top_bar(mx, my) {
-            let layout = self.top_bar_layout(
-                cx.viewport_w,
-                cx.viewport_h,
-                cx.cell_w,
-                cx.cell_h,
-                cx.ui_shaper,
-            );
-            let c = TopBarComponent::capture(self, layout, &cx);
-            if let Some(UiTopBarHit::PaneTab(id)) = c.hit_test(mx, my, &cx) {
-                self.apply_ui_action(UiAction::ClosePaneTab(id));
-            }
-            return true; // top bar area always consumed to suppress pass-through
+        let (action, consumed) = {
+            let cx = self.ui_context();
+            let frame = UiFrame::capture_current(self, &cx);
+            frame.middle_click(mx, my, &cx)
+        };
+        if let Some(action) = action {
+            self.apply_ui_action(action);
         }
-
-        if let Some((bx, by, bw, bh)) = self.side_tab_bar_rect(cx.viewport_w, cx.viewport_h)
-            && mx >= bx
-            && mx < bx + bw
-            && my >= by
-            && my < by + bh
-        {
-            let tab_bar = TabBarComponent::capture(self, &cx);
-            let rect = UiRect::new(bx, by, bw, bh);
-            if let Some(UiAction::FocusPaneTab(id)) = tab_bar.hit(rect, mx, my, &cx) {
-                self.apply_ui_action(UiAction::ClosePaneTab(id));
-            }
-            return true;
-        }
-
-        false
+        consumed
     }
 
     pub(crate) fn apply_ui_action(&mut self, action: UiAction) {
@@ -574,139 +611,124 @@ impl App {
     }
 
     pub(crate) fn dispatch_ui_hover(&mut self, mx: f32, my: f32) -> UiHoverOutcome {
-        // Hover Z-order must match click Z-order (and paint Z-order in
-        // `build_ui`): ContextMenu → PasteDialog → Palette. Previously
-        // PasteDialog ran before ContextMenu, which meant a paste
-        // opened concurrently with a context menu claimed hover events
-        // meant for the visually topmost menu.
-        if self.core.context_menu.visible {
-            let prev = self.core.context_menu.hovered_index;
-            let next = self.ui_context_menu_hover(mx, my);
-            self.core.context_menu.hovered_index = next;
-            return UiHoverOutcome {
-                handled: true,
-                cursor: if next.is_some() {
-                    CursorIcon::Pointer
-                } else {
-                    CursorIcon::Default
-                },
-                needs_redraw: prev != next,
-            };
-        }
+        let hover = {
+            let cx = self.ui_context();
+            let frame = UiFrame::capture_current(self, &cx);
+            frame.hover(self, mx, my, &cx)
+        };
 
-        if self.core.pending_paste.is_some() {
-            let prev = self
-                .core
-                .pending_paste
-                .as_ref()
-                .and_then(|p| p.hovered_button);
-            let next = self.ui_paste_dialog_hover(mx, my);
-            if let Some(pending) = &mut self.core.pending_paste {
-                pending.hovered_button = next;
+        match hover {
+            UiFrameHover::ContextMenu { hovered } => {
+                let prev = self.core.context_menu.hovered_index;
+                self.core.context_menu.hovered_index = hovered;
+                return UiHoverOutcome {
+                    handled: true,
+                    cursor: if hovered.is_some() {
+                        CursorIcon::Pointer
+                    } else {
+                        CursorIcon::Default
+                    },
+                    needs_redraw: prev != hovered,
+                };
             }
-            return UiHoverOutcome {
-                handled: true,
-                cursor: if next.is_some() {
-                    CursorIcon::Pointer
-                } else {
-                    CursorIcon::Default
-                },
-                needs_redraw: prev != next,
-            };
-        }
-
-        if self.core.command_palette.is_some() {
-            let prev_hovered = self
-                .core
-                .command_palette
-                .as_ref()
-                .and_then(|p| p.hovered_idx);
-            let (next_hovered, pointer) = self.ui_palette_hover(mx, my);
-            if let Some(palette) = &mut self.core.command_palette {
-                palette.hovered_idx = next_hovered;
+            UiFrameHover::PasteDialog { button } => {
+                let prev = self
+                    .core
+                    .pending_paste
+                    .as_ref()
+                    .and_then(|p| p.hovered_button);
+                if let Some(pending) = &mut self.core.pending_paste {
+                    pending.hovered_button = button;
+                }
+                return UiHoverOutcome {
+                    handled: true,
+                    cursor: if button.is_some() {
+                        CursorIcon::Pointer
+                    } else {
+                        CursorIcon::Default
+                    },
+                    needs_redraw: prev != button,
+                };
             }
-            return UiHoverOutcome {
-                handled: true,
-                cursor: if pointer {
-                    CursorIcon::Pointer
-                } else {
-                    CursorIcon::Default
-                },
-                needs_redraw: prev_hovered != next_hovered,
-            };
-        }
+            UiFrameHover::Palette { hovered, pointer } => {
+                let prev_hovered = self
+                    .core
+                    .command_palette
+                    .as_ref()
+                    .and_then(|p| p.hovered_idx);
+                if let Some(palette) = &mut self.core.command_palette {
+                    palette.hovered_idx = hovered;
+                }
+                return UiHoverOutcome {
+                    handled: true,
+                    cursor: if pointer {
+                        CursorIcon::Pointer
+                    } else {
+                        CursorIcon::Default
+                    },
+                    needs_redraw: prev_hovered != hovered,
+                };
+            }
+            UiFrameHover::TopBar { region, tab } => {
+                let prev_region = self.core.hovered_top_bar_region;
+                let prev_tab = self.core.hovered_pane_tab;
+                self.core.hovered_top_bar_region = region;
+                self.core.hovered_pane_tab = tab;
+                return UiHoverOutcome {
+                    handled: true,
+                    cursor: if region.is_some() || tab.is_some() {
+                        CursorIcon::Pointer
+                    } else {
+                        CursorIcon::Default
+                    },
+                    needs_redraw: prev_region != region || prev_tab != tab,
+                };
+            }
+            UiFrameHover::SideTab { tab } => {
+                let prev_tab = self.core.hovered_pane_tab;
+                self.core.hovered_pane_tab = tab;
+                return UiHoverOutcome {
+                    handled: true,
+                    cursor: if tab.is_some() {
+                        CursorIcon::Pointer
+                    } else {
+                        CursorIcon::Default
+                    },
+                    needs_redraw: prev_tab != tab,
+                };
+            }
+            UiFrameHover::Overview {
+                target,
+                action_hover,
+            } => {
+                let had_top_bar_hover = self.core.hovered_top_bar_region.take().is_some()
+                    || self.core.hovered_pane_tab.take().is_some();
+                let prev = self.core.overview.hovered_pane;
+                let prev_action = self.core.overview_action_hover;
+                self.core.overview.hovered_pane = target;
+                self.core.overview_action_hover = action_hover;
+                return UiHoverOutcome {
+                    handled: true,
+                    cursor: if target.is_some() {
+                        CursorIcon::Pointer
+                    } else {
+                        CursorIcon::Default
+                    },
+                    needs_redraw: had_top_bar_hover
+                        || prev != target
+                        || prev_action != action_hover,
+                };
+            }
+            UiFrameHover::None => {
+                let had_top_bar_hover = self.core.hovered_top_bar_region.take().is_some()
+                    || self.core.hovered_pane_tab.take().is_some();
 
-        if self.hit_test_top_bar(mx, my) {
-            let prev_region = self.core.hovered_top_bar_region;
-            let prev_tab = self.core.hovered_pane_tab;
-            let (region, tab) = self.ui_top_bar_hover(mx, my);
-            self.core.hovered_top_bar_region = region;
-            self.core.hovered_pane_tab = tab;
-            return UiHoverOutcome {
-                handled: true,
-                cursor: if region.is_some() || tab.is_some() {
-                    CursorIcon::Pointer
-                } else {
-                    CursorIcon::Default
-                },
-                needs_redraw: prev_region != region || prev_tab != tab,
-            };
-        }
-
-        // Side tab bar hover: reuse `hovered_pane_tab` so paint logic
-        // (both integrated and side variants) shares one hovered-id
-        // state. Clearing it happens via `had_top_bar_hover` below.
-        let cx = self.ui_context();
-        if let Some((bx, by, bw, bh)) = self.side_tab_bar_rect(cx.viewport_w, cx.viewport_h)
-            && mx >= bx
-            && mx < bx + bw
-            && my >= by
-            && my < by + bh
-        {
-            let tab_bar = TabBarComponent::capture(self, &cx);
-            let rect = UiRect::new(bx, by, bw, bh);
-            let hit = tab_bar.hit(rect, mx, my, &cx);
-            let next_tab = match hit {
-                Some(UiAction::FocusPaneTab(id)) => Some(id),
-                _ => None,
-            };
-            let prev_tab = self.core.hovered_pane_tab;
-            self.core.hovered_pane_tab = next_tab;
-            return UiHoverOutcome {
-                handled: true,
-                cursor: if next_tab.is_some() {
-                    CursorIcon::Pointer
-                } else {
-                    CursorIcon::Default
-                },
-                needs_redraw: prev_tab != next_tab,
-            };
-        }
-
-        let had_top_bar_hover = self.core.hovered_top_bar_region.take().is_some()
-            || self.core.hovered_pane_tab.take().is_some();
-
-        if self.core.overview.active {
-            let prev = self.core.overview.hovered_pane;
-            let prev_action = self.core.overview_action_hover;
-            let next = self.ui_overview_hover(mx, my);
-            self.core.overview.hovered_pane = next;
-            let next_action = self.core.overview_action_hover;
-            return UiHoverOutcome {
-                handled: true,
-                cursor: if next.is_some() {
-                    CursorIcon::Pointer
-                } else {
-                    CursorIcon::Default
-                },
-                needs_redraw: had_top_bar_hover || prev != next || prev_action != next_action,
-            };
-        }
-
-        UiHoverOutcome {
-            handled: had_top_bar_hover,
-            cursor: CursorIcon::Default,
-            needs_redraw: had_top_bar_hover,
+                UiHoverOutcome {
+                    handled: had_top_bar_hover,
+                    cursor: CursorIcon::Default,
+                    needs_redraw: had_top_bar_hover,
+                }
+            }
         }
     }
 }

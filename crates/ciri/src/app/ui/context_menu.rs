@@ -8,7 +8,7 @@ use super::text_layout;
 use super::tokens;
 use super::types::{UiAction, UiContext, UiContextMenuHit, UiScene, ui_hit_id};
 use crate::app::App;
-use crate::app::ciri_ui_bridge::paint_ui_tree;
+use crate::app::ciri_ui_adapter::paint_ui_tree;
 use ciri_ui::{Div, Layer, Styled, div, text};
 
 const HIT_MENU: u64 = 1;

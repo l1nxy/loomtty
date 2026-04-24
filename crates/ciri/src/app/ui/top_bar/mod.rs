@@ -32,7 +32,7 @@ use self::workspace::WorkspaceIndicator;
 use super::text_layout;
 use super::tokens;
 use super::types::{UiAction, UiContext, UiRect, UiScene, UiTopBarHit, ui_hit_id};
-use crate::app::ciri_ui_bridge::paint_ui_tree;
+use crate::app::ciri_ui_adapter::paint_ui_tree;
 use crate::app::top_bar::{PaneTabLayout, TopBarLayout};
 use crate::app::{App, TopBarHoverRegion};
 use ciri_ui::{Div, Layer, Styled, div};

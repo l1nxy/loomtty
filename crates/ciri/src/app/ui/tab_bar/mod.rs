@@ -20,7 +20,7 @@ use super::text_layout;
 use super::tokens;
 use super::types::{UiAction, UiContext, UiRect, UiScene, ui_hit_id};
 use crate::app::App;
-use crate::app::ciri_ui_bridge::paint_ui_tree;
+use crate::app::ciri_ui_adapter::paint_ui_tree;
 use ciri_ui::{Layer, Styled, div, text};
 
 const HIT_TAB_BASE: u64 = 1_000_000;

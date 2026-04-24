@@ -93,6 +93,7 @@ pub struct FontInitParams<'a> {
     pub font_size_pt: f32,
     pub dpi_scale: f64,
     pub family_name: &'a str,
+    pub ui_family_name: Option<&'a str>,
     pub primary_font_path: Option<(String, u32)>,
     pub emoji_font_path: Option<(String, u32)>,
     pub emoji_font_id: Option<fontdb::ID>,
@@ -490,9 +491,11 @@ impl GlyphCache {
                 dwrite.cjk_face(FontStyle::Regular),
             );
 
-            // Load UI font into DWrite if configured.
+            // Load the UI font. On Windows, prefer the system collection when a
+            // family name was configured so simulated bold/italic follow the
+            // same fallback rules as the primary terminal font.
             if let Some((ref path, idx)) = params.ui_font_path {
-                dwrite.load_ui_font(path, idx);
+                dwrite.load_ui_font(params.ui_family_name, path, idx);
             }
 
             (
@@ -836,11 +839,43 @@ impl GlyphCache {
             FontClass::Emoji
         } else if Some(font_id) == self.cjk_font_id {
             FontClass::Cjk
+        } else {
+            FontClass::Primary
+        };
+        self.ensure_glyph_id_with_class(glyph_id, font_class, style, wide)
+    }
+
+    /// Ensure a shaped UI glyph is in the atlas.
+    ///
+    /// UI text may intentionally use the same underlying `fontdb::ID` as the
+    /// terminal primary font. Route these calls explicitly so terminal glyphs
+    /// are never misclassified as `Ui` just because the IDs match.
+    pub fn ensure_ui_glyph_id(
+        &mut self,
+        glyph_id: u32,
+        font_id: fontdb::ID,
+        style: FontStyle,
+        wide: bool,
+    ) -> Option<GlyphEntry> {
+        let font_class = if Some(font_id) == self.emoji_font_id {
+            FontClass::Emoji
+        } else if Some(font_id) == self.cjk_font_id {
+            FontClass::Cjk
         } else if self.ui_font_id.is_some() && Some(font_id) == self.ui_font_id {
             FontClass::Ui
         } else {
             FontClass::Primary
         };
+        self.ensure_glyph_id_with_class(glyph_id, font_class, style, wide)
+    }
+
+    fn ensure_glyph_id_with_class(
+        &mut self,
+        glyph_id: u32,
+        font_class: FontClass,
+        style: FontStyle,
+        wide: bool,
+    ) -> Option<GlyphEntry> {
         let key = (glyph_id, font_class, style, wide);
         if let Some(entry) = self.glyph_id_cache.get(&key) {
             return Some(*entry);
@@ -1112,6 +1147,7 @@ mod tests {
             font_size_pt: config.font.size,
             dpi_scale: 1.0,
             family_name: &config.font.family,
+            ui_family_name: None,
             primary_font_path: None,
             emoji_font_path: None,
             emoji_font_id: None,

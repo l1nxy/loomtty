@@ -207,6 +207,26 @@ impl PaletteComponent {
             shadow_color: [0.0, 0.0, 0.0, 0.35],
         });
 
+        let row_h = self.layout.row_h;
+        for (idx, row) in self.rows.iter().enumerate() {
+            let tint = if row.is_selected {
+                Some(selected_bg)
+            } else if row.is_hovered {
+                Some(hovered_bg)
+            } else {
+                None
+            };
+            if let Some(color) = tint {
+                scene.sdf_rects.push(ciri_render::sdf_rect::SdfRect {
+                    pos: [px, self.layout.sep_y + idx as f32 * row_h],
+                    size: [pw, row_h],
+                    color,
+                    radii: [tokens::SPACE_1; 4],
+                    ..Default::default()
+                });
+            }
+        }
+
         let mut ui = UiBuilder::new_vertical(
             px,
             self.layout.panel_y,
@@ -261,8 +281,6 @@ impl PaletteComponent {
         });
 
         ui.separator_h(border_color, 0.0);
-
-        let row_h = self.layout.row_h;
         for row in &self.rows {
             ui.horizontal(Some(pw), row_h, 0.0, |ui| {
                 let (rx, ry) = ui.cursor_pos();
@@ -271,11 +289,6 @@ impl PaletteComponent {
                     let header_text = format!("── {} ──", row.label);
                     ui.abs_text(&header_text, rx + text_pad, text_y, dim_color);
                 } else {
-                    if row.is_selected {
-                        ui.abs_rect(rx, ry, pw, row_h, selected_bg);
-                    } else if row.is_hovered {
-                        ui.abs_rect(rx, ry, pw, row_h, hovered_bg);
-                    }
                     let color = if row.style == PaletteRowStyle::ConnectRemotePrompt {
                         accent
                     } else {
@@ -349,5 +362,108 @@ impl PaletteComponent {
             let red = cx.theme.error;
             ui.abs_text(error, px + text_pad, y, [red[0], red[1], red[2], 0.9]);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ciri_config::config::CiriConfig;
+    use ciri_render::font_resolver::CmapResolver;
+    use ciri_render::glyph_cache::FontInitParams;
+    use std::sync::Arc;
+
+    fn test_cache() -> ciri_render::glyph_cache::GlyphCache {
+        let config = CiriConfig::default();
+        ciri_render::glyph_cache::GlyphCache::new(&FontInitParams {
+            font_size_pt: 12.0,
+            dpi_scale: 1.0,
+            family_name: "",
+            ui_family_name: None,
+            primary_font_path: None,
+            emoji_font_path: None,
+            emoji_font_id: None,
+            cjk_font_path: None,
+            cjk_font_id: None,
+            ui_font_path: None,
+            ui_font_id: None,
+            ui_pixel_size: None,
+            render_config: &config.render,
+            font_resolver: Arc::new(CmapResolver::new((&[], 0), None, None)),
+            #[cfg(windows)]
+            dwrite_resolver: None,
+        })
+    }
+
+    fn test_cx() -> UiContext<'static> {
+        let cfg = Box::leak(Box::new(CiriConfig::default()));
+        let theme = Box::leak(Box::new(ciri_ui::ResolvedTheme::default()));
+        UiContext {
+            config: cfg,
+            theme,
+            viewport_w: 800.0,
+            viewport_h: 600.0,
+            cell_w: 8.0,
+            cell_h: 16.0,
+            baseline: 12.0,
+            ui_line_h: 16.0,
+            ui_shaper: None,
+        }
+    }
+
+    #[test]
+    fn selected_row_highlight_renders_in_sdf_layer() {
+        let cx = test_cx();
+        let mut atlas = test_cache();
+        let mut bg_rects = Vec::new();
+        let mut glyphs = Vec::new();
+        let mut color_glyphs = Vec::new();
+        let mut sdf_rects = Vec::new();
+        let mut scene = UiScene {
+            atlas: &mut atlas,
+            bg_rects: &mut bg_rects,
+            glyphs: &mut glyphs,
+            color_glyphs: &mut color_glyphs,
+            sdf_rects: &mut sdf_rects,
+        };
+        let comp = PaletteComponent {
+            layout: crate::app::CommandPaletteLayout {
+                panel_x: 100.0,
+                panel_y: 80.0,
+                panel_w: 240.0,
+                panel_h: 140.0,
+                row_h: 24.0,
+                visible_rows: 3,
+                text_x: 0.0,
+                text_y: 0.0,
+                sep_y: 120.0,
+            },
+            query: String::new(),
+            scroll_offset: 0,
+            rows: vec![PaletteRow {
+                entry_idx: 0,
+                label: String::new(),
+                is_selected: true,
+                is_hovered: false,
+                style: PaletteRowStyle::Action,
+            }],
+            total_entries: 1,
+            selectable_position: 1,
+            selectable_count: 1,
+            show_no_matches: false,
+            loading_text: None,
+            error_text: None,
+            remote_input_mode: false,
+        };
+
+        comp.paint(&cx, &mut scene);
+
+        let selected_bg = tokens::tint(cx.theme.accent, tokens::ALPHA_SELECTED_BG);
+        assert!(
+            scene.sdf_rects.iter().any(|r| {
+                r.pos == [100.0, 120.0] && r.size == [240.0, 24.0] && r.color == selected_bg
+            }),
+            "selected row highlight should render in the SDF layer so the panel doesn't cover it"
+        );
     }
 }

@@ -496,6 +496,13 @@ impl App {
                                 font_size_pt: self.core.config.font.size,
                                 dpi_scale: self.dpi_scale,
                                 family_name: &self.core.config.font.family,
+                                ui_family_name: self
+                                    .core
+                                    .config
+                                    .font
+                                    .ui
+                                    .as_ref()
+                                    .and_then(|ui| (!ui.family.is_empty()).then_some(ui.family.as_str())),
                                 primary_font_path: shaper.primary_font_path(),
                                 emoji_font_path: shaper.emoji_font_path(),
                                 emoji_font_id: shaper.emoji_font_id(),

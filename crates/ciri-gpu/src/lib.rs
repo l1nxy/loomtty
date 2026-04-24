@@ -501,6 +501,7 @@ mod tests {
                 font_size_pt: 32.0,
                 dpi_scale: 1.0,
                 family_name: "monospace",
+                ui_family_name: None,
                 primary_font_path: None,
                 emoji_font_path: None,
                 emoji_font_id: None,

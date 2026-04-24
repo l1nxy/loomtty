@@ -68,6 +68,7 @@ fn test_atlas(config: &CiriConfig, shaper: &TextShaper) -> GlyphCache {
         font_size_pt: config.font.size,
         dpi_scale: 1.0,
         family_name: &config.font.family,
+        ui_family_name: None,
         primary_font_path: shaper.primary_font_path(),
         emoji_font_path: shaper.emoji_font_path(),
         emoji_font_id: shaper.emoji_font_id(),

@@ -87,7 +87,8 @@ fn emit_text_via_shaper(
             pen_x += g.x_advance * scale;
             continue;
         }
-        if let Some(entry) = atlas.ensure_glyph_id(g.glyph_id, g.font_id, FontStyle::Regular, false)
+        if let Some(entry) =
+            atlas.ensure_ui_glyph_id(g.glyph_id, g.font_id, FontStyle::Regular, false)
             && entry.width > 0
             && entry.height > 0
         {

@@ -297,13 +297,7 @@ impl App {
             .collect()
     }
 
-    /// Resolve the UI font path / id / pixel size from `config`. Returns
-    /// `path: None` when no `[font.ui]` override is set (UI then shares the
-    /// terminal font and uses `FontClass::Primary` in the atlas).
-    ///
-    /// On Windows the `[font.ui]` override is silently dropped — the DWrite
-    /// rasterizer doesn't yet have a per-face glyph_id path for the UI
-    /// class, so honoring the override would paint empty glyphs.
+    /// Resolve the UI font path / id / pixel size from `config`.
     pub(crate) fn resolve_ui_font_init(config: &CiriConfig, dpi_scale: f64) -> UiFontInit {
         let ui_override = config.font.ui.as_ref();
 

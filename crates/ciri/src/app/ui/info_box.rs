@@ -3,9 +3,9 @@ use ciri_config::config::StatusBarPosition;
 use super::text_layout;
 use super::tokens;
 use super::types::{UiContext, UiScene};
-use crate::app::App;
 use crate::app::ciri_ui_bridge::paint_ui_tree;
-use ciri_ui::{Layer, Styled, div, text};
+use crate::app::App;
+use ciri_ui::{div, text, Div, Layer, Styled};
 
 pub(crate) struct InfoBoxComponent {
     title: String,
@@ -167,6 +167,11 @@ impl InfoBoxComponent {
 
 impl InfoBoxComponent {
     pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        let root = self.build_tree(cx);
+        paint_ui_tree(&root, cx, scene);
+    }
+
+    fn build_tree(&self, cx: &UiContext<'_>) -> Div {
         let bg = cx.theme.surface;
         let accent = cx.theme.accent;
         let fg = cx.theme.on_surface;
@@ -192,9 +197,11 @@ impl InfoBoxComponent {
         let gap_w = cx.cell_w * 2.0;
         let mut panel = div()
             .in_layer(Layer::Overlay)
+            .absolute()
+            .left(self.x)
+            .top(self.y)
             .w(self.w)
             .h(self.h)
-            .translate(self.x, self.y)
             .flex_col()
             .items_center()
             .bg(bg_color)
@@ -234,8 +241,6 @@ impl InfoBoxComponent {
             );
         }
 
-        let root = div().w(cx.viewport_w).h(cx.viewport_h).child(panel);
-
-        paint_ui_tree(&root, cx, scene);
+        div().w(cx.viewport_w).h(cx.viewport_h).child(panel)
     }
 }

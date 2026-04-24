@@ -3,9 +3,9 @@ use super::layout::{Axis, SizeHint, UiElement, UiRect};
 use super::text_layout;
 use super::tokens;
 use super::types::{UiContext, UiScene};
-use crate::app::App;
 use crate::app::ciri_ui_bridge::paint_ui_tree;
-use ciri_ui::{Layer, Styled, div, text};
+use crate::app::App;
+use ciri_ui::{div, text, Div, Layer, Styled};
 
 struct HintItem {
     key: String,
@@ -120,6 +120,13 @@ impl UiElement for HintsBarComponent {
     }
 
     fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        let root = self.build_tree(rect, cx);
+        paint_ui_tree(&root, cx, scene);
+    }
+}
+
+impl HintsBarComponent {
+    fn build_tree(&self, rect: UiRect, cx: &UiContext<'_>) -> Div {
         let bar_bg = cx.theme.statusbar_bg;
         let accent = cx.theme.accent;
         let dim = cx.theme.on_surface_muted;
@@ -176,12 +183,14 @@ impl UiElement for HintsBarComponent {
                 .child(text(format!(" {}", item.label)).color(dim));
         }
 
-        let root = div().w(cx.viewport_w).h(cx.viewport_h).child(
+        div().w(cx.viewport_w).h(cx.viewport_h).child(
             div()
                 .in_layer(Layer::Chrome)
+                .absolute()
+                .left(rect.x)
+                .top(rect.y)
                 .w(rect.w)
                 .h(rect.h)
-                .translate(rect.x, rect.y)
                 .flex_col()
                 .bg(bar_bg)
                 .child(div().w(rect.w).h(tokens::BORDER_THIN).bg(sep_color))
@@ -195,8 +204,6 @@ impl UiElement for HintsBarComponent {
                         .child(left)
                         .child(right),
                 ),
-        );
-
-        paint_ui_tree(&root, cx, scene);
+        )
     }
 }

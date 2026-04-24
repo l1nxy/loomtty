@@ -6,9 +6,9 @@
 use super::text_layout;
 use super::tokens;
 use super::types::{UiContext, UiScene};
-use crate::app::App;
 use crate::app::ciri_ui_bridge::paint_ui_tree;
-use ciri_ui::{Layer, Styled, div, text};
+use crate::app::App;
+use ciri_ui::{div, text, Div, Layer, Styled};
 
 const DOT_PHASE_MS: u128 = 300;
 const DOT_PHASES: u32 = 4;
@@ -176,6 +176,11 @@ fn fit_without_ellipsis(cx: &UiContext<'_>, text: &str, max_w: f32) -> String {
 
 impl ConnectionStatusComponent {
     pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        let root = self.build_tree(cx);
+        paint_ui_tree(&root, cx, scene);
+    }
+
+    fn build_tree(&self, cx: &UiContext<'_>) -> Div {
         let bg = cx.theme.surface;
         let accent = cx.theme.accent;
         let dim = cx.theme.on_surface_muted;
@@ -230,9 +235,11 @@ impl ConnectionStatusComponent {
 
         let mut panel = div()
             .in_layer(Layer::Overlay)
+            .absolute()
+            .left(self.x)
+            .top(self.y)
             .w(self.w)
             .h(self.h)
-            .translate(self.x, self.y)
             .flex_col()
             .items_center()
             .bg(bg_color)
@@ -259,9 +266,7 @@ impl ConnectionStatusComponent {
         }
         panel = panel.child(div().w(content_w).h(v_pad));
 
-        let root = div().w(cx.viewport_w).h(cx.viewport_h).child(panel);
-
-        paint_ui_tree(&root, cx, scene);
+        div().w(cx.viewport_w).h(cx.viewport_h).child(panel)
     }
 }
 

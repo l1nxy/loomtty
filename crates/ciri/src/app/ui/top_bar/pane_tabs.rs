@@ -162,17 +162,19 @@ impl<'a> UiElement for PaneTabsElement<'a> {
 fn abs_rect(x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) -> Div {
     div()
         .in_layer(Layer::Chrome)
-        .w(0.0)
-        .h(0.0)
-        .translate(x, y)
-        .child(div().w(w).h(h).bg(color))
+        .absolute()
+        .left(x)
+        .top(y)
+        .w(w)
+        .h(h)
+        .bg(color)
 }
 
 fn abs_text(x: f32, y: f32, content: String, color: [f32; 4]) -> Div {
     div()
         .in_layer(Layer::Chrome)
-        .w(0.0)
-        .h(0.0)
-        .translate(x, y)
+        .absolute()
+        .left(x)
+        .top(y)
         .child(text(content).color(color))
 }

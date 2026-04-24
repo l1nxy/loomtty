@@ -113,6 +113,31 @@ pub(crate) struct UiContext<'a> {
     pub ui_shaper: Option<&'a RefCell<UiTextShaper>>,
 }
 
+pub(crate) fn ui_context_from_metrics<'a>(
+    config: &'a ciri_config::config::CiriConfig,
+    theme: &'a ciri_ui::ResolvedTheme,
+    ui_shaper: Option<&'a RefCell<UiTextShaper>>,
+    viewport_w: f32,
+    viewport_h: f32,
+    cell_w: f32,
+    cell_h: f32,
+    baseline: f32,
+) -> UiContext<'a> {
+    UiContext {
+        config,
+        theme,
+        viewport_w,
+        viewport_h,
+        cell_w,
+        cell_h,
+        baseline,
+        ui_line_h: ui_shaper
+            .map(|s| s.borrow().line_height())
+            .unwrap_or(cell_h),
+        ui_shaper,
+    }
+}
+
 pub(crate) struct UiScene<'a> {
     pub atlas: &'a mut GlyphCache,
     pub glyphs: &'a mut Vec<GlyphInstance>,

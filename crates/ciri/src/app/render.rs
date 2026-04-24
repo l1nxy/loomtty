@@ -1,4 +1,4 @@
-use ciri_config::config::{CiriConfig, FocusRingStyle, PaneOpenStyle};
+use ciri_config::config::{FocusRingStyle, PaneOpenStyle};
 use ciri_config::theme::ThemeConfig;
 use ciri_layout::geometry::Rect as GeoRect;
 use ciri_protocol::message::*;
@@ -7,15 +7,13 @@ use ciri_render::glyph_cache::{GlyphInstance, ScissoredRange};
 use ciri_render::rect::Rect;
 use ciri_render::sdf_rect::SdfRect;
 use ciri_render::terminal;
-use ciri_render::ui_shaper::UiTextShaper;
-use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::Instant;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::App;
-use super::ui::{UiContext, UiScene};
+use super::ui::{UiContext, UiScene, ui_context_from_metrics};
 
 #[derive(Clone, Copy)]
 struct TilePaintConfig {
@@ -2015,7 +2013,7 @@ impl App {
             color_glyphs,
             sdf_rects,
         };
-        let cx = render_ui_context(
+        let cx = ui_context_from_metrics(
             &self.core.config,
             &self.cached_resolved_theme,
             self.ui_shaper.as_ref(),
@@ -2713,31 +2711,6 @@ fn scissor_rect(tr: &GeoRect, viewport_w: f32, viewport_h: f32) -> Option<(u32, 
             (right - left).max(1.0) as u32,
             (bottom - top).max(1.0) as u32,
         ))
-    }
-}
-
-fn render_ui_context<'a>(
-    config: &'a CiriConfig,
-    theme: &'a ciri_ui::ResolvedTheme,
-    ui_shaper: Option<&'a RefCell<UiTextShaper>>,
-    viewport_w: f32,
-    viewport_h: f32,
-    cell_w: f32,
-    cell_h: f32,
-    baseline: f32,
-) -> UiContext<'a> {
-    UiContext {
-        config,
-        theme,
-        viewport_w,
-        viewport_h,
-        cell_w,
-        cell_h,
-        baseline,
-        ui_line_h: ui_shaper
-            .map(|s| s.borrow().line_height())
-            .unwrap_or(cell_h),
-        ui_shaper,
     }
 }
 

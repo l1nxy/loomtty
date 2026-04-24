@@ -284,49 +284,38 @@ impl TopBarComponent {
         let rect = self.bar_rect(cx);
         self.hit_test_in_rect(rect, mx, my, cx)
     }
-}
 
-impl UiElement for TopBarComponent {
-    fn size_hint(&self, axis: Axis, _cx: &UiContext<'_>) -> SizeHint {
-        match axis {
-            Axis::Vertical => SizeHint::Fixed(self.layout.bar_height),
-            Axis::Horizontal => SizeHint::Fill,
-        }
-    }
-
-    fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+    fn build_chrome_tree(&self, rect: UiRect, cx: &UiContext<'_>) -> Div {
         let bar_bg = cx.theme.statusbar_bg;
         let dim = cx.theme.on_surface_muted;
         let accent = cx.theme.accent;
         let broadcast_color = cx.theme.broadcast;
         let sep_color = tokens::tint(dim, tokens::ALPHA_SEPARATOR);
 
-        // --- global decorations: bar background + separator strip ---
         let sep_y = match cx.config.statusbar.position {
             StatusBarPosition::Top => rect.h - tokens::BORDER_THIN,
             StatusBarPosition::Bottom => 0.0,
         };
-        let chrome = div().w(cx.viewport_w).h(cx.viewport_h).child(
+        let mut root = div().w(cx.viewport_w).h(cx.viewport_h).child(
             div()
                 .in_layer(Layer::Chrome)
+                .absolute()
+                .left(rect.x)
+                .top(rect.y)
                 .w(rect.w)
                 .h(rect.h)
-                .translate(rect.x, rect.y)
                 .bg(bar_bg)
                 .child(
                     div()
+                        .absolute()
+                        .left(0.0)
+                        .top(sep_y)
                         .w(rect.w)
                         .h(tokens::BORDER_THIN)
-                        .translate(0.0, sep_y)
                         .bg(sep_color),
                 ),
         );
-        paint_ui_tree(&chrome, cx, scene);
 
-        // --- inner row (session | tabs | workspace | mode) ---
-        self.build_row(cx).paint(rect, cx, scene);
-
-        // --- leader / broadcast / overview band (painted above or below) ---
         if self.is_leader || self.is_broadcast || self.is_overview {
             let indicator_h = cx.cell_h * cx.config.statusbar.leader_indicator_ratio;
             let indicator_color = if self.is_broadcast {
@@ -338,16 +327,36 @@ impl UiElement for TopBarComponent {
                 StatusBarPosition::Top => rect.bottom(),
                 StatusBarPosition::Bottom => rect.y - indicator_h,
             };
-            let indicator = div().w(cx.viewport_w).h(cx.viewport_h).child(
+            root = root.child(
                 div()
                     .in_layer(Layer::Chrome)
+                    .absolute()
+                    .left(rect.x)
+                    .top(band_y)
                     .w(rect.w)
                     .h(indicator_h)
-                    .translate(rect.x, band_y)
                     .bg(indicator_color),
             );
-            paint_ui_tree(&indicator, cx, scene);
         }
+
+        root
+    }
+}
+
+impl UiElement for TopBarComponent {
+    fn size_hint(&self, axis: Axis, _cx: &UiContext<'_>) -> SizeHint {
+        match axis {
+            Axis::Vertical => SizeHint::Fixed(self.layout.bar_height),
+            Axis::Horizontal => SizeHint::Fill,
+        }
+    }
+
+    fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        let chrome = self.build_chrome_tree(rect, cx);
+        paint_ui_tree(&chrome, cx, scene);
+
+        // --- inner row (session | tabs | workspace | mode) ---
+        self.build_row(cx).paint(rect, cx, scene);
     }
 
     fn hit(&self, rect: UiRect, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<UiAction> {

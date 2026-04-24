@@ -123,24 +123,8 @@ impl TabBarComponent {
                 .h(rect.h),
         )
     }
-}
 
-impl UiElement for TabBarComponent {
-    fn size_hint(&self, axis: Axis, _cx: &UiContext<'_>) -> SizeHint {
-        match axis {
-            // Fixed horizontal width — this is what makes the bar a
-            // dedicated side strip rather than stealing from the terminal.
-            Axis::Horizontal => SizeHint::Fixed(self.bar_width),
-            // Fills the height that Border gave us (minus what top/bottom
-            // edges already consumed).
-            Axis::Vertical => SizeHint::Fill,
-        }
-    }
-
-    fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        if rect.is_empty() {
-            return;
-        }
+    fn build_tree(&self, rect: UiRect, cx: &UiContext<'_>) -> ciri_ui::Div {
         let bar_bg = cx.theme.statusbar_bg;
         let fg = cx.theme.on_surface;
         let dim = cx.theme.on_surface_muted;
@@ -233,12 +217,35 @@ impl UiElement for TabBarComponent {
         };
         let root = div().w(cx.viewport_w).h(cx.viewport_h).child(
             bar.in_layer(Layer::Chrome)
+                .absolute()
+                .left(rect.x)
+                .top(rect.y)
                 .w(rect.w)
                 .h(rect.h)
-                .translate(rect.x, rect.y)
                 .bg(bar_bg),
         );
 
+        root
+    }
+}
+
+impl UiElement for TabBarComponent {
+    fn size_hint(&self, axis: Axis, _cx: &UiContext<'_>) -> SizeHint {
+        match axis {
+            // Fixed horizontal width — this is what makes the bar a
+            // dedicated side strip rather than stealing from the terminal.
+            Axis::Horizontal => SizeHint::Fixed(self.bar_width),
+            // Fills the height that Border gave us (minus what top/bottom
+            // edges already consumed).
+            Axis::Vertical => SizeHint::Fill,
+        }
+    }
+
+    fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        if rect.is_empty() {
+            return;
+        }
+        let root = self.build_tree(rect, cx);
         paint_ui_tree(&root, cx, scene);
     }
 

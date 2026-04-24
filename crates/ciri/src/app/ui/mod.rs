@@ -258,7 +258,7 @@ impl App {
     pub(crate) fn ui_context_menu_hover(&self, mx: f32, my: f32) -> Option<usize> {
         let cx = self.ui_context();
         let component = ContextMenuComponent::capture(self, &cx)?;
-        match component.hit_test(mx, my) {
+        match component.hit_test(mx, my, &cx) {
             UiContextMenuHit::Entry(idx) => Some(idx),
             UiContextMenuHit::Menu | UiContextMenuHit::None => None,
         }

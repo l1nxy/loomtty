@@ -81,6 +81,7 @@ pub(super) enum UiPaletteHit {
     None,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub(super) enum UiContextMenuHit {
     Entry(usize),
     Menu,

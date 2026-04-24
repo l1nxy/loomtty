@@ -9,7 +9,22 @@ use super::tokens;
 use super::types::{UiAction, UiContext, UiContextMenuHit, UiScene};
 use crate::app::App;
 use crate::app::ciri_ui_bridge::paint_ui_tree;
-use ciri_ui::{Layer, Styled, div, text};
+use ciri_ui::{Div, Layer, Styled, div, text};
+
+const HIT_MENU: u64 = 1;
+const HIT_ENTRY_BASE: u64 = 1_000_000;
+
+fn entry_hit_id(index: usize) -> u64 {
+    HIT_ENTRY_BASE + index as u64
+}
+
+fn context_menu_hit_from_id(hit_id: Option<u64>) -> UiContextMenuHit {
+    match hit_id {
+        Some(HIT_MENU) => UiContextMenuHit::Menu,
+        Some(id) if id >= HIT_ENTRY_BASE => UiContextMenuHit::Entry((id - HIT_ENTRY_BASE) as usize),
+        _ => UiContextMenuHit::None,
+    }
+}
 
 struct ContextMenuRow {
     label: String,
@@ -70,38 +85,30 @@ impl ContextMenuComponent {
         })
     }
 
-    pub(super) fn hit_test(&self, mx: f32, my: f32) -> UiContextMenuHit {
-        if mx < self.x
-            || mx > self.x + self.menu_width
-            || my < self.y
-            || my > self.y + self.menu_height
-        {
-            return UiContextMenuHit::None;
-        }
-        let padding = tokens::SPACE_2;
-        let relative_y = my - self.y - padding;
-        if relative_y < 0.0 {
-            return UiContextMenuHit::Menu;
-        }
-        let index = (relative_y / self.item_height) as usize;
-        if index < self.rows.len() && self.rows[index].enabled {
-            UiContextMenuHit::Entry(index)
-        } else {
-            UiContextMenuHit::Menu
-        }
+    pub(super) fn hit_test(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> UiContextMenuHit {
+        let root = self.build_tree(cx);
+        let mut shaper = ciri_ui::NullShaper;
+        let out = ciri_ui::paint_tree_with_layout(
+            &root,
+            cx.theme,
+            [cx.viewport_w, cx.viewport_h],
+            1.0,
+            &mut shaper,
+        );
+        context_menu_hit_from_id(out.layout.hit_test(mx, my).and_then(|n| n.hit_id))
     }
 }
 
 impl ContextMenuComponent {
     pub(crate) fn click(&self, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
-        match self.hit_test(mx, my) {
+        match self.hit_test(mx, my, _cx) {
             UiContextMenuHit::Entry(idx) => Some(UiAction::ExecuteContextMenuEntry(idx)),
             UiContextMenuHit::Menu => None,
             UiContextMenuHit::None => Some(UiAction::CloseContextMenu),
         }
     }
 
-    pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+    fn build_tree(&self, cx: &UiContext<'_>) -> Div {
         let padding = tokens::SPACE_2;
         let bw = tokens::BORDER_THIN;
 
@@ -136,9 +143,10 @@ impl ContextMenuComponent {
             .rounded(tokens::SPACE_1)
             .border(bw, border_color)
             .shadow_md()
+            .hit_id(HIT_MENU)
             .child(div().w(content_w).h(padding));
 
-        for row in &self.rows {
+        for (index, row) in self.rows.iter().enumerate() {
             let text_color = if row.enabled { fg_color } else { dim_color };
             let mut row_el = div()
                 .w(content_w)
@@ -147,6 +155,9 @@ impl ContextMenuComponent {
                 .items_center()
                 .child(div().w(text_pad).h(item_h))
                 .child(text(row.label.clone()).color(text_color));
+            if row.enabled {
+                row_el = row_el.hit_id(entry_hit_id(index)).cursor_pointer();
+            }
             if row.hovered {
                 row_el = row_el.bg(hover_bg);
             }
@@ -156,6 +167,11 @@ impl ContextMenuComponent {
 
         let root = div().w(cx.viewport_w).h(cx.viewport_h).child(panel);
 
+        root
+    }
+
+    pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        let root = self.build_tree(cx);
         paint_ui_tree(&root, cx, scene);
     }
 }
@@ -203,5 +219,35 @@ mod tests {
         assert!(menu.x >= 0.0);
         assert!(menu.y >= 0.0);
         assert!(menu.x + menu.menu_width <= cx.viewport_w + 0.001);
+    }
+
+    #[test]
+    fn hit_test_uses_ciri_ui_layout_snapshot() {
+        let mut app = make_app();
+        app.core.context_menu = ContextMenu {
+            visible: true,
+            x: 40.0,
+            y: 50.0,
+            target_pane_id: None,
+            items: vec![
+                ContextMenuItem {
+                    label: "Copy".into(),
+                    action: ContextMenuAction::Copy,
+                    enabled: true,
+                },
+                ContextMenuItem {
+                    label: "Paste".into(),
+                    action: ContextMenuAction::Paste,
+                    enabled: false,
+                },
+            ],
+            hovered_index: None,
+        };
+        let cx = app.ui_context();
+        let menu = ContextMenuComponent::capture(&app, &cx).expect("menu visible");
+
+        assert_eq!(menu.hit_test(60.0, 65.0, &cx), UiContextMenuHit::Entry(0));
+        assert_eq!(menu.hit_test(60.0, 90.0, &cx), UiContextMenuHit::Menu);
+        assert_eq!(menu.hit_test(10.0, 10.0, &cx), UiContextMenuHit::None);
     }
 }

@@ -45,6 +45,7 @@ mod spacer;
 #[cfg(test)]
 mod test_support;
 
+#[allow(unused_imports)]
 pub(crate) use border::Border;
 pub(crate) use element::UiElement;
 pub(crate) use hint::{Axis, SizeHint};

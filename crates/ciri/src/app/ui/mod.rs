@@ -27,8 +27,54 @@ use ciri_config::config::{StatusBarPosition, TabBarPosition};
 use ciri_render::glyph_cache::GlyphInstance;
 use winit::window::CursorIcon;
 
-use self::layout::{Axis, Border, Linear, UiElement, UiRect};
+use self::layout::{UiElement, UiRect};
 use super::{App, TopBarHoverRegion};
+
+#[derive(Debug, Clone, Copy)]
+struct ChromeRects {
+    top_bar: UiRect,
+    hints_bar: UiRect,
+    side_tab_bar: Option<UiRect>,
+}
+
+fn chrome_rects(app: &App, vw: f32, vh: f32, top_bar_h: f32, hints_bar_h: f32) -> ChromeRects {
+    let top_bar = match app.core.config.statusbar.position {
+        StatusBarPosition::Top => UiRect::new(0.0, 0.0, vw, top_bar_h),
+        StatusBarPosition::Bottom => UiRect::new(0.0, (vh - top_bar_h).max(0.0), vw, top_bar_h),
+    };
+    let hints_bar = match app.core.config.statusbar.position {
+        StatusBarPosition::Top => UiRect::new(0.0, (vh - hints_bar_h).max(0.0), vw, hints_bar_h),
+        StatusBarPosition::Bottom => UiRect::new(
+            0.0,
+            (vh - top_bar_h - hints_bar_h).max(0.0),
+            vw,
+            hints_bar_h,
+        ),
+    };
+    let side_tab_bar = match app.core.config.tabbar.position {
+        TabBarPosition::Integrated => None,
+        TabBarPosition::Left | TabBarPosition::Right => {
+            let w = app.core.config.tabbar.width;
+            let x = match app.core.config.tabbar.position {
+                TabBarPosition::Left => 0.0,
+                TabBarPosition::Right => (vw - w).max(0.0),
+                TabBarPosition::Integrated => unreachable!(),
+            };
+            let y = match app.core.config.statusbar.position {
+                StatusBarPosition::Top => top_bar_h,
+                StatusBarPosition::Bottom => 0.0,
+            };
+            let h = (vh - top_bar_h - hints_bar_h).max(0.0);
+            Some(UiRect::new(x, y, w, h))
+        }
+    };
+
+    ChromeRects {
+        top_bar,
+        hints_bar,
+        side_tab_bar,
+    }
+}
 
 impl App {
     pub(crate) fn build_ui(
@@ -102,40 +148,20 @@ impl App {
         };
         let overview_hover = self.core.overview_action_hover;
 
-        // ── Chrome tree ──────────────────────────────────────────────
+        // ── Chrome rects ─────────────────────────────────────────────
         //
-        // Build a `Border` whose edges contain the bars and whose center
-        // is the terminal viewport (drawn elsewhere — we don't paint it
-        // here).
-        //
-        // Horizontal edges (top / bottom) come from `statusbar.position`:
-        //   Top:    Border { top: TopBar, bottom: HintsBar, .. }
-        //   Bottom: Border { bottom: [HintsBar, TopBar] stacked, .. }
-        //
-        // Vertical edges (left / right) come from `tabbar.position`:
-        //   Integrated:  no side bar — tabs are inside the top bar.
-        //   Left / Right: a `TabBarComponent` on the matching side.
-        //
-        // `Border` resolves top → bottom → left → right → center, so the
-        // side bar always spans vertically *inside* the horizontal edges.
-        // That matches the "top bar goes edge to edge, side bar starts
-        // below it" mental model.
-        let viewport_rect = UiRect::new(0.0, 0.0, vw, vh);
-        let mut chrome: Border<'_> = match cx.config.statusbar.position {
-            StatusBarPosition::Top => Border::new().top(top_bar).bottom(hints_bar),
-            StatusBarPosition::Bottom => {
-                Border::new().bottom(Linear::new(Axis::Vertical).push(hints_bar).push(top_bar))
-            }
-        };
-        if let Some(tab_bar) = side_tab_bar {
-            chrome = match cx.config.tabbar.position {
-                TabBarPosition::Left => chrome.left(tab_bar),
-                TabBarPosition::Right => chrome.right(tab_bar),
-                TabBarPosition::Integrated => {
-                    unreachable!("side_tab_bar is only Some for Left/Right positions",)
-                }
-            };
-        }
+        // Production chrome is now composed directly from captured
+        // components and explicit viewport rects. This keeps paint order
+        // and hit-test geometry in the same coordinate model as ciri-ui,
+        // while the legacy dock containers remain only as test/transition
+        // utilities.
+        let chrome = chrome_rects(
+            self,
+            vw,
+            vh,
+            top_bar_layout.bar_height,
+            self.hints_bar_height(),
+        );
         {
             let cached_ui = &mut self.cached_ui_scene;
             cached_ui.key = Some(cache_key);
@@ -151,7 +177,11 @@ impl App {
                 sdf_rects: &mut cached_ui.sdf_rects,
             };
 
-            chrome.paint(viewport_rect, &cx, &mut scene);
+            top_bar.paint(chrome.top_bar, &cx, &mut scene);
+            hints_bar.paint(chrome.hints_bar, &cx, &mut scene);
+            if let (Some(tab_bar), Some(rect)) = (side_tab_bar, chrome.side_tab_bar) {
+                tab_bar.paint(rect, &cx, &mut scene);
+            }
 
             // Modal / overlay layers — these still position themselves
             // absolutely (centred on the viewport, etc.) and don't fit the
@@ -691,6 +721,34 @@ mod tests {
 
     fn make_app() -> App {
         App::new(CiriConfig::default(), "test-session")
+    }
+
+    #[test]
+    fn chrome_rects_place_bottom_status_hints_above_top_bar() {
+        let mut config = CiriConfig::default();
+        config.statusbar.position = StatusBarPosition::Bottom;
+        let app = App::new(config, "test-session");
+
+        let rects = chrome_rects(&app, 800.0, 600.0, 24.0, 24.0);
+
+        assert_eq!(rects.hints_bar, UiRect::new(0.0, 552.0, 800.0, 24.0));
+        assert_eq!(rects.top_bar, UiRect::new(0.0, 576.0, 800.0, 24.0));
+    }
+
+    #[test]
+    fn chrome_rects_side_tab_bar_sits_between_horizontal_chrome() {
+        let mut config = CiriConfig::default();
+        config.statusbar.position = StatusBarPosition::Top;
+        config.tabbar.position = TabBarPosition::Left;
+        config.tabbar.width = 96.0;
+        let app = App::new(config, "test-session");
+
+        let rects = chrome_rects(&app, 800.0, 600.0, 24.0, 24.0);
+
+        assert_eq!(
+            rects.side_tab_bar,
+            Some(UiRect::new(0.0, 24.0, 96.0, 552.0))
+        );
     }
 
     #[test]

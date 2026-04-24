@@ -20,6 +20,7 @@ pub(crate) struct Border<'a> {
     pub center: Option<Box<dyn UiElement + 'a>>,
 }
 
+#[allow(dead_code)]
 impl<'a> Border<'a> {
     pub fn new() -> Self {
         Self {

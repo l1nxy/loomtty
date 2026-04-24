@@ -88,6 +88,7 @@ pub(super) enum UiContextMenuHit {
     None,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub(super) enum UiPasteDialogHit {
     Paste,
     Cancel,

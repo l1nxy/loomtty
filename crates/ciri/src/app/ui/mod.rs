@@ -267,7 +267,7 @@ impl App {
     pub(crate) fn ui_paste_dialog_hover(&self, mx: f32, my: f32) -> Option<super::PasteButton> {
         let cx = self.ui_context();
         let component = PasteDialogComponent::capture(self, &cx)?;
-        match component.hit_test(mx, my) {
+        match component.hit_test(mx, my, &cx) {
             UiPasteDialogHit::Paste => Some(super::PasteButton::Paste),
             UiPasteDialogHit::Cancel => Some(super::PasteButton::Cancel),
             UiPasteDialogHit::Dialog | UiPasteDialogHit::None => None,
@@ -820,7 +820,9 @@ mod tests {
         });
         let cx = app.ui_context();
         let component = PasteDialogComponent::capture(&app, &cx).unwrap();
-        let (x, y, _, _) = component.paste_button;
+        let [x, y, _, _] = component
+            .hit_bounds_for_test(&cx, UiPasteDialogHit::Paste)
+            .expect("paste button hit bounds");
         let hover = app.dispatch_ui_hover(x + 2.0, y + 2.0);
         assert!(hover.handled);
         assert_eq!(hover.cursor, CursorIcon::Pointer);

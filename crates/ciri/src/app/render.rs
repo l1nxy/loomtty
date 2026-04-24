@@ -1845,7 +1845,7 @@ impl App {
     fn search_bar_component(
         &self,
         tiles: &[(u64, GeoRect, bool)],
-    ) -> Option<super::ui::SearchBarComponent> {
+    ) -> Option<super::ui::search_bar::SearchBarComponent> {
         let Some(search) = &self.core.search_state else {
             return None;
         };
@@ -1856,7 +1856,7 @@ impl App {
             return None;
         };
 
-        Some(super::ui::SearchBarComponent {
+        Some(super::ui::search_bar::SearchBarComponent {
             query: search.query.clone(),
             matches_len: search.matches.len(),
             current_match_idx: search.current_match_idx,
@@ -1944,7 +1944,7 @@ impl App {
         zoom: f32,
         vw: f32,
         vh: f32,
-    ) -> Option<super::ui::BellFlashComponent> {
+    ) -> Option<super::ui::bell_flash::BellFlashComponent> {
         let mut flashes = Vec::new();
 
         for (pane_id, tile_rect, _) in tiles {
@@ -1955,13 +1955,13 @@ impl App {
             let Some(visual) = self.pane_visual_state(*pane_id, *tile_rect, zoom, vw, vh) else {
                 continue;
             };
-            flashes.push(super::ui::BellFlashRect {
+            flashes.push(super::ui::bell_flash::BellFlashRect {
                 rect: visual.tr,
                 intensity,
             });
         }
 
-        (!flashes.is_empty()).then_some(super::ui::BellFlashComponent { flashes })
+        (!flashes.is_empty()).then_some(super::ui::bell_flash::BellFlashComponent { flashes })
     }
 
     #[cfg(test)]
@@ -1997,7 +1997,7 @@ impl App {
         tiles: &[(u64, GeoRect, bool)],
         cw: f32,
         ch: f32,
-    ) -> Option<super::ui::ImePreeditComponent> {
+    ) -> Option<super::ui::ime_preedit::ImePreeditComponent> {
         if !self.core.ime.preedit_active || self.core.ime.preedit_text.is_empty() {
             return None;
         }
@@ -2011,7 +2011,7 @@ impl App {
             .preedit_cursor
             .map(|cursor_pos| Self::preedit_cursor_display_cols(&preedit_text, cursor_pos));
 
-        Some(super::ui::ImePreeditComponent {
+        Some(super::ui::ime_preedit::ImePreeditComponent {
             text: preedit_text,
             base_x,
             base_y,

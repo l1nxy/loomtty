@@ -1,15 +1,15 @@
-mod bell_flash;
+pub(super) mod bell_flash;
 pub(crate) mod connection_status;
 mod context_menu;
 mod frame;
 mod hints_bar;
-mod ime_preedit;
+pub(super) mod ime_preedit;
 mod interaction;
 pub(super) mod info_box;
 mod overview;
 mod palette;
 mod paste_dialog;
-mod search_bar;
+pub(super) mod search_bar;
 mod tab_bar;
 mod text_layout;
 pub(crate) mod tokens;
@@ -17,12 +17,9 @@ mod top_bar;
 mod transient;
 pub(crate) mod types;
 
-pub(crate) use bell_flash::{BellFlashComponent, BellFlashRect};
 #[cfg(test)]
 pub(crate) use frame::chrome_rects;
 use frame::UiFrame;
-pub(crate) use ime_preedit::ImePreeditComponent;
-pub(crate) use search_bar::SearchBarComponent;
 pub(crate) use transient::TransientOverlayFrame;
 pub(crate) use types::*;
 

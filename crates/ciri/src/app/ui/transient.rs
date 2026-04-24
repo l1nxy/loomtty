@@ -1,7 +1,7 @@
 use ciri_layout::geometry::Rect as GeoRect;
 use ciri_render::glyph_cache::GlyphInstance;
 use ciri_render::sdf_rect::SdfRect;
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::bell_flash::{BellFlashComponent, BellFlashRect};
 use super::ime_preedit::ImePreeditComponent;
@@ -226,7 +226,7 @@ impl App {
             .core
             .ime
             .preedit_cursor
-            .map(|cursor_pos| Self::preedit_cursor_display_cols(&preedit_text, cursor_pos));
+            .map(|cursor_pos| preedit_cursor_display_cols(&preedit_text, cursor_pos));
 
         Some(ImePreeditComponent {
             text: preedit_text,
@@ -300,5 +300,27 @@ impl App {
             baseline,
         );
         paint(&cx, &mut scene);
+    }
+}
+
+pub(in crate::app) fn preedit_cursor_display_cols(text: &str, cursor_byte: usize) -> usize {
+    let cursor_byte = cursor_byte.min(text.len());
+    text.char_indices()
+        .take_while(|(idx, _)| *idx < cursor_byte)
+        .map(|(_, ch)| UnicodeWidthChar::width(ch).unwrap_or(0))
+        .sum()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::preedit_cursor_display_cols;
+
+    #[test]
+    fn preedit_cursor_display_cols_handles_utf8_offsets_and_wide_chars() {
+        let text = "你a好";
+        assert_eq!(preedit_cursor_display_cols(text, 0), 0);
+        assert_eq!(preedit_cursor_display_cols(text, "你".len()), 2);
+        assert_eq!(preedit_cursor_display_cols(text, "你a".len()), 3);
+        assert_eq!(preedit_cursor_display_cols(text, text.len()), 5);
     }
 }

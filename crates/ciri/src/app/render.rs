@@ -9,7 +9,6 @@ use ciri_render::terminal;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::Instant;
-use unicode_width::UnicodeWidthChar;
 
 use super::App;
 #[derive(Clone, Copy)]
@@ -779,14 +778,6 @@ impl App {
         }
 
         hasher.finish()
-    }
-
-    pub(in crate::app) fn preedit_cursor_display_cols(text: &str, cursor_byte: usize) -> usize {
-        let cursor_byte = cursor_byte.min(text.len());
-        text.char_indices()
-            .take_while(|(idx, _)| *idx < cursor_byte)
-            .map(|(_, ch)| UnicodeWidthChar::width(ch).unwrap_or(0))
-            .sum()
     }
 
     /// Delegate: snap all column widths.
@@ -2553,15 +2544,6 @@ mod tests {
         let mut app = App::new(config, "test-session");
         app.preview_resize(PhysicalSize::new(900, 700));
         app
-    }
-
-    #[test]
-    fn preedit_cursor_display_cols_handles_utf8_offsets_and_wide_chars() {
-        let text = "你a好";
-        assert_eq!(App::preedit_cursor_display_cols(text, 0), 0);
-        assert_eq!(App::preedit_cursor_display_cols(text, "你".len()), 2);
-        assert_eq!(App::preedit_cursor_display_cols(text, "你a".len()), 3);
-        assert_eq!(App::preedit_cursor_display_cols(text, text.len()), 5);
     }
 
     #[test]

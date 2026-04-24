@@ -3,7 +3,7 @@ use ciri_render::glyph_cache::GlyphInstance;
 use ciri_render::sdf_rect::SdfRect;
 use unicode_width::UnicodeWidthStr;
 
-use super::bell_flash::BellFlashComponent;
+use super::bell_flash::{BellFlashComponent, BellFlashRect};
 use super::ime_preedit::ImePreeditComponent;
 use super::search_bar::SearchBarComponent;
 use super::types::{UiContext, UiScene, ui_context_from_metrics};
@@ -90,6 +90,50 @@ impl App {
             current_match_idx: search.current_match_idx,
             pane_rect: *pane_rect,
         })
+    }
+
+    #[cfg(test)]
+    pub(in crate::app) fn build_bell_flash(
+        &mut self,
+        tiles: &[(u64, GeoRect, bool)],
+        zoom: f32,
+        vw: f32,
+        vh: f32,
+        sdf_rects: &mut Vec<SdfRect>,
+        glyphs: &mut Vec<GlyphInstance>,
+        color_glyphs: &mut Vec<GlyphInstance>,
+    ) {
+        let (cw, ch) = self.ui_cell_metrics();
+        let Some(component) = self.bell_flash_component(tiles, zoom, vw, vh) else {
+            return;
+        };
+        self.paint_transient_ui_with_metrics(
+            vw,
+            vh,
+            cw,
+            ch,
+            sdf_rects,
+            glyphs,
+            color_glyphs,
+            |cx, scene| {
+                component.paint(cx, scene);
+            },
+        );
+    }
+
+    fn bell_flash_component(
+        &self,
+        tiles: &[(u64, GeoRect, bool)],
+        zoom: f32,
+        vw: f32,
+        vh: f32,
+    ) -> Option<BellFlashComponent> {
+        let flashes = self
+            .bell_flash_rects(tiles, zoom, vw, vh)
+            .into_iter()
+            .map(|(rect, intensity)| BellFlashRect { rect, intensity })
+            .collect::<Vec<_>>();
+        (!flashes.is_empty()).then_some(BellFlashComponent { flashes })
     }
 
     pub(in crate::app) fn ime_input_anchor(

@@ -1811,42 +1811,13 @@ impl App {
         false
     }
 
-    #[cfg(test)]
-    pub fn build_bell_flash(
-        &mut self,
-        tiles: &[(u64, GeoRect, bool)],
-        zoom: f32,
-        vw: f32,
-        vh: f32,
-        sdf_rects: &mut Vec<ciri_render::sdf_rect::SdfRect>,
-        glyphs: &mut Vec<GlyphInstance>,
-        color_glyphs: &mut Vec<GlyphInstance>,
-    ) {
-        let (cw, ch) = self.ui_cell_metrics();
-        let Some(component) = self.bell_flash_component(tiles, zoom, vw, vh) else {
-            return;
-        };
-        self.paint_transient_ui_with_metrics(
-            vw,
-            vh,
-            cw,
-            ch,
-            sdf_rects,
-            glyphs,
-            color_glyphs,
-            |cx, scene| {
-                component.paint(cx, scene);
-            },
-        );
-    }
-
-    pub(in crate::app) fn bell_flash_component(
+    pub(in crate::app) fn bell_flash_rects(
         &self,
         tiles: &[(u64, GeoRect, bool)],
         zoom: f32,
         vw: f32,
         vh: f32,
-    ) -> Option<super::ui::bell_flash::BellFlashComponent> {
+    ) -> Vec<(GeoRect, f32)> {
         let mut flashes = Vec::new();
 
         for (pane_id, tile_rect, _) in tiles {
@@ -1857,13 +1828,10 @@ impl App {
             let Some(visual) = self.pane_visual_state(*pane_id, *tile_rect, zoom, vw, vh) else {
                 continue;
             };
-            flashes.push(super::ui::bell_flash::BellFlashRect {
-                rect: visual.tr,
-                intensity,
-            });
+            flashes.push((visual.tr, intensity));
         }
 
-        (!flashes.is_empty()).then_some(super::ui::bell_flash::BellFlashComponent { flashes })
+        flashes
     }
 
     fn rgb_to_rgba(width: u32, height: u32, data: &[u8]) -> Option<Vec<u8>> {

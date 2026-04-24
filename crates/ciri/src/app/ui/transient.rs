@@ -2,12 +2,24 @@ use super::types::{UiContext, UiScene};
 use super::{BellFlashComponent, ImePreeditComponent, SearchBarComponent};
 
 pub(crate) struct TransientOverlayFrame {
-    pub(crate) search_bar: Option<SearchBarComponent>,
-    pub(crate) bell_flash: Option<BellFlashComponent>,
-    pub(crate) ime_preedit: Option<ImePreeditComponent>,
+    search_bar: Option<SearchBarComponent>,
+    bell_flash: Option<BellFlashComponent>,
+    ime_preedit: Option<ImePreeditComponent>,
 }
 
 impl TransientOverlayFrame {
+    pub(crate) fn new(
+        search_bar: Option<SearchBarComponent>,
+        bell_flash: Option<BellFlashComponent>,
+        ime_preedit: Option<ImePreeditComponent>,
+    ) -> Self {
+        Self {
+            search_bar,
+            bell_flash,
+            ime_preedit,
+        }
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.search_bar.is_none() && self.bell_flash.is_none() && self.ime_preedit.is_none()
     }

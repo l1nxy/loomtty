@@ -31,6 +31,20 @@ use ciri_render::glyph_cache::GlyphInstance;
 use super::App;
 
 impl App {
+    pub(super) fn ui_cell_metrics(&self) -> (f32, f32) {
+        let cell_h = self
+            .glyph_cache
+            .as_ref()
+            .map(|c| c.cell_height)
+            .unwrap_or(self.core.config.font.size * 1.2);
+        let cell_w = self
+            .glyph_cache
+            .as_ref()
+            .map(|c| c.cell_width)
+            .unwrap_or(8.0);
+        (cell_w, cell_h)
+    }
+
     pub(crate) fn build_ui(
         &mut self,
         vw: f32,
@@ -45,16 +59,7 @@ impl App {
         if self.glyph_cache.is_none() {
             return;
         }
-        let cell_h = self
-            .glyph_cache
-            .as_ref()
-            .map(|c| c.cell_height)
-            .unwrap_or(self.core.config.font.size * 1.2);
-        let cell_w = self
-            .glyph_cache
-            .as_ref()
-            .map(|c| c.cell_width)
-            .unwrap_or(8.0);
+        let (cell_w, cell_h) = self.ui_cell_metrics();
         let top_bar_layout = self.top_bar_layout(vw, vh, cell_w, cell_h, self.ui_shaper.as_ref());
         self.ensure_active_pane_tab_visible(top_bar_layout.tabs_area_px);
         let baseline = cell_h * self.core.config.statusbar.text_baseline;
@@ -101,16 +106,7 @@ impl App {
     }
 
     pub(crate) fn ui_context(&self) -> UiContext<'_> {
-        let cell_h = self
-            .glyph_cache
-            .as_ref()
-            .map(|c| c.cell_height)
-            .unwrap_or(self.core.config.font.size * 1.2);
-        let cell_w = self
-            .glyph_cache
-            .as_ref()
-            .map(|c| c.cell_width)
-            .unwrap_or(8.0);
+        let (cell_w, cell_h) = self.ui_cell_metrics();
         let (viewport_w, viewport_h) = self.command_palette_viewport_size();
         ui_context_from_metrics(
             &self.core.config,

@@ -1824,10 +1824,7 @@ impl App {
         glyphs: &mut Vec<GlyphInstance>,
         color_glyphs: &mut Vec<GlyphInstance>,
     ) {
-        let (cw, ch) = {
-            let atlas = self.glyph_cache.as_ref().unwrap();
-            (atlas.cell_width, atlas.cell_height)
-        };
+        let (cw, ch) = self.ui_cell_metrics();
         let Some(component) = self.search_bar_component(tiles) else {
             return;
         };
@@ -1923,10 +1920,7 @@ impl App {
         glyphs: &mut Vec<GlyphInstance>,
         color_glyphs: &mut Vec<GlyphInstance>,
     ) {
-        let (cw, ch) = {
-            let atlas = self.glyph_cache.as_ref().unwrap();
-            (atlas.cell_width, atlas.cell_height)
-        };
+        let (cw, ch) = self.ui_cell_metrics();
         let Some(component) = self.bell_flash_component(tiles, zoom, vw, vh) else {
             return;
         };
@@ -1980,10 +1974,7 @@ impl App {
         glyphs: &mut Vec<GlyphInstance>,
         color_glyphs: &mut Vec<GlyphInstance>,
     ) {
-        let (cw, ch) = {
-            let atlas = self.glyph_cache.as_ref().unwrap();
-            (atlas.cell_width, atlas.cell_height)
-        };
+        let (cw, ch) = self.ui_cell_metrics();
         let Some(component) = self.ime_preedit_component(tiles, cw, ch) else {
             return;
         };
@@ -2038,15 +2029,12 @@ impl App {
         glyphs: &mut Vec<GlyphInstance>,
         color_glyphs: &mut Vec<GlyphInstance>,
     ) {
-        let (cw, ch) = {
-            let atlas = self.glyph_cache.as_ref().unwrap();
-            (atlas.cell_width, atlas.cell_height)
-        };
-        let frame = super::ui::TransientOverlayFrame {
-            search_bar: self.search_bar_component(tiles),
-            bell_flash: self.bell_flash_component(tiles, zoom, vw, vh),
-            ime_preedit: self.ime_preedit_component(tiles, cw, ch),
-        };
+        let (cw, ch) = self.ui_cell_metrics();
+        let frame = super::ui::TransientOverlayFrame::new(
+            self.search_bar_component(tiles),
+            self.bell_flash_component(tiles, zoom, vw, vh),
+            self.ime_preedit_component(tiles, cw, ch),
+        );
         if frame.is_empty() {
             return;
         }

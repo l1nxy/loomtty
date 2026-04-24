@@ -173,6 +173,7 @@ impl ContextMenuComponent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::ui::types::test_ui_context;
     use crate::app::{App, ContextMenu, ContextMenuAction, ContextMenuItem};
     use ciri_config::config::CiriConfig;
 
@@ -198,17 +199,7 @@ mod tests {
         let mut config = CiriConfig::default();
         config.theme = app.core.config.theme.clone();
         let theme = ciri_ui::ResolvedTheme::default();
-        let cx = UiContext {
-            config: &config,
-            theme: &theme,
-            viewport_w: 120.0,
-            viewport_h: 60.0,
-            cell_w: 8.0,
-            cell_h: 16.0,
-            baseline: 12.0,
-            ui_line_h: 16.0,
-            ui_shaper: None,
-        };
+        let cx = test_ui_context(&config, &theme, 120.0, 60.0);
         let menu = ContextMenuComponent::capture(&app, &cx).expect("menu visible");
         assert!(menu.x >= 0.0);
         assert!(menu.y >= 0.0);

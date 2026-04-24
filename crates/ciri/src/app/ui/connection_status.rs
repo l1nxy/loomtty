@@ -273,6 +273,7 @@ impl ConnectionStatusComponent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::ui::types::test_ui_context;
     use ciri_app::app::DisconnectReason;
     use ciri_config::config::CiriConfig;
 
@@ -288,17 +289,7 @@ mod tests {
         ));
         app.core.reconnect_state = None;
         let theme = ciri_ui::ResolvedTheme::default();
-        let cx = UiContext {
-            config: &app.core.config,
-            theme: &theme,
-            viewport_w: 220.0,
-            viewport_h: 160.0,
-            cell_w: 8.0,
-            cell_h: 16.0,
-            baseline: 12.0,
-            ui_line_h: 16.0,
-            ui_shaper: None,
-        };
+        let cx = test_ui_context(&app.core.config, &theme, 220.0, 160.0);
         let banner = ConnectionStatusComponent::capture(&app, &cx).expect("banner visible");
         assert!(banner.x >= 0.0);
         assert!(banner.x + banner.w <= cx.viewport_w + 0.001);

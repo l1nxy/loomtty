@@ -220,27 +220,14 @@ fn overview_action_bar_tree(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::ui::types::test_ui_context;
     use ciri_config::config::CiriConfig;
-
-    fn test_cx<'a>(config: &'a CiriConfig, theme: &'a ciri_ui::ResolvedTheme) -> UiContext<'a> {
-        UiContext {
-            config,
-            theme,
-            viewport_w: 400.0,
-            viewport_h: 240.0,
-            cell_w: 8.0,
-            cell_h: 16.0,
-            baseline: 12.0,
-            ui_line_h: 16.0,
-            ui_shaper: None,
-        }
-    }
 
     #[test]
     fn action_bar_hit_uses_ciri_ui_layout_snapshot() {
         let config = CiriConfig::default();
         let theme = ciri_ui::ResolvedTheme::default();
-        let cx = test_cx(&config, &theme);
+        let cx = test_ui_context(&config, &theme, 400.0, 240.0);
         let data = OverviewActionBarData {
             pane_x: 40.0,
             pane_w: 200.0,

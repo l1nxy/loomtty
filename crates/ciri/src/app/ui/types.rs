@@ -138,6 +138,26 @@ pub(crate) fn ui_context_from_metrics<'a>(
     }
 }
 
+#[cfg(test)]
+pub(crate) fn test_ui_context<'a>(
+    config: &'a ciri_config::config::CiriConfig,
+    theme: &'a ciri_ui::ResolvedTheme,
+    viewport_w: f32,
+    viewport_h: f32,
+) -> UiContext<'a> {
+    UiContext {
+        config,
+        theme,
+        viewport_w,
+        viewport_h,
+        cell_w: 8.0,
+        cell_h: 16.0,
+        baseline: 12.0,
+        ui_line_h: 16.0,
+        ui_shaper: None,
+    }
+}
+
 pub(super) fn ui_hit_id(
     root: &impl ciri_ui::Element,
     cx: &UiContext<'_>,

@@ -206,6 +206,7 @@ impl PasteDialogComponent {
 mod tests {
     use super::*;
     use crate::app::paste_guard::PasteInfo;
+    use crate::app::ui::types::test_ui_context;
     use crate::app::{App, PendingPaste};
     use ciri_config::config::CiriConfig;
 
@@ -227,17 +228,7 @@ mod tests {
             target: super::super::super::PendingPasteTarget::Terminal,
         });
         let theme = ciri_ui::ResolvedTheme::default();
-        let cx = UiContext {
-            config: &app.core.config,
-            theme: &theme,
-            viewport_w: 240.0,
-            viewport_h: 160.0,
-            cell_w: 8.0,
-            cell_h: 16.0,
-            baseline: 12.0,
-            ui_line_h: 16.0,
-            ui_shaper: None,
-        };
+        let cx = test_ui_context(&app.core.config, &theme, 240.0, 160.0);
         let dialog = PasteDialogComponent::capture(&app, &cx).expect("dialog visible");
         assert!(text_layout::measure(&cx, &dialog.preview) <= dialog.dialog_w - 32.0 + 0.001);
     }
@@ -256,17 +247,7 @@ mod tests {
             target: super::super::super::PendingPasteTarget::Terminal,
         });
         let theme = ciri_ui::ResolvedTheme::default();
-        let cx = UiContext {
-            config: &app.core.config,
-            theme: &theme,
-            viewport_w: 400.0,
-            viewport_h: 240.0,
-            cell_w: 8.0,
-            cell_h: 16.0,
-            baseline: 12.0,
-            ui_line_h: 16.0,
-            ui_shaper: None,
-        };
+        let cx = test_ui_context(&app.core.config, &theme, 400.0, 240.0);
         let dialog = PasteDialogComponent::capture(&app, &cx).expect("dialog visible");
         let paste_bounds = dialog
             .hit_bounds_for_test(&cx, UiPasteDialogHit::Paste)

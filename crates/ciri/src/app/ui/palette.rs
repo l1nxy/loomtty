@@ -5,10 +5,10 @@
 
 use super::text_layout;
 use super::tokens;
-use super::types::{UiAction, UiContext, UiPaletteHit, UiScene};
-use crate::app::ciri_ui_bridge::paint_ui_tree;
+use super::types::{UiAction, UiContext, UiPaletteHit, UiScene, ui_hit_id};
 use crate::app::App;
-use ciri_ui::{div, text, Div, Layer, Styled};
+use crate::app::ciri_ui_bridge::paint_ui_tree;
+use ciri_ui::{Div, Layer, Styled, div, text};
 
 const HIT_CLOSE: u64 = 1;
 const HIT_PANEL: u64 = 2;
@@ -155,15 +155,7 @@ impl PaletteComponent {
 
     pub(super) fn hit_test(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> UiPaletteHit {
         let root = self.build_tree(cx);
-        let mut shaper = ciri_ui::NullShaper;
-        let out = ciri_ui::paint_tree_with_layout(
-            &root,
-            cx.theme,
-            [cx.viewport_w, cx.viewport_h],
-            1.0,
-            &mut shaper,
-        );
-        palette_hit_from_id(out.layout.hit_test(mx, my).and_then(|n| n.hit_id))
+        palette_hit_from_id(ui_hit_id(&root, cx, mx, my))
     }
 
     /// Map a click to a `UiAction`: clicking an entry runs it, clicking on the

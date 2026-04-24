@@ -6,10 +6,12 @@
 
 use super::text_layout;
 use super::tokens;
-use super::types::{UiAction, UiContext, UiPasteDialogHit, UiScene};
-use crate::app::ciri_ui_bridge::paint_ui_tree;
+#[cfg(test)]
+use super::types::ui_hit_bounds;
+use super::types::{UiAction, UiContext, UiPasteDialogHit, UiScene, ui_hit_id};
 use crate::app::App;
-use ciri_ui::{div, text, Div, Layer, Styled};
+use crate::app::ciri_ui_bridge::paint_ui_tree;
+use ciri_ui::{Div, Layer, Styled, div, text};
 
 const HIT_DIALOG: u64 = 1;
 const HIT_PASTE: u64 = 2;
@@ -61,15 +63,7 @@ impl PasteDialogComponent {
 
     pub(super) fn hit_test(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> UiPasteDialogHit {
         let root = self.build_tree(cx);
-        let mut shaper = ciri_ui::NullShaper;
-        let out = ciri_ui::paint_tree_with_layout(
-            &root,
-            cx.theme,
-            [cx.viewport_w, cx.viewport_h],
-            1.0,
-            &mut shaper,
-        );
-        paste_dialog_hit_from_id(out.layout.hit_test(mx, my).and_then(|n| n.hit_id))
+        paste_dialog_hit_from_id(ui_hit_id(&root, cx, mx, my))
     }
 }
 
@@ -204,19 +198,7 @@ impl PasteDialogComponent {
             UiPasteDialogHit::None => return None,
         };
         let root = self.build_tree(cx);
-        let mut shaper = ciri_ui::NullShaper;
-        let out = ciri_ui::paint_tree_with_layout(
-            &root,
-            cx.theme,
-            [cx.viewport_w, cx.viewport_h],
-            1.0,
-            &mut shaper,
-        );
-        out.layout
-            .nodes()
-            .iter()
-            .find(|node| node.hit_id == Some(hit_id))
-            .map(|node| node.bounds)
+        ui_hit_bounds(&root, cx, hit_id)
     }
 }
 

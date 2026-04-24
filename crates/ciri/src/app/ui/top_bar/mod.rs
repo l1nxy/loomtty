@@ -31,11 +31,11 @@ use self::session_label::SessionLabel;
 use self::workspace::WorkspaceIndicator;
 use super::text_layout;
 use super::tokens;
-use super::types::{UiAction, UiContext, UiRect, UiScene, UiTopBarHit};
+use super::types::{UiAction, UiContext, UiRect, UiScene, UiTopBarHit, ui_hit_id};
 use crate::app::ciri_ui_bridge::paint_ui_tree;
 use crate::app::top_bar::{PaneTabLayout, TopBarLayout};
 use crate::app::{App, TopBarHoverRegion};
-use ciri_ui::{div, Div, Layer, Styled};
+use ciri_ui::{Div, Layer, Styled, div};
 
 const HIT_SESSION: u64 = 1;
 const HIT_WORKSPACE: u64 = 2;
@@ -269,17 +269,7 @@ impl TopBarComponent {
             return None;
         }
         let root = self.build_hit_tree(rect, cx);
-        let mut shaper = ciri_ui::NullShaper;
-        let out = ciri_ui::paint_tree_with_layout(
-            &root,
-            cx.theme,
-            [cx.viewport_w, cx.viewport_h],
-            1.0,
-            &mut shaper,
-        );
-        Some(top_bar_hit_from_id(
-            out.layout.hit_test(mx, my).and_then(|node| node.hit_id),
-        ))
+        Some(top_bar_hit_from_id(ui_hit_id(&root, cx, mx, my)))
     }
 
     pub(super) fn hit_test(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<UiTopBarHit> {

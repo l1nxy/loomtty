@@ -1,10 +1,10 @@
 use ciri_layout::geometry::Rect as GeoRect;
 
 use super::tokens;
-use super::types::{UiContext, UiOverviewHit, UiScene};
-use crate::app::ciri_ui_bridge::paint_ui_tree;
+use super::types::{UiContext, UiOverviewHit, UiScene, ui_hit_id};
 use crate::app::App;
-use ciri_ui::{div, text, Div, Layer, Styled};
+use crate::app::ciri_ui_bridge::paint_ui_tree;
+use ciri_ui::{Div, Layer, Styled, div, text};
 
 const HIT_ACTION_BAR: u64 = 1;
 const HIT_CLOSE: u64 = 2;
@@ -63,15 +63,7 @@ fn overview_action_bar_hit(
     cx: &UiContext<'_>,
 ) -> Option<UiOverviewHit> {
     let root = overview_action_bar_tree(d, None, cx, true);
-    let mut shaper = ciri_ui::NullShaper;
-    let out = ciri_ui::paint_tree_with_layout(
-        &root,
-        cx.theme,
-        [cx.viewport_w, cx.viewport_h],
-        1.0,
-        &mut shaper,
-    );
-    match out.layout.hit_test(mx, my).and_then(|node| node.hit_id) {
+    match ui_hit_id(&root, cx, mx, my) {
         Some(HIT_CLOSE) => Some(UiOverviewHit::ClosePane(pane_id)),
         Some(HIT_FOCUS) => Some(UiOverviewHit::FocusPane(ws_idx, pane_id)),
         Some(HIT_ACTION_BAR) => Some(UiOverviewHit::Background),

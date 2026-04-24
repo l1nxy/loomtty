@@ -18,10 +18,10 @@ use ciri_config::config::TabBarPosition;
 
 use super::text_layout;
 use super::tokens;
-use super::types::{UiAction, UiContext, UiRect, UiScene};
-use crate::app::ciri_ui_bridge::paint_ui_tree;
+use super::types::{UiAction, UiContext, UiRect, UiScene, ui_hit_id};
 use crate::app::App;
-use ciri_ui::{div, text, Layer, Styled};
+use crate::app::ciri_ui_bridge::paint_ui_tree;
+use ciri_ui::{Layer, Styled, div, text};
 
 const HIT_TAB_BASE: u64 = 1_000_000;
 
@@ -244,16 +244,7 @@ impl TabBarComponent {
             return None;
         }
         let root = self.build_hit_tree(rect, cx);
-        let mut shaper = ciri_ui::NullShaper;
-        let out = ciri_ui::paint_tree_with_layout(
-            &root,
-            cx.theme,
-            [cx.viewport_w, cx.viewport_h],
-            1.0,
-            &mut shaper,
-        );
-        pane_id_from_hit_id(out.layout.hit_test(mx, my).and_then(|node| node.hit_id))
-            .map(UiAction::FocusPaneTab)
+        pane_id_from_hit_id(ui_hit_id(&root, cx, mx, my)).map(UiAction::FocusPaneTab)
     }
 }
 

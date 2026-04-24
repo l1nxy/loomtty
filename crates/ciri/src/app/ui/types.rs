@@ -138,6 +138,44 @@ pub(crate) fn ui_context_from_metrics<'a>(
     }
 }
 
+pub(super) fn ui_hit_id(
+    root: &impl ciri_ui::Element,
+    cx: &UiContext<'_>,
+    mx: f32,
+    my: f32,
+) -> Option<u64> {
+    let mut shaper = ciri_ui::NullShaper;
+    let out = ciri_ui::paint_tree_with_layout(
+        root,
+        cx.theme,
+        [cx.viewport_w, cx.viewport_h],
+        1.0,
+        &mut shaper,
+    );
+    out.layout.hit_test(mx, my).and_then(|node| node.hit_id)
+}
+
+#[cfg(test)]
+pub(super) fn ui_hit_bounds(
+    root: &impl ciri_ui::Element,
+    cx: &UiContext<'_>,
+    hit_id: u64,
+) -> Option<[f32; 4]> {
+    let mut shaper = ciri_ui::NullShaper;
+    let out = ciri_ui::paint_tree_with_layout(
+        root,
+        cx.theme,
+        [cx.viewport_w, cx.viewport_h],
+        1.0,
+        &mut shaper,
+    );
+    out.layout
+        .nodes()
+        .iter()
+        .find(|node| node.hit_id == Some(hit_id))
+        .map(|node| node.bounds)
+}
+
 pub(crate) struct UiScene<'a> {
     pub atlas: &'a mut GlyphCache,
     pub glyphs: &'a mut Vec<GlyphInstance>,

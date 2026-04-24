@@ -15,9 +15,7 @@ use std::time::Instant;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::App;
-use super::ciri_ui_bridge::paint_ui_tree;
 use super::ui::{UiContext, UiScene};
-use ciri_ui::{Layer, Styled, div, text};
 
 #[derive(Clone, Copy)]
 struct TilePaintConfig {
@@ -1981,54 +1979,14 @@ impl App {
         let Some((base_x, base_y)) = self.ime_input_anchor(tiles, cw, ch) else {
             return;
         };
-        let atlas = self.glyph_cache.as_mut().unwrap();
-
         let preedit_text = &self.core.ime.preedit_text;
-        let text_width = UnicodeWidthStr::width(preedit_text.as_str()) as f32 * cw;
+        let cursor_cols = self
+            .core
+            .ime
+            .preedit_cursor
+            .map(|cursor_pos| Self::preedit_cursor_display_cols(preedit_text, cursor_pos));
         let baseline = ch * self.core.config.statusbar.text_baseline;
-        let box_w = text_width + 4.0;
-        let panel = div()
-            .in_layer(Layer::Overlay)
-            .absolute()
-            .left(base_x)
-            .top(base_y)
-            .w(box_w)
-            .h(ch + 2.0)
-            .bg([0.15, 0.15, 0.25, 0.95])
-            .child(
-                div()
-                    .absolute()
-                    .left(2.0)
-                    .top(1.0)
-                    .w(text_width.max(0.0))
-                    .h(ch)
-                    .child(text(preedit_text.clone()).color([1.0, 1.0, 1.0, 1.0])),
-            );
-        let mut root = div().w(vw).h(vh).child(panel).child(
-            div()
-                .in_layer(Layer::Overlay)
-                .absolute()
-                .left(base_x)
-                .top(base_y + ch)
-                .w(box_w)
-                .h(2.0)
-                .bg([0.5, 0.7, 1.0, 0.9]),
-        );
-
-        if let Some(cursor_pos) = self.core.ime.preedit_cursor {
-            let cursor_cols = Self::preedit_cursor_display_cols(preedit_text, cursor_pos);
-            root = root.child(
-                div()
-                    .in_layer(Layer::Overlay)
-                    .absolute()
-                    .left(base_x + 2.0 + cursor_cols as f32 * cw)
-                    .top(base_y + 1.0)
-                    .w(2.0)
-                    .h(ch)
-                    .bg([1.0, 1.0, 1.0, 0.8]),
-            );
-        }
-
+        let atlas = self.glyph_cache.as_mut().unwrap();
         let mut scene = UiScene {
             atlas,
             glyphs,
@@ -2045,7 +2003,7 @@ impl App {
             ch,
             baseline,
         );
-        paint_ui_tree(&root, &cx, &mut scene);
+        super::ui::paint_ime_preedit(preedit_text, base_x, base_y, cursor_cols, &cx, &mut scene);
     }
 
     fn rgb_to_rgba(width: u32, height: u32, data: &[u8]) -> Option<Vec<u8>> {

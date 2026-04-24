@@ -1,6 +1,6 @@
 use ciri_config::config::StatusBarPosition;
 
-use super::super::layout::{UiElement, UiRect};
+use super::super::layout::UiRect;
 use super::super::text_layout;
 use super::super::tokens;
 use super::super::types::{UiContext, UiScene};
@@ -14,9 +14,8 @@ use ciri_ui::{Div, Layer, Styled, div, text};
 /// tab layouts plus scroll bookkeeping. All geometry (separator height,
 /// active-indicator y, fade gradient bounds) is derived from the `rect`
 /// handed to `paint` — there is no captured `bar_y` or `bar_height`.
-/// This keeps the element's drawing strictly inside `rect`, which is
-/// the contract of `UiElement` (and what the side-tab layout in
-/// `super::super::tab_bar` relies on).
+/// This keeps the element's drawing strictly inside `rect`, matching what the
+/// side-tab layout in `super::super::tab_bar` relies on.
 pub(super) struct PaneTabsElement<'a> {
     pub(super) tabs: &'a [PaneTabLayout],
     pub(super) hovered_tab: Option<u64>,
@@ -24,8 +23,8 @@ pub(super) struct PaneTabsElement<'a> {
     pub(super) scroll_max: f32,
 }
 
-impl<'a> UiElement for PaneTabsElement<'a> {
-    fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+impl<'a> PaneTabsElement<'a> {
+    pub(super) fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         if rect.is_empty() {
             return;
         }

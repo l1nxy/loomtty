@@ -1,5 +1,5 @@
 use super::info_box::action_short_label;
-use super::layout::{UiElement, UiRect};
+use super::layout::UiRect;
 use super::text_layout;
 use super::tokens;
 use super::types::{UiContext, UiScene};
@@ -107,8 +107,8 @@ impl HintsBarComponent {
     }
 }
 
-impl UiElement for HintsBarComponent {
-    fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+impl HintsBarComponent {
+    pub(crate) fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         let root = self.build_tree(rect, cx);
         paint_ui_tree(&root, cx, scene);
     }

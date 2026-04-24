@@ -10,10 +10,8 @@
 //!   - [`workspace::WorkspaceIndicator`] — fixed width (or zero), clicks cycle workspace
 //!   - [`mode::ModeIndicator`] — fixed width, clicks toggle overview
 //!
-//! Each sub-element implements [`UiElement`] and is told exactly what rect
-//! to draw into; none of them look at `cx.viewport_w`. This is a direct
-//! translation of niri's `LayoutElement::render(location)` idea
-//! (`niri/src/layout/mod.rs:128`) to the chrome layer.
+//! Each sub-element is told exactly what rect to draw into; none of them look
+//! at `cx.viewport_w` to decide its own slot.
 //!
 //! # Compatibility
 //!
@@ -31,7 +29,7 @@ use self::mode::ModeIndicator;
 use self::pane_tabs::PaneTabsElement;
 use self::session_label::SessionLabel;
 use self::workspace::WorkspaceIndicator;
-use super::layout::{UiElement, UiRect};
+use super::layout::UiRect;
 use super::text_layout;
 use super::tokens;
 use super::types::{UiAction, UiContext, UiScene, UiTopBarHit};
@@ -348,8 +346,8 @@ impl TopBarComponent {
     }
 }
 
-impl UiElement for TopBarComponent {
-    fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+impl TopBarComponent {
+    pub(crate) fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         let chrome = self.build_chrome_tree(rect, cx);
         paint_ui_tree(&chrome, cx, scene);
 
@@ -366,12 +364,9 @@ impl UiElement for TopBarComponent {
             UiTopBarHit::Background => None,
         }
     }
-}
-
-impl TopBarComponent {
     pub(crate) fn click(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<UiAction> {
         let rect = self.bar_rect(cx);
-        <Self as UiElement>::hit(self, rect, mx, my, cx)
+        self.hit(rect, mx, my, cx)
     }
 }
 

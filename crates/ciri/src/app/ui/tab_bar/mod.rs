@@ -16,7 +16,7 @@
 
 use ciri_config::config::TabBarPosition;
 
-use super::layout::{UiElement, UiRect};
+use super::layout::UiRect;
 use super::text_layout;
 use super::tokens;
 use super::types::{UiAction, UiContext, UiScene};
@@ -225,8 +225,8 @@ impl TabBarComponent {
     }
 }
 
-impl UiElement for TabBarComponent {
-    fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+impl TabBarComponent {
+    pub(crate) fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         if rect.is_empty() {
             return;
         }
@@ -234,7 +234,13 @@ impl UiElement for TabBarComponent {
         paint_ui_tree(&root, cx, scene);
     }
 
-    fn hit(&self, rect: UiRect, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<UiAction> {
+    pub(crate) fn hit(
+        &self,
+        rect: UiRect,
+        mx: f32,
+        my: f32,
+        cx: &UiContext<'_>,
+    ) -> Option<UiAction> {
         if !rect.contains(mx, my) {
             return None;
         }

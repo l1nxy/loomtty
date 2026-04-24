@@ -27,7 +27,7 @@ use ciri_config::config::{StatusBarPosition, TabBarPosition};
 use ciri_render::glyph_cache::GlyphInstance;
 use winit::window::CursorIcon;
 
-use self::layout::{UiElement, UiRect};
+use self::layout::UiRect;
 use super::{App, TopBarHoverRegion};
 
 #[derive(Debug, Clone, Copy)]

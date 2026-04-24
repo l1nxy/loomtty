@@ -1,4 +1,4 @@
-use super::super::layout::{UiElement, UiRect};
+use super::super::layout::UiRect;
 use super::super::types::{UiContext, UiScene};
 use crate::app::ciri_ui_bridge::paint_ui_tree;
 use ciri_ui::{Div, Layer, Styled, div, text};
@@ -36,8 +36,8 @@ impl<'a> WorkspaceIndicator<'a> {
     }
 }
 
-impl<'a> UiElement for WorkspaceIndicator<'a> {
-    fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+impl<'a> WorkspaceIndicator<'a> {
+    pub(super) fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         let root = self.build_tree(rect, cx);
         paint_ui_tree(&root, cx, scene);
     }

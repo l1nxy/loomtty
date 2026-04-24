@@ -3,7 +3,7 @@ use ciri_config::config::StatusBarPosition;
 use super::super::layout::{Axis, SizeHint, UiElement, UiRect};
 use super::super::text_layout;
 use super::super::tokens;
-use super::super::types::{UiAction, UiContext, UiScene};
+use super::super::types::{UiContext, UiScene};
 use crate::app::ciri_ui_bridge::paint_ui_tree;
 use crate::app::top_bar::PaneTabLayout;
 use ciri_ui::{Div, Layer, Styled, div, text};
@@ -156,22 +156,6 @@ impl<'a> UiElement for PaneTabsElement<'a> {
         }
 
         paint_ui_tree(&root, cx, scene);
-    }
-
-    fn hit(&self, rect: UiRect, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
-        if !rect.contains(mx, my) {
-            return None;
-        }
-        let tabs_start_x = rect.x;
-        let tabs_end_x = rect.right();
-        for tab in self.tabs {
-            let visible_left = tab.x.max(tabs_start_x);
-            let visible_right = (tab.x + tab.w).min(tabs_end_x);
-            if mx >= visible_left && mx <= visible_right {
-                return Some(UiAction::FocusPaneTab(tab.pane_id));
-            }
-        }
-        None
     }
 }
 

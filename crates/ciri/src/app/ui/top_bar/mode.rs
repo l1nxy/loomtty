@@ -1,5 +1,5 @@
 use super::super::layout::{Axis, SizeHint, UiElement, UiRect};
-use super::super::types::{UiAction, UiContext, UiScene};
+use super::super::types::{UiContext, UiScene};
 use crate::app::ciri_ui_bridge::paint_ui_tree;
 use ciri_ui::{Layer, Styled, div, text};
 
@@ -37,9 +37,5 @@ impl<'a> UiElement for ModeIndicator<'a> {
                 .child(text(self.label).color(self.color)),
         );
         paint_ui_tree(&root, cx, scene);
-    }
-
-    fn hit(&self, rect: UiRect, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
-        rect.contains(mx, my).then_some(UiAction::ToggleOverview)
     }
 }

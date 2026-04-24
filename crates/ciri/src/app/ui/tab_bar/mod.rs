@@ -21,9 +21,21 @@ use super::layout::{Axis, SizeHint, UiElement, UiRect};
 use super::text_layout;
 use super::tokens;
 use super::types::{UiAction, UiContext, UiScene};
-use crate::app::App;
 use crate::app::ciri_ui_bridge::paint_ui_tree;
-use ciri_ui::{Layer, Styled, div, text};
+use crate::app::App;
+use ciri_ui::{div, text, Layer, Styled};
+
+const HIT_TAB_BASE: u64 = 1_000_000;
+
+fn pane_tab_hit_id(pane_id: u64) -> u64 {
+    HIT_TAB_BASE + pane_id
+}
+
+fn pane_id_from_hit_id(hit_id: Option<u64>) -> Option<u64> {
+    hit_id
+        .filter(|id| *id >= HIT_TAB_BASE)
+        .map(|id| id - HIT_TAB_BASE)
+}
 
 /// Snapshot of a single tab: what pane it represents, its label, and
 /// whether it is currently active.
@@ -81,6 +93,33 @@ impl TabBarComponent {
         let max_bottom = rect.bottom();
         let h = (self.tab_height).min((max_bottom - y).max(0.0));
         UiRect::new(rect.x, y, rect.w, h)
+    }
+
+    fn build_hit_tree(&self, rect: UiRect, cx: &UiContext<'_>) -> ciri_ui::Div {
+        let mut rows = div().w(rect.w).h(rect.h).flex_col();
+        for (idx, tab) in self.tabs.iter().enumerate() {
+            let row = self.row_rect(rect, idx);
+            if row.is_empty() {
+                break;
+            }
+            if idx > 0 && self.tab_gap > 0.0 {
+                rows = rows.child(div().w(rect.w).h(self.tab_gap));
+            }
+            rows = rows.child(
+                div()
+                    .w(rect.w)
+                    .h(row.h)
+                    .hit_id(pane_tab_hit_id(tab.pane_id))
+                    .cursor_pointer(),
+            );
+        }
+
+        div().w(cx.viewport_w).h(cx.viewport_h).child(
+            rows.in_layer(Layer::Chrome)
+                .translate(rect.x, rect.y)
+                .w(rect.w)
+                .h(rect.h),
+        )
     }
 }
 
@@ -201,20 +240,21 @@ impl UiElement for TabBarComponent {
         paint_ui_tree(&root, cx, scene);
     }
 
-    fn hit(&self, rect: UiRect, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
+    fn hit(&self, rect: UiRect, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<UiAction> {
         if !rect.contains(mx, my) {
             return None;
         }
-        for (idx, tab) in self.tabs.iter().enumerate() {
-            let row = self.row_rect(rect, idx);
-            if row.is_empty() {
-                break;
-            }
-            if row.contains(mx, my) {
-                return Some(UiAction::FocusPaneTab(tab.pane_id));
-            }
-        }
-        None
+        let root = self.build_hit_tree(rect, cx);
+        let mut shaper = ciri_ui::NullShaper;
+        let out = ciri_ui::paint_tree_with_layout(
+            &root,
+            cx.theme,
+            [cx.viewport_w, cx.viewport_h],
+            1.0,
+            &mut shaper,
+        );
+        pane_id_from_hit_id(out.layout.hit_test(mx, my).and_then(|node| node.hit_id))
+            .map(UiAction::FocusPaneTab)
     }
 }
 

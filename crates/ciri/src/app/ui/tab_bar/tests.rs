@@ -37,6 +37,46 @@ fn row_rect_clips_to_bottom_edge() {
     assert!(r2.is_empty());
 }
 
+#[test]
+fn hit_uses_ciri_ui_layout_snapshot() {
+    use crate::app::App;
+    use ciri_config::config::CiriConfig;
+
+    let app = App::new(CiriConfig::default(), "test-session");
+    let cx = app.ui_context();
+    let bar = UiRect::new(10.0, 20.0, 200.0, 80.0);
+    let bar_component = TabBarComponent {
+        tabs: vec![
+            TabEntry {
+                pane_id: 41,
+                label: "one".into(),
+                active: true,
+            },
+            TabEntry {
+                pane_id: 42,
+                label: "two".into(),
+                active: false,
+            },
+        ],
+        hovered_tab: None,
+        bar_width: 200.0,
+        tab_height: 28.0,
+        tab_gap: 4.0,
+        position: TabBarPosition::Left,
+    };
+
+    assert_eq!(
+        bar_component.hit(bar, 12.0, 22.0, &cx),
+        Some(UiAction::FocusPaneTab(41))
+    );
+    assert_eq!(
+        bar_component.hit(bar, 12.0, 54.0, &cx),
+        Some(UiAction::FocusPaneTab(42))
+    );
+    assert_eq!(bar_component.hit(bar, 12.0, 50.0, &cx), None);
+    assert_eq!(bar_component.hit(bar, 1.0, 1.0, &cx), None);
+}
+
 /// End-to-end: with `TabBarPosition::Left`, `Border::layout` must
 /// carve out a strip of `config.tabbar.width` on the left, starting
 /// below the top bar and ending above the hints bar. Cross-checks
@@ -44,10 +84,10 @@ fn row_rect_clips_to_bottom_edge() {
 /// arithmetic.
 #[test]
 fn border_places_left_tab_bar_between_top_and_hints() {
-    use crate::app::App;
+    use crate::app::ui::layout::Border;
     use crate::app::ui::HintsBarComponent;
     use crate::app::ui::TopBarComponent;
-    use crate::app::ui::layout::Border;
+    use crate::app::App;
     use ciri_config::config::{CiriConfig, StatusBarPosition};
 
     let mut cfg = CiriConfig::default();

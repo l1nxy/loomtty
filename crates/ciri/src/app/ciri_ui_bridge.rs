@@ -11,22 +11,20 @@
 //!   GlyphCache + atlas fallback). That means migrated widgets produce
 //!   glyphs through exactly the same path as legacy `UiComponent`s,
 //!   sharing the shape cache and atlas.
-//! - [`merge_ui_scene`] appends the scene's flat paint-order output
-//!   into the accumulators that `FrameScene` is built from — one call
-//!   per painted ciri-ui tree.
+//! - [`paint_ui_tree`] wraps shaper borrowing, `ciri_ui::paint_tree`,
+//!   and scene merging into the accumulators that `FrameScene` consumes.
 //!
-//! No App state is touched in this module: consumers instantiate a
-//! `HostTextShaper` per-frame (cheap — just borrows) and call
-//! `merge_ui_scene` afterwards. Wiring into `App::build_ui` lands with
-//! the first widget migration.
+//! No App state is touched in this module: consumers pass the current
+//! `UiContext`/`UiScene` and a borrowed Element tree.
 
 use ciri_render::glyph_cache::{GlyphCache, GlyphInstance};
 use ciri_render::sdf_rect::SdfRect;
 use ciri_render::ui_shaper::UiTextShaper;
-use ciri_ui::{Layer, Scene, TextShaper as CiriUiTextShaper};
+use ciri_ui::{Element, Layer, Scene, TextShaper as CiriUiTextShaper};
 use unicode_width::UnicodeWidthChar;
 
-use crate::app::status_bar::{emit_status_text, TextEmitParams};
+use crate::app::status_bar::{TextEmitParams, emit_status_text};
+use crate::app::ui::types::{UiContext, UiScene};
 
 /// Bridge implementing [`ciri_ui::TextShaper`] on top of the client's
 /// existing `UiTextShaper` + `GlyphCache` pair.
@@ -35,16 +33,10 @@ use crate::app::status_bar::{emit_status_text, TextEmitParams};
 /// assembles one inline from their mutable atlas + optional shaper
 /// mutable borrow, rather than storing a long-lived struct. The
 /// `RefCell<UiTextShaper>` held by `App` already requires callers to
-/// arrange the borrow order (see `UiBuilder::abs_text` for the
-/// canonical borrow-then-release pattern); this adapter matches that.
+/// arrange the borrow order; this adapter keeps that borrow-then-release
+/// pattern local to each `paint_tree` call.
 ///
-/// Currently consumed only from the crate's own tests — the next
-/// widget migration PR that needs a ciri-ui paint tree in production
-/// will wire this into `build_ui`. The per-item `allow(dead_code)`
-/// keeps the compiler honest about any *other* unused code in this
-/// module (was previously hidden by a file-level allow).
-#[allow(dead_code)]
-pub(crate) struct HostTextShaper<'a> {
+struct HostTextShaper<'a> {
     pub atlas: &'a mut GlyphCache,
     pub shaper: Option<&'a mut UiTextShaper>,
     /// Terminal cell width in logical px — used as the legacy-fallback
@@ -154,12 +146,9 @@ impl<'a> CiriUiTextShaper for HostTextShaper<'a> {
 ///
 /// The scene's flat paint-order iterators already honour the `Layer`
 /// z-order (Chrome → Sidebar → Overlay → Modal → Tooltip), so this is
-/// a single `extend` per stream. The caller is expected to have
-/// already emitted all legacy-widget chrome into these same vecs;
-/// ciri-ui output lands on top of that, which matches its "chrome is
-/// above pane content" semantics.
-#[allow(dead_code)]
-pub(crate) fn merge_ui_scene(
+/// a single `extend` per stream. Appending preserves any earlier
+/// same-frame UI output while keeping chrome above pane content.
+fn merge_ui_scene(
     ui: &Scene,
     sdf_out: &mut Vec<SdfRect>,
     glyph_out: &mut Vec<GlyphInstance>,
@@ -170,19 +159,40 @@ pub(crate) fn merge_ui_scene(
     color_glyph_out.extend(ui.color_glyphs_iter().copied());
 }
 
+/// Paint a ciri-ui tree into the client's current UI scene.
+pub(crate) fn paint_ui_tree(root: &impl Element, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+    let mut ui_shaper = cx.ui_shaper.map(|c| c.borrow_mut());
+    let mut shaper = HostTextShaper {
+        atlas: scene.atlas,
+        shaper: ui_shaper.as_deref_mut(),
+        cell_width: cx.cell_w,
+        baseline: cx.baseline,
+        cell_height: cx.cell_h,
+        fallback_font_size_px: cx.theme.typography.md,
+    };
+    let ui_scene = ciri_ui::paint_tree(
+        root,
+        cx.theme,
+        [cx.viewport_w, cx.viewport_h],
+        1.0,
+        &mut shaper,
+    );
+    merge_ui_scene(&ui_scene, scene.sdf_rects, scene.glyphs, scene.color_glyphs);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ciri_ui::{div, Styled};
+    use ciri_ui::{Styled, div};
 
     #[test]
     fn merge_ui_scene_preserves_paint_order() {
         // Chrome sibling first (green), Modal sibling second (red) in the
         // element tree — scene.sdf_rects() must flatten Chrome before
         // Modal, and merge_ui_scene must preserve that order verbatim.
+        use ciri_ui::ResolvedTheme;
         use ciri_ui::paint_tree;
         use ciri_ui::shaper::NullShaper;
-        use ciri_ui::ResolvedTheme;
 
         let theme = ResolvedTheme::default();
         let root = div()
@@ -212,12 +222,12 @@ mod tests {
 
     #[test]
     fn merge_appends_rather_than_replaces() {
-        // Existing legacy chrome must survive the merge: ciri-ui output
-        // lands on top, not in place of. Simulate a pre-existing SdfRect
-        // and verify it stays at index 0 after the merge.
+        // Existing same-frame chrome must survive the merge: ciri-ui output
+        // appends on top, not in place. Simulate a pre-existing SdfRect and
+        // verify it stays at index 0 after the merge.
+        use ciri_ui::ResolvedTheme;
         use ciri_ui::paint_tree;
         use ciri_ui::shaper::NullShaper;
-        use ciri_ui::ResolvedTheme;
 
         let theme = ResolvedTheme::default();
         let scene = paint_tree(
@@ -237,14 +247,14 @@ mod tests {
         let mut cg = Vec::new();
         merge_ui_scene(&scene, &mut sdf, &mut g, &mut cg);
         assert_eq!(sdf.len(), 2);
-        assert_eq!(sdf[0].color, [0.0, 0.0, 1.0, 1.0], "legacy rect survives");
+        assert_eq!(sdf[0].color, [0.0, 0.0, 1.0, 1.0], "existing rect survives");
     }
 
     #[test]
     fn host_text_shaper_scales_fallback_measure_with_font_size() {
         let config = ciri_config::config::CiriConfig::default();
-        let mut cache = ciri_render::glyph_cache::GlyphCache::new(
-            &ciri_render::glyph_cache::FontInitParams {
+        let mut cache =
+            ciri_render::glyph_cache::GlyphCache::new(&ciri_render::glyph_cache::FontInitParams {
                 font_size_pt: 12.0,
                 dpi_scale: 1.0,
                 family_name: "",
@@ -258,13 +268,14 @@ mod tests {
                 ui_font_id: None,
                 ui_pixel_size: None,
                 render_config: &config.render,
-                font_resolver: std::sync::Arc::new(
-                    ciri_render::font_resolver::CmapResolver::new((&[], 0), None, None),
-                ),
+                font_resolver: std::sync::Arc::new(ciri_render::font_resolver::CmapResolver::new(
+                    (&[], 0),
+                    None,
+                    None,
+                )),
                 #[cfg(windows)]
                 dwrite_resolver: None,
-            },
-        );
+            });
         let mut shaper = HostTextShaper {
             atlas: &mut cache,
             shaper: None,
@@ -286,8 +297,8 @@ mod tests {
     #[test]
     fn host_text_shaper_fallback_measure_matches_unicode_width_columns() {
         let config = ciri_config::config::CiriConfig::default();
-        let mut cache = ciri_render::glyph_cache::GlyphCache::new(
-            &ciri_render::glyph_cache::FontInitParams {
+        let mut cache =
+            ciri_render::glyph_cache::GlyphCache::new(&ciri_render::glyph_cache::FontInitParams {
                 font_size_pt: 12.0,
                 dpi_scale: 1.0,
                 family_name: "",
@@ -301,13 +312,14 @@ mod tests {
                 ui_font_id: None,
                 ui_pixel_size: None,
                 render_config: &config.render,
-                font_resolver: std::sync::Arc::new(
-                    ciri_render::font_resolver::CmapResolver::new((&[], 0), None, None),
-                ),
+                font_resolver: std::sync::Arc::new(ciri_render::font_resolver::CmapResolver::new(
+                    (&[], 0),
+                    None,
+                    None,
+                )),
                 #[cfg(windows)]
                 dwrite_resolver: None,
-            },
-        );
+            });
         let mut shaper = HostTextShaper {
             atlas: &mut cache,
             shaper: None,

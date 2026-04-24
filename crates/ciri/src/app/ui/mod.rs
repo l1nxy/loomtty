@@ -1,5 +1,3 @@
-#[allow(dead_code)] // cursor-based widgets available for future component migration
-pub(crate) mod builder;
 pub(crate) mod connection_status;
 mod context_menu;
 mod hints_bar;
@@ -27,7 +25,6 @@ pub(crate) use types::*;
 
 use ciri_config::config::{StatusBarPosition, TabBarPosition};
 use ciri_render::glyph_cache::GlyphInstance;
-use ciri_render::rect::Rect;
 use winit::window::CursorIcon;
 
 use self::layout::{Axis, Border, Linear, UiElement, UiRect};
@@ -38,7 +35,6 @@ impl App {
         &mut self,
         vw: f32,
         vh: f32,
-        bg_rects: &mut Vec<Rect>,
         glyphs: &mut Vec<GlyphInstance>,
         color_glyphs: &mut Vec<GlyphInstance>,
     ) {
@@ -69,7 +65,6 @@ impl App {
             .unwrap_or(cell_h);
         let cache_key = self.ui_scene_hash(vw, vh, cell_w, cell_h, ui_line_h);
         if self.cached_ui_scene.key == Some(cache_key) {
-            bg_rects.extend_from_slice(&self.cached_ui_scene.bg_rects);
             glyphs.extend_from_slice(&self.cached_ui_scene.glyphs);
             color_glyphs.extend_from_slice(&self.cached_ui_scene.color_glyphs);
             return;
@@ -144,7 +139,6 @@ impl App {
         {
             let cached_ui = &mut self.cached_ui_scene;
             cached_ui.key = Some(cache_key);
-            cached_ui.bg_rects.clear();
             cached_ui.glyphs.clear();
             cached_ui.color_glyphs.clear();
             cached_ui.sdf_rects.clear();
@@ -152,7 +146,6 @@ impl App {
             let atlas = self.glyph_cache.as_mut().unwrap();
             let mut scene = UiScene {
                 atlas,
-                bg_rects: &mut cached_ui.bg_rects,
                 glyphs: &mut cached_ui.glyphs,
                 color_glyphs: &mut cached_ui.color_glyphs,
                 sdf_rects: &mut cached_ui.sdf_rects,
@@ -184,7 +177,6 @@ impl App {
             }
         }
 
-        bg_rects.extend_from_slice(&self.cached_ui_scene.bg_rects);
         glyphs.extend_from_slice(&self.cached_ui_scene.glyphs);
         color_glyphs.extend_from_slice(&self.cached_ui_scene.color_glyphs);
     }

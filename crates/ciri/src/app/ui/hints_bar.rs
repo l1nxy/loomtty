@@ -1,10 +1,11 @@
-
-use super::builder::UiBuilder;
 use super::info_box::action_short_label;
 use super::layout::{Axis, SizeHint, UiElement, UiRect};
+use super::text_layout;
 use super::tokens;
 use super::types::{UiContext, UiScene};
 use crate::app::App;
+use crate::app::ciri_ui_bridge::paint_ui_tree;
+use ciri_ui::{Layer, Styled, div, text};
 
 struct HintItem {
     key: String,
@@ -126,27 +127,6 @@ impl UiElement for HintsBarComponent {
         let sep_color = tokens::tint(dim, tokens::ALPHA_SEPARATOR);
         let padding = cx.cell_w;
 
-        // Text row is vertically centered within the bar
-        let text_y = rect.y + (rect.h - cx.cell_h) * 0.5;
-
-        // Builder is pinned to the inner (padded) content strip. Absolute
-        // rects use full rect coords so the background + separator span
-        // edge to edge.
-        let mut ui = UiBuilder::new_horizontal(
-            rect.x + padding,
-            text_y,
-            (rect.w - padding * 2.0).max(0.0),
-            cx.cell_h,
-            0.0,
-            0.0,
-            0.0,
-            false,
-            cx,
-            scene,
-        );
-        ui.abs_rect(rect.x, rect.y, rect.w, rect.h, bar_bg);
-        ui.abs_rect(rect.x, rect.y, rect.w, tokens::BORDER_THIN, sep_color);
-
         // Pre-compute hints total width for right-alignment
         let hint_spacing = cx.cell_w * 2.0;
         let max_hints_w = rect.w * 0.6;
@@ -155,37 +135,68 @@ impl UiElement for HintsBarComponent {
             if i > 0 {
                 hints_w += hint_spacing;
             }
-            hints_w += ui.text_width(&item.key) + ui.text_width(&format!(" {}", item.label));
+            hints_w += text_layout::measure(cx, &item.key)
+                + text_layout::measure(cx, &format!(" {}", item.label));
         }
         hints_w = hints_w.min(max_hints_w);
 
         // Left side fills remaining space after reserving hints width
-        let left_w = ui.remaining() - hints_w;
-        ui.horizontal(Some(left_w.max(0.0)), cx.cell_h, 0.0, |ui| {
-            ui.label("\u{25CF} ", accent);
+        let inner_w = (rect.w - padding * 2.0).max(0.0);
+        let left_w = (inner_w - hints_w).max(0.0);
+        let pane_text = if self.pane_count == 1 {
+            "1 pane".to_string()
+        } else {
+            format!("{} panes", self.pane_count)
+        };
+        let mut left = div()
+            .w(left_w)
+            .h(cx.cell_h)
+            .flex_row()
+            .items_center()
+            .child(text("\u{25CF} ").color(accent))
+            .child(text(pane_text).color(dim));
+        if !self.active_pane_title.is_empty() {
+            left = left
+                .child(text(" \u{00B7} ").color(dim))
+                .child(text(self.active_pane_title.clone()).color(fg));
+        }
 
-            let pane_text = if self.pane_count == 1 {
-                "1 pane".to_string()
-            } else {
-                format!("{} panes", self.pane_count)
-            };
-            ui.label(&pane_text, dim);
-
-            if !self.active_pane_title.is_empty() {
-                ui.label(" \u{00B7} ", dim);
-                ui.label(&self.active_pane_title, fg);
+        let mut right = div()
+            .w(hints_w)
+            .h(cx.cell_h)
+            .flex_row()
+            .items_center()
+            .justify_end();
+        for (i, item) in self.hints.iter().enumerate() {
+            if i > 0 {
+                right = right.child(div().w(hint_spacing).h(cx.cell_h));
             }
-        });
+            right = right
+                .child(text(item.key.clone()).color(accent))
+                .child(text(format!(" {}", item.label)).color(dim));
+        }
 
-        // Right side: hints (key in accent, label in dim)
-        ui.horizontal(Some(hints_w), cx.cell_h, 0.0, |ui| {
-            for (i, item) in self.hints.iter().enumerate() {
-                if i > 0 {
-                    ui.label("  ", dim);
-                }
-                ui.label(&item.key, accent);
-                ui.label(&format!(" {}", item.label), dim);
-            }
-        });
+        let root = div().w(cx.viewport_w).h(cx.viewport_h).child(
+            div()
+                .in_layer(Layer::Chrome)
+                .w(rect.w)
+                .h(rect.h)
+                .translate(rect.x, rect.y)
+                .flex_col()
+                .bg(bar_bg)
+                .child(div().w(rect.w).h(tokens::BORDER_THIN).bg(sep_color))
+                .child(
+                    div()
+                        .w(rect.w)
+                        .h((rect.h - tokens::BORDER_THIN).max(0.0))
+                        .flex_row()
+                        .items_center()
+                        .px(padding)
+                        .child(left)
+                        .child(right),
+                ),
+        );
+
+        paint_ui_tree(&root, cx, scene);
     }
 }

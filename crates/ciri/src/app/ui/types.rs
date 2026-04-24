@@ -1,5 +1,4 @@
 use ciri_render::glyph_cache::{GlyphCache, GlyphInstance};
-use ciri_render::rect::Rect;
 use ciri_render::sdf_rect::SdfRect;
 use ciri_render::ui_shaper::UiTextShaper;
 use std::cell::RefCell;
@@ -23,35 +22,18 @@ pub(crate) struct UiContext<'a> {
     pub ui_line_h: f32,
     /// UI text shaper (advance-based) used by all UI chrome text. `None` only
     /// in tests or before the renderer has been set up — callers must then
-    /// use `cell_w`-based measurement as a fallback (see `UiBuilder`).
+    /// use `cell_w`-based measurement as a fallback.
     pub ui_shaper: Option<&'a RefCell<UiTextShaper>>,
 }
 
 pub(crate) struct UiScene<'a> {
     pub atlas: &'a mut GlyphCache,
-    pub bg_rects: &'a mut Vec<Rect>,
     pub glyphs: &'a mut Vec<GlyphInstance>,
     pub color_glyphs: &'a mut Vec<GlyphInstance>,
     /// SDF rounded-chrome primitives. Emitted by components that want
     /// rounded corners, shadows, or AA'd borders without building a full
     /// ciri-ui Element tree; paired 1:1 with the blade SDF pipeline.
     pub sdf_rects: &'a mut Vec<SdfRect>,
-}
-
-/// Unified component trait for all UI chrome elements.
-///
-/// Each component captures a snapshot from `App` state, then can:
-/// - `paint()` into the render scene
-/// - `click()` to map a mouse click to a `UiAction`
-pub(crate) trait UiComponent {
-    /// Draw this component.
-    fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>);
-
-    /// Map a click at (mx, my) to a UiAction.
-    /// Returns `None` if the click is outside this component.
-    fn click(&self, _mx: f32, _my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
-        None
-    }
 }
 
 pub(crate) struct UiHoverOutcome {

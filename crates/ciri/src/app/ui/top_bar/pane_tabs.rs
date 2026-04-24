@@ -1,11 +1,12 @@
 use ciri_config::config::StatusBarPosition;
 
-use super::super::builder::UiBuilder;
 use super::super::layout::{Axis, SizeHint, UiElement, UiRect};
 use super::super::text_layout;
 use super::super::tokens;
 use super::super::types::{UiAction, UiContext, UiScene};
+use crate::app::ciri_ui_bridge::paint_ui_tree;
 use crate::app::top_bar::PaneTabLayout;
+use ciri_ui::{Div, Layer, Styled, div, text};
 
 /// Element-relative scrollable tab list.
 ///
@@ -59,10 +60,7 @@ impl<'a> UiElement for PaneTabsElement<'a> {
         };
         let separator_inset = tokens::SPACE_1;
 
-        let mut ui = UiBuilder::new_horizontal(
-            rect.x, text_y, rect.w, cx.cell_h, 0.0, 0.0, 0.0, false, cx, scene,
-        );
-
+        let mut root = div().w(cx.viewport_w).h(cx.viewport_h);
         for tab in self.tabs {
             let hovered = self.hovered_tab == Some(tab.pane_id);
             let visible_left = tab.x.max(tabs_start_x);
@@ -83,34 +81,34 @@ impl<'a> UiElement for PaneTabsElement<'a> {
                 None
             };
             if let Some(a) = bg_alpha {
-                ui.abs_rect(
+                root = root.child(abs_rect(
                     visible_left,
                     rect.y,
                     visible_w,
                     rect.h,
                     tokens::tint(accent, a),
-                );
+                ));
             }
 
             // Separator on the leading edge (skipped if scrolled off-screen).
             if tab.x > tabs_start_x - tokens::BORDER_THIN && tab.x < tabs_end_x {
-                ui.abs_rect(
+                root = root.child(abs_rect(
                     tab.x - tokens::BORDER_THIN * 0.5,
                     rect.y + separator_inset,
                     tokens::BORDER_THIN,
                     rect.h - separator_inset * 2.0,
                     separator_color,
-                );
+                ));
             }
             // Active-tab indicator (thin accent strip on top or bottom).
             if tab.active {
-                ui.abs_rect(
+                root = root.child(abs_rect(
                     visible_left,
                     indicator_y,
                     visible_w,
                     indicator_thickness,
                     accent,
-                );
+                ));
             }
             // Clipped label. Truncate with ellipsis so shaped text never
             // overflows the tab slot on proportional UI fonts. One cell of
@@ -123,7 +121,7 @@ impl<'a> UiElement for PaneTabsElement<'a> {
             if label_budget > 0.0 {
                 let truncated = text_layout::truncate_with_ellipsis(cx, &tab.label, label_budget);
                 if !truncated.is_empty() {
-                    ui.abs_text(&truncated, label_left, text_y, color);
+                    root = root.child(abs_text(label_left, text_y, truncated, color));
                 }
             }
         }
@@ -134,28 +132,30 @@ impl<'a> UiElement for PaneTabsElement<'a> {
             if self.scroll > 0.5 {
                 for i in 0..4 {
                     let alpha = 0.22 * (1.0 - i as f32 / 4.0);
-                    ui.abs_rect(
+                    root = root.child(abs_rect(
                         tabs_start_x + i as f32 * (fade_w / 4.0),
                         rect.y,
                         fade_w / 4.0 + 1.0,
                         rect.h,
                         [bar_bg[0], bar_bg[1], bar_bg[2], alpha],
-                    );
+                    ));
                 }
             }
             if self.scroll < self.scroll_max - 0.5 {
                 for i in 0..4 {
                     let alpha = 0.22 * (i as f32 + 1.0) / 4.0;
-                    ui.abs_rect(
+                    root = root.child(abs_rect(
                         tabs_end_x - fade_w + i as f32 * (fade_w / 4.0),
                         rect.y,
                         fade_w / 4.0 + 1.0,
                         rect.h,
                         [bar_bg[0], bar_bg[1], bar_bg[2], alpha],
-                    );
+                    ));
                 }
             }
         }
+
+        paint_ui_tree(&root, cx, scene);
     }
 
     fn hit(&self, rect: UiRect, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
@@ -173,4 +173,22 @@ impl<'a> UiElement for PaneTabsElement<'a> {
         }
         None
     }
+}
+
+fn abs_rect(x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) -> Div {
+    div()
+        .in_layer(Layer::Chrome)
+        .w(0.0)
+        .h(0.0)
+        .translate(x, y)
+        .child(div().w(w).h(h).bg(color))
+}
+
+fn abs_text(x: f32, y: f32, content: String, color: [f32; 4]) -> Div {
+    div()
+        .in_layer(Layer::Chrome)
+        .w(0.0)
+        .h(0.0)
+        .translate(x, y)
+        .child(text(content).color(color))
 }

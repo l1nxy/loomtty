@@ -4,12 +4,12 @@
 //! label; enabled rows highlight on hover. Capture clamps the menu inside the
 //! viewport so painting can stay purely absolute.
 
-
-use super::builder::UiBuilder;
 use super::text_layout;
 use super::tokens;
-use super::types::{UiAction, UiComponent, UiContext, UiContextMenuHit, UiScene};
+use super::types::{UiAction, UiContext, UiContextMenuHit, UiScene};
 use crate::app::App;
+use crate::app::ciri_ui_bridge::paint_ui_tree;
+use ciri_ui::{Layer, Styled, div, text};
 
 struct ContextMenuRow {
     label: String,
@@ -92,8 +92,8 @@ impl ContextMenuComponent {
     }
 }
 
-impl UiComponent for ContextMenuComponent {
-    fn click(&self, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
+impl ContextMenuComponent {
+    pub(crate) fn click(&self, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
         match self.hit_test(mx, my) {
             UiContextMenuHit::Entry(idx) => Some(UiAction::ExecuteContextMenuEntry(idx)),
             UiContextMenuHit::Menu => None,
@@ -101,7 +101,7 @@ impl UiComponent for ContextMenuComponent {
         }
     }
 
-    fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+    pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         let padding = tokens::SPACE_2;
         let bw = tokens::BORDER_THIN;
 
@@ -122,56 +122,41 @@ impl UiComponent for ContextMenuComponent {
         let dim_color = cx.theme.on_surface_muted;
         let hover_bg = tokens::tint(accent, tokens::ALPHA_HOVER_BG);
 
-        // Outer panel: SDF rounded rect + border + drop shadow, the first
-        // overlay in the client to actually drive the new SDF pipeline.
-        // Everything else (hover strips, labels) still uses the legacy
-        // `UiBuilder` path so this stays a focused migration.
-        scene.sdf_rects.push(ciri_render::sdf_rect::SdfRect {
-            pos: [self.x, self.y],
-            size: [self.menu_width, self.menu_height],
-            color: bg_color,
-            radii: [tokens::SPACE_1; 4],
-            border_color,
-            border_width: bw,
-            shadow_blur: tokens::SPACE_2,
-            shadow_offset: [0.0, tokens::SPACE_1],
-            shadow_color: [0.0, 0.0, 0.0, 0.35],
-        });
-
-        let mut ui = UiBuilder::new_vertical(
-            self.x,
-            self.y,
-            self.menu_width,
-            self.menu_height,
-            0.0,
-            0.0,
-            0.0,
-            false,
-            cx,
-            scene,
-        );
-
         let content_w = self.menu_width - bw * 2.0;
-        let content_h = self.rows.len() as f32 * self.item_height;
         let item_h = self.item_height;
-        ui.vertical(content_w, Some(content_h + padding * 2.0), 0.0, |ui| {
-            ui.bg_rect(content_w, padding, [0.0; 4]);
-            for row in &self.rows {
-                ui.horizontal(Some(content_w), item_h, 0.0, |ui| {
-                    let (rx, ry) = ui.cursor_pos();
-                    if row.hovered {
-                        ui.abs_rect(self.x + bw, ry, content_w, item_h, hover_bg);
-                    }
-                    let text_y = ry + (item_h - cx.ui_line_h) * 0.5;
-                    ui.abs_text(
-                        &row.label,
-                        rx + padding,
-                        text_y,
-                        if row.enabled { fg_color } else { dim_color },
-                    );
-                });
+        let text_pad = (padding - bw).max(0.0);
+        let mut panel = div()
+            .in_layer(Layer::Modal)
+            .w(self.menu_width)
+            .h(self.menu_height)
+            .translate(self.x, self.y)
+            .flex_col()
+            .items_center()
+            .bg(bg_color)
+            .rounded(tokens::SPACE_1)
+            .border(bw, border_color)
+            .shadow_md()
+            .child(div().w(content_w).h(padding));
+
+        for row in &self.rows {
+            let text_color = if row.enabled { fg_color } else { dim_color };
+            let mut row_el = div()
+                .w(content_w)
+                .h(item_h)
+                .flex_row()
+                .items_center()
+                .child(div().w(text_pad).h(item_h))
+                .child(text(row.label.clone()).color(text_color));
+            if row.hovered {
+                row_el = row_el.bg(hover_bg);
             }
-        });
+            panel = panel.child(row_el);
+        }
+        panel = panel.child(div().w(content_w).h(padding));
+
+        let root = div().w(cx.viewport_w).h(cx.viewport_h).child(panel);
+
+        paint_ui_tree(&root, cx, scene);
     }
 }
 

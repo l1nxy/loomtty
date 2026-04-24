@@ -17,12 +17,13 @@
 
 use ciri_config::config::TabBarPosition;
 
-use super::builder::UiBuilder;
 use super::layout::{Axis, SizeHint, UiElement, UiRect};
 use super::text_layout;
 use super::tokens;
 use super::types::{UiAction, UiContext, UiScene};
 use crate::app::App;
+use crate::app::ciri_ui_bridge::paint_ui_tree;
+use ciri_ui::{Layer, Styled, div, text};
 
 /// Snapshot of a single tab: what pane it represents, its label, and
 /// whether it is currently active.
@@ -106,55 +107,41 @@ impl UiElement for TabBarComponent {
         let sep = tokens::tint(dim, tokens::ALPHA_SEPARATOR);
         let indicator_w = tokens::BORDER_THICK;
 
-        // Absolute-coord builder anchored at the bar's top-left.
-        let mut ui = UiBuilder::new_horizontal(
-            rect.x, rect.y, rect.w, cx.cell_h, 0.0, 0.0, 0.0, false, cx, scene,
-        );
-
         // Inner edge = the edge of the bar that touches the terminal.
         // For Left: inner edge is on the right (rect.right() - 1). For
         // Right: inner edge is on the left (rect.x). The separator and
         // active indicator both anchor to this edge so the bar looks
         // "attached" to the terminal on either side.
-        let inner_sep_x = match self.position {
-            TabBarPosition::Left => rect.right() - tokens::BORDER_THIN,
-            TabBarPosition::Right => rect.x,
-            // Unreachable in paint — `TabBarComponent` is only wired in
-            // for the two side positions.
-            TabBarPosition::Integrated => rect.right() - tokens::BORDER_THIN,
-        };
-        let indicator_x = match self.position {
-            TabBarPosition::Left => rect.right() - indicator_w,
-            TabBarPosition::Right => rect.x,
-            TabBarPosition::Integrated => rect.right() - indicator_w,
-        };
         // Label padding — indent from the outer edge (away from the
         // terminal) so the indicator strip sits flush against the text.
-        let label_x_base = match self.position {
-            TabBarPosition::Left => rect.x + cx.cell_w * 0.5,
-            TabBarPosition::Right => rect.x + indicator_w + cx.cell_w * 0.5,
-            TabBarPosition::Integrated => rect.x + cx.cell_w * 0.5,
-        };
-
-        // Bar background + outer separator on the inner edge.
-        ui.abs_rect(rect.x, rect.y, rect.w, rect.h, bar_bg);
-        ui.abs_rect(inner_sep_x, rect.y, tokens::BORDER_THIN, rect.h, sep);
-
-        // Shared vocabulary with integrated tabs in `top_bar::pane_tabs`:
-        //   • hairline separator between adjacent rows (SPACE_1 horizontal inset)
-        //   • active row gets a subtle accent-tint bg + accent indicator strip
-        //   • hovered row gets a lighter accent-tint bg
-        //   • inactive rows: just dim text on the bar bg
-        // The only axis-specific differences are orientation: side bar
-        // draws the separator as a horizontal hairline, integrated draws
-        // it vertical; side indicator is vertical, integrated horizontal.
+        let label_pad = cx.cell_w * 0.5;
         let sep_inset_x = tokens::SPACE_1;
+        let content_w = (rect.w - tokens::BORDER_THIN).max(0.0);
+        let label_budget = (rect.w - indicator_w - cx.cell_w).max(0.0);
+
+        let mut rows = div().w(content_w).h(rect.h).flex_col();
         for (idx, tab) in self.tabs.iter().enumerate() {
             let row = self.row_rect(rect, idx);
             if row.is_empty() {
                 break;
             }
             let hovered = self.hovered_tab == Some(tab.pane_id);
+
+            if idx > 0 && self.tab_gap > 0.0 {
+                rows = rows.child(
+                    div()
+                        .w(content_w)
+                        .h(self.tab_gap)
+                        .flex_col()
+                        .justify_center()
+                        .child(
+                            div()
+                                .w((content_w - sep_inset_x * 2.0).max(0.0))
+                                .h(tokens::BORDER_THIN)
+                                .bg(sep),
+                        ),
+                );
+            }
 
             // Active / hover background tint — mirrors integrated variant.
             let bg_alpha = if tab.active {
@@ -164,40 +151,54 @@ impl UiElement for TabBarComponent {
             } else {
                 None
             };
-            if let Some(a) = bg_alpha {
-                ui.abs_rect(row.x, row.y, row.w, row.h, tokens::tint(accent, a));
-            }
-
-            // Inter-row separator on the leading edge of every row except
-            // the first, inset on both sides like the integrated variant's
-            // vertical separator.
-            if idx > 0 {
-                ui.abs_rect(
-                    row.x + sep_inset_x,
-                    row.y - tokens::BORDER_THIN * 0.5,
-                    row.w - sep_inset_x * 2.0,
-                    tokens::BORDER_THIN,
-                    sep,
-                );
-            }
-
-            // Active-tab accent strip on the inner edge.
-            if tab.active {
-                ui.abs_rect(indicator_x, row.y, indicator_w, row.h, accent);
-            }
-
             // Label. Truncate with ellipsis so shaped text never overflows
             // the row, regardless of whether the UI font is monospaced.
             let label_color = if tab.active || hovered { fg } else { dim };
-            let text_y = row.y + (row.h - cx.cell_h) * 0.5;
-            // Budget = row width minus the indicator strip and one cell of
-            // padding on each side of the text.
-            let label_budget = (row.w - indicator_w - cx.cell_w).max(0.0);
             let truncated = text_layout::truncate_with_ellipsis(cx, &tab.label, label_budget);
-            if !truncated.is_empty() {
-                ui.abs_text(&truncated, label_x_base, text_y, label_color);
+            let mut row_el = div().w(content_w).h(row.h).flex_row().items_center();
+            if let Some(a) = bg_alpha {
+                row_el = row_el.bg(tokens::tint(accent, a));
             }
+
+            let indicator =
+                div()
+                    .w(indicator_w)
+                    .h(row.h)
+                    .bg(if tab.active { accent } else { [0.0; 4] });
+            let label = div()
+                .w((content_w - indicator_w).max(0.0))
+                .h(row.h)
+                .flex_row()
+                .items_center()
+                .pl(label_pad)
+                .pr(label_pad)
+                .child(text(truncated).color(label_color));
+
+            row_el = match self.position {
+                TabBarPosition::Left | TabBarPosition::Integrated => {
+                    row_el.child(label).child(indicator)
+                }
+                TabBarPosition::Right => row_el.child(indicator).child(label),
+            };
+            rows = rows.child(row_el);
         }
+
+        let sep_line = div().w(tokens::BORDER_THIN).h(rect.h).bg(sep);
+        let bar = match self.position {
+            TabBarPosition::Left | TabBarPosition::Integrated => {
+                div().flex_row().child(rows).child(sep_line)
+            }
+            TabBarPosition::Right => div().flex_row().child(sep_line).child(rows),
+        };
+        let root = div().w(cx.viewport_w).h(cx.viewport_h).child(
+            bar.in_layer(Layer::Chrome)
+                .w(rect.w)
+                .h(rect.h)
+                .translate(rect.x, rect.y)
+                .bg(bar_bg),
+        );
+
+        paint_ui_tree(&root, cx, scene);
     }
 
     fn hit(&self, rect: UiRect, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {

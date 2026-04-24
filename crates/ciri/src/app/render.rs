@@ -1,18 +1,23 @@
-use ciri_config::config::{FocusRingStyle, PaneOpenStyle};
+use ciri_config::config::{CiriConfig, FocusRingStyle, PaneOpenStyle};
 use ciri_config::theme::ThemeConfig;
 use ciri_layout::geometry::Rect as GeoRect;
 use ciri_protocol::message::*;
 use ciri_render::FrameScene;
 use ciri_render::glyph_cache::{GlyphInstance, ScissoredRange};
 use ciri_render::rect::Rect;
+use ciri_render::sdf_rect::SdfRect;
 use ciri_render::terminal;
+use ciri_render::ui_shaper::UiTextShaper;
+use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::Instant;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::App;
-use super::status_bar::{TextEmitParams, emit_status_text};
+use super::ciri_ui_bridge::paint_ui_tree;
+use super::ui::{UiContext, UiScene};
+use ciri_ui::{Layer, Styled, div, text};
 
 #[derive(Clone, Copy)]
 struct TilePaintConfig {
@@ -1813,20 +1818,22 @@ impl App {
         false
     }
 
-    pub fn build_search_bar(
+    fn build_search_bar(
         &mut self,
         tiles: &[(u64, GeoRect, bool)],
-        _vw: f32,
-        _vh: f32,
-        bg_rects: &mut Vec<Rect>,
+        vw: f32,
+        vh: f32,
+        sdf_rects: &mut Vec<SdfRect>,
         glyphs: &mut Vec<GlyphInstance>,
         color_glyphs: &mut Vec<GlyphInstance>,
     ) {
         let Some(search) = &self.core.search_state else {
             return;
         };
-        let atlas = self.glyph_cache.as_mut().unwrap();
-        let mut ui_borrow = self.ui_shaper.as_ref().map(|c| c.borrow_mut());
+        let (cw, ch) = {
+            let atlas = self.glyph_cache.as_ref().unwrap();
+            (atlas.cell_width, atlas.cell_height)
+        };
 
         // Find the tile rect for the search pane
         let Some((_, pane_rect, _)) = tiles.iter().find(|(pid, _, _)| *pid == search.pane_id)
@@ -1836,19 +1843,10 @@ impl App {
 
         let border_w = self.core.config.appearance.border_width;
         let padding = self.core.config.appearance.padding;
-        let bar_height = atlas.cell_height + 4.0;
+        let bar_height = ch + 4.0;
         let bar_y = pane_rect.y + pane_rect.h - border_w - bar_height;
         let bar_x = pane_rect.x + border_w;
         let bar_w = pane_rect.w - border_w * 2.0;
-
-        // Search bar background
-        bg_rects.push(Rect {
-            x: bar_x,
-            y: bar_y,
-            w: bar_w,
-            h: bar_height,
-            color: [0.15, 0.15, 0.2, 0.95],
-        });
 
         let match_info = if search.matches.is_empty() {
             if search.query.is_empty() {
@@ -1865,26 +1863,40 @@ impl App {
         };
         let bar_text = format!(" Search: {}{}", search.query, match_info);
 
-        let cw = atlas.cell_width;
-        let baseline = atlas.cell_height * self.core.config.statusbar.text_baseline;
-        let text_y = bar_y + 2.0;
-        let text_color = [1.0, 1.0, 1.0, 1.0];
-
-        emit_status_text(
+        let baseline = ch * self.core.config.statusbar.text_baseline;
+        let root = div().w(vw).h(vh).child(
+            div()
+                .in_layer(Layer::Overlay)
+                .w(bar_w)
+                .h(bar_height)
+                .translate(bar_x, bar_y)
+                .bg([0.15, 0.15, 0.2, 0.95])
+                .child(
+                    div()
+                        .w((bar_w - padding * 2.0).max(0.0))
+                        .h(ch)
+                        .translate(padding, 2.0)
+                        .child(text(bar_text).color([1.0, 1.0, 1.0, 1.0])),
+                ),
+        );
+        let atlas = self.glyph_cache.as_mut().unwrap();
+        let cx = render_ui_context(
+            &self.core.config,
+            &self.cached_resolved_theme,
+            self.ui_shaper.as_ref(),
+            vw,
+            vh,
+            cw,
+            ch,
+            baseline,
+        );
+        let mut scene = UiScene {
             atlas,
-            ui_borrow.as_deref_mut(),
-            &bar_text,
-            &TextEmitParams {
-                x_start: bar_x + padding,
-                y: text_y,
-                cell_width: cw,
-                baseline,
-                color: text_color,
-                scale: 1.0,
-            },
             glyphs,
             color_glyphs,
-        );
+            sdf_rects,
+        };
+        paint_ui_tree(&root, &cx, &mut scene);
     }
 
     fn ime_input_anchor(
@@ -1938,8 +1950,13 @@ impl App {
         zoom: f32,
         vw: f32,
         vh: f32,
-        bg_rects: &mut Vec<Rect>,
+        sdf_rects: &mut Vec<SdfRect>,
+        glyphs: &mut Vec<GlyphInstance>,
+        color_glyphs: &mut Vec<GlyphInstance>,
     ) {
+        let mut root = div().w(vw).h(vh);
+        let mut has_flash = false;
+
         for (pane_id, tile_rect, _) in tiles {
             let intensity = self.core.anim_mgr.bell_flash(*pane_id);
             if intensity <= 0.0 {
@@ -1950,22 +1967,52 @@ impl App {
                 continue;
             };
             let tr = visual.tr;
-            bg_rects.push(Rect {
-                x: tr.x,
-                y: tr.y,
-                w: tr.w,
-                h: tr.h,
-                color: [1.0, 0.9, 0.5, alpha],
-            });
+            has_flash = true;
+            root = root.child(
+                div()
+                    .in_layer(Layer::Overlay)
+                    .w(tr.w)
+                    .h(tr.h)
+                    .translate(tr.x, tr.y)
+                    .bg([1.0, 0.9, 0.5, alpha]),
+            );
         }
+
+        if !has_flash {
+            return;
+        }
+
+        let (cw, ch) = {
+            let atlas = self.glyph_cache.as_ref().unwrap();
+            (atlas.cell_width, atlas.cell_height)
+        };
+        let baseline = ch * self.core.config.statusbar.text_baseline;
+        let atlas = self.glyph_cache.as_mut().unwrap();
+        let mut scene = UiScene {
+            atlas,
+            glyphs,
+            color_glyphs,
+            sdf_rects,
+        };
+        let cx = render_ui_context(
+            &self.core.config,
+            &self.cached_resolved_theme,
+            self.ui_shaper.as_ref(),
+            vw,
+            vh,
+            cw,
+            ch,
+            baseline,
+        );
+        paint_ui_tree(&root, &cx, &mut scene);
     }
 
-    pub fn build_ime_preedit(
+    fn build_ime_preedit(
         &mut self,
         tiles: &[(u64, GeoRect, bool)],
-        _vw: f32,
-        _vh: f32,
-        bg_rects: &mut Vec<Rect>,
+        vw: f32,
+        vh: f32,
+        sdf_rects: &mut Vec<SdfRect>,
         glyphs: &mut Vec<GlyphInstance>,
         color_glyphs: &mut Vec<GlyphInstance>,
     ) {
@@ -1981,59 +2028,61 @@ impl App {
         };
         let atlas = self.glyph_cache.as_mut().unwrap();
 
-        let text = &self.core.ime.preedit_text;
-        let text_width = UnicodeWidthStr::width(text.as_str()) as f32 * cw;
-
-        // Background box
-        bg_rects.push(Rect {
-            x: base_x,
-            y: base_y,
-            w: text_width + 4.0,
-            h: ch + 2.0,
-            color: [0.15, 0.15, 0.25, 0.95],
-        });
-
-        // Underline the preedit region
-        bg_rects.push(Rect {
-            x: base_x,
-            y: base_y + ch,
-            w: text_width + 4.0,
-            h: 2.0,
-            color: [0.5, 0.7, 1.0, 0.9],
-        });
-
-        // Render text
+        let preedit_text = &self.core.ime.preedit_text;
+        let text_width = UnicodeWidthStr::width(preedit_text.as_str()) as f32 * cw;
         let baseline = ch * self.core.config.statusbar.text_baseline;
-        let text_color = [1.0, 1.0, 1.0, 1.0];
-        let mut ui_borrow = self.ui_shaper.as_ref().map(|c| c.borrow_mut());
-        emit_status_text(
-            atlas,
-            ui_borrow.as_deref_mut(),
-            text,
-            &TextEmitParams {
-                x_start: base_x + 2.0,
-                y: base_y + 1.0,
-                cell_width: cw,
-                baseline,
-                color: text_color,
-                scale: 1.0,
-            },
-            glyphs,
-            color_glyphs,
+        let box_w = text_width + 4.0;
+        let panel = div()
+            .in_layer(Layer::Overlay)
+            .w(box_w)
+            .h(ch + 2.0)
+            .translate(base_x, base_y)
+            .bg([0.15, 0.15, 0.25, 0.95])
+            .child(
+                div()
+                    .w(text_width.max(0.0))
+                    .h(ch)
+                    .translate(2.0, 1.0)
+                    .child(text(preedit_text.clone()).color([1.0, 1.0, 1.0, 1.0])),
+            );
+        let mut root = div().w(vw).h(vh).child(panel).child(
+            div()
+                .in_layer(Layer::Overlay)
+                .w(box_w)
+                .h(2.0)
+                .translate(base_x, base_y + ch)
+                .bg([0.5, 0.7, 1.0, 0.9]),
         );
 
-        // Cursor within preedit text
         if let Some(cursor_pos) = self.core.ime.preedit_cursor {
-            let cursor_cols = Self::preedit_cursor_display_cols(text, cursor_pos);
-            let cx = base_x + 2.0 + cursor_cols as f32 * cw;
-            bg_rects.push(Rect {
-                x: cx,
-                y: base_y + 1.0,
-                w: 2.0,
-                h: ch,
-                color: [1.0, 1.0, 1.0, 0.8],
-            });
+            let cursor_cols = Self::preedit_cursor_display_cols(preedit_text, cursor_pos);
+            root = root.child(
+                div()
+                    .in_layer(Layer::Overlay)
+                    .w(2.0)
+                    .h(ch)
+                    .translate(base_x + 2.0 + cursor_cols as f32 * cw, base_y + 1.0)
+                    .bg([1.0, 1.0, 1.0, 0.8]),
+            );
         }
+
+        let mut scene = UiScene {
+            atlas,
+            glyphs,
+            color_glyphs,
+            sdf_rects,
+        };
+        let cx = render_ui_context(
+            &self.core.config,
+            &self.cached_resolved_theme,
+            self.ui_shaper.as_ref(),
+            vw,
+            vh,
+            cw,
+            ch,
+            baseline,
+        );
+        paint_ui_tree(&root, &cx, &mut scene);
     }
 
     fn rgb_to_rgba(width: u32, height: u32, data: &[u8]) -> Option<Vec<u8>> {
@@ -2576,21 +2625,30 @@ impl App {
         let active_color_glyph_batches =
             std::mem::take(&mut self.render_bufs.active_color_glyph_batches);
         let overlay_bg_start = bg_rects.len();
-        self.build_ui(vw_f, vh_f, &mut bg_rects, &mut glyphs, &mut color_glyphs);
+        self.build_ui(vw_f, vh_f, &mut glyphs, &mut color_glyphs);
+        let mut ui_sdf_rects = self.cached_ui_scene.sdf_rects.clone();
         self.build_search_bar(
             &offset_tiles,
             vw_f,
             vh_f,
-            &mut bg_rects,
+            &mut ui_sdf_rects,
             &mut glyphs,
             &mut color_glyphs,
         );
-        self.build_bell_flash(&offset_tiles, zoom, vw_f, vh_f, &mut bg_rects);
+        self.build_bell_flash(
+            &offset_tiles,
+            zoom,
+            vw_f,
+            vh_f,
+            &mut ui_sdf_rects,
+            &mut glyphs,
+            &mut color_glyphs,
+        );
         self.build_ime_preedit(
             &offset_tiles,
             vw_f,
             vh_f,
-            &mut bg_rects,
+            &mut ui_sdf_rects,
             &mut glyphs,
             &mut color_glyphs,
         );
@@ -2615,10 +2673,8 @@ impl App {
                 pane_glyph_end,
                 pane_color_glyph_end,
                 overlay_bg_start,
-                // SDF chrome emitted by ciri-ui widgets during build_ui.
-                // Empty when no migrated widget is visible, so the flat
-                // rect path still carries legacy chrome unchanged.
-                sdf_rects: &self.cached_ui_scene.sdf_rects,
+                // SDF chrome emitted by ciri-ui widgets and transient overlays.
+                sdf_rects: &ui_sdf_rects,
             },
         ) {
             log::error!("draw_frame failed: {e}");
@@ -2717,15 +2773,65 @@ fn scissor_rect(tr: &GeoRect, viewport_w: f32, viewport_h: f32) -> Option<(u32, 
     }
 }
 
+fn render_ui_context<'a>(
+    config: &'a CiriConfig,
+    theme: &'a ciri_ui::ResolvedTheme,
+    ui_shaper: Option<&'a RefCell<UiTextShaper>>,
+    viewport_w: f32,
+    viewport_h: f32,
+    cell_w: f32,
+    cell_h: f32,
+    baseline: f32,
+) -> UiContext<'a> {
+    UiContext {
+        config,
+        theme,
+        viewport_w,
+        viewport_h,
+        cell_w,
+        cell_h,
+        baseline,
+        ui_line_h: ui_shaper
+            .map(|s| s.borrow().line_height())
+            .unwrap_or(cell_h),
+        ui_shaper,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::{SearchMatch, SearchState};
     use ciri_config::config::{CiriConfig, StatusBarPosition, TabBarPosition};
+    use ciri_render::font_resolver::CmapResolver;
+    use ciri_render::glyph_cache::FontInitParams;
     use std::sync::Arc;
     use winit::dpi::PhysicalSize;
 
     fn make_app() -> App {
         App::new(CiriConfig::default(), "test-session")
+    }
+
+    fn test_cache() -> ciri_render::glyph_cache::GlyphCache {
+        let config = CiriConfig::default();
+        ciri_render::glyph_cache::GlyphCache::new(&FontInitParams {
+            font_size_pt: 12.0,
+            dpi_scale: 1.0,
+            family_name: "",
+            ui_family_name: None,
+            primary_font_path: None,
+            emoji_font_path: None,
+            emoji_font_id: None,
+            cjk_font_path: None,
+            cjk_font_id: None,
+            ui_font_path: None,
+            ui_font_id: None,
+            ui_pixel_size: None,
+            render_config: &config.render,
+            font_resolver: Arc::new(CmapResolver::new((&[], 0), None, None)),
+            #[cfg(windows)]
+            dwrite_resolver: None,
+        })
     }
 
     fn make_content_app(tab_position: TabBarPosition) -> App {
@@ -2748,6 +2854,131 @@ mod tests {
         assert_eq!(App::preedit_cursor_display_cols(text, "你".len()), 2);
         assert_eq!(App::preedit_cursor_display_cols(text, "你a".len()), 3);
         assert_eq!(App::preedit_cursor_display_cols(text, text.len()), 5);
+    }
+
+    #[test]
+    fn search_bar_renders_through_sdf_ui_scene() {
+        let mut app = make_app();
+        app.glyph_cache = Some(test_cache());
+        app.core.search_state = Some(SearchState {
+            query: "needle".into(),
+            matches: vec![SearchMatch {
+                buffer_row: 0,
+                start_col: 1,
+                end_col: 7,
+            }],
+            current_match_idx: 0,
+            pane_id: 42,
+            original_scroll_offset: 0,
+        });
+        let tiles = vec![(42, GeoRect::new(10.0, 20.0, 360.0, 240.0), true)];
+        let mut sdf_rects = Vec::new();
+        let mut glyphs = Vec::new();
+        let mut color_glyphs = Vec::new();
+
+        app.build_search_bar(
+            &tiles,
+            800.0,
+            600.0,
+            &mut sdf_rects,
+            &mut glyphs,
+            &mut color_glyphs,
+        );
+
+        assert!(
+            sdf_rects.iter().any(|r| r.color == [0.15, 0.15, 0.2, 0.95]),
+            "search bar background should be emitted as SDF chrome",
+        );
+        assert!(
+            app.cached_ui_scene.sdf_rects.is_empty(),
+            "transient search bar SDF must not pollute cached UI chrome",
+        );
+        let _ = (glyphs, color_glyphs);
+    }
+
+    #[test]
+    fn bell_flash_renders_through_sdf_ui_scene() {
+        let mut app = make_app();
+        app.glyph_cache = Some(test_cache());
+        let params = app.anim_config();
+        app.core.anim_mgr.on_bell(42, &params);
+        let tiles = vec![(42, GeoRect::new(10.0, 20.0, 360.0, 240.0), true)];
+        let mut sdf_rects = Vec::new();
+        let mut glyphs = Vec::new();
+        let mut color_glyphs = Vec::new();
+
+        app.build_bell_flash(
+            &tiles,
+            1.0,
+            800.0,
+            600.0,
+            &mut sdf_rects,
+            &mut glyphs,
+            &mut color_glyphs,
+        );
+
+        assert!(
+            sdf_rects
+                .iter()
+                .any(|r| r.color[0] == 1.0 && r.color[1] == 0.9 && r.color[2] == 0.5),
+            "bell flash should be emitted as SDF chrome",
+        );
+        assert!(
+            app.cached_ui_scene.sdf_rects.is_empty(),
+            "transient bell flash SDF must not pollute cached UI chrome",
+        );
+        let _ = (glyphs, color_glyphs);
+    }
+
+    #[test]
+    fn ime_preedit_renders_through_sdf_ui_scene() {
+        let mut app = make_app();
+        app.glyph_cache = Some(test_cache());
+        app.core.search_state = Some(SearchState {
+            query: "needle".into(),
+            matches: Vec::new(),
+            current_match_idx: 0,
+            pane_id: 42,
+            original_scroll_offset: 0,
+        });
+        app.core.ime.preedit_active = true;
+        app.core.ime.preedit_text = "你a".into();
+        app.core.ime.preedit_cursor = Some("你".len());
+        let tiles = vec![(42, GeoRect::new(10.0, 20.0, 360.0, 240.0), true)];
+        let mut sdf_rects = Vec::new();
+        let mut glyphs = Vec::new();
+        let mut color_glyphs = Vec::new();
+
+        app.build_ime_preedit(
+            &tiles,
+            800.0,
+            600.0,
+            &mut sdf_rects,
+            &mut glyphs,
+            &mut color_glyphs,
+        );
+
+        assert!(
+            sdf_rects
+                .iter()
+                .any(|r| r.color == [0.15, 0.15, 0.25, 0.95]),
+            "IME preedit background should be emitted as SDF chrome",
+        );
+        assert!(
+            sdf_rects.iter().any(|r| r.color == [0.5, 0.7, 1.0, 0.9]),
+            "IME preedit underline should be emitted as SDF chrome",
+        );
+        assert!(
+            sdf_rects
+                .iter()
+                .any(|r| (r.size[0] - 2.0).abs() < 0.01 && (r.size[1] - 16.0).abs() < 0.01),
+            "IME preedit cursor should be emitted as a narrow SDF rect",
+        );
+        assert!(
+            app.cached_ui_scene.sdf_rects.is_empty(),
+            "transient IME preedit SDF must not pollute cached UI chrome",
+        );
+        let _ = (glyphs, color_glyphs);
     }
 
     #[test]

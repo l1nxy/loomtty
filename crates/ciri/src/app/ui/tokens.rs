@@ -12,10 +12,9 @@
 //!
 //! Duplication note: `ciri_ui::theme::SpaceScale` / `RadiusScale` carry
 //! the same numbers under `s1 / s2 / …` field names. The two tables are
-//! intentionally kept in lock-step while legacy `UiComponent`s are being
-//! migrated onto `ciri-ui`; the `spacing_scales_agree_*` static asserts
-//! below will fail a build if either side drifts. New components should
-//! prefer reading `theme.space.s*` so this module can be retired.
+//! intentionally kept in lock-step while components move toward direct
+//! `theme.space.s*` reads; the `spacing_scales_agree_*` static asserts
+//! below will fail a build if either side drifts.
 
 #![allow(dead_code)] // reserved tokens for upcoming components
 
@@ -135,10 +134,10 @@ pub fn tint(rgb: [f32; 4], alpha: f32) -> [f32; 4] {
     [rgb[0], rgb[1], rgb[2], alpha]
 }
 
-// Guardrail: the two spacing tables must stay numerically identical until
-// the last legacy consumer migrates off SPACE_*. Runtime assertion rather
-// than a `const _: () = assert!(...)` because `SpaceScale::default()`
-// isn't const.
+// Guardrail: the two spacing tables must stay numerically identical while
+// tokens.rs remains a compatibility layer over ciri-ui's theme scale.
+// Runtime assertion rather than a `const _: () = assert!(...)` because
+// `SpaceScale::default()` isn't const.
 #[cfg(test)]
 mod scale_sync_tests {
     use super::*;

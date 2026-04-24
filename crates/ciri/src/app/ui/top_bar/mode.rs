@@ -1,6 +1,7 @@
-use super::super::builder::UiBuilder;
 use super::super::layout::{Axis, SizeHint, UiElement, UiRect};
 use super::super::types::{UiAction, UiContext, UiScene};
+use crate::app::ciri_ui_bridge::paint_ui_tree;
+use ciri_ui::{Layer, Styled, div, text};
 
 pub(super) struct ModeIndicator<'a> {
     pub(super) label: &'a str,
@@ -27,10 +28,15 @@ impl<'a> UiElement for ModeIndicator<'a> {
             .unwrap_or(cx.cell_h * cx.config.statusbar.padding_ratio);
         let text_y = rect.y + padding * 0.5;
 
-        let mut ui = UiBuilder::new_horizontal(
-            rect.x, text_y, rect.w, cx.cell_h, 0.0, 0.0, 0.0, false, cx, scene,
+        let root = div().w(cx.viewport_w).h(cx.viewport_h).child(
+            div()
+                .in_layer(Layer::Chrome)
+                .w(rect.w)
+                .h(cx.cell_h)
+                .translate(rect.x, text_y)
+                .child(text(self.label).color(self.color)),
         );
-        ui.label(self.label, self.color);
+        paint_ui_tree(&root, cx, scene);
     }
 
     fn hit(&self, rect: UiRect, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {

@@ -105,19 +105,16 @@ pub(crate) struct RenderBuffers {
 #[derive(Default)]
 pub(crate) struct CachedUiScene {
     pub key: Option<u64>,
-    pub bg_rects: Vec<Rect>,
     pub glyphs: Vec<GlyphInstance>,
     pub color_glyphs: Vec<GlyphInstance>,
     /// SDF-shader chrome rects emitted by ciri-ui-painted widgets
-    /// (rounded / bordered / shadowed). Flat rects still live in
-    /// `bg_rects`; the two streams are drawn by separate GPU passes.
+    /// (rounded / bordered / shadowed).
     pub sdf_rects: Vec<ciri_render::sdf_rect::SdfRect>,
 }
 
 impl CachedUiScene {
     pub fn clear(&mut self) {
         self.key = None;
-        self.bg_rects.clear();
         self.glyphs.clear();
         self.color_glyphs.clear();
         self.sdf_rects.clear();
@@ -1180,10 +1177,7 @@ impl App {
         self.core.write_last_session();
     }
 
-    pub fn mark_disconnected_for_reconnect(
-        &mut self,
-        reason: ciri_app::app::DisconnectReason,
-    ) {
+    pub fn mark_disconnected_for_reconnect(&mut self, reason: ciri_app::app::DisconnectReason) {
         self.core.mark_disconnected_for_reconnect(reason);
         // The IO thread is gone — its cancel endpoint has no listener.
         self.connection_cancel = None;

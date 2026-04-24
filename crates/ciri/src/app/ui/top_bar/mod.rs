@@ -17,10 +17,8 @@
 //!
 //! # Compatibility
 //!
-//! `TopBarComponent` also still implements [`UiComponent`] — this keeps
-//! the existing `ui/mod.rs` dispatch code working while we transition.
-//! The `UiComponent` impl just builds the full-width rect from
-//! `cx.viewport_w` and delegates to `UiElement::paint`/`::hit`.
+//! `TopBarComponent` also exposes a full-bar click helper for call-sites that
+//! just want "the top bar" without manually building a rect.
 
 mod mode;
 mod pane_tabs;
@@ -33,13 +31,14 @@ use self::mode::ModeIndicator;
 use self::pane_tabs::PaneTabsElement;
 use self::session_label::SessionLabel;
 use self::workspace::WorkspaceIndicator;
-use super::builder::UiBuilder;
 use super::layout::{Axis, Linear, SizeHint, Spacer, UiElement, UiRect};
 use super::text_layout;
 use super::tokens;
-use super::types::{UiAction, UiComponent, UiContext, UiScene, UiTopBarHit};
+use super::types::{UiAction, UiContext, UiScene, UiTopBarHit};
+use crate::app::ciri_ui_bridge::paint_ui_tree;
 use crate::app::top_bar::{PaneTabLayout, TopBarLayout};
 use crate::app::{App, TopBarHoverRegion};
+use ciri_ui::{Layer, Styled, div};
 
 pub(crate) struct TopBarComponent {
     pub layout: TopBarLayout,
@@ -96,17 +95,16 @@ impl TopBarComponent {
     }
 
     /// The rect this bar occupies, derived from `UiContext` + config.
-    /// Kept as a helper so the `UiComponent` impl and legacy `hit_test`
+    /// Kept as a helper so the full-bar helpers and legacy `hit_test`
     /// can both ask "where am I?" without duplicating the math.
     ///
-    /// NB (pre-existing, inherited from `UiComponent::paint`/`::click`):
+    /// NB (pre-existing, inherited from full-bar paint/click helpers):
     /// `cx.viewport_w` here comes from `App::ui_context()` →
     /// `command_palette_viewport_size()`, which is the renderer surface
     /// size. During a resize event this can briefly differ from the `vw`
     /// passed to `App::build_ui`. The discrepancy resolves naturally when
-    /// `UiComponent` is removed and all paint/hit goes through
-    /// `UiElement::paint(rect)` / `::hit(rect)` with the rect that
-    /// `Border::layout` produced from the same `vw`.
+    /// all paint/hit goes through `UiElement::paint(rect)` / `::hit(rect)`
+    /// with the rect that `Border::layout` produced from the same `vw`.
     pub(super) fn bar_rect(&self, cx: &UiContext<'_>) -> UiRect {
         UiRect::new(
             0.0,
@@ -125,8 +123,7 @@ impl TopBarComponent {
         // Widths of the right-side fixed zones. Measured via `text_layout`
         // so proportional UI fonts get their real advance — using
         // `unicode_width * cell_w` here would silently under-allocate wide
-        // labels and cause `UiBuilder::label` to fail its `allocate` check,
-        // leaving the mode/workspace text unpainted. The `top_bar_layout`
+        // labels and leave the mode/workspace text clipped. The `top_bar_layout`
         // on the `App` side measures the same way (same shaper), so the
         // `tabs_area_px` visibility window stays in lockstep with these
         // slot widths (invariant pinned by
@@ -212,19 +209,26 @@ impl UiElement for TopBarComponent {
         let sep_color = tokens::tint(dim, tokens::ALPHA_SEPARATOR);
 
         // --- global decorations: bar background + separator strip ---
-        {
-            // We just need a no-op UiBuilder long enough to emit absolute
-            // rects via `abs_rect`. (The builder's cursor is not used here.)
-            let mut ui = UiBuilder::new_horizontal(
-                rect.x, rect.y, rect.w, cx.cell_h, 0.0, 0.0, 0.0, false, cx, scene,
-            );
-            ui.abs_rect(rect.x, rect.y, rect.w, rect.h, bar_bg);
-            let sep_y = match cx.config.statusbar.position {
-                StatusBarPosition::Top => rect.bottom() - tokens::BORDER_THIN,
-                StatusBarPosition::Bottom => rect.y,
-            };
-            ui.abs_rect(rect.x, sep_y, rect.w, tokens::BORDER_THIN, sep_color);
-        }
+        let sep_y = match cx.config.statusbar.position {
+            StatusBarPosition::Top => rect.h - tokens::BORDER_THIN,
+            StatusBarPosition::Bottom => 0.0,
+        };
+        let chrome = div().w(cx.viewport_w).h(cx.viewport_h).child(
+            div()
+                .in_layer(Layer::Chrome)
+                .w(rect.w)
+                .h(rect.h)
+                .translate(rect.x, rect.y)
+                .bg(bar_bg)
+                .child(
+                    div()
+                        .w(rect.w)
+                        .h(tokens::BORDER_THIN)
+                        .translate(0.0, sep_y)
+                        .bg(sep_color),
+                ),
+        );
+        paint_ui_tree(&chrome, cx, scene);
 
         // --- inner row (session | tabs | workspace | mode) ---
         self.build_row(cx).paint(rect, cx, scene);
@@ -241,10 +245,15 @@ impl UiElement for TopBarComponent {
                 StatusBarPosition::Top => rect.bottom(),
                 StatusBarPosition::Bottom => rect.y - indicator_h,
             };
-            let mut ui = UiBuilder::new_horizontal(
-                rect.x, rect.y, rect.w, cx.cell_h, 0.0, 0.0, 0.0, false, cx, scene,
+            let indicator = div().w(cx.viewport_w).h(cx.viewport_h).child(
+                div()
+                    .in_layer(Layer::Chrome)
+                    .w(rect.w)
+                    .h(indicator_h)
+                    .translate(rect.x, band_y)
+                    .bg(indicator_color),
             );
-            ui.abs_rect(rect.x, band_y, rect.w, indicator_h, indicator_color);
+            paint_ui_tree(&indicator, cx, scene);
         }
     }
 
@@ -260,16 +269,12 @@ impl UiElement for TopBarComponent {
     }
 }
 
-impl UiComponent for TopBarComponent {
-    fn click(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<UiAction> {
+impl TopBarComponent {
+    pub(crate) fn click(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<UiAction> {
         let rect = self.bar_rect(cx);
         <Self as UiElement>::hit(self, rect, mx, my, cx)
     }
 
-    fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let rect = self.bar_rect(cx);
-        <Self as UiElement>::paint(self, rect, cx, scene);
-    }
 }
 
 #[cfg(test)]

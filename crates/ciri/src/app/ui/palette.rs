@@ -3,12 +3,12 @@
 //! Layout is pre-computed by `App::command_palette_layout` so capture
 //! only has to read it and translate per-entry state into `PaletteRow`s`.
 
-
-use super::builder::UiBuilder;
 use super::text_layout;
 use super::tokens;
 use super::types::{UiAction, UiContext, UiPaletteHit, UiScene};
 use crate::app::App;
+use crate::app::ciri_ui_bridge::paint_ui_tree;
+use ciri_ui::{Layer, Styled, div, text};
 
 pub(super) struct PaletteRow {
     pub entry_idx: usize,
@@ -185,30 +185,42 @@ impl PaletteComponent {
         let pw = self.layout.panel_w;
         let text_pad = tokens::SPACE_2;
 
-        // Outer panel via SDF: rounded bg + hairline border + drop
-        // shadow. Panel bg is `surface` *lifted one step* so it reads
-        // as raised above the (dimmed) terminal backdrop — with the
-        // sRGB-passthrough pipeline there's no accidental gamma lift
-        // to rely on (commit 003b123). The input row below stacks a
-        // second raise on top of this to keep the visual hierarchy.
         let panel_bg = tokens::surface_raise(
             [bg_color[0], bg_color[1], bg_color[2], 1.0],
             tokens::SURFACE_LIFT,
         );
-        scene.sdf_rects.push(ciri_render::sdf_rect::SdfRect {
-            pos: [px, self.layout.panel_y],
-            size: [pw, self.layout.panel_h],
-            color: panel_bg,
-            radii: [tokens::SPACE_1; 4],
-            border_color,
-            border_width: tokens::BORDER_THIN,
-            shadow_blur: tokens::SPACE_3,
-            shadow_offset: [0.0, tokens::SPACE_1],
-            shadow_color: [0.0, 0.0, 0.0, 0.35],
-        });
-
         let row_h = self.layout.row_h;
-        for (idx, row) in self.rows.iter().enumerate() {
+        let input_row_h = (self.layout.sep_y - self.layout.panel_y - tokens::BORDER_THIN).max(0.0);
+        let input_bg = tokens::surface_raise(
+            [bg_color[0], bg_color[1], bg_color[2], 1.0],
+            tokens::SURFACE_LIFT_HIGH,
+        );
+        let input_text = if self.remote_input_mode {
+            format!("SSH> {}", self.query)
+        } else {
+            format!("> {}", self.query)
+        };
+
+        let mut input_row = div()
+            .w_full()
+            .h(input_row_h)
+            .flex_row()
+            .items_center()
+            .bg(input_bg)
+            .child(div().w(text_pad).h(input_row_h))
+            .child(text(input_text.clone()).color(fg_color))
+            .child(
+                div()
+                    .w(2.0)
+                    .h(cx.ui_line_h)
+                    .bg(tokens::tint(fg_color, tokens::ALPHA_CURSOR)),
+            );
+        if self.remote_input_mode && self.query.is_empty() {
+            input_row = input_row.child(text("user@host[:port]").color(dim_color));
+        }
+
+        let mut rows_col = div().w_full().flex_col();
+        for row in &self.rows {
             let tint = if row.is_selected {
                 Some(selected_bg)
             } else if row.is_hovered {
@@ -216,116 +228,106 @@ impl PaletteComponent {
             } else {
                 None
             };
+            let mut row_el = div()
+                .w_full()
+                .h(row_h)
+                .flex_row()
+                .items_center()
+                .child(div().w(text_pad).h(row_h));
             if let Some(color) = tint {
-                scene.sdf_rects.push(ciri_render::sdf_rect::SdfRect {
-                    pos: [px, self.layout.sep_y + idx as f32 * row_h],
-                    size: [pw, row_h],
-                    color,
-                    radii: [tokens::SPACE_1; 4],
-                    ..Default::default()
-                });
+                row_el = row_el.bg(color).rounded(tokens::SPACE_1);
             }
-        }
-
-        let mut ui = UiBuilder::new_vertical(
-            px,
-            self.layout.panel_y,
-            pw,
-            self.layout.panel_h,
-            0.0,
-            0.0,
-            0.0,
-            false,
-            cx,
-            scene,
-        );
-
-        ui.modal_backdrop([0.0, 0.0, 0.0, tokens::ALPHA_BACKDROP]);
-        // (Panel bg/border/shadow already emitted as SdfRect above.)
-
-        let input_row_h = tokens::control_height_md(cx.ui_line_h);
-        ui.horizontal(Some(pw), input_row_h, 0.0, |ui| {
-            let (rx, ry) = ui.cursor_pos();
-            ui.abs_rect(
-                rx,
-                ry,
-                pw,
-                input_row_h,
-                tokens::surface_raise(
-                    [bg_color[0], bg_color[1], bg_color[2], 1.0],
-                    tokens::SURFACE_LIFT_HIGH,
-                ),
-            );
-            let text_y = ry + (input_row_h - cx.ui_line_h) * 0.5;
-
-            let input_text = if self.remote_input_mode {
-                format!("SSH> {}", self.query)
+            if row.style == PaletteRowStyle::SectionHeader {
+                row_el = row_el.child(text(format!("── {} ──", row.label)).color(dim_color));
             } else {
-                format!("> {}", self.query)
-            };
-            ui.abs_text(&input_text, rx + text_pad, text_y, fg_color);
-
-            if self.remote_input_mode && self.query.is_empty() {
-                let hint_x = rx + text_pad + ui.text_width(&input_text);
-                ui.abs_text("user@host[:port]", hint_x, text_y, dim_color);
-            }
-
-            let cursor_x = rx + text_pad + ui.text_width(&input_text);
-            ui.abs_rect(
-                cursor_x,
-                text_y,
-                2.0,
-                cx.ui_line_h,
-                tokens::tint(fg_color, tokens::ALPHA_CURSOR),
-            );
-        });
-
-        ui.separator_h(border_color, 0.0);
-        for row in &self.rows {
-            ui.horizontal(Some(pw), row_h, 0.0, |ui| {
-                let (rx, ry) = ui.cursor_pos();
-                let text_y = ry + (row_h - cx.ui_line_h) * 0.5;
-                if row.style == PaletteRowStyle::SectionHeader {
-                    let header_text = format!("── {} ──", row.label);
-                    ui.abs_text(&header_text, rx + text_pad, text_y, dim_color);
+                let color = if row.style == PaletteRowStyle::ConnectRemotePrompt {
+                    accent
                 } else {
-                    let color = if row.style == PaletteRowStyle::ConnectRemotePrompt {
-                        accent
-                    } else {
-                        fg_color
-                    };
-                    ui.abs_text(&row.label, rx + text_pad, text_y, color);
-                }
-            });
+                    fg_color
+                };
+                row_el = row_el.child(text(row.label.clone()).color(color));
+            }
+            rows_col = rows_col.child(row_el);
         }
+        if self.show_no_matches {
+            rows_col = rows_col.child(
+                div()
+                    .w_full()
+                    .h(row_h)
+                    .flex_row()
+                    .items_center()
+                    .child(div().w(text_pad).h(row_h))
+                    .child(text("No matching commands").color(dim_color)),
+            );
+        }
+
+        let rows_area_h = self.layout.visible_rows as f32 * row_h;
+        let mut rows_area = div().w_full().h(rows_area_h).flex_row().child(rows_col);
+
+        let mut panel = div()
+            .in_layer(Layer::Modal)
+            .w(pw)
+            .h(self.layout.panel_h)
+            .translate(px, self.layout.panel_y)
+            .flex_col()
+            .bg(panel_bg)
+            .rounded(tokens::SPACE_1)
+            .border(tokens::BORDER_THIN, border_color)
+            .shadow_lg()
+            .child(input_row)
+            .child(div().w_full().h(tokens::BORDER_THIN).bg(border_color));
 
         if self.total_entries > self.layout.visible_rows {
             let track_w = tokens::SPACE_1;
-            let track_x = px + pw - tokens::SPACE_2;
-            let track_y = self.layout.sep_y + 2.0;
             let track_h = (self.layout.visible_rows as f32 * row_h - tokens::SPACE_1).max(0.0);
-            ui.abs_rect(
-                track_x,
-                track_y,
-                track_w,
-                track_h,
-                tokens::tint(border_color, tokens::ALPHA_SCROLL_TRACK),
-            );
-
             let thumb_h = (track_h * (self.layout.visible_rows as f32 / self.total_entries as f32))
                 .max(row_h * 0.75);
             let denom = self
                 .total_entries
                 .saturating_sub(self.layout.visible_rows)
                 .max(1);
-            let thumb_y =
-                track_y + (track_h - thumb_h).max(0.0) * (self.scroll_offset as f32 / denom as f32);
-            ui.abs_rect(
-                track_x,
-                thumb_y,
-                track_w,
-                thumb_h,
-                tokens::tint(accent, tokens::ALPHA_SCROLL_THUMB),
+            let thumb_top =
+                (track_h - thumb_h).max(0.0) * (self.scroll_offset as f32 / denom as f32);
+            rows_area = rows_area.child(
+                div()
+                    .w(track_w)
+                    .h(track_h)
+                    .translate(-tokens::SPACE_2, 2.0)
+                    .bg(tokens::tint(border_color, tokens::ALPHA_SCROLL_TRACK))
+                    .child(
+                        div()
+                            .w(track_w)
+                            .h(thumb_h)
+                            .translate(0.0, thumb_top)
+                            .bg(tokens::tint(accent, tokens::ALPHA_SCROLL_THUMB)),
+                    ),
+            );
+        }
+        panel = panel.child(rows_area).child(div().w_full().flex_1());
+
+        // Loading takes precedence over a stale error so the two strings
+        // can't paint at the same Y. The `else if` in `capture` already
+        // enforces this, but guard defensively here.
+        if let Some(ref loading) = self.loading_text {
+            panel = panel.child(
+                div()
+                    .w_full()
+                    .h(cx.ui_line_h)
+                    .flex_row()
+                    .items_center()
+                    .child(div().w(text_pad).h(cx.ui_line_h))
+                    .child(text(loading.clone()).color([accent[0], accent[1], accent[2], 0.7])),
+            );
+        } else if let Some(ref error) = self.error_text {
+            let red = cx.theme.error;
+            panel = panel.child(
+                div()
+                    .w_full()
+                    .h(cx.ui_line_h)
+                    .flex_row()
+                    .items_center()
+                    .child(div().w(text_pad).h(cx.ui_line_h))
+                    .child(text(error.clone()).color([red[0], red[1], red[2], 0.9])),
             );
         }
 
@@ -334,34 +336,25 @@ impl PaletteComponent {
         } else {
             "0/0".to_string()
         };
-        let footer_x = px + pw - ui.text_width(&footer) - 12.0;
-        let footer_y = self.layout.panel_y + self.layout.panel_h - cx.ui_line_h - 2.0;
-        ui.abs_text(&footer, footer_x, footer_y, dim_color);
+        panel = panel.child(
+            div()
+                .w_full()
+                .h(cx.ui_line_h)
+                .flex_row()
+                .items_center()
+                .justify_end()
+                .child(text(footer).color(dim_color))
+                .child(div().w(12.0).h(cx.ui_line_h)),
+        );
 
-        if self.show_no_matches {
-            ui.abs_text(
-                "No matching commands",
-                px + text_pad,
-                self.layout.sep_y + 4.0,
-                dim_color,
-            );
-        }
-        // Loading takes precedence over a stale error so the two strings
-        // can't paint at the same Y. The `else if` in `capture` already
-        // enforces this, but guard defensively here.
-        if let Some(ref loading) = self.loading_text {
-            let y = self.layout.panel_y + self.layout.panel_h - cx.ui_line_h * 2.0 - 4.0;
-            ui.abs_text(
-                loading,
-                px + text_pad,
-                y,
-                [accent[0], accent[1], accent[2], 0.7],
-            );
-        } else if let Some(ref error) = self.error_text {
-            let y = self.layout.panel_y + self.layout.panel_h - cx.ui_line_h * 2.0 - 4.0;
-            let red = cx.theme.error;
-            ui.abs_text(error, px + text_pad, y, [red[0], red[1], red[2], 0.9]);
-        }
+        let root = div()
+            .w(cx.viewport_w)
+            .h(cx.viewport_h)
+            .in_layer(Layer::Modal)
+            .bg([0.0, 0.0, 0.0, tokens::ALPHA_BACKDROP])
+            .child(panel);
+
+        paint_ui_tree(&root, cx, scene);
     }
 }
 
@@ -415,13 +408,11 @@ mod tests {
     fn selected_row_highlight_renders_in_sdf_layer() {
         let cx = test_cx();
         let mut atlas = test_cache();
-        let mut bg_rects = Vec::new();
         let mut glyphs = Vec::new();
         let mut color_glyphs = Vec::new();
         let mut sdf_rects = Vec::new();
         let mut scene = UiScene {
             atlas: &mut atlas,
-            bg_rects: &mut bg_rects,
             glyphs: &mut glyphs,
             color_glyphs: &mut color_glyphs,
             sdf_rects: &mut sdf_rects,

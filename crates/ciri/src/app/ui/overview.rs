@@ -1,10 +1,10 @@
 use ciri_layout::geometry::Rect as GeoRect;
-use ciri_render::rect::Rect;
 
 use super::tokens;
 use super::types::{UiContext, UiOverviewHit, UiScene};
 use crate::app::App;
-use crate::app::status_bar::{TextEmitParams, emit_status_text};
+use crate::app::ciri_ui_bridge::paint_ui_tree;
+use ciri_ui::{Layer, Styled, div, text};
 
 pub(crate) struct OverviewComponent {
     hovered_pane: Option<(usize, u64)>,
@@ -128,91 +128,58 @@ pub(crate) fn paint_overview_action_bar(
     let accent = cx.theme.accent;
     let red = cx.theme.error;
     let fg = cx.theme.on_surface;
-    let text_y = d.bar_y + (d.bar_h - cx.cell_h) * 0.5;
 
     let close_hovered = hover == Some(super::super::OverviewActionHover::Close);
     let focus_hovered = hover == Some(super::super::OverviewActionHover::Focus);
 
-    // Semi-opaque backdrop over the tile so the action bar reads as an
-    // overlay rather than part of the tile content.
-    scene.bg_rects.push(Rect {
-        x: d.pane_x,
-        y: d.bar_y,
-        w: d.pane_w,
-        h: d.bar_h,
-        color: [0.0, 0.0, 0.0, tokens::ALPHA_PRIMARY_HOVER],
-    });
-    // Vertical divider between Close / Focus.
-    scene.bg_rects.push(Rect {
-        x: d.focus_x,
-        y: d.bar_y + tokens::SPACE_1,
-        w: 1.0,
-        h: d.bar_h - tokens::SPACE_1 * 2.0,
-        color: tokens::tint(fg, tokens::ALPHA_SEPARATOR * 0.6),
-    });
-
     let close_label = "\u{2715} Close";
     let focus_label = "Focus";
-    let close_text_w = super::text_layout::measure(cx, close_label);
-    let focus_text_w = super::text_layout::measure(cx, focus_label);
-
-    if close_hovered {
-        scene.bg_rects.push(Rect {
-            x: d.close_x,
-            y: d.bar_y,
-            w: d.close_w,
-            h: d.bar_h,
-            color: tokens::tint(red, tokens::ALPHA_PRIMARY_REST),
-        });
-    }
-    let close_text_x = d.close_x + (d.close_w - close_text_w) * 0.5;
-    // Invert to full foreground on hover so contrast stays AA on the red
-    // wash; resting state uses red to signal a destructive action.
     let close_text_color = if close_hovered {
         fg
     } else {
         tokens::tint(red, 1.0)
     };
-    let mut ui_borrow = cx.ui_shaper.map(|c| c.borrow_mut());
-    emit_status_text(
-        scene.atlas,
-        ui_borrow.as_deref_mut(),
-        close_label,
-        &TextEmitParams {
-            x_start: close_text_x,
-            y: text_y,
-            cell_width: cx.cell_w,
-            baseline: cx.baseline,
-            color: close_text_color,
-            scale: 1.0,
-        },
-        scene.glyphs,
-        scene.color_glyphs,
+
+    let mut close_button = div()
+        .w(d.close_w)
+        .h(d.bar_h)
+        .flex_row()
+        .items_center()
+        .justify_center()
+        .child(text(close_label).color(close_text_color));
+    if close_hovered {
+        close_button = close_button.bg(tokens::tint(red, tokens::ALPHA_PRIMARY_REST));
+    }
+
+    let mut focus_button = div()
+        .w((d.focus_w - 1.0).max(0.0))
+        .h(d.bar_h)
+        .flex_row()
+        .items_center()
+        .justify_center()
+        .child(text(focus_label).color(fg));
+    if focus_hovered {
+        focus_button = focus_button.bg(tokens::tint(accent, tokens::ALPHA_SELECTED_BG + 0.10));
+    }
+
+    let root = div().w(cx.viewport_w).h(cx.viewport_h).child(
+        div()
+            .in_layer(Layer::Overlay)
+            .w(d.pane_w)
+            .h(d.bar_h)
+            .translate(d.pane_x, d.bar_y)
+            .flex_row()
+            .items_center()
+            .bg([0.0, 0.0, 0.0, tokens::ALPHA_PRIMARY_HOVER])
+            .child(close_button)
+            .child(
+                div()
+                    .w(1.0)
+                    .h(d.bar_h - tokens::SPACE_1 * 2.0)
+                    .bg(tokens::tint(fg, tokens::ALPHA_SEPARATOR * 0.6)),
+            )
+            .child(focus_button),
     );
 
-    if focus_hovered {
-        scene.bg_rects.push(Rect {
-            x: d.focus_x,
-            y: d.bar_y,
-            w: d.focus_w,
-            h: d.bar_h,
-            color: tokens::tint(accent, tokens::ALPHA_SELECTED_BG + 0.10),
-        });
-    }
-    let focus_text_x = d.focus_x + (d.focus_w - focus_text_w) * 0.5;
-    emit_status_text(
-        scene.atlas,
-        ui_borrow.as_deref_mut(),
-        focus_label,
-        &TextEmitParams {
-            x_start: focus_text_x,
-            y: text_y,
-            cell_width: cx.cell_w,
-            baseline: cx.baseline,
-            color: fg,
-            scale: 1.0,
-        },
-        scene.glyphs,
-        scene.color_glyphs,
-    );
+    paint_ui_tree(&root, cx, scene);
 }

@@ -5,9 +5,8 @@
 //! for proportional UI fonts — it over-estimates narrow glyphs and
 //! under-estimates wide ones, which desyncs layout slots from actual glyph
 //! advance. The consequence is either clipped text or, when the difference
-//! makes a slot too narrow for its own label, a `UiBuilder::label()` call
-//! that fails to allocate and silently emits nothing (the bug that left
-//! the session/mode indicators blank on the top bar).
+//! makes a slot too narrow for its own label, text may clip or disappear
+//! (the bug that left the session/mode indicators blank on the top bar).
 //!
 //! This module centralises the three primitives every bar/panel needs:
 //! * [`measure`] — shape-aware pixel width
@@ -16,8 +15,8 @@
 //!
 //! Every helper falls back to a cell-grid estimate when the shaper has no
 //! face available (headless tests, very early startup). The fallback
-//! matches what `UiBuilder::text_width` does so measurement stays
-//! internally consistent within a single frame.
+//! matches the legacy chrome fallback so measurement stays internally
+//! consistent within a single frame.
 
 use unicode_width::UnicodeWidthStr;
 

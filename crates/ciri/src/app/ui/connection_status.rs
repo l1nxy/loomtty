@@ -3,12 +3,12 @@
 //! A centred, non-modal overlay that narrates the connection lifecycle so the
 //! user is not left staring at a blank window when DNS hangs or ssh refuses.
 
-
-use super::builder::UiBuilder;
 use super::text_layout;
 use super::tokens;
-use super::types::{UiComponent, UiContext, UiScene};
+use super::types::{UiContext, UiScene};
 use crate::app::App;
+use crate::app::ciri_ui_bridge::paint_ui_tree;
+use ciri_ui::{Layer, Styled, div, text};
 
 const DOT_PHASE_MS: u128 = 300;
 const DOT_PHASES: u32 = 4;
@@ -43,7 +43,10 @@ pub(crate) enum StatusKind {
 
 impl StatusKind {
     fn animates(&self) -> bool {
-        matches!(self, StatusKind::Connecting | StatusKind::Reconnecting { .. })
+        matches!(
+            self,
+            StatusKind::Connecting | StatusKind::Reconnecting { .. }
+        )
     }
 }
 
@@ -72,7 +75,11 @@ impl ConnectionStatusComponent {
             StatusKind::Reconnecting {
                 attempt: state.attempt,
                 max_attempts: state.max_attempts,
-                last_reason: app.core.last_disconnect_reason.as_ref().map(|r| r.to_string()),
+                last_reason: app
+                    .core
+                    .last_disconnect_reason
+                    .as_ref()
+                    .map(|r| r.to_string()),
             }
         } else if app.core.is_halted() {
             let reason = app
@@ -167,10 +174,9 @@ fn fit_without_ellipsis(cx: &UiContext<'_>, text: &str, max_w: f32) -> String {
     text[..text.floor_char_boundary(cut.min(text.len()))].to_string()
 }
 
-impl UiComponent for ConnectionStatusComponent {
-    fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+impl ConnectionStatusComponent {
+    pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         let bg = cx.theme.surface;
-        let fg = cx.theme.on_surface;
         let accent = cx.theme.accent;
         let dim = cx.theme.on_surface_muted;
         let red = cx.theme.error;
@@ -192,70 +198,70 @@ impl UiComponent for ConnectionStatusComponent {
         // raw `[c * k]` multiply introduces on non-neutral backgrounds.
         let sunk = tokens::surface_sink([bg[0], bg[1], bg[2], 1.0], tokens::SURFACE_SINK);
         let bg_color = [sunk[0], sunk[1], sunk[2], 0.97];
-        scene.sdf_rects.push(ciri_render::sdf_rect::SdfRect {
-            pos: [self.x, self.y],
-            size: [self.w, self.h],
-            color: bg_color,
-            radii: [tokens::SPACE_1; 4],
-            border_color: head_color,
-            border_width: bw,
-            shadow_blur: tokens::SPACE_2,
-            shadow_offset: [0.0, tokens::SPACE_1],
-            shadow_color: [0.0, 0.0, 0.0, 0.30],
-        });
-
-        let mut ui = UiBuilder::new_vertical(
-            self.x + bw,
-            self.y + bw,
-            content_w,
-            self.h - bw * 2.0,
-            0.0,
-            0.0,
-            0.0,
-            false,
-            cx,
-            scene,
-        );
 
         let (primary, secondary) = banner_lines(&self.kind, &self.target);
         let animates = self.kind.animates();
-        let dots = if animates { dot_suffix(dot_phase()) } else { "" };
+        let dots = if animates {
+            dot_suffix(dot_phase())
+        } else {
+            ""
+        };
 
-        ui.bg_rect(content_w, v_pad, [0.0; 4]);
-        ui.horizontal(Some(content_w), row_h, 0.0, |ui| {
-            let (rx, ry) = ui.cursor_pos();
-            let text_y = ry + (row_h - cx.ui_line_h) * 0.5;
-            let suffix_w = if animates { ui.text_width("...") } else { 0.0 };
-            let head = if animates {
-                fit_without_ellipsis(cx, &primary, (content_w - suffix_w).max(0.0))
-            } else {
-                text_layout::truncate_with_ellipsis(cx, &primary, content_w)
-            };
-            let head_w = ui.text_width(&head);
-            let tx = rx + (content_w - head_w - suffix_w) * 0.5;
-            ui.abs_text(&head, tx, text_y, head_color);
-            if animates && !dots.is_empty() {
-                ui.abs_text(dots, tx + head_w, text_y, head_color);
-            }
-        });
-
-        if !secondary.is_empty() {
-            ui.bg_rect(content_w, tokens::SPACE_1, [0.0; 4]);
-            ui.horizontal(Some(content_w), row_h, 0.0, |ui| {
-                let (rx, ry) = ui.cursor_pos();
-                let text_y = ry + (row_h - cx.ui_line_h) * 0.5;
-                let line = text_layout::truncate_with_ellipsis(cx, &secondary, content_w);
-                let tw = ui.text_width(&line);
-                let tx = rx + (content_w - tw) * 0.5;
-                let color = match &self.kind {
-                    StatusKind::Failed { .. } => fg,
-                    _ => dim,
-                };
-                ui.abs_text(&line, tx, text_y, color);
-            });
+        let suffix_w = if animates {
+            text_layout::measure(cx, "...")
+        } else {
+            0.0
+        };
+        let head = if animates {
+            fit_without_ellipsis(cx, &primary, (content_w - suffix_w).max(0.0))
+        } else {
+            text_layout::truncate_with_ellipsis(cx, &primary, content_w)
+        };
+        let mut primary_row = div()
+            .w_full()
+            .h(row_h)
+            .flex_row()
+            .items_center()
+            .justify_center()
+            .child(text(head).color(head_color));
+        if animates && !dots.is_empty() {
+            primary_row = primary_row.child(text(dots).color(head_color));
         }
 
-        ui.bg_rect(content_w, v_pad, [0.0; 4]);
+        let mut panel = div()
+            .in_layer(Layer::Overlay)
+            .w(self.w)
+            .h(self.h)
+            .translate(self.x, self.y)
+            .flex_col()
+            .items_center()
+            .bg(bg_color)
+            .rounded(tokens::SPACE_1)
+            .border(bw, head_color)
+            .shadow_md()
+            .child(div().w(content_w).h(v_pad))
+            .child(primary_row);
+        if !secondary.is_empty() {
+            let line = text_layout::truncate_with_ellipsis(cx, &secondary, content_w);
+            let color = match &self.kind {
+                StatusKind::Failed { .. } => cx.theme.on_surface,
+                _ => dim,
+            };
+            panel = panel.child(div().w(content_w).h(tokens::SPACE_1)).child(
+                div()
+                    .w_full()
+                    .h(row_h)
+                    .flex_row()
+                    .items_center()
+                    .justify_center()
+                    .child(text(line).color(color)),
+            );
+        }
+        panel = panel.child(div().w(content_w).h(v_pad));
+
+        let root = div().w(cx.viewport_w).h(cx.viewport_h).child(panel);
+
+        paint_ui_tree(&root, cx, scene);
     }
 }
 

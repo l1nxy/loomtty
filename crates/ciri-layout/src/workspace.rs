@@ -165,7 +165,7 @@ impl Workspace {
 
         let fit_clamped = if col_w <= inner_vw {
             // Fits with both outer gaps — keep them visible.
-            raw.clamp(right_limit, left_limit)
+            clamp_offset(raw, right_limit, left_limit)
         } else if col_w <= vw {
             // Wider than inner area but still fits the raw viewport; anchor
             // to the left outer gap so the pane doesn't touch the edge.
@@ -175,7 +175,7 @@ impl Workspace {
             // minimal-scroll) since no clamping can preserve gaps.
             raw
         };
-        fit_clamped.clamp(0.0, max_offset)
+        clamp_offset(fit_clamped, 0.0, max_offset)
     }
 
     /// Decide whether `OnOverflow` should center the active column.
@@ -222,7 +222,7 @@ impl Workspace {
         span > vw
     }
 
-/// Get visible tiles as (pane_id, screen_rect, is_active).
+    /// Get visible tiles as (pane_id, screen_rect, is_active).
     /// Multi-tile columns return one entry per tile, splitting column height by weight.
     pub fn visible_tiles(&self, view_offset_x: f32) -> Vec<(PaneId, Rect, bool)> {
         self.collect_tiles(true, view_offset_x)
@@ -254,7 +254,11 @@ impl Workspace {
             let top = self.inner_top();
             for (pane_id, y, h) in &tile_rects {
                 let is_active = Some(*pane_id) == active_pane;
-                result.push((*pane_id, Rect::new(screen_x, top + *y, col_w, *h), is_active));
+                result.push((
+                    *pane_id,
+                    Rect::new(screen_x, top + *y, col_w, *h),
+                    is_active,
+                ));
             }
         }
         result
@@ -630,8 +634,7 @@ impl Workspace {
                 continue;
             }
 
-            let border_ys =
-                tile_border_positions(col, col_w, self.inner_height(), self.column_gap);
+            let border_ys = tile_border_positions(col, col_w, self.inner_height(), self.column_gap);
             let top = self.inner_top();
             for (tile_idx, border_y) in border_ys.into_iter().enumerate() {
                 if (my - (top + border_y)).abs() < threshold {
@@ -770,6 +773,21 @@ fn tile_border_positions(
 fn clamped_tile_pair_height(top_height: f32, total_height: f32, delta_y: f32) -> f32 {
     let min_height = 30.0_f32;
     (top_height + delta_y).clamp(min_height, total_height - min_height)
+}
+
+fn clamp_offset(value: f32, min: f32, max: f32) -> f32 {
+    let value = if value.is_finite() { value } else { 0.0 };
+    let min = if min.is_finite() { min } else { 0.0 };
+    let max = if max.is_finite() { max } else { min };
+    if min <= max {
+        value.clamp(min, max)
+    } else {
+        // `target_offset_for_active_with_strategy` can hit a mathematical
+        // equality where f32 operation order makes `min` exceed `max` by a
+        // tiny fraction of a pixel. Treat that as one collapsed bound rather
+        // than panicking in `f32::clamp`.
+        (min + max) * 0.5
+    }
 }
 
 #[cfg(test)]
@@ -929,6 +947,23 @@ mod tests {
     }
 
     #[test]
+    fn clamp_offset_tolerates_float_rounding_reversed_bounds() {
+        // Regression for a Windows crash in f32::clamp:
+        // min = 1689.6001, max = 1689.6. Mathematically these bounds were
+        // equal, but f32 operation order inverted them by ~0.0001px.
+        let clamped = clamp_offset(1700.0, 1689.6001, 1689.6);
+        assert!(clamped.is_finite());
+        assert!((clamped - 1689.6001).abs() < 0.001);
+    }
+
+    #[test]
+    fn clamp_offset_tolerates_non_finite_inputs() {
+        assert_eq!(clamp_offset(f32::NAN, 0.0, 10.0), 0.0);
+        assert_eq!(clamp_offset(5.0, f32::NAN, 10.0), 5.0);
+        assert_eq!(clamp_offset(5.0, 0.0, f32::NAN), 0.0);
+    }
+
+    #[test]
     fn on_overflow_fits_adjacent_pair_with_minimal_scroll() {
         let mut w = ws();
         w.add_test_column(1);
@@ -966,7 +1001,10 @@ mod tests {
         let col_x = w.column_x(1);
         let max_offset = (w.total_width() - 1000.0).max(0.0);
         let expected = (col_x + col_w / 2.0 - 500.0).clamp(0.0, max_offset);
-        assert!((t - expected).abs() < 1e-3, "expected centered ({expected}), got {t}");
+        assert!(
+            (t - expected).abs() < 1e-3,
+            "expected centered ({expected}), got {t}"
+        );
     }
 
     #[test]
@@ -984,7 +1022,10 @@ mod tests {
         let col_x = w.column_x(2);
         let max_offset = (w.total_width() - 1000.0).max(0.0);
         let expected = ((col_x + 700.0) - 1000.0).max(0.0).clamp(0.0, max_offset);
-        assert!((t - expected).abs() < 1e-3, "expected fit ({expected}), got {t}");
+        assert!(
+            (t - expected).abs() < 1e-3,
+            "expected fit ({expected}), got {t}"
+        );
     }
 
     #[test]

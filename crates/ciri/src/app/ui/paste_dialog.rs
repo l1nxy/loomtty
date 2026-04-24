@@ -4,12 +4,12 @@
 //! paste-guard considers risky. The backdrop dims the viewport and a centred
 //! panel shows the summary, preview, and action buttons.
 
-
-use super::builder::UiBuilder;
 use super::text_layout;
 use super::tokens;
-use super::types::{UiAction, UiComponent, UiContext, UiPasteDialogHit, UiScene};
+use super::types::{UiAction, UiContext, UiPasteDialogHit, UiScene};
 use crate::app::App;
+use crate::app::ciri_ui_bridge::paint_ui_tree;
+use ciri_ui::{Layer, Styled, div, text};
 
 pub(crate) struct PasteDialogComponent {
     dx: f32,
@@ -66,8 +66,8 @@ impl PasteDialogComponent {
 
     pub(super) fn hit_test(&self, mx: f32, my: f32) -> UiPasteDialogHit {
         // Half-open ranges on the right/bottom edges (`<` not `<=`), to
-        // match `HitRect::contains` in `ui/builder.rs` and the hit-test
-        // convention across the other modals (context menu, palette).
+        // match the hit-test convention across the other modals
+        // (context menu, palette).
         // Using `<=` here treated a click exactly on the trailing-edge
         // pixel as inside, which could double-book at the boundary
         // between the dialog body and an adjacent button edge.
@@ -76,10 +76,7 @@ impl PasteDialogComponent {
             return UiPasteDialogHit::Paste;
         }
         let (cancel_x, cancel_y, cancel_w, cancel_h) = self.cancel_button;
-        if mx >= cancel_x
-            && mx < cancel_x + cancel_w
-            && my >= cancel_y
-            && my < cancel_y + cancel_h
+        if mx >= cancel_x && mx < cancel_x + cancel_w && my >= cancel_y && my < cancel_y + cancel_h
         {
             return UiPasteDialogHit::Cancel;
         }
@@ -94,8 +91,8 @@ impl PasteDialogComponent {
     }
 }
 
-impl UiComponent for PasteDialogComponent {
-    fn click(&self, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
+impl PasteDialogComponent {
+    pub(crate) fn click(&self, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
         match self.hit_test(mx, my) {
             UiPasteDialogHit::Paste => Some(UiAction::ConfirmPaste),
             UiPasteDialogHit::Cancel | UiPasteDialogHit::None => Some(UiAction::CancelPaste),
@@ -103,7 +100,7 @@ impl UiComponent for PasteDialogComponent {
         }
     }
 
-    fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+    pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         let border_color = cx.theme.border_focus;
         let accent = cx.theme.accent;
         let bg = cx.theme.surface;
@@ -115,96 +112,89 @@ impl UiComponent for PasteDialogComponent {
         let btn_w = 100.0;
         let btn_h = tokens::control_height_lg(cx.cell_h);
 
-        // Outer dialog via SDF: rounded surface + border + drop shadow.
-        // Emit before building the UiBuilder (which takes &mut scene).
-        let surface = tokens::surface_raise(
-            [bg[0], bg[1], bg[2], 1.0],
-            tokens::SURFACE_LIFT_SUBTLE,
-        );
-        scene.sdf_rects.push(ciri_render::sdf_rect::SdfRect {
-            pos: [self.dx, self.dy],
-            size: [self.dialog_w, self.dialog_h],
-            color: surface,
-            radii: [tokens::SPACE_1; 4],
-            border_color,
-            border_width: bw,
-            shadow_blur: tokens::SPACE_3,
-            shadow_offset: [0.0, tokens::SPACE_1],
-            shadow_color: [0.0, 0.0, 0.0, 0.4],
-        });
+        let surface =
+            tokens::surface_raise([bg[0], bg[1], bg[2], 1.0], tokens::SURFACE_LIFT_SUBTLE);
 
-        let mut ui = UiBuilder::new_vertical(
-            self.dx + pad,
-            self.dy + pad,
-            content_w,
-            self.dialog_h - pad * 2.0,
-            0.0,
-            0.0,
-            0.0,
-            false,
-            cx,
-            scene,
-        );
+        let recessed = tokens::surface_sink([bg[0], bg[1], bg[2], 1.0], tokens::SURFACE_SINK);
+        let paste_alpha = if self.hovered_button == Some(super::super::PasteButton::Paste) {
+            tokens::ALPHA_PRIMARY_HOVER
+        } else {
+            tokens::ALPHA_PRIMARY_REST
+        };
+        let cancel_alpha = if self.hovered_button == Some(super::super::PasteButton::Cancel) {
+            tokens::ALPHA_SECONDARY_HOVER
+        } else {
+            tokens::ALPHA_SECONDARY_REST
+        };
 
-        ui.modal_backdrop([0.0, 0.0, 0.0, tokens::ALPHA_BACKDROP]);
+        let preview_h = cx.ui_line_h + tokens::SPACE_1 * 2.0;
+        let button_row = div()
+            .w_full()
+            .h(btn_h)
+            .flex_row()
+            .items_center()
+            .justify_center()
+            .gap(pad)
+            .child(
+                div()
+                    .w(btn_w)
+                    .h(btn_h)
+                    .flex_row()
+                    .items_center()
+                    .justify_center()
+                    .bg(tokens::tint(accent, paste_alpha))
+                    .child(text("Paste").color(fg)),
+            )
+            .child(
+                div()
+                    .w(btn_w)
+                    .h(btn_h)
+                    .flex_row()
+                    .items_center()
+                    .justify_center()
+                    .bg(tokens::tint(fg, cancel_alpha))
+                    .child(text("Cancel").color(fg)),
+            );
 
-        ui.label(&self.title, fg);
-        ui.bg_rect(content_w, tokens::SPACE_3, [0.0; 4]);
-        ui.label("Preview:", dim);
-        ui.bg_rect(content_w, tokens::SPACE_1, [0.0; 4]);
+        let panel = div()
+            .in_layer(Layer::Modal)
+            .w(self.dialog_w)
+            .h(self.dialog_h)
+            .translate(self.dx, self.dy)
+            .flex_col()
+            .p(pad)
+            .bg(surface)
+            .rounded(tokens::SPACE_1)
+            .border(bw, border_color)
+            .shadow_lg()
+            .child(text(self.title.clone()).color(fg))
+            .child(div().w(content_w).h(tokens::SPACE_3))
+            .child(text("Preview:").color(dim))
+            .child(div().w(content_w).h(tokens::SPACE_1))
+            .child(
+                div()
+                    .w(content_w + tokens::SPACE_2)
+                    .h(preview_h)
+                    .translate(-tokens::SPACE_1, -2.0)
+                    .flex_row()
+                    .items_center()
+                    .bg(recessed)
+                    .child(div().w(tokens::SPACE_1).h(preview_h))
+                    .child(text(self.preview.clone()).color(dim)),
+            )
+            .child(div().w(content_w).h(cx.ui_line_h + tokens::SPACE_1 * 2.0))
+            .child(div().w(content_w).flex_1())
+            .child(button_row)
+            .child(div().w(content_w).h(tokens::SPACE_2));
 
-        let recessed = tokens::surface_sink(
-            [bg[0], bg[1], bg[2], 1.0],
-            tokens::SURFACE_SINK,
-        );
-        let (_, preview_y) = ui.cursor_pos();
-        ui.abs_rect(
-            self.dx + pad - tokens::SPACE_1,
-            preview_y - 2.0,
-            content_w + tokens::SPACE_2,
-            cx.ui_line_h + tokens::SPACE_1 * 2.0,
-            recessed,
-        );
-        let preview_text_y = preview_y + tokens::SPACE_1 * 0.5;
-        ui.abs_text(&self.preview, self.dx + pad, preview_text_y, dim);
+        let root = div()
+            .w(cx.viewport_w)
+            .h(cx.viewport_h)
+            .in_layer(Layer::Modal)
+            .bg([0.0, 0.0, 0.0, tokens::ALPHA_BACKDROP])
+            .child(panel);
 
-        ui.bg_rect(content_w, cx.ui_line_h + tokens::SPACE_1 * 2.0, [0.0; 4]);
-        ui.spacer();
-
-        ui.horizontal(Some(content_w), btn_h, 0.0, |ui| {
-            let total_btn_w = btn_w * 2.0 + pad;
-            let left_pad = (content_w - total_btn_w) / 2.0;
-            ui.bg_rect(left_pad, btn_h, [0.0; 4]);
-
-            let paste_alpha = if self.hovered_button == Some(super::super::PasteButton::Paste) {
-                tokens::ALPHA_PRIMARY_HOVER
-            } else {
-                tokens::ALPHA_PRIMARY_REST
-            };
-            let paste_bg = tokens::tint(accent, paste_alpha);
-            let (px, py) = ui.cursor_pos();
-            ui.abs_rect(px, py, btn_w, btn_h, paste_bg);
-            let text_y = py + (btn_h - cx.ui_line_h) * 0.5;
-            let text_x = px + (btn_w - ui.text_width("Paste")) * 0.5;
-            ui.abs_text("Paste", text_x, text_y, fg);
-            ui.bg_rect(btn_w, btn_h, [0.0; 4]);
-
-            ui.bg_rect(pad, btn_h, [0.0; 4]);
-
-            let cancel_alpha = if self.hovered_button == Some(super::super::PasteButton::Cancel) {
-                tokens::ALPHA_SECONDARY_HOVER
-            } else {
-                tokens::ALPHA_SECONDARY_REST
-            };
-            let cancel_bg = tokens::tint(fg, cancel_alpha);
-            let (cx2, cy2) = ui.cursor_pos();
-            ui.abs_rect(cx2, cy2, btn_w, btn_h, cancel_bg);
-            let text_y = cy2 + (btn_h - cx.ui_line_h) * 0.5;
-            let text_x = cx2 + (btn_w - ui.text_width("Cancel")) * 0.5;
-            ui.abs_text("Cancel", text_x, text_y, fg);
-        });
-
-        ui.bg_rect(content_w, tokens::SPACE_2, [0.0; 4]);
+        paint_ui_tree(&root, cx, scene);
     }
 }
 

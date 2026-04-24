@@ -1,10 +1,11 @@
 use ciri_config::config::StatusBarPosition;
 
-use super::builder::UiBuilder;
 use super::text_layout;
 use super::tokens;
-use super::types::{UiComponent, UiContext, UiScene};
+use super::types::{UiContext, UiScene};
 use crate::app::App;
+use crate::app::ciri_ui_bridge::paint_ui_tree;
+use ciri_ui::{Layer, Styled, div, text};
 
 pub(crate) struct InfoBoxComponent {
     title: String,
@@ -164,8 +165,8 @@ impl InfoBoxComponent {
     }
 }
 
-impl UiComponent for InfoBoxComponent {
-    fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+impl InfoBoxComponent {
+    pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         let bg = cx.theme.surface;
         let accent = cx.theme.accent;
         let fg = cx.theme.on_surface;
@@ -176,42 +177,12 @@ impl UiComponent for InfoBoxComponent {
         let title_h = cx.cell_h + tokens::SPACE_1;
         let content_w = self.w - bw * 2.0;
 
-        let mut ui = UiBuilder::new_vertical(
-            self.x + bw,
-            self.y + bw,
-            content_w,
-            self.h - bw * 2.0,
-            0.0,
-            0.0,
-            0.0,
-            false,
-            cx,
-            scene,
-        );
-
         // Shadow + border + background — sink below `bg` with a flat sRGB
         // delta instead of a raw channel multiply, matching `context_menu.rs`
         // and `connection_status.rs` (see the note on gamma-incorrect darken
         // in `context_menu.rs`).
         let sunk = tokens::surface_sink([bg[0], bg[1], bg[2], 1.0], tokens::SURFACE_SINK);
         let bg_color = [sunk[0], sunk[1], sunk[2], 0.97];
-        ui.bordered_panel_inset(self.x, self.y, self.w, self.h, bg_color, accent, bw, true);
-
-        // Title row (tinted background + text)
-        ui.horizontal(Some(content_w), title_h, 0.0, |ui| {
-            let (rx, ry) = ui.cursor_pos();
-            ui.abs_rect(
-                rx,
-                ry,
-                content_w,
-                title_h,
-                tokens::tint(accent, tokens::ALPHA_TINT_HEADER),
-            );
-            let text_y = ry + (title_h - cx.cell_h) * 0.5;
-            ui.abs_text(&format!(" {} ", self.title), rx + padding, text_y, accent);
-        });
-
-        ui.bg_rect(content_w, tokens::SPACE_1, [0.0; 4]); // spacing after title
 
         // Key-action rows — right-align keys within the shape-measured
         // key column. `self.key_col_w` is the widest shaped key; using
@@ -219,22 +190,52 @@ impl UiComponent for InfoBoxComponent {
         // matches the widest entry on proportional UI fonts.
         let key_col_w = self.key_col_w;
         let gap_w = cx.cell_w * 2.0;
-
+        let mut panel = div()
+            .in_layer(Layer::Overlay)
+            .w(self.w)
+            .h(self.h)
+            .translate(self.x, self.y)
+            .flex_col()
+            .items_center()
+            .bg(bg_color)
+            .rounded(tokens::SPACE_1)
+            .border(bw, accent)
+            .shadow_md()
+            .child(
+                div()
+                    .w(content_w)
+                    .h(title_h)
+                    .flex_row()
+                    .items_center()
+                    .bg(tokens::tint(accent, tokens::ALPHA_TINT_HEADER))
+                    .child(div().w(padding).h(title_h))
+                    .child(text(format!(" {} ", self.title)).color(accent)),
+            )
+            .child(div().w(content_w).h(tokens::SPACE_1));
         for (key, desc) in &self.rows {
-            ui.horizontal(Some(content_w), row_h, 0.0, |ui| {
-                let (_, ry) = ui.cursor_pos();
-                let text_y = ry + (row_h - cx.cell_h) * 0.5;
-
-                // Right-align key within key column.
-                let key_w = ui.text_width(key);
-                let key_offset = (key_col_w - key_w).max(0.0);
-                let key_x = ui.cursor_pos().0 + padding + key_offset;
-                ui.abs_text(key, key_x, text_y, accent);
-
-                // Description after key column + gap.
-                let desc_x = ui.cursor_pos().0 + padding + key_col_w + gap_w;
-                ui.abs_text(desc, desc_x, text_y, if key == "esc" { dim } else { fg });
-            });
+            panel = panel.child(
+                div()
+                    .w(content_w)
+                    .h(row_h)
+                    .flex_row()
+                    .items_center()
+                    .child(div().w(padding).h(row_h))
+                    .child(
+                        div()
+                            .w(key_col_w)
+                            .h(row_h)
+                            .flex_row()
+                            .items_center()
+                            .justify_end()
+                            .child(text(key.clone()).color(accent)),
+                    )
+                    .child(div().w(gap_w).h(row_h))
+                    .child(text(desc.clone()).color(if key == "esc" { dim } else { fg })),
+            );
         }
+
+        let root = div().w(cx.viewport_w).h(cx.viewport_h).child(panel);
+
+        paint_ui_tree(&root, cx, scene);
     }
 }

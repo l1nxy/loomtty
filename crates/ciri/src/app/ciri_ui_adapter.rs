@@ -11,7 +11,7 @@
 //!   GlyphCache + atlas fallback). That means migrated widgets produce
 //!   glyphs through the same renderer-backed text path as the rest of the app,
 //!   sharing the shape cache and atlas.
-//! - [`paint_ui_tree`] wraps shaper borrowing, `ciri_ui::paint_tree`,
+//! - [`paint_element_tree`] wraps shaper borrowing, `ciri_ui::paint_tree`,
 //!   and scene merging into the accumulators that `FrameScene` consumes.
 //!
 //! No App state is touched in this module: consumers pass the current
@@ -172,7 +172,7 @@ fn merge_ui_scene(
 }
 
 /// Paint a ciri-ui tree into the client's current UI scene.
-pub(crate) fn paint_ui_tree(root: &impl Element, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+pub(crate) fn paint_element_tree(root: &impl Element, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
     let mut ui_shaper = cx.ui_shaper.map(|c| c.borrow_mut());
     let mut shaper = HostTextShaper {
         atlas: scene.atlas,

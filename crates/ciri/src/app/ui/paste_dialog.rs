@@ -10,7 +10,7 @@ use super::tokens;
 use super::types::ui_hit_bounds;
 use super::types::{UiAction, UiContext, UiPasteDialogHit, UiScene, ui_hit_id};
 use crate::app::App;
-use crate::app::ciri_ui_adapter::paint_ui_tree;
+use crate::app::ciri_ui_adapter::paint_element_tree;
 use ciri_ui::{Div, Layer, Styled, div, text};
 
 const HIT_DIALOG: u64 = 1;
@@ -182,7 +182,7 @@ impl PasteDialogComponent {
 
     pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         let root = self.build_tree(cx);
-        paint_ui_tree(&root, cx, scene);
+        paint_element_tree(&root, cx, scene);
     }
 
     #[cfg(test)]

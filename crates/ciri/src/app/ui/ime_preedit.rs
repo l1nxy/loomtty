@@ -2,7 +2,7 @@ use ciri_ui::{Layer, Styled, div, text};
 use unicode_width::UnicodeWidthStr;
 
 use super::types::{UiContext, UiScene};
-use crate::app::ciri_ui_adapter::paint_ui_tree;
+use crate::app::ciri_ui_adapter::paint_element_tree;
 
 pub(crate) struct ImePreeditComponent {
     pub(crate) text: String,
@@ -57,6 +57,6 @@ impl ImePreeditComponent {
             );
         }
 
-        paint_ui_tree(&root, cx, scene);
+        paint_element_tree(&root, cx, scene);
     }
 }

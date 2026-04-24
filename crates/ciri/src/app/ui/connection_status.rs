@@ -7,7 +7,7 @@ use super::text_layout;
 use super::tokens;
 use super::types::{UiContext, UiScene};
 use crate::app::App;
-use crate::app::ciri_ui_adapter::paint_ui_tree;
+use crate::app::ciri_ui_adapter::paint_element_tree;
 use ciri_ui::{Div, Layer, Styled, div, text};
 
 const DOT_PHASE_MS: u128 = 300;
@@ -177,7 +177,7 @@ fn fit_without_ellipsis(cx: &UiContext<'_>, text: &str, max_w: f32) -> String {
 impl ConnectionStatusComponent {
     pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         let root = self.build_tree(cx);
-        paint_ui_tree(&root, cx, scene);
+        paint_element_tree(&root, cx, scene);
     }
 
     fn build_tree(&self, cx: &UiContext<'_>) -> Div {

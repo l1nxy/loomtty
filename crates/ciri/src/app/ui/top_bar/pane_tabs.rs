@@ -3,7 +3,7 @@ use ciri_config::config::StatusBarPosition;
 use super::super::text_layout;
 use super::super::tokens;
 use super::super::types::{UiContext, UiRect, UiScene};
-use crate::app::ciri_ui_adapter::paint_ui_tree;
+use crate::app::ciri_ui_adapter::paint_element_tree;
 use crate::app::top_bar::PaneTabLayout;
 use ciri_ui::{Div, Layer, Styled, div, text};
 
@@ -147,7 +147,7 @@ impl<'a> PaneTabsElement<'a> {
             }
         }
 
-        paint_ui_tree(&root, cx, scene);
+        paint_element_tree(&root, cx, scene);
     }
 }
 

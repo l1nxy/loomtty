@@ -3,7 +3,7 @@ use ciri_layout::geometry::Rect as GeoRect;
 use super::tokens;
 use super::types::{UiContext, UiOverviewHit, UiScene, ui_hit_id};
 use crate::app::App;
-use crate::app::ciri_ui_adapter::paint_ui_tree;
+use crate::app::ciri_ui_adapter::paint_element_tree;
 use ciri_ui::{Div, Layer, Styled, div, text};
 
 const HIT_ACTION_BAR: u64 = 1;
@@ -139,7 +139,7 @@ pub(crate) fn paint_overview_action_bar(
     scene: &mut UiScene<'_>,
 ) {
     let root = overview_action_bar_tree(d, hover, cx, false);
-    paint_ui_tree(&root, cx, scene);
+    paint_element_tree(&root, cx, scene);
 }
 
 fn overview_action_bar_tree(

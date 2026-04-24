@@ -32,7 +32,7 @@ use self::workspace::WorkspaceIndicator;
 use super::text_layout;
 use super::tokens;
 use super::types::{UiAction, UiContext, UiRect, UiScene, UiTopBarHit, ui_hit_id};
-use crate::app::ciri_ui_adapter::paint_ui_tree;
+use crate::app::ciri_ui_adapter::paint_element_tree;
 use crate::app::top_bar::{PaneTabLayout, TopBarLayout};
 use crate::app::{App, TopBarHoverRegion};
 use ciri_ui::{Div, Layer, Styled, div};
@@ -338,7 +338,7 @@ impl TopBarComponent {
 impl TopBarComponent {
     pub(crate) fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         let chrome = self.build_chrome_tree(rect, cx);
-        paint_ui_tree(&chrome, cx, scene);
+        paint_element_tree(&chrome, cx, scene);
 
         // --- inner row (session | tabs | workspace | mode) ---
         self.paint_row(rect, cx, scene);

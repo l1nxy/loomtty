@@ -1,5 +1,5 @@
 use super::super::types::{UiContext, UiRect, UiScene};
-use crate::app::ciri_ui_adapter::paint_ui_tree;
+use crate::app::ciri_ui_adapter::paint_element_tree;
 use ciri_ui::{Div, Layer, Styled, div, text};
 
 pub(super) struct ModeIndicator<'a> {
@@ -35,6 +35,6 @@ impl<'a> ModeIndicator<'a> {
 impl<'a> ModeIndicator<'a> {
     pub(super) fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         let root = self.build_tree(rect, cx);
-        paint_ui_tree(&root, cx, scene);
+        paint_element_tree(&root, cx, scene);
     }
 }

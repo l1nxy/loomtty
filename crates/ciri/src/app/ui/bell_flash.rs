@@ -2,7 +2,7 @@ use ciri_layout::geometry::Rect as GeoRect;
 use ciri_ui::{Layer, Styled, div};
 
 use super::types::{UiContext, UiScene};
-use crate::app::ciri_ui_adapter::paint_ui_tree;
+use crate::app::ciri_ui_adapter::paint_element_tree;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct BellFlashRect {
@@ -36,6 +36,6 @@ impl BellFlashComponent {
             );
         }
 
-        paint_ui_tree(&root, cx, scene);
+        paint_element_tree(&root, cx, scene);
     }
 }

@@ -183,10 +183,8 @@ impl App {
                 tab_bar.paint(rect, &cx, &mut scene);
             }
 
-            // Modal / overlay layers — these still position themselves
-            // absolutely (centred on the viewport, etc.) and don't fit the
-            // dock-style Border model. Painted *after* the chrome tree so
-            // they sit on top.
+            // Modal / overlay layers position themselves absolutely and are
+            // painted after chrome so they sit on top.
             if let Some(d) = &overview_bar {
                 overview::paint_overview_action_bar(d, overview_hover, &cx, &mut scene);
             }
@@ -763,10 +761,9 @@ mod tests {
             cx.ui_shaper,
         );
         let component = TopBarComponent::capture(&app, layout, &cx);
-        // Session zone is always at x=0 in the current Linear layout
-        // (`Border::top` puts the bar at the top edge, `SessionLabel` is
-        // the first child of the row). Use a small positive x to land
-        // inside the zone; bar_y is read from the captured layout.
+        // Session zone is always at x=0 in the current Linear layout, and
+        // `SessionLabel` is the first child of the row. Use a small positive x
+        // to land inside the zone; bar_y is read from the captured layout.
         let action = component.click(4.0, layout.bar_y + 2.0, &cx);
         assert_eq!(action, Some(UiAction::OpenSessionPalette));
     }

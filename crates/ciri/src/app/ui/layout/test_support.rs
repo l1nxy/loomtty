@@ -1,4 +1,4 @@
-//! Shared test fixtures used by `linear_tests.rs` and `border_tests.rs`.
+//! Shared test fixtures used by layout tests.
 //!
 //! Defines a few small probe types (so individual test files don't have
 //! to redefine `Probe` / `OffsetProbe` / `dummy_cx`) and exposes them

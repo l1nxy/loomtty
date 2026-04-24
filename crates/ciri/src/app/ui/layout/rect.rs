@@ -12,6 +12,7 @@ pub(crate) struct UiRect {
 }
 
 impl UiRect {
+    #[allow(dead_code)]
     pub const ZERO: UiRect = UiRect {
         x: 0.0,
         y: 0.0,
@@ -54,6 +55,7 @@ impl UiRect {
     }
 
     /// Slice a strip off the right edge; returns (remaining, taken).
+    #[allow(dead_code)]
     pub fn split_right(self, width: f32) -> (UiRect, UiRect) {
         let w = width.clamp(0.0, self.w);
         (
@@ -72,6 +74,7 @@ impl UiRect {
     }
 
     /// Slice a strip off the bottom edge; returns (remaining, taken).
+    #[allow(dead_code)]
     pub fn split_bottom(self, height: f32) -> (UiRect, UiRect) {
         let h = height.clamp(0.0, self.h);
         (

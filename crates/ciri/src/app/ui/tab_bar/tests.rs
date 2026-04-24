@@ -77,16 +77,12 @@ fn hit_uses_ciri_ui_layout_snapshot() {
     assert_eq!(bar_component.hit(bar, 1.0, 1.0, &cx), None);
 }
 
-/// End-to-end: with `TabBarPosition::Left`, `Border::layout` must
-/// carve out a strip of `config.tabbar.width` on the left, starting
-/// below the top bar and ending above the hints bar. Cross-checks
-/// the `side_tab_bar_rect` helper against the actual `Border`
-/// arithmetic.
+/// End-to-end: with `TabBarPosition::Left`, chrome rect composition must carve
+/// out a strip of `config.tabbar.width` on the left, starting below the top bar
+/// and ending above the hints bar.
 #[test]
-fn border_places_left_tab_bar_between_top_and_hints() {
-    use crate::app::ui::layout::Border;
-    use crate::app::ui::HintsBarComponent;
-    use crate::app::ui::TopBarComponent;
+fn chrome_rects_place_left_tab_bar_between_top_and_hints() {
+    use crate::app::ui::chrome_rects;
     use crate::app::App;
     use ciri_config::config::{CiriConfig, StatusBarPosition};
 
@@ -100,39 +96,26 @@ fn border_places_left_tab_bar_between_top_and_hints() {
     let vh = cx.viewport_h;
 
     let top_bar_layout = app.top_bar_layout(vw, vh, cx.cell_w, cx.cell_h, cx.ui_shaper);
-    let top_bar = TopBarComponent::capture(&app, top_bar_layout, &cx);
-    let hints_bar = HintsBarComponent::capture(&app, &cx);
-    let tab_bar = TabBarComponent::capture(&app, &cx);
+    let hints_h = app.hints_bar_height();
+    let rects = chrome_rects(&app, vw, vh, top_bar_layout.bar_height, hints_h);
+    let side = rects.side_tab_bar.expect("left tab bar rect");
 
-    let chrome = Border::new().top(top_bar).bottom(hints_bar).left(tab_bar);
-    let slots = chrome.layout(UiRect::new(0.0, 0.0, vw, vh), &cx);
+    assert!((side.x - 0.0).abs() < 0.01);
+    assert!((side.y - top_bar_layout.bar_height).abs() < 0.01);
+    assert!((side.w - tabbar_w).abs() < 0.01);
+    assert!((side.h - (vh - top_bar_layout.bar_height - hints_h)).abs() < 0.01);
 
-    // Left slot: x=0, y=top_bar_h, w=tabbar_w, h = vh - chrome_h
-    assert!((slots.left.x - 0.0).abs() < 0.01);
-    assert!((slots.left.y - top_bar_layout.bar_height).abs() < 0.01);
-    assert!((slots.left.w - tabbar_w).abs() < 0.01);
-    let expected_left_h = vh - app.total_chrome_height();
-    assert!((slots.left.h - expected_left_h).abs() < 0.01);
-
-    // The helper must match exactly — hit-test uses it, paint uses
-    // Border::layout, they must agree to avoid dead zones.
     let (hx, hy, hw, hh) = app.side_tab_bar_rect(vw, vh).unwrap();
-    assert!((hx - slots.left.x).abs() < 0.01);
-    assert!((hy - slots.left.y).abs() < 0.01);
-    assert!((hw - slots.left.w).abs() < 0.01);
-    assert!((hh - slots.left.h).abs() < 0.01);
-
-    // Center (terminal) must be: x = tabbar_w, w = vw - tabbar_w.
-    assert!((slots.center.x - tabbar_w).abs() < 0.01);
-    assert!((slots.center.w - (vw - tabbar_w)).abs() < 0.01);
+    assert!((hx - side.x).abs() < 0.01);
+    assert!((hy - side.y).abs() < 0.01);
+    assert!((hw - side.w).abs() < 0.01);
+    assert!((hh - side.h).abs() < 0.01);
 }
 
 /// Documents the intended click-routing when the top bar and side
-/// bar *visually* abut. `Border` resolves `top` before `left`, so
-/// pixels at `y < bar_height` are painted by the top bar across the
-/// full window width, even over the side bar's x column. Clicks in
-/// that strip therefore belong to the top bar. The side bar owns
-/// pixels at `y >= bar_height` within its x column.
+/// bar visually abut. The top bar spans the full window width, so pixels at
+/// `y < bar_height` belong to the top bar even over the side bar's x column.
+/// The side bar owns pixels at `y >= bar_height` within its x column.
 ///
 /// This test exists to pin down that boundary so a future reordering
 /// of `dispatch_ui_click` that "fixes" the apparent overlap by

@@ -10,10 +10,9 @@
 //!
 //! Unlike the integrated tab strip — whose per-tab `x`/`w` are baked at
 //! snapshot time by `App::pane_tab_layouts` assuming the bar starts at
-//! screen x=0 — the vertical variant computes tab rows *inside* `paint`
-//! from the rect handed in by the parent `Border`. This keeps the
-//! component fully rect-local and suitable for `Border::left` or
-//! `Border::right` placement without caring which side it lives on.
+//! screen x=0 — the vertical variant computes tab rows from the rect handed in
+//! by chrome composition. This keeps the component fully rect-local without
+//! caring which side it lives on.
 
 use ciri_config::config::TabBarPosition;
 
@@ -235,8 +234,8 @@ impl UiElement for TabBarComponent {
             // Fixed horizontal width — this is what makes the bar a
             // dedicated side strip rather than stealing from the terminal.
             Axis::Horizontal => SizeHint::Fixed(self.bar_width),
-            // Fills the height that Border gave us (minus what top/bottom
-            // edges already consumed).
+            // Fills the height handed in by chrome composition after
+            // top/bottom bars are accounted for.
             Axis::Vertical => SizeHint::Fill,
         }
     }

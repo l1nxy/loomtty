@@ -119,11 +119,11 @@ impl TopBarComponent {
     ///
     /// NB (pre-existing, inherited from full-bar paint/click helpers):
     /// `cx.viewport_w` here comes from `App::ui_context()` →
-    /// `command_palette_viewport_size()`, which is the renderer surface
-    /// size. During a resize event this can briefly differ from the `vw`
-    /// passed to `App::build_ui`. The discrepancy resolves naturally when
-    /// all paint/hit goes through `UiElement::paint(rect)` / `::hit(rect)`
-    /// with the rect that `Border::layout` produced from the same `vw`.
+    /// `command_palette_viewport_size()`, which is the renderer surface size.
+    /// During a resize event this can briefly differ from the `vw` passed to
+    /// `App::build_ui`; production paint uses the explicit chrome rects built
+    /// from that same `vw`, while this helper is used by hit-test paths that
+    /// operate from the current UI context.
     pub(super) fn bar_rect(&self, cx: &UiContext<'_>) -> UiRect {
         UiRect::new(
             0.0,
@@ -163,7 +163,7 @@ impl TopBarComponent {
         // When `show_integrated_tabs == false`, the middle slot becomes
         // a `Spacer` so the right-side items stay right-anchored and the
         // bar background still covers the full width. The actual tabs
-        // are painted by a sibling `TabBarComponent` in the `Border`.
+        // are painted by a sibling `TabBarComponent` in chrome composition.
         let row = Linear::new(Axis::Horizontal).push(SessionLabel {
             text: &self.session_text,
             hovered: self.hovered_region == Some(TopBarHoverRegion::Session),

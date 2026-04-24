@@ -16,10 +16,9 @@
 
 use ciri_config::config::TabBarPosition;
 
-use super::layout::UiRect;
 use super::text_layout;
 use super::tokens;
-use super::types::{UiAction, UiContext, UiScene};
+use super::types::{UiAction, UiContext, UiRect, UiScene};
 use crate::app::ciri_ui_bridge::paint_ui_tree;
 use crate::app::App;
 use ciri_ui::{div, text, Layer, Styled};

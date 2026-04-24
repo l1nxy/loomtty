@@ -2,7 +2,6 @@ pub(crate) mod connection_status;
 mod context_menu;
 mod hints_bar;
 pub(super) mod info_box;
-pub(crate) mod layout;
 mod overview;
 mod palette;
 mod paste_dialog;
@@ -27,7 +26,6 @@ use ciri_config::config::{StatusBarPosition, TabBarPosition};
 use ciri_render::glyph_cache::GlyphInstance;
 use winit::window::CursorIcon;
 
-use self::layout::UiRect;
 use super::{App, TopBarHoverRegion};
 
 #[derive(Debug, Clone, Copy)]

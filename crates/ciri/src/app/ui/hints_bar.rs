@@ -1,8 +1,7 @@
 use super::info_box::action_short_label;
-use super::layout::UiRect;
 use super::text_layout;
 use super::tokens;
-use super::types::{UiContext, UiScene};
+use super::types::{UiContext, UiRect, UiScene};
 use crate::app::ciri_ui_bridge::paint_ui_tree;
 use crate::app::App;
 use ciri_ui::{div, text, Div, Layer, Styled};

@@ -140,7 +140,7 @@ fn hit_test_uses_ciri_ui_layout_snapshot() {
     );
 }
 
-/// End-to-end check that chrome rect composition reproduces the legacy bar
+/// End-to-end check that chrome rect composition reproduces the expected bar
 /// y-positions for `StatusBarPosition::Top`.
 #[test]
 fn chrome_rects_place_top_bar_and_hints_bar_at_legacy_y_for_top_position() {

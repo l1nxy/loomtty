@@ -95,8 +95,8 @@ pub(crate) struct UiContext<'a> {
     pub config: &'a ciri_config::config::CiriConfig,
     /// Pre-resolved theme tokens — paint paths should read colors via
     /// `cx.theme.<token>` rather than hex-parsing `cx.config.theme.*`
-    /// every frame. Kept alongside `config` during the migration so
-    /// legacy call sites can still reach the raw hex strings.
+    /// every frame. Kept alongside `config` for call sites that still need raw
+    /// non-theme settings.
     pub theme: &'a ciri_ui::ResolvedTheme,
     pub viewport_w: f32,
     pub viewport_h: f32,

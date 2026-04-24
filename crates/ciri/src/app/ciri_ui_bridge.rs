@@ -9,7 +9,7 @@
 //! - [`HostTextShaper`] implements `ciri_ui::TextShaper` by delegating
 //!   to the existing `emit_status_text` pipeline (UiTextShaper +
 //!   GlyphCache + atlas fallback). That means migrated widgets produce
-//!   glyphs through exactly the same path as legacy `UiComponent`s,
+//!   glyphs through the same renderer-backed text path as the rest of the app,
 //!   sharing the shape cache and atlas.
 //! - [`paint_ui_tree`] wraps shaper borrowing, `ciri_ui::paint_tree`,
 //!   and scene merging into the accumulators that `FrameScene` consumes.
@@ -39,7 +39,7 @@ use crate::app::ui::types::{UiContext, UiScene};
 struct HostTextShaper<'a> {
     pub atlas: &'a mut GlyphCache,
     pub shaper: Option<&'a mut UiTextShaper>,
-    /// Terminal cell width in logical px — used as the legacy-fallback
+    /// Terminal cell width in logical px — used as the cell-grid fallback
     /// advance when no UI shaper has a loaded face.
     pub cell_width: f32,
     /// UI baseline in logical px from the frame's `UiContext`. The
@@ -87,7 +87,7 @@ impl<'a> CiriUiTextShaper for HostTextShaper<'a> {
         let w = match self.shaper.as_deref_mut() {
             Some(s) if s.has_face() => s.measure(content),
             _ => {
-                // Legacy-fallback advance — must mirror
+                // Cell-grid fallback advance — must mirror
                 // `emit_text_legacy_chars`, which steps the pen by
                 // `unicode_width` columns (wide chars like CJK count as
                 // two cells). Earlier iterations used

@@ -166,10 +166,9 @@ impl PaletteComponent {
         palette_hit_from_id(out.layout.hit_test(mx, my).and_then(|n| n.hit_id))
     }
 
-    /// Map a click to a `UiAction`. Preserves the legacy semantics:
-    /// clicking an entry runs it, clicking on the panel body (between
-    /// rows, on section headers, or on the input row) is a no-op, and
-    /// clicking outside the panel closes the palette.
+    /// Map a click to a `UiAction`: clicking an entry runs it, clicking on the
+    /// panel body (between rows, on section headers, or on the input row) is a
+    /// no-op, and clicking outside the panel closes the palette.
     pub(crate) fn click(&self, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
         match self.hit_test(mx, my, _cx) {
             UiPaletteHit::Entry(entry_idx) => Some(UiAction::ExecutePaletteEntry(entry_idx)),

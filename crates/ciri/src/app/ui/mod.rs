@@ -150,9 +150,7 @@ impl App {
         //
         // Production chrome is now composed directly from captured
         // components and explicit viewport rects. This keeps paint order
-        // and hit-test geometry in the same coordinate model as ciri-ui,
-        // while the legacy dock containers remain only as test/transition
-        // utilities.
+        // and hit-test geometry in the same coordinate model as ciri-ui.
         let chrome = chrome_rects(
             self,
             vw,

@@ -1,7 +1,7 @@
 //! Shape-based text measurement and truncation helpers for UI chrome.
 //!
 //! All non-terminal text in the UI is shaped through `cx.ui_shaper`. The
-//! legacy "cell-grid" assumption (`cell_w * unicode_width(s)`) does not hold
+//! old cell-grid assumption (`cell_w * unicode_width(s)`) does not hold
 //! for proportional UI fonts — it over-estimates narrow glyphs and
 //! under-estimates wide ones, which desyncs layout slots from actual glyph
 //! advance. The consequence is either clipped text or, when the difference
@@ -15,7 +15,7 @@
 //!
 //! Every helper falls back to a cell-grid estimate when the shaper has no
 //! face available (headless tests, very early startup). The fallback
-//! matches the legacy chrome fallback so measurement stays internally
+//! matches the renderer fallback so measurement stays internally
 //! consistent within a single frame.
 
 use unicode_width::UnicodeWidthStr;

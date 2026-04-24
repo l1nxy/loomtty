@@ -118,8 +118,8 @@ impl TopBarComponent {
     }
 
     /// The rect this bar occupies, derived from `UiContext` + config.
-    /// Kept as a helper so the full-bar helpers and legacy `hit_test`
-    /// can both ask "where am I?" without duplicating the math.
+    /// Kept as a helper so full-bar click/hit helpers can ask "where am I?"
+    /// without duplicating the math.
     ///
     /// NB (pre-existing, inherited from full-bar paint/click helpers):
     /// `cx.viewport_w` here comes from `App::ui_context()` →

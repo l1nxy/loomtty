@@ -1867,15 +1867,19 @@ impl App {
         let root = div().w(vw).h(vh).child(
             div()
                 .in_layer(Layer::Overlay)
+                .absolute()
+                .left(bar_x)
+                .top(bar_y)
                 .w(bar_w)
                 .h(bar_height)
-                .translate(bar_x, bar_y)
                 .bg([0.15, 0.15, 0.2, 0.95])
                 .child(
                     div()
+                        .absolute()
+                        .left(padding)
+                        .top(2.0)
                         .w((bar_w - padding * 2.0).max(0.0))
                         .h(ch)
-                        .translate(padding, 2.0)
                         .child(text(bar_text).color([1.0, 1.0, 1.0, 1.0])),
                 ),
         );
@@ -1971,9 +1975,11 @@ impl App {
             root = root.child(
                 div()
                     .in_layer(Layer::Overlay)
+                    .absolute()
+                    .left(tr.x)
+                    .top(tr.y)
                     .w(tr.w)
                     .h(tr.h)
-                    .translate(tr.x, tr.y)
                     .bg([1.0, 0.9, 0.5, alpha]),
             );
         }
@@ -2034,23 +2040,29 @@ impl App {
         let box_w = text_width + 4.0;
         let panel = div()
             .in_layer(Layer::Overlay)
+            .absolute()
+            .left(base_x)
+            .top(base_y)
             .w(box_w)
             .h(ch + 2.0)
-            .translate(base_x, base_y)
             .bg([0.15, 0.15, 0.25, 0.95])
             .child(
                 div()
+                    .absolute()
+                    .left(2.0)
+                    .top(1.0)
                     .w(text_width.max(0.0))
                     .h(ch)
-                    .translate(2.0, 1.0)
                     .child(text(preedit_text.clone()).color([1.0, 1.0, 1.0, 1.0])),
             );
         let mut root = div().w(vw).h(vh).child(panel).child(
             div()
                 .in_layer(Layer::Overlay)
+                .absolute()
+                .left(base_x)
+                .top(base_y + ch)
                 .w(box_w)
                 .h(2.0)
-                .translate(base_x, base_y + ch)
                 .bg([0.5, 0.7, 1.0, 0.9]),
         );
 
@@ -2059,9 +2071,11 @@ impl App {
             root = root.child(
                 div()
                     .in_layer(Layer::Overlay)
+                    .absolute()
+                    .left(base_x + 2.0 + cursor_cols as f32 * cw)
+                    .top(base_y + 1.0)
                     .w(2.0)
                     .h(ch)
-                    .translate(base_x + 2.0 + cursor_cols as f32 * cw, base_y + 1.0)
                     .bg([1.0, 1.0, 1.0, 0.8]),
             );
         }

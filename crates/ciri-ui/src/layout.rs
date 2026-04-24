@@ -39,6 +39,67 @@ pub enum NodeContext {
     Text { content: String, font_size_px: f32 },
 }
 
+/// A laid-out element record captured from the same Taffy pass used for paint.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LayoutNode {
+    pub type_id: &'static str,
+    pub layer: Layer,
+    pub bounds: [f32; 4],
+    pub paint_order: usize,
+    pub accepts_pointer_events: bool,
+}
+
+impl LayoutNode {
+    pub fn contains(&self, x: f32, y: f32) -> bool {
+        x >= self.bounds[0]
+            && x < self.bounds[0] + self.bounds[2]
+            && y >= self.bounds[1]
+            && y < self.bounds[1] + self.bounds[3]
+    }
+}
+
+/// Layout side-channel for event dispatch and debugging.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LayoutSnapshot {
+    nodes: Vec<LayoutNode>,
+}
+
+impl LayoutSnapshot {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn nodes(&self) -> &[LayoutNode] {
+        &self.nodes
+    }
+
+    pub fn clear(&mut self) {
+        self.nodes.clear();
+    }
+
+    pub fn push(&mut self, node: LayoutNode) {
+        self.nodes.push(node);
+    }
+
+    /// Return the topmost pointer target at `x,y`.
+    ///
+    /// Layers dominate tree order; within the same layer, later paint order
+    /// wins. This mirrors the scene flattening order used by the renderer.
+    pub fn hit_test(&self, x: f32, y: f32) -> Option<&LayoutNode> {
+        self.nodes
+            .iter()
+            .filter(|n| n.accepts_pointer_events && n.contains(x, y))
+            .max_by_key(|n| (n.layer as u8, n.paint_order))
+    }
+}
+
+/// Combined output for callers that need paint primitives and hit-test data.
+#[derive(Clone, Default)]
+pub struct PaintOutput {
+    pub scene: Scene,
+    pub layout: LayoutSnapshot,
+}
+
 /// Layout and paint an element tree into a fresh [`Scene`].
 ///
 /// `text_shaper` is the host's bridge for measuring + emitting text;
@@ -55,6 +116,28 @@ pub fn paint_tree(
     scene
 }
 
+/// Layout and paint an element tree, returning the rendered scene plus a
+/// snapshot of the same layout pass for hit testing.
+pub fn paint_tree_with_layout(
+    root: &dyn Element,
+    theme: &ResolvedTheme,
+    viewport: [f32; 2],
+    scale: f32,
+    text_shaper: &mut dyn TextShaper,
+) -> PaintOutput {
+    let mut out = PaintOutput::default();
+    paint_tree_into_with_layout(
+        root,
+        theme,
+        viewport,
+        scale,
+        text_shaper,
+        &mut out.scene,
+        &mut out.layout,
+    );
+    out
+}
+
 /// Same as [`paint_tree`] but appends into an existing scene.
 pub fn paint_tree_into(
     root: &dyn Element,
@@ -65,7 +148,40 @@ pub fn paint_tree_into(
     scene: &mut Scene,
 ) {
     let mut tree = taffy::TaffyTree::<NodeContext>::new();
-    paint_tree_into_with(root, theme, viewport, scale, text_shaper, scene, &mut tree);
+    let mut layout = LayoutSnapshot::new();
+    paint_tree_into_with_snapshot(
+        root,
+        theme,
+        viewport,
+        scale,
+        text_shaper,
+        scene,
+        &mut layout,
+        &mut tree,
+    );
+}
+
+/// Same as [`paint_tree_into`] but also fills a layout snapshot.
+pub fn paint_tree_into_with_layout(
+    root: &dyn Element,
+    theme: &ResolvedTheme,
+    viewport: [f32; 2],
+    scale: f32,
+    text_shaper: &mut dyn TextShaper,
+    scene: &mut Scene,
+    layout: &mut LayoutSnapshot,
+) {
+    let mut tree = taffy::TaffyTree::<NodeContext>::new();
+    paint_tree_into_with_snapshot(
+        root,
+        theme,
+        viewport,
+        scale,
+        text_shaper,
+        scene,
+        layout,
+        &mut tree,
+    );
 }
 
 /// Retained-tree variant of [`paint_tree_into`]. The caller owns a
@@ -83,6 +199,31 @@ pub fn paint_tree_into_with(
     scene: &mut Scene,
     tree: &mut taffy::TaffyTree<NodeContext>,
 ) {
+    let mut layout = LayoutSnapshot::new();
+    paint_tree_into_with_snapshot(
+        root,
+        theme,
+        viewport,
+        scale,
+        text_shaper,
+        scene,
+        &mut layout,
+        tree,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_tree_into_with_snapshot(
+    root: &dyn Element,
+    theme: &ResolvedTheme,
+    viewport: [f32; 2],
+    scale: f32,
+    text_shaper: &mut dyn TextShaper,
+    scene: &mut Scene,
+    layout_snapshot: &mut LayoutSnapshot,
+    tree: &mut taffy::TaffyTree<NodeContext>,
+) {
+    layout_snapshot.clear();
     tree.clear();
     let root_node = build_taffy(tree, root);
 
@@ -131,6 +272,7 @@ pub fn paint_tree_into_with(
         log::warn!("ciri-ui: taffy compute_layout failed: {e:?}");
         return;
     }
+    let mut paint_order = 0;
     paint_node(
         tree,
         root_node,
@@ -144,6 +286,8 @@ pub fn paint_tree_into_with(
         scale,
         text_shaper,
         scene,
+        layout_snapshot,
+        &mut paint_order,
     );
 }
 
@@ -154,10 +298,7 @@ fn build_taffy(tree: &mut taffy::TaffyTree<NodeContext>, el: &dyn Element) -> ta
         tree.new_leaf(style)
             .expect("taffy new_leaf should not fail")
     } else {
-        let child_nodes: Vec<_> = children
-            .iter()
-            .map(|c| build_taffy(tree, &**c))
-            .collect();
+        let child_nodes: Vec<_> = children.iter().map(|c| build_taffy(tree, &**c)).collect();
         tree.new_with_children(style, &child_nodes)
             .expect("taffy new_with_children should not fail")
     };
@@ -182,6 +323,8 @@ fn paint_node(
     scale: f32,
     text_shaper: &mut dyn TextShaper,
     scene: &mut Scene,
+    layout_snapshot: &mut LayoutSnapshot,
+    paint_order: &mut usize,
 ) {
     let layout = match tree.layout(node) {
         Ok(l) => l,
@@ -203,6 +346,21 @@ fn paint_node(
     let paint_y = local_y + inherited_translate[1];
 
     let effective_layer = el.layer().unwrap_or(inherited_layer);
+    let (own_opacity, own_translate) = el.paint_transform();
+    let current_order = *paint_order;
+    *paint_order += 1;
+    layout_snapshot.push(LayoutNode {
+        type_id: el.type_id(),
+        layer: effective_layer,
+        bounds: [
+            paint_x + own_translate[0],
+            paint_y + own_translate[1],
+            layout.size.width,
+            layout.size.height,
+        ],
+        paint_order: current_order,
+        accepts_pointer_events: el.accepts_pointer_events(),
+    });
 
     let mut ctx = PaintCtx {
         theme,
@@ -221,7 +379,6 @@ fn paint_node(
     // Taffy's parent offset stays unaffected (translate is paint-time, not
     // a layout concept), but opacity cascades multiplicatively and
     // translate accumulates so nested animated wrappers compose.
-    let (own_opacity, own_translate) = el.paint_transform();
     let child_inherited_opacity = inherited_opacity * own_opacity;
     let child_inherited_translate = [
         inherited_translate[0] + own_translate[0],
@@ -258,6 +415,8 @@ fn paint_node(
             scale,
             text_shaper,
             scene,
+            layout_snapshot,
+            paint_order,
         );
     }
 }
@@ -388,18 +547,85 @@ mod tests {
 
     #[test]
     fn empty_div_produces_no_sdf_rects() {
-        let scene = paint_tree(&div(), &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
+        let scene = paint_tree(
+            &div(),
+            &theme(),
+            [800.0, 600.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
         assert!(scene.is_empty());
     }
 
     #[test]
     fn div_with_bg_emits_one_sdf_rect() {
         let root = div().w(100.0).h(40.0).bg(ACCENT);
-        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
+        let scene = paint_tree(
+            &root,
+            &theme(),
+            [800.0, 600.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
         assert_eq!(scene.len(), 1);
         let q = first_chrome(&scene);
         assert_eq!(q.size, [100.0, 40.0]);
         assert_eq!(q.color, ACCENT);
+    }
+
+    #[test]
+    fn paint_tree_with_layout_records_painted_bounds() {
+        let root = div()
+            .w(200.0)
+            .h(40.0)
+            .child(div().w(50.0).h(20.0).translate(10.0, 5.0).bg(ACCENT));
+        let out = paint_tree_with_layout(
+            &root,
+            &theme(),
+            [800.0, 600.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
+        assert_eq!(out.scene.sdf_len(), 1);
+        assert!(
+            out.layout
+                .nodes()
+                .iter()
+                .any(|n| n.type_id == "ciri.div" && n.bounds == [10.0, 5.0, 50.0, 20.0]),
+            "layout snapshot should use the same translated bounds as paint",
+        );
+    }
+
+    #[test]
+    fn layout_hit_test_uses_layer_then_paint_order() {
+        let root = div()
+            .w(200.0)
+            .h(200.0)
+            .child(
+                div()
+                    .w(100.0)
+                    .h(100.0)
+                    .cursor_pointer()
+                    .bg([1.0, 0.0, 0.0, 1.0]),
+            )
+            .child(
+                div()
+                    .in_layer(Layer::Modal)
+                    .w(100.0)
+                    .h(100.0)
+                    .translate(-100.0, 0.0)
+                    .cursor_pointer()
+                    .bg([0.0, 1.0, 0.0, 1.0]),
+            );
+        let out = paint_tree_with_layout(
+            &root,
+            &theme(),
+            [800.0, 600.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
+        let hit = out.layout.hit_test(10.0, 10.0).expect("expected hit");
+        assert_eq!(hit.layer, Layer::Modal);
     }
 
     #[test]
@@ -414,7 +640,13 @@ mod tests {
             .gap(10.0) // gap only works on flex containers
             .child(div().w(100.0).h(40.0).bg(ACCENT))
             .child(div().w(100.0).h(40.0).bg(ACCENT));
-        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
+        let scene = paint_tree(
+            &root,
+            &theme(),
+            [800.0, 600.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
         let rects = scene.sdf_in_layer(Layer::Chrome);
         assert_eq!(rects.len(), 2);
         assert_eq!(rects[0].pos[1], rects[1].pos[1], "must be same row");
@@ -432,7 +664,13 @@ mod tests {
             .flex_col()
             .child(div().w(100.0).h(40.0).bg(ACCENT))
             .child(div().w(100.0).h(40.0).bg(ACCENT));
-        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
+        let scene = paint_tree(
+            &root,
+            &theme(),
+            [800.0, 600.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
         let rects = scene.sdf_in_layer(Layer::Chrome);
         assert_eq!(rects.len(), 2);
         assert!((rects[0].pos[1] - 0.0).abs() < 0.5);
@@ -447,7 +685,13 @@ mod tests {
             .p(8.0)
             .flex_col()
             .child(div().w(40.0).h(40.0).bg(ACCENT));
-        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
+        let scene = paint_tree(
+            &root,
+            &theme(),
+            [800.0, 600.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
         let c = &scene.sdf_in_layer(Layer::Chrome)[0];
         assert!((c.pos[0] - 8.0).abs() < 0.5);
         assert!((c.pos[1] - 8.0).abs() < 0.5);
@@ -462,7 +706,13 @@ mod tests {
             .gap(12.0)
             .child(div().w(100.0).h(40.0).bg(ACCENT))
             .child(div().w(100.0).h(40.0).bg(ACCENT));
-        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
+        let scene = paint_tree(
+            &root,
+            &theme(),
+            [800.0, 600.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
         let rects = scene.sdf_in_layer(Layer::Chrome);
         let a = &rects[0];
         let b = &rects[1];
@@ -471,7 +721,13 @@ mod tests {
 
     #[test]
     fn text_leaf_does_not_emit_sdf() {
-        let scene = paint_tree(&text("hello"), &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
+        let scene = paint_tree(
+            &text("hello"),
+            &theme(),
+            [800.0, 600.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
         assert!(scene.is_empty());
     }
 
@@ -479,7 +735,13 @@ mod tests {
     fn display_none_removes_element() {
         let mut root = div().w(100.0).h(100.0).bg(ACCENT);
         root.style_mut().display = Some(Display::None);
-        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
+        let scene = paint_tree(
+            &root,
+            &theme(),
+            [800.0, 600.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
         assert!(scene.is_empty());
     }
 
@@ -496,7 +758,13 @@ mod tests {
             .bg(ACCENT)
             .opacity(0.5)
             .child(div().w(50.0).h(50.0).bg(ACCENT));
-        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
+        let scene = paint_tree(
+            &root,
+            &theme(),
+            [800.0, 600.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
         let rects = scene.sdf_in_layer(Layer::Chrome);
         assert_eq!(rects.len(), 2);
         // Wrapper: 0.5 opacity applied to ACCENT.alpha (1.0) → 0.5
@@ -520,7 +788,13 @@ mod tests {
             .bg(ACCENT)
             .translate(10.0, 20.0)
             .child(div().w(50.0).h(50.0).bg(ACCENT));
-        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
+        let scene = paint_tree(
+            &root,
+            &theme(),
+            [800.0, 600.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
         let rects = scene.sdf_in_layer(Layer::Chrome);
         assert_eq!(rects.len(), 2);
         let wrapper = &rects[0];
@@ -529,8 +803,16 @@ mod tests {
         assert!((wrapper.pos[0] - 10.0).abs() < 0.5);
         assert!((wrapper.pos[1] - 20.0).abs() < 0.5);
         // Child: layout position 0,0 (flex default) + inherited translate 10,20
-        assert!((child.pos[0] - 10.0).abs() < 0.5, "child.x={}", child.pos[0]);
-        assert!((child.pos[1] - 20.0).abs() < 0.5, "child.y={}", child.pos[1]);
+        assert!(
+            (child.pos[0] - 10.0).abs() < 0.5,
+            "child.x={}",
+            child.pos[0]
+        );
+        assert!(
+            (child.pos[1] - 20.0).abs() < 0.5,
+            "child.y={}",
+            child.pos[1]
+        );
     }
 
     /// Nested translates must compose additively, not overwrite.
@@ -549,7 +831,13 @@ mod tests {
                     .translate(5.0, 0.0)
                     .child(div().w(20.0).h(20.0).bg(ACCENT)),
             );
-        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
+        let scene = paint_tree(
+            &root,
+            &theme(),
+            [800.0, 600.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
         let rects = scene.sdf_in_layer(Layer::Chrome);
         // grand-child: 0 layout + 10 + 5 = 15
         let gc = &rects[2];
@@ -573,7 +861,13 @@ mod tests {
                     .bg([1.0, 0.0, 0.0, 1.0]),
             )
             .child(div().w(100.0).h(100.0).bg([0.0, 1.0, 0.0, 1.0]));
-        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
+        let scene = paint_tree(
+            &root,
+            &theme(),
+            [800.0, 600.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
         // Modal bucket gets the red rect even though it was the first
         // child; chrome bucket gets the green one.
         assert_eq!(scene.sdf_in_layer(Layer::Modal).len(), 1);
@@ -718,7 +1012,13 @@ mod tests {
                 .bg([1.0, 0.0, 0.0, 1.0])
                 .child(div().w(50.0).h(50.0).bg([0.5, 0.0, 0.0, 1.0])),
         );
-        let scene = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut crate::shaper::NullShaper);
+        let scene = paint_tree(
+            &root,
+            &theme(),
+            [800.0, 600.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
         assert_eq!(scene.sdf_in_layer(Layer::Modal).len(), 2);
         assert_eq!(scene.sdf_in_layer(Layer::Chrome).len(), 0);
     }

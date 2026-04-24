@@ -229,6 +229,16 @@ pub trait Element: 'static {
         x >= bounds[0] && x < bounds[0] + bounds[2] && y >= bounds[1] && y < bounds[1] + bounds[3]
     }
 
+    /// Whether this element should be considered by pointer hit-testing.
+    ///
+    /// Layout snapshots include all painted nodes for diagnostics, but event
+    /// dispatch should only target elements that opted into pointer behavior
+    /// (click/hover/cursor). Containers override this when their style carries
+    /// handlers. Text defaults to non-interactive.
+    fn accepts_pointer_events(&self) -> bool {
+        false
+    }
+
     /// Handle an input event. Return `true` if consumed. Default: ignore.
     fn on_event(&mut self, _event: &UiEvent, _cx: &mut EventCtx) -> bool {
         false

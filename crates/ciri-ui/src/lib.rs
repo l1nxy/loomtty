@@ -33,8 +33,11 @@ pub mod theme;
 
 pub use color::Color;
 pub use element::{Element, ElementId, EventCtx, Layer, PaintCtx, UiCtx, UiEvent};
-pub use elements::{div, text, Div, Text};
-pub use layout::{paint_tree, paint_tree_into};
+pub use elements::{Div, Text, div, text};
+pub use layout::{
+    LayoutNode, LayoutSnapshot, PaintOutput, paint_tree, paint_tree_into,
+    paint_tree_into_with_layout, paint_tree_with_layout,
+};
 pub use scene::{GlyphInstance, Scene, SdfRect};
 pub use shaper::{NullShaper, TextShaper};
 pub use style::{

@@ -125,6 +125,12 @@ impl Element for Div {
         self.style.text_color
     }
 
+    fn accepts_pointer_events(&self) -> bool {
+        self.style.on_click.is_some()
+            || self.style.on_hover.is_some()
+            || self.style.cursor.is_some()
+    }
+
     /// Fire stored click / hover handlers. Host code is responsible for
     /// hit-testing before calling this — we only see an event if it was
     /// already routed here. `on_hover(false)` must be delivered via

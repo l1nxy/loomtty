@@ -7,9 +7,9 @@
 use super::text_layout;
 use super::tokens;
 use super::types::{UiAction, UiContext, UiPasteDialogHit, UiScene};
-use crate::app::App;
 use crate::app::ciri_ui_bridge::paint_ui_tree;
-use ciri_ui::{Div, Layer, Styled, div, text};
+use crate::app::App;
+use ciri_ui::{div, text, Div, Layer, Styled};
 
 const HIT_DIALOG: u64 = 1;
 const HIT_PASTE: u64 = 2;
@@ -144,9 +144,11 @@ impl PasteDialogComponent {
 
         let panel = div()
             .in_layer(Layer::Modal)
+            .absolute()
+            .left(self.dx)
+            .top(self.dy)
             .w(self.dialog_w)
             .h(self.dialog_h)
-            .translate(self.dx, self.dy)
             .flex_col()
             .p(pad)
             .bg(surface)

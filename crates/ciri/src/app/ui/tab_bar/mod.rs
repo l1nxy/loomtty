@@ -116,7 +116,9 @@ impl TabBarComponent {
 
         div().w(cx.viewport_w).h(cx.viewport_h).child(
             rows.in_layer(Layer::Chrome)
-                .translate(rect.x, rect.y)
+                .absolute()
+                .left(rect.x)
+                .top(rect.y)
                 .w(rect.w)
                 .h(rect.h),
         )

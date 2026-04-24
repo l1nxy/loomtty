@@ -228,9 +228,11 @@ impl TopBarComponent {
 
         let mut row = div()
             .in_layer(Layer::Chrome)
+            .absolute()
+            .left(rect.x)
+            .top(rect.y)
             .w(rect.w)
             .h(rect.h)
-            .translate(rect.x, rect.y)
             .flex_row()
             .child(
                 div()

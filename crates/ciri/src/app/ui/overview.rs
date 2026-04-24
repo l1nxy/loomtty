@@ -201,9 +201,11 @@ fn overview_action_bar_tree(
 
     let mut bar = div()
         .in_layer(Layer::Overlay)
+        .absolute()
+        .left(d.pane_x)
+        .top(d.bar_y)
         .w(d.pane_w)
         .h(d.bar_h)
-        .translate(d.pane_x, d.bar_y)
         .flex_row()
         .items_center()
         .bg([0.0, 0.0, 0.0, tokens::ALPHA_PRIMARY_HOVER]);

@@ -6,9 +6,9 @@
 use super::text_layout;
 use super::tokens;
 use super::types::{UiAction, UiContext, UiPaletteHit, UiScene};
-use crate::app::App;
 use crate::app::ciri_ui_bridge::paint_ui_tree;
-use ciri_ui::{Div, Layer, Styled, div, text};
+use crate::app::App;
+use ciri_ui::{div, text, Div, Layer, Styled};
 
 const HIT_CLOSE: u64 = 1;
 const HIT_PANEL: u64 = 2;
@@ -275,9 +275,11 @@ impl PaletteComponent {
 
         let mut panel = div()
             .in_layer(Layer::Modal)
+            .absolute()
+            .left(px)
+            .top(self.layout.panel_y)
             .w(pw)
             .h(self.layout.panel_h)
-            .translate(px, self.layout.panel_y)
             .flex_col()
             .bg(panel_bg)
             .rounded(tokens::SPACE_1)

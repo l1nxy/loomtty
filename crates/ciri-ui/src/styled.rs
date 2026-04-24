@@ -11,7 +11,8 @@ use std::sync::Arc;
 
 use crate::color::Color;
 use crate::style::{
-    AlignItems, CursorStyle, Display, FlexDirection, JustifyContent, Length, Shadow, Style,
+    AlignItems, CursorStyle, Display, FlexDirection, JustifyContent, Length, Position, Shadow,
+    Style,
 };
 use ciri_motion::Transition;
 
@@ -157,6 +158,38 @@ pub trait Styled: Sized {
 
     fn pr(mut self, px: f32) -> Self {
         self.style().padding.get_or_insert([0.0; 4])[1] = px;
+        self
+    }
+
+    // ── Positioning ─────────────────────────────────────────────────────
+
+    fn relative(mut self) -> Self {
+        self.style().position = Some(Position::Relative);
+        self
+    }
+
+    fn absolute(mut self) -> Self {
+        self.style().position = Some(Position::Absolute);
+        self
+    }
+
+    fn top(mut self, px: f32) -> Self {
+        self.style().inset[0] = Some(Length::Px(px));
+        self
+    }
+
+    fn right(mut self, px: f32) -> Self {
+        self.style().inset[1] = Some(Length::Px(px));
+        self
+    }
+
+    fn bottom(mut self, px: f32) -> Self {
+        self.style().inset[2] = Some(Length::Px(px));
+        self
+    }
+
+    fn left(mut self, px: f32) -> Self {
+        self.style().inset[3] = Some(Length::Px(px));
         self
     }
 

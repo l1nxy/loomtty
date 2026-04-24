@@ -52,6 +52,13 @@ pub enum JustifyContent {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Position {
+    #[default]
+    Relative,
+    Absolute,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CursorStyle {
     #[default]
     Default,
@@ -111,6 +118,9 @@ pub struct Style {
     /// Padding: `[top, right, bottom, left]`.
     pub padding: Option<[f32; 4]>,
     pub margin: Option<[f32; 4]>,
+    pub position: Option<Position>,
+    /// Inset: `[top, right, bottom, left]`.
+    pub inset: [Option<Length>; 4],
     pub width: Option<Length>,
     pub height: Option<Length>,
     pub min_width: Option<Length>,
@@ -182,6 +192,12 @@ impl Style {
         take_some!(gap);
         take_some!(padding);
         take_some!(margin);
+        take_some!(position);
+        for (dst, src) in self.inset.iter_mut().zip(other.inset.iter()) {
+            if src.is_some() {
+                *dst = *src;
+            }
+        }
         take_some!(width);
         take_some!(height);
         take_some!(min_width);
@@ -220,6 +236,8 @@ impl std::fmt::Debug for Style {
             .field("border_width", &self.border_width)
             .field("gap", &self.gap)
             .field("padding", &self.padding)
+            .field("position", &self.position)
+            .field("inset", &self.inset)
             .field("width", &self.width)
             .field("height", &self.height)
             .field("hit_id", &self.hit_id)

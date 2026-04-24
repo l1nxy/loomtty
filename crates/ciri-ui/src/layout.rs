@@ -23,7 +23,7 @@ use crate::scene::Scene;
 use crate::shaper::TextShaper;
 use crate::style::{
     AlignItems as UiAlignItems, Display as UiDisplay, FlexDirection as UiFlexDirection,
-    JustifyContent as UiJustifyContent, Length,
+    JustifyContent as UiJustifyContent, Length, Position as UiPosition,
 };
 use crate::theme::ResolvedTheme;
 
@@ -498,6 +498,18 @@ pub(crate) fn to_taffy_style(s: &crate::Style) -> taffy::Style {
             left: taffy::LengthPercentageAuto::Length(m[3]),
         };
     }
+    if let Some(position) = s.position {
+        t.position = match position {
+            UiPosition::Relative => taffy::Position::Relative,
+            UiPosition::Absolute => taffy::Position::Absolute,
+        };
+    }
+    t.inset = taffy::Rect {
+        top: to_dim_auto(s.inset[0]),
+        right: to_dim_auto(s.inset[1]),
+        bottom: to_dim_auto(s.inset[2]),
+        left: to_dim_auto(s.inset[3]),
+    };
 
     if let Some(w) = s.width {
         t.size.width = to_dim(w);
@@ -526,6 +538,14 @@ fn to_dim(l: Length) -> taffy::Dimension {
         Length::Px(v) => taffy::Dimension::Length(v),
         Length::Percent(v) => taffy::Dimension::Percent(v),
         Length::Auto => taffy::Dimension::Auto,
+    }
+}
+
+fn to_dim_auto(l: Option<Length>) -> taffy::LengthPercentageAuto {
+    match l {
+        Some(Length::Px(v)) => taffy::LengthPercentageAuto::Length(v),
+        Some(Length::Percent(v)) => taffy::LengthPercentageAuto::Percent(v),
+        Some(Length::Auto) | None => taffy::LengthPercentageAuto::Auto,
     }
 }
 
@@ -645,6 +665,30 @@ mod tests {
         );
         let hit = out.layout.hit_test(10.0, 10.0).expect("expected hit");
         assert_eq!(hit.hit_id, Some(42));
+    }
+
+    #[test]
+    fn absolute_child_uses_inset_for_layout_and_hit_test() {
+        let root = div().w(200.0).h(100.0).child(
+            div()
+                .absolute()
+                .left(30.0)
+                .top(20.0)
+                .w(40.0)
+                .h(30.0)
+                .hit_id(7)
+                .bg(ACCENT),
+        );
+        let out = paint_tree_with_layout(
+            &root,
+            &theme(),
+            [800.0, 600.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
+        let hit = out.layout.hit_test(35.0, 25.0).expect("expected hit");
+        assert_eq!(hit.hit_id, Some(7));
+        assert_eq!(hit.bounds, [30.0, 20.0, 40.0, 30.0]);
     }
 
     #[test]

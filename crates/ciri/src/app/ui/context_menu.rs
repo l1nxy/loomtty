@@ -7,9 +7,9 @@
 use super::text_layout;
 use super::tokens;
 use super::types::{UiAction, UiContext, UiContextMenuHit, UiScene};
-use crate::app::App;
 use crate::app::ciri_ui_bridge::paint_ui_tree;
-use ciri_ui::{Div, Layer, Styled, div, text};
+use crate::app::App;
+use ciri_ui::{div, text, Div, Layer, Styled};
 
 const HIT_MENU: u64 = 1;
 const HIT_ENTRY_BASE: u64 = 1_000_000;
@@ -134,9 +134,11 @@ impl ContextMenuComponent {
         let text_pad = (padding - bw).max(0.0);
         let mut panel = div()
             .in_layer(Layer::Modal)
+            .absolute()
+            .left(self.x)
+            .top(self.y)
             .w(self.menu_width)
             .h(self.menu_height)
-            .translate(self.x, self.y)
             .flex_col()
             .items_center()
             .bg(bg_color)

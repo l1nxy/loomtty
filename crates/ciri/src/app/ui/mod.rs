@@ -13,15 +13,16 @@ mod tab_bar;
 mod text_layout;
 pub(crate) mod tokens;
 mod top_bar;
+mod transient;
 pub(crate) mod types;
 
 pub(crate) use bell_flash::{BellFlashComponent, BellFlashRect};
-pub(crate) use frame::TransientOverlayFrame;
 #[cfg(test)]
 pub(crate) use frame::chrome_rects;
 use frame::{UiFrame, UiFrameHover};
 pub(crate) use ime_preedit::ImePreeditComponent;
 pub(crate) use search_bar::SearchBarComponent;
+pub(crate) use transient::TransientOverlayFrame;
 pub(crate) use types::*;
 
 use ciri_render::glyph_cache::GlyphInstance;

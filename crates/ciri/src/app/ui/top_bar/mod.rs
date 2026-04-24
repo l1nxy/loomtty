@@ -38,7 +38,26 @@ use super::types::{UiAction, UiContext, UiScene, UiTopBarHit};
 use crate::app::ciri_ui_bridge::paint_ui_tree;
 use crate::app::top_bar::{PaneTabLayout, TopBarLayout};
 use crate::app::{App, TopBarHoverRegion};
-use ciri_ui::{Layer, Styled, div};
+use ciri_ui::{div, Div, Layer, Styled};
+
+const HIT_SESSION: u64 = 1;
+const HIT_WORKSPACE: u64 = 2;
+const HIT_MODE: u64 = 3;
+const HIT_TAB_BASE: u64 = 1_000_000;
+
+fn pane_tab_hit_id(pane_id: u64) -> u64 {
+    HIT_TAB_BASE + pane_id
+}
+
+fn top_bar_hit_from_id(hit_id: Option<u64>) -> UiTopBarHit {
+    match hit_id {
+        Some(HIT_SESSION) => UiTopBarHit::Session,
+        Some(HIT_WORKSPACE) => UiTopBarHit::Workspace,
+        Some(HIT_MODE) => UiTopBarHit::Mode,
+        Some(id) if id >= HIT_TAB_BASE => UiTopBarHit::PaneTab(id - HIT_TAB_BASE),
+        _ => UiTopBarHit::Background,
+    }
+}
 
 pub(crate) struct TopBarComponent {
     pub layout: TopBarLayout,
@@ -172,24 +191,96 @@ impl TopBarComponent {
         })
     }
 
-    pub(super) fn hit_test(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<UiTopBarHit> {
-        let rect = self.bar_rect(cx);
+    fn build_hit_tree(&self, rect: UiRect, cx: &UiContext<'_>) -> Div {
+        let workspace_w = if self.workspace_label.is_empty() {
+            0.0
+        } else {
+            text_layout::measure(cx, &self.workspace_label)
+        };
+        let mode_w = text_layout::measure(cx, &self.mode_label);
+        let mut tabs_slot = div().flex_1().h(rect.h);
+        let tabs_start_x = rect.x + self.layout.session_w;
+        let tabs_end_x = (rect.x + rect.w - workspace_w - mode_w).max(tabs_start_x);
+        let mut cursor_x = tabs_start_x;
+
+        if self.show_integrated_tabs {
+            for tab in &self.pane_tabs {
+                let visible_left = tab.x.max(tabs_start_x);
+                let visible_right = (tab.x + tab.w).min(tabs_end_x);
+                let visible_w = (visible_right - visible_left).max(0.0);
+                if visible_w <= 0.0 {
+                    continue;
+                }
+                let gap = (visible_left - cursor_x).max(0.0);
+                if gap > 0.0 {
+                    tabs_slot = tabs_slot.child(div().w(gap).h(rect.h));
+                }
+                tabs_slot = tabs_slot.child(
+                    div()
+                        .w(visible_w)
+                        .h(rect.h)
+                        .hit_id(pane_tab_hit_id(tab.pane_id))
+                        .cursor_pointer(),
+                );
+                cursor_x = visible_right;
+            }
+        }
+
+        let mut row = div()
+            .in_layer(Layer::Chrome)
+            .w(rect.w)
+            .h(rect.h)
+            .translate(rect.x, rect.y)
+            .flex_row()
+            .child(
+                div()
+                    .w(self.layout.session_w)
+                    .h(rect.h)
+                    .hit_id(HIT_SESSION)
+                    .cursor_pointer(),
+            )
+            .child(tabs_slot);
+        if workspace_w > 0.0 {
+            row = row.child(
+                div()
+                    .w(workspace_w)
+                    .h(rect.h)
+                    .hit_id(HIT_WORKSPACE)
+                    .cursor_pointer(),
+            );
+        }
+        row = row.child(div().w(mode_w).h(rect.h).hit_id(HIT_MODE).cursor_pointer());
+
+        div().w(cx.viewport_w).h(cx.viewport_h).child(row)
+    }
+
+    fn hit_test_in_rect(
+        &self,
+        rect: UiRect,
+        mx: f32,
+        my: f32,
+        cx: &UiContext<'_>,
+    ) -> Option<UiTopBarHit> {
         if !rect.contains(mx, my) {
             return None;
         }
-        // The Linear decides which child owns which slice; we ask it.
-        // UiElement::hit returns a `UiAction` though — map back to the
-        // `UiTopBarHit` enum expected by the legacy hover dispatcher.
-        let row = self.build_row(cx);
-        match row.hit(rect, mx, my, cx) {
-            Some(UiAction::OpenSessionPalette) => Some(UiTopBarHit::Session),
-            Some(UiAction::CycleWorkspace) => Some(UiTopBarHit::Workspace),
-            Some(UiAction::ToggleOverview) => Some(UiTopBarHit::Mode),
-            Some(UiAction::FocusPaneTab(id)) => Some(UiTopBarHit::PaneTab(id)),
-            // Any other action would be a programming error here; the top
-            // bar only produces the four actions above.
-            _ => Some(UiTopBarHit::Background),
-        }
+        let root = self.build_hit_tree(rect, cx);
+        let mut shaper = ciri_ui::NullShaper;
+        let out = ciri_ui::paint_tree_with_layout(
+            &root,
+            cx.theme,
+            [cx.viewport_w, cx.viewport_h],
+            1.0,
+            &mut shaper,
+        );
+        Some(top_bar_hit_from_id(
+            out.layout.hit_test(mx, my).and_then(|node| node.hit_id),
+        ))
+    }
+
+    pub(super) fn hit_test(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<UiTopBarHit> {
+        let rect = self.bar_rect(cx);
+        self.hit_test_in_rect(rect, mx, my, cx)
     }
 }
 
@@ -258,14 +349,13 @@ impl UiElement for TopBarComponent {
     }
 
     fn hit(&self, rect: UiRect, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<UiAction> {
-        if !rect.contains(mx, my) {
-            return None;
+        match self.hit_test_in_rect(rect, mx, my, cx)? {
+            UiTopBarHit::Session => Some(UiAction::OpenSessionPalette),
+            UiTopBarHit::Workspace => Some(UiAction::CycleWorkspace),
+            UiTopBarHit::Mode => Some(UiAction::ToggleOverview),
+            UiTopBarHit::PaneTab(id) => Some(UiAction::FocusPaneTab(id)),
+            UiTopBarHit::Background => None,
         }
-        // If no child claims the click, we still consume it as "Background"
-        // at the dispatcher level — but UiElement::hit returns UiAction,
-        // and there is no `Background` action. Return None so the caller
-        // can treat "top-bar-hit but no action" itself.
-        self.build_row(cx).hit(rect, mx, my, cx)
     }
 }
 
@@ -274,7 +364,6 @@ impl TopBarComponent {
         let rect = self.bar_rect(cx);
         <Self as UiElement>::hit(self, rect, mx, my, cx)
     }
-
 }
 
 #[cfg(test)]

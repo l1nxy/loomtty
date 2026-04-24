@@ -1,7 +1,7 @@
 use super::*;
-use crate::app::App;
-use crate::app::ui::HintsBarComponent;
 use crate::app::ui::layout::Border;
+use crate::app::ui::HintsBarComponent;
+use crate::app::App;
 use ciri_config::config::{CiriConfig, StatusBarPosition};
 
 fn make_cx(app: &App) -> UiContext<'_> {
@@ -108,6 +108,38 @@ fn pane_tabs_element_slot_is_one_cell_wider_than_tabs_area_px() {
          A change to either the Linear Fill arithmetic OR the top_bar_layout formula would trip this.",
         real_pane_tabs_slot.w,
         layout.tabs_area_px,
+    );
+}
+
+#[test]
+fn hit_test_uses_ciri_ui_layout_snapshot() {
+    let app = App::new(CiriConfig::default(), "test-session");
+    let cx = make_cx(&app);
+    let layout = app.top_bar_layout(
+        cx.viewport_w,
+        cx.viewport_h,
+        cx.cell_w,
+        cx.cell_h,
+        cx.ui_shaper,
+    );
+    let component = TopBarComponent::capture(&app, layout, &cx);
+    let rect = component.bar_rect(&cx);
+
+    assert_eq!(
+        component.hit_test(rect.x + 4.0, rect.y + 2.0, &cx),
+        Some(UiTopBarHit::Session)
+    );
+    assert_eq!(
+        component.hit_test(rect.right() - 2.0, rect.y + 2.0, &cx),
+        Some(UiTopBarHit::Mode)
+    );
+    assert_eq!(
+        component.hit_test(rect.x + layout.session_w + 2.0, rect.y + 2.0, &cx),
+        Some(UiTopBarHit::Background)
+    );
+    assert_eq!(
+        component.hit_test(rect.x + 4.0, rect.bottom() + 2.0, &cx),
+        None
     );
 }
 

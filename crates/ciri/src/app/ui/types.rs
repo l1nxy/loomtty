@@ -66,6 +66,7 @@ pub(crate) enum UiAction {
 // Per-component hit enums — kept internal, used only within each component's
 // click()/hover() implementation to convert to UiAction.
 
+#[derive(Debug, PartialEq, Eq)]
 pub(super) enum UiTopBarHit {
     Session,
     Workspace,

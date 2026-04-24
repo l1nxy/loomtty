@@ -16,7 +16,7 @@
 
 use ciri_config::config::TabBarPosition;
 
-use super::layout::{Axis, SizeHint, UiElement, UiRect};
+use super::layout::{UiElement, UiRect};
 use super::text_layout;
 use super::tokens;
 use super::types::{UiAction, UiContext, UiScene};
@@ -48,8 +48,6 @@ pub(crate) struct TabEntry {
 pub(crate) struct TabBarComponent {
     tabs: Vec<TabEntry>,
     hovered_tab: Option<u64>,
-    /// Fixed width of the bar, from `config.tabbar.width`.
-    bar_width: f32,
     /// Height of one tab row, from `config.tabbar.tab_height`.
     tab_height: f32,
     /// Vertical gap between adjacent tabs, from `config.tabbar.tab_gap`.
@@ -77,7 +75,6 @@ impl TabBarComponent {
         Self {
             tabs,
             hovered_tab: app.core.hovered_pane_tab,
-            bar_width: app.core.config.tabbar.width,
             tab_height: app.core.config.tabbar.tab_height,
             tab_gap: app.core.config.tabbar.tab_gap,
             position: app.core.config.tabbar.position,
@@ -229,17 +226,6 @@ impl TabBarComponent {
 }
 
 impl UiElement for TabBarComponent {
-    fn size_hint(&self, axis: Axis, _cx: &UiContext<'_>) -> SizeHint {
-        match axis {
-            // Fixed horizontal width — this is what makes the bar a
-            // dedicated side strip rather than stealing from the terminal.
-            Axis::Horizontal => SizeHint::Fixed(self.bar_width),
-            // Fills the height handed in by chrome composition after
-            // top/bottom bars are accounted for.
-            Axis::Vertical => SizeHint::Fill,
-        }
-    }
-
     fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         if rect.is_empty() {
             return;

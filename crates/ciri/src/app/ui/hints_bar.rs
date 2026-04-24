@@ -1,5 +1,5 @@
 use super::info_box::action_short_label;
-use super::layout::{Axis, SizeHint, UiElement, UiRect};
+use super::layout::{UiElement, UiRect};
 use super::text_layout;
 use super::tokens;
 use super::types::{UiContext, UiScene};
@@ -13,7 +13,6 @@ struct HintItem {
 }
 
 pub(crate) struct HintsBarComponent {
-    bar_h: f32,
     pane_count: usize,
     active_pane_title: String,
     hints: Vec<HintItem>,
@@ -21,8 +20,6 @@ pub(crate) struct HintsBarComponent {
 
 impl HintsBarComponent {
     pub fn capture(app: &App, _cx: &UiContext<'_>) -> Self {
-        let bar_h = app.hints_bar_height();
-
         let ws = app.core.workspaces.active();
         let pane_count = ws.columns.iter().map(|c| c.tiles.len()).sum::<usize>();
         let active_pane_title = ws
@@ -35,7 +32,6 @@ impl HintsBarComponent {
         let hints = Self::pick_hints(app);
 
         Self {
-            bar_h,
             pane_count,
             active_pane_title,
             hints,
@@ -112,13 +108,6 @@ impl HintsBarComponent {
 }
 
 impl UiElement for HintsBarComponent {
-    fn size_hint(&self, axis: Axis, _cx: &UiContext<'_>) -> SizeHint {
-        match axis {
-            Axis::Vertical => SizeHint::Fixed(self.bar_h),
-            Axis::Horizontal => SizeHint::Fill,
-        }
-    }
-
     fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         let root = self.build_tree(rect, cx);
         paint_ui_tree(&root, cx, scene);

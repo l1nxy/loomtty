@@ -761,9 +761,9 @@ mod tests {
             cx.ui_shaper,
         );
         let component = TopBarComponent::capture(&app, layout, &cx);
-        // Session zone is always at x=0 in the current Linear layout, and
-        // `SessionLabel` is the first child of the row. Use a small positive x
-        // to land inside the zone; bar_y is read from the captured layout.
+        // Session zone is always at x=0 and `SessionLabel` is the first row
+        // slot. Use a small positive x to land inside the zone; bar_y is read
+        // from the captured layout.
         let action = component.click(4.0, layout.bar_y + 2.0, &cx);
         assert_eq!(action, Some(UiAction::OpenSessionPalette));
     }

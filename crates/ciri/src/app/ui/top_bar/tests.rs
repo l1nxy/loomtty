@@ -9,12 +9,12 @@ fn make_cx(app: &App) -> UiContext<'_> {
 
 /// Verifies the load-bearing invariant that `PaneTabsElement` actually
 /// receives a slot one cell **wider** than the tab visibility window
-/// (`tabs_area_px`) when the row is laid out by `Linear`. This is what
+/// (`tabs_area_px`) when the top bar row slots are computed. This is what
 /// produces the breathing-room gap between the right-most tab and the
 /// workspace label.
 ///
 /// The test exercises three independent properties:
-/// 1. `Linear::layout`'s Fill arithmetic (the diff vs `tabs_area_px`).
+/// 1. Row fill arithmetic (the diff vs `tabs_area_px`).
 /// 2. The Fill slot's *absolute width* against a synthetic bar rect of
 ///    known width — this guards against the case where both
 ///    `tabs_area_px` and the Fill slot would be wrong by the same
@@ -40,16 +40,14 @@ fn pane_tabs_element_slot_is_one_cell_wider_than_tabs_area_px() {
     let synthetic_w = 1234.0_f32;
     let bar_rect = UiRect::new(0.0, 0.0, synthetic_w, layout.bar_height);
 
-    let row = component.build_row(&cx);
-    let slots = row.layout(bar_rect, &cx);
+    let slots = component.row_slots(bar_rect, &cx);
 
     // Row is [SessionLabel(Fixed), PaneTabsElement(Fill),
     //        WorkspaceIndicator(Fixed), ModeIndicator(Fixed)].
-    assert_eq!(slots.len(), 4, "row should have exactly four children");
-    let session_slot = slots[0];
-    let pane_tabs_slot = slots[1];
-    let workspace_slot = slots[2];
-    let mode_slot = slots[3];
+    let session_slot = slots.session;
+    let pane_tabs_slot = slots.pane_tabs;
+    let workspace_slot = slots.workspace;
+    let mode_slot = slots.mode;
 
     // (1) Slot adjacency — the four slots must tile the bar rect
     // exactly with no gap and no overlap.
@@ -74,7 +72,7 @@ fn pane_tabs_element_slot_is_one_cell_wider_than_tabs_area_px() {
     // (2) Independent absolute-width check on the Fill slot. The
     // expected width is computed against the synthetic bar rect
     // width — independent of the `tabs_area_px` formula in
-    // `top_bar_layout`. If `Linear::layout`'s Fill computation drifted
+    // `top_bar_layout`. If row Fill computation drifted
     // (e.g. allocated zero or twice the budget), this would fail
     // even if `tabs_area_px` had drifted by the same amount.
     let expected_fill_w = synthetic_w - session_slot.w - workspace_slot.w - mode_slot.w;
@@ -89,22 +87,22 @@ fn pane_tabs_element_slot_is_one_cell_wider_than_tabs_area_px() {
     // bar rect — the same rect production code uses — and compare
     // the Fill slot to the `tabs_area_px` produced by `top_bar_layout`.
     // This cross-checks the *formula* in `top_bar_layout` against the
-    // *Fill arithmetic* in `Linear`, which assertion (2) above has
+    // *Fill arithmetic* in `row_slots`, which assertion (2) above has
     // already independently proved correct. A future refactor that
     // removes the `- cw` term from `top_bar_layout::tabs_area_px`
     // (or otherwise breaks the gap) would fail here. This is *not*
     // tautological: the right-hand side `tabs_area_px` and the
     // left-hand side `Fill slot width` come from two different code
-    // paths (the captured layout formula vs. live `Linear::layout`).
+    // paths (the captured layout formula vs. live row slot computation).
     let cw = cx.cell_w;
     let real_bar_rect = component.bar_rect(&cx);
-    let real_slots = component.build_row(&cx).layout(real_bar_rect, &cx);
-    let real_pane_tabs_slot = real_slots[1];
+    let real_slots = component.row_slots(real_bar_rect, &cx);
+    let real_pane_tabs_slot = real_slots.pane_tabs;
     let gap_diff = real_pane_tabs_slot.w - layout.tabs_area_px;
     assert!(
         (gap_diff - cw).abs() < 0.01,
         "Fill slot ({}) must be exactly one cell ({cw}) wider than tabs_area_px ({}); got diff={gap_diff}. \
-         A change to either the Linear Fill arithmetic OR the top_bar_layout formula would trip this.",
+         A change to either row Fill arithmetic OR the top_bar_layout formula would trip this.",
         real_pane_tabs_slot.w,
         layout.tabs_area_px,
     );

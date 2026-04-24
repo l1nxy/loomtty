@@ -4,7 +4,7 @@
 //!
 //! `TopBarComponent` is the outer "panel" that owns:
 //! - Global decorations (bar background, separator line, leader/broadcast strip)
-//! - A [`Linear`] row of four sub-elements that lay out horizontally:
+//! - A row of four explicit slots that lay out horizontally:
 //!   - [`session_label::SessionLabel`] — fixed width, clicks open the session palette
 //!   - [`pane_tabs::PaneTabsElement`] — fill, scrollable list of pane tabs
 //!   - [`workspace::WorkspaceIndicator`] — fixed width (or zero), clicks cycle workspace
@@ -31,7 +31,7 @@ use self::mode::ModeIndicator;
 use self::pane_tabs::PaneTabsElement;
 use self::session_label::SessionLabel;
 use self::workspace::WorkspaceIndicator;
-use super::layout::{Axis, Linear, SizeHint, Spacer, UiElement, UiRect};
+use super::layout::{UiElement, UiRect};
 use super::text_layout;
 use super::tokens;
 use super::types::{UiAction, UiContext, UiScene, UiTopBarHit};
@@ -74,10 +74,17 @@ pub(crate) struct TopBarComponent {
     tab_scroll: f32,
     tab_scroll_max: f32,
     /// When false, tabs are rendered by a dedicated side tab bar
-    /// (`TabBarComponent`) and the middle slot of this bar's row is a
-    /// no-op `Spacer` instead of `PaneTabsElement`. Keeps session/
-    /// workspace/mode positions stable regardless of tab placement.
+    /// (`TabBarComponent`) and the middle slot is left empty. Keeps
+    /// session/workspace/mode positions stable regardless of tab placement.
     show_integrated_tabs: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct TopBarRowSlots {
+    pub session: UiRect,
+    pub pane_tabs: UiRect,
+    pub workspace: UiRect,
+    pub mode: UiRect,
 }
 
 impl TopBarComponent {
@@ -133,20 +140,11 @@ impl TopBarComponent {
         )
     }
 
-    /// Build the inner [`Linear`] row. Extracted so both paint and hit
-    /// see the exact same child layout.
-    ///
-    /// The returned `Linear` borrows from `self`; no per-frame heap
-    /// allocation for the tab snapshot or label strings.
-    pub(super) fn build_row<'a>(&'a self, cx: &UiContext<'_>) -> Linear<'a> {
-        // Widths of the right-side fixed zones. Measured via `text_layout`
-        // so proportional UI fonts get their real advance — using
-        // `unicode_width * cell_w` here would silently under-allocate wide
-        // labels and leave the mode/workspace text clipped. The `top_bar_layout`
-        // on the `App` side measures the same way (same shaper), so the
-        // `tabs_area_px` visibility window stays in lockstep with these
-        // slot widths (invariant pinned by
-        // `pane_tabs_element_slot_is_one_cell_wider_than_tabs_area_px`).
+    /// Compute the inner row slots shared by paint and tests.
+    pub(super) fn row_slots(&self, rect: UiRect, cx: &UiContext<'_>) -> TopBarRowSlots {
+        // Widths of fixed zones. Measured via `text_layout` so proportional UI
+        // fonts get their real advance. The App-side `top_bar_layout` measures
+        // the same way, keeping `tabs_area_px` in lockstep with these slots.
         let session_w = self.layout.session_w;
         let workspace_w = if self.workspace_label.is_empty() {
             0.0
@@ -154,53 +152,60 @@ impl TopBarComponent {
             text_layout::measure(cx, &self.workspace_label)
         };
         let mode_w = text_layout::measure(cx, &self.mode_label);
+        let fixed_w = session_w + workspace_w + mode_w;
+        let pane_tabs_w = (rect.w - fixed_w).max(0.0);
 
-        // Sub-elements borrow from `self` — no per-frame heap allocation
-        // for the tab snapshot or label strings. The `'a` lifetime ties
-        // every child to `&self`, so the returned `Linear` is short-lived
-        // and discarded after the paint/hit call returns.
-        //
-        // When `show_integrated_tabs == false`, the middle slot becomes
-        // a `Spacer` so the right-side items stay right-anchored and the
-        // bar background still covers the full width. The actual tabs
-        // are painted by a sibling `TabBarComponent` in chrome composition.
-        let row = Linear::new(Axis::Horizontal).push(SessionLabel {
+        let session = UiRect::new(rect.x, rect.y, session_w, rect.h);
+        let pane_tabs = UiRect::new(session.right(), rect.y, pane_tabs_w, rect.h);
+        let workspace = UiRect::new(pane_tabs.right(), rect.y, workspace_w, rect.h);
+        let mode = UiRect::new(workspace.right(), rect.y, mode_w, rect.h);
+
+        TopBarRowSlots {
+            session,
+            pane_tabs,
+            workspace,
+            mode,
+        }
+    }
+
+    fn paint_row(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        let slots = self.row_slots(rect, cx);
+        SessionLabel {
             text: &self.session_text,
             hovered: self.hovered_region == Some(TopBarHoverRegion::Session),
-            width: session_w,
-        });
-        let row = if self.show_integrated_tabs {
-            row.push(PaneTabsElement {
+        }
+        .paint(slots.session, cx, scene);
+
+        if self.show_integrated_tabs {
+            PaneTabsElement {
                 tabs: &self.pane_tabs,
                 hovered_tab: self.hovered_pane_tab,
                 scroll: self.tab_scroll,
                 scroll_max: self.tab_scroll_max,
-            })
-        } else {
-            row.push(Spacer)
-        };
-        row.push(WorkspaceIndicator {
+            }
+            .paint(slots.pane_tabs, cx, scene);
+        }
+
+        WorkspaceIndicator {
             label: &self.workspace_label,
             hovered: self.hovered_region == Some(TopBarHoverRegion::Workspace),
-            width: workspace_w,
-        })
-        .push(ModeIndicator {
+        }
+        .paint(slots.workspace, cx, scene);
+
+        ModeIndicator {
             label: &self.mode_label,
             color: self.mode_color,
-            width: mode_w,
-        })
+        }
+        .paint(slots.mode, cx, scene);
     }
 
     fn build_hit_tree(&self, rect: UiRect, cx: &UiContext<'_>) -> Div {
-        let workspace_w = if self.workspace_label.is_empty() {
-            0.0
-        } else {
-            text_layout::measure(cx, &self.workspace_label)
-        };
-        let mode_w = text_layout::measure(cx, &self.mode_label);
+        let slots = self.row_slots(rect, cx);
+        let workspace_w = slots.workspace.w;
+        let mode_w = slots.mode.w;
         let mut tabs_slot = div().flex_1().h(rect.h);
-        let tabs_start_x = rect.x + self.layout.session_w;
-        let tabs_end_x = (rect.x + rect.w - workspace_w - mode_w).max(tabs_start_x);
+        let tabs_start_x = slots.pane_tabs.x;
+        let tabs_end_x = slots.pane_tabs.right().max(tabs_start_x);
         let mut cursor_x = tabs_start_x;
 
         if self.show_integrated_tabs {
@@ -236,7 +241,7 @@ impl TopBarComponent {
             .flex_row()
             .child(
                 div()
-                    .w(self.layout.session_w)
+                    .w(slots.session.w)
                     .h(rect.h)
                     .hit_id(HIT_SESSION)
                     .cursor_pointer(),
@@ -344,19 +349,12 @@ impl TopBarComponent {
 }
 
 impl UiElement for TopBarComponent {
-    fn size_hint(&self, axis: Axis, _cx: &UiContext<'_>) -> SizeHint {
-        match axis {
-            Axis::Vertical => SizeHint::Fixed(self.layout.bar_height),
-            Axis::Horizontal => SizeHint::Fill,
-        }
-    }
-
     fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         let chrome = self.build_chrome_tree(rect, cx);
         paint_ui_tree(&chrome, cx, scene);
 
         // --- inner row (session | tabs | workspace | mode) ---
-        self.build_row(cx).paint(rect, cx, scene);
+        self.paint_row(rect, cx, scene);
     }
 
     fn hit(&self, rect: UiRect, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<UiAction> {

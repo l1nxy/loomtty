@@ -3,15 +3,10 @@
 //! # Model
 //!
 //! Every piece of chrome (top bar, tab bar, status bar, …) implements
-//! [`UiElement`]. Containers such as [`Linear`] own a set of children and know
-//! how to split an available [`UiRect`] between them. Positions are **never
-//! stored** on the elements themselves — they are computed lazily at paint time
-//! by walking the tree, mirroring the approach niri takes with
-//! `LayoutElement::render(location)` in `niri/src/layout/scrolling.rs:2376`.
+//! [`UiElement`]. Parent components hand explicit [`UiRect`] slots to children;
+//! positions are **never stored** on the elements themselves.
 //!
 //! The trait is deliberately minimal:
-//! - [`UiElement::size_hint`] — how much room the element wants along the
-//!   parent's main axis.
 //! - [`UiElement::paint`] — draw inside a rect handed in by the parent.
 //! - [`UiElement::hit`] — map a mouse position inside the rect to an action.
 //!
@@ -25,30 +20,10 @@
 //! # File layout
 //!
 //! - `rect.rs` — [`UiRect`] geometry primitive
-//! - `offset.rs` — [`Offset`] additive paint-time shift + `UiRect::offset_by`
-//! - `hint.rs` — [`Axis`] / [`SizeHint`]
 //! - `element.rs` — [`UiElement`] trait
-//! - `spacer.rs` — [`Spacer`] no-op filler
-//! - `linear.rs` — [`Linear`] one-axis container
-//! - `test_support.rs` — shared probes for `*_tests.rs`
 
 mod element;
-mod hint;
-mod linear;
-mod offset;
 mod rect;
-mod spacer;
-
-#[cfg(test)]
-mod test_support;
 
 pub(crate) use element::UiElement;
-pub(crate) use hint::{Axis, SizeHint};
-pub(crate) use linear::Linear;
 pub(crate) use rect::UiRect;
-pub(crate) use spacer::Spacer;
-// `Offset` is the return type of `UiElement::render_offset` — kept re-exported
-// for API completeness, but external callers usually access it via type
-// inference rather than by name.
-#[allow(unused_imports)]
-pub(crate) use offset::Offset;

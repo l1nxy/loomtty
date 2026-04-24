@@ -46,6 +46,7 @@ impl UiRect {
 
     /// Slice a strip off the left edge; returns (taken, remaining).
     /// If `width >= self.w`, `remaining` is empty.
+    #[allow(dead_code)]
     pub fn split_left(self, width: f32) -> (UiRect, UiRect) {
         let w = width.clamp(0.0, self.w);
         (
@@ -65,6 +66,7 @@ impl UiRect {
     }
 
     /// Slice a strip off the top edge; returns (taken, remaining).
+    #[allow(dead_code)]
     pub fn split_top(self, height: f32) -> (UiRect, UiRect) {
         let h = height.clamp(0.0, self.h);
         (

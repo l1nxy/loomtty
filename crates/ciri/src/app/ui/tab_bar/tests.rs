@@ -6,7 +6,6 @@ fn row_rect_top_of_bar() {
     let bar_component = TabBarComponent {
         tabs: Vec::new(),
         hovered_tab: None,
-        bar_width: 200.0,
         tab_height: 28.0,
         tab_gap: 0.0,
         position: TabBarPosition::Left,
@@ -25,7 +24,6 @@ fn row_rect_clips_to_bottom_edge() {
     let bar_component = TabBarComponent {
         tabs: Vec::new(),
         hovered_tab: None,
-        bar_width: 200.0,
         tab_height: 28.0,
         tab_gap: 0.0,
         position: TabBarPosition::Left,
@@ -59,7 +57,6 @@ fn hit_uses_ciri_ui_layout_snapshot() {
             },
         ],
         hovered_tab: None,
-        bar_width: 200.0,
         tab_height: 28.0,
         tab_gap: 4.0,
         position: TabBarPosition::Left,

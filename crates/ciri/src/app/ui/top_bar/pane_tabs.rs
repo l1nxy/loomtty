@@ -1,6 +1,6 @@
 use ciri_config::config::StatusBarPosition;
 
-use super::super::layout::{Axis, SizeHint, UiElement, UiRect};
+use super::super::layout::{UiElement, UiRect};
 use super::super::text_layout;
 use super::super::tokens;
 use super::super::types::{UiContext, UiScene};
@@ -25,12 +25,6 @@ pub(super) struct PaneTabsElement<'a> {
 }
 
 impl<'a> UiElement for PaneTabsElement<'a> {
-    fn size_hint(&self, _axis: Axis, _cx: &UiContext<'_>) -> SizeHint {
-        // Tabs fill whatever horizontal space is left between the fixed
-        // zones; vertically they stretch with the parent bar rect.
-        SizeHint::Fill
-    }
-
     fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         if rect.is_empty() {
             return;

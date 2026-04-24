@@ -239,6 +239,11 @@ pub trait Element: 'static {
         false
     }
 
+    /// Optional host-defined hit identifier for layout snapshots.
+    fn hit_id(&self) -> Option<u64> {
+        None
+    }
+
     /// Handle an input event. Return `true` if consumed. Default: ignore.
     fn on_event(&mut self, _event: &UiEvent, _cx: &mut EventCtx) -> bool {
         false

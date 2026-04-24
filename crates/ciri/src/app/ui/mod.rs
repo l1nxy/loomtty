@@ -242,7 +242,7 @@ impl App {
         let Some(component) = PaletteComponent::capture(self, &cx) else {
             return (None, false);
         };
-        match component.hit_test(mx, my) {
+        match component.hit_test(mx, my, &cx) {
             UiPaletteHit::Entry(entry_idx) => {
                 let hovered =
                     self.core.command_palette.as_ref().and_then(|palette| {

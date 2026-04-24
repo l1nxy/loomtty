@@ -314,6 +314,16 @@ pub trait Styled: Sized {
         self.cursor(CursorStyle::Pointer)
     }
 
+    /// Attach an opaque host-defined hit identifier to this element.
+    ///
+    /// The layout snapshot copies this value into `LayoutNode::hit_id`; host
+    /// code can then map it to an application action without duplicating
+    /// geometry outside the UI tree.
+    fn hit_id(mut self, id: u64) -> Self {
+        self.style().hit_id = Some(id);
+        self
+    }
+
     /// Attach a click handler to this element.
     ///
     /// **Not yet dispatched in production.** The current client's real

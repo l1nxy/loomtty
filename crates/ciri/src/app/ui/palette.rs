@@ -8,7 +8,24 @@ use super::tokens;
 use super::types::{UiAction, UiContext, UiPaletteHit, UiScene};
 use crate::app::App;
 use crate::app::ciri_ui_bridge::paint_ui_tree;
-use ciri_ui::{Layer, Styled, div, text};
+use ciri_ui::{Div, Layer, Styled, div, text};
+
+const HIT_CLOSE: u64 = 1;
+const HIT_PANEL: u64 = 2;
+const HIT_ENTRY_BASE: u64 = 1_000_000;
+
+fn entry_hit_id(entry_idx: usize) -> u64 {
+    HIT_ENTRY_BASE + entry_idx as u64
+}
+
+fn palette_hit_from_id(hit_id: Option<u64>) -> UiPaletteHit {
+    match hit_id {
+        Some(HIT_CLOSE) => UiPaletteHit::None,
+        Some(HIT_PANEL) => UiPaletteHit::Panel,
+        Some(id) if id >= HIT_ENTRY_BASE => UiPaletteHit::Entry((id - HIT_ENTRY_BASE) as usize),
+        _ => UiPaletteHit::Panel,
+    }
+}
 
 pub(super) struct PaletteRow {
     pub entry_idx: usize,
@@ -136,28 +153,17 @@ impl PaletteComponent {
         })
     }
 
-    pub(super) fn hit_test(&self, mx: f32, my: f32) -> UiPaletteHit {
-        if mx < self.layout.panel_x
-            || mx > self.layout.panel_x + self.layout.panel_w
-            || my < self.layout.panel_y
-            || my > self.layout.panel_y + self.layout.panel_h
-        {
-            return UiPaletteHit::None;
-        }
-        if my < self.layout.sep_y {
-            return UiPaletteHit::Panel;
-        }
-        let vis_row = ((my - self.layout.sep_y) / self.layout.row_h)
-            .floor()
-            .max(0.0) as usize;
-        if vis_row >= self.rows.len() {
-            return UiPaletteHit::Panel;
-        }
-        // Section headers are not clickable
-        if self.rows[vis_row].style == PaletteRowStyle::SectionHeader {
-            return UiPaletteHit::Panel;
-        }
-        UiPaletteHit::Entry(self.rows[vis_row].entry_idx)
+    pub(super) fn hit_test(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> UiPaletteHit {
+        let root = self.build_tree(cx);
+        let mut shaper = ciri_ui::NullShaper;
+        let out = ciri_ui::paint_tree_with_layout(
+            &root,
+            cx.theme,
+            [cx.viewport_w, cx.viewport_h],
+            1.0,
+            &mut shaper,
+        );
+        palette_hit_from_id(out.layout.hit_test(mx, my).and_then(|n| n.hit_id))
     }
 
     /// Map a click to a `UiAction`. Preserves the legacy semantics:
@@ -165,14 +171,14 @@ impl PaletteComponent {
     /// rows, on section headers, or on the input row) is a no-op, and
     /// clicking outside the panel closes the palette.
     pub(crate) fn click(&self, mx: f32, my: f32, _cx: &UiContext<'_>) -> Option<UiAction> {
-        match self.hit_test(mx, my) {
+        match self.hit_test(mx, my, _cx) {
             UiPaletteHit::Entry(entry_idx) => Some(UiAction::ExecutePaletteEntry(entry_idx)),
             UiPaletteHit::Panel => None,
             UiPaletteHit::None => Some(UiAction::ClosePalette),
         }
     }
 
-    pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+    fn build_tree(&self, cx: &UiContext<'_>) -> Div {
         let bg_color = cx.theme.surface;
         let accent = cx.theme.accent;
         let border_color = cx.theme.border_focus;
@@ -234,6 +240,9 @@ impl PaletteComponent {
                 .flex_row()
                 .items_center()
                 .child(div().w(text_pad).h(row_h));
+            if row.style != PaletteRowStyle::SectionHeader {
+                row_el = row_el.hit_id(entry_hit_id(row.entry_idx)).cursor_pointer();
+            }
             if let Some(color) = tint {
                 row_el = row_el.bg(color).rounded(tokens::SPACE_1);
             }
@@ -274,6 +283,7 @@ impl PaletteComponent {
             .rounded(tokens::SPACE_1)
             .border(tokens::BORDER_THIN, border_color)
             .shadow_lg()
+            .hit_id(HIT_PANEL)
             .child(input_row)
             .child(div().w_full().h(tokens::BORDER_THIN).bg(border_color));
 
@@ -352,8 +362,14 @@ impl PaletteComponent {
             .h(cx.viewport_h)
             .in_layer(Layer::Modal)
             .bg([0.0, 0.0, 0.0, tokens::ALPHA_BACKDROP])
+            .hit_id(HIT_CLOSE)
             .child(panel);
 
+        root
+    }
+
+    pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        let root = self.build_tree(cx);
         paint_ui_tree(&root, cx, scene);
     }
 }
@@ -456,5 +472,52 @@ mod tests {
             }),
             "selected row highlight should render in the SDF layer so the panel doesn't cover it"
         );
+    }
+
+    #[test]
+    fn hit_test_uses_ciri_ui_layout_snapshot() {
+        let cx = test_cx();
+        let comp = PaletteComponent {
+            layout: crate::app::CommandPaletteLayout {
+                panel_x: 100.0,
+                panel_y: 80.0,
+                panel_w: 240.0,
+                panel_h: 140.0,
+                row_h: 24.0,
+                visible_rows: 3,
+                text_x: 0.0,
+                text_y: 0.0,
+                sep_y: 120.0,
+            },
+            query: String::new(),
+            scroll_offset: 0,
+            rows: vec![
+                PaletteRow {
+                    entry_idx: 7,
+                    label: "Run".into(),
+                    is_selected: false,
+                    is_hovered: false,
+                    style: PaletteRowStyle::Action,
+                },
+                PaletteRow {
+                    entry_idx: 8,
+                    label: "Section".into(),
+                    is_selected: false,
+                    is_hovered: false,
+                    style: PaletteRowStyle::SectionHeader,
+                },
+            ],
+            total_entries: 2,
+            selectable_position: 1,
+            selectable_count: 1,
+            show_no_matches: false,
+            loading_text: None,
+            error_text: None,
+            remote_input_mode: false,
+        };
+
+        assert_eq!(comp.hit_test(110.0, 130.0, &cx), UiPaletteHit::Entry(7));
+        assert_eq!(comp.hit_test(110.0, 154.0, &cx), UiPaletteHit::Panel);
+        assert_eq!(comp.hit_test(10.0, 10.0, &cx), UiPaletteHit::None);
     }
 }

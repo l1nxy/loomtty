@@ -129,6 +129,11 @@ impl Element for Div {
         self.style.on_click.is_some()
             || self.style.on_hover.is_some()
             || self.style.cursor.is_some()
+            || self.style.hit_id.is_some()
+    }
+
+    fn hit_id(&self) -> Option<u64> {
+        self.style.hit_id
     }
 
     /// Fire stored click / hover handlers. Host code is responsible for

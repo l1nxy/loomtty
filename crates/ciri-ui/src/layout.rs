@@ -47,6 +47,7 @@ pub struct LayoutNode {
     pub bounds: [f32; 4],
     pub paint_order: usize,
     pub accepts_pointer_events: bool,
+    pub hit_id: Option<u64>,
 }
 
 impl LayoutNode {
@@ -360,6 +361,7 @@ fn paint_node(
         ],
         paint_order: current_order,
         accepts_pointer_events: el.accepts_pointer_events(),
+        hit_id: el.hit_id(),
     });
 
     let mut ctx = PaintCtx {
@@ -626,6 +628,23 @@ mod tests {
         );
         let hit = out.layout.hit_test(10.0, 10.0).expect("expected hit");
         assert_eq!(hit.layer, Layer::Modal);
+    }
+
+    #[test]
+    fn layout_hit_test_returns_host_hit_id() {
+        let root = div()
+            .w(100.0)
+            .h(40.0)
+            .child(div().w(100.0).h(40.0).hit_id(42).bg(ACCENT));
+        let out = paint_tree_with_layout(
+            &root,
+            &theme(),
+            [800.0, 600.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
+        let hit = out.layout.hit_test(10.0, 10.0).expect("expected hit");
+        assert_eq!(hit.hit_id, Some(42));
     }
 
     #[test]

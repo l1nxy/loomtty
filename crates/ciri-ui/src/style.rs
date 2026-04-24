@@ -139,6 +139,10 @@ pub struct Style {
 
     // ── Interaction ──
     pub cursor: Option<CursorStyle>,
+    /// Host-defined identifier emitted into layout snapshots for pointer
+    /// dispatch. `ciri-ui` treats it as opaque; applications map it to their
+    /// own action enum.
+    pub hit_id: Option<u64>,
     pub on_click: Option<ClickHandler>,
     pub on_hover: Option<HoverHandler>,
 }
@@ -198,6 +202,7 @@ impl Style {
         take_some!(transition_border_color);
         take_some!(transition_translate);
         take_some!(cursor);
+        take_some!(hit_id);
         take_some!(on_click);
         take_some!(on_hover);
     }
@@ -217,6 +222,7 @@ impl std::fmt::Debug for Style {
             .field("padding", &self.padding)
             .field("width", &self.width)
             .field("height", &self.height)
+            .field("hit_id", &self.hit_id)
             .field("has_on_click", &self.on_click.is_some())
             .finish()
     }

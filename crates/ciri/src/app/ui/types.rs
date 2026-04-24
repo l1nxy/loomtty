@@ -74,6 +74,7 @@ pub(super) enum UiTopBarHit {
     Background,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub(super) enum UiPaletteHit {
     Entry(usize),
     Panel,

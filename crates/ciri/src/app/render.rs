@@ -1839,25 +1839,29 @@ impl App {
             return;
         };
 
-        let baseline = ch * self.core.config.statusbar.text_baseline;
-        let atlas = self.glyph_cache.as_mut().unwrap();
-        let cx = render_ui_context(
-            &self.core.config,
-            &self.cached_resolved_theme,
-            self.ui_shaper.as_ref(),
+        let query = search.query.clone();
+        let matches_len = search.matches.len();
+        let current_match_idx = search.current_match_idx;
+        let pane_rect = *pane_rect;
+        self.paint_transient_ui_with_metrics(
             vw,
             vh,
             cw,
             ch,
-            baseline,
-        );
-        let mut scene = UiScene {
-            atlas,
+            sdf_rects,
             glyphs,
             color_glyphs,
-            sdf_rects,
-        };
-        super::ui::paint_search_bar(search, *pane_rect, &cx, &mut scene);
+            |cx, scene| {
+                super::ui::paint_search_bar(
+                    &query,
+                    matches_len,
+                    current_match_idx,
+                    pane_rect,
+                    cx,
+                    scene,
+                );
+            },
+        );
     }
 
     fn ime_input_anchor(
@@ -1939,25 +1943,18 @@ impl App {
             let atlas = self.glyph_cache.as_ref().unwrap();
             (atlas.cell_width, atlas.cell_height)
         };
-        let baseline = ch * self.core.config.statusbar.text_baseline;
-        let atlas = self.glyph_cache.as_mut().unwrap();
-        let mut scene = UiScene {
-            atlas,
-            glyphs,
-            color_glyphs,
-            sdf_rects,
-        };
-        let cx = render_ui_context(
-            &self.core.config,
-            &self.cached_resolved_theme,
-            self.ui_shaper.as_ref(),
+        self.paint_transient_ui_with_metrics(
             vw,
             vh,
             cw,
             ch,
-            baseline,
+            sdf_rects,
+            glyphs,
+            color_glyphs,
+            |cx, scene| {
+                super::ui::paint_bell_flash(&flashes, cx, scene);
+            },
         );
-        super::ui::paint_bell_flash(&flashes, &cx, &mut scene);
     }
 
     fn build_ime_preedit(
@@ -1979,13 +1976,38 @@ impl App {
         let Some((base_x, base_y)) = self.ime_input_anchor(tiles, cw, ch) else {
             return;
         };
-        let preedit_text = &self.core.ime.preedit_text;
+        let preedit_text = self.core.ime.preedit_text.clone();
         let cursor_cols = self
             .core
             .ime
             .preedit_cursor
-            .map(|cursor_pos| Self::preedit_cursor_display_cols(preedit_text, cursor_pos));
-        let baseline = ch * self.core.config.statusbar.text_baseline;
+            .map(|cursor_pos| Self::preedit_cursor_display_cols(&preedit_text, cursor_pos));
+        self.paint_transient_ui_with_metrics(
+            vw,
+            vh,
+            cw,
+            ch,
+            sdf_rects,
+            glyphs,
+            color_glyphs,
+            |cx, scene| {
+                super::ui::paint_ime_preedit(&preedit_text, base_x, base_y, cursor_cols, cx, scene);
+            },
+        );
+    }
+
+    fn paint_transient_ui_with_metrics(
+        &mut self,
+        vw: f32,
+        vh: f32,
+        cell_w: f32,
+        cell_h: f32,
+        sdf_rects: &mut Vec<SdfRect>,
+        glyphs: &mut Vec<GlyphInstance>,
+        color_glyphs: &mut Vec<GlyphInstance>,
+        paint: impl FnOnce(&UiContext<'_>, &mut UiScene<'_>),
+    ) {
+        let baseline = cell_h * self.core.config.statusbar.text_baseline;
         let atlas = self.glyph_cache.as_mut().unwrap();
         let mut scene = UiScene {
             atlas,
@@ -1999,11 +2021,11 @@ impl App {
             self.ui_shaper.as_ref(),
             vw,
             vh,
-            cw,
-            ch,
+            cell_w,
+            cell_h,
             baseline,
         );
-        super::ui::paint_ime_preedit(preedit_text, base_x, base_y, cursor_cols, &cx, &mut scene);
+        paint(&cx, &mut scene);
     }
 
     fn rgb_to_rgba(width: u32, height: u32, data: &[u8]) -> Option<Vec<u8>> {

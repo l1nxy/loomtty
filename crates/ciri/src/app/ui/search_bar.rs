@@ -2,11 +2,12 @@ use ciri_layout::geometry::Rect as GeoRect;
 use ciri_ui::{Layer, Styled, div, text};
 
 use super::types::{UiContext, UiScene};
-use crate::app::SearchState;
 use crate::app::ciri_ui_bridge::paint_ui_tree;
 
 pub(crate) fn paint_search_bar(
-    search: &SearchState,
+    query: &str,
+    matches_len: usize,
+    current_match_idx: usize,
     pane_rect: GeoRect,
     cx: &UiContext<'_>,
     scene: &mut UiScene<'_>,
@@ -18,20 +19,16 @@ pub(crate) fn paint_search_bar(
     let bar_x = pane_rect.x + border_w;
     let bar_w = pane_rect.w - border_w * 2.0;
 
-    let match_info = if search.matches.is_empty() {
-        if search.query.is_empty() {
+    let match_info = if matches_len == 0 {
+        if query.is_empty() {
             String::new()
         } else {
             " [no matches]".to_string()
         }
     } else {
-        format!(
-            " [{}/{}]",
-            search.current_match_idx + 1,
-            search.matches.len()
-        )
+        format!(" [{}/{}]", current_match_idx + 1, matches_len)
     };
-    let bar_text = format!(" Search: {}{}", search.query, match_info);
+    let bar_text = format!(" Search: {query}{match_info}");
 
     let root = div().w(cx.viewport_w).h(cx.viewport_h).child(
         div()

@@ -63,12 +63,27 @@ struct HostTextShaper<'a> {
     pub fallback_font_size_px: f32,
 }
 
-impl<'a> CiriUiTextShaper for HostTextShaper<'a> {
-    fn measure(&mut self, content: &str, font_size_px: f32) -> [f32; 2] {
-        let scale = match self.shaper.as_deref() {
+impl<'a> HostTextShaper<'a> {
+    fn scale_for(&self, font_size_px: f32) -> f32 {
+        // `ciri_ui::text()` defaults to theme.typography.md, but the old
+        // chrome path emitted UI glyphs at the shaper/cache native pixel size
+        // (`scale = 1.0`). Resampling the atlas from e.g. 16px down to 13px
+        // makes text visibly blurry on the command palette. Treat the theme
+        // default as "native UI font size"; explicit `.size(...)` overrides
+        // still scale relative to the loaded shaper size.
+        if (font_size_px - self.fallback_font_size_px).abs() < 0.01 {
+            return 1.0;
+        }
+        match self.shaper.as_deref() {
             Some(s) if s.has_face() => (font_size_px / s.pixel_size()).max(0.0),
             _ => (font_size_px / self.fallback_font_size_px.max(1e-3)).max(0.0),
-        };
+        }
+    }
+}
+
+impl<'a> CiriUiTextShaper for HostTextShaper<'a> {
+    fn measure(&mut self, content: &str, font_size_px: f32) -> [f32; 2] {
+        let scale = self.scale_for(font_size_px);
         let w = match self.shaper.as_deref_mut() {
             Some(s) if s.has_face() => s.measure(content),
             _ => {
@@ -112,10 +127,7 @@ impl<'a> CiriUiTextShaper for HostTextShaper<'a> {
         // well under a microsecond for realistic UIs.
         let mut alpha_buf = Vec::new();
         let mut color_buf = Vec::new();
-        let scale = match self.shaper.as_deref() {
-            Some(s) if s.has_face() => (font_size_px / s.pixel_size()).max(0.0),
-            _ => (font_size_px / self.fallback_font_size_px.max(1e-3)).max(0.0),
-        };
+        let scale = self.scale_for(font_size_px);
         let params = TextEmitParams {
             x_start: pos[0],
             y: pos[1],

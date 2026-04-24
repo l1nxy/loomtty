@@ -2,9 +2,13 @@ use ciri_layout::geometry::Rect as GeoRect;
 
 use super::tokens;
 use super::types::{UiContext, UiOverviewHit, UiScene};
-use crate::app::App;
 use crate::app::ciri_ui_bridge::paint_ui_tree;
-use ciri_ui::{Layer, Styled, div, text};
+use crate::app::App;
+use ciri_ui::{div, text, Div, Layer, Styled};
+
+const HIT_ACTION_BAR: u64 = 1;
+const HIT_CLOSE: u64 = 2;
+const HIT_FOCUS: u64 = 3;
 
 pub(crate) struct OverviewComponent {
     hovered_pane: Option<(usize, u64)>,
@@ -15,9 +19,7 @@ pub(crate) struct OverviewActionBarData {
     pub pane_w: f32,
     pub bar_y: f32,
     pub bar_h: f32,
-    pub close_x: f32,
     pub close_w: f32,
-    pub focus_x: f32,
     pub focus_w: f32,
 }
 
@@ -32,27 +34,48 @@ impl OverviewComponent {
         if !app.core.overview.active {
             return UiOverviewHit::None;
         }
-        // Check action bar on hovered pane first
-        if let Some((ws_idx, hovered_id)) = self.hovered_pane
-            && let Some(bar) = overview_action_bar_data(app, self.hovered_pane)
-            && mx >= bar.pane_x
-            && mx < bar.pane_x + bar.pane_w
-            && my >= bar.bar_y
-            && my < bar.bar_y + bar.bar_h
-        {
-            if mx >= bar.close_x && mx < bar.close_x + bar.close_w {
-                return UiOverviewHit::ClosePane(hovered_id);
+        // Check action bar on hovered pane first. Pane tiles themselves
+        // remain renderer/workspace-domain geometry; this overlay is a
+        // regular UI tree and should use the same layout snapshot as paint.
+        if let Some((ws_idx, hovered_id)) = self.hovered_pane {
+            if let Some(bar) = overview_action_bar_data(app, self.hovered_pane) {
+                if let Some(hit) =
+                    overview_action_bar_hit(&bar, ws_idx, hovered_id, mx, my, &app.ui_context())
+                {
+                    return hit;
+                }
             }
-            if mx >= bar.focus_x && mx < bar.focus_x + bar.focus_w {
-                return UiOverviewHit::FocusPane(ws_idx, hovered_id);
-            }
-            return UiOverviewHit::Background;
         }
         if let Some((ws_idx, pane_id)) = app.hit_test_overview(mx, my) {
             UiOverviewHit::Pane(ws_idx, pane_id)
         } else {
             UiOverviewHit::Background
         }
+    }
+}
+
+fn overview_action_bar_hit(
+    d: &OverviewActionBarData,
+    ws_idx: usize,
+    pane_id: u64,
+    mx: f32,
+    my: f32,
+    cx: &UiContext<'_>,
+) -> Option<UiOverviewHit> {
+    let root = overview_action_bar_tree(d, None, cx, true);
+    let mut shaper = ciri_ui::NullShaper;
+    let out = ciri_ui::paint_tree_with_layout(
+        &root,
+        cx.theme,
+        [cx.viewport_w, cx.viewport_h],
+        1.0,
+        &mut shaper,
+    );
+    match out.layout.hit_test(mx, my).and_then(|node| node.hit_id) {
+        Some(HIT_CLOSE) => Some(UiOverviewHit::ClosePane(pane_id)),
+        Some(HIT_FOCUS) => Some(UiOverviewHit::FocusPane(ws_idx, pane_id)),
+        Some(HIT_ACTION_BAR) => Some(UiOverviewHit::Background),
+        _ => None,
     }
 }
 
@@ -109,9 +132,7 @@ pub(crate) fn overview_action_bar_data(
             pane_w: tr.w,
             bar_y,
             bar_h,
-            close_x: pane_x,
             close_w: half_w,
-            focus_x: pane_x + half_w,
             focus_w: half_w,
         });
     }
@@ -125,6 +146,16 @@ pub(crate) fn paint_overview_action_bar(
     cx: &UiContext<'_>,
     scene: &mut UiScene<'_>,
 ) {
+    let root = overview_action_bar_tree(d, hover, cx, false);
+    paint_ui_tree(&root, cx, scene);
+}
+
+fn overview_action_bar_tree(
+    d: &OverviewActionBarData,
+    hover: Option<super::super::OverviewActionHover>,
+    cx: &UiContext<'_>,
+    with_hits: bool,
+) -> Div {
     let accent = cx.theme.accent;
     let red = cx.theme.error;
     let fg = cx.theme.on_surface;
@@ -150,6 +181,9 @@ pub(crate) fn paint_overview_action_bar(
     if close_hovered {
         close_button = close_button.bg(tokens::tint(red, tokens::ALPHA_PRIMARY_REST));
     }
+    if with_hits {
+        close_button = close_button.hit_id(HIT_CLOSE).cursor_pointer();
+    }
 
     let mut focus_button = div()
         .w((d.focus_w - 1.0).max(0.0))
@@ -161,17 +195,24 @@ pub(crate) fn paint_overview_action_bar(
     if focus_hovered {
         focus_button = focus_button.bg(tokens::tint(accent, tokens::ALPHA_SELECTED_BG + 0.10));
     }
+    if with_hits {
+        focus_button = focus_button.hit_id(HIT_FOCUS).cursor_pointer();
+    }
 
-    let root = div().w(cx.viewport_w).h(cx.viewport_h).child(
-        div()
-            .in_layer(Layer::Overlay)
-            .w(d.pane_w)
-            .h(d.bar_h)
-            .translate(d.pane_x, d.bar_y)
-            .flex_row()
-            .items_center()
-            .bg([0.0, 0.0, 0.0, tokens::ALPHA_PRIMARY_HOVER])
-            .child(close_button)
+    let mut bar = div()
+        .in_layer(Layer::Overlay)
+        .w(d.pane_w)
+        .h(d.bar_h)
+        .translate(d.pane_x, d.bar_y)
+        .flex_row()
+        .items_center()
+        .bg([0.0, 0.0, 0.0, tokens::ALPHA_PRIMARY_HOVER]);
+    if with_hits {
+        bar = bar.hit_id(HIT_ACTION_BAR);
+    }
+
+    div().w(cx.viewport_w).h(cx.viewport_h).child(
+        bar.child(close_button)
             .child(
                 div()
                     .w(1.0)
@@ -179,7 +220,54 @@ pub(crate) fn paint_overview_action_bar(
                     .bg(tokens::tint(fg, tokens::ALPHA_SEPARATOR * 0.6)),
             )
             .child(focus_button),
-    );
+    )
+}
 
-    paint_ui_tree(&root, cx, scene);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ciri_config::config::CiriConfig;
+
+    fn test_cx<'a>(config: &'a CiriConfig, theme: &'a ciri_ui::ResolvedTheme) -> UiContext<'a> {
+        UiContext {
+            config,
+            theme,
+            viewport_w: 400.0,
+            viewport_h: 240.0,
+            cell_w: 8.0,
+            cell_h: 16.0,
+            baseline: 12.0,
+            ui_line_h: 16.0,
+            ui_shaper: None,
+        }
+    }
+
+    #[test]
+    fn action_bar_hit_uses_ciri_ui_layout_snapshot() {
+        let config = CiriConfig::default();
+        let theme = ciri_ui::ResolvedTheme::default();
+        let cx = test_cx(&config, &theme);
+        let data = OverviewActionBarData {
+            pane_x: 40.0,
+            pane_w: 200.0,
+            bar_y: 100.0,
+            bar_h: 32.0,
+            close_w: 100.0,
+            focus_w: 100.0,
+        };
+
+        assert_eq!(
+            overview_action_bar_hit(&data, 2, 99, 50.0, 110.0, &cx),
+            Some(UiOverviewHit::ClosePane(99))
+        );
+        assert_eq!(
+            overview_action_bar_hit(&data, 2, 99, 150.0, 110.0, &cx),
+            Some(UiOverviewHit::FocusPane(2, 99))
+        );
+        assert_eq!(
+            overview_action_bar_hit(&data, 2, 99, 140.5, 110.0, &cx),
+            Some(UiOverviewHit::Background)
+        );
+        assert_eq!(overview_action_bar_hit(&data, 2, 99, 10.0, 10.0, &cx), None);
+    }
 }

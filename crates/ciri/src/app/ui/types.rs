@@ -97,6 +97,7 @@ pub(super) enum UiPasteDialogHit {
     None,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub(super) enum UiOverviewHit {
     Pane(usize, u64),
     ClosePane(u64),

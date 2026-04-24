@@ -1841,6 +1841,12 @@ impl App {
         let matches_len = search.matches.len();
         let current_match_idx = search.current_match_idx;
         let pane_rect = *pane_rect;
+        let component = super::ui::SearchBarComponent {
+            query,
+            matches_len,
+            current_match_idx,
+            pane_rect,
+        };
         self.paint_transient_ui_with_metrics(
             vw,
             vh,
@@ -1850,14 +1856,7 @@ impl App {
             glyphs,
             color_glyphs,
             |cx, scene| {
-                super::ui::paint_search_bar(
-                    &query,
-                    matches_len,
-                    current_match_idx,
-                    pane_rect,
-                    cx,
-                    scene,
-                );
+                component.paint(cx, scene);
             },
         );
     }
@@ -1941,6 +1940,7 @@ impl App {
             let atlas = self.glyph_cache.as_ref().unwrap();
             (atlas.cell_width, atlas.cell_height)
         };
+        let component = super::ui::BellFlashComponent { flashes };
         self.paint_transient_ui_with_metrics(
             vw,
             vh,
@@ -1950,7 +1950,7 @@ impl App {
             glyphs,
             color_glyphs,
             |cx, scene| {
-                super::ui::paint_bell_flash(&flashes, cx, scene);
+                component.paint(cx, scene);
             },
         );
     }
@@ -1980,6 +1980,12 @@ impl App {
             .ime
             .preedit_cursor
             .map(|cursor_pos| Self::preedit_cursor_display_cols(&preedit_text, cursor_pos));
+        let component = super::ui::ImePreeditComponent {
+            text: preedit_text,
+            base_x,
+            base_y,
+            cursor_cols,
+        };
         self.paint_transient_ui_with_metrics(
             vw,
             vh,
@@ -1989,7 +1995,7 @@ impl App {
             glyphs,
             color_glyphs,
             |cx, scene| {
-                super::ui::paint_ime_preedit(&preedit_text, base_x, base_y, cursor_cols, cx, scene);
+                component.paint(cx, scene);
             },
         );
     }

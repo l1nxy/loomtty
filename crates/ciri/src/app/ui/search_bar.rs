@@ -4,50 +4,52 @@ use ciri_ui::{Layer, Styled, div, text};
 use super::types::{UiContext, UiScene};
 use crate::app::ciri_ui_bridge::paint_ui_tree;
 
-pub(crate) fn paint_search_bar(
-    query: &str,
-    matches_len: usize,
-    current_match_idx: usize,
-    pane_rect: GeoRect,
-    cx: &UiContext<'_>,
-    scene: &mut UiScene<'_>,
-) {
-    let border_w = cx.config.appearance.border_width;
-    let padding = cx.config.appearance.padding;
-    let bar_height = cx.cell_h + 4.0;
-    let bar_y = pane_rect.y + pane_rect.h - border_w - bar_height;
-    let bar_x = pane_rect.x + border_w;
-    let bar_w = pane_rect.w - border_w * 2.0;
+pub(crate) struct SearchBarComponent {
+    pub(crate) query: String,
+    pub(crate) matches_len: usize,
+    pub(crate) current_match_idx: usize,
+    pub(crate) pane_rect: GeoRect,
+}
 
-    let match_info = if matches_len == 0 {
-        if query.is_empty() {
-            String::new()
+impl SearchBarComponent {
+    pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        let border_w = cx.config.appearance.border_width;
+        let padding = cx.config.appearance.padding;
+        let bar_height = cx.cell_h + 4.0;
+        let bar_y = self.pane_rect.y + self.pane_rect.h - border_w - bar_height;
+        let bar_x = self.pane_rect.x + border_w;
+        let bar_w = self.pane_rect.w - border_w * 2.0;
+
+        let match_info = if self.matches_len == 0 {
+            if self.query.is_empty() {
+                String::new()
+            } else {
+                " [no matches]".to_string()
+            }
         } else {
-            " [no matches]".to_string()
-        }
-    } else {
-        format!(" [{}/{}]", current_match_idx + 1, matches_len)
-    };
-    let bar_text = format!(" Search: {query}{match_info}");
+            format!(" [{}/{}]", self.current_match_idx + 1, self.matches_len)
+        };
+        let bar_text = format!(" Search: {}{}", self.query, match_info);
 
-    let root = div().w(cx.viewport_w).h(cx.viewport_h).child(
-        div()
-            .in_layer(Layer::Overlay)
-            .absolute()
-            .left(bar_x)
-            .top(bar_y)
-            .w(bar_w)
-            .h(bar_height)
-            .bg([0.15, 0.15, 0.2, 0.95])
-            .child(
-                div()
-                    .absolute()
-                    .left(padding)
-                    .top(2.0)
-                    .w((bar_w - padding * 2.0).max(0.0))
-                    .h(cx.cell_h)
-                    .child(text(bar_text).color([1.0, 1.0, 1.0, 1.0])),
-            ),
-    );
-    paint_ui_tree(&root, cx, scene);
+        let root = div().w(cx.viewport_w).h(cx.viewport_h).child(
+            div()
+                .in_layer(Layer::Overlay)
+                .absolute()
+                .left(bar_x)
+                .top(bar_y)
+                .w(bar_w)
+                .h(bar_height)
+                .bg([0.15, 0.15, 0.2, 0.95])
+                .child(
+                    div()
+                        .absolute()
+                        .left(padding)
+                        .top(2.0)
+                        .w((bar_w - padding * 2.0).max(0.0))
+                        .h(cx.cell_h)
+                        .child(text(bar_text).color([1.0, 1.0, 1.0, 1.0])),
+                ),
+        );
+        paint_ui_tree(&root, cx, scene);
+    }
 }

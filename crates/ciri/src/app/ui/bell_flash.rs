@@ -10,30 +10,32 @@ pub(crate) struct BellFlashRect {
     pub(crate) intensity: f32,
 }
 
-pub(crate) fn paint_bell_flash(
-    flashes: &[BellFlashRect],
-    cx: &UiContext<'_>,
-    scene: &mut UiScene<'_>,
-) {
-    if flashes.is_empty() {
-        return;
-    }
+pub(crate) struct BellFlashComponent {
+    pub(crate) flashes: Vec<BellFlashRect>,
+}
 
-    let mut root = div().w(cx.viewport_w).h(cx.viewport_h);
-    for flash in flashes {
-        let alpha = 0.15 * flash.intensity;
-        let rect = flash.rect;
-        root = root.child(
-            div()
-                .in_layer(Layer::Overlay)
-                .absolute()
-                .left(rect.x)
-                .top(rect.y)
-                .w(rect.w)
-                .h(rect.h)
-                .bg([1.0, 0.9, 0.5, alpha]),
-        );
-    }
+impl BellFlashComponent {
+    pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        if self.flashes.is_empty() {
+            return;
+        }
 
-    paint_ui_tree(&root, cx, scene);
+        let mut root = div().w(cx.viewport_w).h(cx.viewport_h);
+        for flash in &self.flashes {
+            let alpha = 0.15 * flash.intensity;
+            let rect = flash.rect;
+            root = root.child(
+                div()
+                    .in_layer(Layer::Overlay)
+                    .absolute()
+                    .left(rect.x)
+                    .top(rect.y)
+                    .w(rect.w)
+                    .h(rect.h)
+                    .bg([1.0, 0.9, 0.5, alpha]),
+            );
+        }
+
+        paint_ui_tree(&root, cx, scene);
+    }
 }

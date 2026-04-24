@@ -1,0 +1,271 @@
+use super::frame::{UiFrame, UiFrameHover};
+use super::types::{UiAction, UiHoverOutcome};
+use crate::app::App;
+use winit::window::CursorIcon;
+
+impl App {
+    pub(crate) fn dispatch_ui_click(&mut self, mx: f32, my: f32) -> bool {
+        let (action, consumed) = {
+            let cx = self.ui_context();
+            let frame = UiFrame::capture_current(self, &cx);
+            frame.click(self, mx, my, &cx)
+        };
+        if let Some(action) = action {
+            self.apply_ui_action(action);
+        }
+        consumed
+    }
+
+    /// Route a middle-mouse click. Currently the only middle-click handler
+    /// is tab close — browsers and most tab-bearing apps treat MMB on a
+    /// tab as "close this tab", so we mirror that. Modal overlays and the
+    /// overview deliberately don't react to middle-click: they're focus
+    /// surfaces where MMB has no meaning, and routing it there would swallow
+    /// the event when the user expects it to pass through to the underlying
+    /// tab strip (e.g. clicking through a dismissible tooltip).
+    pub(crate) fn dispatch_ui_middle_click(&mut self, mx: f32, my: f32) -> bool {
+        let (action, consumed) = {
+            let cx = self.ui_context();
+            let frame = UiFrame::capture_current(self, &cx);
+            frame.middle_click(mx, my, &cx)
+        };
+        if let Some(action) = action {
+            self.apply_ui_action(action);
+        }
+        consumed
+    }
+
+    pub(crate) fn apply_ui_action(&mut self, action: UiAction) {
+        match action {
+            UiAction::OpenSessionPalette => self.open_session_palette(),
+            UiAction::ToggleOverview => {
+                self.handle_action(ciri_input::action::Action::ToggleOverview);
+            }
+            UiAction::CycleWorkspace => {
+                let workspace_count = self.core.workspaces.workspaces.len();
+                if workspace_count > 0 {
+                    let next_idx =
+                        (self.core.workspaces.active_workspace_idx + 1) % workspace_count;
+                    self.core.workspaces.active_workspace_idx = next_idx;
+                    if let Some(&pane_id) = self.core.workspace_last_pane_ids.get(&next_idx)
+                        && self.focus_workspace_pane_local(next_idx, pane_id)
+                    {
+                        self.send(ciri_protocol::message::ClientMessage::FocusPane { pane_id });
+                    }
+                    self.animate_to_active();
+                    self.send(ciri_protocol::message::ClientMessage::SwitchWorkspace {
+                        workspace_idx: next_idx,
+                    });
+                }
+            }
+            UiAction::FocusPaneTab(pane_id) => {
+                let mut target: Option<(usize, usize, usize)> = None;
+                for (ws_idx, ws) in self.core.workspaces.workspaces.iter().enumerate() {
+                    for (col_idx, col) in ws.columns.iter().enumerate() {
+                        if col.contains_pane(pane_id) {
+                            let tile_idx = col
+                                .tiles
+                                .iter()
+                                .position(|t| t.pane_id == pane_id)
+                                .unwrap_or(0);
+                            target = Some((ws_idx, col_idx, tile_idx));
+                            break;
+                        }
+                    }
+                    if target.is_some() {
+                        break;
+                    }
+                }
+                if let Some((ws_idx, col_idx, tile_idx)) = target {
+                    self.core.workspaces.active_workspace_idx = ws_idx;
+                    let ws = self.core.workspaces.active_mut();
+                    ws.active_column_idx = col_idx;
+                    if col_idx < ws.columns.len() {
+                        ws.columns[col_idx].active_tile_idx =
+                            tile_idx.min(ws.columns[col_idx].tiles.len().saturating_sub(1));
+                    }
+                    self.remember_workspace_pane(ws_idx, pane_id);
+                    self.send(ciri_protocol::message::ClientMessage::FocusPane { pane_id });
+                    self.animate_to_active();
+                }
+            }
+            UiAction::ClosePaneTab(pane_id) => {
+                self.core.hovered_pane_tab = None;
+                self.send(ciri_protocol::message::ClientMessage::ClosePane { pane_id });
+            }
+            UiAction::ExecutePaletteEntry(entry_idx) => {
+                // SectionHeaders should not be clickable (hit_test returns Panel),
+                // but guard defensively.
+                let is_selectable = self
+                    .core
+                    .command_palette
+                    .as_ref()
+                    .and_then(|p| p.entries.get(entry_idx))
+                    .is_some_and(|e| e.kind.is_selectable());
+                if !is_selectable {
+                    return;
+                }
+                let keep_open = self
+                    .core
+                    .command_palette
+                    .as_ref()
+                    .and_then(|p| p.entries.get(entry_idx))
+                    .is_some_and(|e| {
+                        matches!(
+                            e.kind,
+                            super::super::PaletteEntryKind::RemoteHost { .. }
+                                | super::super::PaletteEntryKind::ConnectRemotePrompt
+                        )
+                    });
+                if let Some(palette) = &mut self.core.command_palette
+                    && let Some(pos) = palette.filtered.iter().position(|&idx| idx == entry_idx)
+                {
+                    palette.selected_idx = pos;
+                }
+                self.execute_palette_entry(entry_idx);
+                if !keep_open {
+                    self.core.command_palette = None;
+                }
+            }
+            UiAction::ClosePalette => self.core.command_palette = None,
+            UiAction::ExecuteContextMenuEntry(idx) => {
+                self.core.context_menu.hovered_index = Some(idx);
+                self.handle_context_menu_click();
+            }
+            UiAction::CloseContextMenu => self.core.context_menu.visible = false,
+            UiAction::ConfirmPaste => self.confirm_pending_paste(),
+            UiAction::CancelPaste => self.core.pending_paste = None,
+            UiAction::FocusOverviewPane(ws_idx, pane_id) => {
+                self.focus_overview_target(ws_idx, pane_id);
+            }
+            UiAction::CloseOverviewPane(pane_id) => {
+                self.core.overview.hovered_pane = None;
+                self.send(ciri_protocol::message::ClientMessage::ClosePane { pane_id });
+            }
+            UiAction::StartOverviewDrag => {
+                self.core.overview.dragging = true;
+                self.core.overview.drag_last_pos = self.last_mouse_pos;
+            }
+        }
+    }
+
+    pub(crate) fn dispatch_ui_hover(&mut self, mx: f32, my: f32) -> UiHoverOutcome {
+        let hover = {
+            let cx = self.ui_context();
+            let frame = UiFrame::capture_current(self, &cx);
+            frame.hover(self, mx, my, &cx)
+        };
+
+        match hover {
+            UiFrameHover::ContextMenu { hovered } => {
+                let prev = self.core.context_menu.hovered_index;
+                self.core.context_menu.hovered_index = hovered;
+                UiHoverOutcome {
+                    handled: true,
+                    cursor: if hovered.is_some() {
+                        CursorIcon::Pointer
+                    } else {
+                        CursorIcon::Default
+                    },
+                    needs_redraw: prev != hovered,
+                }
+            }
+            UiFrameHover::PasteDialog { button } => {
+                let prev = self
+                    .core
+                    .pending_paste
+                    .as_ref()
+                    .and_then(|p| p.hovered_button);
+                if let Some(pending) = &mut self.core.pending_paste {
+                    pending.hovered_button = button;
+                }
+                UiHoverOutcome {
+                    handled: true,
+                    cursor: if button.is_some() {
+                        CursorIcon::Pointer
+                    } else {
+                        CursorIcon::Default
+                    },
+                    needs_redraw: prev != button,
+                }
+            }
+            UiFrameHover::Palette { hovered, pointer } => {
+                let prev_hovered = self
+                    .core
+                    .command_palette
+                    .as_ref()
+                    .and_then(|p| p.hovered_idx);
+                if let Some(palette) = &mut self.core.command_palette {
+                    palette.hovered_idx = hovered;
+                }
+                UiHoverOutcome {
+                    handled: true,
+                    cursor: if pointer {
+                        CursorIcon::Pointer
+                    } else {
+                        CursorIcon::Default
+                    },
+                    needs_redraw: prev_hovered != hovered,
+                }
+            }
+            UiFrameHover::TopBar { region, tab } => {
+                let prev_region = self.core.hovered_top_bar_region;
+                let prev_tab = self.core.hovered_pane_tab;
+                self.core.hovered_top_bar_region = region;
+                self.core.hovered_pane_tab = tab;
+                UiHoverOutcome {
+                    handled: true,
+                    cursor: if region.is_some() || tab.is_some() {
+                        CursorIcon::Pointer
+                    } else {
+                        CursorIcon::Default
+                    },
+                    needs_redraw: prev_region != region || prev_tab != tab,
+                }
+            }
+            UiFrameHover::SideTab { tab } => {
+                let prev_tab = self.core.hovered_pane_tab;
+                self.core.hovered_pane_tab = tab;
+                UiHoverOutcome {
+                    handled: true,
+                    cursor: if tab.is_some() {
+                        CursorIcon::Pointer
+                    } else {
+                        CursorIcon::Default
+                    },
+                    needs_redraw: prev_tab != tab,
+                }
+            }
+            UiFrameHover::Overview {
+                target,
+                action_hover,
+            } => {
+                let had_top_bar_hover = self.core.hovered_top_bar_region.take().is_some()
+                    || self.core.hovered_pane_tab.take().is_some();
+                let prev = self.core.overview.hovered_pane;
+                let prev_action = self.core.overview_action_hover;
+                self.core.overview.hovered_pane = target;
+                self.core.overview_action_hover = action_hover;
+                UiHoverOutcome {
+                    handled: true,
+                    cursor: if target.is_some() {
+                        CursorIcon::Pointer
+                    } else {
+                        CursorIcon::Default
+                    },
+                    needs_redraw: had_top_bar_hover || prev != target || prev_action != action_hover,
+                }
+            }
+            UiFrameHover::None => {
+                let had_top_bar_hover = self.core.hovered_top_bar_region.take().is_some()
+                    || self.core.hovered_pane_tab.take().is_some();
+
+                UiHoverOutcome {
+                    handled: had_top_bar_hover,
+                    cursor: CursorIcon::Default,
+                    needs_redraw: had_top_bar_hover,
+                }
+            }
+        }
+    }
+}

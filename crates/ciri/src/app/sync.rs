@@ -182,7 +182,7 @@ impl App {
                         self.core.pane_grids.remove(&pane_id);
                         self.core.prediction.clear_pane(pane_id);
                         self.core.image_placements.remove(&pane_id);
-                        self.image_atlas_entries.clear();
+                        self.invalidate_pane_images(pane_id);
                         self.invalidate_pane_cache(pane_id);
                         needs_redraw = true;
                     }
@@ -285,7 +285,7 @@ impl App {
                     }
                     ServerEvent::Control(ServerMessage::ImageDeleted { pane_id }) => {
                         self.core.image_placements.remove(&pane_id);
-                        self.image_atlas_entries.clear();
+                        self.invalidate_pane_images(pane_id);
                         self.invalidate_pane_cache(pane_id);
                         needs_redraw = true;
                     }

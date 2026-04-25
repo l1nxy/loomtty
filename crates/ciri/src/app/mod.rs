@@ -1278,11 +1278,28 @@ impl App {
         }
     }
 
-    /// Invalidate all cached rendering state for a pane (view + glyph cache).
+    /// Invalidate cached rendering state for a pane (view + per-tile
+    /// glyph and background caches). Cheap enough to call on every
+    /// scroll / resize / selection change.
+    ///
+    /// Does NOT touch `image_atlas_entries` — those entries map atlas
+    /// slots that are still valid as long as the underlying image data
+    /// is. Dropping them on every routine invalidation would force
+    /// re-uploads on every scroll. Use [`invalidate_pane_images`] when
+    /// the pane or its images are actually being torn down.
     pub fn invalidate_pane_cache(&mut self, pane_id: u64) {
         self.cached_views.remove(&pane_id);
         self.cached_tile_glyphs.remove(&pane_id);
         self.cached_tile_backgrounds.remove(&pane_id);
+    }
+
+    /// Drop atlas entries for inline images owned by `pane_id`. Called
+    /// when a pane closes or its image set is invalidated upstream.
+    /// `image_atlas_entries` is keyed `(pane_id, image_id)` so this
+    /// only evicts entries for the targeted pane.
+    pub fn invalidate_pane_images(&mut self, pane_id: u64) {
+        self.image_atlas_entries
+            .retain(|(pid, _), _| *pid != pane_id);
     }
 
     pub fn clear_render_caches(&mut self) {

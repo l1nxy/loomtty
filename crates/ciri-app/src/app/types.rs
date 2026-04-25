@@ -171,7 +171,24 @@ impl CommandPaletteState {
 
 pub struct PaletteEntry {
     pub label: String,
+    /// Lowercase form of `label` cached at construction so the per-keystroke
+    /// fuzzy filter doesn't `to_lowercase()` every entry's label on every
+    /// edit. Always derived from `label`; constructors should use
+    /// [`PaletteEntry::new`] rather than building this directly.
+    pub lowercase_label: String,
     pub kind: PaletteEntryKind,
+}
+
+impl PaletteEntry {
+    pub fn new(label: impl Into<String>, kind: PaletteEntryKind) -> Self {
+        let label = label.into();
+        let lowercase_label = label.to_lowercase();
+        Self {
+            label,
+            lowercase_label,
+            kind,
+        }
+    }
 }
 
 #[derive(Clone)]

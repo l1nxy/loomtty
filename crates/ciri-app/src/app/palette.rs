@@ -141,33 +141,21 @@ impl AppModel {
     ///     RemoteHost entries
     ///   + Connect to New Host...
     fn build_session_palette_entries(&self, entries: &mut Vec<PaletteEntry>) {
-        entries.push(PaletteEntry {
-            label: "Sessions".to_string(),
-            kind: PaletteEntryKind::SectionHeader("Sessions".to_string()),
-        });
+        entries.push(PaletteEntry::new("Sessions".to_string(), PaletteEntryKind::SectionHeader("Sessions".to_string())));
         self.push_flat_session_entries(entries);
 
         // ── New Session ── (always available, inline at end of sessions)
-        entries.push(PaletteEntry {
-            label: "+ New Session".to_string(),
-            kind: PaletteEntryKind::Action(Action::NewSession),
-        });
+        entries.push(PaletteEntry::new("+ New Session".to_string(), PaletteEntryKind::Action(Action::NewSession)));
 
         // ── Remote Hosts ── (configured in config but not connected yet)
         let remote_host_entries = self.build_remote_host_entries(true);
         if !remote_host_entries.is_empty() {
-            entries.push(PaletteEntry {
-                label: "Remote Hosts".to_string(),
-                kind: PaletteEntryKind::SectionHeader("Remote Hosts".to_string()),
-            });
+            entries.push(PaletteEntry::new("Remote Hosts".to_string(), PaletteEntryKind::SectionHeader("Remote Hosts".to_string())));
             entries.extend(remote_host_entries);
         }
 
         // ── Connect to New Host... ── always last.
-        entries.push(PaletteEntry {
-            label: "+ Connect to New Host...".to_string(),
-            kind: PaletteEntryKind::ConnectRemotePrompt,
-        });
+        entries.push(PaletteEntry::new("+ Connect to New Host...".to_string(), PaletteEntryKind::ConnectRemotePrompt));
     }
 
     /// Shared flat session list: every session on every slot (current + bg),
@@ -186,24 +174,18 @@ impl AppModel {
                 } else {
                     "  "
                 };
-                entries.push(PaletteEntry {
-                    label: format!("{}{}  [{}]", marker, s.name, current_loc),
-                    kind: PaletteEntryKind::GoToSession {
+                entries.push(PaletteEntry::new(format!("{}{}  [{}]", marker, s.name, current_loc), PaletteEntryKind::GoToSession {
                         slot_id: active_slot.clone(),
                         session_name: s.name.clone(),
-                    },
-                });
+                    }));
             }
         } else {
             // No cache yet (palette opened before list arrived): show at least
             // the active session so the user sees *something* useful.
-            entries.push(PaletteEntry {
-                label: format!("● {}  [{}]", active_session, current_loc),
-                kind: PaletteEntryKind::GoToSession {
+            entries.push(PaletteEntry::new(format!("● {}  [{}]", active_session, current_loc), PaletteEntryKind::GoToSession {
                     slot_id: active_slot.clone(),
                     session_name: active_session.clone(),
-                },
-            });
+                }));
         }
 
         // Background slot sessions (sorted by slot id for stable order)
@@ -216,24 +198,18 @@ impl AppModel {
                 && !sessions.is_empty()
             {
                 for s in sessions {
-                    entries.push(PaletteEntry {
-                        label: format!("  {}  [{}]", s.name, loc),
-                        kind: PaletteEntryKind::GoToSession {
+                    entries.push(PaletteEntry::new(format!("  {}  [{}]", s.name, loc), PaletteEntryKind::GoToSession {
                             slot_id: slot_id.clone(),
                             session_name: s.name.clone(),
-                        },
-                    });
+                        }));
                 }
             } else {
                 // No cached sessions for this slot — at least offer a single
                 // entry for the slot's last-active session.
-                entries.push(PaletteEntry {
-                    label: format!("  {}  [{}]", slot.session_name, loc),
-                    kind: PaletteEntryKind::GoToSession {
+                entries.push(PaletteEntry::new(format!("  {}  [{}]", slot.session_name, loc), PaletteEntryKind::GoToSession {
                         slot_id: slot_id.clone(),
                         session_name: slot.session_name.clone(),
-                    },
-                });
+                    }));
             }
         }
     }
@@ -248,53 +224,32 @@ impl AppModel {
     ///     All action entries
     fn build_command_palette_entries(&self, entries: &mut Vec<PaletteEntry>) {
         // ── Sessions ── (flat, tagged by location; no separate Connections)
-        entries.push(PaletteEntry {
-            label: "Sessions".to_string(),
-            kind: PaletteEntryKind::SectionHeader("Sessions".to_string()),
-        });
+        entries.push(PaletteEntry::new("Sessions".to_string(), PaletteEntryKind::SectionHeader("Sessions".to_string())));
         self.push_flat_session_entries(entries);
 
         // Kill entries only for current-slot sessions (remote kill unsupported).
         for s in &self.cached_local_sessions {
-            entries.push(PaletteEntry {
-                label: format!("Kill: {}", s.name),
-                kind: PaletteEntryKind::KillSession(s.name.clone()),
-            });
+            entries.push(PaletteEntry::new(format!("Kill: {}", s.name), PaletteEntryKind::KillSession(s.name.clone())));
         }
 
-        entries.push(PaletteEntry {
-            label: "+ New Session".to_string(),
-            kind: PaletteEntryKind::Action(Action::NewSession),
-        });
+        entries.push(PaletteEntry::new("+ New Session".to_string(), PaletteEntryKind::Action(Action::NewSession)));
 
         // ── Remote Hosts ── (configured but not connected — still probe-based
         // from command palette, contrast with session palette which skips probe)
         let remote_host_entries = self.build_remote_host_entries(false);
         if !remote_host_entries.is_empty() {
-            entries.push(PaletteEntry {
-                label: "Remote Hosts".to_string(),
-                kind: PaletteEntryKind::SectionHeader("Remote Hosts".to_string()),
-            });
+            entries.push(PaletteEntry::new("Remote Hosts".to_string(), PaletteEntryKind::SectionHeader("Remote Hosts".to_string())));
             entries.extend(remote_host_entries);
         }
-        entries.push(PaletteEntry {
-            label: "+ Connect to New Host...".to_string(),
-            kind: PaletteEntryKind::ConnectRemotePrompt,
-        });
+        entries.push(PaletteEntry::new("+ Connect to New Host...".to_string(), PaletteEntryKind::ConnectRemotePrompt));
 
         // ── Actions ──
         let action_entries: Vec<PaletteEntry> = Action::all_with_labels()
             .into_iter()
-            .map(|(action, label)| PaletteEntry {
-                label: label.to_string(),
-                kind: PaletteEntryKind::Action(action),
-            })
+            .map(|(action, label)| PaletteEntry::new(label.to_string(), PaletteEntryKind::Action(action)))
             .collect();
         if !action_entries.is_empty() {
-            entries.push(PaletteEntry {
-                label: "Actions".to_string(),
-                kind: PaletteEntryKind::SectionHeader("Actions".to_string()),
-            });
+            entries.push(PaletteEntry::new("Actions".to_string(), PaletteEntryKind::SectionHeader("Actions".to_string())));
             entries.extend(action_entries);
         }
     }
@@ -326,38 +281,29 @@ impl AppModel {
                 match probe {
                     RemoteProbeResult::Sessions(sessions) => {
                         if sessions.is_empty() {
-                            entries.push(PaletteEntry {
-                                label: format!("{} > (new session)", rh.name),
-                                kind: PaletteEntryKind::RemoteSession {
+                            entries.push(PaletteEntry::new(format!("{} > (new session)", rh.name), PaletteEntryKind::RemoteSession {
                                     host: rh.host.clone(),
                                     port: rh.port,
                                     ssh_port: rh.ssh_port,
                                     session_name: "default".to_string(),
-                                },
-                            });
+                                }));
                         } else {
                             for s in sessions {
-                                entries.push(PaletteEntry {
-                                    label: format!("{} > {}", rh.name, s.name),
-                                    kind: PaletteEntryKind::RemoteSession {
+                                entries.push(PaletteEntry::new(format!("{} > {}", rh.name, s.name), PaletteEntryKind::RemoteSession {
                                         host: rh.host.clone(),
                                         port: rh.port,
                                         ssh_port: rh.ssh_port,
                                         session_name: s.name.clone(),
-                                    },
-                                });
+                                    }));
                             }
                         }
                     }
                     RemoteProbeResult::NoServer => {
-                        entries.push(PaletteEntry {
-                            label: format!("SSH: {} (no ciritty-server)", rh.name),
-                            kind: PaletteEntryKind::SshShell {
+                        entries.push(PaletteEntry::new(format!("SSH: {} (no ciritty-server)", rh.name), PaletteEntryKind::SshShell {
                                 name: rh.name.clone(),
                                 host: rh.host.clone(),
                                 ssh_port: rh.ssh_port,
-                            },
-                        });
+                            }));
                     }
                     RemoteProbeResult::Error(_) => {
                         // Error results are shown via palette.remote_error, not as entries
@@ -367,25 +313,19 @@ impl AppModel {
             }
 
             if sessions_only {
-                entries.push(PaletteEntry {
-                    label: format!("Connect: {} ({}) [remote]", rh.name, rh.host),
-                    kind: PaletteEntryKind::DirectConnect {
+                entries.push(PaletteEntry::new(format!("Connect: {} ({}) [remote]", rh.name, rh.host), PaletteEntryKind::DirectConnect {
                         name: rh.name.clone(),
                         host: rh.host.clone(),
                         port: rh.port,
                         ssh_port: rh.ssh_port,
-                    },
-                });
+                    }));
             } else {
-                entries.push(PaletteEntry {
-                    label: format!("Remote: {} ({})", rh.name, rh.host),
-                    kind: PaletteEntryKind::RemoteHost {
+                entries.push(PaletteEntry::new(format!("Remote: {} ({})", rh.name, rh.host), PaletteEntryKind::RemoteHost {
                         name: rh.name.clone(),
                         host: rh.host.clone(),
                         port: rh.port,
                         ssh_port: rh.ssh_port,
-                    },
-                });
+                    }));
             }
         }
 
@@ -426,15 +366,15 @@ impl AppModel {
             } else {
                 format!("Recent: {} ({}:{})", rh.host, rh.host, rh.port)
             };
-            entries.push(PaletteEntry {
+            entries.push(PaletteEntry::new(
                 label,
-                kind: PaletteEntryKind::DirectConnect {
+                PaletteEntryKind::DirectConnect {
                     name: rh.host.clone(),
                     host: rh.host.clone(),
                     port: rh.port,
                     ssh_port: rh.ssh_port,
                 },
-            });
+            ));
         }
 
         entries
@@ -488,7 +428,7 @@ impl AppModel {
             // Two-pass filter: match selectable entries, then include their headers
             let mut matched = vec![false; palette.entries.len()];
             for (i, e) in palette.entries.iter().enumerate() {
-                if e.kind.is_selectable() && fuzzy_match(&e.label.to_lowercase(), &needle) {
+                if e.kind.is_selectable() && fuzzy_match(&e.lowercase_label, &needle) {
                     matched[i] = true;
                 }
             }

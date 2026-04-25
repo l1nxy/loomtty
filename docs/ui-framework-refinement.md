@@ -257,17 +257,31 @@ method), so every element implementor must update. There are five today
 (Div, Text, plus three transient widgets that bypass the trait); not
 expensive.
 
-### Phase 2 — `IntoElement` + `&'static str` element + `SharedString`
+### Phase 2 — `IntoElement` + `SharedString`  [DONE]
 
-Add the `IntoElement` trait, `ParentElement` trait, `impl Element for
-&'static str`, `impl Element for SharedString` (where `SharedString` is
-a SmolStr-backed wrapper). Replace `Div::child<E: Element>` with
-`ParentElement::child(impl IntoElement)`. Replace `Text::content: String`
-with `SharedString`.
+Shipped:
 
-Concrete payoff: `div().child("Copy")` works directly; static labels are
-zero-alloc; short dynamic labels (≤22 bytes) are inline. Many call
-sites simplify mechanically.
+- `SharedString` newtype over `SmolStr` (`crates/ciri-ui/src/shared_string.rs`).
+  Inlines short strings (≤22 bytes), `Arc<str>`-shares longer ones.
+  `new_static(&'static str)` is `const` for zero-alloc literals.
+- `Text::content` and `NodeContext::Text { content }` switched from
+  `String` to `SharedString`. The per-frame `taffy_context()` clone is
+  no longer a `String::clone()` — it is now a SmolStr ref-count bump
+  (or stack memcpy for inline strings).
+- `IntoElement` trait in `ciri-ui::element`. Identity impls for `Div`
+  and `Text`. String coercions: `&str`, `String`, `SharedString` all
+  convert to `Text`.
+- `Div::child(impl IntoElement)` replaces `Div::child<E: Element>`.
+  Existing call sites that pass a built element keep compiling.
+
+Diverged from the original sketch:
+
+- `impl Element for &'static str` was not added. ciri-ui's `Element`
+  trait carries fields specific to chrome text (color override, font
+  size override, layer-aware paint inheritance) that don't make sense
+  on a bare `&'static str`. Going through `Text` keeps the trait small
+  and matches GPUI's `IntoElement<Element = SharedString>` pattern
+  rather than its `impl Element for &'static str` direct path.
 
 ### Phase 3 — `Refineable` + declarative state styles
 
@@ -335,13 +349,13 @@ remaining heap pressure source.
 This is largely independent and can be slotted in at any point after
 Phase 2 (which gives us the dynamic-typed `AnyElement` boundary).
 
-### Phase 8 — `Children: SmallVec<[..; 2]>`
+### Phase 8 — `Children: SmallVec<[..; 2]>`  [DONE]
 
-Trivial change to `Div`. Most divs have ≤2 children; switching the
-backing storage to `SmallVec` eliminates the children-Vec heap
-allocation for them.
-
-Independent. Can ship any time.
+`Div::children` now stores up to 2 children inline via
+`SmallVec<[Box<dyn Element>; 2]>`. Containers with ≤2 children pay no
+children-vec heap allocation; >2-child containers spill transparently.
+`Element::children() -> &[Box<dyn Element>]` still returns a slice via
+`SmallVec`'s `Deref`, so no caller needed updating.
 
 ### Phase 9 — `anchored` + `deferred`, retire fixed `Layer` enum
 

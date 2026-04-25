@@ -876,6 +876,7 @@ dependencies = [
  "ciri-motion",
  "ciri-render",
  "log",
+ "smallvec",
  "taffy",
 ]
 

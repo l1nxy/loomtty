@@ -18,6 +18,7 @@ use crate::layout::to_taffy_style;
 use crate::scene::SdfRect;
 use crate::style::{Shadow, Style};
 use crate::styled::Styled;
+use smallvec::SmallVec;
 
 /// Free constructor: `div()` reads better than `Div::new()` in chains.
 pub fn div() -> Div {
@@ -25,9 +26,15 @@ pub fn div() -> Div {
 }
 
 /// Styled container. Children are painted in insertion order.
+///
+/// Backed by a `SmallVec` with inline storage for the first 2 children:
+/// most divs in chrome are leaves (1 text child) or wrapper rows (2
+/// children — icon + label, prefix + value, etc.), so the children
+/// vector lives entirely on the stack and never touches the allocator.
+/// Containers with >2 children spill to a heap Vec transparently.
 pub struct Div {
     style: Style,
-    children: Vec<Box<dyn Element>>,
+    children: SmallVec<[Box<dyn Element>; 2]>,
     layer_override: Option<Layer>,
 }
 
@@ -41,7 +48,7 @@ impl Div {
     pub fn new() -> Self {
         Self {
             style: Style::new(),
-            children: Vec::new(),
+            children: SmallVec::new(),
             layer_override: None,
         }
     }

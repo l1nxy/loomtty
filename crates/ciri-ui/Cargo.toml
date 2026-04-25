@@ -8,4 +8,5 @@ ciri-motion = { workspace = true }
 ciri-config = { workspace = true }
 ciri-render = { workspace = true }
 log = { workspace = true }
+smallvec = { workspace = true }
 taffy = { workspace = true }

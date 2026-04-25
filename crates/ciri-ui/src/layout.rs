@@ -18,7 +18,7 @@
 
 use taffy::TraversePartialTree;
 
-use crate::element::{Element, Layer, PaintCtx};
+use crate::element::{Element, ElementStates, Layer, PaintCtx};
 use crate::scene::Scene;
 use crate::shaper::TextShaper;
 use crate::style::{
@@ -163,6 +163,7 @@ pub fn paint_tree_into(
         &mut layout,
         &mut tree,
         None,
+        None,
     );
 }
 
@@ -187,6 +188,7 @@ pub fn paint_tree_into_with_layout(
         layout,
         &mut tree,
         None,
+        None,
     );
 }
 
@@ -210,6 +212,7 @@ pub fn paint_tree_into_with(
     scene: &mut Scene,
     tree: &mut taffy::TaffyTree<NodeContext>,
     mouse_pos: Option<[f32; 2]>,
+    states: Option<&mut ElementStates>,
 ) {
     let mut layout = LayoutSnapshot::new();
     paint_tree_into_retained(
@@ -222,6 +225,7 @@ pub fn paint_tree_into_with(
         &mut layout,
         tree,
         mouse_pos,
+        states,
     );
 }
 
@@ -316,6 +320,7 @@ pub fn paint_tree_into_retained(
     layout_snapshot: &mut LayoutSnapshot,
     tree: &mut taffy::TaffyTree<NodeContext>,
     mouse_pos: Option<[f32; 2]>,
+    states: Option<&mut ElementStates>,
 ) {
     layout_snapshot.clear();
     tree.clear();
@@ -409,6 +414,7 @@ pub fn paint_tree_into_retained(
         scene,
         layout_snapshot,
         &mut paint_order,
+        states,
     );
 }
 
@@ -447,6 +453,7 @@ fn paint_node(
     scene: &mut Scene,
     layout_snapshot: &mut LayoutSnapshot,
     paint_order: &mut usize,
+    states: Option<&mut ElementStates>,
 ) {
     let layout = match tree.layout(node) {
         Ok(l) => l,
@@ -485,19 +492,29 @@ fn paint_node(
         hit_id: el.hit_id(),
     });
 
-    let mut ctx = PaintCtx {
-        theme,
-        bounds: [paint_x, paint_y, layout.size.width, layout.size.height],
-        scene,
-        text_shaper,
-        scale,
-        element_id: None,
-        inherited_opacity,
-        inherited_text_color,
-        layer: effective_layer,
-        hovered_hit_id,
-    };
-    el.paint(&mut ctx);
+    // Reborrow `Option<&mut ElementStates>` so we keep ownership for
+    // child recursion below — the reborrow gives `paint` mutable access
+    // for this call, then `states` is still live for the children loop.
+    let mut states_owner = states;
+    {
+        let states_for_paint: Option<&mut ElementStates> =
+            states_owner.as_mut().map(|s| &mut **s);
+        let mut ctx = PaintCtx {
+            theme,
+            bounds: [paint_x, paint_y, layout.size.width, layout.size.height],
+            scene,
+            text_shaper,
+            scale,
+            element_id: el.id(),
+            inherited_opacity,
+            inherited_text_color,
+            layer: effective_layer,
+            hovered_hit_id,
+            states: states_for_paint,
+        };
+        el.paint(&mut ctx);
+    }
+    let mut states = states_owner;
 
     // Compose self's own transforms into the inheritance passed down.
     // Taffy's parent offset stays unaffected (translate is paint-time, not
@@ -526,6 +543,8 @@ fn paint_node(
         "Taffy child count disagrees with Element::children()",
     );
     for (child_node, child_el) in taffy_children.iter().zip(children.iter()) {
+        let states_for_child: Option<&mut ElementStates> =
+            states.as_mut().map(|s| &mut **s);
         paint_node(
             tree,
             *child_node,
@@ -542,6 +561,7 @@ fn paint_node(
             scene,
             layout_snapshot,
             paint_order,
+            states_for_child,
         );
     }
 }

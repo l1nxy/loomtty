@@ -118,6 +118,12 @@ pub struct PaintCtx<'a> {
     /// Elements check `cx.is_hovered(self_hit_id)` to apply hover
     /// styles; see [`PaintCtx::is_hovered`].
     pub hovered_hit_id: Option<u64>,
+    /// Cross-frame state map. Elements that opt into persistence
+    /// (typically by overriding [`Element::id`]) call
+    /// `cx.states.use_state::<S>(id)` to borrow their slot. `None`
+    /// when the host hasn't published one (legacy paint paths,
+    /// minimal tests).
+    pub states: Option<&'a mut ElementStates>,
 }
 
 impl<'a> PaintCtx<'a> {
@@ -186,6 +192,67 @@ pub trait IntoElement {
     fn into_element(self) -> Self::Element;
 }
 
+/// Cross-frame persistent state map keyed by `(ElementId, TypeId)`.
+///
+/// Elements that need state across paints (scroll offsets, virtual
+/// list anchors, animation timers) call
+/// [`ElementStates::use_state`] in their paint method passing their
+/// own [`ElementId`] and the state type. The first call in a frame
+/// inserts a `Default` instance; subsequent calls in subsequent
+/// frames return the same instance for mutation.
+///
+/// ciri-ui does **not** GC unused entries automatically — callers
+/// that recycle ids (palette opens/closes) should drop entries
+/// explicitly via [`ElementStates::clear_id`] when an element goes
+/// away. For the single-window chrome use case the map is bounded
+/// and stays small.
+pub struct ElementStates {
+    map: std::collections::HashMap<(ElementId, std::any::TypeId), Box<dyn std::any::Any>>,
+}
+
+impl Default for ElementStates {
+    fn default() -> Self {
+        Self {
+            map: std::collections::HashMap::new(),
+        }
+    }
+}
+
+impl ElementStates {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Borrow (creating with `Default` if missing) the state slot for
+    /// `(id, S)`. Same call across frames returns the same `&mut S`,
+    /// so elements can persist scroll offsets, hover timers, etc.
+    pub fn use_state<S: 'static + Default>(&mut self, id: ElementId) -> &mut S {
+        let key = (id, std::any::TypeId::of::<S>());
+        let slot = self
+            .map
+            .entry(key)
+            .or_insert_with(|| Box::new(S::default()) as Box<dyn std::any::Any>);
+        slot.downcast_mut::<S>()
+            .expect("element_states slot type mismatch — same id reused with different type")
+    }
+
+    /// Drop every state slot belonging to `id`, regardless of state
+    /// type. Call from the host when an element with this id is
+    /// guaranteed not to render any more (component closes, modal
+    /// dismissed, etc.).
+    pub fn clear_id(&mut self, id: ElementId) {
+        self.map.retain(|(eid, _), _| *eid != id);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+}
+
 /// Type-erased, arena-allocated element. Returned by
 /// [`AnyElement::new`] and stored as a `Div`'s child slot. Acts like a
 /// `Box<dyn Element>` for the rest of the framework — derefs to
@@ -241,6 +308,15 @@ pub trait Element: 'static {
     /// for an exact `[w, h]`. Returning `None` (the default) makes
     /// Taffy honour `taffy_style().size`.
     fn taffy_context(&self) -> Option<crate::layout::NodeContext> {
+        None
+    }
+
+    /// Optional stable identifier for this element. When set, it scopes
+    /// the element's slot in [`ElementStates`] so persistent state
+    /// (scroll offset, hover timer, virtual list anchor) survives across
+    /// frames. The walker exposes the id via `cx.element_id` during
+    /// paint. Default: `None` — most chrome elements are stateless.
+    fn id(&self) -> Option<ElementId> {
         None
     }
 
@@ -318,6 +394,56 @@ mod tests {
             "dummy"
         }
         fn paint(&self, _cx: &mut PaintCtx<'_>) {}
+    }
+
+    #[test]
+    fn element_states_use_state_creates_default_then_persists() {
+        #[derive(Default)]
+        struct S {
+            counter: u32,
+        }
+        let mut states = ElementStates::new();
+        let id = ElementId(42);
+        {
+            let s = states.use_state::<S>(id);
+            assert_eq!(s.counter, 0);
+            s.counter = 5;
+        }
+        let s = states.use_state::<S>(id);
+        assert_eq!(s.counter, 5, "state should persist across calls with same id");
+    }
+
+    #[test]
+    fn element_states_isolates_by_type() {
+        #[derive(Default)]
+        struct A {
+            v: u32,
+        }
+        #[derive(Default)]
+        struct B {
+            v: u32,
+        }
+        let mut states = ElementStates::new();
+        states.use_state::<A>(ElementId(1)).v = 7;
+        states.use_state::<B>(ElementId(1)).v = 11;
+        assert_eq!(states.use_state::<A>(ElementId(1)).v, 7);
+        assert_eq!(states.use_state::<B>(ElementId(1)).v, 11);
+    }
+
+    #[test]
+    fn element_states_clear_id_drops_only_that_id() {
+        #[derive(Default)]
+        struct S {
+            v: u32,
+        }
+        let mut states = ElementStates::new();
+        states.use_state::<S>(ElementId(1)).v = 1;
+        states.use_state::<S>(ElementId(2)).v = 2;
+        states.clear_id(ElementId(1));
+        // Id 1's slot is dropped → next use_state re-creates with default.
+        assert_eq!(states.use_state::<S>(ElementId(1)).v, 0);
+        // Id 2's slot is intact.
+        assert_eq!(states.use_state::<S>(ElementId(2)).v, 2);
     }
 
     #[test]

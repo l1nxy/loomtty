@@ -236,6 +236,14 @@ pub(crate) struct App {
     /// `ElementArenaScope` around each paint call so `AnyElement::new`
     /// inside `Div::child` lands here. See `ciri_ui::arena`.
     pub ui_arena: std::cell::RefCell<ciri_ui::Arena>,
+
+    /// Cross-frame state for stateful UI elements (scroll offsets,
+    /// virtual list anchors, hover timers). Keyed by
+    /// `(ElementId, TypeId)` and queried via `cx.states.use_state(id)`
+    /// inside `Element::paint`. Survives across frames as long as the
+    /// element's id remains stable; entries can be flushed via
+    /// `ElementStates::clear_id` when an element is permanently gone.
+    pub ui_states: std::cell::RefCell<ciri_ui::ElementStates>,
 }
 
 impl App {
@@ -476,6 +484,7 @@ impl App {
             // (~150 elements × ~100 bytes each fits in well under that),
             // grows automatically if a frame outsizes it.
             ui_arena: std::cell::RefCell::new(ciri_ui::Arena::new(256 * 1024)),
+            ui_states: std::cell::RefCell::new(ciri_ui::ElementStates::new()),
         }
     }
 

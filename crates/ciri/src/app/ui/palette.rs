@@ -417,6 +417,7 @@ mod tests {
             ui_shaper: None,
             taffy_tree: None,
             mouse_pos: None,
+            element_states: None,
         }
     }
 

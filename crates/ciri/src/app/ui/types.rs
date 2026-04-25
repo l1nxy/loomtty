@@ -127,6 +127,11 @@ pub(crate) struct UiContext<'a> {
     /// when the cursor has left the window or the host hasn't reported
     /// a position yet.
     pub mouse_pos: Option<[f32; 2]>,
+    /// Cross-frame element-state map (scroll offsets, virtual list
+    /// anchors, etc.). Borrowed from `App.ui_states`; the adapter
+    /// reborrows during paint so elements can call
+    /// `cx.states.use_state::<S>(id)` without a 1-frame lag.
+    pub element_states: Option<&'a RefCell<ciri_ui::ElementStates>>,
 }
 
 pub(crate) fn ui_context_from_metrics<'a>(
@@ -135,6 +140,7 @@ pub(crate) fn ui_context_from_metrics<'a>(
     ui_shaper: Option<&'a RefCell<UiTextShaper>>,
     taffy_tree: Option<&'a RefCell<UiTaffyTree>>,
     mouse_pos: Option<[f32; 2]>,
+    element_states: Option<&'a RefCell<ciri_ui::ElementStates>>,
     viewport_w: f32,
     viewport_h: f32,
     cell_w: f32,
@@ -155,6 +161,7 @@ pub(crate) fn ui_context_from_metrics<'a>(
         ui_shaper,
         taffy_tree,
         mouse_pos,
+        element_states,
     }
 }
 
@@ -177,6 +184,7 @@ pub(crate) fn test_ui_context<'a>(
         ui_shaper: None,
         taffy_tree: None,
         mouse_pos: None,
+        element_states: None,
     }
 }
 

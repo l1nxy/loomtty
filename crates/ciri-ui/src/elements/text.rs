@@ -178,6 +178,7 @@ mod tests {
             inherited_text_color: None,
             layer: Layer::Chrome,
             hovered_hit_id: None,
+            states: None,
         }
     }
 

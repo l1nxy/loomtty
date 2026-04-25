@@ -192,6 +192,12 @@ pub(crate) fn paint_element_tree(root: &impl Element, cx: &UiContext<'_>, scene:
     let ui_scene = if let Some(tree_cell) = cx.taffy_tree {
         let mut tree = tree_cell.borrow_mut();
         let mut ui_scene = ciri_ui::Scene::new();
+        // Reborrow `element_states` for the duration of this paint
+        // call. RefCell::borrow_mut would conflict with later
+        // re-entries, so the borrow is scoped to just the paint walk.
+        let mut states_borrow = cx.element_states.map(|c| c.borrow_mut());
+        let states_for_paint: Option<&mut ciri_ui::ElementStates> =
+            states_borrow.as_deref_mut();
         ciri_ui::paint_tree_into_with(
             root,
             cx.theme,
@@ -201,6 +207,7 @@ pub(crate) fn paint_element_tree(root: &impl Element, cx: &UiContext<'_>, scene:
             &mut ui_scene,
             &mut tree,
             cx.mouse_pos,
+            states_for_paint,
         );
         ui_scene
     } else {

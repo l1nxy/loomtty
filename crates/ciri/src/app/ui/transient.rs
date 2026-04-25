@@ -301,6 +301,7 @@ impl App {
             self.ui_shaper.as_ref(),
             Some(&self.ui_taffy_tree),
             self.last_mouse_pos.map(|(x, y)| [x, y]),
+            Some(&self.ui_states),
             vw,
             vh,
             cell_w,

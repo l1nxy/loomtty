@@ -299,34 +299,13 @@ impl App {
                 }
             }
             Action::PaletteUp => {
-                if let Some(palette) = &mut self.core.command_palette
-                    && !palette.filtered.is_empty()
-                {
-                    let len = palette.filtered.len();
-                    let mut idx = palette.selected_idx;
-                    for _ in 0..len {
-                        idx = if idx == 0 { len - 1 } else { idx - 1 };
-                        if palette.entries[palette.filtered[idx]].kind.is_selectable() {
-                            palette.selected_idx = idx;
-                            break;
-                        }
-                    }
-                    // If no selectable entry found, selected_idx stays unchanged
+                if let Some(palette) = &mut self.core.command_palette {
+                    palette.move_selection(-1, true);
                 }
             }
             Action::PaletteDown => {
-                if let Some(palette) = &mut self.core.command_palette
-                    && !palette.filtered.is_empty()
-                {
-                    let len = palette.filtered.len();
-                    let mut idx = palette.selected_idx;
-                    for _ in 0..len {
-                        idx = (idx + 1) % len;
-                        if palette.entries[palette.filtered[idx]].kind.is_selectable() {
-                            palette.selected_idx = idx;
-                            break;
-                        }
-                    }
+                if let Some(palette) = &mut self.core.command_palette {
+                    palette.move_selection(1, true);
                 }
             }
             Action::PaletteConfirm => {

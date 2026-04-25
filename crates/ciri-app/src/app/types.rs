@@ -105,6 +105,70 @@ pub struct CommandPaletteState {
     pub remote_input_mode: bool,
 }
 
+impl CommandPaletteState {
+    /// Move `selected_idx` by `delta` filtered entries, skipping over
+    /// non-selectable items (`SectionHeader`s). Positive `delta` moves
+    /// down, negative moves up. `wrap` controls the boundary behavior:
+    /// keyboard navigation passes `true` (Up at the top wraps to the
+    /// bottom); mouse-wheel scrolling passes `false` (clamps).
+    ///
+    /// Honors the full magnitude of `delta`: a wheel event reporting
+    /// 3 lines moves three selectable entries, not just one. Each unit
+    /// step independently skips past `SectionHeader` rows; if a step
+    /// can't find any selectable entry within `filtered.len()` skip
+    /// iterations the loop bails and `selected_idx` keeps the last
+    /// successful position.
+    pub fn move_selection(&mut self, delta: i32, wrap: bool) {
+        if self.filtered.is_empty() || delta == 0 {
+            return;
+        }
+        let len = self.filtered.len();
+        let dir: isize = if delta > 0 { 1 } else { -1 };
+        let steps = (delta.unsigned_abs() as usize).min(len);
+        for _ in 0..steps {
+            if !self.advance_one_selectable(dir, wrap) {
+                // No selectable position reachable in the requested
+                // direction (e.g. clamped at boundary with all
+                // remaining entries non-selectable). Stop early.
+                return;
+            }
+        }
+    }
+
+    /// Advance `selected_idx` by exactly one selectable entry in the
+    /// direction `dir` (`+1` or `-1`), respecting `wrap`. Returns
+    /// `true` if a new position was committed, `false` if no
+    /// reachable position is selectable.
+    fn advance_one_selectable(&mut self, dir: isize, wrap: bool) -> bool {
+        let len = self.filtered.len();
+        let mut idx = self.selected_idx;
+        for _ in 0..len {
+            let next = idx as isize + dir;
+            let next_idx = if next < 0 {
+                if wrap {
+                    len - 1
+                } else {
+                    return false;
+                }
+            } else if next as usize >= len {
+                if wrap {
+                    0
+                } else {
+                    return false;
+                }
+            } else {
+                next as usize
+            };
+            idx = next_idx;
+            if self.entries[self.filtered[idx]].kind.is_selectable() {
+                self.selected_idx = idx;
+                return true;
+            }
+        }
+        false
+    }
+}
+
 pub struct PaletteEntry {
     pub label: String,
     pub kind: PaletteEntryKind,

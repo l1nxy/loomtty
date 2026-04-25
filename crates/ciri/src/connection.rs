@@ -61,14 +61,22 @@ fn classify_disconnect(
 fn classify_ssh_stderr(tail: &str) -> Option<DisconnectReason> {
     let lower = tail.to_ascii_lowercase();
     // Keep a short human summary rather than the whole ring buffer.
-    let summary = tail.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or(tail).trim().to_string();
+    let summary = tail
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or(tail)
+        .trim()
+        .to_string();
     if lower.contains("could not resolve hostname") || lower.contains("name or service not known") {
         return Some(DisconnectReason::DnsFailure(summary));
     }
     if lower.contains("permission denied") {
         return Some(DisconnectReason::PermissionDenied(summary));
     }
-    if lower.contains("host key verification failed") || lower.contains("remote host identification has changed") {
+    if lower.contains("host key verification failed")
+        || lower.contains("remote host identification has changed")
+    {
         return Some(DisconnectReason::HostKeyChanged(summary));
     }
     if lower.contains("connection refused") {
@@ -217,17 +225,16 @@ where
     }
     // Bound the hello read so DNS-failed ssh tunnels don't wedge the thread
     // for a minute before the stderr reaper concludes.
-    let hello = match tokio::time::timeout(HANDSHAKE_GRACE, codec::read_server_hello(&mut reader))
-        .await
-    {
-        Err(_) => return Err(DisconnectReason::Timeout),
-        Ok(Err(e)) => {
-            return Err(DisconnectReason::HandshakeFailed(format!(
-                "server rejected connection: {e}"
-            )));
-        }
-        Ok(Ok(v)) => v,
-    };
+    let hello =
+        match tokio::time::timeout(HANDSHAKE_GRACE, codec::read_server_hello(&mut reader)).await {
+            Err(_) => return Err(DisconnectReason::Timeout),
+            Ok(Err(e)) => {
+                return Err(DisconnectReason::HandshakeFailed(format!(
+                    "server rejected connection: {e}"
+                )));
+            }
+            Ok(Ok(v)) => v,
+        };
     match hello {
         codec::VersionCompat::Exact(v) => log::info!("server handshake ok (v{v})"),
         codec::VersionCompat::PatchMismatch { peer, local } => {
@@ -413,11 +420,9 @@ pub fn connect_or_spawn(
                     Ok(s) => s,
                     Err(e) => {
                         log::error!("failed to connect to server: {e}");
-                        let _ = event_tx.send(ServerEvent::Disconnected(
-                            DisconnectReason::Other(format!(
-                                "failed to connect to local server: {e}"
-                            )),
-                        ));
+                        let _ = event_tx.send(ServerEvent::Disconnected(DisconnectReason::Other(
+                            format!("failed to connect to local server: {e}"),
+                        )));
                         if let Some(ref proxy) = wake_proxy {
                             let _ = proxy.send_event(());
                         }
@@ -673,7 +678,9 @@ async fn probe_remote(host: &str, remote_port: u16, ssh_port: u16) -> RemoteProb
         codec::write_client_hello(&mut writer, &hello)
             .await
             .map_err(|_| ())?;
-        codec::read_server_hello(&mut reader).await.map_err(|_| ())?;
+        codec::read_server_hello(&mut reader)
+            .await
+            .map_err(|_| ())?;
         codec::encode_client_msg(&mut writer, &ClientMessage::ListSessions { all: true })
             .await
             .map_err(|_| ())?;

@@ -225,9 +225,7 @@ impl App {
         // Other `!connected` shapes (no cancel handle, no reconnect state)
         // mean nothing is in flight — let Esc fall through to the normal
         // binding pipeline.
-        if !self.core.connected
-            && matches!(&event.logical_key, Key::Named(NamedKey::Escape))
-        {
+        if !self.core.connected && matches!(&event.logical_key, Key::Named(NamedKey::Escape)) {
             if self.core.is_halted() {
                 self.dismiss_halted_connection();
                 self.request_redraw();

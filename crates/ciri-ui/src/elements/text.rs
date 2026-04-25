@@ -186,7 +186,10 @@ mod tests {
         let mut scene = Scene::new();
         let mut shaper = RecordingShaper::default();
         let mut cx = make_ctx(&theme, &mut scene, &mut shaper);
-        text("hi").color([1.0, 0.0, 0.0, 1.0]).size(20.0).paint(&mut cx);
+        text("hi")
+            .color([1.0, 0.0, 0.0, 1.0])
+            .size(20.0)
+            .paint(&mut cx);
         let call = &shaper.calls[0];
         assert_eq!(call.color, [1.0, 0.0, 0.0, 1.0]);
         assert_eq!(call.font_size_px, 20.0);

@@ -60,9 +60,7 @@ impl Scene {
         &self.sdf_rects[layer as usize]
     }
 
-    #[deprecated(
-        note = "allocates a Vec every call — prefer `sdf_rects_iter()` on hot paths"
-    )]
+    #[deprecated(note = "allocates a Vec every call — prefer `sdf_rects_iter()` on hot paths")]
     pub fn sdf_rects(&self) -> Vec<SdfRect> {
         let mut out = Vec::with_capacity(self.sdf_len());
         for bucket in &self.sdf_rects {
@@ -89,9 +87,7 @@ impl Scene {
         &self.glyphs[layer as usize]
     }
 
-    #[deprecated(
-        note = "allocates a Vec every call — prefer `glyphs_iter()` on hot paths"
-    )]
+    #[deprecated(note = "allocates a Vec every call — prefer `glyphs_iter()` on hot paths")]
     pub fn glyphs(&self) -> Vec<GlyphInstance> {
         let mut out = Vec::with_capacity(self.glyph_len());
         for bucket in &self.glyphs {
@@ -118,9 +114,7 @@ impl Scene {
         &self.color_glyphs[layer as usize]
     }
 
-    #[deprecated(
-        note = "allocates a Vec every call — prefer `color_glyphs_iter()` on hot paths"
-    )]
+    #[deprecated(note = "allocates a Vec every call — prefer `color_glyphs_iter()` on hot paths")]
     pub fn color_glyphs(&self) -> Vec<GlyphInstance> {
         let mut out = Vec::with_capacity(self.color_glyph_len());
         for bucket in &self.color_glyphs {

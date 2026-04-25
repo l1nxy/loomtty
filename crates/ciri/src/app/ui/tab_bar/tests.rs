@@ -79,8 +79,8 @@ fn hit_uses_ciri_ui_layout_snapshot() {
 /// and ending above the hints bar.
 #[test]
 fn chrome_rects_place_left_tab_bar_between_top_and_hints() {
-    use crate::app::ui::chrome_rects;
     use crate::app::App;
+    use crate::app::ui::chrome_rects;
     use ciri_config::config::{CiriConfig, StatusBarPosition};
 
     let mut cfg = CiriConfig::default();

@@ -49,13 +49,9 @@ impl ApplicationHandler for App {
                             font_size_pt: self.core.config.font.size,
                             dpi_scale: new_dpi,
                             family_name: &self.core.config.font.family,
-                            ui_family_name: self
-                                .core
-                                .config
-                                .font
-                                .ui
-                                .as_ref()
-                                .and_then(|ui| (!ui.family.is_empty()).then_some(ui.family.as_str())),
+                            ui_family_name: self.core.config.font.ui.as_ref().and_then(|ui| {
+                                (!ui.family.is_empty()).then_some(ui.family.as_str())
+                            }),
                             primary_font_path: shaper.primary_font_path(),
                             emoji_font_path: shaper.emoji_font_path(),
                             emoji_font_id: shaper.emoji_font_id(),
@@ -112,8 +108,7 @@ impl ApplicationHandler for App {
         // palette fades, hover transitions); without it in this OR the
         // event loop goes to Wait as soon as anim_mgr settles and chrome
         // animations freeze mid-flight.
-        let is_animating = self.core.anim_mgr.is_animating()
-            || self.motion_ticker.is_animating();
+        let is_animating = self.core.anim_mgr.is_animating() || self.motion_ticker.is_animating();
         // The connection banner needs the event loop to tick so the dot
         // spinner can animate. Covers three states: backing off between
         // retries, initial pre-handshake "Connecting…", and the halted

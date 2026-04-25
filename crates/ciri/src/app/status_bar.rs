@@ -71,8 +71,7 @@ fn emit_text_via_shaper(
                             // `make_text_glyph_instance` already produced.
                             let mut inst = inst;
                             let sx = (pen_x + entry.bearing_x * scale).round();
-                            let sy = (params.y + params.baseline * scale
-                                - entry.bearing_y * scale)
+                            let sy = (params.y + params.baseline * scale - entry.bearing_y * scale)
                                 .round();
                             inst.pos = [sx, sy];
                             if entry.is_color {
@@ -140,8 +139,8 @@ fn make_shaped_glyph_instance(
     // fractional positions blur across texel boundaries.
     let scale = params.scale.max(0.0);
     let sx = (pen_x + (g.x_offset + entry.bearing_x) * scale).round();
-    let sy = (params.y + params.baseline * scale - entry.bearing_y * scale + g.y_offset * scale)
-        .round();
+    let sy =
+        (params.y + params.baseline * scale - entry.bearing_y * scale + g.y_offset * scale).round();
     GlyphInstance {
         pos: [sx, sy],
         size: [entry.width as f32 * scale, entry.height as f32 * scale],

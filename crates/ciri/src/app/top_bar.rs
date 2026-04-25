@@ -158,11 +158,7 @@ impl App {
     /// all three callers that compute pane-tab geometry so they stay in
     /// sync — the `render_snapshot_hash` caching in `render.rs` depends on
     /// `pane_tab_scroll_max` agreeing with what `pane_tab_layouts` paints.
-    fn pane_tab_slot_width(
-        &self,
-        cw: f32,
-        shaper: Option<&RefCell<UiTextShaper>>,
-    ) -> f32 {
+    fn pane_tab_slot_width(&self, cw: f32, shaper: Option<&RefCell<UiTextShaper>>) -> f32 {
         let n = self.core.config.tabbar.pane_tab_width_chars;
         measure(shaper, &TAB_SLOT_REF_CHAR.repeat(n), cw)
     }

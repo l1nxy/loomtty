@@ -350,7 +350,10 @@ mod tests {
     // ── the main reason we wrote this module ──────────────────────
     #[test]
     fn rejects_ssh_option_injection() {
-        assert_eq!(parse_err("-oProxyCommand=evil"), ValidationError::LeadingDash);
+        assert_eq!(
+            parse_err("-oProxyCommand=evil"),
+            ValidationError::LeadingDash
+        );
         assert_eq!(
             parse_err("-oProxyCommand=foo@host"),
             ValidationError::LeadingDash
@@ -398,33 +401,27 @@ mod tests {
             ValidationError::LabelInvalid | ValidationError::HostBadChar(_)
         ));
         assert_eq!(parse_err("user@.bad"), ValidationError::HostBadChar('.'));
-        assert!(matches!(parse_err("user@bad-"), ValidationError::LabelInvalid));
-        assert!(matches!(parse_err("user@a..b"), ValidationError::LabelInvalid));
+        assert!(matches!(
+            parse_err("user@bad-"),
+            ValidationError::LabelInvalid
+        ));
+        assert!(matches!(
+            parse_err("user@a..b"),
+            ValidationError::LabelInvalid
+        ));
     }
 
     #[test]
     fn rejects_all_numeric_hostnames_unless_ipv4() {
         // Bare integer (the `ff@1` report) is almost certainly a typo.
-        assert_eq!(
-            parse_err("ff@1"),
-            ValidationError::NumericHostRequiresIpv4
-        );
+        assert_eq!(parse_err("ff@1"), ValidationError::NumericHostRequiresIpv4);
         assert_eq!(parse_err("1"), ValidationError::NumericHostRequiresIpv4);
-        assert_eq!(
-            parse_err("999"),
-            ValidationError::NumericHostRequiresIpv4
-        );
+        assert_eq!(parse_err("999"), ValidationError::NumericHostRequiresIpv4);
         // Dotted-numeric that isn't a real IPv4.
         assert_eq!(parse_err("u@1.2"), ValidationError::InvalidIpv4);
         assert_eq!(parse_err("u@1.2.3"), ValidationError::InvalidIpv4);
-        assert_eq!(
-            parse_err("u@999.999.999.999"),
-            ValidationError::InvalidIpv4
-        );
-        assert_eq!(
-            parse_err("u@192.168.1.300"),
-            ValidationError::InvalidIpv4
-        );
+        assert_eq!(parse_err("u@999.999.999.999"), ValidationError::InvalidIpv4);
+        assert_eq!(parse_err("u@192.168.1.300"), ValidationError::InvalidIpv4);
         // Real IPv4 still accepted.
         assert!(parse_input("u@127.0.0.1", 22).is_ok());
         assert!(parse_input("u@10.0.0.1", 22).is_ok());
@@ -461,7 +458,10 @@ mod tests {
             parse_err("user@[bad"),
             ValidationError::UnbalancedBracket
         ));
-        assert!(matches!(parse_err("user@::1"), ValidationError::UnbalancedBracket));
+        assert!(matches!(
+            parse_err("user@::1"),
+            ValidationError::UnbalancedBracket
+        ));
         assert_eq!(parse_err("user@[not-ipv6]"), ValidationError::InvalidIpv6);
     }
 
@@ -469,7 +469,10 @@ mod tests {
     fn rejects_port_zero_and_junk() {
         assert_eq!(parse_err("host:0"), ValidationError::ReservedPortZero);
         assert_eq!(parse_err("host:"), ValidationError::TrailingColon);
-        assert!(matches!(parse_err("host:abc"), ValidationError::InvalidPort(_)));
+        assert!(matches!(
+            parse_err("host:abc"),
+            ValidationError::InvalidPort(_)
+        ));
         assert!(matches!(
             parse_err("host:99999"),
             ValidationError::InvalidPort(_)

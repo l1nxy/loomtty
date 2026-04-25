@@ -100,12 +100,7 @@ impl DWriteRasterizer {
     /// Load a UI font after `[font.ui]` or system default sans-serif is
     /// resolved. Prefer the system collection for explicit family overrides so
     /// simulated bold/italic follow the same rules as the terminal font.
-    pub(crate) fn load_ui_font(
-        &mut self,
-        family_name: Option<&str>,
-        path: &str,
-        face_index: u32,
-    ) {
+    pub(crate) fn load_ui_font(&mut self, family_name: Option<&str>, path: &str, face_index: u32) {
         self.ui_faces = family_name
             .filter(|name| !name.is_empty())
             .and_then(|name| load_styled_faces_from_collection(&self.factory, name))

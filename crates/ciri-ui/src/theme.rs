@@ -13,7 +13,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::color::{contrast_on, mul_alpha, scale_rgb, Color};
+use crate::color::{Color, contrast_on, mul_alpha, scale_rgb};
 use ciri_config::theme::ThemeConfig;
 
 /// Monotonic counter backing [`ResolvedTheme::version`]. Bumped on every
@@ -338,6 +338,10 @@ mod tests {
         // theme, which is enough to assert we actually loaded the
         // preset rather than hitting the magenta parse fallback.
         let lum = theme.surface[0] + theme.surface[1] + theme.surface[2];
-        assert!(lum < 1.0, "surface should be dark in dracula: {:?}", theme.surface);
+        assert!(
+            lum < 1.0,
+            "surface should be dark in dracula: {:?}",
+            theme.surface
+        );
     }
 }

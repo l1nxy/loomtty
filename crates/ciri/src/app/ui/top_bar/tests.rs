@@ -1,6 +1,6 @@
 use super::*;
-use crate::app::ui::chrome_rects;
 use crate::app::App;
+use crate::app::ui::chrome_rects;
 use ciri_config::config::{CiriConfig, StatusBarPosition};
 
 fn make_cx(app: &App) -> UiContext<'_> {

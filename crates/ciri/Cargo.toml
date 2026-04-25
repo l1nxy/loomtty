@@ -34,6 +34,7 @@ unicode-width = "0.2"
 notify = { workspace = true }
 libc = { workspace = true }
 image = { version = "0.25", default-features = false, features = ["png"] }
+taffy = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 notify-rust = "4"

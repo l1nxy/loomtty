@@ -907,6 +907,7 @@ dependencies = [
  "notify-rust",
  "rmp-serde",
  "serde_json",
+ "taffy",
  "tokio",
  "unicode-width",
  "winit",

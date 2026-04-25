@@ -172,6 +172,12 @@ fn merge_ui_scene(
 }
 
 /// Paint a ciri-ui tree into the client's current UI scene.
+///
+/// When `cx.taffy_tree` is `Some` (the production path), the layout
+/// engine is reused across calls — the SlotMap allocator stays warm
+/// instead of allocating dozens of nodes per widget per frame. Tests
+/// that build their own `UiContext` set `taffy_tree: None` and fall
+/// back to a fresh tree per call.
 pub(crate) fn paint_element_tree(root: &impl Element, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
     let mut ui_shaper = cx.ui_shaper.map(|c| c.borrow_mut());
     let mut shaper = HostTextShaper {
@@ -182,13 +188,23 @@ pub(crate) fn paint_element_tree(root: &impl Element, cx: &UiContext<'_>, scene:
         cell_height: cx.cell_h,
         fallback_font_size_px: cx.theme.typography.md,
     };
-    let ui_scene = ciri_ui::paint_tree(
-        root,
-        cx.theme,
-        [cx.viewport_w, cx.viewport_h],
-        1.0,
-        &mut shaper,
-    );
+    let viewport = [cx.viewport_w, cx.viewport_h];
+    let ui_scene = if let Some(tree_cell) = cx.taffy_tree {
+        let mut tree = tree_cell.borrow_mut();
+        let mut ui_scene = ciri_ui::Scene::new();
+        ciri_ui::paint_tree_into_with(
+            root,
+            cx.theme,
+            viewport,
+            1.0,
+            &mut shaper,
+            &mut ui_scene,
+            &mut tree,
+        );
+        ui_scene
+    } else {
+        ciri_ui::paint_tree(root, cx.theme, viewport, 1.0, &mut shaper)
+    };
     merge_ui_scene(&ui_scene, scene.sdf_rects, scene.glyphs, scene.color_glyphs);
 }
 

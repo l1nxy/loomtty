@@ -150,7 +150,7 @@ pub fn paint_tree_into(
 ) {
     let mut tree = taffy::TaffyTree::<NodeContext>::new();
     let mut layout = LayoutSnapshot::new();
-    paint_tree_into_with_snapshot(
+    paint_tree_into_retained(
         root,
         theme,
         viewport,
@@ -173,7 +173,7 @@ pub fn paint_tree_into_with_layout(
     layout: &mut LayoutSnapshot,
 ) {
     let mut tree = taffy::TaffyTree::<NodeContext>::new();
-    paint_tree_into_with_snapshot(
+    paint_tree_into_retained(
         root,
         theme,
         viewport,
@@ -201,7 +201,7 @@ pub fn paint_tree_into_with(
     tree: &mut taffy::TaffyTree<NodeContext>,
 ) {
     let mut layout = LayoutSnapshot::new();
-    paint_tree_into_with_snapshot(
+    paint_tree_into_retained(
         root,
         theme,
         viewport,
@@ -214,7 +214,16 @@ pub fn paint_tree_into_with(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn paint_tree_into_with_snapshot(
+/// Most-general paint entry point: caller owns the [`Scene`], the
+/// [`LayoutSnapshot`], and the `TaffyTree`. All three are `clear()`ed
+/// internally and re-filled, so storing them across frames keeps their
+/// allocator capacity warm.
+///
+/// Use this in the live render path when both hit-test and paint are
+/// needed (i.e. anywhere `LayoutSnapshot::hit_test` will be queried).
+/// For paint-only callers, [`paint_tree_into_with`] is equivalent without
+/// the snapshot fill.
+pub fn paint_tree_into_retained(
     root: &dyn Element,
     theme: &ResolvedTheme,
     viewport: [f32; 2],

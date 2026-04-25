@@ -221,6 +221,13 @@ pub(crate) struct App {
     /// `core.anim_mgr` (which animates pane compositor state); the two
     /// tickers coexist while widgets migrate over one at a time.
     pub motion_ticker: Arc<ciri_motion::Ticker>,
+
+    /// Persistent Taffy layout tree shared by every `ciri-ui` paint /
+    /// hit-test call this frame. The tree is `clear()`ed and rebuilt
+    /// each call but its SlotMap allocator is preserved, so layout
+    /// nodes don't bounce through the system allocator on every chrome
+    /// paint. See `ciri_ui::paint_tree_into_with` for the mechanism.
+    pub ui_taffy_tree: std::cell::RefCell<crate::app::ui::types::UiTaffyTree>,
 }
 
 impl App {
@@ -456,6 +463,7 @@ impl App {
             pending_redraw: false,
             connection_cancel: None,
             motion_ticker: Arc::new(ciri_motion::Ticker::new()),
+            ui_taffy_tree: std::cell::RefCell::new(taffy::TaffyTree::new()),
         }
     }
 

@@ -114,6 +114,7 @@ mod tests {
             baseline: cw * 1.6,
             ui_line_h: cw * 2.0,
             ui_shaper: None,
+            taffy_tree: None,
         };
         (cx, CiriConfig::default())
     }

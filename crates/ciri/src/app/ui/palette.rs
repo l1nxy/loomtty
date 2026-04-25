@@ -412,6 +412,7 @@ mod tests {
             baseline: 12.0,
             ui_line_h: 16.0,
             ui_shaper: None,
+            taffy_tree: None,
         }
     }
 

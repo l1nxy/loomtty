@@ -1,8 +1,11 @@
 use ciri_render::glyph_cache::{GlyphCache, GlyphInstance};
 use ciri_render::sdf_rect::SdfRect;
 use ciri_render::ui_shaper::UiTextShaper;
+use ciri_ui::NodeContext;
 use std::cell::RefCell;
 use winit::window::CursorIcon;
+
+pub(crate) type UiTaffyTree = taffy::TaffyTree<NodeContext>;
 
 /// A pixel-aligned axis-aligned rectangle used to describe UI slots.
 ///
@@ -111,12 +114,19 @@ pub(crate) struct UiContext<'a> {
     /// in tests or before the renderer has been set up — callers must then
     /// use `cell_w`-based measurement as a fallback.
     pub ui_shaper: Option<&'a RefCell<UiTextShaper>>,
+    /// Persistent Taffy layout tree. The render path borrows this, calls
+    /// `clear()` on it, and rebuilds the tree each paint — preserving the
+    /// SlotMap allocator instead of dropping and re-allocating dozens of
+    /// nodes per widget per frame. `None` only in tests, where each call
+    /// falls back to allocating a fresh tree.
+    pub taffy_tree: Option<&'a RefCell<UiTaffyTree>>,
 }
 
 pub(crate) fn ui_context_from_metrics<'a>(
     config: &'a ciri_config::config::CiriConfig,
     theme: &'a ciri_ui::ResolvedTheme,
     ui_shaper: Option<&'a RefCell<UiTextShaper>>,
+    taffy_tree: Option<&'a RefCell<UiTaffyTree>>,
     viewport_w: f32,
     viewport_h: f32,
     cell_w: f32,
@@ -135,6 +145,7 @@ pub(crate) fn ui_context_from_metrics<'a>(
             .map(|s| s.borrow().line_height())
             .unwrap_or(cell_h),
         ui_shaper,
+        taffy_tree,
     }
 }
 
@@ -155,6 +166,7 @@ pub(crate) fn test_ui_context<'a>(
         baseline: 12.0,
         ui_line_h: 16.0,
         ui_shaper: None,
+        taffy_tree: None,
     }
 }
 
@@ -165,14 +177,26 @@ pub(super) fn ui_hit_id(
     my: f32,
 ) -> Option<u64> {
     let mut shaper = ciri_ui::NullShaper;
-    let out = ciri_ui::paint_tree_with_layout(
-        root,
-        cx.theme,
-        [cx.viewport_w, cx.viewport_h],
-        1.0,
-        &mut shaper,
-    );
-    out.layout.hit_test(mx, my).and_then(|node| node.hit_id)
+    let viewport = [cx.viewport_w, cx.viewport_h];
+    if let Some(tree_cell) = cx.taffy_tree {
+        let mut tree = tree_cell.borrow_mut();
+        let mut scene = ciri_ui::Scene::new();
+        let mut layout = ciri_ui::LayoutSnapshot::new();
+        ciri_ui::paint_tree_into_retained(
+            root,
+            cx.theme,
+            viewport,
+            1.0,
+            &mut shaper,
+            &mut scene,
+            &mut layout,
+            &mut tree,
+        );
+        layout.hit_test(mx, my).and_then(|node| node.hit_id)
+    } else {
+        let out = ciri_ui::paint_tree_with_layout(root, cx.theme, viewport, 1.0, &mut shaper);
+        out.layout.hit_test(mx, my).and_then(|node| node.hit_id)
+    }
 }
 
 #[cfg(test)]
@@ -182,18 +206,34 @@ pub(super) fn ui_hit_bounds(
     hit_id: u64,
 ) -> Option<[f32; 4]> {
     let mut shaper = ciri_ui::NullShaper;
-    let out = ciri_ui::paint_tree_with_layout(
-        root,
-        cx.theme,
-        [cx.viewport_w, cx.viewport_h],
-        1.0,
-        &mut shaper,
-    );
-    out.layout
-        .nodes()
-        .iter()
-        .find(|node| node.hit_id == Some(hit_id))
-        .map(|node| node.bounds)
+    let viewport = [cx.viewport_w, cx.viewport_h];
+    if let Some(tree_cell) = cx.taffy_tree {
+        let mut tree = tree_cell.borrow_mut();
+        let mut scene = ciri_ui::Scene::new();
+        let mut layout = ciri_ui::LayoutSnapshot::new();
+        ciri_ui::paint_tree_into_retained(
+            root,
+            cx.theme,
+            viewport,
+            1.0,
+            &mut shaper,
+            &mut scene,
+            &mut layout,
+            &mut tree,
+        );
+        layout
+            .nodes()
+            .iter()
+            .find(|node| node.hit_id == Some(hit_id))
+            .map(|node| node.bounds)
+    } else {
+        let out = ciri_ui::paint_tree_with_layout(root, cx.theme, viewport, 1.0, &mut shaper);
+        out.layout
+            .nodes()
+            .iter()
+            .find(|node| node.hit_id == Some(hit_id))
+            .map(|node| node.bounds)
+    }
 }
 
 pub(crate) struct UiScene<'a> {

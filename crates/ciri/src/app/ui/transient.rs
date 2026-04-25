@@ -293,6 +293,7 @@ impl App {
             &self.core.config,
             &self.cached_resolved_theme,
             self.ui_shaper.as_ref(),
+            Some(&self.ui_taffy_tree),
             vw,
             vh,
             cell_w,

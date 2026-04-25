@@ -13,7 +13,7 @@
 //! into its own emitted primitive.
 
 use crate::color::{mul_alpha, Color, TRANSPARENT};
-use crate::element::{Element, EventCtx, Layer, PaintCtx, UiEvent};
+use crate::element::{Element, EventCtx, IntoElement, Layer, PaintCtx, UiEvent};
 use crate::layout::to_taffy_style;
 use crate::scene::SdfRect;
 use crate::style::{Shadow, Style};
@@ -53,9 +53,14 @@ impl Div {
         }
     }
 
-    /// Append one child.
-    pub fn child<E: Element>(mut self, child: E) -> Self {
-        self.children.push(Box::new(child));
+    /// Append one child. Accepts anything convertible to an element —
+    /// strings (`&str` / `String` / `SharedString`) become `Text`,
+    /// existing elements pass through unchanged.
+    ///
+    /// `div().child("Foo")` and `div().child(text("Foo"))` are now
+    /// interchangeable; the former skips one wrap.
+    pub fn child<C: IntoElement>(mut self, child: C) -> Self {
+        self.children.push(Box::new(child.into_element()));
         self
     }
 
@@ -67,13 +72,15 @@ impl Div {
     }
 
     /// Extend with many children.
-    pub fn children_ext<I, E>(mut self, iter: I) -> Self
+    pub fn children_ext<I, C>(mut self, iter: I) -> Self
     where
-        I: IntoIterator<Item = E>,
-        E: Element,
+        I: IntoIterator<Item = C>,
+        C: IntoElement,
     {
-        self.children
-            .extend(iter.into_iter().map(|e| Box::new(e) as Box<dyn Element>));
+        self.children.extend(
+            iter.into_iter()
+                .map(|e| Box::new(e.into_element()) as Box<dyn Element>),
+        );
         self
     }
 
@@ -100,6 +107,13 @@ impl Div {
 impl Styled for Div {
     fn style(&mut self) -> &mut Style {
         &mut self.style
+    }
+}
+
+impl IntoElement for Div {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
     }
 }
 

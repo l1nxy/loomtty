@@ -157,6 +157,17 @@ impl Default for EventCtx {
     }
 }
 
+/// Anything that can be converted into an [`Element`]. Lets builders
+/// like `Div::child(impl IntoElement)` accept strings, `Text`, `Div`,
+/// or any future component without per-call wrapping.
+///
+/// Identity impls are provided for `Text` and `Div`. String types
+/// (`&str`, `String`, `SharedString`) convert to a `Text` element.
+pub trait IntoElement {
+    type Element: Element;
+    fn into_element(self) -> Self::Element;
+}
+
 /// The core trait. Everything in the retained tree is an `Element`.
 ///
 /// Default bodies are intentionally no-ops so leaves like `Text` can

@@ -8,7 +8,7 @@
 //! shaper so the layout and paint paths never disagree.
 
 use crate::color::Color;
-use crate::element::{Element, PaintCtx};
+use crate::element::{Element, IntoElement, PaintCtx};
 use crate::layout::NodeContext;
 use crate::shared_string::SharedString;
 
@@ -79,6 +79,40 @@ impl Text {
     /// needing to thread a theme reference through layout.
     pub fn effective_font_size(&self) -> f32 {
         self.font_size_px.unwrap_or(DEFAULT_FONT_SIZE_PX)
+    }
+}
+
+// ── IntoElement adapters ─────────────────────────────────────────
+//
+// Identity for Text, plus string-to-Text conversions so callers can
+// write `div().child("Foo")`, `div().child(my_string)`, or
+// `div().child(text("Foo"))` interchangeably.
+
+impl IntoElement for Text {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl<'a> IntoElement for &'a str {
+    type Element = Text;
+    fn into_element(self) -> Text {
+        Text::new(self)
+    }
+}
+
+impl IntoElement for String {
+    type Element = Text;
+    fn into_element(self) -> Text {
+        Text::new(self)
+    }
+}
+
+impl IntoElement for SharedString {
+    type Element = Text;
+    fn into_element(self) -> Text {
+        Text::new(self)
     }
 }
 

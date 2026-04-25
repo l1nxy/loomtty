@@ -33,7 +33,7 @@ pub mod styled;
 pub mod theme;
 
 pub use color::Color;
-pub use element::{Element, ElementId, EventCtx, Layer, PaintCtx, UiCtx, UiEvent};
+pub use element::{Element, ElementId, EventCtx, IntoElement, Layer, PaintCtx, UiCtx, UiEvent};
 pub use elements::{Div, Text, div, text};
 pub use layout::{
     LayoutNode, LayoutSnapshot, NodeContext, PaintOutput, paint_tree, paint_tree_into,

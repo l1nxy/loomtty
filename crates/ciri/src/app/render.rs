@@ -1486,26 +1486,7 @@ impl App {
         active_color_glyph_batches: &mut Vec<ScissoredRange>,
     ) -> usize {
         let zoom_threshold = self.core.config.animation.zoom_threshold;
-        let paint = TilePaintConfig {
-            border_w: self.core.config.appearance.border_width,
-            active_border: if self.core.config.appearance.active_border_color.is_empty() {
-                ThemeConfig::parse_color(&self.core.config.theme.border_active)
-            } else {
-                ThemeConfig::parse_color(&self.core.config.appearance.active_border_color)
-            },
-            inactive_border: if self.core.config.appearance.inactive_border_color.is_empty() {
-                ThemeConfig::parse_color(&self.core.config.theme.border_inactive)
-            } else {
-                ThemeConfig::parse_color(&self.core.config.appearance.inactive_border_color)
-            },
-            bg_color: ThemeConfig::parse_color(&self.core.config.theme.background),
-            link_color: ThemeConfig::parse_color(&self.core.config.theme.accent),
-            accent: ThemeConfig::parse_color(&self.core.config.theme.accent),
-            // Per-row tile glyph/background caching disabled — rebuild from
-            // atlas each frame (matches Ghostty / Windows Terminal approach).
-            // render_snapshot_hash still skips entire idle frames.
-            cache_tile_glyphs: false,
-        };
+        let paint = self.tile_paint_config();
 
         for (pane_id, tile_rect, is_active) in tiles.iter().copied() {
             if is_active {

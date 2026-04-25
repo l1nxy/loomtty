@@ -241,21 +241,25 @@ require any framework change.
   parameter lists. Pick this back up after Phase 1 when the borrows
   collapse to `&mut self.render`.
 
-### Phase 1 — `prepaint` phase + hitbox API
+### Phase 1 — same-frame hover detection (light prepaint)  [DONE]
 
-Adds `Element::prepaint(&mut self, bounds, request_layout: &mut S, cx) -> P`
-between layout and paint. Walker calls `prepaint` after computing layout,
-before paint. Window grows `insert_hitbox(bounds) -> Hitbox` plus a
-hit-result lookup.
+Shipped a smaller scope than the original "prepaint phase + hitbox
+API" plan: the walker now does a layout-only pre-pass when a mouse
+position is supplied, queries the resulting `LayoutSnapshot` for the
+topmost element under the cursor, and threads that `hit_id` through
+every paint call via `PaintCtx::hovered_hit_id` (with a
+`PaintCtx::is_hovered(hit_id)` helper).
 
-Concrete payoff: delete `Element::hit_test`, delete `build_hit_tree`
-duals in tab_bar/top_bar, palette `hit_test` no longer rebuilds the
-visual tree.
+This unblocks Phase 3's declarative `.hover(|s| ...)` styles without
+adding a formal `prepaint` method to `Element`. The dual-tree
+pattern in `tab_bar` / `top_bar` (coarse hit zones vs. visual
+elements) was kept — Phase 1's audit revealed it's intentional UX,
+not duplicate work.
 
-This is a change to `ciri-ui::Element` (adds an associated type and a
-method), so every element implementor must update. There are five today
-(Div, Text, plus three transient widgets that bypass the trait); not
-expensive.
+Phase 1 light also delivered the layout-only hit-test walker
+(`layout_tree_into_retained`) — `ui_hit_id` and `ui_hit_bounds`
+skip `Element::paint` entirely, dropping ~30-50 SDF rect emissions
+per palette hit-test call.
 
 ### Phase 2 — `IntoElement` + `SharedString`  [DONE]
 
@@ -283,57 +287,93 @@ Diverged from the original sketch:
   and matches GPUI's `IntoElement<Element = SharedString>` pattern
   rather than its `impl Element for &'static str` direct path.
 
-### Phase 3 — `Refineable` + declarative state styles
+### Phase 3 — declarative hover styles via `Div::hover`  [DONE]
 
-Pull in `refineable` crate from Zed's workspace (it is permissively
-licensed, single dependency on `derive_refineable`). Annotate `Style`
-with `#[derive(Refineable)]`. Generate `StyleRefinement`. Add
-`Interactivity` substate to `Div` with `hover_style: Option<StyleRefinement>`
-etc. Add `.hover / .active / .focus / .group_hover` methods on
-`InteractiveElement` trait.
+Avoided the `refineable` crate dependency by using the existing
+all-`Option<T>` `Style` as both the base and the refinement type.
+`Style::merge(&mut self, other)` already overlays non-`None` fields,
+so a refinement closure builds a fresh `Style`, stashes it on `Div`
+as `hover_style: Option<Box<Style>>`, and `Div::paint` resolves the
+effective style by merging when the matching hit_id is hovered.
 
-Concrete payoff: hover state stops living in `AppModel`. Every widget
-that today reads `palette.hovered_idx == Some(i)` can use
-`.hover(|s| s.bg(theme.accent_tint))` declaratively. The hover hitbox is
-the same hitbox the framework already inserts in prepaint.
+Surface: `div().bg(...).hit_id(7).hover(|s| s.bg(accent))`.
+Refinement closures take a `Style` argument so the same Tailwind-
+shaped builder (`Style: Styled` impl added) chains identically to
+the base. `effective_style` returns `Cow::Borrowed(&self.style)`
+when no refinement matches, so static-styled elements pay zero
+cloning overhead.
 
-This depends on Phase 1 (hitbox in prepaint).
+Future `.active(|s| ...)` / `.focus(|s| ...)` slot into the same
+`effective_style` resolver — they need only the corresponding state
+flag exposed on `PaintCtx`.
 
-### Phase 4 — per-element persistent state
+### Phase 4 — `ElementStates` for cross-frame persistence  [DONE]
 
-Add `Window::with_id(id, |w| ...)` to push to a `GlobalElementId` stack.
-Add `element_states: HashMap<(GlobalElementId, TypeId), Box<dyn Any>>` on
-`Window` (or a per-window context). Add `accessed_element_states`
-tracking, with frame `finish()` migrating accessed entries.
+Shipped a flat `(ElementId, TypeId) -> Box<dyn Any>` map on
+`PaintCtx::states`. Elements with a stable `Element::id()` call
+`cx.states.use_state::<MyState>(id)` to borrow a typed mutable slot
+that survives across frames. Default-constructed on first use.
 
-Concrete payoff: hover hover-into / hover-out animation timers, scroll
-offsets, click-pending state, all live at the framework level. Solves
-the "ephemeral UI state has no home but `AppModel`" problem outright.
+Skipped GPUI's path-based `GlobalElementId` (works on a single
+window with non-conflicting id namespace) and the auto-GC pattern
+(callers explicitly `clear_id` when an element is permanently
+gone). Both can be retrofitted later if the chrome grows enough
+elements that flat ids collide.
 
-This depends on Phase 1 (the GlobalElementId path is constructed during
-prepaint).
+`App.ui_states: RefCell<ElementStates>` is published through
+`UiContext::element_states`; the adapter scope-borrows once per
+paint pass and threads `Option<&mut ElementStates>` through the
+walker. Each child reborrow keeps the slot accessible during deep
+trees.
 
-### Phase 5 — `Render` trait + view objects
+### Phase 5 — `Render` trait for stateful view objects  [DONE]
 
-Add `Render::render(&mut self, cx) -> impl IntoElement`. Refactor
-`PaletteComponent` (and the other "Component" widgets in `app/ui/`) into
-`impl Render` types that hold their own state and produce element trees
-each frame. `App` creates them once, holds them as fields, calls
-`render` on them.
+Shipped the trait shape:
 
-Concrete payoff: `PaletteComponent::capture(app)` per-frame snapshot
-allocation goes away. Component state (which today is split between
-`AppModel.palette` and the snapshot) consolidates onto the component.
+```rust
+pub trait Render: 'static + Sized {
+    fn render(&mut self, cx: &RenderCtx<'_>) -> impl IntoElement;
+}
+```
 
-This depends on Phase 4.
+`RenderCtx { theme, viewport, scale }` is intentionally minimal so
+the trait can grow fields without breaking implementors.
 
-### Phase 6 — virtualization
+Did not migrate existing chrome widgets to `impl Render` — that's a
+larger refactor (each `*Component::capture` needs to fold its
+snapshot fields into a long-lived view struct, and the host needs to
+own those views). The trait is now in place for future widget
+conversions; combined with Phase 4 `ElementStates`, components can
+keep state on themselves rather than threading through per-frame
+captures.
 
-Port `uniform_list(id, count, render_range)` from GPUI. Palette adopts
-it for its row list. Deletes the manual `skip(scroll_offset).take(visible_rows)`
-logic in `PaletteComponent::capture`.
+### Phase 6 — `uniform_list` helper  [DONE]
 
-This depends on Phases 1, 2, 4.
+Shipped as a function helper rather than a stateful Element type:
+
+```rust
+pub fn uniform_list<F, E>(
+    item_count: usize,
+    item_height: f32,
+    visible_range: Range<usize>,
+    render: F,
+) -> Div
+where F: FnOnce(Range<usize>) -> Vec<E>, E: IntoElement
+```
+
+Caller computes the visible range from their own scroll state (which
+can live on `ElementStates` per Phase 4 or on a parent struct). The
+helper builds the `Div` column with the right height for the visible
+slice and invokes the `render` closure exactly once.
+
+Skipped GPUI's full Element-based `uniform_list` because ciri's
+chrome already pre-computes visible row data during model rebuild
+(palette filtering is the prime example). A pure helper drops in to
+that flow without forcing a prepaint integration.
+
+Future stateful list element (auto-virtualizes from parent clip
+area, owns its own scroll state, handles wheel events) would build
+on Phase 4's `ElementStates` and a real `prepaint` phase.
 
 ### Phase 7 — arena element allocator
 

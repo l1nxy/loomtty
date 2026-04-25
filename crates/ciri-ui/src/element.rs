@@ -192,6 +192,39 @@ pub trait IntoElement {
     fn into_element(self) -> Self::Element;
 }
 
+/// Light-weight context passed to [`Render::render`]. Exposes the
+/// theme and viewport that a view needs to compose its element tree.
+/// More fields can be added without breaking the trait — `Render`
+/// implementations only read what they need.
+pub struct RenderCtx<'a> {
+    pub theme: &'a ResolvedTheme,
+    pub viewport: [f32; 2],
+    pub scale: f32,
+}
+
+/// Implemented by stateful "view" types — long-lived structs that
+/// hold their own state (filtered rows, scroll offset, hover index)
+/// and produce a fresh element tree per frame from that state.
+///
+/// Distinct from [`Element`]: an `Element` *is* a tree node in this
+/// frame's paint pass. A `Render` implementor is a host-side object
+/// that knows how to *produce* an element tree on demand. The two
+/// connect through [`IntoElement`] — `render()` returns anything that
+/// can be coerced into an element, including a `Div` tree built up
+/// via the Tailwind-shaped builder.
+///
+/// ```ignore
+/// struct PaletteView { /* state */ }
+/// impl Render for PaletteView {
+///     fn render(&mut self, cx: &RenderCtx<'_>) -> impl IntoElement {
+///         div().bg(cx.theme.surface).child(...)
+///     }
+/// }
+/// ```
+pub trait Render: 'static + Sized {
+    fn render(&mut self, cx: &RenderCtx<'_>) -> impl IntoElement;
+}
+
 /// Cross-frame persistent state map keyed by `(ElementId, TypeId)`.
 ///
 /// Elements that need state across paints (scroll offsets, virtual
@@ -428,6 +461,33 @@ mod tests {
         states.use_state::<B>(ElementId(1)).v = 11;
         assert_eq!(states.use_state::<A>(ElementId(1)).v, 7);
         assert_eq!(states.use_state::<B>(ElementId(1)).v, 11);
+    }
+
+    #[test]
+    fn render_trait_produces_element() {
+        use crate::elements::div;
+        use crate::styled::Styled;
+        struct ButtonView {
+            label_count: u32,
+        }
+        impl Render for ButtonView {
+            fn render(&mut self, _cx: &RenderCtx<'_>) -> impl IntoElement {
+                self.label_count += 1;
+                div().w(100.0).h(40.0)
+            }
+        }
+        let theme = ResolvedTheme::default();
+        let mut view = ButtonView { label_count: 0 };
+        let cx = RenderCtx {
+            theme: &theme,
+            viewport: [800.0, 600.0],
+            scale: 1.0,
+        };
+        // The trait method returns `impl IntoElement`. We exercise the
+        // call to confirm the trait shape compiles and the view's
+        // mutable state is reachable from inside `render`.
+        let _ = view.render(&cx);
+        assert_eq!(view.label_count, 1);
     }
 
     #[test]

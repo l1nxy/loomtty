@@ -39,8 +39,8 @@ pub use arena::{
 };
 pub use color::Color;
 pub use element::{
-    AnyElement, Element, ElementId, ElementStates, EventCtx, IntoElement, Layer, PaintCtx, UiCtx,
-    UiEvent,
+    AnyElement, Element, ElementId, ElementStates, EventCtx, IntoElement, Layer, PaintCtx, Render,
+    RenderCtx, UiCtx, UiEvent,
 };
 pub use elements::{Div, Text, div, text};
 pub use fluent::FluentBuilder;

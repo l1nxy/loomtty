@@ -2347,7 +2347,13 @@ impl App {
             std::mem::take(&mut self.render_bufs.active_color_glyph_batches);
         let overlay_bg_start = bg_rects.len();
         self.build_ui(vw_f, vh_f, &mut glyphs, &mut color_glyphs);
-        let mut ui_sdf_rects = self.cached_ui_scene.sdf_rects.clone();
+        // Take the cached chrome SDF rects rather than cloning: transient
+        // overlays (palette, context menu, paste dialog…) extend onto the
+        // cached prefix for this frame's draw_frame, then we truncate back
+        // to the cached length and put the Vec back so next frame's chrome
+        // cache hit still reuses the same buffer (capacity preserved).
+        let mut ui_sdf_rects = std::mem::take(&mut self.cached_ui_scene.sdf_rects);
+        let cached_sdf_len = ui_sdf_rects.len();
         self.build_transient_ui(
             &offset_tiles,
             zoom,
@@ -2394,6 +2400,13 @@ impl App {
         if draw_ok {
             self.last_render_snapshot = Some(render_snapshot);
         }
+
+        // Restore cached_ui_scene.sdf_rects: drop the transient extension
+        // (truncate preserves capacity) and put the buffer back. The cached
+        // prefix is byte-identical to what we took — next frame's chrome
+        // cache hit still extends the same content into the GPU stream.
+        ui_sdf_rects.truncate(cached_sdf_len);
+        self.cached_ui_scene.sdf_rects = ui_sdf_rects;
 
         self.render_bufs.bg_rects = bg_rects;
         self.render_bufs.glyphs = glyphs;

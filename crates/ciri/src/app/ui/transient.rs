@@ -282,6 +282,12 @@ impl App {
         paint: impl FnOnce(&UiContext<'_>, &mut UiScene<'_>),
     ) {
         let baseline = cell_h * self.core.config.statusbar.text_baseline;
+        // Clear the element arena and enter the scope so any
+        // `Div::child` inside the closure (palette / context-menu /
+        // paste-dialog tree builders) bump-allocates into this arena
+        // rather than the thread-local fallback.
+        self.ui_arena.borrow_mut().clear();
+        let _arena_scope = ciri_ui::ElementArenaScope::enter(&self.ui_arena);
         let atlas = self.glyph_cache.as_mut().unwrap();
         let mut scene = UiScene {
             atlas,

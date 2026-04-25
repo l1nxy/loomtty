@@ -22,6 +22,7 @@
 //! ```
 
 pub mod color;
+pub mod arena;
 pub mod element;
 pub mod elements;
 pub mod fluent;
@@ -33,8 +34,13 @@ pub mod style;
 pub mod styled;
 pub mod theme;
 
+pub use arena::{
+    Arena, ArenaBox, ElementArenaScope, clear_fallback_element_arena, with_element_arena,
+};
 pub use color::Color;
-pub use element::{Element, ElementId, EventCtx, IntoElement, Layer, PaintCtx, UiCtx, UiEvent};
+pub use element::{
+    AnyElement, Element, ElementId, EventCtx, IntoElement, Layer, PaintCtx, UiCtx, UiEvent,
+};
 pub use elements::{Div, Text, div, text};
 pub use fluent::FluentBuilder;
 pub use layout::{

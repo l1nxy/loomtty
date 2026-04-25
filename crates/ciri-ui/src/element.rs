@@ -10,10 +10,12 @@
 //! boundaries cleanly: a fading/sliding wrapper visibly affects every
 //! descendant, and `in_layer(Modal)` wins z-order for its entire subtree.
 
+use crate::arena::{ArenaBox, with_element_arena};
 use crate::color::Color;
 use crate::scene::Scene;
 use crate::shaper::TextShaper;
 use crate::theme::ResolvedTheme;
+use std::ops::Deref;
 
 /// Opaque identifier for a single element in the retained tree. The ID
 /// space is generation-counted so reload / rebuild cycles don't clash.
@@ -168,6 +170,33 @@ pub trait IntoElement {
     fn into_element(self) -> Self::Element;
 }
 
+/// Type-erased, arena-allocated element. Returned by
+/// [`AnyElement::new`] and stored as a `Div`'s child slot. Acts like a
+/// `Box<dyn Element>` for the rest of the framework — derefs to
+/// `dyn Element`, dropped when the arena is cleared.
+///
+/// Construction goes through the active element arena (the per-frame
+/// bump allocator). The active arena is published by an
+/// [`crate::arena::ElementArenaScope`] in the host's paint path; in
+/// tests, the thread-local fallback arena is used.
+pub struct AnyElement(ArenaBox<dyn Element>);
+
+impl AnyElement {
+    pub fn new<E: Element>(element: E) -> Self {
+        let boxed = with_element_arena(|arena| arena.alloc(|| element));
+        AnyElement(boxed.map(|el| el as &mut dyn Element))
+    }
+}
+
+impl Deref for AnyElement {
+    type Target = dyn Element;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
+
 /// The core trait. Everything in the retained tree is an `Element`.
 ///
 /// Default bodies are intentionally no-ops so leaves like `Text` can
@@ -181,8 +210,10 @@ pub trait Element: 'static {
 
     /// Direct children in paint order. The Taffy tree's children are
     /// built from this slice in the same order so the post-layout walker
-    /// can zip them together.
-    fn children(&self) -> &[Box<dyn Element>] {
+    /// can zip them together. Children are arena-allocated; the slice
+    /// is borrowed from the parent's storage and lives as long as the
+    /// element does.
+    fn children(&self) -> &[AnyElement] {
         &[]
     }
 

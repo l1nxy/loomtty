@@ -228,6 +228,14 @@ pub(crate) struct App {
     /// nodes don't bounce through the system allocator on every chrome
     /// paint. See `ciri_ui::paint_tree_into_with` for the mechanism.
     pub ui_taffy_tree: std::cell::RefCell<crate::app::ui::types::UiTaffyTree>,
+
+    /// Bump arena for ciri-ui Element trees. Cleared at the start of
+    /// every chrome / transient paint pass so the per-frame element
+    /// tree (every `Div`, `Text`, etc.) allocates by pointer-bump
+    /// instead of `Box::new`. The bin crate publishes this arena via
+    /// `ElementArenaScope` around each paint call so `AnyElement::new`
+    /// inside `Div::child` lands here. See `ciri_ui::arena`.
+    pub ui_arena: std::cell::RefCell<ciri_ui::Arena>,
 }
 
 impl App {
@@ -464,6 +472,10 @@ impl App {
             connection_cancel: None,
             motion_ticker: Arc::new(ciri_motion::Ticker::new()),
             ui_taffy_tree: std::cell::RefCell::new(taffy::TaffyTree::new()),
+            // 256 KB initial chunk — enough for a typical chrome paint
+            // (~150 elements × ~100 bytes each fits in well under that),
+            // grows automatically if a frame outsizes it.
+            ui_arena: std::cell::RefCell::new(ciri_ui::Arena::new(256 * 1024)),
         }
     }
 

@@ -80,6 +80,13 @@ impl App {
         let top_bar_h = top_bar_layout.bar_height;
         let hints_bar_h = self.hints_bar_height();
         let frame = UiFrame::capture(self, &cx, top_bar_layout, top_bar_h, hints_bar_h);
+        // Clear the element arena before this paint pass so all chrome
+        // widgets allocate into the freshly reset bump space; entering
+        // an `ElementArenaScope` makes `with_element_arena` (called
+        // from `AnyElement::new` inside every `Div::child`) target this
+        // arena for the duration of `frame.paint`.
+        self.ui_arena.borrow_mut().clear();
+        let _arena_scope = ciri_ui::ElementArenaScope::enter(&self.ui_arena);
         {
             let cached_ui = &mut self.cached_ui_scene;
             cached_ui.key = Some(cache_key);

@@ -1928,6 +1928,18 @@ impl App {
             return;
         }
 
+        // Clear ciri-ui's thread-local fallback arena at the frame
+        // boundary. Hit-test paths (mouse-event widget click/hover)
+        // build element trees outside the chrome / transient
+        // `ElementArenaScope`s, so their AnyElements land in the
+        // fallback. Without this clear, every input event between
+        // renders accumulates retained bump entries indefinitely.
+        // The clear is safe here: by the time render() is called,
+        // any tree that hit-test built has been dropped (`root` was
+        // a stack value that fell out of scope when its widget's
+        // hit_test method returned).
+        ciri_ui::clear_fallback_element_arena();
+
         let now = Instant::now();
         let raw_dt = (now - self.core.last_frame).as_secs_f64();
         self.core.last_frame = now;

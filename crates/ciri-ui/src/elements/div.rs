@@ -13,7 +13,7 @@
 //! into its own emitted primitive.
 
 use crate::color::{mul_alpha, Color, TRANSPARENT};
-use crate::element::{Element, EventCtx, IntoElement, Layer, PaintCtx, UiEvent};
+use crate::element::{AnyElement, Element, EventCtx, IntoElement, Layer, PaintCtx, UiEvent};
 use crate::layout::to_taffy_style;
 use crate::scene::SdfRect;
 use crate::style::{Shadow, Style};
@@ -32,9 +32,15 @@ pub fn div() -> Div {
 /// children — icon + label, prefix + value, etc.), so the children
 /// vector lives entirely on the stack and never touches the allocator.
 /// Containers with >2 children spill to a heap Vec transparently.
+///
+/// Each child is an [`AnyElement`] — bump-allocated in the active
+/// element arena rather than `Box::new`'d. `Vec` of `AnyElement` still
+/// pays one allocation when it spills past 2 children, but that's a
+/// single 24-byte node header per spill (vs ~150 `Box::new`s for a
+/// palette frame previously).
 pub struct Div {
     style: Style,
-    children: SmallVec<[Box<dyn Element>; 2]>,
+    children: SmallVec<[AnyElement; 2]>,
     layer_override: Option<Layer>,
 }
 
@@ -55,32 +61,32 @@ impl Div {
 
     /// Append one child. Accepts anything convertible to an element —
     /// strings (`&str` / `String` / `SharedString`) become `Text`,
-    /// existing elements pass through unchanged.
+    /// existing elements pass through unchanged. Allocation goes to
+    /// the active element arena (see [`crate::arena`]).
     ///
-    /// `div().child("Foo")` and `div().child(text("Foo"))` are now
+    /// `div().child("Foo")` and `div().child(text("Foo"))` are
     /// interchangeable; the former skips one wrap.
     pub fn child<C: IntoElement>(mut self, child: C) -> Self {
-        self.children.push(Box::new(child.into_element()));
+        self.children.push(AnyElement::new(child.into_element()));
         self
     }
 
-    /// Append an already-boxed child — useful for containers collected
-    /// dynamically (e.g. plugin-registered items).
-    pub fn child_boxed(mut self, child: Box<dyn Element>) -> Self {
+    /// Append a pre-built [`AnyElement`] — useful when constructing a
+    /// child via a code path that already owns the arena slot.
+    pub fn child_any(mut self, child: AnyElement) -> Self {
         self.children.push(child);
         self
     }
 
-    /// Extend with many children.
+    /// Extend with many children. Each yielded value is converted via
+    /// [`IntoElement`] and arena-allocated.
     pub fn children_ext<I, C>(mut self, iter: I) -> Self
     where
         I: IntoIterator<Item = C>,
         C: IntoElement,
     {
-        self.children.extend(
-            iter.into_iter()
-                .map(|e| Box::new(e.into_element()) as Box<dyn Element>),
-        );
+        self.children
+            .extend(iter.into_iter().map(|e| AnyElement::new(e.into_element())));
         self
     }
 
@@ -122,7 +128,7 @@ impl Element for Div {
         to_taffy_style(&self.style)
     }
 
-    fn children(&self) -> &[Box<dyn Element>] {
+    fn children(&self) -> &[AnyElement] {
         &self.children
     }
 

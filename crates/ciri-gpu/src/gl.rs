@@ -9,7 +9,12 @@ use ciri_config::config::RenderConfig;
 use ciri_render::FrameScene;
 use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, PendingUpload, ScissoredRange};
 use ciri_render::rect::Rect;
+use ciri_render::sdf_rect::SdfRect;
 use glow::HasContext;
+
+/// Upper bound on SDF chrome rects per frame. Mirrors `MAX_SDF_RECTS` in
+/// the blade backend so both backends drop the same tail under a flood.
+const MAX_SDF_RECTS: usize = 256;
 #[cfg(not(target_os = "macos"))]
 use glutin::config::ConfigTemplateBuilder;
 use glutin::context::PossiblyCurrentContext;
@@ -648,6 +653,105 @@ impl GlRectPipeline {
     }
 }
 
+// ─── GL SDF rect pipeline ───────────────────────────────────────────
+//
+// Mirrors blade's `SdfPipeline`: rounded corners + optional border + optional
+// shadow, instanced with one `SdfRect` per quad. Drawn after flat overlay
+// backgrounds and before overlay glyphs so chrome (palette / context menu)
+// sits on top of pane text but the labels stay crisp on top of the panel.
+
+struct GlSdfPipeline {
+    program: glow::Program,
+    vao: glow::VertexArray,
+    instance_vbo: glow::Buffer,
+    loc_viewport: glow::UniformLocation,
+    loc_use_linear_blending: Option<glow::UniformLocation>,
+    max_rects: usize,
+}
+
+impl GlSdfPipeline {
+    unsafe fn new(gl: &glow::Context, max_rects: usize) -> crate::Result<Self> {
+        let sdf_fs = SDF_FS.replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS);
+        let program = compile_program(gl, SDF_VS, &sdf_fs, "sdf")?;
+        let loc_viewport = gl
+            .get_uniform_location(program, "u_viewport")
+            .ok_or_else(|| {
+                crate::GpuError::ShaderCompile("u_viewport uniform not found in sdf shader".into())
+            })?;
+        let loc_use_linear_blending = gl.get_uniform_location(program, "u_use_linear_blending");
+
+        let vao = gl
+            .create_vertex_array()
+            .map_err(|e| crate::GpuError::ResourceCreate(format!("sdf VAO: {e}")))?;
+        let instance_vbo = gl
+            .create_buffer()
+            .map_err(|e| crate::GpuError::ResourceCreate(format!("sdf VBO: {e}")))?;
+
+        gl.bind_vertex_array(Some(vao));
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(instance_vbo));
+        gl.buffer_data_size(
+            glow::ARRAY_BUFFER,
+            (max_rects * SdfRect::SIZE) as i32,
+            glow::DYNAMIC_DRAW,
+        );
+        setup_sdf_vertex_attribs(gl, 0);
+        gl.bind_vertex_array(None);
+
+        Ok(GlSdfPipeline {
+            program,
+            vao,
+            instance_vbo,
+            loc_viewport,
+            loc_use_linear_blending,
+            max_rects,
+        })
+    }
+
+    unsafe fn upload(&self, gl: &glow::Context, rects: &[SdfRect]) {
+        if rects.is_empty() {
+            return;
+        }
+        let count = rects.len().min(self.max_rects);
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instance_vbo));
+        let data = bytemuck::cast_slice(&rects[..count]);
+        gl.buffer_sub_data_u8_slice(glow::ARRAY_BUFFER, 0, data);
+        gl.bind_buffer(glow::ARRAY_BUFFER, None);
+    }
+
+    unsafe fn draw(
+        &self,
+        gl: &glow::Context,
+        count: usize,
+        viewport_w: f32,
+        viewport_h: f32,
+        use_linear_blending: bool,
+    ) {
+        if count == 0 {
+            return;
+        }
+        let count = count.min(self.max_rects);
+        gl.use_program(Some(self.program));
+        gl.uniform_2_f32(Some(&self.loc_viewport), viewport_w, viewport_h);
+        if let Some(ref loc) = self.loc_use_linear_blending {
+            gl.uniform_1_i32(Some(loc), use_linear_blending as i32);
+        }
+        gl.bind_vertex_array(Some(self.vao));
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instance_vbo));
+        setup_sdf_vertex_attribs(gl, 0);
+
+        gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, count as i32);
+
+        gl.bind_vertex_array(None);
+        gl.use_program(None);
+    }
+
+    unsafe fn destroy(&self, gl: &glow::Context) {
+        gl.delete_program(self.program);
+        gl.delete_vertex_array(self.vao);
+        gl.delete_buffer(self.instance_vbo);
+    }
+}
+
 // ─── GlyphAtlasGpu ─────────────────────────────────────────────────
 
 pub struct GlyphAtlasGpu {
@@ -705,6 +809,7 @@ pub struct Renderer {
     gl_surface: glutin::surface::Surface<WindowSurface>,
     gl_context: PossiblyCurrentContext,
     rects: GlRectPipeline,
+    sdf: GlSdfPipeline,
     width: u32,
     height: u32,
     use_linear_blending: bool,
@@ -838,6 +943,7 @@ impl Renderer {
         }
 
         let rects = unsafe { GlRectPipeline::new(&gl, render_config.max_rectangles)? };
+        let sdf = unsafe { GlSdfPipeline::new(&gl, MAX_SDF_RECTS)? };
 
         let use_linear_blending = render_config.alpha_blending.is_linear();
         let use_linear_correction = render_config.alpha_blending.use_correction();
@@ -909,6 +1015,7 @@ impl Renderer {
             gl_surface,
             gl_context,
             rects,
+            sdf,
             width: size.width.max(1),
             height: size.height.max(1),
             use_linear_blending,
@@ -1075,6 +1182,15 @@ impl Renderer {
                     .draw_range(&self.gl, overlay_bg_idx, overlay_bg_count, vw, vh, lb);
             }
 
+            // 7b. SDF chrome (rounded corners + border + shadow) for popups
+            //     like the command palette and context menu. Drawn after flat
+            //     overlay bgs and before overlay glyphs so the panel sits on
+            //     top of pane text and labels paint crisply on top of it.
+            if !scene.sdf_rects.is_empty() {
+                self.sdf.upload(&self.gl, scene.sdf_rects);
+                self.sdf.draw(&self.gl, scene.sdf_rects.len(), vw, vh, lb);
+            }
+
             // 8. Overlay glyphs (no re-upload, just draw remaining range).
             let overlay_alpha = ScissoredRange {
                 x: 0,
@@ -1197,6 +1313,7 @@ impl Drop for Renderer {
                 target.destroy(&self.gl);
             }
             self.rects.destroy(&self.gl);
+            self.sdf.destroy(&self.gl);
         }
     }
 }
@@ -1205,6 +1322,49 @@ impl Drop for Renderer {
 
 unsafe fn setup_glyph_vertex_attribs(gl: &glow::Context) {
     setup_glyph_vertex_attribs_offset(gl, 0);
+}
+
+/// Vertex attribute layout for `SdfRect`. Field offsets must match the Rust
+/// struct exactly — they form a three-way contract with the Rust layout and
+/// the GLSL `in` declarations in `SDF_VS`.
+unsafe fn setup_sdf_vertex_attribs(gl: &glow::Context, base_offset: i32) {
+    let stride = SdfRect::SIZE as i32;
+    // pos
+    gl.enable_vertex_attrib_array(0);
+    gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, stride, base_offset);
+    gl.vertex_attrib_divisor(0, 1);
+    // size
+    gl.enable_vertex_attrib_array(1);
+    gl.vertex_attrib_pointer_f32(1, 2, glow::FLOAT, false, stride, base_offset + 8);
+    gl.vertex_attrib_divisor(1, 1);
+    // color
+    gl.enable_vertex_attrib_array(2);
+    gl.vertex_attrib_pointer_f32(2, 4, glow::FLOAT, false, stride, base_offset + 16);
+    gl.vertex_attrib_divisor(2, 1);
+    // radii
+    gl.enable_vertex_attrib_array(3);
+    gl.vertex_attrib_pointer_f32(3, 4, glow::FLOAT, false, stride, base_offset + 32);
+    gl.vertex_attrib_divisor(3, 1);
+    // border_color
+    gl.enable_vertex_attrib_array(4);
+    gl.vertex_attrib_pointer_f32(4, 4, glow::FLOAT, false, stride, base_offset + 48);
+    gl.vertex_attrib_divisor(4, 1);
+    // border_width
+    gl.enable_vertex_attrib_array(5);
+    gl.vertex_attrib_pointer_f32(5, 1, glow::FLOAT, false, stride, base_offset + 64);
+    gl.vertex_attrib_divisor(5, 1);
+    // shadow_blur
+    gl.enable_vertex_attrib_array(6);
+    gl.vertex_attrib_pointer_f32(6, 1, glow::FLOAT, false, stride, base_offset + 68);
+    gl.vertex_attrib_divisor(6, 1);
+    // shadow_offset
+    gl.enable_vertex_attrib_array(7);
+    gl.vertex_attrib_pointer_f32(7, 2, glow::FLOAT, false, stride, base_offset + 72);
+    gl.vertex_attrib_divisor(7, 1);
+    // shadow_color
+    gl.enable_vertex_attrib_array(8);
+    gl.vertex_attrib_pointer_f32(8, 4, glow::FLOAT, false, stride, base_offset + 80);
+    gl.vertex_attrib_divisor(8, 1);
 }
 
 unsafe fn setup_glyph_vertex_attribs_offset(gl: &glow::Context, base_offset: i32) {
@@ -1334,6 +1494,159 @@ void main() {
         color = linearize(color);
     }
     frag_color = vec4(color.rgb * color.a, color.a);
+}
+"#;
+
+// ─── SDF shaders ────────────────────────────────────────────────────
+//
+// Port of `SDF_SHADER` (WGSL) from the blade backend. All math is in
+// logical pixels; the body, border, and shadow are composited in shader
+// so a single instance produces the full chrome rect.
+//
+// `u_use_linear_blending` mirrors the rect / glyph shaders: when on, sRGB
+// inputs are linearized so the sRGB FBO + `GL_FRAMEBUFFER_SRGB` path
+// re-encodes correctly. Native (non-linear) mode outputs the input sRGB
+// premultiplied directly.
+
+const SDF_VS: &str = r#"#version 330 core
+
+layout(location = 0) in vec2 a_pos;
+layout(location = 1) in vec2 a_size;
+layout(location = 2) in vec4 a_color;
+layout(location = 3) in vec4 a_radii;
+layout(location = 4) in vec4 a_border_color;
+layout(location = 5) in float a_border_width;
+layout(location = 6) in float a_shadow_blur;
+layout(location = 7) in vec2 a_shadow_offset;
+layout(location = 8) in vec4 a_shadow_color;
+
+uniform vec2 u_viewport;
+
+out vec2 v_local;
+out vec2 v_half_size;
+out vec4 v_color;
+out vec4 v_radii;
+out vec4 v_border_color;
+out float v_border_width;
+out float v_shadow_blur;
+out vec2 v_shadow_offset;
+out vec4 v_shadow_color;
+
+void main() {
+    float x = float(gl_VertexID & 1);
+    float y = float((gl_VertexID >> 1) & 1);
+
+    // Inflate the quad so shadow blur + offset spill outside the rect's
+    // bounds without clipping. 3σ covers ~99.7% of a Gaussian envelope.
+    float pad = a_shadow_blur * 3.0
+              + max(abs(a_shadow_offset.x), abs(a_shadow_offset.y));
+    vec2 padded_pos = a_pos - vec2(pad);
+    vec2 padded_size = a_size + vec2(pad * 2.0);
+
+    vec2 px = padded_pos + vec2(x, y) * padded_size;
+    vec2 ndc = vec2(
+        px.x / u_viewport.x * 2.0 - 1.0,
+        1.0 - px.y / u_viewport.y * 2.0
+    );
+
+    vec2 centre = a_pos + a_size * 0.5;
+    v_local = px - centre;
+    v_half_size = a_size * 0.5;
+    v_color = a_color;
+    v_radii = a_radii;
+    v_border_color = a_border_color;
+    v_border_width = a_border_width;
+    v_shadow_blur = a_shadow_blur;
+    v_shadow_offset = a_shadow_offset;
+    v_shadow_color = a_shadow_color;
+
+    gl_Position = vec4(ndc, 0.0, 1.0);
+}
+"#;
+
+const SDF_FS: &str = r#"#version 330 core
+
+in vec2 v_local;
+in vec2 v_half_size;
+in vec4 v_color;
+in vec4 v_radii;
+in vec4 v_border_color;
+in float v_border_width;
+in float v_shadow_blur;
+in vec2 v_shadow_offset;
+in vec4 v_shadow_color;
+
+uniform bool u_use_linear_blending;
+
+out vec4 frag_color;
+
+// COLOR_FUNCS_PLACEHOLDER
+
+// SDF of a rounded box centred at the origin. Per-corner radii order
+// matches CSS: tl, tr, br, bl. Picks the corner from the sample quadrant.
+float sdf_rounded_box(vec2 p, vec2 b, vec4 r) {
+    float r_top_x = (p.x > 0.0) ? r.y : r.x;   // tl | tr
+    float r_bot_x = (p.x > 0.0) ? r.z : r.w;   // bl | br
+    float radius = (p.y > 0.0) ? r_bot_x : r_top_x;
+    vec2 q = abs(p) - b + vec2(radius);
+    return min(max(q.x, q.y), 0.0) + length(max(q, vec2(0.0))) - radius;
+}
+
+float shadow_envelope(float d, float blur) {
+    if (blur <= 0.0) { return 0.0; }
+    return clamp(0.5 - 0.5 * d / blur, 0.0, 1.0);
+}
+
+void main() {
+    float d_body = sdf_rounded_box(v_local, v_half_size, v_radii);
+
+    // DPR-aware AA: half a pixel-derivative either side of the edge.
+    float aa = max(fwidth(d_body) * 0.5, 1e-5);
+    float body_alpha = clamp(0.5 - d_body / (aa * 2.0), 0.0, 1.0);
+
+    // Border SDF band: half-width centred at d = -border_width/2, i.e.
+    // sitting inside the body's outer edge so the AA fringes line up.
+    float border_alpha = 0.0;
+    if (v_border_width > 0.0) {
+        float bw = v_border_width * 0.5;
+        float d_band = abs(d_body + bw) - bw;
+        border_alpha = clamp(0.5 - d_band / (aa * 2.0), 0.0, 1.0);
+    }
+
+    // Linearize sRGB inputs so blending against the sRGB FBO is correct.
+    // In native mode, outputs are written as sRGB directly.
+    vec4 fill = v_color;
+    vec4 border_col = v_border_color;
+    vec4 shadow_in = v_shadow_color;
+    if (u_use_linear_blending) {
+        fill = linearize(fill);
+        border_col = linearize(border_col);
+        shadow_in = linearize(shadow_in);
+    }
+
+    vec4 shadow_col = vec4(0.0);
+    if (v_shadow_blur > 0.0 && shadow_in.a > 0.0) {
+        float d_shadow = sdf_rounded_box(v_local - v_shadow_offset, v_half_size, v_radii);
+        float env = shadow_envelope(d_shadow, v_shadow_blur);
+        // Body occludes its own shadow to avoid a double-dark inner ring.
+        float occlusion = 1.0 - body_alpha;
+        float a = env * shadow_in.a * occlusion;
+        shadow_col = vec4(shadow_in.rgb * a, a);
+    }
+
+    // Premultiply fill + border so OVER compositing works directly.
+    vec4 body = vec4(fill.rgb * fill.a * body_alpha, fill.a * body_alpha);
+    vec4 border = vec4(border_col.rgb * border_col.a * border_alpha,
+                       border_col.a * border_alpha);
+
+    // Shadow under body, border over body.
+    vec3 out_rgb = shadow_col.rgb * (1.0 - body.a)
+                 + body.rgb * (1.0 - border.a)
+                 + border.rgb;
+    float out_a = shadow_col.a * (1.0 - body.a)
+                + body.a * (1.0 - border.a)
+                + border.a;
+    frag_color = vec4(out_rgb, out_a);
 }
 "#;
 

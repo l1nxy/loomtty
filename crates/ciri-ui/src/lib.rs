@@ -38,8 +38,8 @@ pub use element::{Element, ElementId, EventCtx, IntoElement, Layer, PaintCtx, Ui
 pub use elements::{Div, Text, div, text};
 pub use fluent::FluentBuilder;
 pub use layout::{
-    LayoutNode, LayoutSnapshot, NodeContext, PaintOutput, paint_tree, paint_tree_into,
-    paint_tree_into_retained, paint_tree_into_with, paint_tree_into_with_layout,
+    LayoutNode, LayoutSnapshot, NodeContext, PaintOutput, layout_tree_into_retained, paint_tree,
+    paint_tree_into, paint_tree_into_retained, paint_tree_into_with, paint_tree_into_with_layout,
     paint_tree_with_layout,
 };
 pub use scene::{GlyphInstance, Scene, SdfRect};

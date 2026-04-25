@@ -176,27 +176,9 @@ pub(super) fn ui_hit_id(
     mx: f32,
     my: f32,
 ) -> Option<u64> {
-    let mut shaper = ciri_ui::NullShaper;
-    let viewport = [cx.viewport_w, cx.viewport_h];
-    if let Some(tree_cell) = cx.taffy_tree {
-        let mut tree = tree_cell.borrow_mut();
-        let mut scene = ciri_ui::Scene::new();
-        let mut layout = ciri_ui::LayoutSnapshot::new();
-        ciri_ui::paint_tree_into_retained(
-            root,
-            cx.theme,
-            viewport,
-            1.0,
-            &mut shaper,
-            &mut scene,
-            &mut layout,
-            &mut tree,
-        );
+    with_hit_layout(root, cx, |layout| {
         layout.hit_test(mx, my).and_then(|node| node.hit_id)
-    } else {
-        let out = ciri_ui::paint_tree_with_layout(root, cx.theme, viewport, 1.0, &mut shaper);
-        out.layout.hit_test(mx, my).and_then(|node| node.hit_id)
-    }
+    })
 }
 
 #[cfg(test)]
@@ -205,34 +187,38 @@ pub(super) fn ui_hit_bounds(
     cx: &UiContext<'_>,
     hit_id: u64,
 ) -> Option<[f32; 4]> {
-    let mut shaper = ciri_ui::NullShaper;
-    let viewport = [cx.viewport_w, cx.viewport_h];
-    if let Some(tree_cell) = cx.taffy_tree {
-        let mut tree = tree_cell.borrow_mut();
-        let mut scene = ciri_ui::Scene::new();
-        let mut layout = ciri_ui::LayoutSnapshot::new();
-        ciri_ui::paint_tree_into_retained(
-            root,
-            cx.theme,
-            viewport,
-            1.0,
-            &mut shaper,
-            &mut scene,
-            &mut layout,
-            &mut tree,
-        );
+    with_hit_layout(root, cx, |layout| {
         layout
             .nodes()
             .iter()
             .find(|node| node.hit_id == Some(hit_id))
             .map(|node| node.bounds)
+    })
+}
+
+/// Run a layout-only walk of `root`, populate a `LayoutSnapshot`, and
+/// hand it to `f`. The walker is the lightweight hit-test variant —
+/// it skips `Element::paint`, so callers that only need bounds/ids
+/// don't pay for SDF rect emission, glyph shaping, or paint-time
+/// transform composition.
+fn with_hit_layout<R>(
+    root: &impl ciri_ui::Element,
+    cx: &UiContext<'_>,
+    f: impl FnOnce(&ciri_ui::LayoutSnapshot) -> R,
+) -> R {
+    let mut shaper = ciri_ui::NullShaper;
+    let viewport = [cx.viewport_w, cx.viewport_h];
+    if let Some(tree_cell) = cx.taffy_tree {
+        let mut tree = tree_cell.borrow_mut();
+        let mut layout = ciri_ui::LayoutSnapshot::new();
+        ciri_ui::layout_tree_into_retained(root, viewport, &mut shaper, &mut layout, &mut tree);
+        f(&layout)
     } else {
-        let out = ciri_ui::paint_tree_with_layout(root, cx.theme, viewport, 1.0, &mut shaper);
-        out.layout
-            .nodes()
-            .iter()
-            .find(|node| node.hit_id == Some(hit_id))
-            .map(|node| node.bounds)
+        // Test fallback: no retained tree, allocate fresh per call.
+        let mut tree = taffy::TaffyTree::<ciri_ui::NodeContext>::new();
+        let mut layout = ciri_ui::LayoutSnapshot::new();
+        ciri_ui::layout_tree_into_retained(root, viewport, &mut shaper, &mut layout, &mut tree);
+        f(&layout)
     }
 }
 

@@ -217,6 +217,71 @@ pub fn paint_tree_into_with(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Layout-only walker: builds the Taffy tree, computes layout, and
+/// populates [`LayoutSnapshot`] for hit testing — but skips
+/// [`Element::paint`]. Use this when a caller needs hit-test data
+/// only and does not consume the [`Scene`] output (e.g. the modal
+/// `hit_test` paths in ciri's chrome widgets).
+///
+/// Saves the cost of every per-element paint (SDF rect emission,
+/// glyph shaping, inherited transform composition) for the
+/// hit-test-only path. The `TaffyTree` is `clear()`ed and rebuilt as
+/// in [`paint_tree_into_retained`], so callers should keep their tree
+/// across frames for allocator reuse.
+pub fn layout_tree_into_retained(
+    root: &dyn Element,
+    viewport: [f32; 2],
+    text_shaper: &mut dyn TextShaper,
+    layout_snapshot: &mut LayoutSnapshot,
+    tree: &mut taffy::TaffyTree<NodeContext>,
+) {
+    layout_snapshot.clear();
+    tree.clear();
+    let root_node = build_taffy(tree, root);
+
+    let available = taffy::Size {
+        width: taffy::AvailableSpace::Definite(viewport[0].max(0.0)),
+        height: taffy::AvailableSpace::Definite(viewport[1].max(0.0)),
+    };
+    let layout_result = tree.compute_layout_with_measure(
+        root_node,
+        available,
+        |_known, _available, _node, ctx, _style| -> taffy::Size<f32> {
+            match ctx {
+                Some(NodeContext::Text {
+                    content,
+                    font_size_px,
+                }) => {
+                    let [w, h] = text_shaper.measure(content, *font_size_px);
+                    taffy::Size {
+                        width: w,
+                        height: h,
+                    }
+                }
+                None => taffy::Size {
+                    width: 0.0,
+                    height: 0.0,
+                },
+            }
+        },
+    );
+    if let Err(e) = layout_result {
+        log::warn!("ciri-ui: taffy compute_layout failed (hit-only): {e:?}");
+        return;
+    }
+    let mut paint_order = 0;
+    walk_for_layout_snapshot(
+        tree,
+        root_node,
+        root,
+        /* parent_local */ [0.0, 0.0],
+        /* inherited_translate */ [0.0, 0.0],
+        /* inherited_layer */ Layer::Chrome,
+        layout_snapshot,
+        &mut paint_order,
+    );
+}
+
 /// Most-general paint entry point: caller owns the [`Scene`], the
 /// [`LayoutSnapshot`], and the `TaffyTree`. All three are `clear()`ed
 /// internally and re-filled, so storing them across frames keeps their
@@ -429,6 +494,86 @@ fn paint_node(
             scale,
             text_shaper,
             scene,
+            layout_snapshot,
+            paint_order,
+        );
+    }
+}
+
+/// Walk the laid-out tree and populate `LayoutSnapshot` only — the
+/// hit-test counterpart to [`paint_node`]. Mirrors paint_node's bounds
+/// computation and paint-order assignment exactly so the snapshot
+/// shape matches a full paint run; deliberately drops opacity / text-
+/// colour inheritance and `Element::paint` calls because nothing
+/// consumes them on this path.
+#[allow(clippy::too_many_arguments)]
+fn walk_for_layout_snapshot(
+    tree: &taffy::TaffyTree<NodeContext>,
+    node: taffy::NodeId,
+    el: &dyn Element,
+    parent_local: [f32; 2],
+    inherited_translate: [f32; 2],
+    inherited_layer: Layer,
+    layout_snapshot: &mut LayoutSnapshot,
+    paint_order: &mut usize,
+) {
+    let layout = match tree.layout(node) {
+        Ok(l) => l,
+        Err(e) => {
+            log::warn!("ciri-ui: taffy layout query failed (hit-only): {e:?}");
+            return;
+        }
+    };
+    if !(layout.size.width > 0.0 && layout.size.height > 0.0) {
+        return;
+    }
+
+    let local_x = parent_local[0] + layout.location.x;
+    let local_y = parent_local[1] + layout.location.y;
+    let paint_x = local_x + inherited_translate[0];
+    let paint_y = local_y + inherited_translate[1];
+
+    let effective_layer = el.layer().unwrap_or(inherited_layer);
+    let (_own_opacity, own_translate) = el.paint_transform();
+    let current_order = *paint_order;
+    *paint_order += 1;
+    layout_snapshot.push(LayoutNode {
+        type_id: el.type_id(),
+        layer: effective_layer,
+        bounds: [
+            paint_x + own_translate[0],
+            paint_y + own_translate[1],
+            layout.size.width,
+            layout.size.height,
+        ],
+        paint_order: current_order,
+        accepts_pointer_events: el.accepts_pointer_events(),
+        hit_id: el.hit_id(),
+    });
+
+    let child_inherited_translate = [
+        inherited_translate[0] + own_translate[0],
+        inherited_translate[1] + own_translate[1],
+    ];
+
+    let children = el.children();
+    if children.is_empty() {
+        return;
+    }
+    let taffy_children: Vec<_> = tree.child_ids(node).collect();
+    debug_assert_eq!(
+        taffy_children.len(),
+        children.len(),
+        "Taffy child count disagrees with Element::children() (hit-only)",
+    );
+    for (child_node, child_el) in taffy_children.iter().zip(children.iter()) {
+        walk_for_layout_snapshot(
+            tree,
+            *child_node,
+            &**child_el,
+            [local_x, local_y],
+            child_inherited_translate,
+            effective_layer,
             layout_snapshot,
             paint_order,
         );

@@ -27,6 +27,7 @@ pub mod elements;
 pub mod layout;
 pub mod scene;
 pub mod shaper;
+pub mod shared_string;
 pub mod style;
 pub mod styled;
 pub mod theme;
@@ -41,6 +42,7 @@ pub use layout::{
 };
 pub use scene::{GlyphInstance, Scene, SdfRect};
 pub use shaper::{NullShaper, TextShaper};
+pub use shared_string::SharedString;
 pub use style::{
     AlignItems, CursorStyle, Display, FlexDirection, JustifyContent, Length, Shadow, Style,
 };

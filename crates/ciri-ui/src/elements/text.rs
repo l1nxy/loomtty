@@ -10,6 +10,7 @@
 use crate::color::Color;
 use crate::element::{Element, PaintCtx};
 use crate::layout::NodeContext;
+use crate::shared_string::SharedString;
 
 /// Default logical-px font size when no `.size(..)` override is set.
 /// Matches `ResolvedTheme::typography.md` so most chrome reads like a
@@ -19,13 +20,18 @@ use crate::layout::NodeContext;
 pub const DEFAULT_FONT_SIZE_PX: f32 = 13.0;
 
 /// Free constructor: `text("hi")` reads better than `Text::new("hi")`.
-pub fn text(s: impl Into<String>) -> Text {
+///
+/// Accepts anything that converts to [`SharedString`] — `&'static str`
+/// literals are stored zero-alloc, `String` and `&String` move/copy
+/// through `SmolStr`'s small-string optimisation, longer strings end
+/// up as a ref-counted `Arc<str>`.
+pub fn text(s: impl Into<SharedString>) -> Text {
     Text::new(s)
 }
 
 /// A single run of text.
 pub struct Text {
-    content: String,
+    content: SharedString,
     color: Option<Color>,
     /// Logical-px font size. `None` means "use theme default
     /// (`typography.md`)" — resolved at paint time so runtime theme
@@ -34,7 +40,7 @@ pub struct Text {
 }
 
 impl Text {
-    pub fn new(s: impl Into<String>) -> Self {
+    pub fn new(s: impl Into<SharedString>) -> Self {
         Self {
             content: s.into(),
             color: None,
@@ -84,6 +90,10 @@ impl Element for Text {
     }
 
     fn taffy_context(&self) -> Option<NodeContext> {
+        // Cloning a `SharedString` is a SmolStr clone — either an inline
+        // memcpy or an `Arc` ref-count bump, never an allocation. The
+        // previous `self.content.clone()` here was a full `String` copy
+        // every layout pass.
         Some(NodeContext::Text {
             content: self.content.clone(),
             font_size_px: self.effective_font_size(),

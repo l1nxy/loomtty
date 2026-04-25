@@ -877,6 +877,7 @@ dependencies = [
  "ciri-render",
  "log",
  "smallvec",
+ "smol_str",
  "taffy",
 ]
 

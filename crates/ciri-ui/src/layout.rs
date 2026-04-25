@@ -36,7 +36,10 @@ pub enum NodeContext {
     /// Text leaf: layout defers to the host `TextShaper::measure`,
     /// which sees the same font size used at paint time so the two
     /// passes never disagree on width.
-    Text { content: String, font_size_px: f32 },
+    Text {
+        content: crate::shared_string::SharedString,
+        font_size_px: f32,
+    },
 }
 
 /// A laid-out element record captured from the same Taffy pass used for paint.

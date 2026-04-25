@@ -9,4 +9,5 @@ ciri-config = { workspace = true }
 ciri-render = { workspace = true }
 log = { workspace = true }
 smallvec = { workspace = true }
+smol_str = { workspace = true }
 taffy = { workspace = true }

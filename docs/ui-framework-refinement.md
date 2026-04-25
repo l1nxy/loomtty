@@ -205,25 +205,41 @@ respected.
 These are bugfixes / small refactors found during the audit. None
 require any framework change.
 
-- **0a.** Use the retained TaffyTree variant. ciri-ui already has
-  `paint_tree_into_with` (`layout.rs:194`). Add a
-  `paint_tree_into_with_layout_into_tree` (or expose
-  `paint_tree_into_with_snapshot` as `pub`) so that `ui_hit_id` and the
-  layout-snapshot paint path can also retain the tree. Adapter holds
-  `RefCell<TaffyTree<NodeContext>>`. **One file in ciri-ui, one in adapter.**
-- **0b.** Dedupe `tile_paint_config`. Have `build_tiles` call
-  `self.tile_paint_config()` (`app/render.rs:1489-1508` → delete).
-- **0c.** Move `SectionHeader` skip into `CommandPaletteState::move_selection(delta: i32)`,
-  call from `Action::PaletteUp/Down` and `mouse::handle_palette_wheel`.
-- **0d.** Fold `image_atlas_entries.clear()` into `invalidate_pane_cache`,
-  filtering by pane_id rather than `.clear()`-ing all.
-- **0e.** Pre-store `lowercase_label` on `PaletteEntry` at
-  `rebuild_palette_entries` time; `filter_palette` reads it.
-- **0f.** `cached_ui_scene.sdf_rects.clone()` → `take + extend +
-  truncate-to-cached-len + put-back`.
-- **0g.** Split `render()` into four sub-methods:
-  `update_pane_views() / build_frame_buffers() / draw_frame() /
-  post_frame()`.
+- **0a.** [DONE] Use the retained TaffyTree variant. ciri-ui already has
+  `paint_tree_into_with` (`layout.rs:194`); promoted internal
+  `paint_tree_into_with_snapshot` to public `paint_tree_into_retained`
+  for the hit-test path. Adapter holds `RefCell<TaffyTree<NodeContext>>`
+  on `App`, threaded through `UiContext::taffy_tree`.
+- **0b.** [DONE] Dedupe `tile_paint_config`. `build_tiles` now calls
+  `self.tile_paint_config()`; the duplicated 18-line literal is gone.
+- **0c.** [DONE] `SectionHeader` skip lives on
+  `CommandPaletteState::move_selection(delta, wrap)` in ciri-app.
+  Keyboard nav passes `wrap=true`, mouse-wheel passes `wrap=false`.
+  Three duplicated loops collapsed.
+- **0d.** [DONE] Per-pane image-atlas eviction split into its own
+  `invalidate_pane_images(pane_id)` method. `invalidate_pane_cache`
+  keeps the cheap per-pane caches only (views, tile glyphs, tile
+  backgrounds) so it stays cheap to call on every scroll / resize /
+  selection. The two `sync.rs` sites that previously did
+  `image_atlas_entries.clear() + invalidate_pane_cache(pid)` (PaneClosed
+  and ImageDeleted) now call `invalidate_pane_images(pid) +
+  invalidate_pane_cache(pid)`. (An earlier draft folded the image
+  eviction into `invalidate_pane_cache` — Codex caught the regression
+  before it shipped.)
+- **0e.** [DONE] `PaletteEntry::new(label, kind)` constructor stores
+  `lowercase_label` once at construction; `filter_palette` reads
+  `e.lowercase_label` directly. All 21 struct-literal sites converted.
+- **0f.** [DONE] `cached_ui_scene.sdf_rects.clone()` replaced with
+  `mem::take` + record `cached_len` + transient extend + post-draw
+  `truncate(cached_len)` + put-back. One Vec memcpy per frame
+  eliminated; capacity reused.
+- **0g.** [DEFERRED to Phase 1+] Split `render()` into four sub-methods.
+  Hands-on attempt revealed the per-pane view loop, buffer take dance,
+  and `cache`/`shaper`/`cached_views` borrow interleaving make a clean
+  extraction impossible without first restructuring `App`. Doing this
+  before Phase 1's `RenderState` substructure would just produce ugly
+  parameter lists. Pick this back up after Phase 1 when the borrows
+  collapse to `&mut self.render`.
 
 ### Phase 1 — `prepaint` phase + hitbox API
 

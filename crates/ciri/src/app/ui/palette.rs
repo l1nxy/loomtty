@@ -8,7 +8,7 @@ use super::tokens;
 use super::types::{UiAction, UiContext, UiPaletteHit, UiScene, ui_hit_id};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Div, Layer, Styled, div, text};
+use ciri_ui::{Div, FluentBuilder, Layer, Styled, div, text};
 
 const HIT_CLOSE: u64 = 1;
 const HIT_PANEL: u64 = 2;
@@ -198,7 +198,8 @@ impl PaletteComponent {
             format!("> {}", self.query)
         };
 
-        let mut input_row = div()
+        let show_remote_placeholder = self.remote_input_mode && self.query.is_empty();
+        let input_row = div()
             .w_full()
             .h(input_row_h)
             .flex_row()
@@ -211,13 +212,14 @@ impl PaletteComponent {
                     .w(2.0)
                     .h(cx.ui_line_h)
                     .bg(tokens::tint(fg_color, tokens::ALPHA_CURSOR)),
-            );
-        if self.remote_input_mode && self.query.is_empty() {
-            input_row = input_row.child(text("user@host[:port]").color(dim_color));
-        }
+            )
+            .when(show_remote_placeholder, |d| {
+                d.child(text("user@host[:port]").color(dim_color))
+            });
 
         let mut rows_col = div().w_full().flex_col();
         for row in &self.rows {
+            let is_header = row.style == PaletteRowStyle::SectionHeader;
             let tint = if row.is_selected {
                 Some(selected_bg)
             } else if row.is_hovered {
@@ -225,28 +227,29 @@ impl PaletteComponent {
             } else {
                 None
             };
-            let mut row_el = div()
+            let label_color = if row.style == PaletteRowStyle::ConnectRemotePrompt {
+                accent
+            } else if is_header {
+                dim_color
+            } else {
+                fg_color
+            };
+            let label_text = if is_header {
+                format!("── {} ──", row.label)
+            } else {
+                row.label.clone()
+            };
+            let row_el = div()
                 .w_full()
                 .h(row_h)
                 .flex_row()
                 .items_center()
-                .child(div().w(text_pad).h(row_h));
-            if row.style != PaletteRowStyle::SectionHeader {
-                row_el = row_el.hit_id(entry_hit_id(row.entry_idx)).cursor_pointer();
-            }
-            if let Some(color) = tint {
-                row_el = row_el.bg(color).rounded(tokens::SPACE_1);
-            }
-            if row.style == PaletteRowStyle::SectionHeader {
-                row_el = row_el.child(text(format!("── {} ──", row.label)).color(dim_color));
-            } else {
-                let color = if row.style == PaletteRowStyle::ConnectRemotePrompt {
-                    accent
-                } else {
-                    fg_color
-                };
-                row_el = row_el.child(text(row.label.clone()).color(color));
-            }
+                .child(div().w(text_pad).h(row_h))
+                .when(!is_header, |d| {
+                    d.hit_id(entry_hit_id(row.entry_idx)).cursor_pointer()
+                })
+                .when_some(tint, |d, color| d.bg(color).rounded(tokens::SPACE_1))
+                .child(text(label_text).color(label_color));
             rows_col = rows_col.child(row_el);
         }
         if self.show_no_matches {

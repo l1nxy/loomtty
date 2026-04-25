@@ -24,6 +24,7 @@
 pub mod color;
 pub mod element;
 pub mod elements;
+pub mod fluent;
 pub mod layout;
 pub mod scene;
 pub mod shaper;
@@ -35,6 +36,7 @@ pub mod theme;
 pub use color::Color;
 pub use element::{Element, ElementId, EventCtx, IntoElement, Layer, PaintCtx, UiCtx, UiEvent};
 pub use elements::{Div, Text, div, text};
+pub use fluent::FluentBuilder;
 pub use layout::{
     LayoutNode, LayoutSnapshot, NodeContext, PaintOutput, paint_tree, paint_tree_into,
     paint_tree_into_retained, paint_tree_into_with, paint_tree_into_with_layout,

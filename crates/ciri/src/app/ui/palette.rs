@@ -416,6 +416,7 @@ mod tests {
             ui_line_h: 16.0,
             ui_shaper: None,
             taffy_tree: None,
+            mouse_pos: None,
         }
     }
 

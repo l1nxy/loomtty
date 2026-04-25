@@ -162,6 +162,7 @@ pub fn paint_tree_into(
         scene,
         &mut layout,
         &mut tree,
+        None,
     );
 }
 
@@ -185,6 +186,7 @@ pub fn paint_tree_into_with_layout(
         scene,
         layout,
         &mut tree,
+        None,
     );
 }
 
@@ -194,6 +196,11 @@ pub fn paint_tree_into_with_layout(
 /// and re-allocating dozens of SlotMap slots per frame. Prefer this in
 /// the live render path; the one-shot `paint_tree[_into]` remains for
 /// tests and unit calls.
+///
+/// `mouse_pos` enables same-frame hover detection — the walker does a
+/// layout-only pre-pass to find the topmost element under the cursor
+/// and threads its `hit_id` into every paint call. Pass `None` to skip
+/// the pre-pass when hover information isn't needed.
 pub fn paint_tree_into_with(
     root: &dyn Element,
     theme: &ResolvedTheme,
@@ -202,6 +209,7 @@ pub fn paint_tree_into_with(
     text_shaper: &mut dyn TextShaper,
     scene: &mut Scene,
     tree: &mut taffy::TaffyTree<NodeContext>,
+    mouse_pos: Option<[f32; 2]>,
 ) {
     let mut layout = LayoutSnapshot::new();
     paint_tree_into_retained(
@@ -213,6 +221,7 @@ pub fn paint_tree_into_with(
         scene,
         &mut layout,
         tree,
+        mouse_pos,
     );
 }
 
@@ -291,6 +300,12 @@ pub fn layout_tree_into_retained(
 /// needed (i.e. anywhere `LayoutSnapshot::hit_test` will be queried).
 /// For paint-only callers, [`paint_tree_into_with`] is equivalent without
 /// the snapshot fill.
+///
+/// `mouse_pos` (when `Some`) drives same-frame hover detection: the
+/// walker does a layout-only pre-pass, finds the topmost element
+/// under the cursor, then threads its `hit_id` through every paint
+/// call so elements can apply hover styles. Pass `None` to skip the
+/// pre-pass entirely.
 pub fn paint_tree_into_retained(
     root: &dyn Element,
     theme: &ResolvedTheme,
@@ -300,6 +315,7 @@ pub fn paint_tree_into_retained(
     scene: &mut Scene,
     layout_snapshot: &mut LayoutSnapshot,
     tree: &mut taffy::TaffyTree<NodeContext>,
+    mouse_pos: Option<[f32; 2]>,
 ) {
     layout_snapshot.clear();
     tree.clear();
@@ -350,6 +366,32 @@ pub fn paint_tree_into_retained(
         log::warn!("ciri-ui: taffy compute_layout failed: {e:?}");
         return;
     }
+    // Phase 1: layout-only pre-pass to determine the topmost hit_id
+    // under the cursor for this frame. Skipped when no mouse position
+    // was provided — the walk is wasted otherwise. The pre-pass fills
+    // `layout_snapshot`, but the paint walk below clears + refills it
+    // with the same content, so the final state observed by callers
+    // matches what they'd see without this hover lookup.
+    let hovered_hit_id = if let Some([mx, my]) = mouse_pos {
+        let mut prepaint_order = 0;
+        walk_for_layout_snapshot(
+            tree,
+            root_node,
+            root,
+            [0.0, 0.0],
+            [0.0, 0.0],
+            Layer::Chrome,
+            layout_snapshot,
+            &mut prepaint_order,
+        );
+        layout_snapshot.hit_test(mx, my).and_then(|n| n.hit_id)
+    } else {
+        None
+    };
+
+    // Phase 2: actual paint walk. Re-clear the snapshot so paint_order
+    // and bounds match exactly what a single-pass walk would produce.
+    layout_snapshot.clear();
     let mut paint_order = 0;
     paint_node(
         tree,
@@ -360,6 +402,7 @@ pub fn paint_tree_into_retained(
         /* inherited_opacity */ 1.0,
         /* inherited_layer */ Layer::Chrome,
         /* inherited_text_color */ None,
+        hovered_hit_id,
         theme,
         scale,
         text_shaper,
@@ -397,6 +440,7 @@ fn paint_node(
     inherited_opacity: f32,
     inherited_layer: Layer,
     inherited_text_color: Option<crate::color::Color>,
+    hovered_hit_id: Option<u64>,
     theme: &ResolvedTheme,
     scale: f32,
     text_shaper: &mut dyn TextShaper,
@@ -451,6 +495,7 @@ fn paint_node(
         inherited_opacity,
         inherited_text_color,
         layer: effective_layer,
+        hovered_hit_id,
     };
     el.paint(&mut ctx);
 
@@ -490,6 +535,7 @@ fn paint_node(
             child_inherited_opacity,
             effective_layer,
             child_inherited_text_color,
+            hovered_hit_id,
             theme,
             scale,
             text_shaper,

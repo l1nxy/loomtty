@@ -111,11 +111,27 @@ pub struct PaintCtx<'a> {
     /// Effective layer for the emitted primitive. Already resolved by
     /// the walker (own `in_layer` → parent's inherited layer → default).
     pub layer: Layer,
+    /// `hit_id` of the topmost element under the cursor for this paint
+    /// pass, if any. The walker computes this from a pre-paint
+    /// `LayoutSnapshot` walk (so paint sees it immediately, without a
+    /// 1-frame lag) and threads it through every element's paint call.
+    /// Elements check `cx.is_hovered(self_hit_id)` to apply hover
+    /// styles; see [`PaintCtx::is_hovered`].
+    pub hovered_hit_id: Option<u64>,
 }
 
 impl<'a> PaintCtx<'a> {
     pub fn theme(&self) -> &ResolvedTheme {
         self.theme
+    }
+
+    /// True iff the topmost element under the cursor right now has the
+    /// given `hit_id`. Use this to gate hover-state styling — only the
+    /// receiver of pointer events should light up, not every ancestor
+    /// that happens to contain the cursor.
+    #[inline]
+    pub fn is_hovered(&self, hit_id: u64) -> bool {
+        self.hovered_hit_id == Some(hit_id)
     }
 
     /// Convenience: push an SDF rect into the effective layer.

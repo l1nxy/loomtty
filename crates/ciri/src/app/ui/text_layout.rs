@@ -115,6 +115,7 @@ mod tests {
             ui_line_h: cw * 2.0,
             ui_shaper: None,
             taffy_tree: None,
+            mouse_pos: None,
         };
         (cx, CiriConfig::default())
     }

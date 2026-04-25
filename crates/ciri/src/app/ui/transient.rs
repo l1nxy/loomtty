@@ -300,6 +300,7 @@ impl App {
             &self.cached_resolved_theme,
             self.ui_shaper.as_ref(),
             Some(&self.ui_taffy_tree),
+            self.last_mouse_pos.map(|(x, y)| [x, y]),
             vw,
             vh,
             cell_w,

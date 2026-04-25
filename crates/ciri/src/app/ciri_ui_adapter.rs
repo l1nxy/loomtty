@@ -200,6 +200,7 @@ pub(crate) fn paint_element_tree(root: &impl Element, cx: &UiContext<'_>, scene:
             &mut shaper,
             &mut ui_scene,
             &mut tree,
+            cx.mouse_pos,
         );
         ui_scene
     } else {

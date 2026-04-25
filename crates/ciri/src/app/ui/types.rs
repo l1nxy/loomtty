@@ -120,6 +120,13 @@ pub(crate) struct UiContext<'a> {
     /// nodes per widget per frame. `None` only in tests, where each call
     /// falls back to allocating a fresh tree.
     pub taffy_tree: Option<&'a RefCell<UiTaffyTree>>,
+    /// Last mouse position in window-local pixels, when the cursor is
+    /// inside the window. Used by the paint walker to determine which
+    /// element is currently hovered (`Element::paint` reads
+    /// `cx.is_hovered(hit_id)` to apply hover-state styles). `None`
+    /// when the cursor has left the window or the host hasn't reported
+    /// a position yet.
+    pub mouse_pos: Option<[f32; 2]>,
 }
 
 pub(crate) fn ui_context_from_metrics<'a>(
@@ -127,6 +134,7 @@ pub(crate) fn ui_context_from_metrics<'a>(
     theme: &'a ciri_ui::ResolvedTheme,
     ui_shaper: Option<&'a RefCell<UiTextShaper>>,
     taffy_tree: Option<&'a RefCell<UiTaffyTree>>,
+    mouse_pos: Option<[f32; 2]>,
     viewport_w: f32,
     viewport_h: f32,
     cell_w: f32,
@@ -146,6 +154,7 @@ pub(crate) fn ui_context_from_metrics<'a>(
             .unwrap_or(cell_h),
         ui_shaper,
         taffy_tree,
+        mouse_pos,
     }
 }
 
@@ -167,6 +176,7 @@ pub(crate) fn test_ui_context<'a>(
         ui_line_h: 16.0,
         ui_shaper: None,
         taffy_tree: None,
+        mouse_pos: None,
     }
 }
 

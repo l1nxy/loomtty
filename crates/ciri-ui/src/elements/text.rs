@@ -177,6 +177,7 @@ mod tests {
             inherited_opacity: 1.0,
             inherited_text_color: None,
             layer: Layer::Chrome,
+            hovered_hit_id: None,
         }
     }
 

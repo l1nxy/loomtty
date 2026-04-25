@@ -40,6 +40,12 @@ pub fn div() -> Div {
 /// palette frame previously).
 pub struct Div {
     style: Style,
+    /// Optional refinement applied on top of `style` when the cursor is
+    /// hovering over this element (i.e. when `cx.is_hovered(hit_id)`).
+    /// Built by `.hover(|s| s.bg(...))`. Boxed because most divs don't
+    /// have a hover style and we don't want to pay for a fat Style on
+    /// every Div.
+    hover_style: Option<Box<Style>>,
     children: SmallVec<[AnyElement; 2]>,
     layer_override: Option<Layer>,
 }
@@ -54,9 +60,26 @@ impl Div {
     pub fn new() -> Self {
         Self {
             style: Style::new(),
+            hover_style: None,
             children: SmallVec::new(),
             layer_override: None,
         }
+    }
+
+    /// Apply a refinement on top of the base style when the cursor is
+    /// hovering this element. The refinement is built by mutating a
+    /// fresh `Style` in `f`; only fields the closure sets to `Some`
+    /// will override. Requires the element to have a `hit_id` set
+    /// (via [`Styled::hit_id`]) — without one, the framework can't
+    /// identify "this element is hovered".
+    ///
+    /// ```ignore
+    /// div().bg(theme.surface).hover(|s| s.bg(theme.accent_tint))
+    /// ```
+    pub fn hover(mut self, f: impl FnOnce(Style) -> Style) -> Self {
+        let refinement = f(Style::new());
+        self.hover_style = Some(Box::new(refinement));
+        self
     }
 
     /// Append one child. Accepts anything convertible to an element —
@@ -196,21 +219,27 @@ impl Element for Div {
     }
 
     fn paint(&self, cx: &mut PaintCtx<'_>) {
-        if !has_visual(&self.style) {
+        // Resolve the effective style by overlaying refinements on top
+        // of the base. Today only the hover refinement is applied; the
+        // shape leaves room for `.active`, `.focus`, etc. Cloning
+        // happens only when a refinement is active and matches state.
+        let effective = self.effective_style(cx);
+
+        if !has_visual(&effective) {
             return;
         }
 
         // Own opacity folded with whatever the walker inherited. The
         // walker has already baked inherited translate into cx.bounds;
         // we only add our own translate.
-        let own_opacity = self.style.opacity.unwrap_or(1.0).clamp(0.0, 1.0);
+        let own_opacity = effective.opacity.unwrap_or(1.0).clamp(0.0, 1.0);
         let effective_opacity = (cx.inherited_opacity * own_opacity).clamp(0.0, 1.0);
-        let own_translate = self.style.translate.unwrap_or([0.0, 0.0]);
+        let own_translate = effective.translate.unwrap_or([0.0, 0.0]);
 
-        let bg = self.style.background.unwrap_or(TRANSPARENT);
-        let border_c = self.style.border_color.unwrap_or(TRANSPARENT);
-        let border_w = self.style.border_width.unwrap_or(0.0).max(0.0);
-        let (shadow_blur, shadow_color, shadow_offset) = resolve_shadow(self.style.shadow);
+        let bg = effective.background.unwrap_or(TRANSPARENT);
+        let border_c = effective.border_color.unwrap_or(TRANSPARENT);
+        let border_w = effective.border_width.unwrap_or(0.0).max(0.0);
+        let (shadow_blur, shadow_color, shadow_offset) = resolve_shadow(effective.shadow);
 
         let [x, y, w, h] = cx.bounds;
         // The rounded-box SDF is only well-defined when every radius is
@@ -219,7 +248,7 @@ impl Element for Div {
         // distance even at the centre and the fill vanishes. Clamp so
         // semantic sugar like "full = capsule" behaves correctly.
         let max_r = (w.min(h)).max(0.0) * 0.5;
-        let raw_radii = self.style.corner_radii.unwrap_or([0.0; 4]);
+        let raw_radii = effective.corner_radii.unwrap_or([0.0; 4]);
         let radii = [
             raw_radii[0].clamp(0.0, max_r),
             raw_radii[1].clamp(0.0, max_r),
@@ -237,6 +266,30 @@ impl Element for Div {
             shadow_offset,
             shadow_color: mul_alpha(shadow_color, effective_opacity),
         });
+    }
+}
+
+impl Div {
+    /// Compute the style that should drive paint on this frame: the
+    /// base, with `hover_style` merged over top when the cursor is
+    /// over this element. Returns a borrowed reference when no
+    /// refinement applies (the common case) so we don't pay a Style
+    /// clone for every static-styled element.
+    fn effective_style<'a>(&'a self, cx: &PaintCtx<'_>) -> std::borrow::Cow<'a, Style> {
+        let hovered = self
+            .style
+            .hit_id
+            .is_some_and(|id| cx.is_hovered(id))
+            && self.hover_style.is_some();
+        if hovered {
+            let mut merged = self.style.clone();
+            if let Some(hov) = &self.hover_style {
+                merged.merge(hov);
+            }
+            std::borrow::Cow::Owned(merged)
+        } else {
+            std::borrow::Cow::Borrowed(&self.style)
+        }
     }
 }
 
@@ -347,6 +400,38 @@ mod tests {
     #[test]
     fn paint_transform_identity_when_unset() {
         assert_eq!(div().paint_transform(), (1.0, [0.0, 0.0]));
+    }
+
+    #[test]
+    fn hover_style_overlays_when_hit_id_matches() {
+        let theme = ResolvedTheme::default();
+        let mut scene = Scene::new();
+        let mut shaper = crate::shaper::NullShaper;
+        let mut pcx = make_pcx(&theme, &mut scene, &mut shaper, [0.0, 0.0, 100.0, 40.0]);
+        pcx.hovered_hit_id = Some(7);
+        div()
+            .hit_id(7)
+            .bg([1.0, 0.0, 0.0, 1.0])
+            .hover(|s| s.bg([0.0, 1.0, 0.0, 1.0]))
+            .paint(&mut pcx);
+        let r = &scene.sdf_in_layer(Layer::Chrome)[0];
+        assert_eq!(r.color, [0.0, 1.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn hover_style_skipped_when_not_hovered() {
+        let theme = ResolvedTheme::default();
+        let mut scene = Scene::new();
+        let mut shaper = crate::shaper::NullShaper;
+        let mut pcx = make_pcx(&theme, &mut scene, &mut shaper, [0.0, 0.0, 100.0, 40.0]);
+        pcx.hovered_hit_id = Some(99); // different element
+        div()
+            .hit_id(7)
+            .bg([1.0, 0.0, 0.0, 1.0])
+            .hover(|s| s.bg([0.0, 1.0, 0.0, 1.0]))
+            .paint(&mut pcx);
+        let r = &scene.sdf_in_layer(Layer::Chrome)[0];
+        assert_eq!(r.color, [1.0, 0.0, 0.0, 1.0]);
     }
 
     /// Regression for Codex P2: `.rounded_full()` sets radii to 9999 as

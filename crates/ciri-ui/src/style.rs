@@ -157,6 +157,12 @@ pub struct Style {
     pub on_hover: Option<HoverHandler>,
 }
 
+impl crate::styled::Styled for Style {
+    fn style(&mut self) -> &mut Style {
+        self
+    }
+}
+
 impl Style {
     pub fn new() -> Self {
         Self::default()

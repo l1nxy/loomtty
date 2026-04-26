@@ -75,7 +75,11 @@ impl UiFrame {
         hints_bar_h: f32,
     ) -> Self {
         let top_bar = TopBarComponent::capture(app, top_bar_layout, cx);
-        let hints_bar = HintsBarComponent::capture(app, cx);
+        let chrome = chrome_rects(app, cx.viewport_w, cx.viewport_h, top_bar_h, hints_bar_h);
+        // HintsBar takes its layout rect at capture time so its
+        // `Render::render` can read everything from `self` — no
+        // host-supplied rect during paint.
+        let hints_bar = HintsBarComponent::capture(app, cx, chrome.hints_bar);
         let side_tab_bar = match cx.config.tabbar.position {
             TabBarPosition::Left | TabBarPosition::Right => Some(TabBarComponent::capture(app, cx)),
             TabBarPosition::Integrated => None,
@@ -87,7 +91,7 @@ impl UiFrame {
         };
 
         Self {
-            chrome: chrome_rects(app, cx.viewport_w, cx.viewport_h, top_bar_h, hints_bar_h),
+            chrome,
             top_bar,
             hints_bar,
             side_tab_bar,
@@ -116,7 +120,7 @@ impl UiFrame {
 
     pub(super) fn paint(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         self.top_bar.paint(self.chrome.top_bar, cx, scene);
-        self.hints_bar.paint(self.chrome.hints_bar, cx, scene);
+        self.hints_bar.paint(cx, scene);
         if let (Some(tab_bar), Some(rect)) = (&self.side_tab_bar, self.chrome.side_tab_bar) {
             tab_bar.paint(rect, cx, scene);
         }

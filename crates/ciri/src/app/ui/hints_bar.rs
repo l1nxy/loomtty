@@ -4,7 +4,7 @@ use super::tokens;
 use super::types::{UiContext, UiRect, UiScene};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Div, Layer, Styled, div, text};
+use ciri_ui::{Div, IntoElement, Layer, Render, RenderCtx, Styled, div, text};
 
 struct HintItem {
     key: String,
@@ -15,10 +15,24 @@ pub(crate) struct HintsBarComponent {
     pane_count: usize,
     active_pane_title: String,
     hints: Vec<HintItem>,
+    /// Cell metrics + total hints width frozen at `capture()` so
+    /// `build_tree` doesn't need `cx.cell_w/h` or runtime
+    /// `text_layout::measure` calls. Same pattern as the other widgets
+    /// migrated to `Render`.
+    cell_w: f32,
+    cell_h: f32,
+    /// Sum of `hints[i].width + cell_w*2 (gap)` for i>0 — the total
+    /// width the hints column occupies, computed from the same hints
+    /// vector this component holds. Only used for layout.
+    hints_total_w: f32,
+    /// Layout rect supplied by the host's chrome layout, captured at
+    /// `capture()` time. `Render::render` reads it directly so the
+    /// trait method needs no rect parameter.
+    rect: UiRect,
 }
 
 impl HintsBarComponent {
-    pub fn capture(app: &App, _cx: &UiContext<'_>) -> Self {
+    pub fn capture(app: &App, cx: &UiContext<'_>, rect: UiRect) -> Self {
         let ws = app.core.workspaces.active();
         let pane_count = ws.columns.iter().map(|c| c.tiles.len()).sum::<usize>();
         let active_pane_title = ws
@@ -28,20 +42,40 @@ impl HintsBarComponent {
             .filter(|s| !s.is_empty())
             .unwrap_or_default();
 
-        let hints = Self::pick_hints(app);
+        // Pre-measure each hint's combined shaped width and accumulate
+        // the total. Pulling this into `capture` lets `build_tree` work
+        // off a minimal `RenderCtx` — without it the hint widths would
+        // need re-measuring per frame against the host shaper from
+        // `UiContext`, which `RenderCtx` deliberately doesn't carry.
+        let hint_spacing = cx.cell_w * 2.0;
+        let hints_raw = Self::pick_hints(app);
+        let mut hints = Vec::with_capacity(hints_raw.len());
+        let mut hints_total_w = 0.0_f32;
+        for (i, (key, label)) in hints_raw.into_iter().enumerate() {
+            if i > 0 {
+                hints_total_w += hint_spacing;
+            }
+            hints_total_w += text_layout::measure(cx, &key)
+                + text_layout::measure(cx, &format!(" {}", label));
+            hints.push(HintItem { key, label });
+        }
 
         Self {
             pane_count,
             active_pane_title,
             hints,
+            cell_w: cx.cell_w,
+            cell_h: cx.cell_h,
+            hints_total_w,
+            rect,
         }
     }
 
-    fn pick_hints(app: &App) -> Vec<HintItem> {
-        let h = |key: &str, label: &str| HintItem {
-            key: key.into(),
-            label: label.into(),
-        };
+    /// Pick (key, label) tuples for the current state. Returned untyped
+    /// so `capture()` is the single place that pre-measures shaped
+    /// widths into `HintItem.width`.
+    fn pick_hints(app: &App) -> Vec<(String, String)> {
+        let h = |key: &str, label: &str| (key.to_string(), label.to_string());
 
         let find_key = |action: &str,
                         bindings: &std::collections::HashMap<String, String>|
@@ -107,33 +141,37 @@ impl HintsBarComponent {
 }
 
 impl HintsBarComponent {
-    pub(crate) fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let root = self.build_tree(rect, cx);
+    pub(crate) fn paint(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        let render_cx = Self::render_cx(cx);
+        // Fifth production usage of `ciri_ui::Render`. The chrome
+        // layout `rect` was captured into `self.rect` at `capture()`
+        // time, so the trait method needs no extra parameter.
+        let root = <Self as Render>::render(self, &render_cx).into_element();
         paint_element_tree(&root, cx, scene);
     }
-}
 
-impl HintsBarComponent {
-    fn build_tree(&self, rect: UiRect, cx: &UiContext<'_>) -> Div {
+    fn render_cx<'a>(cx: &'a UiContext<'_>) -> RenderCtx<'a> {
+        RenderCtx {
+            theme: cx.theme,
+            viewport: [cx.viewport_w, cx.viewport_h],
+            scale: 1.0,
+        }
+    }
+
+    fn build_tree(&self, rect: UiRect, cx: &RenderCtx<'_>) -> Div {
         let bar_bg = cx.theme.statusbar_bg;
         let accent = cx.theme.accent;
         let dim = cx.theme.on_surface_muted;
         let fg = cx.theme.on_surface;
         let sep_color = tokens::tint(dim, tokens::ALPHA_SEPARATOR);
-        let padding = cx.cell_w;
+        let padding = self.cell_w;
 
-        // Pre-compute hints total width for right-alignment
-        let hint_spacing = cx.cell_w * 2.0;
+        // Pre-computed hints widths from `capture()` — clamp the cached
+        // total to the layout-time max so a wide hints column can't
+        // squeeze the left side off-screen.
+        let hint_spacing = self.cell_w * 2.0;
         let max_hints_w = rect.w * 0.6;
-        let mut hints_w = 0.0_f32;
-        for (i, item) in self.hints.iter().enumerate() {
-            if i > 0 {
-                hints_w += hint_spacing;
-            }
-            hints_w += text_layout::measure(cx, &item.key)
-                + text_layout::measure(cx, &format!(" {}", item.label));
-        }
-        hints_w = hints_w.min(max_hints_w);
+        let hints_w = self.hints_total_w.min(max_hints_w);
 
         // Left side fills remaining space after reserving hints width
         let inner_w = (rect.w - padding * 2.0).max(0.0);
@@ -145,7 +183,7 @@ impl HintsBarComponent {
         };
         let mut left = div()
             .w(left_w)
-            .h(cx.cell_h)
+            .h(self.cell_h)
             .flex_row()
             .items_center()
             .child(text("\u{25CF} ").color(accent))
@@ -158,20 +196,20 @@ impl HintsBarComponent {
 
         let mut right = div()
             .w(hints_w)
-            .h(cx.cell_h)
+            .h(self.cell_h)
             .flex_row()
             .items_center()
             .justify_end();
         for (i, item) in self.hints.iter().enumerate() {
             if i > 0 {
-                right = right.child(div().w(hint_spacing).h(cx.cell_h));
+                right = right.child(div().w(hint_spacing).h(self.cell_h));
             }
             right = right
                 .child(text(item.key.clone()).color(accent))
                 .child(text(format!(" {}", item.label)).color(dim));
         }
 
-        div().w(cx.viewport_w).h(cx.viewport_h).child(
+        div().w(cx.viewport[0]).h(cx.viewport[1]).child(
             div()
                 .in_layer(Layer::Chrome)
                 .absolute()
@@ -193,5 +231,14 @@ impl HintsBarComponent {
                         .child(right),
                 ),
         )
+    }
+}
+
+impl Render for HintsBarComponent {
+    fn render(&mut self, cx: &RenderCtx<'_>) -> impl IntoElement {
+        // Layout rect is owned by `self` (set in `capture()` from the
+        // host's chrome layout), so `render` reads it directly — no
+        // host plumbing through the trait signature.
+        self.build_tree(self.rect, cx)
     }
 }

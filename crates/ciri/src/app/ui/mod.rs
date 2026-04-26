@@ -277,8 +277,11 @@ mod tests {
         let hover = app.dispatch_ui_hover(2.0, layout.bar_y + 2.0);
         assert!(hover.handled);
         assert_eq!(hover.cursor, CursorIcon::Pointer);
+        // After Step 28 the field is gone; assert via the derive
+        // helper that backs the chrome cache key.
+        app.last_mouse_pos = Some((2.0, layout.bar_y + 2.0));
         assert_eq!(
-            app.hovered_top_bar_region,
+            app.current_top_bar_region_hover(),
             Some(TopBarHoverRegion::Session)
         );
     }

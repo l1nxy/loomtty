@@ -559,8 +559,13 @@ impl App {
         self.core.input.is_locked().hash(&mut hasher);
         self.core.input.is_awaiting_action().hash(&mut hasher);
         self.core.input.current_mode_name().hash(&mut hasher);
-        self.hovered_top_bar_region.hash(&mut hasher);
-        self.hovered_pane_tab.hash(&mut hasher);
+        // Both derived at hash time — same shape as palette /
+        // context_menu / overview action helpers. Cache invalidates
+        // on cursor crossing a top-bar region or pane-tab boundary;
+        // declarative `.hover()` reads the live hover via
+        // `cx.is_hovered(hit_id)` at paint.
+        self.current_top_bar_region_hover().hash(&mut hasher);
+        self.current_pane_tab_hover().hash(&mut hasher);
         self.pane_tab_scroll.to_bits().hash(&mut hasher);
         self.pane_tab_scroll_max().to_bits().hash(&mut hasher);
         self.core.overview.active.hash(&mut hasher);
@@ -713,8 +718,13 @@ impl App {
         self.current_overview_action_hover().hash(&mut hasher);
         self.core.broadcast_mode.hash(&mut hasher);
         self.core.input.is_awaiting_action().hash(&mut hasher);
-        self.hovered_top_bar_region.hash(&mut hasher);
-        self.hovered_pane_tab.hash(&mut hasher);
+        // Both derived at hash time — same shape as palette /
+        // context_menu / overview action helpers. Cache invalidates
+        // on cursor crossing a top-bar region or pane-tab boundary;
+        // declarative `.hover()` reads the live hover via
+        // `cx.is_hovered(hit_id)` at paint.
+        self.current_top_bar_region_hover().hash(&mut hasher);
+        self.current_pane_tab_hover().hash(&mut hasher);
         self.pane_tab_scroll.to_bits().hash(&mut hasher);
         self.pane_tab_scroll_max().to_bits().hash(&mut hasher);
         self.core.ime.preedit_active.hash(&mut hasher);

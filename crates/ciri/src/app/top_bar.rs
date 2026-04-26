@@ -10,7 +10,7 @@ use super::App;
 /// layout math stays consistent whether measured from UI components (which
 /// have a `UiContext`) or from the chrome layer (which only has a shaper
 /// handle threaded through from the renderer).
-fn measure(shaper: Option<&RefCell<UiTextShaper>>, text: &str, cell_w: f32) -> f32 {
+pub(crate) fn measure(shaper: Option<&RefCell<UiTextShaper>>, text: &str, cell_w: f32) -> f32 {
     if let Some(cell) = shaper {
         let mut s = cell.borrow_mut();
         if s.has_face() {

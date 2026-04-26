@@ -90,7 +90,6 @@ impl App {
                 }
             }
             UiAction::ClosePaneTab(pane_id) => {
-                self.hovered_pane_tab = None;
                 self.send(ciri_protocol::message::ClientMessage::ClosePane { pane_id });
             }
             UiAction::ExecutePaletteEntry(entry_idx) => {
@@ -206,10 +205,12 @@ impl App {
                 }
             }
             UiFrameHover::TopBar { region, tab } => {
-                let prev_region = self.hovered_top_bar_region;
-                let prev_tab = self.hovered_pane_tab;
-                self.hovered_top_bar_region = region;
-                self.hovered_pane_tab = tab;
+                // Both `region` and `tab` are derived at chrome-cache-
+                // hash time now (Step 28). The handler keeps the
+                // pointer-cursor signal but stops storing the hover
+                // values; cache-key recomputation handles repaint
+                // gating, same shape as the palette / context_menu /
+                // paste_dialog handlers.
                 UiHoverOutcome {
                     handled: true,
                     cursor: if region.is_some() || tab.is_some() {
@@ -217,12 +218,10 @@ impl App {
                     } else {
                         CursorIcon::Default
                     },
-                    needs_redraw: prev_region != region || prev_tab != tab,
+                    needs_redraw: true,
                 }
             }
             UiFrameHover::SideTab { tab } => {
-                let prev_tab = self.hovered_pane_tab;
-                self.hovered_pane_tab = tab;
                 UiHoverOutcome {
                     handled: true,
                     cursor: if tab.is_some() {
@@ -230,20 +229,16 @@ impl App {
                     } else {
                         CursorIcon::Default
                     },
-                    needs_redraw: prev_tab != tab,
+                    needs_redraw: true,
                 }
             }
             UiFrameHover::Overview { target } => {
-                // `action_hover` from the hit-test is no longer
-                // stored — derived at chrome-cache-hash time via
-                // `App::current_overview_action_hover()` and read
-                // declaratively at paint via `cx.is_hovered(...)`.
-                // Same `needs_redraw: true` shape as the other
-                // derived-hover handlers (palette / context_menu /
-                // paste_dialog) — the chrome cache key recomputation
-                // gates actual repaint cost.
-                self.hovered_top_bar_region = None;
-                self.hovered_pane_tab = None;
+                // `action_hover` is derived at hash time (Step 26);
+                // `target` (which overview tile is hovered) still
+                // needs storage on `App.overview_hovered_pane`
+                // because the overview action bar geometry depends
+                // on it (the bar is anchored to whichever tile the
+                // cursor is on).
                 self.overview_hovered_pane = target;
                 UiHoverOutcome {
                     handled: true,
@@ -255,16 +250,11 @@ impl App {
                     needs_redraw: true,
                 }
             }
-            UiFrameHover::None => {
-                let had_top_bar_hover = self.hovered_top_bar_region.take().is_some()
-                    || self.hovered_pane_tab.take().is_some();
-
-                UiHoverOutcome {
-                    handled: had_top_bar_hover,
-                    cursor: CursorIcon::Default,
-                    needs_redraw: had_top_bar_hover,
-                }
-            }
+            UiFrameHover::None => UiHoverOutcome {
+                handled: false,
+                cursor: CursorIcon::Default,
+                needs_redraw: false,
+            },
         }
     }
 }

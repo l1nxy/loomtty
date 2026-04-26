@@ -42,7 +42,7 @@ pub(super) const HIT_WORKSPACE: u64 = 2;
 const HIT_MODE: u64 = 3;
 const HIT_TAB_BASE: u64 = 1_000_000;
 
-fn pane_tab_hit_id(pane_id: u64) -> u64 {
+pub(super) fn pane_tab_hit_id(pane_id: u64) -> u64 {
     HIT_TAB_BASE + pane_id
 }
 
@@ -63,7 +63,6 @@ pub(crate) struct TopBarComponent {
     mode_label: String,
     mode_color: [f32; 4],
     pane_tabs: Vec<PaneTabLayout>,
-    hovered_pane_tab: Option<u64>,
     is_leader: bool,
     is_broadcast: bool,
     is_overview: bool,
@@ -105,7 +104,6 @@ impl TopBarComponent {
             mode_label,
             mode_color,
             pane_tabs,
-            hovered_pane_tab: app.hovered_pane_tab,
             is_leader: app.core.input.is_awaiting_action(),
             is_broadcast: app.core.broadcast_mode,
             is_overview: app.core.overview.active,
@@ -194,7 +192,6 @@ impl TopBarComponent {
             children.extend(
                 PaneTabsElement {
                     tabs: &self.pane_tabs,
-                    hovered_tab: self.hovered_pane_tab,
                     scroll: self.tab_scroll,
                     scroll_max: self.tab_scroll_max,
                 }

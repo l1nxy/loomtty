@@ -207,15 +207,6 @@ pub(crate) struct App {
     pub event_loop_proxy: Option<EventLoopProxy<()>>,
     /// Coalesced redraw request latched until the event loop reaches AboutToWait.
     pub pending_redraw: bool,
-    /// UI-only ephemeral hover state for the top bar's session/workspace/mode
-    /// labels. Lives on `App` (not `AppModel`) — the framework's declarative
-    /// `.hover()` will eventually subsume the read side; the field is kept for
-    /// the chrome cache key and for the existing imperative top-bar paint
-    /// path that hasn't been migrated to an Element tree yet.
-    pub hovered_top_bar_region: Option<ciri_app::app::TopBarHoverRegion>,
-    /// UI-only ephemeral hover state for the per-pane tabs (top-bar inline or
-    /// side tab-bar). Same rationale as `hovered_top_bar_region`.
-    pub hovered_pane_tab: Option<u64>,
     /// UI-only ephemeral hover state for overview tiles (workspace index +
     /// pane id under the cursor). Was on `AppModel.overview.hovered_pane`;
     /// moved here so the platform-agnostic core stays free of UI state.
@@ -529,8 +520,6 @@ impl App {
             pending_dpi: None,
             event_loop_proxy: None,
             pending_redraw: false,
-            hovered_top_bar_region: None,
-            hovered_pane_tab: None,
             overview_hovered_pane: None,
             pane_tab_scroll: 0.0,
             drag: ResizeDragState {
@@ -760,8 +749,6 @@ impl App {
             row_start: 0,
         };
         self.pane_tab_scroll = 0.0;
-        self.hovered_top_bar_region = None;
-        self.hovered_pane_tab = None;
         self.core.last_left_click = None;
         self.core.hovered_link = None;
         self.last_focus_follows_mouse = None;
@@ -1310,6 +1297,89 @@ impl App {
         } else {
             None
         }
+    }
+
+    /// Which inline pane-tab (top-bar integrated mode) the cursor is
+    /// over. Derived from `last_mouse_pos` + the pane-tab layout the
+    /// top bar would compute. Returns `None` outside the tabs strip,
+    /// or when tabs aren't rendered (side-bar mode, no panes).
+    ///
+    /// Same pattern as the other derive helpers — replaces the stored
+    /// `App.hovered_pane_tab` field that was consumed only by the
+    /// chrome cache key (display now reads hover declaratively via
+    /// `cx.is_hovered(hit_id)` after Step 28).
+    pub(crate) fn current_pane_tab_hover(&self) -> Option<u64> {
+        if !matches!(
+            self.core.config.tabbar.position,
+            ciri_config::config::TabBarPosition::Integrated,
+        ) {
+            return None;
+        }
+        let (mx, my) = self.last_mouse_pos?;
+        let (vw, vh) = self.command_palette_viewport_size();
+        let (cw, ch) = self.cell_dimensions();
+        let layout = self.top_bar_layout(vw, vh, cw, ch, self.ui_shaper.as_ref());
+        if my < layout.bar_y || my >= layout.bar_y + layout.bar_height {
+            return None;
+        }
+        // Clamp to the painted wrapper bounds — `pane_tabs::into_children`
+        // clips each tab to `[visible_left, visible_left + visible_w)`
+        // where visible_left = tab.x.max(tabs_start_x) and visible_w >
+        // 0 is the visible portion. Matching the same bounds keeps the
+        // cache hash and the painted hit_id in lockstep at the bar edge.
+        let tabs = self.pane_tab_layouts(cw, layout.tabs_area_px, self.ui_shaper.as_ref());
+        // Tabs strip starts at the session label's right edge; matches
+        // what `top_bar::row_slots` computes.
+        let tabs_start_x = layout.session_w;
+        for tab in &tabs {
+            let visible_left = tab.x.max(tabs_start_x);
+            let visible_right = tab.x + tab.w;
+            if visible_right <= visible_left {
+                continue;
+            }
+            if mx >= visible_left && mx < visible_right {
+                return Some(tab.pane_id);
+            }
+        }
+        None
+    }
+
+    /// Which top-bar region the cursor is over. Same pattern as
+    /// `current_pane_tab_hover` — derived at hash time so the
+    /// display-side `cx.is_hovered(hit_id)` and the cache invalidation
+    /// signal stay in lockstep without a stored field on `App`.
+    pub(crate) fn current_top_bar_region_hover(
+        &self,
+    ) -> Option<ciri_app::app::TopBarHoverRegion> {
+        let (mx, my) = self.last_mouse_pos?;
+        let (vw, vh) = self.command_palette_viewport_size();
+        let (cw, ch) = self.cell_dimensions();
+        let layout = self.top_bar_layout(vw, vh, cw, ch, self.ui_shaper.as_ref());
+        if my < layout.bar_y || my >= layout.bar_y + layout.bar_height {
+            return None;
+        }
+        // Top bar lays out: session label | pane-tabs strip |
+        // workspace label | mode label. Walk from the right — fixed-
+        // width slots first — and fall back to None if the cursor
+        // sits on the pane-tabs middle.
+        let mode_label = self.current_mode_label().0;
+        let mode_w = crate::app::top_bar::measure(self.ui_shaper.as_ref(), &mode_label, cw);
+        let mode_left = vw - mode_w;
+        if mx >= mode_left {
+            return Some(ciri_app::app::TopBarHoverRegion::Mode);
+        }
+        let ws_label = self.workspace_indicator_label();
+        if !ws_label.is_empty() {
+            let ws_w = crate::app::top_bar::measure(self.ui_shaper.as_ref(), &ws_label, cw);
+            let ws_left = mode_left - ws_w;
+            if mx >= ws_left {
+                return Some(ciri_app::app::TopBarHoverRegion::Workspace);
+            }
+        }
+        if mx < layout.session_w {
+            return Some(ciri_app::app::TopBarHoverRegion::Session);
+        }
+        None
     }
 
     pub fn compute_grid_size(&self) -> (u16, u16) {

@@ -163,33 +163,61 @@ impl TopBarComponent {
         }
     }
 
-    fn paint_row(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+    /// Produce the absolute-positioned children for the row's 4 sub-
+    /// widgets. Returns a flat `Vec<Div>` so caller can push each as
+    /// a sibling of the viewport root — avoids a row-level wrapper
+    /// that would shift child absolute coords by `(rect.x, rect.y)`
+    /// (codex Q: double-offset bug from Step 25 review).
+    fn build_row_children(&self, rect: UiRect, cx: &UiContext<'_>) -> Vec<Div> {
         let slots = self.row_slots(rect, cx);
-        SessionLabel {
-            text: &self.session_text,
-        }
-        .paint(slots.session, cx, scene);
+        let fg = cx.theme.on_surface;
+        let dim = cx.theme.on_surface_muted;
+        let accent = cx.theme.accent;
+        let padding = cx
+            .config
+            .statusbar
+            .height_padding
+            .unwrap_or(cx.cell_h * cx.config.statusbar.padding_ratio);
+        let top_pad = padding * 0.5;
+
+        let mut children: Vec<Div> = Vec::new();
+        children.push(
+            SessionLabel {
+                text: &self.session_text,
+            }
+            .into_div(slots.session, fg, dim, top_pad, cx.cell_h),
+        );
 
         if self.show_integrated_tabs {
-            PaneTabsElement {
-                tabs: &self.pane_tabs,
-                hovered_tab: self.hovered_pane_tab,
-                scroll: self.tab_scroll,
-                scroll_max: self.tab_scroll_max,
+            // PaneTabsElement returns its own Vec<Div> of absolute
+            // tab/separator/indicator/label/fade children.
+            children.extend(
+                PaneTabsElement {
+                    tabs: &self.pane_tabs,
+                    hovered_tab: self.hovered_pane_tab,
+                    scroll: self.tab_scroll,
+                    scroll_max: self.tab_scroll_max,
+                }
+                .into_children(slots.pane_tabs, cx),
+            );
+        }
+
+        children.push(
+            WorkspaceIndicator {
+                label: &self.workspace_label,
             }
-            .paint(slots.pane_tabs, cx, scene);
-        }
+            .into_div(slots.workspace, fg, accent, top_pad, cx.cell_h),
+        );
 
-        WorkspaceIndicator {
-            label: &self.workspace_label,
-        }
-        .paint(slots.workspace, cx, scene);
+        children.push(
+            ModeIndicator {
+                label: &self.mode_label,
+                color: self.mode_color,
+            }
+            .into_div(slots.mode, top_pad, cx.cell_h),
+        );
 
-        ModeIndicator {
-            label: &self.mode_label,
-            color: self.mode_color,
-        }
-        .paint(slots.mode, cx, scene);
+        children
     }
 
     fn build_hit_tree(&self, rect: UiRect, cx: &UiContext<'_>) -> Div {
@@ -273,7 +301,11 @@ impl TopBarComponent {
         self.hit_test_in_rect(rect, mx, my, cx)
     }
 
-    fn build_chrome_tree(&self, rect: UiRect, cx: &UiContext<'_>) -> Div {
+    /// Inner chrome trees (bar bg + separator line + optional leader/
+    /// broadcast/overview band). Returns a Vec of absolute-positioned
+    /// children — no viewport wrapper, no layer override; caller
+    /// composes them as siblings inside the unified TopBar tree.
+    fn build_chrome_inner(&self, rect: UiRect, cx: &UiContext<'_>) -> Vec<Div> {
         let bar_bg = cx.theme.statusbar_bg;
         let dim = cx.theme.on_surface_muted;
         let accent = cx.theme.accent;
@@ -284,9 +316,8 @@ impl TopBarComponent {
             StatusBarPosition::Top => rect.h - tokens::BORDER_THIN,
             StatusBarPosition::Bottom => 0.0,
         };
-        let mut root = div().w(cx.viewport_w).h(cx.viewport_h).child(
+        let mut children = vec![
             div()
-                .in_layer(Layer::Chrome)
                 .absolute()
                 .left(rect.x)
                 .top(rect.y)
@@ -302,7 +333,7 @@ impl TopBarComponent {
                         .h(tokens::BORDER_THIN)
                         .bg(sep_color),
                 ),
-        );
+        ];
 
         if self.is_leader || self.is_broadcast || self.is_overview {
             let indicator_h = cx.cell_h * cx.config.statusbar.leader_indicator_ratio;
@@ -315,9 +346,8 @@ impl TopBarComponent {
                 StatusBarPosition::Top => rect.bottom(),
                 StatusBarPosition::Bottom => rect.y - indicator_h,
             };
-            root = root.child(
+            children.push(
                 div()
-                    .in_layer(Layer::Chrome)
                     .absolute()
                     .left(rect.x)
                     .top(band_y)
@@ -327,17 +357,27 @@ impl TopBarComponent {
             );
         }
 
-        root
+        children
     }
 }
 
 impl TopBarComponent {
     pub(crate) fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let chrome = self.build_chrome_tree(rect, cx);
-        paint_element_tree(&chrome, cx, scene);
-
-        // --- inner row (session | tabs | workspace | mode) ---
-        self.paint_row(rect, cx, scene);
+        // Single unified TopBar tree: one viewport wrapper, one
+        // `Layer::Chrome` override, every chrome + row sub-piece as a
+        // flat absolute-positioned sibling. One walker pass per frame
+        // instead of 5 (chrome + 4 sub-widget paints). All children
+        // are themselves `.absolute()` with viewport-relative coords,
+        // so the viewport root stays the only positioning ancestor —
+        // no double offsets, no zero-sized intermediate wrappers.
+        let mut root = div().w(cx.viewport_w).h(cx.viewport_h).in_layer(Layer::Chrome);
+        for chrome_child in self.build_chrome_inner(rect, cx) {
+            root = root.child(chrome_child);
+        }
+        for row_child in self.build_row_children(rect, cx) {
+            root = root.child(row_child);
+        }
+        paint_element_tree(&root, cx, scene);
     }
 
     fn hit(&self, rect: UiRect, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<UiAction> {

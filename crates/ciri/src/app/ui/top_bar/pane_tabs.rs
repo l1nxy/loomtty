@@ -2,10 +2,9 @@ use ciri_config::config::StatusBarPosition;
 
 use super::super::text_layout;
 use super::super::tokens;
-use super::super::types::{UiContext, UiRect, UiScene};
-use crate::app::ciri_ui_adapter::paint_element_tree;
+use super::super::types::{UiContext, UiRect};
 use crate::app::top_bar::PaneTabLayout;
-use ciri_ui::{Div, Layer, Styled, div, text};
+use ciri_ui::{Div, Styled, div, text};
 
 /// Element-relative scrollable tab list.
 ///
@@ -23,9 +22,16 @@ pub(super) struct PaneTabsElement<'a> {
 }
 
 impl<'a> PaneTabsElement<'a> {
-    pub(super) fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+    /// Produce the absolute-positioned children for the pane-tabs
+    /// region (per-tab bg, separators, active indicator, labels, fade
+    /// gradients). Returns a `Vec<Div>` so caller (`TopBarComponent`)
+    /// can push each as a flat sibling of the unified viewport root —
+    /// avoids wrapping in a zero-sized parent that the walker would
+    /// skip, and keeps absolute positions relative to the same
+    /// positioning context as all the other top-bar children.
+    pub(super) fn into_children(self, rect: UiRect, cx: &UiContext<'_>) -> Vec<Div> {
         if rect.is_empty() {
-            return;
+            return Vec::new();
         }
         let bar_bg = cx.theme.statusbar_bg;
         let fg = cx.theme.on_surface;
@@ -52,7 +58,7 @@ impl<'a> PaneTabsElement<'a> {
         };
         let separator_inset = tokens::SPACE_1;
 
-        let mut root = div().w(cx.viewport_w).h(cx.viewport_h);
+        let mut children: Vec<Div> = Vec::new();
         for tab in self.tabs {
             let hovered = self.hovered_tab == Some(tab.pane_id);
             let visible_left = tab.x.max(tabs_start_x);
@@ -73,7 +79,7 @@ impl<'a> PaneTabsElement<'a> {
                 None
             };
             if let Some(a) = bg_alpha {
-                root = root.child(abs_rect(
+                children.push(abs_rect(
                     visible_left,
                     rect.y,
                     visible_w,
@@ -84,7 +90,7 @@ impl<'a> PaneTabsElement<'a> {
 
             // Separator on the leading edge (skipped if scrolled off-screen).
             if tab.x > tabs_start_x - tokens::BORDER_THIN && tab.x < tabs_end_x {
-                root = root.child(abs_rect(
+                children.push(abs_rect(
                     tab.x - tokens::BORDER_THIN * 0.5,
                     rect.y + separator_inset,
                     tokens::BORDER_THIN,
@@ -94,7 +100,7 @@ impl<'a> PaneTabsElement<'a> {
             }
             // Active-tab indicator (thin accent strip on top or bottom).
             if tab.active {
-                root = root.child(abs_rect(
+                children.push(abs_rect(
                     visible_left,
                     indicator_y,
                     visible_w,
@@ -113,7 +119,7 @@ impl<'a> PaneTabsElement<'a> {
             if label_budget > 0.0 {
                 let truncated = text_layout::truncate_with_ellipsis(cx, &tab.label, label_budget);
                 if !truncated.is_empty() {
-                    root = root.child(abs_text(label_left, text_y, truncated, color));
+                    children.push(abs_text(label_left, text_y, truncated, color));
                 }
             }
         }
@@ -124,7 +130,7 @@ impl<'a> PaneTabsElement<'a> {
             if self.scroll > 0.5 {
                 for i in 0..4 {
                     let alpha = 0.22 * (1.0 - i as f32 / 4.0);
-                    root = root.child(abs_rect(
+                    children.push(abs_rect(
                         tabs_start_x + i as f32 * (fade_w / 4.0),
                         rect.y,
                         fade_w / 4.0 + 1.0,
@@ -136,7 +142,7 @@ impl<'a> PaneTabsElement<'a> {
             if self.scroll < self.scroll_max - 0.5 {
                 for i in 0..4 {
                     let alpha = 0.22 * (i as f32 + 1.0) / 4.0;
-                    root = root.child(abs_rect(
+                    children.push(abs_rect(
                         tabs_end_x - fade_w + i as f32 * (fade_w / 4.0),
                         rect.y,
                         fade_w / 4.0 + 1.0,
@@ -147,13 +153,15 @@ impl<'a> PaneTabsElement<'a> {
             }
         }
 
-        paint_element_tree(&root, cx, scene);
+        children
     }
 }
 
+// Layer is inherited from the parent wrapper that TopBarComponent
+// places at `Layer::Chrome`, so per-rect / per-text `.in_layer()`
+// is redundant after sub-widget unification.
 fn abs_rect(x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) -> Div {
     div()
-        .in_layer(Layer::Chrome)
         .absolute()
         .left(x)
         .top(y)
@@ -164,7 +172,6 @@ fn abs_rect(x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) -> Div {
 
 fn abs_text(x: f32, y: f32, content: String, color: [f32; 4]) -> Div {
     div()
-        .in_layer(Layer::Chrome)
         .absolute()
         .left(x)
         .top(y)

@@ -1,6 +1,5 @@
-use super::super::types::{UiContext, UiRect, UiScene};
-use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Div, Layer, Styled, div, text};
+use super::super::types::UiRect;
+use ciri_ui::{Div, Styled, div, text};
 
 pub(super) struct ModeIndicator<'a> {
     pub(super) label: &'a str,
@@ -8,33 +7,20 @@ pub(super) struct ModeIndicator<'a> {
 }
 
 impl<'a> ModeIndicator<'a> {
-    fn build_tree(&self, rect: UiRect, cx: &UiContext<'_>) -> Div {
+    /// Inner positioned Div for the mode slot. Empty rect → empty div
+    /// (no hover, no hit_id; mode label is display-only).
+    pub(super) fn into_div(self, rect: UiRect, top_pad: f32, cell_h: f32) -> Div {
         if rect.is_empty() {
-            return div().w(cx.viewport_w).h(cx.viewport_h);
+            return div();
         }
-        let padding = cx
-            .config
-            .statusbar
-            .height_padding
-            .unwrap_or(cx.cell_h * cx.config.statusbar.padding_ratio);
-        let text_y = rect.y + padding * 0.5;
-
-        div().w(cx.viewport_w).h(cx.viewport_h).child(
-            div()
-                .in_layer(Layer::Chrome)
-                .absolute()
-                .left(rect.x)
-                .top(text_y)
-                .w(rect.w)
-                .h(cx.cell_h)
-                .child(text(self.label).color(self.color)),
-        )
-    }
-}
-
-impl<'a> ModeIndicator<'a> {
-    pub(super) fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let root = self.build_tree(rect, cx);
-        paint_element_tree(&root, cx, scene);
+        div()
+            .absolute()
+            .left(rect.x)
+            .top(rect.y)
+            .w(rect.w)
+            .h(rect.h)
+            .flex_col()
+            .child(div().w(rect.w).h(top_pad))
+            .child(div().w(rect.w).h(cell_h).child(text(self.label).color(self.color)))
     }
 }

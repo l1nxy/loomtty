@@ -565,7 +565,10 @@ impl App {
         self.pane_tab_scroll_max().to_bits().hash(&mut hasher);
         self.core.overview.active.hash(&mut hasher);
         self.overview_hovered_pane.hash(&mut hasher);
-        self.overview_action_hover.hash(&mut hasher);
+        // Derived at hash time from cursor + bar geometry; same shape
+        // as `current_palette_hover` etc. — drops the stored
+        // `App.overview_action_hover` field (Step 26).
+        self.current_overview_action_hover().hash(&mut hasher);
 
         let zoom = self.core.anim_mgr.overview_zoom.value();
         let vox = self.core.anim_mgr.view_offset_x.value();
@@ -704,7 +707,10 @@ impl App {
         self.core.overview.active.hash(&mut hasher);
         self.core.overview.dragging.hash(&mut hasher);
         self.overview_hovered_pane.hash(&mut hasher);
-        self.overview_action_hover.hash(&mut hasher);
+        // Derived at hash time from cursor + bar geometry; same shape
+        // as `current_palette_hover` etc. — drops the stored
+        // `App.overview_action_hover` field (Step 26).
+        self.current_overview_action_hover().hash(&mut hasher);
         self.core.broadcast_mode.hash(&mut hasher);
         self.core.input.is_awaiting_action().hash(&mut hasher);
         self.hovered_top_bar_region.hash(&mut hasher);

@@ -14,7 +14,7 @@ use super::types::{
     UiScene, UiTopBarHit,
 };
 use crate::app::top_bar::TopBarLayout;
-use crate::app::{App, OverviewActionHover, PasteButton, TopBarHoverRegion};
+use crate::app::{App, PasteButton, TopBarHoverRegion};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ChromeRects {
@@ -29,8 +29,7 @@ pub(super) struct UiFrame {
     hints_bar: HintsBarComponent,
     side_tab_bar: Option<TabBarComponent>,
     overview: OverviewComponent,
-    overview_bar: Option<overview::OverviewActionBarData>,
-    overview_hover: Option<OverviewActionHover>,
+    overview_bar: Option<overview::OverviewActionBarComponent>,
     infobox: Option<InfoBoxComponent>,
     palette: Option<PaletteComponent>,
     connection_status: Option<ConnectionStatusComponent>,
@@ -61,7 +60,11 @@ pub(super) enum UiFrameHover {
     },
     Overview {
         target: Option<(usize, u64)>,
-        action_hover: Option<OverviewActionHover>,
+        // `action_hover` removed — derived at chrome-cache-hash time
+        // via `App::current_overview_action_hover()` from the cursor +
+        // bar geometry. The hit-test still computes which button the
+        // cursor is on (used to decide cursor pointer style), but the
+        // outcome doesn't need to thread back here.
     },
     None,
 }
@@ -88,6 +91,7 @@ impl UiFrame {
         };
         let overview_bar = if app.core.overview.active && app.overview_hovered_pane.is_some() {
             overview::overview_action_bar_data(app, app.overview_hovered_pane)
+                .map(|data| overview::OverviewActionBarComponent { data })
         } else {
             None
         };
@@ -99,7 +103,6 @@ impl UiFrame {
             side_tab_bar,
             overview: OverviewComponent::capture(app, cx),
             overview_bar,
-            overview_hover: app.overview_action_hover,
             infobox: InfoBoxComponent::capture(app, cx),
             palette: PaletteComponent::capture(app, cx),
             connection_status: ConnectionStatusComponent::capture(app, cx),
@@ -129,8 +132,8 @@ impl UiFrame {
 
         // Modal / overlay layers position themselves absolutely and are
         // painted after chrome so they sit on top.
-        if let Some(d) = &self.overview_bar {
-            overview::paint_overview_action_bar(d, self.overview_hover, cx, scene);
+        if let Some(component) = &mut self.overview_bar {
+            component.paint(cx, scene);
         }
         if let Some(component) = &mut self.infobox {
             component.paint(cx, scene);
@@ -268,21 +271,13 @@ impl UiFrame {
 
         if app.core.overview.active {
             let hit = self.overview.hit_test(app, mx, my);
-            let action_hover = match &hit {
-                UiOverviewHit::ClosePane(_) => Some(OverviewActionHover::Close),
-                UiOverviewHit::FocusPane(_, _) => Some(OverviewActionHover::Focus),
-                _ => None,
-            };
             let target = match hit {
                 UiOverviewHit::Pane(ws_idx, pane_id)
                 | UiOverviewHit::FocusPane(ws_idx, pane_id) => Some((ws_idx, pane_id)),
                 UiOverviewHit::ClosePane(_) => app.overview_hovered_pane,
                 UiOverviewHit::Background | UiOverviewHit::None => None,
             };
-            return UiFrameHover::Overview {
-                target,
-                action_hover,
-            };
+            return UiFrameHover::Overview { target };
         }
 
         UiFrameHover::None

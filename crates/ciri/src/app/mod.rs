@@ -40,7 +40,7 @@ use winit::window::Window;
 // Re-export core types so existing `use super::*` in submodules still works.
 pub(crate) use ciri_app::app::{
     AppModel, ClientImagePlacement, ConnectionKind, ConnectionSlot, ContextMenu, ContextMenuAction,
-    ContextMenuItem, GestureState, HoveredLink, OverviewActionHover, PaletteEntryKind, PasteButton,
+    ContextMenuItem, GestureState, HoveredLink, PaletteEntryKind, PasteButton,
     PendingPaste, PendingPasteTarget, ReconnectPlan, RemoteConnectionConfig, ResizeDragState,
     ScrollbarDragInfo, SearchMatch, SearchState, Selection, ServerEvent, TopBarHoverRegion,
 };
@@ -220,10 +220,6 @@ pub(crate) struct App {
     /// pane id under the cursor). Was on `AppModel.overview.hovered_pane`;
     /// moved here so the platform-agnostic core stays free of UI state.
     pub overview_hovered_pane: Option<(usize, u64)>,
-    /// UI-only ephemeral hover state for the overview action bar (close /
-    /// focus buttons that float above the hovered tile). Was on
-    /// `AppModel.overview_action_hover`.
-    pub overview_action_hover: Option<ciri_app::app::OverviewActionHover>,
     /// Active pane-resize / column-resize / scrollbar-drag state. UI
     /// input bookkeeping with no model meaning — only mouse handlers in
     /// this crate read or mutate it. Was on `AppModel`; moved out to
@@ -536,7 +532,6 @@ impl App {
             hovered_top_bar_region: None,
             hovered_pane_tab: None,
             overview_hovered_pane: None,
-            overview_action_hover: None,
             pane_tab_scroll: 0.0,
             drag: ResizeDragState {
                 col_dragging: None,
@@ -744,7 +739,6 @@ impl App {
         self.overview_hovered_pane = None;
         self.core.overview.dragging = false;
         self.core.overview.drag_last_pos = None;
-        self.overview_action_hover = None;
         self.core.anim_mgr.overview_zoom.jump_to(1.0);
         self.core.search_state = None;
         self.core.command_palette = None;
@@ -1270,6 +1264,49 @@ impl App {
             Some(ciri_app::app::PasteButton::Paste)
         } else if mx >= cancel_left && mx < cancel_right {
             Some(ciri_app::app::PasteButton::Cancel)
+        } else {
+            None
+        }
+    }
+
+    /// Which overview-action-bar button (`Close` / `Focus`) the cursor
+    /// is over. Derived from `last_mouse_pos` + the bar geometry that
+    /// `OverviewActionBarComponent` would build at paint time. Returns
+    /// `None` when overview is closed, no pane is hovered, or the
+    /// cursor is outside both buttons.
+    ///
+    /// Same pattern as `current_palette_hover` / `current_context_menu_hover`
+    /// / `current_paste_dialog_hover` — the chrome cache hash hashes
+    /// this value so a row-boundary crossing invalidates the cache,
+    /// and display reads the live hover via `cx.is_hovered(hit_id)`.
+    pub(crate) fn current_overview_action_hover(
+        &self,
+    ) -> Option<ciri_app::app::OverviewActionHover> {
+        if !self.core.overview.active {
+            return None;
+        }
+        let bar = crate::app::ui::overview::overview_action_bar_data(
+            self,
+            self.overview_hovered_pane,
+        )?;
+        let (mx, my) = self.last_mouse_pos?;
+        if my < bar.bar_y || my >= bar.bar_y + bar.bar_h {
+            return None;
+        }
+        // Layout: close_button (close_w) | 1px separator (no hit_id —
+        // routes to HIT_ACTION_BAR via parent) | focus_button
+        // (focus_w - 1.0). The separator pixel is intentionally
+        // excluded from both Close and Focus ranges so the cache key
+        // matches what the hit-test tree would return for that strip
+        // (HIT_ACTION_BAR / `Background`, neither button).
+        let close_left = bar.pane_x;
+        let close_right = bar.pane_x + bar.close_w;
+        let separator_right = close_right + 1.0;
+        let focus_right = separator_right + (bar.focus_w - 1.0).max(0.0);
+        if mx >= close_left && mx < close_right {
+            Some(ciri_app::app::OverviewActionHover::Close)
+        } else if mx >= separator_right && mx < focus_right {
+            Some(ciri_app::app::OverviewActionHover::Focus)
         } else {
             None
         }

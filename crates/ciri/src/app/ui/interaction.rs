@@ -233,16 +233,18 @@ impl App {
                     needs_redraw: prev_tab != tab,
                 }
             }
-            UiFrameHover::Overview {
-                target,
-                action_hover,
-            } => {
-                let had_top_bar_hover = self.hovered_top_bar_region.take().is_some()
-                    || self.hovered_pane_tab.take().is_some();
-                let prev = self.overview_hovered_pane;
-                let prev_action = self.overview_action_hover;
+            UiFrameHover::Overview { target } => {
+                // `action_hover` from the hit-test is no longer
+                // stored — derived at chrome-cache-hash time via
+                // `App::current_overview_action_hover()` and read
+                // declaratively at paint via `cx.is_hovered(...)`.
+                // Same `needs_redraw: true` shape as the other
+                // derived-hover handlers (palette / context_menu /
+                // paste_dialog) — the chrome cache key recomputation
+                // gates actual repaint cost.
+                self.hovered_top_bar_region = None;
+                self.hovered_pane_tab = None;
                 self.overview_hovered_pane = target;
-                self.overview_action_hover = action_hover;
                 UiHoverOutcome {
                     handled: true,
                     cursor: if target.is_some() {
@@ -250,7 +252,7 @@ impl App {
                     } else {
                         CursorIcon::Default
                     },
-                    needs_redraw: had_top_bar_hover || prev != target || prev_action != action_hover,
+                    needs_redraw: true,
                 }
             }
             UiFrameHover::None => {

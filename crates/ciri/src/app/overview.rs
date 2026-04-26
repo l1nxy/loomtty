@@ -52,7 +52,6 @@ impl App {
     pub(crate) fn exit_overview(&mut self) {
         self.core.exit_overview();
         self.overview_hovered_pane = None;
-        self.overview_action_hover = None;
     }
 
     /// Delegate: toggle overview mode. Mirrors `exit_overview` for the
@@ -60,7 +59,6 @@ impl App {
     pub(crate) fn toggle_overview(&mut self) {
         self.core.toggle_overview();
         self.overview_hovered_pane = None;
-        self.overview_action_hover = None;
     }
 
     pub(crate) fn focus_overview_target(&mut self, ws_idx: usize, pane_id: u64) {

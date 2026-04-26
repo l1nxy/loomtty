@@ -6,7 +6,7 @@ mod hints_bar;
 pub(super) mod ime_preedit;
 mod interaction;
 pub(super) mod info_box;
-mod overview;
+pub(crate) mod overview;
 mod palette;
 mod paste_dialog;
 pub(super) mod search_bar;

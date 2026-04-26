@@ -4,7 +4,7 @@ use super::tokens;
 use super::types::{UiContext, UiOverviewHit, UiScene, ui_hit_id};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Div, Layer, Styled, div, text};
+use ciri_ui::{Div, IntoElement, Layer, Render, RenderCtx, Styled, div, text};
 
 const HIT_ACTION_BAR: u64 = 1;
 const HIT_CLOSE: u64 = 2;
@@ -14,6 +14,7 @@ pub(crate) struct OverviewComponent {
     hovered_pane: Option<(usize, u64)>,
 }
 
+#[derive(Clone)]
 pub(crate) struct OverviewActionBarData {
     pub pane_x: f32,
     pub pane_w: f32,
@@ -21,6 +22,16 @@ pub(crate) struct OverviewActionBarData {
     pub bar_h: f32,
     pub close_w: f32,
     pub focus_w: f32,
+}
+
+/// Render-trait component wrapping the overview action bar so it goes
+/// through the same paint pipeline as the rest of the chrome.
+/// Hover styling is declarative (`.hover()` per button); cache
+/// invalidation on cursor-cross-button-boundary stays correct because
+/// the chrome cache hash hashes whichever button is currently
+/// hovered (derived at hash time from cursor + bar geometry).
+pub(crate) struct OverviewActionBarComponent {
+    pub data: OverviewActionBarData,
 }
 
 impl OverviewComponent {
@@ -62,7 +73,11 @@ fn overview_action_bar_hit(
     my: f32,
     cx: &UiContext<'_>,
 ) -> Option<UiOverviewHit> {
-    let root = overview_action_bar_tree(d, None, cx, true);
+    // Reuse the same Render-trait tree the painter would build —
+    // hit_ids are always present now (no more `with_hits` split),
+    // so the hit-test walker sees the same layout the painter does.
+    let render_cx = OverviewActionBarComponent::render_cx(cx);
+    let root = OverviewActionBarComponent { data: d.clone() }.build_tree(&render_cx);
     match ui_hit_id(&root, cx, mx, my) {
         Some(HIT_CLOSE) => Some(UiOverviewHit::ClosePane(pane_id)),
         Some(HIT_FOCUS) => Some(UiOverviewHit::FocusPane(ws_idx, pane_id)),
@@ -131,90 +146,89 @@ pub(crate) fn overview_action_bar_data(
     None
 }
 
-/// Paint the overview action bar (Close / Focus buttons).
-pub(crate) fn paint_overview_action_bar(
-    d: &OverviewActionBarData,
-    hover: Option<super::super::OverviewActionHover>,
-    cx: &UiContext<'_>,
-    scene: &mut UiScene<'_>,
-) {
-    let root = overview_action_bar_tree(d, hover, cx, false);
-    paint_element_tree(&root, cx, scene);
+impl OverviewActionBarComponent {
+    pub(crate) fn paint(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        let render_cx = Self::render_cx(cx);
+        // 11th production usage of `ciri_ui::Render`. Hover is now
+        // declarative on each button — refinement-aware text_color
+        // inheritance (Step 16) propagates the hover-state colour
+        // change to the descendant Text without an `if hovered { ... }`
+        // branch.
+        let root = <Self as Render>::render(self, &render_cx).into_element();
+        paint_element_tree(&root, cx, scene);
+    }
+
+    fn render_cx<'a>(cx: &'a UiContext<'_>) -> RenderCtx<'a> {
+        RenderCtx {
+            theme: cx.theme,
+            viewport: [cx.viewport_w, cx.viewport_h],
+            scale: 1.0,
+        }
+    }
+
+    fn build_tree(&self, cx: &RenderCtx<'_>) -> Div {
+        let d = &self.data;
+        let accent = cx.theme.accent;
+        let red = cx.theme.error;
+        let fg = cx.theme.on_surface;
+
+        // Both buttons use refinement-aware text_color: rest text
+        // colour on the Div (red for Close, fg for Focus), hover
+        // refinement switches text_color (and adds a tinted bg).
+        // Descendant Text inherits — no `.color()` on the Text node.
+        let close_button = div()
+            .w(d.close_w)
+            .h(d.bar_h)
+            .flex_row()
+            .items_center()
+            .justify_center()
+            .text_color(red)
+            .hit_id(HIT_CLOSE)
+            .cursor_pointer()
+            .hover(|s| s.bg(tokens::tint(red, tokens::ALPHA_PRIMARY_REST)).text_color(fg))
+            .child(text("\u{2715} Close"));
+
+        let focus_button = div()
+            .w((d.focus_w - 1.0).max(0.0))
+            .h(d.bar_h)
+            .flex_row()
+            .items_center()
+            .justify_center()
+            .text_color(fg)
+            .hit_id(HIT_FOCUS)
+            .cursor_pointer()
+            .hover(|s| s.bg(tokens::tint(accent, tokens::ALPHA_SELECTED_BG + 0.10)))
+            .child(text("Focus"));
+
+        let bar = div()
+            .in_layer(Layer::Overlay)
+            .absolute()
+            .left(d.pane_x)
+            .top(d.bar_y)
+            .w(d.pane_w)
+            .h(d.bar_h)
+            .flex_row()
+            .items_center()
+            .bg([0.0, 0.0, 0.0, tokens::ALPHA_PRIMARY_HOVER])
+            .hit_id(HIT_ACTION_BAR);
+
+        div().w(cx.viewport[0]).h(cx.viewport[1]).child(
+            bar.child(close_button)
+                .child(
+                    div()
+                        .w(1.0)
+                        .h(d.bar_h - tokens::SPACE_1 * 2.0)
+                        .bg(tokens::tint(fg, tokens::ALPHA_SEPARATOR * 0.6)),
+                )
+                .child(focus_button),
+        )
+    }
 }
 
-fn overview_action_bar_tree(
-    d: &OverviewActionBarData,
-    hover: Option<super::super::OverviewActionHover>,
-    cx: &UiContext<'_>,
-    with_hits: bool,
-) -> Div {
-    let accent = cx.theme.accent;
-    let red = cx.theme.error;
-    let fg = cx.theme.on_surface;
-
-    let close_hovered = hover == Some(super::super::OverviewActionHover::Close);
-    let focus_hovered = hover == Some(super::super::OverviewActionHover::Focus);
-
-    let close_label = "\u{2715} Close";
-    let focus_label = "Focus";
-    let close_text_color = if close_hovered {
-        fg
-    } else {
-        tokens::tint(red, 1.0)
-    };
-
-    let mut close_button = div()
-        .w(d.close_w)
-        .h(d.bar_h)
-        .flex_row()
-        .items_center()
-        .justify_center()
-        .child(text(close_label).color(close_text_color));
-    if close_hovered {
-        close_button = close_button.bg(tokens::tint(red, tokens::ALPHA_PRIMARY_REST));
+impl Render for OverviewActionBarComponent {
+    fn render(&mut self, cx: &RenderCtx<'_>) -> impl IntoElement {
+        self.build_tree(cx)
     }
-    if with_hits {
-        close_button = close_button.hit_id(HIT_CLOSE).cursor_pointer();
-    }
-
-    let mut focus_button = div()
-        .w((d.focus_w - 1.0).max(0.0))
-        .h(d.bar_h)
-        .flex_row()
-        .items_center()
-        .justify_center()
-        .child(text(focus_label).color(fg));
-    if focus_hovered {
-        focus_button = focus_button.bg(tokens::tint(accent, tokens::ALPHA_SELECTED_BG + 0.10));
-    }
-    if with_hits {
-        focus_button = focus_button.hit_id(HIT_FOCUS).cursor_pointer();
-    }
-
-    let mut bar = div()
-        .in_layer(Layer::Overlay)
-        .absolute()
-        .left(d.pane_x)
-        .top(d.bar_y)
-        .w(d.pane_w)
-        .h(d.bar_h)
-        .flex_row()
-        .items_center()
-        .bg([0.0, 0.0, 0.0, tokens::ALPHA_PRIMARY_HOVER]);
-    if with_hits {
-        bar = bar.hit_id(HIT_ACTION_BAR);
-    }
-
-    div().w(cx.viewport_w).h(cx.viewport_h).child(
-        bar.child(close_button)
-            .child(
-                div()
-                    .w(1.0)
-                    .h(d.bar_h - tokens::SPACE_1 * 2.0)
-                    .bg(tokens::tint(fg, tokens::ALPHA_SEPARATOR * 0.6)),
-            )
-            .child(focus_button),
-    )
 }
 
 #[cfg(test)]

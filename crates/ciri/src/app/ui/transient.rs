@@ -32,11 +32,11 @@ impl TransientOverlayFrame {
         self.search_bar.is_none() && self.bell_flash.is_none() && self.ime_preedit.is_none()
     }
 
-    pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+    pub(crate) fn paint(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         if let Some(component) = &self.search_bar {
             component.paint(cx, scene);
         }
-        if let Some(component) = &self.bell_flash {
+        if let Some(component) = &mut self.bell_flash {
             component.paint(cx, scene);
         }
         if let Some(component) = &self.ime_preedit {
@@ -104,7 +104,7 @@ impl App {
         color_glyphs: &mut Vec<GlyphInstance>,
     ) {
         let (cw, ch) = self.ui_cell_metrics();
-        let Some(component) = self.bell_flash_component(tiles, zoom, vw, vh) else {
+        let Some(mut component) = self.bell_flash_component(tiles, zoom, vw, vh) else {
             return;
         };
         self.paint_transient_ui_with_metrics(
@@ -247,7 +247,7 @@ impl App {
         color_glyphs: &mut Vec<GlyphInstance>,
     ) {
         let (cw, ch) = self.ui_cell_metrics();
-        let frame = TransientOverlayFrame::new(
+        let mut frame = TransientOverlayFrame::new(
             self.search_bar_component(tiles),
             self.bell_flash_component(tiles, zoom, vw, vh),
             self.ime_preedit_component(tiles, cw, ch),

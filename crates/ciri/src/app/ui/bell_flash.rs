@@ -1,5 +1,5 @@
 use ciri_layout::geometry::Rect as GeoRect;
-use ciri_ui::{Layer, Styled, div};
+use ciri_ui::{Div, IntoElement, Layer, Render, RenderCtx, Styled, div};
 
 use super::types::{UiContext, UiScene};
 use crate::app::ciri_ui_adapter::paint_element_tree;
@@ -15,12 +15,25 @@ pub(crate) struct BellFlashComponent {
 }
 
 impl BellFlashComponent {
-    pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+    pub(crate) fn paint(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         if self.flashes.is_empty() {
             return;
         }
+        let render_cx = RenderCtx {
+            theme: cx.theme,
+            viewport: [cx.viewport_w, cx.viewport_h],
+            scale: 1.0,
+        };
+        // 8th production usage of `ciri_ui::Render`. Bell flash is
+        // tiny — a viewport-sized wrapper with one tinted rect per
+        // flashing pane. No host-derived metrics in `build_tree`, so
+        // the trait migration is mechanical.
+        let root = <Self as Render>::render(self, &render_cx).into_element();
+        paint_element_tree(&root, cx, scene);
+    }
 
-        let mut root = div().w(cx.viewport_w).h(cx.viewport_h);
+    fn build_tree(&self, cx: &RenderCtx<'_>) -> Div {
+        let mut root = div().w(cx.viewport[0]).h(cx.viewport[1]);
         for flash in &self.flashes {
             let alpha = 0.15 * flash.intensity;
             let rect = flash.rect;
@@ -35,7 +48,12 @@ impl BellFlashComponent {
                     .bg([1.0, 0.9, 0.5, alpha]),
             );
         }
+        root
+    }
+}
 
-        paint_element_tree(&root, cx, scene);
+impl Render for BellFlashComponent {
+    fn render(&mut self, cx: &RenderCtx<'_>) -> impl IntoElement {
+        self.build_tree(cx)
     }
 }

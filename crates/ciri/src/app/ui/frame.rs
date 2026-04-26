@@ -138,7 +138,7 @@ impl UiFrame {
         if let Some(component) = &self.paste_dialog {
             component.paint(cx, scene);
         }
-        if let Some(component) = &self.context_menu {
+        if let Some(component) = &mut self.context_menu {
             component.paint(cx, scene);
         }
     }

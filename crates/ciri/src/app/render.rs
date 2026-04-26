@@ -500,7 +500,11 @@ impl App {
             menu.x.to_bits().hash(hasher);
             menu.y.to_bits().hash(hasher);
             menu.target_pane_id.hash(hasher);
-            menu.hovered_index.hash(hasher);
+            // Derived hover (no stored field) — same pattern as
+            // `current_palette_hover`. Invalidates the chrome cache
+            // when the cursor crosses a menu row so the declarative
+            // `.hover()` style paints on the next frame.
+            self.current_context_menu_hover().hash(hasher);
             menu.items.len().hash(hasher);
             for item in &menu.items {
                 item.label.hash(hasher);

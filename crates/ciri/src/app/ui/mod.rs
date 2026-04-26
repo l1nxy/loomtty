@@ -207,7 +207,6 @@ mod tests {
                 action: ContextMenuAction::Copy,
                 enabled: true,
             }],
-            hovered_index: None,
         };
         let cx = app.ui_context();
         let component = ContextMenuComponent::capture(&app, &cx).unwrap();

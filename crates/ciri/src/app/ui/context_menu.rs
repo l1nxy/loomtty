@@ -9,7 +9,7 @@ use super::tokens;
 use super::types::{UiAction, UiContext, UiContextMenuHit, UiScene, ui_hit_id};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Div, Layer, Styled, div, text};
+use ciri_ui::{Div, IntoElement, Layer, Render, RenderCtx, Styled, div, text};
 
 const HIT_MENU: u64 = 1;
 const HIT_ENTRY_BASE: u64 = 1_000_000;
@@ -29,7 +29,6 @@ fn context_menu_hit_from_id(hit_id: Option<u64>) -> UiContextMenuHit {
 struct ContextMenuRow {
     label: String,
     enabled: bool,
-    hovered: bool,
 }
 
 pub(crate) struct ContextMenuComponent {
@@ -68,11 +67,9 @@ impl ContextMenuComponent {
             .context_menu
             .items
             .iter()
-            .enumerate()
-            .map(|(i, item)| ContextMenuRow {
+            .map(|item| ContextMenuRow {
                 label: text_layout::truncate_with_ellipsis(cx, &item.label, label_budget),
                 enabled: item.enabled,
-                hovered: Some(i) == app.core.context_menu.hovered_index && item.enabled,
             })
             .collect();
         Some(Self {
@@ -85,8 +82,21 @@ impl ContextMenuComponent {
         })
     }
 
+    /// Project ciri's `UiContext` to the minimal `RenderCtx` the
+    /// `Render` trait promises. Same pattern as palette: keeps the
+    /// trait's context narrow and lets the host carry shaper / taffy
+    /// fields out-of-band.
+    fn render_cx<'a>(cx: &'a UiContext<'_>) -> RenderCtx<'a> {
+        RenderCtx {
+            theme: cx.theme,
+            viewport: [cx.viewport_w, cx.viewport_h],
+            scale: 1.0,
+        }
+    }
+
     pub(super) fn hit_test(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> UiContextMenuHit {
-        let root = self.build_tree(cx);
+        let render_cx = Self::render_cx(cx);
+        let root = self.build_tree(&render_cx);
         context_menu_hit_from_id(ui_hit_id(&root, cx, mx, my))
     }
 }
@@ -100,7 +110,7 @@ impl ContextMenuComponent {
         }
     }
 
-    fn build_tree(&self, cx: &UiContext<'_>) -> Div {
+    fn build_tree(&self, cx: &RenderCtx<'_>) -> Div {
         let padding = tokens::SPACE_2;
         let bw = tokens::BORDER_THIN;
 
@@ -150,23 +160,34 @@ impl ContextMenuComponent {
                 .child(div().w(text_pad).h(item_h))
                 .child(text(row.label.clone()).color(text_color));
             if row.enabled {
-                row_el = row_el.hit_id(entry_hit_id(index)).cursor_pointer();
-            }
-            if row.hovered {
-                row_el = row_el.bg(hover_bg);
+                row_el = row_el
+                    .hit_id(entry_hit_id(index))
+                    .cursor_pointer()
+                    // Declarative hover — disabled rows don't get a hit_id
+                    // so `cx.is_hovered(entry_hit_id(i))` can never match
+                    // for them and no refinement attaches.
+                    .hover(|s| s.bg(hover_bg));
             }
             panel = panel.child(row_el);
         }
         panel = panel.child(div().w(content_w).h(padding));
 
-        let root = div().w(cx.viewport_w).h(cx.viewport_h).child(panel);
+        let root = div().w(cx.viewport[0]).h(cx.viewport[1]).child(panel);
 
         root
     }
 
-    pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let root = self.build_tree(cx);
+    pub(crate) fn paint(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        let render_cx = Self::render_cx(cx);
+        // Second production usage of `ciri_ui::Render` after palette.
+        let root = <Self as Render>::render(self, &render_cx).into_element();
         paint_element_tree(&root, cx, scene);
+    }
+}
+
+impl Render for ContextMenuComponent {
+    fn render(&mut self, cx: &RenderCtx<'_>) -> impl IntoElement {
+        self.build_tree(cx)
     }
 }
 
@@ -194,7 +215,6 @@ mod tests {
                 action: ContextMenuAction::Copy,
                 enabled: true,
             }],
-            hovered_index: None,
         };
         let mut config = CiriConfig::default();
         config.theme = app.core.config.theme.clone();
@@ -226,7 +246,6 @@ mod tests {
                     enabled: false,
                 },
             ],
-            hovered_index: None,
         };
         let cx = app.ui_context();
         let menu = ContextMenuComponent::capture(&app, &cx).expect("menu visible");

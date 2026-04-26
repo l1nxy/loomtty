@@ -129,8 +129,7 @@ impl App {
             }
             UiAction::ClosePalette => self.core.command_palette = None,
             UiAction::ExecuteContextMenuEntry(idx) => {
-                self.core.context_menu.hovered_index = Some(idx);
-                self.handle_context_menu_click();
+                self.handle_context_menu_click(idx);
             }
             UiAction::CloseContextMenu => self.core.context_menu.visible = false,
             UiAction::ConfirmPaste => self.confirm_pending_paste(),
@@ -158,8 +157,11 @@ impl App {
 
         match hover {
             UiFrameHover::ContextMenu { hovered } => {
-                let prev = self.core.context_menu.hovered_index;
-                self.core.context_menu.hovered_index = hovered;
+                // Hover index is derived at cache-hash time from
+                // `App::current_context_menu_hover()`; display reads it
+                // declaratively via `cx.is_hovered(hit_id)`. Same shape
+                // as the palette hover handler — set redraw
+                // unconditionally and let the cache hit/miss decide.
                 UiHoverOutcome {
                     handled: true,
                     cursor: if hovered.is_some() {
@@ -167,7 +169,7 @@ impl App {
                     } else {
                         CursorIcon::Default
                     },
-                    needs_redraw: prev != hovered,
+                    needs_redraw: true,
                 }
             }
             UiFrameHover::PasteDialog { button } => {

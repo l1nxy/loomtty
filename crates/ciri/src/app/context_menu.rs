@@ -2,10 +2,9 @@ use super::{App, ContextMenu, ContextMenuAction, ContextMenuItem};
 use ciri_protocol::message::ClientMessage;
 
 impl App {
-    pub(crate) fn handle_context_menu_click(&mut self) {
+    pub(crate) fn handle_context_menu_click(&mut self, idx: usize) {
         let target_pane_id = self.core.context_menu.target_pane_id;
-        if let Some(idx) = self.core.context_menu.hovered_index
-            && let Some(item) = self.core.context_menu.items.get(idx).cloned()
+        if let Some(item) = self.core.context_menu.items.get(idx).cloned()
             && item.enabled
         {
             if let Some(pane_id) = target_pane_id {
@@ -208,7 +207,6 @@ impl App {
             y: my,
             target_pane_id: self.pixel_to_cell(mx, my).map(|(pane_id, _, _)| pane_id),
             items,
-            hovered_index: None,
         };
 
         self.schedule_redraw();

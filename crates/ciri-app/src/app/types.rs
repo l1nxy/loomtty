@@ -36,7 +36,6 @@ pub struct ContextMenu {
     pub y: f32,
     pub target_pane_id: Option<u64>,
     pub items: Vec<ContextMenuItem>,
-    pub hovered_index: Option<usize>,
 }
 
 /// Text selection state with absolute buffer coordinates.

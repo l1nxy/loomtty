@@ -229,6 +229,10 @@ pub(crate) struct App {
     /// this crate read or mutate it. Was on `AppModel`; moved out to
     /// keep the platform-agnostic core free of UI input state.
     pub drag: ciri_app::app::ResizeDragState,
+    /// Touchpad gesture tracking (per-row swipe + scroll accumulator).
+    /// Pure UI input state — only mouse-wheel / pan handlers in this
+    /// crate touch it. Was on `AppModel`.
+    pub gestures: ciri_app::app::GestureState,
     /// Horizontal scroll offset (px) for the inline pane-tab strip in
     /// the top bar. Pure UI ephemera — readers/writers all live in this
     /// crate: mouse wheel handler (mouse.rs), top-bar visibility helper
@@ -527,6 +531,11 @@ impl App {
                 tile_start_y: 0.0,
                 scrollbar_dragging: None,
             },
+            gestures: ciri_app::app::GestureState {
+                scroll_accum: 0.0,
+                row_active: false,
+                row_start: 0,
+            },
             connection_cancel: None,
             motion_ticker: Arc::new(ciri_motion::Ticker::new()),
             ui_taffy_tree: std::cell::RefCell::new(taffy::TaffyTree::new()),
@@ -730,7 +739,7 @@ impl App {
             tile_start_y: 0.0,
             scrollbar_dragging: None,
         };
-        self.core.gestures = GestureState {
+        self.gestures = GestureState {
             scroll_accum: 0.0,
             row_active: false,
             row_start: 0,

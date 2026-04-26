@@ -62,7 +62,6 @@ pub struct AppModel {
     pub cursor_blink_visible: bool,
     pub cursor_blink_timer: Instant,
 
-    pub gestures: GestureState,
 
 
     pub workspace_last_pane_ids: HashMap<usize, u64>,
@@ -176,11 +175,6 @@ impl AppModel {
             last_frame: Instant::now(),
             cursor_blink_visible: true,
             cursor_blink_timer: Instant::now(),
-            gestures: GestureState {
-                scroll_accum: 0.0,
-                row_active: false,
-                row_start: 0,
-            },
             workspace_last_pane_ids: HashMap::new(),
             last_left_click: None,
             hovered_link: None,

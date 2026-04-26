@@ -859,12 +859,12 @@ impl App {
 
         match phase {
             TouchPhase::Started => {
-                self.core.gestures.row_active = true;
-                self.core.gestures.row_start = self.core.workspaces.active_workspace_idx;
+                self.gestures.row_active = true;
+                self.gestures.row_start = self.core.workspaces.active_workspace_idx;
                 self.core.anim_mgr.gesture_row_offset.begin_gesture();
             }
             TouchPhase::Moved => {
-                if self.core.gestures.row_active {
+                if self.gestures.row_active {
                     self.core
                         .anim_mgr
                         .gesture_row_offset
@@ -884,7 +884,7 @@ impl App {
                 }
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
-                self.core.gestures.row_active = false;
+                self.gestures.row_active = false;
                 let sp = SpringParams::default();
                 self.core.anim_mgr.gesture_row_offset.end_gesture(0.0, sp);
                 self.animate_to_active();
@@ -921,16 +921,16 @@ impl App {
 
         match phase {
             TouchPhase::Started => {
-                self.core.gestures.scroll_accum = 0.0;
+                self.gestures.scroll_accum = 0.0;
             }
             TouchPhase::Moved | TouchPhase::Ended | TouchPhase::Cancelled => {
-                self.core.gestures.scroll_accum += py;
+                self.gestures.scroll_accum += py;
                 let ppl = self.core.config.gesture.scroll_pixels_per_line;
-                let lines = (self.core.gestures.scroll_accum / ppl) as i64;
+                let lines = (self.gestures.scroll_accum / ppl) as i64;
                 if lines != 0
                     && let Some(pid) = target_pid
                 {
-                    self.core.gestures.scroll_accum -= lines as f64 * ppl;
+                    self.gestures.scroll_accum -= lines as f64 * ppl;
                     if lines > 0 {
                         self.scroll_pane_up(pid, lines as usize);
                     } else {

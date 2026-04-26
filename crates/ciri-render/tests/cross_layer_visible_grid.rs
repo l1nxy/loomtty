@@ -96,10 +96,17 @@ fn protocol_client_render_visible_grid_invariants_stay_aligned() {
     assert_eq!(grid.cursor_col, 2);
     assert_eq!(grid.mode_flags, MODE_ALT_SCREEN | MODE_MOUSE_REPORT);
     assert_eq!(grid.cwd.as_deref(), Some("/tmp/ciri"));
+    // `GraphemeExtras` indexes are over the *combined* scrollback +
+    // viewport buffer the server transmits, not the viewport alone.
+    // With 4 cells of scrollback transmitted before the 8 viewport
+    // cells, protocol index 2 lands on scrollback cell 2 (`ß`),
+    // producing the combined grapheme `ß\u{0301}`. The earlier
+    // assertion (`e\u{0301}`) was written against a wrong assumption
+    // that indices were viewport-relative.
     assert_eq!(
         grid.grapheme_map.get(&2).map(String::as_str),
-        Some("e\u{0301}"),
-        "protocol grapheme extras should become client-visible grapheme data"
+        Some("ß\u{0301}"),
+        "protocol grapheme extras (combined-buffer index 2) should land on scrollback cell 2"
     );
 
     let config = CiriConfig::default();

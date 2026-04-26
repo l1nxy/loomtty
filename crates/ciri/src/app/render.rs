@@ -2686,11 +2686,21 @@ mod tests {
             sdf_rects.iter().any(|r| r.color == [0.5, 0.7, 1.0, 0.9]),
             "IME preedit underline should be emitted as SDF chrome",
         );
+        // Cursor is `2.0` px wide and one cell tall — the original
+        // assertion hard-coded cell_h=16, which only held for an
+        // earlier font metric. Resolve the cursor height against the
+        // live `glyph_cache.cell_height` so the test stays valid as
+        // font metrics evolve.
+        let expected_cursor_h = app
+            .glyph_cache
+            .as_ref()
+            .map(|c| c.cell_height)
+            .expect("test_cache populated above");
         assert!(
-            sdf_rects
-                .iter()
-                .any(|r| (r.size[0] - 2.0).abs() < 0.01 && (r.size[1] - 16.0).abs() < 0.01),
-            "IME preedit cursor should be emitted as a narrow SDF rect",
+            sdf_rects.iter().any(|r| (r.size[0] - 2.0).abs() < 0.01
+                && (r.size[1] - expected_cursor_h).abs() < 0.01),
+            "IME preedit cursor should be emitted as a narrow SDF rect (2.0 × cell_h = {})",
+            expected_cursor_h,
         );
         assert!(
             app.cached_ui_scene.sdf_rects.is_empty(),

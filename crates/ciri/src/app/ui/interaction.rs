@@ -90,7 +90,7 @@ impl App {
                 }
             }
             UiAction::ClosePaneTab(pane_id) => {
-                self.core.hovered_pane_tab = None;
+                self.hovered_pane_tab = None;
                 self.send(ciri_protocol::message::ClientMessage::ClosePane { pane_id });
             }
             UiAction::ExecutePaletteEntry(entry_idx) => {
@@ -210,10 +210,10 @@ impl App {
                 }
             }
             UiFrameHover::TopBar { region, tab } => {
-                let prev_region = self.core.hovered_top_bar_region;
-                let prev_tab = self.core.hovered_pane_tab;
-                self.core.hovered_top_bar_region = region;
-                self.core.hovered_pane_tab = tab;
+                let prev_region = self.hovered_top_bar_region;
+                let prev_tab = self.hovered_pane_tab;
+                self.hovered_top_bar_region = region;
+                self.hovered_pane_tab = tab;
                 UiHoverOutcome {
                     handled: true,
                     cursor: if region.is_some() || tab.is_some() {
@@ -225,8 +225,8 @@ impl App {
                 }
             }
             UiFrameHover::SideTab { tab } => {
-                let prev_tab = self.core.hovered_pane_tab;
-                self.core.hovered_pane_tab = tab;
+                let prev_tab = self.hovered_pane_tab;
+                self.hovered_pane_tab = tab;
                 UiHoverOutcome {
                     handled: true,
                     cursor: if tab.is_some() {
@@ -241,8 +241,8 @@ impl App {
                 target,
                 action_hover,
             } => {
-                let had_top_bar_hover = self.core.hovered_top_bar_region.take().is_some()
-                    || self.core.hovered_pane_tab.take().is_some();
+                let had_top_bar_hover = self.hovered_top_bar_region.take().is_some()
+                    || self.hovered_pane_tab.take().is_some();
                 let prev = self.core.overview.hovered_pane;
                 let prev_action = self.core.overview_action_hover;
                 self.core.overview.hovered_pane = target;
@@ -258,8 +258,8 @@ impl App {
                 }
             }
             UiFrameHover::None => {
-                let had_top_bar_hover = self.core.hovered_top_bar_region.take().is_some()
-                    || self.core.hovered_pane_tab.take().is_some();
+                let had_top_bar_hover = self.hovered_top_bar_region.take().is_some()
+                    || self.hovered_pane_tab.take().is_some();
 
                 UiHoverOutcome {
                     handled: had_top_bar_hover,

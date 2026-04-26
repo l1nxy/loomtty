@@ -73,7 +73,7 @@ impl TabBarComponent {
             .collect();
         Self {
             tabs,
-            hovered_tab: app.core.hovered_pane_tab,
+            hovered_tab: app.hovered_pane_tab,
             tab_height: app.core.config.tabbar.tab_height,
             tab_gap: app.core.config.tabbar.tab_gap,
             position: app.core.config.tabbar.position,

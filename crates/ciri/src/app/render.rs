@@ -555,8 +555,8 @@ impl App {
         self.core.input.is_locked().hash(&mut hasher);
         self.core.input.is_awaiting_action().hash(&mut hasher);
         self.core.input.current_mode_name().hash(&mut hasher);
-        self.core.hovered_top_bar_region.hash(&mut hasher);
-        self.core.hovered_pane_tab.hash(&mut hasher);
+        self.hovered_top_bar_region.hash(&mut hasher);
+        self.hovered_pane_tab.hash(&mut hasher);
         self.core.pane_tab_scroll.to_bits().hash(&mut hasher);
         self.pane_tab_scroll_max().to_bits().hash(&mut hasher);
         self.core.overview.active.hash(&mut hasher);
@@ -703,8 +703,8 @@ impl App {
         self.core.overview_action_hover.hash(&mut hasher);
         self.core.broadcast_mode.hash(&mut hasher);
         self.core.input.is_awaiting_action().hash(&mut hasher);
-        self.core.hovered_top_bar_region.hash(&mut hasher);
-        self.core.hovered_pane_tab.hash(&mut hasher);
+        self.hovered_top_bar_region.hash(&mut hasher);
+        self.hovered_pane_tab.hash(&mut hasher);
         self.core.pane_tab_scroll.to_bits().hash(&mut hasher);
         self.pane_tab_scroll_max().to_bits().hash(&mut hasher);
         self.core.ime.preedit_active.hash(&mut hasher);

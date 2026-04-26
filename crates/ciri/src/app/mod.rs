@@ -207,6 +207,15 @@ pub(crate) struct App {
     pub event_loop_proxy: Option<EventLoopProxy<()>>,
     /// Coalesced redraw request latched until the event loop reaches AboutToWait.
     pub pending_redraw: bool,
+    /// UI-only ephemeral hover state for the top bar's session/workspace/mode
+    /// labels. Lives on `App` (not `AppModel`) — the framework's declarative
+    /// `.hover()` will eventually subsume the read side; the field is kept for
+    /// the chrome cache key and for the existing imperative top-bar paint
+    /// path that hasn't been migrated to an Element tree yet.
+    pub hovered_top_bar_region: Option<ciri_app::app::TopBarHoverRegion>,
+    /// UI-only ephemeral hover state for the per-pane tabs (top-bar inline or
+    /// side tab-bar). Same rationale as `hovered_top_bar_region`.
+    pub hovered_pane_tab: Option<u64>,
     /// Notify handle shared with the active connection's IO thread so the UI
     /// can trigger `Cancelled` mid-connect. Exists only while the active slot
     /// is still in a transient `!connected` state — slot switches drop it.
@@ -477,6 +486,8 @@ impl App {
             pending_dpi: None,
             event_loop_proxy: None,
             pending_redraw: false,
+            hovered_top_bar_region: None,
+            hovered_pane_tab: None,
             connection_cancel: None,
             motion_ticker: Arc::new(ciri_motion::Ticker::new()),
             ui_taffy_tree: std::cell::RefCell::new(taffy::TaffyTree::new()),
@@ -686,8 +697,8 @@ impl App {
             row_start: 0,
         };
         self.core.pane_tab_scroll = 0.0;
-        self.core.hovered_top_bar_region = None;
-        self.core.hovered_pane_tab = None;
+        self.hovered_top_bar_region = None;
+        self.hovered_pane_tab = None;
         self.core.last_left_click = None;
         self.core.hovered_link = None;
         self.core.last_focus_follows_mouse = None;

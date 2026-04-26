@@ -279,7 +279,7 @@ mod tests {
         assert!(hover.handled);
         assert_eq!(hover.cursor, CursorIcon::Pointer);
         assert_eq!(
-            app.core.hovered_top_bar_region,
+            app.hovered_top_bar_region,
             Some(TopBarHoverRegion::Session)
         );
     }

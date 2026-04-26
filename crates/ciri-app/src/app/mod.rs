@@ -67,8 +67,6 @@ pub struct AppModel {
     pub gestures: GestureState,
 
     pub pane_tab_scroll: f32,
-    pub hovered_top_bar_region: Option<TopBarHoverRegion>,
-    pub hovered_pane_tab: Option<u64>,
 
     pub workspace_last_pane_ids: HashMap<usize, u64>,
     pub last_left_click: Option<LastLeftClick>,
@@ -199,8 +197,6 @@ impl AppModel {
                 row_start: 0,
             },
             pane_tab_scroll: 0.0,
-            hovered_top_bar_region: None,
-            hovered_pane_tab: None,
             workspace_last_pane_ids: HashMap::new(),
             last_left_click: None,
             hovered_link: None,

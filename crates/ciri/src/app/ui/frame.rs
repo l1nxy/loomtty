@@ -138,7 +138,7 @@ impl UiFrame {
         if let Some(component) = &mut self.palette {
             component.paint(cx, scene);
         }
-        if let Some(component) = &self.connection_status {
+        if let Some(component) = &mut self.connection_status {
             component.paint(cx, scene);
         }
         if let Some(component) = &self.paste_dialog {

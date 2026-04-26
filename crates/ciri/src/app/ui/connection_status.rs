@@ -8,7 +8,7 @@ use super::tokens;
 use super::types::{UiContext, UiScene};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Div, Layer, Styled, div, text};
+use ciri_ui::{Div, IntoElement, Layer, Render, RenderCtx, Styled, div, text};
 
 const DOT_PHASE_MS: u128 = 300;
 const DOT_PHASES: u32 = 4;
@@ -52,11 +52,26 @@ impl StatusKind {
 
 pub(crate) struct ConnectionStatusComponent {
     kind: StatusKind,
-    target: String,
     x: f32,
     y: f32,
     w: f32,
     h: f32,
+    /// Pre-fitted primary banner line (head + dot suffix already
+    /// concatenated into the displayed string for non-animated kinds;
+    /// animated kinds keep the head string and emit the dot suffix as
+    /// a separate Text node so it can be coloured the same way).
+    head: String,
+    /// Suffix (dot string) for animated banners, frozen at the
+    /// current `dot_phase` so `build_tree` doesn't recompute it.
+    /// Empty for non-animated kinds.
+    dots: &'static str,
+    /// Pre-truncated secondary line — empty when there's no second
+    /// row of text.
+    tail: String,
+    /// Cached value of `head_color` choice from the kind discriminant.
+    /// Could be re-derived in `build_tree`, but keeping it here keeps
+    /// the trait's render path entirely self-contained.
+    has_secondary: bool,
 }
 
 impl ConnectionStatusComponent {
@@ -125,14 +140,59 @@ impl ConnectionStatusComponent {
         let x = ((cx.viewport_w - w) * 0.5).max(tokens::SPACE_2);
         let y = (cx.viewport_h * 0.35 - h * 0.5).max(tokens::SPACE_2);
 
+        // Pre-fit the displayed strings so `build_tree` doesn't need
+        // the host shaper. Animation phase is frozen at the current
+        // `dot_phase()` — the chrome cache hash already invalidates on
+        // phase change (`render.rs:650`), so the captured value is
+        // always fresh-per-frame.
+        //
+        // Pre-existing race window: this `dot_phase()` and the one in
+        // `ui_scene_hash` are independent wall-clock reads. A 300 ms
+        // phase boundary between them can produce a one-frame visual
+        // lag (cached scene served with stale dots). Same behaviour as
+        // the pre-migration code which read `dot_phase()` in
+        // `build_tree` instead of `capture` — fix would require
+        // snapshotting the phase at frame start and threading it to
+        // both call sites.
+        let bw = tokens::BORDER_THIN;
+        let content_w = w - bw * 2.0;
+        let animates = kind.animates();
+        let dots = if animates { dot_suffix(dot_phase()) } else { "" };
+        let suffix_w = if animates {
+            text_layout::measure(cx, "...")
+        } else {
+            0.0
+        };
+        let head = if animates {
+            fit_without_ellipsis(cx, &primary, (content_w - suffix_w).max(0.0))
+        } else {
+            text_layout::truncate_with_ellipsis(cx, &primary, content_w)
+        };
+        let tail = if has_secondary {
+            text_layout::truncate_with_ellipsis(cx, &secondary, content_w)
+        } else {
+            String::new()
+        };
+
         Some(Self {
             kind,
-            target,
             x,
             y,
             w,
             h,
+            head,
+            dots,
+            tail,
+            has_secondary,
         })
+    }
+
+    fn render_cx<'a>(cx: &'a UiContext<'_>) -> RenderCtx<'a> {
+        RenderCtx {
+            theme: cx.theme,
+            viewport: [cx.viewport_w, cx.viewport_h],
+            scale: 1.0,
+        }
     }
 }
 
@@ -175,12 +235,17 @@ fn fit_without_ellipsis(cx: &UiContext<'_>, text: &str, max_w: f32) -> String {
 }
 
 impl ConnectionStatusComponent {
-    pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let root = self.build_tree(cx);
+    pub(crate) fn paint(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        let render_cx = Self::render_cx(cx);
+        // 7th production usage of `ciri_ui::Render`. All text strings
+        // (head, dots, tail) and dimensions are pre-baked in capture so
+        // `build_tree` can run from a minimal `RenderCtx` without re-
+        // borrowing the host shaper.
+        let root = <Self as Render>::render(self, &render_cx).into_element();
         paint_element_tree(&root, cx, scene);
     }
 
-    fn build_tree(&self, cx: &UiContext<'_>) -> Div {
+    fn build_tree(&self, cx: &RenderCtx<'_>) -> Div {
         let bg = cx.theme.surface;
         let accent = cx.theme.accent;
         let dim = cx.theme.on_surface_muted;
@@ -192,45 +257,33 @@ impl ConnectionStatusComponent {
         };
 
         let bw = tokens::BORDER_THIN;
-        let row_h = cx.ui_line_h + tokens::SPACE_1 * 2.0;
+        // Row height was `cx.ui_line_h + SPACE_1 * 2`. We don't have
+        // ui_line_h on `RenderCtx`, but the captured `self.h` already
+        // encodes layout: `h = v_pad*2 + row_h * (1 or 2) + (SPACE_1
+        // for has_secondary)`. Derive row_h back out so divs size the
+        // same way the original layout did.
         let v_pad = tokens::SPACE_2;
+        let row_h = if self.has_secondary {
+            (self.h - v_pad * 2.0 - tokens::SPACE_1) * 0.5
+        } else {
+            self.h - v_pad * 2.0
+        };
         let content_w = self.w - bw * 2.0;
 
         // Outer banner via SDF: rounded + colored border (red on Failed,
         // accent while reconnecting/connecting) + drop shadow.
-        // Sink below `bg` by a flat sRGB delta — matches the chrome
-        // treatment in `context_menu.rs` and avoids the hue skew that a
-        // raw `[c * k]` multiply introduces on non-neutral backgrounds.
         let sunk = tokens::surface_sink([bg[0], bg[1], bg[2], 1.0], tokens::SURFACE_SINK);
         let bg_color = [sunk[0], sunk[1], sunk[2], 0.97];
 
-        let (primary, secondary) = banner_lines(&self.kind, &self.target);
-        let animates = self.kind.animates();
-        let dots = if animates {
-            dot_suffix(dot_phase())
-        } else {
-            ""
-        };
-
-        let suffix_w = if animates {
-            text_layout::measure(cx, "...")
-        } else {
-            0.0
-        };
-        let head = if animates {
-            fit_without_ellipsis(cx, &primary, (content_w - suffix_w).max(0.0))
-        } else {
-            text_layout::truncate_with_ellipsis(cx, &primary, content_w)
-        };
         let mut primary_row = div()
             .w_full()
             .h(row_h)
             .flex_row()
             .items_center()
             .justify_center()
-            .child(text(head).color(head_color));
-        if animates && !dots.is_empty() {
-            primary_row = primary_row.child(text(dots).color(head_color));
+            .child(text(self.head.clone()).color(head_color));
+        if !self.dots.is_empty() {
+            primary_row = primary_row.child(text(self.dots).color(head_color));
         }
 
         let mut panel = div()
@@ -248,8 +301,7 @@ impl ConnectionStatusComponent {
             .shadow_md()
             .child(div().w(content_w).h(v_pad))
             .child(primary_row);
-        if !secondary.is_empty() {
-            let line = text_layout::truncate_with_ellipsis(cx, &secondary, content_w);
+        if self.has_secondary {
             let color = match &self.kind {
                 StatusKind::Failed { .. } => cx.theme.on_surface,
                 _ => dim,
@@ -261,12 +313,18 @@ impl ConnectionStatusComponent {
                     .flex_row()
                     .items_center()
                     .justify_center()
-                    .child(text(line).color(color)),
+                    .child(text(self.tail.clone()).color(color)),
             );
         }
         panel = panel.child(div().w(content_w).h(v_pad));
 
-        div().w(cx.viewport_w).h(cx.viewport_h).child(panel)
+        div().w(cx.viewport[0]).h(cx.viewport[1]).child(panel)
+    }
+}
+
+impl Render for ConnectionStatusComponent {
+    fn render(&mut self, cx: &RenderCtx<'_>) -> impl IntoElement {
+        self.build_tree(cx)
     }
 }
 

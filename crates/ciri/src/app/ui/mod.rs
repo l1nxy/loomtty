@@ -256,7 +256,6 @@ mod tests {
             entries: Vec::new(),
             filtered: Vec::new(),
             selected_idx: 0,
-            hovered_idx: None,
             sessions_only: false,
             remote_loading: None,
             remote_error: None,

@@ -189,15 +189,14 @@ impl App {
                     needs_redraw: prev != button,
                 }
             }
-            UiFrameHover::Palette { hovered, pointer } => {
-                let prev_hovered = self
-                    .core
-                    .command_palette
-                    .as_ref()
-                    .and_then(|p| p.hovered_idx);
-                if let Some(palette) = &mut self.core.command_palette {
-                    palette.hovered_idx = hovered;
-                }
+            UiFrameHover::Palette { pointer } => {
+                // Hover index is derived from `last_mouse_pos` at cache-
+                // hash time (`App::current_palette_hover`); display pulls
+                // it from the walker's `cx.is_hovered(hit_id)` and the
+                // declarative `.hover()` style. Nothing model-side to
+                // mutate here — request a redraw unconditionally so the
+                // cache hash gets recomputed; the chrome cache hit/miss
+                // path makes this cheap when the row hasn't changed.
                 UiHoverOutcome {
                     handled: true,
                     cursor: if pointer {
@@ -205,7 +204,7 @@ impl App {
                     } else {
                         CursorIcon::Default
                     },
-                    needs_redraw: prev_hovered != hovered,
+                    needs_redraw: true,
                 }
             }
             UiFrameHover::TopBar { region, tab } => {

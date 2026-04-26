@@ -755,7 +755,6 @@ impl App {
         };
         if steps != 0 {
             palette.move_selection(steps as i32, false);
-            palette.hovered_idx = None;
             self.request_mouse_redraw();
         }
         true

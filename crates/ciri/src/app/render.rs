@@ -461,7 +461,12 @@ impl App {
             true.hash(hasher);
             palette.query.hash(hasher);
             palette.selected_idx.hash(hasher);
-            palette.hovered_idx.hash(hasher);
+            // Hover state is derived (not stored) — `current_palette_hover`
+            // computes the row under the cursor from `last_mouse_pos` +
+            // the live layout. Hashing it here makes the chrome cache
+            // invalidate when the cursor crosses a row boundary so the
+            // declarative `.hover()` style paints on the next frame.
+            self.current_palette_hover().hash(hasher);
             palette.sessions_only.hash(hasher);
             palette.remote_loading.hash(hasher);
             palette.remote_error.hash(hasher);

@@ -15,7 +15,6 @@ impl AppModel {
             entries: self.build_palette_entries(false),
             filtered: Vec::new(),
             selected_idx: 0,
-            hovered_idx: None,
             sessions_only: false,
             remote_loading: None,
             remote_error: None,
@@ -32,7 +31,6 @@ impl AppModel {
             entries: self.build_palette_entries(true),
             filtered: Vec::new(),
             selected_idx: 0,
-            hovered_idx: None,
             sessions_only: true,
             remote_loading: None,
             remote_error: None,
@@ -462,7 +460,6 @@ impl AppModel {
             .iter()
             .position(|&i| palette.entries[i].kind.is_selectable())
             .unwrap_or(0);
-        palette.hovered_idx = None;
     }
 
     pub fn command_palette_scroll_offset(&self, visible_rows: usize) -> usize {

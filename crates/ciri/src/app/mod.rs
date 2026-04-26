@@ -1057,6 +1057,43 @@ impl App {
         })
     }
 
+    /// Which command-palette filtered-row index the cursor currently sits on,
+    /// derived from `last_mouse_pos` + the live palette layout. `None` when
+    /// the palette is closed, the cursor is outside the row strip, or the
+    /// hit row is non-selectable (a section header). Used by the chrome
+    /// cache hash so hover-state changes invalidate the cache without
+    /// requiring a stored field on `AppModel` that needs reset bookkeeping
+    /// at every palette-close site.
+    pub(crate) fn current_palette_hover(&self) -> Option<usize> {
+        let palette = self.core.command_palette.as_ref()?;
+        let layout = self.command_palette_layout()?;
+        let (mx, my) = self.last_mouse_pos?;
+        if mx < layout.panel_x || mx >= layout.panel_x + layout.panel_w {
+            return None;
+        }
+        if my < layout.sep_y {
+            return None;
+        }
+        let row_strip_offset = my - layout.sep_y;
+        if row_strip_offset < 0.0 {
+            return None;
+        }
+        let row_idx_in_visible = (row_strip_offset / layout.row_h).floor() as usize;
+        if row_idx_in_visible >= layout.visible_rows {
+            return None;
+        }
+        let scroll = self.command_palette_scroll_offset(layout.visible_rows);
+        let row_idx = scroll + row_idx_in_visible;
+        if row_idx >= palette.filtered.len() {
+            return None;
+        }
+        let entry_idx = palette.filtered[row_idx];
+        if !palette.entries[entry_idx].kind.is_selectable() {
+            return None;
+        }
+        Some(row_idx)
+    }
+
     pub fn compute_grid_size(&self) -> (u16, u16) {
         if let Some(cache) = &self.glyph_cache {
             let pad = self.core.total_inset();

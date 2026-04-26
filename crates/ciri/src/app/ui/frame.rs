@@ -46,7 +46,10 @@ pub(super) enum UiFrameHover {
         button: Option<PasteButton>,
     },
     Palette {
-        hovered: Option<usize>,
+        // Hover index is no longer threaded through here — it's derived
+        // at chrome-cache-hash time via `App::current_palette_hover()`,
+        // and display reads it via `cx.is_hovered(hit_id)`. Only the
+        // pointer cursor signal still needs to flow back to the host.
         pointer: bool,
     },
     TopBar {
@@ -232,17 +235,8 @@ impl UiFrame {
         }
 
         if let Some(component) = &self.palette {
-            let (hovered, pointer) = match component.hit_test(mx, my, cx) {
-                UiPaletteHit::Entry(entry_idx) => {
-                    let hovered = app.core.command_palette.as_ref().and_then(|palette| {
-                        palette.filtered.iter().position(|&idx| idx == entry_idx)
-                    });
-                    (hovered, true)
-                }
-                UiPaletteHit::Panel => (None, false),
-                UiPaletteHit::None => (None, false),
-            };
-            return UiFrameHover::Palette { hovered, pointer };
+            let pointer = matches!(component.hit_test(mx, my, cx), UiPaletteHit::Entry(_));
+            return UiFrameHover::Palette { pointer };
         }
 
         if self.chrome.top_bar.contains(mx, my) {

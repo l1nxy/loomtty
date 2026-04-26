@@ -115,7 +115,6 @@ impl App {
                     palette.entries.clear();
                     palette.filtered.clear();
                     palette.selected_idx = 0;
-                    palette.hovered_idx = None;
                 }
             }
         }

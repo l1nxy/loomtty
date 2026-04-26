@@ -94,7 +94,6 @@ pub struct CommandPaletteState {
     pub entries: Vec<PaletteEntry>,
     pub filtered: Vec<usize>, // indices into entries
     pub selected_idx: usize,
-    pub hovered_idx: Option<usize>,
     pub sessions_only: bool,
     /// Remote host name currently being queried (loading state).
     pub remote_loading: Option<String>,
@@ -530,7 +529,6 @@ mod move_selection_tests {
             entries,
             filtered,
             selected_idx: start_idx,
-            hovered_idx: None,
             sessions_only: false,
             remote_loading: None,
             remote_error: None,

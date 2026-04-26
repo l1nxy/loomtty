@@ -309,6 +309,19 @@ the base. `effective_style` returns `Cow::Borrowed(&self.style)`
 when no refinement matches, so static-styled elements pay zero
 cloning overhead.
 
+Production usage: palette entry rows, context-menu rows, paste-
+dialog buttons, top-bar session label, top-bar workspace indicator.
+The pattern dropped per-row `is_hovered: bool` snapshots from each
+widget's capture step — hover styling is now resolved at paint time
+from `cx.is_hovered(hit_id)` and the refinement merges over the
+base.
+
+**Refinement inheritance** (added later): the walker's
+`text_color_override_with_state(hovered_hit_id)` lets a
+`.hover(|s| s.text_color(...))` refinement on a parent Div
+propagate to descendant Text. Without this, refinement-only
+overrides were stuck affecting just the Div's own paint.
+
 Future `.active(|s| ...)` / `.focus(|s| ...)` slot into the same
 `effective_style` resolver — they need only the corresponding state
 flag exposed on `PaintCtx`.
@@ -345,13 +358,25 @@ pub trait Render: 'static + Sized {
 `RenderCtx { theme, viewport, scale }` is intentionally minimal so
 the trait can grow fields without breaking implementors.
 
-Did not migrate existing chrome widgets to `impl Render` — that's a
-larger refactor (each `*Component::capture` needs to fold its
-snapshot fields into a long-lived view struct, and the host needs to
-own those views). The trait is now in place for future widget
-conversions; combined with Phase 4 `ElementStates`, components can
-keep state on themselves rather than threading through per-frame
-captures.
+**Production users:** `PaletteComponent`, `ContextMenuComponent`,
+and `PasteDialogComponent` all `impl Render`. Each widget's
+`paint(&mut self, cx, scene)` projects `UiContext → RenderCtx` via
+a private `render_cx` helper, then calls
+`<Self as Render>::render(self, &render_cx).into_element()`. Hit-
+test still goes through `build_tree` directly with `&self` since
+those paths don't need to mutate.
+
+What's deferred: moving long-lived view state onto the `Render`
+implementor (the original Phase 5 vision had `PaletteView` owning
+filtered/scroll/hover state, replacing the per-frame
+`*Component::capture` snapshot). The current widgets still use
+the snapshot pattern. Migrating that requires restructuring
+`AppModel.command_palette` etc. into view-owned data, which is a
+much larger refactor than the trait wiring — most of the value is
+already captured by combining Phase 1's hover walker (so display
+is stateless), Phase 3's declarative `.hover()` (so per-frame
+hover bools went away), and the AppModel-cleanup pass that
+evicted UI ephemera into `App` or derived helpers.
 
 ### Phase 6 — `uniform_list` helper  [DONE]
 
@@ -422,6 +447,86 @@ better landed as its own focused branch rather than squeezed into a
 multi-step series. Until then, the existing 5-level `Layer` enum keeps
 covering ciri's chrome (palette / paste_dialog / context_menu /
 connection_banner / tooltip) without trouble.
+
+### AppModel UI-ephemera cleanup pass  [DONE]
+
+A separate sweep through `AppModel` (the platform-agnostic core in
+`ciri-app`) removed every UI-only field that had crept into the
+model layer. The motivating observation: `AppModel` was carrying
+hover indices, drag bookkeeping, gesture accumulators, frame
+timestamps, scroll offsets, and cursor blink state — none of which
+have any meaning outside the bin-crate UI shell. They were all
+read and written exclusively by `crates/ciri/src/app/`.
+
+Two relocation patterns:
+
+**Derive at hash-time** (no storage). Used when the value is a
+function of `last_mouse_pos` + a known geometry that the chrome
+cache hash can recompute cheaply. Display reads it via
+`cx.is_hovered(hit_id)` declaratively. No close-site bookkeeping
+because nothing is stored — the helper sees only what's currently
+true.
+
+- `palette.hovered_idx` → `App::current_palette_hover()` (Step 6).
+- `ContextMenu.hovered_index` → `App::current_context_menu_hover()`
+  (Step 7). Also extracted `idx` from
+  `handle_context_menu_click(idx)` so the field wasn't doing
+  double duty as a hidden parameter.
+- `PendingPaste.hovered_button` → `App::current_paste_dialog_hover()`
+  (Step 10). Buttons additionally use `.hover(|s| s.bg(...))`
+  declarative styling instead of imperative branching.
+
+**Move to `App`** (storage stays, owner changes). Used when the
+value can't be cheaply re-derived (drag offsets, scroll positions
+accumulated over time, animation timestamps) or when a widget's
+paint path is still imperative and needs the cached value. The
+relocation trims `AppModel` without changing semantics.
+
+- `hovered_top_bar_region` + `hovered_pane_tab` (Step 8).
+- `OverviewState.hovered_pane` + `overview_action_hover` (Step 9 —
+  `App::exit_overview` / `toggle_overview` wrappers got an explicit
+  reset since the model-level reset in `AppModel::exit_overview`
+  was no longer touching these App-owned fields).
+- `pane_tab_scroll` (Step 11).
+- `ResizeDragState` (Step 12 — 8-field struct with ~30 reader
+  sites in mouse / resize / sync / render).
+- `GestureState` (Step 13).
+- `cursor_blink_visible` + `cursor_blink_timer` +
+  `last_focus_follows_mouse` (Step 14).
+- `last_frame` (Step 15).
+
+After this pass, `AppModel`'s remaining fields all encode genuine
+model state (config, workspaces, pane grids, selection, paste
+content, connection state, search state, multi-click counters that
+feed selection mode, link hover that feeds URL-open). The
+last-mile candidates (`last_left_click`, `hovered_link`,
+`workspace_last_pane_ids`) all have `ciri-app` consumers that read
+them, so they stay on the model.
+
+### Top-bar sub-widgets — declarative hover  [DONE]
+
+`SessionLabel` and `WorkspaceIndicator` were converted from
+imperative `if hovered { fg } else { dim }` text-color switching to
+declarative `.hit_id(...).text_color(rest).hover(|s|
+s.text_color(hov))` on a parent Div. Required adding
+`Element::text_color_override_with_state(hovered_hit_id)` so the
+walker propagates the refinement-time text colour to descendant
+Text nodes — the stateless variant only saw `self.style.text_color`
+and missed hover refinements. `Div` is the only override; default
+impl falls back to the stateless method.
+
+Wrapper geometry intentionally spans the full slot rect (not just
+`cell_h`) so the paint hit area matches the click hit area in
+`build_hit_tree`. Click-padding regions now light up the hover
+style, matching pre-refactor behaviour.
+
+`PaneTabsElement` and `ModeIndicator` keep imperative paint for
+now: pane-tabs draws multiple absolute siblings (bg, separator,
+indicator, label) per tab, which would need restructuring into a
+per-tab wrapper Div for declarative hover; mode label has no hover
+state. `App.hovered_top_bar_region` and `App.hovered_pane_tab`
+remain because tab paint and the chrome cache hash still consume
+them.
 
 ### Out of scope (explicit non-goals)
 

@@ -358,13 +358,25 @@ pub trait Render: 'static + Sized {
 `RenderCtx { theme, viewport, scale }` is intentionally minimal so
 the trait can grow fields without breaking implementors.
 
-**Production users:** `PaletteComponent`, `ContextMenuComponent`,
-and `PasteDialogComponent` all `impl Render`. Each widget's
-`paint(&mut self, cx, scene)` projects `UiContext → RenderCtx` via
-a private `render_cx` helper, then calls
-`<Self as Render>::render(self, &render_cx).into_element()`. Hit-
-test still goes through `build_tree` directly with `&self` since
-those paths don't need to mutate.
+**Production users (10 widgets):** `PaletteComponent`,
+`ContextMenuComponent`, `PasteDialogComponent`, `InfoBoxComponent`,
+`HintsBarComponent`, `TabBarComponent`, `ConnectionStatusComponent`,
+`BellFlashComponent`, `SearchBarComponent`, `ImePreeditComponent`
+all `impl Render`. Each widget's `paint(&mut self, cx, scene)`
+projects `UiContext → RenderCtx` via a private `render_cx` helper,
+then calls `<Self as Render>::render(self, &render_cx).into_element()`.
+Hit-test still goes through `build_tree` directly with `&self`
+since those paths don't need to mutate.
+
+**The recurring pre-cache pattern:** widgets that did per-frame
+runtime text shaping (`text_layout::measure(cx, ...)` or
+`truncate_with_ellipsis(cx, ...)`) in `build_tree` had to move that
+work into `capture()` so `RenderCtx` could stay minimal (no
+shaper). Examples: `HintsBarComponent.hints_total_w`,
+`TabBarComponent.truncated_labels`, `ConnectionStatusComponent.head/dots/tail`.
+For widgets that take a layout `rect` from the host's chrome
+layout (`HintsBar`, `TabBar`), the rect is captured into `self.rect`
+at `capture()` time so the trait method needs no extra parameter.
 
 What's deferred: moving long-lived view state onto the `Render`
 implementor (the original Phase 5 vision had `PaletteView` owning

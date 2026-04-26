@@ -527,8 +527,12 @@ fn paint_node(
     ];
     // Text colour inherits nearest-ancestor-set-wins, so own override
     // beats parent; if neither sets it, descendants see the same `None`
-    // and fall through to the theme default at text-paint time.
-    let child_inherited_text_color = el.text_color_override().or(inherited_text_color);
+    // and fall through to the theme default at text-paint time. Use
+    // the state-aware variant so a `.hover(|s| s.text_color(...))`
+    // refinement on this element actually propagates to descendants.
+    let child_inherited_text_color = el
+        .text_color_override_with_state(hovered_hit_id)
+        .or(inherited_text_color);
 
     let children = el.children();
     if children.is_empty() {
@@ -1283,6 +1287,67 @@ mod tests {
             .child(text("hi").color(GREEN));
         let _ = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut shaper);
         assert_eq!(shaper.calls[0].color, GREEN);
+    }
+
+    /// Regression for refinement-aware text_color inheritance: a parent
+    /// Div with `.text_color(rest).hover(|s| s.text_color(hov))` and a
+    /// matching `hit_id` should propagate `hov` to a descendant Text
+    /// when the cursor sits on it. Before the walker started calling
+    /// `text_color_override_with_state`, the refinement only affected
+    /// the Div's own painted style and Text descendants kept inheriting
+    /// `rest` regardless of hover state.
+    #[test]
+    fn hover_text_color_refinement_propagates_to_descendant_text() {
+        const REST: crate::color::Color = [0.5, 0.5, 0.5, 1.0];
+        const HOV: crate::color::Color = [1.0, 1.0, 1.0, 1.0];
+        let mut shaper = crate::shaper::RecordingShaper::default();
+        // The Div sits at [0..100, 0..40] in the viewport with hit_id=42.
+        let root = div().w(200.0).h(80.0).child(
+            div()
+                .w(100.0)
+                .h(40.0)
+                .text_color(REST)
+                .hit_id(42)
+                .hover(|s| s.text_color(HOV))
+                .child(text("hi")),
+        );
+        let mut tree = taffy::TaffyTree::<NodeContext>::new();
+        let mut scene = Scene::new();
+        // Cursor over the Div ⇒ refinement applies, Text inherits HOV.
+        paint_tree_into_with(
+            &root,
+            &theme(),
+            [200.0, 80.0],
+            1.0,
+            &mut shaper,
+            &mut scene,
+            &mut tree,
+            Some([10.0, 10.0]),
+            None,
+        );
+        assert_eq!(
+            shaper.calls.last().expect("text emitted").color,
+            HOV,
+            "hover refinement should propagate to descendant text",
+        );
+
+        // Cursor outside the Div ⇒ refinement does not apply, Text
+        // inherits the base REST color.
+        let mut shaper = crate::shaper::RecordingShaper::default();
+        let mut tree = taffy::TaffyTree::<NodeContext>::new();
+        let mut scene = Scene::new();
+        paint_tree_into_with(
+            &root,
+            &theme(),
+            [200.0, 80.0],
+            1.0,
+            &mut shaper,
+            &mut scene,
+            &mut tree,
+            Some([150.0, 10.0]),
+            None,
+        );
+        assert_eq!(shaper.calls.last().expect("text emitted").color, REST);
     }
 
     /// Modal subtree inheritance: descendants of a `Modal` element must

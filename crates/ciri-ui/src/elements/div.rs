@@ -175,6 +175,32 @@ impl Element for Div {
         self.style.text_color
     }
 
+    /// Refinement-aware variant: when the cursor sits on this Div's
+    /// `hit_id`, the `.hover()` refinement (if it set `text_color`)
+    /// wins; otherwise this returns the base style's `text_color` —
+    /// same as the stateless variant. The walker calls this so a
+    /// `.hover(|s| s.text_color(fg))` on a parent Div correctly
+    /// propagates the hover-state colour to descendant Text nodes.
+    fn text_color_override_with_state(
+        &self,
+        hovered_hit_id: Option<u64>,
+    ) -> Option<Color> {
+        let hovered = self
+            .style
+            .hit_id
+            .is_some_and(|id| hovered_hit_id == Some(id))
+            && self.hover_style.is_some();
+        if hovered {
+            // Refinement wins when set; fall back to base.
+            self.hover_style
+                .as_ref()
+                .and_then(|hov| hov.text_color)
+                .or(self.style.text_color)
+        } else {
+            self.style.text_color
+        }
+    }
+
     fn accepts_pointer_events(&self) -> bool {
         self.style.on_click.is_some()
             || self.style.on_hover.is_some()

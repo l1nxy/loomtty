@@ -387,6 +387,20 @@ pub trait Element: 'static {
         None
     }
 
+    /// Same as [`Element::text_color_override`] but receives the current
+    /// frame's `hovered_hit_id` so refinement-only colour overrides
+    /// (e.g. `.hover(|s| s.text_color(fg))`) can propagate to
+    /// descendants. Default impl falls back to the stateless variant —
+    /// only `Div` (which has refinement support) needs to override.
+    /// Called by the walker AFTER `paint`, so it sees the same
+    /// effective style the painter used.
+    fn text_color_override_with_state(
+        &self,
+        _hovered_hit_id: Option<u64>,
+    ) -> Option<crate::color::Color> {
+        self.text_color_override()
+    }
+
     /// Paint this element using `cx.bounds`. Children paint themselves
     /// via the walker; `paint` only emits primitives for `self`.
     fn paint(&self, cx: &mut PaintCtx<'_>);

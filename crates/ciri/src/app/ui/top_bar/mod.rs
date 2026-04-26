@@ -34,11 +34,11 @@ use super::tokens;
 use super::types::{UiAction, UiContext, UiRect, UiScene, UiTopBarHit, ui_hit_id};
 use crate::app::ciri_ui_adapter::paint_element_tree;
 use crate::app::top_bar::{PaneTabLayout, TopBarLayout};
-use crate::app::{App, TopBarHoverRegion};
+use crate::app::App;
 use ciri_ui::{Div, Layer, Styled, div};
 
-const HIT_SESSION: u64 = 1;
-const HIT_WORKSPACE: u64 = 2;
+pub(super) const HIT_SESSION: u64 = 1;
+pub(super) const HIT_WORKSPACE: u64 = 2;
 const HIT_MODE: u64 = 3;
 const HIT_TAB_BASE: u64 = 1_000_000;
 
@@ -63,7 +63,6 @@ pub(crate) struct TopBarComponent {
     mode_label: String,
     mode_color: [f32; 4],
     pane_tabs: Vec<PaneTabLayout>,
-    hovered_region: Option<TopBarHoverRegion>,
     hovered_pane_tab: Option<u64>,
     is_leader: bool,
     is_broadcast: bool,
@@ -106,7 +105,6 @@ impl TopBarComponent {
             mode_label,
             mode_color,
             pane_tabs,
-            hovered_region: app.hovered_top_bar_region,
             hovered_pane_tab: app.hovered_pane_tab,
             is_leader: app.core.input.is_awaiting_action(),
             is_broadcast: app.core.broadcast_mode,
@@ -169,7 +167,6 @@ impl TopBarComponent {
         let slots = self.row_slots(rect, cx);
         SessionLabel {
             text: &self.session_text,
-            hovered: self.hovered_region == Some(TopBarHoverRegion::Session),
         }
         .paint(slots.session, cx, scene);
 
@@ -185,7 +182,6 @@ impl TopBarComponent {
 
         WorkspaceIndicator {
             label: &self.workspace_label,
-            hovered: self.hovered_region == Some(TopBarHoverRegion::Workspace),
         }
         .paint(slots.workspace, cx, scene);
 

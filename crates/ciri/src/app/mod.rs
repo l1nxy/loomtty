@@ -216,6 +216,14 @@ pub(crate) struct App {
     /// UI-only ephemeral hover state for the per-pane tabs (top-bar inline or
     /// side tab-bar). Same rationale as `hovered_top_bar_region`.
     pub hovered_pane_tab: Option<u64>,
+    /// UI-only ephemeral hover state for overview tiles (workspace index +
+    /// pane id under the cursor). Was on `AppModel.overview.hovered_pane`;
+    /// moved here so the platform-agnostic core stays free of UI state.
+    pub overview_hovered_pane: Option<(usize, u64)>,
+    /// UI-only ephemeral hover state for the overview action bar (close /
+    /// focus buttons that float above the hovered tile). Was on
+    /// `AppModel.overview_action_hover`.
+    pub overview_action_hover: Option<ciri_app::app::OverviewActionHover>,
     /// Notify handle shared with the active connection's IO thread so the UI
     /// can trigger `Cancelled` mid-connect. Exists only while the active slot
     /// is still in a transient `!connected` state — slot switches drop it.
@@ -488,6 +496,8 @@ impl App {
             pending_redraw: false,
             hovered_top_bar_region: None,
             hovered_pane_tab: None,
+            overview_hovered_pane: None,
+            overview_action_hover: None,
             connection_cancel: None,
             motion_ticker: Arc::new(ciri_motion::Ticker::new()),
             ui_taffy_tree: std::cell::RefCell::new(taffy::TaffyTree::new()),
@@ -672,10 +682,10 @@ impl App {
         // Reset transient UI/interaction state that doesn't belong to the
         // restored slot — overview, drag, hover, gestures, etc.
         self.core.overview.active = false;
-        self.core.overview.hovered_pane = None;
+        self.overview_hovered_pane = None;
         self.core.overview.dragging = false;
         self.core.overview.drag_last_pos = None;
-        self.core.overview_action_hover = None;
+        self.overview_action_hover = None;
         self.core.anim_mgr.overview_zoom.jump_to(1.0);
         self.core.search_state = None;
         self.core.command_palette = None;

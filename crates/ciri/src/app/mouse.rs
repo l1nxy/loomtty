@@ -427,7 +427,7 @@ impl App {
                     let new_zoom = (cur_zoom + zoom_delta).clamp(0.05, 1.0);
                     let sp = SpringParams::default();
                     if new_zoom >= self.core.config.animation.zoom_threshold as f64 {
-                        self.core.overview.hovered_pane = None;
+                        self.overview_hovered_pane = None;
                         self.core.overview.active = false;
                         self.core.anim_mgr.overview_zoom.animate_to(1.0, sp);
                         self.animate_to_active();
@@ -438,7 +438,7 @@ impl App {
                     // In normal mode: pinch in (delta < 0) enters overview
                     if zoom_delta < -0.02 {
                         self.core.overview.active = true;
-                        self.core.overview.hovered_pane = None;
+                        self.overview_hovered_pane = None;
                         self.core.context_menu.visible = false;
                         self.refresh_overview_zoom();
                         let sp = SpringParams::default();
@@ -453,7 +453,7 @@ impl App {
                     && self.core.anim_mgr.overview_zoom.value()
                         > self.core.config.animation.zoom_threshold as f64
                 {
-                    self.core.overview.hovered_pane = None;
+                    self.overview_hovered_pane = None;
                     self.core.overview.active = false;
                     let sp = SpringParams::default();
                     self.core.anim_mgr.overview_zoom.animate_to(1.0, sp);

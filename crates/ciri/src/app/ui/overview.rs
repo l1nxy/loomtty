@@ -26,7 +26,7 @@ pub(crate) struct OverviewActionBarData {
 impl OverviewComponent {
     pub fn capture(app: &App, _cx: &UiContext<'_>) -> Self {
         Self {
-            hovered_pane: app.core.overview.hovered_pane,
+            hovered_pane: app.overview_hovered_pane,
         }
     }
 

@@ -48,7 +48,6 @@ pub struct AppModel {
     pub anim_mgr: AnimationManager,
 
     pub overview: OverviewState,
-    pub overview_action_hover: Option<OverviewActionHover>,
     pub search_state: Option<SearchState>,
     pub command_palette: Option<CommandPaletteState>,
     pub context_menu: ContextMenu,
@@ -162,9 +161,7 @@ impl AppModel {
                 active: false,
                 dragging: false,
                 drag_last_pos: None,
-                hovered_pane: None,
             },
-            overview_action_hover: None,
             search_state: None,
             command_palette: None,
             context_menu: ContextMenu::default(),

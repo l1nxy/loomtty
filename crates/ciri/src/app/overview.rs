@@ -45,14 +45,22 @@ impl App {
         None
     }
 
-    /// Delegate: exit overview mode.
+    /// Delegate: exit overview mode. Also clears the App-owned UI hover
+    /// fields that used to live on `AppModel.overview` — the model-level
+    /// reset went away when those fields moved to `App`, so the wrapper
+    /// has to do it now or stale hover state would survive an Escape.
     pub(crate) fn exit_overview(&mut self) {
         self.core.exit_overview();
+        self.overview_hovered_pane = None;
+        self.overview_action_hover = None;
     }
 
-    /// Delegate: toggle overview mode.
+    /// Delegate: toggle overview mode. Mirrors `exit_overview` for the
+    /// hover-field reset on the off-and-on paths.
     pub(crate) fn toggle_overview(&mut self) {
         self.core.toggle_overview();
+        self.overview_hovered_pane = None;
+        self.overview_action_hover = None;
     }
 
     pub(crate) fn focus_overview_target(&mut self, ws_idx: usize, pane_id: u64) {
@@ -71,7 +79,7 @@ impl App {
         }
         self.remember_workspace_pane(ws_idx, pane_id);
         self.send(ciri_protocol::message::ClientMessage::FocusPane { pane_id });
-        self.core.overview.hovered_pane = None;
+        self.overview_hovered_pane = None;
         self.exit_overview();
     }
 }

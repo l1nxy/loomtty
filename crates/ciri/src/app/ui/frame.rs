@@ -80,8 +80,8 @@ impl UiFrame {
             TabBarPosition::Left | TabBarPosition::Right => Some(TabBarComponent::capture(app, cx)),
             TabBarPosition::Integrated => None,
         };
-        let overview_bar = if app.core.overview.active && app.core.overview.hovered_pane.is_some() {
-            overview::overview_action_bar_data(app, app.core.overview.hovered_pane)
+        let overview_bar = if app.core.overview.active && app.overview_hovered_pane.is_some() {
+            overview::overview_action_bar_data(app, app.overview_hovered_pane)
         } else {
             None
         };
@@ -93,7 +93,7 @@ impl UiFrame {
             side_tab_bar,
             overview: OverviewComponent::capture(app, cx),
             overview_bar,
-            overview_hover: app.core.overview_action_hover,
+            overview_hover: app.overview_action_hover,
             infobox: InfoBoxComponent::capture(app, cx),
             palette: PaletteComponent::capture(app, cx),
             connection_status: ConnectionStatusComponent::capture(app, cx),
@@ -270,7 +270,7 @@ impl UiFrame {
             let target = match hit {
                 UiOverviewHit::Pane(ws_idx, pane_id)
                 | UiOverviewHit::FocusPane(ws_idx, pane_id) => Some((ws_idx, pane_id)),
-                UiOverviewHit::ClosePane(_) => app.core.overview.hovered_pane,
+                UiOverviewHit::ClosePane(_) => app.overview_hovered_pane,
                 UiOverviewHit::Background | UiOverviewHit::None => None,
             };
             return UiFrameHover::Overview {

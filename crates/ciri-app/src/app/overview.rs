@@ -6,7 +6,8 @@ impl AppModel {
     pub fn exit_overview(&mut self) {
         let sp = SpringParams::default();
         self.overview.active = false;
-        self.overview.hovered_pane = None;
+        // Hover state lives on `App` (UI shell) — bin-crate handlers
+        // reset it on the same event paths that call `exit_overview`.
         self.anim_mgr.overview_zoom.animate_to(1.0, sp);
         self.animate_to_active();
     }
@@ -16,7 +17,6 @@ impl AppModel {
         let sp = SpringParams::default();
         if self.overview.active {
             self.context_menu.visible = false;
-            self.overview.hovered_pane = None;
             self.refresh_overview_zoom();
             let center = match self.config.layout.center_focused_column {
                 ciri_config::config::CenterStrategy::Always => {
@@ -38,7 +38,6 @@ impl AppModel {
             self.anim_mgr.view_offset_x.animate_to(target_x, sp);
             self.anim_mgr.view_offset_y.animate_to(target_y, sp);
         } else {
-            self.overview.hovered_pane = None;
             self.anim_mgr.overview_zoom.animate_to(1.0, sp);
             self.animate_to_active();
         }

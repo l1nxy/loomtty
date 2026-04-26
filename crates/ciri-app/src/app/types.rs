@@ -288,7 +288,6 @@ pub struct OverviewState {
     pub active: bool,
     pub dragging: bool,
     pub drag_last_pos: Option<(f32, f32)>,
-    pub hovered_pane: Option<(usize, u64)>,
 }
 
 /// Client-side image placement for rendering.

@@ -138,7 +138,7 @@ impl App {
                 self.focus_overview_target(ws_idx, pane_id);
             }
             UiAction::CloseOverviewPane(pane_id) => {
-                self.core.overview.hovered_pane = None;
+                self.overview_hovered_pane = None;
                 self.send(ciri_protocol::message::ClientMessage::ClosePane { pane_id });
             }
             UiAction::StartOverviewDrag => {
@@ -243,10 +243,10 @@ impl App {
             } => {
                 let had_top_bar_hover = self.hovered_top_bar_region.take().is_some()
                     || self.hovered_pane_tab.take().is_some();
-                let prev = self.core.overview.hovered_pane;
-                let prev_action = self.core.overview_action_hover;
-                self.core.overview.hovered_pane = target;
-                self.core.overview_action_hover = action_hover;
+                let prev = self.overview_hovered_pane;
+                let prev_action = self.overview_action_hover;
+                self.overview_hovered_pane = target;
+                self.overview_action_hover = action_hover;
                 UiHoverOutcome {
                     handled: true,
                     cursor: if target.is_some() {

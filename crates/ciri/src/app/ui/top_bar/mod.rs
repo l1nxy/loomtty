@@ -111,7 +111,7 @@ impl TopBarComponent {
             is_leader: app.core.input.is_awaiting_action(),
             is_broadcast: app.core.broadcast_mode,
             is_overview: app.core.overview.active,
-            tab_scroll: app.core.pane_tab_scroll,
+            tab_scroll: app.pane_tab_scroll,
             tab_scroll_max: app.pane_tab_scroll_max(),
             show_integrated_tabs,
         }

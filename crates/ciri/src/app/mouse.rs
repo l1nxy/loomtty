@@ -773,7 +773,7 @@ impl App {
             MouseScrollDelta::PixelDelta(pos) => -(pos.y as f32),
         };
         let max_scroll = self.pane_tab_scroll_max();
-        self.core.pane_tab_scroll = (self.core.pane_tab_scroll + delta_px).clamp(0.0, max_scroll);
+        self.pane_tab_scroll = (self.pane_tab_scroll + delta_px).clamp(0.0, max_scroll);
         self.request_mouse_redraw();
         true
     }

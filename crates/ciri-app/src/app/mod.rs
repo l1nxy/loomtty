@@ -65,7 +65,6 @@ pub struct AppModel {
     pub drag: ResizeDragState,
     pub gestures: GestureState,
 
-    pub pane_tab_scroll: f32,
 
     pub workspace_last_pane_ids: HashMap<usize, u64>,
     pub last_left_click: Option<LastLeftClick>,
@@ -193,7 +192,6 @@ impl AppModel {
                 row_active: false,
                 row_start: 0,
             },
-            pane_tab_scroll: 0.0,
             workspace_last_pane_ids: HashMap::new(),
             last_left_click: None,
             hovered_link: None,

@@ -78,13 +78,13 @@ impl App {
 
     pub(crate) fn ensure_active_pane_tab_visible(&mut self, tab_area_px: f32) {
         if tab_area_px <= 0.0 {
-            self.core.pane_tab_scroll = 0.0;
+            self.pane_tab_scroll = 0.0;
             return;
         }
 
         let tab_count = self.pane_tab_entries().len();
         if tab_count == 0 {
-            self.core.pane_tab_scroll = 0.0;
+            self.pane_tab_scroll = 0.0;
             return;
         }
 
@@ -101,13 +101,13 @@ impl App {
             .unwrap_or(0);
         let active_start = active_idx as f32 * tab_w;
         let active_end = active_start + tab_w;
-        let mut scroll = self.core.pane_tab_scroll.clamp(0.0, max_scroll);
+        let mut scroll = self.pane_tab_scroll.clamp(0.0, max_scroll);
         if active_start < scroll {
             scroll = active_start;
         } else if active_end > scroll + tab_area_px {
             scroll = (active_end - tab_area_px).max(0.0);
         }
-        self.core.pane_tab_scroll = scroll.clamp(0.0, max_scroll);
+        self.pane_tab_scroll = scroll.clamp(0.0, max_scroll);
     }
 
     pub(crate) fn pane_tab_scroll_max(&self) -> f32 {
@@ -115,7 +115,7 @@ impl App {
         // holds no pane tabs, so the horizontal scroll concept is
         // meaningless. Returning 0.0 early also prevents stale scroll
         // state from leaking across `hit_test_top_bar`-gated mouse-wheel
-        // events (which clamp `core.pane_tab_scroll` against this max)
+        // events (which clamp `App.pane_tab_scroll` against this max)
         // and from flapping the render-snapshot hash that uses this
         // value as a cache-key input.
         if !matches!(
@@ -177,7 +177,7 @@ impl App {
         // edges).
         let tabs_start_x = session_w;
         let tabs_end_x = tabs_start_x + tabs_area_px;
-        let mut x = tabs_start_x - self.core.pane_tab_scroll;
+        let mut x = tabs_start_x - self.pane_tab_scroll;
         let mut layouts = Vec::new();
 
         for (idx, (pane_id, title)) in self.pane_tab_entries().into_iter().enumerate() {

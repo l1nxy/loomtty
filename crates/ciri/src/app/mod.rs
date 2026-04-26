@@ -224,6 +224,19 @@ pub(crate) struct App {
     /// focus buttons that float above the hovered tile). Was on
     /// `AppModel.overview_action_hover`.
     pub overview_action_hover: Option<ciri_app::app::OverviewActionHover>,
+    /// Horizontal scroll offset (px) for the inline pane-tab strip in
+    /// the top bar. Pure UI ephemera — readers/writers all live in this
+    /// crate: mouse wheel handler (mouse.rs), top-bar visibility helper
+    /// (top_bar.rs::ensure_active_pane_tab_visible — re-clamps to the
+    /// current workspace's max each paint), top-bar paint
+    /// (ui/top_bar/mod.rs), and the chrome cache hash (render.rs).
+    ///
+    /// Note: workspace switches don't explicitly reset this — same
+    /// behaviour as when the field lived on `AppModel`. The next paint
+    /// re-clamps to the new workspace's max scroll, which is enough to
+    /// keep the strip visually correct, though scroll position can
+    /// "carry over" between workspaces with similar tab counts.
+    pub pane_tab_scroll: f32,
     /// Notify handle shared with the active connection's IO thread so the UI
     /// can trigger `Cancelled` mid-connect. Exists only while the active slot
     /// is still in a transient `!connected` state — slot switches drop it.
@@ -498,6 +511,7 @@ impl App {
             hovered_pane_tab: None,
             overview_hovered_pane: None,
             overview_action_hover: None,
+            pane_tab_scroll: 0.0,
             connection_cancel: None,
             motion_ticker: Arc::new(ciri_motion::Ticker::new()),
             ui_taffy_tree: std::cell::RefCell::new(taffy::TaffyTree::new()),
@@ -706,7 +720,7 @@ impl App {
             row_active: false,
             row_start: 0,
         };
-        self.core.pane_tab_scroll = 0.0;
+        self.pane_tab_scroll = 0.0;
         self.hovered_top_bar_region = None;
         self.hovered_pane_tab = None;
         self.core.last_left_click = None;

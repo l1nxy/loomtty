@@ -21,7 +21,7 @@ use super::tokens;
 use super::types::{UiAction, UiContext, UiRect, UiScene, ui_hit_id};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Layer, Styled, div, text};
+use ciri_ui::{IntoElement, Layer, Render, RenderCtx, Styled, div, text};
 
 const HIT_TAB_BASE: u64 = 1_000_000;
 
@@ -46,7 +46,6 @@ pub(crate) struct TabEntry {
 
 pub(crate) struct TabBarComponent {
     tabs: Vec<TabEntry>,
-    hovered_tab: Option<u64>,
     /// Height of one tab row, from `config.tabbar.tab_height`.
     tab_height: f32,
     /// Vertical gap between adjacent tabs, from `config.tabbar.tab_gap`.
@@ -56,10 +55,23 @@ pub(crate) struct TabBarComponent {
     /// the terminal — i.e. the *inner* edge — making the bar look
     /// visually "attached" to the terminal for both Left and Right.
     position: TabBarPosition,
+    /// Cell width frozen at `capture()` so `build_tree` only needs
+    /// `RenderCtx`. Same pattern as the other widgets migrated to
+    /// `Render`.
+    cell_w: f32,
+    /// Pre-truncated label per tab — truncation depends on the
+    /// chrome layout `rect.w` (known at capture time) and
+    /// `cell_w` (also known), so doing it here keeps `build_tree`
+    /// off the host shaper.
+    truncated_labels: Vec<String>,
+    /// Layout rect from the host's chrome layout, captured once so
+    /// the `Render` trait method can read it without an extra
+    /// parameter (same pattern as `HintsBarComponent`).
+    rect: UiRect,
 }
 
 impl TabBarComponent {
-    pub fn capture(app: &App, _cx: &UiContext<'_>) -> Self {
+    pub fn capture(app: &App, cx: &UiContext<'_>, rect: UiRect) -> Self {
         let active_pane_id = app.core.workspaces.active().active_pane_id();
         let tabs: Vec<TabEntry> = app
             .pane_tab_entries()
@@ -71,12 +83,34 @@ impl TabBarComponent {
                 active: Some(pane_id) == active_pane_id,
             })
             .collect();
+
+        // Pre-truncate each label using the same `label_budget` math
+        // `build_tree` would have done at paint time. Pulling it into
+        // `capture` keeps `build_tree` off the host shaper so the
+        // `Render` impl can run from a minimal `RenderCtx`.
+        let indicator_w = tokens::BORDER_THICK;
+        let label_budget = (rect.w - indicator_w - cx.cell_w).max(0.0);
+        let truncated_labels: Vec<String> = tabs
+            .iter()
+            .map(|tab| text_layout::truncate_with_ellipsis(cx, &tab.label, label_budget))
+            .collect();
+
         Self {
             tabs,
-            hovered_tab: app.hovered_pane_tab,
             tab_height: app.core.config.tabbar.tab_height,
             tab_gap: app.core.config.tabbar.tab_gap,
             position: app.core.config.tabbar.position,
+            cell_w: cx.cell_w,
+            truncated_labels,
+            rect,
+        }
+    }
+
+    fn render_cx<'a>(cx: &'a UiContext<'_>) -> RenderCtx<'a> {
+        RenderCtx {
+            theme: cx.theme,
+            viewport: [cx.viewport_w, cx.viewport_h],
+            scale: 1.0,
         }
     }
 
@@ -119,7 +153,8 @@ impl TabBarComponent {
         )
     }
 
-    fn build_tree(&self, rect: UiRect, cx: &UiContext<'_>) -> ciri_ui::Div {
+    fn build_tree(&self, cx: &RenderCtx<'_>) -> ciri_ui::Div {
+        let rect = self.rect;
         let bar_bg = cx.theme.statusbar_bg;
         let fg = cx.theme.on_surface;
         let dim = cx.theme.on_surface_muted;
@@ -127,17 +162,17 @@ impl TabBarComponent {
         let sep = tokens::tint(dim, tokens::ALPHA_SEPARATOR);
         let indicator_w = tokens::BORDER_THICK;
 
-        // Inner edge = the edge of the bar that touches the terminal.
-        // For Left: inner edge is on the right (rect.right() - 1). For
-        // Right: inner edge is on the left (rect.x). The separator and
-        // active indicator both anchor to this edge so the bar looks
-        // "attached" to the terminal on either side.
-        // Label padding — indent from the outer edge (away from the
-        // terminal) so the indicator strip sits flush against the text.
-        let label_pad = cx.cell_w * 0.5;
+        let label_pad = self.cell_w * 0.5;
         let sep_inset_x = tokens::SPACE_1;
         let content_w = (rect.w - tokens::BORDER_THIN).max(0.0);
-        let label_budget = (rect.w - indicator_w - cx.cell_w).max(0.0);
+        // Hover bg + text-color refinements applied declaratively via
+        // `.hit_id` + `.hover()` on each row. Inactive non-hovered:
+        // dim text, no bg. Active: accent strip + tinted bg, fg text
+        // (no hover refinement — active wins). Inactive hovered: hover
+        // tint bg + fg text via the refinement, propagated to the
+        // descendant Text by `text_color_override_with_state`.
+        let active_bg = tokens::tint(accent, tokens::ALPHA_TAB_ACTIVE_BG);
+        let hover_bg = tokens::tint(accent, tokens::ALPHA_HOVER_BG);
 
         let mut rows = div().w(content_w).h(rect.h).flex_col();
         for (idx, tab) in self.tabs.iter().enumerate() {
@@ -145,7 +180,6 @@ impl TabBarComponent {
             if row.is_empty() {
                 break;
             }
-            let hovered = self.hovered_tab == Some(tab.pane_id);
 
             if idx > 0 && self.tab_gap > 0.0 {
                 rows = rows.child(
@@ -163,21 +197,32 @@ impl TabBarComponent {
                 );
             }
 
-            // Active / hover background tint — mirrors integrated variant.
-            let bg_alpha = if tab.active {
-                Some(tokens::ALPHA_TAB_ACTIVE_BG)
-            } else if hovered {
-                Some(tokens::ALPHA_HOVER_BG)
-            } else {
-                None
-            };
-            // Label. Truncate with ellipsis so shaped text never overflows
-            // the row, regardless of whether the UI font is monospaced.
-            let label_color = if tab.active || hovered { fg } else { dim };
-            let truncated = text_layout::truncate_with_ellipsis(cx, &tab.label, label_budget);
+            let truncated = self
+                .truncated_labels
+                .get(idx)
+                .cloned()
+                .unwrap_or_default();
+
             let mut row_el = div().w(content_w).h(row.h).flex_row().items_center();
-            if let Some(a) = bg_alpha {
-                row_el = row_el.bg(tokens::tint(accent, a));
+            if tab.active {
+                // Active row: accent-tinted bg, fg text. Set
+                // `text_color(fg)` on the row Div so the descendant
+                // Text inherits it — needed because Text's own
+                // `.color()` would otherwise override (codex Q3 from
+                // Step 20 review).
+                row_el = row_el.bg(active_bg).text_color(fg);
+            } else {
+                // Inactive row: dim text base, hover refinement
+                // switches to fg text + tinted bg. The Text child
+                // intentionally has NO `.color()` so it inherits
+                // whichever `text_color` the walker resolves —
+                // base (dim) at rest, refinement (fg) on hover via
+                // the Step 16 refinement-aware inheritance.
+                row_el = row_el
+                    .text_color(dim)
+                    .hit_id(pane_tab_hit_id(tab.pane_id))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(hover_bg).text_color(fg));
             }
 
             let indicator =
@@ -185,6 +230,9 @@ impl TabBarComponent {
                     .w(indicator_w)
                     .h(row.h)
                     .bg(if tab.active { accent } else { [0.0; 4] });
+            // Text deliberately has no `.color(...)` — the row Div
+            // sets `text_color` (active = fg directly; inactive = dim
+            // with hover refinement to fg) and the walker propagates.
             let label = div()
                 .w((content_w - indicator_w).max(0.0))
                 .h(row.h)
@@ -192,7 +240,7 @@ impl TabBarComponent {
                 .items_center()
                 .pl(label_pad)
                 .pr(label_pad)
-                .child(text(truncated).color(label_color));
+                .child(text(truncated));
 
             row_el = match self.position {
                 TabBarPosition::Left | TabBarPosition::Integrated => {
@@ -210,7 +258,7 @@ impl TabBarComponent {
             }
             TabBarPosition::Right => div().flex_row().child(sep_line).child(rows),
         };
-        let root = div().w(cx.viewport_w).h(cx.viewport_h).child(
+        let root = div().w(cx.viewport[0]).h(cx.viewport[1]).child(
             bar.in_layer(Layer::Chrome)
                 .absolute()
                 .left(rect.x)
@@ -225,13 +273,27 @@ impl TabBarComponent {
 }
 
 impl TabBarComponent {
-    pub(crate) fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        if rect.is_empty() {
+    pub(crate) fn paint(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        if self.rect.is_empty() {
             return;
         }
-        let root = self.build_tree(rect, cx);
+        let render_cx = Self::render_cx(cx);
+        // Sixth production usage of `ciri_ui::Render`. The chrome
+        // layout `rect` was captured in `Self::capture(app, cx, rect)`
+        // and the active label color is text-color-inheritance from
+        // the row Div via the Step 16 refinement support.
+        let root = <Self as Render>::render(self, &render_cx).into_element();
         paint_element_tree(&root, cx, scene);
     }
+}
+
+impl Render for TabBarComponent {
+    fn render(&mut self, cx: &RenderCtx<'_>) -> impl IntoElement {
+        self.build_tree(cx)
+    }
+}
+
+impl TabBarComponent {
 
     pub(crate) fn hit(
         &self,

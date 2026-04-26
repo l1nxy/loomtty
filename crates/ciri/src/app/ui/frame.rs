@@ -81,7 +81,9 @@ impl UiFrame {
         // host-supplied rect during paint.
         let hints_bar = HintsBarComponent::capture(app, cx, chrome.hints_bar);
         let side_tab_bar = match cx.config.tabbar.position {
-            TabBarPosition::Left | TabBarPosition::Right => Some(TabBarComponent::capture(app, cx)),
+            TabBarPosition::Left | TabBarPosition::Right => chrome
+                .side_tab_bar
+                .map(|rect| TabBarComponent::capture(app, cx, rect)),
             TabBarPosition::Integrated => None,
         };
         let overview_bar = if app.core.overview.active && app.overview_hovered_pane.is_some() {
@@ -121,8 +123,8 @@ impl UiFrame {
     pub(super) fn paint(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         self.top_bar.paint(self.chrome.top_bar, cx, scene);
         self.hints_bar.paint(cx, scene);
-        if let (Some(tab_bar), Some(rect)) = (&self.side_tab_bar, self.chrome.side_tab_bar) {
-            tab_bar.paint(rect, cx, scene);
+        if let (Some(tab_bar), Some(_rect)) = (&mut self.side_tab_bar, self.chrome.side_tab_bar) {
+            tab_bar.paint(cx, scene);
         }
 
         // Modal / overlay layers position themselves absolutely and are

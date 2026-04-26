@@ -1,15 +1,30 @@
 use super::*;
 
+/// Helper: build a TabBarComponent for tests with the new field set
+/// — hides the "give me cell_w / truncated_labels / rect" boilerplate.
+fn test_component(
+    tabs: Vec<TabEntry>,
+    rect: UiRect,
+    tab_height: f32,
+    tab_gap: f32,
+    position: TabBarPosition,
+) -> TabBarComponent {
+    let truncated_labels = tabs.iter().map(|t| t.label.clone()).collect();
+    TabBarComponent {
+        tabs,
+        tab_height,
+        tab_gap,
+        position,
+        cell_w: 8.0,
+        truncated_labels,
+        rect,
+    }
+}
+
 #[test]
 fn row_rect_top_of_bar() {
     let bar = UiRect::new(0.0, 0.0, 200.0, 600.0);
-    let bar_component = TabBarComponent {
-        tabs: Vec::new(),
-        hovered_tab: None,
-        tab_height: 28.0,
-        tab_gap: 0.0,
-        position: TabBarPosition::Left,
-    };
+    let bar_component = test_component(Vec::new(), bar, 28.0, 0.0, TabBarPosition::Left);
     let r0 = bar_component.row_rect(bar, 0);
     assert_eq!(r0, UiRect::new(0.0, 0.0, 200.0, 28.0));
     let r5 = bar_component.row_rect(bar, 5);
@@ -21,13 +36,7 @@ fn row_rect_clips_to_bottom_edge() {
     // Bar height 50, tab_height 28: row 0 = 0..28, row 1 = 28..50
     // (clipped from 28..56 to 28..50 = 22 tall).
     let bar = UiRect::new(0.0, 0.0, 200.0, 50.0);
-    let bar_component = TabBarComponent {
-        tabs: Vec::new(),
-        hovered_tab: None,
-        tab_height: 28.0,
-        tab_gap: 0.0,
-        position: TabBarPosition::Left,
-    };
+    let bar_component = test_component(Vec::new(), bar, 28.0, 0.0, TabBarPosition::Left);
     let r1 = bar_component.row_rect(bar, 1);
     assert_eq!(r1, UiRect::new(0.0, 28.0, 200.0, 22.0));
     // Row 2 is fully below the bar — height clamps to 0.
@@ -43,8 +52,8 @@ fn hit_uses_ciri_ui_layout_snapshot() {
     let app = App::new(CiriConfig::default(), "test-session");
     let cx = app.ui_context();
     let bar = UiRect::new(10.0, 20.0, 200.0, 80.0);
-    let bar_component = TabBarComponent {
-        tabs: vec![
+    let bar_component = test_component(
+        vec![
             TabEntry {
                 pane_id: 41,
                 label: "one".into(),
@@ -56,11 +65,11 @@ fn hit_uses_ciri_ui_layout_snapshot() {
                 active: false,
             },
         ],
-        hovered_tab: None,
-        tab_height: 28.0,
-        tab_gap: 4.0,
-        position: TabBarPosition::Left,
-    };
+        bar,
+        28.0,
+        4.0,
+        TabBarPosition::Left,
+    );
 
     assert_eq!(
         bar_component.hit(bar, 12.0, 22.0, &cx),

@@ -375,19 +375,16 @@ Future stateful list element (auto-virtualizes from parent clip
 area, owns its own scroll state, handles wheel events) would build
 on Phase 4's `ElementStates` and a real `prepaint` phase.
 
-### Phase 7 — arena element allocator
+### Phase 7 — arena element allocator  [DONE]
 
-Port `Arena` + `ArenaBox` (`zed/crates/gpui/src/arena.rs`, ~290 lines —
-`alloc::alloc`-based bump allocator with `Drop` registration). Wrap
-`AnyElement = ArenaBox<dyn ElementObject>`. Per-window static
-`ELEMENT_ARENA: RefCell<Arena>` cleared at frame end via
-`ArenaClearNeeded` token RAII pattern.
-
-Concrete payoff: amortized-zero element tree allocation. The largest
-remaining heap pressure source.
-
-This is largely independent and can be slotted in at any point after
-Phase 2 (which gives us the dynamic-typed `AnyElement` boundary).
+Shipped in `crates/ciri-ui/src/arena.rs`. Chunked bump allocator
+(`Arena` / `ArenaBox`) ported from GPUI; `AnyElement` is now
+`ArenaBox<dyn Element>` and constructed via the active arena published
+by an `ElementArenaScope` RAII guard. `App` owns one `RefCell<Arena>`
+which the chrome and transient paint paths each enter for the duration
+of their pass; a thread-local fallback arena covers test / hit-test
+callers that don't push a scope, and is cleared at the head of every
+`render()` to keep its growth bounded.
 
 ### Phase 8 — `Children: SmallVec<[..; 2]>`  [DONE]
 

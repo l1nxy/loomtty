@@ -803,10 +803,14 @@ mod tests {
     }
 
     #[test]
-    // ConPTY continuously synthesises VT sequences even when the shell is
-    // idle, so Alacritty always reports real cell damage and the cursor-row
-    // suppression optimisation cannot stabilise in a Windows test environment.
-    #[cfg_attr(windows, ignore)]
+    // The cursor-row damage suppression optimisation this test exercised was
+    // removed in 36c4490 ("change log and remove the optimize, it has bug!!"),
+    // but the test was kept around. `process_pty_and_damage` now bumps the
+    // generation on every `extract_damage()`, so the suppression assertion
+    // fails on every platform. Keep the test body for reference until the
+    // suppression is reintroduced (or the test is intentionally rewritten),
+    // and ignore it in the meantime so the workspace stays green.
+    #[ignore = "cursor-row suppression optimisation removed in 36c4490; reintroduce or rewrite"]
     fn repeated_cursor_row_damage_does_not_bump_generation() {
         let mut session = Session::new("default", test_shell(), 8.0, TerminalColors::default());
         let mut next_pane_id = 1;

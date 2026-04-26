@@ -507,3 +507,127 @@ pub enum ReconnectPlanDecision {
     GaveUp,
 }
 use std::sync::Arc;
+
+#[cfg(test)]
+mod move_selection_tests {
+    use super::*;
+    use ciri_input::action::Action;
+
+    fn header(label: &str) -> PaletteEntry {
+        PaletteEntry::new(label, PaletteEntryKind::SectionHeader(label.to_string()))
+    }
+
+    fn action(label: &str) -> PaletteEntry {
+        PaletteEntry::new(label, PaletteEntryKind::Action(Action::ClosePane))
+    }
+
+    /// Build a state with `entries`, all included in `filtered`, and the
+    /// initial selection on `start_idx`.
+    fn state(entries: Vec<PaletteEntry>, start_idx: usize) -> CommandPaletteState {
+        let filtered = (0..entries.len()).collect();
+        CommandPaletteState {
+            query: String::new(),
+            entries,
+            filtered,
+            selected_idx: start_idx,
+            hovered_idx: None,
+            sessions_only: false,
+            remote_loading: None,
+            remote_error: None,
+            remote_input_mode: false,
+        }
+    }
+
+    #[test]
+    fn single_step_skips_section_header() {
+        let mut s = state(
+            vec![action("a"), header("h"), action("b"), action("c")],
+            0,
+        );
+        s.move_selection(1, true);
+        assert_eq!(s.selected_idx, 2, "single-step down jumps over the header");
+    }
+
+    #[test]
+    fn large_delta_clamps_to_filtered_len() {
+        // 3 selectable rows, ask for delta = 1000 — should land on the
+        // last selectable index without spinning forever or panicking.
+        let mut s = state(vec![action("a"), action("b"), action("c")], 0);
+        s.move_selection(1000, false);
+        assert_eq!(s.selected_idx, 2);
+    }
+
+    #[test]
+    fn wrap_at_top_when_wrap_true() {
+        let mut s = state(vec![action("a"), action("b"), action("c")], 0);
+        s.move_selection(-1, true);
+        assert_eq!(s.selected_idx, 2, "Up at top with wrap=true wraps to last");
+    }
+
+    #[test]
+    fn wrap_at_bottom_when_wrap_true() {
+        let mut s = state(vec![action("a"), action("b"), action("c")], 2);
+        s.move_selection(1, true);
+        assert_eq!(s.selected_idx, 0, "Down at bottom with wrap=true wraps to first");
+    }
+
+    #[test]
+    fn clamp_at_top_when_wrap_false() {
+        let mut s = state(vec![action("a"), action("b"), action("c")], 0);
+        s.move_selection(-1, false);
+        assert_eq!(s.selected_idx, 0, "Up at top with wrap=false stays put");
+    }
+
+    #[test]
+    fn clamp_at_bottom_when_wrap_false() {
+        let mut s = state(vec![action("a"), action("b"), action("c")], 2);
+        s.move_selection(5, false);
+        assert_eq!(s.selected_idx, 2, "Down past end with wrap=false clamps");
+    }
+
+    #[test]
+    fn delta_zero_is_noop() {
+        let mut s = state(vec![action("a"), action("b")], 1);
+        s.move_selection(0, true);
+        assert_eq!(s.selected_idx, 1);
+    }
+
+    #[test]
+    fn empty_filtered_is_noop() {
+        let mut s = state(vec![], 0);
+        s.move_selection(3, true);
+        assert_eq!(s.selected_idx, 0);
+    }
+
+    #[test]
+    fn all_headers_no_infinite_loop() {
+        // Every entry is non-selectable; advance_one_selectable must bail
+        // after `len` iterations rather than spinning forever.
+        let mut s = state(vec![header("a"), header("b"), header("c")], 0);
+        s.move_selection(1, true);
+        assert_eq!(s.selected_idx, 0, "no selectable target → selection unchanged");
+    }
+
+    #[test]
+    fn i32_min_does_not_overflow() {
+        // Regression: earlier code did `delta.abs() as usize`, which
+        // panics for i32::MIN. unsigned_abs() must be used so this is
+        // just a (clamped) huge upward step.
+        let mut s = state(vec![action("a"), action("b"), action("c")], 2);
+        s.move_selection(i32::MIN, false);
+        assert_eq!(s.selected_idx, 0, "huge upward delta clamps to top with wrap=false");
+    }
+
+    #[test]
+    fn multi_step_skips_repeated_headers() {
+        // Three selectable rows with two consecutive headers between the
+        // first and second. delta=2 from index 0 must skip both headers
+        // and the second selectable, landing on the third (index 4).
+        let mut s = state(
+            vec![action("a"), header("h1"), header("h2"), action("b"), action("c")],
+            0,
+        );
+        s.move_selection(2, true);
+        assert_eq!(s.selected_idx, 4);
+    }
+}

@@ -33,13 +33,13 @@ impl TransientOverlayFrame {
     }
 
     pub(crate) fn paint(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        if let Some(component) = &self.search_bar {
+        if let Some(component) = &mut self.search_bar {
             component.paint(cx, scene);
         }
         if let Some(component) = &mut self.bell_flash {
             component.paint(cx, scene);
         }
-        if let Some(component) = &self.ime_preedit {
+        if let Some(component) = &mut self.ime_preedit {
             component.paint(cx, scene);
         }
     }
@@ -57,7 +57,7 @@ impl App {
         color_glyphs: &mut Vec<GlyphInstance>,
     ) {
         let (cw, ch) = self.ui_cell_metrics();
-        let Some(component) = self.search_bar_component(tiles) else {
+        let Some(mut component) = self.search_bar_component(tiles) else {
             return;
         };
         self.paint_transient_ui_with_metrics(
@@ -84,11 +84,15 @@ impl App {
             return None;
         };
 
+        let (_, ch) = self.ui_cell_metrics();
         Some(SearchBarComponent {
             query: search.query.clone(),
             matches_len: search.matches.len(),
             current_match_idx: search.current_match_idx,
             pane_rect: *pane_rect,
+            border_w: self.core.config.appearance.border_width,
+            padding: self.core.config.appearance.padding,
+            cell_h: ch,
         })
     }
 
@@ -192,7 +196,7 @@ impl App {
         color_glyphs: &mut Vec<GlyphInstance>,
     ) {
         let (cw, ch) = self.ui_cell_metrics();
-        let Some(component) = self.ime_preedit_component(tiles, cw, ch) else {
+        let Some(mut component) = self.ime_preedit_component(tiles, cw, ch) else {
             return;
         };
         self.paint_transient_ui_with_metrics(
@@ -233,6 +237,8 @@ impl App {
             base_x,
             base_y,
             cursor_cols,
+            cell_w: cw,
+            cell_h: ch,
         })
     }
 

@@ -358,15 +358,23 @@ pub trait Render: 'static + Sized {
 `RenderCtx { theme, viewport, scale }` is intentionally minimal so
 the trait can grow fields without breaking implementors.
 
-**Production users (10 widgets):** `PaletteComponent`,
-`ContextMenuComponent`, `PasteDialogComponent`, `InfoBoxComponent`,
-`HintsBarComponent`, `TabBarComponent`, `ConnectionStatusComponent`,
-`BellFlashComponent`, `SearchBarComponent`, `ImePreeditComponent`
-all `impl Render`. Each widget's `paint(&mut self, cx, scene)`
-projects `UiContext → RenderCtx` via a private `render_cx` helper,
-then calls `<Self as Render>::render(self, &render_cx).into_element()`.
+**Production users (11 widgets — every chrome widget):**
+`PaletteComponent`, `ContextMenuComponent`, `PasteDialogComponent`,
+`InfoBoxComponent`, `HintsBarComponent`, `TabBarComponent`,
+`ConnectionStatusComponent`, `BellFlashComponent`,
+`SearchBarComponent`, `ImePreeditComponent`,
+`OverviewActionBarComponent` all `impl Render`. Each widget's
+`paint(&mut self, cx, scene)` projects `UiContext → RenderCtx` via
+a private `render_cx` helper, then calls
+`<Self as Render>::render(self, &render_cx).into_element()`.
 Hit-test still goes through `build_tree` directly with `&self`
 since those paths don't need to mutate.
+
+`TopBarComponent` doesn't `impl Render` itself but unifies its
+chrome + 4 sub-widget sub-trees (SessionLabel / WorkspaceIndicator /
+ModeIndicator / PaneTabsElement) into a single walker pass — same
+goal (one paint dispatch per frame), different shape (composite
+widget rather than trait impl).
 
 **The recurring pre-cache pattern:** widgets that did per-frame
 runtime text shaping (`text_layout::measure(cx, ...)` or
@@ -495,10 +503,14 @@ paint path is still imperative and needs the cached value. The
 relocation trims `AppModel` without changing semantics.
 
 - `hovered_top_bar_region` + `hovered_pane_tab` (Step 8).
-- `OverviewState.hovered_pane` + `overview_action_hover` (Step 9 —
-  `App::exit_overview` / `toggle_overview` wrappers got an explicit
-  reset since the model-level reset in `AppModel::exit_overview`
-  was no longer touching these App-owned fields).
+- `OverviewState.hovered_pane` (Step 9 — `App::exit_overview` /
+  `toggle_overview` wrappers got an explicit reset since the
+  model-level reset in `AppModel::exit_overview` was no longer
+  touching these App-owned fields). `overview_action_hover` was
+  also moved here in Step 9, then later dropped entirely in
+  Step 26 once the overview action bar got its own `Render` impl
+  with declarative `.hover()` — same end state as the
+  derive-at-hash-time fields above.
 - `pane_tab_scroll` (Step 11).
 - `ResizeDragState` (Step 12 — 8-field struct with ~30 reader
   sites in mouse / resize / sync / render).

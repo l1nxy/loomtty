@@ -189,7 +189,7 @@ impl App {
             if !started_drag && let Some(hit) = self.hit_test_scrollbar(mx, my) {
                 if hit.on_thumb {
                     // Start dragging the scrollbar thumb
-                    self.core.drag.scrollbar_dragging = Some(super::ScrollbarDragInfo {
+                    self.drag.scrollbar_dragging = Some(super::ScrollbarDragInfo {
                         pane_id: hit.pane_id,
                         pane_inner_y: hit.inner_y,
                         pane_inner_h: hit.inner_h,

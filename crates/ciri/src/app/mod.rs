@@ -224,6 +224,11 @@ pub(crate) struct App {
     /// focus buttons that float above the hovered tile). Was on
     /// `AppModel.overview_action_hover`.
     pub overview_action_hover: Option<ciri_app::app::OverviewActionHover>,
+    /// Active pane-resize / column-resize / scrollbar-drag state. UI
+    /// input bookkeeping with no model meaning — only mouse handlers in
+    /// this crate read or mutate it. Was on `AppModel`; moved out to
+    /// keep the platform-agnostic core free of UI input state.
+    pub drag: ciri_app::app::ResizeDragState,
     /// Horizontal scroll offset (px) for the inline pane-tab strip in
     /// the top bar. Pure UI ephemera — readers/writers all live in this
     /// crate: mouse wheel handler (mouse.rs), top-bar visibility helper
@@ -512,6 +517,16 @@ impl App {
             overview_hovered_pane: None,
             overview_action_hover: None,
             pane_tab_scroll: 0.0,
+            drag: ResizeDragState {
+                col_dragging: None,
+                col_right_idx: None,
+                col_start_x: 0.0,
+                col_start_width: 0.0,
+                col_delta: 0.0,
+                tile_dragging: None,
+                tile_start_y: 0.0,
+                scrollbar_dragging: None,
+            },
             connection_cancel: None,
             motion_ticker: Arc::new(ciri_motion::Ticker::new()),
             ui_taffy_tree: std::cell::RefCell::new(taffy::TaffyTree::new()),
@@ -705,7 +720,7 @@ impl App {
         self.core.command_palette = None;
         self.core.context_menu = ContextMenu::default();
         self.core.pending_paste = None;
-        self.core.drag = ResizeDragState {
+        self.drag = ResizeDragState {
             col_dragging: None,
             col_right_idx: None,
             col_start_x: 0.0,

@@ -116,7 +116,7 @@ impl App {
                         self.apply_layout(&layout);
                         // Only cancel an in-flight tile drag if indices became
                         // invalid; focus-only syncs must not abort it.
-                        if let Some((col_idx, top_tile_idx)) = self.core.drag.tile_dragging {
+                        if let Some((col_idx, top_tile_idx)) = self.drag.tile_dragging {
                             let still_valid = self
                                 .core
                                 .workspaces
@@ -125,7 +125,7 @@ impl App {
                                 .get(col_idx)
                                 .is_some_and(|col| top_tile_idx + 1 < col.tiles.len());
                             if !still_valid {
-                                self.core.drag.tile_dragging = None;
+                                self.drag.tile_dragging = None;
                             }
                         }
                         needs_redraw = true;

@@ -62,7 +62,6 @@ pub struct AppModel {
     pub cursor_blink_visible: bool,
     pub cursor_blink_timer: Instant,
 
-    pub drag: ResizeDragState,
     pub gestures: GestureState,
 
 
@@ -177,16 +176,6 @@ impl AppModel {
             last_frame: Instant::now(),
             cursor_blink_visible: true,
             cursor_blink_timer: Instant::now(),
-            drag: ResizeDragState {
-                col_dragging: None,
-                col_right_idx: None,
-                col_start_x: 0.0,
-                col_start_width: 0.0,
-                col_delta: 0.0,
-                tile_dragging: None,
-                tile_start_y: 0.0,
-                scrollbar_dragging: None,
-            },
             gestures: GestureState {
                 scroll_accum: 0.0,
                 row_active: false,

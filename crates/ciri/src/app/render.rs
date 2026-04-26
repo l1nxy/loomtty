@@ -740,13 +740,9 @@ impl App {
         self.hash_pending_paste(&mut hasher);
 
         // Drag state affects border/scrollbar visuals
-        self.core.drag.col_dragging.hash(&mut hasher);
-        self.core.drag.tile_dragging.hash(&mut hasher);
-        self.core
-            .drag
-            .scrollbar_dragging
-            .is_some()
-            .hash(&mut hasher);
+        self.drag.col_dragging.hash(&mut hasher);
+        self.drag.tile_dragging.hash(&mut hasher);
+        self.drag.scrollbar_dragging.is_some().hash(&mut hasher);
 
         tiles.len().hash(&mut hasher);
         for (pane_id, rect, is_active) in tiles {
@@ -2150,7 +2146,6 @@ impl App {
                 let ph = tile_rect.h - inset;
                 // Determine scrollbar visual state (Pressed > Hovered > Idle)
                 let sb_state = if self
-                    .core
                     .drag
                     .scrollbar_dragging
                     .as_ref()

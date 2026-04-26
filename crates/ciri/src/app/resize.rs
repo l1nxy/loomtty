@@ -12,7 +12,7 @@ pub(crate) struct ScrollbarHit {
 
 impl App {
     pub(crate) fn apply_scrollbar_drag(&mut self, my: f32) -> bool {
-        let Some(info) = self.core.drag.scrollbar_dragging.as_ref() else {
+        let Some(info) = self.drag.scrollbar_dragging.as_ref() else {
             return false;
         };
         let pane_id = info.pane_id;
@@ -40,27 +40,27 @@ impl App {
     }
 
     pub(crate) fn apply_tile_resize_drag(&mut self, my: f32) -> bool {
-        let Some((col_idx, top_tile_idx)) = self.core.drag.tile_dragging else {
+        let Some((col_idx, top_tile_idx)) = self.drag.tile_dragging else {
             return false;
         };
-        let delta_y = my - self.core.drag.tile_start_y;
+        let delta_y = my - self.drag.tile_start_y;
         self.core
             .workspaces
             .active_mut()
             .resize_tile_pair(col_idx, top_tile_idx, delta_y);
-        self.core.drag.tile_start_y = my;
+        self.drag.tile_start_y = my;
         self.schedule_redraw();
         true
     }
 
     pub(crate) fn apply_column_resize_drag(&mut self, mx: f32) -> bool {
-        let Some(left_idx) = self.core.drag.col_dragging else {
+        let Some(left_idx) = self.drag.col_dragging else {
             return false;
         };
-        let Some(right_idx) = self.core.drag.col_right_idx else {
+        let Some(right_idx) = self.drag.col_right_idx else {
             return false;
         };
-        let delta_px = mx - self.core.drag.col_start_x;
+        let delta_px = mx - self.drag.col_start_x;
         let inner_vw = self.core.workspaces.active().inner_viewport_width();
         if inner_vw > 0.0 {
             let delta_proportion = delta_px as f64 / inner_vw as f64;
@@ -68,8 +68,8 @@ impl App {
             let before = ws.columns[left_idx].proportion(inner_vw);
             ws.resize_column_pair(left_idx, right_idx, delta_proportion);
             let after = ws.columns[left_idx].proportion(inner_vw);
-            self.core.drag.col_delta += after - before;
-            self.core.drag.col_start_x = mx;
+            self.drag.col_delta += after - before;
+            self.drag.col_start_x = mx;
         }
         self.snap_all_col_widths();
         self.schedule_redraw();
@@ -132,11 +132,11 @@ impl App {
         if let Some((left_col_idx, right_col_idx, left_col_width, pane_id, dim_panes)) = found {
             self.remember_workspace_pane(self.core.workspaces.active_workspace_idx, pane_id);
             self.send(ciri_protocol::message::ClientMessage::FocusPane { pane_id });
-            self.core.drag.col_dragging = Some(left_col_idx);
-            self.core.drag.col_right_idx = Some(right_col_idx);
-            self.core.drag.col_start_x = mx;
-            self.core.drag.col_start_width = left_col_width;
-            self.core.drag.col_delta = 0.0;
+            self.drag.col_dragging = Some(left_col_idx);
+            self.drag.col_right_idx = Some(right_col_idx);
+            self.drag.col_start_x = mx;
+            self.drag.col_start_width = left_col_width;
+            self.drag.col_delta = 0.0;
 
             let config = self.anim_config();
             for pid in dim_panes {
@@ -170,19 +170,19 @@ impl App {
                 self.remember_workspace_pane(self.core.workspaces.active_workspace_idx, pane_id);
                 self.send(ciri_protocol::message::ClientMessage::FocusPane { pane_id });
             }
-            self.core.drag.tile_dragging = Some((col_idx, top_tile_idx));
-            self.core.drag.tile_start_y = my;
+            self.drag.tile_dragging = Some((col_idx, top_tile_idx));
+            self.drag.tile_start_y = my;
             return true;
         }
         false
     }
 
     pub(crate) fn finish_resize_drag(&mut self) -> bool {
-        if self.core.drag.scrollbar_dragging.is_some() {
-            self.core.drag.scrollbar_dragging = None;
+        if self.drag.scrollbar_dragging.is_some() {
+            self.drag.scrollbar_dragging = None;
             return true;
         }
-        if let Some((col_idx, top_tile_idx)) = self.core.drag.tile_dragging {
+        if let Some((col_idx, top_tile_idx)) = self.drag.tile_dragging {
             let ws = self.core.workspaces.active();
             if let Some(col) = ws.columns.get(col_idx) {
                 let bot_idx = top_tile_idx + 1;
@@ -197,21 +197,21 @@ impl App {
                     });
                 }
             }
-            self.core.drag.tile_dragging = None;
+            self.drag.tile_dragging = None;
             if let Some(w) = &self.window {
                 w.set_cursor(winit::window::CursorIcon::Default);
             }
         }
-        if let Some(drag_col) = self.core.drag.col_dragging {
+        if let Some(drag_col) = self.drag.col_dragging {
             self.send(ciri_protocol::message::ClientMessage::AdjustColumnSplitAt {
                 column_idx: drag_col,
-                delta: self.core.drag.col_delta,
+                delta: self.drag.col_delta,
             });
 
             // Restore opacity for dimmed panes
             let config = self.anim_config();
             let ws = self.core.workspaces.active();
-            let right_idx = self.core.drag.col_right_idx.unwrap_or(drag_col + 1);
+            let right_idx = self.drag.col_right_idx.unwrap_or(drag_col + 1);
             let pane_ids: Vec<_> = [drag_col, right_idx]
                 .iter()
                 .filter_map(|&idx| ws.columns.get(idx))
@@ -221,7 +221,7 @@ impl App {
                 self.core.anim_mgr.end_drag_dim(pid, &config);
             }
 
-            self.core.drag.col_dragging = None;
+            self.drag.col_dragging = None;
             self.snap_all_col_widths();
             if let Some(w) = &self.window {
                 w.set_cursor(winit::window::CursorIcon::Default);

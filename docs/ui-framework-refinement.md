@@ -376,6 +376,20 @@ ModeIndicator / PaneTabsElement) into a single walker pass — same
 goal (one paint dispatch per frame), different shape (composite
 widget rather than trait impl).
 
+**Declarative `.hover()` production users:** palette rows,
+context_menu rows, paste_dialog buttons, session_label,
+workspace_indicator, tab_bar inactive rows, overview_action_bar
+buttons. The lone exception is `PaneTabsElement` (top-bar inline
+tabs), which still uses imperative `if hovered { bg_alpha = … }`
+and stores the hovered pane_id on `App.hovered_pane_tab`. The
+restructure to per-tab wrappers with declarative `.hover()` is
+viable but requires moving label clipping from viewport-relative
+to wrapper-relative coordinates and nesting the label inside the
+wrapper for `text_color` inheritance. That's a real refactor with
+non-trivial clipping behaviour to preserve; deferred until it
+either becomes the bottleneck or another consumer needs the same
+shape.
+
 **The recurring pre-cache pattern:** widgets that did per-frame
 runtime text shaping (`text_layout::measure(cx, ...)` or
 `truncate_with_ellipsis(cx, ...)`) in `build_tree` had to move that

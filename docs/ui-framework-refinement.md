@@ -233,13 +233,19 @@ require any framework change.
   `mem::take` + record `cached_len` + transient extend + post-draw
   `truncate(cached_len)` + put-back. One Vec memcpy per frame
   eliminated; capacity reused.
-- **0g.** [DEFERRED to Phase 1+] Split `render()` into four sub-methods.
-  Hands-on attempt revealed the per-pane view loop, buffer take dance,
-  and `cache`/`shaper`/`cached_views` borrow interleaving make a clean
-  extraction impossible without first restructuring `App`. Doing this
-  before Phase 1's `RenderState` substructure would just produce ugly
-  parameter lists. Pick this back up after Phase 1 when the borrows
-  collapse to `&mut self.render`.
+- **0g.** [PARTIAL] Split `render()` into four sub-methods. Hands-on
+  attempt revealed the per-pane view loop, buffer take dance, and
+  `cache`/`shaper`/`cached_views` borrow interleaving make a clean
+  full-extraction impossible without first restructuring `App`. The
+  borrow-clean preamble (~37 lines: surface check, fallback-arena
+  clear, `dt` computation, focus-change pre-tick) has been extracted
+  to `App::prepare_frame()`. The remaining three splits (per-pane
+  view update, buffer assembly, atlas/cleanup) still want a
+  `RenderState` substructure on `App` first; the natural prerequisite
+  is finishing Phase 5's state migration so palette/top_bar/tab_bar
+  state stops sharing `&mut self` with the render loop. Pick this
+  back up once a real chrome widget has moved its state onto an
+  `impl Render` view.
 
 ### Phase 1 — same-frame hover detection (light prepaint)  [DONE]
 

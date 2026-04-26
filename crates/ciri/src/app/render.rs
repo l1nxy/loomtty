@@ -1918,14 +1918,20 @@ impl App {
         }
     }
 
-    pub fn render(&mut self) {
+    /// Per-frame work that runs before the heavy borrow-tangled portion
+    /// of `render()`: surface readiness check, fallback-arena reset,
+    /// `dt` computation, and the focus-change → animation pre-tick.
+    /// Returns `None` when the renderer / glyph cache / GPU atlas isn't
+    /// yet wired up or the surface has zero size — caller should bail.
+    /// On `Some(dt)` the caller proceeds to advance animations and the
+    /// rest of `render()`.
+    fn prepare_frame(&mut self) -> Option<f64> {
         if self.renderer.is_none() || self.glyph_cache.is_none() || self.glyph_atlas_gpu.is_none() {
-            return;
+            return None;
         }
-
         let (sw, sh) = self.renderer.as_ref().unwrap().surface_size();
         if sw == 0 || sh == 0 {
-            return;
+            return None;
         }
 
         // Clear ciri-ui's thread-local fallback arena at the frame
@@ -1953,6 +1959,14 @@ impl App {
         let current_focus = self.core.workspaces.active().active_pane_id();
         let config = self.anim_config();
         self.core.anim_mgr.on_focus_changed(current_focus, &config);
+
+        Some(dt)
+    }
+
+    pub fn render(&mut self) {
+        let Some(dt) = self.prepare_frame() else {
+            return;
+        };
 
         let mut animating = self.advance_animations(dt);
 

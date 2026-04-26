@@ -111,7 +111,7 @@ impl UiFrame {
         Self::capture(app, cx, top_bar_layout, top_bar_h, app.hints_bar_height())
     }
 
-    pub(super) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+    pub(super) fn paint(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         self.top_bar.paint(self.chrome.top_bar, cx, scene);
         self.hints_bar.paint(self.chrome.hints_bar, cx, scene);
         if let (Some(tab_bar), Some(rect)) = (&self.side_tab_bar, self.chrome.side_tab_bar) {
@@ -126,7 +126,7 @@ impl UiFrame {
         if let Some(component) = &self.infobox {
             component.paint(cx, scene);
         }
-        if let Some(component) = &self.palette {
+        if let Some(component) = &mut self.palette {
             component.paint(cx, scene);
         }
         if let Some(component) = &self.connection_status {

@@ -8,7 +8,7 @@ use super::tokens;
 use super::types::{UiAction, UiContext, UiPaletteHit, UiScene, ui_hit_id};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Div, FluentBuilder, Layer, Styled, div, text, uniform_list};
+use ciri_ui::{Div, FluentBuilder, IntoElement, Layer, Render, RenderCtx, Styled, div, text, uniform_list};
 
 const HIT_CLOSE: u64 = 1;
 const HIT_PANEL: u64 = 2;
@@ -61,6 +61,11 @@ pub(crate) struct PaletteComponent {
     loading_text: Option<String>,
     error_text: Option<String>,
     remote_input_mode: bool,
+    /// UI font line height in logical pixels. Captured from `UiContext`
+    /// at snapshot time so the `Render` impl can build its tree from a
+    /// minimal `RenderCtx` without re-borrowing the host shaper. Falls
+    /// back to `cell_h` upstream when the shaper is unavailable.
+    ui_line_h: f32,
 }
 
 fn truncate_label(label: &str, panel_w: f32, cx: &UiContext<'_>) -> String {
@@ -150,11 +155,25 @@ impl PaletteComponent {
             loading_text,
             error_text,
             remote_input_mode: palette.remote_input_mode,
+            ui_line_h: cx.ui_line_h,
         })
     }
 
+    /// Build a minimal `RenderCtx` from the host's `UiContext`. The
+    /// `Render` trait keeps its context narrow on purpose; ciri's
+    /// `UiContext` carries shaper / taffy / mouse fields the trait
+    /// shouldn't see, so we project just the three values it needs.
+    fn render_cx<'a>(cx: &'a UiContext<'_>) -> RenderCtx<'a> {
+        RenderCtx {
+            theme: cx.theme,
+            viewport: [cx.viewport_w, cx.viewport_h],
+            scale: 1.0,
+        }
+    }
+
     pub(super) fn hit_test(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> UiPaletteHit {
-        let root = self.build_tree(cx);
+        let render_cx = Self::render_cx(cx);
+        let root = self.build_tree(&render_cx);
         palette_hit_from_id(ui_hit_id(&root, cx, mx, my))
     }
 
@@ -169,7 +188,7 @@ impl PaletteComponent {
         }
     }
 
-    fn build_tree(&self, cx: &UiContext<'_>) -> Div {
+    fn build_tree(&self, cx: &RenderCtx<'_>) -> Div {
         let bg_color = cx.theme.surface;
         let accent = cx.theme.accent;
         let border_color = cx.theme.border_focus;
@@ -210,7 +229,7 @@ impl PaletteComponent {
             .child(
                 div()
                     .w(2.0)
-                    .h(cx.ui_line_h)
+                    .h(self.ui_line_h)
                     .bg(tokens::tint(fg_color, tokens::ALPHA_CURSOR)),
             )
             .when(show_remote_placeholder, |d| {
@@ -328,16 +347,18 @@ impl PaletteComponent {
         panel = panel.child(rows_area).child(div().w_full().flex_1());
 
         // Loading takes precedence over a stale error so the two strings
-        // can't paint at the same Y. The `else if` in `capture` already
-        // enforces this, but guard defensively here.
+        // can't paint at the same Y. The `else if` below — not `capture`,
+        // which sets `loading_text` and `error_text` independently — is
+        // what enforces the precedence.
+        let line_h = self.ui_line_h;
         if let Some(ref loading) = self.loading_text {
             panel = panel.child(
                 div()
                     .w_full()
-                    .h(cx.ui_line_h)
+                    .h(line_h)
                     .flex_row()
                     .items_center()
-                    .child(div().w(text_pad).h(cx.ui_line_h))
+                    .child(div().w(text_pad).h(line_h))
                     .child(text(loading.clone()).color([accent[0], accent[1], accent[2], 0.7])),
             );
         } else if let Some(ref error) = self.error_text {
@@ -345,10 +366,10 @@ impl PaletteComponent {
             panel = panel.child(
                 div()
                     .w_full()
-                    .h(cx.ui_line_h)
+                    .h(line_h)
                     .flex_row()
                     .items_center()
-                    .child(div().w(text_pad).h(cx.ui_line_h))
+                    .child(div().w(text_pad).h(line_h))
                     .child(text(error.clone()).color([red[0], red[1], red[2], 0.9])),
             );
         }
@@ -361,17 +382,17 @@ impl PaletteComponent {
         panel = panel.child(
             div()
                 .w_full()
-                .h(cx.ui_line_h)
+                .h(line_h)
                 .flex_row()
                 .items_center()
                 .justify_end()
                 .child(text(footer).color(dim_color))
-                .child(div().w(12.0).h(cx.ui_line_h)),
+                .child(div().w(12.0).h(line_h)),
         );
 
         let root = div()
-            .w(cx.viewport_w)
-            .h(cx.viewport_h)
+            .w(cx.viewport[0])
+            .h(cx.viewport[1])
             .in_layer(Layer::Modal)
             .bg([0.0, 0.0, 0.0, tokens::ALPHA_BACKDROP])
             .hit_id(HIT_CLOSE)
@@ -380,9 +401,19 @@ impl PaletteComponent {
         root
     }
 
-    pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let root = self.build_tree(cx);
+    pub(crate) fn paint(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        let render_cx = Self::render_cx(cx);
+        // First production usage of `ciri_ui::Render`. The trait method
+        // returns `impl IntoElement`; coerce explicitly so the rest of
+        // the paint path keeps working off a concrete `dyn Element`.
+        let root = <Self as Render>::render(self, &render_cx).into_element();
         paint_element_tree(&root, cx, scene);
+    }
+}
+
+impl Render for PaletteComponent {
+    fn render(&mut self, cx: &RenderCtx<'_>) -> impl IntoElement {
+        self.build_tree(cx)
     }
 }
 
@@ -450,7 +481,7 @@ mod tests {
             color_glyphs: &mut color_glyphs,
             sdf_rects: &mut sdf_rects,
         };
-        let comp = PaletteComponent {
+        let mut comp = PaletteComponent {
             layout: crate::app::CommandPaletteLayout {
                 panel_x: 100.0,
                 panel_y: 80.0,
@@ -478,6 +509,7 @@ mod tests {
             loading_text: None,
             error_text: None,
             remote_input_mode: false,
+            ui_line_h: 16.0,
         };
 
         comp.paint(&cx, &mut scene);
@@ -531,6 +563,7 @@ mod tests {
             loading_text: None,
             error_text: None,
             remote_input_mode: false,
+            ui_line_h: 16.0,
         };
 
         assert_eq!(comp.hit_test(110.0, 130.0, &cx), UiPaletteHit::Entry(7));

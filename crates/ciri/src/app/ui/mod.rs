@@ -81,7 +81,7 @@ impl App {
 
         let top_bar_h = top_bar_layout.bar_height;
         let hints_bar_h = self.hints_bar_height();
-        let frame = UiFrame::capture(self, &cx, top_bar_layout, top_bar_h, hints_bar_h);
+        let mut frame = UiFrame::capture(self, &cx, top_bar_layout, top_bar_h, hints_bar_h);
         // Clear the element arena before this paint pass so all chrome
         // widgets allocate into the freshly reset bump space; entering
         // an `ElementArenaScope` makes `with_element_arena` (called

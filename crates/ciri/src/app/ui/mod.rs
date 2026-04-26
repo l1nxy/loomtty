@@ -224,7 +224,6 @@ mod tests {
                 line_count: 1,
             },
             preview: "hello".into(),
-            hovered_button: None,
             target: super::super::PendingPasteTarget::Terminal,
         });
         let cx = app.ui_context();
@@ -294,7 +293,6 @@ mod tests {
                 line_count: 1,
             },
             preview: "hello".into(),
-            hovered_button: None,
             target: super::super::PendingPasteTarget::Terminal,
         });
         let cx = app.ui_context();
@@ -305,11 +303,12 @@ mod tests {
         let hover = app.dispatch_ui_hover(x + 2.0, y + 2.0);
         assert!(hover.handled);
         assert_eq!(hover.cursor, CursorIcon::Pointer);
+        // Hover is now derived from cursor + dialog geometry (no stored
+        // field); the assertion is that the helper sees the cursor over
+        // the Paste button after the hover dispatch.
+        app.last_mouse_pos = Some((x + 2.0, y + 2.0));
         assert_eq!(
-            app.core
-                .pending_paste
-                .as_ref()
-                .and_then(|p| p.hovered_button),
+            app.current_paste_dialog_hover(),
             Some(super::super::PasteButton::Paste)
         );
     }

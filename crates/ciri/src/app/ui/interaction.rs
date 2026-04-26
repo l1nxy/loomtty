@@ -173,14 +173,10 @@ impl App {
                 }
             }
             UiFrameHover::PasteDialog { button } => {
-                let prev = self
-                    .core
-                    .pending_paste
-                    .as_ref()
-                    .and_then(|p| p.hovered_button);
-                if let Some(pending) = &mut self.core.pending_paste {
-                    pending.hovered_button = button;
-                }
+                // Hover derived at cache-hash time via
+                // `App::current_paste_dialog_hover()`; display reads it
+                // declaratively. Same shape as the palette /
+                // context_menu handlers — set redraw unconditionally.
                 UiHoverOutcome {
                     handled: true,
                     cursor: if button.is_some() {
@@ -188,7 +184,7 @@ impl App {
                     } else {
                         CursorIcon::Default
                     },
-                    needs_redraw: prev != button,
+                    needs_redraw: true,
                 }
             }
             UiFrameHover::Palette { pointer } => {

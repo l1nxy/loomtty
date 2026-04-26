@@ -310,7 +310,6 @@ pub struct ClientImagePlacement {
 pub struct PendingPaste {
     pub info: crate::paste_guard::PasteInfo,
     pub preview: String,
-    pub hovered_button: Option<PasteButton>,
     pub target: PendingPasteTarget,
 }
 

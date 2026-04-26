@@ -517,7 +517,11 @@ impl App {
         if let Some(paste) = &self.core.pending_paste {
             true.hash(hasher);
             paste.preview.hash(hasher);
-            paste.hovered_button.hash(hasher);
+            // Hover derived from cursor + button bounds — same shape as
+            // `current_palette_hover` / `current_context_menu_hover`.
+            // No stored field on App or AppModel; capture-time and
+            // hash-time both see whatever the cursor is over right now.
+            self.current_paste_dialog_hover().hash(hasher);
             paste.target.hash(hasher);
             paste.info.text.hash(hasher);
         } else {

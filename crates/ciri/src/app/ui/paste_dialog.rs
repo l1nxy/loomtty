@@ -33,7 +33,6 @@ pub(crate) struct PasteDialogComponent {
     dialog_h: f32,
     title: String,
     preview: String,
-    hovered_button: Option<super::super::PasteButton>,
 }
 
 impl PasteDialogComponent {
@@ -57,7 +56,6 @@ impl PasteDialogComponent {
             dialog_h,
             title,
             preview,
-            hovered_button: pending.hovered_button,
         })
     }
 
@@ -92,16 +90,10 @@ impl PasteDialogComponent {
             tokens::surface_raise([bg[0], bg[1], bg[2], 1.0], tokens::SURFACE_LIFT_SUBTLE);
 
         let recessed = tokens::surface_sink([bg[0], bg[1], bg[2], 1.0], tokens::SURFACE_SINK);
-        let paste_alpha = if self.hovered_button == Some(super::super::PasteButton::Paste) {
-            tokens::ALPHA_PRIMARY_HOVER
-        } else {
-            tokens::ALPHA_PRIMARY_REST
-        };
-        let cancel_alpha = if self.hovered_button == Some(super::super::PasteButton::Cancel) {
-            tokens::ALPHA_SECONDARY_HOVER
-        } else {
-            tokens::ALPHA_SECONDARY_REST
-        };
+        let paste_rest = tokens::tint(accent, tokens::ALPHA_PRIMARY_REST);
+        let paste_hover = tokens::tint(accent, tokens::ALPHA_PRIMARY_HOVER);
+        let cancel_rest = tokens::tint(fg, tokens::ALPHA_SECONDARY_REST);
+        let cancel_hover = tokens::tint(fg, tokens::ALPHA_SECONDARY_HOVER);
 
         let preview_h = cx.ui_line_h + tokens::SPACE_1 * 2.0;
         let button_row = div()
@@ -112,15 +104,21 @@ impl PasteDialogComponent {
             .justify_center()
             .gap(pad)
             .child(
+                // Declarative hover via the framework — `.hover()`
+                // refines on top of the base style when the walker's
+                // `cx.is_hovered(HIT_PASTE)` matches. Replaces the old
+                // `if self.hovered_button == Some(Paste) { ... }`
+                // imperative branching, dropping the per-frame field.
                 div()
                     .w(btn_w)
                     .h(btn_h)
                     .flex_row()
                     .items_center()
                     .justify_center()
-                    .bg(tokens::tint(accent, paste_alpha))
+                    .bg(paste_rest)
                     .hit_id(HIT_PASTE)
                     .cursor_pointer()
+                    .hover(|s| s.bg(paste_hover))
                     .child(text("Paste").color(fg)),
             )
             .child(
@@ -130,9 +128,10 @@ impl PasteDialogComponent {
                     .flex_row()
                     .items_center()
                     .justify_center()
-                    .bg(tokens::tint(fg, cancel_alpha))
+                    .bg(cancel_rest)
                     .hit_id(HIT_CANCEL)
                     .cursor_pointer()
+                    .hover(|s| s.bg(cancel_hover))
                     .child(text("Cancel").color(fg)),
             );
 
@@ -224,7 +223,6 @@ mod tests {
                 line_count: 1,
             },
             preview: "这是一段很长很长很长很长很长很长的预览文本".into(),
-            hovered_button: None,
             target: super::super::super::PendingPasteTarget::Terminal,
         });
         let theme = ciri_ui::ResolvedTheme::default();
@@ -243,7 +241,6 @@ mod tests {
                 line_count: 1,
             },
             preview: "hello".into(),
-            hovered_button: None,
             target: super::super::super::PendingPasteTarget::Terminal,
         });
         let theme = ciri_ui::ResolvedTheme::default();

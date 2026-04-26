@@ -34,7 +34,6 @@ impl App {
                             self.core.pending_paste = Some(super::PendingPaste {
                                 info,
                                 preview,
-                                hovered_button: None,
                                 target: super::PendingPasteTarget::Terminal,
                             });
                         } else if let Some(pid) = self.core.workspaces.active_mut().active_pane_id()

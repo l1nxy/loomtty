@@ -101,7 +101,6 @@ impl App {
             self.core.pending_paste = Some(super::PendingPaste {
                 info,
                 preview,
-                hovered_button: None,
                 target,
             });
         } else {
@@ -406,7 +405,6 @@ impl App {
                         self.core.pending_paste = Some(super::PendingPaste {
                             info,
                             preview,
-                            hovered_button: None,
                             target: super::PendingPasteTarget::Terminal,
                         });
                         log::info!("paste guard: showing confirmation ({} bytes)", text.len());

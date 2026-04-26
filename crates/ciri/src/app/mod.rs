@@ -1164,6 +1164,58 @@ impl App {
         Some(row_idx)
     }
 
+    /// Which paste-dialog button (`Paste` / `Cancel`) the cursor is over.
+    /// Derived from `last_mouse_pos` + the dialog geometry the capture
+    /// step would compute. Returns `None` when no paste is pending or
+    /// the cursor is outside both buttons.
+    ///
+    /// Same pattern as `current_palette_hover` and
+    /// `current_context_menu_hover`. Used by the chrome cache hash so
+    /// hover changes invalidate the cache; display reads hover via the
+    /// declarative `.hover()` style on each button.
+    pub(crate) fn current_paste_dialog_hover(&self) -> Option<ciri_app::app::PasteButton> {
+        if self.core.pending_paste.is_none() {
+            return None;
+        }
+        let (mx, my) = self.last_mouse_pos?;
+        let (vw, vh) = self.command_palette_viewport_size();
+        let (_, ch) = self.cell_dimensions();
+        // Mirror `PasteDialogComponent::capture` + `build_tree` exactly:
+        // dialog 60% × 40% centered, panel `.p(pad)` on all sides, body
+        // is a `flex_col` whose last children are a `.flex_1()` spacer,
+        // the button_row, then a `SPACE_2` trailing pad. So the
+        // button_row sits at content_bottom − SPACE_2 − btn_h, full
+        // content_w wide, with the two `btn_w` buttons centered with a
+        // `pad` gap (`.justify_center().gap(pad)`).
+        let dialog_w = vw * 0.6;
+        let dialog_h = vh * 0.4;
+        let dx = (vw - dialog_w) / 2.0;
+        let dy = (vh - dialog_h) / 2.0;
+        let pad = crate::app::ui::tokens::SPACE_4;
+        let trailing = crate::app::ui::tokens::SPACE_2;
+        let btn_w = 100.0_f32;
+        let btn_h = crate::app::ui::tokens::control_height_lg(ch);
+        let row_y = dy + dialog_h - pad - trailing - btn_h;
+        if my < row_y || my >= row_y + btn_h {
+            return None;
+        }
+        let content_w = dialog_w - pad * 2.0;
+        let content_x = dx + pad;
+        let row_total_w = btn_w * 2.0 + pad;
+        let row_x = content_x + (content_w - row_total_w) / 2.0;
+        let paste_left = row_x;
+        let paste_right = row_x + btn_w;
+        let cancel_left = paste_right + pad;
+        let cancel_right = cancel_left + btn_w;
+        if mx >= paste_left && mx < paste_right {
+            Some(ciri_app::app::PasteButton::Paste)
+        } else if mx >= cancel_left && mx < cancel_right {
+            Some(ciri_app::app::PasteButton::Cancel)
+        } else {
+            None
+        }
+    }
+
     pub fn compute_grid_size(&self) -> (u16, u16) {
         if let Some(cache) = &self.glyph_cache {
             let pad = self.core.total_inset();

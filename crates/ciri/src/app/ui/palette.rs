@@ -31,7 +31,6 @@ pub(super) struct PaletteRow {
     pub entry_idx: usize,
     pub label: String,
     pub is_selected: bool,
-    pub is_hovered: bool,
     pub style: PaletteRowStyle,
 }
 
@@ -111,7 +110,6 @@ impl PaletteComponent {
                     entry_idx: *filt_idx,
                     label: truncate_label(&entry.label, layout.panel_w, cx),
                     is_selected: scroll_offset + vis_row == palette.selected_idx,
-                    is_hovered: palette.hovered_idx == Some(scroll_offset + vis_row),
                     style,
                 }
             })
@@ -247,13 +245,6 @@ impl PaletteComponent {
                 .map(|i| {
                     let row = &self.rows[i];
                     let is_header = row.style == PaletteRowStyle::SectionHeader;
-                    let tint = if row.is_selected {
-                        Some(selected_bg)
-                    } else if row.is_hovered {
-                        Some(hovered_bg)
-                    } else {
-                        None
-                    };
                     let label_color = if row.style == PaletteRowStyle::ConnectRemotePrompt {
                         accent
                     } else if is_header {
@@ -266,17 +257,30 @@ impl PaletteComponent {
                     } else {
                         row.label.clone()
                     };
-                    div()
+                    // Selection is data-driven (keyboard nav owns it),
+                    // so it stays in the base style. Hover is paint-time
+                    // and resolves from `cx.is_hovered(hit_id)` via the
+                    // declarative `.hover()` refinement — only applied
+                    // to non-selected non-headers, since selected wins
+                    // visually and headers don't take pointer events.
+                    let mut row_div = div()
                         .w_full()
                         .h(row_h)
                         .flex_row()
                         .items_center()
-                        .child(div().w(text_pad).h(row_h))
-                        .when(!is_header, |d| {
-                            d.hit_id(entry_hit_id(row.entry_idx)).cursor_pointer()
-                        })
-                        .when_some(tint, |d, color| d.bg(color).rounded(tokens::SPACE_1))
-                        .child(text(label_text).color(label_color))
+                        .child(div().w(text_pad).h(row_h));
+                    if !is_header {
+                        row_div = row_div
+                            .hit_id(entry_hit_id(row.entry_idx))
+                            .cursor_pointer();
+                        if row.is_selected {
+                            row_div = row_div.bg(selected_bg).rounded(tokens::SPACE_1);
+                        } else {
+                            row_div =
+                                row_div.hover(|s| s.bg(hovered_bg).rounded(tokens::SPACE_1));
+                        }
+                    }
+                    row_div.child(text(label_text).color(label_color))
                 })
                 .collect()
         });
@@ -499,7 +503,6 @@ mod tests {
                 entry_idx: 0,
                 label: String::new(),
                 is_selected: true,
-                is_hovered: false,
                 style: PaletteRowStyle::Action,
             }],
             total_entries: 1,
@@ -545,14 +548,12 @@ mod tests {
                     entry_idx: 7,
                     label: "Run".into(),
                     is_selected: false,
-                    is_hovered: false,
                     style: PaletteRowStyle::Action,
                 },
                 PaletteRow {
                     entry_idx: 8,
                     label: "Section".into(),
                     is_selected: false,
-                    is_hovered: false,
                     style: PaletteRowStyle::SectionHeader,
                 },
             ],

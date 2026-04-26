@@ -394,7 +394,7 @@ children-vec heap allocation; >2-child containers spill transparently.
 `Element::children() -> &[Box<dyn Element>]` still returns a slice via
 `SmallVec`'s `Deref`, so no caller needed updating.
 
-### Phase 9 — `anchored` + `deferred`, retire fixed `Layer` enum
+### Phase 9 — `anchored` + `deferred`, retire fixed `Layer` enum  [DEFERRED]
 
 Port `anchored` and `deferred` elements. Migrate `context_menu` to
 `anchored`. Migrate `Modal`/`Tooltip` z-ordering to `deferred`. Remove
@@ -403,6 +403,19 @@ the `Layer` enum and its inheritance threading from the walker.
 This is a noticeable behavioral refactor — the chrome rendering will
 look identical but the underlying ordering mechanism changes. Worth
 doing once Phase 1 is done so the behavior is testable per widget.
+
+**Why deferred:** GPUI's `anchored` relies on a `prepaint` phase (which
+ciri-ui only has in "light" form — Phase 1 didn't add a formal trait
+method) and `deferred` needs a `Window::defer_draw(child, offset,
+priority, …)` queue ciri-ui has no analogue for. Porting both honestly
+requires (a) Phase 1 promotion to a real `Element::prepaint`, (b) a
+scene-level deferred-paint queue or a walker post-pass, and (c)
+removing `Element::layer()` + the walker's `inherited_layer` thread.
+That's a 1-2 day refactor with workspace-wide blast radius and is
+better landed as its own focused branch rather than squeezed into a
+multi-step series. Until then, the existing 5-level `Layer` enum keeps
+covering ciri's chrome (palette / paste_dialog / context_menu /
+connection_banner / tooltip) without trouble.
 
 ### Out of scope (explicit non-goals)
 

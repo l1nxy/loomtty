@@ -199,9 +199,9 @@ impl ApplicationHandler for App {
             if self.core.config.terminal.cursor_blink {
                 let interval =
                     Duration::from_millis(self.core.config.terminal.cursor_blink_interval_ms);
-                if self.core.cursor_blink_timer.elapsed() >= interval {
-                    self.core.cursor_blink_visible = !self.core.cursor_blink_visible;
-                    self.core.cursor_blink_timer = Instant::now();
+                if self.cursor_blink_timer.elapsed() >= interval {
+                    self.cursor_blink_visible = !self.cursor_blink_visible;
+                    self.cursor_blink_timer = Instant::now();
                     needs_redraw = true;
                 }
             }
@@ -265,7 +265,7 @@ impl ApplicationHandler for App {
         let blink_deadline = if wants_blink {
             let interval =
                 Duration::from_millis(self.core.config.terminal.cursor_blink_interval_ms);
-            Some(self.core.cursor_blink_timer + interval)
+            Some(self.cursor_blink_timer + interval)
         } else {
             None
         };

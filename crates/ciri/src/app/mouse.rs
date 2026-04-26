@@ -629,7 +629,7 @@ impl App {
 
         let hover_pane = self.hovered_pane_at(mx, my);
         let Some(pane_id) = hover_pane else {
-            self.core.last_focus_follows_mouse = None;
+            self.last_focus_follows_mouse = None;
             return;
         };
 
@@ -638,7 +638,7 @@ impl App {
         }
 
         let now = Instant::now();
-        let should_switch = match self.core.last_focus_follows_mouse {
+        let should_switch = match self.last_focus_follows_mouse {
             Some((last_id, last_time)) => {
                 pane_id != last_id || now.duration_since(last_time).as_millis() > 50
             }
@@ -648,7 +648,7 @@ impl App {
             return;
         }
 
-        self.core.last_focus_follows_mouse = Some((pane_id, now));
+        self.last_focus_follows_mouse = Some((pane_id, now));
         self.remember_workspace_pane(self.core.workspaces.active_workspace_idx, pane_id);
         self.send_lossy(ClientMessage::FocusPane { pane_id });
     }

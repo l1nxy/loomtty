@@ -343,7 +343,7 @@ impl App {
             bg_rects,
         );
 
-        if self.core.cursor_blink_visible && is_active {
+        if self.cursor_blink_visible && is_active {
             for cursor in &view.cursor_rects {
                 let src = GeoRect::new(
                     inner_x + cursor.x * zoom,
@@ -717,7 +717,7 @@ impl App {
         self.core.prediction.visual_serial().hash(&mut hasher);
 
         if self.cursor_blink_affects_scene(tiles) {
-            self.core.cursor_blink_visible.hash(&mut hasher);
+            self.cursor_blink_visible.hash(&mut hasher);
         }
 
         self.core.session_display_name().hash(&mut hasher);
@@ -1367,7 +1367,7 @@ impl App {
         );
 
         // Cursor rects
-        if self.core.cursor_blink_visible && is_active {
+        if self.cursor_blink_visible && is_active {
             for cursor in &view.cursor_rects {
                 let src = GeoRect::new(
                     inner_x + cursor.x * zoom,

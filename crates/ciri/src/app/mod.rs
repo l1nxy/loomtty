@@ -233,6 +233,19 @@ pub(crate) struct App {
     /// Pure UI input state — only mouse-wheel / pan handlers in this
     /// crate touch it. Was on `AppModel`.
     pub gestures: ciri_app::app::GestureState,
+    /// Whether the terminal cursor is currently in its visible blink
+    /// half. Pure UI animation state — toggled by the event loop tick
+    /// (`event.rs`) and reset on key input (`keyboard.rs`); read by
+    /// the renderer to gate the cursor primitive. Was on `AppModel`.
+    pub cursor_blink_visible: bool,
+    /// Timestamp of the last cursor-blink toggle. Pairs with
+    /// `cursor_blink_visible` to drive the blink interval. UI-only.
+    pub cursor_blink_timer: Instant,
+    /// Most recent focus-follows-mouse trigger: `(pane_id,
+    /// timestamp_of_switch)`. The mouse handler reads this to debounce
+    /// repeated switches inside the configured cooldown window. Pure
+    /// input gesture state, no model meaning. Was on `AppModel`.
+    pub last_focus_follows_mouse: Option<(u64, Instant)>,
     /// Horizontal scroll offset (px) for the inline pane-tab strip in
     /// the top bar. Pure UI ephemera — readers/writers all live in this
     /// crate: mouse wheel handler (mouse.rs), top-bar visibility helper
@@ -536,6 +549,9 @@ impl App {
                 row_active: false,
                 row_start: 0,
             },
+            cursor_blink_visible: true,
+            cursor_blink_timer: Instant::now(),
+            last_focus_follows_mouse: None,
             connection_cancel: None,
             motion_ticker: Arc::new(ciri_motion::Ticker::new()),
             ui_taffy_tree: std::cell::RefCell::new(taffy::TaffyTree::new()),
@@ -749,7 +765,7 @@ impl App {
         self.hovered_pane_tab = None;
         self.core.last_left_click = None;
         self.core.hovered_link = None;
-        self.core.last_focus_follows_mouse = None;
+        self.last_focus_follows_mouse = None;
         self.core.cached_local_sessions.clear();
         self.core.cached_remote_probes.clear();
         self.core.prediction.reset();

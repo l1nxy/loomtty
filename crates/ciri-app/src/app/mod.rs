@@ -59,15 +59,12 @@ pub struct AppModel {
     pub should_exit: bool,
 
     pub last_frame: Instant,
-    pub cursor_blink_visible: bool,
-    pub cursor_blink_timer: Instant,
 
 
 
     pub workspace_last_pane_ids: HashMap<usize, u64>,
     pub last_left_click: Option<LastLeftClick>,
     pub hovered_link: Option<HoveredLink>,
-    pub last_focus_follows_mouse: Option<(u64, Instant)>,
 
     pub background_slots: HashMap<String, ConnectionSlot>,
     pub active_slot_id: String,
@@ -173,12 +170,9 @@ impl AppModel {
             broadcast_mode: false,
             should_exit: false,
             last_frame: Instant::now(),
-            cursor_blink_visible: true,
-            cursor_blink_timer: Instant::now(),
             workspace_last_pane_ids: HashMap::new(),
             last_left_click: None,
             hovered_link: None,
-            last_focus_follows_mouse: None,
             background_slots: HashMap::new(),
             active_slot_id: "local".to_string(),
             remote_config: None,

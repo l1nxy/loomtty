@@ -370,8 +370,8 @@ impl App {
     }
 
     fn reset_cursor_blink_on_input(&mut self) {
-        self.core.cursor_blink_visible = true;
-        self.core.cursor_blink_timer = std::time::Instant::now();
+        self.cursor_blink_visible = true;
+        self.cursor_blink_timer = std::time::Instant::now();
     }
 
     // Priority handlers removed — all keybindings now go through

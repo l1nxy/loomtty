@@ -376,19 +376,26 @@ ModeIndicator / PaneTabsElement) into a single walker pass — same
 goal (one paint dispatch per frame), different shape (composite
 widget rather than trait impl).
 
-**Declarative `.hover()` production users:** palette rows,
-context_menu rows, paste_dialog buttons, session_label,
+**Declarative `.hover()` production users (8 widgets):** palette
+rows, context_menu rows, paste_dialog buttons, session_label,
 workspace_indicator, tab_bar inactive rows, overview_action_bar
-buttons. The lone exception is `PaneTabsElement` (top-bar inline
-tabs), which still uses imperative `if hovered { bg_alpha = … }`
-and stores the hovered pane_id on `App.hovered_pane_tab`. The
-restructure to per-tab wrappers with declarative `.hover()` is
-viable but requires moving label clipping from viewport-relative
-to wrapper-relative coordinates and nesting the label inside the
-wrapper for `text_color` inheritance. That's a real refactor with
-non-trivial clipping behaviour to preserve; deferred until it
-either becomes the bottleneck or another consumer needs the same
-shape.
+buttons, **pane_tabs (top-bar inline tabs)**. Every chrome widget
+that has a hover state now uses the declarative refinement
+pattern; no imperative `if hovered { … }` branches remain.
+
+PaneTabs (the last holdout, migrated in Step 28) was the trickiest
+because each tab's bg / separator / active indicator / label had
+been emitted as flat absolute siblings in viewport coordinates.
+The migration nests the active indicator and label inside a per-tab
+wrapper Div (which carries the `hit_id` + `.hover()` refinement)
+and converts the label clipping math from viewport-relative to
+wrapper-relative coords. Separators and fade gradients stay as
+flat siblings — they're between tabs, not part of any one tab's
+hit area. With this in place, `App.hovered_pane_tab` and
+`App.hovered_top_bar_region` could both be dropped: the chrome
+cache key now derives both via `App::current_pane_tab_hover()` /
+`App::current_top_bar_region_hover()` (same shape as
+`current_palette_hover` etc.).
 
 **The recurring pre-cache pattern:** widgets that did per-frame
 runtime text shaping (`text_layout::measure(cx, ...)` or
@@ -516,7 +523,10 @@ accumulated over time, animation timestamps) or when a widget's
 paint path is still imperative and needs the cached value. The
 relocation trims `AppModel` without changing semantics.
 
-- `hovered_top_bar_region` + `hovered_pane_tab` (Step 8).
+- `hovered_top_bar_region` + `hovered_pane_tab` (Step 8 — moved
+  from `AppModel` to `App`. Later dropped entirely in Step 28
+  once `pane_tabs` got declarative `.hover()` and both fields
+  could be derived at hash time).
 - `OverviewState.hovered_pane` (Step 9 — `App::exit_overview` /
   `toggle_overview` wrappers got an explicit reset since the
   model-level reset in `AppModel::exit_overview` was no longer

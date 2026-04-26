@@ -5,7 +5,7 @@ use super::tokens;
 use super::types::{UiContext, UiScene};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Div, Layer, Styled, div, text};
+use ciri_ui::{Div, IntoElement, Layer, Render, RenderCtx, Styled, div, text};
 
 pub(crate) struct InfoBoxComponent {
     title: String,
@@ -18,6 +18,11 @@ pub(crate) struct InfoBoxComponent {
     /// so key-column right-alignment matches the shaped glyph advance
     /// rather than a cell-grid estimate.
     key_col_w: f32,
+    /// Cell metrics frozen at `capture()` time so the `Render` impl
+    /// can build its tree from a minimal `RenderCtx` without re-borrowing
+    /// the host shaper. Same pattern as `PaletteComponent::ui_line_h`.
+    cell_w: f32,
+    cell_h: f32,
 }
 
 pub(super) fn action_short_label(action: &str) -> &str {
@@ -161,25 +166,38 @@ impl InfoBoxComponent {
             w,
             h,
             key_col_w,
+            cell_w: cx.cell_w,
+            cell_h: cx.cell_h,
         })
+    }
+
+    fn render_cx<'a>(cx: &'a UiContext<'_>) -> RenderCtx<'a> {
+        RenderCtx {
+            theme: cx.theme,
+            viewport: [cx.viewport_w, cx.viewport_h],
+            scale: 1.0,
+        }
     }
 }
 
 impl InfoBoxComponent {
-    pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        let root = self.build_tree(cx);
+    pub(crate) fn paint(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        let render_cx = Self::render_cx(cx);
+        // Fourth production usage of `ciri_ui::Render` after palette,
+        // context_menu, and paste_dialog.
+        let root = <Self as Render>::render(self, &render_cx).into_element();
         paint_element_tree(&root, cx, scene);
     }
 
-    fn build_tree(&self, cx: &UiContext<'_>) -> Div {
+    fn build_tree(&self, cx: &RenderCtx<'_>) -> Div {
         let bg = cx.theme.surface;
         let accent = cx.theme.accent;
         let fg = cx.theme.on_surface;
         let dim = cx.theme.on_surface_muted;
-        let padding = cx.cell_w;
-        let row_h = cx.cell_h + tokens::SPACE_1 * 2.0;
+        let padding = self.cell_w;
+        let row_h = self.cell_h + tokens::SPACE_1 * 2.0;
         let bw = tokens::BORDER_THIN;
-        let title_h = cx.cell_h + tokens::SPACE_1;
+        let title_h = self.cell_h + tokens::SPACE_1;
         let content_w = self.w - bw * 2.0;
 
         // Shadow + border + background — sink below `bg` with a flat sRGB
@@ -194,7 +212,7 @@ impl InfoBoxComponent {
         // it here guarantees every key fits and the "esc" alignment
         // matches the widest entry on proportional UI fonts.
         let key_col_w = self.key_col_w;
-        let gap_w = cx.cell_w * 2.0;
+        let gap_w = self.cell_w * 2.0;
         let mut panel = div()
             .in_layer(Layer::Overlay)
             .absolute()
@@ -241,6 +259,12 @@ impl InfoBoxComponent {
             );
         }
 
-        div().w(cx.viewport_w).h(cx.viewport_h).child(panel)
+        div().w(cx.viewport[0]).h(cx.viewport[1]).child(panel)
+    }
+}
+
+impl Render for InfoBoxComponent {
+    fn render(&mut self, cx: &RenderCtx<'_>) -> impl IntoElement {
+        self.build_tree(cx)
     }
 }

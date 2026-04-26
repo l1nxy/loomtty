@@ -126,7 +126,7 @@ impl UiFrame {
         if let Some(d) = &self.overview_bar {
             overview::paint_overview_action_bar(d, self.overview_hover, cx, scene);
         }
-        if let Some(component) = &self.infobox {
+        if let Some(component) = &mut self.infobox {
             component.paint(cx, scene);
         }
         if let Some(component) = &mut self.palette {

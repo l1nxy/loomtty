@@ -246,6 +246,10 @@ pub(crate) struct App {
     /// repeated switches inside the configured cooldown window. Pure
     /// input gesture state, no model meaning. Was on `AppModel`.
     pub last_focus_follows_mouse: Option<(u64, Instant)>,
+    /// Timestamp of the previous frame, used to compute `dt` for the
+    /// animation tick at the top of `render()`. Pure render-loop
+    /// bookkeeping with no model meaning. Was on `AppModel`.
+    pub last_frame: Instant,
     /// Horizontal scroll offset (px) for the inline pane-tab strip in
     /// the top bar. Pure UI ephemera — readers/writers all live in this
     /// crate: mouse wheel handler (mouse.rs), top-bar visibility helper
@@ -552,6 +556,7 @@ impl App {
             cursor_blink_visible: true,
             cursor_blink_timer: Instant::now(),
             last_focus_follows_mouse: None,
+            last_frame: Instant::now(),
             connection_cancel: None,
             motion_ticker: Arc::new(ciri_motion::Ticker::new()),
             ui_taffy_tree: std::cell::RefCell::new(taffy::TaffyTree::new()),

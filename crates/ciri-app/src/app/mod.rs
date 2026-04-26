@@ -58,7 +58,6 @@ pub struct AppModel {
     pub broadcast_mode: bool,
     pub should_exit: bool,
 
-    pub last_frame: Instant,
 
 
 
@@ -169,7 +168,6 @@ impl AppModel {
             pending_paste: None,
             broadcast_mode: false,
             should_exit: false,
-            last_frame: Instant::now(),
             workspace_last_pane_ids: HashMap::new(),
             last_left_click: None,
             hovered_link: None,

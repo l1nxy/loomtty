@@ -1954,8 +1954,8 @@ impl App {
         ciri_ui::clear_fallback_element_arena();
 
         let now = Instant::now();
-        let raw_dt = (now - self.core.last_frame).as_secs_f64();
-        self.core.last_frame = now;
+        let raw_dt = (now - self.last_frame).as_secs_f64();
+        self.last_frame = now;
         // When the app wakes after a long idle stretch, a large frame delta can
         // collapse newly started focus/move animations into a single frame.
         let max_dt = (self.core.frame_interval.as_secs_f64() * 2.0).max(1.0 / 60.0);

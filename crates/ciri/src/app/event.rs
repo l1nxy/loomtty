@@ -466,7 +466,7 @@ impl ApplicationHandler for App {
         self.animate_to_active();
         self.window = Some(window);
         self.renderer = Some(renderer);
-        self.core.last_frame = Instant::now();
+        self.last_frame = Instant::now();
 
         self.schedule_redraw();
     }

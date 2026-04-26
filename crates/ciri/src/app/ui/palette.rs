@@ -8,7 +8,7 @@ use super::tokens;
 use super::types::{UiAction, UiContext, UiPaletteHit, UiScene, ui_hit_id};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Div, FluentBuilder, Layer, Styled, div, text};
+use ciri_ui::{Div, FluentBuilder, Layer, Styled, div, text, uniform_list};
 
 const HIT_CLOSE: u64 = 1;
 const HIT_PANEL: u64 = 2;
@@ -217,55 +217,71 @@ impl PaletteComponent {
                 d.child(text("user@host[:port]").color(dim_color))
             });
 
-        let mut rows_col = div().w_full().flex_col();
-        for row in &self.rows {
-            let is_header = row.style == PaletteRowStyle::SectionHeader;
-            let tint = if row.is_selected {
-                Some(selected_bg)
-            } else if row.is_hovered {
-                Some(hovered_bg)
-            } else {
-                None
-            };
-            let label_color = if row.style == PaletteRowStyle::ConnectRemotePrompt {
-                accent
-            } else if is_header {
-                dim_color
-            } else {
-                fg_color
-            };
-            let label_text = if is_header {
-                format!("── {} ──", row.label)
-            } else {
-                row.label.clone()
-            };
-            let row_el = div()
-                .w_full()
-                .h(row_h)
-                .flex_row()
-                .items_center()
-                .child(div().w(text_pad).h(row_h))
-                .when(!is_header, |d| {
-                    d.hit_id(entry_hit_id(row.entry_idx)).cursor_pointer()
+        // `self.rows` is already pre-windowed by `capture()` to the
+        // visible slice; uniform_list here gives the column the correct
+        // explicit height and folds the per-row build into a single
+        // closure invocation. The no-matches placeholder is layered as a
+        // sibling so it isn't counted into the virtualised slice.
+        let visible_count = self.rows.len();
+        let rows_col = uniform_list(visible_count, row_h, 0..visible_count, |range| {
+            range
+                .map(|i| {
+                    let row = &self.rows[i];
+                    let is_header = row.style == PaletteRowStyle::SectionHeader;
+                    let tint = if row.is_selected {
+                        Some(selected_bg)
+                    } else if row.is_hovered {
+                        Some(hovered_bg)
+                    } else {
+                        None
+                    };
+                    let label_color = if row.style == PaletteRowStyle::ConnectRemotePrompt {
+                        accent
+                    } else if is_header {
+                        dim_color
+                    } else {
+                        fg_color
+                    };
+                    let label_text = if is_header {
+                        format!("── {} ──", row.label)
+                    } else {
+                        row.label.clone()
+                    };
+                    div()
+                        .w_full()
+                        .h(row_h)
+                        .flex_row()
+                        .items_center()
+                        .child(div().w(text_pad).h(row_h))
+                        .when(!is_header, |d| {
+                            d.hit_id(entry_hit_id(row.entry_idx)).cursor_pointer()
+                        })
+                        .when_some(tint, |d, color| d.bg(color).rounded(tokens::SPACE_1))
+                        .child(text(label_text).color(label_color))
                 })
-                .when_some(tint, |d, color| d.bg(color).rounded(tokens::SPACE_1))
-                .child(text(label_text).color(label_color));
-            rows_col = rows_col.child(row_el);
-        }
-        if self.show_no_matches {
-            rows_col = rows_col.child(
-                div()
-                    .w_full()
-                    .h(row_h)
-                    .flex_row()
-                    .items_center()
-                    .child(div().w(text_pad).h(row_h))
-                    .child(text("No matching commands").color(dim_color)),
-            );
-        }
+                .collect()
+        });
 
         let rows_area_h = self.layout.visible_rows as f32 * row_h;
-        let mut rows_area = div().w_full().h(rows_area_h).flex_row().child(rows_col);
+        // Always wrap in a flex_col so the layout-tree shape is identical
+        // regardless of `show_no_matches` — Taffy then has no chance of
+        // sizing the placeholder differently between the empty and
+        // non-empty branches.
+        let rows_inner = div().w_full().flex_col().child(rows_col).when(
+            self.show_no_matches,
+            |d| {
+                d.child(
+                    div()
+                        .w_full()
+                        .h(row_h)
+                        .flex_row()
+                        .items_center()
+                        .child(div().w(text_pad).h(row_h))
+                        .child(text("No matching commands").color(dim_color)),
+                )
+            },
+        );
+        let mut rows_area = div().w_full().h(rows_area_h).flex_row().child(rows_inner);
 
         let mut panel = div()
             .in_layer(Layer::Modal)

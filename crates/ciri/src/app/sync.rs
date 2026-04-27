@@ -486,8 +486,7 @@ impl App {
                         || (new.adjust_strikethrough_position - old.adjust_strikethrough_position)
                             .abs()
                             > f32::EPSILON
-                        || (new.adjust_strikethrough_thickness
-                            - old.adjust_strikethrough_thickness)
+                        || (new.adjust_strikethrough_thickness - old.adjust_strikethrough_thickness)
                             .abs()
                             > f32::EPSILON
                 };
@@ -536,12 +535,8 @@ impl App {
                                 font_resolver: shaper.font_resolver(),
                                 #[cfg(windows)]
                                 dwrite_resolver: shaper.dwrite_resolver(),
-                                cell_width_scale: Some(
-                                    self.core.config.font.adjust_cell_width,
-                                ),
-                                cell_height_scale: Some(
-                                    self.core.config.font.adjust_cell_height,
-                                ),
+                                cell_width_scale: Some(self.core.config.font.adjust_cell_width),
+                                cell_height_scale: Some(self.core.config.font.adjust_cell_height),
                             }) {
                                 Ok(v) => v,
                                 Err(e) => {
@@ -612,6 +607,40 @@ mod tests {
     /// to prevent flaky parallel failures in CI.
     static LAST_SESSION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    struct ScopedStateHome {
+        path: std::path::PathBuf,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl ScopedStateHome {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "ciri-sync-{label}-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            let previous = std::env::var_os("XDG_STATE_HOME");
+            unsafe {
+                std::env::set_var("XDG_STATE_HOME", &path);
+            }
+            Self { path, previous }
+        }
+    }
+
+    impl Drop for ScopedStateHome {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.previous {
+                    Some(value) => std::env::set_var("XDG_STATE_HOME", value),
+                    None => std::env::remove_var("XDG_STATE_HOME"),
+                }
+            }
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
     fn make_app() -> App {
         App::new(CiriConfig::default(), "test-session")
     }
@@ -654,6 +683,7 @@ mod tests {
     #[test]
     fn session_switch_state_sync_does_not_prune_retained_client_state() {
         let _lock = LAST_SESSION_LOCK.lock().unwrap();
+        let _state_home = ScopedStateHome::new("state-sync-retains-client-state");
         let mut app = make_app();
         let (event_tx, rx) = crossbeam_channel::unbounded();
         app.core.server_rx = Some(rx);
@@ -738,6 +768,7 @@ mod tests {
     #[test]
     fn session_switch_only_persists_last_session_after_authoritative_resync() {
         let _lock = LAST_SESSION_LOCK.lock().unwrap();
+        let _state_home = ScopedStateHome::new("last-session-authoritative-resync");
         let mut app = make_app();
         let (event_tx, rx) = crossbeam_channel::unbounded();
         app.core.server_rx = Some(rx);
@@ -1194,6 +1225,7 @@ mod tests {
     fn finalize_authoritative_session_switch_clears_slot_query_state() {
         // finalize_authoritative_session_switch 清理 slot_session_pending 和 query_start
         let _lock = LAST_SESSION_LOCK.lock().unwrap();
+        let _state_home = ScopedStateHome::new("finalize-authoritative-session-switch");
         let mut app = make_app();
         let (event_tx, rx) = crossbeam_channel::unbounded();
         app.core.server_rx = Some(rx);
@@ -1433,6 +1465,7 @@ mod tests {
     #[test]
     fn stale_frame_for_old_session_is_dropped_after_session_switch() {
         let _lock = LAST_SESSION_LOCK.lock().unwrap();
+        let _state_home = ScopedStateHome::new("stale-frame-session-switch");
         let mut app = make_app();
         let (event_tx, rx) = crossbeam_channel::unbounded();
         app.core.server_rx = Some(rx);

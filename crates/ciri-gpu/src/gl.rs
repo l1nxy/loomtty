@@ -602,6 +602,10 @@ impl GlRectPipeline {
         let rect_fs = RECT_FS
             .replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS)
             .replace("// CORNER_FUNCS_PLACEHOLDER", GLSL_CORNER_FUNCS);
+        debug_assert!(
+            !rect_fs.contains("PLACEHOLDER"),
+            "shader source still contains unfilled placeholder after all replacements"
+        );
         let program = compile_program(gl, RECT_VS, &rect_fs, "rect")?;
         let loc_viewport = gl
             .get_uniform_location(program, "u_viewport")
@@ -787,6 +791,10 @@ struct GlSdfPipeline {
 impl GlSdfPipeline {
     unsafe fn new(gl: &glow::Context, max_rects: usize) -> crate::Result<Self> {
         let sdf_fs = SDF_FS.replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS);
+        debug_assert!(
+            !sdf_fs.contains("PLACEHOLDER"),
+            "shader source still contains unfilled placeholder after all replacements"
+        );
         let program = compile_program(gl, SDF_VS, &sdf_fs, "sdf")?;
         let loc_viewport = gl
             .get_uniform_location(program, "u_viewport")
@@ -887,6 +895,14 @@ impl GlyphAtlasGpu {
         let color_fs = COLOR_FS
             .replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS)
             .replace("// CORNER_FUNCS_PLACEHOLDER", GLSL_CORNER_FUNCS);
+        debug_assert!(
+            !alpha_fs.contains("PLACEHOLDER"),
+            "shader source still contains unfilled placeholder after all replacements"
+        );
+        debug_assert!(
+            !color_fs.contains("PLACEHOLDER"),
+            "shader source still contains unfilled placeholder after all replacements"
+        );
 
         let alpha = GlAtlasLayer::new(
             gl,

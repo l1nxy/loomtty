@@ -3118,6 +3118,144 @@ mod tests {
     }
 
     #[test]
+    fn build_tiles_zero_pane_corner_radius_marks_ranges_unrounded() {
+        let mut app = make_app();
+        app.core.config.appearance.focus_ring.style = FocusRingStyle::Solid;
+        app.core.config.appearance.pane_corner_radius = 0.0;
+        let tiles = vec![
+            (1, GeoRect::new(10.0, 20.0, 300.0, 200.0), false),
+            (2, GeoRect::new(330.0, 20.0, 300.0, 200.0), true),
+        ];
+        let mut bg_rects = Vec::new();
+        let mut bg_rect_ranges = Vec::new();
+        let mut sdf_rects = Vec::new();
+        let mut glyphs = Vec::new();
+        let mut color_glyphs = Vec::new();
+        let mut glyph_batches = Vec::new();
+        let mut color_glyph_batches = Vec::new();
+        let mut active_glyph_batches = Vec::new();
+        let mut active_color_glyph_batches = Vec::new();
+
+        app.build_tiles(
+            &tiles,
+            1.0,
+            1600.0,
+            900.0,
+            &mut bg_rects,
+            &mut bg_rect_ranges,
+            &mut sdf_rects,
+            &mut glyphs,
+            &mut color_glyphs,
+            &mut glyph_batches,
+            &mut color_glyph_batches,
+            &mut active_glyph_batches,
+            &mut active_color_glyph_batches,
+        );
+
+        assert!(!bg_rect_ranges.is_empty());
+        assert!(
+            bg_rect_ranges
+                .iter()
+                .all(|range| range.pane_radii == [0.0, 0.0, 0.0, 0.0])
+        );
+        assert!(glyph_batches.is_empty());
+        assert!(color_glyph_batches.is_empty());
+        assert!(active_glyph_batches.is_empty());
+        assert!(active_color_glyph_batches.is_empty());
+    }
+
+    #[test]
+    fn build_tiles_configures_pane_range_origin_size_and_radius() {
+        let mut app = make_app();
+        app.core.config.appearance.focus_ring.style = FocusRingStyle::Solid;
+        app.core.config.appearance.pane_corner_radius = 8.0;
+        let inactive = GeoRect::new(10.0, 20.0, 300.0, 200.0);
+        let active = GeoRect::new(330.0, 40.0, 280.0, 180.0);
+        let tiles = vec![(1, inactive, false), (2, active, true)];
+        let mut bg_rects = Vec::new();
+        let mut bg_rect_ranges = Vec::new();
+        let mut sdf_rects = Vec::new();
+        let mut glyphs = Vec::new();
+        let mut color_glyphs = Vec::new();
+        let mut glyph_batches = Vec::new();
+        let mut color_glyph_batches = Vec::new();
+        let mut active_glyph_batches = Vec::new();
+        let mut active_color_glyph_batches = Vec::new();
+
+        app.build_tiles(
+            &tiles,
+            1.0,
+            1600.0,
+            900.0,
+            &mut bg_rects,
+            &mut bg_rect_ranges,
+            &mut sdf_rects,
+            &mut glyphs,
+            &mut color_glyphs,
+            &mut glyph_batches,
+            &mut color_glyph_batches,
+            &mut active_glyph_batches,
+            &mut active_color_glyph_batches,
+        );
+
+        assert_eq!(bg_rect_ranges.len(), 2);
+        assert_eq!(bg_rect_ranges[0].pane_origin, [inactive.x, inactive.y]);
+        assert_eq!(bg_rect_ranges[0].pane_size, [inactive.w, inactive.h]);
+        assert_eq!(bg_rect_ranges[0].pane_radii, [8.0, 8.0, 8.0, 8.0]);
+        assert_eq!(bg_rect_ranges[1].pane_origin, [active.x, active.y]);
+        assert_eq!(bg_rect_ranges[1].pane_size, [active.w, active.h]);
+        assert_eq!(bg_rect_ranges[1].pane_radii, [8.0, 8.0, 8.0, 8.0]);
+    }
+
+    #[test]
+    fn solid_focus_ring_sdf_is_separate_from_pane_body_range() {
+        let mut app = make_app();
+        app.core.config.appearance.focus_ring.style = FocusRingStyle::Solid;
+        app.core.config.appearance.pane_corner_radius = 8.0;
+        let active = GeoRect::new(120.0, 80.0, 320.0, 240.0);
+        let tiles = vec![(7, active, true)];
+        let mut bg_rects = Vec::new();
+        let mut bg_rect_ranges = Vec::new();
+        let mut sdf_rects = Vec::new();
+        let mut glyphs = Vec::new();
+        let mut color_glyphs = Vec::new();
+        let mut glyph_batches = Vec::new();
+        let mut color_glyph_batches = Vec::new();
+        let mut active_glyph_batches = Vec::new();
+        let mut active_color_glyph_batches = Vec::new();
+
+        app.build_tiles(
+            &tiles,
+            1.0,
+            1600.0,
+            900.0,
+            &mut bg_rects,
+            &mut bg_rect_ranges,
+            &mut sdf_rects,
+            &mut glyphs,
+            &mut color_glyphs,
+            &mut glyph_batches,
+            &mut color_glyph_batches,
+            &mut active_glyph_batches,
+            &mut active_color_glyph_batches,
+        );
+
+        assert_eq!(sdf_rects.len(), 1);
+        assert_eq!(sdf_rects[0].pos, [active.x, active.y]);
+        assert_eq!(sdf_rects[0].size, [active.w, active.h]);
+        assert_eq!(sdf_rects[0].radii, [8.0, 8.0, 8.0, 8.0]);
+        assert_eq!(bg_rect_ranges.len(), 1);
+        assert_eq!(bg_rect_ranges[0].pane_origin, [active.x, active.y]);
+        assert_eq!(bg_rect_ranges[0].pane_size, [active.w, active.h]);
+        assert_eq!(bg_rect_ranges[0].pane_radii, [8.0, 8.0, 8.0, 8.0]);
+        assert!(
+            bg_rect_ranges
+                .iter()
+                .all(|range| range.pane_size != [0.0, 0.0])
+        );
+    }
+
+    #[test]
     fn glow_focus_ring_sdf_preserves_configured_layers() {
         let mut app = make_app();
         app.core.config.appearance.focus_ring.style = FocusRingStyle::Glow;

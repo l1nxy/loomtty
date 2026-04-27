@@ -274,7 +274,7 @@ PSInput vs_main(VSInput input) {
 // Per-corner rounding alpha mask. HLSL twin of `GLSL_CORNER_FUNCS` —
 // same Inigo Quilez SDF recipe, same shape as ciri's existing
 // `sdf_rounded_box` over in the SDF chrome path. `radii` order is CSS:
-// tl, tr, br, bl. All-zero radii short-circuits to 1.0.
+// tl, tr, br, bl. All-zero radii takes the no-op short-circuit to 1.0.
 const HLSL_CORNER_FUNCS: &str = r#"
 float ciri_sdf_rounded_box(float2 p, float2 b, float4 r) {
     float rx = (p.x > 0.0) ? r.y : r.x;
@@ -959,6 +959,14 @@ impl DxRectPipeline {
         let rect_ps = RECT_PS_HLSL
             .replace("// RECT_COMMON_HLSL_PLACEHOLDER", RECT_COMMON_HLSL)
             .replace("// HLSL_CORNER_FUNCS_PLACEHOLDER", HLSL_CORNER_FUNCS);
+        debug_assert!(
+            !rect_vs.contains("PLACEHOLDER"),
+            "shader source still contains unfilled placeholder after all replacements"
+        );
+        debug_assert!(
+            !rect_ps.contains("PLACEHOLDER"),
+            "shader source still contains unfilled placeholder after all replacements"
+        );
 
         let vs_blob = compile_shader(&rect_vs, "vs_main", "vs_5_0")?;
         let vs_code = std::slice::from_raw_parts(
@@ -1597,6 +1605,10 @@ impl Renderer {
         let alpha_ps = ALPHA_PS_HLSL
             .replace("// HLSL_COLOR_FUNCS_PLACEHOLDER", HLSL_COLOR_FUNCS)
             .replace("// HLSL_CORNER_FUNCS_PLACEHOLDER", HLSL_CORNER_FUNCS);
+        debug_assert!(
+            !alpha_ps.contains("PLACEHOLDER"),
+            "shader source still contains unfilled placeholder after all replacements"
+        );
 
         let alpha = unsafe {
             DxAtlasLayer::new(
@@ -1621,6 +1633,10 @@ impl Renderer {
 
         let color_ps = COLOR_PS_HLSL
             .replace("// HLSL_CORNER_FUNCS_PLACEHOLDER", HLSL_CORNER_FUNCS);
+        debug_assert!(
+            !color_ps.contains("PLACEHOLDER"),
+            "shader source still contains unfilled placeholder after all replacements"
+        );
 
         let color = unsafe {
             DxAtlasLayer::new(

@@ -45,11 +45,11 @@ the framework's structural shape, not the painting pipeline integration.
   of the per-`hovered_*` storage. App now keeps GPU resources,
   cached scene/views, drag/animation/blink state, and a few
   derive-at-hash-time helpers — three concerns, not four.
-- `render()` is still ~495 lines (down from 570) mixing per-pane view
-  update, buffer assembly, GPU draw, and atlas/animation post-
-  processing. Phase 0g extracted only the borrow-clean preamble
-  (`prepare_frame`); the remaining three splits still want a
-  `RenderState` substructure on `App` first. **Open.**
+- ~~`render()` is 570 lines~~ — split across `prepare_frame` (Phase
+  0g step 1), `update_pane_views` (Step 33), `assemble_scene` +
+  `AssembledScene` POD (Step 34), and `draw_and_finish` (Step 35).
+  `render()` itself is now 89 lines and reads top-to-bottom as a
+  control-flow narrative.
 - ~~`tile_paint_config()` body duplicated~~ — fixed in 0b.
 - ~~`SectionHeader` skip logic duplicated three times~~ — fixed in 0c.
 - ~~`image_atlas_entries.clear()` over-invalidation~~ — fixed in 0d.
@@ -205,19 +205,26 @@ require any framework change.
   `mem::take` + record `cached_len` + transient extend + post-draw
   `truncate(cached_len)` + put-back. One Vec memcpy per frame
   eliminated; capacity reused.
-- **0g.** [PARTIAL] Split `render()` into four sub-methods. Hands-on
-  attempt revealed the per-pane view loop, buffer take dance, and
-  `cache`/`shaper`/`cached_views` borrow interleaving make a clean
-  full-extraction impossible without first restructuring `App`. The
-  borrow-clean preamble (~37 lines: surface check, fallback-arena
-  clear, `dt` computation, focus-change pre-tick) has been extracted
-  to `App::prepare_frame()`. The remaining three splits (per-pane
-  view update, buffer assembly, atlas/cleanup) still want a
-  `RenderState` substructure on `App` first; the natural prerequisite
-  is finishing Phase 5's state migration so palette/top_bar/tab_bar
-  state stops sharing `&mut self` with the render loop. Pick this
-  back up once a real chrome widget has moved its state onto an
-  `impl Render` view.
+- **0g.** [DONE] Split `render()` into four sub-methods. Shipped
+  across four steps:
+  - **prepare_frame** (initial) — surface check, fallback-arena
+    clear, `dt` computation, focus-change pre-tick.
+  - **update_pane_views** (Step 33) — per-pane terminal view sync
+    (full vs incremental rebuild, scrollbar key/rect refresh,
+    prediction overlays). The `cache`/`shaper`/`cached_views`
+    borrow interleaving the original audit flagged turned out to
+    be tractable inside one `&mut self` method body — Rust's
+    split-borrow handles distinct fields just fine.
+  - **assemble_scene** (Step 34) — buffer-take dance over 7 Vecs,
+    retained-pane vs from-scratch tile build, chrome UI + transient
+    overlay extension. Returns `AssembledScene` POD that lives only
+    across the assemble→draw seam (not a permanent App field, so
+    no AppModel restructure was needed after all).
+  - **draw_and_finish** (Step 35) — `renderer.draw_frame` + put
+    every Vec back into `render_bufs` / `cached_ui_scene.sdf_rects`
+    + atlas-overflow recovery + `schedule_redraw`.
+  After this, `render()` is 89 lines (was 495) and reads as a
+  control-flow narrative.
 
 ### Phase 1 — same-frame hover detection (light prepaint)  [DONE]
 

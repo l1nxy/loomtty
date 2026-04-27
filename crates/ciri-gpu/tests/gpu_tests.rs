@@ -13,7 +13,7 @@
 use blade_graphics as gpu;
 use blade_graphics::ShaderData;
 use ciri_render::FrameScene;
-use ciri_render::glyph_cache::{GlyphInstance, PendingUpload, ScissoredRange};
+use ciri_render::glyph_cache::{GlyphInstance, PaneGlyphRange, PendingUpload};
 use ciri_render::rect::Rect;
 use std::ptr;
 
@@ -358,14 +358,14 @@ fn glyph_instance_bytemuck_layout() {
 }
 
 #[test]
-fn scissored_range_default() {
-    let sr = ScissoredRange::default();
-    assert_eq!(sr.x, 0);
-    assert_eq!(sr.y, 0);
-    assert_eq!(sr.w, 0);
-    assert_eq!(sr.h, 0);
+fn pane_glyph_range_default() {
+    let sr = PaneGlyphRange::default();
+    assert_eq!(sr.scissor, (0, 0, 0, 0));
     assert_eq!(sr.start, 0);
-    assert_eq!(sr.end, 0);
+    assert_eq!(sr.count, 0);
+    assert_eq!(sr.pane_origin, [0.0, 0.0]);
+    assert_eq!(sr.pane_size, [0.0, 0.0]);
+    assert_eq!(sr.pane_radii, [0.0, 0.0, 0.0, 0.0]);
 }
 
 #[test]

@@ -6,7 +6,7 @@
 use anyhow::Result;
 use ciri_config::config::RenderConfig;
 use ciri_render::FrameScene;
-use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, PendingUpload, ScissoredRange};
+use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, PaneGlyphRange, PendingUpload};
 use ciri_render::rect::Rect;
 use ciri_render::sdf_rect::SdfRect;
 
@@ -812,7 +812,7 @@ impl DxAtlasLayer {
         &self,
         ctx: &ID3D11DeviceContext,
         instance_count: usize,
-        batches: &[ScissoredRange],
+        batches: &[PaneGlyphRange],
     ) {
         if instance_count == 0 || batches.is_empty() {
             return;
@@ -831,16 +831,20 @@ impl DxAtlasLayer {
         ctx.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
 
         for batch in batches {
-            let start = batch.start.min(count);
-            let end = batch.end.min(count);
-            if start >= end || batch.w == 0 || batch.h == 0 {
+            let (sx, sy, sw, sh) = batch.scissor;
+            let start = (batch.start as usize).min(count);
+            let end = (start + batch.count as usize).min(count);
+            if start >= end || sw == 0 || sh == 0 {
                 continue;
             }
+            // C5 will wire pane_origin / pane_size / pane_radii into the
+            // DX glyph cbuffer; for now the DX path predates corner-alpha
+            // and only consumes the scissor portion of `PaneGlyphRange`.
             let rect = RECT {
-                left: batch.x as i32,
-                top: batch.y as i32,
-                right: (batch.x + batch.w) as i32,
-                bottom: (batch.y + batch.h) as i32,
+                left: sx as i32,
+                top: sy as i32,
+                right: (sx + sw) as i32,
+                bottom: (sy + sh) as i32,
             };
             ctx.RSSetScissorRects(Some(&[rect]));
             let offset = (start * std::mem::size_of::<GlyphInstance>()) as u32;
@@ -1663,21 +1667,19 @@ impl Renderer {
             }
 
             // 8. Overlay glyphs (no re-upload, just draw remaining range).
-            let overlay_alpha = ScissoredRange {
-                x: 0,
-                y: 0,
-                w: self.width,
-                h: self.height,
-                start: scene.pane_glyph_end,
-                end: scene.glyphs.len(),
+            // Zero pane_size hits the helper short-circuit (no clipping)
+            // — once C5 wires the uniforms into the DX path.
+            let overlay_alpha = PaneGlyphRange {
+                start: scene.pane_glyph_end as u32,
+                count: (scene.glyphs.len() - scene.pane_glyph_end) as u32,
+                scissor: (0, 0, self.width, self.height),
+                ..PaneGlyphRange::default()
             };
-            let overlay_color = ScissoredRange {
-                x: 0,
-                y: 0,
-                w: self.width,
-                h: self.height,
-                start: scene.pane_color_glyph_end,
-                end: scene.color_glyphs.len(),
+            let overlay_color = PaneGlyphRange {
+                start: scene.pane_color_glyph_end as u32,
+                count: (scene.color_glyphs.len() - scene.pane_color_glyph_end) as u32,
+                scissor: (0, 0, self.width, self.height),
+                ..PaneGlyphRange::default()
             };
             atlas_gpu
                 .alpha

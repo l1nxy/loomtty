@@ -25,7 +25,7 @@ use ciri_gpu::{GlyphAtlasGpu, Renderer};
 use ciri_layout::geometry::ViewSize;
 use ciri_layout::workspace_set::WorkspaceSet;
 use ciri_protocol::message::*;
-use ciri_render::glyph_cache::{GlyphCache, GlyphEntry, GlyphInstance, ScissoredRange};
+use ciri_render::glyph_cache::{GlyphCache, GlyphEntry, GlyphInstance, PaneGlyphRange};
 use ciri_render::rect::{PaneRectRange, Rect};
 use ciri_render::shaper::TextShaper;
 use ciri_render::terminal::{ColorTable, TerminalView};
@@ -40,9 +40,9 @@ use winit::window::Window;
 // Re-export core types so existing `use super::*` in submodules still works.
 pub(crate) use ciri_app::app::{
     AppModel, ClientImagePlacement, ConnectionKind, ConnectionSlot, ContextMenu, ContextMenuAction,
-    ContextMenuItem, GestureState, HoveredLink, PaletteEntryKind, PasteButton,
-    PendingPaste, PendingPasteTarget, ReconnectPlan, RemoteConnectionConfig, ResizeDragState,
-    ScrollbarDragInfo, SearchMatch, SearchState, Selection, ServerEvent, TopBarHoverRegion,
+    ContextMenuItem, GestureState, HoveredLink, PaletteEntryKind, PasteButton, PendingPaste,
+    PendingPasteTarget, ReconnectPlan, RemoteConnectionConfig, ResizeDragState, ScrollbarDragInfo,
+    SearchMatch, SearchState, Selection, ServerEvent, TopBarHoverRegion,
 };
 use ciri_layout::geometry::Rect as GeoRect;
 
@@ -93,10 +93,10 @@ pub(crate) struct RenderBuffers {
     pub dirty_bg_ranges: Vec<(usize, usize)>,
     pub dirty_glyph_ranges: Vec<(usize, usize)>,
     pub dirty_color_ranges: Vec<(usize, usize)>,
-    pub glyph_batches: Vec<ScissoredRange>,
-    pub color_glyph_batches: Vec<ScissoredRange>,
-    pub active_glyph_batches: Vec<ScissoredRange>,
-    pub active_color_glyph_batches: Vec<ScissoredRange>,
+    pub glyph_batches: Vec<PaneGlyphRange>,
+    pub color_glyph_batches: Vec<PaneGlyphRange>,
+    pub active_glyph_batches: Vec<PaneGlyphRange>,
+    pub active_color_glyph_batches: Vec<PaneGlyphRange>,
     pub pane_order: Vec<u64>,
     pub pane_regions: HashMap<u64, PaneSceneRegion>,
     pub pane_glyph_end: usize,
@@ -131,6 +131,9 @@ pub(crate) struct PaneSceneRegion {
     pub color_len: usize,
     pub color_cap: usize,
     pub scissor: (u32, u32, u32, u32),
+    pub pane_origin: [f32; 2],
+    pub pane_size: [f32; 2],
+    pub pane_radii: [f32; 4],
     pub is_active: bool,
     pub snapshot: u64,
 }
@@ -1258,10 +1261,8 @@ impl App {
         if !self.core.overview.active {
             return None;
         }
-        let bar = crate::app::ui::overview::overview_action_bar_data(
-            self,
-            self.overview_hovered_pane,
-        )?;
+        let bar =
+            crate::app::ui::overview::overview_action_bar_data(self, self.overview_hovered_pane)?;
         let (mx, my) = self.last_mouse_pos?;
         if my < bar.bar_y || my >= bar.bar_y + bar.bar_h {
             return None;
@@ -1334,9 +1335,7 @@ impl App {
     /// `current_pane_tab_hover` — derived at hash time so the
     /// display-side `cx.is_hovered(hit_id)` and the cache invalidation
     /// signal stay in lockstep without a stored field on `App`.
-    pub(crate) fn current_top_bar_region_hover(
-        &self,
-    ) -> Option<ciri_app::app::TopBarHoverRegion> {
+    pub(crate) fn current_top_bar_region_hover(&self) -> Option<ciri_app::app::TopBarHoverRegion> {
         let (mx, my) = self.last_mouse_pos?;
         let (vw, vh) = self.command_palette_viewport_size();
         let (cw, ch) = self.cell_dimensions();

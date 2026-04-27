@@ -3,7 +3,7 @@ use ciri_config::theme::ThemeConfig;
 use ciri_layout::geometry::Rect as GeoRect;
 use ciri_protocol::message::*;
 use ciri_render::FrameScene;
-use ciri_render::glyph_cache::{GlyphInstance, ScissoredRange};
+use ciri_render::glyph_cache::{GlyphInstance, PaneGlyphRange};
 use ciri_render::rect::{PaneRectRange, Rect};
 use ciri_render::terminal;
 use std::collections::hash_map::DefaultHasher;
@@ -31,10 +31,10 @@ struct AssembledScene {
     bg_rect_ranges: Vec<PaneRectRange>,
     glyphs: Vec<GlyphInstance>,
     color_glyphs: Vec<GlyphInstance>,
-    glyph_batches: Vec<ScissoredRange>,
-    color_glyph_batches: Vec<ScissoredRange>,
-    active_glyph_batches: Vec<ScissoredRange>,
-    active_color_glyph_batches: Vec<ScissoredRange>,
+    glyph_batches: Vec<PaneGlyphRange>,
+    color_glyph_batches: Vec<PaneGlyphRange>,
+    active_glyph_batches: Vec<PaneGlyphRange>,
+    active_color_glyph_batches: Vec<PaneGlyphRange>,
     /// Cached chrome SDF rects extended in-place by the transient pass.
     /// `cached_sdf_len` records the prefix length so post-draw can
     /// truncate back to exactly the cached portion before returning the
@@ -68,6 +68,9 @@ struct PaneGlyphFragment {
     glyphs: Vec<GlyphInstance>,
     color_glyphs: Vec<GlyphInstance>,
     scissor: (u32, u32, u32, u32),
+    pane_origin: [f32; 2],
+    pane_size: [f32; 2],
+    pane_radii: [f32; 4],
     is_active: bool,
     snapshot: u64,
 }
@@ -95,6 +98,27 @@ impl App {
             start: start as u32,
             count: (end - start) as u32,
             ..PaneRectRange::default()
+        })
+    }
+
+    fn pane_glyph_range(
+        &self,
+        start: usize,
+        end: usize,
+        scissor: (u32, u32, u32, u32),
+        pane: &GeoRect,
+    ) -> Option<PaneGlyphRange> {
+        if start >= end {
+            return None;
+        }
+        let radius = self.core.config.appearance.pane_corner_radius;
+        Some(PaneGlyphRange {
+            start: start as u32,
+            count: (end - start) as u32,
+            scissor,
+            pane_origin: [pane.x, pane.y],
+            pane_size: [pane.w, pane.h],
+            pane_radii: [radius, radius, radius, radius],
         })
     }
 
@@ -239,6 +263,12 @@ impl App {
             glyphs,
             color_glyphs,
             scissor: visual.scissor,
+            pane_origin: [visual.tr.x, visual.tr.y],
+            pane_size: [visual.tr.w, visual.tr.h],
+            pane_radii: {
+                let radius = self.core.config.appearance.pane_corner_radius;
+                [radius, radius, radius, radius]
+            },
             is_active,
             snapshot,
         })
@@ -1406,8 +1436,8 @@ impl App {
         bg_rect_ranges: &mut Vec<PaneRectRange>,
         glyphs: &mut Vec<GlyphInstance>,
         color_glyphs: &mut Vec<GlyphInstance>,
-        glyph_batches: &mut Vec<ScissoredRange>,
-        color_glyph_batches: &mut Vec<ScissoredRange>,
+        glyph_batches: &mut Vec<PaneGlyphRange>,
+        color_glyph_batches: &mut Vec<PaneGlyphRange>,
     ) {
         let Some(visual) = self.pane_visual_state(pane_id, tile_rect, zoom, vw, vh) else {
             return;
@@ -1563,26 +1593,19 @@ impl App {
         self.build_pane_images(pane_id, inner_x, inner_y, zoom, visual.dim, color_glyphs);
 
         // Scissor batches
-        let (sx, sy, sw, sh) = visual.scissor;
         if glyph_start < glyphs.len() {
-            glyph_batches.push(ScissoredRange {
-                x: sx,
-                y: sy,
-                w: sw,
-                h: sh,
-                start: glyph_start,
-                end: glyphs.len(),
-            });
+            if let Some(range) =
+                self.pane_glyph_range(glyph_start, glyphs.len(), visual.scissor, &tr)
+            {
+                glyph_batches.push(range);
+            }
         }
         if color_start < color_glyphs.len() {
-            color_glyph_batches.push(ScissoredRange {
-                x: sx,
-                y: sy,
-                w: sw,
-                h: sh,
-                start: color_start,
-                end: color_glyphs.len(),
-            });
+            if let Some(range) =
+                self.pane_glyph_range(color_start, color_glyphs.len(), visual.scissor, &tr)
+            {
+                color_glyph_batches.push(range);
+            }
         }
 
         // Open animation overlay
@@ -1612,10 +1635,10 @@ impl App {
         bg_rect_ranges: &mut Vec<PaneRectRange>,
         glyphs: &mut Vec<GlyphInstance>,
         color_glyphs: &mut Vec<GlyphInstance>,
-        glyph_batches: &mut Vec<ScissoredRange>,
-        color_glyph_batches: &mut Vec<ScissoredRange>,
-        active_glyph_batches: &mut Vec<ScissoredRange>,
-        active_color_glyph_batches: &mut Vec<ScissoredRange>,
+        glyph_batches: &mut Vec<PaneGlyphRange>,
+        color_glyph_batches: &mut Vec<PaneGlyphRange>,
+        active_glyph_batches: &mut Vec<PaneGlyphRange>,
+        active_color_glyph_batches: &mut Vec<PaneGlyphRange>,
     ) -> usize {
         let zoom_threshold = self.core.config.animation.zoom_threshold;
         let paint = self.tile_paint_config();
@@ -1762,6 +1785,9 @@ impl App {
                     color_len: fragment.color_glyphs.len(),
                     color_cap,
                     scissor: fragment.scissor,
+                    pane_origin: fragment.pane_origin,
+                    pane_size: fragment.pane_size,
+                    pane_radii: fragment.pane_radii,
                     is_active: fragment.is_active,
                     snapshot: fragment.snapshot,
                     ..Default::default()
@@ -1856,6 +1882,9 @@ impl App {
                 region_mut.glyph_len = fragment.glyphs.len();
                 region_mut.color_len = fragment.color_glyphs.len();
                 region_mut.scissor = fragment.scissor;
+                region_mut.pane_origin = fragment.pane_origin;
+                region_mut.pane_size = fragment.pane_size;
+                region_mut.pane_radii = fragment.pane_radii;
                 region_mut.is_active = fragment.is_active;
                 region_mut.snapshot = fragment.snapshot;
             }
@@ -1876,15 +1905,14 @@ impl App {
             let Some(region) = self.render_bufs.pane_regions.get(&pane_id).copied() else {
                 continue;
             };
-            let (x, y, w, h) = region.scissor;
             if region.glyph_len > 0 {
-                let batch = ScissoredRange {
-                    x,
-                    y,
-                    w,
-                    h,
-                    start: region.glyph_offset,
-                    end: region.glyph_offset + region.glyph_len,
+                let batch = PaneGlyphRange {
+                    start: region.glyph_offset as u32,
+                    count: region.glyph_len as u32,
+                    scissor: region.scissor,
+                    pane_origin: region.pane_origin,
+                    pane_size: region.pane_size,
+                    pane_radii: region.pane_radii,
                 };
                 if region.is_active {
                     self.render_bufs.active_glyph_batches.push(batch);
@@ -1893,13 +1921,13 @@ impl App {
                 }
             }
             if region.color_len > 0 {
-                let batch = ScissoredRange {
-                    x,
-                    y,
-                    w,
-                    h,
-                    start: region.color_offset,
-                    end: region.color_offset + region.color_len,
+                let batch = PaneGlyphRange {
+                    start: region.color_offset as u32,
+                    count: region.color_len as u32,
+                    scissor: region.scissor,
+                    pane_origin: region.pane_origin,
+                    pane_size: region.pane_size,
+                    pane_radii: region.pane_radii,
                 };
                 if region.is_active {
                     self.render_bufs.active_color_glyph_batches.push(batch);
@@ -2939,8 +2967,10 @@ mod tests {
             .map(|c| c.cell_height)
             .expect("test_cache populated above");
         assert!(
-            sdf_rects.iter().any(|r| (r.size[0] - 2.0).abs() < 0.01
-                && (r.size[1] - expected_cursor_h).abs() < 0.01),
+            sdf_rects
+                .iter()
+                .any(|r| (r.size[0] - 2.0).abs() < 0.01
+                    && (r.size[1] - expected_cursor_h).abs() < 0.01),
             "IME preedit cursor should be emitted as a narrow SDF rect (2.0 × cell_h = {})",
             expected_cursor_h,
         );

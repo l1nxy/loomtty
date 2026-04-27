@@ -7,7 +7,7 @@
 
 use ciri_config::config::RenderConfig;
 use ciri_render::FrameScene;
-use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, PendingUpload, ScissoredRange};
+use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, PaneGlyphRange, PendingUpload};
 use ciri_render::rect::{PaneRectRange, Rect};
 use ciri_render::sdf_rect::SdfRect;
 use glow::HasContext;
@@ -299,6 +299,9 @@ struct GlAtlasLayer {
     bpp: u32,
     loc_viewport: glow::UniformLocation,
     loc_atlas: glow::UniformLocation,
+    loc_pane_origin: glow::UniformLocation,
+    loc_pane_size: glow::UniformLocation,
+    loc_pane_radii: glow::UniformLocation,
     loc_use_linear_blending: Option<glow::UniformLocation>,
     loc_use_linear_correction: Option<glow::UniformLocation>,
     max_instances: usize,
@@ -329,8 +332,37 @@ impl GlAtlasLayer {
         let loc_atlas = gl
             .get_uniform_location(program, "u_atlas")
             .ok_or_else(|| crate::GpuError::ShaderCompile("u_atlas uniform not found".into()))?;
+        let loc_pane_origin = gl
+            .get_uniform_location(program, "u_pane_origin")
+            .ok_or_else(|| {
+                crate::GpuError::ShaderCompile(format!(
+                    "u_pane_origin uniform not found in {} shader",
+                    cfg.label
+                ))
+            })?;
+        let loc_pane_size = gl
+            .get_uniform_location(program, "u_pane_size")
+            .ok_or_else(|| {
+                crate::GpuError::ShaderCompile(format!(
+                    "u_pane_size uniform not found in {} shader",
+                    cfg.label
+                ))
+            })?;
+        let loc_pane_radii = gl
+            .get_uniform_location(program, "u_pane_radii")
+            .ok_or_else(|| {
+                crate::GpuError::ShaderCompile(format!(
+                    "u_pane_radii uniform not found in {} shader",
+                    cfg.label
+                ))
+            })?;
         let loc_use_linear_blending = gl.get_uniform_location(program, "u_use_linear_blending");
         let loc_use_linear_correction = gl.get_uniform_location(program, "u_use_linear_correction");
+        gl.use_program(Some(program));
+        gl.uniform_2_f32(Some(&loc_pane_origin), 0.0, 0.0);
+        gl.uniform_2_f32(Some(&loc_pane_size), 0.0, 0.0);
+        gl.uniform_4_f32(Some(&loc_pane_radii), 0.0, 0.0, 0.0, 0.0);
+        gl.use_program(None);
 
         let texture = gl
             .create_texture()
@@ -398,6 +430,9 @@ impl GlAtlasLayer {
             bpp,
             loc_viewport,
             loc_atlas,
+            loc_pane_origin,
+            loc_pane_size,
+            loc_pane_radii,
             loc_use_linear_blending,
             loc_use_linear_correction,
             max_instances,
@@ -477,7 +512,7 @@ impl GlAtlasLayer {
         gl: &glow::Context,
         instance_count: usize,
         vp: &crate::ViewportDims,
-        batches: &[ScissoredRange],
+        batches: &[PaneGlyphRange],
         use_linear_blending: bool,
         use_linear_correction: bool,
     ) {
@@ -503,13 +538,31 @@ impl GlAtlasLayer {
         gl.enable(glow::SCISSOR_TEST);
 
         for batch in batches {
-            let start = batch.start.min(count);
-            let end = batch.end.min(count);
-            if start >= end || batch.w == 0 || batch.h == 0 {
+            let start = (batch.start as usize).min(count);
+            let end = start.saturating_add(batch.count as usize).min(count);
+            let (x, y, w, h) = batch.scissor;
+            if start >= end || w == 0 || h == 0 {
                 continue;
             }
-            let sy = vp.height_px.saturating_sub(batch.y + batch.h);
-            gl.scissor(batch.x as i32, sy as i32, batch.w as i32, batch.h as i32);
+            let sy = vp.height_px.saturating_sub(y + h);
+            gl.scissor(x as i32, sy as i32, w as i32, h as i32);
+            gl.uniform_2_f32(
+                Some(&self.loc_pane_origin),
+                batch.pane_origin[0],
+                batch.pane_origin[1],
+            );
+            gl.uniform_2_f32(
+                Some(&self.loc_pane_size),
+                batch.pane_size[0],
+                batch.pane_size[1],
+            );
+            gl.uniform_4_f32(
+                Some(&self.loc_pane_radii),
+                batch.pane_radii[0],
+                batch.pane_radii[1],
+                batch.pane_radii[2],
+                batch.pane_radii[3],
+            );
 
             let base_offset = start * std::mem::size_of::<GlyphInstance>();
             setup_glyph_vertex_attribs_offset(gl, base_offset as i32);
@@ -563,9 +616,13 @@ impl GlRectPipeline {
                     "u_pane_origin uniform not found in rect shader".into(),
                 )
             })?;
-        let loc_pane_size = gl.get_uniform_location(program, "u_pane_size").ok_or_else(|| {
-            crate::GpuError::ShaderCompile("u_pane_size uniform not found in rect shader".into())
-        })?;
+        let loc_pane_size = gl
+            .get_uniform_location(program, "u_pane_size")
+            .ok_or_else(|| {
+                crate::GpuError::ShaderCompile(
+                    "u_pane_size uniform not found in rect shader".into(),
+                )
+            })?;
         let loc_pane_radii = gl
             .get_uniform_location(program, "u_pane_radii")
             .ok_or_else(|| {
@@ -1022,7 +1079,9 @@ impl Renderer {
                 }
                 Err(e) => {
                     log::warn!("Failed to create sRGB FBO, falling back to native blending: {e}");
-                    unsafe { gl.disable(glow::FRAMEBUFFER_SRGB); }
+                    unsafe {
+                        gl.disable(glow::FRAMEBUFFER_SRGB);
+                    }
                     (false, false, None)
                 }
             }
@@ -1247,9 +1306,14 @@ impl Renderer {
             atlas_gpu
                 .alpha
                 .draw_batches(&self.gl, alpha_count, &vp, scene.glyph_batches, lb, lc);
-            atlas_gpu
-                .color
-                .draw_batches(&self.gl, color_count, &vp, scene.color_glyph_batches, lb, lc);
+            atlas_gpu.color.draw_batches(
+                &self.gl,
+                color_count,
+                &vp,
+                scene.color_glyph_batches,
+                lb,
+                lc,
+            );
 
             // 5. Focused pane background rects.
             let active_bg_count = overlay_bg_idx.saturating_sub(active_bg_idx);
@@ -1261,9 +1325,14 @@ impl Renderer {
             }
 
             // 6. Draw active pane glyphs (scissored, no re-upload).
-            atlas_gpu
-                .alpha
-                .draw_batches(&self.gl, alpha_count, &vp, scene.active_glyph_batches, lb, lc);
+            atlas_gpu.alpha.draw_batches(
+                &self.gl,
+                alpha_count,
+                &vp,
+                scene.active_glyph_batches,
+                lb,
+                lc,
+            );
             atlas_gpu.color.draw_batches(
                 &self.gl,
                 color_count,
@@ -1292,21 +1361,20 @@ impl Renderer {
             }
 
             // 8. Overlay glyphs (no re-upload, just draw remaining range).
-            let overlay_alpha = ScissoredRange {
-                x: 0,
-                y: 0,
-                w: self.width,
-                h: self.height,
-                start: scene.pane_glyph_end,
-                end: scene.glyphs.len(),
+            let overlay_alpha = PaneGlyphRange {
+                start: scene.pane_glyph_end as u32,
+                count: scene.glyphs.len().saturating_sub(scene.pane_glyph_end) as u32,
+                scissor: (0, 0, self.width, self.height),
+                ..PaneGlyphRange::default()
             };
-            let overlay_color = ScissoredRange {
-                x: 0,
-                y: 0,
-                w: self.width,
-                h: self.height,
-                start: scene.pane_color_glyph_end,
-                end: scene.color_glyphs.len(),
+            let overlay_color = PaneGlyphRange {
+                start: scene.pane_color_glyph_end as u32,
+                count: scene
+                    .color_glyphs
+                    .len()
+                    .saturating_sub(scene.pane_color_glyph_end) as u32,
+                scissor: (0, 0, self.width, self.height),
+                ..PaneGlyphRange::default()
             };
             atlas_gpu
                 .alpha
@@ -1338,8 +1406,16 @@ impl Renderer {
                     self.gl
                         .bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(blur.ping.framebuffer));
                     self.gl.blit_framebuffer(
-                        0, 0, w, h, 0, 0, w, h,
-                        glow::COLOR_BUFFER_BIT, glow::NEAREST,
+                        0,
+                        0,
+                        w,
+                        h,
+                        0,
+                        0,
+                        w,
+                        h,
+                        glow::COLOR_BUFFER_BIT,
+                        glow::NEAREST,
                     );
 
                     // 2. Horizontal pass: ping.texture → pong.framebuffer.
@@ -1371,11 +1447,20 @@ impl Renderer {
 
                 // Disable GL_FRAMEBUFFER_SRGB during blit to avoid double gamma.
                 self.gl.disable(glow::FRAMEBUFFER_SRGB);
-                self.gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(read_fb));
+                self.gl
+                    .bind_framebuffer(glow::READ_FRAMEBUFFER, Some(read_fb));
                 self.gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
                 self.gl.blit_framebuffer(
-                    0, 0, w, h, 0, 0, w, h,
-                    glow::COLOR_BUFFER_BIT, glow::NEAREST,
+                    0,
+                    0,
+                    w,
+                    h,
+                    0,
+                    0,
+                    w,
+                    h,
+                    glow::COLOR_BUFFER_BIT,
+                    glow::NEAREST,
                 );
                 self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
                 self.gl.enable(glow::FRAMEBUFFER_SRGB);
@@ -1769,10 +1854,12 @@ layout(location = 4) in vec4 a_color;
 layout(location = 5) in vec4 a_bg_color;
 
 uniform vec2 u_viewport;
+uniform vec2 u_pane_origin;
 
 out vec2 v_uv;
 out vec4 v_color;
 out vec4 v_bg_color;
+out vec2 v_pane_local;
 
 void main() {
     float x = float(gl_VertexID & 1);
@@ -1783,6 +1870,7 @@ void main() {
     v_bg_color = a_bg_color;
 
     vec2 px = a_pos + vec2(x, y) * a_size;
+    v_pane_local = px - u_pane_origin;
     vec2 ndc = vec2(
         px.x / u_viewport.x * 2.0 - 1.0,
         1.0 - px.y / u_viewport.y * 2.0
@@ -1857,8 +1945,11 @@ const ALPHA_FS: &str = r#"#version 330 core
 in vec2 v_uv;
 in vec4 v_color;
 in vec4 v_bg_color;
+in vec2 v_pane_local;
 
 uniform sampler2D u_atlas;
+uniform vec2 u_pane_size;
+uniform vec4 u_pane_radii;
 uniform bool u_use_linear_blending;
 uniform bool u_use_linear_correction;
 
@@ -1910,6 +2001,7 @@ void main() {
     // - linear premultiplied (when use_linear_blending) → GPU auto sRGB-encodes via SRGB8_ALPHA8 FBO
     // - sRGB premultiplied (when native) → written directly to RGBA8 FBO
     color *= a;
+    color *= ciri_corner_alpha(v_pane_local, u_pane_size, u_pane_radii);
     frag_color = color;
 }
 "#;
@@ -1919,8 +2011,11 @@ const COLOR_FS: &str = r#"#version 330 core
 in vec2 v_uv;
 in vec4 v_color;
 in vec4 v_bg_color;
+in vec2 v_pane_local;
 
 uniform sampler2D u_atlas;
+uniform vec2 u_pane_size;
+uniform vec4 u_pane_radii;
 uniform bool u_use_linear_blending;
 uniform bool u_use_linear_correction;
 
@@ -1945,6 +2040,7 @@ void main() {
         srgb_texel.rgb *= srgb_texel.a; // re-premultiply
         frag_color = vec4(srgb_texel.rgb * v_color.rgb, srgb_texel.a * v_color.a);
     }
+    frag_color *= ciri_corner_alpha(v_pane_local, u_pane_size, u_pane_radii);
 }
 "#;
 

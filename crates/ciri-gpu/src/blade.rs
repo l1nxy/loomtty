@@ -15,7 +15,7 @@ use std::sync::Arc;
 use winit::window::Window;
 
 use ciri_render::FrameScene;
-use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, PendingUpload, ScissoredRange};
+use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, PaneGlyphRange, PendingUpload};
 use ciri_render::rect::Rect;
 use ciri_render::sdf_rect::SdfRect;
 
@@ -189,9 +189,7 @@ struct SdfPipeline {
 
 impl SdfPipeline {
     fn new(context: &gpu::Context, format: gpu::TextureFormat, max_rects: usize) -> Self {
-        let shader = context.create_shader(gpu::ShaderDesc {
-            source: SDF_SHADER,
-        });
+        let shader = context.create_shader(gpu::ShaderDesc { source: SDF_SHADER });
 
         let uniform_buffer = context.create_buffer(gpu::BufferDesc {
             name: "sdf_uniform",
@@ -654,7 +652,7 @@ impl AtlasLayer {
         pass: &mut gpu::RenderCommandEncoder,
         max_instances: usize,
         instance_count: usize,
-        batches: &[ScissoredRange],
+        batches: &[PaneGlyphRange],
     ) {
         if instance_count == 0 || batches.is_empty() {
             return;
@@ -662,9 +660,10 @@ impl AtlasLayer {
         let count = instance_count.min(max_instances);
 
         for batch in batches {
-            let start = batch.start.min(count);
-            let end = batch.end.min(count);
-            if start >= end || batch.w == 0 || batch.h == 0 {
+            let start = (batch.start as usize).min(count);
+            let end = start.saturating_add(batch.count as usize).min(count);
+            let (x, y, w, h) = batch.scissor;
+            if start >= end || w == 0 || h == 0 {
                 continue;
             }
             let mut pe = pass.with(&self.pipeline);
@@ -678,10 +677,10 @@ impl AtlasLayer {
             );
             pe.bind_vertex(0, self.instance_buffer.at(0));
             pe.set_scissor_rect(&gpu::ScissorRect {
-                x: batch.x as i32,
-                y: batch.y as i32,
-                w: batch.w,
-                h: batch.h,
+                x: x as i32,
+                y: y as i32,
+                w,
+                h,
             });
             pe.draw(0, 4, start as u32, (end - start) as u32);
         }
@@ -718,10 +717,8 @@ impl GlyphAtlasGpu {
         blending_flags: u32,
     ) -> Self {
         // Inject shared color functions into alpha fragment shader.
-        let alpha_fragment = ALPHA_FRAGMENT.replace(
-            "// WGSL_COLOR_FUNCS_PLACEHOLDER",
-            WGSL_COLOR_FUNCS,
-        );
+        let alpha_fragment =
+            ALPHA_FRAGMENT.replace("// WGSL_COLOR_FUNCS_PLACEHOLDER", WGSL_COLOR_FUNCS);
         let alpha_shader_src = format!("{VERTEX_SHADER}\n{alpha_fragment}");
         let alpha = AtlasLayer::new(
             context,
@@ -822,7 +819,7 @@ impl GlyphAtlasGpu {
         &self,
         pass: &mut gpu::RenderCommandEncoder,
         instance_count: usize,
-        batches: &[ScissoredRange],
+        batches: &[PaneGlyphRange],
     ) {
         self.alpha
             .draw_batches(pass, self.max_instances, instance_count, batches);
@@ -833,7 +830,7 @@ impl GlyphAtlasGpu {
         &self,
         pass: &mut gpu::RenderCommandEncoder,
         instance_count: usize,
-        batches: &[ScissoredRange],
+        batches: &[PaneGlyphRange],
     ) {
         self.color
             .draw_batches(pass, self.max_instances, instance_count, batches);
@@ -1136,21 +1133,20 @@ impl Renderer {
             }
 
             // 8. Overlay glyphs (no re-upload, just draw remaining range).
-            let overlay_alpha = ScissoredRange {
-                x: 0,
-                y: 0,
-                w: vw,
-                h: vh,
-                start: scene.pane_glyph_end,
-                end: scene.glyphs.len(),
+            let overlay_alpha = PaneGlyphRange {
+                start: scene.pane_glyph_end as u32,
+                count: scene.glyphs.len().saturating_sub(scene.pane_glyph_end) as u32,
+                scissor: (0, 0, vw, vh),
+                ..PaneGlyphRange::default()
             };
-            let overlay_color = ScissoredRange {
-                x: 0,
-                y: 0,
-                w: vw,
-                h: vh,
-                start: scene.pane_color_glyph_end,
-                end: scene.color_glyphs.len(),
+            let overlay_color = PaneGlyphRange {
+                start: scene.pane_color_glyph_end as u32,
+                count: scene
+                    .color_glyphs
+                    .len()
+                    .saturating_sub(scene.pane_color_glyph_end) as u32,
+                scissor: (0, 0, vw, vh),
+                ..PaneGlyphRange::default()
             };
             atlas_gpu.draw_alpha_batches(&mut pass, alpha_count, &[overlay_alpha]);
             atlas_gpu.draw_color_batches(&mut pass, color_count, &[overlay_color]);

@@ -5,8 +5,8 @@
 //! supplied by [`ciri_motion`].
 //!
 //! This crate is foundation-only at the moment: it defines the types and
-//! traits (`Style`, `Styled`, `Element`, `Layer`, `ResolvedTheme`, `Div`,
-//! `Text`) but does not yet emit GPU primitives or run a Taffy layout pass —
+//! traits (`Style`, `Styled`, `Element`, `ResolvedTheme`, `Div`, `Text`)
+//! but does not yet emit GPU primitives or run a Taffy layout pass —
 //! those land with the renderer integration in a follow-up change.
 //!
 //! ```ignore
@@ -39,7 +39,7 @@ pub use arena::{
 };
 pub use color::Color;
 pub use element::{
-    AnyElement, Element, ElementId, ElementStates, EventCtx, IntoElement, Layer, PaintCtx, Render,
+    AnyElement, Element, ElementId, ElementStates, EventCtx, IntoElement, PaintCtx, Render,
     RenderCtx, UiCtx, UiEvent,
 };
 pub use elements::{Deferred, Div, Text, deferred, div, text, uniform_list};

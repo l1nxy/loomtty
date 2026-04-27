@@ -5,10 +5,12 @@
 //! tree before `compute_layout`. The walker then calls `paint(&self, cx)`
 //! on each element with its computed bounds filled into `PaintCtx`.
 //!
-//! Paint-time inheritance — opacity, translate and layer — is propagated
-//! by the walker. Elements can therefore compose transforms across parent
-//! boundaries cleanly: a fading/sliding wrapper visibly affects every
-//! descendant, and `in_layer(Modal)` wins z-order for its entire subtree.
+//! Paint-time inheritance — opacity, translate, text colour — is
+//! propagated by the walker. Z-order falls out of paint sequence:
+//! non-deferred elements emit in tree order, then queued
+//! [`crate::elements::Deferred`] subtrees drain in ascending priority.
+//! Containers that need to float above siblings (modals, tooltips,
+//! anchored popovers) wrap themselves in `deferred(...)`.
 
 use crate::arena::{ArenaBox, with_element_arena};
 use crate::color::Color;
@@ -21,29 +23,6 @@ use std::ops::Deref;
 /// space is generation-counted so reload / rebuild cycles don't clash.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
 pub struct ElementId(pub u64);
-
-/// Z-order layers, in paint order (lowest drawn first, highest on top).
-/// Hit-testing walks the inverse order so modals win over chrome.
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
-#[repr(u8)]
-pub enum Layer {
-    /// Permanent chrome: top bar, tab bar, hints bar, borders.
-    Chrome = 0,
-    /// Plugin sidebars / dock panels.
-    Sidebar = 1,
-    /// Non-modal overlays: connection banner, inline hints.
-    Overlay = 2,
-    /// Modal UIs: palette, paste dialog, context menu.
-    Modal = 3,
-    /// Short-lived hints that never receive pointer events.
-    Tooltip = 4,
-}
-
-impl Default for Layer {
-    fn default() -> Self {
-        Self::Chrome
-    }
-}
 
 /// Input events routed to elements by the dispatch tree.
 #[derive(Clone, Debug)]
@@ -80,10 +59,10 @@ impl<'a> UiCtx<'a> {
 /// from ancestors.
 ///
 /// Elements fold `inherited_opacity` into their own opacity, emit into
-/// `scene` via `push_sdf(layer, ...)` using `layer`, and trust that the
-/// walker has already added the inherited translate into `bounds`. An
-/// element's own translate/opacity affect only self and descendants —
-/// the walker passes them on via fresh inherited state.
+/// `scene` via `push_sdf(rect)` (or `emit_text` for glyphs), and trust
+/// that the walker has already added the inherited translate into
+/// `bounds`. An element's own translate/opacity affect only self and
+/// descendants — the walker passes them on via fresh inherited state.
 pub struct PaintCtx<'a> {
     pub theme: &'a ResolvedTheme,
     /// `[x, y, w, h]` in logical pixels. Already includes the inherited
@@ -108,9 +87,6 @@ pub struct PaintCtx<'a> {
     /// `text_color`. `None` = fall back to `theme.on_surface`. Elements
     /// that render text consult this (own color → inherited → theme).
     pub inherited_text_color: Option<Color>,
-    /// Effective layer for the emitted primitive. Already resolved by
-    /// the walker (own `in_layer` → parent's inherited layer → default).
-    pub layer: Layer,
     /// `hit_id` of the topmost element under the cursor for this paint
     /// pass, if any. The walker computes this from a pre-paint
     /// `LayoutSnapshot` walk (so paint sees it immediately, without a
@@ -140,18 +116,18 @@ impl<'a> PaintCtx<'a> {
         self.hovered_hit_id == Some(hit_id)
     }
 
-    /// Convenience: push an SDF rect into the effective layer.
+    /// Convenience: append an SDF rect to the scene in paint order.
     pub fn push_sdf(&mut self, rect: crate::scene::SdfRect) {
-        self.scene.push_sdf(self.layer, rect);
+        self.scene.push_sdf(rect);
     }
 
-    /// Convenience: shape `content` through the host shaper into the
-    /// current layer. Folds in `inherited_opacity` on the alpha channel
-    /// so text fades with its wrapper.
+    /// Convenience: shape `content` through the host shaper, folding
+    /// `inherited_opacity` into the alpha so text fades with its
+    /// animated wrapper. Glyphs land in the scene in emit order.
     pub fn emit_text(&mut self, content: &str, pos: [f32; 2], color: Color, font_size_px: f32) {
         let faded = [color[0], color[1], color[2], color[3] * self.inherited_opacity];
         self.text_shaper
-            .emit(content, pos, faded, font_size_px, self.layer, self.scene);
+            .emit(content, pos, faded, font_size_px, self.scene);
     }
 }
 
@@ -353,18 +329,6 @@ pub trait Element: 'static {
         None
     }
 
-    /// Optional z-layer override for this element and its descendants.
-    /// Returning `None` means "inherit from parent" — the walker tracks
-    /// the running inherited layer and only concrete overrides change it.
-    ///
-    /// This differs from the pre-review signature (which returned a
-    /// default `Chrome` concretely) — that made `in_layer(Modal)`
-    /// effectively an every-child no-op, since default descendants would
-    /// silently reset back to `Chrome`.
-    fn layer(&self) -> Option<Layer> {
-        None
-    }
-
     /// Stable type identifier (used by plugin hosts + debug logs).
     fn type_id(&self) -> &'static str;
 
@@ -546,24 +510,10 @@ mod tests {
     }
 
     #[test]
-    fn default_layer_is_inherit() {
-        // Default (`None`) means "inherit from parent"; the walker starts
-        // the root at Chrome and threads that through.
-        assert_eq!(Dummy.layer(), None);
-    }
-
-    #[test]
     fn default_hit_test_is_aabb() {
         let d = Dummy;
         assert!(d.hit_test(5.0, 5.0, [0.0, 0.0, 10.0, 10.0]));
         assert!(!d.hit_test(15.0, 5.0, [0.0, 0.0, 10.0, 10.0]));
-    }
-
-    #[test]
-    fn layer_order() {
-        assert!(Layer::Chrome < Layer::Overlay);
-        assert!(Layer::Overlay < Layer::Modal);
-        assert!(Layer::Modal < Layer::Tooltip);
     }
 
     #[test]

@@ -4,7 +4,7 @@ use super::tokens;
 use super::types::{UiContext, UiRect, UiScene};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Div, IntoElement, Layer, Render, RenderCtx, Styled, div, text};
+use ciri_ui::{Div, IntoElement, Render, RenderCtx, Styled, div, text};
 
 struct HintItem {
     key: String,
@@ -211,7 +211,6 @@ impl HintsBarComponent {
 
         div().w(cx.viewport[0]).h(cx.viewport[1]).child(
             div()
-                .in_layer(Layer::Chrome)
                 .absolute()
                 .left(rect.x)
                 .top(rect.y)

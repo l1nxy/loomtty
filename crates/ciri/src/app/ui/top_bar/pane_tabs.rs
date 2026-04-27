@@ -183,9 +183,6 @@ impl<'a> PaneTabsElement<'a> {
     }
 }
 
-// Layer is inherited from the parent wrapper that TopBarComponent
-// places at `Layer::Chrome`, so per-rect `.in_layer()` is redundant
-// here.
 fn abs_rect(x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) -> Div {
     div()
         .absolute()

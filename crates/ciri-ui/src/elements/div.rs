@@ -13,7 +13,7 @@
 //! into its own emitted primitive.
 
 use crate::color::{mul_alpha, Color, TRANSPARENT};
-use crate::element::{AnyElement, Element, EventCtx, IntoElement, Layer, PaintCtx, UiEvent};
+use crate::element::{AnyElement, Element, EventCtx, IntoElement, PaintCtx, UiEvent};
 use crate::layout::to_taffy_style;
 use crate::scene::SdfRect;
 use crate::style::{Shadow, Style};
@@ -47,7 +47,6 @@ pub struct Div {
     /// every Div.
     hover_style: Option<Box<Style>>,
     children: SmallVec<[AnyElement; 2]>,
-    layer_override: Option<Layer>,
 }
 
 impl Default for Div {
@@ -62,7 +61,6 @@ impl Div {
             style: Style::new(),
             hover_style: None,
             children: SmallVec::new(),
-            layer_override: None,
         }
     }
 
@@ -113,14 +111,6 @@ impl Div {
         self
     }
 
-    /// Override the layer this element — and, via walker inheritance,
-    /// its descendants — belongs to. Default: inherit from parent.
-    /// Named `in_layer` to avoid shadowing [`Element::layer`].
-    pub fn in_layer(mut self, l: Layer) -> Self {
-        self.layer_override = Some(l);
-        self
-    }
-
     /// Read-only style access.
     pub fn style_ref(&self) -> &Style {
         &self.style
@@ -153,10 +143,6 @@ impl Element for Div {
 
     fn children(&self) -> &[AnyElement] {
         &self.children
-    }
-
-    fn layer(&self) -> Option<Layer> {
-        self.layer_override
     }
 
     fn type_id(&self) -> &'static str {
@@ -360,18 +346,6 @@ mod tests {
     }
 
     #[test]
-    fn layer_override_returns_some() {
-        let d = div().in_layer(Layer::Modal);
-        assert_eq!(<Div as Element>::layer(&d), Some(Layer::Modal));
-    }
-
-    #[test]
-    fn layer_default_is_none_inherit() {
-        let d = div();
-        assert_eq!(<Div as Element>::layer(&d), None);
-    }
-
-    #[test]
     fn children_preserve_order() {
         let d = div().child(text("a")).child(text("b"));
         assert_eq!(d.children().len(), 2);
@@ -392,7 +366,6 @@ mod tests {
             element_id: None,
             inherited_opacity: 1.0,
             inherited_text_color: None,
-            layer: Layer::Chrome,
             hovered_hit_id: None,
             states: None,
         }
@@ -441,7 +414,7 @@ mod tests {
             .bg([1.0, 0.0, 0.0, 1.0])
             .hover(|s| s.bg([0.0, 1.0, 0.0, 1.0]))
             .paint(&mut pcx);
-        let r = &scene.sdf_in_layer(Layer::Chrome)[0];
+        let rects: Vec<_> = scene.sdf_rects_iter().collect(); let r = rects[0];
         assert_eq!(r.color, [0.0, 1.0, 0.0, 1.0]);
     }
 
@@ -457,7 +430,7 @@ mod tests {
             .bg([1.0, 0.0, 0.0, 1.0])
             .hover(|s| s.bg([0.0, 1.0, 0.0, 1.0]))
             .paint(&mut pcx);
-        let r = &scene.sdf_in_layer(Layer::Chrome)[0];
+        let rects: Vec<_> = scene.sdf_rects_iter().collect(); let r = rects[0];
         assert_eq!(r.color, [1.0, 0.0, 0.0, 1.0]);
     }
 
@@ -473,7 +446,7 @@ mod tests {
         // 200 × 40 pill: max radius = 20.
         let mut pcx = make_pcx(&theme, &mut scene, &mut shaper, [0.0, 0.0, 200.0, 40.0]);
         div().bg([1.0, 0.0, 0.0, 1.0]).rounded_full().paint(&mut pcx);
-        let r = &scene.sdf_in_layer(Layer::Chrome)[0];
+        let rects: Vec<_> = scene.sdf_rects_iter().collect(); let r = rects[0];
         for c in r.radii {
             assert!(
                 (c - 20.0).abs() < 1e-3,
@@ -491,7 +464,7 @@ mod tests {
         let mut pcx = make_pcx(&theme, &mut scene, &mut shaper, [0.0, 0.0, 0.0, 0.0]);
         // `bg` forces emission; box has zero area so radii collapse to 0.
         div().bg([1.0, 0.0, 0.0, 1.0]).rounded_full().paint(&mut pcx);
-        let r = &scene.sdf_in_layer(Layer::Chrome)[0];
+        let rects: Vec<_> = scene.sdf_rects_iter().collect(); let r = rects[0];
         assert_eq!(r.radii, [0.0; 4]);
     }
 

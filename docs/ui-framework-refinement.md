@@ -466,28 +466,52 @@ children-vec heap allocation; >2-child containers spill transparently.
 `Element::children() -> &[Box<dyn Element>]` still returns a slice via
 `SmallVec`'s `Deref`, so no caller needed updating.
 
-### Phase 9 — `anchored` + `deferred`, retire fixed `Layer` enum  [DEFERRED]
+### Phase 9 — `deferred()` + retire fixed `Layer` enum  [DONE]
 
-Port `anchored` and `deferred` elements. Migrate `context_menu` to
-`anchored`. Migrate `Modal`/`Tooltip` z-ordering to `deferred`. Remove
-the `Layer` enum and its inheritance threading from the walker.
+Shipped in four steps (29 → 32):
 
-This is a noticeable behavioral refactor — the chrome rendering will
-look identical but the underlying ordering mechanism changes. Worth
-doing once Phase 1 is done so the behavior is testable per widget.
+- **Step 29.** Added `deferred(child).priority(n)` element + walker
+  queue. The walker recognizes `Element::is_deferred()` wrappers as
+  layout-transparent: their child(ren) get captured into a queue with
+  the wrapper's parent inheritance state, then drained in ascending
+  priority after the main paint walk completes. Nested defers are
+  flushed across multiple drain rounds. Hit-test `walk_for_layout_snapshot`
+  has the same shape so the snapshot reflects the drained order.
+- **Step 30.** Migrated Modal-tier widgets (palette, paste_dialog,
+  context_menu) from `.in_layer(Layer::Modal)` to `deferred(panel)`.
+  The backdrop dim still paints first as a normal widget-root child;
+  the panel sits inside `deferred(...)` so the drain keeps it on top.
+- **Step 31.** Migrated Overlay-tier widgets (info_box,
+  connection_status, overview action bar, search_bar, bell_flash,
+  ime_preedit) the same way. ime_preedit's three sibling pieces
+  (panel/underline/cursor) each got their own `deferred()`; the
+  stable sort with equal priority preserves capture order.
+- **Step 32.** Retired the `Layer` enum:
+  - `ciri_ui::Layer` removed; `Element::layer()`,
+    `PaintCtx::layer`, `Div::in_layer()` / `Div::layer_override`
+    deleted along with the walker's `inherited_layer` thread.
+  - `Scene` now stores three flat ordered streams (`Vec<SdfRect>`,
+    two `Vec<GlyphInstance>`) instead of per-layer buckets;
+    `push_sdf` / `push_glyph` / `push_color_glyph` no longer take a
+    layer parameter. Iterators yield in emit order.
+  - `TextShaper::emit` dropped the `layer: Layer` parameter.
+  - `LayoutNode::layer` field removed; `LayoutSnapshot::hit_test`
+    orders purely by `paint_order` (later paint = on top).
+  - All bin-crate `.in_layer(Layer::Chrome)` no-ops dropped.
 
-**Why deferred:** GPUI's `anchored` relies on a `prepaint` phase (which
-ciri-ui only has in "light" form — Phase 1 didn't add a formal trait
-method) and `deferred` needs a `Window::defer_draw(child, offset,
-priority, …)` queue ciri-ui has no analogue for. Porting both honestly
-requires (a) Phase 1 promotion to a real `Element::prepaint`, (b) a
-scene-level deferred-paint queue or a walker post-pass, and (c)
-removing `Element::layer()` + the walker's `inherited_layer` thread.
-That's a 1-2 day refactor with workspace-wide blast radius and is
-better landed as its own focused branch rather than squeezed into a
-multi-step series. Until then, the existing 5-level `Layer` enum keeps
-covering ciri's chrome (palette / paste_dialog / context_menu /
-connection_banner / tooltip) without trouble.
+Z-order is now a single, simple rule: tree-order paint for
+non-deferred elements; deferred subtrees drain in ascending priority
+after the main walk. Cross-widget ordering remains determined by the
+host's `UiFrame::paint` call sequence, same as before.
+
+What was *not* ported: `anchored`. ciri's chrome popovers
+(context_menu, palette, paste_dialog) all position themselves
+absolutely from already-clamped `(x, y)` coordinates computed at
+capture time, which doesn't need the smart edge-flipping `anchored`
+provides in GPUI. If a future widget wants viewport-aware re-anchoring
+(e.g. tooltip pointing at a hovered cell), porting GPUI's `anchored`
+becomes worthwhile then; until that need shows up, the math at
+capture time is enough.
 
 ### AppModel UI-ephemera cleanup pass  [DONE]
 

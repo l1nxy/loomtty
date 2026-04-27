@@ -157,7 +157,7 @@ impl Element for Text {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::element::{Layer, PaintCtx};
+    use crate::element::PaintCtx;
     use crate::scene::Scene;
     use crate::shaper::{NullShaper, RecordingShaper};
     use crate::theme::ResolvedTheme;
@@ -176,7 +176,6 @@ mod tests {
             element_id: None,
             inherited_opacity: 1.0,
             inherited_text_color: None,
-            layer: Layer::Chrome,
             hovered_hit_id: None,
             states: None,
         }

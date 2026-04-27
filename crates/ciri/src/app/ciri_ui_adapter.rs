@@ -2,9 +2,9 @@
 //! primitives.
 //!
 //! `ciri-ui` runs Taffy layout, walks its Element tree, and produces a
-//! `ciri_ui::Scene` of SdfRects + alpha/color glyph instances — all
-//! keyed by semantic `Layer`. This module is the stable boundary that lets
-//! the client's `App::render` consume that output:
+//! `ciri_ui::Scene` of SdfRects + alpha/color glyph instances in paint
+//! order. This module is the stable boundary that lets the client's
+//! `App::render` consume that output:
 //!
 //! - [`HostTextShaper`] implements `ciri_ui::TextShaper` by delegating
 //!   to the existing `emit_status_text` pipeline (UiTextShaper +
@@ -20,7 +20,7 @@
 use ciri_render::glyph_cache::{GlyphCache, GlyphInstance};
 use ciri_render::sdf_rect::SdfRect;
 use ciri_render::ui_shaper::UiTextShaper;
-use ciri_ui::{Element, Layer, Scene, TextShaper as CiriUiTextShaper};
+use ciri_ui::{Element, Scene, TextShaper as CiriUiTextShaper};
 use unicode_width::UnicodeWidthChar;
 
 use crate::app::status_bar::{TextEmitParams, emit_status_text};
@@ -115,16 +115,17 @@ impl<'a> CiriUiTextShaper for HostTextShaper<'a> {
         pos: [f32; 2],
         color: [f32; 4],
         font_size_px: f32,
-        layer: Layer,
         scene: &mut Scene,
     ) {
         if content.is_empty() {
             return;
         }
-        // Buffer into temporary vecs so we can route each glyph into
-        // the scene's per-layer buckets afterwards. Chrome text runs
-        // are short (a few words per label), so the per-frame cost is
-        // well under a microsecond for realistic UIs.
+        // Buffer the alpha and color emit streams independently — the
+        // status-text helper can produce both for a single string when
+        // emoji and regular runs are interleaved. Each stream is then
+        // appended to the scene in emit order; z-ordering across widgets
+        // is the host's `UiFrame::paint` sequence + per-widget deferred
+        // drains, not a per-bucket Layer enum.
         let mut alpha_buf = Vec::new();
         let mut color_buf = Vec::new();
         let scale = self.scale_for(font_size_px);
@@ -145,10 +146,10 @@ impl<'a> CiriUiTextShaper for HostTextShaper<'a> {
             &mut color_buf,
         );
         for g in alpha_buf {
-            scene.push_glyph(layer, g);
+            scene.push_glyph(g);
         }
         for g in color_buf {
-            scene.push_color_glyph(layer, g);
+            scene.push_color_glyph(g);
         }
     }
 }
@@ -156,10 +157,11 @@ impl<'a> CiriUiTextShaper for HostTextShaper<'a> {
 /// Append a freshly-painted ciri-ui scene into the client's accumulator
 /// Vecs for the current frame.
 ///
-/// The scene's flat paint-order iterators already honour the `Layer`
-/// z-order (Chrome → Sidebar → Overlay → Modal → Tooltip), so this is
-/// a single `extend` per stream. Appending preserves any earlier
-/// same-frame UI output while keeping chrome above pane content.
+/// The scene's iterators yield primitives in paint order (tree order
+/// for non-deferred elements, then the drain pass for `deferred()`
+/// subtrees in ascending priority), so this is a single `extend` per
+/// stream. Appending preserves any earlier same-frame UI output while
+/// keeping chrome above pane content.
 fn merge_ui_scene(
     ui: &Scene,
     sdf_out: &mut Vec<SdfRect>,
@@ -223,9 +225,9 @@ mod tests {
 
     #[test]
     fn merge_ui_scene_preserves_paint_order() {
-        // Chrome sibling first (green), Modal sibling second (red) in the
-        // element tree — scene.sdf_rects() must flatten Chrome before
-        // Modal, and merge_ui_scene must preserve that order verbatim.
+        // Two non-deferred siblings: tree order is paint order is z-order.
+        // First child painted first (lower index in the merged stream),
+        // second child painted second.
         use ciri_ui::ResolvedTheme;
         use ciri_ui::paint_tree;
         use ciri_ui::shaper::NullShaper;
@@ -234,14 +236,8 @@ mod tests {
         let root = div()
             .w(200.0)
             .h(100.0)
-            .child(
-                div()
-                    .in_layer(Layer::Modal)
-                    .w(50.0)
-                    .h(50.0)
-                    .bg([1.0, 0.0, 0.0, 1.0]),
-            )
-            .child(div().w(50.0).h(50.0).bg([0.0, 1.0, 0.0, 1.0]));
+            .child(div().w(50.0).h(50.0).bg([0.0, 1.0, 0.0, 1.0]))
+            .child(div().w(50.0).h(50.0).bg([1.0, 0.0, 0.0, 1.0]));
         let scene = paint_tree(&root, &theme, [200.0, 100.0], 1.0, &mut NullShaper);
 
         let mut sdf = Vec::new();
@@ -250,8 +246,8 @@ mod tests {
         merge_ui_scene(&scene, &mut sdf, &mut g, &mut cg);
 
         assert_eq!(sdf.len(), 2);
-        assert_eq!(sdf[0].color, [0.0, 1.0, 0.0, 1.0], "chrome first");
-        assert_eq!(sdf[1].color, [1.0, 0.0, 0.0, 1.0], "modal second");
+        assert_eq!(sdf[0].color, [0.0, 1.0, 0.0, 1.0], "first child first");
+        assert_eq!(sdf[1].color, [1.0, 0.0, 0.0, 1.0], "second child second");
         assert!(g.is_empty());
         assert!(cg.is_empty());
     }

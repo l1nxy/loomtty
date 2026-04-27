@@ -10,7 +10,6 @@
 //! which measures with a fixed advance heuristic and emits nothing.
 
 use crate::color::Color;
-use crate::element::Layer;
 use crate::scene::Scene;
 
 /// Bridge trait for measuring + shaping UI chrome text.
@@ -25,9 +24,10 @@ pub trait TextShaper {
     fn measure(&mut self, content: &str, font_size_px: f32) -> [f32; 2];
 
     /// Emit glyph instances for `content` anchored at `pos` (top-left),
-    /// in `color`, at `font_size_px`. Glyphs are written into the
-    /// provided `scene`, partitioned by `layer` for z-ordering and by
-    /// alpha vs color atlas.
+    /// in `color`, at `font_size_px`. Glyphs are appended to the
+    /// provided `scene` in emit order, partitioned by alpha vs color
+    /// atlas. Z-order = emit order; the walker arranges that for the
+    /// caller via tree-order paint plus deferred draining.
     ///
     /// `pos` is in logical pixels, in the same space as `SdfRect.pos`.
     fn emit(
@@ -36,7 +36,6 @@ pub trait TextShaper {
         pos: [f32; 2],
         color: Color,
         font_size_px: f32,
-        layer: Layer,
         scene: &mut Scene,
     );
 }
@@ -66,7 +65,6 @@ impl TextShaper for NullShaper {
         _pos: [f32; 2],
         _color: Color,
         _font_size_px: f32,
-        _layer: Layer,
         _scene: &mut Scene,
     ) {
         // No glyphs — tests using NullShaper assert on SdfRects /
@@ -90,7 +88,6 @@ pub struct RecordedShape {
     pub pos: [f32; 2],
     pub color: Color,
     pub font_size_px: f32,
-    pub layer: Layer,
 }
 
 #[cfg(test)]
@@ -105,7 +102,6 @@ impl TextShaper for RecordingShaper {
         pos: [f32; 2],
         color: Color,
         font_size_px: f32,
-        layer: Layer,
         _scene: &mut Scene,
     ) {
         self.calls.push(RecordedShape {
@@ -113,7 +109,6 @@ impl TextShaper for RecordingShaper {
             pos,
             color,
             font_size_px,
-            layer,
         });
     }
 }
@@ -135,7 +130,7 @@ mod tests {
     fn null_emit_is_silent() {
         let mut s = NullShaper;
         let mut scene = Scene::new();
-        s.emit("hi", [0.0, 0.0], [1.0; 4], 12.0, Layer::Chrome, &mut scene);
+        s.emit("hi", [0.0, 0.0], [1.0; 4], 12.0, &mut scene);
         assert!(scene.is_empty());
     }
 
@@ -148,13 +143,11 @@ mod tests {
             [10.0, 20.0],
             [1.0, 0.0, 0.0, 1.0],
             13.0,
-            Layer::Overlay,
             &mut scene,
         );
         assert_eq!(r.calls.len(), 1);
         assert_eq!(r.calls[0].content, "hello");
         assert_eq!(r.calls[0].pos, [10.0, 20.0]);
         assert_eq!(r.calls[0].font_size_px, 13.0);
-        assert_eq!(r.calls[0].layer, Layer::Overlay);
     }
 }

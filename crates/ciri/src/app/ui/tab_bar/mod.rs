@@ -21,7 +21,7 @@ use super::tokens;
 use super::types::{UiAction, UiContext, UiRect, UiScene, ui_hit_id};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{IntoElement, Layer, Render, RenderCtx, Styled, div, text};
+use ciri_ui::{IntoElement, Render, RenderCtx, Styled, div, text};
 
 const HIT_TAB_BASE: u64 = 1_000_000;
 
@@ -144,8 +144,7 @@ impl TabBarComponent {
         }
 
         div().w(cx.viewport_w).h(cx.viewport_h).child(
-            rows.in_layer(Layer::Chrome)
-                .absolute()
+            rows.absolute()
                 .left(rect.x)
                 .top(rect.y)
                 .w(rect.w)
@@ -259,8 +258,7 @@ impl TabBarComponent {
             TabBarPosition::Right => div().flex_row().child(sep_line).child(rows),
         };
         let root = div().w(cx.viewport[0]).h(cx.viewport[1]).child(
-            bar.in_layer(Layer::Chrome)
-                .absolute()
+            bar.absolute()
                 .left(rect.x)
                 .top(rect.y)
                 .w(rect.w)

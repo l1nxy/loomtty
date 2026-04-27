@@ -35,7 +35,7 @@ use super::types::{UiAction, UiContext, UiRect, UiScene, UiTopBarHit, ui_hit_id}
 use crate::app::ciri_ui_adapter::paint_element_tree;
 use crate::app::top_bar::{PaneTabLayout, TopBarLayout};
 use crate::app::App;
-use ciri_ui::{Div, Layer, Styled, div};
+use ciri_ui::{Div, Styled, div};
 
 pub(super) const HIT_SESSION: u64 = 1;
 pub(super) const HIT_WORKSPACE: u64 = 2;
@@ -250,7 +250,6 @@ impl TopBarComponent {
         }
 
         let mut row = div()
-            .in_layer(Layer::Chrome)
             .absolute()
             .left(rect.x)
             .top(rect.y)
@@ -360,14 +359,14 @@ impl TopBarComponent {
 
 impl TopBarComponent {
     pub(crate) fn paint(&self, rect: UiRect, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
-        // Single unified TopBar tree: one viewport wrapper, one
-        // `Layer::Chrome` override, every chrome + row sub-piece as a
-        // flat absolute-positioned sibling. One walker pass per frame
-        // instead of 5 (chrome + 4 sub-widget paints). All children
-        // are themselves `.absolute()` with viewport-relative coords,
-        // so the viewport root stays the only positioning ancestor —
-        // no double offsets, no zero-sized intermediate wrappers.
-        let mut root = div().w(cx.viewport_w).h(cx.viewport_h).in_layer(Layer::Chrome);
+        // Single unified TopBar tree: one viewport wrapper, every chrome
+        // + row sub-piece as a flat absolute-positioned sibling. One
+        // walker pass per frame instead of 5 (chrome + 4 sub-widget
+        // paints). All children are themselves `.absolute()` with
+        // viewport-relative coords, so the viewport root stays the only
+        // positioning ancestor — no double offsets, no zero-sized
+        // intermediate wrappers.
+        let mut root = div().w(cx.viewport_w).h(cx.viewport_h);
         for chrome_child in self.build_chrome_inner(rect, cx) {
             root = root.child(chrome_child);
         }

@@ -1,24 +1,23 @@
 //! Paint-pipeline glue: build a Taffy tree from an `Element` tree, run
 //! layout, then walk both in parallel to emit primitives into a `Scene`.
 //!
-//! The walker propagates three pieces of paint-time state down the tree:
+//! The walker propagates two pieces of paint-time state down the tree:
 //!
 //! 1. **Taffy-absolute offset** — the accumulated `layout.location` of
 //!    ancestors. Pure layout, independent of any paint transforms.
-//! 2. **Inherited translate / opacity** — CSS-style paint transforms.
-//!    Translate moves the subtree without touching layout; opacity
-//!    multiplies down. Both derive from `Element::paint_transform()`.
-//! 3. **Inherited layer** — the effective z-layer. Starts at `Chrome`
-//!    at the root; every element's `layer()` overrides inheritance for
-//!    itself and its descendants, so `in_layer(Modal)` actually wins
-//!    z-order for the whole subtree.
+//! 2. **Inherited translate / opacity / text colour** — CSS-style paint
+//!    inheritance. Translate moves the subtree without touching layout;
+//!    opacity multiplies down; text colour cascades nearest-ancestor
+//!    wins. All three derive from `Element::paint_transform()` /
+//!    `text_color_override_with_state()`.
 //!
-//! These three form the correctness backbone of the paint pass; tests
-//! in this module lock each one down.
+//! Z-order falls out of paint sequence: non-deferred elements emit in
+//! tree order, then queued [`crate::elements::Deferred`] subtrees drain
+//! in ascending priority. There is no fixed layer enum.
 
 use taffy::TraversePartialTree;
 
-use crate::element::{Element, ElementStates, Layer, PaintCtx};
+use crate::element::{Element, ElementStates, PaintCtx};
 use crate::scene::Scene;
 use crate::shaper::TextShaper;
 use crate::style::{
@@ -38,7 +37,6 @@ struct DeferredEntry<'a> {
     parent_local: [f32; 2],
     inherited_translate: [f32; 2],
     inherited_opacity: f32,
-    inherited_layer: Layer,
     inherited_text_color: Option<crate::color::Color>,
     priority: u32,
 }
@@ -62,7 +60,6 @@ pub enum NodeContext {
 #[derive(Clone, Debug, PartialEq)]
 pub struct LayoutNode {
     pub type_id: &'static str,
-    pub layer: Layer,
     pub bounds: [f32; 4],
     pub paint_order: usize,
     pub accepts_pointer_events: bool,
@@ -103,13 +100,15 @@ impl LayoutSnapshot {
 
     /// Return the topmost pointer target at `x,y`.
     ///
-    /// Layers dominate tree order; within the same layer, later paint order
-    /// wins. This mirrors the scene flattening order used by the renderer.
+    /// Later paint order wins — same ordering the renderer uses when
+    /// flattening the scene streams. Deferred subtrees naturally sit on
+    /// top because the drain pass paints them after every non-deferred
+    /// sibling.
     pub fn hit_test(&self, x: f32, y: f32) -> Option<&LayoutNode> {
         self.nodes
             .iter()
             .filter(|n| n.accepts_pointer_events && n.contains(x, y))
-            .max_by_key(|n| (n.layer as u8, n.paint_order))
+            .max_by_key(|n| n.paint_order)
     }
 }
 
@@ -306,7 +305,6 @@ pub fn layout_tree_into_retained(
         root,
         /* parent_local */ [0.0, 0.0],
         /* inherited_translate */ [0.0, 0.0],
-        /* inherited_layer */ Layer::Chrome,
         layout_snapshot,
         &mut paint_order,
         &mut deferred_queue,
@@ -405,7 +403,6 @@ pub fn paint_tree_into_retained(
             root,
             [0.0, 0.0],
             [0.0, 0.0],
-            Layer::Chrome,
             layout_snapshot,
             &mut prepaint_order,
             &mut prepaint_deferred,
@@ -437,7 +434,6 @@ pub fn paint_tree_into_retained(
             /* parent_local */ [0.0, 0.0],
             /* inherited_translate */ [0.0, 0.0],
             /* inherited_opacity */ 1.0,
-            /* inherited_layer */ Layer::Chrome,
             /* inherited_text_color */ None,
             hovered_hit_id,
             theme,
@@ -490,7 +486,6 @@ fn paint_node<'a>(
     parent_local: [f32; 2],
     inherited_translate: [f32; 2],
     inherited_opacity: f32,
-    inherited_layer: Layer,
     inherited_text_color: Option<crate::color::Color>,
     hovered_hit_id: Option<u64>,
     theme: &ResolvedTheme,
@@ -520,7 +515,6 @@ fn paint_node<'a>(
     // the drain re-enters paint_node from each child's taffy node.
     if el.is_deferred() {
         let priority = el.deferred_priority();
-        let effective_layer = el.layer().unwrap_or(inherited_layer);
         let children = el.children();
         let taffy_children: Vec<_> = tree.child_ids(node).collect();
         debug_assert_eq!(
@@ -535,7 +529,6 @@ fn paint_node<'a>(
                 parent_local: [local_x, local_y],
                 inherited_translate,
                 inherited_opacity,
-                inherited_layer: effective_layer,
                 inherited_text_color,
                 priority,
             });
@@ -553,13 +546,11 @@ fn paint_node<'a>(
     let paint_x = local_x + inherited_translate[0];
     let paint_y = local_y + inherited_translate[1];
 
-    let effective_layer = el.layer().unwrap_or(inherited_layer);
     let (own_opacity, own_translate) = el.paint_transform();
     let current_order = *paint_order;
     *paint_order += 1;
     layout_snapshot.push(LayoutNode {
         type_id: el.type_id(),
-        layer: effective_layer,
         bounds: [
             paint_x + own_translate[0],
             paint_y + own_translate[1],
@@ -587,7 +578,6 @@ fn paint_node<'a>(
             element_id: el.id(),
             inherited_opacity,
             inherited_text_color,
-            layer: effective_layer,
             hovered_hit_id,
             states: states_for_paint,
         };
@@ -635,7 +625,6 @@ fn paint_node<'a>(
             [local_x, local_y],
             child_inherited_translate,
             child_inherited_opacity,
-            effective_layer,
             child_inherited_text_color,
             hovered_hit_id,
             theme,
@@ -687,7 +676,6 @@ fn drain_deferred_paint<'a>(
                 entry.parent_local,
                 entry.inherited_translate,
                 entry.inherited_opacity,
-                entry.inherited_layer,
                 entry.inherited_text_color,
                 hovered_hit_id,
                 theme,
@@ -724,7 +712,6 @@ fn drain_deferred_layout_only<'a>(
                 entry.el,
                 entry.parent_local,
                 entry.inherited_translate,
-                entry.inherited_layer,
                 layout_snapshot,
                 paint_order,
                 &mut next_pending,
@@ -747,7 +734,6 @@ fn walk_for_layout_snapshot<'a>(
     el: &'a dyn Element,
     parent_local: [f32; 2],
     inherited_translate: [f32; 2],
-    inherited_layer: Layer,
     layout_snapshot: &mut LayoutSnapshot,
     paint_order: &mut usize,
     deferred_queue: &mut Vec<DeferredEntry<'a>>,
@@ -767,7 +753,6 @@ fn walk_for_layout_snapshot<'a>(
     // snapshot in the same order paint would produce.
     if el.is_deferred() {
         let priority = el.deferred_priority();
-        let effective_layer = el.layer().unwrap_or(inherited_layer);
         let children = el.children();
         let taffy_children: Vec<_> = tree.child_ids(node).collect();
         debug_assert_eq!(
@@ -782,7 +767,6 @@ fn walk_for_layout_snapshot<'a>(
                 parent_local: [local_x, local_y],
                 inherited_translate,
                 inherited_opacity: 1.0,
-                inherited_layer: effective_layer,
                 inherited_text_color: None,
                 priority,
             });
@@ -797,13 +781,11 @@ fn walk_for_layout_snapshot<'a>(
     let paint_x = local_x + inherited_translate[0];
     let paint_y = local_y + inherited_translate[1];
 
-    let effective_layer = el.layer().unwrap_or(inherited_layer);
     let (_own_opacity, own_translate) = el.paint_transform();
     let current_order = *paint_order;
     *paint_order += 1;
     layout_snapshot.push(LayoutNode {
         type_id: el.type_id(),
-        layer: effective_layer,
         bounds: [
             paint_x + own_translate[0],
             paint_y + own_translate[1],
@@ -837,7 +819,6 @@ fn walk_for_layout_snapshot<'a>(
             &**child_el,
             [local_x, local_y],
             child_inherited_translate,
-            effective_layer,
             layout_snapshot,
             paint_order,
             deferred_queue,
@@ -985,8 +966,12 @@ mod tests {
         ResolvedTheme::default()
     }
 
-    fn first_chrome(scene: &Scene) -> &crate::scene::SdfRect {
-        &scene.sdf_in_layer(Layer::Chrome)[0]
+    fn first_rect(scene: &Scene) -> crate::scene::SdfRect {
+        *scene.sdf_rects_iter().next().expect("expected one rect")
+    }
+
+    fn collect_rects(scene: &Scene) -> Vec<crate::scene::SdfRect> {
+        scene.sdf_rects_iter().copied().collect()
     }
 
     #[test]
@@ -1012,7 +997,7 @@ mod tests {
             &mut crate::shaper::NullShaper,
         );
         assert_eq!(scene.len(), 1);
-        let q = first_chrome(&scene);
+        let q = first_rect(&scene);
         assert_eq!(q.size, [100.0, 40.0]);
         assert_eq!(q.color, ACCENT);
     }
@@ -1041,7 +1026,9 @@ mod tests {
     }
 
     #[test]
-    fn layout_hit_test_uses_layer_then_paint_order() {
+    fn layout_hit_test_uses_paint_order() {
+        // Two cursor-pointer children overlap at (10,10): the second
+        // sibling paints later (higher `paint_order`) so it wins.
         let root = div()
             .w(200.0)
             .h(200.0)
@@ -1050,15 +1037,16 @@ mod tests {
                     .w(100.0)
                     .h(100.0)
                     .cursor_pointer()
+                    .hit_id(1)
                     .bg([1.0, 0.0, 0.0, 1.0]),
             )
             .child(
                 div()
-                    .in_layer(Layer::Modal)
                     .w(100.0)
                     .h(100.0)
                     .translate(-100.0, 0.0)
                     .cursor_pointer()
+                    .hit_id(2)
                     .bg([0.0, 1.0, 0.0, 1.0]),
             );
         let out = paint_tree_with_layout(
@@ -1069,7 +1057,7 @@ mod tests {
             &mut crate::shaper::NullShaper,
         );
         let hit = out.layout.hit_test(10.0, 10.0).expect("expected hit");
-        assert_eq!(hit.layer, Layer::Modal);
+        assert_eq!(hit.hit_id, Some(2));
     }
 
     #[test]
@@ -1132,7 +1120,7 @@ mod tests {
             1.0,
             &mut crate::shaper::NullShaper,
         );
-        let rects = scene.sdf_in_layer(Layer::Chrome);
+        let rects = scene.sdf_rects_iter().copied().collect::<Vec<_>>();
         assert_eq!(rects.len(), 2);
         assert_eq!(rects[0].pos[1], rects[1].pos[1], "must be same row");
         assert!(
@@ -1156,7 +1144,7 @@ mod tests {
             1.0,
             &mut crate::shaper::NullShaper,
         );
-        let rects = scene.sdf_in_layer(Layer::Chrome);
+        let rects = scene.sdf_rects_iter().copied().collect::<Vec<_>>();
         assert_eq!(rects.len(), 2);
         assert!((rects[0].pos[1] - 0.0).abs() < 0.5);
         assert!((rects[1].pos[1] - 40.0).abs() < 0.5);
@@ -1177,7 +1165,8 @@ mod tests {
             1.0,
             &mut crate::shaper::NullShaper,
         );
-        let c = &scene.sdf_in_layer(Layer::Chrome)[0];
+        let collected = collect_rects(&scene);
+        let c = &collected[0];
         assert!((c.pos[0] - 8.0).abs() < 0.5);
         assert!((c.pos[1] - 8.0).abs() < 0.5);
     }
@@ -1198,7 +1187,7 @@ mod tests {
             1.0,
             &mut crate::shaper::NullShaper,
         );
-        let rects = scene.sdf_in_layer(Layer::Chrome);
+        let rects = scene.sdf_rects_iter().copied().collect::<Vec<_>>();
         let a = &rects[0];
         let b = &rects[1];
         assert!((b.pos[0] - (a.pos[0] + 100.0 + 12.0)).abs() < 0.5);
@@ -1250,7 +1239,7 @@ mod tests {
             1.0,
             &mut crate::shaper::NullShaper,
         );
-        let rects = scene.sdf_in_layer(Layer::Chrome);
+        let rects = scene.sdf_rects_iter().copied().collect::<Vec<_>>();
         assert_eq!(rects.len(), 2);
         // Wrapper: 0.5 opacity applied to ACCENT.alpha (1.0) → 0.5
         assert!((rects[0].color[3] - 0.5).abs() < 1e-3, "wrapper alpha");
@@ -1280,7 +1269,7 @@ mod tests {
             1.0,
             &mut crate::shaper::NullShaper,
         );
-        let rects = scene.sdf_in_layer(Layer::Chrome);
+        let rects = scene.sdf_rects_iter().copied().collect::<Vec<_>>();
         assert_eq!(rects.len(), 2);
         let wrapper = &rects[0];
         let child = &rects[1];
@@ -1323,28 +1312,25 @@ mod tests {
             1.0,
             &mut crate::shaper::NullShaper,
         );
-        let rects = scene.sdf_in_layer(Layer::Chrome);
+        let rects = scene.sdf_rects_iter().copied().collect::<Vec<_>>();
         // grand-child: 0 layout + 10 + 5 = 15
         let gc = &rects[2];
         assert!((gc.pos[0] - 15.0).abs() < 0.5, "grandchild.x={}", gc.pos[0]);
     }
 
-    /// `in_layer(Modal)` must win z-order for the whole subtree, even
-    /// when the modal is a tree-order sibling that appears before
-    /// chrome. The walker emits into the right bucket, and
-    /// `Scene::sdf_rects()` flattens them in the layer-paint order.
+    /// `deferred()` (the post-Layer-enum equivalent of `in_layer(Modal)`)
+    /// must win z-order over a non-deferred sibling that appears later in
+    /// tree order. The walker emits the deferred subtree only after the
+    /// main walk completes, so it always paints last.
     #[test]
-    fn in_layer_modal_wins_over_tree_order() {
+    fn deferred_wins_over_tree_order() {
+        use crate::elements::deferred;
         let root = div()
             .w(800.0)
             .h(600.0)
-            .child(
-                div()
-                    .in_layer(Layer::Modal)
-                    .w(100.0)
-                    .h(100.0)
-                    .bg([1.0, 0.0, 0.0, 1.0]),
-            )
+            // Deferred sibling — captured during walk, painted at drain.
+            .child(deferred(div().w(100.0).h(100.0).bg([1.0, 0.0, 0.0, 1.0])))
+            // Non-deferred sibling — painted during main walk.
             .child(div().w(100.0).h(100.0).bg([0.0, 1.0, 0.0, 1.0]));
         let scene = paint_tree(
             &root,
@@ -1353,14 +1339,18 @@ mod tests {
             1.0,
             &mut crate::shaper::NullShaper,
         );
-        // Modal bucket gets the red rect even though it was the first
-        // child; chrome bucket gets the green one.
-        assert_eq!(scene.sdf_in_layer(Layer::Modal).len(), 1);
-        assert_eq!(scene.sdf_in_layer(Layer::Chrome).len(), 1);
-        // Flattened paint order: Chrome before Modal → modal paints last.
-        let flat: Vec<_> = scene.sdf_rects_iter().copied().collect();
-        assert_eq!(flat[0].color, [0.0, 1.0, 0.0, 1.0], "chrome first");
-        assert_eq!(flat[1].color, [1.0, 0.0, 0.0, 1.0], "modal last");
+        let flat = collect_rects(&scene);
+        assert_eq!(flat.len(), 2);
+        assert_eq!(
+            flat[0].color,
+            [0.0, 1.0, 0.0, 1.0],
+            "non-deferred sibling paints first"
+        );
+        assert_eq!(
+            flat[1].color,
+            [1.0, 0.0, 0.0, 1.0],
+            "deferred sibling drains last"
+        );
     }
 
     /// Regression: Text layout size comes from the host shaper through
@@ -1388,7 +1378,6 @@ mod tests {
                 _p: [f32; 2],
                 _col: Color,
                 _fs: f32,
-                _l: Layer,
                 _s: &mut Scene,
             ) {
             }
@@ -1545,19 +1534,21 @@ mod tests {
         assert_eq!(shaper.calls.last().expect("text emitted").color, REST);
     }
 
-    /// Modal subtree inheritance: descendants of a `Modal` element must
-    /// stay on the Modal layer by default, so a modal with chrome-default
-    /// children doesn't accidentally split its own rendering.
+    /// A subtree that uses `deferred()` paints atomically — wrapper
+    /// child first, then nested children — even when other Chrome
+    /// elements are emitted in between by virtue of tree order. The
+    /// drain re-enters paint_node from the deferred root, recursing
+    /// through every descendant before moving on.
     #[test]
-    fn modal_subtree_inherits_modal_layer() {
-        let root = div().w(800.0).h(600.0).child(
+    fn deferred_subtree_paints_atomically() {
+        use crate::elements::deferred;
+        let root = div().w(800.0).h(600.0).child(deferred(
             div()
-                .in_layer(Layer::Modal)
                 .w(100.0)
                 .h(100.0)
                 .bg([1.0, 0.0, 0.0, 1.0])
                 .child(div().w(50.0).h(50.0).bg([0.5, 0.0, 0.0, 1.0])),
-        );
+        ));
         let scene = paint_tree(
             &root,
             &theme(),
@@ -1565,14 +1556,17 @@ mod tests {
             1.0,
             &mut crate::shaper::NullShaper,
         );
-        assert_eq!(scene.sdf_in_layer(Layer::Modal).len(), 2);
-        assert_eq!(scene.sdf_in_layer(Layer::Chrome).len(), 0);
+        let flat = collect_rects(&scene);
+        assert_eq!(flat.len(), 2);
+        // Outer (red) emits before inner (dark red) — both via the drain.
+        assert_eq!(flat[0].color, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(flat[1].color, [0.5, 0.0, 0.0, 1.0]);
     }
 
-    /// Within the same layer, a `deferred()` child must paint AFTER its
-    /// non-deferred siblings — that's the whole point of the queue.
-    /// Without the drain pass the deferred child would emit in tree
-    /// order and get covered by anything painted after it.
+    /// A `deferred()` child must paint AFTER its non-deferred siblings
+    /// — that's the whole point of the queue. Without the drain pass
+    /// the deferred child would emit in tree order and get covered by
+    /// anything painted after it.
     #[test]
     fn deferred_child_paints_after_non_deferred_sibling() {
         use crate::elements::deferred;
@@ -1594,7 +1588,7 @@ mod tests {
             1.0,
             &mut crate::shaper::NullShaper,
         );
-        let rects = scene.sdf_in_layer(Layer::Chrome);
+        let rects = scene.sdf_rects_iter().copied().collect::<Vec<_>>();
         assert_eq!(rects.len(), 2, "two children, both with bg");
         assert_eq!(
             rects[0].color, BLUE,
@@ -1626,7 +1620,7 @@ mod tests {
             1.0,
             &mut crate::shaper::NullShaper,
         );
-        let rects = scene.sdf_in_layer(Layer::Chrome);
+        let rects = scene.sdf_rects_iter().copied().collect::<Vec<_>>();
         let order: Vec<_> = rects.iter().map(|r| r.color).collect();
         assert_eq!(order, vec![A, B, C], "drained in ascending priority order");
     }

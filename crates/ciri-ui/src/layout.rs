@@ -31,6 +31,12 @@ use crate::theme::ResolvedTheme;
 /// resume painting where the first walk would have continued — bounds
 /// inherit from the deferred wrapper's parent, not from the wrapper
 /// itself.
+///
+/// When `anchor` is `Some`, the drain ignores the captured
+/// `parent_local` and recomputes a screen position from the anchor
+/// point + corner + the child's measured size + viewport. Used by
+/// [`crate::elements::Anchored`] for viewport-aware popover
+/// placement with edge-flipping.
 struct DeferredEntry<'a> {
     el: &'a dyn Element,
     node: taffy::NodeId,
@@ -39,6 +45,7 @@ struct DeferredEntry<'a> {
     inherited_opacity: f32,
     inherited_text_color: Option<crate::color::Color>,
     priority: u32,
+    anchor: Option<crate::element::AnchorPlacement>,
 }
 
 /// Per-node side-channel the layout pass hands to its
@@ -318,7 +325,13 @@ pub fn layout_tree_into_retained(
         &mut paint_order,
         &mut deferred_queue,
     );
-    drain_deferred_layout_only(tree, deferred_queue, layout_snapshot, &mut paint_order);
+    drain_deferred_layout_only(
+        tree,
+        deferred_queue,
+        viewport,
+        layout_snapshot,
+        &mut paint_order,
+    );
 }
 
 /// Most-general paint entry point: caller owns the [`Scene`], the
@@ -426,6 +439,7 @@ pub fn paint_tree_into_retained(
         drain_deferred_layout_only(
             tree,
             prepaint_deferred,
+            viewport,
             layout_snapshot,
             &mut prepaint_order,
         );
@@ -466,6 +480,7 @@ pub fn paint_tree_into_retained(
     drain_deferred_paint(
         tree,
         deferred_queue,
+        viewport,
         hovered_hit_id,
         active_hit_id,
         theme,
@@ -534,6 +549,7 @@ fn paint_node<'a>(
     // the drain re-enters paint_node from each child's taffy node.
     if el.is_deferred() {
         let priority = el.deferred_priority();
+        let anchor = el.anchor_placement();
         let children = el.children();
         let taffy_children: Vec<_> = tree.child_ids(node).collect();
         debug_assert_eq!(
@@ -550,6 +566,7 @@ fn paint_node<'a>(
                 inherited_opacity,
                 inherited_text_color,
                 priority,
+                anchor,
             });
         }
         return;
@@ -660,15 +677,70 @@ fn paint_node<'a>(
     }
 }
 
+/// Compute an anchored child's `parent_local` from its measured size,
+/// the anchor point + corner, and the viewport. Edge-flips along
+/// either axis when the preferred corner would push the child off-
+/// screen and the opposite corner has room. Final clamp ensures the
+/// child stays inside the viewport even when neither corner fits
+/// (e.g. child wider than the viewport).
+fn anchor_child_position(
+    placement: crate::element::AnchorPlacement,
+    child_size: [f32; 2],
+    viewport: [f32; 2],
+) -> [f32; 2] {
+    use crate::element::AnchorCorner;
+
+    let [ax, ay] = placement.point;
+    let [cw, ch] = child_size;
+    let [vw, vh] = viewport;
+
+    // Preferred placement: the named corner of the child sits at the
+    // anchor point.
+    let (mut x, mut y) = match placement.corner {
+        AnchorCorner::TopLeft => (ax, ay),
+        AnchorCorner::TopRight => (ax - cw, ay),
+        AnchorCorner::BottomLeft => (ax, ay - ch),
+        AnchorCorner::BottomRight => (ax - cw, ay - ch),
+    };
+
+    // Per-axis edge flip. We only flip when (a) the preferred placement
+    // would extend past the viewport edge AND (b) the opposite corner
+    // has room. Both conditions matter: a child wider than the
+    // viewport can't fit either way, so flipping wouldn't help and
+    // would just hide the anchor on the other side.
+    if x + cw > vw && (ax - cw) >= 0.0 {
+        x = ax - cw;
+    } else if x < 0.0 && ax + cw <= vw {
+        x = ax;
+    }
+    if y + ch > vh && (ay - ch) >= 0.0 {
+        y = ay - ch;
+    } else if y < 0.0 && ay + ch <= vh {
+        y = ay;
+    }
+
+    // Final clamp: the child can't exceed viewport bounds even if
+    // edge-flipping didn't help (neither corner fits).
+    let max_x = (vw - cw).max(0.0);
+    let max_y = (vh - ch).max(0.0);
+    [x.clamp(0.0, max_x), y.clamp(0.0, max_y)]
+}
+
 /// Drain queued deferred subtrees in priority order — lowest priority
 /// paints first, so higher-priority deferred paints land on top.
 /// Re-paint passes can themselves push new entries (nested `deferred()`
 /// inside a deferred subtree); the loop empties the queue completely
 /// before returning so ordering invariants hold even for nested cases.
+///
+/// `viewport` is required for `Anchored`-flavoured entries: if the
+/// captured entry has `anchor: Some(_)`, the drain reads the child's
+/// measured size from `tree` and recomputes `parent_local` via
+/// [`anchor_child_position`] before painting.
 #[allow(clippy::too_many_arguments)]
 fn drain_deferred_paint<'a>(
     tree: &taffy::TaffyTree<NodeContext>,
     queue: Vec<DeferredEntry<'a>>,
+    viewport: [f32; 2],
     hovered_hit_id: Option<u64>,
     active_hit_id: Option<u64>,
     theme: &ResolvedTheme,
@@ -691,11 +763,24 @@ fn drain_deferred_paint<'a>(
         for entry in pending.drain(..) {
             let states_for_call: Option<&mut ElementStates> =
                 states_owner.as_mut().map(|s| &mut **s);
+            // For anchored entries, recompute parent_local from the
+            // child's measured size + viewport. The captured value
+            // (the wrapper's parent_local) is irrelevant — anchored
+            // overrides positioning entirely.
+            let parent_local = if let Some(placement) = entry.anchor {
+                let size = match tree.layout(entry.node) {
+                    Ok(l) => [l.size.width, l.size.height],
+                    Err(_) => [0.0, 0.0],
+                };
+                anchor_child_position(placement, size, viewport)
+            } else {
+                entry.parent_local
+            };
             paint_node(
                 tree,
                 entry.node,
                 entry.el,
-                entry.parent_local,
+                parent_local,
                 entry.inherited_translate,
                 entry.inherited_opacity,
                 entry.inherited_text_color,
@@ -718,9 +803,15 @@ fn drain_deferred_paint<'a>(
 /// Same shape as [`drain_deferred_paint`] but for the hit-test-only
 /// walker. No paint, no scene, no states — just snapshot population in
 /// the same order the painter would have chosen.
+///
+/// Anchored entries are repositioned exactly as in
+/// [`drain_deferred_paint`] so the snapshot bounds match the painter
+/// — otherwise hit-tests on an anchored popover would target the
+/// pre-flip position and miss the actual visible element.
 fn drain_deferred_layout_only<'a>(
     tree: &taffy::TaffyTree<NodeContext>,
     queue: Vec<DeferredEntry<'a>>,
+    viewport: [f32; 2],
     layout_snapshot: &mut LayoutSnapshot,
     paint_order: &mut usize,
 ) {
@@ -729,11 +820,20 @@ fn drain_deferred_layout_only<'a>(
         pending.sort_by_key(|e| e.priority);
         let mut next_pending: Vec<DeferredEntry<'a>> = Vec::new();
         for entry in pending.drain(..) {
+            let parent_local = if let Some(placement) = entry.anchor {
+                let size = match tree.layout(entry.node) {
+                    Ok(l) => [l.size.width, l.size.height],
+                    Err(_) => [0.0, 0.0],
+                };
+                anchor_child_position(placement, size, viewport)
+            } else {
+                entry.parent_local
+            };
             walk_for_layout_snapshot(
                 tree,
                 entry.node,
                 entry.el,
-                entry.parent_local,
+                parent_local,
                 entry.inherited_translate,
                 layout_snapshot,
                 paint_order,
@@ -776,6 +876,7 @@ fn walk_for_layout_snapshot<'a>(
     // snapshot in the same order paint would produce.
     if el.is_deferred() {
         let priority = el.deferred_priority();
+        let anchor = el.anchor_placement();
         let children = el.children();
         let taffy_children: Vec<_> = tree.child_ids(node).collect();
         debug_assert_eq!(
@@ -792,6 +893,7 @@ fn walk_for_layout_snapshot<'a>(
                 inherited_opacity: 1.0,
                 inherited_text_color: None,
                 priority,
+                anchor,
             });
         }
         return;
@@ -1722,5 +1824,184 @@ mod tests {
         let hit = snapshot.hit_test(5.0, 5.0);
         assert!(hit.is_some(), "deferred element must be in snapshot");
         assert_eq!(hit.unwrap().hit_id, Some(99));
+    }
+
+    /// `anchored()` with a TopLeft corner should pin the child at the
+    /// anchor point when the child fits in the viewport.
+    #[test]
+    fn anchored_top_left_in_bounds_paints_at_anchor() {
+        use crate::elements::anchored;
+        use crate::AnchorCorner;
+        const RED: Color = [1.0, 0.0, 0.0, 1.0];
+
+        let root = div()
+            .w(400.0)
+            .h(300.0)
+            .child(anchored(
+                div().w(40.0).h(20.0).bg(RED),
+                [50.0, 80.0],
+                AnchorCorner::TopLeft,
+            ));
+        let scene = paint_tree(
+            &root,
+            &theme(),
+            [400.0, 300.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
+        let rects = collect_rects(&scene);
+        assert_eq!(rects.len(), 1, "anchored child paints");
+        assert!((rects[0].pos[0] - 50.0).abs() < 0.5, "x at anchor");
+        assert!((rects[0].pos[1] - 80.0).abs() < 0.5, "y at anchor");
+    }
+
+    /// Edge-flip: a TopLeft anchor near the viewport's right edge
+    /// should flip horizontally to BottomLeft-ish placement so the
+    /// child stays on-screen with the anchor at its right edge.
+    #[test]
+    fn anchored_flips_horizontally_when_off_right_edge() {
+        use crate::elements::anchored;
+        use crate::AnchorCorner;
+        const RED: Color = [1.0, 0.0, 0.0, 1.0];
+
+        // Viewport 400 wide, child 100 wide. Anchor at x=380 with
+        // TopLeft would place child at x=380..480 — overflows. Flip
+        // to "anchor at child's right edge" → child at x=280..380.
+        let root = div()
+            .w(400.0)
+            .h(300.0)
+            .child(anchored(
+                div().w(100.0).h(20.0).bg(RED),
+                [380.0, 50.0],
+                AnchorCorner::TopLeft,
+            ));
+        let scene = paint_tree(
+            &root,
+            &theme(),
+            [400.0, 300.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
+        let rects = collect_rects(&scene);
+        assert_eq!(rects.len(), 1);
+        assert!(
+            (rects[0].pos[0] - 280.0).abs() < 0.5,
+            "expected horizontal flip to x=280, got x={}",
+            rects[0].pos[0],
+        );
+    }
+
+    /// Final clamp: a child wider than the viewport can't fit either
+    /// corner. The clamp keeps it inside the viewport at x=0 (since
+    /// max_x = vw - cw is negative when cw > vw, clamping floors to 0).
+    #[test]
+    fn anchored_clamps_when_neither_corner_fits() {
+        use crate::elements::anchored;
+        use crate::AnchorCorner;
+        const RED: Color = [1.0, 0.0, 0.0, 1.0];
+
+        // Viewport 100, child 200. No corner can fit; final clamp
+        // floors x to 0.
+        let root = div()
+            .w(100.0)
+            .h(300.0)
+            .child(anchored(
+                div().w(200.0).h(20.0).bg(RED),
+                [50.0, 50.0],
+                AnchorCorner::TopLeft,
+            ));
+        let scene = paint_tree(
+            &root,
+            &theme(),
+            [100.0, 300.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
+        let rects = collect_rects(&scene);
+        assert_eq!(rects.len(), 1);
+        assert!(
+            (rects[0].pos[0] - 0.0).abs() < 0.5,
+            "child wider than viewport ⇒ clamp to x=0, got x={}",
+            rects[0].pos[0],
+        );
+    }
+
+    /// Y-axis edge flip: a TopLeft anchor near the bottom edge should
+    /// flip vertically to BottomLeft-ish placement so the child stays
+    /// on-screen with the anchor at its bottom edge.
+    #[test]
+    fn anchored_flips_vertically_when_off_bottom_edge() {
+        use crate::elements::anchored;
+        use crate::AnchorCorner;
+        const RED: Color = [1.0, 0.0, 0.0, 1.0];
+
+        // Viewport 300 tall, child 80 tall. Anchor at y=270 with
+        // TopLeft would place child at y=270..350 — overflows. Flip
+        // to "anchor at child's bottom edge" → child at y=190..270.
+        let root = div()
+            .w(400.0)
+            .h(300.0)
+            .child(anchored(
+                div().w(20.0).h(80.0).bg(RED),
+                [50.0, 270.0],
+                AnchorCorner::TopLeft,
+            ));
+        let scene = paint_tree(
+            &root,
+            &theme(),
+            [400.0, 300.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
+        let rects = collect_rects(&scene);
+        assert_eq!(rects.len(), 1);
+        assert!(
+            (rects[0].pos[1] - 190.0).abs() < 0.5,
+            "expected vertical flip to y=190, got y={}",
+            rects[0].pos[1],
+        );
+    }
+
+    /// `BottomRight` corner near the top-left edge: the preferred
+    /// placement (`x = ax - cw`, `y = ay - ch`) sends both axes
+    /// negative, so each axis flips to the right/bottom of the anchor.
+    /// Result: the child's TopLeft corner sits at the anchor point.
+    #[test]
+    fn anchored_bottom_right_near_top_left_flips_both_axes() {
+        use crate::elements::anchored;
+        use crate::AnchorCorner;
+        const RED: Color = [1.0, 0.0, 0.0, 1.0];
+
+        // Viewport 400×300, child 100×80. Anchor at (10, 20) with
+        // BottomRight: preferred = (10-100, 20-80) = (-90, -60), both
+        // off-screen. Per-axis flip: x = ax = 10, y = ay = 20. Child
+        // ends up at (10, 20) — i.e. its TopLeft at the anchor.
+        let root = div()
+            .w(400.0)
+            .h(300.0)
+            .child(anchored(
+                div().w(100.0).h(80.0).bg(RED),
+                [10.0, 20.0],
+                AnchorCorner::BottomRight,
+            ));
+        let scene = paint_tree(
+            &root,
+            &theme(),
+            [400.0, 300.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
+        let rects = collect_rects(&scene);
+        assert_eq!(rects.len(), 1);
+        assert!(
+            (rects[0].pos[0] - 10.0).abs() < 0.5,
+            "expected x-axis flip to anchor.x=10, got x={}",
+            rects[0].pos[0],
+        );
+        assert!(
+            (rects[0].pos[1] - 20.0).abs() < 0.5,
+            "expected y-axis flip to anchor.y=20, got y={}",
+            rects[0].pos[1],
+        );
     }
 }

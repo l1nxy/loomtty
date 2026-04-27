@@ -1,15 +1,18 @@
 //! Right-click context menu.
 //!
-//! A small modal popup anchored at the click point. Rows show the menu item
-//! label; enabled rows highlight on hover. Capture clamps the menu inside the
-//! viewport so painting can stay purely absolute.
+//! A small modal popup anchored at the click point. Rows show the menu
+//! item label; enabled rows highlight on hover. Capture stores the
+//! raw click coordinates; `ciri_ui::anchored()` handles viewport-aware
+//! placement at paint time — edge-flips when the click lands near the
+//! right or bottom edge so the cursor stays at one of the menu's
+//! corners instead of inside the menu.
 
 use super::text_layout;
 use super::tokens;
 use super::types::{UiAction, UiContext, UiContextMenuHit, UiScene, ui_hit_id};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Div, IntoElement, Render, RenderCtx, Styled, deferred, div, text};
+use ciri_ui::{AnchorCorner, Div, IntoElement, Render, RenderCtx, Styled, anchored, div, text};
 
 const HIT_MENU: u64 = 1;
 const HIT_ENTRY_BASE: u64 = 1_000_000;
@@ -51,16 +54,15 @@ impl ContextMenuComponent {
         let max_menu_width = (cx.viewport_w - padding * 2.0).max(1.0);
         let menu_width = 200.0_f32.min(max_menu_width);
         let menu_height = app.core.context_menu.items.len() as f32 * item_height + padding * 2.0;
-        let x = app
-            .core
-            .context_menu
-            .x
-            .clamp(0.0, (cx.viewport_w - menu_width).max(0.0));
-        let y = app
-            .core
-            .context_menu
-            .y
-            .clamp(0.0, (cx.viewport_h - menu_height).max(0.0));
+        // Capture raw click point — `anchored()` in `build_tree`
+        // handles viewport-aware placement (edge-flips on the right /
+        // bottom, final clamp if neither corner fits). The pre-Step-42
+        // clamp baked into capture ran on the wrong side of the
+        // truncation pipeline anyway; deferring it to paint-time
+        // means the menu can still anchor at the cursor when there's
+        // room, instead of always sliding into view.
+        let x = app.core.context_menu.x;
+        let y = app.core.context_menu.y;
         let label_budget = (menu_width - padding * 2.0 - tokens::BORDER_THIN * 2.0).max(0.0);
         let rows = app
             .core
@@ -134,10 +136,11 @@ impl ContextMenuComponent {
         let content_w = self.menu_width - bw * 2.0;
         let item_h = self.item_height;
         let text_pad = (padding - bw).max(0.0);
+        // Panel sizes itself; positioning is delegated to `anchored()`
+        // below. No `.absolute().left().top()` because the anchored
+        // wrapper overrides `parent_local` at drain time based on the
+        // child's measured size + viewport.
         let mut panel = div()
-            .absolute()
-            .left(self.x)
-            .top(self.y)
             .w(self.menu_width)
             .h(self.menu_height)
             .flex_col()
@@ -173,15 +176,19 @@ impl ContextMenuComponent {
         }
         panel = panel.child(div().w(content_w).h(padding));
 
-        // `deferred()` floats the panel above any other element painted
-        // into this widget's Scene without needing `in_layer(Modal)` —
-        // the walker's drain pass paints deferred subtrees last. The
-        // panel still positions itself absolutely from `self.x/self.y`
-        // so the layout-transparent wrapper doesn't perturb geometry.
+        // `anchored()` is `deferred()` with viewport-aware
+        // positioning — drain reads the panel's measured size and
+        // edge-flips when the click point near the bottom-right
+        // would extend the menu off-screen. Replaces the manual
+        // `.clamp(...)` previously applied at capture time.
         let root = div()
             .w(cx.viewport[0])
             .h(cx.viewport[1])
-            .child(deferred(panel));
+            .child(anchored(
+                panel,
+                [self.x, self.y],
+                AnchorCorner::TopLeft,
+            ));
 
         root
     }
@@ -212,7 +219,11 @@ mod tests {
     }
 
     #[test]
-    fn capture_clamps_menu_inside_small_viewport() {
+    fn capture_records_raw_click_anchor_for_anchored_placement() {
+        // Step 42 contract: `capture` stores the raw click point;
+        // viewport clamping happens at paint via `anchored()`. The
+        // rendered position (verified by `hit_test`) lands inside
+        // the viewport even though `menu.x/y` are out-of-bounds.
         let mut app = make_app();
         app.core.context_menu = ContextMenu {
             visible: true,
@@ -230,9 +241,13 @@ mod tests {
         let theme = ciri_ui::ResolvedTheme::default();
         let cx = test_ui_context(&config, &theme, 120.0, 60.0);
         let menu = ContextMenuComponent::capture(&app, &cx).expect("menu visible");
-        assert!(menu.x >= 0.0);
-        assert!(menu.y >= 0.0);
-        assert!(menu.x + menu.menu_width <= cx.viewport_w + 0.001);
+        // Capture stores raw click coords — no pre-paint clamp.
+        assert!((menu.x - 999.0).abs() < 0.001);
+        assert!((menu.y - 999.0).abs() < 0.001);
+        // The menu still has a well-defined size; anchored uses these
+        // dimensions during drain to compute the on-screen bounds.
+        assert!(menu.menu_width > 0.0);
+        assert!(menu.menu_height > 0.0);
     }
 
     #[test]

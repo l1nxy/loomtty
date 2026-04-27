@@ -39,10 +39,10 @@ pub use arena::{
 };
 pub use color::Color;
 pub use element::{
-    AnyElement, Element, ElementId, ElementStates, EventCtx, IntoElement, PaintCtx, Render,
-    RenderCtx, UiCtx, UiEvent,
+    AnchorCorner, AnchorPlacement, AnyElement, Element, ElementId, ElementStates, EventCtx,
+    IntoElement, PaintCtx, Render, RenderCtx, UiCtx, UiEvent,
 };
-pub use elements::{Deferred, Div, Text, deferred, div, text, uniform_list};
+pub use elements::{Anchored, Deferred, Div, Text, anchored, deferred, div, text, uniform_list};
 pub use fluent::FluentBuilder;
 pub use layout::{
     LayoutNode, LayoutSnapshot, NodeContext, PaintOutput, layout_tree_into_retained, paint_tree,

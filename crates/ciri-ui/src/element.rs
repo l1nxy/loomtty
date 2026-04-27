@@ -24,6 +24,30 @@ use std::ops::Deref;
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
 pub struct ElementId(pub u64);
 
+/// Which corner of an [`crate::elements::Anchored`]'s child sits at
+/// the anchor point. Used by the drain pass to compute the child's
+/// screen position from its measured size + anchor.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum AnchorCorner {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+/// Placement metadata for [`crate::elements::Anchored`] — the anchor
+/// point in viewport coordinates plus the preferred child corner. The
+/// drain pass edge-flips to the opposite corner along any axis where
+/// the preferred placement would push the child off the viewport.
+///
+/// `Eq` isn't derivable because `[f32; 2]` only implements
+/// `PartialEq`. Tests compare by value via `assert_eq!`.
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub struct AnchorPlacement {
+    pub point: [f32; 2],
+    pub corner: AnchorCorner,
+}
+
 /// Input events routed to elements by the dispatch tree.
 #[derive(Clone, Debug)]
 pub enum UiEvent {
@@ -432,6 +456,18 @@ pub trait Element: 'static {
     /// [`Element::is_deferred`] returns `true`. Default 0.
     fn deferred_priority(&self) -> u32 {
         0
+    }
+
+    /// Anchor placement for the child of an [`crate::elements::Anchored`]
+    /// wrapper. When `Some`, the drain pass overrides the captured
+    /// `parent_local` with a position computed from the child's
+    /// measured size + the anchor point + corner, edge-flipping if the
+    /// preferred corner would push the child off the viewport. Returns
+    /// `None` for ordinary deferred wrappers — they paint at their
+    /// natural in-tree position. Read by the walker only when
+    /// [`Element::is_deferred`] is also `true`.
+    fn anchor_placement(&self) -> Option<AnchorPlacement> {
+        None
     }
 
     /// Handle an input event. Return `true` if consumed. Default: ignore.

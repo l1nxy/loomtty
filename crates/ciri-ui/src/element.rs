@@ -425,6 +425,31 @@ pub trait Element: 'static {
         None
     }
 
+    /// Marker: `true` when this element wants the walker to defer paint
+    /// of its single child to *after* the main tree walk completes.
+    /// Used by [`crate::elements::Deferred`] to escape z-order without
+    /// the fixed `Layer` enum: deferred children are sorted by
+    /// `deferred_priority()` ascending and painted in order, so they
+    /// always sit above non-deferred siblings regardless of tree order.
+    ///
+    /// Walker contract: when this returns `true`, the wrapper itself
+    /// does not paint — neither `paint()` nor a snapshot push runs for
+    /// it, and the zero-size guard is bypassed. Each child is captured
+    /// into the deferred queue with the current inheritance state and
+    /// re-painted during drain. Authors that need a scrim alongside a
+    /// deferred subtree should emit it from a sibling element, not
+    /// from inside the deferred wrapper.
+    fn is_deferred(&self) -> bool {
+        false
+    }
+
+    /// Drain priority for deferred elements. Lower values paint earlier
+    /// (i.e. further from the viewer). Read by the walker only when
+    /// [`Element::is_deferred`] returns `true`. Default 0.
+    fn deferred_priority(&self) -> u32 {
+        0
+    }
+
     /// Handle an input event. Return `true` if consumed. Default: ignore.
     fn on_event(&mut self, _event: &UiEvent, _cx: &mut EventCtx) -> bool {
         false

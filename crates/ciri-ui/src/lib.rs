@@ -42,7 +42,7 @@ pub use element::{
     AnyElement, Element, ElementId, ElementStates, EventCtx, IntoElement, Layer, PaintCtx, Render,
     RenderCtx, UiCtx, UiEvent,
 };
-pub use elements::{Div, Text, div, text, uniform_list};
+pub use elements::{Deferred, Div, Text, deferred, div, text, uniform_list};
 pub use fluent::FluentBuilder;
 pub use layout::{
     LayoutNode, LayoutSnapshot, NodeContext, PaintOutput, layout_tree_into_retained, paint_tree,

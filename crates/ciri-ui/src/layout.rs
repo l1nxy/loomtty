@@ -27,6 +27,22 @@ use crate::style::{
 };
 use crate::theme::ResolvedTheme;
 
+/// One captured deferred subtree, queued during the main walk and
+/// drained after it. Carries everything the second walk needs to
+/// resume painting where the first walk would have continued — bounds
+/// inherit from the deferred wrapper's parent, not from the wrapper
+/// itself.
+struct DeferredEntry<'a> {
+    el: &'a dyn Element,
+    node: taffy::NodeId,
+    parent_local: [f32; 2],
+    inherited_translate: [f32; 2],
+    inherited_opacity: f32,
+    inherited_layer: Layer,
+    inherited_text_color: Option<crate::color::Color>,
+    priority: u32,
+}
+
 /// Per-node side-channel the layout pass hands to its
 /// `compute_layout_with_measure` callback. Only leaves that need
 /// shaper-driven sizing attach one; containers stay `None` and let
@@ -283,6 +299,7 @@ pub fn layout_tree_into_retained(
         return;
     }
     let mut paint_order = 0;
+    let mut deferred_queue: Vec<DeferredEntry<'_>> = Vec::new();
     walk_for_layout_snapshot(
         tree,
         root_node,
@@ -292,7 +309,9 @@ pub fn layout_tree_into_retained(
         /* inherited_layer */ Layer::Chrome,
         layout_snapshot,
         &mut paint_order,
+        &mut deferred_queue,
     );
+    drain_deferred_layout_only(tree, deferred_queue, layout_snapshot, &mut paint_order);
 }
 
 /// Most-general paint entry point: caller owns the [`Scene`], the
@@ -379,6 +398,7 @@ pub fn paint_tree_into_retained(
     // matches what they'd see without this hover lookup.
     let hovered_hit_id = if let Some([mx, my]) = mouse_pos {
         let mut prepaint_order = 0;
+        let mut prepaint_deferred: Vec<DeferredEntry<'_>> = Vec::new();
         walk_for_layout_snapshot(
             tree,
             root_node,
@@ -386,6 +406,13 @@ pub fn paint_tree_into_retained(
             [0.0, 0.0],
             [0.0, 0.0],
             Layer::Chrome,
+            layout_snapshot,
+            &mut prepaint_order,
+            &mut prepaint_deferred,
+        );
+        drain_deferred_layout_only(
+            tree,
+            prepaint_deferred,
             layout_snapshot,
             &mut prepaint_order,
         );
@@ -398,15 +425,34 @@ pub fn paint_tree_into_retained(
     // and bounds match exactly what a single-pass walk would produce.
     layout_snapshot.clear();
     let mut paint_order = 0;
-    paint_node(
+    let mut deferred_queue: Vec<DeferredEntry<'_>> = Vec::new();
+    let mut states_owner = states;
+    {
+        let states_for_main: Option<&mut ElementStates> =
+            states_owner.as_mut().map(|s| &mut **s);
+        paint_node(
+            tree,
+            root_node,
+            root,
+            /* parent_local */ [0.0, 0.0],
+            /* inherited_translate */ [0.0, 0.0],
+            /* inherited_opacity */ 1.0,
+            /* inherited_layer */ Layer::Chrome,
+            /* inherited_text_color */ None,
+            hovered_hit_id,
+            theme,
+            scale,
+            text_shaper,
+            scene,
+            layout_snapshot,
+            &mut paint_order,
+            states_for_main,
+            &mut deferred_queue,
+        );
+    }
+    drain_deferred_paint(
         tree,
-        root_node,
-        root,
-        /* parent_local */ [0.0, 0.0],
-        /* inherited_translate */ [0.0, 0.0],
-        /* inherited_opacity */ 1.0,
-        /* inherited_layer */ Layer::Chrome,
-        /* inherited_text_color */ None,
+        deferred_queue,
         hovered_hit_id,
         theme,
         scale,
@@ -414,7 +460,7 @@ pub fn paint_tree_into_retained(
         scene,
         layout_snapshot,
         &mut paint_order,
-        states,
+        states_owner.as_mut().map(|s| &mut **s),
     );
 }
 
@@ -437,10 +483,10 @@ fn build_taffy(tree: &mut taffy::TaffyTree<NodeContext>, el: &dyn Element) -> ta
 }
 
 #[allow(clippy::too_many_arguments)]
-fn paint_node(
+fn paint_node<'a>(
     tree: &taffy::TaffyTree<NodeContext>,
     node: taffy::NodeId,
-    el: &dyn Element,
+    el: &'a dyn Element,
     parent_local: [f32; 2],
     inherited_translate: [f32; 2],
     inherited_opacity: f32,
@@ -454,6 +500,7 @@ fn paint_node(
     layout_snapshot: &mut LayoutSnapshot,
     paint_order: &mut usize,
     states: Option<&mut ElementStates>,
+    deferred_queue: &mut Vec<DeferredEntry<'a>>,
 ) {
     let layout = match tree.layout(node) {
         Ok(l) => l,
@@ -462,6 +509,40 @@ fn paint_node(
             return;
         }
     };
+    let local_x = parent_local[0] + layout.location.x;
+    let local_y = parent_local[1] + layout.location.y;
+
+    // Deferred wrappers are layout-transparent: they don't paint, don't
+    // appear in the snapshot, and don't enforce a min-size. Capture
+    // their child(ren) into the drain queue with the same inheritance
+    // the wrapper itself would have passed down, then return — the
+    // wrapper's own bounds are irrelevant because it has no paint and
+    // the drain re-enters paint_node from each child's taffy node.
+    if el.is_deferred() {
+        let priority = el.deferred_priority();
+        let effective_layer = el.layer().unwrap_or(inherited_layer);
+        let children = el.children();
+        let taffy_children: Vec<_> = tree.child_ids(node).collect();
+        debug_assert_eq!(
+            taffy_children.len(),
+            children.len(),
+            "Taffy child count disagrees with Element::children() (deferred)",
+        );
+        for (child_node, child_el) in taffy_children.iter().zip(children.iter()) {
+            deferred_queue.push(DeferredEntry {
+                el: &**child_el,
+                node: *child_node,
+                parent_local: [local_x, local_y],
+                inherited_translate,
+                inherited_opacity,
+                inherited_layer: effective_layer,
+                inherited_text_color,
+                priority,
+            });
+        }
+        return;
+    }
+
     // Zero-sized nodes cover `display: None`, collapsed flex items and
     // defensively any non-finite layout result — there's nothing
     // meaningful to paint, and descending would waste buffer space.
@@ -469,8 +550,6 @@ fn paint_node(
         return;
     }
 
-    let local_x = parent_local[0] + layout.location.x;
-    let local_y = parent_local[1] + layout.location.y;
     let paint_x = local_x + inherited_translate[0];
     let paint_y = local_y + inherited_translate[1];
 
@@ -566,7 +645,92 @@ fn paint_node(
             layout_snapshot,
             paint_order,
             states_for_child,
+            deferred_queue,
         );
+    }
+}
+
+/// Drain queued deferred subtrees in priority order — lowest priority
+/// paints first, so higher-priority deferred paints land on top.
+/// Re-paint passes can themselves push new entries (nested `deferred()`
+/// inside a deferred subtree); the loop empties the queue completely
+/// before returning so ordering invariants hold even for nested cases.
+#[allow(clippy::too_many_arguments)]
+fn drain_deferred_paint<'a>(
+    tree: &taffy::TaffyTree<NodeContext>,
+    queue: Vec<DeferredEntry<'a>>,
+    hovered_hit_id: Option<u64>,
+    theme: &ResolvedTheme,
+    scale: f32,
+    text_shaper: &mut dyn TextShaper,
+    scene: &mut Scene,
+    layout_snapshot: &mut LayoutSnapshot,
+    paint_order: &mut usize,
+    states: Option<&mut ElementStates>,
+) {
+    let mut pending = queue;
+    let mut states_owner = states;
+    while !pending.is_empty() {
+        // Stable-sort by priority so equal-priority entries paint in
+        // capture order — i.e. the order siblings appeared in the
+        // original tree walk. Without stability, two equal-priority
+        // popovers could swap z each frame.
+        pending.sort_by_key(|e| e.priority);
+        let mut next_pending: Vec<DeferredEntry<'a>> = Vec::new();
+        for entry in pending.drain(..) {
+            let states_for_call: Option<&mut ElementStates> =
+                states_owner.as_mut().map(|s| &mut **s);
+            paint_node(
+                tree,
+                entry.node,
+                entry.el,
+                entry.parent_local,
+                entry.inherited_translate,
+                entry.inherited_opacity,
+                entry.inherited_layer,
+                entry.inherited_text_color,
+                hovered_hit_id,
+                theme,
+                scale,
+                text_shaper,
+                scene,
+                layout_snapshot,
+                paint_order,
+                states_for_call,
+                &mut next_pending,
+            );
+        }
+        pending = next_pending;
+    }
+}
+
+/// Same shape as [`drain_deferred_paint`] but for the hit-test-only
+/// walker. No paint, no scene, no states — just snapshot population in
+/// the same order the painter would have chosen.
+fn drain_deferred_layout_only<'a>(
+    tree: &taffy::TaffyTree<NodeContext>,
+    queue: Vec<DeferredEntry<'a>>,
+    layout_snapshot: &mut LayoutSnapshot,
+    paint_order: &mut usize,
+) {
+    let mut pending = queue;
+    while !pending.is_empty() {
+        pending.sort_by_key(|e| e.priority);
+        let mut next_pending: Vec<DeferredEntry<'a>> = Vec::new();
+        for entry in pending.drain(..) {
+            walk_for_layout_snapshot(
+                tree,
+                entry.node,
+                entry.el,
+                entry.parent_local,
+                entry.inherited_translate,
+                entry.inherited_layer,
+                layout_snapshot,
+                paint_order,
+                &mut next_pending,
+            );
+        }
+        pending = next_pending;
     }
 }
 
@@ -577,15 +741,16 @@ fn paint_node(
 /// colour inheritance and `Element::paint` calls because nothing
 /// consumes them on this path.
 #[allow(clippy::too_many_arguments)]
-fn walk_for_layout_snapshot(
+fn walk_for_layout_snapshot<'a>(
     tree: &taffy::TaffyTree<NodeContext>,
     node: taffy::NodeId,
-    el: &dyn Element,
+    el: &'a dyn Element,
     parent_local: [f32; 2],
     inherited_translate: [f32; 2],
     inherited_layer: Layer,
     layout_snapshot: &mut LayoutSnapshot,
     paint_order: &mut usize,
+    deferred_queue: &mut Vec<DeferredEntry<'a>>,
 ) {
     let layout = match tree.layout(node) {
         Ok(l) => l,
@@ -594,12 +759,41 @@ fn walk_for_layout_snapshot(
             return;
         }
     };
+    let local_x = parent_local[0] + layout.location.x;
+    let local_y = parent_local[1] + layout.location.y;
+
+    // Mirror the paint walker: deferred wrappers are layout-transparent.
+    // Capture each child into the queue so the drain pass populates the
+    // snapshot in the same order paint would produce.
+    if el.is_deferred() {
+        let priority = el.deferred_priority();
+        let effective_layer = el.layer().unwrap_or(inherited_layer);
+        let children = el.children();
+        let taffy_children: Vec<_> = tree.child_ids(node).collect();
+        debug_assert_eq!(
+            taffy_children.len(),
+            children.len(),
+            "Taffy child count disagrees with Element::children() (hit-only deferred)",
+        );
+        for (child_node, child_el) in taffy_children.iter().zip(children.iter()) {
+            deferred_queue.push(DeferredEntry {
+                el: &**child_el,
+                node: *child_node,
+                parent_local: [local_x, local_y],
+                inherited_translate,
+                inherited_opacity: 1.0,
+                inherited_layer: effective_layer,
+                inherited_text_color: None,
+                priority,
+            });
+        }
+        return;
+    }
+
     if !(layout.size.width > 0.0 && layout.size.height > 0.0) {
         return;
     }
 
-    let local_x = parent_local[0] + layout.location.x;
-    let local_y = parent_local[1] + layout.location.y;
     let paint_x = local_x + inherited_translate[0];
     let paint_y = local_y + inherited_translate[1];
 
@@ -646,6 +840,7 @@ fn walk_for_layout_snapshot(
             effective_layer,
             layout_snapshot,
             paint_order,
+            deferred_queue,
         );
     }
 }
@@ -1372,5 +1567,99 @@ mod tests {
         );
         assert_eq!(scene.sdf_in_layer(Layer::Modal).len(), 2);
         assert_eq!(scene.sdf_in_layer(Layer::Chrome).len(), 0);
+    }
+
+    /// Within the same layer, a `deferred()` child must paint AFTER its
+    /// non-deferred siblings — that's the whole point of the queue.
+    /// Without the drain pass the deferred child would emit in tree
+    /// order and get covered by anything painted after it.
+    #[test]
+    fn deferred_child_paints_after_non_deferred_sibling() {
+        use crate::elements::deferred;
+        const RED: Color = [1.0, 0.0, 0.0, 1.0];
+        const BLUE: Color = [0.0, 0.0, 1.0, 1.0];
+        // Root has no bg → emits no SDF, so the only visible rects are
+        // the two children. Without the drain pass, the BLUE sibling
+        // would paint last (covering the deferred); with the drain,
+        // RED must come last.
+        let root = div()
+            .w(800.0)
+            .h(600.0)
+            .child(deferred(div().w(20.0).h(20.0).bg(RED)))
+            .child(div().w(20.0).h(20.0).bg(BLUE));
+        let scene = paint_tree(
+            &root,
+            &theme(),
+            [800.0, 600.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
+        let rects = scene.sdf_in_layer(Layer::Chrome);
+        assert_eq!(rects.len(), 2, "two children, both with bg");
+        assert_eq!(
+            rects[0].color, BLUE,
+            "non-deferred sibling paints first (bottom)"
+        );
+        assert_eq!(rects[1].color, RED, "deferred child paints last (top)");
+    }
+
+    /// Higher `priority()` paints later — i.e. on top of lower-priority
+    /// deferred siblings. Equal priorities preserve capture order
+    /// (tree order) thanks to the stable sort.
+    #[test]
+    fn deferred_priority_orders_drain() {
+        use crate::elements::deferred;
+        const A: Color = [0.1, 0.0, 0.0, 1.0];
+        const B: Color = [0.2, 0.0, 0.0, 1.0];
+        const C: Color = [0.3, 0.0, 0.0, 1.0];
+        // Insert in reverse priority to confirm sort wins over tree order.
+        let root = div()
+            .w(800.0)
+            .h(600.0)
+            .child(deferred(div().w(20.0).h(20.0).bg(C)).priority(20))
+            .child(deferred(div().w(20.0).h(20.0).bg(A)).priority(0))
+            .child(deferred(div().w(20.0).h(20.0).bg(B)).priority(10));
+        let scene = paint_tree(
+            &root,
+            &theme(),
+            [800.0, 600.0],
+            1.0,
+            &mut crate::shaper::NullShaper,
+        );
+        let rects = scene.sdf_in_layer(Layer::Chrome);
+        let order: Vec<_> = rects.iter().map(|r| r.color).collect();
+        assert_eq!(order, vec![A, B, C], "drained in ascending priority order");
+    }
+
+    /// Hit-test should still find a deferred subtree — the drain has to
+    /// run for the layout-only walker too, otherwise the snapshot would
+    /// be missing the deferred descendants and clicks would fall through.
+    #[test]
+    fn deferred_subtree_appears_in_layout_snapshot() {
+        use crate::elements::deferred;
+        use crate::styled::Styled;
+        let root = div()
+            .w(800.0)
+            .h(600.0)
+            .child(deferred(
+                div()
+                    .w(40.0)
+                    .h(40.0)
+                    .bg([1.0, 1.0, 1.0, 1.0])
+                    .hit_id(99)
+                    .on_click(|| {}),
+            ));
+        let mut snapshot = LayoutSnapshot::new();
+        let mut tree = taffy::TaffyTree::<NodeContext>::new();
+        layout_tree_into_retained(
+            &root,
+            [800.0, 600.0],
+            &mut crate::shaper::NullShaper,
+            &mut snapshot,
+            &mut tree,
+        );
+        let hit = snapshot.hit_test(5.0, 5.0);
+        assert!(hit.is_some(), "deferred element must be in snapshot");
+        assert_eq!(hit.unwrap().hit_id, Some(99));
     }
 }

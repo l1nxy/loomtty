@@ -1118,6 +1118,17 @@ fn find_cjk_font(db: &fontdb::Database, primary: Option<fontdb::ID>) -> Option<f
         log::info!("CJK: CTFontCreateForString fallback failed, trying hardcoded list");
     }
 
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(id) = find_cjk_font_via_fontconfig(db, primary) {
+            return Some(id);
+        }
+        if let Some(id) = find_cjk_monospace_font(db, primary) {
+            return Some(id);
+        }
+        log::info!("CJK: fontconfig/monospace fallback failed, trying hardcoded list");
+    }
+
     let known = [
         "Noto Sans CJK SC",
         "Noto Sans CJK TC",
@@ -1193,6 +1204,165 @@ fn find_cjk_font(db: &fontdb::Database, primary: Option<fontdb::ID>) -> Option<f
     }
     log::info!("no CJK font found on system");
     None
+}
+
+#[cfg(target_os = "linux")]
+fn find_cjk_font_via_fontconfig(
+    db: &fontdb::Database,
+    primary: Option<fontdb::ID>,
+) -> Option<fontdb::ID> {
+    for query in ["monospace:charset=6c34", "monospace:charset=4e2d"] {
+        let output = std::process::Command::new("fc-match")
+            .args(["-f", "%{file}\n%{index}\n"])
+            .arg(query)
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            continue;
+        }
+
+        let stdout = String::from_utf8(output.stdout).ok()?;
+        let mut lines = stdout.lines();
+        let path = lines.next()?.trim();
+        if path.is_empty() {
+            continue;
+        }
+        let index = lines
+            .next()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .unwrap_or(0);
+
+        if let Some(id) = find_fontdb_face_by_path_index(db, primary, path, Some(index)) {
+            log_cjk_font_selection(db, id, "fontconfig monospace");
+            return Some(id);
+        }
+
+        // Some fontconfig builds report collection indexes differently than
+        // fontdb. If the exact face index doesn't map, accept another CJK-
+        // capable face from the same file rather than ignoring fontconfig's
+        // chosen family entirely.
+        if let Some(id) = find_fontdb_face_by_path_index(db, primary, path, None) {
+            log_cjk_font_selection(db, id, "fontconfig monospace file");
+            return Some(id);
+        }
+    }
+
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn find_fontdb_face_by_path_index(
+    db: &fontdb::Database,
+    primary: Option<fontdb::ID>,
+    path: &str,
+    index: Option<u32>,
+) -> Option<fontdb::ID> {
+    let target_path = std::path::Path::new(path);
+    let target_canonical = std::fs::canonicalize(target_path).ok();
+    let mut best: Option<(fontdb::ID, u16)> = None;
+
+    for face in db.faces() {
+        if Some(face.id) == primary || face.style != fontdb::Style::Normal {
+            continue;
+        }
+        if index.is_some_and(|idx| face.index != idx) {
+            continue;
+        }
+        if !font_source_matches_path(&face.source, target_path, target_canonical.as_deref()) {
+            continue;
+        }
+        if !font_face_supports_char(face, '水') && !font_face_supports_char(face, '中') {
+            continue;
+        }
+
+        let dist = (face.weight.0 as i32 - 400).unsigned_abs() as u16;
+        if best.is_none_or(|(_, best_dist)| dist < best_dist) {
+            best = Some((face.id, dist));
+        }
+    }
+
+    best.map(|(id, _)| id)
+}
+
+#[cfg(target_os = "linux")]
+fn font_source_matches_path(
+    source: &fontdb::Source,
+    target: &std::path::Path,
+    target_canonical: Option<&std::path::Path>,
+) -> bool {
+    let source_path = match source {
+        fontdb::Source::File(path) => path,
+        fontdb::Source::SharedFile(path, _) => path,
+        fontdb::Source::Binary(_) => return false,
+    };
+
+    source_path == target
+        || target_canonical.is_some_and(|canonical| {
+            source_path == canonical
+                || std::fs::canonicalize(source_path)
+                    .ok()
+                    .as_deref()
+                    .is_some_and(|source_canonical| source_canonical == canonical)
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn find_cjk_monospace_font(
+    db: &fontdb::Database,
+    primary: Option<fontdb::ID>,
+) -> Option<fontdb::ID> {
+    let mut best: Option<(fontdb::ID, u16)> = None;
+    for face in db.faces() {
+        if Some(face.id) == primary
+            || face.style != fontdb::Style::Normal
+            || !face.monospaced
+            || (!font_face_supports_char(face, '水') && !font_face_supports_char(face, '中'))
+        {
+            continue;
+        }
+
+        let dist = (face.weight.0 as i32 - 400).unsigned_abs() as u16;
+        if best.is_none_or(|(_, best_dist)| dist < best_dist) {
+            best = Some((face.id, dist));
+        }
+    }
+
+    if let Some((id, _)) = best {
+        log_cjk_font_selection(db, id, "fontdb monospace");
+        Some(id)
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn font_face_supports_char(face: &fontdb::FaceInfo, ch: char) -> bool {
+    let face_index = face.index;
+    let data = match &face.source {
+        fontdb::Source::File(path) => std::fs::read(path).ok(),
+        fontdb::Source::Binary(arc) => Some(arc.as_ref().as_ref().to_vec()),
+        fontdb::Source::SharedFile(_, arc) => Some(arc.as_ref().as_ref().to_vec()),
+    };
+    let Some(data) = data else {
+        return false;
+    };
+    let Ok(parsed) = ttf_parser::Face::parse(&data, face_index) else {
+        return false;
+    };
+    parsed.glyph_index(ch).is_some()
+}
+
+#[cfg(target_os = "linux")]
+fn log_cjk_font_selection(db: &fontdb::Database, id: fontdb::ID, source: &str) {
+    let Some(face) = db.face(id) else { return };
+    let name = face.families.first().map(|f| f.0.as_str()).unwrap_or("?");
+    log::info!(
+        "CJK font ({}): {} (weight={}, monospaced={})",
+        source,
+        name,
+        face.weight.0,
+        face.monospaced,
+    );
 }
 
 /// Use CTFontCreateForString to let macOS pick the locale-appropriate CJK font.
@@ -1342,5 +1512,39 @@ mod tests {
     fn shape_grapheme_no_font() {
         let shaper = TextShaper::new("NonexistentFontFamily12345");
         assert!(shaper.shape_grapheme("a", fontdb::ID::dummy()).is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cjk_font_prefers_fontconfig_monospace_match() {
+        let Ok(output) = std::process::Command::new("fc-match")
+            .args(["-f", "%{file}\n%{index}\n", "monospace:charset=6c34"])
+            .output()
+        else {
+            return;
+        };
+        if !output.status.success() {
+            return;
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut lines = stdout.lines();
+        let Some(path) = lines.next().map(str::trim).filter(|s| !s.is_empty()) else {
+            return;
+        };
+        let index = lines
+            .next()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .unwrap_or(0);
+
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+        let expected = find_fontdb_face_by_path_index(&db, None, path, Some(index))
+            .or_else(|| find_fontdb_face_by_path_index(&db, None, path, None));
+        let Some(expected) = expected else {
+            return;
+        };
+
+        assert_eq!(find_cjk_font(&db, None), Some(expected));
     }
 }

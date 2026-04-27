@@ -25,7 +25,7 @@ use ciri_ui::{IntoElement, Render, RenderCtx, Styled, div, text};
 
 const HIT_TAB_BASE: u64 = 1_000_000;
 
-fn pane_tab_hit_id(pane_id: u64) -> u64 {
+pub(super) fn pane_tab_hit_id(pane_id: u64) -> u64 {
     HIT_TAB_BASE + pane_id
 }
 
@@ -172,6 +172,7 @@ impl TabBarComponent {
         // descendant Text by `text_color_override_with_state`.
         let active_bg = tokens::tint(accent, tokens::ALPHA_TAB_ACTIVE_BG);
         let hover_bg = tokens::tint(accent, tokens::ALPHA_HOVER_BG);
+        let press_bg = tokens::tint(accent, tokens::ALPHA_PRESS_BG);
 
         let mut rows = div().w(content_w).h(rect.h).flex_col();
         for (idx, tab) in self.tabs.iter().enumerate() {
@@ -209,7 +210,16 @@ impl TabBarComponent {
                 // Text inherits it — needed because Text's own
                 // `.color()` would otherwise override (codex Q3 from
                 // Step 20 review).
-                row_el = row_el.bg(active_bg).text_color(fg);
+                //
+                // Active also gets a hit_id + `.active()` refinement
+                // so re-clicking the active tab still feels
+                // responsive (matches the integrated pane_tabs shape).
+                row_el = row_el
+                    .bg(active_bg)
+                    .text_color(fg)
+                    .hit_id(pane_tab_hit_id(tab.pane_id))
+                    .cursor_pointer()
+                    .active(|s| s.bg(press_bg));
             } else {
                 // Inactive row: dim text base, hover refinement
                 // switches to fg text + tinted bg. The Text child
@@ -217,11 +227,15 @@ impl TabBarComponent {
                 // whichever `text_color` the walker resolves —
                 // base (dim) at rest, refinement (fg) on hover via
                 // the Step 16 refinement-aware inheritance.
+                //
+                // Press wins over hover so press-and-drag-off keeps
+                // the press cue, matching the integrated tab strip.
                 row_el = row_el
                     .text_color(dim)
                     .hit_id(pane_tab_hit_id(tab.pane_id))
                     .cursor_pointer()
-                    .hover(|s| s.bg(hover_bg).text_color(fg));
+                    .hover(|s| s.bg(hover_bg).text_color(fg))
+                    .active(|s| s.bg(press_bg).text_color(fg));
             }
 
             let indicator =

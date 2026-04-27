@@ -118,6 +118,54 @@ fn chrome_rects_place_left_tab_bar_between_top_and_hints() {
     assert!((hh - side.h).abs() < 0.01);
 }
 
+/// Step 40 contract: `tab_bar.hit()` returns
+/// `Some(UiAction::FocusPaneTab(pane_id))` for clicks inside any tab
+/// row (active or inactive), and the `pane_tab_hit_id(pane_id)` value
+/// derived from that pane_id is what `App::active_hit_id` captures
+/// for `.active()` styling. This test pins down that contract using
+/// the same fixture shape as `hit_uses_ciri_ui_layout_snapshot`.
+#[test]
+fn hit_yields_pane_tab_hit_id_for_active_press_capture() {
+    use crate::app::App;
+    use ciri_config::config::CiriConfig;
+
+    let app = App::new(CiriConfig::default(), "test-session");
+    let cx = app.ui_context();
+    let bar = UiRect::new(10.0, 20.0, 200.0, 80.0);
+    let bar_component = test_component(
+        vec![
+            TabEntry {
+                pane_id: 41,
+                label: "one".into(),
+                active: true,
+            },
+            TabEntry {
+                pane_id: 42,
+                label: "two".into(),
+                active: false,
+            },
+        ],
+        bar,
+        28.0,
+        4.0,
+        TabBarPosition::Left,
+    );
+
+    // Active row click → FocusPaneTab(41) → press captures pane_tab_hit_id(41).
+    let hit_active = bar_component.hit(bar, 12.0, 22.0, &cx);
+    assert_eq!(hit_active, Some(UiAction::FocusPaneTab(41)));
+    if let Some(UiAction::FocusPaneTab(pane_id)) = hit_active {
+        assert_eq!(super::pane_tab_hit_id(pane_id), 1_000_000 + 41);
+    }
+
+    // Inactive row click → FocusPaneTab(42) → press captures pane_tab_hit_id(42).
+    let hit_inactive = bar_component.hit(bar, 12.0, 54.0, &cx);
+    assert_eq!(hit_inactive, Some(UiAction::FocusPaneTab(42)));
+    if let Some(UiAction::FocusPaneTab(pane_id)) = hit_inactive {
+        assert_eq!(super::pane_tab_hit_id(pane_id), 1_000_000 + 42);
+    }
+}
+
 /// Documents the intended click-routing when the top bar and side
 /// bar visually abut. The top bar spans the full window width, so pixels at
 /// `y < bar_height` belong to the top bar even over the side bar's x column.

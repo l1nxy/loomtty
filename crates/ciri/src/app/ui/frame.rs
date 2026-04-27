@@ -295,6 +295,8 @@ impl UiFrame {
     /// - Top-bar **session label** and **workspace indicator**: click
     ///   opens the palette, but the bar stays painted under the
     ///   palette backdrop, so the press tint is visible at the edges.
+    /// - Side **tab bar** rows: click focuses the pane without
+    ///   dismissing the bar; same shape as the integrated tabs.
     ///
     /// Returns `None` for click-and-dismiss chrome (palette /
     /// paste_dialog / context_menu rows) so they don't flash an
@@ -317,6 +319,12 @@ impl UiFrame {
                 Some(UiTopBarHit::Workspace) => return Some(super::top_bar::HIT_WORKSPACE),
                 _ => {}
             }
+        }
+        if let (Some(tab_bar), Some(rect)) = (&self.side_tab_bar, self.chrome.side_tab_bar)
+            && rect.contains(mx, my)
+            && let Some(UiAction::FocusPaneTab(pane_id)) = tab_bar.hit(rect, mx, my, cx)
+        {
+            return Some(super::tab_bar::pane_tab_hit_id(pane_id));
         }
         None
     }

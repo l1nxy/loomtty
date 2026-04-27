@@ -69,6 +69,14 @@ impl App {
                 }
             }
             UiAction::FocusPaneTab(pane_id) => {
+                // Re-clicking the already-focused tab is a no-op:
+                // skip the `FocusPane` network round-trip and the
+                // animate_to_active call so the active-tab `.active()`
+                // refinement (Steps 38/40) doesn't generate spurious
+                // server traffic per click of the focused tab.
+                if self.core.workspaces.active().active_pane_id() == Some(pane_id) {
+                    return;
+                }
                 let mut target: Option<(usize, usize, usize)> = None;
                 for (ws_idx, ws) in self.core.workspaces.workspaces.iter().enumerate() {
                     for (col_idx, col) in ws.columns.iter().enumerate() {

@@ -81,6 +81,8 @@ fn test_atlas(config: &CiriConfig, shaper: &TextShaper) -> GlyphCache {
         font_resolver: shaper.font_resolver(),
         #[cfg(windows)]
         dwrite_resolver: shaper.dwrite_resolver(),
+        cell_width_scale: None,
+        cell_height_scale: None,
     })
 }
 
@@ -650,4 +652,79 @@ fn scrollbar_thumb_visual_state_changes_color_and_alpha() {
     assert_eq!(idle.color[3], 0.4);
     assert_eq!(hovered.color[3], 0.45);
     assert_eq!(pressed.color[3], 0.6);
+}
+
+/// Regression: when a row of box-drawing cells sits on a solid bg colour,
+/// the merged bg strip used to be appended to `bg_rects` *after* the line
+/// rects and paint right over them. The renderer must emit the strip (or
+/// per-cell bg) BEFORE the box-drawing geometry so the line stays visible.
+#[test]
+fn box_drawing_lines_stay_above_colored_bg_strip() {
+    let config = test_config();
+    let shaper = test_shaper(&config);
+    let mut atlas = test_atlas(&config, &shaper);
+    let ct = test_color_table(&config);
+    let graphemes = HashMap::new();
+
+    let bg = PackedColor::rgb(64, 0, 0);
+    let fg = PackedColor::rgb(255, 255, 255);
+    let mut cells = grid_with_size(3, 1);
+    cells[0] = styled_cell('\u{2500}', fg, bg, 0);
+    cells[1] = styled_cell('\u{2500}', fg, bg, 0);
+    cells[2] = styled_cell('\u{2500}', fg, bg, 0);
+
+    let params = test_view_inputs(
+        TestFrame {
+            cells: &cells,
+            cols: 3,
+            rows: 1,
+            cursor_line: -1,
+            cursor_col: 0,
+            cursor_shape: CURSOR_HIDDEN,
+        },
+        &shaper,
+        &config,
+        &ct,
+        &graphemes,
+    );
+    let view = build_view_from_grid(&mut atlas, &params);
+
+    let bg_rects: Vec<_> = (0..view.row_count())
+        .flat_map(|r| view.row_bg_rects(r).iter().copied())
+        .collect();
+
+    let bg_color = ct.resolve_packed(bg);
+    let fg_color = ct.resolve_packed(fg);
+
+    // Every line rect (the fg-coloured short-height rects emitted by
+    // box_drawing) must NOT have any later rect that fully overlaps it
+    // and is bg-coloured — otherwise the renderer would paint over it.
+    let line_indices: Vec<usize> = bg_rects
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.color == fg_color && r.h < atlas.cell_height)
+        .map(|(i, _)| i)
+        .collect();
+    assert!(
+        !line_indices.is_empty(),
+        "expected box-drawing line rects to be emitted"
+    );
+    fn covers(outer: &Rect, inner: &Rect) -> bool {
+        outer.x <= inner.x
+            && outer.y <= inner.y
+            && outer.x + outer.w >= inner.x + inner.w
+            && outer.y + outer.h >= inner.y + inner.h
+    }
+    for &li in &line_indices {
+        let line = bg_rects[li];
+        for (j, later) in bg_rects.iter().enumerate().skip(li + 1) {
+            if later.color == bg_color && covers(later, &line) {
+                panic!(
+                    "line rect at index {li} (x={} y={} w={} h={}) is covered by a later \
+                     bg rect at index {j} (x={} y={} w={} h={}) — strip flush ordering bug",
+                    line.x, line.y, line.w, line.h, later.x, later.y, later.w, later.h
+                );
+            }
+        }
+    }
 }

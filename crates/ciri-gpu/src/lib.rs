@@ -518,6 +518,8 @@ mod tests {
                 )),
                 #[cfg(windows)]
                 dwrite_resolver: None,
+                cell_width_scale: None,
+                cell_height_scale: None,
             });
         let scene = ciri_render::FrameScene {
             clear_color: [0.0, 0.0, 0.0, 1.0],

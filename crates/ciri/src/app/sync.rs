@@ -469,8 +469,28 @@ impl App {
     pub fn reload_config(&mut self) {
         match ciri_config::config::CiriConfig::load() {
             Ok(new_config) => {
-                let font_changed = new_config.font.family != self.core.config.font.family
-                    || (new_config.font.size - self.core.config.font.size).abs() > 0.01;
+                let font_changed = {
+                    let old = &self.core.config.font;
+                    let new = &new_config.font;
+                    new.family != old.family
+                        || (new.size - old.size).abs() > 0.01
+                        || new.features != old.features
+                        || new.disable_ligatures != old.disable_ligatures
+                        || new.weight != old.weight
+                        || (new.adjust_cell_width - old.adjust_cell_width).abs() > f32::EPSILON
+                        || (new.adjust_cell_height - old.adjust_cell_height).abs() > f32::EPSILON
+                        || (new.adjust_underline_position - old.adjust_underline_position).abs()
+                            > f32::EPSILON
+                        || (new.adjust_underline_thickness - old.adjust_underline_thickness).abs()
+                            > f32::EPSILON
+                        || (new.adjust_strikethrough_position - old.adjust_strikethrough_position)
+                            .abs()
+                            > f32::EPSILON
+                        || (new.adjust_strikethrough_thickness
+                            - old.adjust_strikethrough_thickness)
+                            .abs()
+                            > f32::EPSILON
+                };
                 self.core.config = new_config;
                 self.cached_color_table = ciri_render::terminal::ColorTable::new(&self.core.config);
                 self.cached_resolved_theme.reload(&self.core.config.theme);
@@ -488,8 +508,13 @@ impl App {
                 if font_changed {
                     self.destroy_gpu_resources();
                     if let Some(renderer) = &mut self.renderer {
-                        let shaper =
-                            ciri_render::shaper::TextShaper::new(&self.core.config.font.family);
+                        let shaper = ciri_render::shaper::TextShaper::with_options(
+                            &self.core.config.font.family,
+                            &ciri_render::shaper::ShapingOptions {
+                                preferred_weight: self.core.config.font.weight,
+                                features: self.core.config.font.parsed_features(),
+                            },
+                        );
                         let ui_init = App::resolve_ui_font_init(&self.core.config, self.dpi_scale);
                         let (cache, atlas_gpu) =
                             match renderer.create_atlas(&ciri_render::glyph_cache::FontInitParams {
@@ -511,6 +536,12 @@ impl App {
                                 font_resolver: shaper.font_resolver(),
                                 #[cfg(windows)]
                                 dwrite_resolver: shaper.dwrite_resolver(),
+                                cell_width_scale: Some(
+                                    self.core.config.font.adjust_cell_width,
+                                ),
+                                cell_height_scale: Some(
+                                    self.core.config.font.adjust_cell_height,
+                                ),
                             }) {
                                 Ok(v) => v,
                                 Err(e) => {

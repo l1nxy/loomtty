@@ -46,16 +46,33 @@ pub(super) struct CellMetrics {
     pub(super) baseline: f32,   // baseline offset from cell top
     pub(super) face_width: f32, // unrounded face advance width (for centering compensation)
     pub(super) default_bg: [f32; 4],
+    /// Pixel offset added to the underline's vertical position.
+    pub(super) underline_offset: f32,
+    /// Underline thickness in pixels (clamped to ≥ 1px so the line is visible).
+    pub(super) underline_thickness: f32,
+    /// Pixel offset added to the strikethrough's vertical position.
+    pub(super) strikethrough_offset: f32,
+    /// Strikethrough thickness in pixels (clamped to ≥ 1px).
+    pub(super) strikethrough_thickness: f32,
 }
 
 impl CellMetrics {
     pub(super) fn new(atlas: &GlyphCache, config: &CiriConfig) -> Self {
+        let base_thickness = 1.0_f32;
+        let ul_thick =
+            (base_thickness * config.font.adjust_underline_thickness.max(0.0)).max(1.0);
+        let st_thick =
+            (base_thickness * config.font.adjust_strikethrough_thickness.max(0.0)).max(1.0);
         CellMetrics {
             cw: atlas.cell_width,
             ch: atlas.cell_height,
             baseline: atlas.ascent,
             face_width: atlas.face_width,
             default_bg: ThemeConfig::parse_color(&config.theme.background),
+            underline_offset: config.font.adjust_underline_position,
+            underline_thickness: ul_thick,
+            strikethrough_offset: config.font.adjust_strikethrough_position,
+            strikethrough_thickness: st_thick,
         }
     }
 }

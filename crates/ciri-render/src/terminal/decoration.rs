@@ -25,7 +25,7 @@ pub(super) fn render_cell(
 
     // Underline decoration
     if cell.underline != UnderlineStyle::None {
-        let uy = py + renderer.metrics.baseline + 1.0;
+        let uy = py + renderer.metrics.baseline + 1.0 + renderer.metrics.underline_offset;
         emit_underline_rects(
             renderer.bg_rects,
             cell.underline,
@@ -34,16 +34,19 @@ pub(super) fn render_cell(
             bg_width,
             cell.fg,
             renderer.metrics.cw,
+            renderer.metrics.underline_thickness,
         );
     }
 
-    // Strikethrough: 1px line through vertical center
+    // Strikethrough: line through vertical center, configurable offset & thickness
     if cell.is_strikeout {
+        let h = renderer.metrics.strikethrough_thickness;
         renderer.bg_rects.push(Rect {
             x: px,
-            y: py + renderer.metrics.ch * 0.5,
+            y: py + renderer.metrics.ch * 0.5 + renderer.metrics.strikethrough_offset
+                - (h - 1.0) * 0.5,
             w: bg_width,
-            h: 1.0,
+            h,
             color: cell.fg,
         });
     }
@@ -51,6 +54,23 @@ pub(super) fn render_cell(
     // Skip whitespace / control chars (no glyph to render)
     let c = cell.ch;
     if c == ' ' || c == '\0' || c.is_control() {
+        return;
+    }
+
+    // Box-drawing / block-element codepoints render via geometric rects
+    // pinned to the cell, never via the font glyph — that's how WT and
+    // Ghostty avoid the seam-brightening / corner-misalignment issues.
+    if super::box_drawing::is_in_range(c)
+        && super::box_drawing::emit(
+            c,
+            px,
+            py,
+            renderer.metrics.cw,
+            renderer.metrics.ch,
+            cell.fg,
+            renderer.bg_rects,
+        )
+    {
         return;
     }
 
@@ -80,7 +100,8 @@ pub(super) fn render_cell(
     }
 }
 
-/// Emit underline decoration rects into `bg_rects`.
+/// Emit underline decoration rects into `bg_rects`. `thickness` is the
+/// resolved underline pixel height (≥ 1).
 pub(super) fn emit_underline_rects(
     rects: &mut Vec<Rect>,
     style: UnderlineStyle,
@@ -89,6 +110,7 @@ pub(super) fn emit_underline_rects(
     width: f32,
     color: [f32; 4],
     cell_width: f32,
+    thickness: f32,
 ) {
     match style {
         UnderlineStyle::None => {}
@@ -97,51 +119,54 @@ pub(super) fn emit_underline_rects(
                 x: px,
                 y: uy,
                 w: width,
-                h: 1.0,
+                h: thickness,
                 color,
             });
         }
         UnderlineStyle::Double => {
-            // Two 1px lines with 1px gap
+            // Two `thickness`-tall lines with `thickness`-tall gap
             rects.push(Rect {
                 x: px,
                 y: uy,
                 w: width,
-                h: 1.0,
+                h: thickness,
                 color,
             });
             rects.push(Rect {
                 x: px,
-                y: uy + 2.0,
+                y: uy + 2.0 * thickness,
                 w: width,
-                h: 1.0,
+                h: thickness,
                 color,
             });
         }
         UnderlineStyle::Curly => {
-            // Approximate sine wave with 2px-wide rect segments
+            // Approximate sine wave with 2px-wide rect segments. Thickness
+            // controls dash height; amplitude scales with it so the wave
+            // remains visible at heavier weights.
             let wave_len = cell_width.max(8.0);
             let segments = (width / 2.0).ceil() as usize;
+            let amplitude = 1.5_f32.max(thickness);
             for i in 0..segments {
                 let x = px + i as f32 * 2.0;
-                let y_off = (i as f32 / wave_len * std::f32::consts::TAU).sin() * 1.5;
+                let y_off = (i as f32 / wave_len * std::f32::consts::TAU).sin() * amplitude;
                 let w = 2.0_f32.min(width - i as f32 * 2.0);
                 if w > 0.0 {
                     rects.push(Rect {
                         x,
                         y: uy + y_off,
                         w,
-                        h: 1.0,
+                        h: thickness,
                         color,
                     });
                 }
             }
         }
         UnderlineStyle::Dotted => {
-            emit_dashed_line(rects, px, uy, width, color, 2.0, 2.0);
+            emit_dashed_line(rects, px, uy, width, color, 2.0, 2.0, thickness);
         }
         UnderlineStyle::Dashed => {
-            emit_dashed_line(rects, px, uy, width, color, 4.0, 2.0);
+            emit_dashed_line(rects, px, uy, width, color, 4.0, 2.0, thickness);
         }
     }
 }
@@ -155,6 +180,7 @@ fn emit_dashed_line(
     color: [f32; 4],
     dash_len: f32,
     gap_len: f32,
+    thickness: f32,
 ) {
     let end = px + total_width;
     let mut x = px;
@@ -164,7 +190,7 @@ fn emit_dashed_line(
             x,
             y,
             w,
-            h: 1.0,
+            h: thickness,
             color,
         });
         x += dash_len + gap_len;
@@ -190,18 +216,20 @@ pub(super) fn render_cell_decorations(
             bg_rects,
             cell.underline,
             px,
-            py + m.baseline + 1.0,
+            py + m.baseline + 1.0 + m.underline_offset,
             bg_width,
             cell.fg,
             m.cw,
+            m.underline_thickness,
         );
     }
     if cell.is_strikeout {
+        let h = m.strikethrough_thickness;
         bg_rects.push(Rect {
             x: px,
-            y: py + m.ch * 0.5,
+            y: py + m.ch * 0.5 + m.strikethrough_offset - (h - 1.0) * 0.5,
             w: bg_width,
-            h: 1.0,
+            h,
             color: cell.fg,
         });
     }

@@ -7,6 +7,7 @@
 //! Both extract per-cell properties into [`CellProps`], then share a single rendering
 //! path for backgrounds, text glyphs, decorations (underline/strikeout), and cursor.
 
+mod box_drawing;
 mod cell;
 pub mod color;
 mod cursor;

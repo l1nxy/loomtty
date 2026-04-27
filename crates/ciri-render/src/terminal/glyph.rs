@@ -167,6 +167,10 @@ mod tests {
             baseline: 16.0,
             face_width: 10.0,
             default_bg: [0.0, 0.0, 0.0, 1.0],
+            underline_offset: 0.0,
+            underline_thickness: 1.0,
+            strikethrough_offset: 0.0,
+            strikethrough_thickness: 1.0,
         }
     }
 

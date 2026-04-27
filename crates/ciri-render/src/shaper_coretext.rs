@@ -211,6 +211,78 @@ pub(crate) fn ct_detect_ligatures(font: &CTFont, text: &str, font_id: fontdb::ID
     ligatures
 }
 
+/// CoreText analogue of `TextShaper::shape_run_with_face`. Returns one
+/// `ShapedGlyph` per CTRun glyph, with `char_count` reflecting the cluster
+/// span. `char_count == 0` for additional glyphs sharing a cluster with an
+/// earlier glyph (multi-glyph ligatures).
+pub(crate) fn ct_shape_run(
+    font: &CTFont,
+    text: &str,
+    font_id: fontdb::ID,
+) -> Vec<crate::shaper::ShapedGlyph> {
+    use crate::shaper::ShapedGlyph;
+    if text.is_empty() {
+        return Vec::new();
+    }
+    let line = create_ct_line(font, text);
+    let runs = line.glyph_runs();
+    let char_count = text.chars().count();
+    let utf16_to_char = build_utf16_to_char_map(text);
+    let utf16_len = text.encode_utf16().count();
+
+    let mut out = Vec::new();
+    for run in runs.iter() {
+        let glyph_count = run.glyph_count() as usize;
+        if glyph_count == 0 {
+            continue;
+        }
+        let glyphs = run.glyphs();
+        let raw_indices = run.string_indices();
+
+        let mut pairs: Vec<(usize, usize)> = (0..glyph_count)
+            .map(|i| (raw_indices[i] as usize, i))
+            .collect();
+        pairs.sort_unstable_by_key(|&(si, _)| si);
+
+        // Collapse multi-glyph clusters to their first glyph (mirrors the
+        // rustybuzz path); skip .notdef.
+        let mut last_utf16: Option<usize> = None;
+        for p in 0..pairs.len() {
+            let (utf16_start, gi) = pairs[p];
+            let glyph_id = glyphs[gi];
+            if glyph_id == 0 {
+                continue;
+            }
+            if last_utf16 == Some(utf16_start) {
+                continue;
+            }
+            last_utf16 = Some(utf16_start);
+            let mut next = p + 1;
+            while next < pairs.len() && pairs[next].0 == utf16_start {
+                next += 1;
+            }
+            let next_utf16 = if next < pairs.len() {
+                pairs[next].0
+            } else {
+                utf16_len
+            };
+            let start = utf16_offset_to_char(&utf16_to_char, utf16_start);
+            let end = if next_utf16 <= utf16_to_char.len() {
+                utf16_offset_to_char(&utf16_to_char, next_utf16)
+            } else {
+                char_count
+            };
+            out.push(ShapedGlyph {
+                start_col: start,
+                char_count: end.saturating_sub(start).max(1),
+                glyph_id: glyph_id as u32,
+                font_id,
+            });
+        }
+    }
+    out
+}
+
 /// Build a lookup table: for each UTF-16 code unit offset, what char index is it?
 /// Returns a Vec where `result[utf16_offset]` = char_index.
 fn build_utf16_to_char_map(text: &str) -> Vec<usize> {

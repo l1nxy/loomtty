@@ -1,5 +1,6 @@
 //! Row-level text shaping: ligature detection, grapheme clustering, single-char shaping.
 
+use ciri_config::schema::DisableLigatures;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -63,6 +64,12 @@ pub(super) fn precompute_row_shaping_into(
     faces: &FaceSet<'_>,
     data: &mut RowLigatureData,
 ) {
+    let ligatures_enabled = match params.config.font.disable_ligatures {
+        DisableLigatures::Never => true,
+        DisableLigatures::Always => false,
+        DisableLigatures::Cursor => params.cursor_line < 0 || (row as i16) != params.cursor_line,
+    };
+
     struct LigatureRun<'a> {
         start: Option<usize>,
         text: &'a str,
@@ -78,25 +85,42 @@ pub(super) fn precompute_row_shaping_into(
         run: &LigatureRun<'_>,
         skip_cols: &mut [bool],
         ligature_glyphs: &mut Vec<(usize, u32, fontdb::ID, FontStyle, [f32; 4])>,
+        char_glyphs: &mut Vec<(usize, u32, fontdb::ID, bool)>,
     ) {
-        if let Some(start) = run.start
-            && run.char_count >= 2
-        {
-            for lig in shaper.detect_ligatures_with_face(run.text, faces.primary, faces.primary_id)
-            {
-                for k in 1..lig.char_count {
-                    let c = start + lig.start_col + k;
+        let Some(start) = run.start else { return };
+        if run.char_count == 0 {
+            return;
+        }
+        // Always shape the run, even single-char runs — `calt`/`clig` may
+        // substitute a single codepoint based on context (e.g. Cascadia
+        // Code's `=>` flips earlier substitution decisions when the run
+        // grows). For a 1-char run with no substitution this is cheap and
+        // produces the same glyph the per-char fallback would.
+        let shaped = shaper.shape_run_with_face(run.text, faces.primary, faces.primary_id);
+        for sg in shaped {
+            let abs_col = start + sg.start_col;
+            if abs_col >= cols_usize {
+                continue;
+            }
+            if sg.char_count >= 2 {
+                // Real cluster-merging ligature: render the merged glyph at
+                // the start column and skip continuation columns.
+                for k in 1..sg.char_count {
+                    let c = abs_col + k;
                     if c < cols_usize {
                         skip_cols[c] = true;
                     }
                 }
-                ligature_glyphs.push((
-                    start + lig.start_col,
-                    lig.glyph_id,
-                    lig.font_id,
-                    run.style,
-                    run.fg,
-                ));
+                ligature_glyphs.push((abs_col, sg.glyph_id, sg.font_id, run.style, run.fg));
+            } else {
+                // Single-cluster glyph (possibly a contextual substitution
+                // like Cascadia Code's `equal_equal.liga`/`LIG` pair). Route
+                // through `char_glyphs` so the renderer uses the shaped
+                // glyph_id rather than re-mapping the bare codepoint.
+                // `char_count == 0` means it's a continuation of a multi-
+                // glyph cluster — we still want to render it, attached to
+                // the same column as the previous shaped glyph.
+                char_glyphs.push((abs_col, sg.glyph_id, sg.font_id, false));
             }
         }
     }
@@ -105,6 +129,10 @@ pub(super) fn precompute_row_shaping_into(
     data.reset(cols_usize);
 
     // ── Detect ligatures via text shaping ──
+    // When `disable_ligatures` is `always`, or `cursor` and we're on the
+    // cursor row, skip the entire detection pass. The grapheme/single-char
+    // pass below already copes with `ligature_glyphs` being empty.
+    if ligatures_enabled {
     let mut run_start = None;
     let mut run_text = String::with_capacity(cols_usize);
     let mut run_char_count = 0usize;
@@ -116,7 +144,27 @@ pub(super) fn precompute_row_shaping_into(
             let idx = row * cols_usize + col;
             if idx < params.grid.cells.len() {
                 CellProps::from_packed_cell_fast(&params.grid.cells[idx], params.grid.colors)
-                    .filter(|p| !p.is_hidden && p.ch != ' ' && p.ch != '\0' && !p.ch.is_control())
+                    .filter(|p| {
+                        !p.is_hidden
+                            && p.ch != ' '
+                            && p.ch != '\0'
+                            && !p.ch.is_control()
+                            // Exclude wide cells (CJK / emoji): they span two
+                            // columns, but `run_text` is built from chars
+                            // alone. Mixing them in would break the
+                            // `start + sg.start_col` column math used to
+                            // place shaped glyphs back onto the grid.
+                            // Wide cells are handled by the grapheme /
+                            // single-char fallback below.
+                            && !p.is_wide
+                            // Exclude box-drawing / block-element cells:
+                            // they don't go through the font at all (the
+                            // render path emits geometric rects instead),
+                            // so keeping them out of the run avoids both
+                            // wasted shaping work and the renderer seeing
+                            // a shaped glyph it must then suppress.
+                            && !super::box_drawing::is_in_range(p.ch)
+                    })
             } else {
                 None
             }
@@ -127,6 +175,7 @@ pub(super) fn precompute_row_shaping_into(
         if let Some(props) = &cell_info {
             if run_start.is_some() && props.style == run_style {
                 run_text.push(props.ch);
+                run_char_count += 1;
                 continue;
             }
             flush_ligature_run(
@@ -142,6 +191,7 @@ pub(super) fn precompute_row_shaping_into(
                 },
                 &mut data.skip_cols,
                 &mut data.ligature_glyphs,
+                &mut data.char_glyphs,
             );
             run_start = Some(col);
             run_text.clear();
@@ -163,10 +213,25 @@ pub(super) fn precompute_row_shaping_into(
                 },
                 &mut data.skip_cols,
                 &mut data.ligature_glyphs,
+                &mut data.char_glyphs,
             );
             run_start = None;
             run_text.clear();
             run_char_count = 0;
+        }
+    }
+    } // end `if ligatures_enabled`
+
+    // Cells that the run-shape pass already produced a glyph for. Skip them
+    // in the grapheme/single-char fallback below so we don't push a second
+    // glyph for the same cell. (The run-shape glyph_id reflects contextual
+    // substitution like Cascadia Code's `==`; per-char shaping would lose
+    // it.) Sort first so binary_search is valid.
+    data.char_glyphs.sort_by_key(|(col, ..)| *col);
+    let mut covered_by_run: Vec<bool> = vec![false; cols_usize];
+    for &(col, ..) in data.char_glyphs.iter() {
+        if col < cols_usize {
+            covered_by_run[col] = true;
         }
     }
 
@@ -286,6 +351,14 @@ pub(super) fn precompute_row_shaping_into(
             }
         }
 
+        if covered_by_run[col] {
+            // Run shaping already produced the right glyph for this cell;
+            // don't add a duplicate per-char entry. The grapheme path above
+            // is allowed to override it, since combined clusters
+            // (e + ◌́, regional indicators, ZWJ) carry information the
+            // run shape can't see.
+            continue;
+        }
         if let Some((gid, fid)) = params.shaper.shape_char_with_fallback(props.ch, faces) {
             data.char_glyphs.push((col, gid, fid, props.is_wide));
         }

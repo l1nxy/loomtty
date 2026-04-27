@@ -287,6 +287,8 @@ mod tests {
                 )),
                 #[cfg(windows)]
                 dwrite_resolver: None,
+                cell_width_scale: None,
+                cell_height_scale: None,
             });
         let mut shaper = HostTextShaper {
             atlas: &mut cache,
@@ -331,6 +333,8 @@ mod tests {
                 )),
                 #[cfg(windows)]
                 dwrite_resolver: None,
+                cell_width_scale: None,
+                cell_height_scale: None,
             });
         let mut shaper = HostTextShaper {
             atlas: &mut cache,

@@ -2530,6 +2530,8 @@ mod tests {
             font_resolver: Arc::new(CmapResolver::new((&[], 0), None, None)),
             #[cfg(windows)]
             dwrite_resolver: None,
+            cell_width_scale: None,
+            cell_height_scale: None,
         })
     }
 

@@ -121,6 +121,8 @@ fn protocol_client_render_visible_grid_invariants_stay_aligned() {
         font_resolver: shaper.font_resolver(),
         #[cfg(windows)]
         dwrite_resolver: shaper.dwrite_resolver(),
+        cell_width_scale: None,
+        cell_height_scale: None,
     });
     let colors = ColorTable::new(&config);
     let render_graphemes: HashMap<u32, String> =

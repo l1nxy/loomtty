@@ -328,6 +328,9 @@ mod tests {
             ("prediction", "mode", "never"),
             ("prediction", "mode", "always"),
             ("prediction", "mode", "adaptive"),
+            ("font", "disable_ligatures", "never"),
+            ("font", "disable_ligatures", "cursor"),
+            ("font", "disable_ligatures", "always"),
         ];
         for (section, key, value) in cases {
             let toml_str = format!("[{section}]\n{key} = \"{value}\"");
@@ -336,6 +339,41 @@ mod tests {
                 panic!("[{section}] {key} = \"{value}\" should parse, got: {e}")
             });
         }
+    }
+
+    #[test]
+    fn load_font_advanced_settings_round_trip() {
+        let toml_str = r#"
+            [font]
+            family = "Cascadia Code"
+            size = 13.0
+            features = ["+ss01", "-calt", "zero=2"]
+            disable_ligatures = "cursor"
+            weight = 500
+            adjust_cell_width = 1.05
+            adjust_cell_height = 1.10
+            adjust_underline_position = 2.0
+            adjust_underline_thickness = 1.5
+            adjust_strikethrough_position = -1.0
+            adjust_strikethrough_thickness = 2.0
+        "#;
+        let cfg: CiriConfig = toml::from_str(toml_str).expect("parses");
+        cfg.validate().expect("validates");
+        assert_eq!(cfg.font.family, "Cascadia Code");
+        assert_eq!(cfg.font.size, 13.0);
+        assert_eq!(cfg.font.disable_ligatures, DisableLigatures::Cursor);
+        assert_eq!(cfg.font.weight, Some(500));
+        assert_eq!(cfg.font.adjust_cell_width, 1.05);
+        assert_eq!(cfg.font.adjust_cell_height, 1.10);
+        assert_eq!(cfg.font.adjust_underline_position, 2.0);
+        assert_eq!(cfg.font.adjust_underline_thickness, 1.5);
+        assert_eq!(cfg.font.adjust_strikethrough_position, -1.0);
+        assert_eq!(cfg.font.adjust_strikethrough_thickness, 2.0);
+        let parsed = cfg.font.parsed_features();
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[0], (*b"ss01", 1));
+        assert_eq!(parsed[1], (*b"calt", 0));
+        assert_eq!(parsed[2], (*b"zero", 2));
     }
 
     #[test]

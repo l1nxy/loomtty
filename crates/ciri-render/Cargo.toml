@@ -17,7 +17,7 @@ rustybuzz = { workspace = true }
 unicode-segmentation = { workspace = true }
 unicode-width = "0.2"
 unicode-properties = "0.1"
-ttf-parser = "0.24"
+ttf-parser = "0.25"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 crossfont = { workspace = true }

@@ -126,6 +126,11 @@ pub struct TerminalView {
     pub cell_height: f32,
     /// Monotonically increasing generation counter. Bumped on every build/update.
     pub generation: u64,
+    /// Cursor line from the last build/update. Used by `disable_ligatures =
+    /// "cursor"` to invalidate the previously-skipped row when the cursor
+    /// moves; otherwise stale ligature data lives on until the row's content
+    /// hash flips.
+    pub(crate) last_cursor_line: i16,
 }
 
 // ─── Internal grid context types ─────────────────────────────────────
@@ -270,6 +275,27 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
                     flush_bg_strip(&mut bg_rects, sc, strip_start, col, row, &m);
                 }
 
+                // Same as the client-side path: box drawing must flush any
+                // pending bg strip so the line geometry isn't covered when
+                // the strip is appended later.
+                if super::box_drawing::is_in_range(props.ch) {
+                    if let Some(sc) = strip_color.take() {
+                        if strip_start < col {
+                            flush_bg_strip(&mut bg_rects, sc, strip_start, col, row, &m);
+                        }
+                    }
+                    if props.bg != m.default_bg {
+                        let cell_bg_w = if props.is_wide { m.cw * 2.0 } else { m.cw };
+                        bg_rects.push(crate::rect::Rect {
+                            x: col as f32 * m.cw,
+                            y: row as f32 * m.ch,
+                            w: cell_bg_w,
+                            h: m.ch,
+                            color: props.bg,
+                        });
+                    }
+                }
+
                 let mut renderer = CellRenderer {
                     row,
                     metrics: &m,
@@ -315,6 +341,7 @@ pub fn build_terminal_view<T: alacritty_terminal::event::EventListener>(
         last_scroll_shift: 0,
         cell_height: m.ch,
         generation: 0,
+        last_cursor_line: i16::MIN,
     }
 }
 
@@ -357,6 +384,7 @@ pub fn build_view_from_grid(atlas: &mut GlyphCache, inputs: &PackedViewInputs<'_
         last_scroll_shift: 0,
         cell_height: metrics.ch,
         generation: 1,
+        last_cursor_line: inputs.cursor_line,
     };
     view
 }
@@ -373,6 +401,37 @@ pub fn update_view_from_grid(
     let metrics = CellMetrics::new(atlas, inputs.config);
     let params = inputs.build_params(&metrics);
     let row_count = params.grid.rows as usize;
+
+    // `disable_ligatures = "cursor"` skips ligature shaping on the cursor
+    // row only. When the cursor moves between rows, both the previously
+    // skipped row and the newly skipped row need re-shaping; otherwise the
+    // old row keeps its ligature-free output and the new row keeps its
+    // ligatures.
+    let mut cursor_dirty: Vec<bool>;
+    let dirty_rows: &[bool] = if matches!(
+        inputs.config.font.disable_ligatures,
+        ciri_config::schema::DisableLigatures::Cursor
+    ) && view.last_cursor_line != inputs.cursor_line
+    {
+        cursor_dirty = dirty_rows.to_vec();
+        if cursor_dirty.len() < row_count {
+            cursor_dirty.resize(row_count, false);
+        }
+        let mark = |line: i16, out: &mut [bool]| {
+            if line >= 0 {
+                let row = line as usize;
+                if row < out.len() {
+                    out[row] = true;
+                }
+            }
+        };
+        mark(view.last_cursor_line, &mut cursor_dirty);
+        mark(inputs.cursor_line, &mut cursor_dirty);
+        &cursor_dirty
+    } else {
+        dirty_rows
+    };
+
     let has_dirty_rows = dirty_rows.iter().any(|dirty| *dirty);
     let mut applied_scroll_shift = normalize_scroll_shift(scroll_shift, row_count);
     let new_row_hashes = if view.row_hashes.len() != row_count {
@@ -423,6 +482,7 @@ pub fn update_view_from_grid(
 
     view.row_hashes = new_row_hashes;
     view.last_scroll_shift = applied_scroll_shift;
+    view.last_cursor_line = inputs.cursor_line;
     // Only bump generation when row content actually changed.  Cursor-only
     // changes (position/shape) are captured via grid.cursor_* in the
     // render snapshot hash, so they still trigger redraws without a
@@ -501,6 +561,53 @@ fn rebuild_row_render_data(
             continue;
         }
 
+        // Box-drawing / block-element codepoints — render as geometric
+        // rects pinned to the cell so adjacent cells join flush and corners
+        // align across the whole grid. Same approach as Windows Terminal's
+        // `BuiltinGlyphs` and Ghostty's `font/sprite/draw/box.zig`.
+        if super::box_drawing::is_in_range(props.ch) {
+            // Strips merge consecutive coloured-bg cells and are flushed
+            // *lazily* (when the bg colour changes or at end of row). If we
+            // append the box-drawing rects here while a strip is still
+            // pending, the eventual strip flush lands AFTER our rects in
+            // `bg_rects` and paints over them. Force the strip out now and
+            // emit this cell's bg as a single rect so the line geometry
+            // sits on top.
+            if let Some(sc) = strip_color.take() {
+                if strip_start < col {
+                    flush_bg_strip(bg_rects, sc, strip_start, col, row, grid.metrics);
+                }
+            }
+            if props.bg != grid.metrics.default_bg {
+                let cell_bg_w = if props.is_wide {
+                    grid.metrics.cw * 2.0
+                } else {
+                    grid.metrics.cw
+                };
+                bg_rects.push(crate::rect::Rect {
+                    x: col as f32 * grid.metrics.cw,
+                    y: row as f32 * grid.metrics.ch,
+                    w: cell_bg_w,
+                    h: grid.metrics.ch,
+                    color: props.bg,
+                });
+            }
+            if super::box_drawing::emit(
+                props.ch,
+                col as f32 * grid.metrics.cw,
+                row as f32 * grid.metrics.ch,
+                grid.metrics.cw,
+                grid.metrics.ch,
+                props.fg,
+                bg_rects,
+            ) {
+                continue;
+            }
+            // emit() returned false — a hole in the table (e.g. diagonals).
+            // Fall through to the font path; the cell bg has already been
+            // emitted above so the glyph still renders correctly.
+        }
+
         if let Some(ld) = lig
             && col < ld.skip_cols.len()
             && ld.skip_cols[col]
@@ -561,38 +668,43 @@ fn rebuild_row_render_data(
             }
             if char_idx < ld.char_glyphs.len() && ld.char_glyphs[char_idx].0 == col {
                 let (_, gid, font_id, is_wide) = ld.char_glyphs[char_idx];
-                if let Some(entry) = atlas.ensure_glyph_id(gid, font_id, props.style, is_wide)
-                    && entry.width > 0
-                    && entry.height > 0
-                {
-                    let px = col as f32 * grid.metrics.cw;
-                    let py = row as f32 * grid.metrics.ch;
-                    let is_cjk_text_wide =
-                        is_wide && !entry.is_color && Some(font_id) == grid.cjk_font_id;
-                    let color_span = color_glyph_cell_span(props.ch, is_wide);
-                    let g = if entry.is_color && color_span > 1 {
-                        constrain_color_glyph_to_cells(
-                            &entry,
-                            px,
-                            py,
-                            grid.metrics,
-                            props.fg,
-                            color_span,
-                        )
-                    } else if is_cjk_text_wide {
-                        constrain_wide_text_glyph(&entry, px, py, grid.metrics, props.fg)
-                    } else {
-                        make_relative_glyph(&entry, px, py, grid.metrics, props.fg)
-                    };
-                    if entry.is_color {
-                        color_glyphs.push(g);
-                    } else {
-                        glyphs.push(g);
+                char_idx += 1;
+                // The shaper has decided this cell's glyph; honour it even
+                // when it rasterizes to zero ink. Programming-ligature fonts
+                // (Cascadia Code's `==`/`??`/`!=`) substitute the trailing
+                // codepoint with a transparent `LIG` glyph whose visible
+                // shape is carried by the leading glyph. Falling through to
+                // `emit_glyph` here would draw the bare `?`/`=` on top, which
+                // is exactly the "first char thick, second char thin" bug.
+                if let Some(entry) = atlas.ensure_glyph_id(gid, font_id, props.style, is_wide) {
+                    if entry.width > 0 && entry.height > 0 {
+                        let px = col as f32 * grid.metrics.cw;
+                        let py = row as f32 * grid.metrics.ch;
+                        let is_cjk_text_wide =
+                            is_wide && !entry.is_color && Some(font_id) == grid.cjk_font_id;
+                        let color_span = color_glyph_cell_span(props.ch, is_wide);
+                        let g = if entry.is_color && color_span > 1 {
+                            constrain_color_glyph_to_cells(
+                                &entry,
+                                px,
+                                py,
+                                grid.metrics,
+                                props.fg,
+                                color_span,
+                            )
+                        } else if is_cjk_text_wide {
+                            constrain_wide_text_glyph(&entry, px, py, grid.metrics, props.fg)
+                        } else {
+                            make_relative_glyph(&entry, px, py, grid.metrics, props.fg)
+                        };
+                        if entry.is_color {
+                            color_glyphs.push(g);
+                        } else {
+                            glyphs.push(g);
+                        }
                     }
-                    char_idx += 1;
                     continue;
                 }
-                char_idx += 1;
             }
         }
 

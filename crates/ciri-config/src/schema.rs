@@ -46,6 +46,24 @@ pub struct CiriConfig {
     pub prediction: PredictionConfig,
 }
 
+/// Controls when ligatures are applied during shaping.
+///
+/// Mirrors Kitty's `disable_ligatures` setting. Ghostty and WT achieve the
+/// same effect via OpenType `features = ["-calt", "-liga"]`, but the explicit
+/// enum reads better and lets us cheaply skip ligature shaping on the cursor
+/// row only.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum DisableLigatures {
+    /// Always shape ligatures — the default.
+    #[default]
+    Never,
+    /// Disable ligatures only on the row containing the cursor.
+    Cursor,
+    /// Never shape ligatures.
+    Always,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 #[serde(default)]
 pub struct FontConfig {
@@ -59,6 +77,97 @@ pub struct FontConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[garde(skip)]
     pub ui: Option<UiFontConfig>,
+
+    /// OpenType feature toggles. Strings follow the HarfBuzz/CSS syntax,
+    /// e.g. `"liga"`, `"+ss01"`, `"-calt"`, `"zero=1"`. Applied to terminal
+    /// shaping (rustybuzz) on Linux/Windows.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[garde(skip)]
+    pub features: Vec<String>,
+
+    /// When to apply ligatures during shaping (`never` / `cursor` / `always`).
+    #[serde(default, skip_serializing_if = "is_default_disable_ligatures")]
+    #[garde(skip)]
+    pub disable_ligatures: DisableLigatures,
+
+    /// Preferred OpenType weight for the regular face (100..=1000). When
+    /// `None`, the closest-to-400 face is selected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[garde(skip)]
+    pub weight: Option<u16>,
+
+    /// Multiplier on the computed cell width (1.0 = unchanged).
+    #[garde(range(min = 0.5, max = 3.0))]
+    pub adjust_cell_width: f32,
+    /// Multiplier on the computed cell height (1.0 = unchanged).
+    #[garde(range(min = 0.5, max = 3.0))]
+    pub adjust_cell_height: f32,
+
+    /// Pixel offset added to the underline's vertical position
+    /// (positive = lower).
+    #[garde(skip)]
+    pub adjust_underline_position: f32,
+    /// Multiplier on the underline thickness (default 1.0px).
+    #[garde(range(min = 0.0, max = 16.0))]
+    pub adjust_underline_thickness: f32,
+
+    /// Pixel offset added to the strikethrough vertical position.
+    #[garde(skip)]
+    pub adjust_strikethrough_position: f32,
+    /// Multiplier on the strikethrough thickness (default 1.0px).
+    #[garde(range(min = 0.0, max = 16.0))]
+    pub adjust_strikethrough_thickness: f32,
+}
+
+fn is_default_disable_ligatures(v: &DisableLigatures) -> bool {
+    *v == DisableLigatures::Never
+}
+
+impl FontConfig {
+    /// Parse `features` strings into `(tag, value, range)` triples ready for
+    /// HarfBuzz-style consumers. Tags shorter than four bytes are zero-padded
+    /// (HarfBuzz convention); over-long tags are truncated.
+    ///
+    /// Accepted forms:
+    /// - `"liga"` / `"+liga"`        → `("liga", 1)`
+    /// - `"-liga"` / `"liga=0"`      → `("liga", 0)`
+    /// - `"ss05=2"`                  → `("ss05", 2)`
+    pub fn parsed_features(&self) -> Vec<([u8; 4], u32)> {
+        self.features
+            .iter()
+            .filter_map(|raw| parse_feature_string(raw))
+            .collect()
+    }
+}
+
+fn parse_feature_string(raw: &str) -> Option<([u8; 4], u32)> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let (sign, rest) = match s.as_bytes()[0] {
+        b'+' => (1u32, &s[1..]),
+        b'-' => (0u32, &s[1..]),
+        _ => (1u32, s),
+    };
+    let (name, value) = match rest.split_once('=') {
+        Some((name, val)) => {
+            let v: u32 = val.trim().parse().ok()?;
+            (name.trim(), v)
+        }
+        None => (rest.trim(), sign),
+    };
+    if name.is_empty() {
+        return None;
+    }
+    let bytes = name.as_bytes();
+    let mut tag = [b' '; 4];
+    for (i, slot) in tag.iter_mut().enumerate() {
+        if let Some(b) = bytes.get(i) {
+            *slot = *b;
+        }
+    }
+    Some((tag, value))
 }
 
 /// UI-only font override. Does not have to be monospace.
@@ -86,6 +195,15 @@ impl Default for FontConfig {
             family: default_font_family().to_string(),
             size: 10.0,
             ui: None,
+            features: Vec::new(),
+            disable_ligatures: DisableLigatures::Never,
+            weight: None,
+            adjust_cell_width: 1.0,
+            adjust_cell_height: 1.0,
+            adjust_underline_position: 0.0,
+            adjust_underline_thickness: 1.0,
+            adjust_strikethrough_position: 0.0,
+            adjust_strikethrough_thickness: 1.0,
         }
     }
 }
@@ -703,5 +821,75 @@ impl Default for PredictionConfig {
             threshold_ms: 30,
             show_underline: true,
         }
+    }
+}
+
+#[cfg(test)]
+mod font_feature_tests {
+    use super::*;
+
+    fn tag(s: &str) -> [u8; 4] {
+        let mut t = [b' '; 4];
+        for (i, b) in s.as_bytes().iter().enumerate().take(4) {
+            t[i] = *b;
+        }
+        t
+    }
+
+    #[test]
+    fn parses_plain_tag_as_enabled() {
+        assert_eq!(parse_feature_string("liga"), Some((tag("liga"), 1)));
+        assert_eq!(parse_feature_string(" liga "), Some((tag("liga"), 1)));
+    }
+
+    #[test]
+    fn plus_and_minus_prefixes() {
+        assert_eq!(parse_feature_string("+ss01"), Some((tag("ss01"), 1)));
+        assert_eq!(parse_feature_string("-calt"), Some((tag("calt"), 0)));
+    }
+
+    #[test]
+    fn explicit_value_wins_over_sign() {
+        assert_eq!(parse_feature_string("ss05=2"), Some((tag("ss05"), 2)));
+        assert_eq!(parse_feature_string("-liga=1"), Some((tag("liga"), 1)));
+    }
+
+    #[test]
+    fn rejects_empty_or_malformed() {
+        assert_eq!(parse_feature_string(""), None);
+        assert_eq!(parse_feature_string("   "), None);
+        assert_eq!(parse_feature_string("=1"), None);
+        assert_eq!(parse_feature_string("liga=abc"), None);
+    }
+
+    #[test]
+    fn pads_short_tags_to_four_bytes() {
+        assert_eq!(parse_feature_string("aa"), Some(([b'a', b'a', b' ', b' '], 1)));
+    }
+
+    #[test]
+    fn parsed_features_filters_invalid() {
+        let cfg = FontConfig {
+            features: vec!["liga".into(), "".into(), "-calt".into(), "=junk".into()],
+            ..FontConfig::default()
+        };
+        let parsed = cfg.parsed_features();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0], (tag("liga"), 1));
+        assert_eq!(parsed[1], (tag("calt"), 0));
+    }
+
+    #[test]
+    fn default_is_backward_compatible() {
+        let cfg = FontConfig::default();
+        assert!(cfg.features.is_empty());
+        assert_eq!(cfg.disable_ligatures, DisableLigatures::Never);
+        assert_eq!(cfg.adjust_cell_width, 1.0);
+        assert_eq!(cfg.adjust_cell_height, 1.0);
+        assert_eq!(cfg.adjust_underline_thickness, 1.0);
+        assert_eq!(cfg.adjust_strikethrough_thickness, 1.0);
+        assert_eq!(cfg.adjust_underline_position, 0.0);
+        assert_eq!(cfg.adjust_strikethrough_position, 0.0);
+        assert_eq!(cfg.weight, None);
     }
 }

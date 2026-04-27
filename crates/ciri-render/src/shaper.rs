@@ -86,6 +86,22 @@ pub struct Ligature {
     pub font_id: fontdb::ID,
 }
 
+/// One shaped glyph from a text run: starts at `start_col` (char index in the
+/// run), spans `char_count` input characters (≥ 1), maps to `glyph_id`.
+///
+/// `char_count > 1` means a true cluster-merging ligature (`fi`, Arabic
+/// joining, etc). `char_count == 1` may still be a substituted glyph — e.g.
+/// Cascadia Code's `==` produces two single-cluster glyphs whose IDs differ
+/// from the bare codepoint mapping. Either way the renderer should use the
+/// shaped `glyph_id`, not the cmap glyph for the source character.
+#[derive(Debug, Clone)]
+pub struct ShapedGlyph {
+    pub start_col: usize,
+    pub char_count: usize,
+    pub glyph_id: u32,
+    pub font_id: fontdb::ID,
+}
+
 // ─── TextShaper ───────────────────────────────────────────────────
 
 /// Text shaper using rustybuzz (Linux/Windows) or CoreText (macOS).
@@ -98,6 +114,12 @@ pub struct TextShaper {
     primary_font_id: Option<fontdb::ID>,
     emoji_font_id: Option<fontdb::ID>,
     cjk_font_id: Option<fontdb::ID>,
+
+    /// Pre-built rustybuzz `Feature` list applied to terminal shaping.
+    /// Empty when the user hasn't configured `font.features`. Not yet wired
+    /// through the CoreText path; macOS shaping silently ignores features.
+    #[cfg(not(target_os = "macos"))]
+    rb_features: Vec<rustybuzz::Feature>,
 
     /// Long-lived cached font faces — parsed once, reused across all frames.
     #[cfg(not(target_os = "macos"))]
@@ -129,16 +151,35 @@ pub struct TextShaper {
     ligature_cache: RefCell<HashMap<(String, fontdb::ID), Vec<Ligature>>>,
 }
 
+/// Extra hooks that callers (config) can use to influence font discovery and
+/// shaping. All fields default to "preserve historical behavior".
+#[derive(Debug, Clone, Default)]
+pub struct ShapingOptions {
+    /// Preferred OpenType weight for the primary face (e.g. 400 for Regular,
+    /// 500 for Medium). When `None`, the closest-to-400 face is selected.
+    pub preferred_weight: Option<u16>,
+    /// Parsed OpenType feature list (`(tag, value)` pairs). Forwarded into
+    /// every `rustybuzz::shape()` call used by the terminal pipeline.
+    pub features: Vec<([u8; 4], u32)>,
+}
+
 impl TextShaper {
     /// Create a new TextShaper that discovers system fonts via fontdb.
     ///
     /// Finds the primary font matching `family_name` and preloads its data
     /// for shaping. Falls back to the first monospaced font if no match.
     pub fn new(family_name: &str) -> Self {
+        Self::with_options(family_name, &ShapingOptions::default())
+    }
+
+    /// Create a new TextShaper with explicit `ShapingOptions` (preferred
+    /// weight, OpenType features). The simpler `new()` keeps callers that
+    /// don't need feature/weight overrides unchanged.
+    pub fn with_options(family_name: &str, opts: &ShapingOptions) -> Self {
         let mut db = fontdb::Database::new();
         db.load_system_fonts();
 
-        let primary_font_id = find_primary_font(&db, family_name);
+        let primary_font_id = find_primary_font(&db, family_name, opts.preferred_weight);
         let emoji_font_id = find_emoji_font(&db);
         let cjk_font_id = find_cjk_font(&db, primary_font_id);
 
@@ -146,12 +187,23 @@ impl TextShaper {
         let placeholder_resolver: Arc<dyn FontResolver> =
             Arc::new(CmapResolver::new((&[], 0), None, None));
 
+        #[cfg(not(target_os = "macos"))]
+        let rb_features: Vec<rustybuzz::Feature> = opts
+            .features
+            .iter()
+            .map(|(tag, value)| {
+                rustybuzz::Feature::new(ttf_parser::Tag::from_bytes(tag), *value, ..)
+            })
+            .collect();
+
         let mut shaper = TextShaper {
             db,
             fonts: HashMap::new(),
             primary_font_id,
             emoji_font_id,
             cjk_font_id,
+            #[cfg(not(target_os = "macos"))]
+            rb_features,
             #[cfg(not(target_os = "macos"))]
             primary_face: None,
             #[cfg(not(target_os = "macos"))]
@@ -471,6 +523,84 @@ impl TextShaper {
         result
     }
 
+    // ─── shape_run_with_face ──────────────────────────────────────
+
+    /// Shape a whole run of text and return one `ShapedGlyph` per HarfBuzz
+    /// cluster. This is the right primitive for terminal rows: it surfaces
+    /// both real cluster-merging ligatures (`fi`, Arabic joining) AND
+    /// `calt`-style contextual substitutions where a font replaces e.g. `==`
+    /// with `equal_equal.liga` + `LIG` glyphs at separate clusters.
+    #[cfg(not(target_os = "macos"))]
+    pub fn shape_run_with_face(
+        &self,
+        text: &str,
+        face: &rustybuzz::Face,
+        font_id: fontdb::ID,
+    ) -> Vec<ShapedGlyph> {
+        let mut buffer = rustybuzz::UnicodeBuffer::new();
+        buffer.push_str(text);
+        let output = rustybuzz::shape(face, &self.rb_features, buffer);
+        let infos = output.glyph_infos();
+        if infos.is_empty() {
+            return Vec::new();
+        }
+        let char_byte_starts: Vec<usize> = text.char_indices().map(|(bi, _)| bi).collect();
+        let char_count = char_byte_starts.len();
+        let byte_to_char = |byte_off: usize| -> usize {
+            char_byte_starts
+                .binary_search(&byte_off)
+                .unwrap_or_else(|x| x)
+        };
+
+        let mut out = Vec::with_capacity(infos.len());
+        // Filter `.notdef` (glyph_id == 0) — those mean the font lacked the
+        // codepoint and the caller should fall back to per-char shaping with
+        // CJK / emoji faces. Collapse multi-glyph clusters to their first
+        // glyph: the renderer can only attach one glyph per column, and
+        // for terminal use cases multi-glyph clusters at a single column
+        // (rare outside complex scripts) are best handled by the grapheme
+        // path which uses `shape_grapheme_with_fallback`.
+        let mut last_cluster: Option<u32> = None;
+        for (i, info) in infos.iter().enumerate() {
+            if info.glyph_id == 0 {
+                continue;
+            }
+            if last_cluster == Some(info.cluster) {
+                continue;
+            }
+            last_cluster = Some(info.cluster);
+            let start = byte_to_char(info.cluster as usize);
+            // Find the next cluster boundary (skipping same-cluster glyphs).
+            let mut next_idx = i + 1;
+            while next_idx < infos.len() && infos[next_idx].cluster == info.cluster {
+                next_idx += 1;
+            }
+            let end = if next_idx < infos.len() {
+                byte_to_char(infos[next_idx].cluster as usize).max(start)
+            } else {
+                char_count
+            };
+            out.push(ShapedGlyph {
+                start_col: start,
+                char_count: end.saturating_sub(start).max(1),
+                glyph_id: info.glyph_id,
+                font_id,
+            });
+        }
+        out
+    }
+
+    /// macOS variant: shape the run via CoreText.
+    #[cfg(target_os = "macos")]
+    pub fn shape_run_with_face(
+        &self,
+        text: &str,
+        font: &core_text::font::CTFont,
+        font_id: fontdb::ID,
+    ) -> Vec<ShapedGlyph> {
+        crate::shaper_coretext::ct_shape_run(font, text, font_id)
+    }
+
     // ─── detect_ligatures_uncached (non-macOS) ────────────────────
 
     #[cfg(not(target_os = "macos"))]
@@ -483,7 +613,7 @@ impl TextShaper {
         let mut buffer = rustybuzz::UnicodeBuffer::new();
         buffer.push_str(text);
 
-        let output = rustybuzz::shape(face, &[], buffer);
+        let output = rustybuzz::shape(face, &self.rb_features, buffer);
         let infos = output.glyph_infos();
 
         if infos.is_empty() {
@@ -564,7 +694,7 @@ impl TextShaper {
     fn shape_single_char(&self, s: &str, face: &rustybuzz::Face) -> Option<u32> {
         let mut buffer = rustybuzz::UnicodeBuffer::new();
         buffer.push_str(s);
-        let output = rustybuzz::shape(face, &[], buffer);
+        let output = rustybuzz::shape(face, &self.rb_features, buffer);
         output
             .glyph_infos()
             .iter()
@@ -712,7 +842,7 @@ impl TextShaper {
         let mut buffer = rustybuzz::UnicodeBuffer::new();
         buffer.push_str(cluster);
 
-        let output = rustybuzz::shape(face, &[], buffer);
+        let output = rustybuzz::shape(face, &self.rb_features, buffer);
         let infos = output.glyph_infos();
 
         // If shaping produced as many glyphs as input chars, the font didn't
@@ -900,14 +1030,18 @@ pub(crate) fn load_ct_font_from_path(
 ///
 /// When several faces share the same family (e.g. FiraCode Nerd Font has
 /// Light/Regular/Medium/Bold all listed under "FiraCode Nerd Font"), pick the
-/// one whose weight is closest to Regular (400) so we don't accidentally land
-/// on Bold just because fontdb enumerated it first.
-fn find_primary_font(db: &fontdb::Database, family_name: &str) -> Option<fontdb::ID> {
+/// face whose weight is closest to `preferred_weight` (defaults to 400 /
+/// Regular) so we don't accidentally land on Bold just because fontdb
+/// enumerated it first.
+fn find_primary_font(
+    db: &fontdb::Database,
+    family_name: &str,
+    preferred_weight: Option<u16>,
+) -> Option<fontdb::ID> {
     let family_lower = family_name.to_ascii_lowercase();
+    let target = preferred_weight.unwrap_or(400) as i32;
 
-    fn weight_dist(w: fontdb::Weight) -> u16 {
-        (w.0 as i32 - 400).unsigned_abs() as u16
-    }
+    let weight_dist = |w: fontdb::Weight| -> u16 { (w.0 as i32 - target).unsigned_abs() as u16 };
 
     // Exact match: pick best weight among same-family faces.
     let mut best: Option<(fontdb::ID, u16, &str, bool)> = None;

@@ -41,8 +41,13 @@ impl ApplicationHandler for App {
                 self.dpi_scale = new_dpi;
                 self.destroy_gpu_resources();
                 if let Some(renderer) = &mut self.renderer {
-                    let shaper =
-                        ciri_render::shaper::TextShaper::new(&self.core.config.font.family);
+                    let shaper = ciri_render::shaper::TextShaper::with_options(
+                        &self.core.config.font.family,
+                        &ciri_render::shaper::ShapingOptions {
+                            preferred_weight: self.core.config.font.weight,
+                            features: self.core.config.font.parsed_features(),
+                        },
+                    );
                     let ui_init = App::resolve_ui_font_init(&self.core.config, new_dpi);
                     let (cache, atlas_gpu) =
                         match renderer.create_atlas(&ciri_render::glyph_cache::FontInitParams {
@@ -64,6 +69,8 @@ impl ApplicationHandler for App {
                             font_resolver: shaper.font_resolver(),
                             #[cfg(windows)]
                             dwrite_resolver: shaper.dwrite_resolver(),
+                            cell_width_scale: Some(self.core.config.font.adjust_cell_width),
+                            cell_height_scale: Some(self.core.config.font.adjust_cell_height),
                         }) {
                             Ok(v) => v,
                             Err(e) => {
@@ -339,7 +346,13 @@ impl ApplicationHandler for App {
         let mut renderer = ciri_gpu::Renderer::new(window.clone(), &self.core.config.render)
             .expect("renderer init failed");
 
-        let shaper = ciri_render::shaper::TextShaper::new(&self.core.config.font.family);
+        let shaper = ciri_render::shaper::TextShaper::with_options(
+            &self.core.config.font.family,
+            &ciri_render::shaper::ShapingOptions {
+                preferred_weight: self.core.config.font.weight,
+                features: self.core.config.font.parsed_features(),
+            },
+        );
         let ui_init = App::resolve_ui_font_init(&self.core.config, dpi_scale);
         let (cache, atlas_gpu) = renderer
             .create_atlas(&ciri_render::glyph_cache::FontInitParams {
@@ -365,6 +378,8 @@ impl ApplicationHandler for App {
                 font_resolver: shaper.font_resolver(),
                 #[cfg(windows)]
                 dwrite_resolver: shaper.dwrite_resolver(),
+                cell_width_scale: Some(self.core.config.font.adjust_cell_width),
+                cell_height_scale: Some(self.core.config.font.adjust_cell_height),
             })
             .expect("initial glyph atlas creation failed");
         let ui_shaper = App::build_ui_shaper(

@@ -111,6 +111,34 @@ pub struct FontInitParams<'a> {
     /// DWrite resolver for system font face access (Windows only).
     #[cfg(windows)]
     pub dwrite_resolver: Option<Arc<crate::font_resolver::DWriteResolver>>,
+    /// Optional multiplier applied to the platform-computed cell width.
+    /// `None` (or any value `<= 0`) keeps the original metrics — the
+    /// historical default — so existing callers don't need to opt in.
+    #[doc(hidden)]
+    pub cell_width_scale: Option<f32>,
+    /// Optional multiplier applied to the platform-computed cell height.
+    /// `None` keeps the original metrics.
+    #[doc(hidden)]
+    pub cell_height_scale: Option<f32>,
+}
+
+impl<'a> FontInitParams<'a> {
+    /// Resolve `cell_width_scale`, falling back to `1.0` for the historical
+    /// default behavior.
+    fn cell_width_scale_or_default(&self) -> f32 {
+        match self.cell_width_scale {
+            Some(s) if s.is_finite() && s > 0.0 => s,
+            _ => 1.0,
+        }
+    }
+
+    /// Resolve `cell_height_scale`, falling back to `1.0`.
+    fn cell_height_scale_or_default(&self) -> f32 {
+        match self.cell_height_scale {
+            Some(s) if s.is_finite() && s > 0.0 => s,
+            _ => 1.0,
+        }
+    }
 }
 
 // ─── Glyph cache (CPU) ──────────────────────────────────────────────
@@ -403,7 +431,7 @@ impl GlyphCache {
         };
 
         #[cfg(target_os = "macos")]
-        let (coretext, ui_ct_font, cell_width, cell_height, ascent, face_width, cjk_pixel_size) = {
+        let (mut coretext, ui_ct_font, cell_width, cell_height, ascent, face_width, cjk_pixel_size) = {
             log::info!(
                 "CoreText cache: initializing pixel_size={:.1} family='{}' primary_path={:?} emoji_path={:?} cjk_path={:?}",
                 pixel_size,
@@ -507,6 +535,34 @@ impl GlyphCache {
                 cjk_pixel_size,
             )
         };
+
+        // Apply caller-supplied cell metric scaling. We round to whole pixels
+        // because grid math elsewhere assumes integer-aligned cells; clamp to
+        // a sensible minimum so a misconfigured value can't produce a zero
+        // cell.
+        let cw_scale = params.cell_width_scale_or_default();
+        let ch_scale = params.cell_height_scale_or_default();
+        let cell_width = (cell_width * cw_scale).round().max(1.0);
+        let cell_height = (cell_height * ch_scale).round().max(1.0);
+        // The glyph baseline is measured from the cell top, so it should
+        // shift along with the (now larger or smaller) cell height. Keeping
+        // the *fraction* of the original cell height that the baseline took
+        // up is a reasonable default; users can fine-tune via
+        // `adjust-underline-position` etc. if needed.
+        let ascent = ascent * ch_scale;
+        // CJK pixel size was solved against the unscaled cell width to make
+        // "水" advance fill exactly two cells. The advance scales linearly
+        // with pixel size, so apply the same horizontal scale to keep CJK
+        // glyphs aligned with the (now wider/narrower) two-cell box.
+        let cjk_pixel_size = cjk_pixel_size * cw_scale;
+        // CoreText caches the CJK font at a specific size; re-set it so the
+        // rasterization side actually uses the scaled size.
+        #[cfg(target_os = "macos")]
+        {
+            if (cw_scale - 1.0).abs() > f32::EPSILON {
+                coretext.set_cjk_pixel_size(cjk_pixel_size);
+            }
+        }
 
         let cache = GlyphCache {
             alpha_packer: ShelfPacker::new(atlas_size),
@@ -1164,6 +1220,8 @@ mod tests {
             )),
             #[cfg(windows)]
             dwrite_resolver: None,
+            cell_width_scale: None,
+            cell_height_scale: None,
         })
     }
 

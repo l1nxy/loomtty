@@ -11,7 +11,7 @@ use super::types::ui_hit_bounds;
 use super::types::{UiAction, UiContext, UiPasteDialogHit, UiScene, ui_hit_id};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Div, Layer, Styled, div, text};
+use ciri_ui::{Div, Styled, deferred, div, text};
 
 const HIT_DIALOG: u64 = 1;
 const HIT_PASTE: u64 = 2;
@@ -136,7 +136,6 @@ impl PasteDialogComponent {
             );
 
         let panel = div()
-            .in_layer(Layer::Modal)
             .absolute()
             .left(self.dx)
             .top(self.dy)
@@ -169,12 +168,14 @@ impl PasteDialogComponent {
             .child(button_row)
             .child(div().w(content_w).h(tokens::SPACE_2));
 
+        // Backdrop dim catches outside-clicks; the panel is drained via
+        // `deferred()` so it sits z-on-top of the backdrop without
+        // needing `Layer::Modal`.
         let root = div()
             .w(cx.viewport_w)
             .h(cx.viewport_h)
-            .in_layer(Layer::Modal)
             .bg([0.0, 0.0, 0.0, tokens::ALPHA_BACKDROP])
-            .child(panel);
+            .child(deferred(panel));
 
         root
     }

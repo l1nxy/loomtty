@@ -8,7 +8,7 @@ use super::tokens;
 use super::types::{UiAction, UiContext, UiPaletteHit, UiScene, ui_hit_id};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Div, FluentBuilder, IntoElement, Layer, Render, RenderCtx, Styled, div, text, uniform_list};
+use ciri_ui::{Div, FluentBuilder, IntoElement, Render, RenderCtx, Styled, deferred, div, text, uniform_list};
 
 const HIT_CLOSE: u64 = 1;
 const HIT_PANEL: u64 = 2;
@@ -307,7 +307,6 @@ impl PaletteComponent {
         let mut rows_area = div().w_full().h(rows_area_h).flex_row().child(rows_inner);
 
         let mut panel = div()
-            .in_layer(Layer::Modal)
             .absolute()
             .left(px)
             .top(self.layout.panel_y)
@@ -394,13 +393,15 @@ impl PaletteComponent {
                 .child(div().w(12.0).h(line_h)),
         );
 
+        // Backdrop dim catches outside-clicks (HIT_CLOSE); the panel is
+        // wrapped in `deferred()` so the walker drains it after the
+        // backdrop, keeping the panel z-on-top without `Layer::Modal`.
         let root = div()
             .w(cx.viewport[0])
             .h(cx.viewport[1])
-            .in_layer(Layer::Modal)
             .bg([0.0, 0.0, 0.0, tokens::ALPHA_BACKDROP])
             .hit_id(HIT_CLOSE)
-            .child(panel);
+            .child(deferred(panel));
 
         root
     }

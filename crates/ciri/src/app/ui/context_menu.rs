@@ -9,7 +9,7 @@ use super::tokens;
 use super::types::{UiAction, UiContext, UiContextMenuHit, UiScene, ui_hit_id};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Div, IntoElement, Layer, Render, RenderCtx, Styled, div, text};
+use ciri_ui::{Div, IntoElement, Render, RenderCtx, Styled, deferred, div, text};
 
 const HIT_MENU: u64 = 1;
 const HIT_ENTRY_BASE: u64 = 1_000_000;
@@ -135,7 +135,6 @@ impl ContextMenuComponent {
         let item_h = self.item_height;
         let text_pad = (padding - bw).max(0.0);
         let mut panel = div()
-            .in_layer(Layer::Modal)
             .absolute()
             .left(self.x)
             .top(self.y)
@@ -172,7 +171,15 @@ impl ContextMenuComponent {
         }
         panel = panel.child(div().w(content_w).h(padding));
 
-        let root = div().w(cx.viewport[0]).h(cx.viewport[1]).child(panel);
+        // `deferred()` floats the panel above any other element painted
+        // into this widget's Scene without needing `in_layer(Modal)` —
+        // the walker's drain pass paints deferred subtrees last. The
+        // panel still positions itself absolutely from `self.x/self.y`
+        // so the layout-transparent wrapper doesn't perturb geometry.
+        let root = div()
+            .w(cx.viewport[0])
+            .h(cx.viewport[1])
+            .child(deferred(panel));
 
         root
     }

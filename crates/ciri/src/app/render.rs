@@ -22,6 +22,37 @@ struct TilePaintConfig {
     cache_tile_glyphs: bool,
 }
 
+/// One frame's worth of GPU draw input, assembled by
+/// [`App::assemble_scene`]. Owns the per-stream Vecs so the GPU draw
+/// step receives them by reference and the post-draw step puts them
+/// back into `App::render_bufs` to preserve their capacity.
+struct AssembledScene {
+    bg_rects: Vec<Rect>,
+    glyphs: Vec<GlyphInstance>,
+    color_glyphs: Vec<GlyphInstance>,
+    glyph_batches: Vec<ScissoredRange>,
+    color_glyph_batches: Vec<ScissoredRange>,
+    active_glyph_batches: Vec<ScissoredRange>,
+    active_color_glyph_batches: Vec<ScissoredRange>,
+    /// Cached chrome SDF rects extended in-place by the transient pass.
+    /// `cached_sdf_len` records the prefix length so post-draw can
+    /// truncate back to exactly the cached portion before returning the
+    /// Vec to `cached_ui_scene.sdf_rects`.
+    ui_sdf_rects: Vec<ciri_render::sdf_rect::SdfRect>,
+    cached_sdf_len: usize,
+    /// Index in `bg_rects` where active-tile backgrounds begin.
+    active_bg_start: usize,
+    /// Index in `glyphs`/`color_glyphs` where pane glyphs end and
+    /// chrome-overlay glyphs begin. Used by the renderer's depth-sort
+    /// to keep the chrome above pane glyphs without re-binding atlases.
+    pane_glyph_end: usize,
+    pane_color_glyph_end: usize,
+    /// Index in `bg_rects` where overlay (UI / transient) backgrounds
+    /// would begin, equal to `bg_rects.len()` at scene-assembly end —
+    /// reserved for future overlay-bg emission.
+    overlay_bg_start: usize,
+}
+
 #[derive(Clone, Copy)]
 struct PaneVisualState {
     tr: GeoRect,
@@ -1986,41 +2017,26 @@ impl App {
         Some(dt)
     }
 
-    pub fn render(&mut self) {
-        let Some(dt) = self.prepare_frame() else {
-            return;
-        };
-
-        let mut animating = self.advance_animations(dt);
-
-        let renderer = self.renderer.as_mut().unwrap();
-        let (vw, vh) = renderer.surface_size();
-        let vw_f = vw as f32;
-        let vh_f = vh as f32;
-        let zoom = self.core.anim_mgr.overview_zoom.value() as f32;
-        let zoom_threshold = self.core.config.animation.zoom_threshold;
-        let vox = self.core.anim_mgr.view_offset_x.value() as f32;
-        let voy = self.core.anim_mgr.view_offset_y.value() as f32;
-        let tiles = if self.core.overview.active || zoom < zoom_threshold {
-            self.overview_visible_tiles(zoom, vox, voy)
-        } else {
-            self.core.workspaces.visible_tiles_2d(vox, voy)
-        };
-        let mouse_content_pos = self.last_mouse_pos.and_then(|(mx, my)| {
-            let my = self.content_y_from_screen(my)?;
-            let mx = self.content_x_from_screen(mx, vw_f)?;
-            Some((mx, my))
-        });
-
-        let (cache_cell_width, cache_cell_height) = {
-            let cache = self.glyph_cache.as_ref().unwrap();
-            (cache.cell_width, cache.cell_height)
-        };
+    /// Walk the visible tiles and bring each pane's `cached_views` entry
+    /// up to date with its grid: full rebuild when the grid is newly
+    /// visible or `dirty`, incremental rebuild when only individual rows
+    /// changed, scrollbar key/rect refresh on geometry / state changes.
+    /// Pulls in prediction overlays for both cells and cursor before
+    /// handing off to `terminal::build_view_from_grid` /
+    /// `update_view_from_grid`.
+    ///
+    /// All field accesses split-borrow cleanly: `glyph_cache` and
+    /// `text_shaper` are independent of `cached_views` /
+    /// `cached_tile_glyphs` / `core.pane_grids` / `core.prediction`,
+    /// so rust's borrow checker is happy with one `&mut self`.
+    fn update_pane_views(
+        &mut self,
+        tiles: &[(u64, GeoRect, bool)],
+        mouse_content_pos: Option<(f32, f32)>,
+    ) {
         let cache = self.glyph_cache.as_mut().unwrap();
         let shaper = self.text_shaper.as_ref().unwrap();
-
-        // Update terminal views for dirty pane grids
-        for (pane_id, tile_rect, _) in &tiles {
+        for (pane_id, tile_rect, _) in tiles {
             // Snapshot dirty state before taking mutable borrows
             let (needs_full, has_dirty_rows, dirty_rows_copy, pending_scroll_delta) =
                 if let Some(g) = self.core.pane_grids.get(pane_id) {
@@ -2205,53 +2221,26 @@ impl App {
                 }
             }
         }
+    }
 
-        // Update IME cursor area
-        if self.pending_resize.is_none()
-            && let Some(window) = &self.window
-            && let Some((x, y)) = self.ime_input_anchor(&tiles, cache_cell_width, cache_cell_height)
-        {
-            let cx = x as i32;
-            let cy = y as i32;
-            let pos = (cx, cy);
-            if self.core.ime.last_pos != Some(pos) {
-                self.core.ime.last_pos = Some(pos);
-                window.set_ime_cursor_area(
-                    winit::dpi::PhysicalPosition::new(cx as f64, cy as f64),
-                    winit::dpi::PhysicalSize::new(
-                        cache_cell_width as f64,
-                        cache_cell_height as f64,
-                    ),
-                );
-            }
-        }
-
-        let content_y = self.content_origin_y();
-        let content_x = self.content_origin_x();
-        let offset_tiles: Vec<(u64, GeoRect, bool)> = tiles
-            .iter()
-            .map(|(pane_id, rect, is_active)| {
-                (
-                    *pane_id,
-                    GeoRect::new(rect.x + content_x, rect.y + content_y, rect.w, rect.h),
-                    *is_active,
-                )
-            })
-            .collect();
-
-        let render_snapshot = self.render_snapshot_hash(&offset_tiles, vw, vh, zoom);
-        if !animating && self.last_render_snapshot == Some(render_snapshot) {
-            return;
-        }
-
+    /// Take buffers out of `render_bufs`, run the scene-assembly dance
+    /// (per-tile backgrounds + glyphs, chrome UI, transient overlays),
+    /// and return the assembled output. Caller is responsible for
+    /// putting the Vecs back into `render_bufs` after the GPU draw —
+    /// the post step does that to keep the buffer capacities warm.
+    fn assemble_scene(
+        &mut self,
+        offset_tiles: &[(u64, GeoRect, bool)],
+        ordered_tiles: &[(u64, GeoRect, bool)],
+        paint: TilePaintConfig,
+        zoom: f32,
+        vw_f: f32,
+        vh_f: f32,
+        use_retained_panes: bool,
+    ) -> AssembledScene {
         self.render_bufs.dirty_bg_ranges.clear();
         self.render_bufs.dirty_glyph_ranges.clear();
         self.render_bufs.dirty_color_ranges.clear();
-
-        let paint = self.tile_paint_config();
-        let ordered_tiles = Self::ordered_pane_tiles(&offset_tiles);
-        let use_retained_panes =
-            self.should_use_retained_pane_scene(&ordered_tiles, zoom, vw_f, vh_f);
 
         let mut bg_rects = std::mem::take(&mut self.render_bufs.bg_rects);
         let glyphs = std::mem::take(&mut self.render_bufs.glyphs);
@@ -2271,7 +2260,7 @@ impl App {
                 self.render_bufs.active_glyph_batches = active_glyph_batches;
                 self.render_bufs.active_color_glyph_batches = active_color_glyph_batches;
 
-                self.sync_retained_pane_glyphs(&ordered_tiles, zoom, vw_f, vh_f, paint);
+                self.sync_retained_pane_glyphs(ordered_tiles, zoom, vw_f, vh_f, paint);
                 self.rebuild_retained_glyph_batches();
 
                 let mut glyphs = std::mem::take(&mut self.render_bufs.glyphs);
@@ -2357,7 +2346,7 @@ impl App {
                 active_color_glyph_batches.clear();
 
                 let active_bg_start = self.build_tiles(
-                    &offset_tiles,
+                    offset_tiles,
                     zoom,
                     vw_f,
                     vh_f,
@@ -2403,7 +2392,7 @@ impl App {
         let mut ui_sdf_rects = std::mem::take(&mut self.cached_ui_scene.sdf_rects);
         let cached_sdf_len = ui_sdf_rects.len();
         self.build_transient_ui(
-            &offset_tiles,
+            offset_tiles,
             zoom,
             vw_f,
             vh_f,
@@ -2411,6 +2400,53 @@ impl App {
             &mut glyphs,
             &mut color_glyphs,
         );
+
+        AssembledScene {
+            bg_rects,
+            glyphs,
+            color_glyphs,
+            glyph_batches,
+            color_glyph_batches,
+            active_glyph_batches,
+            active_color_glyph_batches,
+            ui_sdf_rects,
+            cached_sdf_len,
+            active_bg_start,
+            pane_glyph_end,
+            pane_color_glyph_end,
+            overlay_bg_start,
+        }
+    }
+
+    /// Hand the assembled scene to the GPU, then put each Vec back into
+    /// its home (`render_bufs` / `cached_ui_scene.sdf_rects`) so the
+    /// next frame reuses the same backing storage.
+    ///
+    /// On atlas overflow this clears the GPU atlas + every cached pane
+    /// view and forces `animating = true` so the next frame rebuilds
+    /// glyphs. Returns no signal — the post-step (`schedule_redraw`)
+    /// is folded into the bottom of this method.
+    fn draw_and_finish(
+        &mut self,
+        scene: AssembledScene,
+        render_snapshot: u64,
+        animating: &mut bool,
+    ) {
+        let AssembledScene {
+            bg_rects,
+            glyphs,
+            color_glyphs,
+            glyph_batches,
+            color_glyph_batches,
+            active_glyph_batches,
+            active_color_glyph_batches,
+            mut ui_sdf_rects,
+            cached_sdf_len,
+            active_bg_start,
+            pane_glyph_end,
+            pane_color_glyph_end,
+            overlay_bg_start,
+        } = scene;
 
         let clear_color = ThemeConfig::parse_color(&self.core.config.theme.overview_background);
         let renderer = self.renderer.as_mut().unwrap();
@@ -2439,7 +2475,7 @@ impl App {
             log::error!("draw_frame failed: {e}");
             // Don't schedule another redraw — a failed frame will fail again,
             // causing an infinite error loop at frame rate.
-            animating = false;
+            *animating = false;
             false
         } else {
             true
@@ -2473,13 +2509,102 @@ impl App {
             for grid in self.core.pane_grids.values_mut() {
                 grid.dirty = true;
             }
-            animating = true; // ensure redraw to rebuild glyphs
+            *animating = true; // ensure redraw to rebuild glyphs
             log::info!("atlas overflow: cleared cache, will rebuild next frame");
         }
 
-        if animating {
+        if *animating {
             self.schedule_redraw();
         }
+    }
+
+    pub fn render(&mut self) {
+        let Some(dt) = self.prepare_frame() else {
+            return;
+        };
+
+        let mut animating = self.advance_animations(dt);
+
+        let renderer = self.renderer.as_mut().unwrap();
+        let (vw, vh) = renderer.surface_size();
+        let vw_f = vw as f32;
+        let vh_f = vh as f32;
+        let zoom = self.core.anim_mgr.overview_zoom.value() as f32;
+        let zoom_threshold = self.core.config.animation.zoom_threshold;
+        let vox = self.core.anim_mgr.view_offset_x.value() as f32;
+        let voy = self.core.anim_mgr.view_offset_y.value() as f32;
+        let tiles = if self.core.overview.active || zoom < zoom_threshold {
+            self.overview_visible_tiles(zoom, vox, voy)
+        } else {
+            self.core.workspaces.visible_tiles_2d(vox, voy)
+        };
+        let mouse_content_pos = self.last_mouse_pos.and_then(|(mx, my)| {
+            let my = self.content_y_from_screen(my)?;
+            let mx = self.content_x_from_screen(mx, vw_f)?;
+            Some((mx, my))
+        });
+
+        let (cache_cell_width, cache_cell_height) = {
+            let cache = self.glyph_cache.as_ref().unwrap();
+            (cache.cell_width, cache.cell_height)
+        };
+
+        self.update_pane_views(&tiles, mouse_content_pos);
+
+        // Update IME cursor area
+        if self.pending_resize.is_none()
+            && let Some(window) = &self.window
+            && let Some((x, y)) = self.ime_input_anchor(&tiles, cache_cell_width, cache_cell_height)
+        {
+            let cx = x as i32;
+            let cy = y as i32;
+            let pos = (cx, cy);
+            if self.core.ime.last_pos != Some(pos) {
+                self.core.ime.last_pos = Some(pos);
+                window.set_ime_cursor_area(
+                    winit::dpi::PhysicalPosition::new(cx as f64, cy as f64),
+                    winit::dpi::PhysicalSize::new(
+                        cache_cell_width as f64,
+                        cache_cell_height as f64,
+                    ),
+                );
+            }
+        }
+
+        let content_y = self.content_origin_y();
+        let content_x = self.content_origin_x();
+        let offset_tiles: Vec<(u64, GeoRect, bool)> = tiles
+            .iter()
+            .map(|(pane_id, rect, is_active)| {
+                (
+                    *pane_id,
+                    GeoRect::new(rect.x + content_x, rect.y + content_y, rect.w, rect.h),
+                    *is_active,
+                )
+            })
+            .collect();
+
+        let render_snapshot = self.render_snapshot_hash(&offset_tiles, vw, vh, zoom);
+        if !animating && self.last_render_snapshot == Some(render_snapshot) {
+            return;
+        }
+
+        let paint = self.tile_paint_config();
+        let ordered_tiles = Self::ordered_pane_tiles(&offset_tiles);
+        let use_retained_panes =
+            self.should_use_retained_pane_scene(&ordered_tiles, zoom, vw_f, vh_f);
+
+        let scene = self.assemble_scene(
+            &offset_tiles,
+            &ordered_tiles,
+            paint,
+            zoom,
+            vw_f,
+            vh_f,
+            use_retained_panes,
+        );
+
+        self.draw_and_finish(scene, render_snapshot, &mut animating);
     }
 }
 

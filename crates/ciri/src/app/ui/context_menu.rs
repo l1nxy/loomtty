@@ -150,23 +150,25 @@ impl ContextMenuComponent {
             .child(div().w(content_w).h(padding));
 
         for (index, row) in self.rows.iter().enumerate() {
-            let text_color = if row.enabled { fg_color } else { dim_color };
-            let mut row_el = div()
+            // Single declarative branch: every row carries hit_id +
+            // cursor + hover, then `.disabled(!row.enabled, ...)`
+            // clears hit_id + cursor and overlays the dim text colour
+            // when the row is disabled. The Text node has no
+            // `.color()` so it inherits from whichever style wins
+            // (base `fg_color`, or disabled refinement `dim_color`)
+            // via the walker's refinement-aware text-color thread.
+            let row_el = div()
                 .w(content_w)
                 .h(item_h)
                 .flex_row()
                 .items_center()
+                .text_color(fg_color)
+                .hit_id(entry_hit_id(index))
+                .cursor_pointer()
+                .hover(|s| s.bg(hover_bg))
+                .disabled(!row.enabled, |s| s.text_color(dim_color))
                 .child(div().w(text_pad).h(item_h))
-                .child(text(row.label.clone()).color(text_color));
-            if row.enabled {
-                row_el = row_el
-                    .hit_id(entry_hit_id(index))
-                    .cursor_pointer()
-                    // Declarative hover — disabled rows don't get a hit_id
-                    // so `cx.is_hovered(entry_hit_id(i))` can never match
-                    // for them and no refinement attaches.
-                    .hover(|s| s.bg(hover_bg));
-            }
+                .child(text(row.label.clone()));
             panel = panel.child(row_el);
         }
         panel = panel.child(div().w(content_w).h(padding));

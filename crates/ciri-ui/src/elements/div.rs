@@ -53,6 +53,19 @@ pub struct Div {
     /// Same boxed-Option shape as `hover_style` so divs without
     /// active feedback pay no extra storage.
     active_style: Option<Box<Style>>,
+    /// Optional refinement applied unconditionally when [`Div::disabled`]
+    /// is called with `disabled=true`. The merge layers it on top of
+    /// hover / active in [`Div::effective_style`].
+    disabled_style: Option<Box<Style>>,
+    /// Whether this Div is currently disabled. Set by
+    /// [`Div::disabled`]. Gates `Element::hit_id` and
+    /// `Element::accepts_pointer_events` at trait-method time so the
+    /// inertness is order-independent — `.disabled(true).hit_id(7)`
+    /// is just as inert as `.hit_id(7).disabled(true)`. Without this
+    /// flag the eager `style.hit_id = None` clear could be silently
+    /// undone by a subsequent builder call (codex caught it on Step 41
+    /// review).
+    disabled: bool,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -68,6 +81,8 @@ impl Div {
             style: Style::new(),
             hover_style: None,
             active_style: None,
+            disabled_style: None,
+            disabled: false,
             children: SmallVec::new(),
         }
     }
@@ -106,6 +121,44 @@ impl Div {
     pub fn active(mut self, f: impl FnOnce(Style) -> Style) -> Self {
         let refinement = f(Style::new());
         self.active_style = Some(Box::new(refinement));
+        self
+    }
+
+    /// Mark this Div disabled-or-not, and supply the visual refinement
+    /// for the disabled state. When `disabled` is `true`:
+    ///
+    /// 1. The refinement (`f(Style::new())`) is layered on top of the
+    ///    base `style` at paint time — same merge plumbing used by
+    ///    `.hover()` / `.active()`.
+    /// 2. `Element::hit_id` returns `None` so the layout walker won't
+    ///    surface this element for hit-test, hover, or active.
+    /// 3. `Element::accepts_pointer_events` returns `false` so clicks
+    ///    fall through to whatever sits underneath (e.g. a disabled
+    ///    context-menu row falls through to the panel's own hit_id,
+    ///    which is a click-on-menu no-op).
+    ///
+    /// Both gates are applied at the `Element` trait level (not at
+    /// builder time), so chain order doesn't matter:
+    /// `.disabled(true, ...).hit_id(7)` is just as inert as
+    /// `.hit_id(7).disabled(true, ...)`. The base `style.hit_id` is
+    /// preserved on the Div itself — only the trait-method projection
+    /// gates it — so future hover/active refinements that reference
+    /// it would still match if `disabled` were toggled false later.
+    ///
+    /// When `disabled` is `false` this method is a no-op (the
+    /// refinement closure isn't even invoked), so callers can wire it
+    /// unconditionally:
+    ///
+    /// ```ignore
+    /// div().bg(rest).hit_id(7).cursor_pointer().hover(|s| s.bg(hov))
+    ///     .disabled(item.disabled, |s| s.text_color(dim))
+    /// ```
+    pub fn disabled(mut self, disabled: bool, f: impl FnOnce(Style) -> Style) -> Self {
+        self.disabled = disabled;
+        if disabled {
+            let refinement = f(Style::new());
+            self.disabled_style = Some(Box::new(refinement));
+        }
         self
     }
 
@@ -190,18 +243,28 @@ impl Element for Div {
         self.style.text_color
     }
 
-    /// Refinement-aware variant: when the cursor sits on this Div's
-    /// `hit_id` and a `.hover()` refinement is set, OR a button is
-    /// held on it and a `.active()` refinement is set, the matching
-    /// refinement's `text_color` (if any) wins over the base. Active
-    /// is checked before hover because the press state is more
-    /// specific. The walker calls this so refinement-state text
-    /// colours propagate to descendant Text nodes.
+    /// Refinement-aware variant: surfaces the effective text colour
+    /// after considering `.hover()` / `.active()` / `.disabled()`
+    /// refinements. Specificity order matches `effective_style`:
+    /// disabled > active > hover > base. The walker calls this so
+    /// refinement-state text colours propagate to descendant Text
+    /// nodes.
     fn text_color_override_with_state(
         &self,
         hovered_hit_id: Option<u64>,
         active_hit_id: Option<u64>,
     ) -> Option<Color> {
+        // Disabled is the most specific. When set, its `text_color`
+        // (if any) wins; otherwise fall through to the base `style`.
+        // Hover / active are skipped here because they're suppressed
+        // for disabled elements (see `effective_style`).
+        if self.disabled {
+            return self
+                .disabled_style
+                .as_ref()
+                .and_then(|d| d.text_color)
+                .or(self.style.text_color);
+        }
         let hit_id = self.style.hit_id;
         let active = hit_id.is_some_and(|id| active_hit_id == Some(id))
             && self.active_style.is_some();
@@ -232,6 +295,12 @@ impl Element for Div {
     }
 
     fn accepts_pointer_events(&self) -> bool {
+        // Disabled elements drop out of hit-testing entirely so clicks
+        // pass through to whatever sits underneath (e.g. a disabled
+        // context-menu row → click hits the panel and is a no-op).
+        if self.disabled {
+            return false;
+        }
         self.style.on_click.is_some()
             || self.style.on_hover.is_some()
             || self.style.cursor.is_some()
@@ -239,7 +308,11 @@ impl Element for Div {
     }
 
     fn hit_id(&self) -> Option<u64> {
-        self.style.hit_id
+        if self.disabled {
+            None
+        } else {
+            self.style.hit_id
+        }
     }
 
     /// Fire stored click / hover handlers. Host code is responsible for
@@ -329,16 +402,30 @@ impl Div {
     /// Compute the style that should drive paint on this frame: the
     /// base, with `hover_style` merged over top when the cursor is
     /// over this element, then `active_style` merged on top of that
-    /// when a button is currently held on this element. Active wins
-    /// over hover (matches CSS semantics — press is more specific
-    /// than hover). Returns a borrowed reference when no refinement
-    /// applies (the common case) so we don't pay a Style clone for
-    /// every static-styled element.
+    /// when a button is currently held on this element, then
+    /// `disabled_style` merged on top of those when the caller passed
+    /// `disabled=true`. Disabled wins over active wins over hover —
+    /// disabled is the most specific because it overrides interaction
+    /// state entirely, active is more specific than hover (CSS
+    /// semantics: press is more specific than hover). Returns a
+    /// borrowed reference when no refinement applies (the common
+    /// case) so we don't pay a Style clone for every static-styled
+    /// element.
     fn effective_style<'a>(&'a self, cx: &PaintCtx<'_>) -> std::borrow::Cow<'a, Style> {
         let hit_id = self.style.hit_id;
-        let hovered = hit_id.is_some_and(|id| cx.is_hovered(id)) && self.hover_style.is_some();
-        let active = hit_id.is_some_and(|id| cx.is_active(id)) && self.active_style.is_some();
-        if !hovered && !active {
+        // Disabled gates out hover/active to keep paint consistent
+        // with the trait-level `Element::hit_id` projection — a
+        // disabled element shouldn't light up its hover style even
+        // if the cursor is technically over it (see Finding 2 from
+        // the codex review of Step 41).
+        let hovered = !self.disabled
+            && hit_id.is_some_and(|id| cx.is_hovered(id))
+            && self.hover_style.is_some();
+        let active = !self.disabled
+            && hit_id.is_some_and(|id| cx.is_active(id))
+            && self.active_style.is_some();
+        let disabled = self.disabled_style.is_some();
+        if !hovered && !active && !disabled {
             return std::borrow::Cow::Borrowed(&self.style);
         }
         let mut merged = self.style.clone();
@@ -351,6 +438,9 @@ impl Div {
             && let Some(act) = &self.active_style
         {
             merged.merge(act);
+        }
+        if let Some(dis) = &self.disabled_style {
+            merged.merge(dis);
         }
         std::borrow::Cow::Owned(merged)
     }
@@ -564,6 +654,100 @@ mod tests {
         div().bg(REST).active(|s| s.bg(ACT)).paint(&mut pcx);
         let rects: Vec<_> = scene.sdf_rects_iter().collect();
         assert_eq!(rects[0].color, REST, "no hit_id ⇒ no active match");
+    }
+
+    #[test]
+    fn disabled_refinement_overlays_when_flag_true() {
+        const REST: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
+        const DIS: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
+        let theme = ResolvedTheme::default();
+        let mut scene = Scene::new();
+        let mut shaper = crate::shaper::NullShaper;
+        let mut pcx = make_pcx(&theme, &mut scene, &mut shaper, [0.0, 0.0, 100.0, 40.0]);
+        div().bg(REST).disabled(true, |s| s.bg(DIS)).paint(&mut pcx);
+        let rects: Vec<_> = scene.sdf_rects_iter().collect();
+        assert_eq!(rects[0].color, DIS, "disabled refinement should apply");
+    }
+
+    #[test]
+    fn disabled_refinement_skipped_when_flag_false() {
+        const REST: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
+        const DIS: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
+        let theme = ResolvedTheme::default();
+        let mut scene = Scene::new();
+        let mut shaper = crate::shaper::NullShaper;
+        let mut pcx = make_pcx(&theme, &mut scene, &mut shaper, [0.0, 0.0, 100.0, 40.0]);
+        div().bg(REST).disabled(false, |s| s.bg(DIS)).paint(&mut pcx);
+        let rects: Vec<_> = scene.sdf_rects_iter().collect();
+        assert_eq!(rects[0].color, REST, "disabled=false ⇒ no refinement");
+    }
+
+    /// `.disabled(true, ...)` MUST make the element interactive-inert
+    /// at the Element trait surface — `hit_id()` returns None, and
+    /// `accepts_pointer_events()` returns false even though the base
+    /// `style.hit_id` / `style.cursor` are still set.
+    #[test]
+    fn disabled_gates_hit_id_and_pointer_events() {
+        let d = div()
+            .hit_id(7)
+            .cursor_pointer()
+            .disabled(true, |s| s.text_color([0.5; 4]));
+        assert_eq!(<Div as Element>::hit_id(&d), None, "hit_id gated");
+        assert!(
+            !<Div as Element>::accepts_pointer_events(&d),
+            "disabled ⇒ no pointer events",
+        );
+    }
+
+    /// Order-independence: `.disabled(true, ...)` followed by
+    /// `.hit_id(7).cursor_pointer()` MUST still leave the element
+    /// inert. The trait-level gate (Step 41 codex review fix) means
+    /// the chain order doesn't matter — `disabled` is checked at
+    /// `Element::hit_id` / `accepts_pointer_events` projection time,
+    /// not eagerly cleared at builder time.
+    #[test]
+    fn disabled_inertness_is_order_independent() {
+        let d = div()
+            .disabled(true, |s| s.text_color([0.5; 4]))
+            .hit_id(7)
+            .cursor_pointer();
+        assert_eq!(
+            <Div as Element>::hit_id(&d),
+            None,
+            "disabled wins regardless of chain order",
+        );
+        assert!(
+            !<Div as Element>::accepts_pointer_events(&d),
+            "disabled wins regardless of chain order",
+        );
+    }
+
+    /// A Div with `.hover()` set but `.disabled(true)` applied should
+    /// not light up the hover refinement even when the cursor sits on
+    /// it — because `.disabled()` cleared hit_id, the cursor's
+    /// `hovered_hit_id` can never match.
+    #[test]
+    fn disabled_suppresses_hover_match() {
+        const REST: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
+        const HOV: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
+        const DIS: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
+        let theme = ResolvedTheme::default();
+        let mut scene = Scene::new();
+        let mut shaper = crate::shaper::NullShaper;
+        let mut pcx = make_pcx(&theme, &mut scene, &mut shaper, [0.0, 0.0, 100.0, 40.0]);
+        // Cursor IS on hit_id 7, but disabled cleared it, so no hover.
+        pcx.hovered_hit_id = Some(7);
+        div()
+            .bg(REST)
+            .hit_id(7)
+            .hover(|s| s.bg(HOV))
+            .disabled(true, |s| s.bg(DIS))
+            .paint(&mut pcx);
+        let rects: Vec<_> = scene.sdf_rects_iter().collect();
+        assert_eq!(
+            rects[0].color, DIS,
+            "disabled wins, hover is suppressed via cleared hit_id",
+        );
     }
 
     /// Regression for Codex P2: `.rounded_full()` sets radii to 9999 as

@@ -4,6 +4,7 @@ use ciri_config::schema::DisableLigatures;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::font_resolver::ResolvedFont;
 use crate::glyph_cache::FontStyle;
 use crate::shaper::{FaceSet, TextShaper};
 
@@ -13,7 +14,10 @@ use super::view::ViewBuildParams;
 /// Pre-computed ligature info for a single row.
 #[derive(Clone)]
 pub(crate) struct RowLigatureData {
-    /// True for columns that are continuations of a ligature (should skip normal rendering).
+    /// True for cells that should be skipped by the per-cell glyph loop —
+    /// both the *start* column of a cluster-merging ligature and its
+    /// continuation columns. The merged glyph is emitted separately by the
+    /// `ligature_glyphs` post-pass keyed on the start column.
     pub(crate) skip_cols: Vec<bool>,
     /// Ligature glyphs to render: (col, glyph_id, font_id, style, fg_color).
     pub(crate) ligature_glyphs: Vec<(usize, u32, fontdb::ID, FontStyle, [f32; 4])>,
@@ -104,8 +108,13 @@ pub(super) fn precompute_row_shaping_into(
             }
             if sg.char_count >= 2 {
                 // Real cluster-merging ligature: render the merged glyph at
-                // the start column and skip continuation columns.
-                for k in 1..sg.char_count {
+                // the start column and skip every cell it spans (start +
+                // continuations) in the per-cell loop. Without skipping the
+                // start column, the renderer would draw the bare codepoint
+                // there *in addition to* the ligature glyph emitted by the
+                // post-loop `ligature_glyphs` pass — visible as overlapping
+                // strokes that look like the text "shrinks" or doubles.
+                for k in 0..sg.char_count {
                     let c = abs_col + k;
                     if c < cols_usize {
                         skip_cols[c] = true;
@@ -133,19 +142,20 @@ pub(super) fn precompute_row_shaping_into(
     // cursor row, skip the entire detection pass. The grapheme/single-char
     // pass below already copes with `ligature_glyphs` being empty.
     if ligatures_enabled {
-    let mut run_start = None;
-    let mut run_text = String::with_capacity(cols_usize);
-    let mut run_char_count = 0usize;
-    let mut run_style = FontStyle::Regular;
-    let mut run_fg = [1.0f32; 4];
+        let font_resolver = params.shaper.font_resolver();
+        let mut run_start = None;
+        let mut run_text = String::with_capacity(cols_usize);
+        let mut run_char_count = 0usize;
+        let mut run_style = FontStyle::Regular;
+        let mut run_fg = [1.0f32; 4];
 
-    for col in 0..=cols_usize {
-        let cell_info = if col < cols_usize {
-            let idx = row * cols_usize + col;
-            if idx < params.grid.cells.len() {
-                CellProps::from_packed_cell_fast(&params.grid.cells[idx], params.grid.colors)
-                    .filter(|p| {
-                        !p.is_hidden
+        for col in 0..=cols_usize {
+            let cell_info = if col < cols_usize {
+                let idx = row * cols_usize + col;
+                if idx < params.grid.cells.len() {
+                    CellProps::from_packed_cell_fast(&params.grid.cells[idx], params.grid.colors)
+                        .filter(|p| {
+                            !p.is_hidden
                             && p.ch != ' '
                             && p.ch != '\0'
                             && !p.ch.is_control()
@@ -157,6 +167,15 @@ pub(super) fn precompute_row_shaping_into(
                             // Wide cells are handled by the grapheme /
                             // single-char fallback below.
                             && !p.is_wide
+                            // Only shape primary-font text as a ligature
+                            // run. Fallback glyphs (CJK / emoji / symbols)
+                            // must stay out of this primary-face run or
+                            // HarfBuzz returns `.notdef` entries that carry
+                            // no useful glyph IDs. The per-cell fallback
+                            // pass below resolves them against the right
+                            // face and keeps mixed text like `abc中文`
+                            // independent of the preceding ASCII run.
+                            && font_resolver.resolve_char(p.ch) == ResolvedFont::Primary
                             // Exclude box-drawing / block-element cells:
                             // they don't go through the font at all (the
                             // render path emits geometric rects instead),
@@ -164,62 +183,62 @@ pub(super) fn precompute_row_shaping_into(
                             // wasted shaping work and the renderer seeing
                             // a shaped glyph it must then suppress.
                             && !super::box_drawing::is_in_range(p.ch)
-                    })
+                        })
+                } else {
+                    None
+                }
             } else {
                 None
-            }
-        } else {
-            None
-        };
+            };
 
-        if let Some(props) = &cell_info {
-            if run_start.is_some() && props.style == run_style {
+            if let Some(props) = &cell_info {
+                if run_start.is_some() && props.style == run_style {
+                    run_text.push(props.ch);
+                    run_char_count += 1;
+                    continue;
+                }
+                flush_ligature_run(
+                    params.shaper,
+                    faces,
+                    cols_usize,
+                    &LigatureRun {
+                        start: run_start,
+                        text: &run_text,
+                        char_count: run_char_count,
+                        style: run_style,
+                        fg: run_fg,
+                    },
+                    &mut data.skip_cols,
+                    &mut data.ligature_glyphs,
+                    &mut data.char_glyphs,
+                );
+                run_start = Some(col);
+                run_text.clear();
                 run_text.push(props.ch);
-                run_char_count += 1;
-                continue;
+                run_char_count = 1;
+                run_style = props.style;
+                run_fg = props.fg;
+            } else {
+                flush_ligature_run(
+                    params.shaper,
+                    faces,
+                    cols_usize,
+                    &LigatureRun {
+                        start: run_start,
+                        text: &run_text,
+                        char_count: run_char_count,
+                        style: run_style,
+                        fg: run_fg,
+                    },
+                    &mut data.skip_cols,
+                    &mut data.ligature_glyphs,
+                    &mut data.char_glyphs,
+                );
+                run_start = None;
+                run_text.clear();
+                run_char_count = 0;
             }
-            flush_ligature_run(
-                params.shaper,
-                faces,
-                cols_usize,
-                &LigatureRun {
-                    start: run_start,
-                    text: &run_text,
-                    char_count: run_char_count,
-                    style: run_style,
-                    fg: run_fg,
-                },
-                &mut data.skip_cols,
-                &mut data.ligature_glyphs,
-                &mut data.char_glyphs,
-            );
-            run_start = Some(col);
-            run_text.clear();
-            run_text.push(props.ch);
-            run_char_count = 1;
-            run_style = props.style;
-            run_fg = props.fg;
-        } else {
-            flush_ligature_run(
-                params.shaper,
-                faces,
-                cols_usize,
-                &LigatureRun {
-                    start: run_start,
-                    text: &run_text,
-                    char_count: run_char_count,
-                    style: run_style,
-                    fg: run_fg,
-                },
-                &mut data.skip_cols,
-                &mut data.ligature_glyphs,
-                &mut data.char_glyphs,
-            );
-            run_start = None;
-            run_text.clear();
-            run_char_count = 0;
         }
-    }
     } // end `if ligatures_enabled`
 
     // Cells that the run-shape pass already produced a glyph for. Skip them
@@ -363,6 +382,12 @@ pub(super) fn precompute_row_shaping_into(
             data.char_glyphs.push((col, gid, fid, props.is_wide));
         }
     }
+
+    // The fallback pass above can append glyphs for columns before a
+    // previously-shaped ASCII run, e.g. `中文bac`: run shaping adds `bac`
+    // first, then per-cell fallback adds the earlier CJK cells. The renderer
+    // walks this list in column order, so keep it sorted after all producers.
+    data.char_glyphs.sort_by_key(|(col, ..)| *col);
 }
 
 fn push_shaped_grapheme(

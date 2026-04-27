@@ -543,7 +543,9 @@ struct GlRectPipeline {
 
 impl GlRectPipeline {
     unsafe fn new(gl: &glow::Context, max_rects: usize) -> crate::Result<Self> {
-        let rect_fs = RECT_FS.replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS);
+        let rect_fs = RECT_FS
+            .replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS)
+            .replace("// CORNER_FUNCS_PLACEHOLDER", GLSL_CORNER_FUNCS);
         let program = compile_program(gl, RECT_VS, &rect_fs, "rect")?;
         let loc_viewport = gl
             .get_uniform_location(program, "u_viewport")
@@ -766,8 +768,12 @@ impl GlyphAtlasGpu {
         max_instances: usize,
     ) -> crate::Result<Self> {
         // Inject shared color functions into fragment shaders.
-        let alpha_fs = ALPHA_FS.replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS);
-        let color_fs = COLOR_FS.replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS);
+        let alpha_fs = ALPHA_FS
+            .replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS)
+            .replace("// CORNER_FUNCS_PLACEHOLDER", GLSL_CORNER_FUNCS);
+        let color_fs = COLOR_FS
+            .replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS)
+            .replace("// CORNER_FUNCS_PLACEHOLDER", GLSL_CORNER_FUNCS);
 
         let alpha = GlAtlasLayer::new(
             gl,
@@ -1486,6 +1492,8 @@ out vec4 frag_color;
 
 // COLOR_FUNCS_PLACEHOLDER
 
+// CORNER_FUNCS_PLACEHOLDER
+
 void main() {
     vec4 color = v_color;
     // When linear blending is on, linearize sRGB input so the
@@ -1683,6 +1691,38 @@ void main() {
 "#;
 
 // ─── Shared GLSL functions for sRGB ↔ linear conversion ────────────
+// Per-corner rounding alpha mask, built on Inigo Quilez's classic
+// rounded-box signed distance function (see iquilezles.org/articles/
+// distfunctions/). The same recipe powers ciri's existing SDF chrome
+// path (`sdf_rounded_box` further down this file) — this helper is the
+// alpha-mask packaging of it for callers that just want corner clipping
+// on top of an already-rendered fragment (cell bg, glyphs, pane bg,
+// focus ring).
+//
+// `radii` order is CSS: tl, tr, br, bl. The early return on all-zero
+// radii means non-rounded callers pay one branch and zero ALU.
+const GLSL_CORNER_FUNCS: &str = r#"
+float ciri_sdf_rounded_box(vec2 p, vec2 b, vec4 r) {
+    float rx = (p.x > 0.0) ? r.y : r.x;
+    float bx = (p.x > 0.0) ? r.z : r.w;
+    float radius = (p.y > 0.0) ? bx : rx;
+    vec2 q = abs(p) - b + vec2(radius);
+    return min(max(q.x, q.y), 0.0) + length(max(q, vec2(0.0))) - radius;
+}
+
+float ciri_corner_alpha(vec2 px, vec2 size, vec4 radii) {
+    if (radii.x <= 0.0 && radii.y <= 0.0 && radii.z <= 0.0 && radii.w <= 0.0) {
+        return 1.0;
+    }
+    float d = ciri_sdf_rounded_box(px - 0.5 * size, 0.5 * size, radii);
+    // smoothstep spans 2 * aa, so use half-pixel derivative to land
+    // a one-pixel-wide AA transition — matches the chrome SDF path's
+    // `fwidth(d_body) * 0.5` further down this file.
+    float aa = max(fwidth(d) * 0.5, 1e-5);
+    return 1.0 - smoothstep(-aa, aa, d);
+}
+"#;
+
 const GLSL_COLOR_FUNCS: &str = r#"
 vec4 linearize(vec4 srgb) {
     bvec3 c = lessThanEqual(srgb.rgb, vec3(0.04045));
@@ -1724,6 +1764,8 @@ uniform bool u_use_linear_correction;
 out vec4 frag_color;
 
 // COLOR_FUNCS_PLACEHOLDER
+
+// CORNER_FUNCS_PLACEHOLDER
 
 void main() {
     // Input color is sRGB non-premultiplied. Always linearize first.
@@ -1784,6 +1826,8 @@ uniform bool u_use_linear_correction;
 out vec4 frag_color;
 
 // COLOR_FUNCS_PLACEHOLDER
+
+// CORNER_FUNCS_PLACEHOLDER
 
 void main() {
     // Atlas is SRGB8_ALPHA8 — GPU auto-linearizes on sample.

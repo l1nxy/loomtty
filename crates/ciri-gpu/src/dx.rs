@@ -50,6 +50,12 @@ struct PSInput {
     float4 color    : COLOR;
 };
 
+// CORNER_FUNCS deliberately NOT injected here: this source file is
+// compiled twice (vs_main + ps_main), and the helper uses `fwidth` —
+// some HLSL compilers reject derivative intrinsics during vs_5_0
+// validation even when only ps_main calls them. Wired up in C2 once
+// the rect source is split into separate vs/ps strings.
+
 PSInput vs_main(VSInput input) {
     float x = float(input.vid & 1);
     float y = float((input.vid >> 1) & 1);
@@ -251,6 +257,32 @@ PSInput vs_main(VSInput input) {
 }
 "#;
 
+// Per-corner rounding alpha mask. HLSL twin of `GLSL_CORNER_FUNCS` —
+// same Inigo Quilez SDF recipe, same shape as ciri's existing
+// `sdf_rounded_box` over in the SDF chrome path. `radii` order is CSS:
+// tl, tr, br, bl. All-zero radii short-circuits to 1.0.
+const HLSL_CORNER_FUNCS: &str = r#"
+float ciri_sdf_rounded_box(float2 p, float2 b, float4 r) {
+    float rx = (p.x > 0.0) ? r.y : r.x;
+    float bx = (p.x > 0.0) ? r.z : r.w;
+    float radius = (p.y > 0.0) ? bx : rx;
+    float2 q = abs(p) - b + float2(radius, radius);
+    return min(max(q.x, q.y), 0.0) + length(max(q, float2(0.0, 0.0))) - radius;
+}
+
+float ciri_corner_alpha(float2 px, float2 size, float4 radii) {
+    if (radii.x <= 0.0 && radii.y <= 0.0 && radii.z <= 0.0 && radii.w <= 0.0) {
+        return 1.0;
+    }
+    float d = ciri_sdf_rounded_box(px - 0.5 * size, 0.5 * size, radii);
+    // smoothstep spans 2 * aa, so use half-pixel derivative to land a
+    // one-pixel-wide AA transition. Matches the GL twin and the
+    // chrome SDF path.
+    float aa = max(fwidth(d) * 0.5, 1e-5);
+    return 1.0 - smoothstep(-aa, aa, d);
+}
+"#;
+
 const HLSL_COLOR_FUNCS: &str = r#"
 float linearize_f(float v) {
     return (v <= 0.04045) ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4);
@@ -291,6 +323,8 @@ struct PSInput {
 
 // HLSL_COLOR_FUNCS_PLACEHOLDER
 
+// HLSL_CORNER_FUNCS_PLACEHOLDER
+
 float4 ps_main(PSInput input) : SV_TARGET {
     bool use_linear_correction = (blending_flags & 2u) != 0u;
 
@@ -327,6 +361,8 @@ struct PSInput {
     float4 color    : COLOR;
     float4 bg_color : BGCOL;
 };
+
+// HLSL_CORNER_FUNCS_PLACEHOLDER
 
 float4 ps_main(PSInput input) : SV_TARGET {
     float4 texel = atlas_tex.Sample(atlas_sampler, input.uv);
@@ -1436,7 +1472,9 @@ impl Renderer {
 
         // Both atlas layers use B8G8R8A8 for D2D render target compatibility.
         // Inject color functions into the alpha pixel shader.
-        let alpha_ps = ALPHA_PS_HLSL.replace("// HLSL_COLOR_FUNCS_PLACEHOLDER", HLSL_COLOR_FUNCS);
+        let alpha_ps = ALPHA_PS_HLSL
+            .replace("// HLSL_COLOR_FUNCS_PLACEHOLDER", HLSL_COLOR_FUNCS)
+            .replace("// HLSL_CORNER_FUNCS_PLACEHOLDER", HLSL_CORNER_FUNCS);
 
         let alpha = unsafe {
             DxAtlasLayer::new(
@@ -1459,6 +1497,9 @@ impl Renderer {
             .expect("alpha atlas creation failed")
         };
 
+        let color_ps = COLOR_PS_HLSL
+            .replace("// HLSL_CORNER_FUNCS_PLACEHOLDER", HLSL_CORNER_FUNCS);
+
         let color = unsafe {
             DxAtlasLayer::new(
                 &self.device,
@@ -1469,7 +1510,7 @@ impl Renderer {
                     bpp: 4,
                     swizzle_rgba_to_bgra: true,
                     vs_hlsl: GLYPH_HLSL,
-                    ps_hlsl: COLOR_PS_HLSL,
+                    ps_hlsl: &color_ps,
                     filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
                     d2d_factory: &self.d2d_factory,
                     text_antialias: D2D1_TEXT_ANTIALIAS_MODE_DEFAULT,

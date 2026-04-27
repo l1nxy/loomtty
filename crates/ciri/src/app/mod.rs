@@ -1164,53 +1164,27 @@ impl App {
         Some(row_idx)
     }
 
-    /// Which context-menu row the cursor currently sits on, derived from
-    /// `last_mouse_pos` + the live menu geometry the capture step would
-    /// produce. Returns `None` when the menu is hidden, the cursor is
-    /// outside the menu rect, the row index is past the items list, or
-    /// the row is disabled. Used by the chrome cache hash so a row-
-    /// boundary crossing invalidates the cache without a stored field.
+    /// Which context-menu row the cursor currently sits on. Returns
+    /// `None` when the menu is hidden, the cursor is outside the menu
+    /// rect, or the row is disabled. Used by the chrome cache hash so a
+    /// row-boundary crossing invalidates the cache without a stored
+    /// field.
     ///
-    /// Geometry kept in sync with `ContextMenuComponent::capture` —
-    /// padding, item height, clamped origin all derived the same way.
+    /// Routed through `ContextMenuComponent::capture` + `hover_index`
+    /// so cache invalidation, paint, and hit-test all share one layout
+    /// snapshot. This matters after Step 42: capture stores raw click
+    /// coordinates and `anchored()` may edge-flip the menu at paint
+    /// time when the click lands near the bottom or right viewport
+    /// edge, so the pre-flip clamp this function used to do would
+    /// hash against the wrong rectangle and leave stale hover.
     pub(crate) fn current_context_menu_hover(&self) -> Option<usize> {
-        let menu = &self.core.context_menu;
-        if !menu.visible {
+        if !self.core.context_menu.visible {
             return None;
         }
         let (mx, my) = self.last_mouse_pos?;
-        let (vw, vh) = self.command_palette_viewport_size();
-        let (_, ch) = self.cell_dimensions();
-        let padding = crate::app::ui::tokens::SPACE_2;
-        let bw = crate::app::ui::tokens::BORDER_THIN;
-        let item_height = crate::app::ui::tokens::control_height_sm(ch);
-        let max_menu_width = (vw - padding * 2.0).max(1.0);
-        let menu_width = 200.0_f32.min(max_menu_width);
-        let menu_height = menu.items.len() as f32 * item_height + padding * 2.0;
-        let x = menu.x.clamp(0.0, (vw - menu_width).max(0.0));
-        let y = menu.y.clamp(0.0, (vh - menu_height).max(0.0));
-        // Row hit boxes span `content_w = menu_width - bw * 2.0` (rows
-        // are children inside the panel's border, not full-bleed). Mirror
-        // that span here so the cache key never invalidates for the
-        // border strips on either side — those pixels can't actually
-        // receive a hover event because no `hit_id` is attached there.
-        let row_left = x + bw;
-        let row_right = x + menu_width - bw;
-        if mx < row_left || mx >= row_right {
-            return None;
-        }
-        let row_strip_offset = my - (y + padding);
-        if row_strip_offset < 0.0 {
-            return None;
-        }
-        let row_idx = (row_strip_offset / item_height).floor() as usize;
-        if row_idx >= menu.items.len() {
-            return None;
-        }
-        if !menu.items[row_idx].enabled {
-            return None;
-        }
-        Some(row_idx)
+        let cx = self.ui_context();
+        let component = crate::app::ui::context_menu::ContextMenuComponent::capture(self, &cx)?;
+        component.hover_index(mx, my, &cx)
     }
 
     /// Which paste-dialog button (`Paste` / `Cancel`) the cursor is over.

@@ -191,15 +191,20 @@ pub(crate) fn paint_element_tree(root: &impl Element, cx: &UiContext<'_>, scene:
         fallback_font_size_px: cx.theme.typography.md,
     };
     let viewport = [cx.viewport_w, cx.viewport_h];
-    let ui_scene = if let Some(tree_cell) = cx.taffy_tree {
+    let mut ui_scene = ciri_ui::Scene::new();
+    // Reborrow `element_states` for the duration of this paint call.
+    // RefCell::borrow_mut would conflict with later re-entries, so the
+    // borrow is scoped to just the paint walk.
+    let mut states_borrow = cx.element_states.map(|c| c.borrow_mut());
+    let states_for_paint: Option<&mut ciri_ui::ElementStates> = states_borrow.as_deref_mut();
+    // Both branches use `paint_tree_into_with` so declarative `.hover()`,
+    // `.active()`, and any `ElementStates`-backed element behave the
+    // same in tests and production. The only difference is whether the
+    // Taffy allocator is reused across frames (production) or freshly
+    // allocated for this one call (tests / first-frame bootstrap before
+    // the host's tree exists).
+    if let Some(tree_cell) = cx.taffy_tree {
         let mut tree = tree_cell.borrow_mut();
-        let mut ui_scene = ciri_ui::Scene::new();
-        // Reborrow `element_states` for the duration of this paint
-        // call. RefCell::borrow_mut would conflict with later
-        // re-entries, so the borrow is scoped to just the paint walk.
-        let mut states_borrow = cx.element_states.map(|c| c.borrow_mut());
-        let states_for_paint: Option<&mut ciri_ui::ElementStates> =
-            states_borrow.as_deref_mut();
         ciri_ui::paint_tree_into_with(
             root,
             cx.theme,
@@ -212,10 +217,21 @@ pub(crate) fn paint_element_tree(root: &impl Element, cx: &UiContext<'_>, scene:
             cx.active_hit_id,
             states_for_paint,
         );
-        ui_scene
     } else {
-        ciri_ui::paint_tree(root, cx.theme, viewport, 1.0, &mut shaper)
-    };
+        let mut tree = taffy::TaffyTree::<ciri_ui::NodeContext>::new();
+        ciri_ui::paint_tree_into_with(
+            root,
+            cx.theme,
+            viewport,
+            1.0,
+            &mut shaper,
+            &mut ui_scene,
+            &mut tree,
+            cx.mouse_pos,
+            cx.active_hit_id,
+            states_for_paint,
+        );
+    }
     merge_ui_scene(&ui_scene, scene.sdf_rects, scene.glyphs, scene.color_glyphs);
 }
 

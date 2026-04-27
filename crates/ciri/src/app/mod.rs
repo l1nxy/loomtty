@@ -26,7 +26,7 @@ use ciri_layout::geometry::ViewSize;
 use ciri_layout::workspace_set::WorkspaceSet;
 use ciri_protocol::message::*;
 use ciri_render::glyph_cache::{GlyphCache, GlyphEntry, GlyphInstance, ScissoredRange};
-use ciri_render::rect::Rect;
+use ciri_render::rect::{PaneRectRange, Rect};
 use ciri_render::shaper::TextShaper;
 use ciri_render::terminal::{ColorTable, TerminalView};
 use crossbeam_channel::{Receiver, Sender};
@@ -87,6 +87,7 @@ pub(crate) struct CommandPaletteLayout {
 /// Reusable render buffers (cleared each frame).
 pub(crate) struct RenderBuffers {
     pub bg_rects: Vec<Rect>,
+    pub bg_rect_ranges: Vec<PaneRectRange>,
     pub glyphs: Vec<GlyphInstance>,
     pub color_glyphs: Vec<GlyphInstance>,
     pub dirty_bg_ranges: Vec<(usize, usize)>,
@@ -137,6 +138,7 @@ pub(crate) struct PaneSceneRegion {
 impl RenderBuffers {
     pub fn clear_retained_scene(&mut self) {
         self.bg_rects.clear();
+        self.bg_rect_ranges.clear();
         self.glyphs.clear();
         self.color_glyphs.clear();
         self.dirty_bg_ranges.clear();
@@ -497,6 +499,7 @@ impl App {
             last_mouse_pos: None,
             render_bufs: RenderBuffers {
                 bg_rects: Vec::new(),
+                bg_rect_ranges: Vec::new(),
                 glyphs: Vec::new(),
                 color_glyphs: Vec::new(),
                 dirty_bg_ranges: Vec::new(),

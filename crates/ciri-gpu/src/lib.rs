@@ -524,6 +524,7 @@ mod tests {
         let scene = ciri_render::FrameScene {
             clear_color: [0.0, 0.0, 0.0, 1.0],
             bg_rects: &[],
+            bg_rect_ranges: &[],
             glyphs: &[],
             color_glyphs: &[],
             glyph_batches: &[],
@@ -537,7 +538,7 @@ mod tests {
             sdf_rects: &[],
         };
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            renderer.draw_frame(&mut atlas, &mut cache, scene);
+            let _ = renderer.draw_frame(&mut atlas, &mut cache, scene);
         }));
         std::mem::forget(renderer);
         std::mem::forget(atlas);

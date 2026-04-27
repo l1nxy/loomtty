@@ -8,7 +8,7 @@
 use ciri_config::config::RenderConfig;
 use ciri_render::FrameScene;
 use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, PendingUpload, ScissoredRange};
-use ciri_render::rect::Rect;
+use ciri_render::rect::{PaneRectRange, Rect};
 use ciri_render::sdf_rect::SdfRect;
 use glow::HasContext;
 
@@ -537,6 +537,9 @@ struct GlRectPipeline {
     vao: glow::VertexArray,
     instance_vbo: glow::Buffer,
     loc_viewport: glow::UniformLocation,
+    loc_pane_origin: glow::UniformLocation,
+    loc_pane_size: glow::UniformLocation,
+    loc_pane_radii: glow::UniformLocation,
     loc_use_linear_blending: Option<glow::UniformLocation>,
     max_rects: usize,
 }
@@ -553,6 +556,28 @@ impl GlRectPipeline {
                 crate::GpuError::ShaderCompile("u_viewport uniform not found in rect shader".into())
             })?;
         let loc_use_linear_blending = gl.get_uniform_location(program, "u_use_linear_blending");
+        let loc_pane_origin = gl
+            .get_uniform_location(program, "u_pane_origin")
+            .ok_or_else(|| {
+                crate::GpuError::ShaderCompile(
+                    "u_pane_origin uniform not found in rect shader".into(),
+                )
+            })?;
+        let loc_pane_size = gl.get_uniform_location(program, "u_pane_size").ok_or_else(|| {
+            crate::GpuError::ShaderCompile("u_pane_size uniform not found in rect shader".into())
+        })?;
+        let loc_pane_radii = gl
+            .get_uniform_location(program, "u_pane_radii")
+            .ok_or_else(|| {
+                crate::GpuError::ShaderCompile(
+                    "u_pane_radii uniform not found in rect shader".into(),
+                )
+            })?;
+        gl.use_program(Some(program));
+        gl.uniform_2_f32(Some(&loc_pane_origin), 0.0, 0.0);
+        gl.uniform_2_f32(Some(&loc_pane_size), 0.0, 0.0);
+        gl.uniform_4_f32(Some(&loc_pane_radii), 0.0, 0.0, 0.0, 0.0);
+        gl.use_program(None);
 
         let vao = gl
             .create_vertex_array()
@@ -590,6 +615,9 @@ impl GlRectPipeline {
             vao,
             instance_vbo,
             loc_viewport,
+            loc_pane_origin,
+            loc_pane_size,
+            loc_pane_radii,
             loc_use_linear_blending,
             max_rects,
         })
@@ -609,19 +637,23 @@ impl GlRectPipeline {
         let _ = (viewport_w, viewport_h);
     }
 
-    /// Draw a range of previously uploaded rects.
-    unsafe fn draw_range(
+    /// Draw previously uploaded rects grouped by pane clipping uniforms.
+    unsafe fn draw_ranges(
         &self,
         gl: &glow::Context,
-        start: usize,
-        count: usize,
+        ranges: &[PaneRectRange],
         viewport_w: f32,
         viewport_h: f32,
         use_linear_blending: bool,
     ) {
-        if count == 0 {
+        if ranges.is_empty() {
             return;
         }
+        let any_non_empty = ranges.iter().any(|range| range.count > 0);
+        if !any_non_empty {
+            return;
+        }
+        let stride = std::mem::size_of::<Rect>() as i32;
         gl.use_program(Some(self.program));
         gl.uniform_2_f32(Some(&self.loc_viewport), viewport_w, viewport_h);
         if let Some(ref loc) = self.loc_use_linear_blending {
@@ -630,19 +662,43 @@ impl GlRectPipeline {
         gl.bind_vertex_array(Some(self.vao));
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instance_vbo));
 
-        let stride = std::mem::size_of::<Rect>() as i32;
-        let base = (start * std::mem::size_of::<Rect>()) as i32;
-        gl.enable_vertex_attrib_array(0);
-        gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, stride, base);
-        gl.vertex_attrib_divisor(0, 1);
-        gl.enable_vertex_attrib_array(1);
-        gl.vertex_attrib_pointer_f32(1, 2, glow::FLOAT, false, stride, base + 8);
-        gl.vertex_attrib_divisor(1, 1);
-        gl.enable_vertex_attrib_array(2);
-        gl.vertex_attrib_pointer_f32(2, 4, glow::FLOAT, false, stride, base + 16);
-        gl.vertex_attrib_divisor(2, 1);
+        for range in ranges {
+            let start = range.start as usize;
+            let count = range.count as usize;
+            if count == 0 || start >= self.max_rects {
+                continue;
+            }
+            let count = count.min(self.max_rects - start);
+            gl.uniform_2_f32(
+                Some(&self.loc_pane_origin),
+                range.pane_origin[0],
+                range.pane_origin[1],
+            );
+            gl.uniform_2_f32(
+                Some(&self.loc_pane_size),
+                range.pane_size[0],
+                range.pane_size[1],
+            );
+            gl.uniform_4_f32(
+                Some(&self.loc_pane_radii),
+                range.pane_radii[0],
+                range.pane_radii[1],
+                range.pane_radii[2],
+                range.pane_radii[3],
+            );
+            let base = (start * std::mem::size_of::<Rect>()) as i32;
+            gl.enable_vertex_attrib_array(0);
+            gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, stride, base);
+            gl.vertex_attrib_divisor(0, 1);
+            gl.enable_vertex_attrib_array(1);
+            gl.vertex_attrib_pointer_f32(1, 2, glow::FLOAT, false, stride, base + 8);
+            gl.vertex_attrib_divisor(1, 1);
+            gl.enable_vertex_attrib_array(2);
+            gl.vertex_attrib_pointer_f32(2, 4, glow::FLOAT, false, stride, base + 16);
+            gl.vertex_attrib_divisor(2, 1);
 
-        gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, count as i32);
+            gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, count as i32);
+        }
 
         gl.bind_vertex_array(None);
         gl.use_program(None);
@@ -1121,6 +1177,40 @@ impl Renderer {
             let overlay_bg_idx = 1 + scene.overlay_bg_start; // +1 for clear rect
             let total_bg = all_bg.len().min(self.rects.max_rects);
             self.rects.upload(&self.gl, &all_bg, vw, vh);
+            let mut all_bg_ranges = Vec::with_capacity(1 + scene.bg_rect_ranges.len());
+            all_bg_ranges.push(PaneRectRange {
+                start: 0,
+                count: 1,
+                ..PaneRectRange::default()
+            });
+            all_bg_ranges.extend(scene.bg_rect_ranges.iter().map(|range| PaneRectRange {
+                start: range.start.saturating_add(1),
+                ..*range
+            }));
+            if scene.bg_rect_ranges.is_empty() && !scene.bg_rects.is_empty() {
+                all_bg_ranges.push(PaneRectRange {
+                    start: 1,
+                    count: scene.bg_rects.len() as u32,
+                    ..PaneRectRange::default()
+                });
+            }
+            let split_ranges =
+                |ranges: &[PaneRectRange], start: usize, end: usize| -> Vec<PaneRectRange> {
+                    ranges
+                        .iter()
+                        .filter_map(|range| {
+                            let range_start = range.start as usize;
+                            let range_end = range_start.saturating_add(range.count as usize);
+                            let clipped_start = range_start.max(start);
+                            let clipped_end = range_end.min(end);
+                            (clipped_start < clipped_end).then(|| PaneRectRange {
+                                start: clipped_start as u32,
+                                count: (clipped_end - clipped_start) as u32,
+                                ..*range
+                            })
+                        })
+                        .collect()
+                };
 
             // Blending flags for the frame.
             let lb = self.use_linear_blending;
@@ -1128,8 +1218,9 @@ impl Renderer {
 
             // 2. Draw non-focused pane background rects.
             let inactive_bg_count = active_bg_idx.min(total_bg);
+            let inactive_bg_ranges = split_ranges(&all_bg_ranges, 0, inactive_bg_count);
             self.rects
-                .draw_range(&self.gl, 0, inactive_bg_count, vw, vh, lb);
+                .draw_ranges(&self.gl, &inactive_bg_ranges, vw, vh, lb);
 
             let vp = crate::ViewportDims {
                 width: vw,
@@ -1163,8 +1254,10 @@ impl Renderer {
             // 5. Focused pane background rects.
             let active_bg_count = overlay_bg_idx.saturating_sub(active_bg_idx);
             if active_bg_count > 0 {
+                let active_bg_ranges =
+                    split_ranges(&all_bg_ranges, active_bg_idx, overlay_bg_idx.min(total_bg));
                 self.rects
-                    .draw_range(&self.gl, active_bg_idx, active_bg_count, vw, vh, lb);
+                    .draw_ranges(&self.gl, &active_bg_ranges, vw, vh, lb);
             }
 
             // 6. Draw active pane glyphs (scissored, no re-upload).
@@ -1184,8 +1277,9 @@ impl Renderer {
             //    occlude terminal text underneath popups like the context menu).
             let overlay_bg_count = total_bg.saturating_sub(overlay_bg_idx);
             if overlay_bg_count > 0 {
+                let overlay_bg_ranges = split_ranges(&all_bg_ranges, overlay_bg_idx, total_bg);
                 self.rects
-                    .draw_range(&self.gl, overlay_bg_idx, overlay_bg_count, vw, vh, lb);
+                    .draw_ranges(&self.gl, &overlay_bg_ranges, vw, vh, lb);
             }
 
             // 7b. SDF chrome (rounded corners + border + shadow) for popups
@@ -1466,8 +1560,10 @@ layout(location = 1) in vec2 a_size;
 layout(location = 2) in vec4 a_color;
 
 uniform vec2 u_viewport;
+uniform vec2 u_pane_origin;
 
 out vec4 v_color;
+out vec2 v_pane_local;
 
 void main() {
     float x = float(gl_VertexID & 1);
@@ -1481,12 +1577,16 @@ void main() {
 
     gl_Position = vec4(ndc, 0.0, 1.0);
     v_color = a_color;
+    v_pane_local = px - u_pane_origin;
 }
 "#;
 
 const RECT_FS: &str = r#"#version 330 core
 
 in vec4 v_color;
+in vec2 v_pane_local;
+uniform vec2 u_pane_size;
+uniform vec4 u_pane_radii;
 uniform bool u_use_linear_blending;
 out vec4 frag_color;
 
@@ -1502,6 +1602,7 @@ void main() {
         color = linearize(color);
     }
     frag_color = vec4(color.rgb * color.a, color.a);
+    frag_color *= ciri_corner_alpha(v_pane_local, u_pane_size, u_pane_radii);
 }
 "#;
 

@@ -381,6 +381,7 @@ fn frame_scene_construction() {
     let scene = FrameScene {
         clear_color: [0.1, 0.2, 0.3, 1.0],
         bg_rects: &rects,
+        bg_rect_ranges: &[],
         glyphs,
         color_glyphs: &[],
         glyph_batches: &[],

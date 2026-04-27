@@ -4,7 +4,7 @@ use ciri_layout::geometry::Rect as GeoRect;
 use ciri_protocol::message::*;
 use ciri_render::FrameScene;
 use ciri_render::glyph_cache::{GlyphInstance, ScissoredRange};
-use ciri_render::rect::Rect;
+use ciri_render::rect::{PaneRectRange, Rect};
 use ciri_render::terminal;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -28,6 +28,7 @@ struct TilePaintConfig {
 /// back into `App::render_bufs` to preserve their capacity.
 struct AssembledScene {
     bg_rects: Vec<Rect>,
+    bg_rect_ranges: Vec<PaneRectRange>,
     glyphs: Vec<GlyphInstance>,
     color_glyphs: Vec<GlyphInstance>,
     glyph_batches: Vec<ScissoredRange>,
@@ -72,6 +73,31 @@ struct PaneGlyphFragment {
 }
 
 impl App {
+    fn pane_rect_range(&self, start: usize, end: usize, pane: &GeoRect) -> Option<PaneRectRange> {
+        if start >= end {
+            return None;
+        }
+        let radius = self.core.config.appearance.pane_corner_radius;
+        Some(PaneRectRange {
+            start: start as u32,
+            count: (end - start) as u32,
+            pane_origin: [pane.x, pane.y],
+            pane_size: [pane.w, pane.h],
+            pane_radii: [radius, radius, radius, radius],
+        })
+    }
+
+    fn zero_rect_range(start: usize, end: usize) -> Option<PaneRectRange> {
+        if start >= end {
+            return None;
+        }
+        Some(PaneRectRange {
+            start: start as u32,
+            count: (end - start) as u32,
+            ..PaneRectRange::default()
+        })
+    }
+
     fn zero_glyph_instance() -> GlyphInstance {
         GlyphInstance {
             pos: [0.0, 0.0],
@@ -320,6 +346,7 @@ impl App {
         vh: f32,
         paint: TilePaintConfig,
         bg_rects: &mut Vec<Rect>,
+        bg_rect_ranges: &mut Vec<PaneRectRange>,
     ) {
         let Some(visual) = self.pane_visual_state(pane_id, tile_rect, zoom, vw, vh) else {
             return;
@@ -334,9 +361,19 @@ impl App {
             visual.dim.to_bits(),
         );
 
+        // Same focus-ring/inactive-border split as `build_tile`. Active
+        // ring is emitted as a zero-radius range so Glow legs that
+        // extend past `tr` aren't clipped by the pane corner mask.
+        let range_start: usize;
         if is_active {
+            let ring_start = bg_rects.len();
             self.emit_focus_ring(&tr, zoom, &paint, bg_rects);
+            if let Some(range) = Self::zero_rect_range(ring_start, bg_rects.len()) {
+                bg_rect_ranges.push(range);
+            }
+            range_start = bg_rects.len();
         } else {
+            range_start = bg_rects.len();
             bg_rects.push(Rect {
                 x: tr.x,
                 y: tr.y,
@@ -357,6 +394,9 @@ impl App {
         self.emit_overview_hover(pane_id, &tr, zoom, &paint, bg_rects);
 
         let Some(view) = self.cached_views.get(&pane_id) else {
+            if let Some(range) = self.pane_rect_range(range_start, bg_rects.len(), &tr) {
+                bg_rect_ranges.push(range);
+            }
             return;
         };
 
@@ -425,6 +465,9 @@ impl App {
                 h: tr.h,
                 color: [0.0, 0.0, 0.0, overlay_alpha],
             });
+        }
+        if let Some(range) = self.pane_rect_range(range_start, bg_rects.len(), &tr) {
+            bg_rect_ranges.push(range);
         }
     }
 
@@ -1360,6 +1403,7 @@ impl App {
         vh: f32,
         paint: TilePaintConfig,
         bg_rects: &mut Vec<Rect>,
+        bg_rect_ranges: &mut Vec<PaneRectRange>,
         glyphs: &mut Vec<GlyphInstance>,
         color_glyphs: &mut Vec<GlyphInstance>,
         glyph_batches: &mut Vec<ScissoredRange>,
@@ -1372,10 +1416,29 @@ impl App {
         let inner_x = visual.inner_x;
         let inner_y = visual.inner_y;
 
-        // Focus ring / inactive border
+        // Focus ring / inactive border. The active focus ring is decorative
+        // chrome — Glow style emits legs that extend past `tr`, and Solid
+        // style is a flat 1-pane rect. Either way, clipping it to the pane
+        // rounded box would amputate the chrome. Emit the active ring as a
+        // separate zero-radius range BEFORE the pane range so the rect-
+        // pipeline corner-alpha doesn't see it as part of the pane body.
+        // C4 replaces this whole branch with an SDF border that rounds
+        // itself via niri's outer/inner double-mask trick.
+        //
+        // The inactive variant is a single pane-sized fill (the cell-bg
+        // path paints `paint.bg_color` over the inset, leaving the border
+        // showing along `tr`'s edge), which IS part of the pane and SHOULD
+        // round with it — keep it inside the pane range below.
+        let range_start: usize;
         if is_active {
+            let ring_start = bg_rects.len();
             self.emit_focus_ring(&tr, zoom, &paint, bg_rects);
+            if let Some(range) = Self::zero_rect_range(ring_start, bg_rects.len()) {
+                bg_rect_ranges.push(range);
+            }
+            range_start = bg_rects.len();
         } else {
+            range_start = bg_rects.len();
             bg_rects.push(Rect {
                 x: tr.x,
                 y: tr.y,
@@ -1399,6 +1462,9 @@ impl App {
 
         // Cell backgrounds from view
         let Some(view) = self.cached_views.remove(&pane_id) else {
+            if let Some(range) = self.pane_rect_range(range_start, bg_rects.len(), &tr) {
+                bg_rect_ranges.push(range);
+            }
             return;
         };
         let tile_key = (
@@ -1530,6 +1596,9 @@ impl App {
                 color: [0.0, 0.0, 0.0, overlay_alpha],
             });
         }
+        if let Some(range) = self.pane_rect_range(range_start, bg_rects.len(), &tr) {
+            bg_rect_ranges.push(range);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1540,6 +1609,7 @@ impl App {
         vw: f32,
         vh: f32,
         bg_rects: &mut Vec<Rect>,
+        bg_rect_ranges: &mut Vec<PaneRectRange>,
         glyphs: &mut Vec<GlyphInstance>,
         color_glyphs: &mut Vec<GlyphInstance>,
         glyph_batches: &mut Vec<ScissoredRange>,
@@ -1563,6 +1633,7 @@ impl App {
                 vh,
                 paint,
                 bg_rects,
+                bg_rect_ranges,
                 glyphs,
                 color_glyphs,
                 glyph_batches,
@@ -1571,6 +1642,7 @@ impl App {
         }
 
         for (rect, opacity, _slide) in self.core.anim_mgr.closing_panes() {
+            let range_start = bg_rects.len();
             let (rx, ry, rw, rh) = if zoom < zoom_threshold {
                 let cx = vw / 2.0;
                 let cy = vh / 2.0;
@@ -1590,6 +1662,9 @@ impl App {
                 h: rh,
                 color: [0.1, 0.1, 0.1, opacity * 0.5],
             });
+            if let Some(range) = Self::zero_rect_range(range_start, bg_rects.len()) {
+                bg_rect_ranges.push(range);
+            }
         }
 
         let active_bg_start = bg_rects.len();
@@ -1607,6 +1682,7 @@ impl App {
                 vh,
                 paint,
                 bg_rects,
+                bg_rect_ranges,
                 glyphs,
                 color_glyphs,
                 active_glyph_batches,
@@ -2251,6 +2327,7 @@ impl App {
         self.render_bufs.dirty_color_ranges.clear();
 
         let mut bg_rects = std::mem::take(&mut self.render_bufs.bg_rects);
+        let mut bg_rect_ranges = std::mem::take(&mut self.render_bufs.bg_rect_ranges);
         let glyphs = std::mem::take(&mut self.render_bufs.glyphs);
         let color_glyphs = std::mem::take(&mut self.render_bufs.color_glyphs);
         let glyph_batches = std::mem::take(&mut self.render_bufs.glyph_batches);
@@ -2259,6 +2336,7 @@ impl App {
         let active_color_glyph_batches =
             std::mem::take(&mut self.render_bufs.active_color_glyph_batches);
         bg_rects.clear();
+        bg_rect_ranges.clear();
         let (active_bg_start, pane_glyph_end, pane_color_glyph_end, mut glyphs, mut color_glyphs) =
             if use_retained_panes {
                 self.render_bufs.glyphs = glyphs;
@@ -2289,11 +2367,13 @@ impl App {
                         vh_f,
                         paint,
                         &mut bg_rects,
+                        &mut bg_rect_ranges,
                     );
                 }
 
                 let zoom_threshold = self.core.config.animation.zoom_threshold;
                 for (rect, opacity, _slide) in self.core.anim_mgr.closing_panes() {
+                    let range_start = bg_rects.len();
                     let (rx, ry, rw, rh) = if zoom < zoom_threshold {
                         let cx = vw_f / 2.0;
                         let cy = vh_f / 2.0;
@@ -2313,6 +2393,9 @@ impl App {
                         h: rh,
                         color: [0.1, 0.1, 0.1, opacity * 0.5],
                     });
+                    if let Some(range) = Self::zero_rect_range(range_start, bg_rects.len()) {
+                        bg_rect_ranges.push(range);
+                    }
                 }
 
                 let active_bg_start = bg_rects.len();
@@ -2329,6 +2412,7 @@ impl App {
                         vh_f,
                         paint,
                         &mut bg_rects,
+                        &mut bg_rect_ranges,
                     );
                 }
 
@@ -2359,6 +2443,7 @@ impl App {
                     vw_f,
                     vh_f,
                     &mut bg_rects,
+                    &mut bg_rect_ranges,
                     &mut glyphs,
                     &mut color_glyphs,
                     &mut glyph_batches,
@@ -2391,6 +2476,7 @@ impl App {
         let active_color_glyph_batches =
             std::mem::take(&mut self.render_bufs.active_color_glyph_batches);
         let overlay_bg_start = bg_rects.len();
+        let overlay_range_start = bg_rects.len();
         self.build_ui(vw_f, vh_f, &mut glyphs, &mut color_glyphs);
         // Take the cached chrome SDF rects rather than cloning: transient
         // overlays (palette, context menu, paste dialog…) extend onto the
@@ -2408,9 +2494,13 @@ impl App {
             &mut glyphs,
             &mut color_glyphs,
         );
+        if let Some(range) = Self::zero_rect_range(overlay_range_start, bg_rects.len()) {
+            bg_rect_ranges.push(range);
+        }
 
         AssembledScene {
             bg_rects,
+            bg_rect_ranges,
             glyphs,
             color_glyphs,
             glyph_batches,
@@ -2442,6 +2532,7 @@ impl App {
     ) {
         let AssembledScene {
             bg_rects,
+            bg_rect_ranges,
             glyphs,
             color_glyphs,
             glyph_batches,
@@ -2466,6 +2557,7 @@ impl App {
             FrameScene {
                 clear_color,
                 bg_rects: &bg_rects,
+                bg_rect_ranges: &bg_rect_ranges,
                 glyphs: &glyphs,
                 color_glyphs: &color_glyphs,
                 glyph_batches: &glyph_batches,
@@ -2501,6 +2593,7 @@ impl App {
         self.cached_ui_scene.sdf_rects = ui_sdf_rects;
 
         self.render_bufs.bg_rects = bg_rects;
+        self.render_bufs.bg_rect_ranges = bg_rect_ranges;
         self.render_bufs.glyphs = glyphs;
         self.render_bufs.color_glyphs = color_glyphs;
         self.render_bufs.glyph_batches = glyph_batches;
@@ -2897,6 +2990,7 @@ mod tests {
         let mut color_glyph_batches = Vec::new();
         let mut active_glyph_batches = Vec::new();
         let mut active_color_glyph_batches = Vec::new();
+        let mut bg_rect_ranges = Vec::new();
 
         let active_bg_start = app.build_tiles(
             &tiles,
@@ -2904,6 +2998,7 @@ mod tests {
             1600.0,
             900.0,
             &mut bg_rects,
+            &mut bg_rect_ranges,
             &mut glyphs,
             &mut color_glyphs,
             &mut glyph_batches,

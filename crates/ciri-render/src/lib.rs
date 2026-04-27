@@ -11,7 +11,7 @@ pub mod ui_shaper;
 pub use fontdb;
 
 use glyph_cache::{GlyphInstance, ScissoredRange};
-use rect::Rect;
+use rect::{PaneRectRange, Rect};
 use sdf_rect::SdfRect;
 
 /// All data needed to render a single frame.
@@ -19,6 +19,7 @@ use sdf_rect::SdfRect;
 pub struct FrameScene<'a> {
     pub clear_color: [f32; 4],
     pub bg_rects: &'a [Rect],
+    pub bg_rect_ranges: &'a [PaneRectRange],
     pub glyphs: &'a [GlyphInstance],
     pub color_glyphs: &'a [GlyphInstance],
     pub glyph_batches: &'a [ScissoredRange],

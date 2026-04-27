@@ -703,8 +703,8 @@ fn rebuild_row_render_data(
                             glyphs.push(g);
                         }
                     }
-                    continue;
                 }
+                continue;
             }
         }
 

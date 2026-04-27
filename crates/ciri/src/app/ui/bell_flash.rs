@@ -1,5 +1,5 @@
 use ciri_layout::geometry::Rect as GeoRect;
-use ciri_ui::{Div, IntoElement, Layer, Render, RenderCtx, Styled, div};
+use ciri_ui::{Div, IntoElement, Render, RenderCtx, Styled, deferred, div};
 
 use super::types::{UiContext, UiScene};
 use crate::app::ciri_ui_adapter::paint_element_tree;
@@ -37,16 +37,18 @@ impl BellFlashComponent {
         for flash in &self.flashes {
             let alpha = 0.15 * flash.intensity;
             let rect = flash.rect;
-            root = root.child(
+            // Each flash gets its own `deferred()` so it sits above
+            // pane content and other chrome merged earlier; matches
+            // the old `Layer::Overlay` placement without the enum.
+            root = root.child(deferred(
                 div()
-                    .in_layer(Layer::Overlay)
                     .absolute()
                     .left(rect.x)
                     .top(rect.y)
                     .w(rect.w)
                     .h(rect.h)
                     .bg([1.0, 0.9, 0.5, alpha]),
-            );
+            ));
         }
         root
     }

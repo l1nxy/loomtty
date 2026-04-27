@@ -5,7 +5,7 @@ use super::tokens;
 use super::types::{UiContext, UiScene};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Div, IntoElement, Layer, Render, RenderCtx, Styled, div, text};
+use ciri_ui::{Div, IntoElement, Render, RenderCtx, Styled, deferred, div, text};
 
 pub(crate) struct InfoBoxComponent {
     title: String,
@@ -214,7 +214,6 @@ impl InfoBoxComponent {
         let key_col_w = self.key_col_w;
         let gap_w = self.cell_w * 2.0;
         let mut panel = div()
-            .in_layer(Layer::Overlay)
             .absolute()
             .left(self.x)
             .top(self.y)
@@ -259,7 +258,13 @@ impl InfoBoxComponent {
             );
         }
 
-        div().w(cx.viewport[0]).h(cx.viewport[1]).child(panel)
+        // `deferred()` keeps the panel z-on-top of any other Chrome
+        // primitives the host appends after this widget — no scrim
+        // here (info-box is non-modal), just paint-order escape.
+        div()
+            .w(cx.viewport[0])
+            .h(cx.viewport[1])
+            .child(deferred(panel))
     }
 }
 

@@ -1,4 +1,4 @@
-use ciri_ui::{Div, IntoElement, Layer, Render, RenderCtx, Styled, div, text};
+use ciri_ui::{Div, IntoElement, Render, RenderCtx, Styled, deferred, div, text};
 use unicode_width::UnicodeWidthStr;
 
 use super::types::{UiContext, UiScene};
@@ -35,7 +35,6 @@ impl ImePreeditComponent {
         let box_w = text_width + 4.0;
 
         let panel = div()
-            .in_layer(Layer::Overlay)
             .absolute()
             .left(self.base_x)
             .top(self.base_y)
@@ -51,28 +50,34 @@ impl ImePreeditComponent {
                     .h(self.cell_h)
                     .child(text(self.text.clone()).color([1.0, 1.0, 1.0, 1.0])),
             );
-        let mut root = div().w(cx.viewport[0]).h(cx.viewport[1]).child(panel).child(
-            div()
-                .in_layer(Layer::Overlay)
-                .absolute()
-                .left(self.base_x)
-                .top(self.base_y + self.cell_h)
-                .w(box_w)
-                .h(2.0)
-                .bg([0.5, 0.7, 1.0, 0.9]),
-        );
+        let underline = div()
+            .absolute()
+            .left(self.base_x)
+            .top(self.base_y + self.cell_h)
+            .w(box_w)
+            .h(2.0)
+            .bg([0.5, 0.7, 1.0, 0.9]);
+
+        // Each overlay piece is its own `deferred()` so they all sit
+        // above pane content without `Layer::Overlay`. Within the
+        // widget'\''s scene the three deferreds drain in capture order
+        // (stable sort, equal priority) — same shape as before.
+        let mut root = div()
+            .w(cx.viewport[0])
+            .h(cx.viewport[1])
+            .child(deferred(panel))
+            .child(deferred(underline));
 
         if let Some(cursor_cols) = self.cursor_cols {
-            root = root.child(
+            root = root.child(deferred(
                 div()
-                    .in_layer(Layer::Overlay)
                     .absolute()
                     .left(self.base_x + 2.0 + cursor_cols as f32 * self.cell_w)
                     .top(self.base_y + 1.0)
                     .w(2.0)
                     .h(self.cell_h)
                     .bg([1.0, 1.0, 1.0, 0.8]),
-            );
+            ));
         }
         root
     }

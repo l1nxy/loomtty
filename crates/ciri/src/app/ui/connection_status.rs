@@ -8,7 +8,7 @@ use super::tokens;
 use super::types::{UiContext, UiScene};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Div, IntoElement, Layer, Render, RenderCtx, Styled, div, text};
+use ciri_ui::{Div, IntoElement, Render, RenderCtx, Styled, deferred, div, text};
 
 const DOT_PHASE_MS: u128 = 300;
 const DOT_PHASES: u32 = 4;
@@ -287,7 +287,6 @@ impl ConnectionStatusComponent {
         }
 
         let mut panel = div()
-            .in_layer(Layer::Overlay)
             .absolute()
             .left(self.x)
             .top(self.y)
@@ -318,7 +317,12 @@ impl ConnectionStatusComponent {
         }
         panel = panel.child(div().w(content_w).h(v_pad));
 
-        div().w(cx.viewport[0]).h(cx.viewport[1]).child(panel)
+        // Drained via `deferred()` so the banner sits z-on-top of any
+        // chrome the host appends after this widget'\''s scene.
+        div()
+            .w(cx.viewport[0])
+            .h(cx.viewport[1])
+            .child(deferred(panel))
     }
 }
 

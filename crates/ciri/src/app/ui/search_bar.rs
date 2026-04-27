@@ -1,5 +1,5 @@
 use ciri_layout::geometry::Rect as GeoRect;
-use ciri_ui::{Div, IntoElement, Layer, Render, RenderCtx, Styled, div, text};
+use ciri_ui::{Div, IntoElement, Render, RenderCtx, Styled, deferred, div, text};
 
 use super::types::{UiContext, UiScene};
 use crate::app::ciri_ui_adapter::paint_element_tree;
@@ -49,25 +49,28 @@ impl SearchBarComponent {
         };
         let bar_text = format!(" Search: {}{}", self.query, match_info);
 
-        div().w(cx.viewport[0]).h(cx.viewport[1]).child(
-            div()
-                .in_layer(Layer::Overlay)
-                .absolute()
-                .left(bar_x)
-                .top(bar_y)
-                .w(bar_w)
-                .h(bar_height)
-                .bg([0.15, 0.15, 0.2, 0.95])
-                .child(
-                    div()
-                        .absolute()
-                        .left(self.padding)
-                        .top(2.0)
-                        .w((bar_w - self.padding * 2.0).max(0.0))
-                        .h(self.cell_h)
-                        .child(text(bar_text).color([1.0, 1.0, 1.0, 1.0])),
-                ),
-        )
+        let bar = div()
+            .absolute()
+            .left(bar_x)
+            .top(bar_y)
+            .w(bar_w)
+            .h(bar_height)
+            .bg([0.15, 0.15, 0.2, 0.95])
+            .child(
+                div()
+                    .absolute()
+                    .left(self.padding)
+                    .top(2.0)
+                    .w((bar_w - self.padding * 2.0).max(0.0))
+                    .h(self.cell_h)
+                    .child(text(bar_text).color([1.0, 1.0, 1.0, 1.0])),
+            );
+        // `deferred()` keeps the bar above pane content emitted earlier
+        // in the host'\''s scene merge — replaces `Layer::Overlay`.
+        div()
+            .w(cx.viewport[0])
+            .h(cx.viewport[1])
+            .child(deferred(bar))
     }
 }
 

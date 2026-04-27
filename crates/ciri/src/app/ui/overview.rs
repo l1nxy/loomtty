@@ -4,7 +4,7 @@ use super::tokens;
 use super::types::{UiContext, UiOverviewHit, UiScene, ui_hit_id};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Div, IntoElement, Layer, Render, RenderCtx, Styled, div, text};
+use ciri_ui::{Div, IntoElement, Render, RenderCtx, Styled, deferred, div, text};
 
 const HIT_ACTION_BAR: u64 = 1;
 const HIT_CLOSE: u64 = 2;
@@ -201,7 +201,6 @@ impl OverviewActionBarComponent {
             .child(text("Focus"));
 
         let bar = div()
-            .in_layer(Layer::Overlay)
             .absolute()
             .left(d.pane_x)
             .top(d.bar_y)
@@ -212,16 +211,23 @@ impl OverviewActionBarComponent {
             .bg([0.0, 0.0, 0.0, tokens::ALPHA_PRIMARY_HOVER])
             .hit_id(HIT_ACTION_BAR);
 
-        div().w(cx.viewport[0]).h(cx.viewport[1]).child(
-            bar.child(close_button)
-                .child(
-                    div()
-                        .w(1.0)
-                        .h(d.bar_h - tokens::SPACE_1 * 2.0)
-                        .bg(tokens::tint(fg, tokens::ALPHA_SEPARATOR * 0.6)),
-                )
-                .child(focus_button),
-        )
+        // The action bar is wrapped in `deferred()` so it sits z-on-top
+        // of the overview tile thumbnails (painted earlier in the
+        // OverviewComponent), matching the old `Layer::Overlay`
+        // behaviour without the enum.
+        let bar = bar
+            .child(close_button)
+            .child(
+                div()
+                    .w(1.0)
+                    .h(d.bar_h - tokens::SPACE_1 * 2.0)
+                    .bg(tokens::tint(fg, tokens::ALPHA_SEPARATOR * 0.6)),
+            )
+            .child(focus_button);
+        div()
+            .w(cx.viewport[0])
+            .h(cx.viewport[1])
+            .child(deferred(bar))
     }
 }
 

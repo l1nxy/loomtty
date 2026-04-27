@@ -285,23 +285,38 @@ impl UiFrame {
 
     /// Look up the chrome `hit_id` at `(mx, my)` for the purposes of
     /// `.active()` press-state styling. Only returns hit_ids for
-    /// elements that benefit from press feedback — currently top-bar
-    /// pane tabs (clicking selects a pane without dismissing the bar,
-    /// so the active state has frames to render before mouse-up).
-    /// Returns `None` for everything else, so widgets that dismiss on
-    /// click (palette / paste_dialog / context_menu rows) don't try
-    /// to flash an active style for the single frame between press
-    /// and dismiss.
+    /// elements that benefit from press feedback — chrome that
+    /// stays visible long enough between press and release for the
+    /// `.active()` refinement to render frames.
+    ///
+    /// Currently covers:
+    /// - Top-bar **pane tabs**: click focuses a pane without
+    ///   dismissing the bar.
+    /// - Top-bar **session label** and **workspace indicator**: click
+    ///   opens the palette, but the bar stays painted under the
+    ///   palette backdrop, so the press tint is visible at the edges.
+    ///
+    /// Returns `None` for click-and-dismiss chrome (palette /
+    /// paste_dialog / context_menu rows) so they don't flash an
+    /// active style for the one frame between press and dismiss.
+    /// Mode indicator is also skipped because it has no hover
+    /// styling — adding `.active()` without `.hover()` would feel
+    /// inconsistent with the rest of the bar.
     pub(super) fn active_press_hit_id(
         &self,
         mx: f32,
         my: f32,
         cx: &UiContext<'_>,
     ) -> Option<u64> {
-        if self.chrome.top_bar.contains(mx, my)
-            && let Some(UiTopBarHit::PaneTab(pane_id)) = self.top_bar.hit_test(mx, my, cx)
-        {
-            return Some(super::top_bar::pane_tab_hit_id(pane_id));
+        if self.chrome.top_bar.contains(mx, my) {
+            match self.top_bar.hit_test(mx, my, cx) {
+                Some(UiTopBarHit::PaneTab(pane_id)) => {
+                    return Some(super::top_bar::pane_tab_hit_id(pane_id));
+                }
+                Some(UiTopBarHit::Session) => return Some(super::top_bar::HIT_SESSION),
+                Some(UiTopBarHit::Workspace) => return Some(super::top_bar::HIT_WORKSPACE),
+                _ => {}
+            }
         }
         None
     }

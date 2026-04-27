@@ -341,25 +341,68 @@ mod tests {
 
     /// `capture_active_press_hit_id` is the seam between mouse-down
     /// routing and `App::active_hit_id`. It returns `None` for clicks
-    /// that don't land on press-friendly chrome — currently anything
-    /// outside top-bar pane tabs. This guards against a phantom press
-    /// state appearing when the user clicks pane content or hover-
-    /// only chrome (session label, mode indicator, etc.).
+    /// that don't land on press-friendly chrome (pane content, mode
+    /// indicator, modal-only widgets) — guards against a phantom
+    /// press state appearing for non-clickable / dismiss-on-click
+    /// regions.
     #[test]
     fn capture_active_press_hit_id_returns_none_outside_press_friendly_chrome() {
         let app = make_app();
         // Far below the top bar — pane content area.
         assert_eq!(app.capture_active_press_hit_id(100.0, 300.0), None);
-        // Top of the bar but outside any pane tab (default App has no
-        // pane tabs anyway, so the whole top bar is "no press target").
+        // Top-bar mode region (right edge). Mode does have a click
+        // action (ToggleOverview) but no `.hover()` / `.active()`
+        // styling, so it'\''s deliberately excluded from the press-
+        // friendly set — adding press feedback alone (no hover) would
+        // feel inconsistent with the rest of the bar.
         let cx = app.ui_context();
         let layout =
             app.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h, cx.ui_shaper);
+        let mode_x = cx.viewport_w - 4.0;
         assert_eq!(
-            app.capture_active_press_hit_id(2.0, layout.bar_y + 2.0),
+            app.capture_active_press_hit_id(mode_x, layout.bar_y + 2.0),
             None,
-            "default App has no pane tabs ⇒ top-bar press returns None",
+            "mode region has no hover/press styling ⇒ press should not capture a hit_id",
         );
+    }
+
+    /// Top-bar session label and workspace indicator both opt into
+    /// `.active()` press feedback — Step 39 extension. Click coords
+    /// inside their slots return `Some(HIT_SESSION)` /
+    /// `Some(HIT_WORKSPACE)` so the next paint can apply the press
+    /// tint.
+    #[test]
+    fn capture_active_press_hit_id_matches_session_and_workspace() {
+        use crate::app::ui::top_bar::TopBarComponent;
+
+        let app = make_app();
+        let cx = app.ui_context();
+        let layout =
+            app.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h, cx.ui_shaper);
+        let bar_y = layout.bar_y + layout.bar_height * 0.5;
+        let bar_rect = super::types::UiRect::new(0.0, layout.bar_y, cx.viewport_w, layout.bar_height);
+        let component = TopBarComponent::capture(&app, layout, &cx);
+        let slots = component.row_slots(bar_rect, &cx);
+
+        // Session is the leftmost slot — well-defined for the default
+        // App. Click in its centre.
+        let session_x = slots.session.x + slots.session.w * 0.5;
+        assert_eq!(
+            app.capture_active_press_hit_id(session_x, bar_y),
+            Some(super::top_bar::HIT_SESSION),
+            "session label should be press-friendly",
+        );
+
+        // Workspace slot is only non-empty when there's a label —
+        // default App has the workspace indicator visible.
+        if slots.workspace.w > 0.0 {
+            let workspace_x = slots.workspace.x + slots.workspace.w * 0.5;
+            assert_eq!(
+                app.capture_active_press_hit_id(workspace_x, bar_y),
+                Some(super::top_bar::HIT_WORKSPACE),
+                "workspace indicator should be press-friendly",
+            );
+        }
     }
 
     /// Mouse-down outside any press-friendly chrome leaves

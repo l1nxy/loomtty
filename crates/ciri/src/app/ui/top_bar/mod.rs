@@ -42,6 +42,17 @@ pub(super) const HIT_WORKSPACE: u64 = 2;
 const HIT_MODE: u64 = 3;
 const HIT_TAB_BASE: u64 = 1_000_000;
 
+// The pane-tab hit-id base must sit far above every singleton chrome
+// hit_id so `App::active_hit_id` and the chrome cache hash can't
+// conflate a pane-tab press with a session/workspace/mode press. With
+// `HIT_TAB_BASE = 1_000_000`, the gap leaves room for ~999_996 unique
+// chrome hit_ids and trillions of pane ids before any overlap.
+const _: () = {
+    assert!(HIT_TAB_BASE > HIT_SESSION);
+    assert!(HIT_TAB_BASE > HIT_WORKSPACE);
+    assert!(HIT_TAB_BASE > HIT_MODE);
+};
+
 pub(super) fn pane_tab_hit_id(pane_id: u64) -> u64 {
     HIT_TAB_BASE + pane_id
 }
@@ -178,12 +189,17 @@ impl TopBarComponent {
             .unwrap_or(cx.cell_h * cx.config.statusbar.padding_ratio);
         let top_pad = padding * 0.5;
 
+        // Press tint shared by SessionLabel and WorkspaceIndicator —
+        // matches the `ALPHA_PRESS_BG` cue used by pane tabs so all
+        // press-friendly top-bar regions feel the same on click.
+        let press_bg = tokens::tint(accent, tokens::ALPHA_PRESS_BG);
+
         let mut children: Vec<Div> = Vec::new();
         children.push(
             SessionLabel {
                 text: &self.session_text,
             }
-            .into_div(slots.session, fg, dim, top_pad, cx.cell_h),
+            .into_div(slots.session, fg, dim, press_bg, top_pad, cx.cell_h),
         );
 
         if self.show_integrated_tabs {
@@ -203,7 +219,7 @@ impl TopBarComponent {
             WorkspaceIndicator {
                 label: &self.workspace_label,
             }
-            .into_div(slots.workspace, fg, accent, top_pad, cx.cell_h),
+            .into_div(slots.workspace, fg, accent, press_bg, top_pad, cx.cell_h),
         );
 
         children.push(

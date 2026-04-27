@@ -295,7 +295,7 @@ impl ConnectionStatusComponent {
             .flex_col()
             .items_center()
             .bg(bg_color)
-            .rounded(tokens::SPACE_1)
+            .rounded(cx.theme.radius.md)
             .border(bw, head_color)
             .shadow_md()
             .child(div().w(content_w).h(v_pad))

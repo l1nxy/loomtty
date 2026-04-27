@@ -101,6 +101,26 @@ impl ContextMenuComponent {
         let root = self.build_tree(&render_cx);
         context_menu_hit_from_id(ui_hit_id(&root, cx, mx, my))
     }
+
+    /// Hover row index resolved through the same anchored layout that
+    /// paint uses. Returns `None` when the cursor is outside the menu,
+    /// over a non-row region (border / padding / `HIT_MENU` background),
+    /// or over a disabled row. Used by the chrome cache hash so a row-
+    /// boundary crossing invalidates the cache without a stored field.
+    /// Replaces the pre-Step-42 manual clamp + row-rect math, which
+    /// hashed against the un-flipped rectangle and went stale whenever
+    /// `anchored()` flipped the menu near the bottom-right viewport
+    /// corner.
+    pub(crate) fn hover_index(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<usize> {
+        match self.hit_test(mx, my, cx) {
+            UiContextMenuHit::Entry(idx) => self
+                .rows
+                .get(idx)
+                .filter(|row| row.enabled)
+                .map(|_| idx),
+            UiContextMenuHit::Menu | UiContextMenuHit::None => None,
+        }
+    }
 }
 
 impl ContextMenuComponent {
@@ -146,7 +166,7 @@ impl ContextMenuComponent {
             .flex_col()
             .items_center()
             .bg(bg_color)
-            .rounded(tokens::SPACE_1)
+            .rounded(cx.theme.radius.md)
             .border(bw, border_color)
             .shadow_md()
             .hit_id(HIT_MENU)

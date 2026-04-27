@@ -1,6 +1,6 @@
 pub(super) mod bell_flash;
 pub(crate) mod connection_status;
-mod context_menu;
+pub(crate) mod context_menu;
 mod frame;
 mod hints_bar;
 pub(super) mod ime_preedit;

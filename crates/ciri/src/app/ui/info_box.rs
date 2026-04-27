@@ -222,7 +222,7 @@ impl InfoBoxComponent {
             .flex_col()
             .items_center()
             .bg(bg_color)
-            .rounded(tokens::SPACE_1)
+            .rounded(cx.theme.radius.md)
             .border(bw, accent)
             .shadow_md()
             .child(

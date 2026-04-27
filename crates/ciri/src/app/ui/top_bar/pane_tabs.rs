@@ -68,6 +68,11 @@ impl<'a> PaneTabsElement<'a> {
         let active_bg = tokens::tint(accent, tokens::ALPHA_TAB_ACTIVE_BG);
         let hover_bg = tokens::tint(accent, tokens::ALPHA_HOVER_BG);
         let press_bg = tokens::tint(accent, tokens::ALPHA_PRESS_BG);
+        // Tab corners: round the edge that faces away from the bar's
+        // baseline so the tab reads as "lifted off the bar" — top
+        // corners when the bar sits at the top of the viewport, bottom
+        // corners when the bar sits at the bottom.
+        let tab_radius = cx.theme.radius.sm;
 
         let mut children: Vec<Div> = Vec::new();
         for tab in self.tabs {
@@ -103,6 +108,10 @@ impl<'a> PaneTabsElement<'a> {
                 .h(rect.h)
                 .hit_id(super::pane_tab_hit_id(tab.pane_id))
                 .cursor_pointer();
+            tab_wrapper = match cx.config.statusbar.position {
+                StatusBarPosition::Top => tab_wrapper.rounded_t(tab_radius),
+                StatusBarPosition::Bottom => tab_wrapper.rounded_b(tab_radius),
+            };
             if tab.active {
                 // The currently-focused tab also responds to press —
                 // a slight darken so re-clicking the active tab still

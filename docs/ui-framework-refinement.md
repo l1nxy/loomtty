@@ -301,14 +301,28 @@ from `cx.is_hovered(hit_id)` and the refinement merges over the
 base.
 
 **Refinement inheritance** (added later): the walker's
-`text_color_override_with_state(hovered_hit_id)` lets a
-`.hover(|s| s.text_color(...))` refinement on a parent Div
-propagate to descendant Text. Without this, refinement-only
-overrides were stuck affecting just the Div's own paint.
+`text_color_override_with_state(hovered_hit_id, active_hit_id)`
+lets a `.hover(|s| s.text_color(...))` or `.active(|s|
+s.text_color(...))` refinement on a parent Div propagate to
+descendant Text. Without this, refinement-only overrides were
+stuck affecting just the Div's own paint.
 
-Future `.active(|s| ...)` / `.focus(|s| ...)` slot into the same
-`effective_style` resolver — they need only the corresponding state
-flag exposed on `PaintCtx`.
+**`.active()` press refinement** (Steps 37 + 38): sibling to
+`.hover()`. `Div::active(|s| ...)` builds an active-state
+refinement that wins over hover when both match — same merge
+shape, just one more state flag in `PaintCtx`. Host plumbing
+captures the chrome `hit_id` under the cursor on mouse-down into
+`App::active_hit_id`, clears on mouse-up; the chrome cache hash
+folds the field in so press / release transitions invalidate the
+cache. First production user: top-bar pane tabs darken on press
+via `ALPHA_PRESS_BG = 0.22` (between hover 0.14 and selected
+0.25). Other widgets opt in by extending
+`UiFrame::active_press_hit_id` — palette / paste_dialog rows are
+intentionally NOT consumers because they dismiss on click and
+never have a frame to render the active style.
+
+Future `.focus(|s| ...)` slots into the same `effective_style`
+resolver once a focus tracking system lands.
 
 ### Phase 4 — `ElementStates` for cross-frame persistence  [DONE]
 

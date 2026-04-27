@@ -94,6 +94,15 @@ pub struct PaintCtx<'a> {
     /// Elements check `cx.is_hovered(self_hit_id)` to apply hover
     /// styles; see [`PaintCtx::is_hovered`].
     pub hovered_hit_id: Option<u64>,
+    /// `hit_id` captured at the most recent mouse-down, while a button
+    /// is still held. Stays the same until the host receives a
+    /// mouse-up — i.e. sticky on drag, like CSS `:active`. Sourced
+    /// from the host (`App::active_hit_id`); not derivable from the
+    /// current cursor position because "what was pressed" is across-
+    /// frame state. `None` when no button is held or the host hasn't
+    /// plumbed it. Elements check `cx.is_active(self_hit_id)` to apply
+    /// `.active(|s| ...)` refinement.
+    pub active_hit_id: Option<u64>,
     /// Cross-frame state map. Elements that opt into persistence
     /// (typically by overriding [`Element::id`]) call
     /// `cx.states.use_state::<S>(id)` to borrow their slot. `None`
@@ -114,6 +123,15 @@ impl<'a> PaintCtx<'a> {
     #[inline]
     pub fn is_hovered(&self, hit_id: u64) -> bool {
         self.hovered_hit_id == Some(hit_id)
+    }
+
+    /// True iff the host reports this `hit_id` as the current active
+    /// press target. Use this to gate `.active(|s| ...)` refinements.
+    /// Sticky-on-drag is the host's responsibility — this helper just
+    /// compares against [`PaintCtx::active_hit_id`].
+    #[inline]
+    pub fn is_active(&self, hit_id: u64) -> bool {
+        self.active_hit_id == Some(hit_id)
     }
 
     /// Convenience: append an SDF rect to the scene in paint order.
@@ -352,8 +370,9 @@ pub trait Element: 'static {
     }
 
     /// Same as [`Element::text_color_override`] but receives the current
-    /// frame's `hovered_hit_id` so refinement-only colour overrides
-    /// (e.g. `.hover(|s| s.text_color(fg))`) can propagate to
+    /// frame's `hovered_hit_id` and `active_hit_id` so refinement-only
+    /// colour overrides (e.g. `.hover(|s| s.text_color(fg))` /
+    /// `.active(|s| s.text_color(pressed))`) can propagate to
     /// descendants. Default impl falls back to the stateless variant —
     /// only `Div` (which has refinement support) needs to override.
     /// Called by the walker AFTER `paint`, so it sees the same
@@ -361,6 +380,7 @@ pub trait Element: 'static {
     fn text_color_override_with_state(
         &self,
         _hovered_hit_id: Option<u64>,
+        _active_hit_id: Option<u64>,
     ) -> Option<crate::color::Color> {
         self.text_color_override()
     }

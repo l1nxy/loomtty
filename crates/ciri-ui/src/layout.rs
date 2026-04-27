@@ -179,6 +179,7 @@ pub fn paint_tree_into(
         &mut tree,
         None,
         None,
+        None,
     );
 }
 
@@ -204,6 +205,7 @@ pub fn paint_tree_into_with_layout(
         &mut tree,
         None,
         None,
+        None,
     );
 }
 
@@ -218,6 +220,11 @@ pub fn paint_tree_into_with_layout(
 /// layout-only pre-pass to find the topmost element under the cursor
 /// and threads its `hit_id` into every paint call. Pass `None` to skip
 /// the pre-pass when hover information isn't needed.
+///
+/// `active_hit_id` is the host-tracked press target — `Some(id)` while
+/// a mouse button is held after pressing on the element with that
+/// `hit_id`, `None` otherwise. Threaded into [`PaintCtx::active_hit_id`]
+/// so elements can apply `.active(|s| ...)` refinements.
 pub fn paint_tree_into_with(
     root: &dyn Element,
     theme: &ResolvedTheme,
@@ -227,6 +234,7 @@ pub fn paint_tree_into_with(
     scene: &mut Scene,
     tree: &mut taffy::TaffyTree<NodeContext>,
     mouse_pos: Option<[f32; 2]>,
+    active_hit_id: Option<u64>,
     states: Option<&mut ElementStates>,
 ) {
     let mut layout = LayoutSnapshot::new();
@@ -240,6 +248,7 @@ pub fn paint_tree_into_with(
         &mut layout,
         tree,
         mouse_pos,
+        active_hit_id,
         states,
     );
 }
@@ -327,6 +336,12 @@ pub fn layout_tree_into_retained(
 /// under the cursor, then threads its `hit_id` through every paint
 /// call so elements can apply hover styles. Pass `None` to skip the
 /// pre-pass entirely.
+///
+/// `active_hit_id` (when `Some`) is the hit_id captured at the most
+/// recent mouse-down — the host tracks it across frames because it
+/// is not derivable from the current cursor position. Threaded into
+/// [`PaintCtx::active_hit_id`] so elements can apply
+/// `.active(|s| ...)` refinements while a button is held.
 pub fn paint_tree_into_retained(
     root: &dyn Element,
     theme: &ResolvedTheme,
@@ -337,6 +352,7 @@ pub fn paint_tree_into_retained(
     layout_snapshot: &mut LayoutSnapshot,
     tree: &mut taffy::TaffyTree<NodeContext>,
     mouse_pos: Option<[f32; 2]>,
+    active_hit_id: Option<u64>,
     states: Option<&mut ElementStates>,
 ) {
     layout_snapshot.clear();
@@ -436,6 +452,7 @@ pub fn paint_tree_into_retained(
             /* inherited_opacity */ 1.0,
             /* inherited_text_color */ None,
             hovered_hit_id,
+            active_hit_id,
             theme,
             scale,
             text_shaper,
@@ -450,6 +467,7 @@ pub fn paint_tree_into_retained(
         tree,
         deferred_queue,
         hovered_hit_id,
+        active_hit_id,
         theme,
         scale,
         text_shaper,
@@ -488,6 +506,7 @@ fn paint_node<'a>(
     inherited_opacity: f32,
     inherited_text_color: Option<crate::color::Color>,
     hovered_hit_id: Option<u64>,
+    active_hit_id: Option<u64>,
     theme: &ResolvedTheme,
     scale: f32,
     text_shaper: &mut dyn TextShaper,
@@ -579,6 +598,7 @@ fn paint_node<'a>(
             inherited_opacity,
             inherited_text_color,
             hovered_hit_id,
+            active_hit_id,
             states: states_for_paint,
         };
         el.paint(&mut ctx);
@@ -600,7 +620,7 @@ fn paint_node<'a>(
     // the state-aware variant so a `.hover(|s| s.text_color(...))`
     // refinement on this element actually propagates to descendants.
     let child_inherited_text_color = el
-        .text_color_override_with_state(hovered_hit_id)
+        .text_color_override_with_state(hovered_hit_id, active_hit_id)
         .or(inherited_text_color);
 
     let children = el.children();
@@ -627,6 +647,7 @@ fn paint_node<'a>(
             child_inherited_opacity,
             child_inherited_text_color,
             hovered_hit_id,
+            active_hit_id,
             theme,
             scale,
             text_shaper,
@@ -649,6 +670,7 @@ fn drain_deferred_paint<'a>(
     tree: &taffy::TaffyTree<NodeContext>,
     queue: Vec<DeferredEntry<'a>>,
     hovered_hit_id: Option<u64>,
+    active_hit_id: Option<u64>,
     theme: &ResolvedTheme,
     scale: f32,
     text_shaper: &mut dyn TextShaper,
@@ -678,6 +700,7 @@ fn drain_deferred_paint<'a>(
                 entry.inherited_opacity,
                 entry.inherited_text_color,
                 hovered_hit_id,
+                active_hit_id,
                 theme,
                 scale,
                 text_shaper,
@@ -1508,6 +1531,7 @@ mod tests {
             &mut tree,
             Some([10.0, 10.0]),
             None,
+            None,
         );
         assert_eq!(
             shaper.calls.last().expect("text emitted").color,
@@ -1530,8 +1554,51 @@ mod tests {
             &mut tree,
             Some([150.0, 10.0]),
             None,
+            None,
         );
         assert_eq!(shaper.calls.last().expect("text emitted").color, REST);
+    }
+
+    /// Mirror of the hover-text-color test for `.active()` — when the
+    /// host has captured a press on a Div with
+    /// `.active(|s| s.text_color(act))`, descendant Text nodes should
+    /// inherit the active colour. Confirms that the
+    /// `text_color_override_with_state` walker thread also routes the
+    /// active state, not just hover.
+    #[test]
+    fn active_text_color_refinement_propagates_to_descendant_text() {
+        const REST: crate::color::Color = [0.5, 0.5, 0.5, 1.0];
+        const ACT: crate::color::Color = [0.2, 0.2, 1.0, 1.0];
+        let mut shaper = crate::shaper::RecordingShaper::default();
+        let root = div().w(200.0).h(80.0).child(
+            div()
+                .w(100.0)
+                .h(40.0)
+                .text_color(REST)
+                .hit_id(7)
+                .active(|s| s.text_color(ACT))
+                .child(text("hi")),
+        );
+        let mut tree = taffy::TaffyTree::<NodeContext>::new();
+        let mut scene = Scene::new();
+        // No cursor; press captured on hit_id=7 instead. Text inherits ACT.
+        paint_tree_into_with(
+            &root,
+            &theme(),
+            [200.0, 80.0],
+            1.0,
+            &mut shaper,
+            &mut scene,
+            &mut tree,
+            None,
+            Some(7),
+            None,
+        );
+        assert_eq!(
+            shaper.calls.last().expect("text emitted").color,
+            ACT,
+            "active refinement should propagate to descendant text",
+        );
     }
 
     /// A subtree that uses `deferred()` paints atomically — wrapper

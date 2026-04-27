@@ -177,6 +177,7 @@ mod tests {
             inherited_opacity: 1.0,
             inherited_text_color: None,
             hovered_hit_id: None,
+            active_hit_id: None,
             states: None,
         }
     }

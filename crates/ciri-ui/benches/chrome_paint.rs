@@ -116,6 +116,7 @@ fn bench_palette(c: &mut Criterion) {
                     &mut tree,
                     None,
                     None,
+                    None,
                 );
                 black_box(scene.sdf_len());
             });

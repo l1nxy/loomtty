@@ -46,6 +46,13 @@ pub struct Div {
     /// have a hover style and we don't want to pay for a fat Style on
     /// every Div.
     hover_style: Option<Box<Style>>,
+    /// Optional refinement applied on top of `style` (and on top of
+    /// `hover_style` when both match) while a mouse button is held
+    /// after pressing on this element — i.e. when
+    /// `cx.is_active(hit_id)`. Built by `.active(|s| s.bg(...))`.
+    /// Same boxed-Option shape as `hover_style` so divs without
+    /// active feedback pay no extra storage.
+    active_style: Option<Box<Style>>,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -60,6 +67,7 @@ impl Div {
         Self {
             style: Style::new(),
             hover_style: None,
+            active_style: None,
             children: SmallVec::new(),
         }
     }
@@ -77,6 +85,27 @@ impl Div {
     pub fn hover(mut self, f: impl FnOnce(Style) -> Style) -> Self {
         let refinement = f(Style::new());
         self.hover_style = Some(Box::new(refinement));
+        self
+    }
+
+    /// Apply a refinement on top of the base style (and on top of any
+    /// `.hover()` refinement) while the host reports this element as
+    /// the active press target. Same builder shape as `.hover()`;
+    /// requires `hit_id` set so the framework can identify "this
+    /// element is the press target". Without `.hit_id()`, the
+    /// refinement silently no-ops.
+    ///
+    /// Sticky-on-drag semantics are owned by the host: the framework
+    /// only checks `cx.is_active(hit_id)`. Whether the active state
+    /// persists across cursor moves depends on the host keeping
+    /// [`PaintCtx::active_hit_id`] set from mouse-down to mouse-up.
+    ///
+    /// ```ignore
+    /// div().bg(rest).hover(|s| s.bg(hov)).active(|s| s.bg(pressed))
+    /// ```
+    pub fn active(mut self, f: impl FnOnce(Style) -> Style) -> Self {
+        let refinement = f(Style::new());
+        self.active_style = Some(Box::new(refinement));
         self
     }
 
@@ -162,19 +191,34 @@ impl Element for Div {
     }
 
     /// Refinement-aware variant: when the cursor sits on this Div's
-    /// `hit_id`, the `.hover()` refinement (if it set `text_color`)
-    /// wins; otherwise this returns the base style's `text_color` —
-    /// same as the stateless variant. The walker calls this so a
-    /// `.hover(|s| s.text_color(fg))` on a parent Div correctly
-    /// propagates the hover-state colour to descendant Text nodes.
+    /// `hit_id` and a `.hover()` refinement is set, OR a button is
+    /// held on it and a `.active()` refinement is set, the matching
+    /// refinement's `text_color` (if any) wins over the base. Active
+    /// is checked before hover because the press state is more
+    /// specific. The walker calls this so refinement-state text
+    /// colours propagate to descendant Text nodes.
     fn text_color_override_with_state(
         &self,
         hovered_hit_id: Option<u64>,
+        active_hit_id: Option<u64>,
     ) -> Option<Color> {
-        let hovered = self
-            .style
-            .hit_id
-            .is_some_and(|id| hovered_hit_id == Some(id))
+        let hit_id = self.style.hit_id;
+        let active = hit_id.is_some_and(|id| active_hit_id == Some(id))
+            && self.active_style.is_some();
+        if active {
+            return self
+                .active_style
+                .as_ref()
+                .and_then(|act| act.text_color)
+                .or_else(|| {
+                    self.hover_style
+                        .as_ref()
+                        .filter(|_| hit_id.is_some_and(|id| hovered_hit_id == Some(id)))
+                        .and_then(|hov| hov.text_color)
+                })
+                .or(self.style.text_color);
+        }
+        let hovered = hit_id.is_some_and(|id| hovered_hit_id == Some(id))
             && self.hover_style.is_some();
         if hovered {
             // Refinement wins when set; fall back to base.
@@ -284,24 +328,31 @@ impl Element for Div {
 impl Div {
     /// Compute the style that should drive paint on this frame: the
     /// base, with `hover_style` merged over top when the cursor is
-    /// over this element. Returns a borrowed reference when no
-    /// refinement applies (the common case) so we don't pay a Style
-    /// clone for every static-styled element.
+    /// over this element, then `active_style` merged on top of that
+    /// when a button is currently held on this element. Active wins
+    /// over hover (matches CSS semantics — press is more specific
+    /// than hover). Returns a borrowed reference when no refinement
+    /// applies (the common case) so we don't pay a Style clone for
+    /// every static-styled element.
     fn effective_style<'a>(&'a self, cx: &PaintCtx<'_>) -> std::borrow::Cow<'a, Style> {
-        let hovered = self
-            .style
-            .hit_id
-            .is_some_and(|id| cx.is_hovered(id))
-            && self.hover_style.is_some();
-        if hovered {
-            let mut merged = self.style.clone();
-            if let Some(hov) = &self.hover_style {
-                merged.merge(hov);
-            }
-            std::borrow::Cow::Owned(merged)
-        } else {
-            std::borrow::Cow::Borrowed(&self.style)
+        let hit_id = self.style.hit_id;
+        let hovered = hit_id.is_some_and(|id| cx.is_hovered(id)) && self.hover_style.is_some();
+        let active = hit_id.is_some_and(|id| cx.is_active(id)) && self.active_style.is_some();
+        if !hovered && !active {
+            return std::borrow::Cow::Borrowed(&self.style);
         }
+        let mut merged = self.style.clone();
+        if hovered
+            && let Some(hov) = &self.hover_style
+        {
+            merged.merge(hov);
+        }
+        if active
+            && let Some(act) = &self.active_style
+        {
+            merged.merge(act);
+        }
+        std::borrow::Cow::Owned(merged)
     }
 }
 
@@ -367,6 +418,7 @@ mod tests {
             inherited_opacity: 1.0,
             inherited_text_color: None,
             hovered_hit_id: None,
+            active_hit_id: None,
             states: None,
         }
     }
@@ -430,8 +482,88 @@ mod tests {
             .bg([1.0, 0.0, 0.0, 1.0])
             .hover(|s| s.bg([0.0, 1.0, 0.0, 1.0]))
             .paint(&mut pcx);
-        let rects: Vec<_> = scene.sdf_rects_iter().collect(); let r = rects[0];
+        let rects: Vec<_> = scene.sdf_rects_iter().collect();
+        let r = rects[0];
         assert_eq!(r.color, [1.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn active_style_overlays_when_hit_id_matches() {
+        const REST: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
+        const ACT: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
+        let theme = ResolvedTheme::default();
+        let mut scene = Scene::new();
+        let mut shaper = crate::shaper::NullShaper;
+        let mut pcx = make_pcx(&theme, &mut scene, &mut shaper, [0.0, 0.0, 100.0, 40.0]);
+        pcx.active_hit_id = Some(7);
+        div()
+            .hit_id(7)
+            .bg(REST)
+            .active(|s| s.bg(ACT))
+            .paint(&mut pcx);
+        let rects: Vec<_> = scene.sdf_rects_iter().collect();
+        assert_eq!(rects[0].color, ACT, "active refinement wins");
+    }
+
+    #[test]
+    fn active_style_overrides_hover_when_both_match() {
+        const REST: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
+        const HOV: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
+        const ACT: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
+        let theme = ResolvedTheme::default();
+        let mut scene = Scene::new();
+        let mut shaper = crate::shaper::NullShaper;
+        let mut pcx = make_pcx(&theme, &mut scene, &mut shaper, [0.0, 0.0, 100.0, 40.0]);
+        // Cursor over AND button held — active is more specific than hover
+        // and must dominate the merged style.
+        pcx.hovered_hit_id = Some(7);
+        pcx.active_hit_id = Some(7);
+        div()
+            .hit_id(7)
+            .bg(REST)
+            .hover(|s| s.bg(HOV))
+            .active(|s| s.bg(ACT))
+            .paint(&mut pcx);
+        let rects: Vec<_> = scene.sdf_rects_iter().collect();
+        assert_eq!(rects[0].color, ACT, "active beats hover when both match");
+    }
+
+    #[test]
+    fn active_style_skipped_when_not_active() {
+        const REST: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
+        const ACT: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
+        let theme = ResolvedTheme::default();
+        let mut scene = Scene::new();
+        let mut shaper = crate::shaper::NullShaper;
+        let mut pcx = make_pcx(&theme, &mut scene, &mut shaper, [0.0, 0.0, 100.0, 40.0]);
+        pcx.active_hit_id = Some(99); // pressed on a different element
+        div()
+            .hit_id(7)
+            .bg(REST)
+            .active(|s| s.bg(ACT))
+            .paint(&mut pcx);
+        let rects: Vec<_> = scene.sdf_rects_iter().collect();
+        assert_eq!(rects[0].color, REST, "no active when hit_id mismatches");
+    }
+
+    /// Mirror of `hover_style` requiring `hit_id`: a Div with
+    /// `.active(|s| ...)` but no `.hit_id()` set silently no-ops
+    /// regardless of whether `pcx.active_hit_id` is `Some`. Without
+    /// an identity, the framework can't tell "is this element the
+    /// press target" — so the refinement never matches.
+    #[test]
+    fn active_style_noop_when_no_hit_id_set() {
+        const REST: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
+        const ACT: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
+        let theme = ResolvedTheme::default();
+        let mut scene = Scene::new();
+        let mut shaper = crate::shaper::NullShaper;
+        let mut pcx = make_pcx(&theme, &mut scene, &mut shaper, [0.0, 0.0, 100.0, 40.0]);
+        pcx.active_hit_id = Some(7); // host has *some* press target,
+        // but this Div didn't opt in via `.hit_id(...)`.
+        div().bg(REST).active(|s| s.bg(ACT)).paint(&mut pcx);
+        let rects: Vec<_> = scene.sdf_rects_iter().collect();
+        assert_eq!(rects[0].color, REST, "no hit_id ⇒ no active match");
     }
 
     /// Regression for Codex P2: `.rounded_full()` sets radii to 9999 as

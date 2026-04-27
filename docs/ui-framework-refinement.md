@@ -40,30 +40,23 @@ the framework's structural shape, not the painting pipeline integration.
 
 ### 1.2 What is real
 
-- `App` has 31 fields mixing four concerns (`AppModel`, GPU resources, input
-  ephemeral state, six `cached_*` fields): `crates/ciri/src/app/mod.rs:164`.
-  The downstream symptom is `Self::` static helpers in `render.rs` taking
-  five `&mut Vec` outputs because `&mut self` cannot coexist with a borrow
-  of `self.render_bufs.X`.
-- `render()` is 570 lines mixing per-pane view update, buffer assembly, GPU
-  draw, and atlas/animation post-processing: `app/render.rs:1940-2509`.
-  Cleanly splittable into four sub-methods.
-- `tile_paint_config()` body is duplicated **byte-for-byte** between
-  `app/render.rs:73-90` and `app/render.rs:1490-1507`. 18 lines, including
-  identical comments. `build_tiles` should call `self.tile_paint_config()`.
-- `SectionHeader` skip logic is duplicated three times: `app/action.rs:307`,
-  `app/action.rs:323`, `app/mouse.rs:760`. Should live on
-  `CommandPaletteState` as `move_selection(delta: i32)`.
-- `image_atlas_entries.clear()` at `app/sync.rs:185` and `:288` is over-
-  invalidation: the map is keyed `(pane_id, image_id)` so it should be
-  filtered by pane, not nuked. Should be folded into `invalidate_pane_cache`.
-- `truncate_label` in `app/ui/palette.rs:67` hard-codes
-  `panel_w - 16.0`. The 16.0 is the value of `text_pad * 2` but is not
-  referenced through the constant. Symptom of no `text-overflow: ellipsis`
-  in the framework.
-- `filter_palette` (`crates/ciri-app/src/app/palette.rs:478`) re-runs
-  `e.label.to_lowercase()` on every entry per keystroke. `PaletteEntry`
-  should pre-store a lowercase form at `rebuild_palette_entries` time.
+- ~~`App` has 31 fields mixing four concerns~~ — addressed by the
+  AppModel UI-ephemera cleanup pass (Steps 6-15) and Phase 9's drop
+  of the per-`hovered_*` storage. App now keeps GPU resources,
+  cached scene/views, drag/animation/blink state, and a few
+  derive-at-hash-time helpers — three concerns, not four.
+- `render()` is still ~495 lines (down from 570) mixing per-pane view
+  update, buffer assembly, GPU draw, and atlas/animation post-
+  processing. Phase 0g extracted only the borrow-clean preamble
+  (`prepare_frame`); the remaining three splits still want a
+  `RenderState` substructure on `App` first. **Open.**
+- ~~`tile_paint_config()` body duplicated~~ — fixed in 0b.
+- ~~`SectionHeader` skip logic duplicated three times~~ — fixed in 0c.
+- ~~`image_atlas_entries.clear()` over-invalidation~~ — fixed in 0d.
+- ~~`truncate_label` hard-codes `panel_w - 16.0`~~ — now references
+  `tokens::SPACE_2 * 2.0` (Step 33 polish).
+- ~~`filter_palette` per-keystroke `to_lowercase()`~~ — fixed in 0e
+  (`PaletteEntry::lowercase_label` precomputed).
 
 ### 1.3 Allocation profile (verified)
 
@@ -75,44 +68,23 @@ preserving capacity (`app/render.rs:2227-2234, 2417-2423`). Idle frames hit
 The allocation problems live above the render buffers, in the chrome
 painting path:
 
-1. **Non-retained TaffyTree.** ciri-ui ships `paint_tree_into_with` for
-   exactly this case (`crates/ciri-ui/src/layout.rs:194`, with a doc comment
-   that says "Prefer this in the live render path"). The bin crate calls
-   the non-retained `paint_tree` and `paint_tree_with_layout` instead
-   (`app/ciri_ui_adapter.rs:185`, `app/ui/types.rs:168, 185`). With ~12
-   chrome widgets per frame and an extra `ui_hit_id` call per mouse move,
-   this is dozens of `TaffyTree::new()` and `LayoutSnapshot::new()` per
-   frame. **ciri-ui's retained API does not yet expose a tree-and-snapshot
-   variant** — the internal `paint_tree_into_with_snapshot`
-   (`layout.rs:217`) is `pub(crate)` only.
-2. **`Box::new` per Element child.** `Div::child` does
-   `self.children.push(Box::new(child))` (`crates/ciri-ui/src/elements/div.rs:51`).
-   A palette frame with 30 rows × ~3 nodes/row is ~150 system mallocs.
-   GPUI uses an arena allocator (`zed/crates/gpui/src/arena.rs`) with
-   `AnyElement(ArenaBox<dyn ElementObject>)` (`zed/crates/gpui/src/element.rs:593`)
-   bumped from a 1 MB per-window arena (`zed/crates/gpui/src/window.rs:240`)
-   and cleared at frame end. Element trees become amortized zero-alloc.
-3. **`Vec<Box<dyn Element>>` children grow from cap 0.** GPUI uses
-   `SmallVec<[StackSafe<AnyElement>; 2]>` (`zed/crates/gpui/src/elements/div.rs:1391`)
-   so divs with ≤2 children store inline.
-4. **`String` clone for static labels.** `Text::content: String`
-   (`crates/ciri-ui/src/elements/text.rs:28`) means `text("Copy")` runs
-   `String::from("Copy")` per frame. GPUI:
-   `impl Element for &'static str` (`zed/crates/gpui/src/elements/text.rs:21`)
-   plus `SharedString = SmolStr` (`zed/crates/gpui_shared_string/gpui_shared_string.rs:14`)
-   with `new_static`. Static labels are zero-alloc; short dynamic labels
-   are inline (≤22 bytes).
-5. **`cached_ui_scene.sdf_rects.clone()` per frame.**
-   `crates/ciri/src/app/render.rs:2369` clones the cached chrome SDF Vec so
-   transient UI can extend it without polluting the cache. Cheap fix:
-   `take → extend → truncate-to-cached-len → put back`, or pass two slices
-   to `draw_frame`.
-6. **`taffy::Style` rebuilt per node per frame.** `el.taffy_style()` runs
-   `to_taffy_style(&self.style)` for every node every paint
-   (`crates/ciri-ui/src/layout.rs:296` → `:428`). No memoization despite
-   `Style` being plain `Option<T>` data.
-7. **`filter_palette` per-keystroke `e.label.to_lowercase()`** as called
-   out in §1.2.
+1. ~~Non-retained TaffyTree~~ — fixed in Phase 0a. The retained
+   variant `paint_tree_into_retained` is now the live render path.
+2. ~~`Box::new` per Element child~~ — fixed in Phase 7 (arena
+   allocator). `AnyElement` is `ArenaBox<dyn Element>` allocated from
+   a per-frame chunked bump arena.
+3. ~~`Vec<Box<dyn Element>>` grows from cap 0~~ — fixed in Phase 8
+   (`SmallVec<[AnyElement; 2]>` inline storage).
+4. ~~`String` clone for static labels~~ — fixed in Phase 2
+   (`SharedString` newtype over `SmolStr` with `new_static` const ctor).
+5. ~~`cached_ui_scene.sdf_rects.clone()` per frame~~ — fixed in 0f.
+6. **`taffy::Style` rebuilt per node per frame.** Still open.
+   `el.taffy_style()` runs `to_taffy_style(&self.style)` for every
+   node every paint. Should ideally cache via `OnceCell<taffy::Style>`
+   on `Div` and key it on the style hash, but the per-frame cost
+   shrank substantially after Phase 7's arena and Phase 8's
+   SmallVec — needs a benchmark to justify the added storage.
+7. ~~`filter_palette` per-keystroke `to_lowercase()`~~ — fixed in 0e.
 
 These are independent fixes. The TaffyTree retention fix alone is worth
 shipping on its own.

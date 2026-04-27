@@ -68,7 +68,10 @@ pub(crate) struct PaletteComponent {
 }
 
 fn truncate_label(label: &str, panel_w: f32, cx: &UiContext<'_>) -> String {
-    let max_w = (panel_w - 16.0).max(0.0);
+    // Reserve `text_pad` worth of inset on each side of the row so the
+    // ellipsis never overlaps the panel border. Matches the row's own
+    // `.child(div().w(text_pad)...)` left/right gutters in `build_tree`.
+    let max_w = (panel_w - tokens::SPACE_2 * 2.0).max(0.0);
     text_layout::truncate_with_ellipsis(cx, label, max_w)
 }
 

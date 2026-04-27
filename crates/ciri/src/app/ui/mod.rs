@@ -65,6 +65,7 @@ impl App {
             self.ui_shaper.as_ref(),
             Some(&self.ui_taffy_tree),
             self.last_mouse_pos.map(|(x, y)| [x, y]),
+            self.active_hit_id,
             Some(&self.ui_states),
             vw,
             vh,
@@ -120,6 +121,7 @@ impl App {
             self.ui_shaper.as_ref(),
             Some(&self.ui_taffy_tree),
             self.last_mouse_pos.map(|(x, y)| [x, y]),
+            self.active_hit_id,
             Some(&self.ui_states),
             viewport_w,
             viewport_h,
@@ -313,6 +315,65 @@ mod tests {
         assert_eq!(
             app.current_paste_dialog_hover(),
             Some(super::super::PasteButton::Paste)
+        );
+    }
+
+    /// Mouse-up always clears `App::active_hit_id`, regardless of how
+    /// it was captured at press time. The `.active()` refinement on
+    /// any chrome reads the field via `cx.is_active(hit_id)` and
+    /// stops matching as soon as it goes back to `None`.
+    #[test]
+    fn mouse_release_clears_active_hit_id() {
+        use winit::event::MouseButton;
+
+        let mut app = make_app();
+        // Simulate a press having captured some chrome hit_id. The
+        // exact value doesn't matter for the lifecycle test — only
+        // that release transitions `Some(_) → None`.
+        app.active_hit_id = Some(super::top_bar::pane_tab_hit_id(42));
+
+        app.handle_mouse_released(MouseButton::Left);
+        assert_eq!(
+            app.active_hit_id, None,
+            "mouse-up must drop any captured press-state hit_id",
+        );
+    }
+
+    /// `capture_active_press_hit_id` is the seam between mouse-down
+    /// routing and `App::active_hit_id`. It returns `None` for clicks
+    /// that don't land on press-friendly chrome — currently anything
+    /// outside top-bar pane tabs. This guards against a phantom press
+    /// state appearing when the user clicks pane content or hover-
+    /// only chrome (session label, mode indicator, etc.).
+    #[test]
+    fn capture_active_press_hit_id_returns_none_outside_press_friendly_chrome() {
+        let app = make_app();
+        // Far below the top bar — pane content area.
+        assert_eq!(app.capture_active_press_hit_id(100.0, 300.0), None);
+        // Top of the bar but outside any pane tab (default App has no
+        // pane tabs anyway, so the whole top bar is "no press target").
+        let cx = app.ui_context();
+        let layout =
+            app.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h, cx.ui_shaper);
+        assert_eq!(
+            app.capture_active_press_hit_id(2.0, layout.bar_y + 2.0),
+            None,
+            "default App has no pane tabs ⇒ top-bar press returns None",
+        );
+    }
+
+    /// Mouse-down outside any press-friendly chrome leaves
+    /// `active_hit_id` unset — clicking on terminal content should not
+    /// flip on a phantom press state.
+    #[test]
+    fn mouse_press_outside_chrome_leaves_active_hit_id_unset() {
+        use winit::event::MouseButton;
+
+        let mut app = make_app();
+        app.handle_mouse_pressed(MouseButton::Left, 100.0, 300.0);
+        assert_eq!(
+            app.active_hit_id, None,
+            "press outside press-friendly chrome should not set active_hit_id",
         );
     }
 }

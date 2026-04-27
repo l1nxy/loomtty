@@ -127,6 +127,12 @@ pub(crate) struct UiContext<'a> {
     /// when the cursor has left the window or the host hasn't reported
     /// a position yet.
     pub mouse_pos: Option<[f32; 2]>,
+    /// Hit-id of the chrome element the user pressed on at the most
+    /// recent mouse-down, retained until mouse-up. Sourced from
+    /// `App::active_hit_id`. Threaded into `PaintCtx::active_hit_id`
+    /// so widgets can apply `.active(|s| ...)` refinements during a
+    /// press. `None` outside of a press.
+    pub active_hit_id: Option<u64>,
     /// Cross-frame element-state map (scroll offsets, virtual list
     /// anchors, etc.). Borrowed from `App.ui_states`; the adapter
     /// reborrows during paint so elements can call
@@ -140,6 +146,7 @@ pub(crate) fn ui_context_from_metrics<'a>(
     ui_shaper: Option<&'a RefCell<UiTextShaper>>,
     taffy_tree: Option<&'a RefCell<UiTaffyTree>>,
     mouse_pos: Option<[f32; 2]>,
+    active_hit_id: Option<u64>,
     element_states: Option<&'a RefCell<ciri_ui::ElementStates>>,
     viewport_w: f32,
     viewport_h: f32,
@@ -161,6 +168,7 @@ pub(crate) fn ui_context_from_metrics<'a>(
         ui_shaper,
         taffy_tree,
         mouse_pos,
+        active_hit_id,
         element_states,
     }
 }
@@ -184,6 +192,7 @@ pub(crate) fn test_ui_context<'a>(
         ui_shaper: None,
         taffy_tree: None,
         mouse_pos: None,
+        active_hit_id: None,
         element_states: None,
     }
 }

@@ -67,6 +67,7 @@ impl<'a> PaneTabsElement<'a> {
 
         let active_bg = tokens::tint(accent, tokens::ALPHA_TAB_ACTIVE_BG);
         let hover_bg = tokens::tint(accent, tokens::ALPHA_HOVER_BG);
+        let press_bg = tokens::tint(accent, tokens::ALPHA_PRESS_BG);
 
         let mut children: Vec<Div> = Vec::new();
         for tab in self.tabs {
@@ -103,11 +104,21 @@ impl<'a> PaneTabsElement<'a> {
                 .hit_id(super::pane_tab_hit_id(tab.pane_id))
                 .cursor_pointer();
             if tab.active {
-                tab_wrapper = tab_wrapper.bg(active_bg).text_color(fg);
+                // The currently-focused tab also responds to press —
+                // a slight darken so re-clicking the active tab still
+                // gives feedback (handy for users who muscle-mash).
+                tab_wrapper = tab_wrapper
+                    .bg(active_bg)
+                    .text_color(fg)
+                    .active(|s| s.bg(press_bg));
             } else {
                 tab_wrapper = tab_wrapper
                     .text_color(dim)
-                    .hover(|s| s.bg(hover_bg).text_color(fg));
+                    .hover(|s| s.bg(hover_bg).text_color(fg))
+                    // Press wins over hover (CSS `:active` semantics):
+                    // the user feels the click commit even if the
+                    // cursor drifts during the press.
+                    .active(|s| s.bg(press_bg).text_color(fg));
             }
 
             // Active indicator — child of the wrapper, so its y is

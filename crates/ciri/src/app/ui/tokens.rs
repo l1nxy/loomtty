@@ -37,6 +37,10 @@ pub const ALPHA_BACKDROP: f32 = 0.55;
 pub const ALPHA_SELECTED_BG: f32 = 0.25;
 /// Background tint for a hovered row (using accent color).
 pub const ALPHA_HOVER_BG: f32 = 0.14;
+/// Background tint for an actively pressed row (using accent color).
+/// Slightly deeper than hover so the user feels the press; lighter
+/// than `ALPHA_SELECTED_BG` to keep selection the dominant cue.
+pub const ALPHA_PRESS_BG: f32 = 0.22;
 /// Background tint for an always-active tab (using accent color). Weaker
 /// than selection so the active-tab accent strip stays the dominant cue.
 pub const ALPHA_TAB_ACTIVE_BG: f32 = 0.10;

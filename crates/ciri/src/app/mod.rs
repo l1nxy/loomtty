@@ -211,6 +211,14 @@ pub(crate) struct App {
     /// pane id under the cursor). Was on `AppModel.overview.hovered_pane`;
     /// moved here so the platform-agnostic core stays free of UI state.
     pub overview_hovered_pane: Option<(usize, u64)>,
+    /// `hit_id` captured at the most recent mouse-down on chrome,
+    /// retained until mouse-up. Threaded through `UiContext` →
+    /// `PaintCtx::active_hit_id` so `.active(|s| ...)` refinements
+    /// fire while a button is held on a hit-id'd chrome element.
+    /// `None` outside of a press. Sticky on drag — moving the cursor
+    /// off the press target keeps the value set; only mouse-up clears
+    /// it.
+    pub active_hit_id: Option<u64>,
     /// Active pane-resize / column-resize / scrollbar-drag state. UI
     /// input bookkeeping with no model meaning — only mouse handlers in
     /// this crate read or mutate it. Was on `AppModel`; moved out to
@@ -521,6 +529,7 @@ impl App {
             event_loop_proxy: None,
             pending_redraw: false,
             overview_hovered_pane: None,
+            active_hit_id: None,
             pane_tab_scroll: 0.0,
             drag: ResizeDragState {
                 col_dragging: None,

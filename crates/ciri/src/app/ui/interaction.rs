@@ -16,6 +16,16 @@ impl App {
         consumed
     }
 
+    /// Look up the chrome `hit_id` at `(mx, my)` for press-state
+    /// styling. Returns `None` outside of press-friendly chrome.
+    /// Called by `handle_mouse_pressed` to populate
+    /// `App::active_hit_id` before dispatching the click.
+    pub(crate) fn capture_active_press_hit_id(&self, mx: f32, my: f32) -> Option<u64> {
+        let cx = self.ui_context();
+        let frame = UiFrame::capture_current(self, &cx);
+        frame.active_press_hit_id(mx, my, &cx)
+    }
+
     /// Route a middle-mouse click. Currently the only middle-click handler
     /// is tab close — browsers and most tab-bearing apps treat MMB on a
     /// tab as "close this tab", so we mirror that. Modal overlays and the

@@ -282,6 +282,29 @@ impl UiFrame {
 
         UiFrameHover::None
     }
+
+    /// Look up the chrome `hit_id` at `(mx, my)` for the purposes of
+    /// `.active()` press-state styling. Only returns hit_ids for
+    /// elements that benefit from press feedback — currently top-bar
+    /// pane tabs (clicking selects a pane without dismissing the bar,
+    /// so the active state has frames to render before mouse-up).
+    /// Returns `None` for everything else, so widgets that dismiss on
+    /// click (palette / paste_dialog / context_menu rows) don't try
+    /// to flash an active style for the single frame between press
+    /// and dismiss.
+    pub(super) fn active_press_hit_id(
+        &self,
+        mx: f32,
+        my: f32,
+        cx: &UiContext<'_>,
+    ) -> Option<u64> {
+        if self.chrome.top_bar.contains(mx, my)
+            && let Some(UiTopBarHit::PaneTab(pane_id)) = self.top_bar.hit_test(mx, my, cx)
+        {
+            return Some(super::top_bar::pane_tab_hit_id(pane_id));
+        }
+        None
+    }
 }
 
 pub(crate) fn chrome_rects(

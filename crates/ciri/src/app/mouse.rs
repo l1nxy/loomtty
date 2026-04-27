@@ -148,6 +148,13 @@ impl App {
     pub(crate) fn handle_mouse_pressed(&mut self, button: MouseButton, mx: f32, my: f32) {
         match button {
             MouseButton::Left => {
+                // Capture the chrome `hit_id` under the cursor BEFORE
+                // dispatching the click so the next paint can apply
+                // any `.active()` refinement targeting that hit_id.
+                // Only press-friendly elements (top-bar pane tabs)
+                // currently return Some — others dismiss on click and
+                // would never have a frame to render the active style.
+                self.active_hit_id = self.capture_active_press_hit_id(mx, my);
                 if self.dispatch_ui_click(mx, my) {
                     self.schedule_redraw();
                     return;
@@ -171,6 +178,14 @@ impl App {
 
     pub(crate) fn handle_mouse_released(&mut self, button: MouseButton) {
         if button == MouseButton::Left {
+            // Drop the press-state hit_id so any `.active()` refinement
+            // releases on the next paint. Done unconditionally — even
+            // if the press was outside any active-friendly chrome,
+            // `active_hit_id` would already be `None` and clearing is a
+            // no-op.
+            if self.active_hit_id.take().is_some() {
+                self.schedule_redraw();
+            }
             self.handle_left_mouse_released()
         }
     }

@@ -209,9 +209,7 @@ pub(crate) fn paint_element_tree(root: &impl Element, cx: &UiContext<'_>, scene:
             &mut ui_scene,
             &mut tree,
             cx.mouse_pos,
-            // active_hit_id is plumbed in Step 38; for now pass None
-            // so the framework support ships independently.
-            None,
+            cx.active_hit_id,
             states_for_paint,
         );
         ui_scene

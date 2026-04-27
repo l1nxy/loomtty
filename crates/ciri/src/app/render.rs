@@ -597,6 +597,10 @@ impl App {
         // `cx.is_hovered(hit_id)` at paint.
         self.current_top_bar_region_hover().hash(&mut hasher);
         self.current_pane_tab_hover().hash(&mut hasher);
+        // Press-state hit_id (mouse-down → mouse-up). Hashed so the
+        // chrome cache invalidates on press / release; declarative
+        // `.active()` reads it via `cx.is_active(hit_id)` at paint.
+        self.active_hit_id.hash(&mut hasher);
         self.pane_tab_scroll.to_bits().hash(&mut hasher);
         self.pane_tab_scroll_max().to_bits().hash(&mut hasher);
         self.core.overview.active.hash(&mut hasher);
@@ -756,6 +760,10 @@ impl App {
         // `cx.is_hovered(hit_id)` at paint.
         self.current_top_bar_region_hover().hash(&mut hasher);
         self.current_pane_tab_hover().hash(&mut hasher);
+        // Press-state hit_id (mouse-down → mouse-up). Hashed so the
+        // chrome cache invalidates on press / release; declarative
+        // `.active()` reads it via `cx.is_active(hit_id)` at paint.
+        self.active_hit_id.hash(&mut hasher);
         self.pane_tab_scroll.to_bits().hash(&mut hasher);
         self.pane_tab_scroll_max().to_bits().hash(&mut hasher);
         self.core.ime.preedit_active.hash(&mut hasher);

@@ -875,6 +875,7 @@ dependencies = [
  "ciri-config",
  "ciri-motion",
  "ciri-render",
+ "criterion",
  "log",
  "smallvec",
  "smol_str",

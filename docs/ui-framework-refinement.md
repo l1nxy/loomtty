@@ -78,12 +78,17 @@ painting path:
 4. ~~`String` clone for static labels~~ — fixed in Phase 2
    (`SharedString` newtype over `SmolStr` with `new_static` const ctor).
 5. ~~`cached_ui_scene.sdf_rects.clone()` per frame~~ — fixed in 0f.
-6. **`taffy::Style` rebuilt per node per frame.** Still open.
-   `el.taffy_style()` runs `to_taffy_style(&self.style)` for every
-   node every paint. Should ideally cache via `OnceCell<taffy::Style>`
-   on `Div` and key it on the style hash, but the per-frame cost
-   shrank substantially after Phase 7's arena and Phase 8's
-   SmallVec — needs a benchmark to justify the added storage.
+6. ~~`taffy::Style` rebuilt per node per frame~~ — investigated in
+   Step 36 with `crates/ciri-ui/benches/chrome_paint.rs`. The full
+   `taffy_style()` translation across a 30-row palette tree costs
+   **3.6 µs**, against **80 µs** for the entire `paint_tree_into_retained`
+   pass — about 4.5% of paint time. With element trees rebuilt every
+   frame (immediate-mode), `OnceCell` memoization would save ~3.6
+   µs/frame at the cost of ~16 bytes-per-Div storage; at 60 fps that
+   is ~220 µs/sec. **Not worth optimizing** in absolute terms — the
+   work is already a small fraction of paint, and trading per-Div
+   storage for a sub-percent CPU win on a 60 Hz UI is the wrong
+   trade. Audit item closed; benchmark stays as a regression guard.
 7. ~~`filter_palette` per-keystroke `to_lowercase()`~~ — fixed in 0e.
 
 These are independent fixes. The TaffyTree retention fix alone is worth

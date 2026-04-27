@@ -11,3 +11,10 @@ log = { workspace = true }
 smallvec = { workspace = true }
 smol_str = { workspace = true }
 taffy = { workspace = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "chrome_paint"
+harness = false

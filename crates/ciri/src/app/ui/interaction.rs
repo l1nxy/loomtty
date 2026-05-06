@@ -122,6 +122,11 @@ impl App {
                 if !is_selectable {
                     return;
                 }
+                // Mirror the keyboard-enter `keep_open` table in
+                // `execute_palette_selection`. DirectConnect now fires an
+                // async query and relies on the palette staying open as the
+                // cancel anchor — closing it here would make the query-
+                // result handler's cancellation gate discard the result.
                 let keep_open = self
                     .core
                     .command_palette
@@ -131,6 +136,7 @@ impl App {
                         matches!(
                             e.kind,
                             super::super::PaletteEntryKind::RemoteHost { .. }
+                                | super::super::PaletteEntryKind::DirectConnect { .. }
                                 | super::super::PaletteEntryKind::ConnectRemotePrompt
                         )
                     });

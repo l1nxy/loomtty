@@ -355,6 +355,27 @@ pub struct RecentHost {
     pub ssh_port: u16,
     /// Unix epoch seconds — when the user last successfully connected.
     pub last_used: u64,
+    /// Name of the remote session attached on the last successful connect.
+    /// `None` for entries written by older builds (serde default fills in).
+    /// Drives "remember last session" auto-connect: revisits prefer this
+    /// name if the remote still has it, falling back to the most-recent
+    /// session otherwise.
+    #[serde(default)]
+    pub last_session: Option<String>,
+}
+
+/// In-flight intent to auto-connect to a remote after an async session
+/// query completes. Set when the user picks a `DirectConnect` palette row
+/// or types a host into the prompt; consumed by the query-result handler
+/// which picks the right session and triggers the actual connect.
+#[derive(Debug, Clone)]
+pub struct PendingAutoConnect {
+    pub host: String,
+    pub port: u16,
+    pub ssh_port: u16,
+    /// `last_session` from `recent_hosts.json`, if any. Preferred when the
+    /// remote still hosts a session of that name.
+    pub preferred_session: Option<String>,
 }
 
 /// Identifies what kind of connection a slot represents.

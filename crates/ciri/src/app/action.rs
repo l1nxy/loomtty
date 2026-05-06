@@ -489,25 +489,16 @@ impl App {
             return;
         };
 
-        // Remote input mode: parse query as user@host[:port] and connect
+        // Remote input mode: parse query as user@host[:port] and trigger
+        // the async auto-connect flow. The palette stays open in loading
+        // state — the query result handler closes it on success or sets
+        // `remote_error` on failure.
         if palette.remote_input_mode {
             let query = palette.query.trim().to_string();
             if query.is_empty() {
                 return;
             }
-            // Try to connect — if validation fails, connect_remote_from_input
-            // sets palette.remote_error and we keep the palette open so the
-            // user can fix their input.
             self.connect_remote_from_input(&query);
-            if self
-                .core
-                .command_palette
-                .as_ref()
-                .is_some_and(|p| p.remote_error.is_some())
-            {
-                return;
-            }
-            self.core.command_palette = None;
             return;
         }
 
@@ -521,9 +512,13 @@ impl App {
             return;
         }
 
+        // DirectConnect now fires an async query (auto-connect flow), so
+        // keep the palette open in loading state until the result handler
+        // closes it on success or surfaces a remote_error.
         let keep_open = matches!(
             entry.kind,
             super::PaletteEntryKind::RemoteHost { .. }
+                | super::PaletteEntryKind::DirectConnect { .. }
                 | super::PaletteEntryKind::ConnectRemotePrompt
         );
         if let Some(&entry_idx) = palette.filtered.get(palette.selected_idx) {

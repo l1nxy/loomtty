@@ -4,6 +4,19 @@ use ciri_render::ui_shaper::UiTextShaper;
 use unicode_width::UnicodeWidthStr;
 
 use super::App;
+use super::ui::tokens::SEGMENT_PAD_X;
+
+/// Wrap a measured text width with the section's text padding so
+/// session / workspace / mode all share the same lualine-style
+/// flat-rectangle geometry. Returns 0 for an empty input so the
+/// workspace slot collapses to nothing when there is no label.
+pub(crate) fn segment_slot_width(text_w: f32) -> f32 {
+    if text_w <= 0.0 {
+        0.0
+    } else {
+        text_w + 2.0 * SEGMENT_PAD_X
+    }
+}
 
 /// Shape-aware pixel width with a cell-grid fallback. Kept here (rather
 /// than pulling `ui::text_layout` into the non-UI `top_bar` module) so
@@ -170,7 +183,7 @@ impl App {
         shaper: Option<&RefCell<UiTextShaper>>,
     ) -> Vec<PaneTabLayout> {
         let tab_w = self.pane_tab_slot_width(cw, shaper);
-        let session_w = measure(shaper, &format!(" {}  ", self.session_display_name()), cw);
+        let session_w = segment_slot_width(measure(shaper, &self.session_display_name(), cw));
         // NB: tab `x` coordinates are absolute screen coordinates assuming the
         // top bar starts at screen x=0. This holds for the current
         // `Border { top | bottom }` chrome configurations (no `left`/`right`
@@ -245,18 +258,14 @@ impl App {
         // than the unicode-width estimate. Without this, proportional UI
         // fonts desync the `Linear` slots from the shaped text and either
         // clip the right-side zones or leave them entirely unpainted.
-        let session_w = measure(shaper, &format!(" {}  ", self.session_display_name()), cw);
+        let session_w = segment_slot_width(measure(shaper, &self.session_display_name(), cw));
         let ws_label = self.workspace_indicator_label();
-        let workspace_w = measure(shaper, &ws_label, cw);
-        let mode_w = measure(shaper, &self.current_mode_label().0, cw);
-        // tabs_area_px is the *visibility window* for tab generation: it is
-        // one cell narrower than the actual Fill slot so there is always a
-        // one-cell breathing-room gap between the right-most tab and the
-        // workspace label. The Fill slot (= vw - session_w - workspace_w
-        // - mode_w) is wider; tab snapshots constrained to tabs_area_px
-        // simply leave that last cell unpopulated. See the regression test
-        // `tab_area_preserves_one_cell_gap_to_workspace` in `ui/top_bar.rs`.
-        let tabs_area_px = (vw - mode_w - workspace_w - cw - session_w).max(0.0);
+        let workspace_w = segment_slot_width(measure(shaper, &ws_label, cw));
+        let mode_w = segment_slot_width(measure(shaper, &self.current_mode_label().0, cw));
+        // Lualine-style sections tile the bar edge-to-edge with no
+        // breathing room between adjacent zones — the visibility
+        // window for tab generation is exactly the Fill slot.
+        let tabs_area_px = (vw - mode_w - workspace_w - session_w).max(0.0);
 
         TopBarLayout {
             bar_y,

@@ -1,4 +1,6 @@
+use super::super::tokens::SEGMENT_PAD_X;
 use super::super::types::UiRect;
+use ciri_ui::color::contrast_on;
 use ciri_ui::{Div, Styled, div, text};
 
 pub(super) struct ModeIndicator<'a> {
@@ -7,20 +9,28 @@ pub(super) struct ModeIndicator<'a> {
 }
 
 impl<'a> ModeIndicator<'a> {
-    /// Inner positioned Div for the mode slot. Empty rect → empty div
-    /// (no hover, no hit_id; mode label is display-only).
-    pub(super) fn into_div(self, rect: UiRect, top_pad: f32, cell_h: f32) -> Div {
-        if rect.is_empty() {
+    /// Lualine-style right-most section: a flat rectangle filled with
+    /// the per-mode colour (already varies between NORMAL / LEADER /
+    /// BROADCAST). Text colour is `contrast_on(mode_color)` so a
+    /// saturated mode hue stays readable on either light or dark
+    /// themes. Mode is display-only — no `hit_id`, no press state.
+    pub(super) fn into_div(self, slot: UiRect) -> Div {
+        if slot.is_empty() {
             return div();
         }
+        let fg = contrast_on(self.color);
         div()
             .absolute()
-            .left(rect.x)
-            .top(rect.y)
-            .w(rect.w)
-            .h(rect.h)
-            .flex_col()
-            .child(div().w(rect.w).h(top_pad))
-            .child(div().w(rect.w).h(cell_h).child(text(self.label).color(self.color)))
+            .left(slot.x)
+            .top(slot.y)
+            .w(slot.w)
+            .h(slot.h)
+            .bg(self.color)
+            .text_color(fg)
+            .flex_row()
+            .items_center()
+            .pl(SEGMENT_PAD_X)
+            .pr(SEGMENT_PAD_X)
+            .child(text(self.label))
     }
 }

@@ -70,6 +70,15 @@ pub const BORDER_THIN: f32 = 1.0;
 /// Emphasized border — reserve for focus rings / active elements.
 pub const BORDER_THICK: f32 = 2.0;
 
+// ── Status-line sections (lualine-style) ─────────────────────────────
+//
+// The status bar is a row of solid-colour sections that tile the bar
+// edge-to-edge — no gaps, no rounded corners, full bar height. Only
+// the text inside each section is padded.
+
+/// Horizontal padding from the section edge to the text inside.
+pub const SEGMENT_PAD_X: f32 = 10.0;
+
 // ── Control sizing ────────────────────────────────────────────────────
 //
 // Express row / button heights as `cell_h + vertical_padding * 2` so they

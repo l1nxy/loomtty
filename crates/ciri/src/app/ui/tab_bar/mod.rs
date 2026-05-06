@@ -173,6 +173,16 @@ impl TabBarComponent {
         let active_bg = tokens::tint(accent, tokens::ALPHA_TAB_ACTIVE_BG);
         let hover_bg = tokens::tint(accent, tokens::ALPHA_HOVER_BG);
         let press_bg = tokens::tint(accent, tokens::ALPHA_PRESS_BG);
+        let tab_radius = cx.theme.radius.sm;
+        // Round the side facing away from the terminal — mirrors the
+        // integrated tab strip (rounded_t for Top statusbar, rounded_b
+        // for Bottom). The active-tab accent indicator sits on the
+        // *inner* edge (touching the terminal), so this never collides.
+        let row_radii: [f32; 4] = match self.position {
+            TabBarPosition::Left => [tab_radius, 0.0, 0.0, tab_radius],
+            TabBarPosition::Right => [0.0, tab_radius, tab_radius, 0.0],
+            TabBarPosition::Integrated => [0.0; 4],
+        };
 
         let mut rows = div().w(content_w).h(rect.h).flex_col();
         for (idx, tab) in self.tabs.iter().enumerate() {
@@ -203,7 +213,12 @@ impl TabBarComponent {
                 .cloned()
                 .unwrap_or_default();
 
-            let mut row_el = div().w(content_w).h(row.h).flex_row().items_center();
+            let mut row_el = div()
+                .w(content_w)
+                .h(row.h)
+                .flex_row()
+                .items_center()
+                .rounded_each(row_radii);
             if tab.active {
                 // Active row: accent-tinted bg, fg text. Set
                 // `text_color(fg)` on the row Div so the descendant

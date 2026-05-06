@@ -7,11 +7,10 @@ fn make_cx(app: &App) -> UiContext<'_> {
     app.ui_context()
 }
 
-/// Verifies the load-bearing invariant that `PaneTabsElement` actually
-/// receives a slot one cell **wider** than the tab visibility window
-/// (`tabs_area_px`) when the top bar row slots are computed. This is what
-/// produces the breathing-room gap between the right-most tab and the
-/// workspace label.
+/// Verifies the load-bearing invariant that `PaneTabsElement` receives
+/// the same width that `top_bar_layout` advertised as `tabs_area_px`,
+/// i.e. lualine-style sections tile the bar edge-to-edge with no
+/// breathing room between the right-most tab and the workspace block.
 ///
 /// The test exercises three independent properties:
 /// 1. Row fill arithmetic (the diff vs `tabs_area_px`).
@@ -23,7 +22,7 @@ fn make_cx(app: &App) -> UiContext<'_> {
 /// 3. The slot adjacency invariant: the four slots cover the bar
 ///    rect exactly, no overlap, no gap.
 #[test]
-fn pane_tabs_element_slot_is_one_cell_wider_than_tabs_area_px() {
+fn pane_tabs_element_slot_matches_tabs_area_px() {
     let app = App::new(CiriConfig::default(), "test-session");
     let cx = make_cx(&app);
     let layout = app.top_bar_layout(
@@ -82,26 +81,23 @@ fn pane_tabs_element_slot_is_one_cell_wider_than_tabs_area_px() {
         pane_tabs_slot.w,
     );
 
-    // (3) The actual one-cell-gap invariant the test is named for.
-    // Re-run the row layout against the *real* `viewport_w`-derived
-    // bar rect — the same rect production code uses — and compare
-    // the Fill slot to the `tabs_area_px` produced by `top_bar_layout`.
-    // This cross-checks the *formula* in `top_bar_layout` against the
-    // *Fill arithmetic* in `row_slots`, which assertion (2) above has
-    // already independently proved correct. A future refactor that
-    // removes the `- cw` term from `top_bar_layout::tabs_area_px`
-    // (or otherwise breaks the gap) would fail here. This is *not*
-    // tautological: the right-hand side `tabs_area_px` and the
-    // left-hand side `Fill slot width` come from two different code
-    // paths (the captured layout formula vs. live row slot computation).
-    let cw = cx.cell_w;
+    // (3) Cross-check that the `tabs_area_px` formula in
+    // `top_bar_layout` matches the live Fill arithmetic in
+    // `row_slots` against the real `viewport_w`-derived bar rect —
+    // the same rect production code uses. This is *not* tautological:
+    // the right-hand side `tabs_area_px` and the left-hand side
+    // `Fill slot width` come from two different code paths (the
+    // captured layout formula vs. live row slot computation). For
+    // lualine-style sections the two must agree exactly so tabs tile
+    // the bar without leaving a strip of bare statusbar background
+    // before the workspace block.
     let real_bar_rect = component.bar_rect(&cx);
     let real_slots = component.row_slots(real_bar_rect, &cx);
     let real_pane_tabs_slot = real_slots.pane_tabs;
     let gap_diff = real_pane_tabs_slot.w - layout.tabs_area_px;
     assert!(
-        (gap_diff - cw).abs() < 0.01,
-        "Fill slot ({}) must be exactly one cell ({cw}) wider than tabs_area_px ({}); got diff={gap_diff}. \
+        gap_diff.abs() < 0.01,
+        "Fill slot ({}) must equal tabs_area_px ({}); got diff={gap_diff}. \
          A change to either row Fill arithmetic OR the top_bar_layout formula would trip this.",
         real_pane_tabs_slot.w,
         layout.tabs_area_px,

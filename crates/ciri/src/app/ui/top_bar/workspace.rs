@@ -1,4 +1,6 @@
+use super::super::tokens::SEGMENT_PAD_X;
 use super::super::types::UiRect;
+use ciri_ui::color::scale_rgb;
 use ciri_ui::{Color, Div, Styled, div, text};
 
 pub(super) struct WorkspaceIndicator<'a> {
@@ -6,36 +8,36 @@ pub(super) struct WorkspaceIndicator<'a> {
 }
 
 impl<'a> WorkspaceIndicator<'a> {
-    /// Inner positioned Div for the workspace slot. Empty rect or
-    /// empty label → returns an empty div (the outer wrapper still
-    /// places it but it paints nothing). Same state-styling pattern
-    /// as `SessionLabel`: hit_id + `.hover()` switches text colour
-    /// from `accent` to `fg`; `.active()` adds the press tint and
-    /// keeps text at `fg` so press-and-drag-off doesn't flip back.
+    /// Lualine-style mid-section: a `surface_elevated` rectangle with
+    /// `accent` text. Same flat geometry as `SessionLabel` — fills
+    /// the slot edge-to-edge, no rounding — but a quieter colour so
+    /// it doesn't fight the bright session block on the far left or
+    /// the per-mode block on the far right.
     pub(super) fn into_div(
         self,
-        rect: UiRect,
-        fg: Color,
+        slot: UiRect,
         accent: Color,
-        press_bg: Color,
-        top_pad: f32,
-        cell_h: f32,
+        surface_elevated: Color,
     ) -> Div {
-        if self.label.is_empty() || rect.is_empty() {
+        if self.label.is_empty() || slot.is_empty() {
             return div();
         }
+        let press_bg = scale_rgb(surface_elevated, 0.85);
         div()
             .absolute()
-            .left(rect.x)
-            .top(rect.y)
-            .w(rect.w)
-            .h(rect.h)
-            .flex_col()
+            .left(slot.x)
+            .top(slot.y)
+            .w(slot.w)
+            .h(slot.h)
+            .bg(surface_elevated)
             .text_color(accent)
+            .flex_row()
+            .items_center()
+            .pl(SEGMENT_PAD_X)
+            .pr(SEGMENT_PAD_X)
             .hit_id(super::HIT_WORKSPACE)
-            .hover(|s| s.text_color(fg))
-            .active(|s| s.bg(press_bg).text_color(fg))
-            .child(div().w(rect.w).h(top_pad))
-            .child(div().w(rect.w).h(cell_h).child(text(self.label)))
+            .cursor_pointer()
+            .active(|s| s.bg(press_bg))
+            .child(text(self.label))
     }
 }

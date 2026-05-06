@@ -23,6 +23,11 @@ use ciri_render::sdf_rect::SdfRect;
 /// ≤ 20 — 256 gives headroom for plugin UIs and modal stacks. If this is
 /// hit the tail is dropped; matches the existing `RectPipeline` behaviour.
 const MAX_SDF_RECTS: usize = 256;
+/// Upper bound on distinct `PaneRectRange` uniform slots per frame. One slot
+/// per draw range, not per rect — # of ranges is bounded by # of panes plus a
+/// small constant for chrome/overlay layers. Decoupled from `max_rects` so
+/// growing the instance buffer doesn't waste uniform memory.
+const MAX_RECT_PANE_RANGES: usize = 256;
 const RECT_UNIFORM_RECORD_SIZE: u64 = 48;
 const GLYPH_UNIFORM_RECORD_SIZE: u64 = 64;
 const BLADE_UNIFORM_STRIDE: u64 = 256;
@@ -54,13 +59,13 @@ impl RectPipeline {
 
         let uniform_buffer = context.create_buffer(gpu::BufferDesc {
             name: "rect_uniform",
-            size: BLADE_UNIFORM_STRIDE * max_rects.max(1) as u64,
+            size: BLADE_UNIFORM_STRIDE * MAX_RECT_PANE_RANGES as u64,
             memory: gpu::Memory::Shared,
         });
 
         let instance_buffer = context.create_buffer(gpu::BufferDesc {
             name: "rect_instance_buffer",
-            size: (max_rects * std::mem::size_of::<Rect>()) as u64,
+            size: (max_rects.max(1) * std::mem::size_of::<Rect>()) as u64,
             memory: gpu::Memory::Shared,
         });
 
@@ -128,6 +133,27 @@ impl RectPipeline {
         }
     }
 
+    /// Grow the instance buffer if `needed` exceeds current capacity. Must be
+    /// called after the previous frame's GPU work has completed (the
+    /// `wait_for(last_sync)` at the top of `draw_frame`) — otherwise the GPU
+    /// may still be reading from the buffer we're about to destroy.
+    fn ensure_capacity(&mut self, context: &gpu::Context, needed: usize) {
+        if needed <= self.max_rects {
+            return;
+        }
+        let new_cap = needed
+            .next_power_of_two()
+            .max(self.max_rects.saturating_mul(2));
+        let new_buffer = context.create_buffer(gpu::BufferDesc {
+            name: "rect_instance_buffer",
+            size: (new_cap * std::mem::size_of::<Rect>()) as u64,
+            memory: gpu::Memory::Shared,
+        });
+        let old = std::mem::replace(&mut self.instance_buffer, new_buffer);
+        context.destroy_buffer(old);
+        self.max_rects = new_cap;
+    }
+
     /// Upload all rect instance data to the GPU buffer.
     fn upload(&self, rects: &[Rect], viewport_w: f32, viewport_h: f32) {
         if rects.is_empty() {
@@ -155,7 +181,7 @@ impl RectPipeline {
         let offset = slot as u64 * BLADE_UNIFORM_STRIDE;
         debug_assert!(
             offset + RECT_UNIFORM_RECORD_SIZE
-                <= BLADE_UNIFORM_STRIDE * self.max_rects.max(1) as u64
+                <= BLADE_UNIFORM_STRIDE * MAX_RECT_PANE_RANGES as u64
         );
         let viewport = [viewport_w, viewport_h, 0.0f32, 0.0f32];
         unsafe {
@@ -183,7 +209,7 @@ impl RectPipeline {
         for range in ranges {
             let start = range.start as usize;
             let count = range.count as usize;
-            if count == 0 || start >= self.max_rects || *uniform_slot >= self.max_rects {
+            if count == 0 || start >= self.max_rects || *uniform_slot >= MAX_RECT_PANE_RANGES {
                 continue;
             }
             let count = count.min(self.max_rects - start);
@@ -1131,13 +1157,27 @@ impl Renderer {
         // instance buffers.  Without this the GPU may still be reading
         // from the buffers we are about to overwrite, which causes
         // ERROR_DEVICE_LOST on Windows / NVIDIA Vulkan.
-        if let Some(ref sp) = self.last_sync {
-            let wait_start = std::time::Instant::now();
-            self.context.wait_for(sp, 5000);
-            if let Some(profiler) = profiler.as_mut() {
-                profiler.record_sync_wait(wait_start);
+        //
+        // Track whether the GPU is actually idle: `wait_for` returns false on
+        // timeout (still in flight). `RectPipeline::ensure_capacity` destroys
+        // the old buffer immediately (blade-graphics 0.7.1 has no deferred
+        // destruction), so growth is only safe when no prior submit is
+        // pending — `None` means we've never submitted, `true` means the
+        // fence completed.
+        let gpu_idle = match self.last_sync {
+            None => true,
+            Some(ref sp) => {
+                let wait_start = std::time::Instant::now();
+                let ok = self.context.wait_for(sp, 5000);
+                if let Some(profiler) = profiler.as_mut() {
+                    profiler.record_sync_wait(wait_start);
+                }
+                if !ok {
+                    log::warn!("blade: wait_for previous-frame fence timed out (5s)");
+                }
+                ok
             }
-        }
+        };
 
         let (vw, vh) = self.surface_size();
         let vw_f = vw as f32;
@@ -1179,6 +1219,9 @@ impl Renderer {
             all_bg.extend_from_slice(scene.bg_rects);
             let active_bg_idx = 1 + scene.active_bg_start;
             let overlay_bg_idx = 1 + scene.overlay_bg_start;
+            if gpu_idle {
+                self.rects.ensure_capacity(&self.context, all_bg.len());
+            }
             let total_bg = all_bg.len().min(self.rects.max_rects);
             self.rects.upload(&all_bg, vw_f, vh_f);
             let mut all_bg_ranges = Vec::with_capacity(1 + scene.bg_rect_ranges.len());

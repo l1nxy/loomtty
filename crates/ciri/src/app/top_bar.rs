@@ -18,6 +18,26 @@ pub(crate) fn segment_slot_width(text_w: f32) -> f32 {
     }
 }
 
+/// Cap fixed lualine sections when they cannot all fit in the bar.
+///
+/// Priority is mode > session > workspace: the right-edge mode badge keeps
+/// its requested width first, the session label gets the next slice, and the
+/// workspace indicator yields first because it is redundant context.
+pub(crate) fn cap_fixed_section_widths(
+    bar_w: f32,
+    session_w: f32,
+    workspace_w: f32,
+    mode_w: f32,
+) -> (f32, f32, f32) {
+    let mut remaining = bar_w.max(0.0);
+    let mode_w = mode_w.max(0.0).min(remaining);
+    remaining -= mode_w;
+    let session_w = session_w.max(0.0).min(remaining);
+    remaining -= session_w;
+    let workspace_w = workspace_w.max(0.0).min(remaining);
+    (session_w, workspace_w, mode_w)
+}
+
 /// Shape-aware pixel width with a cell-grid fallback. Kept here (rather
 /// than pulling `ui::text_layout` into the non-UI `top_bar` module) so
 /// layout math stays consistent whether measured from UI components (which
@@ -262,6 +282,8 @@ impl App {
         let ws_label = self.workspace_indicator_label();
         let workspace_w = segment_slot_width(measure(shaper, &ws_label, cw));
         let mode_w = segment_slot_width(measure(shaper, &self.current_mode_label().0, cw));
+        let (session_w, workspace_w, mode_w) =
+            cap_fixed_section_widths(vw, session_w, workspace_w, mode_w);
         // Lualine-style sections tile the bar edge-to-edge with no
         // breathing room between adjacent zones — the visibility
         // window for tab generation is exactly the Fill slot.

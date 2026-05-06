@@ -105,6 +105,34 @@ fn pane_tabs_element_slot_matches_tabs_area_px() {
 }
 
 #[test]
+fn fixed_sections_do_not_overflow_narrow_top_bar() {
+    let app = App::new(
+        CiriConfig::default(),
+        "session-name-long-enough-to-overflow-the-status-bar",
+    );
+    let cx = make_cx(&app);
+    let narrow_w = 32.0_f32;
+    let layout = app.top_bar_layout(narrow_w, cx.viewport_h, cx.cell_w, cx.cell_h, cx.ui_shaper);
+    let component = TopBarComponent::capture(&app, layout, &cx);
+    let bar_rect = UiRect::new(0.0, layout.bar_y, narrow_w, layout.bar_height);
+    let slots = component.row_slots(bar_rect, &cx);
+
+    for slot in [slots.session, slots.pane_tabs, slots.workspace, slots.mode] {
+        assert!(
+            slot.x >= bar_rect.x - 0.01,
+            "slot starts before bar: slot={slot:?}, bar={bar_rect:?}",
+        );
+        assert!(
+            slot.right() <= bar_rect.right() + 0.01,
+            "slot extends beyond bar: slot={slot:?}, bar={bar_rect:?}",
+        );
+    }
+    assert!((slots.session.w - layout.session_w).abs() < 0.01);
+    assert!((slots.pane_tabs.w - layout.tabs_area_px).abs() < 0.01);
+    assert!((slots.mode.right() - bar_rect.right()).abs() < 0.01);
+}
+
+#[test]
 fn hit_test_uses_ciri_ui_layout_snapshot() {
     let app = App::new(CiriConfig::default(), "test-session");
     let cx = make_cx(&app);

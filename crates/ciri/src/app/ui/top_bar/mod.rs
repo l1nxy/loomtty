@@ -149,10 +149,12 @@ impl TopBarComponent {
         // Widths of fixed zones. Each capsule slot = measured text width
         // + capsule padding + visual gap budget (`segment_slot_width` in
         // `crate::app::top_bar`). The App-side `top_bar_layout` wraps
-        // its measurements through the same helper, so the fill slot
-        // (= bar_w − sum(fixed)) and the captured `tabs_area_px` stay
+        // its measurements through the same helpers, including the
+        // mode > session > workspace overflow cap, so the fill slot
+        // (= bar_w - sum(fixed)) and the captured `tabs_area_px` stay
         // in lockstep — see `pane_tabs_element_slot_is_one_cell_wider…`.
-        let session_w = self.layout.session_w;
+        let session_w =
+            crate::app::top_bar::segment_slot_width(text_layout::measure(cx, &self.session_text));
         let workspace_w = if self.workspace_label.is_empty() {
             0.0
         } else {
@@ -160,6 +162,8 @@ impl TopBarComponent {
         };
         let mode_w =
             crate::app::top_bar::segment_slot_width(text_layout::measure(cx, &self.mode_label));
+        let (session_w, workspace_w, mode_w) =
+            crate::app::top_bar::cap_fixed_section_widths(rect.w, session_w, workspace_w, mode_w);
         let fixed_w = session_w + workspace_w + mode_w;
         let pane_tabs_w = (rect.w - fixed_w).max(0.0);
 

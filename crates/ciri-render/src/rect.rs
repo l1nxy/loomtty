@@ -9,3 +9,14 @@ pub struct Rect {
     pub h: f32,
     pub color: [f32; 4],
 }
+
+/// A contiguous rect draw range sharing pane corner clipping uniforms.
+#[derive(Copy, Clone, Default, Debug)]
+pub struct PaneRectRange {
+    pub start: u32,
+    pub count: u32,
+    pub pane_origin: [f32; 2],
+    pub pane_size: [f32; 2],
+    /// CSS order: top-left, top-right, bottom-right, bottom-left.
+    pub pane_radii: [f32; 4],
+}

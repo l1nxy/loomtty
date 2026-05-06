@@ -299,6 +299,12 @@ pub struct AppearanceConfig {
     pub inactive_opacity: f32,
     #[garde(skip)]
     pub focus_ring: FocusRingConfig,
+    /// Logical-pixel corner radius for pane backgrounds, cell content, and
+    /// the focus ring. `0.0` keeps the historical sharp-corner look; values
+    /// above zero round all four corners of every pane and clip cell
+    /// background / glyph alpha at the arc (niri-style mask, no extra pass).
+    #[garde(range(min = 0.0, max = 64.0))]
+    pub pane_corner_radius: f32,
 }
 
 impl Default for AppearanceConfig {
@@ -311,6 +317,9 @@ impl Default for AppearanceConfig {
             inactive_border_color: String::new(),
             inactive_opacity: 0.7,
             focus_ring: FocusRingConfig::default(),
+            // Default 0.0 preserves the historical sharp-corner look on
+            // upgrade; users opt in by raising the value in their config.
+            pane_corner_radius: 0.0,
         }
     }
 }

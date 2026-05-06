@@ -6,8 +6,8 @@
 use anyhow::Result;
 use ciri_config::config::RenderConfig;
 use ciri_render::FrameScene;
-use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, PendingUpload, ScissoredRange};
-use ciri_render::rect::Rect;
+use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, PaneGlyphRange, PendingUpload};
+use ciri_render::rect::{PaneRectRange, Rect};
 use ciri_render::sdf_rect::SdfRect;
 
 /// Upper bound on SDF chrome rects per frame. Mirrors the blade backend.
@@ -32,10 +32,13 @@ use ciri_render::glyph_cache::PendingDwriteGlyph;
 
 // ─── HLSL shaders ───────────────────────────────────────────────────
 
-const RECT_HLSL: &str = r#"
+const RECT_COMMON_HLSL: &str = r#"
 cbuffer Viewport : register(b0) {
     float2 viewport_size;
-    float2 _pad;
+    float2 _pad0;
+    float2 pane_origin;
+    float2 pane_size;
+    float4 pane_radii;
 };
 
 struct VSInput {
@@ -48,8 +51,12 @@ struct VSInput {
 struct PSInput {
     float4 position : SV_POSITION;
     float4 color    : COLOR;
+    float2 pane_local : PANELOCAL;
 };
+"#;
 
+const RECT_VS_HLSL: &str = r#"
+// RECT_COMMON_HLSL_PLACEHOLDER
 PSInput vs_main(VSInput input) {
     float x = float(input.vid & 1);
     float y = float((input.vid >> 1) & 1);
@@ -63,11 +70,19 @@ PSInput vs_main(VSInput input) {
     PSInput output;
     output.position = float4(ndc, 0.0, 1.0);
     output.color = input.color;
+    output.pane_local = px - pane_origin;
     return output;
 }
+"#;
+
+const RECT_PS_HLSL: &str = r#"
+// RECT_COMMON_HLSL_PLACEHOLDER
+
+// HLSL_CORNER_FUNCS_PLACEHOLDER
 
 float4 ps_main(PSInput input) : SV_TARGET {
-    return float4(input.color.rgb * input.color.a, input.color.a);
+    float4 out_color = float4(input.color.rgb * input.color.a, input.color.a);
+    return out_color * ciri_corner_alpha(input.pane_local, pane_size, pane_radii);
 }
 "#;
 
@@ -210,6 +225,9 @@ cbuffer Viewport : register(b0) {
     uint _pad1;
     uint _pad2;
     uint _pad3;
+    float2 pane_origin;
+    float2 pane_size;
+    float4 pane_radii;
 };
 
 Texture2D atlas_tex : register(t0);
@@ -230,6 +248,7 @@ struct PSInput {
     float2 uv       : TEXCOORD0;
     float4 color    : COLOR;
     float4 bg_color : BGCOL;
+    float2 pane_local : PANELOCAL;
 };
 
 PSInput vs_main(VSInput input) {
@@ -242,12 +261,39 @@ PSInput vs_main(VSInput input) {
     output.bg_color = input.bg_color;
 
     float2 px = input.pos + float2(x, y) * input.size;
+    output.pane_local = px - pane_origin;
     float2 ndc = float2(
         px.x / viewport_size.x * 2.0 - 1.0,
         1.0 - px.y / viewport_size.y * 2.0
     );
     output.position = float4(ndc, 0.0, 1.0);
     return output;
+}
+"#;
+
+// Per-corner rounding alpha mask. HLSL twin of `GLSL_CORNER_FUNCS` —
+// same Inigo Quilez SDF recipe, same shape as ciri's existing
+// `sdf_rounded_box` over in the SDF chrome path. `radii` order is CSS:
+// tl, tr, br, bl. All-zero radii takes the no-op short-circuit to 1.0.
+const HLSL_CORNER_FUNCS: &str = r#"
+float ciri_sdf_rounded_box(float2 p, float2 b, float4 r) {
+    float rx = (p.x > 0.0) ? r.y : r.x;
+    float bx = (p.x > 0.0) ? r.z : r.w;
+    float radius = (p.y > 0.0) ? bx : rx;
+    float2 q = abs(p) - b + float2(radius, radius);
+    return min(max(q.x, q.y), 0.0) + length(max(q, float2(0.0, 0.0))) - radius;
+}
+
+float ciri_corner_alpha(float2 px, float2 size, float4 radii) {
+    if (radii.x <= 0.0 && radii.y <= 0.0 && radii.z <= 0.0 && radii.w <= 0.0) {
+        return 1.0;
+    }
+    float d = ciri_sdf_rounded_box(px - 0.5 * size, 0.5 * size, radii);
+    // smoothstep spans 2 * aa, so use half-pixel derivative to land a
+    // one-pixel-wide AA transition. Matches the GL twin and the
+    // chrome SDF path.
+    float aa = max(fwidth(d) * 0.5, 1e-5);
+    return 1.0 - smoothstep(-aa, aa, d);
 }
 "#;
 
@@ -280,6 +326,9 @@ cbuffer Viewport : register(b0) {
     uint _pad1;
     uint _pad2;
     uint _pad3;
+    float2 pane_origin;
+    float2 pane_size;
+    float4 pane_radii;
 };
 
 struct PSInput {
@@ -287,9 +336,12 @@ struct PSInput {
     float2 uv       : TEXCOORD0;
     float4 color    : COLOR;
     float4 bg_color : BGCOL;
+    float2 pane_local : PANELOCAL;
 };
 
 // HLSL_COLOR_FUNCS_PLACEHOLDER
+
+// HLSL_CORNER_FUNCS_PLACEHOLDER
 
 float4 ps_main(PSInput input) : SV_TARGET {
     bool use_linear_correction = (blending_flags & 2u) != 0u;
@@ -313,7 +365,8 @@ float4 ps_main(PSInput input) : SV_TARGET {
 
     // Output sRGB premultiplied with corrected alpha.
     float out_alpha = input.color.a * a;
-    return float4(input.color.rgb * out_alpha, out_alpha);
+    float4 out_color = float4(input.color.rgb * out_alpha, out_alpha);
+    return out_color * ciri_corner_alpha(input.pane_local, pane_size, pane_radii);
 }
 "#;
 
@@ -321,16 +374,32 @@ const COLOR_PS_HLSL: &str = r#"
 Texture2D atlas_tex : register(t0);
 SamplerState atlas_sampler : register(s0);
 
+cbuffer Viewport : register(b0) {
+    float2 viewport_size;
+    float2 _pad;
+    uint blending_flags;
+    uint _pad1;
+    uint _pad2;
+    uint _pad3;
+    float2 pane_origin;
+    float2 pane_size;
+    float4 pane_radii;
+};
+
 struct PSInput {
     float4 position : SV_POSITION;
     float2 uv       : TEXCOORD0;
     float4 color    : COLOR;
     float4 bg_color : BGCOL;
+    float2 pane_local : PANELOCAL;
 };
+
+// HLSL_CORNER_FUNCS_PLACEHOLDER
 
 float4 ps_main(PSInput input) : SV_TARGET {
     float4 texel = atlas_tex.Sample(atlas_sampler, input.uv);
-    return float4(texel.rgb * input.color.rgb, texel.a * input.color.a);
+    float4 out_color = float4(texel.rgb * input.color.rgb, texel.a * input.color.a);
+    return out_color * ciri_corner_alpha(input.pane_local, pane_size, pane_radii);
 }
 "#;
 
@@ -553,9 +622,9 @@ impl DxAtlasLayer {
         device.CreateBuffer(&buf_desc, None, Some(&mut instance_buffer))?;
         let instance_buffer = instance_buffer.unwrap();
 
-        // Constant buffer (viewport + blending flags)
+        // Constant buffer: viewport, blending flags, pane origin/size, pane radii.
         let cb_desc = D3D11_BUFFER_DESC {
-            ByteWidth: 32, // float2 viewport_size + float2 pad + uint flags + 3x uint pad
+            ByteWidth: 64,
             Usage: D3D11_USAGE_DYNAMIC,
             BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
             CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
@@ -735,7 +804,7 @@ impl DxAtlasLayer {
         }
         let count = instances.len().min(self.max_instances);
 
-        // Update viewport cbuffer (32 bytes: float2 size + float2 pad + uint flags + 3x uint pad)
+        // Initialize viewport cbuffer. Pane fields are rewritten per batch.
         let viewport = [vp.width, vp.height, 0.0f32, 0.0f32];
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
         ctx.Map(
@@ -752,6 +821,12 @@ impl DxAtlasLayer {
             flags_data.as_ptr() as *const u8,
             (mapped.pData as *mut u8).add(16),
             16,
+        );
+        let pane_data = [0.0f32; 8];
+        std::ptr::copy_nonoverlapping(
+            pane_data.as_ptr() as *const u8,
+            (mapped.pData as *mut u8).add(32),
+            32,
         );
         ctx.Unmap(&self.cbuffer, 0);
 
@@ -776,13 +851,16 @@ impl DxAtlasLayer {
         &self,
         ctx: &ID3D11DeviceContext,
         instance_count: usize,
-        batches: &[ScissoredRange],
+        vp: &crate::ViewportDims,
+        batches: &[PaneGlyphRange],
     ) {
         if instance_count == 0 || batches.is_empty() {
             return;
         }
         let count = instance_count.min(self.max_instances);
         let stride = std::mem::size_of::<GlyphInstance>() as u32;
+        let viewport = [vp.width, vp.height, 0.0f32, 0.0f32];
+        let flags_data: [u32; 4] = [self.blending_flags, 0, 0, 0];
 
         // Bind pipeline state (may have been changed by rect draws between calls)
         ctx.IASetInputLayout(Some(&self.input_layout));
@@ -795,16 +873,52 @@ impl DxAtlasLayer {
         ctx.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
 
         for batch in batches {
-            let start = batch.start.min(count);
-            let end = batch.end.min(count);
-            if start >= end || batch.w == 0 || batch.h == 0 {
+            let (sx, sy, sw, sh) = batch.scissor;
+            let start = (batch.start as usize).min(count);
+            let end = (start + batch.count as usize).min(count);
+            if start >= end || sw == 0 || sh == 0 {
                 continue;
             }
+            let pane_data = [
+                batch.pane_origin[0],
+                batch.pane_origin[1],
+                batch.pane_size[0],
+                batch.pane_size[1],
+                batch.pane_radii[0],
+                batch.pane_radii[1],
+                batch.pane_radii[2],
+                batch.pane_radii[3],
+            ];
+            let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+            ctx.Map(
+                &self.cbuffer,
+                0,
+                D3D11_MAP_WRITE_DISCARD,
+                0,
+                Some(&mut mapped),
+            )
+            .unwrap();
+            std::ptr::copy_nonoverlapping(
+                viewport.as_ptr() as *const u8,
+                mapped.pData as *mut u8,
+                16,
+            );
+            std::ptr::copy_nonoverlapping(
+                flags_data.as_ptr() as *const u8,
+                (mapped.pData as *mut u8).add(16),
+                16,
+            );
+            std::ptr::copy_nonoverlapping(
+                pane_data.as_ptr() as *const u8,
+                (mapped.pData as *mut u8).add(32),
+                32,
+            );
+            ctx.Unmap(&self.cbuffer, 0);
             let rect = RECT {
-                left: batch.x as i32,
-                top: batch.y as i32,
-                right: (batch.x + batch.w) as i32,
-                bottom: (batch.y + batch.h) as i32,
+                left: sx as i32,
+                top: sy as i32,
+                right: (sx + sw) as i32,
+                bottom: (sy + sh) as i32,
             };
             ctx.RSSetScissorRects(Some(&[rect]));
             let offset = (start * std::mem::size_of::<GlyphInstance>()) as u32;
@@ -841,7 +955,20 @@ struct DxRectPipeline {
 
 impl DxRectPipeline {
     unsafe fn new(device: &ID3D11Device, max_rects: usize) -> Result<Self> {
-        let vs_blob = compile_shader(RECT_HLSL, "vs_main", "vs_5_0")?;
+        let rect_vs = RECT_VS_HLSL.replace("// RECT_COMMON_HLSL_PLACEHOLDER", RECT_COMMON_HLSL);
+        let rect_ps = RECT_PS_HLSL
+            .replace("// RECT_COMMON_HLSL_PLACEHOLDER", RECT_COMMON_HLSL)
+            .replace("// HLSL_CORNER_FUNCS_PLACEHOLDER", HLSL_CORNER_FUNCS);
+        debug_assert!(
+            !rect_vs.contains("PLACEHOLDER"),
+            "shader source still contains unfilled placeholder after all replacements"
+        );
+        debug_assert!(
+            !rect_ps.contains("PLACEHOLDER"),
+            "shader source still contains unfilled placeholder after all replacements"
+        );
+
+        let vs_blob = compile_shader(&rect_vs, "vs_main", "vs_5_0")?;
         let vs_code = std::slice::from_raw_parts(
             vs_blob.GetBufferPointer() as *const u8,
             vs_blob.GetBufferSize(),
@@ -850,7 +977,7 @@ impl DxRectPipeline {
         device.CreateVertexShader(vs_code, None, Some(&mut vs))?;
         let vs = vs.unwrap();
 
-        let ps_blob = compile_shader(RECT_HLSL, "ps_main", "ps_5_0")?;
+        let ps_blob = compile_shader(&rect_ps, "ps_main", "ps_5_0")?;
         let ps_code = std::slice::from_raw_parts(
             ps_blob.GetBufferPointer() as *const u8,
             ps_blob.GetBufferSize(),
@@ -904,14 +1031,19 @@ impl DxRectPipeline {
         let instance_buffer = instance_buffer.unwrap();
 
         let cb_desc = D3D11_BUFFER_DESC {
-            ByteWidth: 16,
+            ByteWidth: 48,
             Usage: D3D11_USAGE_DYNAMIC,
             BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
             CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
             ..Default::default()
         };
+        let initial_cb = [0.0f32; 12];
+        let initial_data = D3D11_SUBRESOURCE_DATA {
+            pSysMem: initial_cb.as_ptr() as *const _,
+            ..Default::default()
+        };
         let mut cbuffer = None;
-        device.CreateBuffer(&cb_desc, None, Some(&mut cbuffer))?;
+        device.CreateBuffer(&cb_desc, Some(&initial_data), Some(&mut cbuffer))?;
         let cbuffer = cbuffer.unwrap();
 
         Ok(DxRectPipeline {
@@ -937,19 +1069,7 @@ impl DxRectPipeline {
         }
         let count = rects.len().min(self.max_rects);
 
-        // Viewport cbuffer
-        let viewport = [viewport_w, viewport_h, 0.0f32, 0.0f32];
-        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-        ctx.Map(
-            &self.cbuffer,
-            0,
-            D3D11_MAP_WRITE_DISCARD,
-            0,
-            Some(&mut mapped),
-        )
-        .unwrap();
-        std::ptr::copy_nonoverlapping(viewport.as_ptr() as *const u8, mapped.pData as *mut u8, 16);
-        ctx.Unmap(&self.cbuffer, 0);
+        let _ = (viewport_w, viewport_h);
 
         // Instance data
         let data = bytemuck::cast_slice(&rects[..count]);
@@ -966,26 +1086,72 @@ impl DxRectPipeline {
         ctx.Unmap(&self.instance_buffer, 0);
     }
 
-    /// Draw a range of previously uploaded rects.
-    unsafe fn draw_range(&self, ctx: &ID3D11DeviceContext, start: usize, count: usize) {
-        if count == 0 {
+    /// Draw previously uploaded rects grouped by pane clipping uniforms.
+    unsafe fn draw_ranges(
+        &self,
+        ctx: &ID3D11DeviceContext,
+        ranges: &[PaneRectRange],
+        viewport_w: f32,
+        viewport_h: f32,
+    ) {
+        if ranges.is_empty() || !ranges.iter().any(|range| range.count > 0) {
             return;
         }
         ctx.IASetInputLayout(Some(&self.input_layout));
         ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
         let stride = std::mem::size_of::<Rect>() as u32;
-        let offset = 0u32;
-        ctx.IASetVertexBuffers(
-            0,
-            1,
-            Some(&Some(self.instance_buffer.clone())),
-            Some(&stride),
-            Some(&offset),
-        );
         ctx.VSSetShader(Some(&self.vs), None);
         ctx.PSSetShader(Some(&self.ps), None);
         ctx.VSSetConstantBuffers(0, Some(&[Some(self.cbuffer.clone())]));
-        ctx.DrawInstanced(4, count as u32, 0, start as u32);
+        ctx.PSSetConstantBuffers(0, Some(&[Some(self.cbuffer.clone())]));
+
+        for range in ranges {
+            let start = range.start as usize;
+            let count = range.count as usize;
+            if count == 0 || start >= self.max_rects {
+                continue;
+            }
+            let count = count.min(self.max_rects - start);
+            let cb_data = [
+                viewport_w,
+                viewport_h,
+                0.0,
+                0.0,
+                range.pane_origin[0],
+                range.pane_origin[1],
+                range.pane_size[0],
+                range.pane_size[1],
+                range.pane_radii[0],
+                range.pane_radii[1],
+                range.pane_radii[2],
+                range.pane_radii[3],
+            ];
+            let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+            ctx.Map(
+                &self.cbuffer,
+                0,
+                D3D11_MAP_WRITE_DISCARD,
+                0,
+                Some(&mut mapped),
+            )
+            .unwrap();
+            std::ptr::copy_nonoverlapping(
+                cb_data.as_ptr() as *const u8,
+                mapped.pData as *mut u8,
+                48,
+            );
+            ctx.Unmap(&self.cbuffer, 0);
+
+            let offset = (start * std::mem::size_of::<Rect>()) as u32;
+            ctx.IASetVertexBuffers(
+                0,
+                1,
+                Some(&Some(self.instance_buffer.clone())),
+                Some(&stride),
+                Some(&offset),
+            );
+            ctx.DrawInstanced(4, count as u32, 0, 0);
+        }
     }
 }
 
@@ -1436,7 +1602,13 @@ impl Renderer {
 
         // Both atlas layers use B8G8R8A8 for D2D render target compatibility.
         // Inject color functions into the alpha pixel shader.
-        let alpha_ps = ALPHA_PS_HLSL.replace("// HLSL_COLOR_FUNCS_PLACEHOLDER", HLSL_COLOR_FUNCS);
+        let alpha_ps = ALPHA_PS_HLSL
+            .replace("// HLSL_COLOR_FUNCS_PLACEHOLDER", HLSL_COLOR_FUNCS)
+            .replace("// HLSL_CORNER_FUNCS_PLACEHOLDER", HLSL_CORNER_FUNCS);
+        debug_assert!(
+            !alpha_ps.contains("PLACEHOLDER"),
+            "shader source still contains unfilled placeholder after all replacements"
+        );
 
         let alpha = unsafe {
             DxAtlasLayer::new(
@@ -1459,6 +1631,13 @@ impl Renderer {
             .expect("alpha atlas creation failed")
         };
 
+        let color_ps = COLOR_PS_HLSL
+            .replace("// HLSL_CORNER_FUNCS_PLACEHOLDER", HLSL_CORNER_FUNCS);
+        debug_assert!(
+            !color_ps.contains("PLACEHOLDER"),
+            "shader source still contains unfilled placeholder after all replacements"
+        );
+
         let color = unsafe {
             DxAtlasLayer::new(
                 &self.device,
@@ -1469,7 +1648,7 @@ impl Renderer {
                     bpp: 4,
                     swizzle_rgba_to_bgra: true,
                     vs_hlsl: GLYPH_HLSL,
-                    ps_hlsl: COLOR_PS_HLSL,
+                    ps_hlsl: &color_ps,
                     filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
                     d2d_factory: &self.d2d_factory,
                     text_antialias: D2D1_TEXT_ANTIALIAS_MODE_DEFAULT,
@@ -1554,10 +1733,46 @@ impl Renderer {
             let overlay_bg_idx = 1 + scene.overlay_bg_start;
             let total_bg = all_bg.len().min(self.rects.max_rects);
             self.rects.upload(&self.ctx, &all_bg, vw, vh);
+            let mut all_bg_ranges = Vec::with_capacity(1 + scene.bg_rect_ranges.len());
+            all_bg_ranges.push(PaneRectRange {
+                start: 0,
+                count: 1,
+                ..PaneRectRange::default()
+            });
+            all_bg_ranges.extend(scene.bg_rect_ranges.iter().map(|range| PaneRectRange {
+                start: range.start.saturating_add(1),
+                ..*range
+            }));
+            if scene.bg_rect_ranges.is_empty() && !scene.bg_rects.is_empty() {
+                all_bg_ranges.push(PaneRectRange {
+                    start: 1,
+                    count: scene.bg_rects.len() as u32,
+                    ..PaneRectRange::default()
+                });
+            }
+            let split_ranges =
+                |ranges: &[PaneRectRange], start: usize, end: usize| -> Vec<PaneRectRange> {
+                    ranges
+                        .iter()
+                        .filter_map(|range| {
+                            let range_start = range.start as usize;
+                            let range_end = range_start.saturating_add(range.count as usize);
+                            let clipped_start = range_start.max(start);
+                            let clipped_end = range_end.min(end);
+                            (clipped_start < clipped_end).then(|| PaneRectRange {
+                                start: clipped_start as u32,
+                                count: (clipped_end - clipped_start) as u32,
+                                ..*range
+                            })
+                        })
+                        .collect()
+                };
 
             // 2. Draw non-focused pane background rects.
             let inactive_bg_count = active_bg_idx.min(total_bg);
-            self.rects.draw_range(&self.ctx, 0, inactive_bg_count);
+            let inactive_bg_ranges = split_ranges(&all_bg_ranges, 0, inactive_bg_count);
+            self.rects
+                .draw_ranges(&self.ctx, &inactive_bg_ranges, vw, vh);
 
             let vp = crate::ViewportDims {
                 width: vw,
@@ -1583,33 +1798,36 @@ impl Renderer {
             let draw_start = std::time::Instant::now();
             atlas_gpu
                 .alpha
-                .draw_batches(&self.ctx, alpha_count, scene.glyph_batches);
+                .draw_batches(&self.ctx, alpha_count, &vp, scene.glyph_batches);
             atlas_gpu
                 .color
-                .draw_batches(&self.ctx, color_count, scene.color_glyph_batches);
+                .draw_batches(&self.ctx, color_count, &vp, scene.color_glyph_batches);
 
             // 5. Focused pane background rects.
             let active_bg_count = overlay_bg_idx.saturating_sub(active_bg_idx);
             if active_bg_count > 0 {
                 self.ctx.RSSetScissorRects(Some(&[full_rect]));
+                let active_bg_ranges =
+                    split_ranges(&all_bg_ranges, active_bg_idx, overlay_bg_idx.min(total_bg));
                 self.rects
-                    .draw_range(&self.ctx, active_bg_idx, active_bg_count);
+                    .draw_ranges(&self.ctx, &active_bg_ranges, vw, vh);
             }
 
             // 6. Draw active pane glyphs (scissored, no re-upload).
             atlas_gpu
                 .alpha
-                .draw_batches(&self.ctx, alpha_count, scene.active_glyph_batches);
+                .draw_batches(&self.ctx, alpha_count, &vp, scene.active_glyph_batches);
             atlas_gpu
                 .color
-                .draw_batches(&self.ctx, color_count, scene.active_color_glyph_batches);
+                .draw_batches(&self.ctx, color_count, &vp, scene.active_color_glyph_batches);
 
             // 7. Overlay background rects.
             let overlay_bg_count = total_bg.saturating_sub(overlay_bg_idx);
             if overlay_bg_count > 0 {
                 self.ctx.RSSetScissorRects(Some(&[full_rect]));
+                let overlay_bg_ranges = split_ranges(&all_bg_ranges, overlay_bg_idx, total_bg);
                 self.rects
-                    .draw_range(&self.ctx, overlay_bg_idx, overlay_bg_count);
+                    .draw_ranges(&self.ctx, &overlay_bg_ranges, vw, vh);
             }
 
             // 7b. SDF chrome (rounded / shadow / border). Drawn after flat
@@ -1618,32 +1836,32 @@ impl Renderer {
             if !scene.sdf_rects.is_empty() {
                 self.ctx.RSSetScissorRects(Some(&[full_rect]));
                 self.sdf.upload(&self.ctx, scene.sdf_rects, vw, vh);
+                // C4 verified: DxSdfPipeline consumes the same SdfRect fields
+                // and draw order as GL (focus rings before cached/transient chrome).
                 self.sdf.draw(&self.ctx, scene.sdf_rects.len());
             }
 
             // 8. Overlay glyphs (no re-upload, just draw remaining range).
-            let overlay_alpha = ScissoredRange {
-                x: 0,
-                y: 0,
-                w: self.width,
-                h: self.height,
-                start: scene.pane_glyph_end,
-                end: scene.glyphs.len(),
+            // Zero pane_size hits the helper short-circuit (no clipping)
+            // — once C5 wires the uniforms into the DX path.
+            let overlay_alpha = PaneGlyphRange {
+                start: scene.pane_glyph_end as u32,
+                count: (scene.glyphs.len() - scene.pane_glyph_end) as u32,
+                scissor: (0, 0, self.width, self.height),
+                ..PaneGlyphRange::default()
             };
-            let overlay_color = ScissoredRange {
-                x: 0,
-                y: 0,
-                w: self.width,
-                h: self.height,
-                start: scene.pane_color_glyph_end,
-                end: scene.color_glyphs.len(),
+            let overlay_color = PaneGlyphRange {
+                start: scene.pane_color_glyph_end as u32,
+                count: (scene.color_glyphs.len() - scene.pane_color_glyph_end) as u32,
+                scissor: (0, 0, self.width, self.height),
+                ..PaneGlyphRange::default()
             };
             atlas_gpu
                 .alpha
-                .draw_batches(&self.ctx, alpha_count, &[overlay_alpha]);
+                .draw_batches(&self.ctx, alpha_count, &vp, &[overlay_alpha]);
             atlas_gpu
                 .color
-                .draw_batches(&self.ctx, color_count, &[overlay_color]);
+                .draw_batches(&self.ctx, color_count, &vp, &[overlay_color]);
             if let Some(profiler) = profiler.as_mut() {
                 profiler.record_draw(draw_start);
             }

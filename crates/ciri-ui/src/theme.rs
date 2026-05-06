@@ -63,9 +63,9 @@ impl Default for RadiusScale {
     fn default() -> Self {
         Self {
             none: 0.0,
-            sm: 2.0,
-            md: 6.0,
-            lg: 10.0,
+            sm: 6.0,
+            md: 10.0,
+            lg: 14.0,
             full: 9999.0,
         }
     }

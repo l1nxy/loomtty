@@ -82,9 +82,17 @@ impl AppModel {
     pub const RECENT_HOSTS_MAX: usize = 20;
 
     /// Record a successful remote connection in `recent_hosts`. Dedupes by
-    /// (host, port) and bumps `last_used` to now. Caller is responsible for
-    /// persisting the updated list.
-    pub fn record_recent_host(&mut self, host: &str, port: u16, ssh_port: u16) {
+    /// (host, port), bumps `last_used` to now, and remembers the
+    /// `session_name` so future revisits can attach to the same session
+    /// without re-prompting. Caller is responsible for persisting the
+    /// updated list.
+    pub fn record_recent_host(
+        &mut self,
+        host: &str,
+        port: u16,
+        ssh_port: u16,
+        session_name: &str,
+    ) {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -98,12 +106,14 @@ impl AppModel {
         {
             existing.ssh_port = ssh_port;
             existing.last_used = now;
+            existing.last_session = Some(session_name.to_string());
         } else {
             self.recent_hosts.push(RecentHost {
                 host: host.to_string(),
                 port,
                 ssh_port,
                 last_used: now,
+                last_session: Some(session_name.to_string()),
             });
         }
 
@@ -111,6 +121,43 @@ impl AppModel {
         self.recent_hosts
             .sort_by(|a, b| b.last_used.cmp(&a.last_used));
         self.recent_hosts.truncate(Self::RECENT_HOSTS_MAX);
+    }
+
+    /// Look up the `last_session` remembered for `(host, port)` in
+    /// `recent_hosts`, if any. Used by the `DirectConnect` /
+    /// text-prompt auto-connect flow to bias session selection.
+    pub fn last_session_for(&self, host: &str, port: u16) -> Option<String> {
+        self.recent_hosts
+            .iter()
+            .find(|h| h.host == host && h.port == port)
+            .and_then(|h| h.last_session.clone())
+    }
+
+    /// Pick the session name to attach to, given the result of an async
+    /// `RemoteProbeResult` query plus the user's previously-remembered
+    /// session for this host. Strategy Y:
+    ///   1. If the preferred (last) session is still in the remote's
+    ///      session list, use it.
+    ///   2. Otherwise pick the first entry the server returned (server
+    ///      orders by recency).
+    ///   3. Empty list / probe error / no server → `"default"` so the
+    ///      remote creates a fresh session.
+    pub fn pick_auto_connect_session(
+        preferred: Option<&str>,
+        probe: &RemoteProbeResult,
+    ) -> String {
+        let RemoteProbeResult::Sessions(sessions) = probe else {
+            return "default".to_string();
+        };
+        if let Some(pref) = preferred
+            && sessions.iter().any(|s| s.name == pref)
+        {
+            return pref.to_string();
+        }
+        if let Some(first) = sessions.first() {
+            return first.name.clone();
+        }
+        "default".to_string()
     }
 
     /// Location label for the active connection (used in GoToSession rows).

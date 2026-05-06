@@ -25,8 +25,8 @@ use ciri_gpu::{GlyphAtlasGpu, Renderer};
 use ciri_layout::geometry::ViewSize;
 use ciri_layout::workspace_set::WorkspaceSet;
 use ciri_protocol::message::*;
-use ciri_render::glyph_cache::{GlyphCache, GlyphEntry, GlyphInstance, ScissoredRange};
-use ciri_render::rect::Rect;
+use ciri_render::glyph_cache::{GlyphCache, GlyphEntry, GlyphInstance, PaneGlyphRange};
+use ciri_render::rect::{PaneRectRange, Rect};
 use ciri_render::shaper::TextShaper;
 use ciri_render::terminal::{ColorTable, TerminalView};
 use crossbeam_channel::{Receiver, Sender};
@@ -40,9 +40,9 @@ use winit::window::Window;
 // Re-export core types so existing `use super::*` in submodules still works.
 pub(crate) use ciri_app::app::{
     AppModel, ClientImagePlacement, ConnectionKind, ConnectionSlot, ContextMenu, ContextMenuAction,
-    ContextMenuItem, GestureState, HoveredLink, PaletteEntryKind, PasteButton,
-    PendingPaste, PendingPasteTarget, ReconnectPlan, RemoteConnectionConfig, ResizeDragState,
-    ScrollbarDragInfo, SearchMatch, SearchState, Selection, ServerEvent, TopBarHoverRegion,
+    ContextMenuItem, GestureState, HoveredLink, PaletteEntryKind, PasteButton, PendingPaste,
+    PendingPasteTarget, ReconnectPlan, RemoteConnectionConfig, ResizeDragState, ScrollbarDragInfo,
+    SearchMatch, SearchState, Selection, ServerEvent, TopBarHoverRegion,
 };
 use ciri_layout::geometry::Rect as GeoRect;
 
@@ -87,15 +87,16 @@ pub(crate) struct CommandPaletteLayout {
 /// Reusable render buffers (cleared each frame).
 pub(crate) struct RenderBuffers {
     pub bg_rects: Vec<Rect>,
+    pub bg_rect_ranges: Vec<PaneRectRange>,
     pub glyphs: Vec<GlyphInstance>,
     pub color_glyphs: Vec<GlyphInstance>,
     pub dirty_bg_ranges: Vec<(usize, usize)>,
     pub dirty_glyph_ranges: Vec<(usize, usize)>,
     pub dirty_color_ranges: Vec<(usize, usize)>,
-    pub glyph_batches: Vec<ScissoredRange>,
-    pub color_glyph_batches: Vec<ScissoredRange>,
-    pub active_glyph_batches: Vec<ScissoredRange>,
-    pub active_color_glyph_batches: Vec<ScissoredRange>,
+    pub glyph_batches: Vec<PaneGlyphRange>,
+    pub color_glyph_batches: Vec<PaneGlyphRange>,
+    pub active_glyph_batches: Vec<PaneGlyphRange>,
+    pub active_color_glyph_batches: Vec<PaneGlyphRange>,
     pub pane_order: Vec<u64>,
     pub pane_regions: HashMap<u64, PaneSceneRegion>,
     pub pane_glyph_end: usize,
@@ -130,6 +131,9 @@ pub(crate) struct PaneSceneRegion {
     pub color_len: usize,
     pub color_cap: usize,
     pub scissor: (u32, u32, u32, u32),
+    pub pane_origin: [f32; 2],
+    pub pane_size: [f32; 2],
+    pub pane_radii: [f32; 4],
     pub is_active: bool,
     pub snapshot: u64,
 }
@@ -137,6 +141,7 @@ pub(crate) struct PaneSceneRegion {
 impl RenderBuffers {
     pub fn clear_retained_scene(&mut self) {
         self.bg_rects.clear();
+        self.bg_rect_ranges.clear();
         self.glyphs.clear();
         self.color_glyphs.clear();
         self.dirty_bg_ranges.clear();
@@ -497,6 +502,7 @@ impl App {
             last_mouse_pos: None,
             render_bufs: RenderBuffers {
                 bg_rects: Vec::new(),
+                bg_rect_ranges: Vec::new(),
                 glyphs: Vec::new(),
                 color_glyphs: Vec::new(),
                 dirty_bg_ranges: Vec::new(),
@@ -849,7 +855,10 @@ impl App {
                 self.core.server_rx = Some(rx);
                 self.connection_cancel = Some(cancel);
                 // Record only after connection was successfully initiated.
-                self.core.record_recent_host(&host, port, ssh_port);
+                // session_name was moved into self.core above, so read it back.
+                let attached = self.core.session_name.clone();
+                self.core
+                    .record_recent_host(&host, port, ssh_port, &attached);
                 crate::recent_hosts::save(&self.core.recent_hosts);
             }
             Err(e) => {
@@ -877,8 +886,11 @@ impl App {
         }
     }
 
-    /// Parse a `[user@]host[:ssh_port]` string and connect.
-    /// Uses the protocol's default remote port and session name "default".
+    /// Parse a `[user@]host[:ssh_port]` string and trigger the auto-connect
+    /// flow: fire an async session query, then attach to whichever session
+    /// `pick_auto_connect_session` picks (preferring last-remembered, then
+    /// most-recent, then `"default"`). The palette stays open in loading
+    /// state until the query result arrives.
     pub fn connect_remote_from_input(&mut self, input: &str) {
         let target = match crate::remote_validate::parse_input(input, 22) {
             Ok(t) => t,
@@ -897,24 +909,30 @@ impl App {
             Some(u) => format!("{u}@{}", target.host),
             None => target.host,
         };
-        self.connect_remote_session(
-            host_arg,
-            ciri_protocol::transport::DEFAULT_REMOTE_PORT,
-            target.ssh_port,
-            "default".to_string(),
-        );
+        let port = ciri_protocol::transport::DEFAULT_REMOTE_PORT;
+        self.start_remote_auto_connect(host_arg, port, target.ssh_port);
+    }
 
-        // If the connect attempt failed synchronously with a permanent reason
-        // (bad ssh binary, validation bounce, etc.), mirror it into the
-        // palette footer so the user sees the error before the palette closes.
-        // Transient async failures are surfaced later by the banner/reconnect
-        // machinery in batch 2; here we only cover the immediate-fail path.
-        if let Some(reason) = self.core.last_disconnect_reason.as_ref()
-            && reason.is_permanent()
-            && let Some(palette) = &mut self.core.command_palette
-        {
-            palette.remote_error = Some(("Connection".to_string(), reason.to_string()));
+    /// Common entry for `DirectConnect` palette rows and text-prompt input.
+    /// Sets `pending_auto_connect`, fires `query_remote_sessions`, and
+    /// flips the palette into loading state. The result handler picks
+    /// the right session and calls `connect_remote_session`.
+    pub fn start_remote_auto_connect(&mut self, host: String, port: u16, ssh_port: u16) {
+        let preferred = self.core.last_session_for(&host, port);
+        if let Some(palette) = &mut self.core.command_palette {
+            palette.remote_loading = Some(host.clone());
+            palette.remote_error = None;
         }
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        // host doubles as the display name here — the prompt has no other label.
+        crate::connection::query_remote_sessions(&host, &host, port, ssh_port, tx);
+        self.core.remote_query_rx = Some(rx);
+        self.core.pending_auto_connect = Some(ciri_app::app::PendingAutoConnect {
+            host,
+            port,
+            ssh_port,
+            preferred_session: preferred,
+        });
     }
 
     /// Cycle to the next background connection slot.
@@ -1255,10 +1273,8 @@ impl App {
         if !self.core.overview.active {
             return None;
         }
-        let bar = crate::app::ui::overview::overview_action_bar_data(
-            self,
-            self.overview_hovered_pane,
-        )?;
+        let bar =
+            crate::app::ui::overview::overview_action_bar_data(self, self.overview_hovered_pane)?;
         let (mx, my) = self.last_mouse_pos?;
         if my < bar.bar_y || my >= bar.bar_y + bar.bar_h {
             return None;
@@ -1331,9 +1347,7 @@ impl App {
     /// `current_pane_tab_hover` — derived at hash time so the
     /// display-side `cx.is_hovered(hit_id)` and the cache invalidation
     /// signal stay in lockstep without a stored field on `App`.
-    pub(crate) fn current_top_bar_region_hover(
-        &self,
-    ) -> Option<ciri_app::app::TopBarHoverRegion> {
+    pub(crate) fn current_top_bar_region_hover(&self) -> Option<ciri_app::app::TopBarHoverRegion> {
         let (mx, my) = self.last_mouse_pos?;
         let (vw, vh) = self.command_palette_viewport_size();
         let (cw, ch) = self.cell_dimensions();

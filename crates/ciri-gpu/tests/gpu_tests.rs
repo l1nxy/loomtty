@@ -7,13 +7,16 @@
 //! - Scissor rect verification
 //! - Instanced rendering verification
 //! - Texture upload / atlas flush verification
+//!
+//! Set CIRI_SKIP_HEADLESS_GPU_TESTS to soft-skip these tests when headless GPU
+//! initialization is unavailable. By default, initialization failures panic.
 
 #![cfg(feature = "blade")]
 
 use blade_graphics as gpu;
 use blade_graphics::ShaderData;
 use ciri_render::FrameScene;
-use ciri_render::glyph_cache::{GlyphInstance, PendingUpload, ScissoredRange};
+use ciri_render::glyph_cache::{GlyphInstance, PaneGlyphRange, PendingUpload};
 use ciri_render::rect::Rect;
 use std::ptr;
 
@@ -21,7 +24,7 @@ use std::ptr;
 
 /// Create a headless GPU context (no window, no presentation).
 /// Mirrors wgpu's headless device creation pattern.
-fn create_headless_context() -> gpu::Context {
+fn try_create_headless_context() -> Result<gpu::Context, String> {
     unsafe {
         gpu::Context::init(gpu::ContextDesc {
             presentation: false,
@@ -31,7 +34,22 @@ fn create_headless_context() -> gpu::Context {
             overlay: false,
             device_id: 0,
         })
-        .expect("headless GPU context init failed")
+    }
+    .map_err(|e| format!("{e:?}"))
+}
+
+fn create_headless_context() -> Option<gpu::Context> {
+    match try_create_headless_context() {
+        Ok(ctx) => Some(ctx),
+        Err(e) if std::env::var("CIRI_SKIP_HEADLESS_GPU_TESTS").is_ok() => {
+            eprintln!(
+                "Headless GPU init failed; skipping (CIRI_SKIP_HEADLESS_GPU_TESTS set): {e}"
+            );
+            None
+        }
+        Err(e) => panic!(
+            "Headless GPU init failed (set CIRI_SKIP_HEADLESS_GPU_TESTS to skip): {e}"
+        ),
     }
 }
 
@@ -358,14 +376,14 @@ fn glyph_instance_bytemuck_layout() {
 }
 
 #[test]
-fn scissored_range_default() {
-    let sr = ScissoredRange::default();
-    assert_eq!(sr.x, 0);
-    assert_eq!(sr.y, 0);
-    assert_eq!(sr.w, 0);
-    assert_eq!(sr.h, 0);
+fn pane_glyph_range_default() {
+    let sr = PaneGlyphRange::default();
+    assert_eq!(sr.scissor, (0, 0, 0, 0));
     assert_eq!(sr.start, 0);
-    assert_eq!(sr.end, 0);
+    assert_eq!(sr.count, 0);
+    assert_eq!(sr.pane_origin, [0.0, 0.0]);
+    assert_eq!(sr.pane_size, [0.0, 0.0]);
+    assert_eq!(sr.pane_radii, [0.0, 0.0, 0.0, 0.0]);
 }
 
 #[test]
@@ -381,6 +399,7 @@ fn frame_scene_construction() {
     let scene = FrameScene {
         clear_color: [0.1, 0.2, 0.3, 1.0],
         bg_rects: &rects,
+        bg_rect_ranges: &[],
         glyphs,
         color_glyphs: &[],
         glyph_batches: &[],
@@ -433,13 +452,17 @@ fn pending_upload_data_integrity() {
 
 #[test]
 fn headless_context_creation() {
-    let _ctx = create_headless_context();
+    let Some(_ctx) = create_headless_context() else {
+        return;
+    };
     // If we get here, headless Vulkan/Metal context works
 }
 
 #[test]
 fn headless_context_device_info() {
-    let ctx = create_headless_context();
+    let Some(ctx) = create_headless_context() else {
+        return;
+    };
     let info = ctx.device_information();
     assert!(!info.device_name.is_empty());
     assert!(!info.driver_name.is_empty());
@@ -449,7 +472,9 @@ fn headless_context_device_info() {
 
 #[test]
 fn buffer_create_shared() {
-    let ctx = create_headless_context();
+    let Some(ctx) = create_headless_context() else {
+        return;
+    };
     let buffer = ctx.create_buffer(gpu::BufferDesc {
         name: "test_shared",
         size: 256,
@@ -469,7 +494,9 @@ fn buffer_create_shared() {
 
 #[test]
 fn buffer_create_upload() {
-    let ctx = create_headless_context();
+    let Some(ctx) = create_headless_context() else {
+        return;
+    };
     let buffer = ctx.create_buffer(gpu::BufferDesc {
         name: "test_upload",
         size: 1024,
@@ -485,7 +512,9 @@ fn buffer_create_upload() {
 
 #[test]
 fn buffer_rect_upload() {
-    let ctx = create_headless_context();
+    let Some(ctx) = create_headless_context() else {
+        return;
+    };
     let max_rects = 100;
     let buffer = ctx.create_buffer(gpu::BufferDesc {
         name: "rect_instances",
@@ -520,7 +549,9 @@ fn buffer_rect_upload() {
 
 #[test]
 fn buffer_glyph_instance_upload() {
-    let ctx = create_headless_context();
+    let Some(ctx) = create_headless_context() else {
+        return;
+    };
     let max_instances = 256;
     let buffer = ctx.create_buffer(gpu::BufferDesc {
         name: "glyph_instances",
@@ -556,7 +587,9 @@ fn buffer_glyph_instance_upload() {
 
 #[test]
 fn texture_create_r8() {
-    let ctx = create_headless_context();
+    let Some(ctx) = create_headless_context() else {
+        return;
+    };
     let texture = ctx.create_texture(gpu::TextureDesc {
         name: "atlas_r8",
         format: gpu::TextureFormat::R8Unorm,
@@ -577,7 +610,9 @@ fn texture_create_r8() {
 
 #[test]
 fn texture_create_rgba8_srgb() {
-    let ctx = create_headless_context();
+    let Some(ctx) = create_headless_context() else {
+        return;
+    };
     let texture = ctx.create_texture(gpu::TextureDesc {
         name: "atlas_rgba8",
         format: gpu::TextureFormat::Rgba8UnormSrgb,
@@ -598,7 +633,9 @@ fn texture_create_rgba8_srgb() {
 
 #[test]
 fn texture_upload_and_readback_r8() {
-    let ctx = create_headless_context();
+    let Some(ctx) = create_headless_context() else {
+        return;
+    };
     let mut encoder = create_encoder(&ctx);
     let size = 16u32;
 
@@ -676,7 +713,9 @@ fn texture_upload_and_readback_r8() {
 
 #[test]
 fn texture_upload_and_readback_rgba8() {
-    let ctx = create_headless_context();
+    let Some(ctx) = create_headless_context() else {
+        return;
+    };
     let mut encoder = create_encoder(&ctx);
     let size = 8u32;
     let bpp = 4u32;
@@ -761,7 +800,9 @@ fn texture_upload_and_readback_rgba8() {
 fn atlas_pending_upload_flush() {
     // Simulate what GlyphAtlasGpu.flush_uploads does:
     // drain PendingUpload vec → staging buffer → copy_buffer_to_texture
-    let ctx = create_headless_context();
+    let Some(ctx) = create_headless_context() else {
+        return;
+    };
     let mut encoder = create_encoder(&ctx);
     let atlas_size = 64u32;
 
@@ -879,7 +920,9 @@ fn atlas_pending_upload_flush() {
 #[test]
 fn atlas_clear_and_refill() {
     // Simulate atlas overflow → clear → refill cycle
-    let ctx = create_headless_context();
+    let Some(ctx) = create_headless_context() else {
+        return;
+    };
     let mut encoder = create_encoder(&ctx);
     let atlas_size = 32u32;
 
@@ -1054,7 +1097,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
 #[test]
 fn render_pipeline_creation() {
-    let ctx = create_headless_context();
+    let Some(ctx) = create_headless_context() else {
+        return;
+    };
     let format = gpu::TextureFormat::Rgba8Unorm;
     let shader = ctx.create_shader(gpu::ShaderDesc {
         source: TEST_RECT_SHADER,
@@ -1114,7 +1159,9 @@ fn render_pipeline_creation() {
 
 #[test]
 fn render_fullscreen_rect_and_readback() {
-    let ctx = create_headless_context();
+    let Some(ctx) = create_headless_context() else {
+        return;
+    };
     let mut encoder = create_encoder(&ctx);
     let w = 4u32;
     let h = 4u32;
@@ -1260,7 +1307,9 @@ fn render_fullscreen_rect_and_readback() {
 #[test]
 fn render_instanced_rects() {
     // Render two non-overlapping rects and verify both appear
-    let ctx = create_headless_context();
+    let Some(ctx) = create_headless_context() else {
+        return;
+    };
     let mut encoder = create_encoder(&ctx);
     let w = 8u32;
     let h = 4u32;
@@ -1408,7 +1457,9 @@ fn render_instanced_rects() {
 #[test]
 fn render_scissor_rect() {
     // Render a full-screen white rect, but scissor to top-left 2x2 of a 4x4 target
-    let ctx = create_headless_context();
+    let Some(ctx) = create_headless_context() else {
+        return;
+    };
     let mut encoder = create_encoder(&ctx);
     let w = 4u32;
     let h = 4u32;
@@ -1573,7 +1624,9 @@ fn render_scissor_rect() {
 #[test]
 fn render_alpha_blending() {
     // Render two overlapping rects: opaque red, then 50% alpha green on top
-    let ctx = create_headless_context();
+    let Some(ctx) = create_headless_context() else {
+        return;
+    };
     let mut encoder = create_encoder(&ctx);
     let w = 2u32;
     let h = 2u32;
@@ -1747,7 +1800,9 @@ fn blade_headless_resize_behavior_contract_is_proven() {
     let initial_color = [1.0, 0.0, 0.0, 1.0];
     let resized_color = [0.25, 0.5, 0.75, 1.0];
 
-    let ctx = create_headless_context();
+    let Some(ctx) = create_headless_context() else {
+        return;
+    };
     let format = gpu::TextureFormat::Rgba8Unorm;
 
     let mut committed = create_resize_proof_target(&ctx, format, initial, initial_color);
@@ -1777,7 +1832,9 @@ fn immediate_headless_resize_behavior_contract_is_proven() {
     let initial_color = [1.0, 0.0, 0.0, 1.0];
     let resized_color = [0.25, 0.5, 0.75, 1.0];
 
-    let ctx = create_headless_context();
+    let Some(ctx) = create_headless_context() else {
+        return;
+    };
     let format = gpu::TextureFormat::Rgba8Unorm;
 
     let mut target = create_resize_proof_target(&ctx, format, initial, initial_color);
@@ -1794,7 +1851,9 @@ fn immediate_headless_resize_behavior_contract_is_proven() {
 
 #[test]
 fn post_resize_render_readback_stays_safe() {
-    let ctx = create_headless_context();
+    let Some(ctx) = create_headless_context() else {
+        return;
+    };
     let mut encoder = create_encoder(&ctx);
     let format = gpu::TextureFormat::Rgba8Unorm;
     let initial = (4u32, 4u32);

@@ -7,8 +7,8 @@
 
 use ciri_config::config::RenderConfig;
 use ciri_render::FrameScene;
-use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, PendingUpload, ScissoredRange};
-use ciri_render::rect::Rect;
+use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, PaneGlyphRange, PendingUpload};
+use ciri_render::rect::{PaneRectRange, Rect};
 use ciri_render::sdf_rect::SdfRect;
 use glow::HasContext;
 
@@ -299,6 +299,9 @@ struct GlAtlasLayer {
     bpp: u32,
     loc_viewport: glow::UniformLocation,
     loc_atlas: glow::UniformLocation,
+    loc_pane_origin: glow::UniformLocation,
+    loc_pane_size: glow::UniformLocation,
+    loc_pane_radii: glow::UniformLocation,
     loc_use_linear_blending: Option<glow::UniformLocation>,
     loc_use_linear_correction: Option<glow::UniformLocation>,
     max_instances: usize,
@@ -329,8 +332,37 @@ impl GlAtlasLayer {
         let loc_atlas = gl
             .get_uniform_location(program, "u_atlas")
             .ok_or_else(|| crate::GpuError::ShaderCompile("u_atlas uniform not found".into()))?;
+        let loc_pane_origin = gl
+            .get_uniform_location(program, "u_pane_origin")
+            .ok_or_else(|| {
+                crate::GpuError::ShaderCompile(format!(
+                    "u_pane_origin uniform not found in {} shader",
+                    cfg.label
+                ))
+            })?;
+        let loc_pane_size = gl
+            .get_uniform_location(program, "u_pane_size")
+            .ok_or_else(|| {
+                crate::GpuError::ShaderCompile(format!(
+                    "u_pane_size uniform not found in {} shader",
+                    cfg.label
+                ))
+            })?;
+        let loc_pane_radii = gl
+            .get_uniform_location(program, "u_pane_radii")
+            .ok_or_else(|| {
+                crate::GpuError::ShaderCompile(format!(
+                    "u_pane_radii uniform not found in {} shader",
+                    cfg.label
+                ))
+            })?;
         let loc_use_linear_blending = gl.get_uniform_location(program, "u_use_linear_blending");
         let loc_use_linear_correction = gl.get_uniform_location(program, "u_use_linear_correction");
+        gl.use_program(Some(program));
+        gl.uniform_2_f32(Some(&loc_pane_origin), 0.0, 0.0);
+        gl.uniform_2_f32(Some(&loc_pane_size), 0.0, 0.0);
+        gl.uniform_4_f32(Some(&loc_pane_radii), 0.0, 0.0, 0.0, 0.0);
+        gl.use_program(None);
 
         let texture = gl
             .create_texture()
@@ -398,6 +430,9 @@ impl GlAtlasLayer {
             bpp,
             loc_viewport,
             loc_atlas,
+            loc_pane_origin,
+            loc_pane_size,
+            loc_pane_radii,
             loc_use_linear_blending,
             loc_use_linear_correction,
             max_instances,
@@ -477,7 +512,7 @@ impl GlAtlasLayer {
         gl: &glow::Context,
         instance_count: usize,
         vp: &crate::ViewportDims,
-        batches: &[ScissoredRange],
+        batches: &[PaneGlyphRange],
         use_linear_blending: bool,
         use_linear_correction: bool,
     ) {
@@ -503,13 +538,31 @@ impl GlAtlasLayer {
         gl.enable(glow::SCISSOR_TEST);
 
         for batch in batches {
-            let start = batch.start.min(count);
-            let end = batch.end.min(count);
-            if start >= end || batch.w == 0 || batch.h == 0 {
+            let start = (batch.start as usize).min(count);
+            let end = start.saturating_add(batch.count as usize).min(count);
+            let (x, y, w, h) = batch.scissor;
+            if start >= end || w == 0 || h == 0 {
                 continue;
             }
-            let sy = vp.height_px.saturating_sub(batch.y + batch.h);
-            gl.scissor(batch.x as i32, sy as i32, batch.w as i32, batch.h as i32);
+            let sy = vp.height_px.saturating_sub(y + h);
+            gl.scissor(x as i32, sy as i32, w as i32, h as i32);
+            gl.uniform_2_f32(
+                Some(&self.loc_pane_origin),
+                batch.pane_origin[0],
+                batch.pane_origin[1],
+            );
+            gl.uniform_2_f32(
+                Some(&self.loc_pane_size),
+                batch.pane_size[0],
+                batch.pane_size[1],
+            );
+            gl.uniform_4_f32(
+                Some(&self.loc_pane_radii),
+                batch.pane_radii[0],
+                batch.pane_radii[1],
+                batch.pane_radii[2],
+                batch.pane_radii[3],
+            );
 
             let base_offset = start * std::mem::size_of::<GlyphInstance>();
             setup_glyph_vertex_attribs_offset(gl, base_offset as i32);
@@ -537,13 +590,22 @@ struct GlRectPipeline {
     vao: glow::VertexArray,
     instance_vbo: glow::Buffer,
     loc_viewport: glow::UniformLocation,
+    loc_pane_origin: glow::UniformLocation,
+    loc_pane_size: glow::UniformLocation,
+    loc_pane_radii: glow::UniformLocation,
     loc_use_linear_blending: Option<glow::UniformLocation>,
     max_rects: usize,
 }
 
 impl GlRectPipeline {
     unsafe fn new(gl: &glow::Context, max_rects: usize) -> crate::Result<Self> {
-        let rect_fs = RECT_FS.replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS);
+        let rect_fs = RECT_FS
+            .replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS)
+            .replace("// CORNER_FUNCS_PLACEHOLDER", GLSL_CORNER_FUNCS);
+        debug_assert!(
+            !rect_fs.contains("PLACEHOLDER"),
+            "shader source still contains unfilled placeholder after all replacements"
+        );
         let program = compile_program(gl, RECT_VS, &rect_fs, "rect")?;
         let loc_viewport = gl
             .get_uniform_location(program, "u_viewport")
@@ -551,6 +613,32 @@ impl GlRectPipeline {
                 crate::GpuError::ShaderCompile("u_viewport uniform not found in rect shader".into())
             })?;
         let loc_use_linear_blending = gl.get_uniform_location(program, "u_use_linear_blending");
+        let loc_pane_origin = gl
+            .get_uniform_location(program, "u_pane_origin")
+            .ok_or_else(|| {
+                crate::GpuError::ShaderCompile(
+                    "u_pane_origin uniform not found in rect shader".into(),
+                )
+            })?;
+        let loc_pane_size = gl
+            .get_uniform_location(program, "u_pane_size")
+            .ok_or_else(|| {
+                crate::GpuError::ShaderCompile(
+                    "u_pane_size uniform not found in rect shader".into(),
+                )
+            })?;
+        let loc_pane_radii = gl
+            .get_uniform_location(program, "u_pane_radii")
+            .ok_or_else(|| {
+                crate::GpuError::ShaderCompile(
+                    "u_pane_radii uniform not found in rect shader".into(),
+                )
+            })?;
+        gl.use_program(Some(program));
+        gl.uniform_2_f32(Some(&loc_pane_origin), 0.0, 0.0);
+        gl.uniform_2_f32(Some(&loc_pane_size), 0.0, 0.0);
+        gl.uniform_4_f32(Some(&loc_pane_radii), 0.0, 0.0, 0.0, 0.0);
+        gl.use_program(None);
 
         let vao = gl
             .create_vertex_array()
@@ -588,6 +676,9 @@ impl GlRectPipeline {
             vao,
             instance_vbo,
             loc_viewport,
+            loc_pane_origin,
+            loc_pane_size,
+            loc_pane_radii,
             loc_use_linear_blending,
             max_rects,
         })
@@ -607,19 +698,23 @@ impl GlRectPipeline {
         let _ = (viewport_w, viewport_h);
     }
 
-    /// Draw a range of previously uploaded rects.
-    unsafe fn draw_range(
+    /// Draw previously uploaded rects grouped by pane clipping uniforms.
+    unsafe fn draw_ranges(
         &self,
         gl: &glow::Context,
-        start: usize,
-        count: usize,
+        ranges: &[PaneRectRange],
         viewport_w: f32,
         viewport_h: f32,
         use_linear_blending: bool,
     ) {
-        if count == 0 {
+        if ranges.is_empty() {
             return;
         }
+        let any_non_empty = ranges.iter().any(|range| range.count > 0);
+        if !any_non_empty {
+            return;
+        }
+        let stride = std::mem::size_of::<Rect>() as i32;
         gl.use_program(Some(self.program));
         gl.uniform_2_f32(Some(&self.loc_viewport), viewport_w, viewport_h);
         if let Some(ref loc) = self.loc_use_linear_blending {
@@ -628,19 +723,43 @@ impl GlRectPipeline {
         gl.bind_vertex_array(Some(self.vao));
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instance_vbo));
 
-        let stride = std::mem::size_of::<Rect>() as i32;
-        let base = (start * std::mem::size_of::<Rect>()) as i32;
-        gl.enable_vertex_attrib_array(0);
-        gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, stride, base);
-        gl.vertex_attrib_divisor(0, 1);
-        gl.enable_vertex_attrib_array(1);
-        gl.vertex_attrib_pointer_f32(1, 2, glow::FLOAT, false, stride, base + 8);
-        gl.vertex_attrib_divisor(1, 1);
-        gl.enable_vertex_attrib_array(2);
-        gl.vertex_attrib_pointer_f32(2, 4, glow::FLOAT, false, stride, base + 16);
-        gl.vertex_attrib_divisor(2, 1);
+        for range in ranges {
+            let start = range.start as usize;
+            let count = range.count as usize;
+            if count == 0 || start >= self.max_rects {
+                continue;
+            }
+            let count = count.min(self.max_rects - start);
+            gl.uniform_2_f32(
+                Some(&self.loc_pane_origin),
+                range.pane_origin[0],
+                range.pane_origin[1],
+            );
+            gl.uniform_2_f32(
+                Some(&self.loc_pane_size),
+                range.pane_size[0],
+                range.pane_size[1],
+            );
+            gl.uniform_4_f32(
+                Some(&self.loc_pane_radii),
+                range.pane_radii[0],
+                range.pane_radii[1],
+                range.pane_radii[2],
+                range.pane_radii[3],
+            );
+            let base = (start * std::mem::size_of::<Rect>()) as i32;
+            gl.enable_vertex_attrib_array(0);
+            gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, stride, base);
+            gl.vertex_attrib_divisor(0, 1);
+            gl.enable_vertex_attrib_array(1);
+            gl.vertex_attrib_pointer_f32(1, 2, glow::FLOAT, false, stride, base + 8);
+            gl.vertex_attrib_divisor(1, 1);
+            gl.enable_vertex_attrib_array(2);
+            gl.vertex_attrib_pointer_f32(2, 4, glow::FLOAT, false, stride, base + 16);
+            gl.vertex_attrib_divisor(2, 1);
 
-        gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, count as i32);
+            gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, count as i32);
+        }
 
         gl.bind_vertex_array(None);
         gl.use_program(None);
@@ -672,6 +791,10 @@ struct GlSdfPipeline {
 impl GlSdfPipeline {
     unsafe fn new(gl: &glow::Context, max_rects: usize) -> crate::Result<Self> {
         let sdf_fs = SDF_FS.replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS);
+        debug_assert!(
+            !sdf_fs.contains("PLACEHOLDER"),
+            "shader source still contains unfilled placeholder after all replacements"
+        );
         let program = compile_program(gl, SDF_VS, &sdf_fs, "sdf")?;
         let loc_viewport = gl
             .get_uniform_location(program, "u_viewport")
@@ -766,8 +889,20 @@ impl GlyphAtlasGpu {
         max_instances: usize,
     ) -> crate::Result<Self> {
         // Inject shared color functions into fragment shaders.
-        let alpha_fs = ALPHA_FS.replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS);
-        let color_fs = COLOR_FS.replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS);
+        let alpha_fs = ALPHA_FS
+            .replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS)
+            .replace("// CORNER_FUNCS_PLACEHOLDER", GLSL_CORNER_FUNCS);
+        let color_fs = COLOR_FS
+            .replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS)
+            .replace("// CORNER_FUNCS_PLACEHOLDER", GLSL_CORNER_FUNCS);
+        debug_assert!(
+            !alpha_fs.contains("PLACEHOLDER"),
+            "shader source still contains unfilled placeholder after all replacements"
+        );
+        debug_assert!(
+            !color_fs.contains("PLACEHOLDER"),
+            "shader source still contains unfilled placeholder after all replacements"
+        );
 
         let alpha = GlAtlasLayer::new(
             gl,
@@ -960,7 +1095,9 @@ impl Renderer {
                 }
                 Err(e) => {
                     log::warn!("Failed to create sRGB FBO, falling back to native blending: {e}");
-                    unsafe { gl.disable(glow::FRAMEBUFFER_SRGB); }
+                    unsafe {
+                        gl.disable(glow::FRAMEBUFFER_SRGB);
+                    }
                     (false, false, None)
                 }
             }
@@ -1115,6 +1252,40 @@ impl Renderer {
             let overlay_bg_idx = 1 + scene.overlay_bg_start; // +1 for clear rect
             let total_bg = all_bg.len().min(self.rects.max_rects);
             self.rects.upload(&self.gl, &all_bg, vw, vh);
+            let mut all_bg_ranges = Vec::with_capacity(1 + scene.bg_rect_ranges.len());
+            all_bg_ranges.push(PaneRectRange {
+                start: 0,
+                count: 1,
+                ..PaneRectRange::default()
+            });
+            all_bg_ranges.extend(scene.bg_rect_ranges.iter().map(|range| PaneRectRange {
+                start: range.start.saturating_add(1),
+                ..*range
+            }));
+            if scene.bg_rect_ranges.is_empty() && !scene.bg_rects.is_empty() {
+                all_bg_ranges.push(PaneRectRange {
+                    start: 1,
+                    count: scene.bg_rects.len() as u32,
+                    ..PaneRectRange::default()
+                });
+            }
+            let split_ranges =
+                |ranges: &[PaneRectRange], start: usize, end: usize| -> Vec<PaneRectRange> {
+                    ranges
+                        .iter()
+                        .filter_map(|range| {
+                            let range_start = range.start as usize;
+                            let range_end = range_start.saturating_add(range.count as usize);
+                            let clipped_start = range_start.max(start);
+                            let clipped_end = range_end.min(end);
+                            (clipped_start < clipped_end).then(|| PaneRectRange {
+                                start: clipped_start as u32,
+                                count: (clipped_end - clipped_start) as u32,
+                                ..*range
+                            })
+                        })
+                        .collect()
+                };
 
             // Blending flags for the frame.
             let lb = self.use_linear_blending;
@@ -1122,8 +1293,9 @@ impl Renderer {
 
             // 2. Draw non-focused pane background rects.
             let inactive_bg_count = active_bg_idx.min(total_bg);
+            let inactive_bg_ranges = split_ranges(&all_bg_ranges, 0, inactive_bg_count);
             self.rects
-                .draw_range(&self.gl, 0, inactive_bg_count, vw, vh, lb);
+                .draw_ranges(&self.gl, &inactive_bg_ranges, vw, vh, lb);
 
             let vp = crate::ViewportDims {
                 width: vw,
@@ -1150,21 +1322,33 @@ impl Renderer {
             atlas_gpu
                 .alpha
                 .draw_batches(&self.gl, alpha_count, &vp, scene.glyph_batches, lb, lc);
-            atlas_gpu
-                .color
-                .draw_batches(&self.gl, color_count, &vp, scene.color_glyph_batches, lb, lc);
+            atlas_gpu.color.draw_batches(
+                &self.gl,
+                color_count,
+                &vp,
+                scene.color_glyph_batches,
+                lb,
+                lc,
+            );
 
             // 5. Focused pane background rects.
             let active_bg_count = overlay_bg_idx.saturating_sub(active_bg_idx);
             if active_bg_count > 0 {
+                let active_bg_ranges =
+                    split_ranges(&all_bg_ranges, active_bg_idx, overlay_bg_idx.min(total_bg));
                 self.rects
-                    .draw_range(&self.gl, active_bg_idx, active_bg_count, vw, vh, lb);
+                    .draw_ranges(&self.gl, &active_bg_ranges, vw, vh, lb);
             }
 
             // 6. Draw active pane glyphs (scissored, no re-upload).
-            atlas_gpu
-                .alpha
-                .draw_batches(&self.gl, alpha_count, &vp, scene.active_glyph_batches, lb, lc);
+            atlas_gpu.alpha.draw_batches(
+                &self.gl,
+                alpha_count,
+                &vp,
+                scene.active_glyph_batches,
+                lb,
+                lc,
+            );
             atlas_gpu.color.draw_batches(
                 &self.gl,
                 color_count,
@@ -1178,8 +1362,9 @@ impl Renderer {
             //    occlude terminal text underneath popups like the context menu).
             let overlay_bg_count = total_bg.saturating_sub(overlay_bg_idx);
             if overlay_bg_count > 0 {
+                let overlay_bg_ranges = split_ranges(&all_bg_ranges, overlay_bg_idx, total_bg);
                 self.rects
-                    .draw_range(&self.gl, overlay_bg_idx, overlay_bg_count, vw, vh, lb);
+                    .draw_ranges(&self.gl, &overlay_bg_ranges, vw, vh, lb);
             }
 
             // 7b. SDF chrome (rounded corners + border + shadow) for popups
@@ -1192,21 +1377,20 @@ impl Renderer {
             }
 
             // 8. Overlay glyphs (no re-upload, just draw remaining range).
-            let overlay_alpha = ScissoredRange {
-                x: 0,
-                y: 0,
-                w: self.width,
-                h: self.height,
-                start: scene.pane_glyph_end,
-                end: scene.glyphs.len(),
+            let overlay_alpha = PaneGlyphRange {
+                start: scene.pane_glyph_end as u32,
+                count: scene.glyphs.len().saturating_sub(scene.pane_glyph_end) as u32,
+                scissor: (0, 0, self.width, self.height),
+                ..PaneGlyphRange::default()
             };
-            let overlay_color = ScissoredRange {
-                x: 0,
-                y: 0,
-                w: self.width,
-                h: self.height,
-                start: scene.pane_color_glyph_end,
-                end: scene.color_glyphs.len(),
+            let overlay_color = PaneGlyphRange {
+                start: scene.pane_color_glyph_end as u32,
+                count: scene
+                    .color_glyphs
+                    .len()
+                    .saturating_sub(scene.pane_color_glyph_end) as u32,
+                scissor: (0, 0, self.width, self.height),
+                ..PaneGlyphRange::default()
             };
             atlas_gpu
                 .alpha
@@ -1238,8 +1422,16 @@ impl Renderer {
                     self.gl
                         .bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(blur.ping.framebuffer));
                     self.gl.blit_framebuffer(
-                        0, 0, w, h, 0, 0, w, h,
-                        glow::COLOR_BUFFER_BIT, glow::NEAREST,
+                        0,
+                        0,
+                        w,
+                        h,
+                        0,
+                        0,
+                        w,
+                        h,
+                        glow::COLOR_BUFFER_BIT,
+                        glow::NEAREST,
                     );
 
                     // 2. Horizontal pass: ping.texture → pong.framebuffer.
@@ -1271,11 +1463,20 @@ impl Renderer {
 
                 // Disable GL_FRAMEBUFFER_SRGB during blit to avoid double gamma.
                 self.gl.disable(glow::FRAMEBUFFER_SRGB);
-                self.gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(read_fb));
+                self.gl
+                    .bind_framebuffer(glow::READ_FRAMEBUFFER, Some(read_fb));
                 self.gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
                 self.gl.blit_framebuffer(
-                    0, 0, w, h, 0, 0, w, h,
-                    glow::COLOR_BUFFER_BIT, glow::NEAREST,
+                    0,
+                    0,
+                    w,
+                    h,
+                    0,
+                    0,
+                    w,
+                    h,
+                    glow::COLOR_BUFFER_BIT,
+                    glow::NEAREST,
                 );
                 self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
                 self.gl.enable(glow::FRAMEBUFFER_SRGB);
@@ -1460,8 +1661,10 @@ layout(location = 1) in vec2 a_size;
 layout(location = 2) in vec4 a_color;
 
 uniform vec2 u_viewport;
+uniform vec2 u_pane_origin;
 
 out vec4 v_color;
+out vec2 v_pane_local;
 
 void main() {
     float x = float(gl_VertexID & 1);
@@ -1475,16 +1678,22 @@ void main() {
 
     gl_Position = vec4(ndc, 0.0, 1.0);
     v_color = a_color;
+    v_pane_local = px - u_pane_origin;
 }
 "#;
 
 const RECT_FS: &str = r#"#version 330 core
 
 in vec4 v_color;
+in vec2 v_pane_local;
+uniform vec2 u_pane_size;
+uniform vec4 u_pane_radii;
 uniform bool u_use_linear_blending;
 out vec4 frag_color;
 
 // COLOR_FUNCS_PLACEHOLDER
+
+// CORNER_FUNCS_PLACEHOLDER
 
 void main() {
     vec4 color = v_color;
@@ -1494,6 +1703,7 @@ void main() {
         color = linearize(color);
     }
     frag_color = vec4(color.rgb * color.a, color.a);
+    frag_color *= ciri_corner_alpha(v_pane_local, u_pane_size, u_pane_radii);
 }
 "#;
 
@@ -1660,10 +1870,12 @@ layout(location = 4) in vec4 a_color;
 layout(location = 5) in vec4 a_bg_color;
 
 uniform vec2 u_viewport;
+uniform vec2 u_pane_origin;
 
 out vec2 v_uv;
 out vec4 v_color;
 out vec4 v_bg_color;
+out vec2 v_pane_local;
 
 void main() {
     float x = float(gl_VertexID & 1);
@@ -1674,6 +1886,7 @@ void main() {
     v_bg_color = a_bg_color;
 
     vec2 px = a_pos + vec2(x, y) * a_size;
+    v_pane_local = px - u_pane_origin;
     vec2 ndc = vec2(
         px.x / u_viewport.x * 2.0 - 1.0,
         1.0 - px.y / u_viewport.y * 2.0
@@ -1683,6 +1896,38 @@ void main() {
 "#;
 
 // ─── Shared GLSL functions for sRGB ↔ linear conversion ────────────
+// Per-corner rounding alpha mask, built on Inigo Quilez's classic
+// rounded-box signed distance function (see iquilezles.org/articles/
+// distfunctions/). The same recipe powers ciri's existing SDF chrome
+// path (`sdf_rounded_box` further down this file) — this helper is the
+// alpha-mask packaging of it for callers that just want corner clipping
+// on top of an already-rendered fragment (cell bg, glyphs, pane bg,
+// focus ring).
+//
+// `radii` order is CSS: tl, tr, br, bl. The early return on all-zero
+// radii means non-rounded callers pay one branch and zero ALU.
+const GLSL_CORNER_FUNCS: &str = r#"
+float ciri_sdf_rounded_box(vec2 p, vec2 b, vec4 r) {
+    float rx = (p.x > 0.0) ? r.y : r.x;
+    float bx = (p.x > 0.0) ? r.z : r.w;
+    float radius = (p.y > 0.0) ? bx : rx;
+    vec2 q = abs(p) - b + vec2(radius);
+    return min(max(q.x, q.y), 0.0) + length(max(q, vec2(0.0))) - radius;
+}
+
+float ciri_corner_alpha(vec2 px, vec2 size, vec4 radii) {
+    if (radii.x <= 0.0 && radii.y <= 0.0 && radii.z <= 0.0 && radii.w <= 0.0) {
+        return 1.0;
+    }
+    float d = ciri_sdf_rounded_box(px - 0.5 * size, 0.5 * size, radii);
+    // smoothstep spans 2 * aa, so use half-pixel derivative to land
+    // a one-pixel-wide AA transition — matches the chrome SDF path's
+    // `fwidth(d_body) * 0.5` further down this file.
+    float aa = max(fwidth(d) * 0.5, 1e-5);
+    return 1.0 - smoothstep(-aa, aa, d);
+}
+"#;
+
 const GLSL_COLOR_FUNCS: &str = r#"
 vec4 linearize(vec4 srgb) {
     bvec3 c = lessThanEqual(srgb.rgb, vec3(0.04045));
@@ -1716,14 +1961,19 @@ const ALPHA_FS: &str = r#"#version 330 core
 in vec2 v_uv;
 in vec4 v_color;
 in vec4 v_bg_color;
+in vec2 v_pane_local;
 
 uniform sampler2D u_atlas;
+uniform vec2 u_pane_size;
+uniform vec4 u_pane_radii;
 uniform bool u_use_linear_blending;
 uniform bool u_use_linear_correction;
 
 out vec4 frag_color;
 
 // COLOR_FUNCS_PLACEHOLDER
+
+// CORNER_FUNCS_PLACEHOLDER
 
 void main() {
     // Input color is sRGB non-premultiplied. Always linearize first.
@@ -1767,6 +2017,7 @@ void main() {
     // - linear premultiplied (when use_linear_blending) → GPU auto sRGB-encodes via SRGB8_ALPHA8 FBO
     // - sRGB premultiplied (when native) → written directly to RGBA8 FBO
     color *= a;
+    color *= ciri_corner_alpha(v_pane_local, u_pane_size, u_pane_radii);
     frag_color = color;
 }
 "#;
@@ -1776,14 +2027,19 @@ const COLOR_FS: &str = r#"#version 330 core
 in vec2 v_uv;
 in vec4 v_color;
 in vec4 v_bg_color;
+in vec2 v_pane_local;
 
 uniform sampler2D u_atlas;
+uniform vec2 u_pane_size;
+uniform vec4 u_pane_radii;
 uniform bool u_use_linear_blending;
 uniform bool u_use_linear_correction;
 
 out vec4 frag_color;
 
 // COLOR_FUNCS_PLACEHOLDER
+
+// CORNER_FUNCS_PLACEHOLDER
 
 void main() {
     // Atlas is SRGB8_ALPHA8 — GPU auto-linearizes on sample.
@@ -1800,6 +2056,7 @@ void main() {
         srgb_texel.rgb *= srgb_texel.a; // re-premultiply
         frag_color = vec4(srgb_texel.rgb * v_color.rgb, srgb_texel.a * v_color.a);
     }
+    frag_color *= ciri_corner_alpha(v_pane_local, u_pane_size, u_pane_radii);
 }
 "#;
 

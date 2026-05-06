@@ -31,6 +31,7 @@ This avoids the current split where chrome paints through `ciri-ui` but hit test
 
 6. Keep terminal rendering separate.
    Terminal grid backgrounds, selection, links, focus rings, scrollbars, images, and overview pane thumbnails remain renderer-domain primitives unless they become real widgets.
+   Pane corner rounding follows that boundary: `appearance.pane_corner_radius` is carried through renderer pane ranges and SDF focus-ring rects, not through `ciri-ui` chrome widgets.
 
 ## Non-Goals
 

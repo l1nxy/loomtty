@@ -3,8 +3,9 @@ use ciri_config::theme::ThemeConfig;
 use ciri_layout::geometry::Rect as GeoRect;
 use ciri_protocol::message::*;
 use ciri_render::FrameScene;
-use ciri_render::glyph_cache::{GlyphInstance, ScissoredRange};
-use ciri_render::rect::Rect;
+use ciri_render::glyph_cache::{GlyphInstance, PaneGlyphRange};
+use ciri_render::rect::{PaneRectRange, Rect};
+use ciri_render::sdf_rect::SdfRect;
 use ciri_render::terminal;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -28,17 +29,18 @@ struct TilePaintConfig {
 /// back into `App::render_bufs` to preserve their capacity.
 struct AssembledScene {
     bg_rects: Vec<Rect>,
+    bg_rect_ranges: Vec<PaneRectRange>,
     glyphs: Vec<GlyphInstance>,
     color_glyphs: Vec<GlyphInstance>,
-    glyph_batches: Vec<ScissoredRange>,
-    color_glyph_batches: Vec<ScissoredRange>,
-    active_glyph_batches: Vec<ScissoredRange>,
-    active_color_glyph_batches: Vec<ScissoredRange>,
-    /// Cached chrome SDF rects extended in-place by the transient pass.
-    /// `cached_sdf_len` records the prefix length so post-draw can
-    /// truncate back to exactly the cached portion before returning the
-    /// Vec to `cached_ui_scene.sdf_rects`.
+    glyph_batches: Vec<PaneGlyphRange>,
+    color_glyph_batches: Vec<PaneGlyphRange>,
+    active_glyph_batches: Vec<PaneGlyphRange>,
+    active_color_glyph_batches: Vec<PaneGlyphRange>,
+    /// Frame SDF rects in draw order: pane focus rings, cached chrome,
+    /// then transient chrome. The two lengths let post-draw discard
+    /// frame-local pane/transient rects and restore only cached chrome.
     ui_sdf_rects: Vec<ciri_render::sdf_rect::SdfRect>,
+    pane_sdf_len: usize,
     cached_sdf_len: usize,
     /// Index in `bg_rects` where active-tile backgrounds begin.
     active_bg_start: usize,
@@ -67,11 +69,67 @@ struct PaneGlyphFragment {
     glyphs: Vec<GlyphInstance>,
     color_glyphs: Vec<GlyphInstance>,
     scissor: (u32, u32, u32, u32),
+    pane_origin: [f32; 2],
+    pane_size: [f32; 2],
+    pane_radii: [f32; 4],
     is_active: bool,
     snapshot: u64,
 }
 
 impl App {
+    fn pane_rect_range(&self, start: usize, end: usize, pane: &GeoRect) -> Option<PaneRectRange> {
+        if start >= end {
+            return None;
+        }
+        let radius = self.core.config.appearance.pane_corner_radius;
+        Some(PaneRectRange {
+            start: start as u32,
+            count: (end - start) as u32,
+            pane_origin: [pane.x, pane.y],
+            pane_size: [pane.w, pane.h],
+            pane_radii: [radius, radius, radius, radius],
+        })
+    }
+
+    fn zero_rect_range(start: usize, end: usize) -> Option<PaneRectRange> {
+        if start >= end {
+            return None;
+        }
+        Some(PaneRectRange {
+            start: start as u32,
+            count: (end - start) as u32,
+            ..PaneRectRange::default()
+        })
+    }
+
+    fn focus_ring_uses_sdf(&self) -> bool {
+        matches!(
+            self.core.config.appearance.focus_ring.style,
+            FocusRingStyle::Solid | FocusRingStyle::Glow
+        )
+    }
+
+    fn pane_glyph_range(
+        &self,
+        start: usize,
+        end: usize,
+        scissor: (u32, u32, u32, u32),
+        pane: &GeoRect,
+    ) -> Option<PaneGlyphRange> {
+        if start >= end {
+            return None;
+        }
+        let radius = self.core.config.appearance.pane_corner_radius;
+        Some(PaneGlyphRange {
+            start: start as u32,
+            count: (end - start) as u32,
+            scissor,
+            pane_origin: [pane.x, pane.y],
+            pane_size: [pane.w, pane.h],
+            pane_radii: [radius, radius, radius, radius],
+        })
+    }
+
     fn zero_glyph_instance() -> GlyphInstance {
         GlyphInstance {
             pos: [0.0, 0.0],
@@ -213,6 +271,12 @@ impl App {
             glyphs,
             color_glyphs,
             scissor: visual.scissor,
+            pane_origin: [visual.tr.x, visual.tr.y],
+            pane_size: [visual.tr.w, visual.tr.h],
+            pane_radii: {
+                let radius = self.core.config.appearance.pane_corner_radius;
+                [radius, radius, radius, radius]
+            },
             is_active,
             snapshot,
         })
@@ -320,6 +384,8 @@ impl App {
         vh: f32,
         paint: TilePaintConfig,
         bg_rects: &mut Vec<Rect>,
+        bg_rect_ranges: &mut Vec<PaneRectRange>,
+        sdf_rects: &mut Vec<SdfRect>,
     ) {
         let Some(visual) = self.pane_visual_state(pane_id, tile_rect, zoom, vw, vh) else {
             return;
@@ -334,9 +400,22 @@ impl App {
             visual.dim.to_bits(),
         );
 
+        // Same focus-ring/inactive-border split as `build_tile`.
+        let range_start: usize;
         if is_active {
-            self.emit_focus_ring(&tr, zoom, &paint, bg_rects);
+            if self.focus_ring_uses_sdf() {
+                self.emit_focus_ring_sdf(&tr, zoom, &paint, sdf_rects);
+            } else {
+                let ring_start = bg_rects.len();
+                self.emit_focus_ring_rects(&tr, zoom, &paint, bg_rects);
+                // TODO(C-followup): proper dashed SDF border
+                if let Some(range) = Self::zero_rect_range(ring_start, bg_rects.len()) {
+                    bg_rect_ranges.push(range);
+                }
+            }
+            range_start = bg_rects.len();
         } else {
+            range_start = bg_rects.len();
             bg_rects.push(Rect {
                 x: tr.x,
                 y: tr.y,
@@ -357,6 +436,9 @@ impl App {
         self.emit_overview_hover(pane_id, &tr, zoom, &paint, bg_rects);
 
         let Some(view) = self.cached_views.get(&pane_id) else {
+            if let Some(range) = self.pane_rect_range(range_start, bg_rects.len(), &tr) {
+                bg_rect_ranges.push(range);
+            }
             return;
         };
 
@@ -425,6 +507,9 @@ impl App {
                 h: tr.h,
                 color: [0.0, 0.0, 0.0, overlay_alpha],
             });
+        }
+        if let Some(range) = self.pane_rect_range(range_start, bg_rects.len(), &tr) {
+            bg_rect_ranges.push(range);
         }
     }
 
@@ -952,7 +1037,60 @@ impl App {
         mx >= sx && mx <= sx + scrollbar_rect.w && my >= sy && my <= sy + scrollbar_rect.h
     }
 
-    fn emit_focus_ring(
+    fn emit_focus_ring_sdf(
+        &self,
+        tr: &GeoRect,
+        zoom: f32,
+        paint: &TilePaintConfig,
+        sdf_rects: &mut Vec<SdfRect>,
+    ) {
+        let radius = self.core.config.appearance.pane_corner_radius;
+        let border_rect = SdfRect {
+            pos: [tr.x, tr.y],
+            size: [tr.w, tr.h],
+            color: [0.0, 0.0, 0.0, 0.0],
+            radii: [radius, radius, radius, radius],
+            border_color: paint.active_border,
+            border_width: paint.border_w * zoom,
+            shadow_blur: 0.0,
+            shadow_offset: [0.0, 0.0],
+            shadow_color: [0.0, 0.0, 0.0, 0.0],
+        };
+
+        if let FocusRingStyle::Glow = self.core.config.appearance.focus_ring.style {
+            let fr = &self.core.config.appearance.focus_ring;
+            let layers = fr.glow_layers.max(1) as usize;
+            for layer in (0..layers).rev() {
+                let offset = fr.glow_radius * (layer + 1) as f32 / layers as f32;
+                let alpha = paint.active_border[3] * (1.0 - layer as f32 / layers as f32) * 0.3;
+                sdf_rects.push(SdfRect {
+                    pos: [tr.x - offset, tr.y - offset],
+                    size: [tr.w + offset * 2.0, tr.h + offset * 2.0],
+                    color: [0.0, 0.0, 0.0, 0.0],
+                    radii: [
+                        radius + offset,
+                        radius + offset,
+                        radius + offset,
+                        radius + offset,
+                    ],
+                    border_color: [0.0, 0.0, 0.0, 0.0],
+                    border_width: 0.0,
+                    shadow_blur: offset,
+                    shadow_offset: [0.0, 0.0],
+                    shadow_color: [
+                        paint.active_border[0],
+                        paint.active_border[1],
+                        paint.active_border[2],
+                        alpha,
+                    ],
+                });
+            }
+        }
+
+        sdf_rects.push(border_rect);
+    }
+
+    fn emit_focus_ring_rects(
         &self,
         tr: &GeoRect,
         zoom: f32,
@@ -1360,10 +1498,12 @@ impl App {
         vh: f32,
         paint: TilePaintConfig,
         bg_rects: &mut Vec<Rect>,
+        bg_rect_ranges: &mut Vec<PaneRectRange>,
+        sdf_rects: &mut Vec<SdfRect>,
         glyphs: &mut Vec<GlyphInstance>,
         color_glyphs: &mut Vec<GlyphInstance>,
-        glyph_batches: &mut Vec<ScissoredRange>,
-        color_glyph_batches: &mut Vec<ScissoredRange>,
+        glyph_batches: &mut Vec<PaneGlyphRange>,
+        color_glyph_batches: &mut Vec<PaneGlyphRange>,
     ) {
         let Some(visual) = self.pane_visual_state(pane_id, tile_rect, zoom, vw, vh) else {
             return;
@@ -1372,10 +1512,26 @@ impl App {
         let inner_x = visual.inner_x;
         let inner_y = visual.inner_y;
 
-        // Focus ring / inactive border
+        // Focus ring / inactive border.
+        // The inactive variant is a single pane-sized fill (the cell-bg
+        // path paints `paint.bg_color` over the inset, leaving the border
+        // showing along `tr`'s edge), which IS part of the pane and SHOULD
+        // round with it — keep it inside the pane range below.
+        let range_start: usize;
         if is_active {
-            self.emit_focus_ring(&tr, zoom, &paint, bg_rects);
+            if self.focus_ring_uses_sdf() {
+                self.emit_focus_ring_sdf(&tr, zoom, &paint, sdf_rects);
+            } else {
+                let ring_start = bg_rects.len();
+                self.emit_focus_ring_rects(&tr, zoom, &paint, bg_rects);
+                // TODO(C-followup): proper dashed SDF border
+                if let Some(range) = Self::zero_rect_range(ring_start, bg_rects.len()) {
+                    bg_rect_ranges.push(range);
+                }
+            }
+            range_start = bg_rects.len();
         } else {
+            range_start = bg_rects.len();
             bg_rects.push(Rect {
                 x: tr.x,
                 y: tr.y,
@@ -1399,6 +1555,9 @@ impl App {
 
         // Cell backgrounds from view
         let Some(view) = self.cached_views.remove(&pane_id) else {
+            if let Some(range) = self.pane_rect_range(range_start, bg_rects.len(), &tr) {
+                bg_rect_ranges.push(range);
+            }
             return;
         };
         let tile_key = (
@@ -1497,26 +1656,19 @@ impl App {
         self.build_pane_images(pane_id, inner_x, inner_y, zoom, visual.dim, color_glyphs);
 
         // Scissor batches
-        let (sx, sy, sw, sh) = visual.scissor;
         if glyph_start < glyphs.len() {
-            glyph_batches.push(ScissoredRange {
-                x: sx,
-                y: sy,
-                w: sw,
-                h: sh,
-                start: glyph_start,
-                end: glyphs.len(),
-            });
+            if let Some(range) =
+                self.pane_glyph_range(glyph_start, glyphs.len(), visual.scissor, &tr)
+            {
+                glyph_batches.push(range);
+            }
         }
         if color_start < color_glyphs.len() {
-            color_glyph_batches.push(ScissoredRange {
-                x: sx,
-                y: sy,
-                w: sw,
-                h: sh,
-                start: color_start,
-                end: color_glyphs.len(),
-            });
+            if let Some(range) =
+                self.pane_glyph_range(color_start, color_glyphs.len(), visual.scissor, &tr)
+            {
+                color_glyph_batches.push(range);
+            }
         }
 
         // Open animation overlay
@@ -1530,6 +1682,9 @@ impl App {
                 color: [0.0, 0.0, 0.0, overlay_alpha],
             });
         }
+        if let Some(range) = self.pane_rect_range(range_start, bg_rects.len(), &tr) {
+            bg_rect_ranges.push(range);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1540,12 +1695,14 @@ impl App {
         vw: f32,
         vh: f32,
         bg_rects: &mut Vec<Rect>,
+        bg_rect_ranges: &mut Vec<PaneRectRange>,
+        sdf_rects: &mut Vec<SdfRect>,
         glyphs: &mut Vec<GlyphInstance>,
         color_glyphs: &mut Vec<GlyphInstance>,
-        glyph_batches: &mut Vec<ScissoredRange>,
-        color_glyph_batches: &mut Vec<ScissoredRange>,
-        active_glyph_batches: &mut Vec<ScissoredRange>,
-        active_color_glyph_batches: &mut Vec<ScissoredRange>,
+        glyph_batches: &mut Vec<PaneGlyphRange>,
+        color_glyph_batches: &mut Vec<PaneGlyphRange>,
+        active_glyph_batches: &mut Vec<PaneGlyphRange>,
+        active_color_glyph_batches: &mut Vec<PaneGlyphRange>,
     ) -> usize {
         let zoom_threshold = self.core.config.animation.zoom_threshold;
         let paint = self.tile_paint_config();
@@ -1563,6 +1720,8 @@ impl App {
                 vh,
                 paint,
                 bg_rects,
+                bg_rect_ranges,
+                sdf_rects,
                 glyphs,
                 color_glyphs,
                 glyph_batches,
@@ -1571,6 +1730,7 @@ impl App {
         }
 
         for (rect, opacity, _slide) in self.core.anim_mgr.closing_panes() {
+            let range_start = bg_rects.len();
             let (rx, ry, rw, rh) = if zoom < zoom_threshold {
                 let cx = vw / 2.0;
                 let cy = vh / 2.0;
@@ -1590,6 +1750,9 @@ impl App {
                 h: rh,
                 color: [0.1, 0.1, 0.1, opacity * 0.5],
             });
+            if let Some(range) = Self::zero_rect_range(range_start, bg_rects.len()) {
+                bg_rect_ranges.push(range);
+            }
         }
 
         let active_bg_start = bg_rects.len();
@@ -1607,6 +1770,8 @@ impl App {
                 vh,
                 paint,
                 bg_rects,
+                bg_rect_ranges,
+                sdf_rects,
                 glyphs,
                 color_glyphs,
                 active_glyph_batches,
@@ -1686,6 +1851,9 @@ impl App {
                     color_len: fragment.color_glyphs.len(),
                     color_cap,
                     scissor: fragment.scissor,
+                    pane_origin: fragment.pane_origin,
+                    pane_size: fragment.pane_size,
+                    pane_radii: fragment.pane_radii,
                     is_active: fragment.is_active,
                     snapshot: fragment.snapshot,
                     ..Default::default()
@@ -1780,6 +1948,9 @@ impl App {
                 region_mut.glyph_len = fragment.glyphs.len();
                 region_mut.color_len = fragment.color_glyphs.len();
                 region_mut.scissor = fragment.scissor;
+                region_mut.pane_origin = fragment.pane_origin;
+                region_mut.pane_size = fragment.pane_size;
+                region_mut.pane_radii = fragment.pane_radii;
                 region_mut.is_active = fragment.is_active;
                 region_mut.snapshot = fragment.snapshot;
             }
@@ -1800,15 +1971,14 @@ impl App {
             let Some(region) = self.render_bufs.pane_regions.get(&pane_id).copied() else {
                 continue;
             };
-            let (x, y, w, h) = region.scissor;
             if region.glyph_len > 0 {
-                let batch = ScissoredRange {
-                    x,
-                    y,
-                    w,
-                    h,
-                    start: region.glyph_offset,
-                    end: region.glyph_offset + region.glyph_len,
+                let batch = PaneGlyphRange {
+                    start: region.glyph_offset as u32,
+                    count: region.glyph_len as u32,
+                    scissor: region.scissor,
+                    pane_origin: region.pane_origin,
+                    pane_size: region.pane_size,
+                    pane_radii: region.pane_radii,
                 };
                 if region.is_active {
                     self.render_bufs.active_glyph_batches.push(batch);
@@ -1817,13 +1987,13 @@ impl App {
                 }
             }
             if region.color_len > 0 {
-                let batch = ScissoredRange {
-                    x,
-                    y,
-                    w,
-                    h,
-                    start: region.color_offset,
-                    end: region.color_offset + region.color_len,
+                let batch = PaneGlyphRange {
+                    start: region.color_offset as u32,
+                    count: region.color_len as u32,
+                    scissor: region.scissor,
+                    pane_origin: region.pane_origin,
+                    pane_size: region.pane_size,
+                    pane_radii: region.pane_radii,
                 };
                 if region.is_active {
                     self.render_bufs.active_color_glyph_batches.push(batch);
@@ -2251,6 +2421,7 @@ impl App {
         self.render_bufs.dirty_color_ranges.clear();
 
         let mut bg_rects = std::mem::take(&mut self.render_bufs.bg_rects);
+        let mut bg_rect_ranges = std::mem::take(&mut self.render_bufs.bg_rect_ranges);
         let glyphs = std::mem::take(&mut self.render_bufs.glyphs);
         let color_glyphs = std::mem::take(&mut self.render_bufs.color_glyphs);
         let glyph_batches = std::mem::take(&mut self.render_bufs.glyph_batches);
@@ -2258,7 +2429,9 @@ impl App {
         let active_glyph_batches = std::mem::take(&mut self.render_bufs.active_glyph_batches);
         let active_color_glyph_batches =
             std::mem::take(&mut self.render_bufs.active_color_glyph_batches);
+        let mut ui_sdf_rects = Vec::new();
         bg_rects.clear();
+        bg_rect_ranges.clear();
         let (active_bg_start, pane_glyph_end, pane_color_glyph_end, mut glyphs, mut color_glyphs) =
             if use_retained_panes {
                 self.render_bufs.glyphs = glyphs;
@@ -2289,11 +2462,14 @@ impl App {
                         vh_f,
                         paint,
                         &mut bg_rects,
+                        &mut bg_rect_ranges,
+                        &mut ui_sdf_rects,
                     );
                 }
 
                 let zoom_threshold = self.core.config.animation.zoom_threshold;
                 for (rect, opacity, _slide) in self.core.anim_mgr.closing_panes() {
+                    let range_start = bg_rects.len();
                     let (rx, ry, rw, rh) = if zoom < zoom_threshold {
                         let cx = vw_f / 2.0;
                         let cy = vh_f / 2.0;
@@ -2313,6 +2489,9 @@ impl App {
                         h: rh,
                         color: [0.1, 0.1, 0.1, opacity * 0.5],
                     });
+                    if let Some(range) = Self::zero_rect_range(range_start, bg_rects.len()) {
+                        bg_rect_ranges.push(range);
+                    }
                 }
 
                 let active_bg_start = bg_rects.len();
@@ -2329,6 +2508,8 @@ impl App {
                         vh_f,
                         paint,
                         &mut bg_rects,
+                        &mut bg_rect_ranges,
+                        &mut ui_sdf_rects,
                     );
                 }
 
@@ -2359,6 +2540,8 @@ impl App {
                     vw_f,
                     vh_f,
                     &mut bg_rects,
+                    &mut bg_rect_ranges,
+                    &mut ui_sdf_rects,
                     &mut glyphs,
                     &mut color_glyphs,
                     &mut glyph_batches,
@@ -2391,14 +2574,14 @@ impl App {
         let active_color_glyph_batches =
             std::mem::take(&mut self.render_bufs.active_color_glyph_batches);
         let overlay_bg_start = bg_rects.len();
+        let overlay_range_start = bg_rects.len();
         self.build_ui(vw_f, vh_f, &mut glyphs, &mut color_glyphs);
-        // Take the cached chrome SDF rects rather than cloning: transient
-        // overlays (palette, context menu, paste dialog…) extend onto the
-        // cached prefix for this frame's draw_frame, then we truncate back
-        // to the cached length and put the Vec back so next frame's chrome
-        // cache hit still reuses the same buffer (capacity preserved).
-        let mut ui_sdf_rects = std::mem::take(&mut self.cached_ui_scene.sdf_rects);
-        let cached_sdf_len = ui_sdf_rects.len();
+        let pane_sdf_len = ui_sdf_rects.len();
+        // Cached chrome must draw after pane focus rings but before
+        // transient overlays that should sit above everything else.
+        let cached_sdf_rects = std::mem::take(&mut self.cached_ui_scene.sdf_rects);
+        let cached_sdf_len = cached_sdf_rects.len();
+        ui_sdf_rects.extend(cached_sdf_rects);
         self.build_transient_ui(
             offset_tiles,
             zoom,
@@ -2408,9 +2591,13 @@ impl App {
             &mut glyphs,
             &mut color_glyphs,
         );
+        if let Some(range) = Self::zero_rect_range(overlay_range_start, bg_rects.len()) {
+            bg_rect_ranges.push(range);
+        }
 
         AssembledScene {
             bg_rects,
+            bg_rect_ranges,
             glyphs,
             color_glyphs,
             glyph_batches,
@@ -2418,6 +2605,7 @@ impl App {
             active_glyph_batches,
             active_color_glyph_batches,
             ui_sdf_rects,
+            pane_sdf_len,
             cached_sdf_len,
             active_bg_start,
             pane_glyph_end,
@@ -2442,6 +2630,7 @@ impl App {
     ) {
         let AssembledScene {
             bg_rects,
+            bg_rect_ranges,
             glyphs,
             color_glyphs,
             glyph_batches,
@@ -2449,6 +2638,7 @@ impl App {
             active_glyph_batches,
             active_color_glyph_batches,
             mut ui_sdf_rects,
+            pane_sdf_len,
             cached_sdf_len,
             active_bg_start,
             pane_glyph_end,
@@ -2466,6 +2656,7 @@ impl App {
             FrameScene {
                 clear_color,
                 bg_rects: &bg_rects,
+                bg_rect_ranges: &bg_rect_ranges,
                 glyphs: &glyphs,
                 color_glyphs: &color_glyphs,
                 glyph_batches: &glyph_batches,
@@ -2493,14 +2684,15 @@ impl App {
             self.last_render_snapshot = Some(render_snapshot);
         }
 
-        // Restore cached_ui_scene.sdf_rects: drop the transient extension
-        // (truncate preserves capacity) and put the buffer back. The cached
-        // prefix is byte-identical to what we took — next frame's chrome
-        // cache hit still extends the same content into the GPU stream.
+        // Restore cached_ui_scene.sdf_rects: drop pane focus rings from the
+        // front and transient chrome from the back. The cached middle
+        // segment is byte-identical to what we took.
+        ui_sdf_rects.drain(..pane_sdf_len);
         ui_sdf_rects.truncate(cached_sdf_len);
         self.cached_ui_scene.sdf_rects = ui_sdf_rects;
 
         self.render_bufs.bg_rects = bg_rects;
+        self.render_bufs.bg_rect_ranges = bg_rect_ranges;
         self.render_bufs.glyphs = glyphs;
         self.render_bufs.color_glyphs = color_glyphs;
         self.render_bufs.glyph_batches = glyph_batches;
@@ -2846,8 +3038,10 @@ mod tests {
             .map(|c| c.cell_height)
             .expect("test_cache populated above");
         assert!(
-            sdf_rects.iter().any(|r| (r.size[0] - 2.0).abs() < 0.01
-                && (r.size[1] - expected_cursor_h).abs() < 0.01),
+            sdf_rects
+                .iter()
+                .any(|r| (r.size[0] - 2.0).abs() < 0.01
+                    && (r.size[1] - expected_cursor_h).abs() < 0.01),
             "IME preedit cursor should be emitted as a narrow SDF rect (2.0 × cell_h = {})",
             expected_cursor_h,
         );
@@ -2897,6 +3091,8 @@ mod tests {
         let mut color_glyph_batches = Vec::new();
         let mut active_glyph_batches = Vec::new();
         let mut active_color_glyph_batches = Vec::new();
+        let mut bg_rect_ranges = Vec::new();
+        let mut sdf_rects = Vec::new();
 
         let active_bg_start = app.build_tiles(
             &tiles,
@@ -2904,6 +3100,8 @@ mod tests {
             1600.0,
             900.0,
             &mut bg_rects,
+            &mut bg_rect_ranges,
+            &mut sdf_rects,
             &mut glyphs,
             &mut color_glyphs,
             &mut glyph_batches,
@@ -2917,6 +3115,200 @@ mod tests {
         assert!(bg_rects[0].x < bg_rects[active_bg_start].x);
         assert!(glyph_batches.is_empty());
         assert!(active_glyph_batches.is_empty());
+    }
+
+    #[test]
+    fn build_tiles_zero_pane_corner_radius_marks_ranges_unrounded() {
+        let mut app = make_app();
+        app.core.config.appearance.focus_ring.style = FocusRingStyle::Solid;
+        app.core.config.appearance.pane_corner_radius = 0.0;
+        let tiles = vec![
+            (1, GeoRect::new(10.0, 20.0, 300.0, 200.0), false),
+            (2, GeoRect::new(330.0, 20.0, 300.0, 200.0), true),
+        ];
+        let mut bg_rects = Vec::new();
+        let mut bg_rect_ranges = Vec::new();
+        let mut sdf_rects = Vec::new();
+        let mut glyphs = Vec::new();
+        let mut color_glyphs = Vec::new();
+        let mut glyph_batches = Vec::new();
+        let mut color_glyph_batches = Vec::new();
+        let mut active_glyph_batches = Vec::new();
+        let mut active_color_glyph_batches = Vec::new();
+
+        app.build_tiles(
+            &tiles,
+            1.0,
+            1600.0,
+            900.0,
+            &mut bg_rects,
+            &mut bg_rect_ranges,
+            &mut sdf_rects,
+            &mut glyphs,
+            &mut color_glyphs,
+            &mut glyph_batches,
+            &mut color_glyph_batches,
+            &mut active_glyph_batches,
+            &mut active_color_glyph_batches,
+        );
+
+        assert!(!bg_rect_ranges.is_empty());
+        assert!(
+            bg_rect_ranges
+                .iter()
+                .all(|range| range.pane_radii == [0.0, 0.0, 0.0, 0.0])
+        );
+        assert!(glyph_batches.is_empty());
+        assert!(color_glyph_batches.is_empty());
+        assert!(active_glyph_batches.is_empty());
+        assert!(active_color_glyph_batches.is_empty());
+    }
+
+    #[test]
+    fn build_tiles_configures_pane_range_origin_size_and_radius() {
+        let mut app = make_app();
+        app.core.config.appearance.focus_ring.style = FocusRingStyle::Solid;
+        app.core.config.appearance.pane_corner_radius = 8.0;
+        let inactive = GeoRect::new(10.0, 20.0, 300.0, 200.0);
+        let active = GeoRect::new(330.0, 40.0, 280.0, 180.0);
+        let tiles = vec![(1, inactive, false), (2, active, true)];
+        let mut bg_rects = Vec::new();
+        let mut bg_rect_ranges = Vec::new();
+        let mut sdf_rects = Vec::new();
+        let mut glyphs = Vec::new();
+        let mut color_glyphs = Vec::new();
+        let mut glyph_batches = Vec::new();
+        let mut color_glyph_batches = Vec::new();
+        let mut active_glyph_batches = Vec::new();
+        let mut active_color_glyph_batches = Vec::new();
+
+        app.build_tiles(
+            &tiles,
+            1.0,
+            1600.0,
+            900.0,
+            &mut bg_rects,
+            &mut bg_rect_ranges,
+            &mut sdf_rects,
+            &mut glyphs,
+            &mut color_glyphs,
+            &mut glyph_batches,
+            &mut color_glyph_batches,
+            &mut active_glyph_batches,
+            &mut active_color_glyph_batches,
+        );
+
+        assert_eq!(bg_rect_ranges.len(), 2);
+        assert_eq!(bg_rect_ranges[0].pane_origin, [inactive.x, inactive.y]);
+        assert_eq!(bg_rect_ranges[0].pane_size, [inactive.w, inactive.h]);
+        assert_eq!(bg_rect_ranges[0].pane_radii, [8.0, 8.0, 8.0, 8.0]);
+        assert_eq!(bg_rect_ranges[1].pane_origin, [active.x, active.y]);
+        assert_eq!(bg_rect_ranges[1].pane_size, [active.w, active.h]);
+        assert_eq!(bg_rect_ranges[1].pane_radii, [8.0, 8.0, 8.0, 8.0]);
+    }
+
+    #[test]
+    fn solid_focus_ring_sdf_is_separate_from_pane_body_range() {
+        let mut app = make_app();
+        app.core.config.appearance.focus_ring.style = FocusRingStyle::Solid;
+        app.core.config.appearance.pane_corner_radius = 8.0;
+        let active = GeoRect::new(120.0, 80.0, 320.0, 240.0);
+        let tiles = vec![(7, active, true)];
+        let mut bg_rects = Vec::new();
+        let mut bg_rect_ranges = Vec::new();
+        let mut sdf_rects = Vec::new();
+        let mut glyphs = Vec::new();
+        let mut color_glyphs = Vec::new();
+        let mut glyph_batches = Vec::new();
+        let mut color_glyph_batches = Vec::new();
+        let mut active_glyph_batches = Vec::new();
+        let mut active_color_glyph_batches = Vec::new();
+
+        app.build_tiles(
+            &tiles,
+            1.0,
+            1600.0,
+            900.0,
+            &mut bg_rects,
+            &mut bg_rect_ranges,
+            &mut sdf_rects,
+            &mut glyphs,
+            &mut color_glyphs,
+            &mut glyph_batches,
+            &mut color_glyph_batches,
+            &mut active_glyph_batches,
+            &mut active_color_glyph_batches,
+        );
+
+        assert_eq!(sdf_rects.len(), 1);
+        assert_eq!(sdf_rects[0].pos, [active.x, active.y]);
+        assert_eq!(sdf_rects[0].size, [active.w, active.h]);
+        assert_eq!(sdf_rects[0].radii, [8.0, 8.0, 8.0, 8.0]);
+        assert_eq!(bg_rect_ranges.len(), 1);
+        assert_eq!(bg_rect_ranges[0].pane_origin, [active.x, active.y]);
+        assert_eq!(bg_rect_ranges[0].pane_size, [active.w, active.h]);
+        assert_eq!(bg_rect_ranges[0].pane_radii, [8.0, 8.0, 8.0, 8.0]);
+        assert!(
+            bg_rect_ranges
+                .iter()
+                .all(|range| range.pane_size != [0.0, 0.0])
+        );
+    }
+
+    #[test]
+    fn glow_focus_ring_sdf_preserves_configured_layers() {
+        let mut app = make_app();
+        app.core.config.appearance.focus_ring.style = FocusRingStyle::Glow;
+        app.core.config.appearance.focus_ring.glow_radius = 10.0;
+        app.core.config.appearance.focus_ring.glow_layers = 5;
+        app.core.config.appearance.pane_corner_radius = 6.0;
+        let paint = TilePaintConfig {
+            border_w: 2.0,
+            active_border: [0.2, 0.4, 0.8, 1.0],
+            inactive_border: [0.0, 0.0, 0.0, 0.0],
+            bg_color: [0.0, 0.0, 0.0, 0.0],
+            link_color: [0.0, 0.0, 0.0, 0.0],
+            accent: [0.0, 0.0, 0.0, 0.0],
+            cache_tile_glyphs: false,
+        };
+        let mut sdf_rects = Vec::new();
+
+        app.emit_focus_ring_sdf(
+            &GeoRect::new(100.0, 50.0, 300.0, 200.0),
+            1.0,
+            &paint,
+            &mut sdf_rects,
+        );
+
+        assert_eq!(sdf_rects.len(), 6, "five glow layers plus the border");
+        assert_eq!(sdf_rects[0].pos, [90.0, 40.0]);
+        assert_eq!(sdf_rects[0].size, [320.0, 220.0]);
+        assert!((sdf_rects[0].shadow_color[3] - 0.06).abs() < 0.001);
+        assert_eq!(sdf_rects[4].pos, [98.0, 48.0]);
+        assert!((sdf_rects[4].shadow_color[3] - 0.3).abs() < 0.001);
+        assert_eq!(sdf_rects[5].border_color, paint.active_border);
+        assert_eq!(sdf_rects[5].border_width, 2.0);
+    }
+
+    #[test]
+    fn assemble_scene_orders_focus_sdfs_before_cached_chrome() {
+        let mut app = make_app();
+        app.core.config.appearance.focus_ring.style = FocusRingStyle::Solid;
+        app.cached_ui_scene.sdf_rects.push(SdfRect {
+            pos: [1.0, 1.0],
+            size: [2.0, 2.0],
+            color: [0.9, 0.1, 0.1, 0.8],
+            ..SdfRect::default()
+        });
+        let tiles = vec![(2, GeoRect::new(320.0, 0.0, 300.0, 200.0), true)];
+        let paint = app.tile_paint_config();
+
+        let scene = app.assemble_scene(&tiles, &tiles, paint, 1.0, 1600.0, 900.0, false);
+
+        assert_eq!(scene.pane_sdf_len, 1);
+        assert_eq!(scene.cached_sdf_len, 1);
+        assert_eq!(scene.ui_sdf_rects[0].border_color, paint.active_border);
+        assert_eq!(scene.ui_sdf_rects[1].color, [0.9, 0.1, 0.1, 0.8]);
     }
 
     #[test]

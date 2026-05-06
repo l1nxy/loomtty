@@ -15,14 +15,17 @@ use std::sync::Arc;
 use winit::window::Window;
 
 use ciri_render::FrameScene;
-use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, PendingUpload, ScissoredRange};
-use ciri_render::rect::Rect;
+use ciri_render::glyph_cache::{GlyphCache, GlyphInstance, PaneGlyphRange, PendingUpload};
+use ciri_render::rect::{PaneRectRange, Rect};
 use ciri_render::sdf_rect::SdfRect;
 
 /// Upper bound on SDF chrome rects per frame. Chrome typically has
 /// ≤ 20 — 256 gives headroom for plugin UIs and modal stacks. If this is
 /// hit the tail is dropped; matches the existing `RectPipeline` behaviour.
 const MAX_SDF_RECTS: usize = 256;
+const RECT_UNIFORM_RECORD_SIZE: u64 = 48;
+const GLYPH_UNIFORM_RECORD_SIZE: u64 = 64;
+const BLADE_UNIFORM_STRIDE: u64 = 256;
 
 // ─── Rect pipeline ──────────────────────────────────────────────────
 
@@ -43,13 +46,15 @@ struct RectPipeline {
 
 impl RectPipeline {
     fn new(context: &gpu::Context, format: gpu::TextureFormat, max_rects: usize) -> Self {
+        let rect_shader_src =
+            RECT_SHADER.replace("// WGSL_CORNER_FUNCS_PLACEHOLDER", WGSL_CORNER_FUNCS);
         let shader = context.create_shader(gpu::ShaderDesc {
-            source: RECT_SHADER,
+            source: &rect_shader_src,
         });
 
         let uniform_buffer = context.create_buffer(gpu::BufferDesc {
             name: "rect_uniform",
-            size: 16,
+            size: BLADE_UNIFORM_STRIDE * max_rects.max(1) as u64,
             memory: gpu::Memory::Shared,
         });
 
@@ -130,14 +135,7 @@ impl RectPipeline {
         }
         let count = rects.len().min(self.max_rects);
 
-        let viewport = [viewport_w, viewport_h, 0.0f32, 0.0f32];
-        unsafe {
-            ptr::copy_nonoverlapping(
-                viewport.as_ptr() as *const u8,
-                self.uniform_buffer.data(),
-                16,
-            );
-        }
+        let _ = (viewport_w, viewport_h);
 
         let data = bytemuck::cast_slice(&rects[..count]);
         unsafe {
@@ -145,20 +143,70 @@ impl RectPipeline {
         }
     }
 
-    /// Draw a range of previously uploaded rects.
-    fn draw_range(&self, pass: &mut gpu::RenderCommandEncoder, start: usize, count: usize) {
-        if count == 0 {
+    fn write_uniform(
+        &self,
+        slot: usize,
+        viewport_w: f32,
+        viewport_h: f32,
+        pane_origin: [f32; 2],
+        pane_size: [f32; 2],
+        pane_radii: [f32; 4],
+    ) -> u64 {
+        let offset = slot as u64 * BLADE_UNIFORM_STRIDE;
+        debug_assert!(
+            offset + RECT_UNIFORM_RECORD_SIZE
+                <= BLADE_UNIFORM_STRIDE * self.max_rects.max(1) as u64
+        );
+        let viewport = [viewport_w, viewport_h, 0.0f32, 0.0f32];
+        unsafe {
+            let dst = self.uniform_buffer.data().add(offset as usize);
+            ptr::copy_nonoverlapping(viewport.as_ptr() as *const u8, dst, 16);
+            ptr::copy_nonoverlapping(pane_origin.as_ptr() as *const u8, dst.add(16), 8);
+            ptr::copy_nonoverlapping(pane_size.as_ptr() as *const u8, dst.add(24), 8);
+            ptr::copy_nonoverlapping(pane_radii.as_ptr() as *const u8, dst.add(32), 16);
+        }
+        offset
+    }
+
+    /// Draw previously uploaded rects grouped by pane clipping uniforms.
+    fn draw_ranges(
+        &self,
+        pass: &mut gpu::RenderCommandEncoder,
+        ranges: &[PaneRectRange],
+        viewport_w: f32,
+        viewport_h: f32,
+        uniform_slot: &mut usize,
+    ) {
+        if ranges.is_empty() {
             return;
         }
-        let mut pe = pass.with(&self.pipeline);
-        pe.bind(
-            0,
-            &RectData {
-                uniforms: self.uniform_buffer.at(0),
-            },
-        );
-        pe.bind_vertex(0, self.instance_buffer.at(0));
-        pe.draw(0, 4, start as u32, count as u32);
+        for range in ranges {
+            let start = range.start as usize;
+            let count = range.count as usize;
+            if count == 0 || start >= self.max_rects || *uniform_slot >= self.max_rects {
+                continue;
+            }
+            let count = count.min(self.max_rects - start);
+            let uniform_offset = self.write_uniform(
+                *uniform_slot,
+                viewport_w,
+                viewport_h,
+                range.pane_origin,
+                range.pane_size,
+                range.pane_radii,
+            );
+            *uniform_slot += 1;
+
+            let mut pe = pass.with(&self.pipeline);
+            pe.bind(
+                0,
+                &RectData {
+                    uniforms: self.uniform_buffer.at(uniform_offset),
+                },
+            );
+            pe.bind_vertex(0, self.instance_buffer.at(0));
+            pe.draw(0, 4, start as u32, count as u32);
+        }
     }
 
     fn destroy(&mut self, context: &gpu::Context) {
@@ -189,9 +237,7 @@ struct SdfPipeline {
 
 impl SdfPipeline {
     fn new(context: &gpu::Context, format: gpu::TextureFormat, max_rects: usize) -> Self {
-        let shader = context.create_shader(gpu::ShaderDesc {
-            source: SDF_SHADER,
-        });
+        let shader = context.create_shader(gpu::ShaderDesc { source: SDF_SHADER });
 
         let uniform_buffer = context.create_buffer(gpu::BufferDesc {
             name: "sdf_uniform",
@@ -443,7 +489,7 @@ impl AtlasLayer {
 
         let uniform_buffer = context.create_buffer(gpu::BufferDesc {
             name: "glyph_viewport_uniform",
-            size: 32, // vec4 size + u32 flags + 3xu32 padding
+            size: BLADE_UNIFORM_STRIDE * max_instances.max(1) as u64,
             memory: gpu::Memory::Shared,
         });
 
@@ -620,31 +666,41 @@ impl AtlasLayer {
             return;
         }
         let count = instances.len().min(max_instances);
-        // Write viewport size + blending flags to uniform buffer (32 bytes).
-        let viewport = [viewport_w, viewport_h, 0.0f32, 0.0f32];
-        unsafe {
-            ptr::copy_nonoverlapping(
-                viewport.as_ptr() as *const u8,
-                self.uniform_buffer.data(),
-                16,
-            );
-            let flags = self.blending_flags;
-            ptr::copy_nonoverlapping(
-                &flags as *const u32 as *const u8,
-                self.uniform_buffer.data().add(16),
-                4,
-            );
-            let pad = [0u32; 3];
-            ptr::copy_nonoverlapping(
-                pad.as_ptr() as *const u8,
-                self.uniform_buffer.data().add(20),
-                12,
-            );
-        }
+        let _ = (viewport_w, viewport_h);
         let data = bytemuck::cast_slice(&instances[..count]);
         unsafe {
             ptr::copy_nonoverlapping(data.as_ptr(), self.instance_buffer.data(), data.len());
         }
+    }
+
+    fn write_uniform(
+        &self,
+        slot: usize,
+        max_instances: usize,
+        viewport_w: f32,
+        viewport_h: f32,
+        pane_origin: [f32; 2],
+        pane_size: [f32; 2],
+        pane_radii: [f32; 4],
+    ) -> u64 {
+        let offset = slot as u64 * BLADE_UNIFORM_STRIDE;
+        debug_assert!(
+            offset + GLYPH_UNIFORM_RECORD_SIZE
+                <= BLADE_UNIFORM_STRIDE * max_instances.max(1) as u64
+        );
+        let viewport = [viewport_w, viewport_h, 0.0f32, 0.0f32];
+        let flags = self.blending_flags;
+        let pad = [0u32; 3];
+        unsafe {
+            let dst = self.uniform_buffer.data().add(offset as usize);
+            ptr::copy_nonoverlapping(viewport.as_ptr() as *const u8, dst, 16);
+            ptr::copy_nonoverlapping(&flags as *const u32 as *const u8, dst.add(16), 4);
+            ptr::copy_nonoverlapping(pad.as_ptr() as *const u8, dst.add(20), 12);
+            ptr::copy_nonoverlapping(pane_origin.as_ptr() as *const u8, dst.add(32), 8);
+            ptr::copy_nonoverlapping(pane_size.as_ptr() as *const u8, dst.add(40), 8);
+            ptr::copy_nonoverlapping(pane_radii.as_ptr() as *const u8, dst.add(48), 16);
+        }
+        offset
     }
 
     /// Draw scissored glyph batches.
@@ -654,7 +710,10 @@ impl AtlasLayer {
         pass: &mut gpu::RenderCommandEncoder,
         max_instances: usize,
         instance_count: usize,
-        batches: &[ScissoredRange],
+        batches: &[PaneGlyphRange],
+        viewport_w: f32,
+        viewport_h: f32,
+        uniform_slot: &mut usize,
     ) {
         if instance_count == 0 || batches.is_empty() {
             return;
@@ -662,26 +721,38 @@ impl AtlasLayer {
         let count = instance_count.min(max_instances);
 
         for batch in batches {
-            let start = batch.start.min(count);
-            let end = batch.end.min(count);
-            if start >= end || batch.w == 0 || batch.h == 0 {
+            let start = (batch.start as usize).min(count);
+            let end = start.saturating_add(batch.count as usize).min(count);
+            let (x, y, w, h) = batch.scissor;
+            if start >= end || w == 0 || h == 0 || *uniform_slot >= max_instances {
                 continue;
             }
+            let uniform_offset = self.write_uniform(
+                *uniform_slot,
+                max_instances,
+                viewport_w,
+                viewport_h,
+                batch.pane_origin,
+                batch.pane_size,
+                batch.pane_radii,
+            );
+            *uniform_slot += 1;
+
             let mut pe = pass.with(&self.pipeline);
             pe.bind(
                 0,
                 &GlyphShaderData {
                     atlas_tex: self.texture_view,
                     atlas_sampler: self.sampler,
-                    viewport: self.uniform_buffer.at(0),
+                    viewport: self.uniform_buffer.at(uniform_offset),
                 },
             );
             pe.bind_vertex(0, self.instance_buffer.at(0));
             pe.set_scissor_rect(&gpu::ScissorRect {
-                x: batch.x as i32,
-                y: batch.y as i32,
-                w: batch.w,
-                h: batch.h,
+                x: x as i32,
+                y: y as i32,
+                w,
+                h,
             });
             pe.draw(0, 4, start as u32, (end - start) as u32);
         }
@@ -718,10 +789,9 @@ impl GlyphAtlasGpu {
         blending_flags: u32,
     ) -> Self {
         // Inject shared color functions into alpha fragment shader.
-        let alpha_fragment = ALPHA_FRAGMENT.replace(
-            "// WGSL_COLOR_FUNCS_PLACEHOLDER",
-            WGSL_COLOR_FUNCS,
-        );
+        let alpha_fragment = ALPHA_FRAGMENT
+            .replace("// WGSL_COLOR_FUNCS_PLACEHOLDER", WGSL_COLOR_FUNCS)
+            .replace("// WGSL_CORNER_FUNCS_PLACEHOLDER", WGSL_CORNER_FUNCS);
         let alpha_shader_src = format!("{VERTEX_SHADER}\n{alpha_fragment}");
         let alpha = AtlasLayer::new(
             context,
@@ -745,7 +815,9 @@ impl GlyphAtlasGpu {
             },
         );
 
-        let color_shader_src = format!("{VERTEX_SHADER}\n{COLOR_FRAGMENT}");
+        let color_fragment =
+            COLOR_FRAGMENT.replace("// WGSL_CORNER_FUNCS_PLACEHOLDER", WGSL_CORNER_FUNCS);
+        let color_shader_src = format!("{VERTEX_SHADER}\n{color_fragment}");
         let color = AtlasLayer::new(
             context,
             &AtlasLayerConfig {
@@ -822,10 +894,20 @@ impl GlyphAtlasGpu {
         &self,
         pass: &mut gpu::RenderCommandEncoder,
         instance_count: usize,
-        batches: &[ScissoredRange],
+        batches: &[PaneGlyphRange],
+        viewport_w: f32,
+        viewport_h: f32,
+        uniform_slot: &mut usize,
     ) {
-        self.alpha
-            .draw_batches(pass, self.max_instances, instance_count, batches);
+        self.alpha.draw_batches(
+            pass,
+            self.max_instances,
+            instance_count,
+            batches,
+            viewport_w,
+            viewport_h,
+            uniform_slot,
+        );
     }
 
     /// Draw color glyph batches. Can be called multiple times after upload.
@@ -833,10 +915,20 @@ impl GlyphAtlasGpu {
         &self,
         pass: &mut gpu::RenderCommandEncoder,
         instance_count: usize,
-        batches: &[ScissoredRange],
+        batches: &[PaneGlyphRange],
+        viewport_w: f32,
+        viewport_h: f32,
+        uniform_slot: &mut usize,
     ) {
-        self.color
-            .draw_batches(pass, self.max_instances, instance_count, batches);
+        self.color.draw_batches(
+            pass,
+            self.max_instances,
+            instance_count,
+            batches,
+            viewport_w,
+            viewport_h,
+            uniform_slot,
+        );
     }
 
     fn destroy(&mut self, context: &gpu::Context) {
@@ -1089,42 +1181,127 @@ impl Renderer {
             let overlay_bg_idx = 1 + scene.overlay_bg_start;
             let total_bg = all_bg.len().min(self.rects.max_rects);
             self.rects.upload(&all_bg, vw_f, vh_f);
+            let mut all_bg_ranges = Vec::with_capacity(1 + scene.bg_rect_ranges.len());
+            all_bg_ranges.push(PaneRectRange {
+                start: 0,
+                count: 1,
+                ..PaneRectRange::default()
+            });
+            all_bg_ranges.extend(scene.bg_rect_ranges.iter().map(|range| PaneRectRange {
+                start: range.start.saturating_add(1),
+                ..*range
+            }));
+            if scene.bg_rect_ranges.is_empty() && !scene.bg_rects.is_empty() {
+                all_bg_ranges.push(PaneRectRange {
+                    start: 1,
+                    count: scene.bg_rects.len() as u32,
+                    ..PaneRectRange::default()
+                });
+            }
+            let split_ranges =
+                |ranges: &[PaneRectRange], start: usize, end: usize| -> Vec<PaneRectRange> {
+                    ranges
+                        .iter()
+                        .filter_map(|range| {
+                            let range_start = range.start as usize;
+                            let range_end = range_start.saturating_add(range.count as usize);
+                            let clipped_start = range_start.max(start);
+                            let clipped_end = range_end.min(end);
+                            (clipped_start < clipped_end).then(|| PaneRectRange {
+                                start: clipped_start as u32,
+                                count: (clipped_end - clipped_start) as u32,
+                                ..*range
+                            })
+                        })
+                        .collect()
+                };
 
             // 2. Draw non-focused pane background rects.
+            let mut rect_uniform_slot = 0usize;
             let inactive_bg_count = active_bg_idx.min(total_bg);
-            self.rects.draw_range(&mut pass, 0, inactive_bg_count);
+            let inactive_bg_ranges = split_ranges(&all_bg_ranges, 0, inactive_bg_count);
+            self.rects.draw_ranges(
+                &mut pass,
+                &inactive_bg_ranges,
+                vw_f,
+                vh_f,
+                &mut rect_uniform_slot,
+            );
 
             // 3. Upload alpha + color glyph instances once.
             atlas_gpu.upload_alpha_instances(scene.glyphs, vw_f, vh_f);
             atlas_gpu.upload_color_instances(scene.color_glyphs, vw_f, vh_f);
             let alpha_count = scene.glyphs.len();
             let color_count = scene.color_glyphs.len();
+            let mut alpha_uniform_slot = 0usize;
+            let mut color_uniform_slot = 0usize;
             if let Some(profiler) = profiler.as_mut() {
                 profiler.record_cpu_upload(upload_start);
             }
 
             // 4. Draw inactive pane glyphs (scissored).
             let draw_start = std::time::Instant::now();
-            atlas_gpu.draw_alpha_batches(&mut pass, alpha_count, scene.glyph_batches);
-            atlas_gpu.draw_color_batches(&mut pass, color_count, scene.color_glyph_batches);
+            atlas_gpu.draw_alpha_batches(
+                &mut pass,
+                alpha_count,
+                scene.glyph_batches,
+                vw_f,
+                vh_f,
+                &mut alpha_uniform_slot,
+            );
+            atlas_gpu.draw_color_batches(
+                &mut pass,
+                color_count,
+                scene.color_glyph_batches,
+                vw_f,
+                vh_f,
+                &mut color_uniform_slot,
+            );
 
             // 5. Focused pane background rects.
             let active_bg_count = overlay_bg_idx.saturating_sub(active_bg_idx);
             if active_bg_count > 0 {
-                self.rects
-                    .draw_range(&mut pass, active_bg_idx, active_bg_count);
+                let active_bg_ranges =
+                    split_ranges(&all_bg_ranges, active_bg_idx, overlay_bg_idx.min(total_bg));
+                self.rects.draw_ranges(
+                    &mut pass,
+                    &active_bg_ranges,
+                    vw_f,
+                    vh_f,
+                    &mut rect_uniform_slot,
+                );
             }
 
             // 6. Draw active pane glyphs (scissored, no re-upload).
-            atlas_gpu.draw_alpha_batches(&mut pass, alpha_count, scene.active_glyph_batches);
-            atlas_gpu.draw_color_batches(&mut pass, color_count, scene.active_color_glyph_batches);
+            atlas_gpu.draw_alpha_batches(
+                &mut pass,
+                alpha_count,
+                scene.active_glyph_batches,
+                vw_f,
+                vh_f,
+                &mut alpha_uniform_slot,
+            );
+            atlas_gpu.draw_color_batches(
+                &mut pass,
+                color_count,
+                scene.active_color_glyph_batches,
+                vw_f,
+                vh_f,
+                &mut color_uniform_slot,
+            );
 
             // 7. Overlay background rects (rendered after pane glyphs so they
             //    occlude terminal text underneath popups like the context menu).
             let overlay_bg_count = total_bg.saturating_sub(overlay_bg_idx);
             if overlay_bg_count > 0 {
-                self.rects
-                    .draw_range(&mut pass, overlay_bg_idx, overlay_bg_count);
+                let overlay_bg_ranges = split_ranges(&all_bg_ranges, overlay_bg_idx, total_bg);
+                self.rects.draw_ranges(
+                    &mut pass,
+                    &overlay_bg_ranges,
+                    vw_f,
+                    vh_f,
+                    &mut rect_uniform_slot,
+                );
             }
 
             // 7b. SDF chrome (rounded / shadow / border). Uploaded + drawn
@@ -1136,24 +1313,37 @@ impl Renderer {
             }
 
             // 8. Overlay glyphs (no re-upload, just draw remaining range).
-            let overlay_alpha = ScissoredRange {
-                x: 0,
-                y: 0,
-                w: vw,
-                h: vh,
-                start: scene.pane_glyph_end,
-                end: scene.glyphs.len(),
+            let overlay_alpha = PaneGlyphRange {
+                start: scene.pane_glyph_end as u32,
+                count: scene.glyphs.len().saturating_sub(scene.pane_glyph_end) as u32,
+                scissor: (0, 0, vw, vh),
+                ..PaneGlyphRange::default()
             };
-            let overlay_color = ScissoredRange {
-                x: 0,
-                y: 0,
-                w: vw,
-                h: vh,
-                start: scene.pane_color_glyph_end,
-                end: scene.color_glyphs.len(),
+            let overlay_color = PaneGlyphRange {
+                start: scene.pane_color_glyph_end as u32,
+                count: scene
+                    .color_glyphs
+                    .len()
+                    .saturating_sub(scene.pane_color_glyph_end) as u32,
+                scissor: (0, 0, vw, vh),
+                ..PaneGlyphRange::default()
             };
-            atlas_gpu.draw_alpha_batches(&mut pass, alpha_count, &[overlay_alpha]);
-            atlas_gpu.draw_color_batches(&mut pass, color_count, &[overlay_color]);
+            atlas_gpu.draw_alpha_batches(
+                &mut pass,
+                alpha_count,
+                &[overlay_alpha],
+                vw_f,
+                vh_f,
+                &mut alpha_uniform_slot,
+            );
+            atlas_gpu.draw_color_batches(
+                &mut pass,
+                color_count,
+                &[overlay_color],
+                vw_f,
+                vh_f,
+                &mut color_uniform_slot,
+            );
             if let Some(profiler) = profiler.as_mut() {
                 profiler.record_draw(draw_start);
             }
@@ -1463,6 +1653,9 @@ mod shader_tests {
 const RECT_SHADER: &str = r#"
 struct Uniforms {
     viewport_size: vec4<f32>,
+    pane_origin: vec2<f32>,
+    pane_size: vec2<f32>,
+    pane_radii: vec4<f32>,
 };
 
 var<uniform> uniforms: Uniforms;
@@ -1476,6 +1669,7 @@ struct RectInstance {
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
+    @location(1) pane_local: vec2<f32>,
 };
 
 @vertex
@@ -1492,12 +1686,16 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: RectInstance) -> VertexOutput {
     var out: VertexOutput;
     out.position = vec4<f32>(ndc, 0.0, 1.0);
     out.color = inst.color;
+    out.pane_local = px - uniforms.pane_origin;
     return out;
 }
 
+// WGSL_CORNER_FUNCS_PLACEHOLDER
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(in.color.rgb * in.color.a, in.color.a);
+    let color = vec4<f32>(in.color.rgb * in.color.a, in.color.a);
+    return color * ciri_corner_alpha(in.pane_local, uniforms.pane_size, uniforms.pane_radii);
 }
 "#;
 
@@ -1509,6 +1707,9 @@ struct Viewport {
     _pad0: u32,
     _pad1: u32,
     _pad2: u32,
+    pane_origin: vec2<f32>,
+    pane_size: vec2<f32>,
+    pane_radii: vec4<f32>,
 };
 
 var<uniform> viewport: Viewport;
@@ -1527,6 +1728,7 @@ struct VsOut {
     @location(0) uv: vec2<f32>,
     @location(1) color: vec4<f32>,
     @location(2) bg_color: vec4<f32>,
+    @location(3) pane_local: vec2<f32>,
 };
 
 @vertex
@@ -1539,6 +1741,7 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: Instance) -> VsOut {
     out.color = inst.color;
     out.bg_color = inst.bg_color;
     let px = inst.pos + vec2<f32>(x, y) * inst.size;
+    out.pane_local = px - viewport.pane_origin;
     let ndc = vec2<f32>(
         px.x / viewport.size.x * 2.0 - 1.0,
         1.0 - px.y / viewport.size.y * 2.0
@@ -1579,11 +1782,34 @@ fn luminance_linear(col: vec3<f32>) -> f32 {
 }
 "#;
 
+// Per-corner rounding alpha mask. WGSL twin of GL/DX corner clipping:
+// CSS-order radii (tl, tr, br, bl), with all-zero radii as the no-op path.
+const WGSL_CORNER_FUNCS: &str = r#"
+fn ciri_sdf_rounded_box(p: vec2<f32>, b: vec2<f32>, r: vec4<f32>) -> f32 {
+    let rx = select(r.x, r.y, p.x > 0.0);
+    let bx = select(r.w, r.z, p.x > 0.0);
+    let radius = select(rx, bx, p.y > 0.0);
+    let q = abs(p) - b + vec2<f32>(radius, radius);
+    return min(max(q.x, q.y), 0.0) + length(max(q, vec2<f32>(0.0, 0.0))) - radius;
+}
+
+fn ciri_corner_alpha(px: vec2<f32>, size: vec2<f32>, radii: vec4<f32>) -> f32 {
+    if (radii.x <= 0.0 && radii.y <= 0.0 && radii.z <= 0.0 && radii.w <= 0.0) {
+        return 1.0;
+    }
+    let d = ciri_sdf_rounded_box(px - 0.5 * size, 0.5 * size, radii);
+    let aa = max(fwidth(d) * 0.5, 1e-5);
+    return 1.0 - smoothstep(-aa, aa, d);
+}
+"#;
+
 const ALPHA_FRAGMENT: &str = r#"
 var atlas_tex: texture_2d<f32>;
 var atlas_sampler: sampler;
 
 // WGSL_COLOR_FUNCS_PLACEHOLDER
+
+// WGSL_CORNER_FUNCS_PLACEHOLDER
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
@@ -1608,7 +1834,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
     // Output sRGB premultiplied with corrected alpha.
     let out_alpha = in.color.a * a;
-    return vec4<f32>(in.color.rgb * out_alpha, out_alpha);
+    let out_color = vec4<f32>(in.color.rgb * out_alpha, out_alpha);
+    return out_color * ciri_corner_alpha(in.pane_local, viewport.pane_size, viewport.pane_radii);
 }
 "#;
 
@@ -1616,9 +1843,12 @@ const COLOR_FRAGMENT: &str = r#"
 var atlas_tex: texture_2d<f32>;
 var atlas_sampler: sampler;
 
+// WGSL_CORNER_FUNCS_PLACEHOLDER
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let texel = textureSample(atlas_tex, atlas_sampler, in.uv);
-    return vec4<f32>(texel.rgb * in.color.rgb, texel.a * in.color.a);
+    let out_color = vec4<f32>(texel.rgb * in.color.rgb, texel.a * in.color.a);
+    return out_color * ciri_corner_alpha(in.pane_local, viewport.pane_size, viewport.pane_radii);
 }
 "#;

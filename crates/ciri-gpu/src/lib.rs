@@ -435,6 +435,78 @@ mod tests {
         (renderer, atlas)
     }
 
+    fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+        let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    }
+
+    fn sdf_rounded_box(p: [f32; 2], b: [f32; 2], radii: [f32; 4]) -> f32 {
+        let rx = if p[0] > 0.0 { radii[1] } else { radii[0] };
+        let bx = if p[0] > 0.0 { radii[2] } else { radii[3] };
+        let radius = if p[1] > 0.0 { bx } else { rx };
+        let q = [p[0].abs() - b[0] + radius, p[1].abs() - b[1] + radius];
+        q[0].max(q[1]).min(0.0) + q[0].max(0.0).hypot(q[1].max(0.0)) - radius
+    }
+
+    fn corner_alpha(px: [f32; 2], size: [f32; 2], radii: [f32; 4]) -> f32 {
+        if radii.iter().all(|r| *r <= 0.0) {
+            return 1.0;
+        }
+        let d = sdf_rounded_box(
+            [px[0] - 0.5 * size[0], px[1] - 0.5 * size[1]],
+            [0.5 * size[0], 0.5 * size[1]],
+            radii,
+        );
+        1.0 - smoothstep(-0.5, 0.5, d)
+    }
+
+    #[test]
+    fn corner_alpha_all_zero_radii_is_noop() {
+        assert_eq!(corner_alpha([0.0, 0.0], [100.0, 60.0], [0.0; 4]), 1.0);
+        assert_eq!(corner_alpha([99.0, 59.0], [100.0, 60.0], [0.0; 4]), 1.0);
+    }
+
+    #[test]
+    fn corner_alpha_clips_pixel_outside_corner_arc() {
+        let alpha = corner_alpha([0.0, 0.0], [100.0, 60.0], [12.0; 4]);
+        assert!(alpha <= 0.001, "alpha={alpha}");
+    }
+
+    #[test]
+    fn corner_alpha_arc_center_is_smoothstep_midpoint() {
+        let alpha = corner_alpha([12.0, 0.0], [100.0, 60.0], [12.0; 4]);
+        assert!((alpha - 0.5).abs() <= 0.001, "alpha={alpha}");
+    }
+
+    #[test]
+    fn corner_alpha_rectangular_interior_is_opaque() {
+        let alpha = corner_alpha([50.0, 30.0], [100.0, 60.0], [12.0; 4]);
+        assert!((alpha - 1.0).abs() <= 0.001, "alpha={alpha}");
+    }
+
+    #[test]
+    fn corner_alpha_zero_radius_corner_is_not_clipped() {
+        let alpha = corner_alpha([99.0, 1.0], [100.0, 60.0], [12.0, 0.0, 0.0, 0.0]);
+        assert!((alpha - 1.0).abs() <= 0.001, "alpha={alpha}");
+    }
+
+    #[test]
+    /// Negative radii hit the shader's all-zero short-circuit only when every
+    /// radius is negative. Mixed-sign radii still enter SDF math and can produce
+    /// invalid output; production relies on config validation to reject them.
+    fn corner_alpha_negative_radii_all_negative_hit_short_circuit() {
+        assert_eq!(
+            corner_alpha([0.0, 0.0], [100.0, 60.0], [-8.0, -1.0, -4.0, -2.0]),
+            1.0
+        );
+    }
+
+    #[test]
+    fn corner_alpha_overlarge_radii_stay_finite() {
+        let alpha = corner_alpha([10.0, 10.0], [32.0, 20.0], [64.0; 4]);
+        assert!(alpha.is_finite(), "alpha={alpha}");
+    }
+
     #[test]
     fn auto_backend_uses_platform_default() {
         let choice = BackendChoice::from_config(AUTO_BACKEND);
@@ -524,6 +596,7 @@ mod tests {
         let scene = ciri_render::FrameScene {
             clear_color: [0.0, 0.0, 0.0, 1.0],
             bg_rects: &[],
+            bg_rect_ranges: &[],
             glyphs: &[],
             color_glyphs: &[],
             glyph_batches: &[],
@@ -537,7 +610,7 @@ mod tests {
             sdf_rects: &[],
         };
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            renderer.draw_frame(&mut atlas, &mut cache, scene);
+            let _ = renderer.draw_frame(&mut atlas, &mut cache, scene);
         }));
         std::mem::forget(renderer);
         std::mem::forget(atlas);

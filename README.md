@@ -145,6 +145,9 @@ copy_on_select = false
 column_gap = 8.0
 padding = 4.0
 inactive_opacity = 0.7
+# 0.0 keeps classic sharp panes; try 4-12 for modern soft corners.
+# Rounds pane backgrounds, cell content, and focus rings uniformly.
+pane_corner_radius = 0.0     # 0.0 = sharp; try 4-12 for soft panes
 
 [input]
 mode = "prefix"               # "prefix" (tmux-style) or "sticky" (zellij-style)

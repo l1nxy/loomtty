@@ -12,6 +12,11 @@ border_width = 2.0
 active_border_color = "#528BFF"
 inactive_border_color = "#3E4452"
 inactive_opacity = 0.7
+# Logical-pixel corner radius for panes (background, cell content, focus ring).
+# 0.0 = classic sharp corners (default, no visual change on upgrade).
+# Try 4-12 for modern soft. Niri-style alpha mask: no extra pass, opaque
+# region preserved except at the four arc pixels.
+pane_corner_radius = 0.0
 
 [appearance.focus_ring]
 style = "solid"

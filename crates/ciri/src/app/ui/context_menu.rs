@@ -166,7 +166,7 @@ impl ContextMenuComponent {
             .flex_col()
             .items_center()
             .bg(bg_color)
-            .rounded(tokens::SPACE_1)
+            .rounded(cx.theme.radius.md)
             .border(bw, border_color)
             .shadow_md()
             .hit_id(HIT_MENU)

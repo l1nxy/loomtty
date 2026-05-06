@@ -172,6 +172,7 @@ mod tests {
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::{Mutex, OnceLock};
 
     #[test]
     fn roundtrip_template() {
@@ -228,39 +229,31 @@ mod tests {
             workspaces: Vec::new(),
         };
 
-        save_template("empty", &template).unwrap();
+        with_unique_config_home("template-empty", || {
+            save_template("empty", &template).unwrap();
 
-        let err = load_template("empty").unwrap_err();
-        assert!(err.to_string().contains("has no workspaces"));
+            let err = load_template("empty").unwrap_err();
+            assert!(err.to_string().contains("has no workspaces"));
+        });
     }
 
     #[cfg(unix)]
     #[test]
     fn list_templates_propagates_directory_entry_errors() {
-        let config_home = unique_config_home("template-entry-errors");
-        let templates = config_home.join("ciri").join("templates");
-        fs::create_dir_all(&templates).unwrap();
-        fs::write(templates.join("alpha.toml"), "").unwrap();
-        fs::set_permissions(&templates, fs::Permissions::from_mode(0o0)).unwrap();
+        with_unique_config_home("template-entry-errors", || {
+            let templates = templates_dir();
+            fs::create_dir_all(&templates).unwrap();
+            fs::write(templates.join("alpha.toml"), "").unwrap();
+            fs::set_permissions(&templates, fs::Permissions::from_mode(0o0)).unwrap();
 
-        let previous = std::env::var_os("XDG_CONFIG_HOME");
-        unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", &config_home);
-        }
+            let err = list_templates().unwrap_err();
+            assert_eq!(
+                err.downcast_ref::<std::io::Error>().unwrap().kind(),
+                std::io::ErrorKind::PermissionDenied
+            );
 
-        let err = list_templates().unwrap_err();
-        assert_eq!(
-            err.downcast_ref::<std::io::Error>().unwrap().kind(),
-            std::io::ErrorKind::PermissionDenied
-        );
-
-        unsafe {
-            match previous {
-                Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
-                None => std::env::remove_var("XDG_CONFIG_HOME"),
-            }
-        }
-        fs::set_permissions(&templates, fs::Permissions::from_mode(0o700)).unwrap();
+            fs::set_permissions(&templates, fs::Permissions::from_mode(0o700)).unwrap();
+        });
     }
 
     #[test]
@@ -273,9 +266,11 @@ mod tests {
             }],
         };
 
-        save_template("empty-columns", &template).unwrap();
-        let err = load_template("empty-columns").unwrap_err();
-        assert!(err.to_string().contains("workspace 0 has no columns"));
+        with_unique_config_home("template-empty-columns", || {
+            save_template("empty-columns", &template).unwrap();
+            let err = load_template("empty-columns").unwrap_err();
+            assert!(err.to_string().contains("workspace 0 has no columns"));
+        });
     }
 
     #[test]
@@ -291,9 +286,11 @@ mod tests {
             }],
         };
 
-        save_template("empty-tiles", &template).unwrap();
-        let err = load_template("empty-tiles").unwrap_err();
-        assert!(err.to_string().contains("column 0 has no tiles"));
+        with_unique_config_home("template-empty-tiles", || {
+            save_template("empty-tiles", &template).unwrap();
+            let err = load_template("empty-tiles").unwrap_err();
+            assert!(err.to_string().contains("column 0 has no tiles"));
+        });
     }
 
     #[test]
@@ -313,9 +310,46 @@ mod tests {
             }],
         };
 
-        save_template("active-column-oob", &template).unwrap();
-        let err = load_template("active-column-oob").unwrap_err();
-        assert!(err.to_string().contains("active column 1 out of bounds"));
+        with_unique_config_home("template-active-column-oob", || {
+            save_template("active-column-oob", &template).unwrap();
+            let err = load_template("active-column-oob").unwrap_err();
+            assert!(err.to_string().contains("active column 1 out of bounds"));
+        });
+    }
+
+    fn with_unique_config_home(label: &str, test: impl FnOnce()) {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let _config_home = ScopedConfigHome::new(label);
+        test();
+    }
+
+    struct ScopedConfigHome {
+        path: PathBuf,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl ScopedConfigHome {
+        fn new(label: &str) -> Self {
+            let path = unique_config_home(label);
+            let previous = std::env::var_os("XDG_CONFIG_HOME");
+            unsafe {
+                std::env::set_var("XDG_CONFIG_HOME", &path);
+            }
+            Self { path, previous }
+        }
+    }
+
+    impl Drop for ScopedConfigHome {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.previous {
+                    Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+                    None => std::env::remove_var("XDG_CONFIG_HOME"),
+                }
+            }
+            let _ = fs::remove_dir_all(&self.path);
+        }
     }
 
     fn unique_config_home(label: &str) -> PathBuf {

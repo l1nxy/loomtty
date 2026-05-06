@@ -250,19 +250,35 @@ pub trait Styled: Sized {
     }
 
     fn rounded_sm(self) -> Self {
-        self.rounded(2.0)
-    }
-
-    fn rounded_md(self) -> Self {
         self.rounded(6.0)
     }
 
-    fn rounded_lg(self) -> Self {
+    fn rounded_md(self) -> Self {
         self.rounded(10.0)
+    }
+
+    fn rounded_lg(self) -> Self {
+        self.rounded(14.0)
     }
 
     fn rounded_full(self) -> Self {
         self.rounded(9999.0)
+    }
+
+    /// Per-corner radii in CSS order: `[top-left, top-right, bottom-right, bottom-left]`.
+    fn rounded_each(mut self, radii: [f32; 4]) -> Self {
+        self.style().corner_radii = Some(radii);
+        self
+    }
+
+    /// Round only the top two corners (e.g. tabs that sit on a baseline).
+    fn rounded_t(self, px: f32) -> Self {
+        self.rounded_each([px, px, 0.0, 0.0])
+    }
+
+    /// Round only the bottom two corners.
+    fn rounded_b(self, px: f32) -> Self {
+        self.rounded_each([0.0, 0.0, px, px])
     }
 
     // ── Borders ──────────────────────────────────────────────────────────

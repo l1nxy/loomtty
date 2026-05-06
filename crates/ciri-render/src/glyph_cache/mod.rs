@@ -27,7 +27,7 @@ pub mod types;
 pub use atlas::PendingDwriteGlyph;
 pub use atlas::PendingUpload;
 pub(crate) use atlas::ShelfPacker;
-pub use types::{FontStyle, GlyphEntry, GlyphInstance, ScissoredRange};
+pub use types::{FontStyle, GlyphEntry, GlyphInstance, PaneGlyphRange};
 
 #[cfg(target_os = "linux")]
 use cjk::compute_cjk_pixel_size;

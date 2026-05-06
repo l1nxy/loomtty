@@ -107,15 +107,16 @@ pub struct GlyphInstance {
     pub bg_color: [f32; 4], // RGBA background color (sRGB, for weight correction)
 }
 
-/// Draw range clipped to a scissor rect.
+/// A contiguous glyph draw range sharing scissor and pane corner clipping uniforms.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct ScissoredRange {
-    pub x: u32,
-    pub y: u32,
-    pub w: u32,
-    pub h: u32,
-    pub start: usize,
-    pub end: usize,
+pub struct PaneGlyphRange {
+    pub start: u32,
+    pub count: u32,
+    pub scissor: (u32, u32, u32, u32),
+    pub pane_origin: [f32; 2],
+    pub pane_size: [f32; 2],
+    /// CSS order: top-left, top-right, bottom-right, bottom-left.
+    pub pane_radii: [f32; 4],
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────

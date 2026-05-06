@@ -68,9 +68,14 @@ impl<'a> PaneTabsElement<'a> {
         let active_bg = tokens::tint(accent, tokens::ALPHA_TAB_ACTIVE_BG);
         let hover_bg = tokens::tint(accent, tokens::ALPHA_HOVER_BG);
         let press_bg = tokens::tint(accent, tokens::ALPHA_PRESS_BG);
+        // Tab corners: round the edge that faces away from the bar's
+        // baseline so the tab reads as "lifted off the bar" — top
+        // corners when the bar sits at the top of the viewport, bottom
+        // corners when the bar sits at the bottom.
+        let tab_radius = cx.theme.radius.sm;
 
         let mut children: Vec<Div> = Vec::new();
-        for tab in self.tabs {
+        for (idx, tab) in self.tabs.iter().enumerate() {
             let visible_left = tab.x.max(tabs_start_x);
             let visible_right = (tab.x + tab.w).min(tabs_end_x);
             let visible_w = (visible_right - visible_left).max(0.0);
@@ -79,8 +84,10 @@ impl<'a> PaneTabsElement<'a> {
             }
 
             // Separator on the leading edge — flat sibling between
-            // tabs. Skipped if scrolled off-screen.
-            if tab.x > tabs_start_x - tokens::BORDER_THIN && tab.x < tabs_end_x {
+            // tabs. Skipped for the first tab so the hairline doesn't
+            // bleed onto the session section's solid bg, and skipped
+            // when scrolled off-screen.
+            if idx > 0 && tab.x > tabs_start_x - tokens::BORDER_THIN && tab.x < tabs_end_x {
                 children.push(abs_rect(
                     tab.x - tokens::BORDER_THIN * 0.5,
                     rect.y + separator_inset,
@@ -103,6 +110,10 @@ impl<'a> PaneTabsElement<'a> {
                 .h(rect.h)
                 .hit_id(super::pane_tab_hit_id(tab.pane_id))
                 .cursor_pointer();
+            tab_wrapper = match cx.config.statusbar.position {
+                StatusBarPosition::Top => tab_wrapper.rounded_t(tab_radius),
+                StatusBarPosition::Bottom => tab_wrapper.rounded_b(tab_radius),
+            };
             if tab.active {
                 // The currently-focused tab also responds to press —
                 // a slight darken so re-clicking the active tab still

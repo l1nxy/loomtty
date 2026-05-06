@@ -110,7 +110,7 @@ impl TopBarComponent {
         };
         Self {
             layout,
-            session_text: format!(" {}  ", app.session_display_name()),
+            session_text: app.session_display_name(),
             workspace_label,
             mode_label,
             mode_color,
@@ -146,16 +146,24 @@ impl TopBarComponent {
 
     /// Compute the inner row slots shared by paint and tests.
     pub(super) fn row_slots(&self, rect: UiRect, cx: &UiContext<'_>) -> TopBarRowSlots {
-        // Widths of fixed zones. Measured via `text_layout` so proportional UI
-        // fonts get their real advance. The App-side `top_bar_layout` measures
-        // the same way, keeping `tabs_area_px` in lockstep with these slots.
-        let session_w = self.layout.session_w;
+        // Widths of fixed zones. Each capsule slot = measured text width
+        // + capsule padding + visual gap budget (`segment_slot_width` in
+        // `crate::app::top_bar`). The App-side `top_bar_layout` wraps
+        // its measurements through the same helpers, including the
+        // mode > session > workspace overflow cap, so the fill slot
+        // (= bar_w - sum(fixed)) and the captured `tabs_area_px` stay
+        // in lockstep — see `pane_tabs_element_slot_is_one_cell_wider…`.
+        let session_w =
+            crate::app::top_bar::segment_slot_width(text_layout::measure(cx, &self.session_text));
         let workspace_w = if self.workspace_label.is_empty() {
             0.0
         } else {
-            text_layout::measure(cx, &self.workspace_label)
+            crate::app::top_bar::segment_slot_width(text_layout::measure(cx, &self.workspace_label))
         };
-        let mode_w = text_layout::measure(cx, &self.mode_label);
+        let mode_w =
+            crate::app::top_bar::segment_slot_width(text_layout::measure(cx, &self.mode_label));
+        let (session_w, workspace_w, mode_w) =
+            crate::app::top_bar::cap_fixed_section_widths(rect.w, session_w, workspace_w, mode_w);
         let fixed_w = session_w + workspace_w + mode_w;
         let pane_tabs_w = (rect.w - fixed_w).max(0.0);
 
@@ -179,32 +187,21 @@ impl TopBarComponent {
     /// (codex Q: double-offset bug from Step 25 review).
     fn build_row_children(&self, rect: UiRect, cx: &UiContext<'_>) -> Vec<Div> {
         let slots = self.row_slots(rect, cx);
-        let fg = cx.theme.on_surface;
-        let dim = cx.theme.on_surface_muted;
         let accent = cx.theme.accent;
-        let padding = cx
-            .config
-            .statusbar
-            .height_padding
-            .unwrap_or(cx.cell_h * cx.config.statusbar.padding_ratio);
-        let top_pad = padding * 0.5;
-
-        // Press tint shared by SessionLabel and WorkspaceIndicator —
-        // matches the `ALPHA_PRESS_BG` cue used by pane tabs so all
-        // press-friendly top-bar regions feel the same on click.
-        let press_bg = tokens::tint(accent, tokens::ALPHA_PRESS_BG);
+        let on_accent = cx.theme.on_accent;
+        let surface_elevated = cx.theme.surface_elevated;
 
         let mut children: Vec<Div> = Vec::new();
         children.push(
             SessionLabel {
                 text: &self.session_text,
             }
-            .into_div(slots.session, fg, dim, press_bg, top_pad, cx.cell_h),
+            .into_div(slots.session, accent, on_accent),
         );
 
         if self.show_integrated_tabs {
             // PaneTabsElement returns its own Vec<Div> of absolute
-            // tab/separator/indicator/label/fade children.
+            // tab/label/fade children — one rounded pill per tab.
             children.extend(
                 PaneTabsElement {
                     tabs: &self.pane_tabs,
@@ -219,7 +216,7 @@ impl TopBarComponent {
             WorkspaceIndicator {
                 label: &self.workspace_label,
             }
-            .into_div(slots.workspace, fg, accent, press_bg, top_pad, cx.cell_h),
+            .into_div(slots.workspace, accent, surface_elevated),
         );
 
         children.push(
@@ -227,7 +224,7 @@ impl TopBarComponent {
                 label: &self.mode_label,
                 color: self.mode_color,
             }
-            .into_div(slots.mode, top_pad, cx.cell_h),
+            .into_div(slots.mode),
         );
 
         children

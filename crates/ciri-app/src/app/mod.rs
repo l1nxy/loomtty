@@ -70,6 +70,12 @@ pub struct AppModel {
 
     pub remote_config: Option<RemoteConnectionConfig>,
     pub remote_query_rx: Option<Receiver<RemoteQueryResult>>,
+    /// Set when a `DirectConnect` palette row or text-prompt host has fired
+    /// an async session query and the result handler should auto-pick a
+    /// session and connect, rather than presenting the session list to the
+    /// user. `None` for queries triggered by `RemoteHost` palette rows
+    /// (those still go through the user-selection flow).
+    pub pending_auto_connect: Option<PendingAutoConnect>,
 
     pub image_placements: HashMap<u64, Vec<ClientImagePlacement>>,
     pub prediction: PredictionEngine,
@@ -175,6 +181,7 @@ impl AppModel {
             active_slot_id: "local".to_string(),
             remote_config: None,
             remote_query_rx: None,
+            pending_auto_connect: None,
             image_placements: HashMap::new(),
             prediction,
             buffered_events: std::collections::VecDeque::new(),

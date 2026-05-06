@@ -219,13 +219,20 @@ impl PaletteComponent {
         };
 
         let show_remote_placeholder = self.remote_input_mode && self.query.is_empty();
-        let input_row = div()
-            .w_full()
-            .h(input_row_h)
+        // Raycast/Linear-style pill: the input is an inset rounded box with
+        // its own background, gutters on left/right so the rounded edges
+        // don't kiss the panel border.
+        let pill_v_inset = tokens::SPACE_1;
+        let pill_h_inset = tokens::SPACE_2;
+        let pill_h = (input_row_h - pill_v_inset * 2.0).max(self.ui_line_h);
+        let input_pill = div()
+            .flex_1()
+            .h(pill_h)
             .flex_row()
             .items_center()
             .bg(input_bg)
-            .child(div().w(text_pad).h(input_row_h))
+            .rounded(cx.theme.radius.sm)
+            .child(div().w(text_pad).h(pill_h))
             .child(text(input_text.clone()).color(fg_color))
             .child(
                 div()
@@ -236,6 +243,14 @@ impl PaletteComponent {
             .when(show_remote_placeholder, |d| {
                 d.child(text("user@host[:port]").color(dim_color))
             });
+        let input_row = div()
+            .w_full()
+            .h(input_row_h)
+            .flex_row()
+            .items_center()
+            .child(div().w(pill_h_inset).h(input_row_h))
+            .child(input_pill)
+            .child(div().w(pill_h_inset).h(input_row_h));
 
         // `self.rows` is already pre-windowed by `capture()` to the
         // visible slice; uniform_list here gives the column the correct
@@ -277,10 +292,10 @@ impl PaletteComponent {
                             .hit_id(entry_hit_id(row.entry_idx))
                             .cursor_pointer();
                         if row.is_selected {
-                            row_div = row_div.bg(selected_bg).rounded(tokens::SPACE_1);
+                            row_div = row_div.bg(selected_bg).rounded(cx.theme.radius.sm);
                         } else {
                             row_div =
-                                row_div.hover(|s| s.bg(hovered_bg).rounded(tokens::SPACE_1));
+                                row_div.hover(|s| s.bg(hovered_bg).rounded(cx.theme.radius.sm));
                         }
                     }
                     row_div.child(text(label_text).color(label_color))
@@ -317,7 +332,7 @@ impl PaletteComponent {
             .h(self.layout.panel_h)
             .flex_col()
             .bg(panel_bg)
-            .rounded(tokens::SPACE_1)
+            .rounded(cx.theme.radius.lg)
             .border(tokens::BORDER_THIN, border_color)
             .shadow_lg()
             .hit_id(HIT_PANEL)

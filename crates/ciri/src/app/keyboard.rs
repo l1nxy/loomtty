@@ -113,8 +113,43 @@ impl App {
     pub(crate) fn handle_keyboard_input(
         &mut self,
         event: &winit::event::KeyEvent,
+        event_loop: &ActiveEventLoop,
+    ) {
+        let start = if self.debug_metrics.enabled {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
+        self.handle_keyboard_input_inner(event, event_loop);
+        if let Some(t) = start {
+            let ms = t.elapsed().as_secs_f32() * 1000.0;
+            self.debug_metrics.record_key_event(ms);
+        }
+    }
+
+    fn handle_keyboard_input_inner(
+        &mut self,
+        event: &winit::event::KeyEvent,
         _event_loop: &ActiveEventLoop,
     ) {
+        // Ctrl+Alt+P toggles the frame-debug overlay. Intentionally
+        // hardcoded, not bound through the user keymap — this is a
+        // developer affordance and must work even from modal contexts
+        // (palette open, leader key armed, …). Dispatched before IME
+        // and modal checks for the same reason.
+        if event.state == ElementState::Pressed
+            && self.modifiers.control_key()
+            && self.modifiers.alt_key()
+            && matches!(
+                &event.logical_key,
+                Key::Character(s) if s.as_str().eq_ignore_ascii_case("p")
+            )
+        {
+            self.debug_metrics.toggle();
+            self.request_redraw();
+            return;
+        }
+
         if self.core.ime.preedit_active {
             return;
         }

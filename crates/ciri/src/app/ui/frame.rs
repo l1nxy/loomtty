@@ -2,6 +2,7 @@ use ciri_config::config::{StatusBarPosition, TabBarPosition};
 
 use super::connection_status::ConnectionStatusComponent;
 use super::context_menu::ContextMenuComponent;
+use super::debug_panel::DebugPanelComponent;
 use super::hints_bar::HintsBarComponent;
 use super::info_box::InfoBoxComponent;
 use super::overview::{self, OverviewComponent};
@@ -35,6 +36,7 @@ pub(super) struct UiFrame {
     connection_status: Option<ConnectionStatusComponent>,
     paste_dialog: Option<PasteDialogComponent>,
     context_menu: Option<ContextMenuComponent>,
+    debug_panel: Option<DebugPanelComponent>,
 }
 
 pub(super) enum UiFrameHover {
@@ -108,6 +110,7 @@ impl UiFrame {
             connection_status: ConnectionStatusComponent::capture(app, cx),
             paste_dialog: PasteDialogComponent::capture(app, cx),
             context_menu: ContextMenuComponent::capture(app, cx),
+            debug_panel: DebugPanelComponent::capture(app, cx),
         }
     }
 
@@ -148,6 +151,11 @@ impl UiFrame {
             component.paint(cx, scene);
         }
         if let Some(component) = &mut self.context_menu {
+            component.paint(cx, scene);
+        }
+        // Debug panel paints last so it sits above every other overlay
+        // — it's a developer affordance, not part of the visual chrome.
+        if let Some(component) = &mut self.debug_panel {
             component.paint(cx, scene);
         }
     }

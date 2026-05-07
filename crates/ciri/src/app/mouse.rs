@@ -146,6 +146,19 @@ impl App {
     }
 
     pub(crate) fn handle_mouse_pressed(&mut self, button: MouseButton, mx: f32, my: f32) {
+        let start = if self.debug_metrics.enabled {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
+        self.handle_mouse_pressed_inner(button, mx, my);
+        if let Some(t) = start {
+            let ms = t.elapsed().as_secs_f32() * 1000.0;
+            self.debug_metrics.record_mouse_event(ms);
+        }
+    }
+
+    fn handle_mouse_pressed_inner(&mut self, button: MouseButton, mx: f32, my: f32) {
         match button {
             MouseButton::Left => {
                 // Capture the chrome `hit_id` under the cursor BEFORE
@@ -177,6 +190,19 @@ impl App {
     }
 
     pub(crate) fn handle_mouse_released(&mut self, button: MouseButton) {
+        let start = if self.debug_metrics.enabled {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
+        self.handle_mouse_released_inner(button);
+        if let Some(t) = start {
+            let ms = t.elapsed().as_secs_f32() * 1000.0;
+            self.debug_metrics.record_mouse_event(ms);
+        }
+    }
+
+    fn handle_mouse_released_inner(&mut self, button: MouseButton) {
         if button == MouseButton::Left {
             // Drop the press-state hit_id so any `.active()` refinement
             // releases on the next paint. Done unconditionally — even
@@ -405,6 +431,19 @@ impl App {
     }
 
     pub(crate) fn handle_mouse_wheel(&mut self, delta: MouseScrollDelta, phase: TouchPhase) {
+        let start = if self.debug_metrics.enabled {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
+        self.handle_mouse_wheel_inner(delta, phase);
+        if let Some(t) = start {
+            let ms = t.elapsed().as_secs_f32() * 1000.0;
+            self.debug_metrics.record_mouse_event(ms);
+        }
+    }
+
+    fn handle_mouse_wheel_inner(&mut self, delta: MouseScrollDelta, phase: TouchPhase) {
         if self.dismiss_context_menu_on_scroll() {
             return;
         }

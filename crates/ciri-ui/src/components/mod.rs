@@ -6,9 +6,11 @@
 //! component to carry its own paint trait.
 
 pub mod banner;
+pub mod dropdown;
 pub mod number_field;
 pub mod switch;
 
 pub use banner::{Banner, Severity};
+pub use dropdown::Dropdown;
 pub use number_field::NumberField;
 pub use switch::Switch;

@@ -132,7 +132,7 @@ size = 12.0
 
 [theme]
 preset = "ciri_dark"
-# Available: ciri_dark, one_dark, catppuccin_mocha,
+# Available: ciri_dark, one_dark, one_half_dark, catppuccin_mocha,
 #            tokyo_night, dracula, nord, gruvbox_dark, ghostty
 
 [terminal]

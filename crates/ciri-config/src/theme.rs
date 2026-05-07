@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 /// # background = "#000000"
 /// ```
 ///
-/// Available presets: "one_dark", "catppuccin_mocha", "tokyo_night", "dracula", "nord", "gruvbox_dark", "ghostty", "ciri_dark"
+/// Available presets: "one_dark", "one_half_dark", "catppuccin_mocha", "tokyo_night", "dracula", "nord", "gruvbox_dark", "ghostty", "ciri_dark"
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 #[derive(Default)]
@@ -191,6 +191,7 @@ impl ThemeConfig {
             "" | "ciri_dark" => include_str!("../themes/ciri_dark.toml"),
             "ghostty" => include_str!("../themes/ghostty.toml"),
             "one_dark" => include_str!("../themes/one_dark.toml"),
+            "one_half_dark" => include_str!("../themes/one_half_dark.toml"),
             _ => {
                 log::warn!("unknown theme preset '{}', using ciri_dark", self.preset);
                 include_str!("../themes/ciri_dark.toml")
@@ -283,6 +284,7 @@ mod tests {
         for preset in [
             "ciri_dark",
             "one_dark",
+            "one_half_dark",
             "catppuccin_mocha",
             "tokyo_night",
             "dracula",

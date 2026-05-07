@@ -78,7 +78,7 @@ backend = "auto"
 alpha_blending = "linear-corrected"
 
 [theme]
-# Available presets: "ciri_dark", "one_dark", "catppuccin_mocha", "tokyo_night", "dracula", "nord", "gruvbox_dark", "ghostty"
+# Available presets: "ciri_dark", "one_dark", "one_half_dark", "catppuccin_mocha", "tokyo_night", "dracula", "nord", "gruvbox_dark", "ghostty"
 # Set preset, then override individual colors below if needed.
 preset = "ciri_dark"
 

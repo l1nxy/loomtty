@@ -90,7 +90,7 @@ fi
 > It will guide them through:
 > - Keybinding style: prefix (tmux-like) or sticky (zellij-like)
 > - Leader key: Ctrl+W, Ctrl+A, Alt, or custom
-> - Color theme: one_dark, catppuccin_mocha, tokyo_night, dracula, nord, gruvbox_dark
+> - Color theme: ciri_dark, one_dark, one_half_dark, catppuccin_mocha, tokyo_night, dracula, nord, gruvbox_dark, ghostty
 > - Status bar position: top or bottom
 >
 > Shell and font are auto-detected. If the user wants to skip, ciri works

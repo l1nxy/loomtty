@@ -538,4 +538,29 @@ mod tests {
         let action = component.click(0.0, 0.0, &cx);
         assert_eq!(action, Some(UiAction::CloseSettings));
     }
+
+    /// Click on the panel body (not on any interactive child) returns
+    /// `None` — the click is absorbed and does NOT dismiss settings.
+    /// Pins the `Dialog` no-op contract; without this guard a future
+    /// hit_id reordering could silently turn panel-body clicks into
+    /// dismissals.
+    #[test]
+    fn settings_dialog_body_click_is_no_op() {
+        use crate::app::ui::settings_panel::SettingsPanelComponent;
+
+        let mut app = make_app();
+        app.core.settings_panel_visible = true;
+        let cx = app.ui_context();
+        let component = SettingsPanelComponent::capture(&app, &cx)
+            .expect("panel visible after toggle");
+        // Centre of the viewport — inside the centred panel, but in
+        // the flex spacer between Banner / sections / footer rather
+        // than on a control.
+        let mx = cx.viewport_w * 0.5;
+        let my = cx.viewport_h * 0.5;
+        assert!(
+            component.click(mx, my, &cx).is_none(),
+            "panel-body click must absorb (no UiAction emitted)",
+        );
+    }
 }

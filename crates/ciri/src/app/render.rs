@@ -648,13 +648,20 @@ impl App {
     fn hash_settings_panel(&self, hasher: &mut DefaultHasher) {
         self.core.settings_panel_visible.hash(hasher);
         if self.core.settings_panel_visible {
-            // The displayed values are snapshotted at capture time from
-            // these two config fields; hash them so live edits invalidate
-            // the chrome cache. `pane_opacity` is also hashed in
-            // `render_snapshot_hash` because it propagates to pane tile
-            // rendering, not just the chrome.
+            // The displayed Theme dropdown label and Pane Opacity
+            // value are snapshotted at capture time — hash both so
+            // live edits invalidate the chrome cache and the panel
+            // re-renders with the new values. `render_snapshot_hash`
+            // hashes `pane_opacity` separately for the pane render
+            // path; the duplication is intentional (different cache
+            // keys, different invalidation domains).
             self.core.config.theme.preset.hash(hasher);
-            self.core.config.appearance.pane_opacity.to_bits().hash(hasher);
+            self.core
+                .config
+                .appearance
+                .pane_opacity
+                .to_bits()
+                .hash(hasher);
             // Hover hit_id under the cursor — same shape as
             // `hash_context_menu` / `hash_pending_paste`. Without this
             // the declarative `.hover()` refinements on the panel's
@@ -899,10 +906,14 @@ impl App {
         self.hash_command_palette(&mut hasher);
         self.hash_context_menu(&mut hasher);
         self.hash_pending_paste(&mut hasher);
-        self.hash_settings_panel(&mut hasher);
-        // Pane bg opacity is multiplied into per-cell rect alpha during
-        // tile paint, so live edits from the settings panel must dirty
-        // the snapshot hash even outside the chrome path.
+        // `hash_settings_panel` deliberately NOT called here — the
+        // settings panel UI lives entirely in `ui_scene_hash`'s chrome
+        // cache. This snapshot hash gates the pane-render path; it
+        // only needs the bits the panel can mutate that affect pane
+        // tiles (currently just `pane_opacity`, hashed below).
+        // Skipping the panel hash here also avoids running
+        // `current_settings_hover` (and its `build_tree`) twice per
+        // frame.
         self.core
             .config
             .appearance

@@ -236,9 +236,16 @@ impl App {
                 // just made. Instead, fall back to opening the parent
                 // directory so the user can create the file themselves
                 // without losing their preview state.
+                // Use the trusted-path opener — `config_path()` is
+                // first-party and safe to hand to the OS handler. The
+                // generic `open_url` path refuses file paths without
+                // `$EDITOR` set (see `open_file_path` safety gate),
+                // which fails for any GUI launch context that doesn't
+                // export `$EDITOR` to child processes (common on macOS
+                // and many Linux desktops).
                 let path = ciri_config::config::config_path();
-                if path.exists() {
-                    self.open_url(&path.to_string_lossy());
+                let to_open: Option<std::path::PathBuf> = if path.exists() {
+                    Some(path.clone())
                 } else if let Some(parent) = path.parent()
                     && parent.exists()
                 {
@@ -246,11 +253,20 @@ impl App {
                         "settings.toml does not yet exist; opening parent directory {}",
                         parent.display(),
                     );
-                    self.open_url(&parent.to_string_lossy());
+                    Some(parent.to_path_buf())
                 } else {
                     log::warn!(
                         "settings.toml path unavailable: {} (parent does not exist either)",
                         path.display(),
+                    );
+                    None
+                };
+                if let Some(target) = to_open
+                    && let Err(e) = crate::app::open::open_trusted_path(&target)
+                {
+                    log::warn!(
+                        "failed to open settings location {}: {e}",
+                        target.display(),
                     );
                 }
                 self.core.settings_panel_visible = false;

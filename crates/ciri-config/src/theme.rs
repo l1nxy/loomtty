@@ -87,6 +87,11 @@ pub struct ThemeConfig {
     /// reserved for selection / explicit "you picked this" cues, while
     /// hover stays a subtle brightness lift over the panel body.
     pub ui_element_hover: ThemeValue,
+    /// Active / pressed-state background for chrome interactive rows
+    /// and tabs. Slightly stronger lift than `ui_element_hover` so the
+    /// press read clearly without falling back onto accent-tint (which
+    /// shifted hue per preset before stage 0.4).
+    pub ui_element_active: ThemeValue,
     /// Chrome status colour for errors (e.g. failed-connection banner).
     pub ui_error: ThemeValue,
     /// Chrome status colour for warnings.
@@ -278,6 +283,7 @@ impl ThemeConfig {
         apply_if_missing(&mut self.ui_on_surface_muted, base.ui_on_surface_muted);
         apply_if_missing(&mut self.ui_border, base.ui_border);
         apply_if_missing(&mut self.ui_element_hover, base.ui_element_hover);
+        apply_if_missing(&mut self.ui_element_active, base.ui_element_active);
         apply_if_missing(&mut self.ui_error, base.ui_error);
         apply_if_missing(&mut self.ui_warning, base.ui_warning);
         apply_if_missing(&mut self.ui_success, base.ui_success);
@@ -332,6 +338,12 @@ impl ThemeConfig {
     /// "selected" state.
     pub fn ui_element_hover_color(&self) -> [f32; 4] {
         Self::ui_color_or_default(&self.ui_element_hover, "#22201E")
+    }
+    /// Active / press-state background. `#2A2724` — `+0x08` over
+    /// `ui_element_hover`, deeper enough to feel like a press without
+    /// coming close to the accent-tinted "selected" state.
+    pub fn ui_element_active_color(&self) -> [f32; 4] {
+        Self::ui_color_or_default(&self.ui_element_active, "#2A2724")
     }
     /// Chrome error colour. `#E27870` — warm coral red, picked to read
     /// against `#1A1816` chrome surface without the cool "alert red"

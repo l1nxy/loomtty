@@ -185,8 +185,12 @@ impl TabBarComponent {
         // tint bg + fg text via the refinement, propagated to the
         // descendant Text by `text_color_override_with_state`.
         let active_bg = tokens::tint(accent, tokens::ALPHA_TAB_ACTIVE_BG);
-        let hover_bg = tokens::tint(accent, tokens::ALPHA_HOVER_BG);
-        let press_bg = tokens::tint(accent, tokens::ALPHA_PRESS_BG);
+        // Hover / press go neutral (chrome `element_hover` /
+        // `element_active`) — preset-independent. Active tab keeps the
+        // accent tint above because "this is the focused session" is a
+        // selection cue, not a hover cue.
+        let hover_bg = cx.theme.element_hover;
+        let press_bg = cx.theme.element_active;
         let tab_radius = cx.theme.radius.sm;
         // Round the side facing away from the terminal — mirrors the
         // integrated tab strip (rounded_t for Top statusbar, rounded_b

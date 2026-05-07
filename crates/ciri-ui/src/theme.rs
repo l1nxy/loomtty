@@ -124,6 +124,10 @@ pub struct ResolvedTheme {
     // Border
     pub border: Color,
     pub border_focus: Color,
+    // Interactive states — neutral by design. Selection / active-tab
+    // states continue to compose with `accent` in their consumers, so
+    // the per-theme accent stays reserved for the "explicit pick" cue.
+    pub element_hover: Color,
     // Chrome-specific tokens that have no derived counterpart.
     pub statusbar_bg: Color,
     pub broadcast: Color,
@@ -175,6 +179,7 @@ impl ResolvedTheme {
 
         let muted = cfg.ui_on_surface_muted_color();
         let border_chrome = cfg.ui_border_color();
+        let element_hover = cfg.ui_element_hover_color();
 
         // Terminal palette — kept distinct so terminal cells don't follow
         // chrome re-skinning. `term_fg` reads `cfg.foreground` directly
@@ -215,6 +220,7 @@ impl ResolvedTheme {
             info,
             border: border_chrome,
             border_focus: border_a,
+            element_hover,
             statusbar_bg,
             broadcast,
             term_fg,
@@ -258,6 +264,7 @@ impl Default for ResolvedTheme {
             info: [0.38, 0.60, 0.90, 1.0],
             border: [0.22, 0.22, 0.25, 1.0],
             border_focus: [0.30, 0.68, 0.80, 1.0],
+            element_hover: [0.16, 0.16, 0.18, 1.0],
             statusbar_bg: [0.08, 0.08, 0.10, 1.0],
             broadcast: [0.85, 0.32, 0.30, 1.0],
             term_fg: [0.90, 0.90, 0.92, 1.0],
@@ -354,6 +361,7 @@ mod tests {
         const EXPECTED_ON_SURFACE: &str = "#E2DCD6";
         const EXPECTED_ON_SURFACE_MUTED: &str = "#8E8780";
         const EXPECTED_BORDER: &str = "#2A2622";
+        const EXPECTED_ELEMENT_HOVER: &str = "#22201E";
         for preset in [
             "ciri_dark",
             "one_dark",
@@ -389,6 +397,11 @@ mod tests {
                 theme.border,
                 ThemeConfig::parse_color(EXPECTED_BORDER),
                 "{preset}: chrome border must not follow preset",
+            );
+            assert_eq!(
+                theme.element_hover,
+                ThemeConfig::parse_color(EXPECTED_ELEMENT_HOVER),
+                "{preset}: chrome element_hover must not follow preset",
             );
         }
     }

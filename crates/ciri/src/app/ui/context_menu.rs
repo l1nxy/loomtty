@@ -148,10 +148,12 @@ impl ContextMenuComponent {
             tokens::SURFACE_SINK,
         );
         let border_color = cx.theme.border;
-        let accent = cx.theme.accent;
         let fg_color = cx.theme.on_surface;
         let dim_color = cx.theme.on_surface_muted;
-        let hover_bg = tokens::tint(accent, tokens::ALPHA_HOVER_BG);
+        // Neutral hover (`element_hover`, preset-independent). Items
+        // here aren't selectable, so the accent has no resting state to
+        // claim — keep the whole menu tonally consistent across presets.
+        let hover_bg = cx.theme.element_hover;
 
         let content_w = self.menu_width - bw * 2.0;
         let item_h = self.item_height;

@@ -89,6 +89,11 @@ pub struct ThemeConfig {
     /// rides on `border_active` (preset-driven), but chrome panels stop
     /// inheriting the per-theme accent on their own border.
     pub ui_border: ThemeValue,
+    /// Hover background for chrome interactive rows (palette row,
+    /// context-menu item). Neutral on purpose — the per-theme accent is
+    /// reserved for selection / explicit "you picked this" cues, while
+    /// hover stays a subtle brightness lift over the panel body.
+    pub ui_element_hover: ThemeValue,
     /// Chrome status colour for errors (e.g. failed-connection banner).
     pub ui_error: ThemeValue,
     /// Chrome status colour for warnings.
@@ -279,6 +284,7 @@ impl ThemeConfig {
         apply_if_missing(&mut self.ui_on_surface, base.ui_on_surface);
         apply_if_missing(&mut self.ui_on_surface_muted, base.ui_on_surface_muted);
         apply_if_missing(&mut self.ui_border, base.ui_border);
+        apply_if_missing(&mut self.ui_element_hover, base.ui_element_hover);
         apply_if_missing(&mut self.ui_error, base.ui_error);
         apply_if_missing(&mut self.ui_warning, base.ui_warning);
         apply_if_missing(&mut self.ui_success, base.ui_success);
@@ -341,6 +347,13 @@ impl ThemeConfig {
     /// border. Pane-focus indication still rides on `border_active`.
     pub fn ui_border_color(&self) -> [f32; 4] {
         Self::ui_color_or_default(&self.ui_border, "#2A2622")
+    }
+    /// Hover background for interactive chrome rows. `#22201E` — about
+    /// `+0x12` over a sunk panel body (`#100E0C`), so the hover reads as
+    /// a subtle brightness lift without competing with the accent-tinted
+    /// "selected" state.
+    pub fn ui_element_hover_color(&self) -> [f32; 4] {
+        Self::ui_color_or_default(&self.ui_element_hover, "#22201E")
     }
     /// Chrome error colour. Falls back to preset ANSI red so each
     /// terminal theme's semantic palette continues to drive status hues.

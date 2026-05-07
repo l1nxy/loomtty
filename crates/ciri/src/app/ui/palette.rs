@@ -196,7 +196,11 @@ impl PaletteComponent {
         let dim_color = cx.theme.on_surface_muted;
         let fg_color = cx.theme.on_surface;
         let selected_bg = tokens::tint(accent, tokens::ALPHA_SELECTED_BG);
-        let hovered_bg = tokens::tint(accent, tokens::ALPHA_HOVER_BG);
+        // Hover stays neutral (`element_hover`, preset-independent) so
+        // the per-theme accent is reserved for the selection cue.
+        // Accent-tinted hover painted every preset's chrome a different
+        // colour and worked against the stage 0.1 decoupling.
+        let hovered_bg = cx.theme.element_hover;
 
         let px = self.layout.panel_x;
         let pw = self.layout.panel_w;

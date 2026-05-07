@@ -105,7 +105,12 @@ impl App {
                 port,
                 ssh_port,
             } => {
-                self.connect_remote_session(host, port, ssh_port, "default".to_string());
+                // Fire async session query and let the result handler
+                // pick the session (preferring last-remembered, then most-
+                // recent, then "default"). Palette stays open in loading
+                // state until the query lands — see `execute_palette_selection`'s
+                // `keep_open` table.
+                self.start_remote_auto_connect(host, port, ssh_port);
             }
             PaletteEntryKind::ConnectRemotePrompt => {
                 // Switch palette to remote input mode
@@ -120,8 +125,81 @@ impl App {
         }
     }
 
-    /// Delegate: handle remote query result.
+    /// Handle an async remote session query result. If the query was
+    /// fired by a `DirectConnect` row or text-prompt input
+    /// (`pending_auto_connect` is set and matches), pick a session and
+    /// connect immediately, closing the palette on success. Otherwise
+    /// fall through to the model's default behaviour (cache + rebuild
+    /// palette so the user can pick from a session list).
     pub fn handle_remote_query_result(&mut self, result: RemoteQueryResult) {
+        if let Some(intent) = self.core.pending_auto_connect.take() {
+            let host_match = intent.host == result.host
+                && intent.port == result.port
+                && intent.ssh_port == result.ssh_port;
+            if !host_match {
+                // Stale intent (different host raced ahead) — discard rather
+                // than restoring; the user moved on. Fall through to the
+                // model's default handler so the result still hits the cache.
+                log::debug!(
+                    "discarding stale auto-connect intent for {} (got result for {})",
+                    intent.host,
+                    result.host
+                );
+                self.core.handle_remote_query_result(result);
+                return;
+            }
+
+            // Cancellation gate: the palette is the auto-connect's UI anchor.
+            // If it has been closed (Esc, slot switch, click-out) or has
+            // moved on to a different host's loading state, treat the in-
+            // flight intent as cancelled — do not reach `ssh`. This is the
+            // single chokepoint that catches every cancel path without
+            // having to plumb cleanup through each `command_palette = None`
+            // call site.
+            let palette_still_loading_this_host = self
+                .core
+                .command_palette
+                .as_ref()
+                .and_then(|p| p.remote_loading.as_deref())
+                == Some(intent.host.as_str());
+            if !palette_still_loading_this_host {
+                log::debug!(
+                    "auto-connect cancelled before query landed: {}",
+                    intent.host
+                );
+                return;
+            }
+
+            use ciri_app::app::RemoteProbeResult;
+            if let RemoteProbeResult::Error(err) = &result.result {
+                log::warn!("auto-connect query failed for {}: {err}", intent.host);
+                if let Some(palette) = &mut self.core.command_palette {
+                    palette.remote_loading = None;
+                    palette.remote_error = Some((intent.host.clone(), err.clone()));
+                }
+                return;
+            }
+            let session = ciri_app::app::AppModel::pick_auto_connect_session(
+                intent.preferred_session.as_deref(),
+                &result.result,
+            );
+            if let Some(palette) = &mut self.core.command_palette {
+                palette.remote_loading = None;
+            }
+            self.connect_remote_session(intent.host, intent.port, intent.ssh_port, session);
+            // Close the palette on a clean connect attempt; leave it open
+            // if the synchronous arm of `connect_remote_session` already
+            // surfaced a permanent failure (banner shows the rest).
+            let has_error = self
+                .core
+                .command_palette
+                .as_ref()
+                .is_some_and(|p| p.remote_error.is_some());
+            if !has_error {
+                self.core.command_palette = None;
+            }
+            return;
+        }
         self.core.handle_remote_query_result(result);
     }
 

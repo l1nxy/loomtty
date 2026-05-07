@@ -1056,6 +1056,30 @@ impl DxRectPipeline {
         })
     }
 
+    /// Grow the instance buffer if `needed` exceeds current capacity. Safe to
+    /// call between frames — D3D11 defers release of the old DYNAMIC buffer
+    /// until any pending GPU usage completes (driver-internal renaming).
+    unsafe fn ensure_capacity(&mut self, device: &ID3D11Device, needed: usize) -> Result<()> {
+        if needed <= self.max_rects {
+            return Ok(());
+        }
+        let new_cap = needed
+            .next_power_of_two()
+            .max(self.max_rects.saturating_mul(2));
+        let buf_desc = D3D11_BUFFER_DESC {
+            ByteWidth: (new_cap * std::mem::size_of::<Rect>()) as u32,
+            Usage: D3D11_USAGE_DYNAMIC,
+            BindFlags: D3D11_BIND_VERTEX_BUFFER.0 as u32,
+            CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+            ..Default::default()
+        };
+        let mut new_buffer = None;
+        device.CreateBuffer(&buf_desc, None, Some(&mut new_buffer))?;
+        self.instance_buffer = new_buffer.unwrap();
+        self.max_rects = new_cap;
+        Ok(())
+    }
+
     /// Upload all rect instance data to the GPU buffer.
     unsafe fn upload(
         &self,
@@ -1731,6 +1755,12 @@ impl Renderer {
             all_bg.extend_from_slice(scene.bg_rects);
             let active_bg_idx = 1 + scene.active_bg_start;
             let overlay_bg_idx = 1 + scene.overlay_bg_start;
+            if let Err(e) = self.rects.ensure_capacity(&self.device, all_bg.len()) {
+                log::warn!(
+                    "rect buffer growth to {} rects failed: {e}; dropping tail",
+                    all_bg.len()
+                );
+            }
             let total_bg = all_bg.len().min(self.rects.max_rects);
             self.rects.upload(&self.ctx, &all_bg, vw, vh);
             let mut all_bg_ranges = Vec::with_capacity(1 + scene.bg_rect_ranges.len());

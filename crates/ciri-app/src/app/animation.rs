@@ -169,10 +169,10 @@ impl AppModel {
         }
         let cw = self.workspaces.view_size.width;
         let ch = self.workspaces.view_size.height;
-        // Nudge distance: ~3% of viewport dimension
+        // Nudge distance: ~1.5% of viewport dimension
         let nudge = match direction {
-            BounceDirection::Left | BounceDirection::Right => cw * 0.03,
-            BounceDirection::Up | BounceDirection::Down => ch * 0.03,
+            BounceDirection::Left | BounceDirection::Right => cw * 0.015,
+            BounceDirection::Up | BounceDirection::Down => ch * 0.015,
         };
         let sp = SpringParams::new(0.7, 600.0, 0.0001);
 

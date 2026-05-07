@@ -684,6 +684,26 @@ impl GlRectPipeline {
         })
     }
 
+    /// Grow the instance VBO if `needed` exceeds current capacity. Reuses the
+    /// same buffer object name so the VAO's vertex attribute pointers remain
+    /// valid; `glBufferData` orphans the old storage cleanly.
+    unsafe fn ensure_capacity(&mut self, gl: &glow::Context, needed: usize) {
+        if needed <= self.max_rects {
+            return;
+        }
+        let new_cap = needed
+            .next_power_of_two()
+            .max(self.max_rects.saturating_mul(2));
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instance_vbo));
+        gl.buffer_data_size(
+            glow::ARRAY_BUFFER,
+            (new_cap * std::mem::size_of::<Rect>()) as i32,
+            glow::DYNAMIC_DRAW,
+        );
+        gl.bind_buffer(glow::ARRAY_BUFFER, None);
+        self.max_rects = new_cap;
+    }
+
     /// Upload all rect instance data to the GPU buffer.
     unsafe fn upload(&self, gl: &glow::Context, rects: &[Rect], viewport_w: f32, viewport_h: f32) {
         if rects.is_empty() {
@@ -1250,6 +1270,7 @@ impl Renderer {
             all_bg.extend_from_slice(scene.bg_rects);
             let active_bg_idx = 1 + scene.active_bg_start; // +1 for clear rect
             let overlay_bg_idx = 1 + scene.overlay_bg_start; // +1 for clear rect
+            self.rects.ensure_capacity(&self.gl, all_bg.len());
             let total_bg = all_bg.len().min(self.rects.max_rects);
             self.rects.upload(&self.gl, &all_bg, vw, vh);
             let mut all_bg_ranges = Vec::with_capacity(1 + scene.bg_rect_ranges.len());

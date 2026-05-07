@@ -114,6 +114,7 @@ impl<'a> CiriUiTextShaper for HostTextShaper<'a> {
         content: &str,
         pos: [f32; 2],
         color: [f32; 4],
+        bg_color: [f32; 4],
         font_size_px: f32,
         scene: &mut Scene,
     ) {
@@ -135,6 +136,7 @@ impl<'a> CiriUiTextShaper for HostTextShaper<'a> {
             cell_width: self.cell_width,
             baseline: self.baseline,
             color,
+            bg_color,
             scale,
         };
         emit_status_text(

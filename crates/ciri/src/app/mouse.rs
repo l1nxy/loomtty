@@ -7,11 +7,34 @@ use winit::event::{MouseButton, MouseScrollDelta, TouchPhase};
 
 use super::App;
 
+#[derive(Copy, Clone)]
+enum ColumnSnap {
+    Floor,
+    Round,
+}
+
 impl App {
     // ── Coordinate conversion ──
 
     /// Convert pixel coordinates to (pane_id, col, buffer_row) using absolute buffer indices.
     pub fn pixel_to_cell(&self, mx: f32, my: f32) -> Option<(u64, u16, usize)> {
+        self.pixel_to_cell_with_snap(mx, my, ColumnSnap::Floor)
+    }
+
+    /// Like `pixel_to_cell`, but the column snaps to the nearest cell
+    /// midpoint. Used for the *moving* end of a selection so the cell is
+    /// only included once the cursor passes its midpoint — selection still
+    /// snaps to whole cells, never stops at half a cell.
+    pub fn pixel_to_cell_round(&self, mx: f32, my: f32) -> Option<(u64, u16, usize)> {
+        self.pixel_to_cell_with_snap(mx, my, ColumnSnap::Round)
+    }
+
+    fn pixel_to_cell_with_snap(
+        &self,
+        mx: f32,
+        my: f32,
+        snap: ColumnSnap,
+    ) -> Option<(u64, u16, usize)> {
         let (cw, ch) = self.cell_dimensions();
         if cw <= 0.0 || ch <= 0.0 {
             return None;
@@ -27,7 +50,14 @@ impl App {
             if rect.contains(mx, my) {
                 let inner_x = rect.x + border_w + padding;
                 let inner_y = rect.y + border_w + padding;
-                let col = ((mx - inner_x) / cw).floor().max(0.0) as u16;
+                let col_f = (mx - inner_x) / cw;
+                let col = match snap {
+                    // For round: subtract 0.5 then floor → cell boundary at midpoint.
+                    // i.e. cursor in left half of cell N (col_f in [N, N+0.5)) → N-1
+                    //      cursor in right half of cell N (col_f in [N+0.5, N+1)) → N
+                    ColumnSnap::Floor => col_f.floor().max(0.0) as u16,
+                    ColumnSnap::Round => (col_f - 0.5).floor().max(0.0) as u16,
+                };
                 let viewport_row = ((my - inner_y) / ch).floor().max(0.0) as u16;
                 if let Some(grid) = self.core.pane_grids.get(pane_id) {
                     let col = col.min(grid.cols.saturating_sub(1));
@@ -711,7 +741,7 @@ impl App {
         }
 
         if self.core.selection.as_ref().is_some_and(|s| s.active)
-            && let Some((_, col, buf_row)) = self.pixel_to_cell(mx, my)
+            && let Some((_, col, buf_row)) = self.pixel_to_cell_round(mx, my)
         {
             if let Some(sel) = &mut self.core.selection {
                 sel.end = (col, buf_row);

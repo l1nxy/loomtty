@@ -18,6 +18,19 @@ use tokio::sync::{Mutex, Notify};
 
 use server::Server;
 
+fn parse_cursor_shape_config(name: &str) -> u8 {
+    use ciri_protocol::message::{
+        CURSOR_BEAM, CURSOR_BLOCK, CURSOR_HOLLOW_BLOCK, CURSOR_UNDERLINE,
+    };
+    match name.trim().to_ascii_lowercase().as_str() {
+        "beam" | "bar" | "ibeam" => CURSOR_BEAM,
+        "underline" | "underscore" => CURSOR_UNDERLINE,
+        "hollow_block" | "hollow" => CURSOR_HOLLOW_BLOCK,
+        // Empty string (or any unknown value) means "use the alacritty default".
+        _ => CURSOR_BLOCK,
+    }
+}
+
 /// Shared daemon state returned by `prepare_daemon`.
 pub struct DaemonState {
     pub state: Arc<Mutex<Server>>,
@@ -40,6 +53,13 @@ pub struct DaemonState {
 pub async fn prepare_daemon() -> Result<DaemonState> {
     let config = ciri_config::config::CiriConfig::load()?;
     let shell = config.terminal.shell.clone();
+
+    // Apply user's preferred cursor shape as alacritty's default. TUI apps
+    // (vim/neovim/etc.) that send DECSCUSR will still override this per-mode;
+    // it only fills in when no app override is active.
+    ciri_term::pane::set_default_cursor_shape(parse_cursor_shape_config(
+        &config.terminal.cursor_shape,
+    ));
 
     match crate::shell_integration::ensure_integration_dir() {
         Ok(dir) => {

@@ -406,7 +406,11 @@ impl App {
                 (None, None)
             }
         };
-        let ui_px = size_pt * (96.0 * dpi_scale as f32) / 72.0;
+        // Round to integer ppem so DWrite's NATURAL_SYMMETRIC hinting
+        // grid lands on whole pixels — fractional ppem (e.g. 10pt → 13.33px)
+        // makes proportional UI glyphs render as if hinting were disabled,
+        // softening edges of W/M and similar dense-stroke characters.
+        let ui_px = (size_pt * (96.0 * dpi_scale as f32) / 72.0).round();
         UiFontInit {
             path,
             id,
@@ -855,7 +859,10 @@ impl App {
                 self.core.server_rx = Some(rx);
                 self.connection_cancel = Some(cancel);
                 // Record only after connection was successfully initiated.
-                self.core.record_recent_host(&host, port, ssh_port);
+                // session_name was moved into self.core above, so read it back.
+                let attached = self.core.session_name.clone();
+                self.core
+                    .record_recent_host(&host, port, ssh_port, &attached);
                 crate::recent_hosts::save(&self.core.recent_hosts);
             }
             Err(e) => {
@@ -883,8 +890,11 @@ impl App {
         }
     }
 
-    /// Parse a `[user@]host[:ssh_port]` string and connect.
-    /// Uses the protocol's default remote port and session name "default".
+    /// Parse a `[user@]host[:ssh_port]` string and trigger the auto-connect
+    /// flow: fire an async session query, then attach to whichever session
+    /// `pick_auto_connect_session` picks (preferring last-remembered, then
+    /// most-recent, then `"default"`). The palette stays open in loading
+    /// state until the query result arrives.
     pub fn connect_remote_from_input(&mut self, input: &str) {
         let target = match crate::remote_validate::parse_input(input, 22) {
             Ok(t) => t,
@@ -903,24 +913,30 @@ impl App {
             Some(u) => format!("{u}@{}", target.host),
             None => target.host,
         };
-        self.connect_remote_session(
-            host_arg,
-            ciri_protocol::transport::DEFAULT_REMOTE_PORT,
-            target.ssh_port,
-            "default".to_string(),
-        );
+        let port = ciri_protocol::transport::DEFAULT_REMOTE_PORT;
+        self.start_remote_auto_connect(host_arg, port, target.ssh_port);
+    }
 
-        // If the connect attempt failed synchronously with a permanent reason
-        // (bad ssh binary, validation bounce, etc.), mirror it into the
-        // palette footer so the user sees the error before the palette closes.
-        // Transient async failures are surfaced later by the banner/reconnect
-        // machinery in batch 2; here we only cover the immediate-fail path.
-        if let Some(reason) = self.core.last_disconnect_reason.as_ref()
-            && reason.is_permanent()
-            && let Some(palette) = &mut self.core.command_palette
-        {
-            palette.remote_error = Some(("Connection".to_string(), reason.to_string()));
+    /// Common entry for `DirectConnect` palette rows and text-prompt input.
+    /// Sets `pending_auto_connect`, fires `query_remote_sessions`, and
+    /// flips the palette into loading state. The result handler picks
+    /// the right session and calls `connect_remote_session`.
+    pub fn start_remote_auto_connect(&mut self, host: String, port: u16, ssh_port: u16) {
+        let preferred = self.core.last_session_for(&host, port);
+        if let Some(palette) = &mut self.core.command_palette {
+            palette.remote_loading = Some(host.clone());
+            palette.remote_error = None;
         }
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        // host doubles as the display name here — the prompt has no other label.
+        crate::connection::query_remote_sessions(&host, &host, port, ssh_port, tx);
+        self.core.remote_query_rx = Some(rx);
+        self.core.pending_auto_connect = Some(ciri_app::app::PendingAutoConnect {
+            host,
+            port,
+            ssh_port,
+            preferred_session: preferred,
+        });
     }
 
     /// Cycle to the next background connection slot.

@@ -29,12 +29,18 @@ pub trait TextShaper {
     /// atlas. Z-order = emit order; the walker arranges that for the
     /// caller via tree-order paint plus deferred draining.
     ///
+    /// `bg_color` is the actual backdrop the glyphs will be composited
+    /// onto — the linear-correction shader needs it to compute the
+    /// perceptually-correct alpha. `[0; 4]` means "no opaque ancestor",
+    /// which is the right answer for text on the default chrome bg.
+    ///
     /// `pos` is in logical pixels, in the same space as `SdfRect.pos`.
     fn emit(
         &mut self,
         content: &str,
         pos: [f32; 2],
         color: Color,
+        bg_color: Color,
         font_size_px: f32,
         scene: &mut Scene,
     );
@@ -64,6 +70,7 @@ impl TextShaper for NullShaper {
         _content: &str,
         _pos: [f32; 2],
         _color: Color,
+        _bg_color: Color,
         _font_size_px: f32,
         _scene: &mut Scene,
     ) {
@@ -87,6 +94,7 @@ pub struct RecordedShape {
     pub content: String,
     pub pos: [f32; 2],
     pub color: Color,
+    pub bg_color: Color,
     pub font_size_px: f32,
 }
 
@@ -101,6 +109,7 @@ impl TextShaper for RecordingShaper {
         content: &str,
         pos: [f32; 2],
         color: Color,
+        bg_color: Color,
         font_size_px: f32,
         _scene: &mut Scene,
     ) {
@@ -108,6 +117,7 @@ impl TextShaper for RecordingShaper {
             content: content.to_string(),
             pos,
             color,
+            bg_color,
             font_size_px,
         });
     }
@@ -130,7 +140,7 @@ mod tests {
     fn null_emit_is_silent() {
         let mut s = NullShaper;
         let mut scene = Scene::new();
-        s.emit("hi", [0.0, 0.0], [1.0; 4], 12.0, &mut scene);
+        s.emit("hi", [0.0, 0.0], [1.0; 4], [0.0; 4], 12.0, &mut scene);
         assert!(scene.is_empty());
     }
 
@@ -142,6 +152,7 @@ mod tests {
             "hello",
             [10.0, 20.0],
             [1.0, 0.0, 0.0, 1.0],
+            [0.0, 0.0, 0.0, 0.0],
             13.0,
             &mut scene,
         );

@@ -387,6 +387,11 @@ pub struct TerminalConfig {
     pub cursor_blink: bool,
     #[garde(range(min = 1))]
     pub cursor_blink_interval_ms: u64,
+    /// Override cursor shape regardless of what the running app reports.
+    /// Accepted values: "block", "beam", "underline", "hollow_block".
+    /// Empty string means "follow the app's reported shape".
+    #[garde(skip)]
+    pub cursor_shape: String,
     #[garde(skip)]
     pub shell: String,
     #[garde(range(min = 1))]
@@ -414,6 +419,7 @@ impl Default for TerminalConfig {
             cursor_opacity: 0.7,
             cursor_blink: true,
             cursor_blink_interval_ms: 500,
+            cursor_shape: "beam".to_string(),
             shell: String::new(),
             scrollback_lines: 10000,
             copy_on_select: false,

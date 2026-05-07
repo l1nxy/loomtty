@@ -13,21 +13,27 @@
 //! Banner makes that explicit.
 
 use super::tokens;
-use super::types::{UiAction, UiContext, UiScene, UiSettingsHit, ui_hit_id};
+use super::types::{NudgeDirection, UiAction, UiContext, UiScene, UiSettingsHit, ui_hit_id};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Banner, Div, Dropdown, ElevationIndex, Severity, Styled, deferred, div, text};
+use ciri_ui::{
+    Banner, Div, Dropdown, ElevationIndex, NumberField, Severity, Styled, deferred, div, text,
+};
 
 const HIT_DIALOG: u64 = 1;
 const HIT_CLOSE: u64 = 2;
 const HIT_OPEN_TOML: u64 = 3;
 const HIT_THEME_DROPDOWN: u64 = 4;
+const HIT_OPACITY_DEC: u64 = 5;
+const HIT_OPACITY_INC: u64 = 6;
 
 fn settings_hit_from_id(hit_id: Option<u64>) -> UiSettingsHit {
     match hit_id {
         Some(HIT_CLOSE) => UiSettingsHit::Close,
         Some(HIT_OPEN_TOML) => UiSettingsHit::OpenToml,
         Some(HIT_THEME_DROPDOWN) => UiSettingsHit::ThemeDropdown,
+        Some(HIT_OPACITY_DEC) => UiSettingsHit::PaneOpacityDec,
+        Some(HIT_OPACITY_INC) => UiSettingsHit::PaneOpacityInc,
         Some(HIT_DIALOG) => UiSettingsHit::Dialog,
         _ => UiSettingsHit::None,
     }
@@ -41,6 +47,10 @@ pub(crate) struct SettingsPanelComponent {
     /// Snapshot of the current preset name so the placeholder row can
     /// show what's active. Wired to the working Dropdown in stage 2.C.
     current_preset: String,
+    /// Snapshot of `appearance.pane_opacity` for the NumberField
+    /// display. The +/- buttons dispatch through `UiAction` so the
+    /// step size lives on `App` (stage 2.D).
+    pane_opacity: f32,
 }
 
 impl SettingsPanelComponent {
@@ -61,6 +71,7 @@ impl SettingsPanelComponent {
             panel_w,
             panel_h,
             current_preset: app.core.config.theme.preset.clone(),
+            pane_opacity: app.core.config.appearance.pane_opacity,
         })
     }
 
@@ -74,6 +85,12 @@ impl SettingsPanelComponent {
             UiSettingsHit::Close | UiSettingsHit::None => Some(UiAction::CloseSettings),
             UiSettingsHit::OpenToml => Some(UiAction::OpenSettingsToml),
             UiSettingsHit::ThemeDropdown => Some(UiAction::OpenThemeDropdown),
+            UiSettingsHit::PaneOpacityDec => {
+                Some(UiAction::NudgePaneOpacity(NudgeDirection::Decrement))
+            }
+            UiSettingsHit::PaneOpacityInc => {
+                Some(UiAction::NudgePaneOpacity(NudgeDirection::Increment))
+            }
             UiSettingsHit::Dialog => None,
         }
     }
@@ -138,8 +155,18 @@ impl SettingsPanelComponent {
                 .width(180.0)
                 .into_div(theme),
         );
-        // Pane opacity stepper still pending — stage 2.D.
-        let opacity_row = self.placeholder_row(cx, content_w, "Pane Opacity", "Stepper coming\u{2026}");
+        // Pane opacity stepper — `[ - 0.85 + ]`. The display string is
+        // formatted to two decimals so the same row width works for any
+        // value in [0, 1]. Step size lives on the App handler (stage 2.D
+        // chose 0.05) so settings rows stay value-display-only.
+        let opacity_row = self.control_row(
+            cx,
+            content_w,
+            "Pane Opacity",
+            NumberField::new(HIT_OPACITY_DEC, HIT_OPACITY_INC)
+                .value(format!("{:.2}", self.pane_opacity))
+                .into_div(theme),
+        );
 
         let footer = div()
             .w(content_w)
@@ -192,27 +219,9 @@ impl SettingsPanelComponent {
             .child(deferred(panel))
     }
 
-    fn placeholder_row(
-        &self,
-        cx: &UiContext<'_>,
-        content_w: f32,
-        label: &str,
-        hint: &str,
-    ) -> Div {
-        let row_h = cx.ui_line_h + tokens::SPACE_2 * 2.0;
-        div()
-            .w(content_w)
-            .h(row_h)
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .child(text(label.to_string()).color(cx.theme.on_surface))
-            .child(text(hint.to_string()).color(cx.theme.on_surface_muted))
-    }
-
     /// Live-control row: label on the left, supplied control element on
-    /// the right. Same horizontal alignment as `placeholder_row` so
-    /// settings rows line up vertically as more controls land.
+    /// the right. All Appearance rows share this layout so they line up
+    /// vertically as more controls land.
     fn control_row(
         &self,
         cx: &UiContext<'_>,

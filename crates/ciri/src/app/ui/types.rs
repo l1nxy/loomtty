@@ -294,6 +294,15 @@ pub(crate) enum UiAction {
     /// `context_menu` anchored at last-known mouse position. Items
     /// dispatch `ContextMenuAction::SetThemePreset(name)` on click.
     OpenThemeDropdown,
+    /// Nudge `appearance.pane_opacity`. Step size lives on the App
+    /// handler so settings rows don't have to know the increment.
+    NudgePaneOpacity(NudgeDirection),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NudgeDirection {
+    Decrement,
+    Increment,
 }
 
 // Per-component hit enums — kept internal, used only within each component's
@@ -340,6 +349,10 @@ pub(super) enum UiSettingsHit {
     OpenToml,
     /// Theme preset dropdown trigger — opens the preset popup.
     ThemeDropdown,
+    /// Pane opacity stepper — decrement button.
+    PaneOpacityDec,
+    /// Pane opacity stepper — increment button.
+    PaneOpacityInc,
     /// Click outside the panel — closes settings.
     None,
 }

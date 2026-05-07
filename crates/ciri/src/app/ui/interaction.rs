@@ -228,6 +228,20 @@ impl App {
                 self.open_url(&path.to_string_lossy());
                 self.core.settings_panel_visible = false;
             }
+            UiAction::NudgePaneOpacity(direction) => {
+                // 0.05 step — coarse enough to feel each press, fine
+                // enough to land on common values (0.80, 0.85, 0.90).
+                // Clamp to [0, 1]; below 0 hides the pane entirely and
+                // above 1 has no further effect.
+                const STEP: f32 = 0.05;
+                let delta = match direction {
+                    super::types::NudgeDirection::Decrement => -STEP,
+                    super::types::NudgeDirection::Increment => STEP,
+                };
+                let next = (self.core.config.appearance.pane_opacity + delta).clamp(0.0, 1.0);
+                self.core.config.appearance.pane_opacity = next;
+                self.schedule_redraw();
+            }
         }
     }
 

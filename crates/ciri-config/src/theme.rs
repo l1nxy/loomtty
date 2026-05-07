@@ -61,19 +61,12 @@ pub struct ThemeConfig {
     // (`background`/`foreground`/ANSI) so chrome can have its own visual
     // identity that does not change when the user swaps terminal themes.
     //
-    // Empty fallback chain (resolved in `ResolvedTheme::from_config`):
-    //   ui_surface       → overview_background
-    //   ui_on_surface    → foreground
-    //   ui_error         → red
-    //   ui_warning       → yellow
-    //   ui_success       → green
-    //   ui_info          → blue
-    //
-    // Falling back to `overview_background` (rather than terminal
-    // `background`) keeps chrome panels visually distinct from the
-    // terminal cell area below them — the previous derivation painted
-    // palette / dialogs in the terminal bg colour and they read as
-    // "dissolved" into the pane underneath.
+    // Every field falls back to a preset-independent ciri default
+    // (resolved in the `ui_*_color()` methods below) when left empty —
+    // see the inline doc on each resolver for the exact hex value and
+    // its design rationale. Status hues (error / warning / success /
+    // info) joined the preset-independent set in stage 0.4 so Banner
+    // and connection_status read the same across themes.
     /// Background colour for floating chrome surfaces (palette, dialogs,
     /// context menu, info box).
     pub ui_surface: ThemeValue,
@@ -293,19 +286,13 @@ impl ThemeConfig {
 
     // ── Chrome palette fallback chain ─────────────────────────────────
     //
-    // Two flavours of resolver:
-    //
-    // - `ui_color_or_default(field, "#RRGGBB")` — chrome surface / text /
-    //   border colours fall back to ciri's hand-tuned warm-neutral
-    //   defaults. These are *preset-independent* by design: the chrome
-    //   has its own visual identity that doesn't ride along when users
-    //   swap terminal themes.
-    //
-    // - `ui_color_or_field(field, &cfg.red)` — chrome status hues fall
-    //   back to the preset's ANSI red/yellow/green/blue, because each
-    //   preset already tunes those for its own contrast story and we
-    //   don't want a generic "ciri red" overriding e.g. dracula's
-    //   carefully picked accent reds.
+    // Every `ui_*` resolver falls back to a preset-independent ciri
+    // default when the user / preset hasn't supplied an explicit value.
+    // Chrome (including its status hues) gets its own visual identity
+    // that doesn't ride along when users swap terminal themes — even
+    // error / warning / success / info pick from a warm-friendly
+    // ciri-tuned palette so the Banner / connection_status banner read
+    // the same way across `dracula` / `gruvbox` / `tokyo_night` / etc.
 
     fn ui_color_or_default(primary: &ThemeValue, default_hex: &str) -> [f32; 4] {
         if primary.as_ref().is_empty() {
@@ -313,15 +300,6 @@ impl ThemeConfig {
         } else {
             Self::parse_color(primary.as_ref())
         }
-    }
-
-    fn ui_color_or_field(primary: &ThemeValue, fallback: &ThemeValue) -> [f32; 4] {
-        let chosen = if primary.as_ref().is_empty() {
-            fallback
-        } else {
-            primary
-        };
-        Self::parse_color(chosen.as_ref())
     }
 
     /// Chrome surface colour (floating panel / dialog / popup background).
@@ -355,22 +333,27 @@ impl ThemeConfig {
     pub fn ui_element_hover_color(&self) -> [f32; 4] {
         Self::ui_color_or_default(&self.ui_element_hover, "#22201E")
     }
-    /// Chrome error colour. Falls back to preset ANSI red so each
-    /// terminal theme's semantic palette continues to drive status hues.
+    /// Chrome error colour. `#E27870` — warm coral red, picked to read
+    /// against `#1A1816` chrome surface without the cool "alert red"
+    /// shout that VS Code / Linear go for. Preset-independent.
     pub fn ui_error_color(&self) -> [f32; 4] {
-        Self::ui_color_or_field(&self.ui_error, &self.red)
+        Self::ui_color_or_default(&self.ui_error, "#E27870")
     }
-    /// Chrome warning colour. Falls back to preset ANSI yellow.
+    /// Chrome warning colour. `#E6B26B` — warm amber, designed to fit
+    /// the warm-neutral chrome palette.
     pub fn ui_warning_color(&self) -> [f32; 4] {
-        Self::ui_color_or_field(&self.ui_warning, &self.yellow)
+        Self::ui_color_or_default(&self.ui_warning, "#E6B26B")
     }
-    /// Chrome success colour. Falls back to preset ANSI green.
+    /// Chrome success colour. `#A0BC75` — sage green; lower saturation
+    /// than typical "success green" so it doesn't clash with warm chrome.
     pub fn ui_success_color(&self) -> [f32; 4] {
-        Self::ui_color_or_field(&self.ui_success, &self.green)
+        Self::ui_color_or_default(&self.ui_success, "#A0BC75")
     }
-    /// Chrome info colour. Falls back to preset ANSI blue.
+    /// Chrome info colour. `#7DAEC8` — soft sky blue. Close to
+    /// `ciri_dark`'s preset accent (`#7DB4CB`) but distinct on every
+    /// other preset where the accent diverges.
     pub fn ui_info_color(&self) -> [f32; 4] {
-        Self::ui_color_or_field(&self.ui_info, &self.blue)
+        Self::ui_color_or_default(&self.ui_info, "#7DAEC8")
     }
 }
 

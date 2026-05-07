@@ -419,6 +419,10 @@ mod tests {
         const EXPECTED_ON_SURFACE_MUTED: &str = "#8E8780";
         const EXPECTED_BORDER: &str = "#2A2622";
         const EXPECTED_ELEMENT_HOVER: &str = "#22201E";
+        const EXPECTED_ERROR: &str = "#E27870";
+        const EXPECTED_WARNING: &str = "#E6B26B";
+        const EXPECTED_SUCCESS: &str = "#A0BC75";
+        const EXPECTED_INFO: &str = "#7DAEC8";
         for preset in [
             "ciri_dark",
             "one_dark",
@@ -459,6 +463,26 @@ mod tests {
                 theme.element_hover,
                 ThemeConfig::parse_color(EXPECTED_ELEMENT_HOVER),
                 "{preset}: chrome element_hover must not follow preset",
+            );
+            assert_eq!(
+                theme.error,
+                ThemeConfig::parse_color(EXPECTED_ERROR),
+                "{preset}: chrome error must not follow preset ANSI red",
+            );
+            assert_eq!(
+                theme.warning,
+                ThemeConfig::parse_color(EXPECTED_WARNING),
+                "{preset}: chrome warning must not follow preset ANSI yellow",
+            );
+            assert_eq!(
+                theme.success,
+                ThemeConfig::parse_color(EXPECTED_SUCCESS),
+                "{preset}: chrome success must not follow preset ANSI green",
+            );
+            assert_eq!(
+                theme.info,
+                ThemeConfig::parse_color(EXPECTED_INFO),
+                "{preset}: chrome info must not follow preset ANSI blue",
             );
         }
     }
@@ -560,21 +584,38 @@ mod tests {
         assert_eq!(ElevationIndex::Background.bg(&theme), theme.surface);
     }
 
-    /// Status hues still ride along with the preset's ANSI palette.
-    /// Catches anyone broadening the "preset-independent" rule from
-    /// chrome surface/text to status colours.
+    /// Stage 0.4 flipped status hues from "follow preset ANSI" to
+    /// "preset-independent ciri default". Pin that the chrome `error`
+    /// no longer collapses onto the preset's ANSI red so a future
+    /// resolver tweak can't silently restore the old behaviour and
+    /// re-introduce per-theme Banner colour drift.
     #[test]
-    fn status_hues_still_follow_preset() {
+    fn chrome_status_diverges_from_preset_ansi() {
         let mut cfg = ciri_config::theme::ThemeConfig {
             preset: "dracula".into(),
             ..Default::default()
         };
         cfg.resolve_preset();
         let theme = ResolvedTheme::from_config(&cfg);
-        assert_eq!(
+        assert_ne!(
             theme.error,
             ThemeConfig::parse_color(cfg.red.as_ref()),
-            "chrome error should fall back to preset ANSI red"
+            "chrome error should not collapse onto preset ANSI red"
         );
+    }
+
+    /// Explicit `ui_error` overrides the ciri default. Pins that the
+    /// fallback chain stays open for users / preset authors to tune
+    /// the chrome status palette per theme if they want.
+    #[test]
+    fn ui_error_override_wins_over_default() {
+        let mut cfg = ciri_config::theme::ThemeConfig {
+            preset: "ciri_dark".into(),
+            ui_error: "#FF0000".to_string().into(),
+            ..Default::default()
+        };
+        cfg.resolve_preset();
+        let theme = ResolvedTheme::from_config(&cfg);
+        assert_eq!(theme.error, ThemeConfig::parse_color("#FF0000"));
     }
 }

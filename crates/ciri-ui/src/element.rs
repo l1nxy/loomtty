@@ -111,6 +111,14 @@ pub struct PaintCtx<'a> {
     /// `text_color`. `None` = fall back to `theme.on_surface`. Elements
     /// that render text consult this (own color → inherited → theme).
     pub inherited_text_color: Option<Color>,
+    /// Inherited background colour from the nearest ancestor whose style
+    /// set a non-transparent `bg`. `None` = no opaque ancestor, so the
+    /// effective backdrop is whatever clears the frame (theme bg). The
+    /// linear-corrected glyph shader uses this to compute the perceptually
+    /// correct text alpha — without it, text on accent pills (session,
+    /// mode, active tab) renders with the wrong correction and edges
+    /// look fringey/jagged compared to text on the default chrome bg.
+    pub inherited_bg: Option<Color>,
     /// `hit_id` of the topmost element under the cursor for this paint
     /// pass, if any. The walker computes this from a pre-paint
     /// `LayoutSnapshot` walk (so paint sees it immediately, without a
@@ -167,9 +175,15 @@ impl<'a> PaintCtx<'a> {
     /// `inherited_opacity` into the alpha so text fades with its
     /// animated wrapper. Glyphs land in the scene in emit order.
     pub fn emit_text(&mut self, content: &str, pos: [f32; 2], color: Color, font_size_px: f32) {
-        let faded = [color[0], color[1], color[2], color[3] * self.inherited_opacity];
+        let faded = [
+            color[0],
+            color[1],
+            color[2],
+            color[3] * self.inherited_opacity,
+        ];
+        let bg = self.inherited_bg.unwrap_or([0.0, 0.0, 0.0, 0.0]);
         self.text_shaper
-            .emit(content, pos, faded, font_size_px, self.scene);
+            .emit(content, pos, faded, bg, font_size_px, self.scene);
     }
 }
 
@@ -409,6 +423,27 @@ pub trait Element: 'static {
         self.text_color_override()
     }
 
+    /// Background colour this element wants to impose on its descendants,
+    /// if any. Returning `Some(c)` makes the walker thread `c` as the
+    /// `inherited_bg` for the subtree so descendant text glyphs get the
+    /// correct linear-correction backdrop. Returning `None` keeps the
+    /// ancestor's value. Div overrides to return its `style.background`.
+    fn background_override(&self) -> Option<crate::color::Color> {
+        None
+    }
+
+    /// Refinement-aware variant of [`Element::background_override`] —
+    /// surfaces the bg after `.hover()` / `.active()` / `.disabled()`
+    /// refinements (matching the same specificity order Div paints with).
+    /// Default falls back to the stateless variant.
+    fn background_override_with_state(
+        &self,
+        _hovered_hit_id: Option<u64>,
+        _active_hit_id: Option<u64>,
+    ) -> Option<crate::color::Color> {
+        self.background_override()
+    }
+
     /// Paint this element using `cx.bounds`. Children paint themselves
     /// via the walker; `paint` only emits primitives for `self`.
     fn paint(&self, cx: &mut PaintCtx<'_>);
@@ -502,7 +537,10 @@ mod tests {
             s.counter = 5;
         }
         let s = states.use_state::<S>(id);
-        assert_eq!(s.counter, 5, "state should persist across calls with same id");
+        assert_eq!(
+            s.counter, 5,
+            "state should persist across calls with same id"
+        );
     }
 
     #[test]

@@ -12,7 +12,7 @@
 //! inherited state, so `Div::paint` only has to fold its own values
 //! into its own emitted primitive.
 
-use crate::color::{mul_alpha, Color, TRANSPARENT};
+use crate::color::{Color, TRANSPARENT, mul_alpha};
 use crate::element::{AnyElement, Element, EventCtx, IntoElement, PaintCtx, UiEvent};
 use crate::layout::to_taffy_style;
 use crate::scene::SdfRect;
@@ -266,8 +266,8 @@ impl Element for Div {
                 .or(self.style.text_color);
         }
         let hit_id = self.style.hit_id;
-        let active = hit_id.is_some_and(|id| active_hit_id == Some(id))
-            && self.active_style.is_some();
+        let active =
+            hit_id.is_some_and(|id| active_hit_id == Some(id)) && self.active_style.is_some();
         if active {
             return self
                 .active_style
@@ -281,8 +281,8 @@ impl Element for Div {
                 })
                 .or(self.style.text_color);
         }
-        let hovered = hit_id.is_some_and(|id| hovered_hit_id == Some(id))
-            && self.hover_style.is_some();
+        let hovered =
+            hit_id.is_some_and(|id| hovered_hit_id == Some(id)) && self.hover_style.is_some();
         if hovered {
             // Refinement wins when set; fall back to base.
             self.hover_style
@@ -291,6 +291,66 @@ impl Element for Div {
                 .or(self.style.text_color)
         } else {
             self.style.text_color
+        }
+    }
+
+    fn background_override(&self) -> Option<Color> {
+        // Transparent fills don't impose a backdrop on descendants —
+        // text inside `bg(TRANSPARENT)` should see the ancestor's bg
+        // (which is what the user actually sees through the hole),
+        // not get its glyph correction zeroed out.
+        self.style.background.filter(|c| c[3] > 0.0)
+    }
+
+    /// Refinement-aware variant: surfaces the effective bg after
+    /// `.hover()` / `.active()` / `.disabled()` refinements. Mirrors
+    /// `text_color_override_with_state` so descendant Text glyphs get
+    /// the bg the user is actually looking at — including transient
+    /// hover/press tints — for the linear-correction shader.
+    ///
+    /// Same transparent-fall-through rule as `background_override`:
+    /// a refinement that resolves to `alpha=0` is treated as "no
+    /// override" so the cascade keeps looking up the tree.
+    fn background_override_with_state(
+        &self,
+        hovered_hit_id: Option<u64>,
+        active_hit_id: Option<u64>,
+    ) -> Option<Color> {
+        if self.disabled {
+            return self
+                .disabled_style
+                .as_ref()
+                .and_then(|d| d.background)
+                .or(self.style.background)
+                .filter(|c| c[3] > 0.0);
+        }
+        let hit_id = self.style.hit_id;
+        let active =
+            hit_id.is_some_and(|id| active_hit_id == Some(id)) && self.active_style.is_some();
+        if active {
+            return self
+                .active_style
+                .as_ref()
+                .and_then(|act| act.background)
+                .or_else(|| {
+                    self.hover_style
+                        .as_ref()
+                        .filter(|_| hit_id.is_some_and(|id| hovered_hit_id == Some(id)))
+                        .and_then(|hov| hov.background)
+                })
+                .or(self.style.background)
+                .filter(|c| c[3] > 0.0);
+        }
+        let hovered =
+            hit_id.is_some_and(|id| hovered_hit_id == Some(id)) && self.hover_style.is_some();
+        if hovered {
+            self.hover_style
+                .as_ref()
+                .and_then(|hov| hov.background)
+                .or(self.style.background)
+                .filter(|c| c[3] > 0.0)
+        } else {
+            self.style.background.filter(|c| c[3] > 0.0)
         }
     }
 
@@ -429,14 +489,10 @@ impl Div {
             return std::borrow::Cow::Borrowed(&self.style);
         }
         let mut merged = self.style.clone();
-        if hovered
-            && let Some(hov) = &self.hover_style
-        {
+        if hovered && let Some(hov) = &self.hover_style {
             merged.merge(hov);
         }
-        if active
-            && let Some(act) = &self.active_style
-        {
+        if active && let Some(act) = &self.active_style {
             merged.merge(act);
         }
         if let Some(dis) = &self.disabled_style {
@@ -451,9 +507,7 @@ impl Div {
 /// they aren't part of this check (a bare `div().rounded_md()` with no fill
 /// would otherwise upload a no-op transparent SdfRect every frame).
 fn has_visual(s: &Style) -> bool {
-    s.background.is_some()
-        || s.border_width.map_or(false, |w| w > 0.0)
-        || s.shadow.is_some()
+    s.background.is_some() || s.border_width.map_or(false, |w| w > 0.0) || s.shadow.is_some()
 }
 
 /// Map the semantic `Shadow` enum to concrete (blur, color, offset).
@@ -507,6 +561,7 @@ mod tests {
             element_id: None,
             inherited_opacity: 1.0,
             inherited_text_color: None,
+            inherited_bg: None,
             hovered_hit_id: None,
             active_hit_id: None,
             states: None,
@@ -556,7 +611,8 @@ mod tests {
             .bg([1.0, 0.0, 0.0, 1.0])
             .hover(|s| s.bg([0.0, 1.0, 0.0, 1.0]))
             .paint(&mut pcx);
-        let rects: Vec<_> = scene.sdf_rects_iter().collect(); let r = rects[0];
+        let rects: Vec<_> = scene.sdf_rects_iter().collect();
+        let r = rects[0];
         assert_eq!(r.color, [0.0, 1.0, 0.0, 1.0]);
     }
 
@@ -677,7 +733,10 @@ mod tests {
         let mut scene = Scene::new();
         let mut shaper = crate::shaper::NullShaper;
         let mut pcx = make_pcx(&theme, &mut scene, &mut shaper, [0.0, 0.0, 100.0, 40.0]);
-        div().bg(REST).disabled(false, |s| s.bg(DIS)).paint(&mut pcx);
+        div()
+            .bg(REST)
+            .disabled(false, |s| s.bg(DIS))
+            .paint(&mut pcx);
         let rects: Vec<_> = scene.sdf_rects_iter().collect();
         assert_eq!(rects[0].color, REST, "disabled=false ⇒ no refinement");
     }
@@ -761,8 +820,12 @@ mod tests {
         let mut shaper = crate::shaper::NullShaper;
         // 200 × 40 pill: max radius = 20.
         let mut pcx = make_pcx(&theme, &mut scene, &mut shaper, [0.0, 0.0, 200.0, 40.0]);
-        div().bg([1.0, 0.0, 0.0, 1.0]).rounded_full().paint(&mut pcx);
-        let rects: Vec<_> = scene.sdf_rects_iter().collect(); let r = rects[0];
+        div()
+            .bg([1.0, 0.0, 0.0, 1.0])
+            .rounded_full()
+            .paint(&mut pcx);
+        let rects: Vec<_> = scene.sdf_rects_iter().collect();
+        let r = rects[0];
         for c in r.radii {
             assert!(
                 (c - 20.0).abs() < 1e-3,
@@ -779,8 +842,12 @@ mod tests {
         let mut shaper = crate::shaper::NullShaper;
         let mut pcx = make_pcx(&theme, &mut scene, &mut shaper, [0.0, 0.0, 0.0, 0.0]);
         // `bg` forces emission; box has zero area so radii collapse to 0.
-        div().bg([1.0, 0.0, 0.0, 1.0]).rounded_full().paint(&mut pcx);
-        let rects: Vec<_> = scene.sdf_rects_iter().collect(); let r = rects[0];
+        div()
+            .bg([1.0, 0.0, 0.0, 1.0])
+            .rounded_full()
+            .paint(&mut pcx);
+        let rects: Vec<_> = scene.sdf_rects_iter().collect();
+        let r = rects[0];
         assert_eq!(r.radii, [0.0; 4]);
     }
 
@@ -806,8 +873,8 @@ mod tests {
     /// just stashed closures into `Style` that nothing ever invoked.
     #[test]
     fn on_click_fires_on_pointer_down() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
         let hits = Arc::new(AtomicUsize::new(0));
         let hc = hits.clone();
         let mut d = div().on_click(move || {
@@ -822,8 +889,8 @@ mod tests {
 
     #[test]
     fn on_hover_fires_true_on_move_and_false_on_focus_lost() {
-        use std::sync::atomic::{AtomicI32, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicI32, Ordering};
         // +1 for hover-in, -1 for hover-out
         let state = Arc::new(AtomicI32::new(0));
         let s = state.clone();

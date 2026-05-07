@@ -8,6 +8,10 @@ pub(crate) struct TextEmitParams {
     pub cell_width: f32,
     pub baseline: f32,
     pub color: [f32; 4],
+    /// Backdrop the glyphs sit on, used by the linear-correction shader
+    /// to compute perceptually-correct alpha. `[0; 4]` = no opaque
+    /// ancestor (text on default chrome bg).
+    pub bg_color: [f32; 4],
     pub scale: f32,
 }
 
@@ -147,7 +151,7 @@ fn make_shaped_glyph_instance(
         uv_pos: [entry.u0, entry.v0],
         uv_size: [entry.u1 - entry.u0, entry.v1 - entry.v0],
         color: params.color,
-        bg_color: [0.0, 0.0, 0.0, 0.0],
+        bg_color: params.bg_color,
     }
 }
 
@@ -176,7 +180,7 @@ fn make_text_glyph_instance(
             uv_pos: [entry.u0, entry.v0],
             uv_size: [entry.u1 - entry.u0, entry.v1 - entry.v0],
             color: params.color,
-            bg_color: [0.0, 0.0, 0.0, 0.0],
+            bg_color: params.bg_color,
         }
     } else {
         let sx = (base_x + entry.bearing_x * scale).round();
@@ -187,7 +191,7 @@ fn make_text_glyph_instance(
             uv_pos: [entry.u0, entry.v0],
             uv_size: [entry.u1 - entry.u0, entry.v1 - entry.v0],
             color: params.color,
-            bg_color: [0.0, 0.0, 0.0, 0.0],
+            bg_color: params.bg_color,
         }
     }
 }
@@ -220,6 +224,7 @@ mod tests {
                 cell_width: 10.0,
                 baseline: 16.0,
                 color: [1.0; 4],
+                bg_color: [0.0; 4],
                 scale: 1.0,
             },
             0,
@@ -242,6 +247,7 @@ mod tests {
                 cell_width: 10.0,
                 baseline: 16.0,
                 color: [1.0; 4],
+                bg_color: [0.0; 4],
                 scale: 1.0,
             },
             3,
@@ -264,6 +270,7 @@ mod tests {
                 cell_width: 10.0,
                 baseline: 14.0,
                 color: [1.0; 4],
+                bg_color: [0.0; 4],
                 scale: 1.0,
             },
             100.0,
@@ -293,6 +300,7 @@ mod tests {
                 cell_width: 10.0,
                 baseline: 14.0,
                 color: [1.0; 4],
+                bg_color: [0.0; 4],
                 scale: 1.5,
             },
             20.0,

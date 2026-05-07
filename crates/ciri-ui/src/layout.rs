@@ -44,6 +44,7 @@ struct DeferredEntry<'a> {
     inherited_translate: [f32; 2],
     inherited_opacity: f32,
     inherited_text_color: Option<crate::color::Color>,
+    inherited_bg: Option<crate::color::Color>,
     priority: u32,
     anchor: Option<crate::element::AnchorPlacement>,
 }
@@ -455,8 +456,7 @@ pub fn paint_tree_into_retained(
     let mut deferred_queue: Vec<DeferredEntry<'_>> = Vec::new();
     let mut states_owner = states;
     {
-        let states_for_main: Option<&mut ElementStates> =
-            states_owner.as_mut().map(|s| &mut **s);
+        let states_for_main: Option<&mut ElementStates> = states_owner.as_mut().map(|s| &mut **s);
         paint_node(
             tree,
             root_node,
@@ -465,6 +465,7 @@ pub fn paint_tree_into_retained(
             /* inherited_translate */ [0.0, 0.0],
             /* inherited_opacity */ 1.0,
             /* inherited_text_color */ None,
+            /* inherited_bg */ None,
             hovered_hit_id,
             active_hit_id,
             theme,
@@ -520,6 +521,7 @@ fn paint_node<'a>(
     inherited_translate: [f32; 2],
     inherited_opacity: f32,
     inherited_text_color: Option<crate::color::Color>,
+    inherited_bg: Option<crate::color::Color>,
     hovered_hit_id: Option<u64>,
     active_hit_id: Option<u64>,
     theme: &ResolvedTheme,
@@ -565,6 +567,7 @@ fn paint_node<'a>(
                 inherited_translate,
                 inherited_opacity,
                 inherited_text_color,
+                inherited_bg,
                 priority,
                 anchor,
             });
@@ -603,8 +606,7 @@ fn paint_node<'a>(
     // for this call, then `states` is still live for the children loop.
     let mut states_owner = states;
     {
-        let states_for_paint: Option<&mut ElementStates> =
-            states_owner.as_mut().map(|s| &mut **s);
+        let states_for_paint: Option<&mut ElementStates> = states_owner.as_mut().map(|s| &mut **s);
         let mut ctx = PaintCtx {
             theme,
             bounds: [paint_x, paint_y, layout.size.width, layout.size.height],
@@ -614,6 +616,7 @@ fn paint_node<'a>(
             element_id: el.id(),
             inherited_opacity,
             inherited_text_color,
+            inherited_bg,
             hovered_hit_id,
             active_hit_id,
             states: states_for_paint,
@@ -640,6 +643,16 @@ fn paint_node<'a>(
         .text_color_override_with_state(hovered_hit_id, active_hit_id)
         .or(inherited_text_color);
 
+    // Background colour inherits the same way so descendant Text glyphs
+    // know the actual backdrop they're being composited onto — used by
+    // the linear-correction shader to compute perceptually-correct
+    // alpha. Nearest-ancestor-set-wins matches how the painter layers
+    // bg rects (innermost on top), and the state-aware variant carries
+    // hover/press/disabled tints down to nested text.
+    let child_inherited_bg = el
+        .background_override_with_state(hovered_hit_id, active_hit_id)
+        .or(inherited_bg);
+
     let children = el.children();
     if children.is_empty() {
         return;
@@ -653,8 +666,7 @@ fn paint_node<'a>(
         "Taffy child count disagrees with Element::children()",
     );
     for (child_node, child_el) in taffy_children.iter().zip(children.iter()) {
-        let states_for_child: Option<&mut ElementStates> =
-            states.as_mut().map(|s| &mut **s);
+        let states_for_child: Option<&mut ElementStates> = states.as_mut().map(|s| &mut **s);
         paint_node(
             tree,
             *child_node,
@@ -663,6 +675,7 @@ fn paint_node<'a>(
             child_inherited_translate,
             child_inherited_opacity,
             child_inherited_text_color,
+            child_inherited_bg,
             hovered_hit_id,
             active_hit_id,
             theme,
@@ -784,6 +797,7 @@ fn drain_deferred_paint<'a>(
                 entry.inherited_translate,
                 entry.inherited_opacity,
                 entry.inherited_text_color,
+                entry.inherited_bg,
                 hovered_hit_id,
                 active_hit_id,
                 theme,
@@ -892,6 +906,7 @@ fn walk_for_layout_snapshot<'a>(
                 inherited_translate,
                 inherited_opacity: 1.0,
                 inherited_text_color: None,
+                inherited_bg: None,
                 priority,
                 anchor,
             });
@@ -1502,6 +1517,7 @@ mod tests {
                 _c: &str,
                 _p: [f32; 2],
                 _col: Color,
+                _bg: Color,
                 _fs: f32,
                 _s: &mut Scene,
             ) {
@@ -1561,6 +1577,47 @@ mod tests {
         let _ = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut shaper);
         assert_eq!(shaper.calls.len(), 1);
         assert_eq!(shaper.calls[0].color, RED);
+    }
+
+    /// Regression: a wrapper `bg(...)` must cascade through the walker
+    /// into `Text` descendants so glyph shader linear correction sees
+    /// the actual pill/card backdrop instead of transparent black.
+    #[test]
+    fn wrapper_background_cascades_to_text_descendants() {
+        use crate::shaper::RecordingShaper;
+
+        const BG: Color = [0.2, 0.4, 0.8, 1.0];
+        let mut shaper = RecordingShaper::default();
+        let root = div().w(200.0).h(40.0).bg(BG).child(text("hello"));
+        let _ = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut shaper);
+        assert_eq!(shaper.calls.len(), 1);
+        assert_eq!(shaper.calls[0].bg_color, BG);
+    }
+
+    /// Regression: an inner `bg(TRANSPARENT)` must NOT shadow the
+    /// outer pill's bg — text inside the hole sees the ancestor's
+    /// backdrop (which is what the user is actually looking at), so
+    /// the cascade should fall through alpha=0 overrides.
+    #[test]
+    fn transparent_inner_bg_does_not_shadow_ancestor() {
+        use crate::color::TRANSPARENT;
+        use crate::shaper::RecordingShaper;
+
+        const BG: Color = [0.2, 0.4, 0.8, 1.0];
+        let mut shaper = RecordingShaper::default();
+        let root = div().w(200.0).h(40.0).bg(BG).child(
+            div()
+                .w(100.0)
+                .h(20.0)
+                .bg(TRANSPARENT)
+                .child(text("hello")),
+        );
+        let _ = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut shaper);
+        assert_eq!(shaper.calls.len(), 1);
+        assert_eq!(
+            shaper.calls[0].bg_color, BG,
+            "alpha=0 inner bg should fall through to outer pill's bg"
+        );
     }
 
     /// Nearest-ancestor wins: a `text_color` closer to the Text
@@ -1801,17 +1858,14 @@ mod tests {
     fn deferred_subtree_appears_in_layout_snapshot() {
         use crate::elements::deferred;
         use crate::styled::Styled;
-        let root = div()
-            .w(800.0)
-            .h(600.0)
-            .child(deferred(
-                div()
-                    .w(40.0)
-                    .h(40.0)
-                    .bg([1.0, 1.0, 1.0, 1.0])
-                    .hit_id(99)
-                    .on_click(|| {}),
-            ));
+        let root = div().w(800.0).h(600.0).child(deferred(
+            div()
+                .w(40.0)
+                .h(40.0)
+                .bg([1.0, 1.0, 1.0, 1.0])
+                .hit_id(99)
+                .on_click(|| {}),
+        ));
         let mut snapshot = LayoutSnapshot::new();
         let mut tree = taffy::TaffyTree::<NodeContext>::new();
         layout_tree_into_retained(
@@ -1830,18 +1884,15 @@ mod tests {
     /// anchor point when the child fits in the viewport.
     #[test]
     fn anchored_top_left_in_bounds_paints_at_anchor() {
-        use crate::elements::anchored;
         use crate::AnchorCorner;
+        use crate::elements::anchored;
         const RED: Color = [1.0, 0.0, 0.0, 1.0];
 
-        let root = div()
-            .w(400.0)
-            .h(300.0)
-            .child(anchored(
-                div().w(40.0).h(20.0).bg(RED),
-                [50.0, 80.0],
-                AnchorCorner::TopLeft,
-            ));
+        let root = div().w(400.0).h(300.0).child(anchored(
+            div().w(40.0).h(20.0).bg(RED),
+            [50.0, 80.0],
+            AnchorCorner::TopLeft,
+        ));
         let scene = paint_tree(
             &root,
             &theme(),
@@ -1860,21 +1911,18 @@ mod tests {
     /// child stays on-screen with the anchor at its right edge.
     #[test]
     fn anchored_flips_horizontally_when_off_right_edge() {
-        use crate::elements::anchored;
         use crate::AnchorCorner;
+        use crate::elements::anchored;
         const RED: Color = [1.0, 0.0, 0.0, 1.0];
 
         // Viewport 400 wide, child 100 wide. Anchor at x=380 with
         // TopLeft would place child at x=380..480 — overflows. Flip
         // to "anchor at child's right edge" → child at x=280..380.
-        let root = div()
-            .w(400.0)
-            .h(300.0)
-            .child(anchored(
-                div().w(100.0).h(20.0).bg(RED),
-                [380.0, 50.0],
-                AnchorCorner::TopLeft,
-            ));
+        let root = div().w(400.0).h(300.0).child(anchored(
+            div().w(100.0).h(20.0).bg(RED),
+            [380.0, 50.0],
+            AnchorCorner::TopLeft,
+        ));
         let scene = paint_tree(
             &root,
             &theme(),
@@ -1896,20 +1944,17 @@ mod tests {
     /// max_x = vw - cw is negative when cw > vw, clamping floors to 0).
     #[test]
     fn anchored_clamps_when_neither_corner_fits() {
-        use crate::elements::anchored;
         use crate::AnchorCorner;
+        use crate::elements::anchored;
         const RED: Color = [1.0, 0.0, 0.0, 1.0];
 
         // Viewport 100, child 200. No corner can fit; final clamp
         // floors x to 0.
-        let root = div()
-            .w(100.0)
-            .h(300.0)
-            .child(anchored(
-                div().w(200.0).h(20.0).bg(RED),
-                [50.0, 50.0],
-                AnchorCorner::TopLeft,
-            ));
+        let root = div().w(100.0).h(300.0).child(anchored(
+            div().w(200.0).h(20.0).bg(RED),
+            [50.0, 50.0],
+            AnchorCorner::TopLeft,
+        ));
         let scene = paint_tree(
             &root,
             &theme(),
@@ -1931,21 +1976,18 @@ mod tests {
     /// on-screen with the anchor at its bottom edge.
     #[test]
     fn anchored_flips_vertically_when_off_bottom_edge() {
-        use crate::elements::anchored;
         use crate::AnchorCorner;
+        use crate::elements::anchored;
         const RED: Color = [1.0, 0.0, 0.0, 1.0];
 
         // Viewport 300 tall, child 80 tall. Anchor at y=270 with
         // TopLeft would place child at y=270..350 — overflows. Flip
         // to "anchor at child's bottom edge" → child at y=190..270.
-        let root = div()
-            .w(400.0)
-            .h(300.0)
-            .child(anchored(
-                div().w(20.0).h(80.0).bg(RED),
-                [50.0, 270.0],
-                AnchorCorner::TopLeft,
-            ));
+        let root = div().w(400.0).h(300.0).child(anchored(
+            div().w(20.0).h(80.0).bg(RED),
+            [50.0, 270.0],
+            AnchorCorner::TopLeft,
+        ));
         let scene = paint_tree(
             &root,
             &theme(),
@@ -1968,22 +2010,19 @@ mod tests {
     /// Result: the child's TopLeft corner sits at the anchor point.
     #[test]
     fn anchored_bottom_right_near_top_left_flips_both_axes() {
-        use crate::elements::anchored;
         use crate::AnchorCorner;
+        use crate::elements::anchored;
         const RED: Color = [1.0, 0.0, 0.0, 1.0];
 
         // Viewport 400×300, child 100×80. Anchor at (10, 20) with
         // BottomRight: preferred = (10-100, 20-80) = (-90, -60), both
         // off-screen. Per-axis flip: x = ax = 10, y = ay = 20. Child
         // ends up at (10, 20) — i.e. its TopLeft at the anchor.
-        let root = div()
-            .w(400.0)
-            .h(300.0)
-            .child(anchored(
-                div().w(100.0).h(80.0).bg(RED),
-                [10.0, 20.0],
-                AnchorCorner::BottomRight,
-            ));
+        let root = div().w(400.0).h(300.0).child(anchored(
+            div().w(100.0).h(80.0).bg(RED),
+            [10.0, 20.0],
+            AnchorCorner::BottomRight,
+        ));
         let scene = paint_tree(
             &root,
             &theme(),

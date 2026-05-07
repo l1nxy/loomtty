@@ -176,6 +176,7 @@ mod tests {
             element_id: None,
             inherited_opacity: 1.0,
             inherited_text_color: None,
+            inherited_bg: None,
             hovered_hit_id: None,
             active_hit_id: None,
             states: None,
@@ -251,6 +252,35 @@ mod tests {
         text("hi").color([1.0, 0.0, 0.0, 0.8]).paint(&mut cx);
         // α * inherited → 0.8 * 0.5 = 0.4
         assert!((shaper.calls[0].color[3] - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn inherited_bg_reaches_shaper_for_linear_correction() {
+        // Regression: text glyphs on a colored ancestor's bg need that
+        // bg in their `bg_color` field for the linear-correction shader.
+        // Before the fix, `emit_text` always passed `[0; 4]`, so text
+        // on session/mode pills computed correction against black instead
+        // of accent and rendered with visibly-wrong edge weight.
+        let theme = ResolvedTheme::default();
+        let mut scene = Scene::new();
+        let mut shaper = RecordingShaper::default();
+        let mut cx = make_ctx(&theme, &mut scene, &mut shaper);
+        cx.inherited_bg = Some([0.3, 0.5, 0.9, 1.0]);
+        text("hi").paint(&mut cx);
+        assert_eq!(shaper.calls[0].bg_color, [0.3, 0.5, 0.9, 1.0]);
+    }
+
+    #[test]
+    fn no_inherited_bg_passes_transparent_to_shaper() {
+        // The no-opaque-ancestor case — text on default chrome bg.
+        // Shader treats `[0; 4]` as "no correction needed" (or
+        // equivalently, text on theme background).
+        let theme = ResolvedTheme::default();
+        let mut scene = Scene::new();
+        let mut shaper = RecordingShaper::default();
+        let mut cx = make_ctx(&theme, &mut scene, &mut shaper);
+        text("hi").paint(&mut cx);
+        assert_eq!(shaper.calls[0].bg_color, [0.0, 0.0, 0.0, 0.0]);
     }
 
     #[test]

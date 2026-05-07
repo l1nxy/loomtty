@@ -813,7 +813,6 @@ struct OverviewBgData {
 struct OverviewBgTextureSlot {
     texture: gpu::Texture,
     texture_view: gpu::TextureView,
-    staging: gpu::Buffer,
     width: u32,
     height: u32,
 }
@@ -885,8 +884,9 @@ impl OverviewBgPipeline {
     }
 
     /// Upload `rgba` into a freshly-allocated GPU texture, replacing any
-    /// previously-uploaded image. The caller owns the encoder and will
-    /// submit it; this method only records the transfer command.
+    /// previously-uploaded image. Returns the staging buffer the caller
+    /// must destroy *after* the next `submit + wait_for(sync)` so the GPU
+    /// is done copying before the buffer is freed.
     fn upload(
         &mut self,
         context: &gpu::Context,
@@ -894,7 +894,7 @@ impl OverviewBgPipeline {
         rgba: &[u8],
         width: u32,
         height: u32,
-    ) -> Result<()> {
+    ) -> Result<gpu::Buffer> {
         if width == 0 || height == 0 {
             anyhow::bail!("overview bg image has zero dimension ({width}x{height})");
         }
@@ -909,7 +909,6 @@ impl OverviewBgPipeline {
         if let Some(prev) = self.texture.take() {
             context.destroy_texture_view(prev.texture_view);
             context.destroy_texture(prev.texture);
-            context.destroy_buffer(prev.staging);
         }
 
         let texture = context.create_texture(gpu::TextureDesc {
@@ -969,34 +968,35 @@ impl OverviewBgPipeline {
         self.texture = Some(OverviewBgTextureSlot {
             texture,
             texture_view,
-            staging,
             width,
             height,
         });
-        Ok(())
+        Ok(staging)
     }
 
     fn clear(&mut self, context: &gpu::Context) {
         if let Some(prev) = self.texture.take() {
             context.destroy_texture_view(prev.texture_view);
             context.destroy_texture(prev.texture);
-            context.destroy_buffer(prev.staging);
         }
     }
 
     /// Issue the textured-quad draw if a texture is bound and `opacity > 0`.
+    /// Returns `true` iff a draw was actually issued — callers use that to
+    /// suppress the prepended baseline rect that would otherwise erase the
+    /// image.
     fn draw(
         &self,
         pass: &mut gpu::RenderCommandEncoder,
         viewport_w: f32,
         viewport_h: f32,
         opacity: f32,
-    ) {
+    ) -> bool {
         let Some(tex) = self.texture.as_ref() else {
-            return;
+            return false;
         };
         if opacity <= 0.0 {
-            return;
+            return false;
         }
         let cb = [
             viewport_w,
@@ -1027,13 +1027,13 @@ impl OverviewBgPipeline {
         );
         // Vertexless: 6 vertices forming two triangles for the fullscreen quad.
         pe.draw(0, 6, 0, 1);
+        true
     }
 
     fn destroy(&mut self, context: &gpu::Context) {
         if let Some(prev) = self.texture.take() {
             context.destroy_texture_view(prev.texture_view);
             context.destroy_texture(prev.texture);
-            context.destroy_buffer(prev.staging);
         }
         context.destroy_render_pipeline(&mut self.pipeline);
         context.destroy_buffer(self.uniform_buffer);
@@ -1379,12 +1379,15 @@ impl Renderer {
             self.context.wait_for(sp, 5000);
         }
         self.encoder.start();
-        self.overview_bg
+        let staging = self
+            .overview_bg
             .upload(&self.context, &mut self.encoder, rgba, width, height)?;
         let sync = self.context.submit(&mut self.encoder);
-        // Wait so the staging buffer write is safely consumed before the
-        // next `set_overview_background_image` (or shutdown) frees it.
+        // Wait so the GPU has consumed the staging buffer's contents,
+        // then free it — keeping it around would just hold ~size_of_image
+        // bytes of `Memory::Upload` permanently for no reason.
         self.context.wait_for(&sync, 5000);
+        self.context.destroy_buffer(staging);
         Ok(())
     }
 
@@ -1492,8 +1495,10 @@ impl Renderer {
             // Overview wallpaper, if any. Self-checks the texture/opacity
             // gate, so passing 0.0 is a no-op. Drawn after the clear and
             // before pane bgs so the image sits behind everything else.
-            self.overview_bg
-                .draw(&mut pass, vw_f, vh_f, scene.overview_bg_image_opacity);
+            // Returns true iff a draw was actually issued.
+            let wallpaper_drawn =
+                self.overview_bg
+                    .draw(&mut pass, vw_f, vh_f, scene.overview_bg_image_opacity);
 
             // 1. Upload all background rects (clear + pane + overlay) once.
             // The prepended baseline rect goes transparent while the
@@ -1501,9 +1506,7 @@ impl Renderer {
             // erase the image we just drew. The slot itself stays so
             // the bg_rect index math (`active_bg_idx` / `overlay_bg_idx`)
             // still matches `scene.bg_rect_ranges`.
-            let baseline_color = if scene.overview_bg_image_opacity > 0.0
-                && self.overview_bg.texture.is_some()
-            {
+            let baseline_color = if wallpaper_drawn {
                 [0.0; 4]
             } else {
                 scene.clear_color

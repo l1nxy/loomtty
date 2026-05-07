@@ -1042,9 +1042,11 @@ impl GlOverviewBgPipeline {
         gl.delete_vertex_array(self.vao);
     }
 
-    /// Draw the wallpaper if a texture is bound and `opacity > 0`. Caller
-    /// must have set the framebuffer / blend state already; this rebinds
-    /// program + VAO + texture only.
+    /// Draw the wallpaper if a texture is bound and `opacity > 0`. Returns
+    /// `true` iff a draw was actually issued — callers use that to suppress
+    /// the prepended baseline rect that would otherwise erase the image.
+    /// Caller must have set the framebuffer / blend state already; this
+    /// rebinds program + VAO + texture only.
     unsafe fn draw(
         &self,
         gl: &glow::Context,
@@ -1052,12 +1054,12 @@ impl GlOverviewBgPipeline {
         vh: f32,
         opacity: f32,
         use_linear_blending: bool,
-    ) {
+    ) -> bool {
         let Some(tex) = self.texture.as_ref() else {
-            return;
+            return false;
         };
         if opacity <= 0.0 {
-            return;
+            return false;
         }
         gl.use_program(Some(self.program));
         gl.uniform_4_f32(
@@ -1082,6 +1084,7 @@ impl GlOverviewBgPipeline {
         gl.bind_vertex_array(None);
         gl.bind_texture(glow::TEXTURE_2D, None);
         gl.use_program(None);
+        true
     }
 }
 
@@ -1469,7 +1472,8 @@ impl Renderer {
             // Overview wallpaper (if any). Self-checks the texture/opacity
             // gate, so passing 0.0 is a no-op. Drawn after the clear and
             // before pane bgs so the image sits behind everything else.
-            self.overview_bg.draw(
+            // Returns true iff a draw was actually issued.
+            let wallpaper_drawn = self.overview_bg.draw(
                 &self.gl,
                 vw,
                 vh,
@@ -1483,9 +1487,7 @@ impl Renderer {
             // wallpaper is showing. The slot itself stays so the bg_rect
             // index math (active_bg_idx / overlay_bg_idx) still matches
             // `scene.bg_rect_ranges`.
-            let baseline_color = if scene.overview_bg_image_opacity > 0.0
-                && self.overview_bg.texture.is_some()
-            {
+            let baseline_color = if wallpaper_drawn {
                 [0.0; 4]
             } else {
                 scene.clear_color

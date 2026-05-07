@@ -1605,17 +1605,21 @@ impl DxOverviewBgPipeline {
     }
 
     /// Issue the textured-quad draw if a texture is bound and `opacity > 0`.
+    /// Returns `true` if a draw was actually issued — callers use that to
+    /// decide whether the redundant prepended baseline rect needs to be
+    /// transparent (so it doesn't erase the wallpaper).
+    ///
     /// Caller must have set the render target and viewport already; this
     /// rebinds the input layout (none — vertexless), shaders, cbuffer, SRV,
     /// sampler, and topology, but leaves the framebuffer / blend state in
     /// place (the existing premultiplied-alpha state is exactly what the
     /// PS output expects).
-    unsafe fn draw(&self, ctx: &ID3D11DeviceContext, vw: f32, vh: f32, opacity: f32) {
+    unsafe fn draw(&self, ctx: &ID3D11DeviceContext, vw: f32, vh: f32, opacity: f32) -> bool {
         let Some(tex) = self.texture.as_ref() else {
-            return;
+            return false;
         };
         if opacity <= 0.0 {
-            return;
+            return false;
         }
 
         let cb_data = [
@@ -1653,6 +1657,7 @@ impl DxOverviewBgPipeline {
         ctx.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
 
         ctx.Draw(6, 0);
+        true
     }
 }
 
@@ -2025,8 +2030,10 @@ impl Renderer {
             // Overview wallpaper, if any. Self-checks the texture/opacity
             // gate, so passing 0.0 (default outside overview mode) is a
             // no-op. Drawn after the clear and before pane bgs so the
-            // image sits behind everything else.
-            self.overview_bg.draw(
+            // image sits behind everything else. Returns true iff a draw
+            // was actually issued — used below to suppress the prepended
+            // baseline rect (which would otherwise erase the image).
+            let wallpaper_drawn = self.overview_bg.draw(
                 &self.ctx,
                 vw,
                 vh,
@@ -2036,14 +2043,12 @@ impl Renderer {
             // 1. Upload all background rects (clear + pane + overlay) once.
             // The prepended full-viewport rect is normally a redundant
             // baseline of `clear_color` (the framebuffer was already
-            // cleared). When the overview wallpaper is showing it would
-            // erase the image we just drew, so make it transparent in
-            // that case — the index slot has to stay so the rest of the
-            // bg_rects index math (active_bg_idx / overlay_bg_idx) keeps
-            // matching `scene.bg_rect_ranges`.
-            let baseline_color = if scene.overview_bg_image_opacity > 0.0
-                && self.overview_bg.texture.is_some()
-            {
+            // cleared). When the wallpaper is showing it would erase the
+            // image, so go transparent in that case — the index slot has
+            // to stay so the rest of the bg_rects index math
+            // (active_bg_idx / overlay_bg_idx) keeps matching
+            // `scene.bg_rect_ranges`.
+            let baseline_color = if wallpaper_drawn {
                 [0.0; 4]
             } else {
                 scene.clear_color

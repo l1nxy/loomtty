@@ -171,6 +171,52 @@ impl App {
             UiAction::CloseSettings => {
                 self.core.settings_panel_visible = false;
             }
+            UiAction::OpenThemeDropdown => {
+                // Reuse the existing context_menu popup as the dropdown
+                // surface — its anchored / outside-click / hit-walker
+                // pipeline is already production-tested. Items populate
+                // with the built-in preset list; clicking one fires
+                // `ContextMenuAction::SetThemePreset(name)` which the
+                // standard dispatch handles via `apply_theme_preset`.
+                let (mx, my) = self.last_mouse_pos.unwrap_or((0.0, 0.0));
+                let current = self.core.config.theme.preset.clone();
+                let presets = [
+                    "ciri_dark",
+                    "one_dark",
+                    "catppuccin_mocha",
+                    "tokyo_night",
+                    "dracula",
+                    "nord",
+                    "gruvbox_dark",
+                    "ghostty",
+                ];
+                let items = presets
+                    .into_iter()
+                    .map(|name| {
+                        let label = if name == current
+                            || (current.is_empty() && name == "ciri_dark")
+                        {
+                            format!("\u{2713} {}", name)
+                        } else {
+                            format!("  {}", name)
+                        };
+                        crate::app::ContextMenuItem {
+                            label,
+                            action: crate::app::ContextMenuAction::SetThemePreset(
+                                name.to_string(),
+                            ),
+                            enabled: true,
+                        }
+                    })
+                    .collect();
+                self.core.context_menu = crate::app::ContextMenu {
+                    visible: true,
+                    x: mx,
+                    y: my,
+                    target_pane_id: None,
+                    items,
+                };
+            }
             UiAction::OpenSettingsToml => {
                 // v1 escape hatch: open the user's settings.toml so
                 // they can persist any change the panel doesn't yet

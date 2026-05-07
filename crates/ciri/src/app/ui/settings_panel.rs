@@ -16,16 +16,18 @@ use super::tokens;
 use super::types::{UiAction, UiContext, UiScene, UiSettingsHit, ui_hit_id};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Banner, Div, ElevationIndex, Severity, Styled, deferred, div, text};
+use ciri_ui::{Banner, Div, Dropdown, ElevationIndex, Severity, Styled, deferred, div, text};
 
 const HIT_DIALOG: u64 = 1;
 const HIT_CLOSE: u64 = 2;
 const HIT_OPEN_TOML: u64 = 3;
+const HIT_THEME_DROPDOWN: u64 = 4;
 
 fn settings_hit_from_id(hit_id: Option<u64>) -> UiSettingsHit {
     match hit_id {
         Some(HIT_CLOSE) => UiSettingsHit::Close,
         Some(HIT_OPEN_TOML) => UiSettingsHit::OpenToml,
+        Some(HIT_THEME_DROPDOWN) => UiSettingsHit::ThemeDropdown,
         Some(HIT_DIALOG) => UiSettingsHit::Dialog,
         _ => UiSettingsHit::None,
     }
@@ -71,6 +73,7 @@ impl SettingsPanelComponent {
         match self.hit_test(mx, my, cx) {
             UiSettingsHit::Close | UiSettingsHit::None => Some(UiAction::CloseSettings),
             UiSettingsHit::OpenToml => Some(UiAction::OpenSettingsToml),
+            UiSettingsHit::ThemeDropdown => Some(UiAction::OpenThemeDropdown),
             UiSettingsHit::Dialog => None,
         }
     }
@@ -118,23 +121,25 @@ impl SettingsPanelComponent {
             .items_center()
             .child(text("Appearance").color(theme.on_surface_muted));
 
-        // Placeholder rows — replaced with live Dropdown / NumberField in
-        // stages 2.C / 2.D. Lays out the row geometry now so the panel
-        // proportions don't change when controls land.
-        let preset_row = self.placeholder_row(
+        // Theme preset row — real Dropdown trigger; click opens a
+        // context_menu with preset list (handler in interaction.rs
+        // populates `app.core.context_menu` at last-known mouse pos).
+        let preset_label = if self.current_preset.is_empty() {
+            "ciri_dark".to_string()
+        } else {
+            self.current_preset.clone()
+        };
+        let preset_row = self.control_row(
             cx,
             content_w,
             "Theme",
-            &format!(
-                "Currently {}",
-                if self.current_preset.is_empty() {
-                    "ciri_dark"
-                } else {
-                    &self.current_preset
-                }
-            ),
+            Dropdown::new(HIT_THEME_DROPDOWN)
+                .value(preset_label)
+                .width(180.0)
+                .into_div(theme),
         );
-        let opacity_row = self.placeholder_row(cx, content_w, "Pane Opacity", "Stepper coming…");
+        // Pane opacity stepper still pending — stage 2.D.
+        let opacity_row = self.placeholder_row(cx, content_w, "Pane Opacity", "Stepper coming\u{2026}");
 
         let footer = div()
             .w(content_w)
@@ -203,6 +208,27 @@ impl SettingsPanelComponent {
             .justify_between()
             .child(text(label.to_string()).color(cx.theme.on_surface))
             .child(text(hint.to_string()).color(cx.theme.on_surface_muted))
+    }
+
+    /// Live-control row: label on the left, supplied control element on
+    /// the right. Same horizontal alignment as `placeholder_row` so
+    /// settings rows line up vertically as more controls land.
+    fn control_row(
+        &self,
+        cx: &UiContext<'_>,
+        content_w: f32,
+        label: &str,
+        control: Div,
+    ) -> Div {
+        let row_h = cx.ui_line_h + tokens::SPACE_2 * 2.0;
+        div()
+            .w(content_w)
+            .h(row_h)
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .child(text(label.to_string()).color(cx.theme.on_surface))
+            .child(control)
     }
 
     pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {

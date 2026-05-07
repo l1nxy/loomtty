@@ -107,9 +107,37 @@ impl App {
                         self.send(ClientMessage::ClosePane { pane_id });
                     }
                 }
+                ContextMenuAction::SetThemePreset(name) => {
+                    self.apply_theme_preset(name.clone());
+                }
             }
         }
         self.core.context_menu.visible = false;
+    }
+
+    /// Apply a chrome theme preset live: mutate `core.config.theme`,
+    /// resolve the preset to fill any unset fields, refresh the cached
+    /// terminal colour table + chrome `ResolvedTheme`, and request a
+    /// repaint. Mirrors the relevant subset of `reload_config`'s post-
+    /// load pipeline (font / image checks aren't needed here — only the
+    /// theme palette changes).
+    ///
+    /// v1: in-memory only. The change is NOT written back to
+    /// `settings.toml`; users persist via the panel's
+    /// "Open settings.toml" link. The Banner makes that explicit.
+    pub(crate) fn apply_theme_preset(&mut self, preset: String) {
+        // Replace `theme` so the previous preset's fallback fills don't
+        // leak into the new preset (e.g. switching dracula → ciri_dark
+        // shouldn't keep dracula's accent if the user hasn't overridden
+        // it). `resolve_preset` repopulates from the new preset's TOML.
+        self.core.config.theme = ciri_config::theme::ThemeConfig {
+            preset,
+            ..ciri_config::theme::ThemeConfig::default()
+        };
+        self.core.config.theme.resolve_preset();
+        self.cached_color_table = ciri_render::terminal::ColorTable::new(&self.core.config);
+        self.cached_resolved_theme.reload(&self.core.config.theme);
+        self.schedule_redraw();
     }
 
     pub(crate) fn open_context_menu(&mut self, mx: f32, my: f32) {

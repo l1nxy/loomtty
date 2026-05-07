@@ -290,6 +290,10 @@ pub(crate) enum UiAction {
     /// Escape hatch for users who want to persist changes the v1 panel
     /// doesn't write back yet.
     OpenSettingsToml,
+    /// Open the theme-preset dropdown — popup is rendered via
+    /// `context_menu` anchored at last-known mouse position. Items
+    /// dispatch `ContextMenuAction::SetThemePreset(name)` on click.
+    OpenThemeDropdown,
 }
 
 // Per-component hit enums — kept internal, used only within each component's
@@ -334,6 +338,8 @@ pub(super) enum UiSettingsHit {
     Close,
     /// "Open settings.toml" link at the bottom of the panel.
     OpenToml,
+    /// Theme preset dropdown trigger — opens the preset popup.
+    ThemeDropdown,
     /// Click outside the panel — closes settings.
     None,
 }

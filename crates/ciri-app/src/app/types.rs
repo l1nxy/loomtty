@@ -26,6 +26,12 @@ pub enum ContextMenuAction {
     SplitRight,
     SplitDown,
     ClosePane,
+    /// Apply a theme preset by name and live-reload the chrome.
+    /// Used by the settings panel's Theme dropdown — context_menu is
+    /// the existing popup with a hit-walker / outside-click handler,
+    /// so the Theme dropdown reuses it instead of duplicating that
+    /// machinery.
+    SetThemePreset(String),
 }
 
 /// Context menu state.

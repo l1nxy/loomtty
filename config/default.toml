@@ -17,6 +17,15 @@ inactive_opacity = 0.7
 # Try 4-12 for modern soft. Niri-style alpha mask: no extra pass, opaque
 # region preserved except at the four arc pixels.
 pane_corner_radius = 0.0
+# Optional wallpaper for overview mode. PNG and JPEG; supports `~`,
+# absolute paths, and paths relative to this config file's directory.
+# Empty = use the solid `theme.overview_background` colour.
+# Fitted with a `cover` policy (filled, overflow cropped, aspect kept).
+overview_background_image = ""
+# 0.0 shows the wallpaper at full strength; 1.0 hides it entirely under
+# `theme.overview_background`. Mid-values (~0.4-0.6) keep pane thumbnails
+# legible over a busy photo. Ignored when no image is set.
+overview_background_dim = 0.0
 
 [appearance.focus_ring]
 style = "solid"

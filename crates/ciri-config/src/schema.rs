@@ -305,6 +305,19 @@ pub struct AppearanceConfig {
     /// background / glyph alpha at the arc (niri-style mask, no extra pass).
     #[garde(range(min = 0.0, max = 64.0))]
     pub pane_corner_radius: f32,
+    /// Optional path to an image rendered behind panes in overview mode.
+    /// Empty = use `theme.overview_background` solid colour. Supports `~`,
+    /// absolute paths, and paths relative to the config directory. PNG and
+    /// JPEG only. The image is fitted with a `cover` policy (filled to the
+    /// viewport, overflow cropped, aspect preserved).
+    #[garde(skip)]
+    pub overview_background_image: String,
+    /// `0.0` shows the image at full strength; `1.0` blends it entirely
+    /// toward `theme.overview_background` (i.e. hides the image). Use a
+    /// mid value (~0.4-0.6) to keep pane thumbnails legible over a busy
+    /// wallpaper. Ignored when `overview_background_image` is empty.
+    #[garde(range(min = 0.0, max = 1.0))]
+    pub overview_background_dim: f32,
 }
 
 impl Default for AppearanceConfig {
@@ -320,6 +333,10 @@ impl Default for AppearanceConfig {
             // Default 0.0 preserves the historical sharp-corner look on
             // upgrade; users opt in by raising the value in their config.
             pane_corner_radius: 0.0,
+            overview_background_image: String::new(),
+            // Default 0.0 = no dim layer when no image is set; users
+            // typically pick ~0.5 once they configure an image.
+            overview_background_dim: 0.0,
         }
     }
 }

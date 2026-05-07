@@ -399,7 +399,7 @@ impl Renderer {
             #[cfg(feature = "blade")]
             Renderer::Blade(_) => Ok(()),
             #[cfg(feature = "gl")]
-            Renderer::Gl(_) => Ok(()),
+            Renderer::Gl(r) => r.set_overview_background_image(rgba, width, height),
             #[cfg(all(feature = "dx", windows))]
             Renderer::Dx(r) => r
                 .set_overview_background_image(rgba, width, height)
@@ -414,7 +414,7 @@ impl Renderer {
             #[cfg(feature = "blade")]
             Renderer::Blade(_) => {}
             #[cfg(feature = "gl")]
-            Renderer::Gl(_) => {}
+            Renderer::Gl(r) => r.clear_overview_background_image(),
             #[cfg(all(feature = "dx", windows))]
             Renderer::Dx(r) => r.clear_overview_background_image(),
         }

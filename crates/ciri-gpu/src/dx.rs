@@ -413,7 +413,7 @@ float4 ps_main(PSInput input) : SV_TARGET {
 // — opacity 0 hides it entirely, 1 shows the wallpaper at full strength,
 // intermediate values cross-fade toward `clear_color`.
 
-const OVERVIEW_BG_HLSL: &str = r#"
+const BACKGROUND_IMAGE_HLSL: &str = r#"
 cbuffer OverviewBg : register(b0) {
     float4 viewport_tex_size; // vw, vh, tw, th
     float4 params;            // opacity, _, _, _
@@ -1457,24 +1457,24 @@ impl DxSdfPipeline {
 
 // ─── Overview wallpaper pipeline ────────────────────────────────────
 
-struct DxOverviewBgTexture {
+struct DxBackgroundImageTexture {
     _texture: ID3D11Texture2D,
     srv: ID3D11ShaderResourceView,
     width: u32,
     height: u32,
 }
 
-struct DxOverviewBgPipeline {
+struct DxBackgroundImagePipeline {
     vs: ID3D11VertexShader,
     ps: ID3D11PixelShader,
     cbuffer: ID3D11Buffer,
     sampler: ID3D11SamplerState,
-    texture: Option<DxOverviewBgTexture>,
+    texture: Option<DxBackgroundImageTexture>,
 }
 
-impl DxOverviewBgPipeline {
+impl DxBackgroundImagePipeline {
     unsafe fn new(device: &ID3D11Device) -> Result<Self> {
-        let vs_blob = compile_shader(OVERVIEW_BG_HLSL, "vs_main", "vs_5_0")?;
+        let vs_blob = compile_shader(BACKGROUND_IMAGE_HLSL, "vs_main", "vs_5_0")?;
         let vs_code = std::slice::from_raw_parts(
             vs_blob.GetBufferPointer() as *const u8,
             vs_blob.GetBufferSize(),
@@ -1483,7 +1483,7 @@ impl DxOverviewBgPipeline {
         device.CreateVertexShader(vs_code, None, Some(&mut vs))?;
         let vs = vs.unwrap();
 
-        let ps_blob = compile_shader(OVERVIEW_BG_HLSL, "ps_main", "ps_5_0")?;
+        let ps_blob = compile_shader(BACKGROUND_IMAGE_HLSL, "ps_main", "ps_5_0")?;
         let ps_code = std::slice::from_raw_parts(
             ps_blob.GetBufferPointer() as *const u8,
             ps_blob.GetBufferSize(),
@@ -1525,7 +1525,7 @@ impl DxOverviewBgPipeline {
         device.CreateSamplerState(&samp_desc, Some(&mut sampler))?;
         let sampler = sampler.unwrap();
 
-        Ok(DxOverviewBgPipeline {
+        Ok(DxBackgroundImagePipeline {
             vs,
             ps,
             cbuffer,
@@ -1591,7 +1591,7 @@ impl DxOverviewBgPipeline {
         device.CreateShaderResourceView(&resource, Some(&srv_desc), Some(&mut srv))?;
         let srv = srv.unwrap();
 
-        self.texture = Some(DxOverviewBgTexture {
+        self.texture = Some(DxBackgroundImageTexture {
             _texture: texture,
             srv,
             width,
@@ -1681,7 +1681,7 @@ pub struct Renderer {
     text_rendering_params: Option<IDWriteRenderingParams>,
     rects: DxRectPipeline,
     sdf: DxSdfPipeline,
-    overview_bg: DxOverviewBgPipeline,
+    background_image: DxBackgroundImagePipeline,
     width: u32,
     height: u32,
     sync_interval: u32,
@@ -1798,7 +1798,7 @@ impl Renderer {
 
         let rects = unsafe { DxRectPipeline::new(&device, render_config.max_rectangles)? };
         let sdf = unsafe { DxSdfPipeline::new(&device, MAX_SDF_RECTS)? };
-        let overview_bg = unsafe { DxOverviewBgPipeline::new(&device)? };
+        let background_image = unsafe { DxBackgroundImagePipeline::new(&device)? };
 
         let sync_interval = match render_config.present_mode {
             ciri_config::config::PresentMode::Immediate
@@ -1834,7 +1834,7 @@ impl Renderer {
             text_rendering_params,
             rects,
             sdf,
-            overview_bg,
+            background_image,
             width: size.width.max(1),
             height: size.height.max(1),
             sync_interval,
@@ -1889,12 +1889,12 @@ impl Renderer {
         width: u32,
         height: u32,
     ) -> Result<()> {
-        unsafe { self.overview_bg.upload(&self.device, rgba, width, height) }
+        unsafe { self.background_image.upload(&self.device, rgba, width, height) }
     }
 
     /// Drop the wallpaper texture, if any.
     pub fn clear_background_image(&mut self) {
-        self.overview_bg.clear();
+        self.background_image.clear();
     }
 
     pub fn surface_size(&self) -> (u32, u32) {
@@ -2033,11 +2033,11 @@ impl Renderer {
             // image sits behind everything else. Returns true iff a draw
             // was actually issued — used below to suppress the prepended
             // baseline rect (which would otherwise erase the image).
-            let wallpaper_drawn = self.overview_bg.draw(
+            let wallpaper_drawn = self.background_image.draw(
                 &self.ctx,
                 vw,
                 vh,
-                scene.overview_bg_image_opacity,
+                scene.background_image_opacity,
             );
 
             // 1. Upload all background rects (clear + pane + overlay) once.

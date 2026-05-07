@@ -804,34 +804,34 @@ impl AtlasLayer {
 // screen-top up with image-row-0 without a manual texture flip.
 
 #[derive(blade_macros::ShaderData)]
-struct OverviewBgData {
+struct BackgroundImageData {
     uniforms: gpu::BufferPiece,
     bg_tex: gpu::TextureView,
     bg_sampler: gpu::Sampler,
 }
 
-struct OverviewBgTextureSlot {
+struct BackgroundImageTextureSlot {
     texture: gpu::Texture,
     texture_view: gpu::TextureView,
     width: u32,
     height: u32,
 }
 
-struct OverviewBgPipeline {
+struct BackgroundImagePipeline {
     pipeline: gpu::RenderPipeline,
     uniform_buffer: gpu::Buffer,
     sampler: gpu::Sampler,
-    texture: Option<OverviewBgTextureSlot>,
+    texture: Option<BackgroundImageTextureSlot>,
 }
 
-impl OverviewBgPipeline {
+impl BackgroundImagePipeline {
     fn new(context: &gpu::Context, format: gpu::TextureFormat) -> Self {
         let shader = context.create_shader(gpu::ShaderDesc {
-            source: OVERVIEW_BG_SHADER,
+            source: BACKGROUND_IMAGE_SHADER,
         });
 
         let uniform_buffer = context.create_buffer(gpu::BufferDesc {
-            name: "overview_bg_uniform",
+            name: "background_image_uniform",
             // 32 bytes — viewport_tex_size (vec4) + params (vec4). The
             // BLADE_UNIFORM_STRIDE alignment isn't strictly needed (we
             // only ever bind slot 0) but matches the rest of the file.
@@ -840,7 +840,7 @@ impl OverviewBgPipeline {
         });
 
         let sampler = context.create_sampler(gpu::SamplerDesc {
-            name: "overview_bg",
+            name: "background_image",
             address_modes: [gpu::AddressMode::ClampToEdge; 3],
             mag_filter: gpu::FilterMode::Linear,
             min_filter: gpu::FilterMode::Linear,
@@ -849,8 +849,8 @@ impl OverviewBgPipeline {
         });
 
         let pipeline = context.create_render_pipeline(gpu::RenderPipelineDesc {
-            name: "overview_bg_pipeline",
-            data_layouts: &[&OverviewBgData::layout()],
+            name: "background_image_pipeline",
+            data_layouts: &[&BackgroundImageData::layout()],
             vertex: shader.at("vs_main"),
             // Vertexless: VS pulls corners from the `vi` index table.
             vertex_fetches: &[],
@@ -875,7 +875,7 @@ impl OverviewBgPipeline {
             multisample_state: gpu::MultisampleState::default(),
         });
 
-        OverviewBgPipeline {
+        BackgroundImagePipeline {
             pipeline,
             uniform_buffer,
             sampler,
@@ -912,7 +912,7 @@ impl OverviewBgPipeline {
         }
 
         let texture = context.create_texture(gpu::TextureDesc {
-            name: "overview_bg_texture",
+            name: "background_image_texture",
             format: gpu::TextureFormat::Rgba8Unorm,
             size: gpu::Extent {
                 width,
@@ -929,7 +929,7 @@ impl OverviewBgPipeline {
         let texture_view = context.create_texture_view(
             texture,
             gpu::TextureViewDesc {
-                name: "overview_bg_view",
+                name: "background_image_view",
                 format: gpu::TextureFormat::Rgba8Unorm,
                 dimension: gpu::ViewDimension::D2,
                 subresources: &gpu::TextureSubresources::default(),
@@ -937,7 +937,7 @@ impl OverviewBgPipeline {
         );
 
         let staging = context.create_buffer(gpu::BufferDesc {
-            name: "overview_bg_staging",
+            name: "background_image_staging",
             size: rgba.len() as u64,
             memory: gpu::Memory::Upload,
         });
@@ -947,7 +947,7 @@ impl OverviewBgPipeline {
         context.sync_buffer(staging);
 
         {
-            let mut transfer = encoder.transfer("overview_bg_upload");
+            let mut transfer = encoder.transfer("background_image_upload");
             transfer.copy_buffer_to_texture(
                 staging.at(0),
                 width.saturating_mul(4),
@@ -965,7 +965,7 @@ impl OverviewBgPipeline {
             );
         }
 
-        self.texture = Some(OverviewBgTextureSlot {
+        self.texture = Some(BackgroundImageTextureSlot {
             texture,
             texture_view,
             width,
@@ -1019,7 +1019,7 @@ impl OverviewBgPipeline {
         let mut pe = pass.with(&self.pipeline);
         pe.bind(
             0,
-            &OverviewBgData {
+            &BackgroundImageData {
                 uniforms: self.uniform_buffer.at(0),
                 bg_tex: tex.texture_view,
                 bg_sampler: self.sampler,
@@ -1217,7 +1217,7 @@ pub struct Renderer {
     encoder: gpu::CommandEncoder,
     rects: RectPipeline,
     sdf: SdfPipeline,
-    overview_bg: OverviewBgPipeline,
+    background_image: BackgroundImagePipeline,
     surface_config: gpu::SurfaceConfig,
     surface_format: gpu::TextureFormat,
     window: Arc<Window>,
@@ -1302,7 +1302,7 @@ impl Renderer {
 
         let rects = RectPipeline::new(&context, surface_format, render_config.max_rectangles);
         let sdf = SdfPipeline::new(&context, surface_format, MAX_SDF_RECTS);
-        let overview_bg = OverviewBgPipeline::new(&context, surface_format);
+        let background_image = BackgroundImagePipeline::new(&context, surface_format);
 
         let blending_flags = (render_config.alpha_blending.is_linear() as u32)
             | ((render_config.alpha_blending.use_correction() as u32) << 1);
@@ -1313,7 +1313,7 @@ impl Renderer {
             encoder,
             rects,
             sdf,
-            overview_bg,
+            background_image,
             surface_config,
             surface_format,
             window,
@@ -1380,7 +1380,7 @@ impl Renderer {
         }
         self.encoder.start();
         let staging = self
-            .overview_bg
+            .background_image
             .upload(&self.context, &mut self.encoder, rgba, width, height)?;
         let sync = self.context.submit(&mut self.encoder);
         // Wait so the GPU has consumed the staging buffer's contents,
@@ -1408,7 +1408,7 @@ impl Renderer {
         if let Some(ref sp) = self.last_sync {
             self.context.wait_for(sp, 5000);
         }
-        self.overview_bg.clear(&self.context);
+        self.background_image.clear(&self.context);
     }
 
     // ─── Atlas init ──────────────────────────────────────────────────
@@ -1509,8 +1509,8 @@ impl Renderer {
             // before pane bgs so the image sits behind everything else.
             // Returns true iff a draw was actually issued.
             let wallpaper_drawn =
-                self.overview_bg
-                    .draw(&mut pass, vw_f, vh_f, scene.overview_bg_image_opacity);
+                self.background_image
+                    .draw(&mut pass, vw_f, vh_f, scene.background_image_opacity);
 
             // 1. Upload all background rects (clear + pane + overlay) once.
             // The prepended baseline rect goes transparent while the
@@ -1728,7 +1728,7 @@ impl Drop for Renderer {
     fn drop(&mut self) {
         self.rects.destroy(&self.context);
         self.sdf.destroy(&self.context);
-        self.overview_bg.destroy(&self.context);
+        self.background_image.destroy(&self.context);
         self.context.destroy_command_encoder(&mut self.encoder);
         self.context.destroy_surface(&mut self.surface);
     }
@@ -1960,8 +1960,8 @@ mod shader_tests {
     }
 
     #[test]
-    fn overview_bg_shader_parses() {
-        compile("OVERVIEW_BG_SHADER", super::OVERVIEW_BG_SHADER);
+    fn background_image_shader_parses() {
+        compile("BACKGROUND_IMAGE_SHADER", super::BACKGROUND_IMAGE_SHADER);
     }
 
     /// End-to-end smoke: instantiate a real `SdfPipeline` on a headless
@@ -2225,7 +2225,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 // axis cropped (aspect preserved). FS samples the wallpaper and
 // outputs `(rgb * opacity, opacity)` for premult-alpha blending
 // over the already-cleared `clear_color` framebuffer.
-const OVERVIEW_BG_SHADER: &str = r#"
+const BACKGROUND_IMAGE_SHADER: &str = r#"
 struct Uniforms {
     viewport_tex_size: vec4<f32>,  // vw, vh, tw, th
     params: vec4<f32>,             // opacity, _, _, _

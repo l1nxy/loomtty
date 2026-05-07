@@ -377,18 +377,17 @@ impl Renderer {
         }
     }
 
-    /// Upload an RGBA8 image to the renderer's overview-wallpaper slot.
+    /// Upload an RGBA8 image to the renderer's global background slot.
     ///
     /// Replaces any previously-uploaded image. The renderer then draws this
     /// image as a fullscreen `cover`-fitted quad whenever
-    /// `FrameScene::overview_bg_image_opacity > 0.0` (typically only in
-    /// overview mode). Backends that haven't implemented the textured-quad
-    /// pipeline yet silently no-op — overview mode falls back to a solid
-    /// `clear_color` fill, so no visual breakage rolls out across backends.
+    /// `FrameScene::background_image_opacity > 0.0`. Applies in both
+    /// normal and overview modes; `appearance.pane_opacity` controls how
+    /// much of it bleeds through panes.
     ///
     /// `width` and `height` are in image pixels; `rgba.len()` must equal
     /// `width * height * 4`. Caller-side image decoding lives in
-    /// `ciri::app::overview_bg`.
+    /// `ciri::app::background_image`.
     pub fn set_background_image(
         &mut self,
         rgba: &[u8],
@@ -640,7 +639,7 @@ mod tests {
             });
         let scene = ciri_render::FrameScene {
             clear_color: [0.0, 0.0, 0.0, 1.0],
-            overview_bg_image_opacity: 0.0,
+            background_image_opacity: 0.0,
             bg_rects: &[],
             bg_rect_ranges: &[],
             glyphs: &[],

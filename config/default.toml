@@ -31,6 +31,9 @@ background_dim = 0.0
 # on upgrade). Lower values let `background_image` show through panes
 # — try 0.8 with a wallpaper. Applies only to pane interior bgs;
 # chrome (palette, status bar, etc.) stays opaque for legibility.
+# Note: selection / cursor / search-highlight rects also dim with
+# `pane_opacity`. ~0.7-0.9 keeps them visible; values below 0.5 fade
+# them noticeably.
 pane_opacity = 1.0
 
 [appearance.focus_ring]

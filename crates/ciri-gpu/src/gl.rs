@@ -904,13 +904,13 @@ impl GlSdfPipeline {
 // origin and the existing `ndc.y = 1 - py/vh*2` Y-flip in the renderer
 // cancel out — screen-top samples image-top without a manual flip.
 
-struct GlOverviewBgTexture {
+struct GlBackgroundImageTexture {
     texture: glow::Texture,
     width: u32,
     height: u32,
 }
 
-struct GlOverviewBgPipeline {
+struct GlBackgroundImagePipeline {
     program: glow::Program,
     /// Empty VAO bound during draw — core-profile GL requires a VAO be
     /// bound for any draw call, even with vertexless shaders.
@@ -918,40 +918,40 @@ struct GlOverviewBgPipeline {
     loc_viewport_tex: glow::UniformLocation,
     loc_params: glow::UniformLocation,
     loc_tex: glow::UniformLocation,
-    texture: Option<GlOverviewBgTexture>,
+    texture: Option<GlBackgroundImageTexture>,
 }
 
-impl GlOverviewBgPipeline {
+impl GlBackgroundImagePipeline {
     unsafe fn new(gl: &glow::Context) -> crate::Result<Self> {
-        let fs_src = OVERVIEW_BG_FS.replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS);
+        let fs_src = BACKGROUND_IMAGE_FS.replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS);
         debug_assert!(
             !fs_src.contains("PLACEHOLDER"),
             "overview-bg shader source still contains unfilled placeholder"
         );
-        let program = compile_program(gl, OVERVIEW_BG_VS, &fs_src, "overview_bg")?;
+        let program = compile_program(gl, BACKGROUND_IMAGE_VS, &fs_src, "background_image")?;
         let loc_viewport_tex = gl
             .get_uniform_location(program, "u_viewport_tex")
             .ok_or_else(|| {
                 crate::GpuError::ShaderCompile(
-                    "u_viewport_tex uniform not found in overview_bg shader".into(),
+                    "u_viewport_tex uniform not found in background_image shader".into(),
                 )
             })?;
         let loc_params = gl
             .get_uniform_location(program, "u_params")
             .ok_or_else(|| {
                 crate::GpuError::ShaderCompile(
-                    "u_params uniform not found in overview_bg shader".into(),
+                    "u_params uniform not found in background_image shader".into(),
                 )
             })?;
         let loc_tex = gl.get_uniform_location(program, "u_tex").ok_or_else(|| {
-            crate::GpuError::ShaderCompile("u_tex uniform not found in overview_bg shader".into())
+            crate::GpuError::ShaderCompile("u_tex uniform not found in background_image shader".into())
         })?;
 
         let vao = gl
             .create_vertex_array()
-            .map_err(|e| crate::GpuError::ResourceCreate(format!("overview_bg VAO: {e}")))?;
+            .map_err(|e| crate::GpuError::ResourceCreate(format!("background_image VAO: {e}")))?;
 
-        Ok(GlOverviewBgPipeline {
+        Ok(GlBackgroundImagePipeline {
             program,
             vao,
             loc_viewport_tex,
@@ -986,9 +986,9 @@ impl GlOverviewBgPipeline {
         }
         let texture = gl
             .create_texture()
-            .map_err(|e| crate::GpuError::ResourceCreate(format!("overview_bg texture: {e}")))?;
+            .map_err(|e| crate::GpuError::ResourceCreate(format!("background_image texture: {e}")))?;
         gl.bind_texture(glow::TEXTURE_2D, Some(texture));
-        // Non-sRGB internal format — the `OVERVIEW_BG_FS` linearises
+        // Non-sRGB internal format — the `BACKGROUND_IMAGE_FS` linearises
         // explicitly when `use_linear_blending` is on. The color glyph
         // atlas (`GlAtlasLayer` in this file) takes the other path
         // (`SRGB8_ALPHA8` + hardware auto-linearise), but the wallpaper
@@ -1030,7 +1030,7 @@ impl GlOverviewBgPipeline {
             glow::CLAMP_TO_EDGE as i32,
         );
         gl.bind_texture(glow::TEXTURE_2D, None);
-        self.texture = Some(GlOverviewBgTexture {
+        self.texture = Some(GlBackgroundImageTexture {
             texture,
             width,
             height,
@@ -1168,7 +1168,7 @@ pub struct Renderer {
     gl_context: PossiblyCurrentContext,
     rects: GlRectPipeline,
     sdf: GlSdfPipeline,
-    overview_bg: GlOverviewBgPipeline,
+    background_image: GlBackgroundImagePipeline,
     width: u32,
     height: u32,
     use_linear_blending: bool,
@@ -1303,7 +1303,7 @@ impl Renderer {
 
         let rects = unsafe { GlRectPipeline::new(&gl, render_config.max_rectangles)? };
         let sdf = unsafe { GlSdfPipeline::new(&gl, MAX_SDF_RECTS)? };
-        let overview_bg = unsafe { GlOverviewBgPipeline::new(&gl)? };
+        let background_image = unsafe { GlBackgroundImagePipeline::new(&gl)? };
 
         let use_linear_blending = render_config.alpha_blending.is_linear();
         let use_linear_correction = render_config.alpha_blending.use_correction();
@@ -1378,7 +1378,7 @@ impl Renderer {
             gl_context,
             rects,
             sdf,
-            overview_bg,
+            background_image,
             width: size.width.max(1),
             height: size.height.max(1),
             use_linear_blending,
@@ -1417,12 +1417,12 @@ impl Renderer {
         width: u32,
         height: u32,
     ) -> crate::Result<()> {
-        unsafe { self.overview_bg.upload(&self.gl, rgba, width, height) }
+        unsafe { self.background_image.upload(&self.gl, rgba, width, height) }
     }
 
     /// Drop the wallpaper texture, if any.
     pub fn clear_background_image(&mut self) {
-        unsafe { self.overview_bg.clear(&self.gl) }
+        unsafe { self.background_image.clear(&self.gl) }
     }
 
     pub fn create_atlas(
@@ -1483,11 +1483,11 @@ impl Renderer {
             // gate, so passing 0.0 is a no-op. Drawn after the clear and
             // before pane bgs so the image sits behind everything else.
             // Returns true iff a draw was actually issued.
-            let wallpaper_drawn = self.overview_bg.draw(
+            let wallpaper_drawn = self.background_image.draw(
                 &self.gl,
                 vw,
                 vh,
-                scene.overview_bg_image_opacity,
+                scene.background_image_opacity,
                 self.use_linear_blending,
             );
 
@@ -1779,7 +1779,7 @@ impl Drop for Renderer {
             }
             self.rects.destroy(&self.gl);
             self.sdf.destroy(&self.gl);
-            self.overview_bg.destroy(&self.gl);
+            self.background_image.destroy(&self.gl);
         }
     }
 }
@@ -2380,7 +2380,7 @@ void main() {
 // correctly), and outputs `(rgb*opacity, opacity)` for premult-alpha
 // blending over the already-cleared `clear_color` framebuffer.
 
-const OVERVIEW_BG_VS: &str = r#"#version 330 core
+const BACKGROUND_IMAGE_VS: &str = r#"#version 330 core
 
 uniform vec4 u_viewport_tex;  // vw, vh, tw, th
 
@@ -2411,7 +2411,7 @@ void main() {
 }
 "#;
 
-const OVERVIEW_BG_FS: &str = r#"#version 330 core
+const BACKGROUND_IMAGE_FS: &str = r#"#version 330 core
 in vec2 v_uv;
 out vec4 frag_color;
 

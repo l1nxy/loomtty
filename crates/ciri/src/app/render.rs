@@ -2649,13 +2649,22 @@ impl App {
         let clear_color = ThemeConfig::parse_color(&self.core.config.theme.overview_background);
 
         // Pane translucency: lower the alpha of every bg rect inside the
-        // pane region (indices `[..overlay_bg_start]` — terminal pane
-        // bgs and per-cell ANSI bgs) so the global `background_image`
-        // (or `theme.overview_background` if no image is set) shows
-        // through. Chrome bg rects (index >= `overlay_bg_start`) and
-        // SDF chrome stay at their author-set alpha so palettes / status
-        // bar / context menus remain legible.
-        let pane_opacity = self.core.config.appearance.pane_opacity.clamp(0.0, 1.0);
+        // pane region (indices `[..overlay_bg_start]`) so the global
+        // `background_image` (or `theme.overview_background` if no
+        // image is set) shows through. Chrome bg rects (index >=
+        // `overlay_bg_start`) and SDF chrome stay at their author-set
+        // alpha so palettes / status bar / context menus remain legible.
+        //
+        // Known limitation: selection / cursor / search-highlight rects
+        // share the pane region and get dimmed too. At ~0.8 they're a
+        // bit fainter but still legible; below ~0.5 they fade
+        // noticeably. Splitting them out would require either a
+        // per-rect "do-not-dim" tag or a second pane-region boundary
+        // — deferred until someone hits the visibility wall.
+        //
+        // Garde already validates `pane_opacity` to [0.0, 1.0] at config
+        // load, so no clamp is needed here.
+        let pane_opacity = self.core.config.appearance.pane_opacity;
         if pane_opacity < 1.0 {
             let end = overlay_bg_start.min(bg_rects.len());
             for rect in &mut bg_rects[..end] {
@@ -2675,7 +2684,7 @@ impl App {
                 // the textured-quad draw entirely. Applies in both
                 // normal and overview modes — `pane_opacity` controls
                 // how much of it shows through panes in normal mode.
-                overview_bg_image_opacity: if self
+                background_image_opacity: if self
                     .core
                     .config
                     .appearance

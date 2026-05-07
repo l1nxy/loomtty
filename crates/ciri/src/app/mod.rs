@@ -9,7 +9,7 @@ pub(crate) mod mouse;
 pub(crate) mod notification;
 pub(crate) mod open;
 pub(crate) mod overview;
-pub(crate) mod overview_bg;
+pub(crate) mod background_image;
 pub(crate) mod palette;
 pub(crate) mod paste_dialog;
 pub(crate) mod paste_guard;
@@ -205,17 +205,17 @@ pub(crate) struct App {
     pub window_focused: bool,
     pub config_watcher: Option<notify::RecommendedWatcher>,
     pub config_change_rx: Option<crossbeam_channel::Receiver<()>>,
-    /// In-flight overview-wallpaper decode. The worker thread spawned by
-    /// `reload_overview_background` decodes a (possibly multi-MB) image
+    /// In-flight background-image decode. The worker thread spawned by
+    /// `reload_background_image` decodes a (possibly multi-MB) image
     /// off the main thread, then sends the result back here + wakes the
-    /// event loop. `apply_pending_overview_bg` drains it next iteration
+    /// event loop. `apply_pending_background_image` drains it next iteration
     /// and pushes the RGBA bytes to the renderer. Tagged with the path
     /// the decode was started for so a stale result (user changed the
     /// path mid-decode) gets discarded instead of overwriting a newer
     /// upload.
     pub pending_background_image_decode: Option<(
         String,
-        crossbeam_channel::Receiver<anyhow::Result<Option<crate::app::overview_bg::DecodedImage>>>,
+        crossbeam_channel::Receiver<anyhow::Result<Option<crate::app::background_image::DecodedImage>>>,
     )>,
     /// Latest pending resize event and its timestamp.
     pub pending_resize: Option<(winit::dpi::PhysicalSize<u32>, Instant)>,

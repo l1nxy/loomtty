@@ -499,7 +499,7 @@ impl App {
         self.pending_background_image_decode = Some((path_value.clone(), rx));
         let worker_path = path_value.clone();
         std::thread::spawn(move || {
-            let result = crate::app::overview_bg::load_background_image(&worker_path);
+            let result = crate::app::background_image::load_background_image(&worker_path);
             let _ = tx.send(result);
             if let Some(p) = proxy {
                 let _ = p.send_event(());
@@ -588,7 +588,7 @@ impl App {
                             .abs()
                             > f32::EPSILON
                 };
-                let overview_bg_changed = self
+                let background_image_changed = self
                     .core
                     .config
                     .appearance
@@ -687,7 +687,7 @@ impl App {
                     self.core.config.prediction.threshold_ms,
                     self.core.config.prediction.show_underline,
                 );
-                if overview_bg_changed {
+                if background_image_changed {
                     self.reload_background_image();
                 }
             }

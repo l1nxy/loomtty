@@ -795,6 +795,252 @@ impl AtlasLayer {
     }
 }
 
+// ─── Overview wallpaper pipeline ────────────────────────────────────
+//
+// One vertexless fullscreen quad sampled from a user-uploaded RGBA8
+// texture. Mirrors the DX / GL counterparts: cover-UV math, premult
+// alpha output, drawn after the clear and before pane bgs. The
+// `vi`-indexed corner table + the `1.0 - vuv.y * 2.0` Y-flip line
+// screen-top up with image-row-0 without a manual texture flip.
+
+#[derive(blade_macros::ShaderData)]
+struct OverviewBgData {
+    uniforms: gpu::BufferPiece,
+    bg_tex: gpu::TextureView,
+    bg_sampler: gpu::Sampler,
+}
+
+struct OverviewBgTextureSlot {
+    texture: gpu::Texture,
+    texture_view: gpu::TextureView,
+    staging: gpu::Buffer,
+    width: u32,
+    height: u32,
+}
+
+struct OverviewBgPipeline {
+    pipeline: gpu::RenderPipeline,
+    uniform_buffer: gpu::Buffer,
+    sampler: gpu::Sampler,
+    texture: Option<OverviewBgTextureSlot>,
+}
+
+impl OverviewBgPipeline {
+    fn new(context: &gpu::Context, format: gpu::TextureFormat) -> Self {
+        let shader = context.create_shader(gpu::ShaderDesc {
+            source: OVERVIEW_BG_SHADER,
+        });
+
+        let uniform_buffer = context.create_buffer(gpu::BufferDesc {
+            name: "overview_bg_uniform",
+            // 32 bytes — viewport_tex_size (vec4) + params (vec4). The
+            // BLADE_UNIFORM_STRIDE alignment isn't strictly needed (we
+            // only ever bind slot 0) but matches the rest of the file.
+            size: BLADE_UNIFORM_STRIDE,
+            memory: gpu::Memory::Shared,
+        });
+
+        let sampler = context.create_sampler(gpu::SamplerDesc {
+            name: "overview_bg",
+            address_modes: [gpu::AddressMode::ClampToEdge; 3],
+            mag_filter: gpu::FilterMode::Linear,
+            min_filter: gpu::FilterMode::Linear,
+            mipmap_filter: gpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let pipeline = context.create_render_pipeline(gpu::RenderPipelineDesc {
+            name: "overview_bg_pipeline",
+            data_layouts: &[&OverviewBgData::layout()],
+            vertex: shader.at("vs_main"),
+            // Vertexless: VS pulls corners from the `vi` index table.
+            vertex_fetches: &[],
+            primitive: gpu::PrimitiveState {
+                topology: gpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            fragment: Some(shader.at("fs_main")),
+            color_targets: &[gpu::ColorTargetState {
+                format,
+                blend: Some(gpu::BlendState {
+                    color: gpu::BlendComponent {
+                        src_factor: gpu::BlendFactor::One,
+                        dst_factor: gpu::BlendFactor::OneMinusSrcAlpha,
+                        operation: gpu::BlendOperation::Add,
+                    },
+                    alpha: gpu::BlendComponent::OVER,
+                }),
+                write_mask: gpu::ColorWrites::all(),
+            }],
+            multisample_state: gpu::MultisampleState::default(),
+        });
+
+        OverviewBgPipeline {
+            pipeline,
+            uniform_buffer,
+            sampler,
+            texture: None,
+        }
+    }
+
+    /// Upload `rgba` into a freshly-allocated GPU texture, replacing any
+    /// previously-uploaded image. The caller owns the encoder and will
+    /// submit it; this method only records the transfer command.
+    fn upload(
+        &mut self,
+        context: &gpu::Context,
+        encoder: &mut gpu::CommandEncoder,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
+        if width == 0 || height == 0 {
+            anyhow::bail!("overview bg image has zero dimension ({width}x{height})");
+        }
+        let expected = (width as usize) * (height as usize) * 4;
+        if rgba.len() != expected {
+            anyhow::bail!(
+                "overview bg image byte count mismatch: got {}, expected {} ({width}x{height} RGBA8)",
+                rgba.len(),
+                expected
+            );
+        }
+        if let Some(prev) = self.texture.take() {
+            context.destroy_texture_view(prev.texture_view);
+            context.destroy_texture(prev.texture);
+            context.destroy_buffer(prev.staging);
+        }
+
+        let texture = context.create_texture(gpu::TextureDesc {
+            name: "overview_bg_texture",
+            format: gpu::TextureFormat::Rgba8Unorm,
+            size: gpu::Extent {
+                width,
+                height,
+                depth: 1,
+            },
+            array_layer_count: 1,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: gpu::TextureDimension::D2,
+            usage: gpu::TextureUsage::RESOURCE | gpu::TextureUsage::COPY,
+            external: None,
+        });
+        let texture_view = context.create_texture_view(
+            texture,
+            gpu::TextureViewDesc {
+                name: "overview_bg_view",
+                format: gpu::TextureFormat::Rgba8Unorm,
+                dimension: gpu::ViewDimension::D2,
+                subresources: &gpu::TextureSubresources::default(),
+            },
+        );
+
+        let staging = context.create_buffer(gpu::BufferDesc {
+            name: "overview_bg_staging",
+            size: rgba.len() as u64,
+            memory: gpu::Memory::Upload,
+        });
+        unsafe {
+            ptr::copy_nonoverlapping(rgba.as_ptr(), staging.data(), rgba.len());
+        }
+        context.sync_buffer(staging);
+
+        {
+            let mut transfer = encoder.transfer("overview_bg_upload");
+            transfer.copy_buffer_to_texture(
+                staging.at(0),
+                width.saturating_mul(4),
+                gpu::TexturePiece {
+                    texture,
+                    mip_level: 0,
+                    array_layer: 0,
+                    origin: [0, 0, 0],
+                },
+                gpu::Extent {
+                    width,
+                    height,
+                    depth: 1,
+                },
+            );
+        }
+
+        self.texture = Some(OverviewBgTextureSlot {
+            texture,
+            texture_view,
+            staging,
+            width,
+            height,
+        });
+        Ok(())
+    }
+
+    fn clear(&mut self, context: &gpu::Context) {
+        if let Some(prev) = self.texture.take() {
+            context.destroy_texture_view(prev.texture_view);
+            context.destroy_texture(prev.texture);
+            context.destroy_buffer(prev.staging);
+        }
+    }
+
+    /// Issue the textured-quad draw if a texture is bound and `opacity > 0`.
+    fn draw(
+        &self,
+        pass: &mut gpu::RenderCommandEncoder,
+        viewport_w: f32,
+        viewport_h: f32,
+        opacity: f32,
+    ) {
+        let Some(tex) = self.texture.as_ref() else {
+            return;
+        };
+        if opacity <= 0.0 {
+            return;
+        }
+        let cb = [
+            viewport_w,
+            viewport_h,
+            tex.width as f32,
+            tex.height as f32,
+            opacity,
+            0.0,
+            0.0,
+            0.0,
+        ];
+        unsafe {
+            ptr::copy_nonoverlapping(
+                cb.as_ptr() as *const u8,
+                self.uniform_buffer.data(),
+                std::mem::size_of_val(&cb),
+            );
+        }
+
+        let mut pe = pass.with(&self.pipeline);
+        pe.bind(
+            0,
+            &OverviewBgData {
+                uniforms: self.uniform_buffer.at(0),
+                bg_tex: tex.texture_view,
+                bg_sampler: self.sampler,
+            },
+        );
+        // Vertexless: 6 vertices forming two triangles for the fullscreen quad.
+        pe.draw(0, 6, 0, 1);
+    }
+
+    fn destroy(&mut self, context: &gpu::Context) {
+        if let Some(prev) = self.texture.take() {
+            context.destroy_texture_view(prev.texture_view);
+            context.destroy_texture(prev.texture);
+            context.destroy_buffer(prev.staging);
+        }
+        context.destroy_render_pipeline(&mut self.pipeline);
+        context.destroy_buffer(self.uniform_buffer);
+        context.destroy_sampler(self.sampler);
+    }
+}
+
 // ─── GlyphAtlasGpu ─────────────────────────────────────────────────
 
 /// GPU-side glyph atlas: two texture layers (alpha text + color emoji)
@@ -971,6 +1217,7 @@ pub struct Renderer {
     encoder: gpu::CommandEncoder,
     rects: RectPipeline,
     sdf: SdfPipeline,
+    overview_bg: OverviewBgPipeline,
     surface_config: gpu::SurfaceConfig,
     surface_format: gpu::TextureFormat,
     window: Arc<Window>,
@@ -1055,6 +1302,7 @@ impl Renderer {
 
         let rects = RectPipeline::new(&context, surface_format, render_config.max_rectangles);
         let sdf = SdfPipeline::new(&context, surface_format, MAX_SDF_RECTS);
+        let overview_bg = OverviewBgPipeline::new(&context, surface_format);
 
         let blending_flags = (render_config.alpha_blending.is_linear() as u32)
             | ((render_config.alpha_blending.use_correction() as u32) << 1);
@@ -1065,6 +1313,7 @@ impl Renderer {
             encoder,
             rects,
             sdf,
+            overview_bg,
             surface_config,
             surface_format,
             window,
@@ -1112,6 +1361,39 @@ impl Renderer {
 
     pub fn surface_format(&self) -> gpu::TextureFormat {
         self.surface_format
+    }
+
+    /// Upload the overview wallpaper texture. Reuses the renderer's
+    /// command encoder for the staging-buffer transfer (the encoder
+    /// is idle between `draw_frame` calls, so a one-shot start +
+    /// submit here is safe). Replaces any previously-uploaded image.
+    pub fn set_overview_background_image(
+        &mut self,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
+        // Make sure the GPU is done reading the previous wallpaper texture
+        // before destroying it (`upload` will free the prior slot).
+        if let Some(ref sp) = self.last_sync {
+            self.context.wait_for(sp, 5000);
+        }
+        self.encoder.start();
+        self.overview_bg
+            .upload(&self.context, &mut self.encoder, rgba, width, height)?;
+        let sync = self.context.submit(&mut self.encoder);
+        // Wait so the staging buffer write is safely consumed before the
+        // next `set_overview_background_image` (or shutdown) frees it.
+        self.context.wait_for(&sync, 5000);
+        Ok(())
+    }
+
+    /// Drop the wallpaper texture, if any.
+    pub fn clear_overview_background_image(&mut self) {
+        if let Some(ref sp) = self.last_sync {
+            self.context.wait_for(sp, 5000);
+        }
+        self.overview_bg.clear(&self.context);
     }
 
     // ─── Atlas init ──────────────────────────────────────────────────
@@ -1207,14 +1489,32 @@ impl Renderer {
                 },
             );
 
+            // Overview wallpaper, if any. Self-checks the texture/opacity
+            // gate, so passing 0.0 is a no-op. Drawn after the clear and
+            // before pane bgs so the image sits behind everything else.
+            self.overview_bg
+                .draw(&mut pass, vw_f, vh_f, scene.overview_bg_image_opacity);
+
             // 1. Upload all background rects (clear + pane + overlay) once.
+            // The prepended baseline rect goes transparent while the
+            // wallpaper is showing — same trick as DX/GL — so it doesn't
+            // erase the image we just drew. The slot itself stays so
+            // the bg_rect index math (`active_bg_idx` / `overlay_bg_idx`)
+            // still matches `scene.bg_rect_ranges`.
+            let baseline_color = if scene.overview_bg_image_opacity > 0.0
+                && self.overview_bg.texture.is_some()
+            {
+                [0.0; 4]
+            } else {
+                scene.clear_color
+            };
             let mut all_bg = Vec::with_capacity(1 + scene.bg_rects.len());
             all_bg.push(Rect {
                 x: 0.0,
                 y: 0.0,
                 w: vw_f,
                 h: vh_f,
-                color: scene.clear_color,
+                color: baseline_color,
             });
             all_bg.extend_from_slice(scene.bg_rects);
             let active_bg_idx = 1 + scene.active_bg_start;
@@ -1413,6 +1713,7 @@ impl Drop for Renderer {
     fn drop(&mut self) {
         self.rects.destroy(&self.context);
         self.sdf.destroy(&self.context);
+        self.overview_bg.destroy(&self.context);
         self.context.destroy_command_encoder(&mut self.encoder);
         self.context.destroy_surface(&mut self.surface);
     }
@@ -1641,6 +1942,11 @@ mod shader_tests {
     #[test]
     fn sdf_shader_parses() {
         compile("SDF_SHADER", super::SDF_SHADER);
+    }
+
+    #[test]
+    fn overview_bg_shader_parses() {
+        compile("OVERVIEW_BG_SHADER", super::OVERVIEW_BG_SHADER);
     }
 
     /// End-to-end smoke: instantiate a real `SdfPipeline` on a headless
@@ -1893,5 +2199,63 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let texel = textureSample(atlas_tex, atlas_sampler, in.uv);
     let out_color = vec4<f32>(texel.rgb * in.color.rgb, texel.a * in.color.a);
     return out_color * ciri_corner_alpha(in.pane_local, viewport.pane_size, viewport.pane_radii);
+}
+"#;
+
+// ─── Overview wallpaper WGSL ────────────────────────────────────────
+//
+// Vertexless fullscreen quad. The `vi`-indexed corner table emits
+// two triangles in [0,1] UV space; the cover-UV math scales them
+// around 0.5 so the texture fills the viewport with the overflow
+// axis cropped (aspect preserved). FS samples the wallpaper and
+// outputs `(rgb * opacity, opacity)` for premult-alpha blending
+// over the already-cleared `clear_color` framebuffer.
+const OVERVIEW_BG_SHADER: &str = r#"
+struct Uniforms {
+    viewport_tex_size: vec4<f32>,  // vw, vh, tw, th
+    params: vec4<f32>,             // opacity, _, _, _
+};
+
+var<uniform> uniforms: Uniforms;
+var bg_tex: texture_2d<f32>;
+var bg_sampler: sampler;
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
+    var corners = array<vec2<f32>, 6>(
+        vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 0.0), vec2<f32>(1.0, 1.0),
+        vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 1.0), vec2<f32>(0.0, 1.0),
+    );
+    let vuv = corners[vi];
+
+    let vw = uniforms.viewport_tex_size.x;
+    let vh = uniforms.viewport_tex_size.y;
+    let tw = uniforms.viewport_tex_size.z;
+    let th = uniforms.viewport_tex_size.w;
+    let v_aspect = vw / max(vh, 1e-6);
+    let t_aspect = tw / max(th, 1e-6);
+    var scale = vec2<f32>(1.0, 1.0);
+    if (t_aspect > v_aspect) {
+        scale.x = v_aspect / max(t_aspect, 1e-6);
+    } else {
+        scale.y = t_aspect / max(v_aspect, 1e-6);
+    }
+
+    var out: VertexOutput;
+    out.position = vec4<f32>(vuv.x * 2.0 - 1.0, 1.0 - vuv.y * 2.0, 0.0, 1.0);
+    out.uv = (vuv - vec2<f32>(0.5, 0.5)) * scale + vec2<f32>(0.5, 0.5);
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let col = textureSample(bg_tex, bg_sampler, in.uv);
+    let opacity = clamp(uniforms.params.x, 0.0, 1.0);
+    return vec4<f32>(col.rgb * opacity, opacity);
 }
 "#;

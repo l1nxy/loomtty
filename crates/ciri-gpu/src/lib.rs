@@ -397,7 +397,9 @@ impl Renderer {
     ) -> Result<()> {
         match self {
             #[cfg(feature = "blade")]
-            Renderer::Blade(_) => Ok(()),
+            Renderer::Blade(r) => r
+                .set_overview_background_image(rgba, width, height)
+                .map_err(|e| GpuError::ResourceCreate(format!("blade overview bg: {e}"))),
             #[cfg(feature = "gl")]
             Renderer::Gl(r) => r.set_overview_background_image(rgba, width, height),
             #[cfg(all(feature = "dx", windows))]
@@ -412,7 +414,7 @@ impl Renderer {
     pub fn clear_overview_background_image(&mut self) {
         match self {
             #[cfg(feature = "blade")]
-            Renderer::Blade(_) => {}
+            Renderer::Blade(r) => r.clear_overview_background_image(),
             #[cfg(feature = "gl")]
             Renderer::Gl(r) => r.clear_overview_background_image(),
             #[cfg(all(feature = "dx", windows))]

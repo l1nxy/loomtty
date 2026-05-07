@@ -8,7 +8,10 @@ use super::tokens;
 use super::types::{UiAction, UiContext, UiPaletteHit, UiScene, ui_hit_id};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Div, FluentBuilder, IntoElement, Render, RenderCtx, Styled, deferred, div, text, uniform_list};
+use ciri_ui::{
+    Div, ElevationIndex, FluentBuilder, IntoElement, Render, RenderCtx, Styled, deferred, div,
+    text, uniform_list,
+};
 
 const HIT_CLOSE: u64 = 1;
 const HIT_PANEL: u64 = 2;
@@ -206,17 +209,12 @@ impl PaletteComponent {
         let pw = self.layout.panel_w;
         let text_pad = tokens::SPACE_2;
 
-        // Panel body sinks below the chrome surface to read as
-        // "recessed chrome" — same direction context_menu / info_box /
-        // connection_status take. Previously the palette body raised
-        // *over* `surface` because `surface` used to alias the terminal
-        // bg; with the chrome decoupling (stage 0.1) that lift carried
-        // the panel into the backdrop's brightness range and read as
-        // floating instead of grounded.
-        let panel_bg = tokens::surface_sink(
-            [bg_color[0], bg_color[1], bg_color[2], 1.0],
-            tokens::SURFACE_SINK,
-        );
+        // Panel body sits at the `Panel` elevation tier (sunk surface).
+        // Centralises the `surface` → sunk-panel relationship in
+        // `ElevationIndex` so the rest of the chrome — context_menu /
+        // dialog body / future settings sections — share one source of
+        // truth instead of each computing `surface_sink` locally.
+        let panel_bg = ElevationIndex::Panel.bg(cx.theme);
         let row_h = self.layout.row_h;
         let input_row_h = (self.layout.sep_y - self.layout.panel_y - tokens::BORDER_THIN).max(0.0);
         // Input pill sits at the natural chrome surface — i.e. one tier

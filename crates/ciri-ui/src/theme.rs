@@ -199,7 +199,18 @@ impl ResolvedTheme {
         Self {
             surface,
             surface_elevated: scale_rgb(surface, 1.12),
-            surface_sunken: scale_rgb(surface, 0.88),
+            // Additive sink (-0.04 per channel) so `surface_sunken` lands
+            // on the same `#100E0C`-ish tone that floating chrome panels
+            // (palette / context-menu / dialog body) compute locally via
+            // `tokens::surface_sink(surface, SURFACE_SINK)`. Multiplicative
+            // sink (`scale_rgb(0.88)`) shifts hue on non-neutral surfaces,
+            // and the codebase trends toward the additive variant.
+            surface_sunken: [
+                (surface[0] - 0.04).max(0.0),
+                (surface[1] - 0.04).max(0.0),
+                (surface[2] - 0.04).max(0.0),
+                surface[3],
+            ],
             surface_overlay: mul_alpha(surface, 0.55),
             on_surface,
             on_surface_muted: muted,
@@ -276,6 +287,52 @@ impl Default for ResolvedTheme {
             // real config" so production cache keys can't collide with
             // the test-only Default themes.
             version: 0,
+        }
+    }
+}
+
+/// Semantic elevation tier for chrome surfaces.
+///
+/// Each tier resolves to a `(bg, shadow)` pair via [`ElevationIndex::bg`]
+/// and the `shadow_*()` styled helpers — consumers say "I'm a Panel" /
+/// "I'm a Modal" instead of hand-picking sink amounts and shadow sizes.
+///
+/// Mirrors the role Zed's `ElevationIndex` plays, scaled down to ciri's
+/// 4 chrome layers:
+///
+/// - [`Background`] — pane backdrop / overview area. No chrome on top.
+/// - [`Surface`] — chrome resting tier (top bar, status bar, settings
+///   page background once it lands).
+/// - [`Panel`] — floating chrome panels: command palette body, context
+///   menu, dialog body. Recessed below `Surface`.
+/// - [`Modal`] — emphasised modals stacked over panels. Same colour as
+///   `Panel` for now; differentiated by a stronger shadow at consumer.
+///
+/// [`Background`]: ElevationIndex::Background
+/// [`Surface`]: ElevationIndex::Surface
+/// [`Panel`]: ElevationIndex::Panel
+/// [`Modal`]: ElevationIndex::Modal
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ElevationIndex {
+    Background,
+    Surface,
+    Panel,
+    Modal,
+}
+
+impl ElevationIndex {
+    /// Resolve the background colour for this tier from a theme.
+    ///
+    /// `Background` and `Surface` return the same `theme.surface` here —
+    /// `Background` callers are expected to overlay `term_bg` themselves
+    /// for terminal panes, and there's no chrome `Background` paint
+    /// today. Reserves the variant for future consumers (e.g. a
+    /// settings-page wrapper that wants to fill a region with the
+    /// pane-area backdrop).
+    pub fn bg(self, theme: &ResolvedTheme) -> Color {
+        match self {
+            Self::Background | Self::Surface => theme.surface,
+            Self::Panel | Self::Modal => theme.surface_sunken,
         }
     }
 }
@@ -460,6 +517,47 @@ mod tests {
         cfg.resolve_preset();
         let theme = ResolvedTheme::from_config(&cfg);
         assert_eq!(theme.surface, ThemeConfig::parse_color("#112233"));
+    }
+
+    /// `surface_sunken` is the `#100E0C`-ish tier that floating chrome
+    /// panels (palette / context_menu / paste_dialog) paint into via
+    /// `ElevationIndex::Panel`. Pin the additive `-0.04` offset so a
+    /// future refactor can't silently revert to the multiplicative
+    /// formula that produced a different (hue-shifted) sink colour.
+    #[test]
+    fn surface_sunken_is_additive_sink_below_surface() {
+        let mut cfg = ciri_config::theme::ThemeConfig {
+            preset: "ciri_dark".into(),
+            ..Default::default()
+        };
+        cfg.resolve_preset();
+        let theme = ResolvedTheme::from_config(&cfg);
+        // Each channel should be exactly `surface - 0.04` (clamped at 0).
+        for i in 0..3 {
+            let expected = (theme.surface[i] - 0.04).max(0.0);
+            assert!(
+                (theme.surface_sunken[i] - expected).abs() < 1e-6,
+                "channel {i}: expected {expected}, got {}",
+                theme.surface_sunken[i]
+            );
+        }
+    }
+
+    /// `ElevationIndex::Panel` and `Modal` resolve to `surface_sunken`
+    /// today so consumers can pick by semantic meaning instead of
+    /// computing sink amounts locally. Pin the mapping.
+    #[test]
+    fn elevation_panel_and_modal_resolve_to_sunken_surface() {
+        let mut cfg = ciri_config::theme::ThemeConfig {
+            preset: "ciri_dark".into(),
+            ..Default::default()
+        };
+        cfg.resolve_preset();
+        let theme = ResolvedTheme::from_config(&cfg);
+        assert_eq!(ElevationIndex::Panel.bg(&theme), theme.surface_sunken);
+        assert_eq!(ElevationIndex::Modal.bg(&theme), theme.surface_sunken);
+        assert_eq!(ElevationIndex::Surface.bg(&theme), theme.surface);
+        assert_eq!(ElevationIndex::Background.bg(&theme), theme.surface);
     }
 
     /// Status hues still ride along with the preset's ANSI palette.

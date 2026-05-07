@@ -56,6 +56,6 @@ pub use style::{
     AlignItems, CursorStyle, Display, FlexDirection, JustifyContent, Length, Shadow, Style,
 };
 pub use styled::Styled;
-pub use theme::{RadiusScale, ResolvedTheme, SpaceScale, TypeScale};
+pub use theme::{ElevationIndex, RadiusScale, ResolvedTheme, SpaceScale, TypeScale};
 
 pub use ciri_motion::Transition;

@@ -8,7 +8,9 @@ use super::tokens;
 use super::types::{UiContext, UiScene};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Div, IntoElement, Render, RenderCtx, Styled, deferred, div, text};
+use ciri_ui::{
+    Div, ElevationIndex, IntoElement, Render, RenderCtx, Styled, deferred, div, text,
+};
 
 const DOT_PHASE_MS: u128 = 300;
 const DOT_PHASES: u32 = 4;
@@ -246,7 +248,6 @@ impl ConnectionStatusComponent {
     }
 
     fn build_tree(&self, cx: &RenderCtx<'_>) -> Div {
-        let bg = cx.theme.surface;
         let accent = cx.theme.accent;
         let dim = cx.theme.on_surface_muted;
         let red = cx.theme.error;
@@ -270,10 +271,12 @@ impl ConnectionStatusComponent {
         };
         let content_w = self.w - bw * 2.0;
 
-        // Outer banner via SDF: rounded + colored border (red on Failed,
-        // accent while reconnecting/connecting) + drop shadow.
-        let sunk = tokens::surface_sink([bg[0], bg[1], bg[2], 1.0], tokens::SURFACE_SINK);
-        let bg_color = [sunk[0], sunk[1], sunk[2], 0.97];
+        // Outer banner sits at the `Panel` elevation tier (sunk surface).
+        // The `0.97` alpha preserves a tiny amount of pane bleed-through —
+        // the banner is a transient overlay during reconnection so the
+        // user can still read motion in the pane underneath.
+        let panel = ElevationIndex::Panel.bg(cx.theme);
+        let bg_color = [panel[0], panel[1], panel[2], 0.97];
 
         let mut primary_row = div()
             .w_full()

@@ -5,7 +5,9 @@ use super::tokens;
 use super::types::{UiContext, UiScene};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Div, IntoElement, Render, RenderCtx, Styled, deferred, div, text};
+use ciri_ui::{
+    Div, ElevationIndex, IntoElement, Render, RenderCtx, Styled, deferred, div, text,
+};
 
 pub(crate) struct InfoBoxComponent {
     title: String,
@@ -190,7 +192,6 @@ impl InfoBoxComponent {
     }
 
     fn build_tree(&self, cx: &RenderCtx<'_>) -> Div {
-        let bg = cx.theme.surface;
         let accent = cx.theme.accent;
         let fg = cx.theme.on_surface;
         let dim = cx.theme.on_surface_muted;
@@ -200,12 +201,12 @@ impl InfoBoxComponent {
         let title_h = self.cell_h + tokens::SPACE_1;
         let content_w = self.w - bw * 2.0;
 
-        // Shadow + border + background — sink below `bg` with a flat sRGB
-        // delta instead of a raw channel multiply, matching `context_menu.rs`
-        // and `connection_status.rs` (see the note on gamma-incorrect darken
-        // in `context_menu.rs`).
-        let sunk = tokens::surface_sink([bg[0], bg[1], bg[2], 1.0], tokens::SURFACE_SINK);
-        let bg_color = [sunk[0], sunk[1], sunk[2], 0.97];
+        // Info box sits at the `Panel` elevation tier (sunk surface) —
+        // same as palette / context_menu / connection_status banner.
+        // The `0.97` alpha keeps a hint of pane bleed-through for the
+        // overlay-on-pane feel.
+        let panel = ElevationIndex::Panel.bg(cx.theme);
+        let bg_color = [panel[0], panel[1], panel[2], 0.97];
 
         // Key-action rows — right-align keys within the shape-measured
         // key column. `self.key_col_w` is the widest shaped key; using

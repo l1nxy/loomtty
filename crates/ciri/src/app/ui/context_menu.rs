@@ -12,7 +12,9 @@ use super::tokens;
 use super::types::{UiAction, UiContext, UiContextMenuHit, UiScene, ui_hit_id};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{AnchorCorner, Div, IntoElement, Render, RenderCtx, Styled, anchored, div, text};
+use ciri_ui::{
+    AnchorCorner, Div, ElevationIndex, IntoElement, Render, RenderCtx, Styled, anchored, div, text,
+};
 
 const HIT_MENU: u64 = 1;
 const HIT_ENTRY_BASE: u64 = 1_000_000;
@@ -136,17 +138,10 @@ impl ContextMenuComponent {
         let padding = tokens::SPACE_2;
         let bw = tokens::BORDER_THIN;
 
-        let menu_bg = cx.theme.surface;
-        // Subtle sink below term_bg so the panel reads as "recessed chrome"
-        // without producing a gamma-incorrect darken — the rest of the
-        // pipeline treats colors as sRGB-encoded (see commit 2f609b9), so
-        // a raw channel multiply (`[c * 0.9]`) skews hue on non-neutral
-        // backgrounds. `surface_sink` applies a flat additive delta that
-        // matches the rest of the chrome.
-        let bg_color = tokens::surface_sink(
-            [menu_bg[0], menu_bg[1], menu_bg[2], 1.0],
-            tokens::SURFACE_SINK,
-        );
+        // Menu body sits at the `Panel` elevation tier — same recessed
+        // sunk surface palette body uses, so menu and palette read as
+        // tonal siblings.
+        let bg_color = ElevationIndex::Panel.bg(cx.theme);
         let border_color = cx.theme.border;
         let fg_color = cx.theme.on_surface;
         let dim_color = cx.theme.on_surface_muted;

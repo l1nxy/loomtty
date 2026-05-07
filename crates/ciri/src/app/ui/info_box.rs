@@ -111,7 +111,16 @@ fn build_infobox_rows(
 
 impl InfoBoxComponent {
     pub fn capture(app: &App, cx: &UiContext<'_>) -> Option<Self> {
-        if app.core.command_palette.is_some() || app.core.pending_paste.is_some() {
+        // Hide while another modal-ish overlay owns user attention.
+        // Includes context_menu — the GPU pipeline batches by primitive
+        // type (all rects, then all glyphs), so a later context_menu's
+        // bg rect can't actually cover an earlier InfoBox's glyphs in
+        // the merged scene. Suppressing InfoBox at capture time avoids
+        // the bleed-through entirely (rather than fighting it at paint).
+        if app.core.command_palette.is_some()
+            || app.core.pending_paste.is_some()
+            || app.core.context_menu.visible
+        {
             return None;
         }
 

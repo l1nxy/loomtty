@@ -852,6 +852,26 @@ impl App {
         zoom.to_bits().hash(&mut hasher);
         self.content_origin_y().to_bits().hash(&mut hasher);
         self.window_focused.hash(&mut hasher);
+        // Visual config knobs that affect what the renderer emits.
+        // Today these only change via `reload_config`, which calls
+        // `clear_render_caches` and resets `last_render_snapshot`, so
+        // the `Some(_) == None` guard at the call site forces a redraw
+        // even when the hash is unchanged. Hashing them anyway is
+        // defensive — any future runtime path that mutates these
+        // (e.g. a keybinding to nudge `pane_opacity`) without going
+        // through `reload_config` would otherwise see a stale frame.
+        self.core
+            .config
+            .appearance
+            .pane_opacity
+            .to_bits()
+            .hash(&mut hasher);
+        self.core
+            .config
+            .appearance
+            .background_dim
+            .to_bits()
+            .hash(&mut hasher);
         self.core.overview.active.hash(&mut hasher);
         self.core.overview.dragging.hash(&mut hasher);
         self.overview_hovered_pane.hash(&mut hasher);

@@ -1,16 +1,18 @@
 //! Settings panel — modal overlay surfacing a small subset of the
 //! TOML config to GUI-driven controls.
 //!
-//! v1 scope is intentionally narrow: a centred modal with a single
-//! Appearance section, a Banner explaining live-preview semantics,
-//! and an "Open settings.toml" escape hatch. Actual control wiring
-//! (theme preset Dropdown, pane_opacity NumberField) lands in
-//! follow-up turns; this file owns the chrome / capture / hit-test
-//! plumbing the controls plug into.
+//! v1 scope: a centred modal with one Appearance section, a Banner
+//! explaining live-preview semantics, two live controls (theme preset
+//! Dropdown + pane opacity NumberField stepper), and an "Open
+//! settings.toml" escape hatch. Click on a preset re-resolves the
+//! chrome theme via `apply_theme_preset`; clicks on the +/- buttons
+//! step `appearance.pane_opacity` clamped to [0.05, 1.0].
 //!
-//! v1 limitation: changes apply live (`cached_resolved_theme.reload()`
-//! and friends) but are NOT written back to `settings.toml`. The
-//! Banner makes that explicit.
+//! v1 limitation: changes apply live (`cached_resolved_theme.reload`,
+//! `clear_render_caches`, etc.) but are NOT written back to
+//! `settings.toml`. The Banner makes that explicit; the footer link
+//! opens the file (or its parent directory) so users can persist via
+//! manual edit.
 
 use super::tokens;
 use super::types::{NudgeDirection, UiAction, UiContext, UiScene, UiSettingsHit, ui_hit_id};

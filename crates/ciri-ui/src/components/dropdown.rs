@@ -69,6 +69,13 @@ impl Dropdown {
             .border(1.0, theme.border)
             .rounded(theme.radius.sm)
             .hit_id(self.hit_id)
+            // Visual feedback parity with `NumberField` buttons / chrome
+            // close button. Without these the Dropdown trigger was the
+            // only interactive element in the settings panel that
+            // didn't tint on hover.
+            .cursor_pointer()
+            .hover(|s| s.bg(theme.element_hover))
+            .active(|s| s.bg(theme.element_active))
             // U+25BE BLACK DOWN-POINTING SMALL TRIANGLE — works in any
             // monospace fallback chain, no SVG icon needed for v1.
             .child(text(self.value).color(theme.on_surface))

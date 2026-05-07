@@ -584,4 +584,66 @@ mod tests {
             "at least one panel-body candidate must hit Dialog and absorb the click",
         );
     }
+
+    /// Opacity stepper buttons opt into press-state styling via
+    /// `active_press_hit_id`. The negative case
+    /// (`capture_active_press_hit_id_returns_none_outside_press_friendly_chrome`)
+    /// already covers content area; this is the positive case so a
+    /// future hit_id collision or `pub(super)` visibility change can't
+    /// silently break the press-state wiring.
+    #[test]
+    fn capture_active_press_hit_id_matches_opacity_steppers() {
+        use crate::app::ui::settings_panel::SettingsPanelComponent;
+
+        let mut app = make_app();
+        app.core.settings_panel_visible = true;
+        let cx = app.ui_context();
+        let component = SettingsPanelComponent::capture(&app, &cx)
+            .expect("panel visible after toggle");
+
+        // Sweep the panel for the dec / inc hit_ids — concrete
+        // coordinates depend on layout. `hover_hit_id` reports the
+        // walker's hit, then `capture_active_press_hit_id` is asked to
+        // return the same id for press-state tracking.
+        let mut found_dec = false;
+        let mut found_inc = false;
+        for ix in 0..40 {
+            for iy in 0..40 {
+                let mx = (ix as f32 + 0.5) / 40.0 * cx.viewport_w;
+                let my = (iy as f32 + 0.5) / 40.0 * cx.viewport_h;
+                match component.hover_hit_id(mx, my, &cx) {
+                    Some(id)
+                        if id
+                            == crate::app::ui::settings_panel::HIT_OPACITY_DEC =>
+                    {
+                        assert_eq!(
+                            app.capture_active_press_hit_id(mx, my),
+                            Some(crate::app::ui::settings_panel::HIT_OPACITY_DEC),
+                            "opacity dec must register for press-state styling",
+                        );
+                        found_dec = true;
+                    }
+                    Some(id)
+                        if id
+                            == crate::app::ui::settings_panel::HIT_OPACITY_INC =>
+                    {
+                        assert_eq!(
+                            app.capture_active_press_hit_id(mx, my),
+                            Some(crate::app::ui::settings_panel::HIT_OPACITY_INC),
+                            "opacity inc must register for press-state styling",
+                        );
+                        found_inc = true;
+                    }
+                    _ => {}
+                }
+                if found_dec && found_inc {
+                    return;
+                }
+            }
+        }
+        panic!(
+            "couldn't locate opacity stepper hit_ids on the rendered panel — \
+             dec_found={found_dec} inc_found={found_inc}",
+        );
+    }
 }

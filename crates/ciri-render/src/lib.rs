@@ -18,6 +18,15 @@ use sdf_rect::SdfRect;
 /// Shared across all backends.
 pub struct FrameScene<'a> {
     pub clear_color: [f32; 4],
+    /// Opacity (0..1) of the overview wallpaper drawn after the clear and
+    /// before anything else. `0.0` skips the draw entirely (so backends pay
+    /// no cost when no image is configured or the user dialed dim to 1.0).
+    /// The renderer also skips the draw if no image has been uploaded via
+    /// `Renderer::set_overview_background_image`. `1.0` shows the image at
+    /// full strength; values in between blend toward `clear_color` via
+    /// standard alpha (premultiplied output `(rgb*a, a)` over the cleared
+    /// framebuffer).
+    pub overview_bg_image_opacity: f32,
     pub bg_rects: &'a [Rect],
     pub bg_rect_ranges: &'a [PaneRectRange],
     pub glyphs: &'a [GlyphInstance],

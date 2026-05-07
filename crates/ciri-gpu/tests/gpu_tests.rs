@@ -398,6 +398,7 @@ fn frame_scene_construction() {
     let glyphs: &[GlyphInstance] = &[];
     let scene = FrameScene {
         clear_color: [0.1, 0.2, 0.3, 1.0],
+        overview_bg_image_opacity: 0.0,
         bg_rects: &rects,
         bg_rect_ranges: &[],
         glyphs,

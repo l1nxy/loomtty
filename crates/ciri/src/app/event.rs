@@ -468,6 +468,12 @@ impl ApplicationHandler for App {
         self.renderer = Some(renderer);
         self.last_frame = Instant::now();
 
+        // Push the configured overview wallpaper to the renderer, if any.
+        // No-op when the path is empty or the active backend doesn't yet
+        // implement the textured-quad pipeline (everything except DX in
+        // this commit).
+        self.reload_overview_background();
+
         self.schedule_redraw();
     }
 

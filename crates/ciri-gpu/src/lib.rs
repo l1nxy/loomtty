@@ -377,6 +377,49 @@ impl Renderer {
         }
     }
 
+    /// Upload an RGBA8 image to the renderer's overview-wallpaper slot.
+    ///
+    /// Replaces any previously-uploaded image. The renderer then draws this
+    /// image as a fullscreen `cover`-fitted quad whenever
+    /// `FrameScene::overview_bg_image_opacity > 0.0` (typically only in
+    /// overview mode). Backends that haven't implemented the textured-quad
+    /// pipeline yet silently no-op — overview mode falls back to a solid
+    /// `clear_color` fill, so no visual breakage rolls out across backends.
+    ///
+    /// `width` and `height` are in image pixels; `rgba.len()` must equal
+    /// `width * height * 4`. Caller-side image decoding lives in
+    /// `ciri::app::overview_bg`.
+    pub fn set_overview_background_image(
+        &mut self,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
+        match self {
+            #[cfg(feature = "blade")]
+            Renderer::Blade(_) => Ok(()),
+            #[cfg(feature = "gl")]
+            Renderer::Gl(_) => Ok(()),
+            #[cfg(all(feature = "dx", windows))]
+            Renderer::Dx(r) => r
+                .set_overview_background_image(rgba, width, height)
+                .map_err(|e| GpuError::ResourceCreate(format!("dx overview bg: {e}"))),
+        }
+    }
+
+    /// Drop the uploaded overview wallpaper, if any. Subsequent frames
+    /// fall back to the solid `clear_color` fill.
+    pub fn clear_overview_background_image(&mut self) {
+        match self {
+            #[cfg(feature = "blade")]
+            Renderer::Blade(_) => {}
+            #[cfg(feature = "gl")]
+            Renderer::Gl(_) => {}
+            #[cfg(all(feature = "dx", windows))]
+            Renderer::Dx(r) => r.clear_overview_background_image(),
+        }
+    }
+
     pub fn destroy_atlas(&self, atlas_gpu: &mut GlyphAtlasGpu) {
         match (self, atlas_gpu) {
             #[cfg(feature = "blade")]
@@ -595,6 +638,7 @@ mod tests {
             });
         let scene = ciri_render::FrameScene {
             clear_color: [0.0, 0.0, 0.0, 1.0],
+            overview_bg_image_opacity: 0.0,
             bg_rects: &[],
             bg_rect_ranges: &[],
             glyphs: &[],

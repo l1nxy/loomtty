@@ -9,6 +9,7 @@ pub(crate) mod mouse;
 pub(crate) mod notification;
 pub(crate) mod open;
 pub(crate) mod overview;
+pub(crate) mod overview_bg;
 pub(crate) mod palette;
 pub(crate) mod paste_dialog;
 pub(crate) mod paste_guard;

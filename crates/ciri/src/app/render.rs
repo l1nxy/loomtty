@@ -2655,6 +2655,17 @@ impl App {
             cache,
             FrameScene {
                 clear_color,
+                // Wallpaper only shows in overview mode (gated on
+                // `core.overview.active`); 1.0 - dim gives the image's
+                // opacity over `clear_color`. Empty path / 0 opacity → 0.0,
+                // and the renderer skips the textured-quad draw entirely.
+                overview_bg_image_opacity: if self.core.overview.active
+                    && !self.core.config.appearance.overview_background_image.is_empty()
+                {
+                    (1.0 - self.core.config.appearance.overview_background_dim).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                },
                 bg_rects: &bg_rects,
                 bg_rect_ranges: &bg_rect_ranges,
                 glyphs: &glyphs,

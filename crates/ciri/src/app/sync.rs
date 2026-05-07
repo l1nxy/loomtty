@@ -466,6 +466,45 @@ impl App {
         self.core.apply_layout(layout);
     }
 
+    /// (Re)load the overview wallpaper into the renderer's texture slot.
+    ///
+    /// Idempotent — empty path (or load failure) clears any previous
+    /// upload so the renderer falls back to the solid `clear_color` fill.
+    /// Safe to call before the renderer is created (early-startup ordering)
+    /// and at every config reload; non-DX backends quietly no-op until
+    /// their own pipeline ships in B3/B4.
+    pub fn reload_overview_background(&mut self) {
+        let Some(renderer) = self.renderer.as_mut() else {
+            return;
+        };
+        let path_value = self.core.config.appearance.overview_background_image.clone();
+        if path_value.is_empty() {
+            renderer.clear_overview_background_image();
+            return;
+        }
+        match crate::app::overview_bg::load_overview_background(&path_value) {
+            Ok(Some(img)) => {
+                match renderer.set_overview_background_image(&img.rgba, img.width, img.height) {
+                    Ok(()) => log::info!(
+                        "overview wallpaper loaded: {}x{} ({})",
+                        img.width,
+                        img.height,
+                        path_value
+                    ),
+                    Err(e) => {
+                        log::warn!("overview wallpaper upload failed: {e}");
+                        renderer.clear_overview_background_image();
+                    }
+                }
+            }
+            Ok(None) => renderer.clear_overview_background_image(),
+            Err(e) => {
+                log::warn!("overview wallpaper load failed: {e:#}");
+                renderer.clear_overview_background_image();
+            }
+        }
+    }
+
     pub fn reload_config(&mut self) {
         match ciri_config::config::CiriConfig::load() {
             Ok(new_config) => {
@@ -490,6 +529,12 @@ impl App {
                             .abs()
                             > f32::EPSILON
                 };
+                let overview_bg_changed = self
+                    .core
+                    .config
+                    .appearance
+                    .overview_background_image
+                    != new_config.appearance.overview_background_image;
                 self.core.config = new_config;
                 self.cached_color_table = ciri_render::terminal::ColorTable::new(&self.core.config);
                 self.cached_resolved_theme.reload(&self.core.config.theme);
@@ -583,6 +628,9 @@ impl App {
                     self.core.config.prediction.threshold_ms,
                     self.core.config.prediction.show_underline,
                 );
+                if overview_bg_changed {
+                    self.reload_overview_background();
+                }
             }
             Err(e) => log::warn!("config reload failed: {e}"),
         }

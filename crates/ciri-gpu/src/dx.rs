@@ -403,6 +403,64 @@ float4 ps_main(PSInput input) : SV_TARGET {
 }
 "#;
 
+// ─── Overview wallpaper shaders ─────────────────────────────────────
+//
+// One vertexless fullscreen quad textured with the user-supplied image.
+// `cover` UV: scale the [0,1] quad UV around 0.5 by the smaller axis
+// ratio so the image fills the viewport with overflow cropped, aspect
+// preserved. Output is premultiplied (`rgb * opacity, opacity`) so the
+// image alpha-blends over the already-cleared `clear_color` framebuffer
+// — opacity 0 hides it entirely, 1 shows the wallpaper at full strength,
+// intermediate values cross-fade toward `clear_color`.
+
+const OVERVIEW_BG_HLSL: &str = r#"
+cbuffer OverviewBg : register(b0) {
+    float4 viewport_tex_size; // vw, vh, tw, th
+    float4 params;            // opacity, _, _, _
+};
+
+Texture2D bg_tex : register(t0);
+SamplerState bg_samp : register(s0);
+
+struct VSOutput {
+    float4 pos : SV_POSITION;
+    float2 uv  : TEXCOORD0;
+};
+
+VSOutput vs_main(uint vid : SV_VertexID) {
+    static const float2 corners[6] = {
+        float2(0,0), float2(1,0), float2(1,1),
+        float2(0,0), float2(1,1), float2(0,1)
+    };
+    float2 vuv = corners[vid];
+
+    VSOutput o;
+    o.pos = float4(vuv.x * 2.0 - 1.0, 1.0 - vuv.y * 2.0, 0.0, 1.0);
+
+    float vw = viewport_tex_size.x;
+    float vh = viewport_tex_size.y;
+    float tw = viewport_tex_size.z;
+    float th = viewport_tex_size.w;
+    float v_aspect = vw / max(vh, 1e-6);
+    float t_aspect = tw / max(th, 1e-6);
+    float2 scale = float2(1.0, 1.0);
+    if (t_aspect > v_aspect) {
+        // texture wider than viewport — crop the sides
+        scale.x = v_aspect / max(t_aspect, 1e-6);
+    } else {
+        scale.y = t_aspect / max(v_aspect, 1e-6);
+    }
+    o.uv = (vuv - 0.5) * scale + 0.5;
+    return o;
+}
+
+float4 ps_main(VSOutput input) : SV_TARGET {
+    float4 col = bg_tex.Sample(bg_samp, input.uv);
+    float opacity = saturate(params.x);
+    return float4(col.rgb * opacity, opacity);
+}
+"#;
+
 // ─── Shader compilation ─────────────────────────────────────────────
 
 unsafe fn compile_shader(source: &str, entry: &str, target: &str) -> Result<ID3DBlob> {
@@ -1397,6 +1455,207 @@ impl DxSdfPipeline {
     }
 }
 
+// ─── Overview wallpaper pipeline ────────────────────────────────────
+
+struct DxOverviewBgTexture {
+    _texture: ID3D11Texture2D,
+    srv: ID3D11ShaderResourceView,
+    width: u32,
+    height: u32,
+}
+
+struct DxOverviewBgPipeline {
+    vs: ID3D11VertexShader,
+    ps: ID3D11PixelShader,
+    cbuffer: ID3D11Buffer,
+    sampler: ID3D11SamplerState,
+    texture: Option<DxOverviewBgTexture>,
+}
+
+impl DxOverviewBgPipeline {
+    unsafe fn new(device: &ID3D11Device) -> Result<Self> {
+        let vs_blob = compile_shader(OVERVIEW_BG_HLSL, "vs_main", "vs_5_0")?;
+        let vs_code = std::slice::from_raw_parts(
+            vs_blob.GetBufferPointer() as *const u8,
+            vs_blob.GetBufferSize(),
+        );
+        let mut vs = None;
+        device.CreateVertexShader(vs_code, None, Some(&mut vs))?;
+        let vs = vs.unwrap();
+
+        let ps_blob = compile_shader(OVERVIEW_BG_HLSL, "ps_main", "ps_5_0")?;
+        let ps_code = std::slice::from_raw_parts(
+            ps_blob.GetBufferPointer() as *const u8,
+            ps_blob.GetBufferSize(),
+        );
+        let mut ps = None;
+        device.CreatePixelShader(ps_code, None, Some(&mut ps))?;
+        let ps = ps.unwrap();
+
+        // 32 bytes — two float4 slots (viewport_tex_size + params).
+        let cb_desc = D3D11_BUFFER_DESC {
+            ByteWidth: 32,
+            Usage: D3D11_USAGE_DYNAMIC,
+            BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
+            CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+            ..Default::default()
+        };
+        let initial_cb = [0.0f32; 8];
+        let initial_data = D3D11_SUBRESOURCE_DATA {
+            pSysMem: initial_cb.as_ptr() as *const _,
+            ..Default::default()
+        };
+        let mut cbuffer = None;
+        device.CreateBuffer(&cb_desc, Some(&initial_data), Some(&mut cbuffer))?;
+        let cbuffer = cbuffer.unwrap();
+
+        // Linear-filter, clamp-to-edge sampler. The cover-UV math keeps
+        // sample coords inside [0,1], so clamping is just a defensive
+        // boundary against any rounding drift.
+        let samp_desc = D3D11_SAMPLER_DESC {
+            Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+            AddressU: D3D11_TEXTURE_ADDRESS_CLAMP,
+            AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
+            AddressW: D3D11_TEXTURE_ADDRESS_CLAMP,
+            ComparisonFunc: D3D11_COMPARISON_ALWAYS,
+            MaxLOD: f32::MAX,
+            ..Default::default()
+        };
+        let mut sampler = None;
+        device.CreateSamplerState(&samp_desc, Some(&mut sampler))?;
+        let sampler = sampler.unwrap();
+
+        Ok(DxOverviewBgPipeline {
+            vs,
+            ps,
+            cbuffer,
+            sampler,
+            texture: None,
+        })
+    }
+
+    unsafe fn upload(
+        &mut self,
+        device: &ID3D11Device,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
+        if width == 0 || height == 0 {
+            anyhow::bail!("overview bg image has zero dimension ({width}x{height})");
+        }
+        let expected = (width as usize) * (height as usize) * 4;
+        if rgba.len() != expected {
+            anyhow::bail!(
+                "overview bg image byte count mismatch: got {}, expected {} ({width}x{height} RGBA8)",
+                rgba.len(),
+                expected
+            );
+        }
+
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: width,
+            Height: height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            Usage: D3D11_USAGE_IMMUTABLE,
+            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+            ..Default::default()
+        };
+        let init = D3D11_SUBRESOURCE_DATA {
+            pSysMem: rgba.as_ptr() as *const _,
+            SysMemPitch: width * 4,
+            SysMemSlicePitch: 0,
+        };
+        let mut texture = None;
+        device.CreateTexture2D(&desc, Some(&init), Some(&mut texture))?;
+        let texture = texture.unwrap();
+
+        let srv_desc = D3D11_SHADER_RESOURCE_VIEW_DESC {
+            Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+            ViewDimension: D3D_SRV_DIMENSION_TEXTURE2D,
+            Anonymous: D3D11_SHADER_RESOURCE_VIEW_DESC_0 {
+                Texture2D: D3D11_TEX2D_SRV {
+                    MostDetailedMip: 0,
+                    MipLevels: 1,
+                },
+            },
+        };
+        let resource: ID3D11Resource = texture.cast()?;
+        let mut srv = None;
+        device.CreateShaderResourceView(&resource, Some(&srv_desc), Some(&mut srv))?;
+        let srv = srv.unwrap();
+
+        self.texture = Some(DxOverviewBgTexture {
+            _texture: texture,
+            srv,
+            width,
+            height,
+        });
+        Ok(())
+    }
+
+    fn clear(&mut self) {
+        self.texture = None;
+    }
+
+    /// Issue the textured-quad draw if a texture is bound and `opacity > 0`.
+    /// Caller must have set the render target and viewport already; this
+    /// rebinds the input layout (none — vertexless), shaders, cbuffer, SRV,
+    /// sampler, and topology, but leaves the framebuffer / blend state in
+    /// place (the existing premultiplied-alpha state is exactly what the
+    /// PS output expects).
+    unsafe fn draw(&self, ctx: &ID3D11DeviceContext, vw: f32, vh: f32, opacity: f32) {
+        let Some(tex) = self.texture.as_ref() else {
+            return;
+        };
+        if opacity <= 0.0 {
+            return;
+        }
+
+        let cb_data = [
+            vw,
+            vh,
+            tex.width as f32,
+            tex.height as f32,
+            opacity,
+            0.0,
+            0.0,
+            0.0,
+        ];
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        ctx.Map(
+            &self.cbuffer,
+            0,
+            D3D11_MAP_WRITE_DISCARD,
+            0,
+            Some(&mut mapped),
+        )
+        .unwrap();
+        std::ptr::copy_nonoverlapping(cb_data.as_ptr() as *const u8, mapped.pData as *mut u8, 32);
+        ctx.Unmap(&self.cbuffer, 0);
+
+        ctx.IASetInputLayout(None);
+        ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        // No vertex buffer — VS pulls corner positions from SV_VertexID.
+        ctx.IASetVertexBuffers(0, 1, Some(&None), Some(&0), Some(&0));
+
+        ctx.VSSetShader(Some(&self.vs), None);
+        ctx.PSSetShader(Some(&self.ps), None);
+        ctx.VSSetConstantBuffers(0, Some(&[Some(self.cbuffer.clone())]));
+        ctx.PSSetConstantBuffers(0, Some(&[Some(self.cbuffer.clone())]));
+        ctx.PSSetShaderResources(0, Some(&[Some(tex.srv.clone())]));
+        ctx.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
+
+        ctx.Draw(6, 0);
+    }
+}
+
 // ─── GlyphAtlasGpu ─────────────────────────────────────────────────
 
 pub struct GlyphAtlasGpu {
@@ -1417,6 +1676,7 @@ pub struct Renderer {
     text_rendering_params: Option<IDWriteRenderingParams>,
     rects: DxRectPipeline,
     sdf: DxSdfPipeline,
+    overview_bg: DxOverviewBgPipeline,
     width: u32,
     height: u32,
     sync_interval: u32,
@@ -1533,6 +1793,7 @@ impl Renderer {
 
         let rects = unsafe { DxRectPipeline::new(&device, render_config.max_rectangles)? };
         let sdf = unsafe { DxSdfPipeline::new(&device, MAX_SDF_RECTS)? };
+        let overview_bg = unsafe { DxOverviewBgPipeline::new(&device)? };
 
         let sync_interval = match render_config.present_mode {
             ciri_config::config::PresentMode::Immediate
@@ -1568,6 +1829,7 @@ impl Renderer {
             text_rendering_params,
             rects,
             sdf,
+            overview_bg,
             width: size.width.max(1),
             height: size.height.max(1),
             sync_interval,
@@ -1611,6 +1873,23 @@ impl Renderer {
 
     pub fn apply_surface(&mut self) {
         // D3D11 resize is handled synchronously in resize()
+    }
+
+    /// Upload the overview wallpaper texture. Replaces any previously
+    /// uploaded image. Mirrors the public `Renderer::set_overview_background_image`
+    /// signature; the lib-level wrapper converts errors into `GpuError`.
+    pub fn set_overview_background_image(
+        &mut self,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
+        unsafe { self.overview_bg.upload(&self.device, rgba, width, height) }
+    }
+
+    /// Drop the wallpaper texture, if any.
+    pub fn clear_overview_background_image(&mut self) {
+        self.overview_bg.clear();
     }
 
     pub fn surface_size(&self) -> (u32, u32) {
@@ -1743,14 +2022,39 @@ impl Renderer {
             };
             self.ctx.RSSetScissorRects(Some(&[full_rect]));
 
+            // Overview wallpaper, if any. Self-checks the texture/opacity
+            // gate, so passing 0.0 (default outside overview mode) is a
+            // no-op. Drawn after the clear and before pane bgs so the
+            // image sits behind everything else.
+            self.overview_bg.draw(
+                &self.ctx,
+                vw,
+                vh,
+                scene.overview_bg_image_opacity,
+            );
+
             // 1. Upload all background rects (clear + pane + overlay) once.
+            // The prepended full-viewport rect is normally a redundant
+            // baseline of `clear_color` (the framebuffer was already
+            // cleared). When the overview wallpaper is showing it would
+            // erase the image we just drew, so make it transparent in
+            // that case — the index slot has to stay so the rest of the
+            // bg_rects index math (active_bg_idx / overlay_bg_idx) keeps
+            // matching `scene.bg_rect_ranges`.
+            let baseline_color = if scene.overview_bg_image_opacity > 0.0
+                && self.overview_bg.texture.is_some()
+            {
+                [0.0; 4]
+            } else {
+                scene.clear_color
+            };
             let mut all_bg = Vec::with_capacity(1 + scene.bg_rects.len());
             all_bg.push(Rect {
                 x: 0.0,
                 y: 0.0,
                 w: vw,
                 h: vh,
-                color: scene.clear_color,
+                color: baseline_color,
             });
             all_bg.extend_from_slice(scene.bg_rects);
             let active_bg_idx = 1 + scene.active_bg_start;

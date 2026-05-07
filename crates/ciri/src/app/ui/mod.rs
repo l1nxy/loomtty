@@ -420,4 +420,122 @@ mod tests {
             "press outside press-friendly chrome should not set active_hit_id",
         );
     }
+
+    // ── Settings panel ────────────────────────────────────────────────
+
+    /// `Action::ToggleSettings` is a true toggle, AND it closes every
+    /// other modal-ish overlay so the panel cleanly owns input focus.
+    /// Catches anyone reverting the round-1 fix that added the search /
+    /// context_menu close calls (palette was always closed).
+    #[test]
+    fn toggle_settings_closes_other_overlays_and_flips_visibility() {
+        use ciri_input::action::Action;
+
+        let mut app = make_app();
+        // Seed the kinds of overlays that should be force-closed.
+        app.core.command_palette = Some(CommandPaletteState {
+            query: String::new(),
+            entries: Vec::new(),
+            filtered: Vec::new(),
+            selected_idx: 0,
+            sessions_only: false,
+            remote_loading: None,
+            remote_error: None,
+            remote_input_mode: false,
+        });
+        app.core.context_menu = ContextMenu {
+            visible: true,
+            x: 10.0,
+            y: 10.0,
+            target_pane_id: None,
+            items: vec![],
+        };
+
+        app.handle_action(Action::ToggleSettings);
+        assert!(app.core.settings_panel_visible, "first toggle opens panel");
+        assert!(
+            app.core.command_palette.is_none(),
+            "palette must be force-closed when settings opens",
+        );
+        assert!(
+            !app.core.context_menu.visible,
+            "context_menu must be force-closed when settings opens",
+        );
+
+        app.handle_action(Action::ToggleSettings);
+        assert!(!app.core.settings_panel_visible, "second toggle closes");
+    }
+
+    /// `NudgePaneOpacity` clamps at the documented floor (0.05) — fully
+    /// transparent panes are intentionally disallowed via the panel
+    /// (users wanting opacity 0 edit settings.toml directly).
+    #[test]
+    fn nudge_pane_opacity_clamps_at_floor() {
+        use crate::app::ui::types::NudgeDirection;
+
+        let mut app = make_app();
+        app.core.config.appearance.pane_opacity = 0.10;
+        app.apply_ui_action(UiAction::NudgePaneOpacity(NudgeDirection::Decrement));
+        assert!(
+            (app.core.config.appearance.pane_opacity - 0.05).abs() < 1e-6,
+            "single decrement from 0.10 should land on 0.05: {}",
+            app.core.config.appearance.pane_opacity,
+        );
+        // Further decrements stay clamped — no underflow into negative
+        // values.
+        for _ in 0..5 {
+            app.apply_ui_action(UiAction::NudgePaneOpacity(NudgeDirection::Decrement));
+        }
+        assert!(
+            (app.core.config.appearance.pane_opacity - 0.05).abs() < 1e-6,
+            "decrement past the floor must clamp at 0.05",
+        );
+    }
+
+    #[test]
+    fn nudge_pane_opacity_clamps_at_ceiling() {
+        use crate::app::ui::types::NudgeDirection;
+
+        let mut app = make_app();
+        app.core.config.appearance.pane_opacity = 0.97;
+        for _ in 0..5 {
+            app.apply_ui_action(UiAction::NudgePaneOpacity(NudgeDirection::Increment));
+        }
+        assert!(
+            (app.core.config.appearance.pane_opacity - 1.0).abs() < 1e-6,
+            "increment past 1.0 must clamp at 1.0",
+        );
+    }
+
+    /// `SettingsPanelComponent::capture` returns `None` while the panel
+    /// is hidden — gates the rest of the chrome paint pipeline.
+    #[test]
+    fn settings_panel_capture_hidden_returns_none() {
+        use crate::app::ui::settings_panel::SettingsPanelComponent;
+
+        let app = make_app();
+        let cx = app.ui_context();
+        assert!(
+            SettingsPanelComponent::capture(&app, &cx).is_none(),
+            "panel must be invisible until ToggleSettings fires",
+        );
+    }
+
+    /// Outside-click on the settings backdrop maps to `CloseSettings`.
+    /// Pin the dismissal contract so reordering hit_ids can't silently
+    /// turn the backdrop into a no-op.
+    #[test]
+    fn settings_outside_click_maps_to_close() {
+        use crate::app::ui::settings_panel::SettingsPanelComponent;
+
+        let mut app = make_app();
+        app.core.settings_panel_visible = true;
+        let cx = app.ui_context();
+        let component = SettingsPanelComponent::capture(&app, &cx)
+            .expect("panel visible after toggle");
+        // (0, 0) is reliably outside the centred panel for any
+        // non-trivial viewport.
+        let action = component.click(0.0, 0.0, &cx);
+        assert_eq!(action, Some(UiAction::CloseSettings));
+    }
 }

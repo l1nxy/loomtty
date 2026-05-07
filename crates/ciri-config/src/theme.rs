@@ -450,7 +450,12 @@ mod tests {
             };
             theme.resolve_preset();
 
-            // Check all 16 terminal colors + 8 UI colors = 24 fields
+            // 18 terminal palette fields + 7 legacy UI fields = 25.
+            // The `ui_*` chrome fields are intentionally OPTIONAL by
+            // design (preset-independent defaults live in
+            // `ui_*_color()`); they're exercised by the
+            // `chrome_palette_is_preset_independent` test in
+            // `crates/ciri-ui/src/theme.rs`.
             let fields: &[(&str, &ThemeValue)] = &[
                 ("foreground", &theme.foreground),
                 ("background", &theme.background),

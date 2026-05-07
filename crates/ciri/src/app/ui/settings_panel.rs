@@ -80,6 +80,16 @@ impl SettingsPanelComponent {
         settings_hit_from_id(ui_hit_id(&root, cx, mx, my))
     }
 
+    /// Raw hit_id under the cursor — used by `App::current_settings_hover`
+    /// for chrome-cache-hash dirty tracking. Returning the u64 directly
+    /// (rather than the `UiSettingsHit` enum) keeps the hash output
+    /// stable across enum reorderings and matches the hit_id surface
+    /// the hover walker uses internally.
+    pub(crate) fn hover_hit_id(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<u64> {
+        let root = self.build_tree(cx);
+        ui_hit_id(&root, cx, mx, my)
+    }
+
     pub(crate) fn click(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<UiAction> {
         match self.hit_test(mx, my, cx) {
             UiSettingsHit::Close | UiSettingsHit::None => Some(UiAction::CloseSettings),

@@ -1223,6 +1223,27 @@ impl App {
         component.hover_index(mx, my, &cx)
     }
 
+    /// Hit-id under the cursor for the settings panel, used by the
+    /// chrome cache hash so cursor moves between interactive elements
+    /// (close button / dropdown trigger / opacity steppers / "Open
+    /// settings.toml" link) invalidate the cache and the declarative
+    /// `.hover()` styles repaint each frame.
+    ///
+    /// Mirrors `current_context_menu_hover` /
+    /// `current_paste_dialog_hover` / `current_palette_hover`. Returns
+    /// the raw u64 hit_id rather than a typed enum because settings
+    /// hits are flat (no per-item-index payload to thread through).
+    pub(crate) fn current_settings_hover(&self) -> Option<u64> {
+        if !self.core.settings_panel_visible {
+            return None;
+        }
+        let (mx, my) = self.last_mouse_pos?;
+        let cx = self.ui_context();
+        let component =
+            crate::app::ui::settings_panel::SettingsPanelComponent::capture(self, &cx)?;
+        component.hover_hit_id(mx, my, &cx)
+    }
+
     /// Which paste-dialog button (`Paste` / `Cancel`) the cursor is over.
     /// Derived from `last_mouse_pos` + the dialog geometry the capture
     /// step would compute. Returns `None` when no paste is pending or

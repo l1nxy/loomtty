@@ -227,25 +227,32 @@ impl App {
                 // they can persist any change the panel doesn't yet
                 // write back. Reuses the existing `open_url`-via-
                 // `open_file_path` flow so OS-specific editor
-                // resolution ($EDITOR / code / cursor / system
-                // handler) is shared with the link-click path.
+                // resolution ($EDITOR / code / cursor / system handler)
+                // is shared with the link-click path.
                 //
-                // Seed an empty file (and any missing parent dirs) on
-                // first run so `open_file_path`'s canonicalize
-                // existence-check doesn't silently fail for users who
-                // have never written a config. The empty-file write is
-                // best-effort — failure logs a warning but the open is
-                // still attempted (some editors create-on-open).
+                // We deliberately do NOT seed the file when missing —
+                // that round-tripped through the config-file watcher
+                // and clobbered any in-memory live preview the user
+                // just made. Instead, fall back to opening the parent
+                // directory so the user can create the file themselves
+                // without losing their preview state.
                 let path = ciri_config::config::config_path();
-                if !path.exists() {
-                    if let Some(parent) = path.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-                    if let Err(e) = std::fs::write(&path, "# ciri configuration\n") {
-                        log::warn!("failed to seed settings.toml at {}: {e}", path.display());
-                    }
+                if path.exists() {
+                    self.open_url(&path.to_string_lossy());
+                } else if let Some(parent) = path.parent()
+                    && parent.exists()
+                {
+                    log::info!(
+                        "settings.toml does not yet exist; opening parent directory {}",
+                        parent.display(),
+                    );
+                    self.open_url(&parent.to_string_lossy());
+                } else {
+                    log::warn!(
+                        "settings.toml path unavailable: {} (parent does not exist either)",
+                        path.display(),
+                    );
                 }
-                self.open_url(&path.to_string_lossy());
                 self.core.settings_panel_visible = false;
             }
             UiAction::NudgePaneOpacity(direction) => {

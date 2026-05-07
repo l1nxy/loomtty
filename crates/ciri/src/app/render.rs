@@ -655,6 +655,13 @@ impl App {
             // rendering, not just the chrome.
             self.core.config.theme.preset.hash(hasher);
             self.core.config.appearance.pane_opacity.to_bits().hash(hasher);
+            // Hover hit_id under the cursor — same shape as
+            // `hash_context_menu` / `hash_pending_paste`. Without this
+            // the declarative `.hover()` refinements on the panel's
+            // close button / dropdown trigger / opacity steppers /
+            // "Open settings.toml" link wouldn't repaint as the cursor
+            // moves between them (cache hash stays identical).
+            self.current_settings_hover().hash(hasher);
         }
     }
 

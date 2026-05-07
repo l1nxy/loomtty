@@ -544,6 +544,15 @@ mod tests {
     /// Pins the `Dialog` no-op contract; without this guard a future
     /// hit_id reordering could silently turn panel-body clicks into
     /// dismissals.
+    ///
+    /// Sweeps a small grid of candidate "panel body" coordinates and
+    /// requires at least one to land on the panel and produce `None`.
+    /// Without this self-check the test could silently move from
+    /// "click landed on Dialog" to "click landed on backdrop" if
+    /// future layout changes shift the spacer position; both happen
+    /// to return `None`-as-Action but for different reasons (Dialog
+    /// → no-op vs None → CloseSettings via the click handler's
+    /// `None | Close` arm).
     #[test]
     fn settings_dialog_body_click_is_no_op() {
         use crate::app::ui::settings_panel::SettingsPanelComponent;
@@ -553,14 +562,26 @@ mod tests {
         let cx = app.ui_context();
         let component = SettingsPanelComponent::capture(&app, &cx)
             .expect("panel visible after toggle");
-        // Centre of the viewport — inside the centred panel, but in
-        // the flex spacer between Banner / sections / footer rather
-        // than on a control.
-        let mx = cx.viewport_w * 0.5;
-        let my = cx.viewport_h * 0.5;
+        // Probe multiple "likely panel body" points so the test still
+        // works if flex-spacer geometry shifts slightly with future
+        // layout tweaks. Centre is the most reliable; the offsets
+        // sample around it. The assertion verifies the click hit the
+        // Dialog hit_id (panel body) AND returned no action.
+        let cx_w = cx.viewport_w;
+        let cx_h = cx.viewport_h;
+        let candidates: &[(f32, f32)] = &[
+            (cx_w * 0.5, cx_h * 0.5),
+            (cx_w * 0.5, cx_h * 0.55),
+            (cx_w * 0.5, cx_h * 0.45),
+        ];
+        let any_dialog_hit = candidates.iter().any(|&(mx, my)| {
+            component.hover_hit_id(mx, my, &cx)
+                == Some(crate::app::ui::settings_panel::settings_panel_hit_dialog_for_test())
+                && component.click(mx, my, &cx).is_none()
+        });
         assert!(
-            component.click(mx, my, &cx).is_none(),
-            "panel-body click must absorb (no UiAction emitted)",
+            any_dialog_hit,
+            "at least one panel-body candidate must hit Dialog and absorb the click",
         );
     }
 }

@@ -60,6 +60,11 @@ impl NumberField {
         let outer_bg = theme.surface_sunken;
         let border_color = theme.border;
         let fg = theme.on_surface;
+        // Hover / press tints share the chrome state-aware tokens
+        // so NumberField presses look the same as tab bar / palette
+        // row presses (round 0.2 + stage 7).
+        let hover_bg = theme.element_hover;
+        let press_bg = theme.element_active;
 
         let dec_btn = div()
             .w(BTN_W)
@@ -68,6 +73,9 @@ impl NumberField {
             .items_center()
             .justify_center()
             .hit_id(self.dec_hit_id)
+            .cursor_pointer()
+            .hover(|s| s.bg(hover_bg))
+            .active(|s| s.bg(press_bg))
             .child(text("−").color(fg));
 
         let value_cell = div()
@@ -85,6 +93,9 @@ impl NumberField {
             .items_center()
             .justify_center()
             .hit_id(self.inc_hit_id)
+            .cursor_pointer()
+            .hover(|s| s.bg(hover_bg))
+            .active(|s| s.bg(press_bg))
             .child(text("+").color(fg));
 
         div()

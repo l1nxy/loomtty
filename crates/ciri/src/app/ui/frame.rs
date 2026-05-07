@@ -358,6 +358,23 @@ impl UiFrame {
         {
             return Some(super::tab_bar::pane_tab_hit_id(pane_id));
         }
+        // Settings panel opacity steppers — the only settings buttons
+        // that benefit from `.active()` press tint (panel stays open
+        // after each nudge so the press state has a frame to render).
+        // Close button and "Open settings.toml" link dismiss the panel
+        // immediately; rendering a press tint for a single frame
+        // before dismissal isn't worth the complexity.
+        if let Some(panel) = &self.settings_panel {
+            match panel.hit_test(mx, my, cx) {
+                UiSettingsHit::PaneOpacityDec => {
+                    return Some(super::settings_panel::HIT_OPACITY_DEC);
+                }
+                UiSettingsHit::PaneOpacityInc => {
+                    return Some(super::settings_panel::HIT_OPACITY_INC);
+                }
+                _ => {}
+            }
+        }
         None
     }
 }

@@ -24,8 +24,21 @@ const HIT_DIALOG: u64 = 1;
 const HIT_CLOSE: u64 = 2;
 const HIT_OPEN_TOML: u64 = 3;
 const HIT_THEME_DROPDOWN: u64 = 4;
-const HIT_OPACITY_DEC: u64 = 5;
-const HIT_OPACITY_INC: u64 = 6;
+// Opacity stepper hit_ids are `pub(super)` so `frame::active_press_hit_id`
+// can return them — the steppers need press feedback (panel stays open
+// after each nudge, full repaint between events) unlike dismiss-on-press
+// chrome (close button, "Open settings.toml" link).
+pub(super) const HIT_OPACITY_DEC: u64 = 5;
+pub(super) const HIT_OPACITY_INC: u64 = 6;
+
+/// Test-only accessor for the Dialog hit_id so the
+/// `settings_dialog_body_click_is_no_op` regression in `ui/mod.rs` can
+/// verify the click landed on the panel body (not the backdrop) without
+/// re-publishing the constant for production use.
+#[cfg(test)]
+pub(super) fn settings_panel_hit_dialog_for_test() -> u64 {
+    HIT_DIALOG
+}
 
 fn settings_hit_from_id(hit_id: Option<u64>) -> UiSettingsHit {
     match hit_id {
@@ -135,11 +148,17 @@ impl SettingsPanelComponent {
                     .child(text("\u{00D7}").color(theme.on_surface_muted)),
             );
 
+        // Width-constrain so the banner text doesn't overflow the panel
+        // border at the minimum panel width (480 px → content_w ≈ 448 px).
+        // ciri-ui's text layout overflows rather than wraps, so without
+        // an explicit width the banner string runs past the panel edge.
+        // Every other panel row sets `.w(content_w)`; this matches.
         let banner = Banner::new(
             "Changes preview live. Edit settings.toml to persist them across launches.",
         )
         .severity(Severity::Info)
-        .into_div(theme);
+        .into_div(theme)
+        .w(content_w);
 
         let section_header = div()
             .w(content_w)

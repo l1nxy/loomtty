@@ -508,18 +508,20 @@ impl App {
     }
 
     /// Drain the pending wallpaper decode (if the worker has finished)
-    /// and push its result to the renderer. No-op when nothing is
-    /// pending or the worker isn't done yet.
+    /// and push its result to the renderer. Returns `true` iff the
+    /// renderer state changed, so the caller can schedule a redraw —
+    /// without that, an idle session in overview mode would silently
+    /// hold the old (or empty) wallpaper until the next user input.
     ///
     /// Called from `user_event` (when the proxy wake fires) and at the
     /// start of each `render` so a missed wake doesn't strand the
     /// upload until the next user action.
-    pub fn apply_pending_overview_bg(&mut self) {
+    pub fn apply_pending_overview_bg(&mut self) -> bool {
         let Some((path, rx)) = self.pending_overview_bg_decode.as_ref() else {
-            return;
+            return false;
         };
         let Ok(result) = rx.try_recv() else {
-            return;
+            return false;
         };
         // Stale-decode guard: the user may have changed `appearance
         // .overview_background_image` between the spawn and the
@@ -533,10 +535,10 @@ impl App {
             log::debug!(
                 "discarding overview wallpaper decode for stale path '{path_owned}' (current '{current}')"
             );
-            return;
+            return false;
         }
         let Some(renderer) = self.renderer.as_mut() else {
-            return;
+            return false;
         };
         match result {
             Ok(Some(img)) => {
@@ -559,6 +561,7 @@ impl App {
                 renderer.clear_overview_background_image();
             }
         }
+        true
     }
 
     pub fn reload_config(&mut self) {

@@ -298,9 +298,13 @@ impl ApplicationHandler for App {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: ()) {
         // Woken by EventLoopProxy from a background thread. Could be the
         // reader thread (server events) or the wallpaper-decode worker;
-        // both share the `()` event type, so just check both.
-        self.apply_pending_overview_bg();
-        if self.process_server_events() {
+        // both share the `()` event type, so just check both. Either
+        // path's `did anything change` signal must trigger a redraw —
+        // an idle session would otherwise hold the stale frame until
+        // the next user input.
+        let bg_applied = self.apply_pending_overview_bg();
+        let server_changed = self.process_server_events();
+        if bg_applied || server_changed {
             self.schedule_redraw();
         }
     }

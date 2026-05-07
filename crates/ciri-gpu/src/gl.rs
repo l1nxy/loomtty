@@ -988,6 +988,16 @@ impl GlOverviewBgPipeline {
             .create_texture()
             .map_err(|e| crate::GpuError::ResourceCreate(format!("overview_bg texture: {e}")))?;
         gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+        // Non-sRGB internal format — the `OVERVIEW_BG_FS` linearises
+        // explicitly when `use_linear_blending` is on. The color glyph
+        // atlas (`GlAtlasLayer` in this file) takes the other path
+        // (`SRGB8_ALPHA8` + hardware auto-linearise), but the wallpaper
+        // routes through the `RECT_FS` convention because both
+        // `linear` and `native` modes need a path through the same
+        // shader and toggling the texture's internal format per-frame
+        // isn't possible in GL. Either path produces the correct
+        // round-trip; the divergence from the color atlas is
+        // intentional, not an oversight.
         gl.tex_image_2d(
             glow::TEXTURE_2D,
             0,

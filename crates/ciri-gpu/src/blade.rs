@@ -1386,8 +1386,20 @@ impl Renderer {
         // Wait so the GPU has consumed the staging buffer's contents,
         // then free it — keeping it around would just hold ~size_of_image
         // bytes of `Memory::Upload` permanently for no reason.
-        self.context.wait_for(&sync, 5000);
-        self.context.destroy_buffer(staging);
+        //
+        // If `wait_for` times out the GPU may still be reading from the
+        // staging buffer; freeing it then would be a use-after-free in
+        // GPU memory. Leaking ~size_of_image bytes is the safer choice
+        // — the device is in a bad state already (5s with no progress
+        // is usually a hang or driver crash) and we'd rather not crash
+        // on top of that.
+        if self.context.wait_for(&sync, 5000) {
+            self.context.destroy_buffer(staging);
+        } else {
+            log::warn!(
+                "overview wallpaper upload sync timed out after 5s; leaking staging buffer to avoid GPU UAF"
+            );
+        }
         Ok(())
     }
 

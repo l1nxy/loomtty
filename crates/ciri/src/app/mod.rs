@@ -205,6 +205,18 @@ pub(crate) struct App {
     pub window_focused: bool,
     pub config_watcher: Option<notify::RecommendedWatcher>,
     pub config_change_rx: Option<crossbeam_channel::Receiver<()>>,
+    /// In-flight overview-wallpaper decode. The worker thread spawned by
+    /// `reload_overview_background` decodes a (possibly multi-MB) image
+    /// off the main thread, then sends the result back here + wakes the
+    /// event loop. `apply_pending_overview_bg` drains it next iteration
+    /// and pushes the RGBA bytes to the renderer. Tagged with the path
+    /// the decode was started for so a stale result (user changed the
+    /// path mid-decode) gets discarded instead of overwriting a newer
+    /// upload.
+    pub pending_overview_bg_decode: Option<(
+        String,
+        crossbeam_channel::Receiver<anyhow::Result<Option<crate::app::overview_bg::DecodedImage>>>,
+    )>,
     /// Latest pending resize event and its timestamp.
     pub pending_resize: Option<(winit::dpi::PhysicalSize<u32>, Instant)>,
     /// Deferred DPI change — applied when resize settles to avoid atlas churn.
@@ -535,6 +547,7 @@ impl App {
             window_focused: true,
             config_watcher: None,
             config_change_rx: None,
+            pending_overview_bg_decode: None,
             pending_resize: None,
             pending_dpi: None,
             event_loop_proxy: None,

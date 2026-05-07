@@ -1,9 +1,14 @@
 //! Overview-mode wallpaper loader.
 //!
 //! Decodes the user-configured `appearance.overview_background_image`
-//! into RGBA8 bytes the GPU backends can upload directly. The actual
-//! texture upload + fullscreen-quad draw lives in each backend
-//! (currently DX only — GL and blade follow in B3/B4).
+//! into RGBA8 bytes the GPU backends can upload directly. The texture
+//! upload + fullscreen-quad draw lives in each backend (DX, GL, blade).
+//!
+//! Decoding runs on a worker thread spawned by
+//! `App::reload_overview_background` so a multi-MB wallpaper doesn't
+//! stall the event loop. The worker sends its result back through a
+//! channel + an `EventLoopProxy` wake; the main thread applies it via
+//! `App::apply_pending_overview_bg` next event-loop iteration.
 
 use anyhow::{Context, Result};
 use ciri_config::config::expand_config_path;

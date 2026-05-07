@@ -2734,6 +2734,12 @@ impl App {
             return;
         };
 
+        // Drain any wallpaper-decode the worker has finished. Usually
+        // already applied via `user_event` when the proxy fired, but
+        // doubling up here makes the apply loss-tolerant if the wake
+        // gets coalesced with another event.
+        self.apply_pending_overview_bg();
+
         let mut animating = self.advance_animations(dt);
 
         let renderer = self.renderer.as_mut().unwrap();

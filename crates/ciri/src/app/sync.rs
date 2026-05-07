@@ -468,28 +468,84 @@ impl App {
 
     /// (Re)load the overview wallpaper into the renderer's texture slot.
     ///
-    /// Idempotent — empty path (or load failure) clears any previous
-    /// upload so the renderer falls back to the solid `clear_color` fill.
-    /// Safe to call before the renderer is created (early-startup ordering)
-    /// and at every config reload; non-DX backends quietly no-op until
-    /// their own pipeline ships in B3/B4.
+    /// Spawns a worker thread to do the (potentially expensive) image
+    /// decode off the main thread — a 4K JPEG is ~200ms of CPU on the
+    /// decode path alone, which would visibly stall the event loop if
+    /// done inline. The worker sends its result back through
+    /// `pending_overview_bg_decode` and wakes the event loop via the
+    /// proxy; `apply_pending_overview_bg` (called from `user_event` and
+    /// at the top of each frame) drains it and pushes the RGBA bytes
+    /// to the renderer.
+    ///
+    /// Empty path → drops any uploaded wallpaper synchronously (no
+    /// decode needed) and cancels any in-flight decode.
     pub fn reload_overview_background(&mut self) {
+        let path_value = self.core.config.appearance.overview_background_image.clone();
+        if path_value.is_empty() {
+            // Cancel any in-flight decode (its eventual result will be
+            // discarded by `apply_pending_overview_bg`'s path check) and
+            // drop any uploaded image right now.
+            self.pending_overview_bg_decode = None;
+            if let Some(renderer) = self.renderer.as_mut() {
+                renderer.clear_overview_background_image();
+            }
+            return;
+        }
+        let proxy = self.event_loop_proxy.clone();
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        // Replacing any prior in-flight decode just drops the old
+        // receiver — the worker will still finish its work and try
+        // to send, but the send fails silently when nobody's listening.
+        self.pending_overview_bg_decode = Some((path_value.clone(), rx));
+        let worker_path = path_value.clone();
+        std::thread::spawn(move || {
+            let result = crate::app::overview_bg::load_overview_background(&worker_path);
+            let _ = tx.send(result);
+            if let Some(p) = proxy {
+                let _ = p.send_event(());
+            }
+        });
+    }
+
+    /// Drain the pending wallpaper decode (if the worker has finished)
+    /// and push its result to the renderer. No-op when nothing is
+    /// pending or the worker isn't done yet.
+    ///
+    /// Called from `user_event` (when the proxy wake fires) and at the
+    /// start of each `render` so a missed wake doesn't strand the
+    /// upload until the next user action.
+    pub fn apply_pending_overview_bg(&mut self) {
+        let Some((path, rx)) = self.pending_overview_bg_decode.as_ref() else {
+            return;
+        };
+        let Ok(result) = rx.try_recv() else {
+            return;
+        };
+        // Stale-decode guard: the user may have changed `appearance
+        // .overview_background_image` between the spawn and the
+        // result arriving. Compare the path the worker decoded
+        // against the current config; drop on mismatch.
+        let current = &self.core.config.appearance.overview_background_image;
+        let path_owned = path.clone();
+        let stale = path_owned != *current;
+        self.pending_overview_bg_decode = None;
+        if stale {
+            log::debug!(
+                "discarding overview wallpaper decode for stale path '{path_owned}' (current '{current}')"
+            );
+            return;
+        }
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
-        let path_value = self.core.config.appearance.overview_background_image.clone();
-        if path_value.is_empty() {
-            renderer.clear_overview_background_image();
-            return;
-        }
-        match crate::app::overview_bg::load_overview_background(&path_value) {
+        match result {
             Ok(Some(img)) => {
                 match renderer.set_overview_background_image(&img.rgba, img.width, img.height) {
                     Ok(()) => log::info!(
                         "overview wallpaper loaded: {}x{} ({})",
                         img.width,
                         img.height,
-                        path_value
+                        path_owned
                     ),
                     Err(e) => {
                         log::warn!("overview wallpaper upload failed: {e}");

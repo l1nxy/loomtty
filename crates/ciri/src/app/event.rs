@@ -296,7 +296,10 @@ impl ApplicationHandler for App {
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: ()) {
-        // Woken by EventLoopProxy from the reader thread — process pending server events.
+        // Woken by EventLoopProxy from a background thread. Could be the
+        // reader thread (server events) or the wallpaper-decode worker;
+        // both share the `()` event type, so just check both.
+        self.apply_pending_overview_bg();
         if self.process_server_events() {
             self.schedule_redraw();
         }

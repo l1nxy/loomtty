@@ -57,7 +57,7 @@ pub use style::{
     AlignItems, CursorStyle, Display, FlexDirection, JustifyContent, Length, Shadow, Style,
 };
 pub use styled::Styled;
-pub use components::{Banner, Severity};
+pub use components::{Banner, Severity, Switch};
 pub use theme::{ElevationIndex, RadiusScale, ResolvedTheme, SpaceScale, TypeScale};
 
 pub use ciri_motion::Transition;

@@ -5,7 +5,7 @@
 //! upload + fullscreen-quad draw lives in each backend (DX, GL, blade).
 //!
 //! Decoding runs on a worker thread spawned by
-//! `App::reload_overview_background` so a multi-MB wallpaper doesn't
+//! `App::reload_background_image` so a multi-MB wallpaper doesn't
 //! stall the event loop. The worker sends its result back through a
 //! channel + an `EventLoopProxy` wake; the main thread applies it via
 //! `App::apply_pending_overview_bg` next event-loop iteration.
@@ -26,7 +26,7 @@ pub(crate) struct DecodedImage {
 /// Empty config string → `Ok(None)`. Decode errors propagate (caller
 /// logs a warning so a bad path doesn't silently fall through to a
 /// solid backdrop with no explanation).
-pub(crate) fn load_overview_background(config_value: &str) -> Result<Option<DecodedImage>> {
+pub(crate) fn load_background_image(config_value: &str) -> Result<Option<DecodedImage>> {
     if config_value.is_empty() {
         return Ok(None);
     }

@@ -182,12 +182,14 @@ mod tests {
                 c.terminal.cursor_blink_interval_ms = 0
             }),
             ("scrollback_lines=0", |c| c.terminal.scrollback_lines = 0),
-            ("overview_background_dim=-0.1", |c| {
-                c.appearance.overview_background_dim = -0.1
+            ("background_dim=-0.1", |c| {
+                c.appearance.background_dim = -0.1
             }),
-            ("overview_background_dim=1.1", |c| {
-                c.appearance.overview_background_dim = 1.1
+            ("background_dim=1.1", |c| {
+                c.appearance.background_dim = 1.1
             }),
+            ("pane_opacity=-0.1", |c| c.appearance.pane_opacity = -0.1),
+            ("pane_opacity=1.1", |c| c.appearance.pane_opacity = 1.1),
         ];
         for (label, mutate) in cases {
             assert_validation_rejects(label, *mutate);

@@ -389,7 +389,7 @@ impl Renderer {
     /// `width` and `height` are in image pixels; `rgba.len()` must equal
     /// `width * height * 4`. Caller-side image decoding lives in
     /// `ciri::app::overview_bg`.
-    pub fn set_overview_background_image(
+    pub fn set_background_image(
         &mut self,
         rgba: &[u8],
         width: u32,
@@ -398,27 +398,27 @@ impl Renderer {
         match self {
             #[cfg(feature = "blade")]
             Renderer::Blade(r) => r
-                .set_overview_background_image(rgba, width, height)
+                .set_background_image(rgba, width, height)
                 .map_err(|e| GpuError::ResourceCreate(format!("blade overview bg: {e}"))),
             #[cfg(feature = "gl")]
-            Renderer::Gl(r) => r.set_overview_background_image(rgba, width, height),
+            Renderer::Gl(r) => r.set_background_image(rgba, width, height),
             #[cfg(all(feature = "dx", windows))]
             Renderer::Dx(r) => r
-                .set_overview_background_image(rgba, width, height)
+                .set_background_image(rgba, width, height)
                 .map_err(|e| GpuError::ResourceCreate(format!("dx overview bg: {e}"))),
         }
     }
 
     /// Drop the uploaded overview wallpaper, if any. Subsequent frames
     /// fall back to the solid `clear_color` fill.
-    pub fn clear_overview_background_image(&mut self) {
+    pub fn clear_background_image(&mut self) {
         match self {
             #[cfg(feature = "blade")]
-            Renderer::Blade(r) => r.clear_overview_background_image(),
+            Renderer::Blade(r) => r.clear_background_image(),
             #[cfg(feature = "gl")]
-            Renderer::Gl(r) => r.clear_overview_background_image(),
+            Renderer::Gl(r) => r.clear_background_image(),
             #[cfg(all(feature = "dx", windows))]
-            Renderer::Dx(r) => r.clear_overview_background_image(),
+            Renderer::Dx(r) => r.clear_background_image(),
         }
     }
 

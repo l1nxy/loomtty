@@ -1881,9 +1881,9 @@ impl Renderer {
     }
 
     /// Upload the overview wallpaper texture. Replaces any previously
-    /// uploaded image. Mirrors the public `Renderer::set_overview_background_image`
+    /// uploaded image. Mirrors the public `Renderer::set_background_image`
     /// signature; the lib-level wrapper converts errors into `GpuError`.
-    pub fn set_overview_background_image(
+    pub fn set_background_image(
         &mut self,
         rgba: &[u8],
         width: u32,
@@ -1893,7 +1893,7 @@ impl Renderer {
     }
 
     /// Drop the wallpaper texture, if any.
-    pub fn clear_overview_background_image(&mut self) {
+    pub fn clear_background_image(&mut self) {
         self.overview_bg.clear();
     }
 

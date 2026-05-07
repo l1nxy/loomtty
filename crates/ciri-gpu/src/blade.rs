@@ -1367,7 +1367,7 @@ impl Renderer {
     /// command encoder for the staging-buffer transfer (the encoder
     /// is idle between `draw_frame` calls, so a one-shot start +
     /// submit here is safe). Replaces any previously-uploaded image.
-    pub fn set_overview_background_image(
+    pub fn set_background_image(
         &mut self,
         rgba: &[u8],
         width: u32,
@@ -1404,7 +1404,7 @@ impl Renderer {
     }
 
     /// Drop the wallpaper texture, if any.
-    pub fn clear_overview_background_image(&mut self) {
+    pub fn clear_background_image(&mut self) {
         if let Some(ref sp) = self.last_sync {
             self.context.wait_for(sp, 5000);
         }

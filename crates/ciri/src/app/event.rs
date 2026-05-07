@@ -302,7 +302,7 @@ impl ApplicationHandler for App {
         // path's `did anything change` signal must trigger a redraw —
         // an idle session would otherwise hold the stale frame until
         // the next user input.
-        let bg_applied = self.apply_pending_overview_bg();
+        let bg_applied = self.apply_pending_background_image();
         let server_changed = self.process_server_events();
         if bg_applied || server_changed {
             self.schedule_redraw();
@@ -479,7 +479,7 @@ impl ApplicationHandler for App {
         // No-op when the path is empty or the active backend doesn't yet
         // implement the textured-quad pipeline (everything except DX in
         // this commit).
-        self.reload_overview_background();
+        self.reload_background_image();
 
         self.schedule_redraw();
     }

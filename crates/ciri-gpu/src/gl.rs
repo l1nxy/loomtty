@@ -1411,7 +1411,7 @@ impl Renderer {
     }
 
     /// Upload the overview wallpaper RGBA8 texture.
-    pub fn set_overview_background_image(
+    pub fn set_background_image(
         &mut self,
         rgba: &[u8],
         width: u32,
@@ -1421,7 +1421,7 @@ impl Renderer {
     }
 
     /// Drop the wallpaper texture, if any.
-    pub fn clear_overview_background_image(&mut self) {
+    pub fn clear_background_image(&mut self) {
         unsafe { self.overview_bg.clear(&self.gl) }
     }
 

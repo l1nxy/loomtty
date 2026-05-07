@@ -2629,7 +2629,7 @@ impl App {
         animating: &mut bool,
     ) {
         let AssembledScene {
-            bg_rects,
+            mut bg_rects,
             bg_rect_ranges,
             glyphs,
             color_glyphs,
@@ -2647,6 +2647,21 @@ impl App {
         } = scene;
 
         let clear_color = ThemeConfig::parse_color(&self.core.config.theme.overview_background);
+
+        // Pane translucency: lower the alpha of every bg rect inside the
+        // pane region (indices `[..overlay_bg_start]` — terminal pane
+        // bgs and per-cell ANSI bgs) so the global `background_image`
+        // (or `theme.overview_background` if no image is set) shows
+        // through. Chrome bg rects (index >= `overlay_bg_start`) and
+        // SDF chrome stay at their author-set alpha so palettes / status
+        // bar / context menus remain legible.
+        let pane_opacity = self.core.config.appearance.pane_opacity.clamp(0.0, 1.0);
+        if pane_opacity < 1.0 {
+            let end = overlay_bg_start.min(bg_rects.len());
+            for rect in &mut bg_rects[..end] {
+                rect.color[3] *= pane_opacity;
+            }
+        }
         let renderer = self.renderer.as_mut().unwrap();
         let cache = self.glyph_cache.as_mut().unwrap();
         let atlas_gpu = self.glyph_atlas_gpu.as_mut().unwrap();
@@ -2655,16 +2670,21 @@ impl App {
             cache,
             FrameScene {
                 clear_color,
-                // Wallpaper only shows in overview mode (gated on
-                // `core.overview.active`); 1.0 - dim gives the image's
-                // opacity over `clear_color`. Empty path / 0 opacity → 0.0,
-                // and the renderer skips the textured-quad draw entirely.
-                overview_bg_image_opacity: if self.core.overview.active
-                    && !self.core.config.appearance.overview_background_image.is_empty()
+                // `1.0 - dim` is the image's opacity over `clear_color`.
+                // Empty path / 0 opacity → 0.0, and the renderer skips
+                // the textured-quad draw entirely. Applies in both
+                // normal and overview modes — `pane_opacity` controls
+                // how much of it shows through panes in normal mode.
+                overview_bg_image_opacity: if self
+                    .core
+                    .config
+                    .appearance
+                    .background_image
+                    .is_empty()
                 {
-                    (1.0 - self.core.config.appearance.overview_background_dim).clamp(0.0, 1.0)
-                } else {
                     0.0
+                } else {
+                    (1.0 - self.core.config.appearance.background_dim).clamp(0.0, 1.0)
                 },
                 bg_rects: &bg_rects,
                 bg_rect_ranges: &bg_rect_ranges,
@@ -2740,7 +2760,7 @@ impl App {
         // gets coalesced with another event. The bool is discarded —
         // we're already rendering this frame, so any state change is
         // about to be picked up.
-        let _ = self.apply_pending_overview_bg();
+        let _ = self.apply_pending_background_image();
 
         let mut animating = self.advance_animations(dt);
 

@@ -213,7 +213,7 @@ pub(crate) struct App {
     /// the decode was started for so a stale result (user changed the
     /// path mid-decode) gets discarded instead of overwriting a newer
     /// upload.
-    pub pending_overview_bg_decode: Option<(
+    pub pending_background_image_decode: Option<(
         String,
         crossbeam_channel::Receiver<anyhow::Result<Option<crate::app::overview_bg::DecodedImage>>>,
     )>,
@@ -547,7 +547,7 @@ impl App {
             window_focused: true,
             config_watcher: None,
             config_change_rx: None,
-            pending_overview_bg_decode: None,
+            pending_background_image_decode: None,
             pending_resize: None,
             pending_dpi: None,
             event_loop_proxy: None,

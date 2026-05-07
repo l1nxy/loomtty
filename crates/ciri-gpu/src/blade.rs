@@ -1363,7 +1363,7 @@ impl Renderer {
         self.surface_format
     }
 
-    /// Upload the overview wallpaper texture. Reuses the renderer's
+    /// Upload the background image texture. Reuses the renderer's
     /// command encoder for the staging-buffer transfer (the encoder
     /// is idle between `draw_frame` calls, so a one-shot start +
     /// submit here is safe). Replaces any previously-uploaded image.
@@ -1393,13 +1393,17 @@ impl Renderer {
         // — the device is in a bad state already (5s with no progress
         // is usually a hang or driver crash) and we'd rather not crash
         // on top of that.
-        if self.context.wait_for(&sync, 5000) {
+        let consumed = self.context.wait_for(&sync, 5000);
+        if consumed {
             self.context.destroy_buffer(staging);
         } else {
             log::warn!(
-                "overview wallpaper upload sync timed out after 5s; leaking staging buffer to avoid GPU UAF"
+                "background image upload sync timed out after 5s; leaking staging buffer to avoid GPU UAF"
             );
         }
+        // Track the upload submit so later operations don't wait on a
+        // stale older sync.
+        self.last_sync = Some(sync);
         Ok(())
     }
 
@@ -1428,10 +1432,16 @@ impl Renderer {
             self.blending_flags,
         );
 
-        // Initialize atlas textures on GPU
+        // Initialize atlas textures on GPU. Track the sync point in
+        // `last_sync` so a subsequent `set_background_image` (which can
+        // fire from the wallpaper-decode worker before the first
+        // `draw_frame`) waits on this submit before destroying any
+        // previously-uploaded texture. Without this, `last_sync` would
+        // be `None` between init and first frame, the guard would be
+        // skipped, and the atlas init work could still be in flight.
         self.encoder.start();
         atlas_gpu.init_textures(&mut self.encoder);
-        self.context.submit(&mut self.encoder);
+        self.last_sync = Some(self.context.submit(&mut self.encoder));
 
         (cache, atlas_gpu)
     }

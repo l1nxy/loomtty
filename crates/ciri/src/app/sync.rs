@@ -466,7 +466,7 @@ impl App {
         self.core.apply_layout(layout);
     }
 
-    /// (Re)load the overview wallpaper into the renderer's texture slot.
+    /// (Re)load the background image into the renderer's texture slot.
     ///
     /// Spawns a worker thread to do the (potentially expensive) image
     /// decode off the main thread — a 4K JPEG is ~200ms of CPU on the
@@ -520,8 +520,22 @@ impl App {
         let Some((path, rx)) = self.pending_background_image_decode.as_ref() else {
             return false;
         };
-        let Ok(result) = rx.try_recv() else {
-            return false;
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(crossbeam_channel::TryRecvError::Empty) => return false,
+            Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                // Worker dropped its sender without sending — typically
+                // means the decode thread panicked (e.g. malformed image
+                // tickled an `image` crate edge case). Clear the slot
+                // so we don't keep polling the dead receiver forever
+                // and surface a warning so the user knows their wallpaper
+                // didn't load silently.
+                log::warn!(
+                    "background image decode worker disconnected without sending result for '{path}'"
+                );
+                self.pending_background_image_decode = None;
+                return false;
+            }
         };
         // Stale-decode guard: the user may have changed `appearance
         // .background_image` between the spawn and the
@@ -533,7 +547,7 @@ impl App {
         self.pending_background_image_decode = None;
         if stale {
             log::debug!(
-                "discarding overview wallpaper decode for stale path '{path_owned}' (current '{current}')"
+                "discarding background image decode for stale path '{path_owned}' (current '{current}')"
             );
             return false;
         }
@@ -544,20 +558,20 @@ impl App {
             Ok(Some(img)) => {
                 match renderer.set_background_image(&img.rgba, img.width, img.height) {
                     Ok(()) => log::info!(
-                        "overview wallpaper loaded: {}x{} ({})",
+                        "background image loaded: {}x{} ({})",
                         img.width,
                         img.height,
                         path_owned
                     ),
                     Err(e) => {
-                        log::warn!("overview wallpaper upload failed: {e}");
+                        log::warn!("background image upload failed: {e}");
                         renderer.clear_background_image();
                     }
                 }
             }
             Ok(None) => renderer.clear_background_image(),
             Err(e) => {
-                log::warn!("overview wallpaper load failed: {e:#}");
+                log::warn!("background image load failed: {e:#}");
                 renderer.clear_background_image();
             }
         }

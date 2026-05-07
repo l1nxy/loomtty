@@ -235,6 +235,13 @@ impl App {
             Action::ToggleLock => {
                 self.core.input.toggle_lock();
             }
+            Action::ToggleSettings => {
+                // Close any open palette so the settings panel takes
+                // input focus. The palette and settings panel are
+                // mutually exclusive overlays.
+                self.core.command_palette = None;
+                self.core.settings_panel_visible = !self.core.settings_panel_visible;
+            }
             Action::NextSession => {
                 self.cycle_session(1);
             }

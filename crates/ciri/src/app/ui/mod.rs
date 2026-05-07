@@ -10,6 +10,7 @@ pub(crate) mod overview;
 mod palette;
 mod paste_dialog;
 pub(super) mod search_bar;
+pub(super) mod settings_panel;
 mod tab_bar;
 mod text_layout;
 pub(crate) mod tokens;

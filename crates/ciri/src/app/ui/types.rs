@@ -284,6 +284,12 @@ pub(crate) enum UiAction {
     FocusOverviewPane(usize, u64),
     CloseOverviewPane(u64),
     StartOverviewDrag,
+    /// Close the settings panel (Esc / outside click / × button).
+    CloseSettings,
+    /// Reveal `settings.toml` in the OS file manager / open with editor.
+    /// Escape hatch for users who want to persist changes the v1 panel
+    /// doesn't write back yet.
+    OpenSettingsToml,
 }
 
 // Per-component hit enums — kept internal, used only within each component's
@@ -317,6 +323,18 @@ pub(super) enum UiPasteDialogHit {
     Paste,
     Cancel,
     Dialog,
+    None,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum UiSettingsHit {
+    /// Click anywhere on the panel body — no-op (don't close).
+    Dialog,
+    /// Top-right close button.
+    Close,
+    /// "Open settings.toml" link at the bottom of the panel.
+    OpenToml,
+    /// Click outside the panel — closes settings.
     None,
 }
 

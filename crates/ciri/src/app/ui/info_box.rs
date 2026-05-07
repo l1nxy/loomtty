@@ -120,6 +120,7 @@ impl InfoBoxComponent {
         if app.core.command_palette.is_some()
             || app.core.pending_paste.is_some()
             || app.core.context_menu.visible
+            || app.core.settings_panel_visible
         {
             return None;
         }

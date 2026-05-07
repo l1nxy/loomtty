@@ -257,6 +257,16 @@ impl App {
             return;
         }
 
+        // Settings panel takes Esc directly — short-circuits the keybind
+        // pipeline. Keeping it out of the binding-mode plumbing avoids
+        // adding a SETTINGS bit + per-mode bindings table just for one
+        // dismiss key. Mirrors the `!connected + Esc` early-bail above.
+        if self.core.settings_panel_visible && key_name == "escape" {
+            self.core.settings_panel_visible = false;
+            self.request_redraw();
+            return;
+        }
+
         // ── Unified pipeline: compute mode → process key → handle action ──
         let app_mode = self.compute_binding_mode();
         let result = self.core.input.process_key_event(
@@ -312,7 +322,9 @@ impl App {
     }
 
     pub(crate) fn modal_captures_keyboard(&self) -> bool {
-        self.core.context_menu.visible || self.top_overlay_binding_mode() != BindingMode::EMPTY
+        self.core.context_menu.visible
+            || self.core.settings_panel_visible
+            || self.top_overlay_binding_mode() != BindingMode::EMPTY
     }
 
     pub(crate) fn append_text_to_overlay_input(&mut self, text: &str) -> bool {

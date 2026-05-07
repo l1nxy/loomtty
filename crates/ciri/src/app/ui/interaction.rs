@@ -168,6 +168,20 @@ impl App {
                 self.core.overview.dragging = true;
                 self.core.overview.drag_last_pos = self.last_mouse_pos;
             }
+            UiAction::CloseSettings => {
+                self.core.settings_panel_visible = false;
+            }
+            UiAction::OpenSettingsToml => {
+                // v1 escape hatch: open the user's settings.toml so
+                // they can persist any change the panel doesn't yet
+                // write back. Reuses the existing `open_url`-via-
+                // `open_file_path` flow so OS-specific editor
+                // resolution ($EDITOR / code / cursor / system
+                // handler) is shared with the link-click path.
+                let path = ciri_config::config::config_path();
+                self.open_url(&path.to_string_lossy());
+                self.core.settings_panel_visible = false;
+            }
         }
     }
 

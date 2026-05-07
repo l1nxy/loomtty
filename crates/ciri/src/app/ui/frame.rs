@@ -7,6 +7,7 @@ use super::info_box::InfoBoxComponent;
 use super::overview::{self, OverviewComponent};
 use super::palette::PaletteComponent;
 use super::paste_dialog::PasteDialogComponent;
+use super::settings_panel::SettingsPanelComponent;
 use super::tab_bar::TabBarComponent;
 use super::top_bar::TopBarComponent;
 use super::types::{
@@ -34,6 +35,7 @@ pub(super) struct UiFrame {
     palette: Option<PaletteComponent>,
     connection_status: Option<ConnectionStatusComponent>,
     paste_dialog: Option<PasteDialogComponent>,
+    settings_panel: Option<SettingsPanelComponent>,
     context_menu: Option<ContextMenuComponent>,
 }
 
@@ -107,6 +109,7 @@ impl UiFrame {
             palette: PaletteComponent::capture(app, cx),
             connection_status: ConnectionStatusComponent::capture(app, cx),
             paste_dialog: PasteDialogComponent::capture(app, cx),
+            settings_panel: SettingsPanelComponent::capture(app, cx),
             context_menu: ContextMenuComponent::capture(app, cx),
         }
     }
@@ -147,6 +150,9 @@ impl UiFrame {
         if let Some(component) = &self.paste_dialog {
             component.paint(cx, scene);
         }
+        if let Some(component) = &self.settings_panel {
+            component.paint(cx, scene);
+        }
         if let Some(component) = &mut self.context_menu {
             component.paint(cx, scene);
         }
@@ -161,6 +167,9 @@ impl UiFrame {
     ) -> (Option<UiAction>, bool) {
         // Components are checked in reverse paint order: topmost first.
         if let Some(c) = &self.context_menu {
+            return (c.click(mx, my, cx), true);
+        }
+        if let Some(c) = &self.settings_panel {
             return (c.click(mx, my, cx), true);
         }
         if let Some(c) = &self.paste_dialog {

@@ -292,9 +292,16 @@ impl App {
         tr: &GeoRect,
         tile_key: (u32, u32, u32, u32),
         cache_tile_backgrounds: bool,
+        pane_opacity: f32,
         dirty_bg_ranges: &mut Vec<(usize, usize)>,
         bg_rects: &mut Vec<Rect>,
     ) {
+        // Per-cell ANSI bg rects multiply by `pane_opacity` so the user's
+        // wallpaper bleeds through coloured cell backgrounds at the same
+        // strength as the pane base bg. Cached cell rects bake the
+        // multiplied alpha; `clear_render_caches` (called on every
+        // config reload) drops the cache so a `pane_opacity` change is
+        // picked up on the next frame's rebuild.
         let make_rect = |r: &Rect| -> Option<Rect> {
             let src = GeoRect::new(
                 inner_x + r.x * zoom,
@@ -302,12 +309,16 @@ impl App {
                 r.w * zoom,
                 r.h * zoom,
             );
-            src.intersection(tr).map(|c| Rect {
-                x: c.x,
-                y: c.y,
-                w: c.w,
-                h: c.h,
-                color: r.color,
+            src.intersection(tr).map(|c| {
+                let mut color = r.color;
+                color[3] *= pane_opacity;
+                Rect {
+                    x: c.x,
+                    y: c.y,
+                    w: c.w,
+                    h: c.h,
+                    color,
+                }
             })
         };
 
@@ -393,6 +404,15 @@ impl App {
         let tr = visual.tr;
         let inner_x = visual.inner_x;
         let inner_y = visual.inner_y;
+        // Pane translucency is applied at the two emission sites that
+        // produce pane *interior* bgs (the pane-base rect below and the
+        // per-cell bgs in `emit_tile_background_rows`). Other rects
+        // pushed in this method — focus rings, inactive borders, cursor,
+        // scrollbar, selection, link underline, search highlights —
+        // stay at their author-set alpha so they remain legible at low
+        // pane_opacity. `pane_opacity = 1.0` (default) is a no-op
+        // multiplication.
+        let pane_opacity = self.core.config.appearance.pane_opacity;
         let tile_key = (
             inner_x.to_bits(),
             inner_y.to_bits(),
@@ -425,12 +445,14 @@ impl App {
             });
         }
 
+        let mut pane_bg_color = paint.bg_color;
+        pane_bg_color[3] *= pane_opacity;
         bg_rects.push(Rect {
             x: tr.x + paint.border_w * zoom,
             y: tr.y + paint.border_w * zoom,
             w: tr.w - paint.border_w * zoom * 2.0,
             h: tr.h - paint.border_w * zoom * 2.0,
-            color: paint.bg_color,
+            color: pane_bg_color,
         });
 
         self.emit_overview_hover(pane_id, &tr, zoom, &paint, bg_rects);
@@ -452,6 +474,7 @@ impl App {
             &tr,
             tile_key,
             paint.cache_tile_glyphs,
+            pane_opacity,
             &mut self.render_bufs.dirty_bg_ranges,
             bg_rects,
         );
@@ -1511,6 +1534,11 @@ impl App {
         let tr = visual.tr;
         let inner_x = visual.inner_x;
         let inner_y = visual.inner_y;
+        // Pane translucency, applied at construction. See the matching
+        // comment in `build_tile_backgrounds` — only pane-base + cell
+        // bgs get dimmed; cursor / scrollbar / selection / search /
+        // borders stay at full alpha.
+        let pane_opacity = self.core.config.appearance.pane_opacity;
 
         // Focus ring / inactive border.
         // The inactive variant is a single pane-sized fill (the cell-bg
@@ -1542,12 +1570,14 @@ impl App {
         }
 
         // Background fill
+        let mut pane_bg_color = paint.bg_color;
+        pane_bg_color[3] *= pane_opacity;
         bg_rects.push(Rect {
             x: tr.x + paint.border_w * zoom,
             y: tr.y + paint.border_w * zoom,
             w: tr.w - paint.border_w * zoom * 2.0,
             h: tr.h - paint.border_w * zoom * 2.0,
-            color: paint.bg_color,
+            color: pane_bg_color,
         });
 
         // Overview hover highlight
@@ -1576,6 +1606,7 @@ impl App {
             &tr,
             tile_key,
             paint.cache_tile_glyphs,
+            pane_opacity,
             &mut self.render_bufs.dirty_bg_ranges,
             bg_rects,
         );
@@ -2629,7 +2660,7 @@ impl App {
         animating: &mut bool,
     ) {
         let AssembledScene {
-            mut bg_rects,
+            bg_rects,
             bg_rect_ranges,
             glyphs,
             color_glyphs,
@@ -2648,29 +2679,12 @@ impl App {
 
         let clear_color = ThemeConfig::parse_color(&self.core.config.theme.overview_background);
 
-        // Pane translucency: lower the alpha of every bg rect inside the
-        // pane region (indices `[..overlay_bg_start]`) so the global
-        // `background_image` (or `theme.overview_background` if no
-        // image is set) shows through. Chrome bg rects (index >=
-        // `overlay_bg_start`) and SDF chrome stay at their author-set
-        // alpha so palettes / status bar / context menus remain legible.
-        //
-        // Known limitation: selection / cursor / search-highlight rects
-        // share the pane region and get dimmed too. At ~0.8 they're a
-        // bit fainter but still legible; below ~0.5 they fade
-        // noticeably. Splitting them out would require either a
-        // per-rect "do-not-dim" tag or a second pane-region boundary
-        // — deferred until someone hits the visibility wall.
-        //
-        // Garde already validates `pane_opacity` to [0.0, 1.0] at config
-        // load, so no clamp is needed here.
-        let pane_opacity = self.core.config.appearance.pane_opacity;
-        if pane_opacity < 1.0 {
-            let end = overlay_bg_start.min(bg_rects.len());
-            for rect in &mut bg_rects[..end] {
-                rect.color[3] *= pane_opacity;
-            }
-        }
+        // `pane_opacity` is applied at the rect-construction sites in
+        // `build_tile_backgrounds` / `emit_tile_background_rows` — only
+        // the pane-base bg and per-cell ANSI bgs get dimmed. Cursor,
+        // scrollbar, selection, link underline, search highlights, focus
+        // ring, and inactive border are intentionally left at their
+        // author-set alpha so they remain legible at low opacity.
         let renderer = self.renderer.as_mut().unwrap();
         let cache = self.glyph_cache.as_mut().unwrap();
         let atlas_gpu = self.glyph_atlas_gpu.as_mut().unwrap();

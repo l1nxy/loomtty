@@ -408,7 +408,7 @@ impl Renderer {
         }
     }
 
-    /// Drop the uploaded overview wallpaper, if any. Subsequent frames
+    /// Drop the uploaded background image, if any. Subsequent frames
     /// fall back to the solid `clear_color` fill.
     pub fn clear_background_image(&mut self) {
         match self {

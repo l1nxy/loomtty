@@ -414,7 +414,7 @@ float4 ps_main(PSInput input) : SV_TARGET {
 // intermediate values cross-fade toward `clear_color`.
 
 const BACKGROUND_IMAGE_HLSL: &str = r#"
-cbuffer OverviewBg : register(b0) {
+cbuffer BackgroundImage : register(b0) {
     float4 viewport_tex_size; // vw, vh, tw, th
     float4 params;            // opacity, _, _, _
 };
@@ -1880,7 +1880,7 @@ impl Renderer {
         // D3D11 resize is handled synchronously in resize()
     }
 
-    /// Upload the overview wallpaper texture. Replaces any previously
+    /// Upload the background image texture. Replaces any previously
     /// uploaded image. Mirrors the public `Renderer::set_background_image`
     /// signature; the lib-level wrapper converts errors into `GpuError`.
     pub fn set_background_image(

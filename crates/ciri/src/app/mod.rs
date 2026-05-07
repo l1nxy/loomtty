@@ -406,7 +406,11 @@ impl App {
                 (None, None)
             }
         };
-        let ui_px = size_pt * (96.0 * dpi_scale as f32) / 72.0;
+        // Round to integer ppem so DWrite's NATURAL_SYMMETRIC hinting
+        // grid lands on whole pixels — fractional ppem (e.g. 10pt → 13.33px)
+        // makes proportional UI glyphs render as if hinting were disabled,
+        // softening edges of W/M and similar dense-stroke characters.
+        let ui_px = (size_pt * (96.0 * dpi_scale as f32) / 72.0).round();
         UiFontInit {
             path,
             id,

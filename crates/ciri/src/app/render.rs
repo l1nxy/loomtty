@@ -645,6 +645,19 @@ impl App {
         }
     }
 
+    fn hash_settings_panel(&self, hasher: &mut DefaultHasher) {
+        self.core.settings_panel_visible.hash(hasher);
+        if self.core.settings_panel_visible {
+            // The displayed values are snapshotted at capture time from
+            // these two config fields; hash them so live edits invalidate
+            // the chrome cache. `pane_opacity` is also hashed in
+            // `render_snapshot_hash` because it propagates to pane tile
+            // rendering, not just the chrome.
+            self.core.config.theme.preset.hash(hasher);
+            self.core.config.appearance.pane_opacity.to_bits().hash(hasher);
+        }
+    }
+
     pub(crate) fn ui_scene_hash(
         &self,
         vw: f32,
@@ -742,6 +755,7 @@ impl App {
         self.hash_command_palette(&mut hasher);
         self.hash_context_menu(&mut hasher);
         self.hash_pending_paste(&mut hasher);
+        self.hash_settings_panel(&mut hasher);
 
         // Connection-status banner — hash everything its `capture` reads so
         // state transitions trigger a redraw. `server_rx.is_some()` matters
@@ -878,6 +892,16 @@ impl App {
         self.hash_command_palette(&mut hasher);
         self.hash_context_menu(&mut hasher);
         self.hash_pending_paste(&mut hasher);
+        self.hash_settings_panel(&mut hasher);
+        // Pane bg opacity is multiplied into per-cell rect alpha during
+        // tile paint, so live edits from the settings panel must dirty
+        // the snapshot hash even outside the chrome path.
+        self.core
+            .config
+            .appearance
+            .pane_opacity
+            .to_bits()
+            .hash(&mut hasher);
 
         // Drag state affects border/scrollbar visuals
         self.drag.col_dragging.hash(&mut hasher);

@@ -12,7 +12,7 @@ use super::tab_bar::TabBarComponent;
 use super::top_bar::TopBarComponent;
 use super::types::{
     UiAction, UiContext, UiContextMenuHit, UiOverviewHit, UiPaletteHit, UiPasteDialogHit, UiRect,
-    UiScene, UiTopBarHit,
+    UiScene, UiSettingsHit, UiTopBarHit,
 };
 use crate::app::top_bar::TopBarLayout;
 use crate::app::{App, PasteButton, TopBarHoverRegion};
@@ -51,6 +51,14 @@ pub(super) enum UiFrameHover {
         // at chrome-cache-hash time via `App::current_palette_hover()`,
         // and display reads it via `cx.is_hovered(hit_id)`. Only the
         // pointer cursor signal still needs to flow back to the host.
+        pointer: bool,
+    },
+    Settings {
+        // Same shape as `Palette`: the per-element hover styling is
+        // already declarative via `.hover()` refinements driven by
+        // `cx.is_hovered(hit_id)`. The hover handler only needs to
+        // signal "cursor sits over an interactive element" so the host
+        // flips the OS cursor to a pointer.
         pointer: bool,
     },
     TopBar {
@@ -241,6 +249,21 @@ impl UiFrame {
                 UiContextMenuHit::Menu | UiContextMenuHit::None => None,
             };
             return UiFrameHover::ContextMenu { hovered };
+        }
+
+        if let Some(component) = &self.settings_panel {
+            // Pointer cursor on any interactive hit (close button, theme
+            // dropdown trigger, opacity steppers, "Open settings.toml"
+            // link). Background body / outside fall back to default.
+            let pointer = match component.hit_test(mx, my, cx) {
+                UiSettingsHit::Close
+                | UiSettingsHit::OpenToml
+                | UiSettingsHit::ThemeDropdown
+                | UiSettingsHit::PaneOpacityDec
+                | UiSettingsHit::PaneOpacityInc => true,
+                UiSettingsHit::Dialog | UiSettingsHit::None => false,
+            };
+            return UiFrameHover::Settings { pointer };
         }
 
         if let Some(component) = &self.paste_dialog {

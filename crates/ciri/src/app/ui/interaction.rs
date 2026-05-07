@@ -178,24 +178,29 @@ impl App {
                 // with the built-in preset list; clicking one fires
                 // `ContextMenuAction::SetThemePreset(name)` which the
                 // standard dispatch handles via `apply_theme_preset`.
-                let (mx, my) = self.last_mouse_pos.unwrap_or((0.0, 0.0));
+                //
+                // Anchor at the cursor; fall back to the viewport
+                // centre rather than `(0, 0)` (which would put the
+                // popup at the top-left corner) when `last_mouse_pos`
+                // is None — that path is reachable if the action ever
+                // gets dispatched from a non-mouse trigger.
+                let (mx, my) = self.last_mouse_pos.unwrap_or_else(|| {
+                    let (vw, vh) = self.command_palette_viewport_size();
+                    (vw * 0.5, vh * 0.5)
+                });
                 let current = self.core.config.theme.preset.clone();
-                let presets = [
-                    "ciri_dark",
-                    "one_dark",
-                    "catppuccin_mocha",
-                    "tokyo_night",
-                    "dracula",
-                    "nord",
-                    "gruvbox_dark",
-                    "ghostty",
-                ];
+                // Preset names come from `ThemeConfig::preset_names()`
+                // so adding / renaming a preset there flows through
+                // automatically — no second source-of-truth list to
+                // keep in sync.
+                let presets = ciri_config::theme::ThemeConfig::preset_names();
                 let items = presets
-                    .into_iter()
+                    .iter()
+                    .copied()
                     .map(|name| {
-                        let label = if name == current
-                            || (current.is_empty() && name == "ciri_dark")
-                        {
+                        let active = name == current
+                            || (current.is_empty() && name == "ciri_dark");
+                        let label = if active {
                             format!("\u{2713} {}", name)
                         } else {
                             format!("  {}", name)
@@ -224,7 +229,22 @@ impl App {
                 // `open_file_path` flow so OS-specific editor
                 // resolution ($EDITOR / code / cursor / system
                 // handler) is shared with the link-click path.
+                //
+                // Seed an empty file (and any missing parent dirs) on
+                // first run so `open_file_path`'s canonicalize
+                // existence-check doesn't silently fail for users who
+                // have never written a config. The empty-file write is
+                // best-effort — failure logs a warning but the open is
+                // still attempted (some editors create-on-open).
                 let path = ciri_config::config::config_path();
+                if !path.exists() {
+                    if let Some(parent) = path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    if let Err(e) = std::fs::write(&path, "# ciri configuration\n") {
+                        log::warn!("failed to seed settings.toml at {}: {e}", path.display());
+                    }
+                }
                 self.open_url(&path.to_string_lossy());
                 self.core.settings_panel_visible = false;
             }
@@ -238,8 +258,18 @@ impl App {
                     super::types::NudgeDirection::Decrement => -STEP,
                     super::types::NudgeDirection::Increment => STEP,
                 };
-                let next = (self.core.config.appearance.pane_opacity + delta).clamp(0.0, 1.0);
+                // Floor at 0.05 — fully transparent panes leave the
+                // user staring at the desktop with no visual indication
+                // panes still exist. The settings stepper exposes the
+                // useful translucency range (0.05–1.00) instead of the
+                // full clamp; users wanting opacity 0 can edit
+                // settings.toml directly.
+                let next = (self.core.config.appearance.pane_opacity + delta).clamp(0.05, 1.0);
                 self.core.config.appearance.pane_opacity = next;
+                // Per-pane tile glyph and bg caches embed the previous
+                // opacity into rect alphas; clear so the new value
+                // reaches the GPU on the next paint.
+                self.clear_render_caches();
                 self.schedule_redraw();
             }
         }
@@ -292,6 +322,22 @@ impl App {
                 // mutate here — request a redraw unconditionally so the
                 // cache hash gets recomputed; the chrome cache hit/miss
                 // path makes this cheap when the row hasn't changed.
+                UiHoverOutcome {
+                    handled: true,
+                    cursor: if pointer {
+                        CursorIcon::Pointer
+                    } else {
+                        CursorIcon::Default
+                    },
+                    needs_redraw: true,
+                }
+            }
+            UiFrameHover::Settings { pointer } => {
+                // Same shape as Palette: declarative `.hover()` styles
+                // on close button / dropdown trigger / steppers /
+                // "Open settings.toml" link rely on `cx.is_hovered(...)`
+                // refreshing each frame. Request redraw unconditionally
+                // and let the chrome cache hash dedupe.
                 UiHoverOutcome {
                     handled: true,
                     cursor: if pointer {

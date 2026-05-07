@@ -229,6 +229,24 @@ impl ThemeConfig {
         self.apply_missing_fields(base);
     }
 
+    /// Names of the built-in presets, in the order surfaced by the
+    /// settings panel theme dropdown. Single source of truth — keep in
+    /// sync with `preset_theme`'s match arms (the
+    /// `all_builtin_presets_fill_every_color_field` test exercises
+    /// every name returned here, so divergence is caught at test time).
+    pub fn preset_names() -> &'static [&'static str] {
+        &[
+            "ciri_dark",
+            "one_dark",
+            "catppuccin_mocha",
+            "tokyo_night",
+            "dracula",
+            "nord",
+            "gruvbox_dark",
+            "ghostty",
+        ]
+    }
+
     fn preset_theme(&self) -> ThemeConfig {
         let toml_str = match self.preset.as_str() {
             "catppuccin_mocha" => include_str!("../themes/catppuccin_mocha.toml"),
@@ -421,16 +439,11 @@ mod tests {
 
     #[test]
     fn all_builtin_presets_fill_every_color_field() {
-        for preset in [
-            "ciri_dark",
-            "one_dark",
-            "catppuccin_mocha",
-            "tokyo_night",
-            "dracula",
-            "nord",
-            "gruvbox_dark",
-            "ghostty",
-        ] {
+        // Source from `preset_names()` so adding a preset there is
+        // automatically exercised. Catches divergence between the
+        // settings-panel dropdown list and the actual loadable presets.
+        for preset in ThemeConfig::preset_names() {
+            let preset = *preset;
             let mut theme = ThemeConfig {
                 preset: preset.to_string(),
                 ..ThemeConfig::default()

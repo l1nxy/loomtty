@@ -593,6 +593,11 @@ impl ApplicationHandler for App {
                 self.send(ClientMessage::FocusChange { focused });
                 if !focused {
                     self.core.context_menu.visible = false;
+                    // Modal-ish overlays follow the OS convention of
+                    // dismissing on window deactivation. Without this,
+                    // alt-tabbing away leaves the panel intercepting
+                    // keyboard input on return.
+                    self.core.settings_panel_visible = false;
                 }
             }
 

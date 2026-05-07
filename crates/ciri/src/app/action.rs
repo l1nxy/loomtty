@@ -236,10 +236,15 @@ impl App {
                 self.core.input.toggle_lock();
             }
             Action::ToggleSettings => {
-                // Close any open palette so the settings panel takes
-                // input focus. The palette and settings panel are
-                // mutually exclusive overlays.
+                // Close every other modal-ish overlay so the settings
+                // panel cleanly owns input focus. Without this, search /
+                // context_menu / palette can co-exist with settings and
+                // produce confusing keyboard-routing or z-order results
+                // (see resize-mode + context_menu bleed-through, fixed
+                // earlier the same way).
                 self.core.command_palette = None;
+                self.core.search_state = None;
+                self.core.context_menu.visible = false;
                 self.core.settings_panel_visible = !self.core.settings_panel_visible;
             }
             Action::NextSession => {

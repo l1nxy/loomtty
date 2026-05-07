@@ -137,10 +137,23 @@ impl App {
         self.core.config.theme.resolve_preset();
         self.cached_color_table = ciri_render::terminal::ColorTable::new(&self.core.config);
         self.cached_resolved_theme.reload(&self.core.config.theme);
+        // Pane tile caches embed colour values derived from the old
+        // theme — without clearing them the new chrome shows but the
+        // pane area renders stale until some other event dirties it.
+        // Mirrors `reload_config`'s post-load pipeline.
+        self.clear_render_caches();
         self.schedule_redraw();
     }
 
     pub(crate) fn open_context_menu(&mut self, mx: f32, my: f32) {
+        // Settings panel owns the modal layer while visible — refuse to
+        // spawn a pane-context menu underneath / over it. Right-click on
+        // the settings backdrop is a no-op (the panel's hit_test
+        // explicitly returns None for it; this guard makes mouse-down
+        // routing match).
+        if self.core.settings_panel_visible {
+            return;
+        }
         if self.core.context_menu.visible {
             self.core.context_menu.visible = false;
             self.schedule_redraw();

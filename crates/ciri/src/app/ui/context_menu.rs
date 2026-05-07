@@ -165,7 +165,14 @@ impl ContextMenuComponent {
             .bg(bg_color)
             .rounded(cx.theme.radius.md)
             .border(bw, border_color)
-            .shadow_md()
+            // shadow_lg (was shadow_md) so the menu reads as clearly
+            // floating over surfaces whose tone sits close to the
+            // sunken Panel tier — top bar `statusbar_bg` (~#161514) is
+            // only ~6 channel units lighter than the menu bg
+            // (`surface_sunken` = #100E0C), and the previous shadow_md
+            // wasn't strong enough to give the menu a visible edge
+            // when right-clicked on the top bar.
+            .shadow_lg()
             .hit_id(HIT_MENU)
             .child(div().w(content_w).h(padding));
 

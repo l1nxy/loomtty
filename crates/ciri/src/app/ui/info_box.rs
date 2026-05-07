@@ -224,7 +224,11 @@ impl InfoBoxComponent {
             .items_center()
             .bg(bg_color)
             .rounded(cx.theme.radius.md)
-            .border(bw, accent)
+            // Border goes neutral (chrome `border`) to match palette /
+            // context_menu / dialog. Mode identity comes from the title
+            // row text (already painted inside this panel) — no need for
+            // an accent edge that drifts hue per preset.
+            .border(bw, cx.theme.border)
             .shadow_md()
             .child(
                 div()

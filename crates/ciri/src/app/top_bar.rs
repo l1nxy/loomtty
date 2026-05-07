@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 
+use ciri_config::config::StatusBarSegmentKind;
 use ciri_render::ui_shaper::UiTextShaper;
 use unicode_width::UnicodeWidthStr;
 
@@ -18,24 +19,109 @@ pub(crate) fn segment_slot_width(text_w: f32) -> f32 {
     }
 }
 
-/// Cap fixed lualine sections when they cannot all fit in the bar.
+/// Per-segment sizing intent. Fixed segments measure to a preferred width
+/// from their cached label / contents; the Fill segment gobbles whatever
+/// horizontal space is left after fixed segments are allocated.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum SegmentMeasure {
+    Fixed(f32),
+    Fill,
+}
+
+/// Drop-priority for a segment kind when the bar is too narrow to fit
+/// every fixed segment at its preferred width. *Lower number = drops
+/// width first.* Fill segments are not capped by priority — they're
+/// allocated last from whatever fixed segments leave behind.
 ///
-/// Priority is mode > session > workspace: the right-edge mode badge keeps
-/// its requested width first, the session label gets the next slice, and the
-/// workspace indicator yields first because it is redundant context.
+/// The historical behaviour was `mode > session > workspace`; usage
+/// inherits workspace's tier because both are "redundant context" that
+/// can collapse on narrow viewports.
+pub(crate) fn segment_priority(kind: StatusBarSegmentKind) -> u8 {
+    match kind {
+        StatusBarSegmentKind::Mode => 30,
+        StatusBarSegmentKind::SessionLabel => 20,
+        StatusBarSegmentKind::Workspace => 10,
+        StatusBarSegmentKind::Usage => 10,
+        StatusBarSegmentKind::PaneTabs => 0, // Fill — never capped here.
+    }
+}
+
+/// Allocate per-segment widths to fit `bar_w`, respecting priority for
+/// fixed segments and splitting the remainder across fill segments.
+///
+/// Returns one width per input segment in the same order. Fixed
+/// segments at higher priority keep their preferred width first; lower
+/// priorities trim. Fill segments share whatever's left, evenly. If
+/// even after trimming all fixed widths we'd still overflow, fill
+/// segments collapse to zero (they always non-negative).
+pub(crate) fn cap_segments(
+    bar_w: f32,
+    segments: &[(StatusBarSegmentKind, SegmentMeasure)],
+) -> Vec<f32> {
+    let bar_w = bar_w.max(0.0);
+
+    // Sort fixed segments by descending priority so we honour Mode > Session > rest.
+    let mut fixed_idxs: Vec<usize> = segments
+        .iter()
+        .enumerate()
+        .filter_map(|(i, (_, m))| matches!(m, SegmentMeasure::Fixed(_)).then_some(i))
+        .collect();
+    fixed_idxs.sort_by(|a, b| {
+        segment_priority(segments[*b].0).cmp(&segment_priority(segments[*a].0))
+    });
+
+    let mut widths = vec![0.0_f32; segments.len()];
+    let mut remaining = bar_w;
+    for &i in &fixed_idxs {
+        let SegmentMeasure::Fixed(want) = segments[i].1 else {
+            unreachable!()
+        };
+        let alloc = want.max(0.0).min(remaining);
+        widths[i] = alloc;
+        remaining -= alloc;
+    }
+
+    let fill_count = segments
+        .iter()
+        .filter(|(_, m)| matches!(m, SegmentMeasure::Fill))
+        .count();
+    if fill_count > 0 {
+        let per = (remaining / fill_count as f32).max(0.0);
+        for (i, (_, m)) in segments.iter().enumerate() {
+            if matches!(m, SegmentMeasure::Fill) {
+                widths[i] = per;
+            }
+        }
+    }
+
+    widths
+}
+
+/// Compatibility shim for the historical 4-slot capper. New code goes
+/// through `cap_segments` against the configured segment list.
 pub(crate) fn cap_fixed_section_widths(
     bar_w: f32,
     session_w: f32,
     workspace_w: f32,
     mode_w: f32,
 ) -> (f32, f32, f32) {
-    let mut remaining = bar_w.max(0.0);
-    let mode_w = mode_w.max(0.0).min(remaining);
-    remaining -= mode_w;
-    let session_w = session_w.max(0.0).min(remaining);
-    remaining -= session_w;
-    let workspace_w = workspace_w.max(0.0).min(remaining);
-    (session_w, workspace_w, mode_w)
+    let segs = [
+        (
+            StatusBarSegmentKind::SessionLabel,
+            SegmentMeasure::Fixed(session_w),
+        ),
+        (StatusBarSegmentKind::PaneTabs, SegmentMeasure::Fill),
+        (
+            StatusBarSegmentKind::Workspace,
+            SegmentMeasure::Fixed(workspace_w),
+        ),
+        (
+            StatusBarSegmentKind::Mode,
+            SegmentMeasure::Fixed(mode_w),
+        ),
+    ];
+    let widths = cap_segments(bar_w, &segs);
+    (widths[0], widths[2], widths[3])
 }
 
 /// Shape-aware pixel width with a cell-grid fallback. Kept here (rather
@@ -273,21 +359,20 @@ impl App {
         };
         let bar_height = ch + padding;
         let bar_y = self.status_bar_y(vh);
-        // Shape-based widths so the tabs_area_px visibility window and the
-        // session label's Fixed slot both reflect real glyph advance rather
-        // than the unicode-width estimate. Without this, proportional UI
-        // fonts desync the `Linear` slots from the shaped text and either
-        // clip the right-side zones or leave them entirely unpainted.
-        let session_w = segment_slot_width(measure(shaper, &self.session_display_name(), cw));
-        let ws_label = self.workspace_indicator_label();
-        let workspace_w = segment_slot_width(measure(shaper, &ws_label, cw));
-        let mode_w = segment_slot_width(measure(shaper, &self.current_mode_label().0, cw));
-        let (session_w, workspace_w, mode_w) =
-            cap_fixed_section_widths(vw, session_w, workspace_w, mode_w);
-        // Lualine-style sections tile the bar edge-to-edge with no
-        // breathing room between adjacent zones — the visibility
-        // window for tab generation is exactly the Fill slot.
-        let tabs_area_px = (vw - mode_w - workspace_w - session_w).max(0.0);
+
+        let segs = self.top_bar_segments(vw, cw, shaper);
+        // Legacy field accessors: pull session / pane-tabs widths out of
+        // the configured segment list so callers that still ask for
+        // `session_w` / `tabs_area_px` get the right number even when
+        // the user reorders or omits these segments.
+        let session_w = segs
+            .iter()
+            .find_map(|(k, w)| (*k == StatusBarSegmentKind::SessionLabel).then_some(*w))
+            .unwrap_or(0.0);
+        let tabs_area_px = segs
+            .iter()
+            .find_map(|(k, w)| (*k == StatusBarSegmentKind::PaneTabs).then_some(*w))
+            .unwrap_or(0.0);
 
         TopBarLayout {
             bar_y,
@@ -295,5 +380,71 @@ impl App {
             session_w,
             tabs_area_px,
         }
+    }
+
+    /// Compute the configured segment list with allocated widths. Used
+    /// by `top_bar_layout` for legacy fields and directly by
+    /// `TopBarComponent::row_slots` for the actual slot rects.
+    pub(crate) fn top_bar_segments(
+        &self,
+        vw: f32,
+        cw: f32,
+        shaper: Option<&RefCell<UiTextShaper>>,
+    ) -> Vec<(StatusBarSegmentKind, f32)> {
+        let kinds = self.core.config.statusbar.effective_segments();
+        let measures: Vec<(StatusBarSegmentKind, SegmentMeasure)> = kinds
+            .iter()
+            .map(|k| (*k, self.measure_top_bar_segment(*k, cw, shaper)))
+            .collect();
+        let widths = cap_segments(vw, &measures);
+        kinds.into_iter().zip(widths).collect()
+    }
+
+    /// Preferred sizing intent for one segment kind. Fixed segments
+    /// measure their own cached label; PaneTabs is the bar's flex zone.
+    pub(crate) fn measure_top_bar_segment(
+        &self,
+        kind: StatusBarSegmentKind,
+        cw: f32,
+        shaper: Option<&RefCell<UiTextShaper>>,
+    ) -> SegmentMeasure {
+        match kind {
+            StatusBarSegmentKind::SessionLabel => SegmentMeasure::Fixed(segment_slot_width(
+                measure(shaper, &self.session_display_name(), cw),
+            )),
+            StatusBarSegmentKind::PaneTabs => SegmentMeasure::Fill,
+            StatusBarSegmentKind::Workspace => {
+                let label = self.workspace_indicator_label();
+                SegmentMeasure::Fixed(segment_slot_width(measure(shaper, &label, cw)))
+            }
+            StatusBarSegmentKind::Mode => SegmentMeasure::Fixed(segment_slot_width(measure(
+                shaper,
+                &self.current_mode_label().0,
+                cw,
+            ))),
+            StatusBarSegmentKind::Usage => {
+                let label = self.usage_segment_label();
+                SegmentMeasure::Fixed(segment_slot_width(measure(shaper, &label, cw)))
+            }
+        }
+    }
+
+    /// Plain-string label for the usage segment. Pulled here so
+    /// `measure_top_bar_segment` can compute width without instantiating
+    /// the renderer. The renderer (`super::ui::top_bar::usage`)
+    /// reproduces the same logic for paint.
+    pub(crate) fn usage_segment_label(&self) -> String {
+        let snapshot = self.usage_snapshot();
+        super::ui::top_bar::usage::format_label(&snapshot)
+    }
+
+    /// Hook for the segment renderer to read the latest poll. Returns
+    /// the current snapshot if the App owns one, or an empty default
+    /// (so the segment shows `"usage --"` placeholder text).
+    pub(crate) fn usage_snapshot(&self) -> super::usage::UsageSnapshot {
+        self.usage
+            .as_ref()
+            .map(|s| s.read())
+            .unwrap_or_default()
     }
 }

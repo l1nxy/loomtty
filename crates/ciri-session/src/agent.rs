@@ -27,6 +27,22 @@ pub struct SavedAgent {
     pub kind: AgentKind,
 }
 
+impl AgentKind {
+    /// Kebab-case identifier matching the serde representation.
+    /// Stable across releases — used as the wire token for the
+    /// `PaneAgentChanged` protocol message and exposed to Lua plugins
+    /// via `format-usage` ctx.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AgentKind::ClaudeCode => "claude-code",
+            AgentKind::Codex => "codex",
+            AgentKind::OpenCode => "open-code",
+            AgentKind::Droid => "droid",
+            AgentKind::Unknown => "unknown",
+        }
+    }
+}
+
 impl SavedAgent {
     /// Returns true if this agent should be serialized.
     /// Unknown agents (from newer versions) are dropped on re-save to avoid

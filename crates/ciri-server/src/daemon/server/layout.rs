@@ -142,8 +142,17 @@ impl Server {
                 }
             }
             ClientMessage::FocusPane { pane_id } => {
+                let mut agent_diff: Option<Option<String>> = None;
                 if let Some(session) = self.sessions.get_mut(session_name) {
                     if session.focus_pane(pane_id) {
+                        // Refresh detection for the newly-focused pane
+                        // immediately. The 30s bulk timer would
+                        // otherwise leave the usage segment blank for
+                        // up to half a minute after the user switches
+                        // to a fresh `claude` / `codex` pane.
+                        agent_diff = session
+                            .refresh_agent_for_pane(pane_id)
+                            .map(|a| a.map(|a| a.kind.as_str().to_string()));
                         Self::mark_layout_dirty(session, session_name, responses);
                     } else {
                         log::debug!(
@@ -152,6 +161,12 @@ impl Server {
                             session_name
                         );
                     }
+                }
+                if let Some(agent) = agent_diff {
+                    self.broadcast_to_session(
+                        session_name,
+                        &ServerMessage::PaneAgentChanged { pane_id, agent },
+                    );
                 }
             }
             ClientMessage::SetColumnWidth {

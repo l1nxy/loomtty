@@ -4,7 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-mlua = { version = "0.11", features = ["lua54", "vendored"] }
+mlua = { version = "0.11", features = ["lua54", "vendored", "serialize"] }
 log.workspace = true
 anyhow.workspace = true
 dirs = "6"
+serde_json = { workspace = true }

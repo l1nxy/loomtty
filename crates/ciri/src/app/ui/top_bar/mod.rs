@@ -21,19 +21,22 @@
 mod mode;
 mod pane_tabs;
 mod session_label;
+pub(crate) mod usage;
 mod workspace;
 
-use ciri_config::config::StatusBarPosition;
+use ciri_config::config::{StatusBarPosition, StatusBarSegmentKind};
 
 use self::mode::ModeIndicator;
 use self::pane_tabs::PaneTabsElement;
 use self::session_label::SessionLabel;
+use self::usage::UsageSegment;
 use self::workspace::WorkspaceIndicator;
 use super::text_layout;
 use super::tokens;
 use super::types::{UiAction, UiContext, UiRect, UiScene, UiTopBarHit, ui_hit_id};
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use crate::app::top_bar::{PaneTabLayout, TopBarLayout};
+use crate::app::top_bar::{PaneTabLayout, SegmentMeasure, TopBarLayout};
+use crate::app::usage::UsageSnapshot;
 use crate::app::App;
 use ciri_ui::{Div, Styled, div};
 
@@ -69,11 +72,18 @@ fn top_bar_hit_from_id(hit_id: Option<u64>) -> UiTopBarHit {
 
 pub(crate) struct TopBarComponent {
     pub layout: TopBarLayout,
+    /// Configured segments in render order. Drives row_slots,
+    /// build_row_children, and build_hit_tree.
+    segments: Vec<StatusBarSegmentKind>,
     session_text: String,
     workspace_label: String,
     mode_label: String,
     mode_color: [f32; 4],
     pane_tabs: Vec<PaneTabLayout>,
+    usage_snapshot: UsageSnapshot,
+    /// Pre-computed label string shown by the usage segment. Cached so
+    /// `row_slots` can measure without re-running formatting.
+    usage_label: String,
     is_leader: bool,
     is_broadcast: bool,
     is_overview: bool,
@@ -85,22 +95,53 @@ pub(crate) struct TopBarComponent {
     show_integrated_tabs: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+/// Per-frame slot rects in render order. The named accessors are kept
+/// for backward-compatible test code; new callers iterate `ordered`.
+#[derive(Debug, Clone)]
 pub(super) struct TopBarRowSlots {
     pub session: UiRect,
     pub pane_tabs: UiRect,
     pub workspace: UiRect,
     pub mode: UiRect,
+    pub usage: UiRect,
+    /// Ordered list of (kind, rect) — render iteration source. Empty
+    /// rects are filtered out so consumers can blindly iterate.
+    pub ordered: Vec<(StatusBarSegmentKind, UiRect)>,
+}
+
+impl TopBarRowSlots {
+    fn empty(rect: UiRect) -> Self {
+        let zero = UiRect::new(rect.x, rect.y, 0.0, rect.h);
+        Self {
+            session: zero,
+            pane_tabs: zero,
+            workspace: zero,
+            mode: zero,
+            usage: zero,
+            ordered: Vec::new(),
+        }
+    }
+
+    fn slot_for(&self, kind: StatusBarSegmentKind) -> UiRect {
+        match kind {
+            StatusBarSegmentKind::SessionLabel => self.session,
+            StatusBarSegmentKind::PaneTabs => self.pane_tabs,
+            StatusBarSegmentKind::Workspace => self.workspace,
+            StatusBarSegmentKind::Mode => self.mode,
+            StatusBarSegmentKind::Usage => self.usage,
+        }
+    }
 }
 
 impl TopBarComponent {
     pub fn capture(app: &App, layout: TopBarLayout, cx: &UiContext<'_>) -> Self {
         let (mode_label, mode_color) = app.current_mode_label();
         let workspace_label = app.workspace_indicator_label();
+        let segments = app.core.config.statusbar.effective_segments();
         let show_integrated_tabs = matches!(
             app.core.config.tabbar.position,
             ciri_config::config::TabBarPosition::Integrated,
-        );
+        ) && segments.contains(&StatusBarSegmentKind::PaneTabs);
         // Tab snapshot is only needed when we draw them inline. Saves
         // a Vec allocation + label cloning for side-bar configs.
         let pane_tabs = if show_integrated_tabs {
@@ -108,19 +149,48 @@ impl TopBarComponent {
         } else {
             Vec::new()
         };
+        let usage_snapshot = app.usage_snapshot();
+        let usage_label = usage::format_label(&usage_snapshot);
         Self {
             layout,
+            segments,
             session_text: app.session_display_name(),
             workspace_label,
             mode_label,
             mode_color,
             pane_tabs,
+            usage_snapshot,
+            usage_label,
             is_leader: app.core.input.is_awaiting_action(),
             is_broadcast: app.core.broadcast_mode,
             is_overview: app.core.overview.active,
             tab_scroll: app.pane_tab_scroll,
             tab_scroll_max: app.pane_tab_scroll_max(),
             show_integrated_tabs,
+        }
+    }
+
+    fn measure_segment(&self, kind: StatusBarSegmentKind, cx: &UiContext<'_>) -> SegmentMeasure {
+        match kind {
+            StatusBarSegmentKind::SessionLabel => SegmentMeasure::Fixed(
+                crate::app::top_bar::segment_slot_width(text_layout::measure(cx, &self.session_text)),
+            ),
+            StatusBarSegmentKind::PaneTabs => SegmentMeasure::Fill,
+            StatusBarSegmentKind::Workspace => {
+                if self.workspace_label.is_empty() {
+                    SegmentMeasure::Fixed(0.0)
+                } else {
+                    SegmentMeasure::Fixed(crate::app::top_bar::segment_slot_width(
+                        text_layout::measure(cx, &self.workspace_label),
+                    ))
+                }
+            }
+            StatusBarSegmentKind::Mode => SegmentMeasure::Fixed(
+                crate::app::top_bar::segment_slot_width(text_layout::measure(cx, &self.mode_label)),
+            ),
+            StatusBarSegmentKind::Usage => SegmentMeasure::Fixed(
+                crate::app::top_bar::segment_slot_width(text_layout::measure(cx, &self.usage_label)),
+            ),
         }
     }
 
@@ -146,45 +216,42 @@ impl TopBarComponent {
 
     /// Compute the inner row slots shared by paint and tests.
     pub(super) fn row_slots(&self, rect: UiRect, cx: &UiContext<'_>) -> TopBarRowSlots {
-        // Widths of fixed zones. Each capsule slot = measured text width
-        // + capsule padding + visual gap budget (`segment_slot_width` in
-        // `crate::app::top_bar`). The App-side `top_bar_layout` wraps
-        // its measurements through the same helpers, including the
-        // mode > session > workspace overflow cap, so the fill slot
-        // (= bar_w - sum(fixed)) and the captured `tabs_area_px` stay
-        // in lockstep — see `pane_tabs_element_slot_is_one_cell_wider…`.
-        let session_w =
-            crate::app::top_bar::segment_slot_width(text_layout::measure(cx, &self.session_text));
-        let workspace_w = if self.workspace_label.is_empty() {
-            0.0
-        } else {
-            crate::app::top_bar::segment_slot_width(text_layout::measure(cx, &self.workspace_label))
-        };
-        let mode_w =
-            crate::app::top_bar::segment_slot_width(text_layout::measure(cx, &self.mode_label));
-        let (session_w, workspace_w, mode_w) =
-            crate::app::top_bar::cap_fixed_section_widths(rect.w, session_w, workspace_w, mode_w);
-        let fixed_w = session_w + workspace_w + mode_w;
-        let pane_tabs_w = (rect.w - fixed_w).max(0.0);
-
-        let session = UiRect::new(rect.x, rect.y, session_w, rect.h);
-        let pane_tabs = UiRect::new(session.right(), rect.y, pane_tabs_w, rect.h);
-        let workspace = UiRect::new(pane_tabs.right(), rect.y, workspace_w, rect.h);
-        let mode = UiRect::new(workspace.right(), rect.y, mode_w, rect.h);
-
-        TopBarRowSlots {
-            session,
-            pane_tabs,
-            workspace,
-            mode,
+        if self.segments.is_empty() {
+            return TopBarRowSlots::empty(rect);
         }
+        // Each capsule slot = measured text width + capsule padding
+        // (`segment_slot_width` in `crate::app::top_bar`). App-side
+        // `top_bar_layout` measures from a `UiTextShaper` directly while
+        // the row uses `text_layout::measure(cx, ...)`; both paths agree
+        // on width, so `pane_tabs_area_px` and the rendered Fill slot
+        // stay in lockstep.
+        let measures: Vec<(StatusBarSegmentKind, SegmentMeasure)> = self
+            .segments
+            .iter()
+            .map(|k| (*k, self.measure_segment(*k, cx)))
+            .collect();
+        let widths = crate::app::top_bar::cap_segments(rect.w, &measures);
+
+        let mut slots = TopBarRowSlots::empty(rect);
+        let mut x = rect.x;
+        for ((kind, _), w) in measures.iter().zip(widths.iter().copied()) {
+            let slot = UiRect::new(x, rect.y, w, rect.h);
+            slots.ordered.push((*kind, slot));
+            match kind {
+                StatusBarSegmentKind::SessionLabel => slots.session = slot,
+                StatusBarSegmentKind::PaneTabs => slots.pane_tabs = slot,
+                StatusBarSegmentKind::Workspace => slots.workspace = slot,
+                StatusBarSegmentKind::Mode => slots.mode = slot,
+                StatusBarSegmentKind::Usage => slots.usage = slot,
+            }
+            x += w;
+        }
+        slots
     }
 
-    /// Produce the absolute-positioned children for the row's 4 sub-
-    /// widgets. Returns a flat `Vec<Div>` so caller can push each as
-    /// a sibling of the viewport root — avoids a row-level wrapper
-    /// that would shift child absolute coords by `(rect.x, rect.y)`
-    /// (codex Q: double-offset bug from Step 25 review).
+    /// Produce the absolute-positioned children for the row's segments.
+    /// Iterates `slots.ordered` so config-driven segment order (and any
+    /// future additions) flow through one dispatch site.
     fn build_row_children(&self, rect: UiRect, cx: &UiContext<'_>) -> Vec<Div> {
         let slots = self.row_slots(rect, cx);
         let accent = cx.theme.accent;
@@ -192,101 +259,136 @@ impl TopBarComponent {
         let surface_elevated = cx.theme.surface_elevated;
 
         let mut children: Vec<Div> = Vec::new();
-        children.push(
-            SessionLabel {
-                text: &self.session_text,
-            }
-            .into_div(slots.session, accent, on_accent),
-        );
-
-        if self.show_integrated_tabs {
-            // PaneTabsElement returns its own Vec<Div> of absolute
-            // tab/label/fade children — one rounded pill per tab.
-            children.extend(
-                PaneTabsElement {
-                    tabs: &self.pane_tabs,
-                    scroll: self.tab_scroll,
-                    scroll_max: self.tab_scroll_max,
+        for (kind, slot) in &slots.ordered {
+            match kind {
+                StatusBarSegmentKind::SessionLabel => children.push(
+                    SessionLabel {
+                        text: &self.session_text,
+                    }
+                    .into_div(*slot, accent, on_accent),
+                ),
+                StatusBarSegmentKind::PaneTabs => {
+                    if self.show_integrated_tabs {
+                        children.extend(
+                            PaneTabsElement {
+                                tabs: &self.pane_tabs,
+                                scroll: self.tab_scroll,
+                                scroll_max: self.tab_scroll_max,
+                            }
+                            .into_children(*slot, cx),
+                        );
+                    }
                 }
-                .into_children(slots.pane_tabs, cx),
-            );
+                StatusBarSegmentKind::Workspace => children.push(
+                    WorkspaceIndicator {
+                        label: &self.workspace_label,
+                    }
+                    .into_div(*slot, accent, surface_elevated),
+                ),
+                StatusBarSegmentKind::Mode => children.push(
+                    ModeIndicator {
+                        label: &self.mode_label,
+                        color: self.mode_color,
+                    }
+                    .into_div(*slot),
+                ),
+                StatusBarSegmentKind::Usage => children.push(
+                    UsageSegment {
+                        snapshot: &self.usage_snapshot,
+                    }
+                    .into_div(*slot, accent, surface_elevated),
+                ),
+            }
         }
-
-        children.push(
-            WorkspaceIndicator {
-                label: &self.workspace_label,
-            }
-            .into_div(slots.workspace, accent, surface_elevated),
-        );
-
-        children.push(
-            ModeIndicator {
-                label: &self.mode_label,
-                color: self.mode_color,
-            }
-            .into_div(slots.mode),
-        );
 
         children
     }
 
     fn build_hit_tree(&self, rect: UiRect, cx: &UiContext<'_>) -> Div {
         let slots = self.row_slots(rect, cx);
-        let workspace_w = slots.workspace.w;
-        let mode_w = slots.mode.w;
-        let mut tabs_slot = div().flex_1().h(rect.h);
-        let tabs_start_x = slots.pane_tabs.x;
-        let tabs_end_x = slots.pane_tabs.right().max(tabs_start_x);
-        let mut cursor_x = tabs_start_x;
-
-        if self.show_integrated_tabs {
-            for tab in &self.pane_tabs {
-                let visible_left = tab.x.max(tabs_start_x);
-                let visible_right = (tab.x + tab.w).min(tabs_end_x);
-                let visible_w = (visible_right - visible_left).max(0.0);
-                if visible_w <= 0.0 {
-                    continue;
-                }
-                let gap = (visible_left - cursor_x).max(0.0);
-                if gap > 0.0 {
-                    tabs_slot = tabs_slot.child(div().w(gap).h(rect.h));
-                }
-                tabs_slot = tabs_slot.child(
-                    div()
-                        .w(visible_w)
-                        .h(rect.h)
-                        .hit_id(pane_tab_hit_id(tab.pane_id))
-                        .cursor_pointer(),
-                );
-                cursor_x = visible_right;
-            }
-        }
-
         let mut row = div()
             .absolute()
             .left(rect.x)
             .top(rect.y)
             .w(rect.w)
             .h(rect.h)
-            .flex_row()
-            .child(
-                div()
-                    .w(slots.session.w)
-                    .h(rect.h)
-                    .hit_id(HIT_SESSION)
-                    .cursor_pointer(),
-            )
-            .child(tabs_slot);
-        if workspace_w > 0.0 {
-            row = row.child(
-                div()
-                    .w(workspace_w)
-                    .h(rect.h)
-                    .hit_id(HIT_WORKSPACE)
-                    .cursor_pointer(),
-            );
+            .flex_row();
+
+        for (kind, slot) in &slots.ordered {
+            match kind {
+                StatusBarSegmentKind::SessionLabel => {
+                    if slot.w > 0.0 {
+                        row = row.child(
+                            div()
+                                .w(slot.w)
+                                .h(rect.h)
+                                .hit_id(HIT_SESSION)
+                                .cursor_pointer(),
+                        );
+                    }
+                }
+                StatusBarSegmentKind::PaneTabs => {
+                    let mut tabs_slot = div().w(slot.w).h(rect.h);
+                    if self.show_integrated_tabs {
+                        let tabs_start_x = slot.x;
+                        let tabs_end_x = slot.right().max(tabs_start_x);
+                        let mut cursor_x = tabs_start_x;
+                        for tab in &self.pane_tabs {
+                            let visible_left = tab.x.max(tabs_start_x);
+                            let visible_right = (tab.x + tab.w).min(tabs_end_x);
+                            let visible_w = (visible_right - visible_left).max(0.0);
+                            if visible_w <= 0.0 {
+                                continue;
+                            }
+                            let gap = (visible_left - cursor_x).max(0.0);
+                            if gap > 0.0 {
+                                tabs_slot = tabs_slot.child(div().w(gap).h(rect.h));
+                            }
+                            tabs_slot = tabs_slot.child(
+                                div()
+                                    .w(visible_w)
+                                    .h(rect.h)
+                                    .hit_id(pane_tab_hit_id(tab.pane_id))
+                                    .cursor_pointer(),
+                            );
+                            cursor_x = visible_right;
+                        }
+                    }
+                    row = row.child(tabs_slot);
+                }
+                StatusBarSegmentKind::Workspace => {
+                    if slot.w > 0.0 {
+                        row = row.child(
+                            div()
+                                .w(slot.w)
+                                .h(rect.h)
+                                .hit_id(HIT_WORKSPACE)
+                                .cursor_pointer(),
+                        );
+                    }
+                }
+                StatusBarSegmentKind::Mode => {
+                    row = row.child(
+                        div()
+                            .w(slot.w)
+                            .h(rect.h)
+                            .hit_id(HIT_MODE)
+                            .cursor_pointer(),
+                    );
+                }
+                StatusBarSegmentKind::Usage => {
+                    // Display-only — emit a sized but hit-id-less div so
+                    // it occupies the slot without intercepting clicks.
+                    if slot.w > 0.0 {
+                        row = row.child(div().w(slot.w).h(rect.h));
+                    }
+                }
+            }
         }
-        row = row.child(div().w(mode_w).h(rect.h).hit_id(HIT_MODE).cursor_pointer());
+
+        // Suppress unused-method-warning while the Usage hit_test
+        // routing is still display-only.
+        let _ = slots.slot_for(StatusBarSegmentKind::Usage);
 
         div().w(cx.viewport_w).h(cx.viewport_h).child(row)
     }

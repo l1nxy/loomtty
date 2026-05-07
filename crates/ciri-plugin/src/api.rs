@@ -1,6 +1,6 @@
 //! `ciri.*` Lua API bindings.
 
-use mlua::Lua;
+use mlua::{Lua, LuaSerdeExt, Value};
 
 use crate::events::EventRegistry;
 
@@ -36,6 +36,34 @@ pub(crate) fn register_api(lua: &Lua, registry: &EventRegistry) -> mlua::Result<
             Ok(())
         })?,
     )?;
+
+    // ciri.json — a sub-table of encode / decode helpers, mirroring
+    // Neovim's `vim.json`. Built on serde_json + mlua's `LuaSerdeExt`
+    // so the values round-trip through the same data model the rest
+    // of the plugin API uses.
+    let json = lua.create_table()?;
+    json.set(
+        "decode",
+        lua.create_function(|lua, s: mlua::String| {
+            let bytes = s.as_bytes();
+            let parsed: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
+                mlua::Error::external(format!("ciri.json.decode: {e}"))
+            })?;
+            lua.to_value(&parsed)
+        })?,
+    )?;
+    json.set(
+        "encode",
+        lua.create_function(|lua, v: Value| {
+            let v: serde_json::Value = lua.from_value(v).map_err(|e| {
+                mlua::Error::external(format!("ciri.json.encode (table → json): {e}"))
+            })?;
+            serde_json::to_string(&v).map_err(|e| {
+                mlua::Error::external(format!("ciri.json.encode (serialize): {e}"))
+            })
+        })?,
+    )?;
+    ciri.set("json", json)?;
 
     lua.globals().set("ciri", ciri)?;
     Ok(())

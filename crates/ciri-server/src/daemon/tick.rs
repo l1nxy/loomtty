@@ -142,10 +142,28 @@ pub(crate) async fn run_tick_loop(
                 if s.session_config.restore_agents {
                     let now = Instant::now();
                     if session.agent_detection_due(now, s.session_config.agent_save_interval_secs) {
-                        let changed = session.detect_agents();
+                        let diffs = session.detect_agents();
                         session.last_agent_save = Some(now);
-                        if changed {
+                        if !diffs.is_empty() {
                             session.mark_session_dirty();
+                            // Broadcast each diff to clients on this
+                            // session so format-usage ctx picks up the
+                            // new agent without waiting for a layout
+                            // change.
+                            for (pane_id, agent) in &diffs {
+                                let msg = ServerMessage::PaneAgentChanged {
+                                    pane_id: *pane_id,
+                                    agent: agent.as_ref().map(|a| a.kind.as_str().to_string()),
+                                };
+                                if let Some(frame) = codec::frame_server_msg(&msg) {
+                                    let frame = Bytes::from(frame);
+                                    for client in s.clients.values() {
+                                        if client.session_name == *session_name {
+                                            let _ = client.tx.try_send(frame.clone());
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

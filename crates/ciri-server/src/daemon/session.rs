@@ -485,29 +485,65 @@ impl Session {
 
     /// Detect AI agents running in all panes.
     /// Called on a slow timer (~30s) and on graceful shutdown.
-    /// Returns `true` if any detected agents changed since last call.
-    pub(crate) fn detect_agents(&mut self) -> bool {
-        let mut changed = false;
+    /// Returns the per-pane diff so callers can broadcast
+    /// `PaneAgentChanged` for each entry.
+    pub(crate) fn detect_agents(&mut self) -> Vec<(u64, Option<SavedAgent>)> {
+        let mut diffs = Vec::new();
         for (&pane_id, pane) in &self.panes {
             let agent = Self::detect_agent_for_pane(pane);
             let prev = self.detected_agents.get(&pane_id);
             let new_kind = agent.as_ref().map(|a| a.kind);
             let old_kind = prev.and_then(|a| a.as_ref().map(|a| a.kind));
             if new_kind != old_kind {
-                changed = true;
+                diffs.push((pane_id, agent.clone()));
             }
             self.detected_agents.insert(pane_id, agent);
         }
         log::debug!(
-            "agent detection: {} panes scanned, {} agents found, changed={}",
+            "agent detection: {} panes scanned, {} agents found, {} changed",
             self.panes.len(),
             self.detected_agents
                 .values()
                 .filter(|a| a.is_some())
                 .count(),
-            changed
+            diffs.len(),
         );
-        changed
+        diffs
+    }
+
+    /// Re-run agent detection for a single pane. Triggered on focus
+    /// switches (and pane creation) so the usage segment / Lua plugin
+    /// sees the new agent within one round-trip rather than waiting
+    /// up to 30s for the bulk timer. Returns `Some(new_value)` if the
+    /// cache changed (caller broadcasts `PaneAgentChanged`); `None`
+    /// when the value matches what's already cached.
+    pub(crate) fn refresh_agent_for_pane(
+        &mut self,
+        pane_id: u64,
+    ) -> Option<Option<SavedAgent>> {
+        let pane = self.panes.get(&pane_id)?;
+        let agent = Self::detect_agent_for_pane(pane);
+        let new_kind = agent.as_ref().map(|a| a.kind);
+        let old_kind = self
+            .detected_agents
+            .get(&pane_id)
+            .and_then(|a| a.as_ref().map(|a| a.kind));
+        if new_kind == old_kind {
+            return None;
+        }
+        self.detected_agents.insert(pane_id, agent.clone());
+        Some(agent)
+    }
+
+    /// Snapshot of every pane that currently has an associated agent.
+    /// Used to burst `PaneAgentChanged` on client connect so a fresh
+    /// client picks up the running agents without waiting for the
+    /// next 30s detection tick.
+    pub(crate) fn known_agents(&self) -> Vec<(u64, SavedAgent)> {
+        self.detected_agents
+            .iter()
+            .filter_map(|(id, a)| a.clone().map(|a| (*id, a)))
+            .collect()
     }
 
     #[cfg(unix)]
@@ -680,7 +716,7 @@ impl Session {
             })
             .collect();
 
-        let image_events: Vec<ServerMessage> = pane_ids
+        let mut image_events: Vec<ServerMessage> = pane_ids
             .iter()
             .flat_map(|&id| {
                 let pane = self.panes.get(&id)?;
@@ -708,6 +744,17 @@ impl Session {
             })
             .flatten()
             .collect();
+
+        // Burst-emit currently-known agents so a fresh client picks
+        // them up on connect without waiting for the next 30s tick.
+        // Reuses the `ImageDeleted` event channel — the same envelope
+        // that already fans out alongside StateSync.
+        for (pane_id, agent) in self.known_agents() {
+            image_events.push(ServerMessage::PaneAgentChanged {
+                pane_id,
+                agent: Some(agent.kind.as_str().to_string()),
+            });
+        }
 
         let msg = ServerMessage::StateSync {
             layout: self.layout_state(),

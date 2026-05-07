@@ -295,6 +295,12 @@ impl App {
                         }
                         needs_redraw = true;
                     }
+                    ServerEvent::Control(ServerMessage::PaneAgentChanged { pane_id, agent }) => {
+                        if let Some(grid) = self.core.pane_grids.get_mut(&pane_id) {
+                            grid.agent = agent;
+                        }
+                        needs_redraw = true;
+                    }
                     ServerEvent::Control(ServerMessage::SessionList { sessions }) => {
                         log::debug!(
                             "SessionList received: {} entries: {:?}",

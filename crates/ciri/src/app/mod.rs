@@ -19,6 +19,7 @@ pub(crate) mod status_bar;
 pub(crate) mod sync;
 pub(crate) mod top_bar;
 pub(crate) mod ui;
+pub(crate) mod usage;
 
 use ciri_anim::manager::{AnimConfig, AnimationManager};
 use ciri_config::config::{CiriConfig, StatusBarPosition};
@@ -280,6 +281,20 @@ pub(crate) struct App {
     /// can trigger `Cancelled` mid-connect. Exists only while the active slot
     /// is still in a transient `!connected` state — slot switches drop it.
     pub connection_cancel: Option<Arc<tokio::sync::Notify>>,
+
+    /// Shared snapshot updated by the OAuth-driven usage poller. `None`
+    /// when the segment is disabled in config (`[statusbar.usage] enabled
+    /// = false`); otherwise lives for the App's lifetime, reflecting the
+    /// latest Claude / Codex probe results. Read by the UsageSegment
+    /// renderer in the status bar.
+    pub usage: Option<crate::app::usage::SharedSnapshot>,
+
+    /// Lua plugin engine. Owns its own VM and event registry — see
+    /// `crates/ciri-plugin`. `None` when initialization failed (the
+    /// chrome falls back to Rust defaults so a broken plugin can't
+    /// brick the bar). Held here directly because `mlua::Lua` is
+    /// `!Send`, and `App` lives only on the winit main thread.
+    pub plugin: Option<ciri_plugin::PluginEngine>,
 
     /// Redraw-gating ticker for the new `ciri-ui` animation layer.
     ///
@@ -582,7 +597,43 @@ impl App {
             // grows automatically if a frame outsizes it.
             ui_arena: std::cell::RefCell::new(ciri_ui::Arena::new(256 * 1024)),
             ui_states: std::cell::RefCell::new(ciri_ui::ElementStates::new()),
+            usage: None,
+            plugin: None,
         }
+    }
+
+    /// Boot the Lua plugin engine. Logs and continues without plugins
+    /// on init failure — chrome falls back to Rust default formatters.
+    /// Idempotent so config-reload paths can call without spawning a
+    /// second VM.
+    pub fn ensure_plugin_engine(&mut self) {
+        if self.plugin.is_some() {
+            return;
+        }
+        match ciri_plugin::PluginEngine::new() {
+            Ok(engine) => self.plugin = Some(engine),
+            Err(e) => log::error!("[plugin] failed to start engine: {e:#}"),
+        }
+    }
+
+    /// Spin up the OAuth-driven usage poller if the config opts in. Idempotent —
+    /// later calls are a no-op so reload events don't multiply the tasks.
+    /// Requires a tokio runtime (the caller's `connect()` already creates one).
+    pub fn ensure_usage_poller(&mut self) {
+        let cfg = &self.core.config.statusbar.usage;
+        if !cfg.enabled || self.usage.is_some() {
+            return;
+        }
+        let snapshot = crate::app::usage::SharedSnapshot::new();
+        crate::app::usage::spawn(
+            crate::app::usage::PollerConfig {
+                claude_enabled: cfg.claude,
+                codex_enabled: cfg.codex,
+                refresh: std::time::Duration::from_secs(cfg.refresh_secs.max(15)),
+            },
+            snapshot.clone(),
+        );
+        self.usage = Some(snapshot);
     }
 
     /// Connect to the server, either locally or via remote SSH tunnel.
@@ -1435,6 +1486,96 @@ impl App {
     /// Total vertical space occupied by chrome (status bar + hints bar).
     pub fn total_chrome_height(&self) -> f32 {
         self.status_bar_height() + self.hints_bar_height()
+    }
+
+    /// Whether the OAuth-driven usage probes are active. Doesn't say
+    /// where the segment is rendered — that's decided by which segment
+    /// list (top bar / hints bar) lists `Usage`.
+    pub fn usage_enabled(&self) -> bool {
+        self.core.config.statusbar.usage.enabled
+    }
+
+    /// Build the JSON context handed to the `format-usage` Lua event.
+    /// Schema is deliberately stable so user plugins can rely on it.
+    /// All `*_utilization` fields are 0..1 *fractions* — the Lua
+    /// handler decides how to display them (typically `v * 100` for
+    /// a percentage, but a plugin could equally show a progress bar
+    /// without further arithmetic).
+    ///
+    /// ```json
+    /// {
+    ///   "session_name": "main",
+    ///   "mode": "NORMAL",
+    ///   "pane_count": 3,
+    ///   "focused_pane": { "id": 7, "title": "claude", "cwd": "/repo" },
+    ///   "usage": {
+    ///     "claude": { "session_utilization": 0.12, "weekly_utilization": 0.41, … } | null,
+    ///     "codex":  { "primary_utilization": 0.07, "secondary_utilization": 0.23, … } | null
+    ///   }
+    /// }
+    /// ```
+    pub(crate) fn build_usage_plugin_ctx(&self) -> serde_json::Value {
+        let active_pane_id = self.core.workspaces.active().active_pane_id();
+        let pane_count: usize = self
+            .core
+            .workspaces
+            .active()
+            .columns
+            .iter()
+            .map(|c| c.tiles.len())
+            .sum();
+        let focused_pane = active_pane_id.and_then(|id| {
+            self.core.pane_grids.get(&id).map(|g| {
+                serde_json::json!({
+                    "id": id,
+                    "title": g.title,
+                    "cwd": g.cwd,
+                    // Server pushes this on a 30s tick via
+                    // `PaneAgentChanged`. Lua plugins should prefer
+                    // it over `title`/`cwd` heuristics — it comes from
+                    // a real foreground-process probe.
+                    "agent": g.agent,
+                })
+            })
+        });
+
+        let snapshot = self.usage_snapshot();
+        let claude = snapshot.claude.data.as_ref().map(|c| {
+            serde_json::json!({
+                "session_utilization": c.session.utilization,
+                "session_resets_at": c.session.resets_at_unix,
+                "session_status": c.session.status,
+                "weekly_utilization": c.weekly.utilization,
+                "weekly_resets_at": c.weekly.resets_at_unix,
+                "weekly_status": c.weekly.status,
+                "org_id": c.organization_id,
+                "last_error": snapshot.claude.last_error,
+            })
+        });
+        let codex = snapshot.codex.data.as_ref().map(|c| {
+            serde_json::json!({
+                "primary_utilization": c.primary.utilization,
+                "primary_resets_at": c.primary.resets_at_unix,
+                "secondary_utilization": c.secondary.utilization,
+                "secondary_resets_at": c.secondary.resets_at_unix,
+                "plan": c.plan,
+                "balance": c.balance,
+                "has_credits": c.has_credits,
+                "unlimited": c.unlimited,
+                "last_error": snapshot.codex.last_error,
+            })
+        });
+
+        serde_json::json!({
+            "session_name": self.core.session_name,
+            "mode": self.current_mode_label().0,
+            "pane_count": pane_count,
+            "focused_pane": focused_pane,
+            "usage": {
+                "claude": claude,
+                "codex": codex,
+            },
+        })
     }
 
     /// Total horizontal space consumed by the side tab bar, if any.

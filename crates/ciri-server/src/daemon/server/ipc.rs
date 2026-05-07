@@ -77,11 +77,30 @@ impl Server {
                 session_name: target,
                 pane_id,
             } => {
-                let Some(session) = self.resolve_session_mut(&target, client_id, responses) else {
-                    return;
-                };
-                if session.focus_pane(pane_id) {
-                    Self::mark_layout_dirty(session, &target, responses);
+                let mut agent_diff: Option<Option<String>> = None;
+                let success;
+                {
+                    let Some(session) = self.resolve_session_mut(&target, client_id, responses)
+                    else {
+                        return;
+                    };
+                    if session.focus_pane(pane_id) {
+                        agent_diff = session
+                            .refresh_agent_for_pane(pane_id)
+                            .map(|a| a.map(|a| a.kind.as_str().to_string()));
+                        Self::mark_layout_dirty(session, &target, responses);
+                        success = true;
+                    } else {
+                        success = false;
+                    }
+                }
+                if success {
+                    if let Some(agent) = agent_diff {
+                        self.broadcast_to_session(
+                            &target,
+                            &ServerMessage::PaneAgentChanged { pane_id, agent },
+                        );
+                    }
                     responses.push(ServerResponse::SendToClient(
                         client_id,
                         ServerMessage::CommandResult {

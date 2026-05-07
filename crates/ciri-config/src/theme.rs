@@ -52,6 +52,51 @@ pub struct ThemeConfig {
     pub statusbar_dim: ThemeValue,
     /// Broadcast mode indicator color.
     pub mode_broadcast: ThemeValue,
+
+    // ── Chrome (UI) palette ────────────────────────────────────────────
+    //
+    // These describe the colours of floating chrome surfaces (palette,
+    // context menu, paste / info dialogs, top-bar) and the chrome status
+    // hues. They are intentionally separated from the terminal palette
+    // (`background`/`foreground`/ANSI) so chrome can have its own visual
+    // identity that does not change when the user swaps terminal themes.
+    //
+    // Empty fallback chain (resolved in `ResolvedTheme::from_config`):
+    //   ui_surface       → overview_background
+    //   ui_on_surface    → foreground
+    //   ui_error         → red
+    //   ui_warning       → yellow
+    //   ui_success       → green
+    //   ui_info          → blue
+    //
+    // Falling back to `overview_background` (rather than terminal
+    // `background`) keeps chrome panels visually distinct from the
+    // terminal cell area below them — the previous derivation painted
+    // palette / dialogs in the terminal bg colour and they read as
+    // "dissolved" into the pane underneath.
+    /// Background colour for floating chrome surfaces (palette, dialogs,
+    /// context menu, info box).
+    pub ui_surface: ThemeValue,
+    /// Default text colour painted on chrome surfaces.
+    pub ui_on_surface: ThemeValue,
+    /// Muted text colour for chrome (descriptions, mode labels in their
+    /// resting state, dim hints). Preset-independent so chrome typography
+    /// stays consistent across terminal themes; the preset's
+    /// `statusbar_dim` keeps driving status-bar-internal text only.
+    pub ui_on_surface_muted: ThemeValue,
+    /// Chrome panel edge colour (palette / dialog / context-menu outer
+    /// border). Neutral by design — terminal-pane focus indication still
+    /// rides on `border_active` (preset-driven), but chrome panels stop
+    /// inheriting the per-theme accent on their own border.
+    pub ui_border: ThemeValue,
+    /// Chrome status colour for errors (e.g. failed-connection banner).
+    pub ui_error: ThemeValue,
+    /// Chrome status colour for warnings.
+    pub ui_warning: ThemeValue,
+    /// Chrome status colour for success indicators.
+    pub ui_success: ThemeValue,
+    /// Chrome status colour for informational accents.
+    pub ui_info: ThemeValue,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -225,6 +270,94 @@ impl ThemeConfig {
         apply_if_missing(&mut self.accent, base.accent);
         apply_if_missing(&mut self.statusbar_dim, base.statusbar_dim);
         apply_if_missing(&mut self.mode_broadcast, base.mode_broadcast);
+        // Chrome palette — preset can supply explicit values; if both
+        // user and preset leave them empty, the resolver methods below
+        // apply ciri's built-in warm-neutral defaults (status hues fall
+        // back to the preset's ANSI red/yellow/green/blue so semantic
+        // colours stay tunable per terminal theme).
+        apply_if_missing(&mut self.ui_surface, base.ui_surface);
+        apply_if_missing(&mut self.ui_on_surface, base.ui_on_surface);
+        apply_if_missing(&mut self.ui_on_surface_muted, base.ui_on_surface_muted);
+        apply_if_missing(&mut self.ui_border, base.ui_border);
+        apply_if_missing(&mut self.ui_error, base.ui_error);
+        apply_if_missing(&mut self.ui_warning, base.ui_warning);
+        apply_if_missing(&mut self.ui_success, base.ui_success);
+        apply_if_missing(&mut self.ui_info, base.ui_info);
+    }
+
+    // ── Chrome palette fallback chain ─────────────────────────────────
+    //
+    // Two flavours of resolver:
+    //
+    // - `ui_color_or_default(field, "#RRGGBB")` — chrome surface / text /
+    //   border colours fall back to ciri's hand-tuned warm-neutral
+    //   defaults. These are *preset-independent* by design: the chrome
+    //   has its own visual identity that doesn't ride along when users
+    //   swap terminal themes.
+    //
+    // - `ui_color_or_field(field, &cfg.red)` — chrome status hues fall
+    //   back to the preset's ANSI red/yellow/green/blue, because each
+    //   preset already tunes those for its own contrast story and we
+    //   don't want a generic "ciri red" overriding e.g. dracula's
+    //   carefully picked accent reds.
+
+    fn ui_color_or_default(primary: &ThemeValue, default_hex: &str) -> [f32; 4] {
+        if primary.as_ref().is_empty() {
+            Self::parse_color(default_hex)
+        } else {
+            Self::parse_color(primary.as_ref())
+        }
+    }
+
+    fn ui_color_or_field(primary: &ThemeValue, fallback: &ThemeValue) -> [f32; 4] {
+        let chosen = if primary.as_ref().is_empty() {
+            fallback
+        } else {
+            primary
+        };
+        Self::parse_color(chosen.as_ref())
+    }
+
+    /// Chrome surface colour (floating panel / dialog / popup background).
+    /// Default `#1A1816` — warm near-black with a yellow tint, picked to
+    /// sit clearly above terminal cell backgrounds without competing
+    /// with them. Decoupled from terminal palette.
+    pub fn ui_surface_color(&self) -> [f32; 4] {
+        Self::ui_color_or_default(&self.ui_surface, "#1A1816")
+    }
+    /// Default chrome text colour. `#E2DCD6` — warm near-white. Pairs
+    /// with `ui_surface` for ~13:1 contrast (well above WCAG AAA).
+    pub fn ui_on_surface_color(&self) -> [f32; 4] {
+        Self::ui_color_or_default(&self.ui_on_surface, "#E2DCD6")
+    }
+    /// Muted chrome text colour. `#8E8780` — warm mid-grey. Sized for
+    /// description text, resting mode labels, hint rows; readable but
+    /// recedes from `on_surface`.
+    pub fn ui_on_surface_muted_color(&self) -> [f32; 4] {
+        Self::ui_color_or_default(&self.ui_on_surface_muted, "#8E8780")
+    }
+    /// Chrome panel edge colour. `#2A2622` — warm hairline. Used by
+    /// floating panels (palette / dialog / context menu) for their outer
+    /// border. Pane-focus indication still rides on `border_active`.
+    pub fn ui_border_color(&self) -> [f32; 4] {
+        Self::ui_color_or_default(&self.ui_border, "#2A2622")
+    }
+    /// Chrome error colour. Falls back to preset ANSI red so each
+    /// terminal theme's semantic palette continues to drive status hues.
+    pub fn ui_error_color(&self) -> [f32; 4] {
+        Self::ui_color_or_field(&self.ui_error, &self.red)
+    }
+    /// Chrome warning colour. Falls back to preset ANSI yellow.
+    pub fn ui_warning_color(&self) -> [f32; 4] {
+        Self::ui_color_or_field(&self.ui_warning, &self.yellow)
+    }
+    /// Chrome success colour. Falls back to preset ANSI green.
+    pub fn ui_success_color(&self) -> [f32; 4] {
+        Self::ui_color_or_field(&self.ui_success, &self.green)
+    }
+    /// Chrome info colour. Falls back to preset ANSI blue.
+    pub fn ui_info_color(&self) -> [f32; 4] {
+        Self::ui_color_or_field(&self.ui_info, &self.blue)
     }
 }
 

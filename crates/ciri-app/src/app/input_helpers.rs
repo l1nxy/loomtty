@@ -177,7 +177,11 @@ impl AppModel {
         use ciri_config::theme::ThemeConfig;
         let accent = ThemeConfig::parse_color(&self.config.theme.accent);
         let broadcast_color = ThemeConfig::parse_color(&self.config.theme.mode_broadcast);
-        let dim = ThemeConfig::parse_color(&self.config.theme.statusbar_dim);
+        // Chrome muted text — uses the preset-independent `ui_*` resolver
+        // so the resting NORMAL-mode label stays consistent across
+        // terminal themes. `statusbar_dim` continues to drive other
+        // status-bar-internal text only.
+        let dim = self.config.theme.ui_on_surface_muted_color();
         let warn_color = ThemeConfig::parse_color(&self.config.theme.mode_broadcast);
         if self.input.is_locked() {
             (" LOCKED ".into(), warn_color)

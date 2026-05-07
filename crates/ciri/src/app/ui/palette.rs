@@ -192,7 +192,7 @@ impl PaletteComponent {
     fn build_tree(&self, cx: &RenderCtx<'_>) -> Div {
         let bg_color = cx.theme.surface;
         let accent = cx.theme.accent;
-        let border_color = cx.theme.border_focus;
+        let border_color = cx.theme.border;
         let dim_color = cx.theme.on_surface_muted;
         let fg_color = cx.theme.on_surface;
         let selected_bg = tokens::tint(accent, tokens::ALPHA_SELECTED_BG);
@@ -202,16 +202,25 @@ impl PaletteComponent {
         let pw = self.layout.panel_w;
         let text_pad = tokens::SPACE_2;
 
-        let panel_bg = tokens::surface_raise(
+        // Panel body sinks below the chrome surface to read as
+        // "recessed chrome" — same direction context_menu / info_box /
+        // connection_status take. Previously the palette body raised
+        // *over* `surface` because `surface` used to alias the terminal
+        // bg; with the chrome decoupling (stage 0.1) that lift carried
+        // the panel into the backdrop's brightness range and read as
+        // floating instead of grounded.
+        let panel_bg = tokens::surface_sink(
             [bg_color[0], bg_color[1], bg_color[2], 1.0],
-            tokens::SURFACE_LIFT,
+            tokens::SURFACE_SINK,
         );
         let row_h = self.layout.row_h;
         let input_row_h = (self.layout.sep_y - self.layout.panel_y - tokens::BORDER_THIN).max(0.0);
-        let input_bg = tokens::surface_raise(
-            [bg_color[0], bg_color[1], bg_color[2], 1.0],
-            tokens::SURFACE_LIFT_HIGH,
-        );
+        // Input pill sits at the natural chrome surface — i.e. one tier
+        // *above* the sunken panel body. The pill's rounded edges and
+        // the +0.04 channel delta against `panel_bg` give it the
+        // Raycast/Linear-style "raised search bar" feel without pushing
+        // the colour into the backdrop's brightness range.
+        let input_bg = bg_color;
         let input_text = if self.remote_input_mode {
             format!("SSH> {}", self.query)
         } else {

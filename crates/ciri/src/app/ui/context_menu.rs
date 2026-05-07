@@ -147,7 +147,7 @@ impl ContextMenuComponent {
             [menu_bg[0], menu_bg[1], menu_bg[2], 1.0],
             tokens::SURFACE_SINK,
         );
-        let border_color = cx.theme.border_focus;
+        let border_color = cx.theme.border;
         let accent = cx.theme.accent;
         let fg_color = cx.theme.on_surface;
         let dim_color = cx.theme.on_surface_muted;

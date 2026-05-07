@@ -160,17 +160,34 @@ impl ResolvedTheme {
     /// computed mechanically from base fields so theme authors only need to
     /// set the handful of colors that exist in `ThemeConfig` today.
     pub fn from_config(cfg: &ThemeConfig) -> Self {
-        let surface = ThemeConfig::parse_color(cfg.background.as_ref());
-        let bg_term = ThemeConfig::parse_color(cfg.background.as_ref());
-        let on_surface = ThemeConfig::parse_color(cfg.foreground.as_ref());
-        let muted = ThemeConfig::parse_color(cfg.statusbar_dim.as_ref());
+        // Chrome (UI) palette — `ui_*` fields with empty-fallback to
+        // `overview_background` / `foreground` / ANSI hues. See
+        // `ThemeConfig`'s field comments for the fallback chain. The
+        // intent is for chrome panels (palette, dialogs, context menus)
+        // to have their own visual identity that doesn't dissolve into
+        // the terminal pane underneath them.
+        let surface = cfg.ui_surface_color();
+        let on_surface = cfg.ui_on_surface_color();
+        let err = cfg.ui_error_color();
+        let warn = cfg.ui_warning_color();
+        let ok = cfg.ui_success_color();
+        let info = cfg.ui_info_color();
+
+        let muted = cfg.ui_on_surface_muted_color();
+        let border_chrome = cfg.ui_border_color();
+
+        // Terminal palette — kept distinct so terminal cells don't follow
+        // chrome re-skinning. `term_fg` reads `cfg.foreground` directly
+        // (not `on_surface`) so a user override of `ui_on_surface` does
+        // not change the terminal text colour.
+        let term_bg = ThemeConfig::parse_color(cfg.background.as_ref());
+        let term_fg = ThemeConfig::parse_color(cfg.foreground.as_ref());
+
         let accent = ThemeConfig::parse_color(cfg.accent.as_ref());
-        let err = ThemeConfig::parse_color(cfg.red.as_ref());
-        let warn = ThemeConfig::parse_color(cfg.yellow.as_ref());
-        let ok = ThemeConfig::parse_color(cfg.green.as_ref());
-        let info = ThemeConfig::parse_color(cfg.blue.as_ref());
+        // `border_active` keeps driving terminal pane focus indication —
+        // that's where preset hue belongs (theme identity on the focused
+        // pane edge). Chrome panel borders use `border_chrome` instead.
         let border_a = ThemeConfig::parse_color(cfg.border_active.as_ref());
-        let border_i = ThemeConfig::parse_color(cfg.border_inactive.as_ref());
         let statusbar_bg = ThemeConfig::parse_color(cfg.statusbar_background.as_ref());
         let broadcast = ThemeConfig::parse_color(cfg.mode_broadcast.as_ref());
 
@@ -196,12 +213,12 @@ impl ResolvedTheme {
             warning: warn,
             error: err,
             info,
-            border: border_i,
+            border: border_chrome,
             border_focus: border_a,
             statusbar_bg,
             broadcast,
-            term_fg: on_surface,
-            term_bg: bg_term,
+            term_fg,
+            term_bg,
             space: SpaceScale::default(),
             radius: RadiusScale::default(),
             typography: TypeScale::default(),
@@ -325,23 +342,128 @@ mod tests {
         );
     }
 
+    /// Chrome surface, text, muted text and border colours are
+    /// preset-independent (ciri-built-in warm-neutral defaults).
+    /// Iterate every preset to catch anyone reintroducing a per-preset
+    /// chrome colour. Status hues (error/warning/success/info) and
+    /// `border_focus` (terminal-pane focus indicator) are intentionally
+    /// excluded — those still ride along with the preset.
     #[test]
-    fn from_config_reads_preset_colors() {
+    fn chrome_palette_is_preset_independent() {
+        const EXPECTED_SURFACE: &str = "#1A1816";
+        const EXPECTED_ON_SURFACE: &str = "#E2DCD6";
+        const EXPECTED_ON_SURFACE_MUTED: &str = "#8E8780";
+        const EXPECTED_BORDER: &str = "#2A2622";
+        for preset in [
+            "ciri_dark",
+            "one_dark",
+            "catppuccin_mocha",
+            "tokyo_night",
+            "dracula",
+            "nord",
+            "gruvbox_dark",
+            "ghostty",
+        ] {
+            let mut cfg = ciri_config::theme::ThemeConfig {
+                preset: preset.into(),
+                ..Default::default()
+            };
+            cfg.resolve_preset();
+            let theme = ResolvedTheme::from_config(&cfg);
+            assert_eq!(
+                theme.surface,
+                ThemeConfig::parse_color(EXPECTED_SURFACE),
+                "{preset}: chrome surface must not follow preset",
+            );
+            assert_eq!(
+                theme.on_surface,
+                ThemeConfig::parse_color(EXPECTED_ON_SURFACE),
+                "{preset}: chrome on_surface must not follow preset",
+            );
+            assert_eq!(
+                theme.on_surface_muted,
+                ThemeConfig::parse_color(EXPECTED_ON_SURFACE_MUTED),
+                "{preset}: chrome on_surface_muted must not follow preset",
+            );
+            assert_eq!(
+                theme.border,
+                ThemeConfig::parse_color(EXPECTED_BORDER),
+                "{preset}: chrome border must not follow preset",
+            );
+        }
+    }
+
+    /// `border_focus` (terminal-pane focus colour) intentionally still
+    /// follows the preset — it represents theme identity on the
+    /// focused-pane edge. Catches anyone broadening the
+    /// preset-independent rule onto pane focus.
+    #[test]
+    fn pane_focus_border_still_follows_preset() {
         let mut cfg = ciri_config::theme::ThemeConfig {
             preset: "dracula".into(),
             ..Default::default()
         };
         cfg.resolve_preset();
         let theme = ResolvedTheme::from_config(&cfg);
-        // Dracula ui_background "#282A36" → sRGB-normalised dark
-        // colour. Summing channels stays well under 1.0 for any dark
-        // theme, which is enough to assert we actually loaded the
-        // preset rather than hitting the magenta parse fallback.
-        let lum = theme.surface[0] + theme.surface[1] + theme.surface[2];
-        assert!(
-            lum < 1.0,
-            "surface should be dark in dracula: {:?}",
-            theme.surface
+        assert_eq!(
+            theme.border_focus,
+            ThemeConfig::parse_color(cfg.border_active.as_ref()),
+            "pane-focus border should ride along with preset border_active",
+        );
+    }
+
+    /// Stage 0.1 regression: chrome surface must not be the terminal
+    /// cell background. Catches anyone re-introducing the old
+    /// `ResolvedTheme::from_config` line that used `cfg.background` for
+    /// `surface`. Uses `ciri_dark` because its terminal bg (`#1C1B1A`)
+    /// and chrome surface (`#1A1816`) are very close in luminance —
+    /// asserting inequality on the array still works because the warm
+    /// tint differs from the cool terminal-grey by a perceptible
+    /// channel-by-channel offset.
+    #[test]
+    fn surface_decoupled_from_terminal_bg() {
+        let mut cfg = ciri_config::theme::ThemeConfig {
+            preset: "ciri_dark".into(),
+            ..Default::default()
+        };
+        cfg.resolve_preset();
+        let theme = ResolvedTheme::from_config(&cfg);
+        assert_ne!(
+            theme.surface, theme.term_bg,
+            "chrome surface must not collapse onto terminal bg: surface={:?} term_bg={:?}",
+            theme.surface, theme.term_bg,
+        );
+    }
+
+    /// Explicit `ui_surface` overrides ciri's built-in default. Pin the
+    /// fallback-chain order so future refactors can't silently flip it.
+    #[test]
+    fn ui_surface_override_wins_over_default() {
+        let mut cfg = ciri_config::theme::ThemeConfig {
+            preset: "ciri_dark".into(),
+            ui_surface: "#112233".to_string().into(),
+            ..Default::default()
+        };
+        cfg.resolve_preset();
+        let theme = ResolvedTheme::from_config(&cfg);
+        assert_eq!(theme.surface, ThemeConfig::parse_color("#112233"));
+    }
+
+    /// Status hues still ride along with the preset's ANSI palette.
+    /// Catches anyone broadening the "preset-independent" rule from
+    /// chrome surface/text to status colours.
+    #[test]
+    fn status_hues_still_follow_preset() {
+        let mut cfg = ciri_config::theme::ThemeConfig {
+            preset: "dracula".into(),
+            ..Default::default()
+        };
+        cfg.resolve_preset();
+        let theme = ResolvedTheme::from_config(&cfg);
+        assert_eq!(
+            theme.error,
+            ThemeConfig::parse_color(cfg.red.as_ref()),
+            "chrome error should fall back to preset ANSI red"
         );
     }
 }

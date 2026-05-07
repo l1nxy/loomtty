@@ -114,10 +114,24 @@ impl TabBarComponent {
         }
     }
 
+    /// Effective inter-tab gap height. Snapped down by 1px when
+    /// `(tab_gap - hairline_thickness)` is odd, so the per-side padding
+    /// around the separator hairline is always equal in integer pixels —
+    /// taffy's `justify_center` rounds 2.5 → 3 which made 6px gaps render
+    /// as 3-above + 1-line + 2-below, visibly off-centre.
+    fn separator_gap_h(&self) -> f32 {
+        if self.tab_gap <= 0.0 {
+            return 0.0;
+        }
+        let line_h = tokens::BORDER_THIN;
+        let pad = ((self.tab_gap - line_h) * 0.5).floor().max(0.0);
+        pad * 2.0 + line_h
+    }
+
     /// Row rect for the nth tab inside the bar's rect. Clipped at the
     /// bottom if the bar would overflow (callers should skip empty rects).
     fn row_rect(&self, rect: UiRect, idx: usize) -> UiRect {
-        let stride = self.tab_height + self.tab_gap;
+        let stride = self.tab_height + self.separator_gap_h();
         let y = rect.y + idx as f32 * stride;
         let max_bottom = rect.bottom();
         let h = (self.tab_height).min((max_bottom - y).max(0.0));
@@ -132,7 +146,7 @@ impl TabBarComponent {
                 break;
             }
             if idx > 0 && self.tab_gap > 0.0 {
-                rows = rows.child(div().w(rect.w).h(self.tab_gap));
+                rows = rows.child(div().w(rect.w).h(self.separator_gap_h()));
             }
             rows = rows.child(
                 div()
@@ -192,10 +206,11 @@ impl TabBarComponent {
             }
 
             if idx > 0 && self.tab_gap > 0.0 {
+                let gap_h = self.separator_gap_h();
                 rows = rows.child(
                     div()
                         .w(content_w)
-                        .h(self.tab_gap)
+                        .h(gap_h)
                         .flex_col()
                         .justify_center()
                         .child(

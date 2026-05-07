@@ -32,6 +32,26 @@ fn row_rect_top_of_bar() {
 }
 
 #[test]
+fn separator_gap_snaps_to_even_parity_for_symmetric_hairline() {
+    // tab_gap=6, BORDER_THIN=1: free space = 5 (odd). taffy's
+    // `justify_center` would render the hairline at 3-above + 1-line +
+    // 2-below — visibly off-centre. `separator_gap_h` snaps the gap
+    // down by 1 so the per-side padding is equal in integer pixels.
+    let bar = UiRect::new(0.0, 0.0, 200.0, 600.0);
+    let bar_component = test_component(Vec::new(), bar, 28.0, 6.0, TabBarPosition::Left);
+    let gap = bar_component.separator_gap_h();
+    assert_eq!(gap, 5.0, "6/1 parity mismatch: gap should snap from 6 to 5");
+
+    // Even-parity case: tab_gap=5, BORDER_THIN=1 → free=4, half=2 → no snap.
+    let even = test_component(Vec::new(), bar, 28.0, 5.0, TabBarPosition::Left);
+    assert_eq!(even.separator_gap_h(), 5.0);
+
+    // Zero gap → zero (no separator at all).
+    let zero = test_component(Vec::new(), bar, 28.0, 0.0, TabBarPosition::Left);
+    assert_eq!(zero.separator_gap_h(), 0.0);
+}
+
+#[test]
 fn row_rect_clips_to_bottom_edge() {
     // Bar height 50, tab_height 28: row 0 = 0..28, row 1 = 28..50
     // (clipped from 28..56 to 28..50 = 22 tall).

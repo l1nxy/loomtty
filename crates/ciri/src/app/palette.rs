@@ -4,14 +4,32 @@ use super::{App, PaletteEntryKind};
 use crate::connection::RemoteQueryResult;
 
 impl App {
-    /// Delegate: open command palette.
+    /// Delegate: open command palette. Closes every other modal-ish
+    /// overlay first so the palette cleanly owns input focus and the
+    /// layered z-order stays unambiguous (Overlay-tier popups must not
+    /// stack with Base-tier modals — `UiFrame::click` would dispatch
+    /// the click to whichever the dispatch table reaches first, and
+    /// either choice would feel wrong to the user).
     pub fn open_command_palette(&mut self) {
+        self.dismiss_other_modals_for_palette();
         self.core.open_command_palette();
     }
 
-    /// Delegate: open session palette.
+    /// Delegate: open session palette. Same close-others discipline as
+    /// `open_command_palette`.
     pub fn open_session_palette(&mut self) {
+        self.dismiss_other_modals_for_palette();
         self.core.open_session_palette();
+    }
+
+    fn dismiss_other_modals_for_palette(&mut self) {
+        self.core.settings_panel_visible = false;
+        self.core.context_menu.visible = false;
+        // Paste confirmation is a Base-tier modal; if a palette opens
+        // over it the click and hover order route to the palette and
+        // the dialog becomes unreachable. Drop it here so the user
+        // doesn't end up locked out by an over-stacked modal.
+        self.core.pending_paste = None;
     }
 
     /// Execute a palette entry — some entries require shell access (clipboard, window, connection).

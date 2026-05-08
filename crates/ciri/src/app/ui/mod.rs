@@ -485,6 +485,55 @@ mod tests {
         assert!(!app.core.settings_panel_visible, "second toggle closes");
     }
 
+    /// `ToggleCommandPalette` (and `ToggleSessionPalette`) is the
+    /// inverse direction of the previous test — opening a palette must
+    /// close any Base-tier modal underneath, otherwise `UiFrame::click`
+    /// dispatches mouse events to the visually-occluded modal sitting
+    /// behind the palette.
+    #[test]
+    fn toggle_command_palette_closes_base_modals() {
+        use ciri_input::action::Action;
+
+        let mut app = make_app();
+        app.core.settings_panel_visible = true;
+        app.core.context_menu = ContextMenu {
+            visible: true,
+            x: 0.0,
+            y: 0.0,
+            target_pane_id: None,
+            items: vec![],
+        };
+        app.core.pending_paste = Some(PendingPaste {
+            info: PasteInfo {
+                text: "hello".into(),
+                size: 5,
+                line_count: 1,
+            },
+            preview: "hello".into(),
+            target: super::super::PendingPasteTarget::Terminal,
+        });
+
+        app.handle_action(Action::ToggleCommandPalette);
+
+        assert!(
+            app.core.command_palette.is_some(),
+            "ToggleCommandPalette opens the palette",
+        );
+        assert!(
+            !app.core.settings_panel_visible,
+            "settings panel must close when palette opens",
+        );
+        assert!(
+            !app.core.context_menu.visible,
+            "context_menu must close when palette opens",
+        );
+        assert!(
+            app.core.pending_paste.is_none(),
+            "paste dialog must close when palette opens (otherwise palette \
+             would route clicks past the dialog and lock the user out)",
+        );
+    }
+
     /// `NudgePaneOpacity` clamps at the documented floor (0.05) — fully
     /// transparent panes are intentionally disallowed via the panel
     /// (users wanting opacity 0 edit settings.toml directly).

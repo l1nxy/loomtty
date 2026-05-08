@@ -897,6 +897,17 @@ impl GlSdfPipeline {
 
         gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, count as i32);
 
+        // Restore the canonical zero-offset state on the VAO before
+        // unbinding. `vertex_attrib_pointer` writes into VAO state,
+        // and a non-zero `base_offset` from this call would otherwise
+        // persist into any future caller that bound the VAO without
+        // re-running `setup_sdf_vertex_attribs`. Today the layered
+        // pass always re-runs it on the next frame's Base call, but
+        // any new code path skipping that setup would silently read
+        // from the wrong byte offset.
+        if base_offset != 0 {
+            setup_sdf_vertex_attribs(gl, 0);
+        }
         gl.bind_vertex_array(None);
         gl.use_program(None);
     }

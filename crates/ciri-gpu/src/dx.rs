@@ -1438,6 +1438,14 @@ impl DxSdfPipeline {
     /// before Overlay SDF + Overlay glyphs in submission order. Without
     /// this split the GPU pipeline's natural "all rects → all glyphs"
     /// order lets Base glyphs bleed through Overlay backgrounds.
+    ///
+    /// D3D11's `StartInstanceLocation` (the 4th param of
+    /// `DrawInstanced`) only offsets `SV_InstanceID`, NOT the IA's
+    /// per-instance buffer reads — those still start at the byte offset
+    /// passed to `IASetVertexBuffers`. So to render `[start..start+count)`
+    /// we set that byte offset, then issue a draw with
+    /// `StartInstanceLocation = 0` for the slice. Same pattern the
+    /// glyph pipeline uses for batched chrome runs.
     unsafe fn draw_range(&self, ctx: &ID3D11DeviceContext, start: usize, count: usize) {
         if count == 0 {
             return;
@@ -1450,7 +1458,7 @@ impl DxSdfPipeline {
         ctx.IASetInputLayout(Some(&self.input_layout));
         ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
         let stride = SdfRect::SIZE as u32;
-        let offset = 0u32;
+        let offset = (start * SdfRect::SIZE) as u32;
         ctx.IASetVertexBuffers(
             0,
             1,
@@ -1461,7 +1469,7 @@ impl DxSdfPipeline {
         ctx.VSSetShader(Some(&self.vs), None);
         ctx.PSSetShader(Some(&self.ps), None);
         ctx.VSSetConstantBuffers(0, Some(&[Some(self.cbuffer.clone())]));
-        ctx.DrawInstanced(4, count as u32, 0, start as u32);
+        ctx.DrawInstanced(4, count as u32, 0, 0);
     }
 }
 

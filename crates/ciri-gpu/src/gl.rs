@@ -12,9 +12,10 @@ use ciri_render::rect::{PaneRectRange, Rect};
 use ciri_render::sdf_rect::SdfRect;
 use glow::HasContext;
 
-/// Upper bound on SDF chrome rects per frame. Mirrors `MAX_SDF_RECTS` in
-/// the blade backend so both backends drop the same tail under a flood.
-const MAX_SDF_RECTS: usize = 256;
+/// Upper bound on SDF chrome rects per frame. See
+/// `blade::MAX_SDF_RECTS` for rationale; kept identical so all
+/// backends behave the same under load.
+const MAX_SDF_RECTS: usize = 1024;
 #[cfg(not(target_os = "macos"))]
 use glutin::config::ConfigTemplateBuilder;
 use glutin::context::PossiblyCurrentContext;
@@ -853,6 +854,13 @@ impl GlSdfPipeline {
     unsafe fn upload(&self, gl: &glow::Context, rects: &[SdfRect]) {
         if rects.is_empty() {
             return;
+        }
+        if rects.len() > self.max_rects {
+            log::warn!(
+                "SDF chrome overflow: {} rects > {} cap; tail (incl. Overlay) dropped",
+                rects.len(),
+                self.max_rects,
+            );
         }
         let count = rects.len().min(self.max_rects);
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instance_vbo));

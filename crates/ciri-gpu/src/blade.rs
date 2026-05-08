@@ -22,7 +22,15 @@ use ciri_render::sdf_rect::SdfRect;
 /// Upper bound on SDF chrome rects per frame. Chrome typically has
 /// ≤ 20 — 256 gives headroom for plugin UIs and modal stacks. If this is
 /// hit the tail is dropped; matches the existing `RectPipeline` behaviour.
-const MAX_SDF_RECTS: usize = 256;
+/// Per-frame SDF chrome rect capacity. Sized for the layered chrome
+/// path: pane focus rings + base chrome (top_bar / hints / settings /
+/// dialogs) + overlay chrome (palette / context_menu) + transient
+/// overlays. 1024 is roughly 4× the worst observed real workload — if
+/// `base_sdf_end` ever exceeded `MAX_SDF_RECTS`, the upload would
+/// truncate, and `draw_range`'s `start >= max` guard would drop the
+/// entire Overlay pass silently. The `upload` helpers `log::warn` on
+/// truncation so a hit is visible in logs.
+const MAX_SDF_RECTS: usize = 1024;
 /// Upper bound on distinct `PaneRectRange` uniform slots per frame. One slot
 /// per draw range, not per rect — # of ranges is bounded by # of panes plus a
 /// small constant for chrome/overlay layers. Decoupled from `max_rects` so
@@ -388,6 +396,16 @@ impl SdfPipeline {
     fn upload(&self, rects: &[SdfRect], viewport_w: f32, viewport_h: f32) {
         if rects.is_empty() {
             return;
+        }
+        if rects.len() > self.max_rects {
+            // Truncation hides Overlay chrome silently because layered
+            // `draw_range` short-circuits when `start >= max_rects`.
+            // Bump `MAX_SDF_RECTS` if this fires in real use.
+            log::warn!(
+                "SDF chrome overflow: {} rects > {} cap; tail (incl. Overlay) dropped",
+                rects.len(),
+                self.max_rects,
+            );
         }
         let count = rects.len().min(self.max_rects);
 

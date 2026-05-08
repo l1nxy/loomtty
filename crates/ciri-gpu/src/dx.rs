@@ -11,7 +11,9 @@ use ciri_render::rect::{PaneRectRange, Rect};
 use ciri_render::sdf_rect::SdfRect;
 
 /// Upper bound on SDF chrome rects per frame. Mirrors the blade backend.
-const MAX_SDF_RECTS: usize = 256;
+/// Per-frame SDF chrome rect capacity. See `blade::MAX_SDF_RECTS` for
+/// rationale; kept identical so all backends behave the same.
+const MAX_SDF_RECTS: usize = 1024;
 use std::sync::Arc;
 use winit::window::Window;
 
@@ -1402,6 +1404,13 @@ impl DxSdfPipeline {
     ) {
         if rects.is_empty() {
             return;
+        }
+        if rects.len() > self.max_rects {
+            log::warn!(
+                "SDF chrome overflow: {} rects > {} cap; tail (incl. Overlay) dropped",
+                rects.len(),
+                self.max_rects,
+            );
         }
         let count = rects.len().min(self.max_rects);
 

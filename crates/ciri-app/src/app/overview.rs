@@ -29,6 +29,12 @@ impl AppModel {
             self.settings_panel_visible = false;
             self.command_palette = None;
             self.pending_paste = None;
+            // Search bar lives on the transient layer and isn't
+            // suppressed by modal gates, so leaving `search_state`
+            // active alongside overview leaves both widgets visible
+            // AND keyboard-routable simultaneously. Clear it the same
+            // way `ToggleSettings` does in `action.rs`.
+            self.search_state = None;
             self.refresh_overview_zoom();
             let center = match self.config.layout.center_focused_column {
                 ciri_config::config::CenterStrategy::Always => {

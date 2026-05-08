@@ -511,6 +511,7 @@ mod tests {
     /// behind the palette.
     #[test]
     fn toggle_command_palette_closes_base_modals() {
+        use ciri_app::app::SearchState;
         use ciri_input::action::Action;
 
         let mut app = make_app();
@@ -530,6 +531,13 @@ mod tests {
             },
             preview: "hello".into(),
             target: super::super::PendingPasteTarget::Terminal,
+        });
+        app.core.search_state = Some(SearchState {
+            query: "abc".into(),
+            matches: Vec::new(),
+            current_match_idx: 0,
+            pane_id: 0,
+            original_scroll_offset: 0,
         });
 
         app.handle_action(Action::ToggleCommandPalette);
@@ -551,6 +559,10 @@ mod tests {
             "paste dialog must close when palette opens (otherwise palette \
              would route clicks past the dialog and lock the user out)",
         );
+        assert!(
+            app.core.search_state.is_none(),
+            "search bar must close when palette opens",
+        );
     }
 
     /// Entering overview must dismiss every modal-ish overlay,
@@ -561,6 +573,7 @@ mod tests {
     /// closes it with Esc.
     #[test]
     fn toggle_overview_closes_base_modals() {
+        use ciri_app::app::SearchState;
         use ciri_input::action::Action;
 
         let mut app = make_app();
@@ -581,6 +594,16 @@ mod tests {
             preview: "x".into(),
             target: super::super::PendingPasteTarget::Terminal,
         });
+        // Search lives on the transient layer (not modal-gated), so
+        // overview entry must clear it explicitly or both widgets stay
+        // visible AND keyboard-routable simultaneously.
+        app.core.search_state = Some(SearchState {
+            query: "abc".into(),
+            matches: Vec::new(),
+            current_match_idx: 0,
+            pane_id: 0,
+            original_scroll_offset: 0,
+        });
 
         app.handle_action(Action::ToggleOverview);
 
@@ -588,6 +611,7 @@ mod tests {
         assert!(!app.core.settings_panel_visible);
         assert!(!app.core.context_menu.visible);
         assert!(app.core.pending_paste.is_none());
+        assert!(app.core.search_state.is_none());
     }
 
     /// Mirror of `toggle_command_palette_closes_base_modals` for the
@@ -597,6 +621,7 @@ mod tests {
     /// against future refactors that diverge the two entry points.
     #[test]
     fn toggle_session_palette_closes_base_modals() {
+        use ciri_app::app::SearchState;
         use ciri_input::action::Action;
 
         let mut app = make_app();
@@ -617,6 +642,13 @@ mod tests {
             preview: "hello".into(),
             target: super::super::PendingPasteTarget::Terminal,
         });
+        app.core.search_state = Some(SearchState {
+            query: "abc".into(),
+            matches: Vec::new(),
+            current_match_idx: 0,
+            pane_id: 0,
+            original_scroll_offset: 0,
+        });
 
         app.handle_action(Action::ToggleSessionPalette);
 
@@ -624,6 +656,7 @@ mod tests {
         assert!(!app.core.settings_panel_visible);
         assert!(!app.core.context_menu.visible);
         assert!(app.core.pending_paste.is_none());
+        assert!(app.core.search_state.is_none());
     }
 
     /// `NudgePaneOpacity` clamps at the documented floor (0.05) — fully

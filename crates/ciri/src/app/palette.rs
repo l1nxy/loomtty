@@ -30,6 +30,11 @@ impl App {
         // the dialog becomes unreachable. Drop it here so the user
         // doesn't end up locked out by an over-stacked modal.
         self.core.pending_paste = None;
+        // Search bar is transient-layer and isn't suppressed by modal
+        // gates, so opening a palette over an active pane-search would
+        // leave both widgets visible and competing for keyboard input.
+        // `ToggleSettings` already clears it for the same reason.
+        self.core.search_state = None;
     }
 
     /// Execute a palette entry — some entries require shell access (clipboard, window, connection).

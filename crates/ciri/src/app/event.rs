@@ -592,12 +592,23 @@ impl ApplicationHandler for App {
                 self.window_focused = focused;
                 self.send(ClientMessage::FocusChange { focused });
                 if !focused {
+                    // Dismiss every modal-ish overlay on focus loss.
+                    // Without this, alt-tabbing away leaves the
+                    // overlay intercepting keyboard input on return:
+                    // first keystrokes after re-focus go to the
+                    // palette query / search bar / paste dialog
+                    // before the user notices it's still up.
+                    // Search uses the restore-scroll helper so the
+                    // pane's pre-search position comes back; drag /
+                    // selection state is also dropped because the
+                    // mouse-up that would normally finalise it may
+                    // happen in another window.
                     self.core.context_menu.visible = false;
-                    // Modal-ish overlays follow the OS convention of
-                    // dismissing on window deactivation. Without this,
-                    // alt-tabbing away leaves the panel intercepting
-                    // keyboard input on return.
                     self.core.settings_panel_visible = false;
+                    self.core.command_palette = None;
+                    self.core.pending_paste = None;
+                    self.close_search_restore_scroll();
+                    self.cancel_pending_mouse_interactions();
                 }
             }
 

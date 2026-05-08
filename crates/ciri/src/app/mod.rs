@@ -1621,6 +1621,29 @@ impl App {
     }
 
     pub fn mark_disconnected_for_reconnect(&mut self, reason: ciri_app::app::DisconnectReason) {
+        // Tear down any modal that depends on a live server before
+        // signalling disconnect:
+        //   * paste_dialog → Confirm sends `Input` over `server_tx`
+        //     which is about to become None, silently dropping the
+        //     paste; close it explicitly.
+        //   * command_palette in remote-input mode → keystrokes route
+        //     into the prompt buffer over the reconnecting banner,
+        //     where the user can't see they're typing into a dead
+        //     dialog. Dismiss.
+        //   * search_state → after reconnect the layout may differ;
+        //     `search.pane_id` could reference a missing pane.
+        //     Restore the original scroll while the old grid is
+        //     still live, then drop the state.
+        //   * context_menu / settings_panel → no server dependency
+        //     but neither are useful while disconnected.
+        // App-level drag/selection state goes too, since mouse-up
+        // may not reach us before reconnect repopulates the layout.
+        self.core.command_palette = None;
+        self.core.pending_paste = None;
+        self.core.context_menu.visible = false;
+        self.core.settings_panel_visible = false;
+        self.close_search_restore_scroll();
+        self.cancel_pending_mouse_interactions();
         self.core.mark_disconnected_for_reconnect(reason);
         // The IO thread is gone — its cancel endpoint has no listener.
         self.connection_cancel = None;

@@ -1432,11 +1432,21 @@ impl DxSdfPipeline {
         ctx.Unmap(&self.instance_buffer, 0);
     }
 
-    unsafe fn draw(&self, ctx: &ID3D11DeviceContext, count: usize) {
+    /// Draw a contiguous slice `[start..start + count)` of the
+    /// uploaded instance buffer. Mirrors blade's `draw_range`: needed
+    /// by the layered chrome pass so Base SDF + Base glyphs land
+    /// before Overlay SDF + Overlay glyphs in submission order. Without
+    /// this split the GPU pipeline's natural "all rects → all glyphs"
+    /// order lets Base glyphs bleed through Overlay backgrounds.
+    unsafe fn draw_range(&self, ctx: &ID3D11DeviceContext, start: usize, count: usize) {
         if count == 0 {
             return;
         }
-        let count = count.min(self.max_rects);
+        let max = self.max_rects;
+        if start >= max {
+            return;
+        }
+        let count = count.min(max - start);
         ctx.IASetInputLayout(Some(&self.input_layout));
         ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
         let stride = SdfRect::SIZE as u32;
@@ -1451,7 +1461,7 @@ impl DxSdfPipeline {
         ctx.VSSetShader(Some(&self.vs), None);
         ctx.PSSetShader(Some(&self.ps), None);
         ctx.VSSetConstantBuffers(0, Some(&[Some(self.cbuffer.clone())]));
-        ctx.DrawInstanced(4, count as u32, 0, 0);
+        ctx.DrawInstanced(4, count as u32, 0, start as u32);
     }
 }
 
@@ -2169,38 +2179,65 @@ impl Renderer {
                     .draw_ranges(&self.ctx, &overlay_bg_ranges, vw, vh);
             }
 
-            // 7b. SDF chrome (rounded / shadow / border). Drawn after flat
-            //     overlay bgs and before overlay glyphs so chrome labels
-            //     paint crisply on top of their rounded panel.
-            if !scene.sdf_rects.is_empty() {
+            // 7b. Layered chrome: two passes (Base then Overlay), each
+            //     a (SDF rects → glyphs) pair so Overlay rects occlude
+            //     Base glyphs (settings_panel labels under a popup,
+            //     etc.). See blade.rs for the design rationale; the DX
+            //     path mirrors it exactly so all backends behave the
+            //     same w.r.t. popup z-order.
+            let total_sdf = scene.sdf_rects.len();
+            let base_sdf_end = scene.chrome_base_sdf_end.min(total_sdf);
+            let alpha_total = scene.glyphs.len();
+            let color_total = scene.color_glyphs.len();
+            let base_alpha_end = scene.chrome_base_alpha_glyph_end.min(alpha_total);
+            let base_color_end = scene.chrome_base_color_glyph_end.min(color_total);
+
+            if total_sdf > 0 {
                 self.ctx.RSSetScissorRects(Some(&[full_rect]));
                 self.sdf.upload(&self.ctx, scene.sdf_rects, vw, vh);
-                // C4 verified: DxSdfPipeline consumes the same SdfRect fields
-                // and draw order as GL (focus rings before cached/transient chrome).
-                self.sdf.draw(&self.ctx, scene.sdf_rects.len());
             }
 
-            // 8. Overlay glyphs (no re-upload, just draw remaining range).
-            // Zero pane_size hits the helper short-circuit (no clipping)
-            // — once C5 wires the uniforms into the DX path.
-            let overlay_alpha = PaneGlyphRange {
-                start: scene.pane_glyph_end as u32,
-                count: (scene.glyphs.len() - scene.pane_glyph_end) as u32,
+            let make_glyph_range = |start: usize, end: usize| PaneGlyphRange {
+                start: start as u32,
+                count: end.saturating_sub(start) as u32,
                 scissor: (0, 0, self.width, self.height),
                 ..PaneGlyphRange::default()
             };
-            let overlay_color = PaneGlyphRange {
-                start: scene.pane_color_glyph_end as u32,
-                count: (scene.color_glyphs.len() - scene.pane_color_glyph_end) as u32,
-                scissor: (0, 0, self.width, self.height),
-                ..PaneGlyphRange::default()
-            };
-            atlas_gpu
-                .alpha
-                .draw_batches(&self.ctx, alpha_count, &vp, &[overlay_alpha]);
-            atlas_gpu
-                .color
-                .draw_batches(&self.ctx, color_count, &vp, &[overlay_color]);
+
+            // ── Base pass (includes pane focus rings, see blade.rs) ──
+            if base_sdf_end > 0 {
+                self.sdf.draw_range(&self.ctx, 0, base_sdf_end);
+            }
+            atlas_gpu.alpha.draw_batches(
+                &self.ctx,
+                alpha_count,
+                &vp,
+                &[make_glyph_range(scene.pane_glyph_end, base_alpha_end)],
+            );
+            atlas_gpu.color.draw_batches(
+                &self.ctx,
+                color_count,
+                &vp,
+                &[make_glyph_range(scene.pane_color_glyph_end, base_color_end)],
+            );
+
+            // ── Overlay + transient pass ─────────────────────────────
+            if base_sdf_end < total_sdf {
+                self.sdf
+                    .draw_range(&self.ctx, base_sdf_end, total_sdf - base_sdf_end);
+            }
+            atlas_gpu.alpha.draw_batches(
+                &self.ctx,
+                alpha_count,
+                &vp,
+                &[make_glyph_range(base_alpha_end, alpha_total)],
+            );
+            atlas_gpu.color.draw_batches(
+                &self.ctx,
+                color_count,
+                &vp,
+                &[make_glyph_range(base_color_end, color_total)],
+            );
             if let Some(profiler) = profiler.as_mut() {
                 profiler.record_draw(draw_start);
             }

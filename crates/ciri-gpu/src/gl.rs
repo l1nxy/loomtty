@@ -861,9 +861,17 @@ impl GlSdfPipeline {
         gl.bind_buffer(glow::ARRAY_BUFFER, None);
     }
 
-    unsafe fn draw(
+    /// Draw a contiguous slice `[start..start + count)` of the
+    /// uploaded instance buffer. Mirrors blade / dx `draw_range`:
+    /// needed by the layered chrome pass so Base SDF + Base glyphs land
+    /// before Overlay SDF + Overlay glyphs in submission order.
+    /// Without first-instance support in pre-4.2 GL, we shift the base
+    /// vertex-attrib pointer by `start * SdfRect::SIZE` bytes — same
+    /// trick the glyph pipeline already uses for batched chrome runs.
+    unsafe fn draw_range(
         &self,
         gl: &glow::Context,
+        start: usize,
         count: usize,
         viewport_w: f32,
         viewport_h: f32,
@@ -872,7 +880,11 @@ impl GlSdfPipeline {
         if count == 0 {
             return;
         }
-        let count = count.min(self.max_rects);
+        let max = self.max_rects;
+        if start >= max {
+            return;
+        }
+        let count = count.min(max - start);
         gl.use_program(Some(self.program));
         gl.uniform_2_f32(Some(&self.loc_viewport), viewport_w, viewport_h);
         if let Some(ref loc) = self.loc_use_linear_blending {
@@ -880,7 +892,8 @@ impl GlSdfPipeline {
         }
         gl.bind_vertex_array(Some(self.vao));
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instance_vbo));
-        setup_sdf_vertex_attribs(gl, 0);
+        let base_offset = (start * SdfRect::SIZE) as i32;
+        setup_sdf_vertex_attribs(gl, base_offset);
 
         gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, count as i32);
 
@@ -1635,33 +1648,72 @@ impl Renderer {
             //     like the command palette and context menu. Drawn after flat
             //     overlay bgs and before overlay glyphs so the panel sits on
             //     top of pane text and labels paint crisply on top of it.
-            if !scene.sdf_rects.is_empty() {
+            // 7b. Layered chrome: two passes (Base then Overlay), each
+            //     a (SDF rects → glyphs) pair so Overlay rects occlude
+            //     Base glyphs (settings_panel labels under a popup,
+            //     etc.). See blade.rs for the design rationale; the GL
+            //     path mirrors it exactly so all backends behave the
+            //     same w.r.t. popup z-order.
+            let total_sdf = scene.sdf_rects.len();
+            let base_sdf_end = scene.chrome_base_sdf_end.min(total_sdf);
+            let alpha_total = scene.glyphs.len();
+            let color_total = scene.color_glyphs.len();
+            let base_alpha_end = scene.chrome_base_alpha_glyph_end.min(alpha_total);
+            let base_color_end = scene.chrome_base_color_glyph_end.min(color_total);
+
+            if total_sdf > 0 {
                 self.sdf.upload(&self.gl, scene.sdf_rects);
-                self.sdf.draw(&self.gl, scene.sdf_rects.len(), vw, vh, lb);
             }
 
-            // 8. Overlay glyphs (no re-upload, just draw remaining range).
-            let overlay_alpha = PaneGlyphRange {
-                start: scene.pane_glyph_end as u32,
-                count: scene.glyphs.len().saturating_sub(scene.pane_glyph_end) as u32,
+            let make_glyph_range = |start: usize, end: usize| PaneGlyphRange {
+                start: start as u32,
+                count: end.saturating_sub(start) as u32,
                 scissor: (0, 0, self.width, self.height),
                 ..PaneGlyphRange::default()
             };
-            let overlay_color = PaneGlyphRange {
-                start: scene.pane_color_glyph_end as u32,
-                count: scene
-                    .color_glyphs
-                    .len()
-                    .saturating_sub(scene.pane_color_glyph_end) as u32,
-                scissor: (0, 0, self.width, self.height),
-                ..PaneGlyphRange::default()
-            };
-            atlas_gpu
-                .alpha
-                .draw_batches(&self.gl, alpha_count, &vp, &[overlay_alpha], lb, lc);
-            atlas_gpu
-                .color
-                .draw_batches(&self.gl, color_count, &vp, &[overlay_color], lb, lc);
+
+            // ── Base pass (includes pane focus rings, see blade.rs) ──
+            if base_sdf_end > 0 {
+                self.sdf.draw_range(&self.gl, 0, base_sdf_end, vw, vh, lb);
+            }
+            atlas_gpu.alpha.draw_batches(
+                &self.gl,
+                alpha_count,
+                &vp,
+                &[make_glyph_range(scene.pane_glyph_end, base_alpha_end)],
+                lb,
+                lc,
+            );
+            atlas_gpu.color.draw_batches(
+                &self.gl,
+                color_count,
+                &vp,
+                &[make_glyph_range(scene.pane_color_glyph_end, base_color_end)],
+                lb,
+                lc,
+            );
+
+            // ── Overlay + transient pass ─────────────────────────────
+            if base_sdf_end < total_sdf {
+                self.sdf
+                    .draw_range(&self.gl, base_sdf_end, total_sdf - base_sdf_end, vw, vh, lb);
+            }
+            atlas_gpu.alpha.draw_batches(
+                &self.gl,
+                alpha_count,
+                &vp,
+                &[make_glyph_range(base_alpha_end, alpha_total)],
+                lb,
+                lc,
+            );
+            atlas_gpu.color.draw_batches(
+                &self.gl,
+                color_count,
+                &vp,
+                &[make_glyph_range(base_color_end, color_total)],
+                lb,
+                lc,
+            );
             if let Some(profiler) = profiler.as_mut() {
                 profiler.record_draw(draw_start);
             }

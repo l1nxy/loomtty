@@ -337,11 +337,18 @@ impl SettingsPanelComponent {
                     .child(control),
             )
             .child(
-                // Description is content-flow, not absolutely sized —
-                // wraps under the label, never under the control. Kept
-                // muted so the row's primary visual mass stays on the
-                // top line.
-                text(description.to_string()).color(theme.on_surface_muted),
+                // Description sits beneath, kept muted so the row's
+                // primary visual mass stays on the top line. ciri-ui's
+                // text engine doesn't wrap — a long description at the
+                // 640 px minimum panel width with a proportional UI
+                // font would otherwise spill past the panel body
+                // (label "Colour scheme for the chrome and terminal
+                // palette." rendered ≈ 720 px at 14 px). Pre-truncate
+                // against the row's content_w so the rendered string
+                // always fits, using the same shaper-backed measure
+                // helper paint sees so hit-test stays in sync.
+                text(text_layout::truncate_with_ellipsis(cx, description, content_w))
+                    .color(theme.on_surface_muted),
             )
     }
 

@@ -405,11 +405,25 @@ impl SdfPipeline {
         }
     }
 
-    fn draw(&self, pass: &mut gpu::RenderCommandEncoder, count: usize) {
+    /// Draw a contiguous slice `[start..start + count)` of the uploaded
+    /// instance buffer. Used by the layered chrome pass: Base SDF runs
+    /// `[pane_sdf..base_end]`, then a glyph batch covers Base text,
+    /// then `[base_end..]` runs Overlay + transient SDF on top, and a
+    /// final glyph batch lays Overlay + transient text. Without this
+    /// split the merged stream's "all rects then all glyphs" ordering
+    /// lets Base glyphs bleed through Overlay backgrounds.
+    fn draw_range(&self, pass: &mut gpu::RenderCommandEncoder, start: usize, count: usize) {
         if count == 0 {
             return;
         }
-        let count = count.min(self.max_rects);
+        // Clamp end against the uploaded buffer's capacity. `upload`
+        // already truncated to `max_rects`, so any tail past that has
+        // no valid instance data.
+        let max = self.max_rects;
+        if start >= max {
+            return;
+        }
+        let count = count.min(max - start);
         let mut pe = pass.with(&self.pipeline);
         pe.bind(
             0,
@@ -418,7 +432,7 @@ impl SdfPipeline {
             },
         );
         pe.bind_vertex(0, self.instance_buffer.at(0));
-        pe.draw(0, 4, 0, count as u32);
+        pe.draw(0, 4, start as u32, count as u32);
     }
 
     fn destroy(&mut self, context: &gpu::Context) {
@@ -1662,34 +1676,59 @@ impl Renderer {
                 );
             }
 
-            // 7b. SDF chrome (rounded / shadow / border). Uploaded + drawn
-            //     after flat overlay bgs and before overlay glyphs so chrome
-            //     labels paint crisply on top of their rounded panel.
-            if !scene.sdf_rects.is_empty() {
+            // 7b. Layered chrome. Two passes — Base then Overlay —
+            //     each one a (SDF rects → glyphs) pair, so Overlay
+            //     rects occlude Base glyphs (settings_panel labels
+            //     under a popup, top_bar text under a palette). The
+            //     GPU pipeline's natural "all rects then all glyphs"
+            //     order would otherwise paint Overlay rects first and
+            //     ALL glyphs (including Base) on top of them, breaking
+            //     the popup's visual occlusion contract.
+            //
+            //     Per-stream layout in scene buffers:
+            //       sdf_rects:    [pane_rings | base_chrome | overlay+transient]
+            //                     [..base_sdf_end]    [base_sdf_end..]
+            //       glyphs:       [pane | base_chrome | overlay+transient]
+            //                     [..pane_glyph_end] [pane_glyph_end..base_glyph_end] [base_glyph_end..]
+            //
+            //     Transient widgets (search_bar / bell_flash /
+            //     ime_preedit) ride the Overlay pass — they're
+            //     mutually exclusive with palette / context_menu and
+            //     don't need their own tier.
+            let total_sdf = scene.sdf_rects.len();
+            let base_sdf_end = scene.chrome_base_sdf_end.min(total_sdf);
+            let alpha_total = scene.glyphs.len();
+            let color_total = scene.color_glyphs.len();
+            let base_alpha_end = scene.chrome_base_alpha_glyph_end.min(alpha_total);
+            let base_color_end = scene.chrome_base_color_glyph_end.min(color_total);
+            // Single upload covers both Base and Overlay slices —
+            // `draw_range` issues the contiguous sub-draws.
+            if total_sdf > 0 {
                 self.sdf.upload(scene.sdf_rects, vw_f, vh_f);
-                self.sdf.draw(&mut pass, scene.sdf_rects.len());
             }
 
-            // 8. Overlay glyphs (no re-upload, just draw remaining range).
-            let overlay_alpha = PaneGlyphRange {
-                start: scene.pane_glyph_end as u32,
-                count: scene.glyphs.len().saturating_sub(scene.pane_glyph_end) as u32,
+            let make_glyph_range = |start: usize, end: usize| PaneGlyphRange {
+                start: start as u32,
+                count: end.saturating_sub(start) as u32,
                 scissor: (0, 0, vw, vh),
                 ..PaneGlyphRange::default()
             };
-            let overlay_color = PaneGlyphRange {
-                start: scene.pane_color_glyph_end as u32,
-                count: scene
-                    .color_glyphs
-                    .len()
-                    .saturating_sub(scene.pane_color_glyph_end) as u32,
-                scissor: (0, 0, vw, vh),
-                ..PaneGlyphRange::default()
-            };
+
+            // ── Base pass ────────────────────────────────────────────
+            //   Pane focus rings (at indices `[..pane_sdf_len]`) ride
+            //   along here — they were already in the SDF stream
+            //   ahead of cached chrome, so the same `[0..base_sdf_end]`
+            //   range covers both. Re-drawing rings under the same
+            //   blending is idempotent given identical instances, and
+            //   keeping the original draw call ordering avoids a
+            //   second SDF pipeline switch.
+            if base_sdf_end > 0 {
+                self.sdf.draw_range(&mut pass, 0, base_sdf_end);
+            }
             atlas_gpu.draw_alpha_batches(
                 &mut pass,
                 alpha_count,
-                &[overlay_alpha],
+                &[make_glyph_range(scene.pane_glyph_end, base_alpha_end)],
                 vw_f,
                 vh_f,
                 &mut alpha_uniform_slot,
@@ -1697,7 +1736,29 @@ impl Renderer {
             atlas_gpu.draw_color_batches(
                 &mut pass,
                 color_count,
-                &[overlay_color],
+                &[make_glyph_range(scene.pane_color_glyph_end, base_color_end)],
+                vw_f,
+                vh_f,
+                &mut color_uniform_slot,
+            );
+
+            // ── Overlay + transient pass ─────────────────────────────
+            if base_sdf_end < total_sdf {
+                self.sdf
+                    .draw_range(&mut pass, base_sdf_end, total_sdf - base_sdf_end);
+            }
+            atlas_gpu.draw_alpha_batches(
+                &mut pass,
+                alpha_count,
+                &[make_glyph_range(base_alpha_end, alpha_total)],
+                vw_f,
+                vh_f,
+                &mut alpha_uniform_slot,
+            );
+            atlas_gpu.draw_color_batches(
+                &mut pass,
+                color_count,
+                &[make_glyph_range(base_color_end, color_total)],
                 vw_f,
                 vh_f,
                 &mut color_uniform_slot,

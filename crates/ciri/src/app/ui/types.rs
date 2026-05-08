@@ -233,15 +233,23 @@ fn with_hit_layout<R>(
     cx: &UiContext<'_>,
     f: impl FnOnce(&ciri_ui::LayoutSnapshot) -> R,
 ) -> R {
-    let mut shaper = ciri_ui::NullShaper;
-    let viewport = [cx.viewport_w, cx.viewport_h];
-    if let Some(tree_cell) = cx.taffy_tree {
-        let mut tree = tree_cell.borrow_mut();
+    // MUST use the real host shaper, not `NullShaper`, so the
+    // hit-test layout matches the paint layout. Settings rows lay
+    // out label + description side-by-side at proportional widths;
+    // measuring those at zero width (NullShaper) shifts the dropdown
+    // bounds and the same cursor coord then resolves to a different
+    // `hit_id` than the paint walk produces — `current_settings_hover`
+    // and the paint prepass disagree, so `.hover()` styles never apply.
+    if cx.taffy_tree.is_some() {
         let mut layout = ciri_ui::LayoutSnapshot::new();
-        ciri_ui::layout_tree_into_retained(root, viewport, &mut shaper, &mut layout, &mut tree);
+        crate::app::ciri_ui_adapter::layout_only_into(root, cx, &mut layout);
         f(&layout)
     } else {
-        // Test fallback: no retained tree, allocate fresh per call.
+        // Test fallback: no retained tree / shaper. Use NullShaper here
+        // because the test harness never sets `cx.ui_shaper` either, so
+        // matching paint-time `NullShaper` measurement is correct.
+        let mut shaper = ciri_ui::NullShaper;
+        let viewport = [cx.viewport_w, cx.viewport_h];
         let mut tree = taffy::TaffyTree::<ciri_ui::NodeContext>::new();
         let mut layout = ciri_ui::LayoutSnapshot::new();
         ciri_ui::layout_tree_into_retained(root, viewport, &mut shaper, &mut layout, &mut tree);

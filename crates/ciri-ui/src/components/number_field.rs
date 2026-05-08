@@ -26,9 +26,13 @@ use crate::shared_string::SharedString;
 use crate::styled::Styled;
 use crate::theme::ResolvedTheme;
 
-const TOTAL_W: f32 = 120.0;
-const ROW_H: f32 = 28.0;
-const BTN_W: f32 = 32.0;
+const TOTAL_W: f32 = 144.0;
+// Tracks Dropdown::ROW_H so the two button-class controls share a
+// vertical baseline when they appear in the same settings row.
+const ROW_H: f32 = 40.0;
+// Square buttons (40 × 40) — matches the row height so the dec/inc
+// regions read as proper press targets, not narrow strips.
+const BTN_W: f32 = 40.0;
 const VALUE_W: f32 = TOTAL_W - BTN_W * 2.0;
 const HAIRLINE: f32 = 1.0;
 

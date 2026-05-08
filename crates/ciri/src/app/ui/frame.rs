@@ -134,22 +134,21 @@ impl UiFrame {
         Self::capture(app, cx, top_bar_layout, top_bar_h, app.hints_bar_height())
     }
 
-    pub(super) fn paint(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+    /// Paint Base-layer chrome. Runs first; rects + glyphs from these
+    /// components occupy the lower z-tier and are drawn fully (rects,
+    /// then glyphs) before Overlay primitives. Caller records the per-
+    /// stream lengths after this returns to know the layer split.
+    pub(super) fn paint_base(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         self.top_bar.paint(self.chrome.top_bar, cx, scene);
         self.hints_bar.paint(cx, scene);
         if let (Some(tab_bar), Some(_rect)) = (&mut self.side_tab_bar, self.chrome.side_tab_bar) {
             tab_bar.paint(cx, scene);
         }
 
-        // Modal / overlay layers position themselves absolutely and are
-        // painted after chrome so they sit on top.
         if let Some(component) = &mut self.overview_bar {
             component.paint(cx, scene);
         }
         if let Some(component) = &mut self.infobox {
-            component.paint(cx, scene);
-        }
-        if let Some(component) = &mut self.palette {
             component.paint(cx, scene);
         }
         if let Some(component) = &mut self.connection_status {
@@ -159,6 +158,17 @@ impl UiFrame {
             component.paint(cx, scene);
         }
         if let Some(component) = &self.settings_panel {
+            component.paint(cx, scene);
+        }
+    }
+
+    /// Paint Overlay-layer chrome on top of Base. Popup-class
+    /// components only — palette and context_menu mutually exclude
+    /// each other today, so this layer holds at most one widget per
+    /// frame. The renderer draws Overlay rects after Base glyphs, so
+    /// these popups cover everything underneath including labels.
+    pub(super) fn paint_overlay(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        if let Some(component) = &mut self.palette {
             component.paint(cx, scene);
         }
         if let Some(component) = &mut self.context_menu {

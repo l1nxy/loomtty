@@ -189,7 +189,11 @@ impl SettingsPanelComponent {
         // shape-aware text_layout helper so it never overflows the
         // value column even when the user runs a large UI font.
         const DROPDOWN_W: f32 = 320.0;
-        const DROPDOWN_VALUE_BUDGET: f32 = DROPDOWN_W - 8.0 * 2.0 - 28.0; // pad + chevron col
+        // Mirrors `Dropdown::PAD_X` (12) and the chevron column width
+        // (ROW_H, 40). Keep these constants in sync if Dropdown's
+        // metrics change, otherwise the pre-truncated value will
+        // either underfill or clip into the chevron.
+        const DROPDOWN_VALUE_BUDGET: f32 = DROPDOWN_W - 12.0 * 2.0 - 40.0;
         let preset_raw = if self.current_preset.is_empty() {
             "ciri_dark"
         } else {
@@ -299,10 +303,13 @@ impl SettingsPanelComponent {
             .child(deferred(panel))
     }
 
-    /// Zed-style settings row: label + description stacked on the left,
-    /// control on the right. The description gives the setting context
-    /// without needing tooltips and visually anchors each row so the
-    /// panel doesn't read as a flat list of single lines.
+    /// Zed-style settings row: label sits on the same horizontal line
+    /// as the control (so the eye reads "this label → this widget"
+    /// without scanning vertically), description flows on the line
+    /// below as supplementary context. The previous layout stacked
+    /// label+description on the left and centred the control against
+    /// that whole block, which made the control look visually
+    /// detached — floating in the middle of two lines of text.
     fn control_row(
         &self,
         cx: &UiContext<'_>,
@@ -312,26 +319,30 @@ impl SettingsPanelComponent {
         control: Div,
     ) -> Div {
         let theme = cx.theme;
-        let row_h = cx.ui_line_h * 2.0 + tokens::SPACE_3 * 2.0;
-        let label_col_w = (content_w * 0.5).max(0.0);
         div()
             .w(content_w)
-            .h(row_h)
-            .flex_row()
-            .items_center()
-            .justify_between()
+            .flex_col()
+            .gap(tokens::SPACE_1)
             .child(
+                // Top line: label ←→ control. items_center vertically
+                // aligns the single-line label against the taller
+                // control (e.g. 40 px Dropdown), so the label's text
+                // baseline lands on the control's mid-line.
                 div()
-                    .w(label_col_w)
-                    .flex_col()
-                    .gap(tokens::SPACE_1)
+                    .w(content_w)
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
                     .child(text(label.to_string()).color(theme.on_surface))
-                    .child(
-                        text(description.to_string())
-                            .color(theme.on_surface_muted),
-                    ),
+                    .child(control),
             )
-            .child(control)
+            .child(
+                // Description is content-flow, not absolutely sized —
+                // wraps under the label, never under the control. Kept
+                // muted so the row's primary visual mass stays on the
+                // top line.
+                text(description.to_string()).color(theme.on_surface_muted),
+            )
     }
 
     pub(crate) fn paint(&self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {

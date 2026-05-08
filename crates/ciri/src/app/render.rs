@@ -42,6 +42,15 @@ struct AssembledScene {
     ui_sdf_rects: Vec<ciri_render::sdf_rect::SdfRect>,
     pane_sdf_len: usize,
     cached_sdf_len: usize,
+    /// Absolute index in `ui_sdf_rects` where the cached chrome's Base
+    /// layer ends (and the Overlay layer + transient SDF begins). The
+    /// renderer issues a `[pane..base_end]` SDF draw, then base-layer
+    /// glyphs, then `[base_end..]` SDF, then overlay+transient glyphs —
+    /// so popup rects (Overlay) cover Base glyphs (settings_panel
+    /// labels, top_bar text, etc.) instead of being painted under them.
+    chrome_base_sdf_end: usize,
+    chrome_base_alpha_glyph_end: usize,
+    chrome_base_color_glyph_end: usize,
     /// Index in `bg_rects` where active-tile backgrounds begin.
     active_bg_start: usize,
     /// Index in `glyphs`/`color_glyphs` where pane glyphs end and
@@ -2618,7 +2627,18 @@ impl App {
         let overlay_bg_start = bg_rects.len();
         let overlay_range_start = bg_rects.len();
         self.build_ui(vw_f, vh_f, &mut glyphs, &mut color_glyphs);
+        // Snapshot the chrome layer split BEFORE we tack transient
+        // chrome onto the same Vecs — anything past the cached
+        // overlay slice must still draw on top, but it shares the
+        // overlay-tier batch (transient widgets like search_bar /
+        // bell_flash / ime_preedit don't co-exist with palette /
+        // context_menu and don't introduce a third layer).
+        let chrome_base_alpha_glyph_end =
+            pane_glyph_end + self.cached_ui_scene.base_glyph_end;
+        let chrome_base_color_glyph_end =
+            pane_color_glyph_end + self.cached_ui_scene.base_color_glyph_end;
         let pane_sdf_len = ui_sdf_rects.len();
+        let chrome_base_sdf_end = pane_sdf_len + self.cached_ui_scene.base_sdf_end;
         // Cached chrome must draw after pane focus rings but before
         // transient overlays that should sit above everything else.
         let cached_sdf_rects = std::mem::take(&mut self.cached_ui_scene.sdf_rects);
@@ -2649,6 +2669,9 @@ impl App {
             ui_sdf_rects,
             pane_sdf_len,
             cached_sdf_len,
+            chrome_base_sdf_end,
+            chrome_base_alpha_glyph_end,
+            chrome_base_color_glyph_end,
             active_bg_start,
             pane_glyph_end,
             pane_color_glyph_end,
@@ -2682,6 +2705,9 @@ impl App {
             mut ui_sdf_rects,
             pane_sdf_len,
             cached_sdf_len,
+            chrome_base_sdf_end,
+            chrome_base_alpha_glyph_end,
+            chrome_base_color_glyph_end,
             active_bg_start,
             pane_glyph_end,
             pane_color_glyph_end,
@@ -2751,6 +2777,9 @@ impl App {
                 overlay_bg_start,
                 // SDF chrome emitted by ciri-ui widgets and transient overlays.
                 sdf_rects: &ui_sdf_rects,
+                chrome_base_sdf_end,
+                chrome_base_alpha_glyph_end,
+                chrome_base_color_glyph_end,
             },
         ) {
             log::error!("draw_frame failed: {e}");

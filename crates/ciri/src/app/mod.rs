@@ -112,6 +112,15 @@ pub(crate) struct CachedUiScene {
     /// SDF-shader chrome rects emitted by ciri-ui-painted widgets
     /// (rounded / bordered / shadowed).
     pub sdf_rects: Vec<ciri_render::sdf_rect::SdfRect>,
+    /// Index into `glyphs` where the Overlay layer begins. Anything
+    /// before it is `ChromeLayer::Base`. Set by `frame.paint` after
+    /// the base pass completes; Overlay primitives append onto the same
+    /// Vec, so `[..base_glyph_end]` is base, `[base_glyph_end..]` is
+    /// overlay. The renderer issues two GPU passes against these
+    /// ranges so overlay rects cover base glyphs.
+    pub base_glyph_end: usize,
+    pub base_color_glyph_end: usize,
+    pub base_sdf_end: usize,
 }
 
 impl CachedUiScene {
@@ -120,6 +129,9 @@ impl CachedUiScene {
         self.glyphs.clear();
         self.color_glyphs.clear();
         self.sdf_rects.clear();
+        self.base_glyph_end = 0;
+        self.base_color_glyph_end = 0;
+        self.base_sdf_end = 0;
     }
 }
 

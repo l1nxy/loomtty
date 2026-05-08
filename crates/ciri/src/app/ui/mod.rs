@@ -106,7 +106,26 @@ impl App {
                 sdf_rects: &mut cached_ui.sdf_rects,
             };
 
-            frame.paint(&cx, &mut scene);
+            // Two-phase paint to materialise the Base / Overlay
+            // z-layers as contiguous ranges in each primitive Vec.
+            // After the base pass returns, the current Vec lengths
+            // are the layer split points; the overlay pass appends
+            // onto the same Vecs so the final layout is
+            // `[base | overlay]` per stream — the renderer draws the
+            // base half (rects then glyphs) before issuing the overlay
+            // half so popup rects can occlude base glyphs.
+            frame.paint_base(&cx, &mut scene);
+            cached_ui.base_glyph_end = cached_ui.glyphs.len();
+            cached_ui.base_color_glyph_end = cached_ui.color_glyphs.len();
+            cached_ui.base_sdf_end = cached_ui.sdf_rects.len();
+
+            let mut scene = UiScene {
+                atlas: self.glyph_cache.as_mut().unwrap(),
+                glyphs: &mut cached_ui.glyphs,
+                color_glyphs: &mut cached_ui.color_glyphs,
+                sdf_rects: &mut cached_ui.sdf_rects,
+            };
+            frame.paint_overlay(&cx, &mut scene);
         }
 
         glyphs.extend_from_slice(&self.cached_ui_scene.glyphs);

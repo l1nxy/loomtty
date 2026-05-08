@@ -51,4 +51,17 @@ pub struct FrameScene<'a> {
     /// slice — flat chrome still renders via `bg_rects`, so no widget
     /// disappears while support rolls out.
     pub sdf_rects: &'a [SdfRect],
+    /// Index in `sdf_rects` where the cached chrome's Base layer ends and
+    /// the Overlay layer (palette / context_menu, etc.) begins. Backends
+    /// that issue a single combined draw can ignore this; the layered
+    /// renderer splits the SDF + glyph passes here so popup rects can
+    /// occlude base-layer glyphs (settings_panel labels, top_bar text)
+    /// instead of sitting beneath them.
+    pub chrome_base_sdf_end: usize,
+    /// Indices in `glyphs` / `color_glyphs` where the Base chrome layer
+    /// ends. The slice between `pane_*_glyph_end` and these is the Base
+    /// chrome's text; the slice from these to the end is Overlay +
+    /// transient text (drawn after the Overlay SDF rects).
+    pub chrome_base_alpha_glyph_end: usize,
+    pub chrome_base_color_glyph_end: usize,
 }

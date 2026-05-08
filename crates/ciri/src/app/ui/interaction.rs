@@ -192,12 +192,12 @@ impl App {
                 // value — paint *after* the menu rect. Without this
                 // offset the trigger glyphs bleed through the popup.
                 //
-                // 32 px is slightly larger than `Dropdown::ROW_H`
-                // (28 px) — a fixed offset is enough since the panel's
+                // 44 px is slightly larger than `Dropdown::ROW_H`
+                // (40 px) — a fixed offset is enough since the panel's
                 // dropdown row sits at a known Y, and `anchored()`
                 // edge-flips upward if the offset would clip the
                 // popup off the bottom of the viewport.
-                const POPUP_OFFSET_Y: f32 = 32.0;
+                const POPUP_OFFSET_Y: f32 = 44.0;
                 let (mx, my) = self.last_mouse_pos.map(|(x, y)| (x, y + POPUP_OFFSET_Y))
                     .unwrap_or_else(|| {
                         let (vw, vh) = self.command_palette_viewport_size();

@@ -534,6 +534,42 @@ mod tests {
         );
     }
 
+    /// Mirror of `toggle_command_palette_closes_base_modals` for the
+    /// session-palette path. Both actions land in
+    /// `App::open_session_palette` / `open_command_palette` which
+    /// share `dismiss_other_modals_for_palette`; this test guards
+    /// against future refactors that diverge the two entry points.
+    #[test]
+    fn toggle_session_palette_closes_base_modals() {
+        use ciri_input::action::Action;
+
+        let mut app = make_app();
+        app.core.settings_panel_visible = true;
+        app.core.context_menu = ContextMenu {
+            visible: true,
+            x: 0.0,
+            y: 0.0,
+            target_pane_id: None,
+            items: vec![],
+        };
+        app.core.pending_paste = Some(PendingPaste {
+            info: PasteInfo {
+                text: "hello".into(),
+                size: 5,
+                line_count: 1,
+            },
+            preview: "hello".into(),
+            target: super::super::PendingPasteTarget::Terminal,
+        });
+
+        app.handle_action(Action::ToggleSessionPalette);
+
+        assert!(app.core.command_palette.is_some());
+        assert!(!app.core.settings_panel_visible);
+        assert!(!app.core.context_menu.visible);
+        assert!(app.core.pending_paste.is_none());
+    }
+
     /// `NudgePaneOpacity` clamps at the documented floor (0.05) — fully
     /// transparent panes are intentionally disallowed via the panel
     /// (users wanting opacity 0 edit settings.toml directly).

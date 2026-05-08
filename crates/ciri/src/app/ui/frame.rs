@@ -361,6 +361,40 @@ impl UiFrame {
         my: f32,
         cx: &UiContext<'_>,
     ) -> Option<u64> {
+        // Same precedence as `UiFrame::click` / `UiFrame::hover`:
+        // Overlay-tier popups first, then Base-tier modals, then bars.
+        // Without this gate `capture_active_press_hit_id` would record
+        // a top-bar press even when a popup or modal owns the click —
+        // the mouse-down bypasses dispatch order, so the cache hash
+        // ends up referencing a hit_id underneath the modal and the
+        // base-layer element renders a phantom `.active()` tint until
+        // mouse-up clears it. Overlay-tier widgets manage their own
+        // press affordances internally; we don't expose hit_ids here.
+        if self.context_menu.is_some() || self.palette.is_some() {
+            return None;
+        }
+        // Settings panel opacity steppers — the only press-friendly
+        // controls in any of the Base-tier modals (panel stays open
+        // after each nudge so the press state has a frame to render).
+        // Close button and "Open settings.toml" dismiss the panel
+        // immediately, so per-frame press tint isn't worth threading.
+        // Returning early when `settings_panel` is visible also
+        // suppresses spurious top-bar press tint that would otherwise
+        // bleed through the panel's translucent backdrop.
+        if let Some(panel) = &self.settings_panel {
+            return match panel.hit_test(mx, my, cx) {
+                UiSettingsHit::PaneOpacityDec => Some(super::settings_panel::HIT_OPACITY_DEC),
+                UiSettingsHit::PaneOpacityInc => Some(super::settings_panel::HIT_OPACITY_INC),
+                _ => None,
+            };
+        }
+        // Paste dialog has Paste / Cancel buttons but they dismiss
+        // the dialog on click, so press tint per-frame isn't worth
+        // threading either — and we still need to suppress top-bar
+        // tint so the dialog backdrop doesn't bleed press through it.
+        if self.paste_dialog.is_some() {
+            return None;
+        }
         if self.chrome.top_bar.contains(mx, my) {
             match self.top_bar.hit_test(mx, my, cx) {
                 Some(UiTopBarHit::PaneTab(pane_id)) => {
@@ -376,23 +410,6 @@ impl UiFrame {
             && let Some(UiAction::FocusPaneTab(pane_id)) = tab_bar.hit(rect, mx, my, cx)
         {
             return Some(super::tab_bar::pane_tab_hit_id(pane_id));
-        }
-        // Settings panel opacity steppers — the only settings buttons
-        // that benefit from `.active()` press tint (panel stays open
-        // after each nudge so the press state has a frame to render).
-        // Close button and "Open settings.toml" link dismiss the panel
-        // immediately; rendering a press tint for a single frame
-        // before dismissal isn't worth the complexity.
-        if let Some(panel) = &self.settings_panel {
-            match panel.hit_test(mx, my, cx) {
-                UiSettingsHit::PaneOpacityDec => {
-                    return Some(super::settings_panel::HIT_OPACITY_DEC);
-                }
-                UiSettingsHit::PaneOpacityInc => {
-                    return Some(super::settings_panel::HIT_OPACITY_INC);
-                }
-                _ => {}
-            }
         }
         None
     }

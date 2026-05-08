@@ -263,6 +263,13 @@ impl App {
         // dismiss key. Mirrors the `!connected + Esc` early-bail above.
         if self.core.settings_panel_visible && key_name == "escape" {
             self.core.settings_panel_visible = false;
+            // Theme dropdown reuses `context_menu` as its popup
+            // surface; without this clear, dismissing the panel via
+            // Esc while the dropdown is open leaves the popup
+            // floating over the terminal AND `effective_active_hit_id`
+            // gates on `context_menu.visible` so all base-layer press
+            // tints stay suppressed. Same fix as `UiAction::CloseSettings`.
+            self.core.context_menu.visible = false;
             self.request_redraw();
             return;
         }

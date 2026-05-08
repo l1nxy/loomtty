@@ -153,6 +153,16 @@ impl App {
             self.schedule_redraw();
             return;
         }
+        // Same close-others discipline the palette / settings paths
+        // already enforce: when right-click opens a context menu over
+        // an active palette or search session, the palette / search
+        // continues consuming keyboard input even though the
+        // context menu is what the user just brought up. Dismiss
+        // them so context_menu cleanly owns the popup tier.
+        if self.core.command_palette.is_some() {
+            self.core.command_palette = None;
+        }
+        self.close_search_restore_scroll();
 
         if let Some((pane_id, col, row)) = self.pixel_to_viewport_cell(mx, my)
             && self.pane_prefers_mouse_passthrough(pane_id)

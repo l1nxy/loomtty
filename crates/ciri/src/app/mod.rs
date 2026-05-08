@@ -760,7 +760,13 @@ impl App {
         if self.core.overview.active {
             self.core.exit_overview();
         }
-        self.core.search_state = None;
+        // Restore the active pane's pre-search scroll BEFORE we save
+        // the slot — `close_search_restore_scroll` mutates the live
+        // pane grid in-place. Bare `search_state = None` would freeze
+        // the slot's saved scroll at the last match position with no
+        // way to recover when the slot is restored. Same shape as the
+        // R12 `finalize_authoritative_session_switch` fix.
+        self.close_search_restore_scroll();
         self.core.command_palette = None;
         self.core.context_menu = ContextMenu::default();
         self.core.pending_paste = None;
@@ -782,7 +788,10 @@ impl App {
         self.core.overview.dragging = false;
         self.core.overview.drag_last_pos = None;
         self.core.anim_mgr.overview_zoom.jump_to(1.0);
-        self.core.search_state = None;
+        // If the saved slot had a live search session, restore its
+        // pre-search scroll on the just-loaded pane grid before
+        // clearing — same shape as the pre-save restore above.
+        self.close_search_restore_scroll();
         self.core.command_palette = None;
         self.core.context_menu = ContextMenu::default();
         self.core.pending_paste = None;

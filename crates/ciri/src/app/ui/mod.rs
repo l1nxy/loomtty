@@ -534,6 +534,43 @@ mod tests {
         );
     }
 
+    /// Entering overview must dismiss every modal-ish overlay,
+    /// otherwise the settings panel's full-viewport backdrop locks
+    /// the user out: `UiFrame::click` / `hover` walk
+    /// `settings_panel` ahead of the `overview.active` branch, so
+    /// every mouse event is consumed by the panel until the user
+    /// closes it with Esc.
+    #[test]
+    fn toggle_overview_closes_base_modals() {
+        use ciri_input::action::Action;
+
+        let mut app = make_app();
+        app.core.settings_panel_visible = true;
+        app.core.context_menu = ContextMenu {
+            visible: true,
+            x: 0.0,
+            y: 0.0,
+            target_pane_id: None,
+            items: vec![],
+        };
+        app.core.pending_paste = Some(PendingPaste {
+            info: PasteInfo {
+                text: "x".into(),
+                size: 1,
+                line_count: 1,
+            },
+            preview: "x".into(),
+            target: super::super::PendingPasteTarget::Terminal,
+        });
+
+        app.handle_action(Action::ToggleOverview);
+
+        assert!(app.core.overview.active);
+        assert!(!app.core.settings_panel_visible);
+        assert!(!app.core.context_menu.visible);
+        assert!(app.core.pending_paste.is_none());
+    }
+
     /// Mirror of `toggle_command_palette_closes_base_modals` for the
     /// session-palette path. Both actions land in
     /// `App::open_session_palette` / `open_command_palette` which

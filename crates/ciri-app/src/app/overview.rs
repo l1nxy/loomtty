@@ -16,7 +16,19 @@ impl AppModel {
         self.overview.active = !self.overview.active;
         let sp = SpringParams::default();
         if self.overview.active {
+            // Close every modal-ish overlay so overview cleanly owns
+            // the surface. Without dismissing settings_panel here, the
+            // panel's full-viewport backdrop continues to render and
+            // `UiFrame::click` / `hover` route every event to the
+            // panel's dispatcher before reaching the `overview.active`
+            // arm — overview is completely unreachable by mouse until
+            // the user closes settings via Esc. Mirrors the
+            // close-others discipline of `ToggleSettings` /
+            // `open_command_palette`.
             self.context_menu.visible = false;
+            self.settings_panel_visible = false;
+            self.command_palette = None;
+            self.pending_paste = None;
             self.refresh_overview_zoom();
             let center = match self.config.layout.center_focused_column {
                 ciri_config::config::CenterStrategy::Always => {

@@ -102,6 +102,13 @@ pub(crate) struct RenderBuffers {
     pub pane_regions: HashMap<u64, PaneSceneRegion>,
     pub pane_glyph_end: usize,
     pub pane_color_glyph_end: usize,
+    /// Reused per-frame storage for the assembled SDF rect stream
+    /// (pane focus rings + cached chrome + transient overlays).
+    /// Without this, `assemble_scene` allocated a fresh `Vec` every
+    /// frame while every other buffer cycled via `mem::take` — a
+    /// small but consistent ~96 KB / frame heap churn at the 1024-rect
+    /// cap.
+    pub ui_sdf_rects: Vec<ciri_render::sdf_rect::SdfRect>,
 }
 
 #[derive(Default)]
@@ -545,6 +552,7 @@ impl App {
                 pane_regions: HashMap::new(),
                 pane_glyph_end: 0,
                 pane_color_glyph_end: 0,
+                ui_sdf_rects: Vec::new(),
             },
             clipboard: arboard::Clipboard::new().ok(),
             mouse_left_held: false,
@@ -1245,6 +1253,18 @@ impl App {
     /// `current_paste_dialog_hover` / `current_palette_hover`. Returns
     /// the raw u64 hit_id rather than a typed enum because settings
     /// hits are flat (no per-item-index payload to thread through).
+    /// `active_hit_id` projected through the same overlay gate as
+    /// `current_settings_hover`. When an Overlay-tier popup is visible
+    /// the Base layer's press tint must not light up — same shape as
+    /// the hover suppression. Used by the cache hash and by the paint
+    /// context so both are in lockstep.
+    pub(crate) fn effective_active_hit_id(&self) -> Option<u64> {
+        if self.core.context_menu.visible || self.core.command_palette.is_some() {
+            return None;
+        }
+        self.active_hit_id
+    }
+
     pub(crate) fn current_settings_hover(&self) -> Option<u64> {
         if !self.core.settings_panel_visible {
             return None;

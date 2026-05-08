@@ -219,6 +219,16 @@ impl App {
                 if self.core.command_palette.is_some() {
                     self.core.command_palette = None;
                 } else {
+                    // Mirror the close-others discipline `ToggleSettings`
+                    // applies in the inverse direction: the palette is
+                    // an Overlay-tier modal and must own input focus.
+                    // Without this, opening the palette over an open
+                    // settings panel leaves the panel collecting clicks
+                    // through the popup since `UiFrame::click` walks
+                    // settings_panel before palette in `paint_base`
+                    // ordering.
+                    self.core.settings_panel_visible = false;
+                    self.core.context_menu.visible = false;
                     self.open_command_palette();
                 }
             }
@@ -226,6 +236,8 @@ impl App {
                 if self.core.command_palette.is_some() {
                     self.core.command_palette = None;
                 } else {
+                    self.core.settings_panel_visible = false;
+                    self.core.context_menu.visible = false;
                     self.open_session_palette();
                 }
             }

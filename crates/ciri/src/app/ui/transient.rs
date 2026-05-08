@@ -292,6 +292,10 @@ impl App {
         // `Div::child` inside the closure (palette / context-menu /
         // paste-dialog tree builders) bump-allocates into this arena
         // rather than the thread-local fallback.
+        // Snapshot the overlay-gated press hit_id before borrowing
+        // `glyph_cache` mutably — `effective_active_hit_id` is an
+        // immutable read on `self` and would conflict otherwise.
+        let active = self.effective_active_hit_id();
         self.ui_arena.borrow_mut().clear();
         let _arena_scope = ciri_ui::ElementArenaScope::enter(&self.ui_arena);
         let atlas = self.glyph_cache.as_mut().unwrap();
@@ -307,7 +311,7 @@ impl App {
             self.ui_shaper.as_ref(),
             Some(&self.ui_taffy_tree),
             self.last_mouse_pos.map(|(x, y)| [x, y]),
-            self.active_hit_id,
+            active,
             Some(&self.ui_states),
             vw,
             vh,

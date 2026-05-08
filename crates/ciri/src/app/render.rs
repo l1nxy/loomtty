@@ -37,9 +37,12 @@ struct AssembledScene {
     active_glyph_batches: Vec<PaneGlyphRange>,
     active_color_glyph_batches: Vec<PaneGlyphRange>,
     /// Frame SDF rects in draw order: pane focus rings, cached chrome,
-    /// then transient chrome. The two lengths let post-draw discard
-    /// frame-local pane/transient rects and restore only cached chrome.
+    /// then transient chrome. `cached_sdf_len` lets the debug-assert
+    /// in `draw_and_finish` confirm `cached_ui_scene.sdf_rects` wasn't
+    /// mutated mid-frame; `pane_sdf_len` is read by `assemble_scene`
+    /// tests for layout correctness.
     ui_sdf_rects: Vec<ciri_render::sdf_rect::SdfRect>,
+    #[cfg_attr(not(test), allow(dead_code))]
     pane_sdf_len: usize,
     cached_sdf_len: usize,
     /// Absolute index in `ui_sdf_rects` where the cached chrome's Base
@@ -721,7 +724,7 @@ impl App {
         // Press-state hit_id (mouse-down → mouse-up). Hashed so the
         // chrome cache invalidates on press / release; declarative
         // `.active()` reads it via `cx.is_active(hit_id)` at paint.
-        self.active_hit_id.hash(&mut hasher);
+        self.effective_active_hit_id().hash(&mut hasher);
         self.pane_tab_scroll.to_bits().hash(&mut hasher);
         self.pane_tab_scroll_max().to_bits().hash(&mut hasher);
         self.core.overview.active.hash(&mut hasher);
@@ -885,7 +888,7 @@ impl App {
         // Press-state hit_id (mouse-down → mouse-up). Hashed so the
         // chrome cache invalidates on press / release; declarative
         // `.active()` reads it via `cx.is_active(hit_id)` at paint.
-        self.active_hit_id.hash(&mut hasher);
+        self.effective_active_hit_id().hash(&mut hasher);
         self.pane_tab_scroll.to_bits().hash(&mut hasher);
         self.pane_tab_scroll_max().to_bits().hash(&mut hasher);
         self.core.ime.preedit_active.hash(&mut hasher);
@@ -2480,7 +2483,12 @@ impl App {
         let active_glyph_batches = std::mem::take(&mut self.render_bufs.active_glyph_batches);
         let active_color_glyph_batches =
             std::mem::take(&mut self.render_bufs.active_color_glyph_batches);
-        let mut ui_sdf_rects = Vec::new();
+        // Reuse the SDF rect Vec across frames — the round-trip through
+        // `cached_ui_scene.sdf_rects` doesn't recycle this buffer's
+        // capacity, so an explicit slot on `render_bufs` keeps the
+        // allocation pattern consistent with every other frame buffer.
+        let mut ui_sdf_rects = std::mem::take(&mut self.render_bufs.ui_sdf_rects);
+        ui_sdf_rects.clear();
         bg_rects.clear();
         bg_rect_ranges.clear();
         let (active_bg_start, pane_glyph_end, pane_color_glyph_end, mut glyphs, mut color_glyphs) =
@@ -2641,9 +2649,11 @@ impl App {
         let chrome_base_sdf_end = pane_sdf_len + self.cached_ui_scene.base_sdf_end;
         // Cached chrome must draw after pane focus rings but before
         // transient overlays that should sit above everything else.
-        let cached_sdf_rects = std::mem::take(&mut self.cached_ui_scene.sdf_rects);
-        let cached_sdf_len = cached_sdf_rects.len();
-        ui_sdf_rects.extend(cached_sdf_rects);
+        // Copy from the cache (don't move) so `cached_ui_scene.sdf_rects`
+        // keeps its allocation for the next cache-hit frame — this
+        // pairs with `render_bufs.ui_sdf_rects` keeping its own.
+        let cached_sdf_len = self.cached_ui_scene.sdf_rects.len();
+        ui_sdf_rects.extend_from_slice(&self.cached_ui_scene.sdf_rects);
         self.build_transient_ui(
             offset_tiles,
             zoom,
@@ -2703,7 +2713,7 @@ impl App {
             active_glyph_batches,
             active_color_glyph_batches,
             mut ui_sdf_rects,
-            pane_sdf_len,
+            pane_sdf_len: _,
             cached_sdf_len,
             chrome_base_sdf_end,
             chrome_base_alpha_glyph_end,
@@ -2795,12 +2805,16 @@ impl App {
             self.last_render_snapshot = Some(render_snapshot);
         }
 
-        // Restore cached_ui_scene.sdf_rects: drop pane focus rings from the
-        // front and transient chrome from the back. The cached middle
-        // segment is byte-identical to what we took.
-        ui_sdf_rects.drain(..pane_sdf_len);
-        ui_sdf_rects.truncate(cached_sdf_len);
-        self.cached_ui_scene.sdf_rects = ui_sdf_rects;
+        // Park the per-frame SDF buffer back on `render_bufs` so its
+        // capacity recycles. `cached_ui_scene.sdf_rects` still holds
+        // the cached chrome from build_ui (we only borrowed via
+        // `extend_from_slice`), so cache-hit frames find it intact.
+        // `cached_sdf_len` is preserved as a sanity invariant — if
+        // `cached_ui_scene.sdf_rects.len()` ever drifted from it,
+        // someone mutated the cache mid-frame.
+        debug_assert_eq!(self.cached_ui_scene.sdf_rects.len(), cached_sdf_len);
+        ui_sdf_rects.clear();
+        self.render_bufs.ui_sdf_rects = ui_sdf_rects;
 
         self.render_bufs.bg_rects = bg_rects;
         self.render_bufs.bg_rect_ranges = bg_rect_ranges;

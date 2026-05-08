@@ -184,16 +184,21 @@ impl UiFrame {
         cx: &UiContext<'_>,
     ) -> (Option<UiAction>, bool) {
         // Components are checked in reverse paint order: topmost first.
+        // Overlay-layer components (context_menu, palette) come ahead
+        // of Base-layer modals (paste_dialog, settings_panel) so that
+        // when both happen to be visible the popup that's painted on
+        // top also receives the click — matches the layered chrome
+        // ordering in `paint_base` / `paint_overlay`.
         if let Some(c) = &self.context_menu {
             return (c.click(mx, my, cx), true);
         }
-        if let Some(c) = &self.settings_panel {
+        if let Some(c) = &self.palette {
             return (c.click(mx, my, cx), true);
         }
         if let Some(c) = &self.paste_dialog {
             return (c.click(mx, my, cx), true);
         }
-        if let Some(c) = &self.palette {
+        if let Some(c) = &self.settings_panel {
             return (c.click(mx, my, cx), true);
         }
 
@@ -253,12 +258,30 @@ impl UiFrame {
     }
 
     pub(super) fn hover(&self, app: &App, mx: f32, my: f32, cx: &UiContext<'_>) -> UiFrameHover {
+        // Overlay-layer first (context_menu, palette), then Base-layer
+        // modals (paste_dialog, settings_panel). Same precedence as
+        // `click` — keeps hover styling and click dispatch in lockstep
+        // with the layered paint order.
         if let Some(component) = &self.context_menu {
             let hovered = match component.hit_test(mx, my, cx) {
                 UiContextMenuHit::Entry(idx) => Some(idx),
                 UiContextMenuHit::Menu | UiContextMenuHit::None => None,
             };
             return UiFrameHover::ContextMenu { hovered };
+        }
+
+        if let Some(component) = &self.palette {
+            let pointer = matches!(component.hit_test(mx, my, cx), UiPaletteHit::Entry(_));
+            return UiFrameHover::Palette { pointer };
+        }
+
+        if let Some(component) = &self.paste_dialog {
+            let button = match component.hit_test(mx, my, cx) {
+                UiPasteDialogHit::Paste => Some(PasteButton::Paste),
+                UiPasteDialogHit::Cancel => Some(PasteButton::Cancel),
+                UiPasteDialogHit::Dialog | UiPasteDialogHit::None => None,
+            };
+            return UiFrameHover::PasteDialog { button };
         }
 
         if let Some(component) = &self.settings_panel {
@@ -274,20 +297,6 @@ impl UiFrame {
                 UiSettingsHit::Dialog | UiSettingsHit::None => false,
             };
             return UiFrameHover::Settings { pointer };
-        }
-
-        if let Some(component) = &self.paste_dialog {
-            let button = match component.hit_test(mx, my, cx) {
-                UiPasteDialogHit::Paste => Some(PasteButton::Paste),
-                UiPasteDialogHit::Cancel => Some(PasteButton::Cancel),
-                UiPasteDialogHit::Dialog | UiPasteDialogHit::None => None,
-            };
-            return UiFrameHover::PasteDialog { button };
-        }
-
-        if let Some(component) = &self.palette {
-            let pointer = matches!(component.hit_test(mx, my, cx), UiPaletteHit::Entry(_));
-            return UiFrameHover::Palette { pointer };
         }
 
         if self.chrome.top_bar.contains(mx, my) {

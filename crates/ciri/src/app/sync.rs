@@ -11,6 +11,14 @@ impl App {
             return;
         };
 
+        // Restore the active pane's pre-search scroll BEFORE the
+        // pane_grids map is replaced by the incoming layout — once
+        // the old pane is gone, `close_search_restore_scroll` would
+        // find no grid to update and silently drop the offset. Without
+        // this restore, a session switch initiated while a search was
+        // active leaves an orphaned `search_state.pane_id` pointing
+        // into the new session's pane set.
+        self.close_search_restore_scroll();
         self.core.session_name = session_name;
         self.core.expected_pane_ids = pane_ids.iter().copied().collect();
         self.write_last_session();

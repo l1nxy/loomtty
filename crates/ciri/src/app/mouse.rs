@@ -810,9 +810,16 @@ impl App {
         let new_zoom = (cur_zoom + dy).clamp(0.05, 1.0);
         let sp = SpringParams::default();
         if new_zoom >= self.core.config.animation.zoom_threshold as f64 {
-            self.core.overview.active = false;
-            self.core.anim_mgr.overview_zoom.animate_to(1.0, sp);
-            self.animate_to_active();
+            // Use the App-level wrapper that clears
+            // `overview_hovered_pane` — bare `overview.active = false`
+            // leaves a stale hover hit_id pointing at a pane the user
+            // selected in overview mode, which renders a phantom hover
+            // highlight on the wrong pane after exit. (Same fix shape
+            // as the R11 pinch-gesture fix.) `AppModel::exit_overview`
+            // animates `overview_zoom` and `view_offset_*` itself, so
+            // we don't need the inline animations.
+            self.exit_overview();
+            let _ = sp;
         } else {
             self.core.anim_mgr.overview_zoom.animate_to(new_zoom, sp);
         }

@@ -170,6 +170,17 @@ impl App {
             }
             UiAction::CloseSettings => {
                 self.core.settings_panel_visible = false;
+                // Theme dropdown reuses `context_menu` as its popup
+                // surface (`OpenThemeDropdown` sets `visible = true`).
+                // If the user dismisses the panel via backdrop click
+                // while the dropdown is still open, the popup
+                // outlives its parent and floats over the terminal —
+                // worse, `effective_active_hit_id` keeps gating on
+                // `context_menu.visible` so all base-layer press
+                // tints stay suppressed until the user dismisses
+                // the orphan. Close it here so panel dismissal also
+                // tears down its child popup.
+                self.core.context_menu.visible = false;
             }
             UiAction::OpenThemeDropdown => {
                 // Reuse the existing context_menu popup as the dropdown

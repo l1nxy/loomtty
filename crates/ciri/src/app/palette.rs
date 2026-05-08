@@ -38,6 +38,10 @@ impl App {
         // dropping `search_state` would leave the user scrolled into
         // history at the last match position with no way back.
         self.close_search_restore_scroll();
+        // Cancel any in-flight pane drag / text selection so the
+        // palette overlay doesn't accumulate selection growth as the
+        // cursor moves under it.
+        self.cancel_pending_mouse_interactions();
     }
 
     /// Execute a palette entry — some entries require shell access (clipboard, window, connection).

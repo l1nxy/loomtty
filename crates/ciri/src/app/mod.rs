@@ -1746,6 +1746,22 @@ impl App {
         self.last_render_snapshot = None;
     }
 
+    /// Tear down any in-flight mouse interaction (text selection,
+    /// column / tile / scrollbar drag) before opening a modal that
+    /// will visually occlude the surface where the drag started.
+    /// Without this, `mouse_left_held` and the various `drag.*`
+    /// states stay live: subsequent `CursorMoved` events extend the
+    /// selection or commit a resize through the modal, finalising on
+    /// mouse-release. Called from every modal-open site that runs the
+    /// close-others discipline.
+    pub fn cancel_pending_mouse_interactions(&mut self) {
+        self.mouse_left_held = false;
+        self.mouse_left_passthrough = false;
+        self.drag.col_dragging = None;
+        self.drag.tile_dragging = None;
+        self.drag.scrollbar_dragging = None;
+    }
+
     pub fn schedule_redraw(&mut self) {
         self.pending_redraw = true;
     }

@@ -264,6 +264,11 @@ impl App {
                 // shape `dismiss_other_modals_for_palette` and
                 // `toggle_overview` already enforce.
                 self.core.pending_paste = None;
+                // Tear down any live mouse drag/selection so the
+                // panel's full-viewport backdrop doesn't cover an
+                // ongoing pane-text selection that would otherwise
+                // extend through the modal on each cursor move.
+                self.cancel_pending_mouse_interactions();
                 self.core.settings_panel_visible = !self.core.settings_panel_visible;
             }
             Action::NextSession => {
@@ -296,8 +301,13 @@ impl App {
                     .as_ref()
                     .is_some_and(|s| s.query.is_empty())
                 {
-                    // Empty query: just exit search
-                    self.core.search_state = None;
+                    // Empty query: exit search through the
+                    // restore-scroll helper. Bare `= None` skips
+                    // `grid.dirty = true` + `invalidate_pane_cache`,
+                    // so if the user scrolled while the search bar
+                    // was open with no query the pane stays
+                    // un-redrawn at the scrolled position.
+                    self.close_search_restore_scroll();
                 } else {
                     self.jump_to_match(false);
                 }
@@ -378,6 +388,11 @@ impl App {
     // ── Search helpers (used by handle_action and keyboard.rs) ──
 
     pub(super) fn open_search(&mut self) {
+        // Tear down any live drag / selection at the App level
+        // before delegating — `AppModel::open_search` runs the
+        // close-others discipline for the modal fields it owns,
+        // but App-level mouse/drag state is invisible to it.
+        self.cancel_pending_mouse_interactions();
         self.core.open_search();
     }
 

@@ -66,6 +66,10 @@ impl App {
         // back. AppModel's bare `search_state = None` is then a no-op.
         if !self.core.overview.active {
             self.close_search_restore_scroll();
+            // Tear down any live mouse drag / selection — overview's
+            // zoom-out transform breaks the screen-coord assumption
+            // those drags were started under.
+            self.cancel_pending_mouse_interactions();
         }
         self.core.toggle_overview();
         self.overview_hovered_pane = None;

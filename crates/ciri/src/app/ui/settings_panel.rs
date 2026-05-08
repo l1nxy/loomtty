@@ -19,7 +19,7 @@ use super::types::{NudgeDirection, UiAction, UiContext, UiScene, UiSettingsHit, 
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
 use ciri_ui::{
-    Banner, Div, Dropdown, ElevationIndex, NumberField, Severity, Styled, deferred, div, text,
+    Banner, Div, Dropdown, NumberField, Severity, Styled, deferred, div, text,
 };
 
 const HIT_DIALOG: u64 = 1;
@@ -123,23 +123,26 @@ impl SettingsPanelComponent {
     fn build_tree(&self, cx: &UiContext<'_>) -> Div {
         let theme = cx.theme;
         let bw = tokens::BORDER_THIN;
-        let pad = tokens::SPACE_4;
-        let content_w = self.panel_w - pad * 2.0;
+        // Generous padding so the title and content don't sit flush
+        // against the rounded panel corners.
+        let pad_x = tokens::SPACE_4;
+        let pad_y = tokens::SPACE_3;
+        let content_w = self.panel_w - pad_x * 2.0;
 
-        let title_row = div()
-            .w(content_w)
-            .h(cx.ui_line_h + tokens::SPACE_2)
+        let title_h = cx.ui_line_h + tokens::SPACE_3;
+        let close_size = title_h - tokens::SPACE_1;
+        let title_bar = div()
+            .w(self.panel_w)
+            .h(title_h)
             .flex_row()
             .items_center()
             .justify_between()
+            .px(pad_x)
             .child(text("Settings").color(theme.on_surface))
-            // Close button — square sized for a single glyph; uses neutral
-            // hover from `theme.element_hover` so the close target is
-            // discoverable without an accent shout.
             .child(
                 div()
-                    .w(cx.ui_line_h + tokens::SPACE_2)
-                    .h(cx.ui_line_h + tokens::SPACE_2)
+                    .w(close_size)
+                    .h(close_size)
                     .flex_row()
                     .items_center()
                     .justify_center()
@@ -147,14 +150,14 @@ impl SettingsPanelComponent {
                     .hit_id(HIT_CLOSE)
                     .cursor_pointer()
                     .hover(|s| s.bg(theme.element_hover))
+                    .active(|s| s.bg(theme.element_active))
                     .child(text("\u{00D7}").color(theme.on_surface_muted)),
             );
+        // Hairline divider directly under the title — gives the title
+        // row visual weight (otherwise it floats indistinguishably above
+        // the content).
+        let title_divider = div().w(self.panel_w).h(bw).bg(theme.border);
 
-        // Width-constrain so the banner text doesn't overflow the panel
-        // border at the minimum panel width (480 px → content_w ≈ 448 px).
-        // ciri-ui's text layout overflows rather than wraps, so without
-        // an explicit width the banner string runs past the panel edge.
-        // Every other panel row sets `.w(content_w)`; this matches.
         let banner = Banner::new(
             "Changes preview live. Edit settings.toml to persist them across launches.",
         )
@@ -162,16 +165,23 @@ impl SettingsPanelComponent {
         .into_div(theme)
         .w(content_w);
 
+        // Section header: uppercased + accent-muted to read as a label
+        // line, with a subtle hairline underline so groups visually
+        // separate when more sections land later.
         let section_header = div()
             .w(content_w)
-            .h(cx.ui_line_h + tokens::SPACE_1)
-            .flex_row()
-            .items_center()
-            .child(text("Appearance").color(theme.on_surface_muted));
+            .flex_col()
+            .gap(tokens::SPACE_1)
+            .child(
+                div()
+                    .w(content_w)
+                    .h(cx.ui_line_h + tokens::SPACE_1)
+                    .flex_row()
+                    .items_center()
+                    .child(text("APPEARANCE").color(theme.on_surface_muted)),
+            )
+            .child(div().w(content_w).h(bw).bg(theme.border));
 
-        // Theme preset row — real Dropdown trigger; click opens a
-        // context_menu with preset list (handler in interaction.rs
-        // populates `app.core.context_menu` at last-known mouse pos).
         let preset_label = if self.current_preset.is_empty() {
             "ciri_dark".to_string()
         } else {
@@ -183,13 +193,9 @@ impl SettingsPanelComponent {
             "Theme",
             Dropdown::new(HIT_THEME_DROPDOWN)
                 .value(preset_label)
-                .width(180.0)
+                .width(200.0)
                 .into_div(theme),
         );
-        // Pane opacity stepper — `[ - 0.85 + ]`. The display string is
-        // formatted to two decimals so the same row width works for any
-        // value in [0, 1]. Step size lives on the App handler (stage 2.D
-        // chose 0.05) so settings rows stay value-display-only.
         let opacity_row = self.control_row(
             cx,
             content_w,
@@ -199,15 +205,35 @@ impl SettingsPanelComponent {
                 .into_div(theme),
         );
 
-        let footer = div()
+        // Body: section + rows share a smaller intra-group gap; the
+        // outer panel uses a larger gap to space title / banner / body
+        // / footer.
+        let body = div()
             .w(content_w)
-            .h(cx.ui_line_h + tokens::SPACE_2)
+            .flex_col()
+            .gap(tokens::SPACE_3)
+            .child(banner)
+            .child(
+                div()
+                    .w(content_w)
+                    .flex_col()
+                    .gap(tokens::SPACE_2)
+                    .child(section_header)
+                    .child(preset_row)
+                    .child(opacity_row),
+            );
+
+        let footer_divider = div().w(self.panel_w).h(bw).bg(theme.border);
+        let footer = div()
+            .w(self.panel_w)
+            .h(title_h)
             .flex_row()
             .items_center()
             .justify_end()
+            .px(pad_x)
             .child(
                 div()
-                    .h(cx.ui_line_h + tokens::SPACE_2)
+                    .h(close_size)
                     .flex_row()
                     .items_center()
                     .px(tokens::SPACE_2)
@@ -215,8 +241,19 @@ impl SettingsPanelComponent {
                     .hit_id(HIT_OPEN_TOML)
                     .cursor_pointer()
                     .hover(|s| s.bg(theme.element_hover))
+                    .active(|s| s.bg(theme.element_active))
                     .child(text("Open settings.toml").color(theme.accent)),
             );
+
+        // Body wrapper carries the side / vertical padding so it
+        // doesn't extend over the title / footer dividers.
+        let body_wrapper = div()
+            .w(self.panel_w)
+            .flex_col()
+            .px(pad_x)
+            .py(pad_y)
+            .flex_1()
+            .child(body);
 
         let panel = div()
             .absolute()
@@ -225,19 +262,20 @@ impl SettingsPanelComponent {
             .w(self.panel_w)
             .h(self.panel_h)
             .flex_col()
-            .p(pad)
-            .gap(tokens::SPACE_3)
-            .bg(ElevationIndex::Modal.bg(theme))
+            // Panel bg = chrome surface (light tier). Controls inside
+            // use `surface_sunken` so they recess against this lift —
+            // gives a 2-tier hierarchy without changing the global
+            // ElevationIndex mapping (paste_dialog / palette stay at
+            // their sunk Modal tier).
+            .bg(theme.surface)
             .rounded(theme.radius.lg)
             .border(bw, theme.border)
             .shadow_lg()
             .hit_id(HIT_DIALOG)
-            .child(title_row)
-            .child(banner)
-            .child(section_header)
-            .child(preset_row)
-            .child(opacity_row)
-            .child(div().w(content_w).flex_1())
+            .child(title_bar)
+            .child(title_divider)
+            .child(body_wrapper)
+            .child(footer_divider)
             .child(footer);
 
         // Backdrop dim catches outside-clicks; the panel is wrapped in
@@ -251,8 +289,8 @@ impl SettingsPanelComponent {
     }
 
     /// Live-control row: label on the left, supplied control element on
-    /// the right. All Appearance rows share this layout so they line up
-    /// vertically as more controls land.
+    /// the right. Generous row height so controls have breathing space
+    /// against neighbours.
     fn control_row(
         &self,
         cx: &UiContext<'_>,
@@ -260,7 +298,7 @@ impl SettingsPanelComponent {
         label: &str,
         control: Div,
     ) -> Div {
-        let row_h = cx.ui_line_h + tokens::SPACE_2 * 2.0;
+        let row_h = cx.ui_line_h + tokens::SPACE_3 * 2.0;
         div()
             .w(content_w)
             .h(row_h)

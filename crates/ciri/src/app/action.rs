@@ -250,6 +250,13 @@ impl App {
                 self.core.command_palette = None;
                 self.core.search_state = None;
                 self.core.context_menu.visible = false;
+                // Paste dialog also closes — it sits ahead of the
+                // settings panel in `UiFrame::click` (Base-tier modal
+                // precedence), so leaving it open would intercept
+                // every click intended for settings. Same close-others
+                // shape `dismiss_other_modals_for_palette` and
+                // `toggle_overview` already enforce.
+                self.core.pending_paste = None;
                 self.core.settings_panel_visible = !self.core.settings_panel_visible;
             }
             Action::NextSession => {

@@ -469,6 +469,20 @@ mod tests {
             target_pane_id: None,
             items: vec![],
         };
+        // paste_dialog sits ahead of settings_panel in `UiFrame::click`
+        // (Base-tier modal precedence), so leaving it open would
+        // intercept every click intended for the settings panel. Pin
+        // the close-others contract for it the same way the palette
+        // and overview tests do.
+        app.core.pending_paste = Some(PendingPaste {
+            info: PasteInfo {
+                text: "x".into(),
+                size: 1,
+                line_count: 1,
+            },
+            preview: "x".into(),
+            target: super::super::PendingPasteTarget::Terminal,
+        });
 
         app.handle_action(Action::ToggleSettings);
         assert!(app.core.settings_panel_visible, "first toggle opens panel");
@@ -479,6 +493,11 @@ mod tests {
         assert!(
             !app.core.context_menu.visible,
             "context_menu must be force-closed when settings opens",
+        );
+        assert!(
+            app.core.pending_paste.is_none(),
+            "paste dialog must close when settings opens — it would \
+             otherwise intercept clicks intended for the panel",
         );
 
         app.handle_action(Action::ToggleSettings);

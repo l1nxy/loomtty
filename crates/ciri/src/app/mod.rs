@@ -1249,6 +1249,17 @@ impl App {
         if !self.core.settings_panel_visible {
             return None;
         }
+        // Suppress base-layer hover when an Overlay-layer popup is
+        // visible: the popup occludes the panel, so styling a
+        // settings element as hovered while the cursor is actually
+        // over a popup row produces a phantom highlight underneath
+        // the popup. Same gate also kills cache-thrashing — without
+        // it every cursor move over the overlap area mutates the
+        // hover hit_id and invalidates the chrome cache, causing a
+        // full repaint per pointer-move event.
+        if self.core.context_menu.visible || self.core.command_palette.is_some() {
+            return None;
+        }
         let (mx, my) = self.last_mouse_pos?;
         let cx = self.ui_context();
         let component =

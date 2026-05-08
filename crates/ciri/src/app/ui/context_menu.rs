@@ -54,7 +54,22 @@ impl ContextMenuComponent {
         let padding = tokens::SPACE_2;
         let item_height = tokens::control_height_sm(cx.cell_h);
         let max_menu_width = (cx.viewport_w - padding * 2.0).max(1.0);
-        let menu_width = 200.0_f32.min(max_menu_width);
+        // Auto-size to the widest item label so longer entries
+        // (settings panel theme dropdown's full preset names) are not
+        // chopped to "✓ catppuccin_…". The 200 px floor preserves the
+        // historic minimum for short pane-context items
+        // (Copy/Paste/Split…) so they don't render as a tiny strip.
+        let widest_label = app
+            .core
+            .context_menu
+            .items
+            .iter()
+            .map(|item| text_layout::measure(cx, &item.label))
+            .fold(0.0_f32, f32::max);
+        let chrome_w = padding * 2.0 + tokens::BORDER_THIN * 2.0;
+        let menu_width = (widest_label + chrome_w + tokens::SPACE_2)
+            .max(200.0)
+            .min(max_menu_width);
         let menu_height = app.core.context_menu.items.len() as f32 * item_height + padding * 2.0;
         // Capture raw click point — `anchored()` in `build_tree`
         // handles viewport-aware placement (edge-flips on the right /
@@ -65,7 +80,7 @@ impl ContextMenuComponent {
         // room, instead of always sliding into view.
         let x = app.core.context_menu.x;
         let y = app.core.context_menu.y;
-        let label_budget = (menu_width - padding * 2.0 - tokens::BORDER_THIN * 2.0).max(0.0);
+        let label_budget = (menu_width - chrome_w).max(0.0);
         let rows = app
             .core
             .context_menu

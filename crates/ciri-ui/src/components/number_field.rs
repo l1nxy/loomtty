@@ -26,10 +26,11 @@ use crate::shared_string::SharedString;
 use crate::styled::Styled;
 use crate::theme::ResolvedTheme;
 
-const TOTAL_W: f32 = 96.0;
-const ROW_H: f32 = 24.0;
-const BTN_W: f32 = 24.0;
+const TOTAL_W: f32 = 120.0;
+const ROW_H: f32 = 28.0;
+const BTN_W: f32 = 32.0;
 const VALUE_W: f32 = TOTAL_W - BTN_W * 2.0;
+const HAIRLINE: f32 = 1.0;
 
 pub struct NumberField {
     dec_hit_id: u64,
@@ -60,15 +61,24 @@ impl NumberField {
         let outer_bg = theme.surface_sunken;
         let border_color = theme.border;
         let fg = theme.on_surface;
-        // Hover / press tints share the chrome state-aware tokens
-        // so NumberField presses look the same as tab bar / palette
-        // row presses (round 0.2 + stage 7).
         let hover_bg = theme.element_hover;
         let press_bg = theme.element_active;
+
+        // Vertical hairline between segments — gives the dec / value /
+        // inc tri-cell the obvious "stepper buttons" silhouette so the
+        // hit areas are visually discoverable, not just clickable rect
+        // regions hiding inside an otherwise undivided box.
+        let hairline = || {
+            div()
+                .w(HAIRLINE)
+                .h(ROW_H)
+                .bg(border_color)
+        };
 
         let dec_btn = div()
             .w(BTN_W)
             .h(ROW_H)
+            .flex_none()
             .flex_row()
             .items_center()
             .justify_center()
@@ -79,8 +89,9 @@ impl NumberField {
             .child(text("−").color(fg));
 
         let value_cell = div()
-            .w(VALUE_W)
+            .w(VALUE_W - HAIRLINE * 2.0)
             .h(ROW_H)
+            .flex_none()
             .flex_row()
             .items_center()
             .justify_center()
@@ -89,6 +100,7 @@ impl NumberField {
         let inc_btn = div()
             .w(BTN_W)
             .h(ROW_H)
+            .flex_none()
             .flex_row()
             .items_center()
             .justify_center()
@@ -99,6 +111,7 @@ impl NumberField {
             .child(text("+").color(fg));
 
         div()
+            .flex_none()
             .flex_row()
             .items_center()
             .w(TOTAL_W)
@@ -107,7 +120,9 @@ impl NumberField {
             .border(1.0, border_color)
             .rounded(theme.radius.sm)
             .child(dec_btn)
+            .child(hairline())
             .child(value_cell)
+            .child(hairline())
             .child(inc_btn)
     }
 }

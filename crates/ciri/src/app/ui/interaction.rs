@@ -184,10 +184,25 @@ impl App {
                 // popup at the top-left corner) when `last_mouse_pos`
                 // is None — that path is reachable if the action ever
                 // gets dispatched from a non-mouse trigger.
-                let (mx, my) = self.last_mouse_pos.unwrap_or_else(|| {
-                    let (vw, vh) = self.command_palette_viewport_size();
-                    (vw * 0.5, vh * 0.5)
-                });
+                // Anchor popup BELOW the trigger row so it doesn't
+                // visually overlap the dropdown's value text. The GPU
+                // pipeline batches by primitive type (rects then
+                // glyphs across the whole frame), so chrome glyphs
+                // emitted earlier — including the Dropdown trigger
+                // value — paint *after* the menu rect. Without this
+                // offset the trigger glyphs bleed through the popup.
+                //
+                // 32 px is slightly larger than `Dropdown::ROW_H`
+                // (28 px) — a fixed offset is enough since the panel's
+                // dropdown row sits at a known Y, and `anchored()`
+                // edge-flips upward if the offset would clip the
+                // popup off the bottom of the viewport.
+                const POPUP_OFFSET_Y: f32 = 32.0;
+                let (mx, my) = self.last_mouse_pos.map(|(x, y)| (x, y + POPUP_OFFSET_Y))
+                    .unwrap_or_else(|| {
+                        let (vw, vh) = self.command_palette_viewport_size();
+                        (vw * 0.5, vh * 0.5)
+                    });
                 let current = self.core.config.theme.preset.clone();
                 // Preset names come from `ThemeConfig::preset_names()`
                 // so adding / renaming a preset there flows through

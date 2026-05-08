@@ -58,9 +58,21 @@ impl Dropdown {
     }
 
     pub fn into_div(self, theme: &ResolvedTheme) -> Div {
+        // Reserve room for the chevron + its left gap so the value
+        // text never collides with it. The value text gets the
+        // remaining width; ciri-ui doesn't auto-truncate yet so
+        // callers should pre-truncate / size the dropdown for the
+        // longest expected option.
+        let chevron_col_w = ROW_H;
+        let value_col_w = (self.width - PAD_X * 2.0 - chevron_col_w).max(0.0);
         div()
             .w(self.width)
             .h(ROW_H)
+            // Pin the trigger size against flex shrink in the parent —
+            // settings rows use justify_between() and would otherwise
+            // collapse the dropdown if its content was narrower than
+            // expected, leaving only a sliver of clickable area.
+            .flex_none()
             .flex_row()
             .items_center()
             .justify_between()
@@ -69,17 +81,30 @@ impl Dropdown {
             .border(1.0, theme.border)
             .rounded(theme.radius.sm)
             .hit_id(self.hit_id)
-            // Visual feedback parity with `NumberField` buttons / chrome
-            // close button. Without these the Dropdown trigger was the
-            // only interactive element in the settings panel that
-            // didn't tint on hover.
             .cursor_pointer()
             .hover(|s| s.bg(theme.element_hover))
             .active(|s| s.bg(theme.element_active))
+            // Value column reserves explicit width so glyphs can't
+            // overrun the chevron's space at long preset names.
+            .child(
+                div()
+                    .w(value_col_w)
+                    .h(ROW_H)
+                    .flex_row()
+                    .items_center()
+                    .child(text(self.value).color(theme.on_surface)),
+            )
             // U+25BE BLACK DOWN-POINTING SMALL TRIANGLE — works in any
             // monospace fallback chain, no SVG icon needed for v1.
-            .child(text(self.value).color(theme.on_surface))
-            .child(text("▾").color(theme.on_surface_muted))
+            .child(
+                div()
+                    .w(chevron_col_w)
+                    .h(ROW_H)
+                    .flex_row()
+                    .items_center()
+                    .justify_end()
+                    .child(text("▾").color(theme.on_surface_muted)),
+            )
     }
 }
 

@@ -94,6 +94,26 @@ impl AppModel {
         let Some(pane_id) = self.workspaces.active().active_pane_id() else {
             return;
         };
+        self.open_search_for_pane(pane_id);
+    }
+
+    /// Open search bound to a specific pane (used by the right-click
+    /// "Search" entry where the menu's `target_pane_id` may differ
+    /// from the currently-active pane). Shares close-others discipline
+    /// with the keyboard `open_search` so both entry points dismiss
+    /// the same set of peer modals.
+    pub fn open_search_for_pane(&mut self, pane_id: u64) {
+        // Close peer modals so search owns the surface — same
+        // discipline `ToggleSettings` / `open_command_palette` /
+        // `toggle_overview` already enforce. Without this, opening
+        // search while a palette / settings panel / paste dialog is
+        // visible leaves both visible and competing for keyboard
+        // input (search bar is transient-tier so modal gates don't
+        // suppress it).
+        self.command_palette = None;
+        self.context_menu.visible = false;
+        self.settings_panel_visible = false;
+        self.pending_paste = None;
         let scroll_offset = self
             .pane_grids
             .get(&pane_id)

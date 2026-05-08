@@ -668,7 +668,8 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{App, SearchState};
+    use crate::app::App;
+    use ciri_app::app::SearchState;
     use ciri_config::config::CiriConfig;
 
     fn make_app() -> App {

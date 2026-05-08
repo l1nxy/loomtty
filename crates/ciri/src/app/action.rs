@@ -248,7 +248,14 @@ impl App {
                 // (see resize-mode + context_menu bleed-through, fixed
                 // earlier the same way).
                 self.core.command_palette = None;
-                self.core.search_state = None;
+                // Restore the pane's scroll offset before dropping
+                // search_state — bare `= None` would leave the pane
+                // scrolled at the last match's position and the user
+                // would have no way to get back. `close_search_*`
+                // tolerates an already-`None` search_state and is the
+                // right cleanup path for every site that closes search
+                // implicitly.
+                self.close_search_restore_scroll();
                 self.core.context_menu.visible = false;
                 // Paste dialog also closes — it sits ahead of the
                 // settings panel in `UiFrame::click` (Base-tier modal

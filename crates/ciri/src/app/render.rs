@@ -3000,7 +3000,8 @@ fn scissor_rect(tr: &GeoRect, viewport_w: f32, viewport_h: f32) -> Option<(u32, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{SearchMatch, SearchState};
+    use crate::app::SearchMatch;
+    use ciri_app::app::SearchState;
     use ciri_config::config::{CiriConfig, StatusBarPosition, TabBarPosition};
     use ciri_render::font_resolver::CmapResolver;
     use ciri_render::glyph_cache::FontInitParams;

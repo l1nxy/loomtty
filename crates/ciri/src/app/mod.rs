@@ -43,7 +43,7 @@ pub(crate) use ciri_app::app::{
     AppModel, ClientImagePlacement, ConnectionKind, ConnectionSlot, ContextMenu, ContextMenuAction,
     ContextMenuItem, GestureState, HoveredLink, PaletteEntryKind, PasteButton, PendingPaste,
     PendingPasteTarget, ReconnectPlan, RemoteConnectionConfig, ResizeDragState, ScrollbarDragInfo,
-    SearchMatch, SearchState, Selection, ServerEvent, TopBarHoverRegion,
+    SearchMatch, Selection, ServerEvent, TopBarHoverRegion,
 };
 use ciri_layout::geometry::Rect as GeoRect;
 

@@ -450,11 +450,19 @@ impl App {
                         self.core.anim_mgr.overview_zoom.animate_to(new_zoom, sp);
                     }
                 } else {
-                    // In normal mode: pinch in (delta < 0) enters overview
-                    if zoom_delta < -0.02 {
-                        self.core.overview.active = true;
-                        self.overview_hovered_pane = None;
-                        self.core.context_menu.visible = false;
+                    // In normal mode: pinch in (delta < 0) enters overview.
+                    // Go through `AppModel::toggle_overview` (via the
+                    // App-level `toggle_overview` wrapper that also
+                    // resets `overview_hovered_pane`) so the close-
+                    // others discipline runs — settings panel,
+                    // command palette, paste dialog, search bar all
+                    // get dismissed the same way the keyboard
+                    // `Action::ToggleOverview` path enforces. Inlining
+                    // `overview.active = true` here used to leak
+                    // those modals into overview mode and lock the
+                    // user out of overview keyboard navigation.
+                    if zoom_delta < -0.02 && !self.core.overview.active {
+                        self.toggle_overview();
                         self.refresh_overview_zoom();
                         let sp = SpringParams::default();
                         self.core.anim_mgr.view_offset_x.animate_to(0.0, sp);

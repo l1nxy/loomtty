@@ -74,22 +74,16 @@ impl App {
                     }
                 }
                 ContextMenuAction::Search => {
+                    // Route through `AppModel::open_search_for_pane`
+                    // so the close-others discipline (palette /
+                    // settings panel / paste dialog) lands on this
+                    // path too — inlining the construction would
+                    // diverge from the keyboard `OpenSearch` entry
+                    // and silently leave peer modals open.
                     if let Some(pane_id) =
                         target_pane_id.or(self.core.workspaces.active().active_pane_id())
                     {
-                        let scroll_offset = self
-                            .core
-                            .pane_grids
-                            .get(&pane_id)
-                            .map(|g| g.scroll_offset)
-                            .unwrap_or(0);
-                        self.core.search_state = Some(super::SearchState {
-                            query: String::new(),
-                            matches: Vec::new(),
-                            current_match_idx: 0,
-                            pane_id,
-                            original_scroll_offset: scroll_offset,
-                        });
+                        self.core.open_search_for_pane(pane_id);
                     }
                 }
                 ContextMenuAction::OpenLink(url) => self.open_url(url),

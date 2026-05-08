@@ -33,8 +33,11 @@ impl App {
         // Search bar is transient-layer and isn't suppressed by modal
         // gates, so opening a palette over an active pane-search would
         // leave both widgets visible and competing for keyboard input.
-        // `ToggleSettings` already clears it for the same reason.
-        self.core.search_state = None;
+        // Use `close_search_restore_scroll` (not bare `= None`) so the
+        // pane's pre-search scroll offset is restored — silently
+        // dropping `search_state` would leave the user scrolled into
+        // history at the last match position with no way back.
+        self.close_search_restore_scroll();
     }
 
     /// Execute a palette entry — some entries require shell access (clipboard, window, connection).

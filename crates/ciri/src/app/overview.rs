@@ -57,6 +57,16 @@ impl App {
     /// Delegate: toggle overview mode. Mirrors `exit_overview` for the
     /// hover-field reset on the off-and-on paths.
     pub(crate) fn toggle_overview(&mut self) {
+        // If we're about to enter overview, close search through the
+        // restore-scroll path FIRST (before AppModel zeroes
+        // `search_state` blindly in its own close-others). Without
+        // this, a search session left active when the user enters
+        // overview would lose the original-scroll snapshot, leaving
+        // the pane scrolled at the last match position with no way
+        // back. AppModel's bare `search_state = None` is then a no-op.
+        if !self.core.overview.active {
+            self.close_search_restore_scroll();
+        }
         self.core.toggle_overview();
         self.overview_hovered_pane = None;
     }

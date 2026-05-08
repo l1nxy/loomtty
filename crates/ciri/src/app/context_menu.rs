@@ -75,14 +75,20 @@ impl App {
                 }
                 ContextMenuAction::Search => {
                     // Route through `AppModel::open_search_for_pane`
-                    // so the close-others discipline (palette /
-                    // settings panel / paste dialog) lands on this
-                    // path too — inlining the construction would
-                    // diverge from the keyboard `OpenSearch` entry
-                    // and silently leave peer modals open.
+                    // for the modal close-others, then run
+                    // `cancel_pending_mouse_interactions` at the App
+                    // level — the AppModel helper can't reach
+                    // `mouse_left_held` / `drag.*` since those live
+                    // on App. The keyboard `OpenSearch` path goes
+                    // through `App::open_search` which calls both;
+                    // this path needs the same treatment so a
+                    // text-selection drag started before right-click
+                    // doesn't extend through the search bar after
+                    // dismissal.
                     if let Some(pane_id) =
                         target_pane_id.or(self.core.workspaces.active().active_pane_id())
                     {
+                        self.cancel_pending_mouse_interactions();
                         self.core.open_search_for_pane(pane_id);
                     }
                 }
@@ -163,6 +169,14 @@ impl App {
             self.core.command_palette = None;
         }
         self.close_search_restore_scroll();
+        // Tear down any in-flight column / tile / scrollbar drag
+        // and text-selection state — the context menu's full-viewport
+        // backdrop intercepts clicks and the user can't release a
+        // drag through it. Without this, on mouse-up the resize or
+        // selection commits even though the menu has been visually
+        // covering the surface. Same shape as the other modal-open
+        // sites that call this helper (R14).
+        self.cancel_pending_mouse_interactions();
 
         if let Some((pane_id, col, row)) = self.pixel_to_viewport_cell(mx, my)
             && self.pane_prefers_mouse_passthrough(pane_id)

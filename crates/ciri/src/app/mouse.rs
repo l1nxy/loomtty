@@ -442,10 +442,14 @@ impl App {
                     let new_zoom = (cur_zoom + zoom_delta).clamp(0.05, 1.0);
                     let sp = SpringParams::default();
                     if new_zoom >= self.core.config.animation.zoom_threshold as f64 {
-                        self.overview_hovered_pane = None;
-                        self.core.overview.active = false;
-                        self.core.anim_mgr.overview_zoom.animate_to(1.0, sp);
-                        self.animate_to_active();
+                        // Route through `App::exit_overview` (clears
+                        // `overview_hovered_pane`, animates zoom +
+                        // view offsets via `AppModel::exit_overview`)
+                        // — bare field mutation skipped both. Same
+                        // fix shape as the R12 `handle_overview_wheel`
+                        // exit path.
+                        self.exit_overview();
+                        let _ = sp;
                     } else {
                         self.core.anim_mgr.overview_zoom.animate_to(new_zoom, sp);
                     }
@@ -471,16 +475,16 @@ impl App {
                 }
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
-                // Snap: if barely zoomed out, snap back to normal
+                // Snap: if barely zoomed out, snap back to normal.
+                // Use `exit_overview` so `overview_hovered_pane` is
+                // cleared and the animations are driven by AppModel —
+                // bare mutation here used to leak hover state into
+                // normal mode after pinch end.
                 if self.core.overview.active
                     && self.core.anim_mgr.overview_zoom.value()
                         > self.core.config.animation.zoom_threshold as f64
                 {
-                    self.overview_hovered_pane = None;
-                    self.core.overview.active = false;
-                    let sp = SpringParams::default();
-                    self.core.anim_mgr.overview_zoom.animate_to(1.0, sp);
-                    self.animate_to_active();
+                    self.exit_overview();
                 }
             }
         }
@@ -646,6 +650,14 @@ impl App {
             || self.core.search_state.is_some()
             || self.core.command_palette.is_some()
             || self.core.context_menu.visible
+            // Settings panel covers the whole viewport with a backdrop;
+            // moving the cursor over a "different pane" while the
+            // panel is up shouldn't silently switch focus, otherwise
+            // closing the panel lands the user on a pane they didn't
+            // intend. Same shape as the other modal gates in this
+            // chain.
+            || self.core.settings_panel_visible
+            || self.core.pending_paste.is_some()
         {
             return;
         }

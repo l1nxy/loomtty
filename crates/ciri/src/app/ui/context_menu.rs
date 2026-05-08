@@ -66,9 +66,15 @@ impl ContextMenuComponent {
             .iter()
             .map(|item| text_layout::measure(cx, &item.label))
             .fold(0.0_f32, f32::max);
+        // Comfortable horizontal margin around the longest label —
+        // `chrome_w` is the rounded panel's own padding + 1 px borders;
+        // the additional `SPACE_4` is breathing room on the right so
+        // labels don't kiss the panel edge or the rounded corner.
+        // Floor 240 px so short pane-context items (Copy / Paste / …)
+        // still read as a comfortable menu rather than a tiny strip.
         let chrome_w = padding * 2.0 + tokens::BORDER_THIN * 2.0;
-        let menu_width = (widest_label + chrome_w + tokens::SPACE_2)
-            .max(200.0)
+        let menu_width = (widest_label + chrome_w + tokens::SPACE_4)
+            .max(240.0)
             .min(max_menu_width);
         let menu_height = app.core.context_menu.items.len() as f32 * item_height + padding * 2.0;
         // Capture raw click point — `anchored()` in `build_tree`

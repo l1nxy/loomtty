@@ -14,6 +14,7 @@
 //! opens the file (or its parent directory) so users can persist via
 //! manual edit.
 
+use super::text_layout;
 use super::tokens;
 use super::types::{NudgeDirection, UiAction, UiContext, UiScene, UiSettingsHit, ui_hit_id};
 use crate::app::App;
@@ -73,11 +74,12 @@ impl SettingsPanelComponent {
         if !app.core.settings_panel_visible {
             return None;
         }
-        // Clamp the panel to a comfortable reading width — too narrow on
-        // small windows reads as cramped, too wide on big monitors makes
-        // the form feel sparse.
-        let panel_w = (cx.viewport_w * 0.6).clamp(480.0, 720.0);
-        let panel_h = (cx.viewport_h * 0.7).clamp(360.0, 560.0);
+        // Settings panel is a real workbench surface, not a pop-up tip
+        // — give it room. Aim for ~70% of the viewport with sensible
+        // floors and a generous ceiling so the form has breathing space
+        // even on a 4K monitor.
+        let panel_w = (cx.viewport_w * 0.7).clamp(640.0, 1080.0);
+        let panel_h = (cx.viewport_h * 0.75).clamp(440.0, 760.0);
         let dx = ((cx.viewport_w - panel_w) / 2.0).max(0.0);
         let dy = ((cx.viewport_h - panel_h) / 2.0).max(0.0);
         Some(Self {
@@ -182,24 +184,33 @@ impl SettingsPanelComponent {
             )
             .child(div().w(content_w).h(bw).bg(theme.border));
 
-        let preset_label = if self.current_preset.is_empty() {
-            "ciri_dark".to_string()
+        // Dropdown trigger sized for the longest preset name with a
+        // little headroom; the displayed value is pre-truncated by the
+        // shape-aware text_layout helper so it never overflows the
+        // value column even when the user runs a large UI font.
+        const DROPDOWN_W: f32 = 320.0;
+        const DROPDOWN_VALUE_BUDGET: f32 = DROPDOWN_W - 8.0 * 2.0 - 28.0; // pad + chevron col
+        let preset_raw = if self.current_preset.is_empty() {
+            "ciri_dark"
         } else {
-            self.current_preset.clone()
+            self.current_preset.as_str()
         };
+        let preset_label = text_layout::truncate_with_ellipsis(cx, preset_raw, DROPDOWN_VALUE_BUDGET);
         let preset_row = self.control_row(
             cx,
             content_w,
             "Theme",
+            "Colour scheme for the chrome and terminal palette.",
             Dropdown::new(HIT_THEME_DROPDOWN)
                 .value(preset_label)
-                .width(200.0)
+                .width(DROPDOWN_W)
                 .into_div(theme),
         );
         let opacity_row = self.control_row(
             cx,
             content_w,
             "Pane Opacity",
+            "Translucency of pane backgrounds over the wallpaper.",
             NumberField::new(HIT_OPACITY_DEC, HIT_OPACITY_INC)
                 .value(format!("{:.2}", self.pane_opacity))
                 .into_div(theme),
@@ -288,24 +299,38 @@ impl SettingsPanelComponent {
             .child(deferred(panel))
     }
 
-    /// Live-control row: label on the left, supplied control element on
-    /// the right. Generous row height so controls have breathing space
-    /// against neighbours.
+    /// Zed-style settings row: label + description stacked on the left,
+    /// control on the right. The description gives the setting context
+    /// without needing tooltips and visually anchors each row so the
+    /// panel doesn't read as a flat list of single lines.
     fn control_row(
         &self,
         cx: &UiContext<'_>,
         content_w: f32,
         label: &str,
+        description: &str,
         control: Div,
     ) -> Div {
-        let row_h = cx.ui_line_h + tokens::SPACE_3 * 2.0;
+        let theme = cx.theme;
+        let row_h = cx.ui_line_h * 2.0 + tokens::SPACE_3 * 2.0;
+        let label_col_w = (content_w * 0.5).max(0.0);
         div()
             .w(content_w)
             .h(row_h)
             .flex_row()
             .items_center()
             .justify_between()
-            .child(text(label.to_string()).color(cx.theme.on_surface))
+            .child(
+                div()
+                    .w(label_col_w)
+                    .flex_col()
+                    .gap(tokens::SPACE_1)
+                    .child(text(label.to_string()).color(theme.on_surface))
+                    .child(
+                        text(description.to_string())
+                            .color(theme.on_surface_muted),
+                    ),
+            )
             .child(control)
     }
 

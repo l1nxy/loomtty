@@ -28,6 +28,7 @@ use windows::Win32::Graphics::DirectWrite::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Dxgi::*;
 use windows::Win32::System::Threading::WaitForSingleObjectEx;
+use windows::Win32::Foundation::WAIT_TIMEOUT;
 use windows::core::*;
 
 use ciri_render::glyph_cache::PendingDwriteGlyph;
@@ -2265,11 +2266,23 @@ impl Renderer {
             // Wait for the previous frame to finish presentation before
             // submitting the next one. With the waitable object this is a true
             // kernel wait (CPU sleeps), not a busy-wait spin loop.
+            //
+            // On timeout (GPU hung / stalled past 1s), discarding the
+            // return value would defeat the latency control: `Present`
+            // queues frames faster than the GPU consumes them, piling
+            // them up in the flip queue precisely when the GPU is
+            // already struggling. Log it (matching blade.rs's
+            // wait-timeout pattern) so the diagnostic surfaces; we still
+            // proceed with `Present` because skipping it would freeze
+            // the UI entirely on transient stalls.
             if let Some(handle) = self.frame_waitable {
                 let wait_start = std::time::Instant::now();
-                WaitForSingleObjectEx(handle, 1000, false);
+                let result = WaitForSingleObjectEx(handle, 1000, false);
                 if let Some(profiler) = profiler.as_mut() {
                     profiler.record_sync_wait(wait_start);
+                }
+                if result == WAIT_TIMEOUT {
+                    log::warn!("dx: frame waitable timed out (1s) — GPU may be stalled");
                 }
             }
 

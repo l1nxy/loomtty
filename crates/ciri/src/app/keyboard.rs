@@ -265,17 +265,21 @@ impl App {
             return;
         }
 
-        // Settings panel takes Esc directly — short-circuits the keybind
-        // pipeline. Keeping it out of the binding-mode plumbing avoids
-        // adding a SETTINGS bit + per-mode bindings table just for one
-        // dismiss key. Mirrors the `!connected + Esc` early-bail above.
-        // Routes through the close-peers gate so any submodal that
-        // attached to settings (theme dropdown reuses `context_menu`)
-        // is torn down with the panel — no per-child cleanup list to
-        // keep in sync as new submodals are added.
-        if self.core.settings_panel_visible && key_name == "escape" {
-            self.enter_modal_close_peers(ModalKind::None);
-            self.request_redraw();
+        // Settings panel is a full-viewport modal — block ALL
+        // keybindings except Escape (which dismisses the panel
+        // through the close-peers gate, tearing down any submodal
+        // like the theme dropdown that reuses `context_menu`).
+        // Without this swallow, normal shortcuts (close pane, new
+        // session, toggle overview, etc.) still mutate the
+        // underlying session while the modal is up: `process_key_event`
+        // dispatches them and `modal_captures_keyboard()` only
+        // suppresses raw terminal pass-through *after* dispatch —
+        // it doesn't gate Action handlers themselves.
+        if self.core.settings_panel_visible {
+            if key_name == "escape" {
+                self.enter_modal_close_peers(ModalKind::None);
+                self.request_redraw();
+            }
             return;
         }
 

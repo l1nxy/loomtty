@@ -569,13 +569,18 @@ impl App {
                 renderer.clear_background_image();
             }
         }
-        // Invalidate the render-cache hash so the next frame actually
-        // redraws with the new (or cleared) wallpaper texture.
-        // Without this, an idle window where nothing else changed
-        // skips the draw via the `render_snapshot` early-return in
-        // `render.rs`, and the user keeps seeing the previous image
-        // until some unrelated UI change forces a repaint.
-        self.last_render_snapshot = None;
+        // Drop ALL render caches. Forces a clean rebuild of the
+        // scene including per-tile glyph instances and pane bg
+        // entries, both of which can carry stale color-channel
+        // values keyed against the previous wallpaper / opacity
+        // combination. `last_render_snapshot = None` alone only
+        // bypasses the frame-hash early-return; the underlying
+        // tile caches stay populated and serve stale data on the
+        // first post-wallpaper frame for panes that weren't
+        // otherwise dirtied. The interactive opacity stepper at
+        // `interaction.rs::NudgePaneOpacity` already does the same
+        // full clear for the analogous reason — keep them aligned.
+        self.clear_render_caches();
         true
     }
 

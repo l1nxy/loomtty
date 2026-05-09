@@ -258,7 +258,6 @@ impl App {
             event.physical_key
         );
 
-        self.clear_selection_on_typing(event);
         let key_name = self.resolve_key_name(event, modifiers.ctrl);
         if key_name.is_empty() {
             self.request_redraw();
@@ -269,12 +268,12 @@ impl App {
         // keybindings except Escape (which dismisses the panel
         // through the close-peers gate, tearing down any submodal
         // like the theme dropdown that reuses `context_menu`).
-        // Without this swallow, normal shortcuts (close pane, new
-        // session, toggle overview, etc.) still mutate the
-        // underlying session while the modal is up: `process_key_event`
-        // dispatches them and `modal_captures_keyboard()` only
-        // suppresses raw terminal pass-through *after* dispatch —
-        // it doesn't gate Action handlers themselves.
+        // Runs BEFORE `clear_selection_on_typing` so a key tap with
+        // the panel open doesn't clear an active terminal selection
+        // underneath. `process_key_event` dispatches Action handlers
+        // (close pane, new session, toggle overview, etc.) which
+        // `modal_captures_keyboard()` would NOT suppress — that
+        // only gates raw terminal pass-through after dispatch.
         if self.core.settings_panel_visible {
             if key_name == "escape" {
                 self.enter_modal_close_peers(ModalKind::None);
@@ -282,6 +281,8 @@ impl App {
             }
             return;
         }
+
+        self.clear_selection_on_typing(event);
 
         // ── Unified pipeline: compute mode → process key → handle action ──
         let app_mode = self.compute_binding_mode();

@@ -459,7 +459,10 @@ VSOutput vs_main(uint vid : SV_VertexID) {
 float4 ps_main(VSOutput input) : SV_TARGET {
     float4 col = bg_tex.Sample(bg_samp, input.uv);
     float opacity = saturate(params.x);
-    return float4(col.rgb * opacity, opacity);
+    // Premultiply against texel alpha so transparent PNG pixels stay
+    // transparent. Mirror of the GL/Blade fix.
+    float a = col.a * opacity;
+    return float4(col.rgb * a, a);
 }
 "#;
 

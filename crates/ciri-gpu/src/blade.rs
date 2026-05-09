@@ -2365,6 +2365,9 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let col = textureSample(bg_tex, bg_sampler, in.uv);
     let opacity = clamp(uniforms.params.x, 0.0, 1.0);
-    return vec4<f32>(col.rgb * opacity, opacity);
+    // Premultiply against texel alpha so transparent PNG pixels stay
+    // transparent. Mirror of the GL/DX fix.
+    let a = col.a * opacity;
+    return vec4<f32>(col.rgb * a, a);
 }
 "#;

@@ -2497,6 +2497,11 @@ void main() {
     if (u_params.y > 0.5) {
         col = linearize(col);
     }
-    frag_color = vec4(col.rgb * opacity, opacity);
+    // Premultiply against the texel's own alpha so transparent PNG
+    // pixels stay transparent (let the underlying clear color show).
+    // The previous `opacity` for alpha treated every texel as opaque
+    // and rendered transparent regions as solid tinted blocks.
+    float a = col.a * opacity;
+    frag_color = vec4(col.rgb * a, a);
 }
 "#;

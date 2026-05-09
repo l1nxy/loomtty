@@ -1536,32 +1536,21 @@ impl Renderer {
                 },
             );
 
-            // Overview wallpaper, if any. Self-checks the texture/opacity
-            // gate, so passing 0.0 is a no-op. Drawn after the clear and
-            // before pane bgs so the image sits behind everything else.
-            // Returns true iff a draw was actually issued.
-            let wallpaper_drawn =
-                self.background_image
-                    .draw(&mut pass, vw_f, vh_f, scene.background_image_opacity);
-
-            // 1. Upload all background rects (clear + pane + overlay) once.
-            // The prepended baseline rect goes transparent while the
-            // wallpaper is showing — same trick as DX/GL — so it doesn't
-            // erase the image we just drew. The slot itself stays so
-            // the bg_rect index math (`active_bg_idx` / `overlay_bg_idx`)
-            // still matches `scene.bg_rect_ranges`.
-            let baseline_color = if wallpaper_drawn {
-                [0.0; 4]
-            } else {
-                scene.clear_color
-            };
+            // 1. Upload all background rects (baseline + pane + overlay)
+            // once. Baseline is ALWAYS opaque `scene.clear_color`. We
+            // draw it FIRST (before the wallpaper) so any wallpaper
+            // dim alpha-blends toward the configured background colour
+            // — matching DX/GL which clear the framebuffer to
+            // `scene.clear_color` directly. Blade's `TextureColor`
+            // doesn't support a custom-RGBA clear, hence the explicit
+            // baseline rect approach.
             let mut all_bg = Vec::with_capacity(1 + scene.bg_rects.len());
             all_bg.push(Rect {
                 x: 0.0,
                 y: 0.0,
                 w: vw_f,
                 h: vh_f,
-                color: baseline_color,
+                color: scene.clear_color,
             });
             all_bg.extend_from_slice(scene.bg_rects);
             let active_bg_idx = 1 + scene.active_bg_start;
@@ -1606,10 +1595,36 @@ impl Renderer {
                         .collect()
                 };
 
-            // 2. Draw non-focused pane background rects.
             let mut rect_uniform_slot = 0usize;
+
+            // 2. Draw the baseline rect (index 0) BEFORE the wallpaper
+            // so wallpaper alpha-blends against `scene.clear_color`,
+            // not the OpaqueBlack init clear.
+            let baseline_range = [PaneRectRange {
+                start: 0,
+                count: 1,
+                ..PaneRectRange::default()
+            }];
+            self.rects.draw_ranges(
+                &mut pass,
+                &baseline_range,
+                vw_f,
+                vh_f,
+                &mut rect_uniform_slot,
+            );
+
+            // 3. Overview wallpaper, if any. Self-checks the texture/
+            // opacity gate, so passing 0.0 is a no-op. Returns true
+            // iff a draw was actually issued — kept around as a
+            // diagnostic but no longer drives baseline transparency.
+            let _wallpaper_drawn =
+                self.background_image
+                    .draw(&mut pass, vw_f, vh_f, scene.background_image_opacity);
+
+            // 4. Draw non-focused pane background rects, starting from
+            // index 1 — the baseline at index 0 already painted above.
             let inactive_bg_count = active_bg_idx.min(total_bg);
-            let inactive_bg_ranges = split_ranges(&all_bg_ranges, 0, inactive_bg_count);
+            let inactive_bg_ranges = split_ranges(&all_bg_ranges, 1, inactive_bg_count);
             self.rects.draw_ranges(
                 &mut pass,
                 &inactive_bg_ranges,

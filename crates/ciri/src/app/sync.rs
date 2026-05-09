@@ -569,6 +569,13 @@ impl App {
                 renderer.clear_background_image();
             }
         }
+        // Invalidate the render-cache hash so the next frame actually
+        // redraws with the new (or cleared) wallpaper texture.
+        // Without this, an idle window where nothing else changed
+        // skips the draw via the `render_snapshot` early-return in
+        // `render.rs`, and the user keeps seeing the previous image
+        // until some unrelated UI change forces a repaint.
+        self.last_render_snapshot = None;
         true
     }
 

@@ -1,3 +1,4 @@
+use ciri_app::app::{ModalKind, PendingPasteTarget};
 use ciri_input::action::Action;
 use ciri_input::keybind::BindingMode;
 use ciri_protocol::message::ClientMessage;
@@ -98,6 +99,13 @@ impl App {
             } else {
                 normalized.clone()
             };
+            // `target` is `CommandPalette` or `Search` — the dialog
+            // is overlaid ABOVE the still-live overlay, not a peer.
+            // The payload variant tells the gate to preserve the
+            // underlying overlay rather than tearing it down (which
+            // would leave the dialog confirming a paste with nowhere
+            // to land).
+            self.enter_modal_close_peers(ModalKind::PendingPaste(target));
             self.core.pending_paste = Some(super::PendingPaste {
                 info,
                 preview,
@@ -261,15 +269,12 @@ impl App {
         // pipeline. Keeping it out of the binding-mode plumbing avoids
         // adding a SETTINGS bit + per-mode bindings table just for one
         // dismiss key. Mirrors the `!connected + Esc` early-bail above.
+        // Routes through the close-peers gate so any submodal that
+        // attached to settings (theme dropdown reuses `context_menu`)
+        // is torn down with the panel — no per-child cleanup list to
+        // keep in sync as new submodals are added.
         if self.core.settings_panel_visible && key_name == "escape" {
-            self.core.settings_panel_visible = false;
-            // Theme dropdown reuses `context_menu` as its popup
-            // surface; without this clear, dismissing the panel via
-            // Esc while the dropdown is open leaves the popup
-            // floating over the terminal AND `effective_active_hit_id`
-            // gates on `context_menu.visible` so all base-layer press
-            // tints stay suppressed. Same fix as `UiAction::CloseSettings`.
-            self.core.context_menu.visible = false;
+            self.enter_modal_close_peers(ModalKind::None);
             self.request_redraw();
             return;
         }
@@ -421,6 +426,9 @@ impl App {
                             text.clone()
                         };
                         let preview = preview.replace('\n', " \\n ").replace('\r', "");
+                        self.enter_modal_close_peers(ModalKind::PendingPaste(
+                            PendingPasteTarget::Terminal,
+                        ));
                         self.core.pending_paste = Some(super::PendingPaste {
                             info,
                             preview,

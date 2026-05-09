@@ -1,6 +1,6 @@
 use ciri_anim::spring::SpringParams;
 
-use super::AppModel;
+use super::{AppModel, ModalKind};
 
 impl AppModel {
     pub fn exit_overview(&mut self) {
@@ -16,25 +16,21 @@ impl AppModel {
         self.overview.active = !self.overview.active;
         let sp = SpringParams::default();
         if self.overview.active {
-            // Close every modal-ish overlay so overview cleanly owns
-            // the surface. Without dismissing settings_panel here, the
-            // panel's full-viewport backdrop continues to render and
+            // Close every modal-tier overlay so overview cleanly owns
+            // the surface. Without dismissing settings_panel here, its
+            // full-viewport backdrop continues to render and
             // `UiFrame::click` / `hover` route every event to the
-            // panel's dispatcher before reaching the `overview.active`
-            // arm — overview is completely unreachable by mouse until
-            // the user closes settings via Esc. Mirrors the
-            // close-others discipline of `ToggleSettings` /
-            // `open_command_palette`.
-            self.context_menu.visible = false;
-            self.settings_panel_visible = false;
-            self.command_palette = None;
-            self.pending_paste = None;
-            // Search bar lives on the transient layer and isn't
-            // suppressed by modal gates, so leaving `search_state`
-            // active alongside overview leaves both widgets visible
-            // AND keyboard-routable simultaneously. Clear it the same
-            // way `ToggleSettings` does in `action.rs`.
-            self.search_state = None;
+            // panel before reaching the `overview.active` arm —
+            // overview becomes mouse-unreachable until the user
+            // closes settings via Esc. Production callers route
+            // through `App::toggle_overview` which runs
+            // `close_search_restore_scroll` (the only correct way to
+            // tear down `search_state` — it requires `pane_grids`
+            // mutation that AppModel can't reach). DO NOT call this
+            // method directly without the App wrapper; an active
+            // search session would silently lose its pre-search
+            // scroll snapshot.
+            self.enter_modal_close_peers_core(ModalKind::None);
             self.refresh_overview_zoom();
             let center = match self.config.layout.center_focused_column {
                 ciri_config::config::CenterStrategy::Always => {

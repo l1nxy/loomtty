@@ -1,6 +1,7 @@
 use super::frame::{UiFrame, UiFrameHover};
 use super::types::{UiAction, UiHoverOutcome};
 use crate::app::App;
+use ciri_app::app::{ContextMenuParent, ModalKind};
 use winit::window::CursorIcon;
 
 impl App {
@@ -146,11 +147,16 @@ impl App {
                     palette.selected_idx = pos;
                 }
                 self.execute_palette_entry(entry_idx);
-                if !keep_open {
-                    self.core.command_palette = None;
+                // Skip the gate when the executed action ALREADY
+                // closed the palette by opening a new modal (mirrors
+                // `execute_palette_selection`'s guard — without this,
+                // selecting "Settings…" flashes the panel open then
+                // immediately back closed).
+                if !keep_open && self.core.command_palette.is_some() {
+                    self.enter_modal_close_peers(ModalKind::None);
                 }
             }
-            UiAction::ClosePalette => self.core.command_palette = None,
+            UiAction::ClosePalette => self.enter_modal_close_peers(ModalKind::None),
             UiAction::ExecuteContextMenuEntry(idx) => {
                 self.handle_context_menu_click(idx);
             }
@@ -169,18 +175,11 @@ impl App {
                 self.core.overview.drag_last_pos = self.last_mouse_pos;
             }
             UiAction::CloseSettings => {
-                self.core.settings_panel_visible = false;
-                // Theme dropdown reuses `context_menu` as its popup
-                // surface (`OpenThemeDropdown` sets `visible = true`).
-                // If the user dismisses the panel via backdrop click
-                // while the dropdown is still open, the popup
-                // outlives its parent and floats over the terminal —
-                // worse, `effective_active_hit_id` keeps gating on
-                // `context_menu.visible` so all base-layer press
-                // tints stay suppressed until the user dismisses
-                // the orphan. Close it here so panel dismissal also
-                // tears down its child popup.
-                self.core.context_menu.visible = false;
+                // Routes through the close-peers gate so the theme
+                // dropdown (which reuses `context_menu`) and any
+                // future settings submodal are torn down with the
+                // panel — no per-child cleanup list to maintain.
+                self.enter_modal_close_peers(ModalKind::None);
             }
             UiAction::OpenThemeDropdown => {
                 // Reuse the existing context_menu popup as the dropdown
@@ -240,6 +239,13 @@ impl App {
                         }
                     })
                     .collect();
+                // Theme dropdown reuses `context_menu` as a submodal
+                // anchored under settings. The `OverSettings` payload
+                // tells the gate to preserve `settings_panel_visible`
+                // (the parent) rather than tearing it down.
+                self.enter_modal_close_peers(ModalKind::ContextMenu(
+                    ContextMenuParent::OverSettings,
+                ));
                 self.core.context_menu = crate::app::ContextMenu {
                     visible: true,
                     x: mx,
@@ -295,7 +301,13 @@ impl App {
                         target.display(),
                     );
                 }
-                self.core.settings_panel_visible = false;
+                // Same shape as `UiAction::CloseSettings` — the theme
+                // dropdown could be alive as a submodal at the moment
+                // this fires (defense-in-depth; hit-test order may
+                // already prevent it). Route through the gate so any
+                // submodal is torn down with the panel rather than
+                // floating orphaned over the terminal.
+                self.enter_modal_close_peers(ModalKind::None);
             }
             UiAction::NudgePaneOpacity(direction) => {
                 // 0.05 step — coarse enough to feel each press, fine

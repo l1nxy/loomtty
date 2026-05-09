@@ -1,47 +1,24 @@
+use ciri_app::app::ModalKind;
 use ciri_protocol::message::ClientMessage;
 
 use super::{App, PaletteEntryKind};
 use crate::connection::RemoteQueryResult;
 
 impl App {
-    /// Delegate: open command palette. Closes every other modal-ish
-    /// overlay first so the palette cleanly owns input focus and the
-    /// layered z-order stays unambiguous (Overlay-tier popups must not
-    /// stack with Base-tier modals — `UiFrame::click` would dispatch
-    /// the click to whichever the dispatch table reaches first, and
-    /// either choice would feel wrong to the user).
+    /// Delegate: open command palette. The close-peers discipline is
+    /// shared with every other modal-tier UI through
+    /// `enter_modal_close_peers` — the palette is just one client of
+    /// the gate.
     pub fn open_command_palette(&mut self) {
-        self.dismiss_other_modals_for_palette();
+        self.enter_modal_close_peers(ModalKind::CommandPalette);
         self.core.open_command_palette();
     }
 
-    /// Delegate: open session palette. Same close-others discipline as
+    /// Delegate: open session palette. Same close-peers discipline as
     /// `open_command_palette`.
     pub fn open_session_palette(&mut self) {
-        self.dismiss_other_modals_for_palette();
+        self.enter_modal_close_peers(ModalKind::SessionPalette);
         self.core.open_session_palette();
-    }
-
-    fn dismiss_other_modals_for_palette(&mut self) {
-        self.core.settings_panel_visible = false;
-        self.core.context_menu.visible = false;
-        // Paste confirmation is a Base-tier modal; if a palette opens
-        // over it the click and hover order route to the palette and
-        // the dialog becomes unreachable. Drop it here so the user
-        // doesn't end up locked out by an over-stacked modal.
-        self.core.pending_paste = None;
-        // Search bar is transient-layer and isn't suppressed by modal
-        // gates, so opening a palette over an active pane-search would
-        // leave both widgets visible and competing for keyboard input.
-        // Use `close_search_restore_scroll` (not bare `= None`) so the
-        // pane's pre-search scroll offset is restored — silently
-        // dropping `search_state` would leave the user scrolled into
-        // history at the last match position with no way back.
-        self.close_search_restore_scroll();
-        // Cancel any in-flight pane drag / text selection so the
-        // palette overlay doesn't accumulate selection growth as the
-        // cursor moves under it.
-        self.cancel_pending_mouse_interactions();
     }
 
     /// Execute a palette entry — some entries require shell access (clipboard, window, connection).
@@ -184,7 +161,7 @@ impl App {
             // moved on to a different host's loading state, treat the in-
             // flight intent as cancelled — do not reach `ssh`. This is the
             // single chokepoint that catches every cancel path without
-            // having to plumb cleanup through each `command_palette = None`
+            // having to plumb cleanup through each palette-close
             // call site.
             let palette_still_loading_this_host = self
                 .core
@@ -226,7 +203,10 @@ impl App {
                 .as_ref()
                 .is_some_and(|p| p.remote_error.is_some());
             if !has_error {
-                self.core.command_palette = None;
+                // Route through the gate so any palette submodal
+                // (paste-confirm overlaid on the palette query) dies
+                // with the palette.
+                self.enter_modal_close_peers(ModalKind::None);
             }
             return;
         }

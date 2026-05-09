@@ -1,3 +1,4 @@
+use ciri_app::app::ModalKind;
 use ciri_protocol::message::*;
 use std::sync::Arc;
 
@@ -11,18 +12,17 @@ impl App {
             return;
         };
 
-        // Restore the active pane's pre-search scroll BEFORE the
-        // pane_grids map is replaced by the incoming layout — once
-        // the old pane is gone, `close_search_restore_scroll` would
-        // find no grid to update and silently drop the offset. Without
-        // this restore, a session switch initiated while a search was
-        // active leaves an orphaned `search_state.pane_id` pointing
-        // into the new session's pane set.
-        self.close_search_restore_scroll();
+        // Close every modal BEFORE the pane_grids map is replaced by
+        // the incoming layout — once the old pane is gone,
+        // `close_search_restore_scroll` (run inside the helper) would
+        // find no grid to update and silently drop the offset.
+        // Without this, a session switch initiated while a search
+        // was active leaves an orphaned `search_state.pane_id`
+        // pointing into the new session's pane set.
+        self.enter_modal_close_peers(ModalKind::None);
         self.core.session_name = session_name;
         self.core.expected_pane_ids = pane_ids.iter().copied().collect();
         self.write_last_session();
-        self.core.command_palette = None;
         self.core.slot_session_pending.clear();
         self.core.slot_session_query_start = None;
         // The incoming layout is unrelated to the previous session's columns.

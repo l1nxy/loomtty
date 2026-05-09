@@ -5,6 +5,7 @@ pub(crate) mod event;
 pub(crate) mod ime;
 pub(crate) mod key_encode;
 pub(crate) mod keyboard;
+pub(crate) mod modal_state;
 pub(crate) mod mouse;
 pub(crate) mod notification;
 pub(crate) mod open;
@@ -41,9 +42,9 @@ use winit::window::Window;
 // Re-export core types so existing `use super::*` in submodules still works.
 pub(crate) use ciri_app::app::{
     AppModel, ClientImagePlacement, ConnectionKind, ConnectionSlot, ContextMenu, ContextMenuAction,
-    ContextMenuItem, GestureState, HoveredLink, PaletteEntryKind, PasteButton, PendingPaste,
-    PendingPasteTarget, ReconnectPlan, RemoteConnectionConfig, ResizeDragState, ScrollbarDragInfo,
-    SearchMatch, Selection, ServerEvent, TopBarHoverRegion,
+    ContextMenuItem, GestureState, HoveredLink, ModalKind, PaletteEntryKind, PasteButton,
+    PendingPaste, PendingPasteTarget, ReconnectPlan, RemoteConnectionConfig, ResizeDragState,
+    ScrollbarDragInfo, SearchMatch, Selection, ServerEvent, TopBarHoverRegion,
 };
 use ciri_layout::geometry::Rect as GeoRect;
 
@@ -760,16 +761,16 @@ impl App {
         if self.core.overview.active {
             self.core.exit_overview();
         }
-        // Restore the active pane's pre-search scroll BEFORE we save
-        // the slot — `close_search_restore_scroll` mutates the live
-        // pane grid in-place. Bare `search_state = None` would freeze
-        // the slot's saved scroll at the last match position with no
-        // way to recover when the slot is restored. Same shape as the
-        // R12 `finalize_authoritative_session_switch` fix.
-        self.close_search_restore_scroll();
-        self.core.command_palette = None;
-        self.core.context_menu = ContextMenu::default();
-        self.core.pending_paste = None;
+        // First gate runs against the CURRENT slot's pane_grids,
+        // before `save_current_to_slot` snapshots them. A live search
+        // session must be torn down (scroll restored) here, while the
+        // grid the snapshot belongs to is still the live one. Bare
+        // `search_state = None` would freeze the saved slot's grid at
+        // the last-match scroll position with no way to recover when
+        // the slot is restored later. Paired with the post-restore
+        // gate at line ~787 below — the two are not redundant; they
+        // run against different pane_grids.
+        self.enter_modal_close_peers(ModalKind::None);
 
         // Save current state to background
         if let Some(current) = self.save_current_to_slot() {
@@ -788,13 +789,11 @@ impl App {
         self.core.overview.dragging = false;
         self.core.overview.drag_last_pos = None;
         self.core.anim_mgr.overview_zoom.jump_to(1.0);
-        // If the saved slot had a live search session, restore its
+        // If the restored slot had a live search session, restore its
         // pre-search scroll on the just-loaded pane grid before
-        // clearing — same shape as the pre-save restore above.
-        self.close_search_restore_scroll();
-        self.core.command_palette = None;
-        self.core.context_menu = ContextMenu::default();
-        self.core.pending_paste = None;
+        // clearing — `enter_modal_close_peers` does this through the
+        // App-level `close_search_restore_scroll` path.
+        self.enter_modal_close_peers(ModalKind::None);
         self.drag = ResizeDragState {
             col_dragging: None,
             col_right_idx: None,
@@ -1621,29 +1620,23 @@ impl App {
     }
 
     pub fn mark_disconnected_for_reconnect(&mut self, reason: ciri_app::app::DisconnectReason) {
-        // Tear down any modal that depends on a live server before
+        // Tear down every modal that depends on a live server before
         // signalling disconnect:
         //   * paste_dialog → Confirm sends `Input` over `server_tx`
         //     which is about to become None, silently dropping the
-        //     paste; close it explicitly.
-        //   * command_palette in remote-input mode → keystrokes route
-        //     into the prompt buffer over the reconnecting banner,
-        //     where the user can't see they're typing into a dead
-        //     dialog. Dismiss.
+        //     paste.
+        //   * command_palette in remote-input mode → keystrokes
+        //     route into the prompt buffer over the reconnecting
+        //     banner where the user can't see them.
         //   * search_state → after reconnect the layout may differ;
-        //     `search.pane_id` could reference a missing pane.
-        //     Restore the original scroll while the old grid is
-        //     still live, then drop the state.
+        //     `search.pane_id` could reference a missing pane. Drop
+        //     it through the scroll-restore path while the old grid
+        //     is still live.
         //   * context_menu / settings_panel → no server dependency
-        //     but neither are useful while disconnected.
+        //     but neither is useful while disconnected.
         // App-level drag/selection state goes too, since mouse-up
         // may not reach us before reconnect repopulates the layout.
-        self.core.command_palette = None;
-        self.core.pending_paste = None;
-        self.core.context_menu.visible = false;
-        self.core.settings_panel_visible = false;
-        self.close_search_restore_scroll();
-        self.cancel_pending_mouse_interactions();
+        self.enter_modal_close_peers(ModalKind::None);
         self.core.mark_disconnected_for_reconnect(reason);
         // The IO thread is gone — its cancel endpoint has no listener.
         self.connection_cancel = None;

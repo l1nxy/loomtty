@@ -1,10 +1,12 @@
 mod animation;
 mod input_helpers;
+mod modal_state;
 mod overview;
 mod palette;
 mod sync;
 mod types;
 
+pub use modal_state::{ContextMenuParent, ModalField, ModalKind, kept_set};
 pub use types::*;
 
 use ciri_config::config::CiriConfig;

@@ -1885,25 +1885,40 @@ impl Renderer {
             // Drop the old RTV before resizing the swap chain.
             std::ptr::drop_in_place(&mut self.rtv);
 
-            self.swap_chain
-                .ResizeBuffers(
-                    0,
-                    width,
-                    height,
-                    DXGI_FORMAT_UNKNOWN,
-                    if self.frame_waitable.is_some() {
-                        DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT
-                    } else {
-                        DXGI_SWAP_CHAIN_FLAG(0)
-                    },
-                )
-                .expect("ResizeBuffers failed");
+            // ResizeBuffers / create_rtv use `abort` rather than
+            // `expect` (panic). Between `drop_in_place` and
+            // `ptr::write` below, `self.rtv` holds invalid bytes; if
+            // either fallible call panicked, unwind would drop
+            // `Renderer` later and call COM `Release()` on the
+            // dangling pointer — a double-free that crashes the D3D
+            // driver. Abort skips unwind entirely; a failed resize
+            // means the GPU is gone and we couldn't recover anyway.
+            let resize_result = self.swap_chain.ResizeBuffers(
+                0,
+                width,
+                height,
+                DXGI_FORMAT_UNKNOWN,
+                if self.frame_waitable.is_some() {
+                    DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT
+                } else {
+                    DXGI_SWAP_CHAIN_FLAG(0)
+                },
+            );
+            if let Err(e) = resize_result {
+                log::error!("dx: ResizeBuffers failed ({e:?}); aborting to avoid double-free");
+                std::process::abort();
+            }
+
+            let new_rtv = match create_rtv(&self.device, &self.swap_chain) {
+                Ok(v) => v,
+                Err(e) => {
+                    log::error!("dx: create_rtv failed ({e:?}); aborting to avoid double-free");
+                    std::process::abort();
+                }
+            };
 
             // Write the new RTV without dropping the (now-invalid) old value.
-            std::ptr::write(
-                &mut self.rtv,
-                create_rtv(&self.device, &self.swap_chain).expect("create_rtv failed"),
-            );
+            std::ptr::write(&mut self.rtv, new_rtv);
         }
     }
 

@@ -417,6 +417,19 @@ impl App {
             return;
         }
 
+        // Settings panel covers the viewport with a full backdrop;
+        // forwarding wheel events to terminal / overview / topbar
+        // scroll handlers lets the underlying content scroll while
+        // the modal sits on top — visually disconcerting and
+        // sometimes destructive (e.g. scrolling a pane's history
+        // out of view while the user is reading settings). Same
+        // gating shape as `handle_focus_follows_mouse` above.
+        // Pending paste is also a Base-tier modal with a backdrop;
+        // include it for the same reason.
+        if self.core.settings_panel_visible || self.core.pending_paste.is_some() {
+            return;
+        }
+
         if self.core.overview.active {
             self.handle_overview_wheel(delta);
         } else {

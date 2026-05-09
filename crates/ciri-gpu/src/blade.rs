@@ -2043,9 +2043,18 @@ mod shader_tests {
         }
     }
 
+    /// Substitute `// WGSL_CORNER_FUNCS_PLACEHOLDER` with the corner-
+    /// alpha helpers, mirroring the runtime path at the pipeline
+    /// constructors (lines 63, 1098, 1123). Without this, parsing the
+    /// raw source surfaces an "unknown identifier `ciri_corner_alpha`"
+    /// error that doesn't reflect what the GPU actually compiles.
+    fn corner_substitute(source: &str) -> String {
+        source.replace("// WGSL_CORNER_FUNCS_PLACEHOLDER", super::WGSL_CORNER_FUNCS)
+    }
+
     #[test]
     fn rect_shader_parses() {
-        compile("RECT_SHADER", super::RECT_SHADER);
+        compile("RECT_SHADER", &corner_substitute(super::RECT_SHADER));
     }
 
     #[test]

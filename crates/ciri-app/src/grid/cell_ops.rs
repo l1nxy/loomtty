@@ -119,16 +119,28 @@ impl ClientPaneGrid {
                 break;
             }
             let row_data = self.row(buf_row);
-            let left = if buf_row == start.1 {
+            let mut left = if buf_row == start.1 {
                 start.0 as usize
             } else {
                 0
             };
-            let right = if buf_row == end.1 {
+            let mut right = if buf_row == end.1 {
                 end.0 as usize
             } else {
                 self.cols.saturating_sub(1) as usize
             };
+            // Don't split a wide char: if `left` lands on a spacer, walk back
+            // to its leading cell so the leading char is included in the copy;
+            // if `right` lands on the leading cell of a wide char, walk forward
+            // to the spacer so the wide char isn't half-selected. Together with
+            // the `FLAG_WIDE_CHAR_SPACER` skip below, this means a half-cell
+            // visual selection still copies the full underlying character.
+            if left < row_data.len() {
+                left = self.normalize_cell_start(row_data, left);
+            }
+            if right < row_data.len() {
+                right = self.cell_end(row_data, right);
+            }
             let mut line = String::new();
             for col in left..=right {
                 if col >= row_data.len() {
@@ -149,6 +161,27 @@ impl ClientPaneGrid {
             }
         }
         result
+    }
+
+    /// Expand a selection range `[left, right]` on `buf_row` so it never
+    /// splits a wide character (CJK, emoji, etc.). Visual selection should call
+    /// this before building its highlight rect so the user sees full glyphs
+    /// even when the mouse stops in the middle of a wide char.
+    pub fn snap_selection_to_wide_chars(
+        &self,
+        buf_row: usize,
+        left: u16,
+        right: u16,
+    ) -> (u16, u16) {
+        if buf_row >= self.buffer_len() {
+            return (left, right);
+        }
+        let row = self.row(buf_row);
+        let l = (left as usize).min(row.len().saturating_sub(1));
+        let r = (right as usize).min(row.len().saturating_sub(1));
+        let l = self.normalize_cell_start(row, l);
+        let r = self.cell_end(row, r);
+        (l as u16, r as u16)
     }
 
     pub(super) fn normalize_cell_start(&self, row: &[PackedCell], mut idx: usize) -> usize {

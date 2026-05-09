@@ -16,6 +16,7 @@ use alacritty_terminal::term::color::COUNT as COLOR_COUNT;
 use alacritty_terminal::vte::ansi::{CursorShape, Handler, Processor};
 use anyhow::Result;
 use ciri_protocol::message::*;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc;
 
 use crate::event::PtyEventListener;
@@ -43,6 +44,28 @@ impl Dimensions for TermSize {
     }
     fn columns(&self) -> usize {
         self.cols
+    }
+}
+
+/// Process-wide default cursor shape used when an app hasn't explicitly set one
+/// via DECSCUSR. Stored as a `u8` matching `CURSOR_BLOCK`/`CURSOR_BEAM`/etc;
+/// `CURSOR_BLOCK` (the alacritty default) means "no override".
+static DEFAULT_CURSOR_SHAPE: AtomicU8 = AtomicU8::new(CURSOR_BLOCK);
+
+/// Override the process-wide default cursor shape. Call at startup, before any
+/// `Pane` is created. Apps that send DECSCUSR still win — this only affects the
+/// fallback shape `alacritty_terminal` returns when no app override is active.
+pub fn set_default_cursor_shape(shape: u8) {
+    DEFAULT_CURSOR_SHAPE.store(shape, Ordering::Relaxed);
+}
+
+fn default_cursor_shape() -> CursorShape {
+    match DEFAULT_CURSOR_SHAPE.load(Ordering::Relaxed) {
+        CURSOR_BEAM => CursorShape::Beam,
+        CURSOR_UNDERLINE => CursorShape::Underline,
+        CURSOR_HOLLOW_BLOCK => CursorShape::HollowBlock,
+        // CURSOR_HIDDEN is not a sensible default; fall back to Block.
+        _ => CursorShape::Block,
     }
 }
 
@@ -143,10 +166,11 @@ impl Pane {
             cols: cols as usize,
             rows: rows as usize,
         };
-        let config = TermConfig {
+        let mut config = TermConfig {
             kitty_keyboard: true,
             ..TermConfig::default()
         };
+        config.default_cursor_style.shape = default_cursor_shape();
         let (event_listener, event_rx) = PtyEventListener::new();
         let term = Term::new(config, &size, event_listener);
 

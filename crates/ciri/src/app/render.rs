@@ -1246,6 +1246,9 @@ impl App {
                 } else {
                     grid.cols.saturating_sub(1)
                 };
+                // Don't split a wide char visually: snap `left`/`right` so
+                // the highlight always covers full CJK / emoji glyphs.
+                let (left, right) = grid.snap_selection_to_wide_chars(buf_row, left, right);
                 let sx = inner_x + left as f32 * cw * zoom;
                 let sy = inner_y + viewport_row as f32 * ch * zoom;
                 let sw = (right - left + 1) as f32 * cw * zoom;

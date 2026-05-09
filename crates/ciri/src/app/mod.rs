@@ -5,10 +5,12 @@ pub(crate) mod event;
 pub(crate) mod ime;
 pub(crate) mod key_encode;
 pub(crate) mod keyboard;
+pub(crate) mod modal_state;
 pub(crate) mod mouse;
 pub(crate) mod notification;
 pub(crate) mod open;
 pub(crate) mod overview;
+pub(crate) mod background_image;
 pub(crate) mod palette;
 pub(crate) mod paste_dialog;
 pub(crate) mod paste_guard;
@@ -40,9 +42,9 @@ use winit::window::Window;
 // Re-export core types so existing `use super::*` in submodules still works.
 pub(crate) use ciri_app::app::{
     AppModel, ClientImagePlacement, ConnectionKind, ConnectionSlot, ContextMenu, ContextMenuAction,
-    ContextMenuItem, GestureState, HoveredLink, PaletteEntryKind, PasteButton, PendingPaste,
-    PendingPasteTarget, ReconnectPlan, RemoteConnectionConfig, ResizeDragState, ScrollbarDragInfo,
-    SearchMatch, SearchState, Selection, ServerEvent, TopBarHoverRegion,
+    ContextMenuItem, GestureState, HoveredLink, ModalKind, PaletteEntryKind, PasteButton,
+    PendingPaste, PendingPasteTarget, ReconnectPlan, RemoteConnectionConfig, ResizeDragState,
+    ScrollbarDragInfo, SearchMatch, Selection, ServerEvent, TopBarHoverRegion,
 };
 use ciri_layout::geometry::Rect as GeoRect;
 
@@ -101,6 +103,13 @@ pub(crate) struct RenderBuffers {
     pub pane_regions: HashMap<u64, PaneSceneRegion>,
     pub pane_glyph_end: usize,
     pub pane_color_glyph_end: usize,
+    /// Reused per-frame storage for the assembled SDF rect stream
+    /// (pane focus rings + cached chrome + transient overlays).
+    /// Without this, `assemble_scene` allocated a fresh `Vec` every
+    /// frame while every other buffer cycled via `mem::take` — a
+    /// small but consistent ~96 KB / frame heap churn at the 1024-rect
+    /// cap.
+    pub ui_sdf_rects: Vec<ciri_render::sdf_rect::SdfRect>,
 }
 
 #[derive(Default)]
@@ -111,6 +120,15 @@ pub(crate) struct CachedUiScene {
     /// SDF-shader chrome rects emitted by ciri-ui-painted widgets
     /// (rounded / bordered / shadowed).
     pub sdf_rects: Vec<ciri_render::sdf_rect::SdfRect>,
+    /// Index into `glyphs` where the Overlay layer begins. Anything
+    /// before it is `ChromeLayer::Base`. Set by `frame.paint` after
+    /// the base pass completes; Overlay primitives append onto the same
+    /// Vec, so `[..base_glyph_end]` is base, `[base_glyph_end..]` is
+    /// overlay. The renderer issues two GPU passes against these
+    /// ranges so overlay rects cover base glyphs.
+    pub base_glyph_end: usize,
+    pub base_color_glyph_end: usize,
+    pub base_sdf_end: usize,
 }
 
 impl CachedUiScene {
@@ -119,6 +137,9 @@ impl CachedUiScene {
         self.glyphs.clear();
         self.color_glyphs.clear();
         self.sdf_rects.clear();
+        self.base_glyph_end = 0;
+        self.base_color_glyph_end = 0;
+        self.base_sdf_end = 0;
     }
 }
 
@@ -204,6 +225,18 @@ pub(crate) struct App {
     pub window_focused: bool,
     pub config_watcher: Option<notify::RecommendedWatcher>,
     pub config_change_rx: Option<crossbeam_channel::Receiver<()>>,
+    /// In-flight background-image decode. The worker thread spawned by
+    /// `reload_background_image` decodes a (possibly multi-MB) image
+    /// off the main thread, then sends the result back here + wakes the
+    /// event loop. `apply_pending_background_image` drains it next iteration
+    /// and pushes the RGBA bytes to the renderer. Tagged with the path
+    /// the decode was started for so a stale result (user changed the
+    /// path mid-decode) gets discarded instead of overwriting a newer
+    /// upload.
+    pub pending_background_image_decode: Option<(
+        String,
+        crossbeam_channel::Receiver<anyhow::Result<Option<crate::app::background_image::DecodedImage>>>,
+    )>,
     /// Latest pending resize event and its timestamp.
     pub pending_resize: Option<(winit::dpi::PhysicalSize<u32>, Instant)>,
     /// Deferred DPI change — applied when resize settles to avoid atlas churn.
@@ -520,6 +553,7 @@ impl App {
                 pane_regions: HashMap::new(),
                 pane_glyph_end: 0,
                 pane_color_glyph_end: 0,
+                ui_sdf_rects: Vec::new(),
             },
             clipboard: arboard::Clipboard::new().ok(),
             mouse_left_held: false,
@@ -534,6 +568,7 @@ impl App {
             window_focused: true,
             config_watcher: None,
             config_change_rx: None,
+            pending_background_image_decode: None,
             pending_resize: None,
             pending_dpi: None,
             event_loop_proxy: None,
@@ -726,10 +761,16 @@ impl App {
         if self.core.overview.active {
             self.core.exit_overview();
         }
-        self.core.search_state = None;
-        self.core.command_palette = None;
-        self.core.context_menu = ContextMenu::default();
-        self.core.pending_paste = None;
+        // First gate runs against the CURRENT slot's pane_grids,
+        // before `save_current_to_slot` snapshots them. A live search
+        // session must be torn down (scroll restored) here, while the
+        // grid the snapshot belongs to is still the live one. Bare
+        // `search_state = None` would freeze the saved slot's grid at
+        // the last-match scroll position with no way to recover when
+        // the slot is restored later. Paired with the post-restore
+        // gate at line ~787 below — the two are not redundant; they
+        // run against different pane_grids.
+        self.enter_modal_close_peers(ModalKind::None);
 
         // Save current state to background
         if let Some(current) = self.save_current_to_slot() {
@@ -748,10 +789,11 @@ impl App {
         self.core.overview.dragging = false;
         self.core.overview.drag_last_pos = None;
         self.core.anim_mgr.overview_zoom.jump_to(1.0);
-        self.core.search_state = None;
-        self.core.command_palette = None;
-        self.core.context_menu = ContextMenu::default();
-        self.core.pending_paste = None;
+        // If the restored slot had a live search session, restore its
+        // pre-search scroll on the just-loaded pane grid before
+        // clearing — `enter_modal_close_peers` does this through the
+        // App-level `close_search_restore_scroll` path.
+        self.enter_modal_close_peers(ModalKind::None);
         self.drag = ResizeDragState {
             col_dragging: None,
             col_right_idx: None,
@@ -1209,6 +1251,50 @@ impl App {
         component.hover_index(mx, my, &cx)
     }
 
+    /// Hit-id under the cursor for the settings panel, used by the
+    /// chrome cache hash so cursor moves between interactive elements
+    /// (close button / dropdown trigger / opacity steppers / "Open
+    /// settings.toml" link) invalidate the cache and the declarative
+    /// `.hover()` styles repaint each frame.
+    ///
+    /// Mirrors `current_context_menu_hover` /
+    /// `current_paste_dialog_hover` / `current_palette_hover`. Returns
+    /// the raw u64 hit_id rather than a typed enum because settings
+    /// hits are flat (no per-item-index payload to thread through).
+    /// `active_hit_id` projected through the same overlay gate as
+    /// `current_settings_hover`. When an Overlay-tier popup is visible
+    /// the Base layer's press tint must not light up — same shape as
+    /// the hover suppression. Used by the cache hash and by the paint
+    /// context so both are in lockstep.
+    pub(crate) fn effective_active_hit_id(&self) -> Option<u64> {
+        if self.core.context_menu.visible || self.core.command_palette.is_some() {
+            return None;
+        }
+        self.active_hit_id
+    }
+
+    pub(crate) fn current_settings_hover(&self) -> Option<u64> {
+        if !self.core.settings_panel_visible {
+            return None;
+        }
+        // Suppress base-layer hover when an Overlay-layer popup is
+        // visible: the popup occludes the panel, so styling a
+        // settings element as hovered while the cursor is actually
+        // over a popup row produces a phantom highlight underneath
+        // the popup. Same gate also kills cache-thrashing — without
+        // it every cursor move over the overlap area mutates the
+        // hover hit_id and invalidates the chrome cache, causing a
+        // full repaint per pointer-move event.
+        if self.core.context_menu.visible || self.core.command_palette.is_some() {
+            return None;
+        }
+        let (mx, my) = self.last_mouse_pos?;
+        let cx = self.ui_context();
+        let component =
+            crate::app::ui::settings_panel::SettingsPanelComponent::capture(self, &cx)?;
+        component.hover_hit_id(mx, my, &cx)
+    }
+
     /// Which paste-dialog button (`Paste` / `Cancel`) the cursor is over.
     /// Derived from `last_mouse_pos` + the dialog geometry the capture
     /// step would compute. Returns `None` when no paste is pending or
@@ -1534,6 +1620,23 @@ impl App {
     }
 
     pub fn mark_disconnected_for_reconnect(&mut self, reason: ciri_app::app::DisconnectReason) {
+        // Tear down every modal that depends on a live server before
+        // signalling disconnect:
+        //   * paste_dialog → Confirm sends `Input` over `server_tx`
+        //     which is about to become None, silently dropping the
+        //     paste.
+        //   * command_palette in remote-input mode → keystrokes
+        //     route into the prompt buffer over the reconnecting
+        //     banner where the user can't see them.
+        //   * search_state → after reconnect the layout may differ;
+        //     `search.pane_id` could reference a missing pane. Drop
+        //     it through the scroll-restore path while the old grid
+        //     is still live.
+        //   * context_menu / settings_panel → no server dependency
+        //     but neither is useful while disconnected.
+        // App-level drag/selection state goes too, since mouse-up
+        // may not reach us before reconnect repopulates the layout.
+        self.enter_modal_close_peers(ModalKind::None);
         self.core.mark_disconnected_for_reconnect(reason);
         // The IO thread is gone — its cancel endpoint has no listener.
         self.connection_cancel = None;
@@ -1657,6 +1760,31 @@ impl App {
         self.cached_ui_scene.clear();
         self.render_bufs.clear_retained_scene();
         self.last_render_snapshot = None;
+    }
+
+    /// Tear down any in-flight mouse interaction (text selection,
+    /// column / tile / scrollbar drag) before opening a modal that
+    /// will visually occlude the surface where the drag started.
+    /// Without this, `mouse_left_held` and the various `drag.*`
+    /// states stay live: subsequent `CursorMoved` events extend the
+    /// selection or commit a resize through the modal, finalising on
+    /// mouse-release. Called from every modal-open site that runs the
+    /// close-others discipline.
+    pub fn cancel_pending_mouse_interactions(&mut self) {
+        self.mouse_left_held = false;
+        self.mouse_left_passthrough = false;
+        self.drag.col_dragging = None;
+        self.drag.tile_dragging = None;
+        self.drag.scrollbar_dragging = None;
+        // Deactivate any in-flight terminal selection drag too —
+        // clearing `mouse_left_held` alone leaves `selection.active`
+        // set, so the next mouse-up still triggers copy-on-select on
+        // a selection the user thought was cancelled when the modal
+        // opened. The selection range itself is preserved (only
+        // `active` flips); copy intent is what we cancel.
+        if let Some(sel) = self.core.selection.as_mut() {
+            sel.active = false;
+        }
     }
 
     pub fn schedule_redraw(&mut self) {

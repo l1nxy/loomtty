@@ -511,13 +511,15 @@ fn has_visual(s: &Style) -> bool {
 }
 
 /// Map the semantic `Shadow` enum to concrete (blur, color, offset).
-/// Values track Tailwind's steps closely enough for chrome without
-/// shipping a full design-token table yet.
+///
+/// Values lean Linear/VS Code rather than Tailwind: wider blur with
+/// lower alpha gives a soft falloff that reads as "floating chrome"
+/// rather than a hard drop shadow stuck on a pane.
 fn resolve_shadow(s: Option<Shadow>) -> (f32, Color, [f32; 2]) {
     match s {
-        Some(Shadow::Sm) => (4.0, [0.0, 0.0, 0.0, 0.15], [0.0, 2.0]),
-        Some(Shadow::Md) => (8.0, [0.0, 0.0, 0.0, 0.25], [0.0, 4.0]),
-        Some(Shadow::Lg) => (16.0, [0.0, 0.0, 0.0, 0.35], [0.0, 6.0]),
+        Some(Shadow::Sm) => (6.0, [0.0, 0.0, 0.0, 0.14], [0.0, 2.0]),
+        Some(Shadow::Md) => (16.0, [0.0, 0.0, 0.0, 0.20], [0.0, 4.0]),
+        Some(Shadow::Lg) => (28.0, [0.0, 0.0, 0.0, 0.26], [0.0, 8.0]),
         None => (0.0, [0.0; 4], [0.0; 2]),
     }
 }

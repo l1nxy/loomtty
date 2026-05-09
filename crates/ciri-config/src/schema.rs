@@ -305,6 +305,30 @@ pub struct AppearanceConfig {
     /// background / glyph alpha at the arc (niri-style mask, no extra pass).
     #[garde(range(min = 0.0, max = 64.0))]
     pub pane_corner_radius: f32,
+    /// Optional path to a background image rendered behind everything
+    /// (panes in normal mode, thumbnails in overview mode). Empty =
+    /// solid `theme.overview_background` fill. Supports `~`, absolute
+    /// paths, and paths relative to the config directory. PNG and JPEG
+    /// only. Fitted with a `cover` policy (filled to viewport, overflow
+    /// cropped, aspect preserved).
+    #[garde(skip)]
+    pub background_image: String,
+    /// Dim factor applied over the background image. `0.0` shows the
+    /// image at full strength; `1.0` blends it entirely toward
+    /// `theme.overview_background` (hides the image). Use a mid value
+    /// (~0.4-0.6) to keep pane content legible over a busy wallpaper.
+    /// Ignored when `background_image` is empty.
+    #[garde(range(min = 0.0, max = 1.0))]
+    pub background_dim: f32,
+    /// Pane background opacity (`0.0`-`1.0`). `1.0` keeps panes fully
+    /// opaque; lower values let the global `background_image` (or
+    /// `theme.overview_background` if no image is set) show through.
+    /// `~0.8` is a good middle ground over a wallpaper. Applies only to
+    /// pane interior bg rects (terminal pane background + per-cell ANSI
+    /// bg colours); chrome (palette, status bar, etc.) stays opaque so
+    /// it remains legible.
+    #[garde(range(min = 0.0, max = 1.0))]
+    pub pane_opacity: f32,
 }
 
 impl Default for AppearanceConfig {
@@ -320,6 +344,13 @@ impl Default for AppearanceConfig {
             // Default 0.0 preserves the historical sharp-corner look on
             // upgrade; users opt in by raising the value in their config.
             pane_corner_radius: 0.0,
+            background_image: String::new(),
+            // Default 0.0 = no dim layer when no image is set; users
+            // typically pick ~0.5 once they configure an image.
+            background_dim: 0.0,
+            // Default 1.0 = fully opaque panes (existing visual behaviour
+            // on upgrade). Users opt in to translucency by lowering it.
+            pane_opacity: 1.0,
         }
     }
 }

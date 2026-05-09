@@ -18,6 +18,15 @@ use sdf_rect::SdfRect;
 /// Shared across all backends.
 pub struct FrameScene<'a> {
     pub clear_color: [f32; 4],
+    /// Opacity (0..1) of the background image drawn after the clear and
+    /// before anything else. `0.0` skips the draw entirely (so backends pay
+    /// no cost when no image is configured or the user dialed dim to 1.0).
+    /// The renderer also skips the draw if no image has been uploaded via
+    /// `Renderer::set_background_image`. `1.0` shows the image at full
+    /// strength; values in between blend toward `clear_color` via standard
+    /// alpha (premultiplied output `(rgb*a, a)` over the cleared
+    /// framebuffer).
+    pub background_image_opacity: f32,
     pub bg_rects: &'a [Rect],
     pub bg_rect_ranges: &'a [PaneRectRange],
     pub glyphs: &'a [GlyphInstance],
@@ -42,4 +51,17 @@ pub struct FrameScene<'a> {
     /// slice — flat chrome still renders via `bg_rects`, so no widget
     /// disappears while support rolls out.
     pub sdf_rects: &'a [SdfRect],
+    /// Index in `sdf_rects` where the cached chrome's Base layer ends and
+    /// the Overlay layer (palette / context_menu, etc.) begins. Backends
+    /// that issue a single combined draw can ignore this; the layered
+    /// renderer splits the SDF + glyph passes here so popup rects can
+    /// occlude base-layer glyphs (settings_panel labels, top_bar text)
+    /// instead of sitting beneath them.
+    pub chrome_base_sdf_end: usize,
+    /// Indices in `glyphs` / `color_glyphs` where the Base chrome layer
+    /// ends. The slice between `pane_*_glyph_end` and these is the Base
+    /// chrome's text; the slice from these to the end is Overlay +
+    /// transient text (drawn after the Overlay SDF rects).
+    pub chrome_base_alpha_glyph_end: usize,
+    pub chrome_base_color_glyph_end: usize,
 }

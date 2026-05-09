@@ -151,6 +151,74 @@ fn open_url_impl(url: &str, pane_cwd: Option<&str>) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Open a trusted first-party file or directory in the OS default
+/// handler. Bypasses the `$EDITOR`-or-refuse safety gate that
+/// `open_file_path` enforces for terminal-output-derived paths —
+/// this entry point is for paths the app itself produced (e.g.
+/// `config_path()`), where there's no risk of malicious terminal
+/// content forging the input.
+pub(crate) fn open_trusted_path(path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open").arg(path).spawn()?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // Same `ShellExecuteW` shape as `open_url_impl`'s URL path —
+        // copy-paste rather than refactor to keep the unsafe surface
+        // tightly scoped. `path` here is OsStr so we encode to UTF-16
+        // with the standard Windows extension.
+        use std::os::windows::ffi::OsStrExt;
+        unsafe extern "system" {
+            fn ShellExecuteW(
+                hwnd: *mut std::ffi::c_void,
+                operation: *const u16,
+                file: *const u16,
+                parameters: *const u16,
+                directory: *const u16,
+                show_cmd: i32,
+            ) -> isize;
+        }
+        let wide_open: Vec<u16> = std::ffi::OsStr::new("open")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let wide_path: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let result = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                wide_open.as_ptr(),
+                wide_path.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                1, // SW_SHOWNORMAL
+            )
+        };
+        if result <= 32 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("ShellExecuteW failed with code {result}"),
+            ));
+        }
+        return Ok(());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Command::new("xdg-open").arg(path).spawn()?;
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Ok(())
+}
+
 /// Check if a link string looks like a file path rather than a URL.
 fn is_file_path_link(s: &str) -> bool {
     let lower = s.to_ascii_lowercase();

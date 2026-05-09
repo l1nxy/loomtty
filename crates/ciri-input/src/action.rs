@@ -67,6 +67,8 @@ pub enum Action {
     EnterMode(String),
     /// Toggle locked mode (all keys pass through to terminal).
     ToggleLock,
+    /// Toggle the settings panel overlay.
+    ToggleSettings,
     /// Switch to the next connection (cycles through slots, restoring each
     /// slot's last-active session). For within-slot session switching use the
     /// session palette.
@@ -207,6 +209,7 @@ impl Action {
             (Action::ToggleCommandPalette, "Toggle Command Palette"),
             (Action::ToggleSessionPalette, "Toggle Session Palette"),
             (Action::ToggleLock, "Toggle Lock"),
+            (Action::ToggleSettings, "Settings\u{2026}"),
             (Action::NextSession, "Next Session"),
             (Action::PrevSession, "Previous Session"),
             (Action::NewSession, "New Session"),
@@ -258,6 +261,7 @@ fn parse_named_action(name: &str) -> Option<Action> {
         "toggle_command_palette" => Some(Action::ToggleCommandPalette),
         "toggle_session_palette" => Some(Action::ToggleSessionPalette),
         "toggle_lock" => Some(Action::ToggleLock),
+        "toggle_settings" | "settings" => Some(Action::ToggleSettings),
         "next_session" => Some(Action::NextSession),
         "prev_session" | "previous_session" => Some(Action::PrevSession),
         "new_session" => Some(Action::NewSession),

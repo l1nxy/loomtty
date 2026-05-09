@@ -1,6 +1,7 @@
 use super::frame::{UiFrame, UiFrameHover};
 use super::types::{UiAction, UiHoverOutcome};
 use crate::app::App;
+use ciri_app::app::{ContextMenuParent, ModalKind};
 use winit::window::CursorIcon;
 
 impl App {
@@ -146,11 +147,16 @@ impl App {
                     palette.selected_idx = pos;
                 }
                 self.execute_palette_entry(entry_idx);
-                if !keep_open {
-                    self.core.command_palette = None;
+                // Skip the gate when the executed action ALREADY
+                // closed the palette by opening a new modal (mirrors
+                // `execute_palette_selection`'s guard — without this,
+                // selecting "Settings…" flashes the panel open then
+                // immediately back closed).
+                if !keep_open && self.core.command_palette.is_some() {
+                    self.enter_modal_close_peers(ModalKind::None);
                 }
             }
-            UiAction::ClosePalette => self.core.command_palette = None,
+            UiAction::ClosePalette => self.enter_modal_close_peers(ModalKind::None),
             UiAction::ExecuteContextMenuEntry(idx) => {
                 self.handle_context_menu_click(idx);
             }
@@ -167,6 +173,165 @@ impl App {
             UiAction::StartOverviewDrag => {
                 self.core.overview.dragging = true;
                 self.core.overview.drag_last_pos = self.last_mouse_pos;
+            }
+            UiAction::CloseSettings => {
+                // Routes through the close-peers gate so the theme
+                // dropdown (which reuses `context_menu`) and any
+                // future settings submodal are torn down with the
+                // panel — no per-child cleanup list to maintain.
+                self.enter_modal_close_peers(ModalKind::None);
+            }
+            UiAction::OpenThemeDropdown => {
+                // Reuse the existing context_menu popup as the dropdown
+                // surface — its anchored / outside-click / hit-walker
+                // pipeline is already production-tested. Items populate
+                // with the built-in preset list; clicking one fires
+                // `ContextMenuAction::SetThemePreset(name)` which the
+                // standard dispatch handles via `apply_theme_preset`.
+                //
+                // Anchor at the cursor; fall back to the viewport
+                // centre rather than `(0, 0)` (which would put the
+                // popup at the top-left corner) when `last_mouse_pos`
+                // is None — that path is reachable if the action ever
+                // gets dispatched from a non-mouse trigger.
+                // Anchor popup BELOW the trigger row so it doesn't
+                // visually overlap the dropdown's value text. The GPU
+                // pipeline batches by primitive type (rects then
+                // glyphs across the whole frame), so chrome glyphs
+                // emitted earlier — including the Dropdown trigger
+                // value — paint *after* the menu rect. Without this
+                // offset the trigger glyphs bleed through the popup.
+                //
+                // 44 px is slightly larger than `Dropdown::ROW_H`
+                // (40 px) — a fixed offset is enough since the panel's
+                // dropdown row sits at a known Y, and `anchored()`
+                // edge-flips upward if the offset would clip the
+                // popup off the bottom of the viewport.
+                const POPUP_OFFSET_Y: f32 = 44.0;
+                let (mx, my) = self.last_mouse_pos.map(|(x, y)| (x, y + POPUP_OFFSET_Y))
+                    .unwrap_or_else(|| {
+                        let (vw, vh) = self.command_palette_viewport_size();
+                        (vw * 0.5, vh * 0.5)
+                    });
+                let current = self.core.config.theme.preset.clone();
+                // Preset names come from `ThemeConfig::preset_names()`
+                // so adding / renaming a preset there flows through
+                // automatically — no second source-of-truth list to
+                // keep in sync.
+                let presets = ciri_config::theme::ThemeConfig::preset_names();
+                let items = presets
+                    .iter()
+                    .copied()
+                    .map(|name| {
+                        let active = name == current
+                            || (current.is_empty() && name == "ciri_dark");
+                        let label = if active {
+                            format!("\u{2713} {}", name)
+                        } else {
+                            format!("  {}", name)
+                        };
+                        crate::app::ContextMenuItem {
+                            label,
+                            action: crate::app::ContextMenuAction::SetThemePreset(
+                                name.to_string(),
+                            ),
+                            enabled: true,
+                        }
+                    })
+                    .collect();
+                // Theme dropdown reuses `context_menu` as a submodal
+                // anchored under settings. The `OverSettings` payload
+                // tells the gate to preserve `settings_panel_visible`
+                // (the parent) rather than tearing it down.
+                self.enter_modal_close_peers(ModalKind::ContextMenu(
+                    ContextMenuParent::OverSettings,
+                ));
+                self.core.context_menu = crate::app::ContextMenu {
+                    visible: true,
+                    x: mx,
+                    y: my,
+                    target_pane_id: None,
+                    items,
+                };
+            }
+            UiAction::OpenSettingsToml => {
+                // v1 escape hatch: open the user's settings.toml so
+                // they can persist any change the panel doesn't yet
+                // write back. Reuses the existing `open_url`-via-
+                // `open_file_path` flow so OS-specific editor
+                // resolution ($EDITOR / code / cursor / system handler)
+                // is shared with the link-click path.
+                //
+                // We deliberately do NOT seed the file when missing —
+                // that round-tripped through the config-file watcher
+                // and clobbered any in-memory live preview the user
+                // just made. Instead, fall back to opening the parent
+                // directory so the user can create the file themselves
+                // without losing their preview state.
+                // Use the trusted-path opener — `config_path()` is
+                // first-party and safe to hand to the OS handler. The
+                // generic `open_url` path refuses file paths without
+                // `$EDITOR` set (see `open_file_path` safety gate),
+                // which fails for any GUI launch context that doesn't
+                // export `$EDITOR` to child processes (common on macOS
+                // and many Linux desktops).
+                let path = ciri_config::config::config_path();
+                let to_open: Option<std::path::PathBuf> = if path.exists() {
+                    Some(path.clone())
+                } else if let Some(parent) = path.parent()
+                    && parent.exists()
+                {
+                    log::info!(
+                        "settings.toml does not yet exist; opening parent directory {}",
+                        parent.display(),
+                    );
+                    Some(parent.to_path_buf())
+                } else {
+                    log::warn!(
+                        "settings.toml path unavailable: {} (parent does not exist either)",
+                        path.display(),
+                    );
+                    None
+                };
+                if let Some(target) = to_open
+                    && let Err(e) = crate::app::open::open_trusted_path(&target)
+                {
+                    log::warn!(
+                        "failed to open settings location {}: {e}",
+                        target.display(),
+                    );
+                }
+                // Same shape as `UiAction::CloseSettings` — the theme
+                // dropdown could be alive as a submodal at the moment
+                // this fires (defense-in-depth; hit-test order may
+                // already prevent it). Route through the gate so any
+                // submodal is torn down with the panel rather than
+                // floating orphaned over the terminal.
+                self.enter_modal_close_peers(ModalKind::None);
+            }
+            UiAction::NudgePaneOpacity(direction) => {
+                // 0.05 step — coarse enough to feel each press, fine
+                // enough to land on common values (0.80, 0.85, 0.90).
+                // Clamp to [0, 1]; below 0 hides the pane entirely and
+                // above 1 has no further effect.
+                const STEP: f32 = 0.05;
+                let delta = match direction {
+                    super::types::NudgeDirection::Decrement => -STEP,
+                    super::types::NudgeDirection::Increment => STEP,
+                };
+                // Floor at 0.05 — fully transparent panes leave the
+                // user staring at the desktop with no visual indication
+                // panes still exist. The settings stepper exposes the
+                // useful translucency range (0.05–1.00) instead of the
+                // full clamp; users wanting opacity 0 can edit
+                // settings.toml directly.
+                let next = (self.core.config.appearance.pane_opacity + delta).clamp(0.05, 1.0);
+                self.core.config.appearance.pane_opacity = next;
+                // Per-pane tile glyph and bg caches embed the previous
+                // opacity into rect alphas; clear so the new value
+                // reaches the GPU on the next paint.
+                self.clear_render_caches();
+                self.schedule_redraw();
             }
         }
     }
@@ -218,6 +383,22 @@ impl App {
                 // mutate here — request a redraw unconditionally so the
                 // cache hash gets recomputed; the chrome cache hit/miss
                 // path makes this cheap when the row hasn't changed.
+                UiHoverOutcome {
+                    handled: true,
+                    cursor: if pointer {
+                        CursorIcon::Pointer
+                    } else {
+                        CursorIcon::Default
+                    },
+                    needs_redraw: true,
+                }
+            }
+            UiFrameHover::Settings { pointer } => {
+                // Same shape as Palette: declarative `.hover()` styles
+                // on close button / dropdown trigger / steppers /
+                // "Open settings.toml" link rely on `cx.is_hovered(...)`
+                // refreshing each frame. Request redraw unconditionally
+                // and let the chrome cache hash dedupe.
                 UiHoverOutcome {
                     handled: true,
                     cursor: if pointer {

@@ -398,6 +398,7 @@ fn frame_scene_construction() {
     let glyphs: &[GlyphInstance] = &[];
     let scene = FrameScene {
         clear_color: [0.1, 0.2, 0.3, 1.0],
+        background_image_opacity: 0.0,
         bg_rects: &rects,
         bg_rect_ranges: &[],
         glyphs,
@@ -411,6 +412,9 @@ fn frame_scene_construction() {
         pane_color_glyph_end: 0,
         overlay_bg_start: 0,
         sdf_rects: &[],
+        chrome_base_sdf_end: 0,
+        chrome_base_alpha_glyph_end: 0,
+        chrome_base_color_glyph_end: 0,
     };
     assert_eq!(scene.bg_rects.len(), 1);
     assert_eq!(scene.clear_color[0], 0.1);

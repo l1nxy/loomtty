@@ -66,8 +66,11 @@ impl<'a> PaneTabsElement<'a> {
         let separator_inset = tokens::SPACE_1;
 
         let active_bg = tokens::tint(accent, tokens::ALPHA_TAB_ACTIVE_BG);
-        let hover_bg = tokens::tint(accent, tokens::ALPHA_HOVER_BG);
-        let press_bg = tokens::tint(accent, tokens::ALPHA_PRESS_BG);
+        // Hover / press go neutral (chrome `element_hover` /
+        // `element_active`) — preset-independent. Active tab keeps the
+        // accent tint above for the focused-pane selection cue.
+        let hover_bg = cx.theme.element_hover;
+        let press_bg = cx.theme.element_active;
         // Tab corners: round the edge that faces away from the bar's
         // baseline so the tab reads as "lifted off the bar" — top
         // corners when the bar sits at the top of the viewport, bottom

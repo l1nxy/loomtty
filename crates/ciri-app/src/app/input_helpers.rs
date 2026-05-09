@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use super::{AppModel, LastLeftClick, SearchState, Selection};
+use super::{AppModel, LastLeftClick, ModalKind, SearchState, Selection};
 
 impl AppModel {
     /// Extract selected text from the pane grid using absolute buffer coordinates.
@@ -94,6 +94,20 @@ impl AppModel {
         let Some(pane_id) = self.workspaces.active().active_pane_id() else {
             return;
         };
+        self.open_search_for_pane(pane_id);
+    }
+
+    /// Open search bound to a specific pane (used by the right-click
+    /// "Search" entry where the menu's `target_pane_id` may differ
+    /// from the currently-active pane). Defense-in-depth: every
+    /// caller is expected to go through `App::enter_modal_close_peers`
+    /// first (which restores pre-search scroll + cancels mouse drag
+    /// — App-level concerns we can't reach here). The core close-
+    /// peers below clears modal Option/bool fields a second time so
+    /// a future direct caller of this AppModel method still gets the
+    /// invariant.
+    pub fn open_search_for_pane(&mut self, pane_id: u64) {
+        self.enter_modal_close_peers_core(ModalKind::Search);
         let scroll_offset = self
             .pane_grids
             .get(&pane_id)
@@ -177,7 +191,11 @@ impl AppModel {
         use ciri_config::theme::ThemeConfig;
         let accent = ThemeConfig::parse_color(&self.config.theme.accent);
         let broadcast_color = ThemeConfig::parse_color(&self.config.theme.mode_broadcast);
-        let dim = ThemeConfig::parse_color(&self.config.theme.statusbar_dim);
+        // Chrome muted text — uses the preset-independent `ui_*` resolver
+        // so the resting NORMAL-mode label stays consistent across
+        // terminal themes. `statusbar_dim` continues to drive other
+        // status-bar-internal text only.
+        let dim = self.config.theme.ui_on_surface_muted_color();
         let warn_color = ThemeConfig::parse_color(&self.config.theme.mode_broadcast);
         if self.input.is_locked() {
             (" LOCKED ".into(), warn_color)

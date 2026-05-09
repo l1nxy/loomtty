@@ -12,9 +12,10 @@ use ciri_render::rect::{PaneRectRange, Rect};
 use ciri_render::sdf_rect::SdfRect;
 use glow::HasContext;
 
-/// Upper bound on SDF chrome rects per frame. Mirrors `MAX_SDF_RECTS` in
-/// the blade backend so both backends drop the same tail under a flood.
-const MAX_SDF_RECTS: usize = 256;
+/// Upper bound on SDF chrome rects per frame. See
+/// `blade::MAX_SDF_RECTS` for rationale; kept identical so all
+/// backends behave the same under load.
+const MAX_SDF_RECTS: usize = 1024;
 #[cfg(not(target_os = "macos"))]
 use glutin::config::ConfigTemplateBuilder;
 use glutin::context::PossiblyCurrentContext;
@@ -854,6 +855,13 @@ impl GlSdfPipeline {
         if rects.is_empty() {
             return;
         }
+        if rects.len() > self.max_rects {
+            log::warn!(
+                "SDF chrome overflow: {} rects > {} cap; tail (incl. Overlay) dropped",
+                rects.len(),
+                self.max_rects,
+            );
+        }
         let count = rects.len().min(self.max_rects);
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instance_vbo));
         let data = bytemuck::cast_slice(&rects[..count]);
@@ -861,9 +869,17 @@ impl GlSdfPipeline {
         gl.bind_buffer(glow::ARRAY_BUFFER, None);
     }
 
-    unsafe fn draw(
+    /// Draw a contiguous slice `[start..start + count)` of the
+    /// uploaded instance buffer. Mirrors blade / dx `draw_range`:
+    /// needed by the layered chrome pass so Base SDF + Base glyphs land
+    /// before Overlay SDF + Overlay glyphs in submission order.
+    /// Without first-instance support in pre-4.2 GL, we shift the base
+    /// vertex-attrib pointer by `start * SdfRect::SIZE` bytes — same
+    /// trick the glyph pipeline already uses for batched chrome runs.
+    unsafe fn draw_range(
         &self,
         gl: &glow::Context,
+        start: usize,
         count: usize,
         viewport_w: f32,
         viewport_h: f32,
@@ -872,7 +888,11 @@ impl GlSdfPipeline {
         if count == 0 {
             return;
         }
-        let count = count.min(self.max_rects);
+        let max = self.max_rects;
+        if start >= max {
+            return;
+        }
+        let count = count.min(max - start);
         gl.use_program(Some(self.program));
         gl.uniform_2_f32(Some(&self.loc_viewport), viewport_w, viewport_h);
         if let Some(ref loc) = self.loc_use_linear_blending {
@@ -880,10 +900,22 @@ impl GlSdfPipeline {
         }
         gl.bind_vertex_array(Some(self.vao));
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.instance_vbo));
-        setup_sdf_vertex_attribs(gl, 0);
+        let base_offset = (start * SdfRect::SIZE) as i32;
+        setup_sdf_vertex_attribs(gl, base_offset);
 
         gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, count as i32);
 
+        // Restore the canonical zero-offset state on the VAO before
+        // unbinding. `vertex_attrib_pointer` writes into VAO state,
+        // and a non-zero `base_offset` from this call would otherwise
+        // persist into any future caller that bound the VAO without
+        // re-running `setup_sdf_vertex_attribs`. Today the layered
+        // pass always re-runs it on the next frame's Base call, but
+        // any new code path skipping that setup would silently read
+        // from the wrong byte offset.
+        if base_offset != 0 {
+            setup_sdf_vertex_attribs(gl, 0);
+        }
         gl.bind_vertex_array(None);
         gl.use_program(None);
     }
@@ -892,6 +924,209 @@ impl GlSdfPipeline {
         gl.delete_program(self.program);
         gl.delete_vertex_array(self.vao);
         gl.delete_buffer(self.instance_vbo);
+    }
+}
+
+// ─── GL overview wallpaper pipeline ─────────────────────────────────
+//
+// One vertexless fullscreen quad textured with the user-supplied image.
+// Mirrors the DX `DxOverviewBgPipeline`: cover-fit UV math, premult-alpha
+// output, draws after the clear and before pane bgs. The `image` crate's
+// row-major top-down RGBA8 layout combined with GL's lower-left texture
+// origin and the existing `ndc.y = 1 - py/vh*2` Y-flip in the renderer
+// cancel out — screen-top samples image-top without a manual flip.
+
+struct GlBackgroundImageTexture {
+    texture: glow::Texture,
+    width: u32,
+    height: u32,
+}
+
+struct GlBackgroundImagePipeline {
+    program: glow::Program,
+    /// Empty VAO bound during draw — core-profile GL requires a VAO be
+    /// bound for any draw call, even with vertexless shaders.
+    vao: glow::VertexArray,
+    loc_viewport_tex: glow::UniformLocation,
+    loc_params: glow::UniformLocation,
+    loc_tex: glow::UniformLocation,
+    texture: Option<GlBackgroundImageTexture>,
+}
+
+impl GlBackgroundImagePipeline {
+    unsafe fn new(gl: &glow::Context) -> crate::Result<Self> {
+        let fs_src = BACKGROUND_IMAGE_FS.replace("// COLOR_FUNCS_PLACEHOLDER", GLSL_COLOR_FUNCS);
+        debug_assert!(
+            !fs_src.contains("PLACEHOLDER"),
+            "overview-bg shader source still contains unfilled placeholder"
+        );
+        let program = compile_program(gl, BACKGROUND_IMAGE_VS, &fs_src, "background_image")?;
+        let loc_viewport_tex = gl
+            .get_uniform_location(program, "u_viewport_tex")
+            .ok_or_else(|| {
+                crate::GpuError::ShaderCompile(
+                    "u_viewport_tex uniform not found in background_image shader".into(),
+                )
+            })?;
+        let loc_params = gl
+            .get_uniform_location(program, "u_params")
+            .ok_or_else(|| {
+                crate::GpuError::ShaderCompile(
+                    "u_params uniform not found in background_image shader".into(),
+                )
+            })?;
+        let loc_tex = gl.get_uniform_location(program, "u_tex").ok_or_else(|| {
+            crate::GpuError::ShaderCompile("u_tex uniform not found in background_image shader".into())
+        })?;
+
+        let vao = gl
+            .create_vertex_array()
+            .map_err(|e| crate::GpuError::ResourceCreate(format!("background_image VAO: {e}")))?;
+
+        Ok(GlBackgroundImagePipeline {
+            program,
+            vao,
+            loc_viewport_tex,
+            loc_params,
+            loc_tex,
+            texture: None,
+        })
+    }
+
+    unsafe fn upload(
+        &mut self,
+        gl: &glow::Context,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> crate::Result<()> {
+        if width == 0 || height == 0 {
+            return Err(crate::GpuError::ResourceCreate(format!(
+                "overview bg image has zero dimension ({width}x{height})"
+            )));
+        }
+        let expected = (width as usize) * (height as usize) * 4;
+        if rgba.len() != expected {
+            return Err(crate::GpuError::ResourceCreate(format!(
+                "overview bg image byte count mismatch: got {}, expected {} ({width}x{height} RGBA8)",
+                rgba.len(),
+                expected
+            )));
+        }
+        if let Some(prev) = self.texture.take() {
+            gl.delete_texture(prev.texture);
+        }
+        let texture = gl
+            .create_texture()
+            .map_err(|e| crate::GpuError::ResourceCreate(format!("background_image texture: {e}")))?;
+        gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+        // Non-sRGB internal format — the `BACKGROUND_IMAGE_FS` linearises
+        // explicitly when `use_linear_blending` is on. The color glyph
+        // atlas (`GlAtlasLayer` in this file) takes the other path
+        // (`SRGB8_ALPHA8` + hardware auto-linearise), but the wallpaper
+        // routes through the `RECT_FS` convention because both
+        // `linear` and `native` modes need a path through the same
+        // shader and toggling the texture's internal format per-frame
+        // isn't possible in GL. Either path produces the correct
+        // round-trip; the divergence from the color atlas is
+        // intentional, not an oversight.
+        gl.tex_image_2d(
+            glow::TEXTURE_2D,
+            0,
+            glow::RGBA8 as i32,
+            width as i32,
+            height as i32,
+            0,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            glow::PixelUnpackData::Slice(Some(rgba)),
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_MIN_FILTER,
+            glow::LINEAR as i32,
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_MAG_FILTER,
+            glow::LINEAR as i32,
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_WRAP_S,
+            glow::CLAMP_TO_EDGE as i32,
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_WRAP_T,
+            glow::CLAMP_TO_EDGE as i32,
+        );
+        gl.bind_texture(glow::TEXTURE_2D, None);
+        self.texture = Some(GlBackgroundImageTexture {
+            texture,
+            width,
+            height,
+        });
+        Ok(())
+    }
+
+    unsafe fn clear(&mut self, gl: &glow::Context) {
+        if let Some(prev) = self.texture.take() {
+            gl.delete_texture(prev.texture);
+        }
+    }
+
+    unsafe fn destroy(&self, gl: &glow::Context) {
+        if let Some(prev) = self.texture.as_ref() {
+            gl.delete_texture(prev.texture);
+        }
+        gl.delete_program(self.program);
+        gl.delete_vertex_array(self.vao);
+    }
+
+    /// Draw the wallpaper if a texture is bound and `opacity > 0`. Returns
+    /// `true` iff a draw was actually issued — callers use that to suppress
+    /// the prepended baseline rect that would otherwise erase the image.
+    /// Caller must have set the framebuffer / blend state already; this
+    /// rebinds program + VAO + texture only.
+    unsafe fn draw(
+        &self,
+        gl: &glow::Context,
+        vw: f32,
+        vh: f32,
+        opacity: f32,
+        use_linear_blending: bool,
+    ) -> bool {
+        let Some(tex) = self.texture.as_ref() else {
+            return false;
+        };
+        if opacity <= 0.0 {
+            return false;
+        }
+        gl.use_program(Some(self.program));
+        gl.uniform_4_f32(
+            Some(&self.loc_viewport_tex),
+            vw,
+            vh,
+            tex.width as f32,
+            tex.height as f32,
+        );
+        gl.uniform_4_f32(
+            Some(&self.loc_params),
+            opacity,
+            if use_linear_blending { 1.0 } else { 0.0 },
+            0.0,
+            0.0,
+        );
+        gl.active_texture(glow::TEXTURE0);
+        gl.bind_texture(glow::TEXTURE_2D, Some(tex.texture));
+        gl.uniform_1_i32(Some(&self.loc_tex), 0);
+        gl.bind_vertex_array(Some(self.vao));
+        gl.draw_arrays(glow::TRIANGLES, 0, 6);
+        gl.bind_vertex_array(None);
+        gl.bind_texture(glow::TEXTURE_2D, None);
+        gl.use_program(None);
+        true
     }
 }
 
@@ -965,6 +1200,7 @@ pub struct Renderer {
     gl_context: PossiblyCurrentContext,
     rects: GlRectPipeline,
     sdf: GlSdfPipeline,
+    background_image: GlBackgroundImagePipeline,
     width: u32,
     height: u32,
     use_linear_blending: bool,
@@ -1099,6 +1335,7 @@ impl Renderer {
 
         let rects = unsafe { GlRectPipeline::new(&gl, render_config.max_rectangles)? };
         let sdf = unsafe { GlSdfPipeline::new(&gl, MAX_SDF_RECTS)? };
+        let background_image = unsafe { GlBackgroundImagePipeline::new(&gl)? };
 
         let use_linear_blending = render_config.alpha_blending.is_linear();
         let use_linear_correction = render_config.alpha_blending.use_correction();
@@ -1173,6 +1410,7 @@ impl Renderer {
             gl_context,
             rects,
             sdf,
+            background_image,
             width: size.width.max(1),
             height: size.height.max(1),
             use_linear_blending,
@@ -1202,6 +1440,21 @@ impl Renderer {
 
     pub fn surface_size(&self) -> (u32, u32) {
         (self.width, self.height)
+    }
+
+    /// Upload the overview wallpaper RGBA8 texture.
+    pub fn set_background_image(
+        &mut self,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> crate::Result<()> {
+        unsafe { self.background_image.upload(&self.gl, rgba, width, height) }
+    }
+
+    /// Drop the wallpaper texture, if any.
+    pub fn clear_background_image(&mut self) {
+        unsafe { self.background_image.clear(&self.gl) }
     }
 
     pub fn create_atlas(
@@ -1258,14 +1511,36 @@ impl Renderer {
             self.gl.clear_color(cc[0], cc[1], cc[2], cc[3]);
             self.gl.clear(glow::COLOR_BUFFER_BIT);
 
+            // Overview wallpaper (if any). Self-checks the texture/opacity
+            // gate, so passing 0.0 is a no-op. Drawn after the clear and
+            // before pane bgs so the image sits behind everything else.
+            // Returns true iff a draw was actually issued.
+            let wallpaper_drawn = self.background_image.draw(
+                &self.gl,
+                vw,
+                vh,
+                scene.background_image_opacity,
+                self.use_linear_blending,
+            );
+
             // 1. Upload all background rects (clear + pane + overlay) once.
+            // Mirrors the DX path: the prepended baseline rect would erase
+            // the wallpaper we just drew, so make it transparent while the
+            // wallpaper is showing. The slot itself stays so the bg_rect
+            // index math (active_bg_idx / overlay_bg_idx) still matches
+            // `scene.bg_rect_ranges`.
+            let baseline_color = if wallpaper_drawn {
+                [0.0; 4]
+            } else {
+                scene.clear_color
+            };
             let mut all_bg = Vec::with_capacity(1 + scene.bg_rects.len());
             all_bg.push(Rect {
                 x: 0.0,
                 y: 0.0,
                 w: vw,
                 h: vh,
-                color: scene.clear_color,
+                color: baseline_color,
             });
             all_bg.extend_from_slice(scene.bg_rects);
             let active_bg_idx = 1 + scene.active_bg_start; // +1 for clear rect
@@ -1392,33 +1667,72 @@ impl Renderer {
             //     like the command palette and context menu. Drawn after flat
             //     overlay bgs and before overlay glyphs so the panel sits on
             //     top of pane text and labels paint crisply on top of it.
-            if !scene.sdf_rects.is_empty() {
+            // 7b. Layered chrome: two passes (Base then Overlay), each
+            //     a (SDF rects → glyphs) pair so Overlay rects occlude
+            //     Base glyphs (settings_panel labels under a popup,
+            //     etc.). See blade.rs for the design rationale; the GL
+            //     path mirrors it exactly so all backends behave the
+            //     same w.r.t. popup z-order.
+            let total_sdf = scene.sdf_rects.len();
+            let base_sdf_end = scene.chrome_base_sdf_end.min(total_sdf);
+            let alpha_total = scene.glyphs.len();
+            let color_total = scene.color_glyphs.len();
+            let base_alpha_end = scene.chrome_base_alpha_glyph_end.min(alpha_total);
+            let base_color_end = scene.chrome_base_color_glyph_end.min(color_total);
+
+            if total_sdf > 0 {
                 self.sdf.upload(&self.gl, scene.sdf_rects);
-                self.sdf.draw(&self.gl, scene.sdf_rects.len(), vw, vh, lb);
             }
 
-            // 8. Overlay glyphs (no re-upload, just draw remaining range).
-            let overlay_alpha = PaneGlyphRange {
-                start: scene.pane_glyph_end as u32,
-                count: scene.glyphs.len().saturating_sub(scene.pane_glyph_end) as u32,
+            let make_glyph_range = |start: usize, end: usize| PaneGlyphRange {
+                start: start as u32,
+                count: end.saturating_sub(start) as u32,
                 scissor: (0, 0, self.width, self.height),
                 ..PaneGlyphRange::default()
             };
-            let overlay_color = PaneGlyphRange {
-                start: scene.pane_color_glyph_end as u32,
-                count: scene
-                    .color_glyphs
-                    .len()
-                    .saturating_sub(scene.pane_color_glyph_end) as u32,
-                scissor: (0, 0, self.width, self.height),
-                ..PaneGlyphRange::default()
-            };
-            atlas_gpu
-                .alpha
-                .draw_batches(&self.gl, alpha_count, &vp, &[overlay_alpha], lb, lc);
-            atlas_gpu
-                .color
-                .draw_batches(&self.gl, color_count, &vp, &[overlay_color], lb, lc);
+
+            // ── Base pass (includes pane focus rings, see blade.rs) ──
+            if base_sdf_end > 0 {
+                self.sdf.draw_range(&self.gl, 0, base_sdf_end, vw, vh, lb);
+            }
+            atlas_gpu.alpha.draw_batches(
+                &self.gl,
+                alpha_count,
+                &vp,
+                &[make_glyph_range(scene.pane_glyph_end, base_alpha_end)],
+                lb,
+                lc,
+            );
+            atlas_gpu.color.draw_batches(
+                &self.gl,
+                color_count,
+                &vp,
+                &[make_glyph_range(scene.pane_color_glyph_end, base_color_end)],
+                lb,
+                lc,
+            );
+
+            // ── Overlay + transient pass ─────────────────────────────
+            if base_sdf_end < total_sdf {
+                self.sdf
+                    .draw_range(&self.gl, base_sdf_end, total_sdf - base_sdf_end, vw, vh, lb);
+            }
+            atlas_gpu.alpha.draw_batches(
+                &self.gl,
+                alpha_count,
+                &vp,
+                &[make_glyph_range(base_alpha_end, alpha_total)],
+                lb,
+                lc,
+            );
+            atlas_gpu.color.draw_batches(
+                &self.gl,
+                color_count,
+                &vp,
+                &[make_glyph_range(base_color_end, color_total)],
+                lb,
+                lc,
+            );
             if let Some(profiler) = profiler.as_mut() {
                 profiler.record_draw(draw_start);
             }
@@ -1536,6 +1850,7 @@ impl Drop for Renderer {
             }
             self.rects.destroy(&self.gl);
             self.sdf.destroy(&self.gl);
+            self.background_image.destroy(&self.gl);
         }
     }
 }
@@ -2123,5 +2438,70 @@ void main() {
 
     // Binomial weights: 1, 4, 6, 4, 1 / 16.
     frag_color = s0 * 0.0625 + s1 * 0.25 + s2 * 0.375 + s3 * 0.25 + s4 * 0.0625;
+}
+"#;
+
+// ─── Overview wallpaper shaders ─────────────────────────────────────
+//
+// VS: vertexless fullscreen quad. `gl_VertexID` indexes a hard-coded
+// corner table (two triangles), and the same NDC Y-flip the rect / glyph
+// pipelines use lines screen-top up with image-top.
+// FS: samples the user-uploaded RGBA8 texture, optionally linearizes
+// when rendering to an sRGB FBO (so `GL_FRAMEBUFFER_SRGB` re-encodes
+// correctly), and outputs `(rgb*opacity, opacity)` for premult-alpha
+// blending over the already-cleared `clear_color` framebuffer.
+
+const BACKGROUND_IMAGE_VS: &str = r#"#version 330 core
+
+uniform vec4 u_viewport_tex;  // vw, vh, tw, th
+
+out vec2 v_uv;
+
+void main() {
+    vec2 corners[6] = vec2[](
+        vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(1.0, 1.0),
+        vec2(0.0, 0.0), vec2(1.0, 1.0), vec2(0.0, 1.0)
+    );
+    vec2 vuv = corners[gl_VertexID];
+    gl_Position = vec4(vuv.x * 2.0 - 1.0, 1.0 - vuv.y * 2.0, 0.0, 1.0);
+
+    float vw = u_viewport_tex.x;
+    float vh = u_viewport_tex.y;
+    float tw = u_viewport_tex.z;
+    float th = u_viewport_tex.w;
+    float v_aspect = vw / max(vh, 1e-6);
+    float t_aspect = tw / max(th, 1e-6);
+    vec2 scale = vec2(1.0);
+    if (t_aspect > v_aspect) {
+        // texture wider than viewport — crop the sides
+        scale.x = v_aspect / max(t_aspect, 1e-6);
+    } else {
+        scale.y = t_aspect / max(v_aspect, 1e-6);
+    }
+    v_uv = (vuv - 0.5) * scale + 0.5;
+}
+"#;
+
+const BACKGROUND_IMAGE_FS: &str = r#"#version 330 core
+in vec2 v_uv;
+out vec4 frag_color;
+
+uniform sampler2D u_tex;
+uniform vec4 u_params;  // .x = opacity, .y = use_linear_blending (0/1)
+
+// COLOR_FUNCS_PLACEHOLDER
+
+void main() {
+    vec4 col = texture(u_tex, v_uv);
+    float opacity = clamp(u_params.x, 0.0, 1.0);
+    if (u_params.y > 0.5) {
+        col = linearize(col);
+    }
+    // Premultiply against the texel's own alpha so transparent PNG
+    // pixels stay transparent (let the underlying clear color show).
+    // The previous `opacity` for alpha treated every texel as opaque
+    // and rendered transparent regions as solid tinted blocks.
+    float a = col.a * opacity;
+    frag_color = vec4(col.rgb * a, a);
 }
 "#;

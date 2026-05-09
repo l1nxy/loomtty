@@ -7,11 +7,12 @@ use super::info_box::InfoBoxComponent;
 use super::overview::{self, OverviewComponent};
 use super::palette::PaletteComponent;
 use super::paste_dialog::PasteDialogComponent;
+use super::settings_panel::SettingsPanelComponent;
 use super::tab_bar::TabBarComponent;
 use super::top_bar::TopBarComponent;
 use super::types::{
     UiAction, UiContext, UiContextMenuHit, UiOverviewHit, UiPaletteHit, UiPasteDialogHit, UiRect,
-    UiScene, UiTopBarHit,
+    UiScene, UiSettingsHit, UiTopBarHit,
 };
 use crate::app::top_bar::TopBarLayout;
 use crate::app::{App, PasteButton, TopBarHoverRegion};
@@ -34,6 +35,7 @@ pub(super) struct UiFrame {
     palette: Option<PaletteComponent>,
     connection_status: Option<ConnectionStatusComponent>,
     paste_dialog: Option<PasteDialogComponent>,
+    settings_panel: Option<SettingsPanelComponent>,
     context_menu: Option<ContextMenuComponent>,
 }
 
@@ -49,6 +51,14 @@ pub(super) enum UiFrameHover {
         // at chrome-cache-hash time via `App::current_palette_hover()`,
         // and display reads it via `cx.is_hovered(hit_id)`. Only the
         // pointer cursor signal still needs to flow back to the host.
+        pointer: bool,
+    },
+    Settings {
+        // Same shape as `Palette`: the per-element hover styling is
+        // already declarative via `.hover()` refinements driven by
+        // `cx.is_hovered(hit_id)`. The hover handler only needs to
+        // signal "cursor sits over an interactive element" so the host
+        // flips the OS cursor to a pointer.
         pointer: bool,
     },
     TopBar {
@@ -107,6 +117,7 @@ impl UiFrame {
             palette: PaletteComponent::capture(app, cx),
             connection_status: ConnectionStatusComponent::capture(app, cx),
             paste_dialog: PasteDialogComponent::capture(app, cx),
+            settings_panel: SettingsPanelComponent::capture(app, cx),
             context_menu: ContextMenuComponent::capture(app, cx),
         }
     }
@@ -123,25 +134,43 @@ impl UiFrame {
         Self::capture(app, cx, top_bar_layout, top_bar_h, app.hints_bar_height())
     }
 
-    pub(super) fn paint(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+    /// Paint Base-layer chrome. Runs first; rects + glyphs from these
+    /// components occupy the lower z-tier and are drawn fully (rects,
+    /// then glyphs) before Overlay primitives. Caller records the per-
+    /// stream lengths after this returns to know the layer split.
+    pub(super) fn paint_base(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         self.top_bar.paint(self.chrome.top_bar, cx, scene);
         self.hints_bar.paint(cx, scene);
         if let (Some(tab_bar), Some(_rect)) = (&mut self.side_tab_bar, self.chrome.side_tab_bar) {
             tab_bar.paint(cx, scene);
         }
 
-        // Modal / overlay layers position themselves absolutely and are
-        // painted after chrome so they sit on top.
         if let Some(component) = &mut self.overview_bar {
             component.paint(cx, scene);
         }
         if let Some(component) = &mut self.infobox {
             component.paint(cx, scene);
         }
-        if let Some(component) = &mut self.palette {
+        if let Some(component) = &mut self.connection_status {
             component.paint(cx, scene);
         }
-        if let Some(component) = &mut self.connection_status {
+        if let Some(component) = &self.settings_panel {
+            component.paint(cx, scene);
+        }
+    }
+
+    /// Paint Overlay-layer chrome on top of Base. Multiple components
+    /// can coexist here under the layered `ModalKind` invariant:
+    /// `PendingPaste(CommandPalette/Search)` keeps both palette and
+    /// paste_dialog alive — paste_dialog must paint AFTER palette so
+    /// the confirmation visually covers the palette beneath, matching
+    /// the click-priority order in `click` / `hover`. context_menu
+    /// can't coexist with paste_dialog per `kept_set`, so its order
+    /// vs paste_dialog is moot. The renderer draws Overlay rects
+    /// after Base glyphs, so these popups cover everything underneath
+    /// including labels.
+    pub(super) fn paint_overlay(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
+        if let Some(component) = &mut self.palette {
             component.paint(cx, scene);
         }
         if let Some(component) = &self.paste_dialog {
@@ -160,6 +189,13 @@ impl UiFrame {
         cx: &UiContext<'_>,
     ) -> (Option<UiAction>, bool) {
         // Components are checked in reverse paint order: topmost first.
+        // `paste_dialog` runs ahead of `palette` because the layered
+        // `ModalKind::PendingPaste(CommandPalette/Search)` case keeps
+        // BOTH alive — the confirmation dialog must win clicks over
+        // the palette underneath, otherwise Paste/Cancel buttons hit
+        // the palette and either close it or move its selection.
+        // `context_menu` stays first (theme-dropdown / right-click
+        // menu can't coexist with paste_dialog per kept_set).
         if let Some(c) = &self.context_menu {
             return (c.click(mx, my, cx), true);
         }
@@ -167,6 +203,9 @@ impl UiFrame {
             return (c.click(mx, my, cx), true);
         }
         if let Some(c) = &self.palette {
+            return (c.click(mx, my, cx), true);
+        }
+        if let Some(c) = &self.settings_panel {
             return (c.click(mx, my, cx), true);
         }
 
@@ -204,6 +243,20 @@ impl UiFrame {
         my: f32,
         cx: &UiContext<'_>,
     ) -> (Option<UiAction>, bool) {
+        // Modal precedence — same shape as `click` / `hover`. Without
+        // this guard, middle-clicking a top/side tab THROUGH the
+        // settings backdrop (or any modal that owns the surface)
+        // would dispatch `ClosePaneTab` and close a pane behind the
+        // panel. Consume the click when any modal is alive; tabs
+        // are only reachable when the surface is otherwise idle.
+        if self.context_menu.is_some()
+            || self.paste_dialog.is_some()
+            || self.palette.is_some()
+            || self.settings_panel.is_some()
+        {
+            return (None, true);
+        }
+
         if self.chrome.top_bar.contains(mx, my) {
             let action = match self.top_bar.hit_test(mx, my, cx) {
                 Some(UiTopBarHit::PaneTab(id)) => Some(UiAction::ClosePaneTab(id)),
@@ -226,6 +279,10 @@ impl UiFrame {
     }
 
     pub(super) fn hover(&self, app: &App, mx: f32, my: f32, cx: &UiContext<'_>) -> UiFrameHover {
+        // Same precedence as `click`: paste_dialog runs ahead of
+        // palette so the layered `PendingPaste(CommandPalette/Search)`
+        // case routes hover styling to the topmost dialog rather than
+        // the palette underneath.
         if let Some(component) = &self.context_menu {
             let hovered = match component.hit_test(mx, my, cx) {
                 UiContextMenuHit::Entry(idx) => Some(idx),
@@ -246,6 +303,21 @@ impl UiFrame {
         if let Some(component) = &self.palette {
             let pointer = matches!(component.hit_test(mx, my, cx), UiPaletteHit::Entry(_));
             return UiFrameHover::Palette { pointer };
+        }
+
+        if let Some(component) = &self.settings_panel {
+            // Pointer cursor on any interactive hit (close button, theme
+            // dropdown trigger, opacity steppers, "Open settings.toml"
+            // link). Background body / outside fall back to default.
+            let pointer = match component.hit_test(mx, my, cx) {
+                UiSettingsHit::Close
+                | UiSettingsHit::OpenToml
+                | UiSettingsHit::ThemeDropdown
+                | UiSettingsHit::PaneOpacityDec
+                | UiSettingsHit::PaneOpacityInc => true,
+                UiSettingsHit::Dialog | UiSettingsHit::None => false,
+            };
+            return UiFrameHover::Settings { pointer };
         }
 
         if self.chrome.top_bar.contains(mx, my) {
@@ -310,6 +382,40 @@ impl UiFrame {
         my: f32,
         cx: &UiContext<'_>,
     ) -> Option<u64> {
+        // Same precedence as `UiFrame::click` / `UiFrame::hover`:
+        // Overlay-tier popups first, then Base-tier modals, then bars.
+        // Without this gate `capture_active_press_hit_id` would record
+        // a top-bar press even when a popup or modal owns the click —
+        // the mouse-down bypasses dispatch order, so the cache hash
+        // ends up referencing a hit_id underneath the modal and the
+        // base-layer element renders a phantom `.active()` tint until
+        // mouse-up clears it. Overlay-tier widgets manage their own
+        // press affordances internally; we don't expose hit_ids here.
+        if self.context_menu.is_some() || self.palette.is_some() {
+            return None;
+        }
+        // Settings panel opacity steppers — the only press-friendly
+        // controls in any of the Base-tier modals (panel stays open
+        // after each nudge so the press state has a frame to render).
+        // Close button and "Open settings.toml" dismiss the panel
+        // immediately, so per-frame press tint isn't worth threading.
+        // Returning early when `settings_panel` is visible also
+        // suppresses spurious top-bar press tint that would otherwise
+        // bleed through the panel's translucent backdrop.
+        if let Some(panel) = &self.settings_panel {
+            return match panel.hit_test(mx, my, cx) {
+                UiSettingsHit::PaneOpacityDec => Some(super::settings_panel::HIT_OPACITY_DEC),
+                UiSettingsHit::PaneOpacityInc => Some(super::settings_panel::HIT_OPACITY_INC),
+                _ => None,
+            };
+        }
+        // Paste dialog has Paste / Cancel buttons but they dismiss
+        // the dialog on click, so press tint per-frame isn't worth
+        // threading either — and we still need to suppress top-bar
+        // tint so the dialog backdrop doesn't bleed press through it.
+        if self.paste_dialog.is_some() {
+            return None;
+        }
         if self.chrome.top_bar.contains(mx, my) {
             match self.top_bar.hit_test(mx, my, cx) {
                 Some(UiTopBarHit::PaneTab(pane_id)) => {

@@ -10,6 +10,7 @@ pub(crate) mod overview;
 mod palette;
 mod paste_dialog;
 pub(super) mod search_bar;
+pub(super) mod settings_panel;
 mod tab_bar;
 mod text_layout;
 pub(crate) mod tokens;
@@ -65,7 +66,7 @@ impl App {
             self.ui_shaper.as_ref(),
             Some(&self.ui_taffy_tree),
             self.last_mouse_pos.map(|(x, y)| [x, y]),
-            self.active_hit_id,
+            self.effective_active_hit_id(),
             Some(&self.ui_states),
             vw,
             vh,
@@ -105,7 +106,26 @@ impl App {
                 sdf_rects: &mut cached_ui.sdf_rects,
             };
 
-            frame.paint(&cx, &mut scene);
+            // Two-phase paint to materialise the Base / Overlay
+            // z-layers as contiguous ranges in each primitive Vec.
+            // After the base pass returns, the current Vec lengths
+            // are the layer split points; the overlay pass appends
+            // onto the same Vecs so the final layout is
+            // `[base | overlay]` per stream — the renderer draws the
+            // base half (rects then glyphs) before issuing the overlay
+            // half so popup rects can occlude base glyphs.
+            frame.paint_base(&cx, &mut scene);
+            cached_ui.base_glyph_end = cached_ui.glyphs.len();
+            cached_ui.base_color_glyph_end = cached_ui.color_glyphs.len();
+            cached_ui.base_sdf_end = cached_ui.sdf_rects.len();
+
+            let mut scene = UiScene {
+                atlas: self.glyph_cache.as_mut().unwrap(),
+                glyphs: &mut cached_ui.glyphs,
+                color_glyphs: &mut cached_ui.color_glyphs,
+                sdf_rects: &mut cached_ui.sdf_rects,
+            };
+            frame.paint_overlay(&cx, &mut scene);
         }
 
         glyphs.extend_from_slice(&self.cached_ui_scene.glyphs);
@@ -121,7 +141,7 @@ impl App {
             self.ui_shaper.as_ref(),
             Some(&self.ui_taffy_tree),
             self.last_mouse_pos.map(|(x, y)| [x, y]),
-            self.active_hit_id,
+            self.effective_active_hit_id(),
             Some(&self.ui_states),
             viewport_w,
             viewport_h,
@@ -417,6 +437,691 @@ mod tests {
         assert_eq!(
             app.active_hit_id, None,
             "press outside press-friendly chrome should not set active_hit_id",
+        );
+    }
+
+    // ── Settings panel ────────────────────────────────────────────────
+
+    /// `Action::ToggleSettings` is a true toggle, AND it closes every
+    /// other modal-ish overlay so the panel cleanly owns input focus.
+    /// Catches anyone reverting the round-1 fix that added the search /
+    /// context_menu close calls (palette was always closed).
+    #[test]
+    fn toggle_settings_closes_other_overlays_and_flips_visibility() {
+        use ciri_input::action::Action;
+
+        let mut app = make_app();
+        // Seed the kinds of overlays that should be force-closed.
+        app.core.command_palette = Some(CommandPaletteState {
+            query: String::new(),
+            entries: Vec::new(),
+            filtered: Vec::new(),
+            selected_idx: 0,
+            sessions_only: false,
+            remote_loading: None,
+            remote_error: None,
+            remote_input_mode: false,
+        });
+        app.core.context_menu = ContextMenu {
+            visible: true,
+            x: 10.0,
+            y: 10.0,
+            target_pane_id: None,
+            items: vec![],
+        };
+        // paste_dialog sits ahead of settings_panel in `UiFrame::click`
+        // (Base-tier modal precedence), so leaving it open would
+        // intercept every click intended for the settings panel. Pin
+        // the close-others contract for it the same way the palette
+        // and overview tests do.
+        app.core.pending_paste = Some(PendingPaste {
+            info: PasteInfo {
+                text: "x".into(),
+                size: 1,
+                line_count: 1,
+            },
+            preview: "x".into(),
+            target: super::super::PendingPasteTarget::Terminal,
+        });
+
+        app.handle_action(Action::ToggleSettings);
+        assert!(app.core.settings_panel_visible, "first toggle opens panel");
+        assert!(
+            app.core.command_palette.is_none(),
+            "palette must be force-closed when settings opens",
+        );
+        assert!(
+            !app.core.context_menu.visible,
+            "context_menu must be force-closed when settings opens",
+        );
+        assert!(
+            app.core.pending_paste.is_none(),
+            "paste dialog must close when settings opens — it would \
+             otherwise intercept clicks intended for the panel",
+        );
+
+        // Open the theme dropdown as a submodal of the panel —
+        // `ContextMenu(OverSettings)` declares the parent-child
+        // relationship. Closing the panel via toggle MUST also tear
+        // down its submodal; otherwise the dropdown floats orphaned
+        // and the next keypress hits `dismiss_context_menu_on_keypress`
+        // silently. Pinned because the toggle-off branch had a bare
+        // `settings_panel_visible = false` that bypassed the gate.
+        app.core.context_menu = ContextMenu {
+            visible: true,
+            x: 0.0,
+            y: 0.0,
+            target_pane_id: None,
+            items: vec![],
+        };
+
+        app.handle_action(Action::ToggleSettings);
+        assert!(!app.core.settings_panel_visible, "second toggle closes");
+        assert!(
+            !app.core.context_menu.visible,
+            "toggle-off must close the theme-dropdown submodal with its parent panel",
+        );
+    }
+
+    /// Closing a parent modal (palette, search, settings) via the
+    /// toggle action must tear down its submodal — otherwise the
+    /// child overlay floats orphaned with no underlying state. This
+    /// pins the contract that ALL parent-close paths route through
+    /// `enter_modal_close_peers(ModalKind::None)`, not bare field
+    /// writes. Bug-shape: paste-confirm dialog opened OVER the
+    /// palette query, then user toggles palette closed; the dialog
+    /// stays visible confirming a paste with nowhere to land.
+    #[test]
+    fn toggle_palette_closed_kills_paste_overlay_submodal() {
+        use ciri_app::app::{CommandPaletteState, PendingPasteTarget};
+        use ciri_input::action::Action;
+
+        let mut app = make_app();
+        app.core.command_palette = Some(CommandPaletteState {
+            query: String::new(),
+            entries: Vec::new(),
+            filtered: Vec::new(),
+            selected_idx: 0,
+            sessions_only: false,
+            remote_loading: None,
+            remote_error: None,
+            remote_input_mode: false,
+        });
+        app.core.pending_paste = Some(PendingPaste {
+            info: PasteInfo {
+                text: "x".into(),
+                size: 1,
+                line_count: 1,
+            },
+            preview: "x".into(),
+            target: PendingPasteTarget::CommandPalette,
+        });
+
+        app.handle_action(Action::ToggleCommandPalette);
+
+        assert!(app.core.command_palette.is_none(), "palette closed");
+        assert!(
+            app.core.pending_paste.is_none(),
+            "paste-over-palette submodal must die with parent palette",
+        );
+    }
+
+    /// Selecting an `Action(ToggleSettings)` entry from the palette
+    /// must leave the settings panel OPEN. The execute flow is:
+    /// (1) `execute_palette_entry` → `handle_action(ToggleSettings)`
+    /// → ToggleSettings opens settings via the gate, which closes
+    /// palette as a peer.
+    /// (2) Back in `execute_palette_selection`, `!keep_open` is true.
+    /// Without the `command_palette.is_some()` guard, the `None` gate
+    /// fires here and nukes the freshly-opened settings panel —
+    /// settings flashes open then immediately closed, user sees nothing.
+    /// Pinned because the gate-everywhere defensive sweep introduced
+    /// this regression and a prior critic round caught it.
+    #[test]
+    fn execute_palette_action_entry_does_not_double_close_new_modal() {
+        use ciri_app::app::{
+            CommandPaletteState, PaletteEntry, PaletteEntryKind,
+        };
+        use ciri_input::action::Action;
+
+        let mut app = make_app();
+        // Seed a palette with a single Action(ToggleSettings) entry,
+        // already filtered + selected so `execute_palette_selection`
+        // picks it.
+        app.core.command_palette = Some(CommandPaletteState {
+            query: String::new(),
+            entries: vec![PaletteEntry::new(
+                "Settings…",
+                PaletteEntryKind::Action(Action::ToggleSettings),
+            )],
+            filtered: vec![0],
+            selected_idx: 0,
+            sessions_only: false,
+            remote_loading: None,
+            remote_error: None,
+            remote_input_mode: false,
+        });
+
+        app.handle_action(Action::PaletteConfirm);
+
+        assert!(
+            app.core.settings_panel_visible,
+            "settings panel must stay open after palette executes \
+             ToggleSettings — the redundant `None` gate after the \
+             action would otherwise close it",
+        );
+        assert!(
+            app.core.command_palette.is_none(),
+            "palette closed (cleared by ToggleSettings's own gate)",
+        );
+    }
+
+    /// Mouse-click counterpart of
+    /// `execute_palette_action_entry_does_not_double_close_new_modal`.
+    /// Clicking a palette entry routes through `apply_ui_action` ->
+    /// `UiAction::ExecutePaletteEntry(idx)`, which has the same
+    /// `command_palette.is_some()` guard as the keyboard path. A
+    /// prior critic round caught that the keyboard test alone left
+    /// the mouse path unpinned — this test closes the gap. Same
+    /// regression shape: without the guard, selecting "Settings…"
+    /// via mouse flashes the panel open then immediately closed.
+    #[test]
+    fn ui_execute_palette_entry_does_not_double_close_new_modal() {
+        use ciri_app::app::{
+            CommandPaletteState, PaletteEntry, PaletteEntryKind,
+        };
+        use ciri_input::action::Action;
+
+        let mut app = make_app();
+        app.core.command_palette = Some(CommandPaletteState {
+            query: String::new(),
+            entries: vec![PaletteEntry::new(
+                "Settings…",
+                PaletteEntryKind::Action(Action::ToggleSettings),
+            )],
+            filtered: vec![0],
+            selected_idx: 0,
+            sessions_only: false,
+            remote_loading: None,
+            remote_error: None,
+            remote_input_mode: false,
+        });
+
+        app.apply_ui_action(UiAction::ExecutePaletteEntry(0));
+
+        assert!(
+            app.core.settings_panel_visible,
+            "settings panel must stay open after mouse-click executes \
+             ToggleSettings — same guard shape as the keyboard path",
+        );
+        assert!(
+            app.core.command_palette.is_none(),
+            "palette closed (cleared by ToggleSettings's own gate)",
+        );
+    }
+
+    /// `close_search_restore_scroll` writes the pre-search scroll
+    /// offset back to the pane grid. Every prior search-related test
+    /// uses `original_scroll_offset: 0` against a default-zero grid,
+    /// so the restore-write path was never exercised: deleting it
+    /// would leave the test suite green. Pin the actual mutation
+    /// here — seed a non-default scroll on the grid, route through
+    /// the gate via `CloseSearch`, assert the original offset is
+    /// written back. The comments in `App::toggle_overview` /
+    /// `App::enter_modal_close_peers` call this the critical reason
+    /// the App-level wrapper exists; pin it with a real assertion.
+    #[test]
+    fn close_search_restores_pre_search_scroll_offset() {
+        use ciri_app::app::SearchState;
+        use ciri_input::action::Action;
+
+        let mut app = make_app();
+        let pane_id: u64 = 7;
+        // Seed a grid scrolled into history. The user is currently
+        // viewing match position `scroll_offset = 50`; before the
+        // search was opened, they were at `original_scroll_offset = 5`.
+        let mut grid = crate::grid::ClientPaneGrid::new(80, 24, 1000);
+        grid.scroll_offset = 50;
+        app.core.pane_grids.insert(pane_id, grid);
+        app.core.search_state = Some(SearchState {
+            query: "abc".into(),
+            matches: Vec::new(),
+            current_match_idx: 0,
+            pane_id,
+            original_scroll_offset: 5,
+        });
+
+        app.handle_action(Action::CloseSearch);
+
+        assert!(
+            app.core.search_state.is_none(),
+            "CloseSearch tears down search_state",
+        );
+        let restored = app
+            .core
+            .pane_grids
+            .get(&pane_id)
+            .expect("grid still present")
+            .scroll_offset;
+        assert_eq!(
+            restored, 5,
+            "pre-search scroll offset (5) must be restored to the grid; \
+             without this the user is stranded at the last match position (50)",
+        );
+    }
+
+    /// Same shape as `toggle_palette_closed_kills_paste_overlay_submodal`
+    /// but for search + paste-over-search. `Action::CloseSearch`
+    /// must route through the gate so the paste dialog overlaying
+    /// the search bar dies with it.
+    #[test]
+    fn close_search_kills_paste_overlay_submodal() {
+        use ciri_app::app::{PendingPasteTarget, SearchState};
+        use ciri_input::action::Action;
+
+        let mut app = make_app();
+        app.core.search_state = Some(SearchState {
+            query: "abc".into(),
+            matches: Vec::new(),
+            current_match_idx: 0,
+            pane_id: 0,
+            original_scroll_offset: 0,
+        });
+        app.core.pending_paste = Some(PendingPaste {
+            info: PasteInfo {
+                text: "x".into(),
+                size: 1,
+                line_count: 1,
+            },
+            preview: "x".into(),
+            target: PendingPasteTarget::Search,
+        });
+
+        app.handle_action(Action::CloseSearch);
+
+        assert!(app.core.search_state.is_none(), "search closed");
+        assert!(
+            app.core.pending_paste.is_none(),
+            "paste-over-search submodal must die with parent search",
+        );
+    }
+
+    /// `ToggleSessionPalette` close path mirrors `ToggleCommandPalette`
+    /// (both clear `command_palette` via `gate(None)`), but the close
+    /// branch had no dedicated test pinning the submodal-teardown
+    /// invariant. Without this, a future refactor that diverges the
+    /// two close branches could orphan a `PendingPaste(CommandPalette)`
+    /// submodal on `ToggleSessionPalette` while keeping
+    /// `ToggleCommandPalette` correct, and the test suite wouldn't
+    /// catch it.
+    #[test]
+    fn toggle_session_palette_closed_kills_paste_overlay_submodal() {
+        use ciri_app::app::{CommandPaletteState, PendingPasteTarget};
+        use ciri_input::action::Action;
+
+        let mut app = make_app();
+        app.core.command_palette = Some(CommandPaletteState {
+            query: String::new(),
+            entries: Vec::new(),
+            filtered: Vec::new(),
+            selected_idx: 0,
+            sessions_only: true, // session-palette flavor
+            remote_loading: None,
+            remote_error: None,
+            remote_input_mode: false,
+        });
+        app.core.pending_paste = Some(PendingPaste {
+            info: PasteInfo {
+                text: "x".into(),
+                size: 1,
+                line_count: 1,
+            },
+            preview: "x".into(),
+            target: PendingPasteTarget::CommandPalette,
+        });
+
+        app.handle_action(Action::ToggleSessionPalette);
+
+        assert!(app.core.command_palette.is_none(), "session palette closed");
+        assert!(
+            app.core.pending_paste.is_none(),
+            "paste-over-palette submodal must die with the parent session palette",
+        );
+    }
+
+    /// `ToggleCommandPalette` (and `ToggleSessionPalette`) is the
+    /// inverse direction of the previous test — opening a palette must
+    /// close any Base-tier modal underneath, otherwise `UiFrame::click`
+    /// dispatches mouse events to the visually-occluded modal sitting
+    /// behind the palette.
+    #[test]
+    fn toggle_command_palette_closes_base_modals() {
+        use ciri_app::app::SearchState;
+        use ciri_input::action::Action;
+
+        let mut app = make_app();
+        app.core.settings_panel_visible = true;
+        app.core.context_menu = ContextMenu {
+            visible: true,
+            x: 0.0,
+            y: 0.0,
+            target_pane_id: None,
+            items: vec![],
+        };
+        app.core.pending_paste = Some(PendingPaste {
+            info: PasteInfo {
+                text: "hello".into(),
+                size: 5,
+                line_count: 1,
+            },
+            preview: "hello".into(),
+            target: super::super::PendingPasteTarget::Terminal,
+        });
+        app.core.search_state = Some(SearchState {
+            query: "abc".into(),
+            matches: Vec::new(),
+            current_match_idx: 0,
+            pane_id: 0,
+            original_scroll_offset: 0,
+        });
+
+        app.handle_action(Action::ToggleCommandPalette);
+
+        assert!(
+            app.core.command_palette.is_some(),
+            "ToggleCommandPalette opens the palette",
+        );
+        assert!(
+            !app.core.settings_panel_visible,
+            "settings panel must close when palette opens",
+        );
+        assert!(
+            !app.core.context_menu.visible,
+            "context_menu must close when palette opens",
+        );
+        assert!(
+            app.core.pending_paste.is_none(),
+            "paste dialog must close when palette opens (otherwise palette \
+             would route clicks past the dialog and lock the user out)",
+        );
+        assert!(
+            app.core.search_state.is_none(),
+            "search bar must close when palette opens",
+        );
+    }
+
+    /// Entering overview must dismiss every modal-ish overlay,
+    /// otherwise the settings panel's full-viewport backdrop locks
+    /// the user out: `UiFrame::click` / `hover` walk
+    /// `settings_panel` ahead of the `overview.active` branch, so
+    /// every mouse event is consumed by the panel until the user
+    /// closes it with Esc.
+    #[test]
+    fn toggle_overview_closes_base_modals() {
+        use ciri_app::app::SearchState;
+        use ciri_input::action::Action;
+
+        let mut app = make_app();
+        app.core.settings_panel_visible = true;
+        app.core.context_menu = ContextMenu {
+            visible: true,
+            x: 0.0,
+            y: 0.0,
+            target_pane_id: None,
+            items: vec![],
+        };
+        app.core.pending_paste = Some(PendingPaste {
+            info: PasteInfo {
+                text: "x".into(),
+                size: 1,
+                line_count: 1,
+            },
+            preview: "x".into(),
+            target: super::super::PendingPasteTarget::Terminal,
+        });
+        // Search lives on the transient layer (not modal-gated), so
+        // overview entry must clear it explicitly or both widgets stay
+        // visible AND keyboard-routable simultaneously.
+        app.core.search_state = Some(SearchState {
+            query: "abc".into(),
+            matches: Vec::new(),
+            current_match_idx: 0,
+            pane_id: 0,
+            original_scroll_offset: 0,
+        });
+
+        app.handle_action(Action::ToggleOverview);
+
+        assert!(app.core.overview.active);
+        assert!(!app.core.settings_panel_visible);
+        assert!(!app.core.context_menu.visible);
+        assert!(app.core.pending_paste.is_none());
+        assert!(app.core.search_state.is_none());
+    }
+
+    /// Mirror of `toggle_command_palette_closes_base_modals` for the
+    /// session-palette path. Both actions land in
+    /// `App::open_session_palette` / `open_command_palette` which
+    /// share the `enter_modal_close_peers` gate; this test guards
+    /// against future refactors that diverge the two entry points.
+    #[test]
+    fn toggle_session_palette_closes_base_modals() {
+        use ciri_app::app::SearchState;
+        use ciri_input::action::Action;
+
+        let mut app = make_app();
+        app.core.settings_panel_visible = true;
+        app.core.context_menu = ContextMenu {
+            visible: true,
+            x: 0.0,
+            y: 0.0,
+            target_pane_id: None,
+            items: vec![],
+        };
+        app.core.pending_paste = Some(PendingPaste {
+            info: PasteInfo {
+                text: "hello".into(),
+                size: 5,
+                line_count: 1,
+            },
+            preview: "hello".into(),
+            target: super::super::PendingPasteTarget::Terminal,
+        });
+        app.core.search_state = Some(SearchState {
+            query: "abc".into(),
+            matches: Vec::new(),
+            current_match_idx: 0,
+            pane_id: 0,
+            original_scroll_offset: 0,
+        });
+
+        app.handle_action(Action::ToggleSessionPalette);
+
+        assert!(app.core.command_palette.is_some());
+        assert!(!app.core.settings_panel_visible);
+        assert!(!app.core.context_menu.visible);
+        assert!(app.core.pending_paste.is_none());
+        assert!(app.core.search_state.is_none());
+    }
+
+    /// `NudgePaneOpacity` clamps at the documented floor (0.05) — fully
+    /// transparent panes are intentionally disallowed via the panel
+    /// (users wanting opacity 0 edit settings.toml directly).
+    #[test]
+    fn nudge_pane_opacity_clamps_at_floor() {
+        use crate::app::ui::types::NudgeDirection;
+
+        let mut app = make_app();
+        app.core.config.appearance.pane_opacity = 0.10;
+        app.apply_ui_action(UiAction::NudgePaneOpacity(NudgeDirection::Decrement));
+        assert!(
+            (app.core.config.appearance.pane_opacity - 0.05).abs() < 1e-6,
+            "single decrement from 0.10 should land on 0.05: {}",
+            app.core.config.appearance.pane_opacity,
+        );
+        // Further decrements stay clamped — no underflow into negative
+        // values.
+        for _ in 0..5 {
+            app.apply_ui_action(UiAction::NudgePaneOpacity(NudgeDirection::Decrement));
+        }
+        assert!(
+            (app.core.config.appearance.pane_opacity - 0.05).abs() < 1e-6,
+            "decrement past the floor must clamp at 0.05",
+        );
+    }
+
+    #[test]
+    fn nudge_pane_opacity_clamps_at_ceiling() {
+        use crate::app::ui::types::NudgeDirection;
+
+        let mut app = make_app();
+        app.core.config.appearance.pane_opacity = 0.97;
+        for _ in 0..5 {
+            app.apply_ui_action(UiAction::NudgePaneOpacity(NudgeDirection::Increment));
+        }
+        assert!(
+            (app.core.config.appearance.pane_opacity - 1.0).abs() < 1e-6,
+            "increment past 1.0 must clamp at 1.0",
+        );
+    }
+
+    /// `SettingsPanelComponent::capture` returns `None` while the panel
+    /// is hidden — gates the rest of the chrome paint pipeline.
+    #[test]
+    fn settings_panel_capture_hidden_returns_none() {
+        use crate::app::ui::settings_panel::SettingsPanelComponent;
+
+        let app = make_app();
+        let cx = app.ui_context();
+        assert!(
+            SettingsPanelComponent::capture(&app, &cx).is_none(),
+            "panel must be invisible until ToggleSettings fires",
+        );
+    }
+
+    /// Outside-click on the settings backdrop maps to `CloseSettings`.
+    /// Pin the dismissal contract so reordering hit_ids can't silently
+    /// turn the backdrop into a no-op.
+    #[test]
+    fn settings_outside_click_maps_to_close() {
+        use crate::app::ui::settings_panel::SettingsPanelComponent;
+
+        let mut app = make_app();
+        app.core.settings_panel_visible = true;
+        let cx = app.ui_context();
+        let component = SettingsPanelComponent::capture(&app, &cx)
+            .expect("panel visible after toggle");
+        // (0, 0) is reliably outside the centred panel for any
+        // non-trivial viewport.
+        let action = component.click(0.0, 0.0, &cx);
+        assert_eq!(action, Some(UiAction::CloseSettings));
+    }
+
+    /// Click on the panel body (not on any interactive child) returns
+    /// `None` — the click is absorbed and does NOT dismiss settings.
+    /// Pins the `Dialog` no-op contract; without this guard a future
+    /// hit_id reordering could silently turn panel-body clicks into
+    /// dismissals.
+    ///
+    /// Sweeps a small grid of candidate "panel body" coordinates and
+    /// requires at least one to land on the panel and produce `None`.
+    /// Without this self-check the test could silently move from
+    /// "click landed on Dialog" to "click landed on backdrop" if
+    /// future layout changes shift the spacer position; both happen
+    /// to return `None`-as-Action but for different reasons (Dialog
+    /// → no-op vs None → CloseSettings via the click handler's
+    /// `None | Close` arm).
+    #[test]
+    fn settings_dialog_body_click_is_no_op() {
+        use crate::app::ui::settings_panel::SettingsPanelComponent;
+
+        let mut app = make_app();
+        app.core.settings_panel_visible = true;
+        let cx = app.ui_context();
+        let component = SettingsPanelComponent::capture(&app, &cx)
+            .expect("panel visible after toggle");
+        // Probe multiple "likely panel body" points so the test still
+        // works if flex-spacer geometry shifts slightly with future
+        // layout tweaks. Centre is the most reliable; the offsets
+        // sample around it. The assertion verifies the click hit the
+        // Dialog hit_id (panel body) AND returned no action.
+        let cx_w = cx.viewport_w;
+        let cx_h = cx.viewport_h;
+        let candidates: &[(f32, f32)] = &[
+            (cx_w * 0.5, cx_h * 0.5),
+            (cx_w * 0.5, cx_h * 0.55),
+            (cx_w * 0.5, cx_h * 0.45),
+        ];
+        let any_dialog_hit = candidates.iter().any(|&(mx, my)| {
+            component.hover_hit_id(mx, my, &cx)
+                == Some(crate::app::ui::settings_panel::settings_panel_hit_dialog_for_test())
+                && component.click(mx, my, &cx).is_none()
+        });
+        assert!(
+            any_dialog_hit,
+            "at least one panel-body candidate must hit Dialog and absorb the click",
+        );
+    }
+
+    /// Opacity stepper buttons opt into press-state styling via
+    /// `active_press_hit_id`. The negative case
+    /// (`capture_active_press_hit_id_returns_none_outside_press_friendly_chrome`)
+    /// already covers content area; this is the positive case so a
+    /// future hit_id collision or `pub(super)` visibility change can't
+    /// silently break the press-state wiring.
+    #[test]
+    fn capture_active_press_hit_id_matches_opacity_steppers() {
+        use crate::app::ui::settings_panel::SettingsPanelComponent;
+
+        let mut app = make_app();
+        app.core.settings_panel_visible = true;
+        let cx = app.ui_context();
+        let component = SettingsPanelComponent::capture(&app, &cx)
+            .expect("panel visible after toggle");
+
+        // Sweep the panel for the dec / inc hit_ids — concrete
+        // coordinates depend on layout. `hover_hit_id` reports the
+        // walker's hit, then `capture_active_press_hit_id` is asked to
+        // return the same id for press-state tracking.
+        let mut found_dec = false;
+        let mut found_inc = false;
+        for ix in 0..40 {
+            for iy in 0..40 {
+                let mx = (ix as f32 + 0.5) / 40.0 * cx.viewport_w;
+                let my = (iy as f32 + 0.5) / 40.0 * cx.viewport_h;
+                match component.hover_hit_id(mx, my, &cx) {
+                    Some(id)
+                        if id
+                            == crate::app::ui::settings_panel::HIT_OPACITY_DEC =>
+                    {
+                        assert_eq!(
+                            app.capture_active_press_hit_id(mx, my),
+                            Some(crate::app::ui::settings_panel::HIT_OPACITY_DEC),
+                            "opacity dec must register for press-state styling",
+                        );
+                        found_dec = true;
+                    }
+                    Some(id)
+                        if id
+                            == crate::app::ui::settings_panel::HIT_OPACITY_INC =>
+                    {
+                        assert_eq!(
+                            app.capture_active_press_hit_id(mx, my),
+                            Some(crate::app::ui::settings_panel::HIT_OPACITY_INC),
+                            "opacity inc must register for press-state styling",
+                        );
+                        found_inc = true;
+                    }
+                    _ => {}
+                }
+                if found_dec && found_inc {
+                    return;
+                }
+            }
+        }
+        panic!(
+            "couldn't locate opacity stepper hit_ids on the rendered panel — \
+             dec_found={found_dec} inc_found={found_inc}",
         );
     }
 }

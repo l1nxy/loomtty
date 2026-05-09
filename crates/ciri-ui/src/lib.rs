@@ -23,6 +23,7 @@
 
 pub mod color;
 pub mod arena;
+pub mod components;
 pub mod element;
 pub mod elements;
 pub mod fluent;
@@ -56,6 +57,7 @@ pub use style::{
     AlignItems, CursorStyle, Display, FlexDirection, JustifyContent, Length, Shadow, Style,
 };
 pub use styled::Styled;
-pub use theme::{RadiusScale, ResolvedTheme, SpaceScale, TypeScale};
+pub use components::{Banner, Dropdown, NumberField, Severity, Switch};
+pub use theme::{ElevationIndex, RadiusScale, ResolvedTheme, SpaceScale, TypeScale};
 
 pub use ciri_motion::Transition;

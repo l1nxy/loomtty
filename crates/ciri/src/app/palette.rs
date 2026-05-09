@@ -1,16 +1,23 @@
+use ciri_app::app::ModalKind;
 use ciri_protocol::message::ClientMessage;
 
 use super::{App, PaletteEntryKind};
 use crate::connection::RemoteQueryResult;
 
 impl App {
-    /// Delegate: open command palette.
+    /// Delegate: open command palette. The close-peers discipline is
+    /// shared with every other modal-tier UI through
+    /// `enter_modal_close_peers` — the palette is just one client of
+    /// the gate.
     pub fn open_command_palette(&mut self) {
+        self.enter_modal_close_peers(ModalKind::CommandPalette);
         self.core.open_command_palette();
     }
 
-    /// Delegate: open session palette.
+    /// Delegate: open session palette. Same close-peers discipline as
+    /// `open_command_palette`.
     pub fn open_session_palette(&mut self) {
+        self.enter_modal_close_peers(ModalKind::SessionPalette);
         self.core.open_session_palette();
     }
 
@@ -154,7 +161,7 @@ impl App {
             // moved on to a different host's loading state, treat the in-
             // flight intent as cancelled — do not reach `ssh`. This is the
             // single chokepoint that catches every cancel path without
-            // having to plumb cleanup through each `command_palette = None`
+            // having to plumb cleanup through each palette-close
             // call site.
             let palette_still_loading_this_host = self
                 .core
@@ -196,7 +203,10 @@ impl App {
                 .as_ref()
                 .is_some_and(|p| p.remote_error.is_some());
             if !has_error {
-                self.core.command_palette = None;
+                // Route through the gate so any palette submodal
+                // (paste-confirm overlaid on the palette query) dies
+                // with the palette.
+                self.enter_modal_close_peers(ModalKind::None);
             }
             return;
         }

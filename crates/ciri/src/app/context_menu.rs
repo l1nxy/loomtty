@@ -1,4 +1,5 @@
 use super::{App, ContextMenu, ContextMenuAction, ContextMenuItem};
+use ciri_app::app::{ContextMenuParent, ModalKind, PendingPasteTarget};
 use ciri_protocol::message::ClientMessage;
 
 impl App {
@@ -31,6 +32,9 @@ impl App {
                                 text.clone()
                             };
                             let preview = preview.replace('\n', " \\n ").replace('\r', "");
+                            self.enter_modal_close_peers(ModalKind::PendingPaste(
+                                PendingPasteTarget::Terminal,
+                            ));
                             self.core.pending_paste = Some(super::PendingPaste {
                                 info,
                                 preview,
@@ -77,19 +81,8 @@ impl App {
                     if let Some(pane_id) =
                         target_pane_id.or(self.core.workspaces.active().active_pane_id())
                     {
-                        let scroll_offset = self
-                            .core
-                            .pane_grids
-                            .get(&pane_id)
-                            .map(|g| g.scroll_offset)
-                            .unwrap_or(0);
-                        self.core.search_state = Some(super::SearchState {
-                            query: String::new(),
-                            matches: Vec::new(),
-                            current_match_idx: 0,
-                            pane_id,
-                            original_scroll_offset: scroll_offset,
-                        });
+                        self.enter_modal_close_peers(ModalKind::Search);
+                        self.core.open_search_for_pane(pane_id);
                     }
                 }
                 ContextMenuAction::OpenLink(url) => self.open_url(url),
@@ -107,17 +100,69 @@ impl App {
                         self.send(ClientMessage::ClosePane { pane_id });
                     }
                 }
+                ContextMenuAction::SetThemePreset(name) => {
+                    self.apply_theme_preset(name.clone());
+                }
             }
         }
         self.core.context_menu.visible = false;
     }
 
+    /// Apply a chrome theme preset live: mutate `core.config.theme`,
+    /// resolve the preset to fill any unset fields, refresh the cached
+    /// terminal colour table + chrome `ResolvedTheme`, and request a
+    /// repaint. Mirrors the relevant subset of `reload_config`'s post-
+    /// load pipeline (font / image checks aren't needed here — only the
+    /// theme palette changes).
+    ///
+    /// v1: in-memory only. The change is NOT written back to
+    /// `settings.toml`; users persist via the panel's
+    /// "Open settings.toml" link. The Banner makes that explicit.
+    pub(crate) fn apply_theme_preset(&mut self, preset: String) {
+        // Replace `theme` so the previous preset's fallback fills don't
+        // leak into the new preset (e.g. switching dracula → ciri_dark
+        // shouldn't keep dracula's accent if the user hasn't overridden
+        // it). `resolve_preset` repopulates from the new preset's TOML.
+        self.core.config.theme = ciri_config::theme::ThemeConfig {
+            preset,
+            ..ciri_config::theme::ThemeConfig::default()
+        };
+        self.core.config.theme.resolve_preset();
+        self.cached_color_table = ciri_render::terminal::ColorTable::new(&self.core.config);
+        self.cached_resolved_theme.reload(&self.core.config.theme);
+        // Pane tile caches embed colour values derived from the old
+        // theme — without clearing them the new chrome shows but the
+        // pane area renders stale until some other event dirties it.
+        // Mirrors `reload_config`'s post-load pipeline.
+        self.clear_render_caches();
+        self.schedule_redraw();
+    }
+
     pub(crate) fn open_context_menu(&mut self, mx: f32, my: f32) {
+        // Settings panel owns the modal layer while visible — refuse to
+        // spawn a pane-context menu underneath / over it. Right-click on
+        // the settings backdrop is a no-op (the panel's hit_test
+        // explicitly returns None for it; this guard makes mouse-down
+        // routing match).
+        if self.core.settings_panel_visible {
+            return;
+        }
+        // Overview mode applies a zoom transform that
+        // `pixel_to_viewport_cell` doesn't account for — the cell
+        // coordinates we'd send in `MouseInput` would point at the
+        // wrong cell. The menu items themselves (Copy/Paste/Search)
+        // also don't make sense when no pane is in viewport-frame.
+        // Left-click already routes through `UiFrame::click`'s overview
+        // arm; mirror that gate here.
+        if self.core.overview.active {
+            return;
+        }
         if self.core.context_menu.visible {
             self.core.context_menu.visible = false;
             self.schedule_redraw();
             return;
         }
+        self.enter_modal_close_peers(ModalKind::ContextMenu(ContextMenuParent::Standalone));
 
         if let Some((pane_id, col, row)) = self.pixel_to_viewport_cell(mx, my)
             && self.pane_prefers_mouse_passthrough(pane_id)

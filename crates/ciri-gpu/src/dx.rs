@@ -11,7 +11,9 @@ use ciri_render::rect::{PaneRectRange, Rect};
 use ciri_render::sdf_rect::SdfRect;
 
 /// Upper bound on SDF chrome rects per frame. Mirrors the blade backend.
-const MAX_SDF_RECTS: usize = 256;
+/// Per-frame SDF chrome rect capacity. See `blade::MAX_SDF_RECTS` for
+/// rationale; kept identical so all backends behave the same.
+const MAX_SDF_RECTS: usize = 1024;
 use std::sync::Arc;
 use winit::window::Window;
 
@@ -26,6 +28,7 @@ use windows::Win32::Graphics::DirectWrite::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Dxgi::*;
 use windows::Win32::System::Threading::WaitForSingleObjectEx;
+use windows::Win32::Foundation::WAIT_TIMEOUT;
 use windows::core::*;
 
 use ciri_render::glyph_cache::PendingDwriteGlyph;
@@ -400,6 +403,67 @@ float4 ps_main(PSInput input) : SV_TARGET {
     float4 texel = atlas_tex.Sample(atlas_sampler, input.uv);
     float4 out_color = float4(texel.rgb * input.color.rgb, texel.a * input.color.a);
     return out_color * ciri_corner_alpha(input.pane_local, pane_size, pane_radii);
+}
+"#;
+
+// ─── Overview wallpaper shaders ─────────────────────────────────────
+//
+// One vertexless fullscreen quad textured with the user-supplied image.
+// `cover` UV: scale the [0,1] quad UV around 0.5 by the smaller axis
+// ratio so the image fills the viewport with overflow cropped, aspect
+// preserved. Output is premultiplied (`rgb * opacity, opacity`) so the
+// image alpha-blends over the already-cleared `clear_color` framebuffer
+// — opacity 0 hides it entirely, 1 shows the wallpaper at full strength,
+// intermediate values cross-fade toward `clear_color`.
+
+const BACKGROUND_IMAGE_HLSL: &str = r#"
+cbuffer OverviewBg : register(b0) {
+    float4 viewport_tex_size; // vw, vh, tw, th
+    float4 params;            // opacity, _, _, _
+};
+
+Texture2D bg_tex : register(t0);
+SamplerState bg_samp : register(s0);
+
+struct VSOutput {
+    float4 pos : SV_POSITION;
+    float2 uv  : TEXCOORD0;
+};
+
+VSOutput vs_main(uint vid : SV_VertexID) {
+    static const float2 corners[6] = {
+        float2(0,0), float2(1,0), float2(1,1),
+        float2(0,0), float2(1,1), float2(0,1)
+    };
+    float2 vuv = corners[vid];
+
+    VSOutput o;
+    o.pos = float4(vuv.x * 2.0 - 1.0, 1.0 - vuv.y * 2.0, 0.0, 1.0);
+
+    float vw = viewport_tex_size.x;
+    float vh = viewport_tex_size.y;
+    float tw = viewport_tex_size.z;
+    float th = viewport_tex_size.w;
+    float v_aspect = vw / max(vh, 1e-6);
+    float t_aspect = tw / max(th, 1e-6);
+    float2 scale = float2(1.0, 1.0);
+    if (t_aspect > v_aspect) {
+        // texture wider than viewport — crop the sides
+        scale.x = v_aspect / max(t_aspect, 1e-6);
+    } else {
+        scale.y = t_aspect / max(v_aspect, 1e-6);
+    }
+    o.uv = (vuv - 0.5) * scale + 0.5;
+    return o;
+}
+
+float4 ps_main(VSOutput input) : SV_TARGET {
+    float4 col = bg_tex.Sample(bg_samp, input.uv);
+    float opacity = saturate(params.x);
+    // Premultiply against texel alpha so transparent PNG pixels stay
+    // transparent. Mirror of the GL/Blade fix.
+    float a = col.a * opacity;
+    return float4(col.rgb * a, a);
 }
 "#;
 
@@ -1345,6 +1409,13 @@ impl DxSdfPipeline {
         if rects.is_empty() {
             return;
         }
+        if rects.len() > self.max_rects {
+            log::warn!(
+                "SDF chrome overflow: {} rects > {} cap; tail (incl. Overlay) dropped",
+                rects.len(),
+                self.max_rects,
+            );
+        }
         let count = rects.len().min(self.max_rects);
 
         let viewport = [viewport_w, viewport_h, 0.0f32, 0.0f32];
@@ -1374,15 +1445,33 @@ impl DxSdfPipeline {
         ctx.Unmap(&self.instance_buffer, 0);
     }
 
-    unsafe fn draw(&self, ctx: &ID3D11DeviceContext, count: usize) {
+    /// Draw a contiguous slice `[start..start + count)` of the
+    /// uploaded instance buffer. Mirrors blade's `draw_range`: needed
+    /// by the layered chrome pass so Base SDF + Base glyphs land
+    /// before Overlay SDF + Overlay glyphs in submission order. Without
+    /// this split the GPU pipeline's natural "all rects → all glyphs"
+    /// order lets Base glyphs bleed through Overlay backgrounds.
+    ///
+    /// D3D11's `StartInstanceLocation` (the 4th param of
+    /// `DrawInstanced`) only offsets `SV_InstanceID`, NOT the IA's
+    /// per-instance buffer reads — those still start at the byte offset
+    /// passed to `IASetVertexBuffers`. So to render `[start..start+count)`
+    /// we set that byte offset, then issue a draw with
+    /// `StartInstanceLocation = 0` for the slice. Same pattern the
+    /// glyph pipeline uses for batched chrome runs.
+    unsafe fn draw_range(&self, ctx: &ID3D11DeviceContext, start: usize, count: usize) {
         if count == 0 {
             return;
         }
-        let count = count.min(self.max_rects);
+        let max = self.max_rects;
+        if start >= max {
+            return;
+        }
+        let count = count.min(max - start);
         ctx.IASetInputLayout(Some(&self.input_layout));
         ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
         let stride = SdfRect::SIZE as u32;
-        let offset = 0u32;
+        let offset = (start * SdfRect::SIZE) as u32;
         ctx.IASetVertexBuffers(
             0,
             1,
@@ -1394,6 +1483,212 @@ impl DxSdfPipeline {
         ctx.PSSetShader(Some(&self.ps), None);
         ctx.VSSetConstantBuffers(0, Some(&[Some(self.cbuffer.clone())]));
         ctx.DrawInstanced(4, count as u32, 0, 0);
+    }
+}
+
+// ─── Overview wallpaper pipeline ────────────────────────────────────
+
+struct DxBackgroundImageTexture {
+    _texture: ID3D11Texture2D,
+    srv: ID3D11ShaderResourceView,
+    width: u32,
+    height: u32,
+}
+
+struct DxBackgroundImagePipeline {
+    vs: ID3D11VertexShader,
+    ps: ID3D11PixelShader,
+    cbuffer: ID3D11Buffer,
+    sampler: ID3D11SamplerState,
+    texture: Option<DxBackgroundImageTexture>,
+}
+
+impl DxBackgroundImagePipeline {
+    unsafe fn new(device: &ID3D11Device) -> Result<Self> {
+        let vs_blob = compile_shader(BACKGROUND_IMAGE_HLSL, "vs_main", "vs_5_0")?;
+        let vs_code = std::slice::from_raw_parts(
+            vs_blob.GetBufferPointer() as *const u8,
+            vs_blob.GetBufferSize(),
+        );
+        let mut vs = None;
+        device.CreateVertexShader(vs_code, None, Some(&mut vs))?;
+        let vs = vs.unwrap();
+
+        let ps_blob = compile_shader(BACKGROUND_IMAGE_HLSL, "ps_main", "ps_5_0")?;
+        let ps_code = std::slice::from_raw_parts(
+            ps_blob.GetBufferPointer() as *const u8,
+            ps_blob.GetBufferSize(),
+        );
+        let mut ps = None;
+        device.CreatePixelShader(ps_code, None, Some(&mut ps))?;
+        let ps = ps.unwrap();
+
+        // 32 bytes — two float4 slots (viewport_tex_size + params).
+        let cb_desc = D3D11_BUFFER_DESC {
+            ByteWidth: 32,
+            Usage: D3D11_USAGE_DYNAMIC,
+            BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
+            CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+            ..Default::default()
+        };
+        let initial_cb = [0.0f32; 8];
+        let initial_data = D3D11_SUBRESOURCE_DATA {
+            pSysMem: initial_cb.as_ptr() as *const _,
+            ..Default::default()
+        };
+        let mut cbuffer = None;
+        device.CreateBuffer(&cb_desc, Some(&initial_data), Some(&mut cbuffer))?;
+        let cbuffer = cbuffer.unwrap();
+
+        // Linear-filter, clamp-to-edge sampler. The cover-UV math keeps
+        // sample coords inside [0,1], so clamping is just a defensive
+        // boundary against any rounding drift.
+        let samp_desc = D3D11_SAMPLER_DESC {
+            Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+            AddressU: D3D11_TEXTURE_ADDRESS_CLAMP,
+            AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
+            AddressW: D3D11_TEXTURE_ADDRESS_CLAMP,
+            ComparisonFunc: D3D11_COMPARISON_ALWAYS,
+            MaxLOD: f32::MAX,
+            ..Default::default()
+        };
+        let mut sampler = None;
+        device.CreateSamplerState(&samp_desc, Some(&mut sampler))?;
+        let sampler = sampler.unwrap();
+
+        Ok(DxBackgroundImagePipeline {
+            vs,
+            ps,
+            cbuffer,
+            sampler,
+            texture: None,
+        })
+    }
+
+    unsafe fn upload(
+        &mut self,
+        device: &ID3D11Device,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
+        if width == 0 || height == 0 {
+            anyhow::bail!("overview bg image has zero dimension ({width}x{height})");
+        }
+        let expected = (width as usize) * (height as usize) * 4;
+        if rgba.len() != expected {
+            anyhow::bail!(
+                "overview bg image byte count mismatch: got {}, expected {} ({width}x{height} RGBA8)",
+                rgba.len(),
+                expected
+            );
+        }
+
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: width,
+            Height: height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            Usage: D3D11_USAGE_IMMUTABLE,
+            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+            ..Default::default()
+        };
+        let init = D3D11_SUBRESOURCE_DATA {
+            pSysMem: rgba.as_ptr() as *const _,
+            SysMemPitch: width * 4,
+            SysMemSlicePitch: 0,
+        };
+        let mut texture = None;
+        device.CreateTexture2D(&desc, Some(&init), Some(&mut texture))?;
+        let texture = texture.unwrap();
+
+        let srv_desc = D3D11_SHADER_RESOURCE_VIEW_DESC {
+            Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+            ViewDimension: D3D_SRV_DIMENSION_TEXTURE2D,
+            Anonymous: D3D11_SHADER_RESOURCE_VIEW_DESC_0 {
+                Texture2D: D3D11_TEX2D_SRV {
+                    MostDetailedMip: 0,
+                    MipLevels: 1,
+                },
+            },
+        };
+        let resource: ID3D11Resource = texture.cast()?;
+        let mut srv = None;
+        device.CreateShaderResourceView(&resource, Some(&srv_desc), Some(&mut srv))?;
+        let srv = srv.unwrap();
+
+        self.texture = Some(DxBackgroundImageTexture {
+            _texture: texture,
+            srv,
+            width,
+            height,
+        });
+        Ok(())
+    }
+
+    fn clear(&mut self) {
+        self.texture = None;
+    }
+
+    /// Issue the textured-quad draw if a texture is bound and `opacity > 0`.
+    /// Returns `true` if a draw was actually issued — callers use that to
+    /// decide whether the redundant prepended baseline rect needs to be
+    /// transparent (so it doesn't erase the wallpaper).
+    ///
+    /// Caller must have set the render target and viewport already; this
+    /// rebinds the input layout (none — vertexless), shaders, cbuffer, SRV,
+    /// sampler, and topology, but leaves the framebuffer / blend state in
+    /// place (the existing premultiplied-alpha state is exactly what the
+    /// PS output expects).
+    unsafe fn draw(&self, ctx: &ID3D11DeviceContext, vw: f32, vh: f32, opacity: f32) -> bool {
+        let Some(tex) = self.texture.as_ref() else {
+            return false;
+        };
+        if opacity <= 0.0 {
+            return false;
+        }
+
+        let cb_data = [
+            vw,
+            vh,
+            tex.width as f32,
+            tex.height as f32,
+            opacity,
+            0.0,
+            0.0,
+            0.0,
+        ];
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        ctx.Map(
+            &self.cbuffer,
+            0,
+            D3D11_MAP_WRITE_DISCARD,
+            0,
+            Some(&mut mapped),
+        )
+        .unwrap();
+        std::ptr::copy_nonoverlapping(cb_data.as_ptr() as *const u8, mapped.pData as *mut u8, 32);
+        ctx.Unmap(&self.cbuffer, 0);
+
+        ctx.IASetInputLayout(None);
+        ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        // No vertex buffer — VS pulls corner positions from SV_VertexID.
+        ctx.IASetVertexBuffers(0, 1, Some(&None), Some(&0), Some(&0));
+
+        ctx.VSSetShader(Some(&self.vs), None);
+        ctx.PSSetShader(Some(&self.ps), None);
+        ctx.VSSetConstantBuffers(0, Some(&[Some(self.cbuffer.clone())]));
+        ctx.PSSetConstantBuffers(0, Some(&[Some(self.cbuffer.clone())]));
+        ctx.PSSetShaderResources(0, Some(&[Some(tex.srv.clone())]));
+        ctx.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
+
+        ctx.Draw(6, 0);
+        true
     }
 }
 
@@ -1417,6 +1712,7 @@ pub struct Renderer {
     text_rendering_params: Option<IDWriteRenderingParams>,
     rects: DxRectPipeline,
     sdf: DxSdfPipeline,
+    background_image: DxBackgroundImagePipeline,
     width: u32,
     height: u32,
     sync_interval: u32,
@@ -1533,6 +1829,7 @@ impl Renderer {
 
         let rects = unsafe { DxRectPipeline::new(&device, render_config.max_rectangles)? };
         let sdf = unsafe { DxSdfPipeline::new(&device, MAX_SDF_RECTS)? };
+        let background_image = unsafe { DxBackgroundImagePipeline::new(&device)? };
 
         let sync_interval = match render_config.present_mode {
             ciri_config::config::PresentMode::Immediate
@@ -1568,6 +1865,7 @@ impl Renderer {
             text_rendering_params,
             rects,
             sdf,
+            background_image,
             width: size.width.max(1),
             height: size.height.max(1),
             sync_interval,
@@ -1587,30 +1885,62 @@ impl Renderer {
             // Drop the old RTV before resizing the swap chain.
             std::ptr::drop_in_place(&mut self.rtv);
 
-            self.swap_chain
-                .ResizeBuffers(
-                    0,
-                    width,
-                    height,
-                    DXGI_FORMAT_UNKNOWN,
-                    if self.frame_waitable.is_some() {
-                        DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT
-                    } else {
-                        DXGI_SWAP_CHAIN_FLAG(0)
-                    },
-                )
-                .expect("ResizeBuffers failed");
+            // ResizeBuffers / create_rtv use `abort` rather than
+            // `expect` (panic). Between `drop_in_place` and
+            // `ptr::write` below, `self.rtv` holds invalid bytes; if
+            // either fallible call panicked, unwind would drop
+            // `Renderer` later and call COM `Release()` on the
+            // dangling pointer — a double-free that crashes the D3D
+            // driver. Abort skips unwind entirely; a failed resize
+            // means the GPU is gone and we couldn't recover anyway.
+            let resize_result = self.swap_chain.ResizeBuffers(
+                0,
+                width,
+                height,
+                DXGI_FORMAT_UNKNOWN,
+                if self.frame_waitable.is_some() {
+                    DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT
+                } else {
+                    DXGI_SWAP_CHAIN_FLAG(0)
+                },
+            );
+            if let Err(e) = resize_result {
+                log::error!("dx: ResizeBuffers failed ({e:?}); aborting to avoid double-free");
+                std::process::abort();
+            }
+
+            let new_rtv = match create_rtv(&self.device, &self.swap_chain) {
+                Ok(v) => v,
+                Err(e) => {
+                    log::error!("dx: create_rtv failed ({e:?}); aborting to avoid double-free");
+                    std::process::abort();
+                }
+            };
 
             // Write the new RTV without dropping the (now-invalid) old value.
-            std::ptr::write(
-                &mut self.rtv,
-                create_rtv(&self.device, &self.swap_chain).expect("create_rtv failed"),
-            );
+            std::ptr::write(&mut self.rtv, new_rtv);
         }
     }
 
     pub fn apply_surface(&mut self) {
         // D3D11 resize is handled synchronously in resize()
+    }
+
+    /// Upload the overview wallpaper texture. Replaces any previously
+    /// uploaded image. Mirrors the public `Renderer::set_background_image`
+    /// signature; the lib-level wrapper converts errors into `GpuError`.
+    pub fn set_background_image(
+        &mut self,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
+        unsafe { self.background_image.upload(&self.device, rgba, width, height) }
+    }
+
+    /// Drop the wallpaper texture, if any.
+    pub fn clear_background_image(&mut self) {
+        self.background_image.clear();
     }
 
     pub fn surface_size(&self) -> (u32, u32) {
@@ -1743,14 +2073,39 @@ impl Renderer {
             };
             self.ctx.RSSetScissorRects(Some(&[full_rect]));
 
+            // Overview wallpaper, if any. Self-checks the texture/opacity
+            // gate, so passing 0.0 (default outside overview mode) is a
+            // no-op. Drawn after the clear and before pane bgs so the
+            // image sits behind everything else. Returns true iff a draw
+            // was actually issued — used below to suppress the prepended
+            // baseline rect (which would otherwise erase the image).
+            let wallpaper_drawn = self.background_image.draw(
+                &self.ctx,
+                vw,
+                vh,
+                scene.background_image_opacity,
+            );
+
             // 1. Upload all background rects (clear + pane + overlay) once.
+            // The prepended full-viewport rect is normally a redundant
+            // baseline of `clear_color` (the framebuffer was already
+            // cleared). When the wallpaper is showing it would erase the
+            // image, so go transparent in that case — the index slot has
+            // to stay so the rest of the bg_rects index math
+            // (active_bg_idx / overlay_bg_idx) keeps matching
+            // `scene.bg_rect_ranges`.
+            let baseline_color = if wallpaper_drawn {
+                [0.0; 4]
+            } else {
+                scene.clear_color
+            };
             let mut all_bg = Vec::with_capacity(1 + scene.bg_rects.len());
             all_bg.push(Rect {
                 x: 0.0,
                 y: 0.0,
                 w: vw,
                 h: vh,
-                color: scene.clear_color,
+                color: baseline_color,
             });
             all_bg.extend_from_slice(scene.bg_rects);
             let active_bg_idx = 1 + scene.active_bg_start;
@@ -1860,38 +2215,65 @@ impl Renderer {
                     .draw_ranges(&self.ctx, &overlay_bg_ranges, vw, vh);
             }
 
-            // 7b. SDF chrome (rounded / shadow / border). Drawn after flat
-            //     overlay bgs and before overlay glyphs so chrome labels
-            //     paint crisply on top of their rounded panel.
-            if !scene.sdf_rects.is_empty() {
+            // 7b. Layered chrome: two passes (Base then Overlay), each
+            //     a (SDF rects → glyphs) pair so Overlay rects occlude
+            //     Base glyphs (settings_panel labels under a popup,
+            //     etc.). See blade.rs for the design rationale; the DX
+            //     path mirrors it exactly so all backends behave the
+            //     same w.r.t. popup z-order.
+            let total_sdf = scene.sdf_rects.len();
+            let base_sdf_end = scene.chrome_base_sdf_end.min(total_sdf);
+            let alpha_total = scene.glyphs.len();
+            let color_total = scene.color_glyphs.len();
+            let base_alpha_end = scene.chrome_base_alpha_glyph_end.min(alpha_total);
+            let base_color_end = scene.chrome_base_color_glyph_end.min(color_total);
+
+            if total_sdf > 0 {
                 self.ctx.RSSetScissorRects(Some(&[full_rect]));
                 self.sdf.upload(&self.ctx, scene.sdf_rects, vw, vh);
-                // C4 verified: DxSdfPipeline consumes the same SdfRect fields
-                // and draw order as GL (focus rings before cached/transient chrome).
-                self.sdf.draw(&self.ctx, scene.sdf_rects.len());
             }
 
-            // 8. Overlay glyphs (no re-upload, just draw remaining range).
-            // Zero pane_size hits the helper short-circuit (no clipping)
-            // — once C5 wires the uniforms into the DX path.
-            let overlay_alpha = PaneGlyphRange {
-                start: scene.pane_glyph_end as u32,
-                count: (scene.glyphs.len() - scene.pane_glyph_end) as u32,
+            let make_glyph_range = |start: usize, end: usize| PaneGlyphRange {
+                start: start as u32,
+                count: end.saturating_sub(start) as u32,
                 scissor: (0, 0, self.width, self.height),
                 ..PaneGlyphRange::default()
             };
-            let overlay_color = PaneGlyphRange {
-                start: scene.pane_color_glyph_end as u32,
-                count: (scene.color_glyphs.len() - scene.pane_color_glyph_end) as u32,
-                scissor: (0, 0, self.width, self.height),
-                ..PaneGlyphRange::default()
-            };
-            atlas_gpu
-                .alpha
-                .draw_batches(&self.ctx, alpha_count, &vp, &[overlay_alpha]);
-            atlas_gpu
-                .color
-                .draw_batches(&self.ctx, color_count, &vp, &[overlay_color]);
+
+            // ── Base pass (includes pane focus rings, see blade.rs) ──
+            if base_sdf_end > 0 {
+                self.sdf.draw_range(&self.ctx, 0, base_sdf_end);
+            }
+            atlas_gpu.alpha.draw_batches(
+                &self.ctx,
+                alpha_count,
+                &vp,
+                &[make_glyph_range(scene.pane_glyph_end, base_alpha_end)],
+            );
+            atlas_gpu.color.draw_batches(
+                &self.ctx,
+                color_count,
+                &vp,
+                &[make_glyph_range(scene.pane_color_glyph_end, base_color_end)],
+            );
+
+            // ── Overlay + transient pass ─────────────────────────────
+            if base_sdf_end < total_sdf {
+                self.sdf
+                    .draw_range(&self.ctx, base_sdf_end, total_sdf - base_sdf_end);
+            }
+            atlas_gpu.alpha.draw_batches(
+                &self.ctx,
+                alpha_count,
+                &vp,
+                &[make_glyph_range(base_alpha_end, alpha_total)],
+            );
+            atlas_gpu.color.draw_batches(
+                &self.ctx,
+                color_count,
+                &vp,
+                &[make_glyph_range(base_color_end, color_total)],
+            );
             if let Some(profiler) = profiler.as_mut() {
                 profiler.record_draw(draw_start);
             }
@@ -1899,11 +2281,23 @@ impl Renderer {
             // Wait for the previous frame to finish presentation before
             // submitting the next one. With the waitable object this is a true
             // kernel wait (CPU sleeps), not a busy-wait spin loop.
+            //
+            // On timeout (GPU hung / stalled past 1s), discarding the
+            // return value would defeat the latency control: `Present`
+            // queues frames faster than the GPU consumes them, piling
+            // them up in the flip queue precisely when the GPU is
+            // already struggling. Log it (matching blade.rs's
+            // wait-timeout pattern) so the diagnostic surfaces; we still
+            // proceed with `Present` because skipping it would freeze
+            // the UI entirely on transient stalls.
             if let Some(handle) = self.frame_waitable {
                 let wait_start = std::time::Instant::now();
-                WaitForSingleObjectEx(handle, 1000, false);
+                let result = WaitForSingleObjectEx(handle, 1000, false);
                 if let Some(profiler) = profiler.as_mut() {
                     profiler.record_sync_wait(wait_start);
+                }
+                if result == WAIT_TIMEOUT {
+                    log::warn!("dx: frame waitable timed out (1s) — GPU may be stalled");
                 }
             }
 

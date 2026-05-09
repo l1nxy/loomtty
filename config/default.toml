@@ -17,6 +17,24 @@ inactive_opacity = 0.7
 # Try 4-12 for modern soft. Niri-style alpha mask: no extra pass, opaque
 # region preserved except at the four arc pixels.
 pane_corner_radius = 0.0
+# Optional global background image rendered behind everything (panes
+# in normal mode, thumbnails in overview mode). PNG and JPEG; supports
+# `~`, absolute paths, and paths relative to this config file's
+# directory. Empty = use the solid `theme.overview_background` colour.
+# Fitted with a `cover` policy (filled, overflow cropped, aspect kept).
+background_image = ""
+# 0.0 shows the wallpaper at full strength; 1.0 hides it entirely under
+# `theme.overview_background`. Mid-values (~0.4-0.6) keep pane content
+# legible over a busy photo. Ignored when no image is set.
+background_dim = 0.0
+# Pane background opacity. 1.0 = fully opaque (default, no visual change
+# on upgrade). Lower values let `background_image` show through panes
+# — try 0.8 with a wallpaper. Applies only to pane interior bgs;
+# chrome (palette, status bar, etc.) stays opaque for legibility.
+# Note: selection / cursor / search-highlight rects also dim with
+# `pane_opacity`. ~0.7-0.9 keeps them visible; values below 0.5 fade
+# them noticeably.
+pane_opacity = 1.0
 
 [appearance.focus_ring]
 style = "solid"

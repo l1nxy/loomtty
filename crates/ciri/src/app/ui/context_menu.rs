@@ -12,7 +12,9 @@ use super::tokens;
 use super::types::{UiAction, UiContext, UiContextMenuHit, UiScene, ui_hit_id};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{AnchorCorner, Div, IntoElement, Render, RenderCtx, Styled, anchored, div, text};
+use ciri_ui::{
+    AnchorCorner, Div, ElevationIndex, IntoElement, Render, RenderCtx, Styled, anchored, div, text,
+};
 
 const HIT_MENU: u64 = 1;
 const HIT_ENTRY_BASE: u64 = 1_000_000;
@@ -52,7 +54,28 @@ impl ContextMenuComponent {
         let padding = tokens::SPACE_2;
         let item_height = tokens::control_height_sm(cx.cell_h);
         let max_menu_width = (cx.viewport_w - padding * 2.0).max(1.0);
-        let menu_width = 200.0_f32.min(max_menu_width);
+        // Auto-size to the widest item label so longer entries
+        // (settings panel theme dropdown's full preset names) are not
+        // chopped to "✓ catppuccin_…". The 200 px floor preserves the
+        // historic minimum for short pane-context items
+        // (Copy/Paste/Split…) so they don't render as a tiny strip.
+        let widest_label = app
+            .core
+            .context_menu
+            .items
+            .iter()
+            .map(|item| text_layout::measure(cx, &item.label))
+            .fold(0.0_f32, f32::max);
+        // Comfortable horizontal margin around the longest label —
+        // `chrome_w` is the rounded panel's own padding + 1 px borders;
+        // the additional `SPACE_4` is breathing room on the right so
+        // labels don't kiss the panel edge or the rounded corner.
+        // Floor 240 px so short pane-context items (Copy / Paste / …)
+        // still read as a comfortable menu rather than a tiny strip.
+        let chrome_w = padding * 2.0 + tokens::BORDER_THIN * 2.0;
+        let menu_width = (widest_label + chrome_w + tokens::SPACE_4)
+            .max(240.0)
+            .min(max_menu_width);
         let menu_height = app.core.context_menu.items.len() as f32 * item_height + padding * 2.0;
         // Capture raw click point — `anchored()` in `build_tree`
         // handles viewport-aware placement (edge-flips on the right /
@@ -63,7 +86,7 @@ impl ContextMenuComponent {
         // room, instead of always sliding into view.
         let x = app.core.context_menu.x;
         let y = app.core.context_menu.y;
-        let label_budget = (menu_width - padding * 2.0 - tokens::BORDER_THIN * 2.0).max(0.0);
+        let label_budget = (menu_width - chrome_w).max(0.0);
         let rows = app
             .core
             .context_menu
@@ -136,22 +159,17 @@ impl ContextMenuComponent {
         let padding = tokens::SPACE_2;
         let bw = tokens::BORDER_THIN;
 
-        let menu_bg = cx.theme.surface;
-        // Subtle sink below term_bg so the panel reads as "recessed chrome"
-        // without producing a gamma-incorrect darken — the rest of the
-        // pipeline treats colors as sRGB-encoded (see commit 2f609b9), so
-        // a raw channel multiply (`[c * 0.9]`) skews hue on non-neutral
-        // backgrounds. `surface_sink` applies a flat additive delta that
-        // matches the rest of the chrome.
-        let bg_color = tokens::surface_sink(
-            [menu_bg[0], menu_bg[1], menu_bg[2], 1.0],
-            tokens::SURFACE_SINK,
-        );
-        let border_color = cx.theme.border_focus;
-        let accent = cx.theme.accent;
+        // Menu body sits at the `Panel` elevation tier — same recessed
+        // sunk surface palette body uses, so menu and palette read as
+        // tonal siblings.
+        let bg_color = ElevationIndex::Panel.bg(cx.theme);
+        let border_color = cx.theme.border;
         let fg_color = cx.theme.on_surface;
         let dim_color = cx.theme.on_surface_muted;
-        let hover_bg = tokens::tint(accent, tokens::ALPHA_HOVER_BG);
+        // Neutral hover (`element_hover`, preset-independent). Items
+        // here aren't selectable, so the accent has no resting state to
+        // claim — keep the whole menu tonally consistent across presets.
+        let hover_bg = cx.theme.element_hover;
 
         let content_w = self.menu_width - bw * 2.0;
         let item_h = self.item_height;
@@ -168,7 +186,14 @@ impl ContextMenuComponent {
             .bg(bg_color)
             .rounded(cx.theme.radius.md)
             .border(bw, border_color)
-            .shadow_md()
+            // shadow_lg (was shadow_md) so the menu reads as clearly
+            // floating over surfaces whose tone sits close to the
+            // sunken Panel tier — top bar `statusbar_bg` (~#161514) is
+            // only ~6 channel units lighter than the menu bg
+            // (`surface_sunken` = #100E0C), and the previous shadow_md
+            // wasn't strong enough to give the menu a visible edge
+            // when right-clicked on the top bar.
+            .shadow_lg()
             .hit_id(HIT_MENU)
             .child(div().w(content_w).h(padding));
 

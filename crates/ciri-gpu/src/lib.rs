@@ -377,6 +377,50 @@ impl Renderer {
         }
     }
 
+    /// Upload an RGBA8 image to the renderer's global background slot.
+    ///
+    /// Replaces any previously-uploaded image. The renderer then draws this
+    /// image as a fullscreen `cover`-fitted quad whenever
+    /// `FrameScene::background_image_opacity > 0.0`. Applies in both
+    /// normal and overview modes; `appearance.pane_opacity` controls how
+    /// much of it bleeds through panes.
+    ///
+    /// `width` and `height` are in image pixels; `rgba.len()` must equal
+    /// `width * height * 4`. Caller-side image decoding lives in
+    /// `ciri::app::background_image`.
+    pub fn set_background_image(
+        &mut self,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
+        match self {
+            #[cfg(feature = "blade")]
+            Renderer::Blade(r) => r
+                .set_background_image(rgba, width, height)
+                .map_err(|e| GpuError::ResourceCreate(format!("blade overview bg: {e}"))),
+            #[cfg(feature = "gl")]
+            Renderer::Gl(r) => r.set_background_image(rgba, width, height),
+            #[cfg(all(feature = "dx", windows))]
+            Renderer::Dx(r) => r
+                .set_background_image(rgba, width, height)
+                .map_err(|e| GpuError::ResourceCreate(format!("dx overview bg: {e}"))),
+        }
+    }
+
+    /// Drop the uploaded overview wallpaper, if any. Subsequent frames
+    /// fall back to the solid `clear_color` fill.
+    pub fn clear_background_image(&mut self) {
+        match self {
+            #[cfg(feature = "blade")]
+            Renderer::Blade(r) => r.clear_background_image(),
+            #[cfg(feature = "gl")]
+            Renderer::Gl(r) => r.clear_background_image(),
+            #[cfg(all(feature = "dx", windows))]
+            Renderer::Dx(r) => r.clear_background_image(),
+        }
+    }
+
     pub fn destroy_atlas(&self, atlas_gpu: &mut GlyphAtlasGpu) {
         match (self, atlas_gpu) {
             #[cfg(feature = "blade")]
@@ -595,6 +639,7 @@ mod tests {
             });
         let scene = ciri_render::FrameScene {
             clear_color: [0.0, 0.0, 0.0, 1.0],
+            background_image_opacity: 0.0,
             bg_rects: &[],
             bg_rect_ranges: &[],
             glyphs: &[],
@@ -608,6 +653,9 @@ mod tests {
             pane_color_glyph_end: 0,
             overlay_bg_start: 0,
             sdf_rects: &[],
+            chrome_base_sdf_end: 0,
+            chrome_base_alpha_glyph_end: 0,
+            chrome_base_color_glyph_end: 0,
         };
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = renderer.draw_frame(&mut atlas, &mut cache, scene);

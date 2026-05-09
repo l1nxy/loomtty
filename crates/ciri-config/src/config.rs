@@ -25,6 +25,33 @@ fn load_from_path(path: &PathBuf) -> Result<CiriConfig> {
     }
 }
 
+/// Resolve a user-supplied path string against the config directory.
+///
+/// Rules:
+/// - `~/foo` → home dir + `foo`
+/// - absolute path → returned as-is
+/// - relative path → joined to the config directory (so users can drop a
+///   wallpaper next to `config.toml` and reference it by basename)
+///
+/// `~` resolution falls back to the literal path when no home directory
+/// is available, matching the rest of `config_path()`'s "degenerate
+/// environment, return something that won't exist" stance.
+pub fn expand_config_path(path: &str) -> PathBuf {
+    if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
+        return dirs::home_dir()
+            .map(|h| h.join(rest))
+            .unwrap_or_else(|| PathBuf::from(path));
+    }
+    let p = PathBuf::from(path);
+    if p.is_absolute() {
+        return p;
+    }
+    config_path()
+        .parent()
+        .map(|dir| dir.join(&p))
+        .unwrap_or(p)
+}
+
 pub fn config_path() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
@@ -155,9 +182,46 @@ mod tests {
                 c.terminal.cursor_blink_interval_ms = 0
             }),
             ("scrollback_lines=0", |c| c.terminal.scrollback_lines = 0),
+            ("background_dim=-0.1", |c| {
+                c.appearance.background_dim = -0.1
+            }),
+            ("background_dim=1.1", |c| {
+                c.appearance.background_dim = 1.1
+            }),
+            ("pane_opacity=-0.1", |c| c.appearance.pane_opacity = -0.1),
+            ("pane_opacity=1.1", |c| c.appearance.pane_opacity = 1.1),
         ];
         for (label, mutate) in cases {
             assert_validation_rejects(label, *mutate);
+        }
+    }
+
+    #[test]
+    fn expand_config_path_handles_tilde_absolute_and_relative() {
+        // Tilde expands to home (or falls through if no home — assert
+        // either we got a real expansion or the literal back).
+        let home = dirs::home_dir();
+        let expanded = expand_config_path("~/wallpapers/bg.png");
+        if let Some(h) = &home {
+            assert_eq!(expanded, h.join("wallpapers").join("bg.png"));
+        } else {
+            assert_eq!(expanded, PathBuf::from("~/wallpapers/bg.png"));
+        }
+
+        // Absolute paths pass through untouched.
+        let abs = if cfg!(windows) {
+            r"C:\img\bg.png"
+        } else {
+            "/img/bg.png"
+        };
+        assert_eq!(expand_config_path(abs), PathBuf::from(abs));
+
+        // Relative paths join the config directory (so users can drop
+        // an image next to config.toml and reference it by basename).
+        let rel = expand_config_path("bg.png");
+        let cfg_dir = config_path().parent().map(PathBuf::from);
+        if let Some(dir) = cfg_dir {
+            assert_eq!(rel, dir.join("bg.png"));
         }
     }
 

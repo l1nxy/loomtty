@@ -11,7 +11,7 @@ use super::types::ui_hit_bounds;
 use super::types::{UiAction, UiContext, UiPasteDialogHit, UiScene, ui_hit_id};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Div, Styled, deferred, div, text};
+use ciri_ui::{Div, ElevationIndex, Styled, deferred, div, text};
 
 const HIT_DIALOG: u64 = 1;
 const HIT_PASTE: u64 = 2;
@@ -75,7 +75,7 @@ impl PasteDialogComponent {
     }
 
     fn build_tree(&self, cx: &UiContext<'_>) -> Div {
-        let border_color = cx.theme.border_focus;
+        let border_color = cx.theme.border;
         let accent = cx.theme.accent;
         let bg = cx.theme.surface;
         let fg = cx.theme.on_surface;
@@ -86,10 +86,13 @@ impl PasteDialogComponent {
         let btn_w = 100.0;
         let btn_h = tokens::control_height_lg(cx.cell_h);
 
-        let surface =
-            tokens::surface_raise([bg[0], bg[1], bg[2], 1.0], tokens::SURFACE_LIFT_SUBTLE);
-
-        let recessed = tokens::surface_sink([bg[0], bg[1], bg[2], 1.0], tokens::SURFACE_SINK);
+        // Dialog body sits at the `Modal` elevation tier — same sunk
+        // surface as palette / context_menu, but consumers pair it with
+        // a stronger shadow (`shadow_lg`) for the emphasised-modal feel.
+        // The preview inset lifts back to chrome surface (palette pattern:
+        // panel sinks, content area sits at chrome surface above it).
+        let surface = ElevationIndex::Modal.bg(cx.theme);
+        let recessed = bg;
         let paste_rest = tokens::tint(accent, tokens::ALPHA_PRIMARY_REST);
         let paste_hover = tokens::tint(accent, tokens::ALPHA_PRIMARY_HOVER);
         let cancel_rest = tokens::tint(fg, tokens::ALPHA_SECONDARY_REST);

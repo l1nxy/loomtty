@@ -1,3 +1,4 @@
+use ciri_app::app::{ModalKind, PendingPasteTarget};
 use ciri_input::action::Action;
 use ciri_input::keybind::BindingMode;
 use ciri_protocol::message::ClientMessage;
@@ -98,6 +99,13 @@ impl App {
             } else {
                 normalized.clone()
             };
+            // `target` is `CommandPalette` or `Search` — the dialog
+            // is overlaid ABOVE the still-live overlay, not a peer.
+            // The payload variant tells the gate to preserve the
+            // underlying overlay rather than tearing it down (which
+            // would leave the dialog confirming a paste with nowhere
+            // to land).
+            self.enter_modal_close_peers(ModalKind::PendingPaste(target));
             self.core.pending_paste = Some(super::PendingPaste {
                 info,
                 preview,
@@ -250,12 +258,31 @@ impl App {
             event.physical_key
         );
 
-        self.clear_selection_on_typing(event);
         let key_name = self.resolve_key_name(event, modifiers.ctrl);
         if key_name.is_empty() {
             self.request_redraw();
             return;
         }
+
+        // Settings panel is a full-viewport modal — block ALL
+        // keybindings except Escape (which dismisses the panel
+        // through the close-peers gate, tearing down any submodal
+        // like the theme dropdown that reuses `context_menu`).
+        // Runs BEFORE `clear_selection_on_typing` so a key tap with
+        // the panel open doesn't clear an active terminal selection
+        // underneath. `process_key_event` dispatches Action handlers
+        // (close pane, new session, toggle overview, etc.) which
+        // `modal_captures_keyboard()` would NOT suppress — that
+        // only gates raw terminal pass-through after dispatch.
+        if self.core.settings_panel_visible {
+            if key_name == "escape" {
+                self.enter_modal_close_peers(ModalKind::None);
+                self.request_redraw();
+            }
+            return;
+        }
+
+        self.clear_selection_on_typing(event);
 
         // ── Unified pipeline: compute mode → process key → handle action ──
         let app_mode = self.compute_binding_mode();
@@ -312,7 +339,9 @@ impl App {
     }
 
     pub(crate) fn modal_captures_keyboard(&self) -> bool {
-        self.core.context_menu.visible || self.top_overlay_binding_mode() != BindingMode::EMPTY
+        self.core.context_menu.visible
+            || self.core.settings_panel_visible
+            || self.top_overlay_binding_mode() != BindingMode::EMPTY
     }
 
     pub(crate) fn append_text_to_overlay_input(&mut self, text: &str) -> bool {
@@ -402,6 +431,9 @@ impl App {
                             text.clone()
                         };
                         let preview = preview.replace('\n', " \\n ").replace('\r', "");
+                        self.enter_modal_close_peers(ModalKind::PendingPaste(
+                            PendingPasteTarget::Terminal,
+                        ));
                         self.core.pending_paste = Some(super::PendingPaste {
                             info,
                             preview,
@@ -656,7 +688,8 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{App, SearchState};
+    use crate::app::App;
+    use ciri_app::app::SearchState;
     use ciri_config::config::CiriConfig;
 
     fn make_app() -> App {

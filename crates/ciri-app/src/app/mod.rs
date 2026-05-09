@@ -1,10 +1,12 @@
 mod animation;
 mod input_helpers;
+mod modal_state;
 mod overview;
 mod palette;
 mod sync;
 mod types;
 
+pub use modal_state::{ContextMenuParent, ModalField, ModalKind, kept_set};
 pub use types::*;
 
 use ciri_config::config::CiriConfig;
@@ -51,6 +53,10 @@ pub struct AppModel {
     pub search_state: Option<SearchState>,
     pub command_palette: Option<CommandPaletteState>,
     pub context_menu: ContextMenu,
+    /// Settings panel visibility. Simple bool for v1; will grow into a
+    /// struct when the panel needs internal state (open dropdowns,
+    /// scroll position, focused row).
+    pub settings_panel_visible: bool,
     pub ime: ImeState,
 
     pub selection: Option<Selection>,
@@ -164,6 +170,7 @@ impl AppModel {
             search_state: None,
             command_palette: None,
             context_menu: ContextMenu::default(),
+            settings_panel_visible: false,
             ime: ImeState {
                 preedit_active: false,
                 preedit_text: String::new(),

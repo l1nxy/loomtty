@@ -222,9 +222,13 @@ impl App {
 
     fn handle_left_mouse_pressed(&mut self, mx: f32, my: f32) {
         self.mouse_left_passthrough = false;
-        if self.core.overview.active {
-            self.dispatch_ui_click(mx, my);
-        } else {
+        // Overview-active clicks are claimed by `UiFrame::click`'s
+        // overview arm — `dispatch_ui_click` returns `consumed=true`
+        // whenever overview is active, so this path is unreachable
+        // when overview is on. Leaving the branch in place was
+        // load-bearing before the chrome z-order refactor; remove the
+        // dead arm and inline the resize-drag flow.
+        {
             let mut started_drag = self.start_column_resize_drag(mx);
             if !started_drag {
                 started_drag = self.start_tile_resize_drag(mx, my);
@@ -439,6 +443,23 @@ impl App {
             return;
         }
 
+        // Settings panel / pending paste / search bar are
+        // viewport-owning modals; their backdrop / strip must
+        // consume wheel events so nothing below scrolls —
+        // including the palette in the layered
+        // `PendingPaste(CommandPalette/Search)` case where both are
+        // alive. Search needs the same gate because scrolling the
+        // pane while the search bar is open shifts the buffer view
+        // out from under the active match highlight, breaking
+        // search continuity. `handle_focus_follows_mouse` already
+        // gates on the same triple — keep them in lockstep.
+        if self.core.settings_panel_visible
+            || self.core.pending_paste.is_some()
+            || self.core.search_state.is_some()
+        {
+            return;
+        }
+
         if self.handle_palette_wheel(delta) {
             return;
         }
@@ -472,19 +493,31 @@ impl App {
                     let new_zoom = (cur_zoom + zoom_delta).clamp(0.05, 1.0);
                     let sp = SpringParams::default();
                     if new_zoom >= self.core.config.animation.zoom_threshold as f64 {
-                        self.overview_hovered_pane = None;
-                        self.core.overview.active = false;
-                        self.core.anim_mgr.overview_zoom.animate_to(1.0, sp);
-                        self.animate_to_active();
+                        // Route through `App::exit_overview` (clears
+                        // `overview_hovered_pane`, animates zoom +
+                        // view offsets via `AppModel::exit_overview`)
+                        // — bare field mutation skipped both. Same
+                        // fix shape as the R12 `handle_overview_wheel`
+                        // exit path.
+                        self.exit_overview();
+                        let _ = sp;
                     } else {
                         self.core.anim_mgr.overview_zoom.animate_to(new_zoom, sp);
                     }
                 } else {
-                    // In normal mode: pinch in (delta < 0) enters overview
-                    if zoom_delta < -0.02 {
-                        self.core.overview.active = true;
-                        self.overview_hovered_pane = None;
-                        self.core.context_menu.visible = false;
+                    // In normal mode: pinch in (delta < 0) enters overview.
+                    // Go through `AppModel::toggle_overview` (via the
+                    // App-level `toggle_overview` wrapper that also
+                    // resets `overview_hovered_pane`) so the close-
+                    // others discipline runs — settings panel,
+                    // command palette, paste dialog, search bar all
+                    // get dismissed the same way the keyboard
+                    // `Action::ToggleOverview` path enforces. Inlining
+                    // `overview.active = true` here used to leak
+                    // those modals into overview mode and lock the
+                    // user out of overview keyboard navigation.
+                    if zoom_delta < -0.02 && !self.core.overview.active {
+                        self.toggle_overview();
                         self.refresh_overview_zoom();
                         let sp = SpringParams::default();
                         self.core.anim_mgr.view_offset_x.animate_to(0.0, sp);
@@ -493,16 +526,16 @@ impl App {
                 }
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
-                // Snap: if barely zoomed out, snap back to normal
+                // Snap: if barely zoomed out, snap back to normal.
+                // Use `exit_overview` so `overview_hovered_pane` is
+                // cleared and the animations are driven by AppModel —
+                // bare mutation here used to leak hover state into
+                // normal mode after pinch end.
                 if self.core.overview.active
                     && self.core.anim_mgr.overview_zoom.value()
                         > self.core.config.animation.zoom_threshold as f64
                 {
-                    self.overview_hovered_pane = None;
-                    self.core.overview.active = false;
-                    let sp = SpringParams::default();
-                    self.core.anim_mgr.overview_zoom.animate_to(1.0, sp);
-                    self.animate_to_active();
+                    self.exit_overview();
                 }
             }
         }
@@ -668,6 +701,14 @@ impl App {
             || self.core.search_state.is_some()
             || self.core.command_palette.is_some()
             || self.core.context_menu.visible
+            // Settings panel covers the whole viewport with a backdrop;
+            // moving the cursor over a "different pane" while the
+            // panel is up shouldn't silently switch focus, otherwise
+            // closing the panel lands the user on a pane they didn't
+            // intend. Same shape as the other modal gates in this
+            // chain.
+            || self.core.settings_panel_visible
+            || self.core.pending_paste.is_some()
         {
             return;
         }
@@ -832,9 +873,16 @@ impl App {
         let new_zoom = (cur_zoom + dy).clamp(0.05, 1.0);
         let sp = SpringParams::default();
         if new_zoom >= self.core.config.animation.zoom_threshold as f64 {
-            self.core.overview.active = false;
-            self.core.anim_mgr.overview_zoom.animate_to(1.0, sp);
-            self.animate_to_active();
+            // Use the App-level wrapper that clears
+            // `overview_hovered_pane` — bare `overview.active = false`
+            // leaves a stale hover hit_id pointing at a pane the user
+            // selected in overview mode, which renders a phantom hover
+            // highlight on the wrong pane after exit. (Same fix shape
+            // as the R11 pinch-gesture fix.) `AppModel::exit_overview`
+            // animates `overview_zoom` and `view_offset_*` itself, so
+            // we don't need the inline animations.
+            self.exit_overview();
+            let _ = sp;
         } else {
             self.core.anim_mgr.overview_zoom.animate_to(new_zoom, sp);
         }

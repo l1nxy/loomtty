@@ -233,15 +233,23 @@ fn with_hit_layout<R>(
     cx: &UiContext<'_>,
     f: impl FnOnce(&ciri_ui::LayoutSnapshot) -> R,
 ) -> R {
-    let mut shaper = ciri_ui::NullShaper;
-    let viewport = [cx.viewport_w, cx.viewport_h];
-    if let Some(tree_cell) = cx.taffy_tree {
-        let mut tree = tree_cell.borrow_mut();
+    // MUST use the real host shaper, not `NullShaper`, so the
+    // hit-test layout matches the paint layout. Settings rows lay
+    // out label + description side-by-side at proportional widths;
+    // measuring those at zero width (NullShaper) shifts the dropdown
+    // bounds and the same cursor coord then resolves to a different
+    // `hit_id` than the paint walk produces — `current_settings_hover`
+    // and the paint prepass disagree, so `.hover()` styles never apply.
+    if cx.taffy_tree.is_some() {
         let mut layout = ciri_ui::LayoutSnapshot::new();
-        ciri_ui::layout_tree_into_retained(root, viewport, &mut shaper, &mut layout, &mut tree);
+        crate::app::ciri_ui_adapter::layout_only_into(root, cx, &mut layout);
         f(&layout)
     } else {
-        // Test fallback: no retained tree, allocate fresh per call.
+        // Test fallback: no retained tree / shaper. Use NullShaper here
+        // because the test harness never sets `cx.ui_shaper` either, so
+        // matching paint-time `NullShaper` measurement is correct.
+        let mut shaper = ciri_ui::NullShaper;
+        let viewport = [cx.viewport_w, cx.viewport_h];
         let mut tree = taffy::TaffyTree::<ciri_ui::NodeContext>::new();
         let mut layout = ciri_ui::LayoutSnapshot::new();
         ciri_ui::layout_tree_into_retained(root, viewport, &mut shaper, &mut layout, &mut tree);
@@ -284,6 +292,25 @@ pub(crate) enum UiAction {
     FocusOverviewPane(usize, u64),
     CloseOverviewPane(u64),
     StartOverviewDrag,
+    /// Close the settings panel (Esc / outside click / × button).
+    CloseSettings,
+    /// Reveal `settings.toml` in the OS file manager / open with editor.
+    /// Escape hatch for users who want to persist changes the v1 panel
+    /// doesn't write back yet.
+    OpenSettingsToml,
+    /// Open the theme-preset dropdown — popup is rendered via
+    /// `context_menu` anchored at last-known mouse position. Items
+    /// dispatch `ContextMenuAction::SetThemePreset(name)` on click.
+    OpenThemeDropdown,
+    /// Nudge `appearance.pane_opacity`. Step size lives on the App
+    /// handler so settings rows don't have to know the increment.
+    NudgePaneOpacity(NudgeDirection),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NudgeDirection {
+    Decrement,
+    Increment,
 }
 
 // Per-component hit enums — kept internal, used only within each component's
@@ -317,6 +344,24 @@ pub(super) enum UiPasteDialogHit {
     Paste,
     Cancel,
     Dialog,
+    None,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum UiSettingsHit {
+    /// Click anywhere on the panel body — no-op (don't close).
+    Dialog,
+    /// Top-right close button.
+    Close,
+    /// "Open settings.toml" link at the bottom of the panel.
+    OpenToml,
+    /// Theme preset dropdown trigger — opens the preset popup.
+    ThemeDropdown,
+    /// Pane opacity stepper — decrement button.
+    PaneOpacityDec,
+    /// Pane opacity stepper — increment button.
+    PaneOpacityInc,
+    /// Click outside the panel — closes settings.
     None,
 }
 

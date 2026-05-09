@@ -1,3 +1,4 @@
+use ciri_app::app::ModalKind;
 use ciri_layout::geometry::ViewSize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -296,8 +297,15 @@ impl ApplicationHandler for App {
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: ()) {
-        // Woken by EventLoopProxy from the reader thread — process pending server events.
-        if self.process_server_events() {
+        // Woken by EventLoopProxy from a background thread. Could be the
+        // reader thread (server events) or the wallpaper-decode worker;
+        // both share the `()` event type, so just check both. Either
+        // path's `did anything change` signal must trigger a redraw —
+        // an idle session would otherwise hold the stale frame until
+        // the next user input.
+        let bg_applied = self.apply_pending_background_image();
+        let server_changed = self.process_server_events();
+        if bg_applied || server_changed {
             self.schedule_redraw();
         }
     }
@@ -468,6 +476,12 @@ impl ApplicationHandler for App {
         self.renderer = Some(renderer);
         self.last_frame = Instant::now();
 
+        // Push the configured overview wallpaper to the renderer, if any.
+        // No-op when the path is empty or the active backend doesn't yet
+        // implement the textured-quad pipeline (everything except DX in
+        // this commit).
+        self.reload_background_image();
+
         self.schedule_redraw();
     }
 
@@ -579,7 +593,13 @@ impl ApplicationHandler for App {
                 self.window_focused = focused;
                 self.send(ClientMessage::FocusChange { focused });
                 if !focused {
-                    self.core.context_menu.visible = false;
+                    // Dismiss every modal-ish overlay on focus loss
+                    // — alt-tabbing back into a stale palette /
+                    // search / paste dialog and discovering the
+                    // first keystrokes went there is bad UX. Drag
+                    // teardown handles the case where the
+                    // finalising mouse-up lands in another window.
+                    self.enter_modal_close_peers(ModalKind::None);
                 }
             }
 

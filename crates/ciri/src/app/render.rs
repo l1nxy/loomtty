@@ -37,11 +37,23 @@ struct AssembledScene {
     active_glyph_batches: Vec<PaneGlyphRange>,
     active_color_glyph_batches: Vec<PaneGlyphRange>,
     /// Frame SDF rects in draw order: pane focus rings, cached chrome,
-    /// then transient chrome. The two lengths let post-draw discard
-    /// frame-local pane/transient rects and restore only cached chrome.
+    /// then transient chrome. `cached_sdf_len` lets the debug-assert
+    /// in `draw_and_finish` confirm `cached_ui_scene.sdf_rects` wasn't
+    /// mutated mid-frame; `pane_sdf_len` is read by `assemble_scene`
+    /// tests for layout correctness.
     ui_sdf_rects: Vec<ciri_render::sdf_rect::SdfRect>,
+    #[cfg_attr(not(test), allow(dead_code))]
     pane_sdf_len: usize,
     cached_sdf_len: usize,
+    /// Absolute index in `ui_sdf_rects` where the cached chrome's Base
+    /// layer ends (and the Overlay layer + transient SDF begins). The
+    /// renderer issues a `[pane..base_end]` SDF draw, then base-layer
+    /// glyphs, then `[base_end..]` SDF, then overlay+transient glyphs —
+    /// so popup rects (Overlay) cover Base glyphs (settings_panel
+    /// labels, top_bar text, etc.) instead of being painted under them.
+    chrome_base_sdf_end: usize,
+    chrome_base_alpha_glyph_end: usize,
+    chrome_base_color_glyph_end: usize,
     /// Index in `bg_rects` where active-tile backgrounds begin.
     active_bg_start: usize,
     /// Index in `glyphs`/`color_glyphs` where pane glyphs end and
@@ -645,6 +657,33 @@ impl App {
         }
     }
 
+    fn hash_settings_panel(&self, hasher: &mut DefaultHasher) {
+        self.core.settings_panel_visible.hash(hasher);
+        if self.core.settings_panel_visible {
+            // The displayed Theme dropdown label and Pane Opacity
+            // value are snapshotted at capture time — hash both so
+            // live edits invalidate the chrome cache and the panel
+            // re-renders with the new values. `render_snapshot_hash`
+            // hashes `pane_opacity` separately for the pane render
+            // path; the duplication is intentional (different cache
+            // keys, different invalidation domains).
+            self.core.config.theme.preset.hash(hasher);
+            self.core
+                .config
+                .appearance
+                .pane_opacity
+                .to_bits()
+                .hash(hasher);
+            // Hover hit_id under the cursor — same shape as
+            // `hash_context_menu` / `hash_pending_paste`. Without this
+            // the declarative `.hover()` refinements on the panel's
+            // close button / dropdown trigger / opacity steppers /
+            // "Open settings.toml" link wouldn't repaint as the cursor
+            // moves between them (cache hash stays identical).
+            self.current_settings_hover().hash(hasher);
+        }
+    }
+
     pub(crate) fn ui_scene_hash(
         &self,
         vw: f32,
@@ -685,7 +724,7 @@ impl App {
         // Press-state hit_id (mouse-down → mouse-up). Hashed so the
         // chrome cache invalidates on press / release; declarative
         // `.active()` reads it via `cx.is_active(hit_id)` at paint.
-        self.active_hit_id.hash(&mut hasher);
+        self.effective_active_hit_id().hash(&mut hasher);
         self.pane_tab_scroll.to_bits().hash(&mut hasher);
         self.pane_tab_scroll_max().to_bits().hash(&mut hasher);
         self.core.overview.active.hash(&mut hasher);
@@ -742,6 +781,7 @@ impl App {
         self.hash_command_palette(&mut hasher);
         self.hash_context_menu(&mut hasher);
         self.hash_pending_paste(&mut hasher);
+        self.hash_settings_panel(&mut hasher);
 
         // Connection-status banner — hash everything its `capture` reads so
         // state transitions trigger a redraw. `server_rx.is_some()` matters
@@ -848,7 +888,7 @@ impl App {
         // Press-state hit_id (mouse-down → mouse-up). Hashed so the
         // chrome cache invalidates on press / release; declarative
         // `.active()` reads it via `cx.is_active(hit_id)` at paint.
-        self.active_hit_id.hash(&mut hasher);
+        self.effective_active_hit_id().hash(&mut hasher);
         self.pane_tab_scroll.to_bits().hash(&mut hasher);
         self.pane_tab_scroll_max().to_bits().hash(&mut hasher);
         self.core.ime.preedit_active.hash(&mut hasher);
@@ -878,6 +918,20 @@ impl App {
         self.hash_command_palette(&mut hasher);
         self.hash_context_menu(&mut hasher);
         self.hash_pending_paste(&mut hasher);
+        // `hash_settings_panel` deliberately NOT called here — the
+        // settings panel UI lives entirely in `ui_scene_hash`'s chrome
+        // cache. This snapshot hash gates the pane-render path; it
+        // only needs the bits the panel can mutate that affect pane
+        // tiles (currently just `pane_opacity`, hashed below).
+        // Skipping the panel hash here also avoids running
+        // `current_settings_hover` (and its `build_tree`) twice per
+        // frame.
+        self.core
+            .config
+            .appearance
+            .pane_opacity
+            .to_bits()
+            .hash(&mut hasher);
 
         // Drag state affects border/scrollbar visuals
         self.drag.col_dragging.hash(&mut hasher);
@@ -2432,7 +2486,12 @@ impl App {
         let active_glyph_batches = std::mem::take(&mut self.render_bufs.active_glyph_batches);
         let active_color_glyph_batches =
             std::mem::take(&mut self.render_bufs.active_color_glyph_batches);
-        let mut ui_sdf_rects = Vec::new();
+        // Reuse the SDF rect Vec across frames — the round-trip through
+        // `cached_ui_scene.sdf_rects` doesn't recycle this buffer's
+        // capacity, so an explicit slot on `render_bufs` keeps the
+        // allocation pattern consistent with every other frame buffer.
+        let mut ui_sdf_rects = std::mem::take(&mut self.render_bufs.ui_sdf_rects);
+        ui_sdf_rects.clear();
         bg_rects.clear();
         bg_rect_ranges.clear();
         let (active_bg_start, pane_glyph_end, pane_color_glyph_end, mut glyphs, mut color_glyphs) =
@@ -2579,12 +2638,25 @@ impl App {
         let overlay_bg_start = bg_rects.len();
         let overlay_range_start = bg_rects.len();
         self.build_ui(vw_f, vh_f, &mut glyphs, &mut color_glyphs);
+        // Snapshot the chrome layer split BEFORE we tack transient
+        // chrome onto the same Vecs — anything past the cached
+        // overlay slice must still draw on top, but it shares the
+        // overlay-tier batch (transient widgets like search_bar /
+        // bell_flash / ime_preedit don't co-exist with palette /
+        // context_menu and don't introduce a third layer).
+        let chrome_base_alpha_glyph_end =
+            pane_glyph_end + self.cached_ui_scene.base_glyph_end;
+        let chrome_base_color_glyph_end =
+            pane_color_glyph_end + self.cached_ui_scene.base_color_glyph_end;
         let pane_sdf_len = ui_sdf_rects.len();
+        let chrome_base_sdf_end = pane_sdf_len + self.cached_ui_scene.base_sdf_end;
         // Cached chrome must draw after pane focus rings but before
         // transient overlays that should sit above everything else.
-        let cached_sdf_rects = std::mem::take(&mut self.cached_ui_scene.sdf_rects);
-        let cached_sdf_len = cached_sdf_rects.len();
-        ui_sdf_rects.extend(cached_sdf_rects);
+        // Copy from the cache (don't move) so `cached_ui_scene.sdf_rects`
+        // keeps its allocation for the next cache-hit frame — this
+        // pairs with `render_bufs.ui_sdf_rects` keeping its own.
+        let cached_sdf_len = self.cached_ui_scene.sdf_rects.len();
+        ui_sdf_rects.extend_from_slice(&self.cached_ui_scene.sdf_rects);
         self.build_transient_ui(
             offset_tiles,
             zoom,
@@ -2610,6 +2682,9 @@ impl App {
             ui_sdf_rects,
             pane_sdf_len,
             cached_sdf_len,
+            chrome_base_sdf_end,
+            chrome_base_alpha_glyph_end,
+            chrome_base_color_glyph_end,
             active_bg_start,
             pane_glyph_end,
             pane_color_glyph_end,
@@ -2632,7 +2707,7 @@ impl App {
         animating: &mut bool,
     ) {
         let AssembledScene {
-            bg_rects,
+            mut bg_rects,
             bg_rect_ranges,
             glyphs,
             color_glyphs,
@@ -2641,8 +2716,11 @@ impl App {
             active_glyph_batches,
             active_color_glyph_batches,
             mut ui_sdf_rects,
-            pane_sdf_len,
+            pane_sdf_len: _,
             cached_sdf_len,
+            chrome_base_sdf_end,
+            chrome_base_alpha_glyph_end,
+            chrome_base_color_glyph_end,
             active_bg_start,
             pane_glyph_end,
             pane_color_glyph_end,
@@ -2650,6 +2728,30 @@ impl App {
         } = scene;
 
         let clear_color = ThemeConfig::parse_color(&self.core.config.theme.overview_background);
+
+        // Pane translucency: lower the alpha of every bg rect inside the
+        // pane region (indices `[..overlay_bg_start]`) so the global
+        // `background_image` (or `theme.overview_background` if no
+        // image is set) shows through. Chrome bg rects (index >=
+        // `overlay_bg_start`) and SDF chrome stay at their author-set
+        // alpha so palettes / status bar / context menus remain legible.
+        //
+        // Known limitation: selection / cursor / search-highlight rects
+        // share the pane region and get dimmed too. At ~0.8 they're a
+        // bit fainter but still legible; below ~0.5 they fade
+        // noticeably. Splitting them out would require either a
+        // per-rect "do-not-dim" tag or a second pane-region boundary
+        // — deferred until someone hits the visibility wall.
+        //
+        // Garde already validates `pane_opacity` to [0.0, 1.0] at config
+        // load, so no clamp is needed here.
+        let pane_opacity = self.core.config.appearance.pane_opacity;
+        if pane_opacity < 1.0 {
+            let end = overlay_bg_start.min(bg_rects.len());
+            for rect in &mut bg_rects[..end] {
+                rect.color[3] *= pane_opacity;
+            }
+        }
         let renderer = self.renderer.as_mut().unwrap();
         let cache = self.glyph_cache.as_mut().unwrap();
         let atlas_gpu = self.glyph_atlas_gpu.as_mut().unwrap();
@@ -2658,6 +2760,22 @@ impl App {
             cache,
             FrameScene {
                 clear_color,
+                // `1.0 - dim` is the image's opacity over `clear_color`.
+                // Empty path / 0 opacity → 0.0, and the renderer skips
+                // the textured-quad draw entirely. Applies in both
+                // normal and overview modes — `pane_opacity` controls
+                // how much of it shows through panes in normal mode.
+                background_image_opacity: if self
+                    .core
+                    .config
+                    .appearance
+                    .background_image
+                    .is_empty()
+                {
+                    0.0
+                } else {
+                    (1.0 - self.core.config.appearance.background_dim).clamp(0.0, 1.0)
+                },
                 bg_rects: &bg_rects,
                 bg_rect_ranges: &bg_rect_ranges,
                 glyphs: &glyphs,
@@ -2672,6 +2790,9 @@ impl App {
                 overlay_bg_start,
                 // SDF chrome emitted by ciri-ui widgets and transient overlays.
                 sdf_rects: &ui_sdf_rects,
+                chrome_base_sdf_end,
+                chrome_base_alpha_glyph_end,
+                chrome_base_color_glyph_end,
             },
         ) {
             log::error!("draw_frame failed: {e}");
@@ -2687,12 +2808,16 @@ impl App {
             self.last_render_snapshot = Some(render_snapshot);
         }
 
-        // Restore cached_ui_scene.sdf_rects: drop pane focus rings from the
-        // front and transient chrome from the back. The cached middle
-        // segment is byte-identical to what we took.
-        ui_sdf_rects.drain(..pane_sdf_len);
-        ui_sdf_rects.truncate(cached_sdf_len);
-        self.cached_ui_scene.sdf_rects = ui_sdf_rects;
+        // Park the per-frame SDF buffer back on `render_bufs` so its
+        // capacity recycles. `cached_ui_scene.sdf_rects` still holds
+        // the cached chrome from build_ui (we only borrowed via
+        // `extend_from_slice`), so cache-hit frames find it intact.
+        // `cached_sdf_len` is preserved as a sanity invariant — if
+        // `cached_ui_scene.sdf_rects.len()` ever drifted from it,
+        // someone mutated the cache mid-frame.
+        debug_assert_eq!(self.cached_ui_scene.sdf_rects.len(), cached_sdf_len);
+        ui_sdf_rects.clear();
+        self.render_bufs.ui_sdf_rects = ui_sdf_rects;
 
         self.render_bufs.bg_rects = bg_rects;
         self.render_bufs.bg_rect_ranges = bg_rect_ranges;
@@ -2725,6 +2850,14 @@ impl App {
         let Some(dt) = self.prepare_frame() else {
             return;
         };
+
+        // Drain any wallpaper-decode the worker has finished. Usually
+        // already applied via `user_event` when the proxy fired, but
+        // doubling up here makes the apply loss-tolerant if the wake
+        // gets coalesced with another event. The bool is discarded —
+        // we're already rendering this frame, so any state change is
+        // about to be picked up.
+        let _ = self.apply_pending_background_image();
 
         let mut animating = self.advance_animations(dt);
 
@@ -2870,7 +3003,8 @@ fn scissor_rect(tr: &GeoRect, viewport_w: f32, viewport_h: f32) -> Option<(u32, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{SearchMatch, SearchState};
+    use crate::app::SearchMatch;
+    use ciri_app::app::SearchState;
     use ciri_config::config::{CiriConfig, StatusBarPosition, TabBarPosition};
     use ciri_render::font_resolver::CmapResolver;
     use ciri_render::glyph_cache::FontInitParams;

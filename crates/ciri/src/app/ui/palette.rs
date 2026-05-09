@@ -8,7 +8,10 @@ use super::tokens;
 use super::types::{UiAction, UiContext, UiPaletteHit, UiScene, ui_hit_id};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{Div, FluentBuilder, IntoElement, Render, RenderCtx, Styled, deferred, div, text, uniform_list};
+use ciri_ui::{
+    Div, ElevationIndex, FluentBuilder, IntoElement, Render, RenderCtx, Styled, deferred, div,
+    text, uniform_list,
+};
 
 const HIT_CLOSE: u64 = 1;
 const HIT_PANEL: u64 = 2;
@@ -192,26 +195,34 @@ impl PaletteComponent {
     fn build_tree(&self, cx: &RenderCtx<'_>) -> Div {
         let bg_color = cx.theme.surface;
         let accent = cx.theme.accent;
-        let border_color = cx.theme.border_focus;
+        let border_color = cx.theme.border;
         let dim_color = cx.theme.on_surface_muted;
         let fg_color = cx.theme.on_surface;
         let selected_bg = tokens::tint(accent, tokens::ALPHA_SELECTED_BG);
-        let hovered_bg = tokens::tint(accent, tokens::ALPHA_HOVER_BG);
+        // Hover stays neutral (`element_hover`, preset-independent) so
+        // the per-theme accent is reserved for the selection cue.
+        // Accent-tinted hover painted every preset's chrome a different
+        // colour and worked against the stage 0.1 decoupling.
+        let hovered_bg = cx.theme.element_hover;
 
         let px = self.layout.panel_x;
         let pw = self.layout.panel_w;
         let text_pad = tokens::SPACE_2;
 
-        let panel_bg = tokens::surface_raise(
-            [bg_color[0], bg_color[1], bg_color[2], 1.0],
-            tokens::SURFACE_LIFT,
-        );
+        // Panel body sits at the `Panel` elevation tier (sunk surface).
+        // Centralises the `surface` → sunk-panel relationship in
+        // `ElevationIndex` so the rest of the chrome — context_menu /
+        // dialog body / future settings sections — share one source of
+        // truth instead of each computing `surface_sink` locally.
+        let panel_bg = ElevationIndex::Panel.bg(cx.theme);
         let row_h = self.layout.row_h;
         let input_row_h = (self.layout.sep_y - self.layout.panel_y - tokens::BORDER_THIN).max(0.0);
-        let input_bg = tokens::surface_raise(
-            [bg_color[0], bg_color[1], bg_color[2], 1.0],
-            tokens::SURFACE_LIFT_HIGH,
-        );
+        // Input pill sits at the natural chrome surface — i.e. one tier
+        // *above* the sunken panel body. The pill's rounded edges and
+        // the +0.04 channel delta against `panel_bg` give it the
+        // Raycast/Linear-style "raised search bar" feel without pushing
+        // the colour into the backdrop's brightness range.
+        let input_bg = bg_color;
         let input_text = if self.remote_input_mode {
             format!("SSH> {}", self.query)
         } else {

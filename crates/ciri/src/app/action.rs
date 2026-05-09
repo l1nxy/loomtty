@@ -3,6 +3,7 @@
 use ciri_config::config::CiriConfig;
 use ciri_input::action::Action;
 use ciri_input::keybind::{BindingSet, KeybindMap};
+use ciri_app::app::ModalKind;
 use ciri_input::leader::InputHandler;
 use ciri_protocol::message::*;
 
@@ -217,14 +218,20 @@ impl App {
             }
             Action::ToggleCommandPalette => {
                 if self.core.command_palette.is_some() {
-                    self.core.command_palette = None;
+                    // Route close through the gate so a live
+                    // `PendingPaste(CommandPalette)` submodal — paste
+                    // confirmation overlaid on the palette query —
+                    // dies with its parent. Bare `= None` would leave
+                    // the dialog floating, confirming a paste with
+                    // nowhere to land.
+                    self.enter_modal_close_peers(ModalKind::None);
                 } else {
                     self.open_command_palette();
                 }
             }
             Action::ToggleSessionPalette => {
                 if self.core.command_palette.is_some() {
-                    self.core.command_palette = None;
+                    self.enter_modal_close_peers(ModalKind::None);
                 } else {
                     self.open_session_palette();
                 }
@@ -234,6 +241,21 @@ impl App {
             }
             Action::ToggleLock => {
                 self.core.input.toggle_lock();
+            }
+            Action::ToggleSettings => {
+                if self.core.settings_panel_visible {
+                    // Route close through the gate so a live submodal
+                    // (theme dropdown is a `ContextMenu(OverSettings)`)
+                    // is torn down with its parent. A bare
+                    // `settings_panel_visible = false` would orphan
+                    // the dropdown — visible without a parent panel,
+                    // and the next keypress hits
+                    // `dismiss_context_menu_on_keypress` silently.
+                    self.enter_modal_close_peers(ModalKind::None);
+                } else {
+                    self.enter_modal_close_peers(ModalKind::Settings);
+                    self.core.settings_panel_visible = true;
+                }
             }
             Action::NextSession => {
                 self.cycle_session(1);
@@ -256,7 +278,13 @@ impl App {
                 self.open_search();
             }
             Action::CloseSearch => {
-                self.close_search_restore_scroll();
+                // Route through the gate so a live
+                // `PendingPaste(Search)` submodal — paste
+                // confirmation overlaid on the search bar — dies
+                // with its parent. The gate's internal
+                // `close_search_restore_scroll` does the
+                // pane-grid scroll-restore + cache invalidate.
+                self.enter_modal_close_peers(ModalKind::None);
             }
             Action::SearchNextMatch => {
                 if self
@@ -265,8 +293,10 @@ impl App {
                     .as_ref()
                     .is_some_and(|s| s.query.is_empty())
                 {
-                    // Empty query: just exit search
-                    self.core.search_state = None;
+                    // Empty query: exit search through the gate so
+                    // any paste-over-search submodal closes too
+                    // (same shape as `CloseSearch` above).
+                    self.enter_modal_close_peers(ModalKind::None);
                 } else {
                     self.jump_to_match(false);
                 }
@@ -295,7 +325,10 @@ impl App {
                         self.open_command_palette();
                     }
                 } else {
-                    self.core.command_palette = None;
+                    // Esc out of palette: route through the gate so
+                    // any `PendingPaste(CommandPalette)` submodal
+                    // closes with its parent.
+                    self.enter_modal_close_peers(ModalKind::None);
                 }
             }
             Action::PaletteUp => {
@@ -347,6 +380,7 @@ impl App {
     // ── Search helpers (used by handle_action and keyboard.rs) ──
 
     pub(super) fn open_search(&mut self) {
+        self.enter_modal_close_peers(ModalKind::Search);
         self.core.open_search();
     }
 
@@ -524,8 +558,16 @@ impl App {
         if let Some(&entry_idx) = palette.filtered.get(palette.selected_idx) {
             self.execute_palette_entry(entry_idx);
         }
-        if !keep_open {
-            self.core.command_palette = None;
+        // Route close through the gate so `PendingPaste(CommandPalette)`
+        // and any other submodal die with the palette. Skip when the
+        // executed action ALREADY closed the palette by opening a new
+        // modal — e.g. selecting "Settings…" runs `ToggleSettings`
+        // which goes through the gate with `ModalKind::Settings`,
+        // closing palette as a peer. Firing the `None` gate here on
+        // top of that would nuke the freshly-opened settings panel,
+        // making the entry flash open then immediately close.
+        if !keep_open && self.core.command_palette.is_some() {
+            self.enter_modal_close_peers(ModalKind::None);
         }
     }
 }

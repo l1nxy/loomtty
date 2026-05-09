@@ -36,8 +36,15 @@ use crate::app::ui::types::{UiContext, UiScene};
 /// arrange the borrow order; this adapter keeps that borrow-then-release
 /// pattern local to each `paint_tree` call.
 ///
-struct HostTextShaper<'a> {
-    pub atlas: &'a mut GlyphCache,
+pub(crate) struct HostTextShaper<'a> {
+    /// `None` on the layout-only / hit-test path: `emit` becomes a
+    /// no-op so callers can build the shaper without a live atlas
+    /// borrow. `measure` does not need the atlas, so layout still
+    /// runs against the real font metrics — the previous `NullShaper`
+    /// fallback in `with_hit_layout` produced 0-width text and gave
+    /// chrome hit-tests a different layout than paint, breaking
+    /// hover gating on rows with description text.
+    pub atlas: Option<&'a mut GlyphCache>,
     pub shaper: Option<&'a mut UiTextShaper>,
     /// Terminal cell width in logical px — used as the cell-grid fallback
     /// advance when no UI shaper has a loaded face.
@@ -121,6 +128,12 @@ impl<'a> CiriUiTextShaper for HostTextShaper<'a> {
         if content.is_empty() {
             return;
         }
+        // Layout-only / hit-test path constructs the shaper without an
+        // atlas (see `with_hit_layout`). Skip emit — measurement-only
+        // walks never read back the scene.
+        if self.atlas.is_none() {
+            return;
+        }
         // Buffer the alpha and color emit streams independently — the
         // status-text helper can produce both for a single string when
         // emoji and regular runs are interleaved. Each stream is then
@@ -139,8 +152,9 @@ impl<'a> CiriUiTextShaper for HostTextShaper<'a> {
             bg_color,
             scale,
         };
+        let atlas = self.atlas.as_deref_mut().expect("atlas presence checked above");
         emit_status_text(
-            self.atlas,
+            atlas,
             self.shaper.as_deref_mut(),
             content,
             &params,
@@ -185,7 +199,7 @@ fn merge_ui_scene(
 pub(crate) fn paint_element_tree(root: &impl Element, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
     let mut ui_shaper = cx.ui_shaper.map(|c| c.borrow_mut());
     let mut shaper = HostTextShaper {
-        atlas: scene.atlas,
+        atlas: Some(scene.atlas),
         shaper: ui_shaper.as_deref_mut(),
         cell_width: cx.cell_w,
         baseline: cx.baseline,
@@ -235,6 +249,45 @@ pub(crate) fn paint_element_tree(root: &impl Element, cx: &UiContext<'_>, scene:
         );
     }
     merge_ui_scene(&ui_scene, scene.sdf_rects, scene.glyphs, scene.color_glyphs);
+}
+
+/// Layout-only walk that uses the real UI shaper for measurement.
+///
+/// Hit-test paths previously used `ciri_ui::NullShaper`, which returns
+/// zero-width text. With multi-line proportional rows in the settings
+/// panel (label + description), that produced a layout where the
+/// dropdown sat at a different y than in the paint walk — the same
+/// cursor coord would resolve to two different `hit_id`s between
+/// `current_settings_hover` (hash) and the paint prepass (draw). The
+/// chrome cache hash and the paint disagreed about which element was
+/// hovered, so the declarative `.hover()` background never applied
+/// even though redraws fired correctly.
+///
+/// Building a `HostTextShaper` with `atlas: None` keeps `measure`
+/// against the real font and silently drops `emit` (never called on
+/// the layout-only path).
+pub(crate) fn layout_only_into(
+    root: &impl Element,
+    cx: &UiContext<'_>,
+    layout: &mut ciri_ui::LayoutSnapshot,
+) {
+    let mut ui_shaper = cx.ui_shaper.map(|c| c.borrow_mut());
+    let mut shaper = HostTextShaper {
+        atlas: None,
+        shaper: ui_shaper.as_deref_mut(),
+        cell_width: cx.cell_w,
+        baseline: cx.baseline,
+        cell_height: cx.cell_h,
+        fallback_font_size_px: cx.theme.typography.md,
+    };
+    let viewport = [cx.viewport_w, cx.viewport_h];
+    if let Some(tree_cell) = cx.taffy_tree {
+        let mut tree = tree_cell.borrow_mut();
+        ciri_ui::layout_tree_into_retained(root, viewport, &mut shaper, layout, &mut tree);
+    } else {
+        let mut tree = taffy::TaffyTree::<ciri_ui::NodeContext>::new();
+        ciri_ui::layout_tree_into_retained(root, viewport, &mut shaper, layout, &mut tree);
+    }
 }
 
 #[cfg(test)]
@@ -330,7 +383,7 @@ mod tests {
                 cell_height_scale: None,
             });
         let mut shaper = HostTextShaper {
-            atlas: &mut cache,
+            atlas: Some(&mut cache),
             shaper: None,
             cell_width: 8.0,
             baseline: 10.0,
@@ -376,7 +429,7 @@ mod tests {
                 cell_height_scale: None,
             });
         let mut shaper = HostTextShaper {
-            atlas: &mut cache,
+            atlas: Some(&mut cache),
             shaper: None,
             cell_width: 8.0,
             baseline: 10.0,

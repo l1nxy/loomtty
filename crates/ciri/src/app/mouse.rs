@@ -413,20 +413,17 @@ impl App {
             return;
         }
 
-        if self.handle_top_bar_wheel(delta) {
+        // Settings panel / pending paste are full-viewport modals.
+        // Their backdrop must consume wheel events so the underlying
+        // top-bar tab strip / overview / terminal scroll handlers
+        // don't fire. Gate runs BEFORE `handle_top_bar_wheel` —
+        // otherwise the top bar still scrolls under the modal.
+        // Same shape as `handle_focus_follows_mouse` above.
+        if self.core.settings_panel_visible || self.core.pending_paste.is_some() {
             return;
         }
 
-        // Settings panel covers the viewport with a full backdrop;
-        // forwarding wheel events to terminal / overview / topbar
-        // scroll handlers lets the underlying content scroll while
-        // the modal sits on top — visually disconcerting and
-        // sometimes destructive (e.g. scrolling a pane's history
-        // out of view while the user is reading settings). Same
-        // gating shape as `handle_focus_follows_mouse` above.
-        // Pending paste is also a Base-tier modal with a backdrop;
-        // include it for the same reason.
-        if self.core.settings_panel_visible || self.core.pending_paste.is_some() {
+        if self.handle_top_bar_wheel(delta) {
             return;
         }
 

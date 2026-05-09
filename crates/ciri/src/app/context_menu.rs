@@ -147,6 +147,16 @@ impl App {
         if self.core.settings_panel_visible {
             return;
         }
+        // Overview mode applies a zoom transform that
+        // `pixel_to_viewport_cell` doesn't account for — the cell
+        // coordinates we'd send in `MouseInput` would point at the
+        // wrong cell. The menu items themselves (Copy/Paste/Search)
+        // also don't make sense when no pane is in viewport-frame.
+        // Left-click already routes through `UiFrame::click`'s overview
+        // arm; mirror that gate here.
+        if self.core.overview.active {
+            return;
+        }
         if self.core.context_menu.visible {
             self.core.context_menu.visible = false;
             self.schedule_redraw();

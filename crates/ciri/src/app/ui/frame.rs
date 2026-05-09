@@ -243,6 +243,20 @@ impl UiFrame {
         my: f32,
         cx: &UiContext<'_>,
     ) -> (Option<UiAction>, bool) {
+        // Modal precedence — same shape as `click` / `hover`. Without
+        // this guard, middle-clicking a top/side tab THROUGH the
+        // settings backdrop (or any modal that owns the surface)
+        // would dispatch `ClosePaneTab` and close a pane behind the
+        // panel. Consume the click when any modal is alive; tabs
+        // are only reachable when the surface is otherwise idle.
+        if self.context_menu.is_some()
+            || self.paste_dialog.is_some()
+            || self.palette.is_some()
+            || self.settings_panel.is_some()
+        {
+            return (None, true);
+        }
+
         if self.chrome.top_bar.contains(mx, my) {
             let action = match self.top_bar.hit_test(mx, my, cx) {
                 Some(UiTopBarHit::PaneTab(id)) => Some(UiAction::ClosePaneTab(id)),

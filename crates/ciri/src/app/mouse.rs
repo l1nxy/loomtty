@@ -192,9 +192,13 @@ impl App {
 
     fn handle_left_mouse_pressed(&mut self, mx: f32, my: f32) {
         self.mouse_left_passthrough = false;
-        if self.core.overview.active {
-            self.dispatch_ui_click(mx, my);
-        } else {
+        // Overview-active clicks are claimed by `UiFrame::click`'s
+        // overview arm — `dispatch_ui_click` returns `consumed=true`
+        // whenever overview is active, so this path is unreachable
+        // when overview is on. Leaving the branch in place was
+        // load-bearing before the chrome z-order refactor; remove the
+        // dead arm and inline the resize-drag flow.
+        {
             let mut started_drag = self.start_column_resize_drag(mx);
             if !started_drag {
                 started_drag = self.start_tile_resize_drag(mx, my);
@@ -409,14 +413,20 @@ impl App {
             return;
         }
 
-        // Settings panel / pending paste are full-viewport modals;
-        // their backdrop must consume wheel events so NOTHING below
-        // scrolls — including the palette in the layered
+        // Settings panel / pending paste / search bar are
+        // viewport-owning modals; their backdrop / strip must
+        // consume wheel events so nothing below scrolls —
+        // including the palette in the layered
         // `PendingPaste(CommandPalette/Search)` case where both are
-        // alive. Gate runs ahead of palette / top-bar / overview /
-        // main wheel handlers (each of which would happily scroll
-        // its target underneath the dialog).
-        if self.core.settings_panel_visible || self.core.pending_paste.is_some() {
+        // alive. Search needs the same gate because scrolling the
+        // pane while the search bar is open shifts the buffer view
+        // out from under the active match highlight, breaking
+        // search continuity. `handle_focus_follows_mouse` already
+        // gates on the same triple — keep them in lockstep.
+        if self.core.settings_panel_visible
+            || self.core.pending_paste.is_some()
+            || self.core.search_state.is_some()
+        {
             return;
         }
 

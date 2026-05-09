@@ -40,6 +40,13 @@ impl App {
         // drag started. Without this teardown, mouse-up commits the
         // selection / resize through the modal.
         self.cancel_pending_mouse_interactions();
+        // Visual state changed — request a repaint. Without this,
+        // call sites that mutate modal state but don't otherwise
+        // schedule redraw (e.g. `Focused(false)` in `event.rs`, the
+        // mouse-passthrough early-return in `open_context_menu`)
+        // leave stale overlays painted on screen even though input
+        // state has been cleared.
+        self.schedule_redraw();
     }
 }
 

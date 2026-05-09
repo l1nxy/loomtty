@@ -409,17 +409,18 @@ impl App {
             return;
         }
 
-        if self.handle_palette_wheel(delta) {
+        // Settings panel / pending paste are full-viewport modals;
+        // their backdrop must consume wheel events so NOTHING below
+        // scrolls — including the palette in the layered
+        // `PendingPaste(CommandPalette/Search)` case where both are
+        // alive. Gate runs ahead of palette / top-bar / overview /
+        // main wheel handlers (each of which would happily scroll
+        // its target underneath the dialog).
+        if self.core.settings_panel_visible || self.core.pending_paste.is_some() {
             return;
         }
 
-        // Settings panel / pending paste are full-viewport modals.
-        // Their backdrop must consume wheel events so the underlying
-        // top-bar tab strip / overview / terminal scroll handlers
-        // don't fire. Gate runs BEFORE `handle_top_bar_wheel` —
-        // otherwise the top bar still scrolls under the modal.
-        // Same shape as `handle_focus_follows_mouse` above.
-        if self.core.settings_panel_visible || self.core.pending_paste.is_some() {
+        if self.handle_palette_wheel(delta) {
             return;
         }
 

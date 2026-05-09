@@ -707,6 +707,14 @@ impl App {
         // still work when nothing animates.
         self.motion_ticker.frame().hash(&mut hasher);
 
+        // Debug metrics generation bumps each time the overlay's numbers
+        // change, which is essentially every painted frame while the
+        // panel is on. Folding it in keeps the cached chrome scene
+        // honest — the overlay shows the latest sample instead of a
+        // cache snapshot from when the user first toggled it on. Off by
+        // default, so this is a zero-effect addition for normal users.
+        self.debug_metrics.generation.hash(&mut hasher);
+
         self.core.workspaces.active_workspace_idx.hash(&mut hasher);
         self.core.workspaces.workspaces.len().hash(&mut hasher);
         self.window_focused.hash(&mut hasher);
@@ -2847,7 +2855,9 @@ impl App {
     }
 
     pub fn render(&mut self) {
+        self.debug_metrics.begin_frame_attempt();
         let Some(dt) = self.prepare_frame() else {
+            self.debug_metrics.end_frame_skipped();
             return;
         };
 
@@ -2860,6 +2870,16 @@ impl App {
         let _ = self.apply_pending_background_image();
 
         let mut animating = self.advance_animations(dt);
+        // Save the pre-force animating state so the metrics path can
+        // tell apart "real repaint" from "overlay-forced repaint" — the
+        // forced ones shouldn't inflate Repaint to 100%.
+        let real_animating = animating;
+        // Force a redraw next tick while the overlay is on so its
+        // numbers stay live — without this the damage check would
+        // freeze the panel between input events.
+        if self.debug_metrics.enabled {
+            animating = true;
+        }
 
         let renderer = self.renderer.as_mut().unwrap();
         let (vw, vh) = renderer.surface_size();
@@ -2885,7 +2905,11 @@ impl App {
             (cache.cell_width, cache.cell_height)
         };
 
+        self.debug_metrics
+            .begin_phase(crate::app::debug_metrics::Phase::Build);
         self.update_pane_views(&tiles, mouse_content_pos);
+        self.debug_metrics
+            .end_phase(crate::app::debug_metrics::Phase::Build);
 
         // Update IME cursor area
         if self.pending_resize.is_none()
@@ -2920,16 +2944,31 @@ impl App {
             })
             .collect();
 
+        self.debug_metrics
+            .begin_phase(crate::app::debug_metrics::Phase::Layout);
         let render_snapshot = self.render_snapshot_hash(&offset_tiles, vw, vh, zoom);
-        if !animating && self.last_render_snapshot == Some(render_snapshot) {
+        let damage_skip = !animating && self.last_render_snapshot == Some(render_snapshot);
+        // "Would have skipped" — same condition but using the *real*
+        // animating state. When the overlay is off, this matches
+        // `damage_skip`; when the overlay forced `animating = true`,
+        // this can be true even though we won't actually skip.
+        let was_forced_by_overlay =
+            !real_animating && self.last_render_snapshot == Some(render_snapshot);
+        if damage_skip {
+            self.debug_metrics
+                .end_phase(crate::app::debug_metrics::Phase::Layout);
+            self.debug_metrics.end_frame_skipped();
             return;
         }
-
         let paint = self.tile_paint_config();
         let ordered_tiles = Self::ordered_pane_tiles(&offset_tiles);
         let use_retained_panes =
             self.should_use_retained_pane_scene(&ordered_tiles, zoom, vw_f, vh_f);
+        self.debug_metrics
+            .end_phase(crate::app::debug_metrics::Phase::Layout);
 
+        self.debug_metrics
+            .begin_phase(crate::app::debug_metrics::Phase::Paint);
         let scene = self.assemble_scene(
             &offset_tiles,
             &ordered_tiles,
@@ -2939,9 +2978,30 @@ impl App {
             vh_f,
             use_retained_panes,
         );
+        let scene_bytes = scene_byte_estimate(&scene);
+        self.debug_metrics
+            .end_phase(crate::app::debug_metrics::Phase::Paint);
 
+        self.debug_metrics
+            .begin_phase(crate::app::debug_metrics::Phase::Render);
         self.draw_and_finish(scene, render_snapshot, &mut animating);
+        self.debug_metrics
+            .end_phase(crate::app::debug_metrics::Phase::Render);
+        self.debug_metrics
+            .end_frame_repaint(scene_bytes, was_forced_by_overlay);
     }
+}
+
+/// Approximate byte size of an assembled scene — the sum of the per-buffer
+/// instance arrays the renderer will upload to the GPU. Tracked by the debug
+/// overlay's "Bytes" row; stays close enough to the real upload size to be a
+/// useful comparison across frames without reaching into backend specifics.
+fn scene_byte_estimate(scene: &AssembledScene) -> usize {
+    use std::mem::size_of;
+    scene.bg_rects.len() * size_of::<Rect>()
+        + scene.glyphs.len() * size_of::<ciri_render::glyph_cache::GlyphInstance>()
+        + scene.color_glyphs.len() * size_of::<ciri_render::glyph_cache::GlyphInstance>()
+        + scene.ui_sdf_rects.len() * size_of::<ciri_render::sdf_rect::SdfRect>()
 }
 
 /// Emit a dashed border (4 edges) as rect segments.

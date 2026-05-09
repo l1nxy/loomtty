@@ -1,6 +1,7 @@
 pub(crate) mod action;
 pub(crate) mod ciri_ui_adapter;
 pub(crate) mod context_menu;
+pub(crate) mod debug_metrics;
 pub(crate) mod event;
 pub(crate) mod ime;
 pub(crate) mod key_encode;
@@ -221,6 +222,11 @@ pub(crate) struct App {
     pub cached_ui_scene: CachedUiScene,
     /// Hash of the last successfully rendered visual state.
     pub last_render_snapshot: Option<u64>,
+    /// Frame-pipeline debug metrics. Disabled by default; toggled by
+    /// `Ctrl+Alt+P` (event.rs) or pre-enabled via `CIRI_DEBUG_PERF=1`.
+    /// While enabled, forces continuous redraws so the panel's numbers
+    /// stay live.
+    pub debug_metrics: debug_metrics::DebugMetrics,
     /// Whether the window currently has input focus.
     pub window_focused: bool,
     pub config_watcher: Option<notify::RecommendedWatcher>,
@@ -565,6 +571,17 @@ impl App {
             image_atlas_entries: HashMap::new(),
             cached_ui_scene: CachedUiScene::default(),
             last_render_snapshot: None,
+            debug_metrics: {
+                let mut m = debug_metrics::DebugMetrics::new();
+                if std::env::var("CIRI_DEBUG_PERF")
+                    .ok()
+                    .filter(|v| !v.is_empty() && v != "0")
+                    .is_some()
+                {
+                    m.set_enabled(true);
+                }
+                m
+            },
             window_focused: true,
             config_watcher: None,
             config_change_rx: None,

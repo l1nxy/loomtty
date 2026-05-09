@@ -154,21 +154,26 @@ impl UiFrame {
         if let Some(component) = &mut self.connection_status {
             component.paint(cx, scene);
         }
-        if let Some(component) = &self.paste_dialog {
-            component.paint(cx, scene);
-        }
         if let Some(component) = &self.settings_panel {
             component.paint(cx, scene);
         }
     }
 
-    /// Paint Overlay-layer chrome on top of Base. Popup-class
-    /// components only — palette and context_menu mutually exclude
-    /// each other today, so this layer holds at most one widget per
-    /// frame. The renderer draws Overlay rects after Base glyphs, so
-    /// these popups cover everything underneath including labels.
+    /// Paint Overlay-layer chrome on top of Base. Multiple components
+    /// can coexist here under the layered `ModalKind` invariant:
+    /// `PendingPaste(CommandPalette/Search)` keeps both palette and
+    /// paste_dialog alive — paste_dialog must paint AFTER palette so
+    /// the confirmation visually covers the palette beneath, matching
+    /// the click-priority order in `click` / `hover`. context_menu
+    /// can't coexist with paste_dialog per `kept_set`, so its order
+    /// vs paste_dialog is moot. The renderer draws Overlay rects
+    /// after Base glyphs, so these popups cover everything underneath
+    /// including labels.
     pub(super) fn paint_overlay(&mut self, cx: &UiContext<'_>, scene: &mut UiScene<'_>) {
         if let Some(component) = &mut self.palette {
+            component.paint(cx, scene);
+        }
+        if let Some(component) = &self.paste_dialog {
             component.paint(cx, scene);
         }
         if let Some(component) = &mut self.context_menu {

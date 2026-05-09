@@ -1776,6 +1776,15 @@ impl App {
         self.drag.col_dragging = None;
         self.drag.tile_dragging = None;
         self.drag.scrollbar_dragging = None;
+        // Deactivate any in-flight terminal selection drag too —
+        // clearing `mouse_left_held` alone leaves `selection.active`
+        // set, so the next mouse-up still triggers copy-on-select on
+        // a selection the user thought was cancelled when the modal
+        // opened. The selection range itself is preserved (only
+        // `active` flips); copy intent is what we cancel.
+        if let Some(sel) = self.core.selection.as_mut() {
+            sel.active = false;
+        }
     }
 
     pub fn schedule_redraw(&mut self) {

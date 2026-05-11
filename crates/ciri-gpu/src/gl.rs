@@ -927,10 +927,10 @@ impl GlSdfPipeline {
     }
 }
 
-// ─── GL overview wallpaper pipeline ─────────────────────────────────
+// ─── GL background image pipeline ───────────────────────────────────
 //
 // One vertexless fullscreen quad textured with the user-supplied image.
-// Mirrors the DX `DxOverviewBgPipeline`: cover-fit UV math, premult-alpha
+// Mirrors the DX `DxBackgroundImagePipeline`: cover-fit UV math, premult-alpha
 // output, draws after the clear and before pane bgs. The `image` crate's
 // row-major top-down RGBA8 layout combined with GL's lower-left texture
 // origin and the existing `ndc.y = 1 - py/vh*2` Y-flip in the renderer
@@ -1442,7 +1442,7 @@ impl Renderer {
         (self.width, self.height)
     }
 
-    /// Upload the overview wallpaper RGBA8 texture.
+    /// Upload the background image RGBA8 texture.
     pub fn set_background_image(
         &mut self,
         rgba: &[u8],

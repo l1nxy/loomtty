@@ -922,6 +922,60 @@ fn validate_web_bind(value: &str, _: &()) -> garde::Result {
         .map_err(|_| garde::Error::new(format!("`bind` must be an IP address, got {value:?}")))
 }
 
+#[cfg(test)]
+mod web_config_tests {
+    use super::*;
+    use garde::Validate;
+
+    #[test]
+    fn defaults_validate() {
+        WebConfig::default().validate().expect("default must pass");
+    }
+
+    #[test]
+    fn rejects_port_zero() {
+        let cfg = WebConfig {
+            port: 0,
+            ..WebConfig::default()
+        };
+        let err = cfg.validate().expect_err("port=0 must fail");
+        assert!(err.to_string().contains("port"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_hostname_bind() {
+        for bind in ["example.com", "localhost", "host.local", "10.0.0..1"] {
+            let cfg = WebConfig {
+                bind: bind.to_string(),
+                ..WebConfig::default()
+            };
+            cfg.validate()
+                .expect_err(&format!("bind={bind:?} must fail"));
+        }
+    }
+
+    #[test]
+    fn accepts_valid_ipv4_and_ipv6_binds() {
+        for bind in ["127.0.0.1", "0.0.0.0", "10.0.0.1", "::1", "::"] {
+            let cfg = WebConfig {
+                bind: bind.to_string(),
+                ..WebConfig::default()
+            };
+            cfg.validate()
+                .unwrap_or_else(|e| panic!("bind={bind:?} should validate, got {e}"));
+        }
+    }
+
+    #[test]
+    fn accepts_empty_bind_as_loopback_placeholder() {
+        let cfg = WebConfig {
+            bind: String::new(),
+            ..WebConfig::default()
+        };
+        cfg.validate().expect("empty bind defers to daemon default");
+    }
+}
+
 impl Default for WebConfig {
     fn default() -> Self {
         WebConfig {

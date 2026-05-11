@@ -6,7 +6,7 @@ pub(crate) mod session;
 mod tick;
 mod ws;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use ciri_layout::column::ColumnWidth;
 use ciri_protocol::transport;
 use std::sync::Arc;
@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::net::UnixListener;
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::ServerOptions;
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex, Notify, Semaphore};
 
 use server::Server;
 
@@ -290,10 +290,17 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
         } else {
             ds.config.web.bind.clone()
         };
+        // `bind` has already passed `validate_web_bind` (or is the empty
+        // default), so parsing as IpAddr can only fail if the schema and
+        // this code disagree — bail explicitly rather than papering it
+        // over with `expect`.
+        let parsed_bind: std::net::IpAddr = bind.parse().with_context(|| {
+            format!("[web] bind {bind:?} passed config validation but failed to parse here")
+        })?;
         let addr = format!("{}:{}", bind, ds.config.web.port);
         let tcp = tokio::net::TcpListener::bind(&addr).await?;
         log::info!("ciritty-server WS listener on {addr}");
-        if bind != "127.0.0.1" && bind != "::1" && bind != "localhost" {
+        if !parsed_bind.is_loopback() {
             log::warn!(
                 "ws bind={bind} is not loopback — terminate TLS upstream and \
                  ensure the token is rotated; the gateway speaks plain ws://"
@@ -303,6 +310,8 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
     } else {
         (None, String::new())
     };
+
+    let ws_handshake_sem = Arc::new(Semaphore::new(MAX_IN_FLIGHT_WS_HANDSHAKES));
 
     loop {
         #[cfg(unix)]
@@ -363,6 +372,7 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
                         shutdown.clone(),
                         input_notify.clone(),
                         ws_token.clone(),
+                        ws_handshake_sem.clone(),
                     );
                 }
                 _ = shutdown.notified() => {
@@ -409,6 +419,7 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
                         shutdown.clone(),
                         input_notify.clone(),
                         ws_token.clone(),
+                        ws_handshake_sem.clone(),
                     );
                     continue;
                 }
@@ -457,6 +468,14 @@ async fn tcp_accept(
     }
 }
 
+/// Cap on concurrent in-flight WS handshakes. A handshake is bounded by
+/// `ws::HANDSHAKE_TIMEOUT` (10s); 64 concurrent slots give legitimate
+/// burst load plenty of room while putting a hard ceiling on tasks an
+/// attacker can pin by completing the TCP handshake and stalling the
+/// HTTP upgrade. Excess attempts are rejected immediately rather than
+/// queued so an attacker can't hold attempts in line.
+const MAX_IN_FLIGHT_WS_HANDSHAKES: usize = 64;
+
 /// Perform the WS handshake off the accept-loop thread and, on success,
 /// hand the wrapped stream to `connection::handle_client`. Errors from
 /// the handshake (bad token, malformed upgrade, etc.) are logged and
@@ -469,7 +488,23 @@ fn spawn_ws_client(
     shutdown: Arc<Notify>,
     input_notify: Arc<Notify>,
     token: String,
+    handshake_sem: Arc<Semaphore>,
 ) {
+    // `try_acquire_owned` is non-blocking: when the cap is reached we
+    // reject the new attempt immediately and free the TCP stream rather
+    // than queueing it, so an attacker can't keep a pipeline of stalled
+    // upgrades in line.
+    let permit = match handshake_sem.try_acquire_owned() {
+        Ok(p) => p,
+        Err(_) => {
+            log::warn!(
+                "ws handshake from {addr} rejected: {MAX_IN_FLIGHT_WS_HANDSHAKES} \
+                 concurrent handshakes already in flight"
+            );
+            return;
+        }
+    };
+
     tokio::spawn(async move {
         let ws_stream = match ws::accept_ws(stream, &token).await {
             Ok(ws) => ws,
@@ -478,7 +513,11 @@ fn spawn_ws_client(
                 return;
             }
         };
-        log::info!("WS client connected from {addr}");
+        // Handshake done — release the slot before the long-lived client
+        // session begins; the session itself does not count against the
+        // handshake budget.
+        drop(permit);
+        log::info!("ws upgrade from {addr} accepted (handshake complete)");
         let (reader, writer) = tokio::io::split(ws_stream);
         connection::handle_client(reader, writer, state, shutdown, input_notify).await;
     });

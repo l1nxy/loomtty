@@ -76,6 +76,11 @@ freetype-rs = "0.36"
 nix = { version = "0.29", features = ["term", "process", "fs", "signal"] }
 libc = "0.2"
 notify-rust = "4"
+# TLS is intentionally NOT enabled here. The WS gateway in ciri-server
+# expects an upstream reverse proxy (caddy/nginx) to terminate TLS when
+# bind != loopback. Enabling `native-tls` or `rustls-tls-*` here would
+# add a server-side TLS code path that the gateway does not implement —
+# bump features explicitly only if you also wire the cert plumbing.
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
 futures-util = { version = "0.3", default-features = false, features = ["std", "sink", "async-await"] }
 

@@ -199,3 +199,14 @@ enter = "confirm_paste"
 y = "confirm_paste"
 escape = "dismiss_paste_confirm"
 n = "dismiss_paste_confirm"
+
+# Browser-facing WebSocket gateway. Disabled by default. When enabled, the
+# daemon accepts WS upgrades alongside the existing Unix/TCP listeners.
+# The gateway speaks plain ws:// — terminate TLS upstream (caddy/nginx) if
+# you point `bind` at a non-loopback address. Token must be at least 16
+# bytes; generate one with `openssl rand -hex 16`.
+[web]
+enabled = false
+bind = "127.0.0.1"
+port = 7891
+token = ""

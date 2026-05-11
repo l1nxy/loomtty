@@ -26,19 +26,16 @@ use tokio_tungstenite::{WebSocketStream, accept_hdr_async};
 use ciri_protocol::codec::MAX_DATA_FRAME_LEN;
 
 /// Cap on a single inbound WS message and on the outbound pending-write
-/// buffer. Sized to match the protocol's largest legal frame so a
-/// malicious or buggy peer cannot exhaust memory by claiming a single
-/// huge binary message; the compile-time assert below keeps the two in
-/// sync if the protocol cap is ever bumped.
+/// buffer. Both are sourced directly from the protocol cap so a malicious
+/// or buggy peer cannot exhaust memory by claiming a single huge binary
+/// message.
 ///
 /// Callers wrap `WsStream` in a `BufWriter` in `handle_client`, which
-/// flushes after every batched frame group — the outbound check exists
+/// flushes after every batched frame group — the outbound cap exists
 /// only as a tripwire against an unbuffered writer or a buggy caller
 /// that accumulates many MiB between flushes.
 const MAX_WS_MESSAGE_BYTES: usize = MAX_DATA_FRAME_LEN as usize;
 const MAX_WS_WRITE_BYTES: usize = MAX_DATA_FRAME_LEN as usize;
-
-const _: () = assert!(MAX_WS_MESSAGE_BYTES == MAX_DATA_FRAME_LEN as usize);
 
 /// Adapter exposing a binary WebSocket as `AsyncRead + AsyncWrite`.
 ///
@@ -125,7 +122,11 @@ fn extract_bearer(req: &Request) -> Option<Cow<'_, str>> {
         && scheme.eq_ignore_ascii_case("Bearer")
     {
         let trimmed = rest.trim();
-        if !trimmed.is_empty() {
+        // Tokens are required to be a single non-empty whitespace-free
+        // run. A whitespace-containing value almost certainly indicates
+        // operator error (concatenated headers, malformed input) — reject
+        // it rather than forwarding garbage to the constant-time compare.
+        if !trimmed.is_empty() && !trimmed.contains(char::is_whitespace) {
             return Some(Cow::Borrowed(trimmed));
         }
     }
@@ -141,9 +142,10 @@ fn extract_token_query(query: &str) -> Option<Cow<'_, str>> {
         if let Some(value) = pair.strip_prefix("token=") {
             // Decode `%xx` escapes so a token containing `+`, `=`, `&`,
             // `%`, or non-ASCII survives the URL round-trip. Invalid
-            // UTF-8 falls back to a lossy string — the constant-time
-            // compare against the configured token will then reject it.
-            return Some(percent_decode_str(value).decode_utf8_lossy());
+            // UTF-8 short-circuits to `None` so the caller falls through
+            // to a 401 rather than feeding U+FFFD replacement characters
+            // into the constant-time compare.
+            return percent_decode_str(value).decode_utf8().ok();
         }
     }
     None
@@ -323,6 +325,79 @@ mod tests {
             extract_token_query("token=abc%26def").as_deref(),
             Some("abc&def"),
         );
+    }
+
+    fn req_with(headers: &[(&str, &str)], query: Option<&str>) -> Request {
+        let uri = match query {
+            Some(q) => format!("/?{q}"),
+            None => "/".to_string(),
+        };
+        let mut builder = tokio_tungstenite::tungstenite::http::Request::builder().uri(&uri);
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        builder.body(()).unwrap()
+    }
+
+    #[test]
+    fn extract_bearer_matches_scheme_case_insensitively() {
+        for scheme in &["Bearer", "bearer", "BEARER", "BeArEr"] {
+            let req = req_with(&[("authorization", &format!("{scheme} abc123"))], None);
+            assert_eq!(
+                extract_bearer(&req).as_deref(),
+                Some("abc123"),
+                "scheme {scheme} should be accepted",
+            );
+        }
+    }
+
+    #[test]
+    fn extract_bearer_rejects_embedded_whitespace_and_falls_back() {
+        // "tok en" must not be forwarded — tokens never contain spaces.
+        // With no query fallback the result is None; with a query
+        // fallback it picks up the query value instead.
+        let req = req_with(&[("authorization", "Bearer tok en")], None);
+        assert_eq!(extract_bearer(&req).as_deref(), None);
+
+        let req = req_with(&[("authorization", "Bearer tok en")], Some("token=fallback"));
+        assert_eq!(extract_bearer(&req).as_deref(), Some("fallback"));
+    }
+
+    #[test]
+    fn extract_bearer_ignores_empty_credentials() {
+        let req = req_with(&[("authorization", "Bearer   ")], Some("token=q"));
+        assert_eq!(extract_bearer(&req).as_deref(), Some("q"));
+
+        let req = req_with(&[("authorization", "Bearer")], Some("token=q"));
+        // No space → split_once fails → falls back to query.
+        assert_eq!(extract_bearer(&req).as_deref(), Some("q"));
+    }
+
+    #[test]
+    fn extract_bearer_falls_back_to_query_when_no_header() {
+        let req = req_with(&[], Some("token=via-query"));
+        assert_eq!(extract_bearer(&req).as_deref(), Some("via-query"));
+
+        let req = req_with(&[], None);
+        assert_eq!(extract_bearer(&req).as_deref(), None);
+    }
+
+    #[test]
+    fn extract_bearer_rejects_wrong_scheme() {
+        let req = req_with(
+            &[("authorization", "Basic dXNlcjpwYXNz")],
+            Some("token=q"),
+        );
+        assert_eq!(extract_bearer(&req).as_deref(), Some("q"));
+    }
+
+    #[test]
+    fn extract_token_query_rejects_invalid_utf8() {
+        // %FF is not a valid UTF-8 start byte. Lossy decoding would
+        // return "\u{FFFD}" and accept it; we want None instead so the
+        // caller emits a 401 rather than letting U+FFFD reach the
+        // constant-time compare.
+        assert_eq!(extract_token_query("token=%FF").as_deref(), None);
     }
 
     #[test]

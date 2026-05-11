@@ -4,6 +4,7 @@ mod damage;
 pub(crate) mod server;
 pub(crate) mod session;
 mod tick;
+mod ws;
 
 use anyhow::Result;
 use ciri_layout::column::ColumnWidth;
@@ -276,6 +277,32 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
         None
     };
 
+    let (ws_listener, ws_token) = if ds.config.web.enabled {
+        if ds.config.web.token.trim().is_empty() {
+            anyhow::bail!(
+                "[web] enabled but token is empty — refusing to start. \
+                 Set a non-trivial value for web.token in your config."
+            );
+        }
+        let bind = if ds.config.web.bind.is_empty() {
+            "127.0.0.1".to_string()
+        } else {
+            ds.config.web.bind.clone()
+        };
+        let addr = format!("{}:{}", bind, ds.config.web.port);
+        let tcp = tokio::net::TcpListener::bind(&addr).await?;
+        log::info!("ciritty-server WS listener on {addr}");
+        if bind != "127.0.0.1" && bind != "::1" && bind != "localhost" {
+            log::warn!(
+                "ws bind={bind} is not loopback — terminate TLS upstream and \
+                 ensure the token is rotated; the gateway speaks plain ws://"
+            );
+        }
+        (Some(tcp), ds.config.web.token.clone())
+    } else {
+        (None, String::new())
+    };
+
     loop {
         #[cfg(unix)]
         {
@@ -316,6 +343,18 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
                     let (reader, writer) = stream.into_split();
                     tokio::spawn(connection::handle_client(reader, writer, state, client_shutdown, client_input_notify));
                 }
+                result = tcp_accept(&ws_listener) => {
+                    let (stream, addr) = result?;
+                    stream.set_nodelay(true).ok();
+                    spawn_ws_client(
+                        stream,
+                        addr,
+                        state.clone(),
+                        shutdown.clone(),
+                        input_notify.clone(),
+                        ws_token.clone(),
+                    );
+                }
                 _ = shutdown.notified() => {
                     log::info!("accept loop shutting down");
                     connection::graceful_shutdown(&state).await;
@@ -342,6 +381,19 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
                     let client_input_notify = input_notify.clone();
                     let (reader, writer) = stream.into_split();
                     tokio::spawn(connection::handle_client(reader, writer, state, client_shutdown, client_input_notify));
+                    continue;
+                }
+                result = tcp_accept(&ws_listener) => {
+                    let (stream, addr) = result?;
+                    stream.set_nodelay(true).ok();
+                    spawn_ws_client(
+                        stream,
+                        addr,
+                        state.clone(),
+                        shutdown.clone(),
+                        input_notify.clone(),
+                        ws_token.clone(),
+                    );
                     continue;
                 }
                 _ = shutdown.notified() => {
@@ -387,4 +439,31 @@ async fn tcp_accept(
         Some(l) => l.accept().await,
         None => std::future::pending().await,
     }
+}
+
+/// Perform the WS handshake off the accept-loop thread and, on success,
+/// hand the wrapped stream to `connection::handle_client`. Errors from
+/// the handshake (bad token, malformed upgrade, etc.) are logged and
+/// the connection is dropped — the accept loop must stay responsive
+/// for other clients regardless of any single peer's misbehaviour.
+fn spawn_ws_client(
+    stream: tokio::net::TcpStream,
+    addr: std::net::SocketAddr,
+    state: Arc<Mutex<Server>>,
+    shutdown: Arc<Notify>,
+    input_notify: Arc<Notify>,
+    token: String,
+) {
+    tokio::spawn(async move {
+        let ws_stream = match ws::accept_ws(stream, &token).await {
+            Ok(ws) => ws,
+            Err(e) => {
+                log::warn!("ws handshake from {addr} failed: {e}");
+                return;
+            }
+        };
+        log::info!("WS client connected from {addr}");
+        let (reader, writer) = tokio::io::split(ws_stream);
+        connection::handle_client(reader, writer, state, shutdown, input_notify).await;
+    });
 }

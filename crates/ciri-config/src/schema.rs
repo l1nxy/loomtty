@@ -44,6 +44,8 @@ pub struct CiriConfig {
     pub server: ServerConfig,
     #[garde(skip)]
     pub prediction: PredictionConfig,
+    #[garde(skip)]
+    pub web: WebConfig,
 }
 
 /// Controls when ligatures are applied during shaping.
@@ -866,6 +868,40 @@ impl Default for PredictionConfig {
             mode: PredictionMode::Never,
             threshold_ms: 30,
             show_underline: true,
+        }
+    }
+}
+
+// ── Web (browser) gateway ──────────────────────────────────────────
+
+/// Browser-facing WebSocket gateway. Disabled by default; when enabled,
+/// the daemon spins up an extra listener that wraps each WS connection
+/// in an `AsyncRead + AsyncWrite` shim and hands it to the same client
+/// handler used by Unix/TCP transports.
+///
+/// `bind` defaults to loopback. If you point this at a non-loopback
+/// address you are responsible for terminating TLS upstream — the
+/// gateway itself speaks plain ws:// and relies on a single shared
+/// token for authentication.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WebConfig {
+    pub enabled: bool,
+    pub bind: String,
+    pub port: u16,
+    /// Shared token required as `?token=…` on the upgrade URL. Must be
+    /// non-empty when `enabled` is true; the daemon refuses to start
+    /// otherwise.
+    pub token: String,
+}
+
+impl Default for WebConfig {
+    fn default() -> Self {
+        WebConfig {
+            enabled: false,
+            bind: "127.0.0.1".to_string(),
+            port: 7891,
+            token: String::new(),
         }
     }
 }

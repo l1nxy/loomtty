@@ -17,6 +17,8 @@ ciri-procinfo = { workspace = true }
 rmp-serde = { workspace = true }
 bytes = { workspace = true }
 tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }
 anyhow = { workspace = true }

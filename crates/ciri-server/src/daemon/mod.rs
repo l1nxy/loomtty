@@ -285,25 +285,29 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
         // against a correctly configured secret. The helper also enforces
         // a 16-byte floor — see ws::MIN_WEB_TOKEN_BYTES.
         let token = ws::prepare_web_token(&ds.config.web.token)?;
-        let bind = if ds.config.web.bind.is_empty() {
-            "127.0.0.1".to_string()
+        // `bind` has already passed `validate_web_bind` (which accepts
+        // either empty or a parseable IpAddr) — empty means "use loopback".
+        let parsed_bind: std::net::IpAddr = if ds.config.web.bind.is_empty() {
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
         } else {
-            ds.config.web.bind.clone()
+            ds.config.web.bind.parse().with_context(|| {
+                format!(
+                    "[web] bind {:?} passed config validation but failed to parse here",
+                    ds.config.web.bind,
+                )
+            })?
         };
-        // `bind` has already passed `validate_web_bind` (or is the empty
-        // default), so parsing as IpAddr can only fail if the schema and
-        // this code disagree — bail explicitly rather than papering it
-        // over with `expect`.
-        let parsed_bind: std::net::IpAddr = bind.parse().with_context(|| {
-            format!("[web] bind {bind:?} passed config validation but failed to parse here")
-        })?;
-        let addr = format!("{}:{}", bind, ds.config.web.port);
+        // Construct the listener from the canonical IpAddr so the logged
+        // address and the loopback check agree on a single normalised
+        // form (matters for IPv6: `::0001` and `::1` parse to the same
+        // address but compare as different strings).
+        let addr = std::net::SocketAddr::new(parsed_bind, ds.config.web.port);
         let tcp = tokio::net::TcpListener::bind(&addr).await?;
         log::info!("ciritty-server WS listener on {addr}");
         if !parsed_bind.is_loopback() {
             log::warn!(
-                "ws bind={bind} is not loopback — terminate TLS upstream and \
-                 ensure the token is rotated; the gateway speaks plain ws://"
+                "ws bind={parsed_bind} is not loopback — terminate TLS upstream \
+                 and ensure the token is rotated; the gateway speaks plain ws://"
             );
         }
         (Some(tcp), token)

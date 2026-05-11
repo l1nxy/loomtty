@@ -291,16 +291,34 @@ where
 {
     fn poll_write(
         mut self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
+        cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        if self.write_buf.len().saturating_add(buf.len()) > MAX_WS_WRITE_BYTES {
+        // A single write larger than the cap cannot succeed no matter how
+        // many flush rounds we run; surface it as a hard error before
+        // touching state.
+        if buf.len() > MAX_WS_WRITE_BYTES {
             return Poll::Ready(Err(io::Error::other(format!(
-                "ws write would exceed pending-write limit {MAX_WS_WRITE_BYTES}; \
-                 pending={} new={}",
-                self.write_buf.len(),
+                "single ws write {} bytes exceeds limit {MAX_WS_WRITE_BYTES}",
                 buf.len(),
             ))));
+        }
+        // Honour the AsyncWrite contract: if accepting this write would
+        // overflow the pending buffer, try to drain first. `poll_flush`
+        // registers a waker with the underlying sink, so a `Pending`
+        // result correctly backpressures the caller instead of dropping
+        // the connection.
+        if self.write_buf.len().saturating_add(buf.len()) > MAX_WS_WRITE_BYTES {
+            ready!(self.as_mut().poll_flush(cx))?;
+            if self.write_buf.len().saturating_add(buf.len()) > MAX_WS_WRITE_BYTES {
+                // poll_flush succeeded → write_buf was drained via
+                // mem::take + start_send. Reaching here means buf.len()
+                // alone exceeds the cap, which we already checked above
+                // — this branch is defensive.
+                return Poll::Ready(Err(io::Error::other(
+                    "ws poll_write: pending buffer non-empty after successful flush",
+                )));
+            }
         }
         self.write_buf.extend_from_slice(buf);
         Poll::Ready(Ok(buf.len()))

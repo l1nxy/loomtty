@@ -77,7 +77,15 @@ async fn read_frame_header<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<(
         TAG_CELL_DELTA | TAG_FULL_PANE_SYNC | TAG_CELL_DELTA_LZ4 | TAG_FULL_PANE_SYNC_LZ4 => {
             MAX_DATA_FRAME_LEN
         }
-        _ => MAX_DATA_FRAME_LEN,
+        // Unknown tag: reject the frame at the header rather than letting
+        // a malicious peer dictate up to 16 MiB of read buffer before the
+        // payload is even examined.
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unknown frame tag: 0x{tag:02x}"),
+            ));
+        }
     };
     if len > limit {
         return Err(io::Error::new(

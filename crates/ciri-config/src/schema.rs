@@ -888,19 +888,38 @@ impl Default for PredictionConfig {
 pub struct WebConfig {
     #[garde(skip)]
     pub enabled: bool,
-    #[garde(skip)]
+    /// Empty string is read as "127.0.0.1" by the daemon. Otherwise the
+    /// value must parse as an IP address; a hostname here would force
+    /// `TcpListener::bind` to fail at startup with a less actionable OS
+    /// error than the garde rejection.
+    #[garde(custom(validate_web_bind))]
     pub bind: String,
     /// Reject `port = 0` (OS-assigned ephemeral). The daemon prints the
     /// configured port at startup, so an ephemeral assignment would lie
     /// to operators who later try to point clients at the logged value.
     #[garde(range(min = 1))]
     pub port: u16,
-    /// Shared token required on the upgrade. The daemon enforces a 16-byte
-    /// floor at startup when `enabled = true`; that pairing of two fields
-    /// is verified there rather than as a per-field garde rule, because
-    /// `enabled = false, token = ""` is a valid resting state.
+    /// Shared token required on the upgrade.
+    ///
+    /// Cross-field rule: when `enabled = true`, the token (after
+    /// trimming) must be at least `ws::MIN_WEB_TOKEN_BYTES` bytes. That
+    /// pairing is enforced in `ws::prepare_web_token`, not as a per-field
+    /// garde rule, because `enabled = false, token = ""` is a valid
+    /// resting state. Any new caller that validates a `CiriConfig`
+    /// without then calling `prepare_web_token` will miss the floor —
+    /// keep them in sync.
     #[garde(skip)]
     pub token: String,
+}
+
+fn validate_web_bind(value: &str, _: &()) -> garde::Result {
+    if value.is_empty() {
+        return Ok(());
+    }
+    value
+        .parse::<std::net::IpAddr>()
+        .map(|_| ())
+        .map_err(|_| garde::Error::new(format!("`bind` must be an IP address, got {value:?}")))
 }
 
 impl Default for WebConfig {

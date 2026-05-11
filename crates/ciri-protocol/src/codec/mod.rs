@@ -25,8 +25,8 @@ mod util;
 
 pub use cell_delta::{decode_cell_delta_borrowed, encode_cell_delta_streaming_framed};
 pub use frame::{
-    Frame, encode_client_msg, encode_server_msg, frame_full_pane_sync, frame_server_msg,
-    frame_server_msg_into, read_frame, read_frame_reuse,
+    Frame, MAX_DATA_FRAME_LEN, encode_client_msg, encode_server_msg, frame_full_pane_sync,
+    frame_server_msg, frame_server_msg_into, read_frame, read_frame_reuse,
 };
 pub use full_sync::{
     decode_full_pane_sync, decode_full_pane_sync_borrowed, encode_full_pane_sync,

@@ -35,7 +35,7 @@ pub(super) const MAX_CONTROL_FRAME_LEN: u32 = 1024 * 1024;
 
 /// Maximum frame size for data frames (CellDelta, FullPaneSync).
 /// Large grids with scrollback can legitimately reach several MiB.
-pub(super) const MAX_DATA_FRAME_LEN: u32 = 16 * 1024 * 1024;
+pub const MAX_DATA_FRAME_LEN: u32 = 16 * 1024 * 1024;
 
 // ─── Frame format: [u8 tag][u32 LE payload_len][payload] ───────────
 

@@ -129,14 +129,17 @@ pub async fn accept_ws(tcp: TcpStream, expected_token: &str) -> Result<WsStream<
     }
     let expected = expected_token.as_bytes().to_vec();
 
-    // Tungstenite's default `max_message_size` is 64 MiB; without an
-    // override a malicious peer could force a fresh 64 MiB allocation
-    // before our application-layer 16 MiB check fires. Push the limit
-    // down to MAX_WS_MESSAGE_BYTES on both the frame and message axes
-    // so tungstenite rejects oversize input at the framing layer.
+    // Tungstenite's default `max_message_size` is 64 MiB and
+    // `max_write_buffer_size` is unlimited; without overrides a slow
+    // peer could force a 64 MiB read allocation, or unbounded growth
+    // of the internal send buffer when the TCP socket is congested.
+    // Cap both axes (read + frame size, write buffer high-water mark)
+    // at MAX_WS_MESSAGE_BYTES so tungstenite applies the rejection /
+    // backpressure at its own framing layer.
     let ws_config = WebSocketConfig {
         max_message_size: Some(MAX_WS_MESSAGE_BYTES),
         max_frame_size: Some(MAX_WS_MESSAGE_BYTES),
+        max_write_buffer_size: MAX_WS_MESSAGE_BYTES,
         ..Default::default()
     };
 
@@ -255,7 +258,20 @@ where
             match Pin::new(&mut self.ws).poll_next(cx) {
                 Poll::Ready(Some(Ok(msg))) => match msg {
                     Message::Binary(data) => {
+                        if data.is_empty() {
+                            // Zero-length messages are legal WS frames
+                            // but carry no bytes; treat them like control
+                            // frames and re-poll rather than storing an
+                            // empty buffer that would just loop back.
+                            continue;
+                        }
                         if data.len() > MAX_WS_MESSAGE_BYTES {
+                            // Defensive: tungstenite's `max_message_size`
+                            // already enforces this at the framing layer,
+                            // so we should never observe an oversized
+                            // Binary message here. Keep the guard as a
+                            // belt-and-braces check against a future
+                            // WebSocketConfig change.
                             return Poll::Ready(Err(io::Error::other(format!(
                                 "ws binary message {} bytes exceeds limit {MAX_WS_MESSAGE_BYTES}",
                                 data.len(),
@@ -304,21 +320,12 @@ where
             ))));
         }
         // Honour the AsyncWrite contract: if accepting this write would
-        // overflow the pending buffer, try to drain first. `poll_flush`
-        // registers a waker with the underlying sink, so a `Pending`
-        // result correctly backpressures the caller instead of dropping
-        // the connection.
+        // overflow the pending buffer, drain first. `poll_flush` empties
+        // `write_buf` via `mem::take`, so after `ready!` the buffer is
+        // guaranteed empty — combined with the `buf.len() <= cap` check
+        // above, the new write always fits, no second guard needed.
         if self.write_buf.len().saturating_add(buf.len()) > MAX_WS_WRITE_BYTES {
             ready!(self.as_mut().poll_flush(cx))?;
-            if self.write_buf.len().saturating_add(buf.len()) > MAX_WS_WRITE_BYTES {
-                // poll_flush succeeded → write_buf was drained via
-                // mem::take + start_send. Reaching here means buf.len()
-                // alone exceeds the cap, which we already checked above
-                // — this branch is defensive.
-                return Poll::Ready(Err(io::Error::other(
-                    "ws poll_write: pending buffer non-empty after successful flush",
-                )));
-            }
         }
         self.write_buf.extend_from_slice(buf);
         Poll::Ready(Ok(buf.len()))

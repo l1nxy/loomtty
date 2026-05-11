@@ -980,7 +980,12 @@ impl Default for WebConfig {
     fn default() -> Self {
         WebConfig {
             enabled: false,
-            bind: "127.0.0.1".to_string(),
+            // Empty string is the loopback placeholder — the daemon
+            // substitutes 127.0.0.1 at bind time. Keeping the default
+            // empty means the doc contract ("empty = loopback") and the
+            // actual default value agree, and there is only one canonical
+            // path through the loopback-injection code.
+            bind: String::new(),
             port: 7891,
             token: String::new(),
         }

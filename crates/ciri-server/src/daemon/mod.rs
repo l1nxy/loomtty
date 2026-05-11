@@ -278,10 +278,24 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
     };
 
     let (ws_listener, ws_token) = if ds.config.web.enabled {
-        if ds.config.web.token.trim().is_empty() {
+        let token = ds.config.web.token.trim();
+        if token.is_empty() {
             anyhow::bail!(
                 "[web] enabled but token is empty — refusing to start. \
                  Set a non-trivial value for web.token in your config."
+            );
+        }
+        // Floor at 16 chars (≥ 96 bits if random alnum). The constant-time
+        // compare in ws::accept_ws leaks token length through its
+        // length-mismatch fast path, so a too-short secret is easy to
+        // brute-force on top of the leak.
+        const MIN_WEB_TOKEN_BYTES: usize = 16;
+        if token.len() < MIN_WEB_TOKEN_BYTES {
+            anyhow::bail!(
+                "[web] token is {} bytes — refusing to start. \
+                 Minimum is {MIN_WEB_TOKEN_BYTES} bytes (use a random secret, \
+                 e.g. `openssl rand -hex 16` or `pwgen -s 32 1`).",
+                token.len(),
             );
         }
         let bind = if ds.config.web.bind.is_empty() {

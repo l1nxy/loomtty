@@ -30,6 +30,11 @@ use ciri_protocol::codec::MAX_DATA_FRAME_LEN;
 /// malicious or buggy peer cannot exhaust memory by claiming a single
 /// huge binary message; the compile-time assert below keeps the two in
 /// sync if the protocol cap is ever bumped.
+///
+/// Callers wrap `WsStream` in a `BufWriter` in `handle_client`, which
+/// flushes after every batched frame group — the outbound check exists
+/// only as a tripwire against an unbuffered writer or a buggy caller
+/// that accumulates many MiB between flushes.
 const MAX_WS_MESSAGE_BYTES: usize = MAX_DATA_FRAME_LEN as usize;
 const MAX_WS_WRITE_BYTES: usize = MAX_DATA_FRAME_LEN as usize;
 
@@ -110,13 +115,19 @@ pub async fn accept_ws(tcp: TcpStream, expected_token: &str) -> Result<WsStream<
 }
 
 /// Pull the bearer token from `Authorization: Bearer <token>` if present,
-/// otherwise fall back to `?token=…` on the upgrade URL.
+/// otherwise fall back to `?token=…` on the upgrade URL. The scheme name
+/// compare is case-insensitive per RFC 7235 §2.1 (`"Bearer"`, `"bearer"`,
+/// `"BEARER"`, etc. all match).
 fn extract_bearer(req: &Request) -> Option<Cow<'_, str>> {
     if let Some(value) = req.headers().get("authorization")
         && let Ok(s) = value.to_str()
-        && let Some(rest) = s.strip_prefix("Bearer ").or_else(|| s.strip_prefix("bearer "))
+        && let Some((scheme, rest)) = s.split_once(' ')
+        && scheme.eq_ignore_ascii_case("Bearer")
     {
-        return Some(Cow::Borrowed(rest.trim()));
+        let trimmed = rest.trim();
+        if !trimmed.is_empty() {
+            return Some(Cow::Borrowed(trimmed));
+        }
     }
     let query = req.uri().query()?;
     extract_token_query(query)

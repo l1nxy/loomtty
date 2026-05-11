@@ -21,8 +21,8 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
 use tokio_tungstenite::tungstenite::http::StatusCode;
-use tokio_tungstenite::tungstenite::protocol::Message;
-use tokio_tungstenite::{WebSocketStream, accept_hdr_async};
+use tokio_tungstenite::tungstenite::protocol::{Message, WebSocketConfig};
+use tokio_tungstenite::{WebSocketStream, accept_hdr_async_with_config};
 
 use ciri_protocol::codec::MAX_DATA_FRAME_LEN;
 
@@ -44,6 +44,35 @@ const MAX_WS_WRITE_BYTES: usize = MAX_DATA_FRAME_LEN as usize;
 /// slow-loris-style attempts that complete the TCP three-way handshake
 /// and then stop talking.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Minimum byte-length for `web.token` when the gateway is enabled.
+/// `openssl rand -hex 16` produces 32 bytes, well above this; the floor
+/// is the entropy lower bound that the constant-time compare's
+/// length-leak fast path still leaves brute-forceable.
+pub const MIN_WEB_TOKEN_BYTES: usize = 16;
+
+/// Validate the configured web token before the gateway accepts the
+/// first connection. Returns the trimmed, owned token on success — that
+/// is the value that must reach `accept_ws`, not the raw config string,
+/// since surrounding whitespace would silently break authentication.
+pub fn prepare_web_token(raw: &str) -> Result<String> {
+    let token = raw.trim().to_string();
+    if token.is_empty() {
+        return Err(anyhow!(
+            "[web] enabled but token is empty — refusing to start. \
+             Set a non-trivial value for web.token in your config."
+        ));
+    }
+    if token.len() < MIN_WEB_TOKEN_BYTES {
+        return Err(anyhow!(
+            "[web] token is {} bytes — refusing to start. \
+             Minimum is {MIN_WEB_TOKEN_BYTES} bytes (generate one with \
+             `openssl rand -hex 16` or `pwgen -s 32 1`).",
+            token.len(),
+        ));
+    }
+    Ok(token)
+}
 
 /// Adapter exposing a binary WebSocket as `AsyncRead + AsyncWrite`.
 ///
@@ -100,19 +129,34 @@ pub async fn accept_ws(tcp: TcpStream, expected_token: &str) -> Result<WsStream<
     }
     let expected = expected_token.as_bytes().to_vec();
 
-    let handshake = accept_hdr_async(tcp, move |req: &Request, response: Response| {
-        let token_ok = extract_bearer(req)
-            .map(|t| constant_time_eq(t.as_bytes(), &expected))
-            .unwrap_or(false);
-        if !token_ok {
-            let err: ErrorResponse = tokio_tungstenite::tungstenite::http::Response::builder()
-                .status(StatusCode::UNAUTHORIZED)
-                .body(Some("unauthorized".to_string()))
-                .expect("static error response builds");
-            return Err(err);
-        }
-        Ok(response)
-    });
+    // Tungstenite's default `max_message_size` is 64 MiB; without an
+    // override a malicious peer could force a fresh 64 MiB allocation
+    // before our application-layer 16 MiB check fires. Push the limit
+    // down to MAX_WS_MESSAGE_BYTES on both the frame and message axes
+    // so tungstenite rejects oversize input at the framing layer.
+    let ws_config = WebSocketConfig {
+        max_message_size: Some(MAX_WS_MESSAGE_BYTES),
+        max_frame_size: Some(MAX_WS_MESSAGE_BYTES),
+        ..Default::default()
+    };
+
+    let handshake = accept_hdr_async_with_config(
+        tcp,
+        move |req: &Request, response: Response| {
+            let token_ok = extract_bearer(req)
+                .map(|t| constant_time_eq(t.as_bytes(), &expected))
+                .unwrap_or(false);
+            if !token_ok {
+                let err: ErrorResponse = tokio_tungstenite::tungstenite::http::Response::builder()
+                    .status(StatusCode::UNAUTHORIZED)
+                    .body(Some("unauthorized".to_string()))
+                    .expect("static error response builds");
+                return Err(err);
+            }
+            Ok(response)
+        },
+        Some(ws_config),
+    );
 
     let ws = tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake)
         .await
@@ -428,6 +472,43 @@ mod tests {
         // caller emits a 401 rather than letting U+FFFD reach the
         // constant-time compare.
         assert_eq!(extract_token_query("token=%FF").as_deref(), None);
+    }
+
+    #[test]
+    fn prepare_web_token_rejects_empty_and_whitespace_only() {
+        for raw in ["", "   ", "\n", "\t\t"] {
+            let err = prepare_web_token(raw).expect_err("empty must error");
+            assert!(
+                err.to_string().contains("empty"),
+                "expected 'empty' in error, got {err}",
+            );
+        }
+    }
+
+    #[test]
+    fn prepare_web_token_rejects_short_tokens() {
+        // 15 ASCII bytes — just below the floor.
+        let err = prepare_web_token("a".repeat(15).as_str())
+            .expect_err("15-byte token must error");
+        assert!(err.to_string().contains("15 bytes"));
+        assert!(err.to_string().contains("Minimum is 16 bytes"));
+    }
+
+    #[test]
+    fn prepare_web_token_strips_surrounding_whitespace() {
+        // A trailing newline from `openssl rand -hex 16 > token.txt` is
+        // the classic source of authentication mismatches. The helper
+        // must trim and return the visible secret.
+        let token = prepare_web_token("  deadbeefcafebabe1234  \n")
+            .expect("valid token must accept");
+        assert_eq!(token, "deadbeefcafebabe1234");
+    }
+
+    #[test]
+    fn prepare_web_token_accepts_minimum_length() {
+        let token = prepare_web_token(&"a".repeat(MIN_WEB_TOKEN_BYTES))
+            .expect("16-byte token must accept");
+        assert_eq!(token.len(), MIN_WEB_TOKEN_BYTES);
     }
 
     #[test]

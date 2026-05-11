@@ -44,7 +44,7 @@ pub struct CiriConfig {
     pub server: ServerConfig,
     #[garde(skip)]
     pub prediction: PredictionConfig,
-    #[garde(skip)]
+    #[garde(dive)]
     pub web: WebConfig,
 }
 

@@ -282,27 +282,9 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
         // shell-generated secrets (a trailing newline is the classic case)
         // must NOT survive into the compare path, otherwise a client that
         // sends the visible token without padding fails authentication
-        // against a correctly configured secret.
-        let token: String = ds.config.web.token.trim().to_string();
-        if token.is_empty() {
-            anyhow::bail!(
-                "[web] enabled but token is empty — refusing to start. \
-                 Set a non-trivial value for web.token in your config."
-            );
-        }
-        // Floor at 16 ASCII bytes — `openssl rand -hex 16` produces 32, well
-        // above this. The constant-time compare in ws::accept_ws leaks the
-        // secret's length through its length-mismatch fast path, so a short
-        // secret is trivially brute-forceable on top of the leak.
-        const MIN_WEB_TOKEN_BYTES: usize = 16;
-        if token.len() < MIN_WEB_TOKEN_BYTES {
-            anyhow::bail!(
-                "[web] token is {} bytes — refusing to start. \
-                 Minimum is {MIN_WEB_TOKEN_BYTES} bytes (generate one with \
-                 `openssl rand -hex 16` or `pwgen -s 32 1`).",
-                token.len(),
-            );
-        }
+        // against a correctly configured secret. The helper also enforces
+        // a 16-byte floor — see ws::MIN_WEB_TOKEN_BYTES.
+        let token = ws::prepare_web_token(&ds.config.web.token)?;
         let bind = if ds.config.web.bind.is_empty() {
             "127.0.0.1".to_string()
         } else {

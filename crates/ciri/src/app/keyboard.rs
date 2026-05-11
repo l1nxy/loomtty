@@ -443,43 +443,94 @@ impl App {
 
     pub(crate) fn handle_clipboard_paste(&mut self) {
         log::info!("clipboard paste triggered");
-        match &mut self.clipboard {
-            None => log::warn!("clipboard not available"),
-            Some(cb) => match cb.get_text() {
-                Err(e) => log::warn!("clipboard read failed: {e}"),
-                Ok(text) => {
-                    if self.queue_overlay_paste(&text) {
-                        log::info!("clipboard paste routed to overlay flow");
-                        return;
-                    }
-                    if self.modal_captures_keyboard() {
-                        log::debug!("clipboard paste swallowed by modal layer");
-                        return;
-                    }
 
-                    log::info!("clipboard text: {} bytes", text.len());
-                    let threshold = self.core.config.terminal.paste_warn_threshold;
-                    if let Some(info) = super::paste_guard::check_paste_size(&text, threshold) {
-                        let preview = if text.len() > 200 {
-                            format!("{}...", &text[..text.floor_char_boundary(200)])
-                        } else {
-                            text.clone()
-                        };
-                        let preview = preview.replace('\n', " \\n ").replace('\r', "");
-                        self.enter_modal_close_peers(ModalKind::PendingPaste(
-                            PendingPasteTarget::Terminal,
-                        ));
-                        self.core.pending_paste = Some(super::PendingPaste {
-                            info,
-                            preview,
-                            target: super::PendingPasteTarget::Terminal,
-                        });
-                        log::info!("paste guard: showing confirmation ({} bytes)", text.len());
-                    } else {
-                        self.send_paste_to_active_pane(text.as_bytes());
+        // Resolve the clipboard contents up front. The mutable borrow on
+        // `self.clipboard` is released before any other `self.*` call, which
+        // is what lets the existing text pipeline call `&mut self` methods
+        // afterwards.
+        enum Source {
+            Text,
+            ImagePath,
+        }
+        let (text, source) = {
+            let Some(cb) = self.clipboard.as_mut() else {
+                log::warn!("clipboard not available");
+                return;
+            };
+            match cb.get_text() {
+                Ok(t) => (t, Source::Text),
+                Err(text_err) => match cb.get_image() {
+                    Ok(img) => match super::clipboard_image::save_to_temp(&img) {
+                        Ok(path) => {
+                            log::info!("clipboard image saved: {}", path.display());
+                            let quoted =
+                                super::clipboard_image::quote_path_for_shell(&path.to_string_lossy());
+                            // Trailing space matches WindowEvent::DroppedFile so
+                            // the user's cursor lands after the argument.
+                            (format!("{quoted} "), Source::ImagePath)
+                        }
+                        Err(io_err) => {
+                            log::warn!("clipboard image save failed: {io_err}");
+                            return;
+                        }
+                    },
+                    Err(img_err) => {
+                        log::debug!(
+                            "clipboard read failed: text={text_err}, image={img_err}"
+                        );
+                        return;
                     }
-                }
-            },
+                },
+            }
+        };
+
+        // Image-path pastes go straight to the active pane: a screenshot
+        // path has no business landing in the command palette filter or
+        // tripping the paste-size confirmation dialog. Matches DroppedFile.
+        // The modal-capture check is still honored so an open PendingPaste
+        // confirmation does not get double-fed by a concurrent image paste.
+        // PNG encoding on the main thread is acceptable here — WezTerm does
+        // the same; 4K screenshots take ~200-500ms which is below the OS
+        // "not responding" threshold. TODO: offload encode to a worker if a
+        // user reports actual jank.
+        if matches!(source, Source::ImagePath) {
+            if self.modal_captures_keyboard() {
+                log::debug!("clipboard image paste swallowed by modal layer");
+                return;
+            }
+            self.send_paste_to_active_pane(text.as_bytes());
+            return;
+        }
+
+        if self.queue_overlay_paste(&text) {
+            log::info!("clipboard paste routed to overlay flow");
+            return;
+        }
+        if self.modal_captures_keyboard() {
+            log::debug!("clipboard paste swallowed by modal layer");
+            return;
+        }
+
+        log::info!("clipboard text: {} bytes", text.len());
+        let threshold = self.core.config.terminal.paste_warn_threshold;
+        if let Some(info) = super::paste_guard::check_paste_size(&text, threshold) {
+            let preview = if text.len() > 200 {
+                format!("{}...", &text[..text.floor_char_boundary(200)])
+            } else {
+                text.clone()
+            };
+            let preview = preview.replace('\n', " \\n ").replace('\r', "");
+            self.enter_modal_close_peers(ModalKind::PendingPaste(
+                PendingPasteTarget::Terminal,
+            ));
+            self.core.pending_paste = Some(super::PendingPaste {
+                info,
+                preview,
+                target: super::PendingPasteTarget::Terminal,
+            });
+            log::info!("paste guard: showing confirmation ({} bytes)", text.len());
+        } else {
+            self.send_paste_to_active_pane(text.as_bytes());
         }
     }
 

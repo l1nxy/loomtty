@@ -26,17 +26,22 @@ use tokio_tungstenite::{WebSocketStream, accept_hdr_async_with_config};
 
 use ciri_protocol::codec::MAX_DATA_FRAME_LEN;
 
-/// Cap on a single inbound WS message and on the outbound pending-write
-/// buffer. Both are sourced directly from the protocol cap so a malicious
-/// or buggy peer cannot exhaust memory by claiming a single huge binary
-/// message.
+/// Cap on a single inbound WS message. Sourced directly from the
+/// protocol payload cap so a malicious or buggy peer cannot exhaust
+/// memory by claiming a single huge binary message.
+const MAX_WS_MESSAGE_BYTES: usize = MAX_DATA_FRAME_LEN as usize;
+
+/// Cap on the outbound pending-write buffer. The codec sends frames
+/// as `[u8 tag][u32 LE len][payload]` so a single legitimate frame
+/// can be up to `MAX_DATA_FRAME_LEN + 5` bytes; add a small additional
+/// slack so the buffer can briefly hold one full frame plus a control
+/// header without tripping the tripwire.
 ///
 /// Callers wrap `WsStream` in a `BufWriter` in `handle_client`, which
-/// flushes after every batched frame group — the outbound cap exists
-/// only as a tripwire against an unbuffered writer or a buggy caller
-/// that accumulates many MiB between flushes.
-const MAX_WS_MESSAGE_BYTES: usize = MAX_DATA_FRAME_LEN as usize;
-const MAX_WS_WRITE_BYTES: usize = MAX_DATA_FRAME_LEN as usize;
+/// flushes after every batched frame group — the cap exists as a
+/// tripwire against an unbuffered writer or a buggy caller that
+/// accumulates many MiB between flushes.
+const MAX_WS_WRITE_BYTES: usize = MAX_DATA_FRAME_LEN as usize + 64;
 
 /// Wall-clock bound on the WS upgrade handshake. A slow or stalled peer
 /// must not be able to occupy a spawned task indefinitely; 10s leaves
@@ -47,9 +52,11 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Minimum byte-length for `web.token` when the gateway is enabled.
 /// `openssl rand -hex 16` produces 32 bytes, well above this; the floor
-/// is the entropy lower bound that the constant-time compare's
-/// length-leak fast path still leaves brute-forceable.
-pub const MIN_WEB_TOKEN_BYTES: usize = 16;
+/// is the byte-length lower bound that the constant-time compare's
+/// length-leak fast path still leaves brute-forceable. The check is on
+/// raw UTF-8 byte count (not codepoint count), matching the wire
+/// representation of the secret.
+pub(crate) const MIN_WEB_TOKEN_BYTES: usize = 16;
 
 /// Validate the configured web token before the gateway accepts the
 /// first connection. Returns the trimmed, owned token on success — that
@@ -173,6 +180,12 @@ pub async fn accept_ws(tcp: TcpStream, expected_token: &str) -> Result<WsStream<
 /// otherwise fall back to `?token=…` on the upgrade URL. The scheme name
 /// compare is case-insensitive per RFC 7235 §2.1 (`"Bearer"`, `"bearer"`,
 /// `"BEARER"`, etc. all match).
+///
+/// A non-UTF-8 `Authorization` value silently falls back to the query
+/// path. That preserves the documented contract ("invalid header → no
+/// header") and avoids leaking the byte sequence into any diagnostic,
+/// at the cost that a buggy proxy mangling the header to non-UTF-8 will
+/// route authentication through the query parameter.
 fn extract_bearer(req: &Request) -> Option<Cow<'_, str>> {
     let header_token = req
         .headers()
@@ -204,6 +217,13 @@ fn extract_bearer(req: &Request) -> Option<Cow<'_, str>> {
 /// Accepts both `&` (RFC 3986) and `;` (HTML 4.01 §17.13.4 / legacy
 /// proxies) as query-pair separators so a middleware that rewrites one
 /// to the other does not silently strip the token.
+///
+/// Per RFC 3986 the decoder treats `+` as a literal plus sign (not as
+/// a space — that's `application/x-www-form-urlencoded` semantics,
+/// which a WS upgrade URL does not use). Operators who generate tokens
+/// with `openssl rand -base64 …` must `%2B`-encode any `+` characters
+/// before sending; the safer recipe is `openssl rand -hex …`, which
+/// only emits `[0-9a-f]` and needs no escaping.
 fn extract_token_query(query: &str) -> Option<Cow<'_, str>> {
     for pair in query.split(['&', ';']) {
         if let Some(value) = pair.strip_prefix("token=") {
@@ -517,6 +537,15 @@ mod tests {
             .expect_err("15-byte token must error");
         assert!(err.to_string().contains("15 bytes"));
         assert!(err.to_string().contains("Minimum is 16 bytes"));
+    }
+
+    #[test]
+    fn prepare_web_token_trim_then_length_check() {
+        // Trim must happen before the length check: `"  aaa  "` reads as
+        // 7 bytes raw but trims to 3, which fails the floor. The error
+        // must reflect the trimmed length, not the raw length.
+        let err = prepare_web_token("  aaa  ").expect_err("trim-to-3 must error");
+        assert!(err.to_string().contains("3 bytes"));
     }
 
     #[test]

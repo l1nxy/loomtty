@@ -510,6 +510,7 @@ fn spawn_ws_client(
     };
 
     tokio::spawn(async move {
+        log::debug!("ws TCP accept from {addr}; starting handshake");
         let ws_stream = match ws::accept_ws(stream, &token).await {
             Ok(ws) => ws,
             Err(e) => {

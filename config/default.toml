@@ -209,4 +209,7 @@ n = "dismiss_paste_confirm"
 enabled = false
 bind = "127.0.0.1"
 port = 7891
+# Generate with `openssl rand -hex 16` (32 hex chars) and paste the
+# value between the quotes. Leave as "" while `enabled = false`.
+# token = "0123456789abcdef0123456789abcdef"
 token = ""

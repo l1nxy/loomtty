@@ -62,7 +62,7 @@ pub(crate) const MIN_WEB_TOKEN_BYTES: usize = 16;
 /// first connection. Returns the trimmed, owned token on success — that
 /// is the value that must reach `accept_ws`, not the raw config string,
 /// since surrounding whitespace would silently break authentication.
-pub fn prepare_web_token(raw: &str) -> Result<String> {
+pub(crate) fn prepare_web_token(raw: &str) -> Result<String> {
     let token = raw.trim().to_string();
     if token.is_empty() {
         return Err(anyhow!(
@@ -86,7 +86,11 @@ pub fn prepare_web_token(raw: &str) -> Result<String> {
 /// Generic over the underlying byte stream so unit tests can exercise
 /// the read/write impls against an in-memory duplex pair instead of a
 /// real TCP socket. Production code uses `WsStream<TcpStream>`.
-pub struct WsStream<S = TcpStream> {
+///
+/// The `ws` module is private to the crate; `pub` on this and the
+/// adjacent items reflects the scope inside the module, not an
+/// external API contract.
+pub(crate) struct WsStream<S = TcpStream> {
     ws: WebSocketStream<S>,
     /// Bytes pulled from the most recent inbound Binary message that
     /// haven't been delivered to the reader yet.
@@ -127,7 +131,10 @@ impl<S> WsStream<S> {
 // `Result<Response, ErrorResponse>` variant size, but the type is dictated
 // by tungstenite's callback contract so we can't shrink it.
 #[allow(clippy::result_large_err)]
-pub async fn accept_ws(tcp: TcpStream, expected_token: &str) -> Result<WsStream<TcpStream>> {
+pub(crate) async fn accept_ws(
+    tcp: TcpStream,
+    expected_token: &str,
+) -> Result<WsStream<TcpStream>> {
     if expected_token.is_empty() {
         // Defensive: the daemon already rejects empty tokens at startup,
         // but if someone ever bypasses that, refuse to authenticate any
@@ -339,11 +346,17 @@ where
                 buf.len(),
             ))));
         }
-        // Honour the AsyncWrite contract: if accepting this write would
-        // overflow the pending buffer, drain first. `poll_flush` empties
-        // `write_buf` via `mem::take`, so after `ready!` the buffer is
-        // guaranteed empty — combined with the `buf.len() <= cap` check
-        // above, the new write always fits, no second guard needed.
+        // When accepting this write would overflow the pending buffer,
+        // drain first via `poll_flush`. The inner sink's `poll_ready` /
+        // `poll_flush` register `cx.waker()` on Pending, so propagating
+        // `ready!` here yields the correct backpressure semantics: the
+        // caller is woken when the underlying sink can accept more
+        // bytes, at which point retrying `poll_write` succeeds because
+        // `mem::take` inside `poll_flush` has emptied `write_buf`.
+        //
+        // This pattern (poll_flush from poll_write) is unconventional
+        // but is the cheapest way to satisfy the AsyncWrite contract
+        // without re-implementing tungstenite's send-readiness signal.
         if self.write_buf.len().saturating_add(buf.len()) > MAX_WS_WRITE_BYTES {
             ready!(self.as_mut().poll_flush(cx))?;
         }
@@ -508,6 +521,22 @@ mod tests {
             Some("token=q"),
         );
         assert_eq!(extract_bearer(&req).as_deref(), Some("q"));
+    }
+
+    #[test]
+    fn extract_bearer_non_utf8_header_falls_back_to_query() {
+        // `to_str()` rejects non-UTF-8; the header is dropped silently
+        // and the query path is consulted. A proxy that mangles the
+        // header to Latin-1 must not stop a correctly-encoded ?token=.
+        let raw_bytes: [u8; 9] = [b'B', b'e', b'a', b'r', b'e', b'r', b' ', 0xff, 0xfe];
+        let value =
+            tokio_tungstenite::tungstenite::http::HeaderValue::from_bytes(&raw_bytes).unwrap();
+        let req = tokio_tungstenite::tungstenite::http::Request::builder()
+            .uri("/?token=via-query")
+            .header("authorization", value)
+            .body(())
+            .unwrap();
+        assert_eq!(extract_bearer(&req).as_deref(), Some("via-query"));
     }
 
     #[test]

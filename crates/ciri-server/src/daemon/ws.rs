@@ -16,6 +16,7 @@ use std::borrow::Cow;
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
@@ -36,6 +37,13 @@ use ciri_protocol::codec::MAX_DATA_FRAME_LEN;
 /// that accumulates many MiB between flushes.
 const MAX_WS_MESSAGE_BYTES: usize = MAX_DATA_FRAME_LEN as usize;
 const MAX_WS_WRITE_BYTES: usize = MAX_DATA_FRAME_LEN as usize;
+
+/// Wall-clock bound on the WS upgrade handshake. A slow or stalled peer
+/// must not be able to occupy a spawned task indefinitely; 10s leaves
+/// plenty of room for a reasonable browser/CLI handshake while reaping
+/// slow-loris-style attempts that complete the TCP three-way handshake
+/// and then stop talking.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Adapter exposing a binary WebSocket as `AsyncRead + AsyncWrite`.
 ///
@@ -92,7 +100,7 @@ pub async fn accept_ws(tcp: TcpStream, expected_token: &str) -> Result<WsStream<
     }
     let expected = expected_token.as_bytes().to_vec();
 
-    let ws = accept_hdr_async(tcp, move |req: &Request, response: Response| {
+    let handshake = accept_hdr_async(tcp, move |req: &Request, response: Response| {
         let token_ok = extract_bearer(req)
             .map(|t| constant_time_eq(t.as_bytes(), &expected))
             .unwrap_or(false);
@@ -104,9 +112,12 @@ pub async fn accept_ws(tcp: TcpStream, expected_token: &str) -> Result<WsStream<
             return Err(err);
         }
         Ok(response)
-    })
-    .await
-    .map_err(|e| anyhow!("ws handshake failed: {e}"))?;
+    });
+
+    let ws = tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake)
+        .await
+        .map_err(|_| anyhow!("ws handshake timed out after {HANDSHAKE_TIMEOUT:?}"))?
+        .map_err(|e| anyhow!("ws handshake failed: {e}"))?;
 
     Ok(WsStream::new(ws))
 }
@@ -116,29 +127,38 @@ pub async fn accept_ws(tcp: TcpStream, expected_token: &str) -> Result<WsStream<
 /// compare is case-insensitive per RFC 7235 §2.1 (`"Bearer"`, `"bearer"`,
 /// `"BEARER"`, etc. all match).
 fn extract_bearer(req: &Request) -> Option<Cow<'_, str>> {
-    if let Some(value) = req.headers().get("authorization")
-        && let Ok(s) = value.to_str()
-        && let Some((scheme, rest)) = s.split_once(' ')
-        && scheme.eq_ignore_ascii_case("Bearer")
-    {
-        let trimmed = rest.trim();
+    let header_token = req
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split_once(' '))
+        .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("Bearer"))
+        .map(|(_, rest)| rest.trim())
         // Tokens are required to be a single non-empty whitespace-free
         // run. A whitespace-containing value almost certainly indicates
         // operator error (concatenated headers, malformed input) — reject
         // it rather than forwarding garbage to the constant-time compare.
-        if !trimmed.is_empty() && !trimmed.contains(char::is_whitespace) {
-            return Some(Cow::Borrowed(trimmed));
-        }
+        .filter(|t| !t.is_empty() && !t.contains(char::is_whitespace));
+
+    let query_token = req.uri().query().and_then(extract_token_query);
+
+    if header_token.is_some() && query_token.is_some() {
+        // Defined precedence is "header wins" but the diagnostic helps
+        // operators chasing config drift between two delivery channels.
+        log::debug!("ws auth: both Authorization header and ?token= present — header wins");
     }
-    let query = req.uri().query()?;
-    extract_token_query(query)
+    header_token.map(Cow::Borrowed).or(query_token)
 }
 
 /// Find a `token=` pair in a URL query string and percent-decode the
 /// value. Only the first occurrence is returned; later duplicates are
 /// ignored, matching how browsers and servers usually treat them.
+///
+/// Accepts both `&` (RFC 3986) and `;` (HTML 4.01 §17.13.4 / legacy
+/// proxies) as query-pair separators so a middleware that rewrites one
+/// to the other does not silently strip the token.
 fn extract_token_query(query: &str) -> Option<Cow<'_, str>> {
-    for pair in query.split('&') {
+    for pair in query.split(['&', ';']) {
         if let Some(value) = pair.strip_prefix("token=") {
             // Decode `%xx` escapes so a token containing `+`, `=`, `&`,
             // `%`, or non-ASCII survives the URL round-trip. Invalid
@@ -313,10 +333,10 @@ mod tests {
 
     #[test]
     fn extract_token_query_stops_at_unencoded_separator() {
-        // `&` is the query-pair separator. An unencoded `&` inside a
-        // token splits the pair before percent-decoding even runs; the
-        // returned value is truncated. Operators must percent-encode `&`
-        // in tokens (`%26`) — this assertion documents the contract.
+        // `&` and `;` are both treated as query-pair separators. An
+        // unencoded one inside a token splits the pair before
+        // percent-decoding even runs; the returned value is truncated.
+        // Operators must percent-encode them (`%26` / `%3B`).
         assert_eq!(
             extract_token_query("token=abc&def").as_deref(),
             Some("abc"),
@@ -324,6 +344,16 @@ mod tests {
         assert_eq!(
             extract_token_query("token=abc%26def").as_deref(),
             Some("abc&def"),
+        );
+        assert_eq!(
+            extract_token_query("token=abc;def").as_deref(),
+            Some("abc"),
+        );
+        // Semicolon-separated pair format is also accepted as a
+        // separator for the outer split; legacy HTML / proxy behavior.
+        assert_eq!(
+            extract_token_query("foo=1;token=abc").as_deref(),
+            Some("abc"),
         );
     }
 
@@ -452,6 +482,26 @@ mod tests {
             Message::Binary(b) => assert_eq!(b, vec![1, 2, 3, 4, 5, 6]),
             other => panic!("expected Binary, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn poll_read_reassembles_consecutive_messages() {
+        let (mut server, mut client) = paired_ws().await;
+        client.send(Message::Binary(vec![1, 2, 3])).await.unwrap();
+        client.send(Message::Binary(vec![4, 5])).await.unwrap();
+        client.send(Message::Binary(vec![6, 7, 8, 9])).await.unwrap();
+        client.flush().await.unwrap();
+        // Don't close the client — keep the connection alive so the
+        // reader does not see EOF before draining all messages.
+
+        let mut out = Vec::new();
+        let mut chunk = [0u8; 4];
+        while out.len() < 9 {
+            let n = server.read(&mut chunk).await.unwrap();
+            assert!(n > 0, "premature EOF at {} bytes", out.len());
+            out.extend_from_slice(&chunk[..n]);
+        }
+        assert_eq!(out, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
     }
 
     #[tokio::test]

@@ -363,7 +363,16 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
                     tokio::spawn(connection::handle_client(reader, writer, state, client_shutdown, client_input_notify));
                 }
                 result = tcp_accept(&ws_listener) => {
-                    let (stream, addr) = result?;
+                    let (stream, addr) = match result {
+                        Ok(v) => v,
+                        Err(e) => {
+                            // EMFILE/ENFILE/ECONNABORTED and similar
+                            // transient errors must not kill the entire
+                            // daemon — log and keep accepting.
+                            log::warn!("ws accept failed: {e}");
+                            continue;
+                        }
+                    };
                     stream.set_nodelay(true).ok();
                     spawn_ws_client(
                         stream,
@@ -403,7 +412,13 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
                     continue;
                 }
                 result = tcp_accept(&ws_listener) => {
-                    let (stream, addr) = result?;
+                    let (stream, addr) = match result {
+                        Ok(v) => v,
+                        Err(e) => {
+                            log::warn!("ws accept failed: {e}");
+                            continue;
+                        }
+                    };
                     stream.set_nodelay(true).ok();
                     spawn_ws_client(
                         stream,

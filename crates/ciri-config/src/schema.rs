@@ -883,15 +883,23 @@ impl Default for PredictionConfig {
 /// address you are responsible for terminating TLS upstream — the
 /// gateway itself speaks plain ws:// and relies on a single shared
 /// token for authentication.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 #[serde(default)]
 pub struct WebConfig {
+    #[garde(skip)]
     pub enabled: bool,
+    #[garde(skip)]
     pub bind: String,
+    /// Reject `port = 0` (OS-assigned ephemeral). The daemon prints the
+    /// configured port at startup, so an ephemeral assignment would lie
+    /// to operators who later try to point clients at the logged value.
+    #[garde(range(min = 1))]
     pub port: u16,
-    /// Shared token required as `?token=…` on the upgrade URL. Must be
-    /// non-empty when `enabled` is true; the daemon refuses to start
-    /// otherwise.
+    /// Shared token required on the upgrade. The daemon enforces a 16-byte
+    /// floor at startup when `enabled = true`; that pairing of two fields
+    /// is verified there rather than as a per-field garde rule, because
+    /// `enabled = false, token = ""` is a valid resting state.
+    #[garde(skip)]
     pub token: String,
 }
 

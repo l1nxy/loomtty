@@ -33,7 +33,7 @@
 |---|------|------|------|------|
 | R1-4 / R2-26 | ✓ | `ws.rs:poll_write` | 错误信息说成 "flush buffer" 但是从 `poll_write` 抛 | 698d994 改文案 + 加 BufWriter 交互文档 |
 | R1-13 | ✓ | `ws.rs:poll_read` | "drop the old buffer so the next Binary message can reuse the allocation" 注释错误（实际从未复用） | 698d994 改成 `self.read_buf = Vec::new()` + 注释如实说"释放，不复用" |
-| R1-20 | ✓ | `ws.rs` / `ciri-protocol/codec/mod.rs` | 用了字面量 `16 * 1024 * 1024`，与 protocol 真常量无强约束 | 698d994 把 `MAX_DATA_FRAME_LEN` 提升为 `pub` 并加 `const _: () = assert!(…)` |
+| R1-20 | ✓ | `ws.rs` / `ciri-protocol/codec/mod.rs` | 用了字面量 `16 * 1024 * 1024`，与 protocol 真常量无强约束 | 698d994 把 `MAX_DATA_FRAME_LEN` 提升为 `pub`；`MAX_WS_*` 直接 `= MAX_DATA_FRAME_LEN as usize`，无需 assert |
 | R1-22 | ✓ | `Cargo.toml` workspace | `futures-util` features 不显式（`Stream`/`ready!` 靠传递依赖） | 698d994 改成 `["std", "sink", "async-await"]` |
 
 ### A3. 测试覆盖

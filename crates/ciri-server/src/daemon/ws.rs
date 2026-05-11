@@ -229,8 +229,10 @@ fn extract_bearer(req: &Request) -> Option<Cow<'_, str>> {
 /// a space — that's `application/x-www-form-urlencoded` semantics,
 /// which a WS upgrade URL does not use). Operators who generate tokens
 /// with `openssl rand -base64 …` must `%2B`-encode any `+` characters
-/// before sending; the safer recipe is `openssl rand -hex …`, which
-/// only emits `[0-9a-f]` and needs no escaping.
+/// before sending, and similarly `%3B`-encode any `;` (which would
+/// otherwise terminate the token early via the legacy separator).
+/// The safer recipe is `openssl rand -hex …`, which only emits
+/// `[0-9a-f]` and needs no escaping.
 fn extract_token_query(query: &str) -> Option<Cow<'_, str>> {
     for pair in query.split(['&', ';']) {
         if let Some(value) = pair.strip_prefix("token=") {

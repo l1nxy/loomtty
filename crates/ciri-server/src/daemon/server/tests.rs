@@ -230,6 +230,10 @@ fn switch_session_to_new_session_refreshes_attach_ordering_for_list_sessions() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "ConPTY + PowerShell prompt rendering eats the second printf in a small pane; see 9e5d317"
+)]
 fn alt_screen_full_sync_keeps_primary_scrollback_watermark_unsent() {
     let mut pane = Pane::new_with_opts(1, 80, 5, test_shell(), None, None).expect("create pane");
 

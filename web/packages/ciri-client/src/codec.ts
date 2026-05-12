@@ -145,7 +145,19 @@ function encodeEnumVariantInto(
   void _discriminant;
   w.writeMapHeader(1);
   w.writeString(variant.name);
-  encodeContainerInto(w, payload, variant.shape);
+  // For newtype/tuple-struct variant shapes, the TS surface puts the
+  // payload under a `value` key (`{ tag: "Foo", value: T }`), but the
+  // inner encoder expects T itself, not the wrapper object. Unwrap
+  // before recursing. Struct variants keep the named-field shape on
+  // both sides.
+  if (
+    variant.shape.kind === "newtype-struct" ||
+    variant.shape.kind === "tuple-struct"
+  ) {
+    encodeContainerInto(w, payload["value"], variant.shape);
+  } else {
+    encodeContainerInto(w, payload, variant.shape);
+  }
 }
 
 function encodeValueInto(w: MsgpackWriter, value: unknown, ty: SchemaType): void {
@@ -465,14 +477,25 @@ function decodeValue(raw: unknown, ty: SchemaType): unknown {
       return arr.map((v) => decodeValue(v, ty.of));
     }
     case "map": {
-      if (!(raw instanceof Map)) {
-        throw new CodecError(`map expected Map, got ${typeofTag(raw)}`);
-      }
+      // @msgpack/msgpack decodes msgpack maps with string keys to
+      // plain JS objects (NOT to `Map` instances), so an `instanceof
+      // Map` check would always miss a real `HashMap<String, V>` from
+      // the server. Accept both shapes — a JS Map (if the caller's
+      // decoder ever opts into one) and a plain object.
       const out = new Map<unknown, unknown>();
-      for (const [k, v] of raw) {
-        out.set(decodeValue(k, ty.key), decodeValue(v, ty.value));
+      if (raw instanceof Map) {
+        for (const [k, v] of raw) {
+          out.set(decodeValue(k, ty.key), decodeValue(v, ty.value));
+        }
+        return out;
       }
-      return out;
+      if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
+        for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+          out.set(decodeValue(k, ty.key), decodeValue(v, ty.value));
+        }
+        return out;
+      }
+      throw new CodecError(`map expected object or Map, got ${typeofTag(raw)}`);
     }
     default:
       throw new CodecError(`unhandled schema kind: ${(ty as { kind: string }).kind}`);

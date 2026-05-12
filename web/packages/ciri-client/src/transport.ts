@@ -123,16 +123,29 @@ export class WebSocketTransport {
     this.enqueue(bytes);
   }
 
-  /** Close the socket and stop reconnecting. Idempotent. */
+  /** Close the socket and stop reconnecting. Idempotent — keyed on
+   *  `intentionallyClosed` (NOT `_state === "closed"`) so we can
+   *  still synthesize a terminal `onClose` when the user calls
+   *  `close()` mid-reconnect-backoff (state is already "closed" at
+   *  that point, but the lifecycle hasn't been finalized). */
   close(code = 1000, reason = "client closed"): void {
+    if (this.intentionallyClosed) return;
     this.intentionallyClosed = true;
     this.clearReconnectTimer();
     if (this.ws && (this._state === "open" || this._state === "connecting")) {
       this._state = "closing";
       this.ws.close(code, reason);
-    } else {
-      this._state = "closed";
+      // Real-browser `ws.close()` fires `onclose` asynchronously, so
+      // `handleClose` will deliver the `onClose` callback on its own.
+      return;
     }
+    // No live socket — either we never started, or close() was
+    // called between a transient drop and the pending reconnect
+    // timer firing. Synthesize a terminal `reconnecting: false`
+    // event so callers stop pretending a reconnect is still
+    // pending.
+    this._state = "closed";
+    this.cbs.onClose?.({ code, reason, reconnecting: false });
   }
 
   // ─── Internal lifecycle ──────────────────────────────────────────

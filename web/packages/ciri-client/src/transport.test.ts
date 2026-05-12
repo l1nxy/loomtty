@@ -267,4 +267,55 @@ describe("WebSocketTransport", () => {
       vi.useRealTimers();
     }
   });
+
+  test("close() during reconnect backoff still fires terminal onClose", () => {
+    // Without the synthesized onClose in transport.close(), callers
+    // staring at a "reconnecting…" UI would never learn the lifecycle
+    // ended when the user navigated away mid-backoff.
+    vi.useFakeTimers();
+    try {
+      const { factory, sockets } = makeFakeFactory();
+      const closes: { reconnecting: boolean }[] = [];
+      const t = new WebSocketTransport(
+        {
+          url: "ws://example.test",
+          reconnect: true,
+          initialReconnectDelayMs: 200,
+          webSocketFactory: factory,
+        },
+        { onClose: (i) => closes.push({ reconnecting: i.reconnecting }) },
+      );
+      t.start();
+      sockets[0]!.simulateOpen();
+      sockets[0]!.simulateClose(1006, "drop"); // transient → reconnecting:true
+      expect(closes).toEqual([{ reconnecting: true }]);
+      // Mid-backoff (timer not yet fired): caller calls close().
+      vi.advanceTimersByTime(50);
+      t.close();
+      expect(closes).toEqual([
+        { reconnecting: true },
+        { reconnecting: false },
+      ]);
+      // And the pending reconnect timer is cancelled.
+      vi.advanceTimersByTime(10_000);
+      expect(sockets).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("close() is idempotent — second call is a no-op", () => {
+    const { factory, sockets } = makeFakeFactory();
+    const closes: unknown[] = [];
+    const t = new WebSocketTransport(
+      { url: "ws://example.test", reconnect: false, webSocketFactory: factory },
+      { onClose: (i) => closes.push(i) },
+    );
+    t.start();
+    sockets[0]!.simulateOpen();
+    t.close();
+    const after = closes.length;
+    t.close();
+    expect(closes.length).toBe(after);
+  });
 });

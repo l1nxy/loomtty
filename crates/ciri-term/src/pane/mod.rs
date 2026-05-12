@@ -7,7 +7,7 @@ pub mod types;
 
 pub use cell::{pack_cell, pack_color};
 pub use colors::TerminalColors;
-pub use types::{ImagePlacement, PaneId, SemanticZone, ShellState};
+pub use types::{ImagePlacement, PaneId, PromptMark, PromptMarkRing, SemanticZone, ShellState};
 
 use alacritty_terminal::event::{Event, WindowSize};
 use alacritty_terminal::grid::Dimensions;
@@ -25,6 +25,7 @@ use crate::image_store::ImageStore;
 use crate::parser_suite::ParserSuite;
 use crate::pending_events::PendingEvents;
 use crate::pty::Pty;
+use crate::shell_integration::Osc133Event;
 use cell::round_cell_size;
 use colors::default_color;
 
@@ -102,6 +103,10 @@ pub struct Pane {
     pub id: PaneId,
     pub title: String,
     pub shell_state: ShellState,
+    /// History of OSC 133 prompt boundaries — see [`PromptMark`]. Bounded
+    /// ring; oldest entries fall off when full or when their prompt row is
+    /// evicted from the grid's scrollback.
+    pub prompt_marks: PromptMarkRing,
 
     term: Term<PtyEventListener>,
     processor: Processor,
@@ -188,6 +193,7 @@ impl Pane {
                 output_line: None,
                 command_start: None,
             },
+            prompt_marks: PromptMarkRing::new(),
             term,
             processor: Processor::new(),
             event_rx,
@@ -248,11 +254,15 @@ impl Pane {
         }
 
         for chunk in &chunks {
-            self.parsers.scan_control(
-                chunk,
-                &mut self.shell_state,
-                &mut self.events.command_completion,
-            );
+            // Snapshot the absolute line BEFORE advancing this chunk. Shells
+            // emit OSC 133 sequences at chunk boundaries (precmd/preexec
+            // hooks fire as standalone PTY writes), so this is the correct
+            // row for every OSC 133 event observed within the chunk.
+            let abs_line_at_chunk_start = self.current_abs_line();
+            let osc133_events = self.parsers.scan_control(chunk);
+            for event in osc133_events {
+                self.apply_osc133_event(event, abs_line_at_chunk_start);
+            }
             self.scan_osc_notifications(chunk);
         }
 
@@ -278,6 +288,60 @@ impl Pane {
 
         self.images.cap_active();
         true
+    }
+
+    /// Absolute grid line of the current cursor position. "Absolute" here
+    /// means `scrollback_total + cursor.line` — a monotonically non-decreasing
+    /// row counter on the primary screen that stays stable as rows scroll
+    /// into history. See [`PromptMark`] for why this matters.
+    fn current_abs_line(&self) -> u64 {
+        let cursor_line = self.term.grid().cursor.point.line.0 as i64;
+        let base = self.scrollback_total() as i64;
+        (base + cursor_line).max(0) as u64
+    }
+
+    fn apply_osc133_event(&mut self, event: Osc133Event, abs_line: u64) {
+        match event {
+            Osc133Event::PromptStart => {
+                self.shell_state.zone = SemanticZone::Prompt;
+                // `prompt_line.is_some()` is the long-standing "shell
+                // integration is active" sentinel checked by
+                // `mode_flags_from_term`. The actual per-command line
+                // numbers live in `prompt_marks`.
+                self.shell_state.prompt_line = Some(0);
+                self.shell_state.command_start = None;
+                self.prompt_marks.begin_prompt(abs_line);
+            }
+            Osc133Event::CommandInput => {
+                self.shell_state.zone = SemanticZone::Input;
+            }
+            Osc133Event::CommandOutput => {
+                self.shell_state.zone = SemanticZone::Output;
+                self.shell_state.output_line = Some(0);
+                self.shell_state.command_start = Some(std::time::Instant::now());
+                self.prompt_marks.mark_output(abs_line);
+            }
+            Osc133Event::Done { exit_code } => {
+                self.shell_state.zone = SemanticZone::Prompt;
+                self.shell_state.last_exit_code = exit_code;
+                let duration = self
+                    .shell_state
+                    .command_start
+                    .take()
+                    .map(|s| s.elapsed());
+                if let Some(d) = duration {
+                    self.events.command_completion = Some(d);
+                }
+                self.prompt_marks.mark_done(abs_line, exit_code, duration);
+                // Drop marks whose prompt row has aged out of the scrollback
+                // ring. `scrollback_total - history_size` is the oldest line
+                // still reachable in the grid.
+                let history_cap = self.term.grid().history_size() as u64;
+                let scrollback_total = self.scrollback_total() as u64;
+                let min_reachable = scrollback_total.saturating_sub(history_cap);
+                self.prompt_marks.prune_below(min_reachable);
+            }
+        }
     }
 
     fn process_terminal_events(&mut self) {

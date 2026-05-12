@@ -5,28 +5,28 @@ use std::io;
 
 // ─── Opcode constants ────────────────────────────────────────────────
 
-pub(super) const OP_SET_FG: u8 = 0x01;
-pub(super) const OP_SET_BG: u8 = 0x02;
-pub(super) const OP_SET_FLAGS: u8 = 0x03;
-pub(super) const OP_SET_FG_BG: u8 = 0x04;
-pub(super) const OP_RESET: u8 = 0x05;
+pub const OP_SET_FG: u8 = 0x01;
+pub const OP_SET_BG: u8 = 0x02;
+pub const OP_SET_FLAGS: u8 = 0x03;
+pub const OP_SET_FG_BG: u8 = 0x04;
+pub const OP_RESET: u8 = 0x05;
 
-pub(super) const OP_CHAR1: u8 = 0x10;
-pub(super) const OP_CHARS: u8 = 0x11;
-pub(super) const OP_REPEAT: u8 = 0x12;
-pub(super) const OP_CHARS_LONG: u8 = 0x13;
+pub const OP_CHAR1: u8 = 0x10;
+pub const OP_CHARS: u8 = 0x11;
+pub const OP_REPEAT: u8 = 0x12;
+pub const OP_CHARS_LONG: u8 = 0x13;
 /// ASCII run: 1-byte count + N raw ASCII bytes (1 byte each instead of 4).
-pub(super) const OP_ASCII: u8 = 0x14;
+pub const OP_ASCII: u8 = 0x14;
 /// Single ASCII repeat: 2-byte count + 1 ASCII byte.
-pub(super) const OP_ASCII_REPEAT: u8 = 0x15;
+pub const OP_ASCII_REPEAT: u8 = 0x15;
 
 /// Compact color opcodes: Named/Indexed use 2 bytes instead of 4.
-pub(super) const OP_SET_FG_NAMED: u8 = 0x06;
-pub(super) const OP_SET_BG_NAMED: u8 = 0x07;
-pub(super) const OP_SET_FG_INDEXED: u8 = 0x08;
-pub(super) const OP_SET_BG_INDEXED: u8 = 0x09;
+pub const OP_SET_FG_NAMED: u8 = 0x06;
+pub const OP_SET_BG_NAMED: u8 = 0x07;
+pub const OP_SET_FG_INDEXED: u8 = 0x08;
+pub const OP_SET_BG_INDEXED: u8 = 0x09;
 
-pub(super) const OP_END: u8 = 0xFF;
+pub const OP_END: u8 = 0xFF;
 
 // ─── Encoder ─────────────────────────────────────────────────────────
 

@@ -1,0 +1,20 @@
+{
+  "name": "ciri-web",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Browser-facing renderer + codec for ciritty",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "gen:constants": "cargo run --manifest-path ../Cargo.toml -p ciri-protocol --example dump_constants > packages/ciri-codec/src/constants.ts",
+    "test": "npm -ws --if-present run test",
+    "build": "npm -ws --if-present run build",
+    "lint": "npm -ws --if-present run lint"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

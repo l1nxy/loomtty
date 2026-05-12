@@ -7,6 +7,9 @@ use super::{
 };
 use crate::grid::ClientPaneGrid;
 
+const TOLERANT_MISMATCH_MIN_MS: u64 = 2_000;
+const TOLERANT_MISMATCH_MAX_MS: u64 = 5_000;
+
 impl PredictionEngine {
     /// Validate predictions against authoritative server state.
     ///
@@ -23,6 +26,7 @@ impl PredictionEngine {
         let prev = self.last_dims.insert(pane_id, dims);
         if prev.is_some_and(|d| d != dims) {
             self.overlays.remove(&pane_id);
+            self.force_visible_panes.remove(&pane_id);
             return;
         }
 
@@ -34,6 +38,9 @@ impl PredictionEngine {
         }
 
         let now = Instant::now();
+        let mismatch_grace_ms = (self.srtt_us / 1000)
+            .saturating_mul(4)
+            .clamp(TOLERANT_MISMATCH_MIN_MS, TOLERANT_MISMATCH_MAX_MS);
         overlay.expire_old(now);
 
         let cols = grid.cols as usize;
@@ -158,6 +165,10 @@ impl PredictionEngine {
                 let pred_ch = cell.replacement.ch();
 
                 if pred_ch != actual_ch {
+                    let pred_ms = now.duration_since(cell.created_at).as_millis() as u64;
+                    if cell.tolerate_mismatch && pred_ms < mismatch_grace_ms {
+                        continue;
+                    }
                     if cell.epoch <= confirmed {
                         need_reset = true;
                     } else {
@@ -169,6 +180,7 @@ impl PredictionEngine {
 
         if need_reset {
             self.overlays.remove(&pane_id);
+            self.force_visible_panes.remove(&pane_id);
             return;
         }
 
@@ -185,8 +197,16 @@ impl PredictionEngine {
             if echo_ack >= cur.min_echo_ack {
                 if cur.row == grid.cursor_line && cur.col == grid.cursor_col {
                     overlay.cursor = None;
+                } else if cur.tolerate_mismatch
+                    && (now.duration_since(cur.created_at).as_millis() as u64) < mismatch_grace_ms
+                {
+                    // `echo_ack` means the server received the input, not that
+                    // the PTY output has already reached the grid. Keep
+                    // hidden/force-visible predictions alive briefly so a
+                    // following Backspace can still use the local edit state.
                 } else {
                     self.overlays.remove(&pane_id);
+                    self.force_visible_panes.remove(&pane_id);
                     return;
                 }
             }
@@ -195,7 +215,10 @@ impl PredictionEngine {
         if let Some(overlay) = self.overlays.get_mut(&pane_id) {
             overlay.gc_rows();
             if overlay.is_empty() {
-                self.overlays.remove(&pane_id);
+                self.force_visible_panes.remove(&pane_id);
+                if overlay.local_edit_start.is_none() {
+                    self.overlays.remove(&pane_id);
+                }
             }
         }
     }

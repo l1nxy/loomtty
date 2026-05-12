@@ -7,6 +7,32 @@ use super::overlay::{PaneOverlay, PredictedCursor};
 use crate::grid::ClientPaneGrid;
 
 impl PredictionEngine {
+    fn starts_local_edit(data: &[u8]) -> bool {
+        !data.is_empty() && !data.iter().any(|b| matches!(*b, 0x00..=0x1F | 0x7F))
+    }
+
+    fn ends_local_edit(data: &[u8]) -> bool {
+        data.iter().any(|b| matches!(*b, 0x03 | 0x04 | 0x0A | 0x0D))
+    }
+
+    fn backspace_only(data: &[u8]) -> bool {
+        !data.is_empty() && data.iter().all(|b| matches!(*b, 0x08 | 0x7F))
+    }
+
+    fn requires_local_edit_start(grid: &ClientPaneGrid) -> bool {
+        grid.mode_flags & (MODE_ALT_SCREEN | MODE_MOUSE_REPORT | MODE_BRACKETED_PASTE) != 0
+            || grid.kitty_flags != 0
+    }
+
+    fn clear_local_edit_state(&mut self, pane_id: u64) {
+        self.overlays.remove(&pane_id);
+        self.force_visible_panes.remove(&pane_id);
+    }
+
+    fn cursor_at_or_before(row: i16, col: u16, start: (i16, u16)) -> bool {
+        row < start.0 || (row == start.0 && col <= start.1)
+    }
+
     /// Predict inserting `ch` at cursor position with insert-mode right-shift.
     /// Returns the char width (columns consumed), or 0 if prediction was abandoned.
     pub(super) fn predict_char(
@@ -17,6 +43,7 @@ impl PredictionEngine {
         ccol: u16,
         min_ack: u64,
         show_ul: bool,
+        tolerate_mismatch: bool,
     ) -> u16 {
         let char_width = ch.width().unwrap_or(1) as u16;
         if ccol + char_width > grid.cols {
@@ -58,6 +85,7 @@ impl PredictionEngine {
             dc.min_echo_ack = min_ack;
             dc.original_ch = orig_ch;
             dc.unknown = src_unknown;
+            dc.tolerate_mismatch = tolerate_mismatch;
         }
 
         // Mark rightmost cells as unknown.
@@ -75,6 +103,7 @@ impl PredictionEngine {
                     dc.original_ch = grid.viewport.get(orig_idx).map(|c| c.ch()).unwrap_or('\0');
                 }
                 orow.cells[uc as usize].unknown = true;
+                orow.cells[uc as usize].tolerate_mismatch = tolerate_mismatch;
             }
         }
 
@@ -124,6 +153,7 @@ impl PredictionEngine {
         cc.min_echo_ack = min_ack;
         cc.original_ch = orig_ch;
         cc.unknown = false;
+        cc.tolerate_mismatch = tolerate_mismatch;
 
         // Wide char spacer.
         if char_width == 2 {
@@ -146,6 +176,7 @@ impl PredictionEngine {
             sc.min_echo_ack = min_ack;
             sc.original_ch = spacer_orig;
             sc.unknown = false;
+            sc.tolerate_mismatch = tolerate_mismatch;
         }
 
         char_width
@@ -153,22 +184,78 @@ impl PredictionEngine {
 
     /// Process user keyboard input and generate predictions.
     pub fn new_user_input(&mut self, pane_id: u64, data: &[u8], grid: &ClientPaneGrid) {
-        if self.mode == ciri_config::config::PredictionMode::Never {
+        self.new_user_input_internal(pane_id, data, grid, self.next_input_seq, false, false);
+    }
+
+    /// Process user keyboard input and generate predictions tied to a specific input ack.
+    pub fn new_user_input_with_min_ack(
+        &mut self,
+        pane_id: u64,
+        data: &[u8],
+        grid: &ClientPaneGrid,
+        min_ack: u64,
+    ) {
+        self.new_user_input_internal(pane_id, data, grid, min_ack, false, false);
+    }
+
+    /// Track local editable input even when speculative display is disabled.
+    ///
+    /// This keeps the prediction cursor/cells coherent for a following
+    /// force-visible Backspace without making regular typed text visible in
+    /// `PredictionMode::Never`.
+    pub fn new_user_input_track_hidden(
+        &mut self,
+        pane_id: u64,
+        data: &[u8],
+        grid: &ClientPaneGrid,
+        min_ack: u64,
+    ) {
+        self.new_user_input_internal(pane_id, data, grid, min_ack, false, true);
+    }
+
+    /// Process input as an immediately visible local prediction, even when
+    /// regular speculative echo is disabled.
+    pub fn new_user_input_force_visible(
+        &mut self,
+        pane_id: u64,
+        data: &[u8],
+        grid: &ClientPaneGrid,
+        min_ack: u64,
+    ) {
+        self.new_user_input_internal(pane_id, data, grid, min_ack, true, true);
+    }
+
+    fn new_user_input_internal(
+        &mut self,
+        pane_id: u64,
+        data: &[u8],
+        grid: &ClientPaneGrid,
+        min_ack: u64,
+        force_visible: bool,
+        force_track: bool,
+    ) {
+        if self.mode == ciri_config::config::PredictionMode::Never && !force_track {
+            if Self::ends_local_edit(data) {
+                self.clear_local_edit_state(pane_id);
+            }
             return;
         }
         if grid.cols == 0 || grid.rows == 0 {
             return;
         }
-        if grid.mode_flags & MODE_ALT_SCREEN != 0
-            || grid.mode_flags & MODE_MOUSE_REPORT != 0
-            || grid.mode_flags & MODE_BRACKETED_PASTE != 0
+        if !force_track
+            && (grid.mode_flags & MODE_ALT_SCREEN != 0
+                || grid.mode_flags & MODE_MOUSE_REPORT != 0
+                || grid.mode_flags & MODE_BRACKETED_PASTE != 0)
         {
+            if Self::ends_local_edit(data) {
+                self.clear_local_edit_state(pane_id);
+            }
             return;
         }
 
         self.bump_visual_serial_for_pane(pane_id);
 
-        let min_ack = self.next_input_seq;
         let show_ul = self.show_underline
             && (self.flagging || self.mode == ciri_config::config::PredictionMode::Always);
         let cols = grid.cols;
@@ -190,6 +277,27 @@ impl PredictionEngine {
             overlay.increment_epoch();
             return;
         }
+        if force_track
+            && !force_visible
+            && overlay.local_edit_start.is_none()
+            && Self::starts_local_edit(data)
+        {
+            overlay.local_edit_start = Some((crow, ccol));
+        }
+        if force_visible
+            && Self::backspace_only(data)
+            && overlay.local_edit_start.is_none()
+            && Self::requires_local_edit_start(grid)
+        {
+            if overlay.is_empty() {
+                self.overlays.remove(&pane_id);
+            }
+            self.force_visible_panes.remove(&pane_id);
+            return;
+        }
+        if force_visible {
+            self.force_visible_panes.insert(pane_id);
+        }
 
         // Arrow key escape sequences (normal + application mode)
         if data == b"\x1B[C" || data == b"\x1BOC" {
@@ -202,6 +310,8 @@ impl PredictionEngine {
                     col: ccol,
                     epoch: overlay.prediction_epoch,
                     min_echo_ack: min_ack,
+                    created_at: Instant::now(),
+                    tolerate_mismatch: force_track,
                 });
             }
             return;
@@ -215,6 +325,8 @@ impl PredictionEngine {
                 col: ccol,
                 epoch: overlay.prediction_epoch,
                 min_echo_ack: min_ack,
+                created_at: Instant::now(),
+                tolerate_mismatch: force_track,
             });
             return;
         }
@@ -230,6 +342,7 @@ impl PredictionEngine {
                         ccol,
                         min_ack,
                         show_ul,
+                        force_track,
                     );
                     if w == 0 {
                         return;
@@ -241,7 +354,16 @@ impl PredictionEngine {
                 }
                 0x80..=0xBF => {
                     if let Some(ch) = overlay.utf8.push_cont(byte) {
-                        let w = Self::predict_char(overlay, grid, ch, crow, ccol, min_ack, show_ul);
+                        let w = Self::predict_char(
+                            overlay,
+                            grid,
+                            ch,
+                            crow,
+                            ccol,
+                            min_ack,
+                            show_ul,
+                            force_track,
+                        );
                         if w == 0 {
                             return;
                         }
@@ -249,9 +371,30 @@ impl PredictionEngine {
                     }
                 }
                 0x08 | 0x7F => {
+                    if force_visible {
+                        if let Some(start) = overlay.local_edit_start {
+                            if Self::cursor_at_or_before(crow, ccol, start) {
+                                crow = start.0;
+                                ccol = start.1;
+                                overlay.cursor = Some(PredictedCursor {
+                                    row: crow,
+                                    col: ccol,
+                                    epoch: overlay.prediction_epoch,
+                                    min_echo_ack: min_ack,
+                                    created_at: Instant::now(),
+                                    tolerate_mismatch: force_track,
+                                });
+                                continue;
+                            }
+                        }
+                    }
                     if ccol == 0 {
-                        overlay.increment_epoch();
-                        continue;
+                        if crow <= 0 {
+                            overlay.increment_epoch();
+                            continue;
+                        }
+                        crow -= 1;
+                        ccol = cols;
                     }
                     ccol -= 1;
                     let row_idx = crow as u16;
@@ -295,6 +438,7 @@ impl PredictionEngine {
                         dc.min_echo_ack = min_ack;
                         dc.original_ch = orig;
                         dc.unknown = false;
+                        dc.tolerate_mismatch = force_track;
                     }
 
                     for trail in 0..del_width {
@@ -314,10 +458,12 @@ impl PredictionEngine {
                         dc.min_echo_ack = min_ack;
                         dc.original_ch = orig;
                         dc.unknown = false;
+                        dc.tolerate_mismatch = force_track;
                     }
                 }
                 0x0D => {
                     ccol = 0;
+                    overlay.local_edit_start = None;
                     overlay.increment_epoch();
                 }
                 0x0A => {
@@ -329,10 +475,12 @@ impl PredictionEngine {
                     }
                 }
                 0x1B => {
+                    overlay.local_edit_start = None;
                     overlay.increment_epoch();
                     return;
                 }
                 _ => {
+                    overlay.local_edit_start = None;
                     overlay.increment_epoch();
                     return;
                 }
@@ -345,6 +493,8 @@ impl PredictionEngine {
                 col: ccol,
                 epoch: overlay.prediction_epoch,
                 min_echo_ack: min_ack,
+                created_at: Instant::now(),
+                tolerate_mismatch: force_track,
             });
         }
     }

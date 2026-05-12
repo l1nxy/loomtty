@@ -65,6 +65,229 @@ fn never_mode_skips() {
 }
 
 #[test]
+fn force_visible_backspace_displays_even_when_prediction_disabled() {
+    let mut engine = PredictionEngine::new(PredictionMode::Never, 0, false);
+    let mut grid = make_grid_at(80, 24, 2, 0);
+    grid.viewport[0].set_ch('A');
+    grid.viewport[1].set_ch('B');
+
+    engine.new_user_input_force_visible(1, &[0x7F], &grid, 1);
+
+    assert_eq!(engine.get_overlay_cursor(1), Some((0, 1)));
+    assert_eq!(engine.get_overlay_cell(1, 0, 1).unwrap().ch(), ' ');
+}
+
+#[test]
+fn force_visible_backspace_without_edit_start_skips_in_alt_screen() {
+    let mut engine = PredictionEngine::new(PredictionMode::Adaptive, 30, false);
+    let mut grid = make_grid_at(80, 24, 2, 0);
+    grid.mode_flags = MODE_ALT_SCREEN | MODE_MOUSE_REPORT;
+    grid.viewport[0].set_ch('A');
+    grid.viewport[1].set_ch('B');
+
+    engine.new_user_input_force_visible(1, &[0x7F], &grid, 1);
+
+    assert!(!engine.has_overlay(1));
+    assert_eq!(engine.get_overlay_cursor(1), None);
+}
+
+#[test]
+fn force_visible_backspace_without_edit_start_skips_in_bracketed_kitty_mode() {
+    let mut engine = PredictionEngine::new(PredictionMode::Adaptive, 30, false);
+    let mut grid = make_grid_at(80, 24, 2, 0);
+    grid.mode_flags = MODE_BRACKETED_PASTE;
+    grid.kitty_flags = MODE_KITTY_KEYBOARD;
+    grid.viewport[0].set_ch('A');
+    grid.viewport[1].set_ch('B');
+
+    engine.new_user_input_force_visible(1, &[0x7F], &grid, 1);
+
+    assert!(!engine.has_overlay(1));
+    assert_eq!(engine.get_overlay_cursor(1), None);
+}
+
+#[test]
+fn hidden_text_tracking_feeds_force_visible_backspace_in_never_mode() {
+    let mut engine = PredictionEngine::new(PredictionMode::Never, 0, false);
+    let grid = make_grid_at(80, 24, 0, 0);
+
+    engine.new_user_input_track_hidden(1, b"ABC", &grid, 1);
+
+    assert!(engine.has_overlay(1));
+    assert_eq!(engine.get_overlay_cell(1, 0, 0), None);
+    assert_eq!(engine.get_overlay_cursor(1), None);
+
+    engine.new_user_input_force_visible(1, &[0x7F], &grid, 2);
+
+    assert_eq!(engine.get_overlay_cursor(1), Some((0, 2)));
+    assert_eq!(engine.get_overlay_cell(1, 0, 0).unwrap().ch(), 'A');
+    assert_eq!(engine.get_overlay_cell(1, 0, 1).unwrap().ch(), 'B');
+    assert_eq!(engine.get_overlay_cell(1, 0, 2).unwrap().ch(), ' ');
+}
+
+#[test]
+fn force_visible_backspace_stops_at_hidden_edit_start() {
+    let mut engine = PredictionEngine::new(PredictionMode::Never, 0, false);
+    let mut grid = make_grid_at(80, 24, 5, 0);
+    grid.viewport[4].set_ch('$');
+
+    engine.new_user_input_track_hidden(1, b"ABC", &grid, 1);
+
+    engine.new_user_input_force_visible(1, &[0x7F], &grid, 2);
+    engine.new_user_input_force_visible(1, &[0x7F], &grid, 3);
+    engine.new_user_input_force_visible(1, &[0x7F], &grid, 4);
+    engine.new_user_input_force_visible(1, &[0x7F], &grid, 5);
+
+    assert_eq!(engine.get_overlay_cursor(1), Some((0, 5)));
+    assert_eq!(engine.get_overlay_cell(1, 0, 4), None);
+    assert_eq!(engine.get_overlay_cell(1, 0, 5).unwrap().ch(), ' ');
+}
+
+#[test]
+fn hidden_edit_start_survives_text_confirmation() {
+    let mut engine = PredictionEngine::new(PredictionMode::Never, 0, false);
+    let grid = make_grid_at(80, 24, 5, 0);
+
+    engine.new_user_input_track_hidden(1, b"AB", &grid, 1);
+
+    let mut server_grid = make_grid_at(80, 24, 7, 0);
+    server_grid.viewport[4].set_ch('$');
+    server_grid.viewport[5].set_ch('A');
+    server_grid.viewport[6].set_ch('B');
+    engine.on_server_sync(1, &server_grid, 1);
+
+    assert!(!engine.has_overlay(1));
+
+    engine.new_user_input_force_visible(1, &[0x7F], &server_grid, 2);
+    engine.new_user_input_force_visible(1, &[0x7F], &server_grid, 3);
+    engine.new_user_input_force_visible(1, &[0x7F], &server_grid, 4);
+
+    assert_eq!(engine.get_overlay_cursor(1), Some((0, 5)));
+    assert_eq!(engine.get_overlay_cell(1, 0, 4), None);
+}
+
+#[test]
+fn hidden_edit_start_clears_on_enter_in_never_mode() {
+    let mut engine = PredictionEngine::new(PredictionMode::Never, 0, false);
+    let grid = make_grid_at(80, 24, 5, 0);
+
+    engine.new_user_input_track_hidden(1, b"AB", &grid, 1);
+
+    let mut server_grid = make_grid_at(80, 24, 7, 0);
+    server_grid.viewport[5].set_ch('A');
+    server_grid.viewport[6].set_ch('B');
+    engine.on_server_sync(1, &server_grid, 1);
+
+    engine.new_user_input_with_min_ack(1, b"\r", &server_grid, 2);
+
+    let mut next_prompt_grid = make_grid_at(80, 24, 2, 0);
+    next_prompt_grid.viewport[1].set_ch('X');
+    engine.new_user_input_force_visible(1, &[0x7F], &next_prompt_grid, 3);
+
+    assert_eq!(engine.get_overlay_cursor(1), Some((0, 1)));
+}
+
+#[test]
+fn hidden_text_tracking_feeds_force_visible_backspace_in_alt_screen() {
+    let mut engine = PredictionEngine::new(PredictionMode::Adaptive, 30, false);
+    let mut grid = make_grid_at(80, 24, 0, 0);
+    grid.mode_flags = MODE_ALT_SCREEN | MODE_MOUSE_REPORT;
+
+    engine.new_user_input_track_hidden(1, b"AB", &grid, 1);
+
+    assert!(engine.has_overlay(1));
+    assert_eq!(engine.get_overlay_cell(1, 0, 0), None);
+
+    engine.new_user_input_force_visible(1, &[0x7F], &grid, 2);
+
+    assert_eq!(engine.get_overlay_cursor(1), Some((0, 1)));
+    assert_eq!(engine.get_overlay_cell(1, 0, 0).unwrap().ch(), 'A');
+    assert_eq!(engine.get_overlay_cell(1, 0, 1).unwrap().ch(), ' ');
+}
+
+#[test]
+fn hidden_text_tracking_survives_early_echo_ack_with_stale_grid() {
+    let mut engine = PredictionEngine::new(PredictionMode::Never, 0, false);
+    let grid = make_grid_at(80, 24, 0, 0);
+
+    engine.new_user_input_track_hidden(1, b"ABC", &grid, 1);
+
+    let stale_server_grid = make_grid_at(80, 24, 0, 0);
+    engine.on_server_sync(1, &stale_server_grid, 1);
+
+    assert!(engine.has_overlay(1));
+
+    engine.new_user_input_force_visible(1, &[0x7F], &stale_server_grid, 2);
+
+    assert_eq!(engine.get_overlay_cursor(1), Some((0, 2)));
+    assert_eq!(engine.get_overlay_cell(1, 0, 0).unwrap().ch(), 'A');
+    assert_eq!(engine.get_overlay_cell(1, 0, 1).unwrap().ch(), 'B');
+    assert_eq!(engine.get_overlay_cell(1, 0, 2).unwrap().ch(), ' ');
+}
+
+#[test]
+fn force_visible_backspace_survives_early_echo_ack_with_stale_grid() {
+    let mut engine = PredictionEngine::new(PredictionMode::Never, 0, false);
+    let grid = make_grid_at(80, 24, 0, 0);
+
+    engine.new_user_input_track_hidden(1, b"AB", &grid, 1);
+    engine.new_user_input_force_visible(1, &[0x7F], &grid, 2);
+
+    let stale_server_grid = make_grid_at(80, 24, 0, 0);
+    engine.on_server_sync(1, &stale_server_grid, 2);
+
+    assert_eq!(engine.get_overlay_cursor(1), Some((0, 1)));
+    assert_eq!(engine.get_overlay_cell(1, 0, 0).unwrap().ch(), 'A');
+    assert!(engine
+        .get_overlay_cell(1, 0, 1)
+        .is_none_or(|cell| cell.ch() == ' '));
+}
+
+#[test]
+fn hidden_space_tracking_keeps_cursor_after_early_echo_ack() {
+    let mut engine = PredictionEngine::new(PredictionMode::Never, 0, false);
+    let grid = make_grid_at(80, 24, 0, 0);
+
+    engine.new_user_input_track_hidden(1, b" ", &grid, 1);
+
+    let stale_server_grid = make_grid_at(80, 24, 0, 0);
+    engine.on_server_sync(1, &stale_server_grid, 1);
+    engine.on_server_sync(1, &stale_server_grid, 1);
+
+    engine.new_user_input_force_visible(1, &[0x7F], &stale_server_grid, 2);
+
+    assert_eq!(engine.get_overlay_cursor(1), Some((0, 0)));
+}
+
+#[test]
+fn force_visible_prediction_clears_after_server_confirmation() {
+    let mut engine = PredictionEngine::new(PredictionMode::Never, 0, false);
+    let mut grid = make_grid_at(80, 24, 2, 0);
+    grid.viewport[0].set_ch('A');
+    grid.viewport[1].set_ch('B');
+    engine.new_user_input_force_visible(1, &[0x7F], &grid, 1);
+
+    let mut server_grid = make_grid_at(80, 24, 1, 0);
+    server_grid.viewport[0].set_ch('A');
+    engine.on_server_sync(1, &server_grid, 1);
+
+    assert!(!engine.has_overlay(1));
+    assert_eq!(engine.get_overlay_cursor(1), None);
+}
+
+#[test]
+fn backspace_at_wrapped_line_start_deletes_previous_row() {
+    let mut engine = PredictionEngine::new(PredictionMode::Always, 0, false);
+    let mut grid = make_grid_at(4, 2, 0, 1);
+    grid.viewport[3].set_ch('A');
+
+    engine.new_user_input(1, &[0x7F], &grid);
+
+    assert_eq!(engine.get_overlay_cursor(1), Some((0, 3)));
+    assert_eq!(engine.get_overlay_cell(1, 0, 3).unwrap().ch(), ' ');
+}
+
+#[test]
 fn adaptive_mode_display_threshold() {
     let mut engine = PredictionEngine::new(PredictionMode::Adaptive, 30, false);
     assert!(!engine.should_display());
@@ -99,6 +322,45 @@ fn pending_prediction_not_validated_early() {
     engine.on_server_sync(1, &server_grid, 0);
 
     assert!(engine.has_overlay(1));
+}
+
+#[test]
+fn explicit_min_ack_confirms_on_matching_echo_ack() {
+    let mut engine = PredictionEngine::new(PredictionMode::Always, 0, false);
+    let grid = make_grid_at(80, 24, 0, 0);
+    let seq = engine.next_input_seq();
+    engine.new_user_input_with_min_ack(1, b"A", &grid, seq);
+
+    let mut server_grid = make_grid(80, 24);
+    server_grid.viewport[0].set_ch('A');
+    server_grid.cursor_col = 1;
+    server_grid.cursor_line = 0;
+
+    engine.on_server_sync(1, &server_grid, seq - 1);
+    assert!(engine.has_overlay(1));
+
+    engine.on_server_sync(1, &server_grid, seq);
+    assert!(!engine.has_overlay(1));
+}
+
+#[test]
+fn adaptive_prediction_unlocks_next_pending_input_on_matching_ack() {
+    let mut engine = PredictionEngine::new(PredictionMode::Adaptive, 30, false);
+    engine.srtt_us = 50_000;
+    let grid = make_grid_at(80, 24, 0, 0);
+
+    engine.new_user_input_with_min_ack(1, b"A", &grid, 1);
+    engine.new_user_input_with_min_ack(1, b"B", &grid, 2);
+
+    let mut server_grid = make_grid(80, 24);
+    server_grid.viewport[0].set_ch('A');
+    server_grid.cursor_col = 1;
+    server_grid.cursor_line = 0;
+    engine.on_server_sync(1, &server_grid, 1);
+
+    let cell = engine.get_overlay_cell(1, 0, 1);
+    assert!(cell.is_some());
+    assert_eq!(cell.unwrap().ch(), 'B');
 }
 
 #[test]
@@ -711,7 +973,7 @@ fn predictions_isolated_between_panes() {
     // Pane 1 at col 5: insert-shift created an active cell (shifted from col 0).
     // But pane 2 should not have pane 1's predictions.
     assert_eq!(engine.get_overlay_cell(2, 0, 0), None); // pane 2 col 0 is inactive
-    // Clear pane 1, pane 2 should be unaffected.
+                                                        // Clear pane 1, pane 2 should be unaffected.
     engine.clear_pane(1);
     assert!(!engine.has_overlay(1));
     assert!(engine.has_overlay(2));
@@ -963,7 +1225,7 @@ fn flagging_hysteresis_srtt_thresholds() {
 fn flagging_forced_by_major_glitch() {
     let mut engine = PredictionEngine::new(PredictionMode::Always, 0, true);
     engine.srtt_us = 0; // low SRTT, normally no flagging
-    // Set to 15: quick confirm may decrement by 1 → 14, still > 10.
+                        // Set to 15: quick confirm may decrement by 1 → 14, still > 10.
     engine.glitch_trigger = 15;
 
     let grid = make_grid_at(80, 24, 0, 0);
@@ -1025,9 +1287,9 @@ fn rendition_propagation_on_confirm() {
     let mut sg = make_grid(80, 24);
     sg.viewport[0].set_ch('A');
     sg.viewport[0].fg = PackedColor::rgb(255, 0, 0); // actual is red
-    // Don't confirm cursor (leave cursor pending) by not matching position.
-    // Actually, cursor is at col 2 after typing AB. Server has cursor at wrong pos
-    // to keep cursor pending. But that might cause reset... Let's just match cursor.
+                                                     // Don't confirm cursor (leave cursor pending) by not matching position.
+                                                     // Actually, cursor is at col 2 after typing AB. Server has cursor at wrong pos
+                                                     // to keep cursor pending. But that might cause reset... Let's just match cursor.
     sg.cursor_col = 2;
     sg.cursor_line = 0;
     // echo_ack=1 → 'A' (min_echo_ack=1) is confirmed, 'B' (min_echo_ack=12) is pending.

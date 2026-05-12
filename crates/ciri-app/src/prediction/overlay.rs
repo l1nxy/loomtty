@@ -15,6 +15,7 @@ pub(super) struct OverlayCell {
     pub min_echo_ack: u64,
     pub original_ch: char,
     pub unknown: bool,
+    pub tolerate_mismatch: bool,
 }
 
 impl OverlayCell {
@@ -27,12 +28,14 @@ impl OverlayCell {
             min_echo_ack: 0,
             original_ch: '\0',
             unknown: false,
+            tolerate_mismatch: false,
         }
     }
 
     pub fn reset(&mut self) {
         self.active = false;
         self.unknown = false;
+        self.tolerate_mismatch = false;
     }
 }
 
@@ -58,11 +61,14 @@ pub struct PredictedCursor {
     pub col: u16,
     pub epoch: u64,
     pub min_echo_ack: u64,
+    pub created_at: Instant,
+    pub tolerate_mismatch: bool,
 }
 
 pub struct PaneOverlay {
     pub(super) rows: HashMap<u16, OverlayRow>,
     pub cursor: Option<PredictedCursor>,
+    pub(super) local_edit_start: Option<(i16, u16)>,
     pub prediction_epoch: u64,
     pub confirmed_epoch: u64,
     pub(super) cols: u16,
@@ -74,6 +80,7 @@ impl PaneOverlay {
         Self {
             rows: HashMap::new(),
             cursor: None,
+            local_edit_start: None,
             prediction_epoch: 1,
             confirmed_epoch: 0,
             cols,
@@ -138,7 +145,9 @@ impl PaneOverlay {
                 .rows
                 .values()
                 .any(|r| r.cells.iter().any(|c| c.active && c.epoch == epoch));
-            if !has_peer {
+            let keep_tolerant = cur.tolerate_mismatch
+                && now.duration_since(cur.created_at).as_secs() < PREDICTION_TIMEOUT_SECS;
+            if !has_peer && !keep_tolerant {
                 self.cursor = None;
             }
         }

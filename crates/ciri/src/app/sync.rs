@@ -7,6 +7,16 @@ use crate::connection::ServerEvent;
 use crate::grid::ClientPaneGrid;
 
 impl App {
+    fn app_like_mode_flags(mode_flags: u16) -> bool {
+        mode_flags
+            & (MODE_ALT_SCREEN
+                | MODE_MOUSE_REPORT
+                | MODE_BRACKETED_PASTE
+                | MODE_KITTY_ALL
+                | MODE_SYNCHRONIZED_OUTPUT)
+            != 0
+    }
+
     fn finalize_authoritative_session_switch(&mut self, pane_ids: &[u64]) {
         let Some(session_name) = self.core.pending_session_name.take() else {
             return;
@@ -55,7 +65,8 @@ impl App {
         const MAX_DRAIN: std::time::Duration = std::time::Duration::from_millis(12);
         let drain_start = std::time::Instant::now();
         let mut needs_redraw = false;
-        let mut terminal_activity = false;
+        let mut normal_terminal_activity = false;
+        let mut app_terminal_activity = false;
 
         // Drain buffered events from restored slots first (they arrived
         // while the slot was backgrounded and must be replayed in order).
@@ -377,6 +388,8 @@ impl App {
                         if !self.core.expected_pane_ids.contains(&sync.meta.pane_id) {
                             continue;
                         }
+                        let prediction_dirty_rows =
+                            self.core.prediction.dirty_rows(sync.meta.pane_id);
                         let grid = self
                             .core
                             .pane_grids
@@ -394,11 +407,18 @@ impl App {
                             grid,
                             sync.meta.echo_ack,
                         );
+                        for row in prediction_dirty_rows {
+                            grid.mark_row_dirty(row as usize);
+                        }
                         self.send_lossy(ClientMessage::Ack {
                             generation: sync.meta.generation,
                         });
                         // grid.dirty is set by apply_full_sync — no need to remove cached view
-                        terminal_activity = true;
+                        if Self::app_like_mode_flags(sync.meta.mode_flags) {
+                            app_terminal_activity = true;
+                        } else {
+                            normal_terminal_activity = true;
+                        }
                         needs_redraw = true;
                     }
                     ServerEvent::CellDelta(delta) => {
@@ -412,6 +432,8 @@ impl App {
                             delta.meta.cursor_col,
                             delta.meta.cursor_line
                         );
+                        let prediction_dirty_rows =
+                            self.core.prediction.dirty_rows(delta.meta.pane_id);
                         if let Some(grid) = self.core.pane_grids.get_mut(&delta.meta.pane_id) {
                             grid.apply_delta_borrowed(&delta);
                             self.core.prediction.on_server_sync(
@@ -419,11 +441,18 @@ impl App {
                                 grid,
                                 delta.meta.echo_ack,
                             );
+                            for row in prediction_dirty_rows {
+                                grid.mark_row_dirty(row as usize);
+                            }
                             self.send_lossy(ClientMessage::Ack {
                                 generation: delta.meta.generation,
                             });
                             // grid.dirty is set by apply_delta_borrowed — no need to remove cached view
-                            terminal_activity = true;
+                            if Self::app_like_mode_flags(delta.meta.mode_flags) {
+                                app_terminal_activity = true;
+                            } else {
+                                normal_terminal_activity = true;
+                            }
                             needs_redraw = true;
                         }
                     }
@@ -477,8 +506,11 @@ impl App {
             }
         } // end loop
 
-        if terminal_activity {
+        if normal_terminal_activity {
             self.reset_cursor_blink();
+        } else if app_terminal_activity && self.core.config.terminal.cursor_blink {
+            self.cursor_blink_visible = false;
+            self.cursor_blink_timer = std::time::Instant::now();
         }
         self.core.server_rx = Some(rx);
         needs_redraw
@@ -884,6 +916,39 @@ mod tests {
 
         assert!(app.process_server_events());
         assert!(app.cursor_blink_visible);
+        assert!(app.cursor_blink_timer.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    fn app_mode_cell_delta_does_not_force_cursor_visible() {
+        let mut app = make_app();
+        let (event_tx, rx) = crossbeam_channel::unbounded();
+        app.core.server_rx = Some(rx);
+        app.core.expected_pane_ids.insert(7);
+        app.core
+            .pane_grids
+            .insert(7, crate::grid::ClientPaneGrid::new(2, 1, 100));
+        app.cursor_blink_visible = true;
+        app.cursor_blink_timer = std::time::Instant::now() - std::time::Duration::from_secs(10);
+
+        let delta = CellDeltaBorrowed::new(
+            PaneFrameMeta {
+                pane_id: 7,
+                generation: 2,
+                cursor_line: 0,
+                cursor_col: 1,
+                cursor_shape: CURSOR_BLOCK,
+                mode_flags: MODE_ALT_SCREEN,
+                echo_ack: 0,
+            },
+            2,
+            Vec::new(),
+            Vec::new(),
+        );
+        event_tx.send(ServerEvent::CellDelta(delta)).unwrap();
+
+        assert!(app.process_server_events());
+        assert!(!app.cursor_blink_visible);
         assert!(app.cursor_blink_timer.elapsed() < std::time::Duration::from_secs(1));
     }
 

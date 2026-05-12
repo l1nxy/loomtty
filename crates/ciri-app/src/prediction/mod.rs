@@ -7,7 +7,7 @@ pub use overlay::{PaneOverlay, PredictedCursor};
 
 use ciri_config::config::PredictionMode;
 use ciri_protocol::message::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 const PREDICTION_TIMEOUT_SECS: u64 = 8;
@@ -33,6 +33,7 @@ pub struct PredictionEngine {
     last_ping: Option<Instant>,
     pub(super) next_input_seq: u64,
     pub(super) last_dims: HashMap<u64, (u16, u16)>,
+    pub(super) force_visible_panes: HashSet<u64>,
     pub(super) glitch_trigger: u32,
     pub(super) last_quick_confirm: Option<Instant>,
     pub(super) flagging: bool,
@@ -52,6 +53,7 @@ impl PredictionEngine {
             last_ping: None,
             next_input_seq: 1,
             last_dims: HashMap::new(),
+            force_visible_panes: HashSet::new(),
             glitch_trigger: 0,
             last_quick_confirm: None,
             flagging: false,
@@ -68,6 +70,7 @@ impl PredictionEngine {
         self.last_ping = None;
         self.next_input_seq = 1;
         self.last_dims.clear();
+        self.force_visible_panes.clear();
         self.glitch_trigger = 0;
         self.last_quick_confirm = None;
         self.flagging = false;
@@ -140,7 +143,8 @@ impl PredictionEngine {
     // ---- Public overlay access ----
 
     pub fn get_overlay_cell(&self, pane_id: u64, row: u16, col: u16) -> Option<PackedCell> {
-        if !self.should_display() {
+        let force_visible = self.force_visible_panes.contains(&pane_id);
+        if !force_visible && !self.should_display() {
             return None;
         }
         let overlay = self.overlays.get(&pane_id)?;
@@ -148,7 +152,10 @@ impl PredictionEngine {
         if cell.unknown {
             return None;
         }
-        if self.mode == PredictionMode::Always || cell.epoch <= overlay.confirmed_epoch {
+        if force_visible
+            || self.mode == PredictionMode::Always
+            || cell.epoch <= overlay.confirmed_epoch
+        {
             Some(cell.replacement)
         } else {
             None
@@ -156,12 +163,16 @@ impl PredictionEngine {
     }
 
     pub fn get_overlay_cursor(&self, pane_id: u64) -> Option<(i16, u16)> {
-        if !self.should_display() {
+        let force_visible = self.force_visible_panes.contains(&pane_id);
+        if !force_visible && !self.should_display() {
             return None;
         }
         let overlay = self.overlays.get(&pane_id)?;
         let cur = overlay.cursor.as_ref()?;
-        if self.mode == PredictionMode::Always || cur.epoch <= overlay.confirmed_epoch {
+        if force_visible
+            || self.mode == PredictionMode::Always
+            || cur.epoch <= overlay.confirmed_epoch
+        {
             Some((cur.row, cur.col))
         } else {
             None
@@ -170,6 +181,13 @@ impl PredictionEngine {
 
     pub fn has_overlay(&self, pane_id: u64) -> bool {
         self.overlays.get(&pane_id).is_some_and(|o| !o.is_empty())
+    }
+
+    pub fn dirty_rows(&self, pane_id: u64) -> Vec<u16> {
+        self.overlays
+            .get(&pane_id)
+            .map(|overlay| overlay.rows.keys().copied().collect())
+            .unwrap_or_default()
     }
 
     pub fn visual_serial(&self) -> u64 {
@@ -184,6 +202,7 @@ impl PredictionEngine {
         if self.overlays.remove(&pane_id).is_some() {
             self.bump_visual_serial();
         }
+        self.force_visible_panes.remove(&pane_id);
         self.pane_visual_serials.remove(&pane_id);
     }
 

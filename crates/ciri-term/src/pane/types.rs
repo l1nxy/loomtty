@@ -132,10 +132,6 @@ impl PromptMarkRing {
         self.marks.iter()
     }
 
-    pub fn as_slice(&self) -> Vec<PromptMark> {
-        self.marks.iter().copied().collect()
-    }
-
     /// Start a new prompt cycle at `abs_line`. Any in-progress mark is
     /// finalized as-is (Done was never observed for it — keep what we have).
     pub(crate) fn begin_prompt(&mut self, abs_line: u64) {

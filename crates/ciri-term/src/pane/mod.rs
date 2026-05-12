@@ -333,9 +333,14 @@ impl Pane {
                     self.events.command_completion = Some(d);
                 }
                 self.prompt_marks.mark_done(abs_line, exit_code, duration);
-                // Drop marks whose prompt row has aged out of the scrollback
-                // ring. `scrollback_total - history_size` is the oldest line
-                // still reachable in the grid.
+                // Prune only on `Done` (not on every event): the ring's
+                // fixed capacity bounds memory regardless, and `Done` is
+                // the natural cadence — one prune per completed command,
+                // matching when fresh entries actually become candidates
+                // for eviction. A pane that runs a never-completing
+                // process won't prune until the user kills it and the
+                // shell sends `Done`, which is fine (the ring caps at
+                // 1024 entries by default).
                 let history_cap = self.term.grid().history_size() as u64;
                 let scrollback_total = self.scrollback_total() as u64;
                 let min_reachable = scrollback_total.saturating_sub(history_cap);

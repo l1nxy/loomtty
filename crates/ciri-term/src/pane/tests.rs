@@ -793,7 +793,7 @@ fn osc133_full_cycle_records_a_completed_prompt_mark() {
     assert!(
         saw_done,
         "expected a completed PromptMark with exit_code=0; ring={:?}",
-        pane.prompt_marks.as_slice()
+        pane.prompt_marks.iter().copied().collect::<Vec<_>>()
     );
 
     let new_marks: Vec<PromptMark> = pane

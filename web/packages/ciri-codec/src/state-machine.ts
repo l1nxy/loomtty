@@ -29,6 +29,7 @@ import {
 } from "./constants.js";
 import {
   DEFAULT_BG,
+  DEFAULT_CELL,
   DEFAULT_FG,
   type PackedCell,
   type PackedColor,
@@ -39,14 +40,28 @@ import {
 /// Trailing zeros (the common case for ASCII) are stripped before
 /// decoding so the resulting string is the single grapheme primary —
 /// combining marks live in the FullPaneSync grapheme-extras map.
-const utf8Decoder = new TextDecoder("utf-8", { fatal: false });
+///
+/// `fatal: true` so the decoder throws on malformed UTF-8 (truncated
+/// multi-byte sequences, overlong encodings, lone surrogates). The
+/// codec's contract is that every cell slot holds a valid Unicode
+/// scalar; silently substituting U+FFFD would mask wire corruption
+/// from a buggy or malicious server.
+const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 function decodeCellChar(bytes: Uint8Array): string {
   // Strip trailing NULs. Rust writes the codepoint encoded as UTF-8
   // into a fixed 4-byte slot, zero-padded.
   let len = 4;
   while (len > 0 && bytes[len - 1] === 0) len -= 1;
   if (len === 0) return "\0";
-  return utf8Decoder.decode(bytes.subarray(0, len));
+  try {
+    return utf8Decoder.decode(bytes.subarray(0, len));
+  } catch (e) {
+    throw new Error(
+      `invalid UTF-8 in cell character slot: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+  }
 }
 
 /// Decode an SM opcode stream into exactly `expected` cells. Throws if
@@ -56,7 +71,13 @@ export function decodeSmCells(
   data: Uint8Array,
   expected: number,
 ): PackedCell[] {
-  const cells: PackedCell[] = new Array(expected);
+  // Pre-fill with the default cell rather than `new Array(expected)`
+  // (which produces a *sparse* array of holes). Sparse holes survive
+  // through callers that iterate via `for…in` or compare to `undefined`,
+  // producing very confusing failures. The default fill is overwritten
+  // by every opcode that emits a cell; the cell-count assertion below
+  // guarantees no holes survive a successful decode.
+  const cells: PackedCell[] = new Array(expected).fill(DEFAULT_CELL);
   const written = decodeSmCellsInto(data, cells, expected);
   if (written !== expected) {
     throw new Error(

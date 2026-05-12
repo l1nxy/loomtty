@@ -9,10 +9,27 @@
 // already validated against `MAX_DATA_FRAME_LEN` + a bomb-ratio guard,
 // but we cap again here so a misbehaving server can't OOM the browser).
 
-// @ts-expect-error — lz4js ships without type defs.
+// @ts-expect-error — lz4js ships without type defs. (When/if it
+// publishes them, this directive will start erroring — replace with
+// proper imports at that point.)
 import lz4 from "lz4js";
 
 import { MAX_DATA_FRAME_LEN } from "./constants.js";
+
+// Fail-fast at module load if the lz4js shape changed (wrong version,
+// bundler dead-stripping, ESM/CJS interop misfire). The previous
+// check ran on first frame, which delayed the diagnostic until a
+// session was already in flight.
+if (typeof lz4 !== "object" || lz4 === null) {
+  throw new Error(
+    "lz4js default import is not an object — check ESM/CJS interop or version",
+  );
+}
+if (typeof (lz4 as { decompressBlock?: unknown }).decompressBlock !== "function") {
+  throw new Error(
+    "lz4js.decompressBlock is missing — version mismatch with the codec",
+  );
+}
 
 const MAX_LZ4_RATIO = 64;
 
@@ -56,14 +73,9 @@ export function decompressLz4Payload(payload: Uint8Array): Uint8Array {
   }
 
   const output = new Uint8Array(uncompressedLen);
-  // lz4js's raw-block decoder is `decompressBlock(src, dst, sIdx,
-  // sLen, dIdx)` — signature documented in the lz4js source. Some
-  // older releases use a shorter signature; the optional-arg overload
-  // below covers the common variants without depending on type defs
-  // we don't ship.
-  if (typeof lz4.decompressBlock !== "function") {
-    throw new Error("lz4js.decompressBlock missing — version mismatch?");
-  }
+  // lz4js's raw-block decoder: decompressBlock(src, dst, sIdx, sLen, dIdx).
+  // Module-load probe at the top of this file already verified the
+  // function exists, so call directly here.
   const written: number = lz4.decompressBlock(
     compressed,
     output,

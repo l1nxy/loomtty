@@ -76,6 +76,11 @@ describe("pipeline: FrameReader → decodeSmCells", () => {
   }
 
   test("multiple framed payloads in one push round-trip without state leak", () => {
+    // Guard rather than just non-null-asserting: if a future fixture
+    // regeneration produces fewer than two cases, fail with a clear
+    // assertion instead of a "cannot read properties of undefined"
+    // runtime crash from the `!` operator.
+    expect(cases.length).toBeGreaterThanOrEqual(2);
     const reader = new FrameReader();
     const c0 = cases[0]!;
     const c1 = cases[1]!;

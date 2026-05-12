@@ -190,6 +190,21 @@ describe("FrameReader", () => {
     expect(() => hexToBytes("abc")).toThrow(/odd length/);
   });
 
+  test("LZ4 payload with uncompressed_len=0 is accepted as empty result", () => {
+    // Edge case: the wire claims 0 uncompressed bytes; some valid LZ4
+    // bitstreams legitimately encode the empty message. The decoder
+    // should return an empty Uint8Array rather than rejecting.
+    const payload = new Uint8Array(5); // [0,0,0,0] + 1 sentinel byte
+    // sentinel byte at index 4 is the LZ4 block end marker for an
+    // empty payload (the single-byte token 0x00).
+    payload[4] = 0x00;
+    const reader = new FrameReader();
+    reader.push(frame(TAG_CELL_DELTA_LZ4, payload));
+    const f = reader.next();
+    expect(f?.kind).toBe("cell-delta");
+    expect(f!.payload.length).toBe(0);
+  });
+
   test("LZ4 payload claiming an oversize uncompressed length is rejected", () => {
     const payload = new Uint8Array(8);
     // 32 MiB > MAX_DATA_FRAME_LEN (16 MiB).

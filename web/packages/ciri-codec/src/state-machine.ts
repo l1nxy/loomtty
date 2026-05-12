@@ -261,8 +261,17 @@ export function decodeSmCellsInto(
         pos += 1;
         need(count, "Ascii data");
         for (let i = 0; i < count; i += 1) {
-          // Each ASCII byte expands to a one-codepoint string.
-          writeCell(String.fromCharCode(data[pos + i]!));
+          const b = data[pos + i]!;
+          // OP_ASCII's contract is bytes < 0x80; the Rust encoder
+          // never emits anything else. A non-ASCII byte here means
+          // wire corruption — surface it instead of silently
+          // rendering a Latin-1 codepoint via `String.fromCharCode`.
+          if (b >= 0x80) {
+            throw new Error(
+              `OP_ASCII byte 0x${b.toString(16)} at offset ${pos + i} is not ASCII (< 0x80)`,
+            );
+          }
+          writeCell(String.fromCharCode(b));
         }
         pos += count;
         break;
@@ -271,7 +280,13 @@ export function decodeSmCellsInto(
         need(3, "AsciiRepeat");
         const count = view.getUint16(pos, /* le */ true);
         pos += 2;
-        const ch = String.fromCharCode(data[pos]!);
+        const b = data[pos]!;
+        if (b >= 0x80) {
+          throw new Error(
+            `OP_ASCII_REPEAT byte 0x${b.toString(16)} at offset ${pos} is not ASCII (< 0x80)`,
+          );
+        }
+        const ch = String.fromCharCode(b);
         pos += 1;
         for (let i = 0; i < count; i += 1) writeCell(ch);
         break;

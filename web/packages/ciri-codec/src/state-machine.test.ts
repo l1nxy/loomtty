@@ -252,6 +252,16 @@ describe("decodeSmCells", () => {
     expect(() => decodeSmCells(data, 1)).toThrow(/trailing byte/);
   });
 
+  test("OP_ASCII rejects bytes >= 0x80 (the encoder never produces them)", () => {
+    const data = bytes(OP_ASCII, 2, 0x61 /* 'a' */, 0xc3 /* latin-1 'Ã' */, OP_END);
+    expect(() => decodeSmCells(data, 2)).toThrow(/not ASCII/);
+  });
+
+  test("OP_ASCII_REPEAT rejects bytes >= 0x80", () => {
+    const data = bytes(OP_ASCII_REPEAT, 0x02, 0x00, 0x80, OP_END);
+    expect(() => decodeSmCells(data, 2)).toThrow(/not ASCII/);
+  });
+
   test("multi-scalar cell slot is rejected (would mis-render as two cells)", () => {
     // Cell slot holds `ab` with no inter-char NUL — Rust's encoder
     // never produces this, so on the wire it indicates corruption.

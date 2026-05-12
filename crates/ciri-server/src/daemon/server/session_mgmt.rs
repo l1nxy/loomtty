@@ -49,14 +49,20 @@ impl Server {
             }
             ClientMessage::SwitchWorkspace { workspace_idx } => {
                 if let Some(session) = self.sessions.get_mut(session_name) {
-                    session.workspaces.switch_to(workspace_idx);
-                    Self::layout_changed(
-                        session,
-                        &mut self.clients,
-                        session_name,
-                        false,
-                        responses,
-                    );
+                    if session.workspaces.switch_to(workspace_idx) {
+                        Self::layout_changed(
+                            session,
+                            &mut self.clients,
+                            session_name,
+                            false,
+                            responses,
+                        );
+                    } else {
+                        log::debug!(
+                            "ignoring out-of-range workspace switch: client {client_id}, session {session_name}, idx {workspace_idx}, count {}",
+                            session.workspaces.workspace_count()
+                        );
+                    }
                 }
             }
             ClientMessage::ListSessions { all } => {

@@ -943,6 +943,29 @@ fn create_split_down_adds_workspace(mut server_with_session: (Server, String)) {
     )));
 }
 
+#[rstest]
+fn switch_workspace_out_of_range_does_not_create_empty_workspaces(
+    mut server_with_session: (Server, String),
+) {
+    let (ref mut server, ref session_name) = server_with_session;
+    server.handle_message(ClientMessage::SplitDown, 1);
+    let (ws_count_before, active_before) = {
+        let session = server.sessions.get(session_name).unwrap();
+        (
+            session.workspaces.workspaces.len(),
+            session.workspaces.active_workspace_idx,
+        )
+    };
+    assert_eq!(ws_count_before, 2);
+
+    let responses = server.handle_message(ClientMessage::SwitchWorkspace { workspace_idx: 8 }, 1);
+
+    let session = server.sessions.get(session_name).unwrap();
+    assert_eq!(session.workspaces.workspaces.len(), ws_count_before);
+    assert_eq!(session.workspaces.active_workspace_idx, active_before);
+    assert!(responses.is_empty());
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Duplex stream: full handshake + message exchange
 // ═══════════════════════════════════════════════════════════════════

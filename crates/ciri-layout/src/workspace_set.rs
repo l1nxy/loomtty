@@ -101,13 +101,13 @@ impl WorkspaceSet {
         }
     }
 
-    /// Switch to workspace by index, creating workspaces if needed.
-    pub fn switch_to(&mut self, idx: usize) {
-        while self.workspaces.len() <= idx {
-            self.workspaces
-                .push(Workspace::new_with_gap(self.view_size, self.column_gap));
+    /// Switch to an existing workspace by index.
+    pub fn switch_to(&mut self, idx: usize) -> bool {
+        if idx >= self.workspaces.len() {
+            return false;
         }
         self.active_workspace_idx = idx;
+        true
     }
 
     /// Get ALL visible tiles across all visible workspaces with screen coordinates.
@@ -522,15 +522,12 @@ mod tests {
     // ── switch_to ───────────────────────────────────────────────────
 
     #[test]
-    fn switch_to_creates_intermediate_workspaces() {
+    fn switch_to_out_of_range_is_noop() {
         let mut ws = wss();
-        ws.switch_to(5);
-        assert_eq!(ws.workspaces.len(), 6);
-        assert_eq!(ws.active_workspace_idx, 5);
-        // Intermediate workspaces should be empty
-        for i in 1..5 {
-            assert!(ws.workspaces[i].is_empty());
-        }
+        assert!(!ws.switch_to(5));
+        assert_eq!(ws.workspaces.len(), 1);
+        assert_eq!(ws.active_workspace_idx, 0);
+        assert_eq!(ws.active().active_pane_id(), Some(1));
     }
 
     #[test]
@@ -538,7 +535,7 @@ mod tests {
         let mut ws = wss();
         ws.add_workspace_below(2);
         ws.add_workspace_below(3);
-        ws.switch_to(0);
+        assert!(ws.switch_to(0));
         assert_eq!(ws.active_workspace_idx, 0);
         assert_eq!(ws.active().active_pane_id(), Some(1));
     }

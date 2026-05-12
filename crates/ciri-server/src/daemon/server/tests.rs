@@ -277,6 +277,104 @@ fn close_pane_emits_close_then_layout_update() {
 }
 
 #[test]
+fn capture_pane_emits_one_newline_per_grid_row() {
+    let mut server = Server::new("", 8.0, TerminalColors::default());
+    let session_name = "capture-ok".to_string();
+    server.clients.insert(1, test_client(1, "__control__"));
+    let target_pane = {
+        let session = server.get_or_create_session(&session_name);
+        session.workspaces.active().active_pane_id().unwrap()
+    };
+
+    let responses = server.handle_message(
+        ClientMessage::CapturePane {
+            session_name: session_name.clone(),
+            pane_id: target_pane,
+            opts: Default::default(),
+        },
+        1,
+    );
+
+    // Tighter than just shape: also verify the response carries
+    // exactly one row per pane row + newline (i.e. capture_text was
+    // actually executed end-to-end, not just stubbed).
+    let [ServerResponse::SendToClient(
+        1,
+        ServerMessage::PaneCapture {
+            session_name: sn,
+            pane_id: pid,
+            text,
+            truncated,
+        },
+    )] = responses.as_slice()
+    else {
+        panic!(
+            "expected exactly one PaneCapture response, got {} response(s)",
+            responses.len()
+        );
+    };
+    assert_eq!(sn, &session_name);
+    assert_eq!(*pid, target_pane);
+    assert!(!truncated, "small capture should not be truncated");
+    // capture_text emits exactly one '\n' per visible row when
+    // join_wrapped is false (the default). With Default::default() opts
+    // on a no-scrollback request, the newline count must equal the
+    // viewport row count regardless of what the shell has written.
+    let pane = server.sessions[&session_name].panes.get(&target_pane).unwrap();
+    let expected_rows = pane.grid_rows() as usize;
+    let newlines = text.matches('\n').count();
+    assert_eq!(
+        newlines, expected_rows,
+        "capture text should emit exactly one newline per visible row; \
+         text={text:?}"
+    );
+}
+
+#[test]
+fn capture_pane_rejects_unknown_session() {
+    let mut server = Server::new("", 8.0, TerminalColors::default());
+    server.clients.insert(1, test_client(1, "__control__"));
+
+    let responses = server.handle_message(
+        ClientMessage::CapturePane {
+            session_name: "ghost".to_string(),
+            pane_id: 1,
+            opts: Default::default(),
+        },
+        1,
+    );
+
+    assert!(matches!(
+        responses.as_slice(),
+        [ServerResponse::SendToClient(1, ServerMessage::Error { message })]
+            if message.contains("ghost")
+    ));
+}
+
+#[test]
+fn capture_pane_rejects_unknown_pane_id_in_known_session() {
+    let mut server = Server::new("", 8.0, TerminalColors::default());
+    let session_name = "capture-bad-pane".to_string();
+    server.clients.insert(1, test_client(1, "__control__"));
+    server.get_or_create_session(&session_name);
+
+    let responses = server.handle_message(
+        ClientMessage::CapturePane {
+            session_name: session_name.clone(),
+            pane_id: 99_999,
+            opts: Default::default(),
+        },
+        1,
+    );
+
+    assert!(matches!(
+        responses.as_slice(),
+        [ServerResponse::SendToClient(1, ServerMessage::Error { message })]
+            if message.contains("99999") && message.contains("capture-bad-pane")
+    ));
+}
+
+#[test]
 fn focus_pane_by_id_returns_layout_update_and_command_result() {
     let mut server = Server::new("", 8.0, TerminalColors::default());
     let session_name = "alpha".to_string();

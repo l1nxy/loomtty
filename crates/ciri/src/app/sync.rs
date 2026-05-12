@@ -438,7 +438,16 @@ impl App {
                     ServerEvent::Control(ServerMessage::SessionInfoReply { .. })
                     | ServerEvent::Control(ServerMessage::PaneListReply { .. })
                     | ServerEvent::Control(ServerMessage::CommandResult { .. })
-                    | ServerEvent::Control(ServerMessage::LayoutReply { .. }) => {}
+                    | ServerEvent::Control(ServerMessage::LayoutReply { .. })
+                    | ServerEvent::Control(ServerMessage::PaneCapture { .. }) => {
+                        // PaneCapture is a control-channel-only reply (sent
+                        // to `__control__` clients in response to `ciritty
+                        // msg capture-pane`). The GUI client should never
+                        // receive one; if it does (routing bug), drop it
+                        // silently — the alternative would be to surface a
+                        // toast, but the control channel is the
+                        // authoritative path.
+                    }
                     ServerEvent::Disconnected(reason) => {
                         // If the text-input palette is still open (async failure
                         // arrived before the user closed it), mirror the reason

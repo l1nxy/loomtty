@@ -266,6 +266,52 @@ pub fn run_control_command(msg: ClientMessage, json: bool) -> Result<()> {
                         println!("{}", serde_json::to_string_pretty(&obj).unwrap_or_default());
                         return Ok(());
                     }
+                    ServerMessage::PaneCapture {
+                        session_name,
+                        pane_id,
+                        text,
+                        truncated,
+                    } => {
+                        let stdout = std::io::stdout();
+                        let mut lock = stdout.lock();
+                        // Emit the truncation warning to stderr BEFORE the
+                        // write — a subsequent stdout BrokenPipe (`… | head`)
+                        // returns Ok early and would otherwise silently
+                        // swallow the signal that rows were clipped.
+                        if truncated {
+                            eprintln!(
+                                "ciritty: capture-pane response was truncated to fit \
+                                 the control-frame budget (some rows omitted)"
+                            );
+                        }
+                        let result: std::io::Result<()> = if json {
+                            let obj = serde_json::json!({
+                                "session_name": session_name,
+                                "pane_id": pane_id,
+                                "text": text,
+                                "truncated": truncated,
+                            });
+                            // Stream-write to stdout. The `to_string_pretty`
+                            // alternative would buffer the entire rendered
+                            // JSON in a second `String` — ~900 KiB extra
+                            // heap for a max-size capture.
+                            (|| -> std::io::Result<()> {
+                                serde_json::to_writer_pretty(&mut lock, &obj)?;
+                                lock.write_all(b"\n")?;
+                                lock.flush()
+                            })()
+                        } else {
+                            lock.write_all(text.as_bytes()).and_then(|_| lock.flush())
+                        };
+                        match result {
+                            Ok(()) => {}
+                            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
+                                return Ok(());
+                            }
+                            Err(e) => return Err(e.into()),
+                        }
+                        return Ok(());
+                    }
                     _ => {
                         // Skip other messages (StateSync etc from initial connect)
                         continue;

@@ -595,3 +595,174 @@ fn alt_screen_detected_via_escape_sequence() {
     let found = wait_until(&mut pane, Duration::from_secs(3), |p| p.is_alt_screen());
     assert!(found, "should detect alt screen mode");
 }
+
+// ── capture_text ────────────────────────────────────────────────────
+
+#[test]
+fn capture_text_default_trims_trailing_ascii_spaces() {
+    use ciri_protocol::message::CapturePaneOpts;
+
+    let mut pane = Pane::new_with_opts(90, 80, 5, shell_path(), None, None).expect("create pane");
+    pane.write_to_pty(b"printf 'CIRI_CAPTURE_MARKER\\n'\n");
+
+    let saw = wait_until(&mut pane, Duration::from_secs(3), |p| {
+        p.capture_text(&CapturePaneOpts::default())
+            .text
+            .contains("CIRI_CAPTURE_MARKER")
+    });
+    assert!(saw, "marker should appear in capture_text");
+
+    let dumped = pane.capture_text(&CapturePaneOpts::default());
+    assert!(!dumped.truncated, "small capture should not truncate");
+    for (i, row) in dumped.text.lines().enumerate() {
+        assert!(
+            !row.ends_with(' '),
+            "row {i} has trailing ASCII space (default opts should trim): {row:?}"
+        );
+    }
+}
+
+#[test]
+fn capture_text_preserve_trailing_spaces_does_not_trim_row_tail() {
+    use ciri_protocol::message::CapturePaneOpts;
+
+    let mut pane = Pane::new_with_opts(92, 16, 4, shell_path(), None, None).expect("create pane");
+    pane.write_to_pty(b"printf 'TRAIL\\n'\n");
+
+    let saw = wait_until(&mut pane, Duration::from_secs(3), |p| {
+        p.capture_text(&CapturePaneOpts::default())
+            .text
+            .contains("TRAIL")
+    });
+    assert!(saw, "marker should appear");
+
+    let preserved = pane.capture_text(&CapturePaneOpts {
+        preserve_trailing_spaces: true,
+        ..Default::default()
+    });
+    let trimmed = pane.capture_text(&CapturePaneOpts::default());
+
+    // Concrete check: the TRAIL row has trailing spaces in `preserved`
+    // and not in `trimmed`. Length comparison alone would be fragile in
+    // the face of wide chars / combining marks, but with pure-ASCII
+    // content the lengths must differ for at least one row.
+    let preserved_trail = preserved
+        .text
+        .lines()
+        .find(|l| l.contains("TRAIL"))
+        .expect("preserve: TRAIL row present");
+    let trimmed_trail = trimmed
+        .text
+        .lines()
+        .find(|l| l.contains("TRAIL"))
+        .expect("trim: TRAIL row present");
+    assert!(
+        preserved_trail.ends_with(' '),
+        "preserved row should keep its trailing space cell: {preserved_trail:?}"
+    );
+    assert!(
+        !trimmed_trail.ends_with(' '),
+        "trimmed row should drop its trailing space cell: {trimmed_trail:?}"
+    );
+    assert!(
+        preserved_trail.len() > trimmed_trail.len(),
+        "preserved row should be strictly longer than trimmed; \
+         preserved={preserved_trail:?} trimmed={trimmed_trail:?}"
+    );
+}
+
+#[test]
+fn capture_text_with_scrollback_includes_scrolled_off_rows() {
+    use ciri_protocol::message::CapturePaneOpts;
+
+    // 3-row viewport; print 8 lines so the early ones must scroll off.
+    let mut pane = Pane::new_with_opts(91, 80, 3, shell_path(), None, None).expect("create pane");
+    pane.write_to_pty(b"printf 'CIRI_SB_1\\nCIRI_SB_2\\nCIRI_SB_3\\nCIRI_SB_4\\nCIRI_SB_5\\nCIRI_SB_6\\nCIRI_SB_7\\nCIRI_SB_8\\n'\n");
+
+    // Wait directly on the post-condition we're about to assert, not on
+    // an indirect proxy (`scrollback_total() > 0` fires the moment a
+    // single row scrolls off, which may be a shell-prompt row long
+    // before our `CIRI_SB_1` marker actually leaves the viewport).
+    let settled = wait_until(&mut pane, Duration::from_secs(3), |p| {
+        let viewport = p.capture_text(&CapturePaneOpts::default()).text;
+        let history = p
+            .capture_text(&CapturePaneOpts {
+                scrollback_rows: 50,
+                ..Default::default()
+            })
+            .text;
+        history.contains("CIRI_SB_1") && !viewport.contains("CIRI_SB_1")
+    });
+    assert!(settled, "row 1 should land in scrollback and leave viewport");
+
+    let viewport_only = pane.capture_text(&CapturePaneOpts::default());
+    let with_history = pane.capture_text(&CapturePaneOpts {
+        scrollback_rows: 50,
+        ..Default::default()
+    });
+
+    assert!(
+        with_history.text.contains("CIRI_SB_1"),
+        "scrollback capture should contain row 1; got:\n{}",
+        with_history.text
+    );
+    assert!(
+        !viewport_only.text.contains("CIRI_SB_1"),
+        "viewport-only capture should not contain row 1; got:\n{}",
+        viewport_only.text
+    );
+}
+
+#[test]
+fn capture_text_join_wrapped_merges_softwraps_but_keeps_hard_newlines() {
+    use ciri_protocol::message::CapturePaneOpts;
+
+    // 8-col viewport; print a 24-char token (forces soft-wrap into 3 rows)
+    // followed by a hard `\n` and a short token (no wrap). With
+    // join_wrapped, the soft-wrap chain must collapse to one logical line
+    // BUT the explicit `\n` must still separate the two tokens.
+    //
+    // Note: line-discipline echoes the typed command BEFORE the shell
+    // processes it, so the `stty -echo` here does NOT prevent the printf
+    // input line itself from being echoed back into the grid (and itself
+    // soft-wrapping). The test tolerates that: both `joined` and `split`
+    // captures contain the echoed line, so the assertion about
+    // `ABCDEFGHNEXTROW` (no hard-newline-collapse) holds whether or not
+    // the echo is present — alacritty does not set WRAPLINE on a cell
+    // that is immediately followed by a hard `\n`.
+    let mut pane = Pane::new_with_opts(93, 8, 6, shell_path(), None, None).expect("create pane");
+    pane.write_to_pty(
+        b"stty -echo; printf 'CIRIWRAPMARK1234ABCDEFGH\\nNEXTROW\\n'; stty echo\n",
+    );
+
+    let saw = wait_until(&mut pane, Duration::from_secs(3), |p| {
+        let t = p.capture_text(&CapturePaneOpts::default()).text;
+        t.contains("CIRIWRAP") && t.contains("NEXTROW")
+    });
+    assert!(saw, "both markers should appear in output");
+
+    let joined = pane.capture_text(&CapturePaneOpts {
+        join_wrapped: true,
+        ..Default::default()
+    }).text;
+    let split = pane.capture_text(&CapturePaneOpts::default()).text;
+
+    assert!(
+        joined.contains("CIRIWRAPMARK1234ABCDEFGH"),
+        "join_wrapped should merge soft-wrap chain into one line; got:\n{joined}"
+    );
+    assert!(
+        !split.contains("CIRIWRAPMARK1234ABCDEFGH"),
+        "default (split) capture should NOT contain the full token unbroken; got:\n{split}"
+    );
+    // Hard newline discrimination: NEXTROW must appear on a separate
+    // physical line FROM the wrapped chain in BOTH outputs.
+    assert!(
+        !joined.contains("ABCDEFGHNEXTROW"),
+        "join_wrapped must not collapse hard \\n; got:\n{joined}"
+    );
+    assert!(
+        !split.contains("ABCDEFGHNEXTROW"),
+        "default capture must not collapse hard \\n; got:\n{split}"
+    );
+}

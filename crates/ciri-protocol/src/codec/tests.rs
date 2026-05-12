@@ -1908,4 +1908,288 @@ mod network_edge_cases {
             other => panic!("frame 3: expected PaneClosed, got {other:?}"),
         }
     }
+
+    /// rmp-serde encodes a struct variant as a 1-element map keyed on the
+    /// variant **name** (not its position in the enum), with the inner
+    /// struct serialised as a positional array. Variant order in the
+    /// source enum therefore does NOT affect wire-compat, but:
+    ///   - renaming the variant breaks every old peer
+    ///   - reordering or removing struct fields shifts the array and
+    ///     breaks every old peer
+    /// This test pins both the name bytes and the payload shape.
+    #[test]
+    fn client_message_capture_pane_wire_format_pinned() {
+        let msg = ClientMessage::CapturePane {
+            session_name: "s".into(),
+            pane_id: 1,
+            opts: Default::default(),
+        };
+        let bytes = rmp_serde::to_vec(&msg).unwrap();
+        // Expected layout:
+        //   0x81                  fixmap of size 1
+        //   0xAB                  fixstr length 11 ("CapturePane")
+        //   "CapturePane"         11 bytes of UTF-8
+        //   0x93                  fixarray of size 3 (struct payload)
+        //   ... session_name, pane_id, opts ...
+        assert_eq!(bytes[0], 0x81, "expected fixmap-of-size-1 prefix");
+        assert_eq!(bytes[1], 0xAB, "expected fixstr length 11 (CapturePane)");
+        assert_eq!(
+            &bytes[2..13],
+            b"CapturePane",
+            "variant NAME bytes must stay 'CapturePane' on the wire — \
+             renaming breaks every old peer"
+        );
+        assert_eq!(
+            bytes[13], 0x93,
+            "struct payload must be fixarray of size 3 — \
+             adding/reordering/removing fields breaks every old peer"
+        );
+
+        let decoded: ClientMessage = rmp_serde::from_slice(&bytes).unwrap();
+        assert!(matches!(decoded, ClientMessage::CapturePane { .. }));
+    }
+
+    #[test]
+    fn server_message_pane_capture_wire_format_pinned() {
+        let msg = ServerMessage::PaneCapture {
+            session_name: "s".into(),
+            pane_id: 1,
+            text: "hi".into(),
+            truncated: false,
+        };
+        let bytes = rmp_serde::to_vec(&msg).unwrap();
+        // Expected layout:
+        //   0x81                  fixmap of size 1
+        //   0xAB                  fixstr length 11 ("PaneCapture")
+        //   "PaneCapture"         11 bytes of UTF-8
+        //   0x94                  fixarray of size 4 (struct payload)
+        assert_eq!(bytes[0], 0x81);
+        assert_eq!(bytes[1], 0xAB, "expected fixstr length 11 (PaneCapture)");
+        assert_eq!(
+            &bytes[2..13],
+            b"PaneCapture",
+            "variant NAME bytes must stay 'PaneCapture' on the wire"
+        );
+        assert_eq!(
+            bytes[13], 0x94,
+            "struct payload must be fixarray of size 4 \
+             (session_name, pane_id, text, truncated)"
+        );
+
+        let decoded: ServerMessage = rmp_serde::from_slice(&bytes).unwrap();
+        assert!(matches!(decoded, ServerMessage::PaneCapture { .. }));
+    }
+
+    /// `CapturePaneOpts` is serialised as a positional array. Forward-compat
+    /// rule: appending a new field with `#[serde(default)]` must let an older
+    /// (shorter) array still deserialise.
+    #[test]
+    fn capture_pane_opts_empty_array_deserialises_to_default() {
+        use crate::message::CapturePaneOpts;
+        // msgpack fixarray-0: a struct payload from a hypothetical older
+        // sender that had zero fields. Must yield Default::default().
+        let empty_bytes = [0x90u8];
+        let from_empty: CapturePaneOpts = rmp_serde::from_slice(&empty_bytes).unwrap();
+        assert_eq!(from_empty.scrollback_rows, 0);
+        assert!(!from_empty.join_wrapped);
+        assert!(!from_empty.preserve_trailing_spaces);
+    }
+
+    #[test]
+    fn capture_pane_opts_full_payload_round_trips() {
+        use crate::message::CapturePaneOpts;
+        let new_full = CapturePaneOpts {
+            scrollback_rows: 7,
+            join_wrapped: true,
+            preserve_trailing_spaces: true,
+        };
+        let bytes = rmp_serde::to_vec(&new_full).unwrap();
+        let decoded: CapturePaneOpts = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(decoded.scrollback_rows, 7);
+        assert!(decoded.join_wrapped);
+        assert!(decoded.preserve_trailing_spaces);
+    }
+
+    /// The realistic forward-compat case: a peer one version behind sends a
+    /// 2-field array (the original two fields), and we transparently
+    /// default the field that didn't exist yet. Hand-crafted msgpack:
+    ///   0x92                  fixarray of size 2
+    ///   0x07                  positive fixint 7      (scrollback_rows)
+    ///   0xC3                  true                   (join_wrapped)
+    #[test]
+    fn capture_pane_opts_partial_array_defaults_trailing_field() {
+        use crate::message::CapturePaneOpts;
+        let bytes = [0x92u8, 0x07, 0xC3];
+        let decoded: CapturePaneOpts = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(decoded.scrollback_rows, 7);
+        assert!(decoded.join_wrapped);
+        assert!(
+            !decoded.preserve_trailing_spaces,
+            "trailing field absent from older array must default to false"
+        );
+    }
+
+    /// Pin the wire-shape of `CapturePaneOpts::default()` so a field
+    /// reorder breaks loudly here instead of corrupting peers.
+    #[test]
+    fn capture_pane_opts_default_wire_shape_pinned() {
+        use crate::message::CapturePaneOpts;
+        let bytes = rmp_serde::to_vec(&CapturePaneOpts::default()).unwrap();
+        // Expected: fixarray-3 [0=scrollback_rows, false, false]
+        assert_eq!(
+            bytes.as_slice(),
+            &[0x93, 0x00, 0xC2, 0xC2],
+            "CapturePaneOpts default wire shape drifted — field order or \
+             types changed?"
+        );
+    }
+
+    /// Pin the FIELD ORDER inside `ClientMessage::CapturePane`. The
+    /// fixarray-of-size-3 length check elsewhere catches add/remove,
+    /// but a silent swap of two same-shape fields (e.g. session_name
+    /// and opts, which is an inner struct also serialised as an array)
+    /// wouldn't change the outer length — this test would.
+    #[test]
+    fn client_message_capture_pane_field_order_pinned() {
+        let msg = ClientMessage::CapturePane {
+            session_name: "s".into(),
+            pane_id: 1,
+            opts: Default::default(),
+        };
+        let bytes = rmp_serde::to_vec(&msg).unwrap();
+        // Skip variant envelope (0x81 fixmap-1, 0xAB fixstr-11,
+        // "CapturePane", 0x93 fixarray-3 → first 14 bytes).
+        let payload = &bytes[14..];
+        // Expected positional layout:
+        //   [0]   0xA1 fixstr-1
+        //   [1]   's'                        (session_name = "s")
+        //   [2]   0x01                       (pane_id = 1, positive fixint)
+        //   [3]   0x93                       (opts = fixarray-3)
+        //   [4]   0x00                       (opts.scrollback_rows = 0)
+        //   [5]   0xC2                       (opts.join_wrapped = false)
+        //   [6]   0xC2                       (opts.preserve_trailing_spaces = false)
+        assert_eq!(
+            payload,
+            &[0xA1, b's', 0x01, 0x93, 0x00, 0xC2, 0xC2],
+            "CapturePane field order changed — reordering fields breaks \
+             every old peer's positional decode"
+        );
+    }
+
+    /// Pin the FIELD ORDER inside `ServerMessage::PaneCapture`. The
+    /// fixarray-of-size-4 length check elsewhere catches *adding/removing*
+    /// fields, but a silent swap of two same-shape fields (e.g. text and
+    /// truncated, or session_name and text) wouldn't change the length —
+    /// this test would.
+    #[test]
+    fn server_message_pane_capture_field_order_pinned() {
+        let msg = ServerMessage::PaneCapture {
+            session_name: "s".into(),
+            pane_id: 1,
+            text: "".into(),
+            truncated: true,
+        };
+        let bytes = rmp_serde::to_vec(&msg).unwrap();
+        // Skip the variant envelope (0x81 fixmap-1, 0xAB fixstr-11,
+        // "PaneCapture", 0x94 fixarray-4 → first 14 bytes).
+        let payload = &bytes[14..];
+        // Expected positional layout:
+        //   [0]   0xA1 fixstr-1
+        //   [1]   's'                        (session_name = "s")
+        //   [2]   0x01                       (pane_id = 1, positive fixint)
+        //   [3]   0xA0 fixstr-0              (text = "")
+        //   [4]   0xC3                       (truncated = true)
+        assert_eq!(
+            payload,
+            &[0xA1, b's', 0x01, 0xA0, 0xC3],
+            "PaneCapture field order changed — reordering fields breaks \
+             every old peer's positional decode"
+        );
+    }
+
+    /// Symmetric forward-compat for the *response* variant: a hypothetical
+    /// older server that pre-dates the `truncated` field would emit
+    /// `PaneCapture` as a fixarray-3 (session_name, pane_id, text). The
+    /// `#[serde(default)]` annotation on `truncated` must default-fill
+    /// to `false` so newer clients keep working. Without this test,
+    /// we'd only learn the mistake when an old daemon meets a new CLI.
+    #[test]
+    fn server_message_pane_capture_omitted_truncated_defaults_to_false() {
+        // Hand-crafted wire bytes:
+        //   0x81                  fixmap-1
+        //   0xAB                  fixstr-11
+        //   "PaneCapture"         variant name
+        //   0x93                  fixarray-3 (no truncated yet)
+        //   0xA1 's'              session_name = "s"
+        //   0x01                  pane_id = 1
+        //   0xA2 'h' 'i'          text = "hi"
+        let mut bytes = vec![0x81, 0xAB];
+        bytes.extend_from_slice(b"PaneCapture");
+        bytes.extend_from_slice(&[0x93, 0xA1, b's', 0x01, 0xA2, b'h', b'i']);
+
+        match rmp_serde::from_slice::<ServerMessage>(&bytes) {
+            Ok(ServerMessage::PaneCapture {
+                session_name,
+                pane_id,
+                text,
+                truncated,
+            }) => {
+                assert_eq!(session_name, "s");
+                assert_eq!(pane_id, 1);
+                assert_eq!(text, "hi");
+                assert!(
+                    !truncated,
+                    "omitted `truncated` field must default to false; \
+                     newer client received {truncated}"
+                );
+            }
+            Ok(other) => panic!("expected PaneCapture, got {other:?}"),
+            Err(e) => panic!(
+                "old-shape response rejected — `#[serde(default)]` on \
+                 `truncated` doesn't actually default-fill in rmp-serde \
+                 array decoding. err: {e}"
+            ),
+        }
+    }
+
+    /// Forward-compat at the *variant* level: an older sender that pre-dates
+    /// the addition of `opts` would send a `CapturePane` payload with only
+    /// `session_name` and `pane_id` (fixarray-2). The `#[serde(default)]`
+    /// annotation on the `opts` field is meant to handle this. This test
+    /// proves whether the annotation actually works for variant payloads —
+    /// if rmp-serde rejects the short array, we learn here, not at runtime
+    /// against an old peer in production.
+    #[test]
+    fn client_message_capture_pane_omitted_opts_defaults() {
+        // Hand-crafted wire bytes:
+        //   0x81                  fixmap-1
+        //   0xAB                  fixstr-11
+        //   "CapturePane"         variant name
+        //   0x92                  fixarray-2 (payload missing `opts`)
+        //   0xA1 's'              session_name = "s"
+        //   0x01                  pane_id = 1
+        let mut bytes = vec![0x81, 0xAB];
+        bytes.extend_from_slice(b"CapturePane");
+        bytes.extend_from_slice(&[0x92, 0xA1, b's', 0x01]);
+
+        match rmp_serde::from_slice::<ClientMessage>(&bytes) {
+            Ok(ClientMessage::CapturePane {
+                session_name,
+                pane_id,
+                opts,
+            }) => {
+                assert_eq!(session_name, "s");
+                assert_eq!(pane_id, 1);
+                assert_eq!(opts.scrollback_rows, 0);
+                assert!(!opts.join_wrapped);
+                assert!(!opts.preserve_trailing_spaces);
+            }
+            Ok(other) => panic!("expected CapturePane, got {other:?}"),
+            Err(e) => panic!(
+                "old-shape variant rejected — `#[serde(default)]` on `opts` \
+                 doesn't actually default-fill a missing trailing field in \
+                 rmp-serde array decoding. err: {e}"
+            ),
+        }
+    }
 }

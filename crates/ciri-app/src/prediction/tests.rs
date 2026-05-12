@@ -206,18 +206,23 @@ fn hidden_text_tracking_feeds_force_visible_backspace_in_alt_screen() {
 }
 
 #[test]
-fn hidden_text_tracking_survives_early_echo_ack_with_stale_grid() {
+fn hidden_text_tracking_pending_until_late_ack_arrives() {
+    // Under the late_ack protocol (server bumps echo_ack only after PTY has
+    // produced output), a tracked-hidden prediction sits in Pending until
+    // echo_ack reaches its min_ack. on_server_sync calls with a lower
+    // echo_ack must leave the overlay untouched so a following Backspace can
+    // still consume `local_edit_start`.
     let mut engine = PredictionEngine::new(PredictionMode::Never, 0, false);
     let grid = make_grid_at(80, 24, 0, 0);
 
     engine.new_user_input_track_hidden(1, b"ABC", &grid, 1);
 
-    let stale_server_grid = make_grid_at(80, 24, 0, 0);
-    engine.on_server_sync(1, &stale_server_grid, 1);
-
+    // echo_ack = 0 < min_ack = 1 → Pending. Server framebuffer has nothing
+    // to compare against yet.
+    engine.on_server_sync(1, &grid, 0);
     assert!(engine.has_overlay(1));
 
-    engine.new_user_input_force_visible(1, &[0x7F], &stale_server_grid, 2);
+    engine.new_user_input_force_visible(1, &[0x7F], &grid, 2);
 
     assert_eq!(engine.get_overlay_cursor(1), Some((0, 2)));
     assert_eq!(engine.get_overlay_cell(1, 0, 0).unwrap().ch(), 'A');
@@ -226,21 +231,103 @@ fn hidden_text_tracking_survives_early_echo_ack_with_stale_grid() {
 }
 
 #[test]
-fn force_visible_backspace_survives_early_echo_ack_with_stale_grid() {
+fn cell_mismatch_at_late_ack_kills_overlay_without_grace() {
+    // Locks in the contract change from the late_ack overhaul: once
+    // `echo_ack >= min_echo_ack` the server's frame is guaranteed to reflect
+    // the input, so any cell mismatch is a genuine misprediction. The old
+    // `tolerate_mismatch` window (2–5s) is gone — mismatched cells must
+    // disappear on the first server sync, not linger.
+    let mut engine = PredictionEngine::new(PredictionMode::Always, 0, false);
+    let grid = make_grid_at(80, 24, 0, 0);
+    engine.new_user_input_with_min_ack(1, b"A", &grid, 1);
+    assert!(engine.has_overlay(1));
+
+    // Server's frame says "I applied input 1, and the cell is 'X' (not 'A')."
+    let mut server_grid = make_grid_at(80, 24, 0, 1);
+    server_grid.viewport[0].set_ch('X');
+    engine.on_server_sync(1, &server_grid, 1);
+
+    // The wrong 'A' prediction must be gone immediately — no grace, no
+    // lingering 2-5s of stale render.
+    assert!(
+        engine.get_overlay_cell(1, 0, 0).is_none(),
+        "mispredicted cell should not survive a late_ack confirmation"
+    );
+}
+
+#[test]
+fn local_edit_start_survives_confirmed_sync_for_followup_backspace() {
+    // Hidden-edit state must outlive a server sync that has confirmed the
+    // typed cells, so subsequent force-visible Backspaces can still clamp at
+    // the original edit boundary. Without this invariant, the second
+    // Backspace below would walk left over the prompt.
+    let mut engine = PredictionEngine::new(PredictionMode::Never, 0, false);
+    let mut grid = make_grid_at(80, 24, 5, 0);
+    grid.viewport[4].set_ch('$');
+    engine.new_user_input_track_hidden(1, b"A", &grid, 1);
+    assert!(engine.has_overlay(1));
+
+    // Server confirms 'A' is in place. Pass-1 resets the matched cell;
+    // cursor validation clears the matched cursor. The overlay's public
+    // `has_overlay` will now report false (no cells, no cursor), but the
+    // internal `local_edit_start` must persist — the only way to prove that
+    // is to issue the Backspace and watch it clamp.
+    let mut server_grid = make_grid_at(80, 24, 6, 0);
+    server_grid.viewport[4].set_ch('$');
+    server_grid.viewport[5].set_ch('A');
+    engine.on_server_sync(1, &server_grid, 1);
+
+    // The first Backspace returns to the edit start. The second must clamp
+    // there instead of walking left over the prompt.
+    engine.new_user_input_force_visible(1, &[0x7F], &server_grid, 2);
+    engine.new_user_input_force_visible(1, &[0x7F], &server_grid, 3);
+    assert_eq!(engine.get_overlay_cursor(1), Some((0, 5)));
+    assert_eq!(engine.get_overlay_cell(1, 0, 4), None);
+}
+
+#[test]
+fn cursor_mismatch_at_late_ack_kills_overlay_without_grace() {
+    // Cursor counterpart of the cell test. When the server has acked an
+    // input but our predicted cursor disagrees with the framebuffer cursor,
+    // the prediction was wrong — wipe it.
+    let mut engine = PredictionEngine::new(PredictionMode::Always, 0, false);
+    let grid = make_grid_at(80, 24, 0, 0);
+    engine.new_user_input_with_min_ack(1, b"\x1B[C", &grid, 1); // Right arrow
+
+    assert_eq!(engine.get_overlay_cursor(1), Some((0, 1)));
+
+    // Server confirms input 1 applied, but cursor stayed put (e.g. line end).
+    let server_grid = make_grid_at(80, 24, 0, 0);
+    engine.on_server_sync(1, &server_grid, 1);
+
+    assert_eq!(engine.get_overlay_cursor(1), None);
+}
+
+#[test]
+fn force_visible_backspace_pending_until_late_ack_arrives() {
+    // Same Pending invariant for the force-visible Backspace path: with
+    // echo_ack still behind the Backspace's min_ack, the predicted erase
+    // remains on screen.
     let mut engine = PredictionEngine::new(PredictionMode::Never, 0, false);
     let grid = make_grid_at(80, 24, 0, 0);
 
     engine.new_user_input_track_hidden(1, b"AB", &grid, 1);
     engine.new_user_input_force_visible(1, &[0x7F], &grid, 2);
 
-    let stale_server_grid = make_grid_at(80, 24, 0, 0);
-    engine.on_server_sync(1, &stale_server_grid, 2);
+    // Under late_ack semantics, when echo_ack=1 the server's grid already
+    // reflects input 1 (i.e. "AB" typed, cursor at col 2). The Backspace
+    // (min_ack=2) is still Pending — its predicted erase must survive.
+    let mut grid_after_typing = make_grid_at(80, 24, 0, 2);
+    grid_after_typing.viewport[0].set_ch('A');
+    grid_after_typing.viewport[1].set_ch('B');
+    engine.on_server_sync(1, &grid_after_typing, 1);
 
     assert_eq!(engine.get_overlay_cursor(1), Some((0, 1)));
-    assert_eq!(engine.get_overlay_cell(1, 0, 0).unwrap().ch(), 'A');
-    assert!(engine
-        .get_overlay_cell(1, 0, 1)
-        .is_none_or(|cell| cell.ch() == ' '));
+    assert!(
+        engine
+            .get_overlay_cell(1, 0, 1)
+            .is_none_or(|cell| cell.ch() == ' ')
+    );
 }
 
 #[test]

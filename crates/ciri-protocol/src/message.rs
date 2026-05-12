@@ -821,7 +821,14 @@ pub struct PaneFrameMeta {
     pub cursor_shape: u8,
     /// Terminal mode flags (mouse mode, alt screen, kitty keyboard levels, etc.)
     pub mode_flags: u16,
-    /// Highest input_seq the server has processed for this pane from this client.
+    /// Highest input_seq from this client that has been late-acked for this
+    /// pane. The server advances this only after `process_pty_output()`
+    /// drains PTY output following the input, on the premise that the
+    /// resulting framebuffer state typically reflects those inputs by then.
+    /// Coalesced bursts may over-ack a suffix (PTY echo trails the write);
+    /// the client treats over-acks as ordinary mispredictions and resets the
+    /// overlay rather than holding stale state. See ciri-server
+    /// `process_pty_and_damage`.
     pub echo_ack: u64,
 }
 

@@ -7,9 +7,6 @@ use super::{
 };
 use crate::grid::ClientPaneGrid;
 
-const TOLERANT_MISMATCH_MIN_MS: u64 = 2_000;
-const TOLERANT_MISMATCH_MAX_MS: u64 = 5_000;
-
 impl PredictionEngine {
     /// Validate predictions against authoritative server state.
     ///
@@ -38,9 +35,6 @@ impl PredictionEngine {
         }
 
         let now = Instant::now();
-        let mismatch_grace_ms = (self.srtt_us / 1000)
-            .saturating_mul(4)
-            .clamp(TOLERANT_MISMATCH_MIN_MS, TOLERANT_MISMATCH_MAX_MS);
         overlay.expire_old(now);
 
         let cols = grid.cols as usize;
@@ -165,10 +159,6 @@ impl PredictionEngine {
                 let pred_ch = cell.replacement.ch();
 
                 if pred_ch != actual_ch {
-                    let pred_ms = now.duration_since(cell.created_at).as_millis() as u64;
-                    if cell.tolerate_mismatch && pred_ms < mismatch_grace_ms {
-                        continue;
-                    }
                     if cell.epoch <= confirmed {
                         need_reset = true;
                     } else {
@@ -192,18 +182,16 @@ impl PredictionEngine {
             overlay.kill_epoch(epoch);
         }
 
-        // Validate cursor prediction.
+        // Validate cursor prediction. echo_ack from the server is now a
+        // `late_ack` (only bumped after the pane's PTY has flowed output back
+        // — see ciri-server `process_pty_and_damage`), so once
+        // `echo_ack >= min_echo_ack` the grid is guaranteed to reflect the
+        // input that produced this cursor. Match → confirmed; mismatch → the
+        // prediction was simply wrong, reset.
         if let Some(ref cur) = overlay.cursor {
             if echo_ack >= cur.min_echo_ack {
                 if cur.row == grid.cursor_line && cur.col == grid.cursor_col {
                     overlay.cursor = None;
-                } else if cur.tolerate_mismatch
-                    && (now.duration_since(cur.created_at).as_millis() as u64) < mismatch_grace_ms
-                {
-                    // `echo_ack` means the server received the input, not that
-                    // the PTY output has already reached the grid. Keep
-                    // hidden/force-visible predictions alive briefly so a
-                    // following Backspace can still use the local edit state.
                 } else {
                     self.overlays.remove(&pane_id);
                     self.force_visible_panes.remove(&pane_id);

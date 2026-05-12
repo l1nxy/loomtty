@@ -398,6 +398,7 @@ impl Session {
                 client.damage.remove(&pane_id);
                 client.history_sent.remove(&pane_id);
                 client.max_input_seq.remove(&pane_id);
+                client.received_input_seq.remove(&pane_id);
             }
         }
     }
@@ -617,8 +618,35 @@ impl Session {
         let pane_ids: Vec<u64> = self.panes.keys().copied().collect();
         for pane_id in pane_ids {
             let pane = self.panes.get_mut(&pane_id).unwrap();
-            if pane.process_pty_output() {
+            let pty_drained = pane.process_pty_output();
+            if pty_drained {
                 self.last_tick_had_pty_data = true;
+                // Promote any pending received-but-unacked input seqs for
+                // this pane. PTY output flowing back is strong evidence the
+                // application has reacted to recent inputs; with the event-
+                // driven tick loop throttled at ~16ms (`tick.rs`) and sub-ms
+                // typical PTY echo latency, the very common case is "all
+                // inputs from the prior interval have been echoed and are
+                // included in this drain", so the framebuffer state below
+                // genuinely reflects them.
+                //
+                // Residual coalescing race: if a burst of inputs is written
+                // to the PTY and only a prefix of their echoes is present in
+                // this drain, promoting to the per-client max over-acks the
+                // suffix. The client's response is a single overlay reset on
+                // the next sync, which the next keystroke recovers from —
+                // dramatically better than the 2–5s wrong-rendering window
+                // this whole machinery replaced. A tighter per-input ack
+                // would require tracking write→read pairing in the PTY
+                // wrapper; deferred.
+                for client in clients.values_mut() {
+                    if let Some(&received) = client.received_input_seq.get(&pane_id) {
+                        let entry = client.max_input_seq.entry(pane_id).or_insert(0);
+                        if received > *entry {
+                            *entry = received;
+                        }
+                    }
+                }
             }
 
             // Drain OSC 52 clipboard writes
@@ -849,6 +877,7 @@ mod tests {
             damage: HashMap::new(),
             last_acked_generation: 0,
             max_input_seq: HashMap::new(),
+            received_input_seq: HashMap::new(),
             history_sent: HashMap::new(),
             send_failures: 0,
             cell_width: 8.0,

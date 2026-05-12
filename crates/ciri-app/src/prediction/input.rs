@@ -43,7 +43,6 @@ impl PredictionEngine {
         ccol: u16,
         min_ack: u64,
         show_ul: bool,
-        tolerate_mismatch: bool,
     ) -> u16 {
         let char_width = ch.width().unwrap_or(1) as u16;
         if ccol + char_width > grid.cols {
@@ -85,7 +84,6 @@ impl PredictionEngine {
             dc.min_echo_ack = min_ack;
             dc.original_ch = orig_ch;
             dc.unknown = src_unknown;
-            dc.tolerate_mismatch = tolerate_mismatch;
         }
 
         // Mark rightmost cells as unknown.
@@ -103,7 +101,6 @@ impl PredictionEngine {
                     dc.original_ch = grid.viewport.get(orig_idx).map(|c| c.ch()).unwrap_or('\0');
                 }
                 orow.cells[uc as usize].unknown = true;
-                orow.cells[uc as usize].tolerate_mismatch = tolerate_mismatch;
             }
         }
 
@@ -153,7 +150,6 @@ impl PredictionEngine {
         cc.min_echo_ack = min_ack;
         cc.original_ch = orig_ch;
         cc.unknown = false;
-        cc.tolerate_mismatch = tolerate_mismatch;
 
         // Wide char spacer.
         if char_width == 2 {
@@ -176,7 +172,6 @@ impl PredictionEngine {
             sc.min_echo_ack = min_ack;
             sc.original_ch = spacer_orig;
             sc.unknown = false;
-            sc.tolerate_mismatch = tolerate_mismatch;
         }
 
         char_width
@@ -311,7 +306,6 @@ impl PredictionEngine {
                     epoch: overlay.prediction_epoch,
                     min_echo_ack: min_ack,
                     created_at: Instant::now(),
-                    tolerate_mismatch: force_track,
                 });
             }
             return;
@@ -326,7 +320,6 @@ impl PredictionEngine {
                 epoch: overlay.prediction_epoch,
                 min_echo_ack: min_ack,
                 created_at: Instant::now(),
-                tolerate_mismatch: force_track,
             });
             return;
         }
@@ -342,7 +335,6 @@ impl PredictionEngine {
                         ccol,
                         min_ack,
                         show_ul,
-                        force_track,
                     );
                     if w == 0 {
                         return;
@@ -362,7 +354,6 @@ impl PredictionEngine {
                             ccol,
                             min_ack,
                             show_ul,
-                            force_track,
                         );
                         if w == 0 {
                             return;
@@ -382,7 +373,6 @@ impl PredictionEngine {
                                     epoch: overlay.prediction_epoch,
                                     min_echo_ack: min_ack,
                                     created_at: Instant::now(),
-                                    tolerate_mismatch: force_track,
                                 });
                                 continue;
                             }
@@ -438,7 +428,6 @@ impl PredictionEngine {
                         dc.min_echo_ack = min_ack;
                         dc.original_ch = orig;
                         dc.unknown = false;
-                        dc.tolerate_mismatch = force_track;
                     }
 
                     for trail in 0..del_width {
@@ -458,7 +447,6 @@ impl PredictionEngine {
                         dc.min_echo_ack = min_ack;
                         dc.original_ch = orig;
                         dc.unknown = false;
-                        dc.tolerate_mismatch = force_track;
                     }
                 }
                 0x0D => {
@@ -494,7 +482,6 @@ impl PredictionEngine {
                 epoch: overlay.prediction_epoch,
                 min_echo_ack: min_ack,
                 created_at: Instant::now(),
-                tolerate_mismatch: force_track,
             });
         }
     }

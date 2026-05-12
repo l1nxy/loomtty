@@ -15,6 +15,7 @@ fn test_client(id: u64, session_name: &str) -> ClientState {
         damage: HashMap::new(),
         last_acked_generation: 0,
         max_input_seq: HashMap::new(),
+        received_input_seq: HashMap::new(),
         history_sent: HashMap::new(),
         send_failures: 0,
         cell_width: 8.0,

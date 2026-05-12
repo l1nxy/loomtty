@@ -15,7 +15,6 @@ pub(super) struct OverlayCell {
     pub min_echo_ack: u64,
     pub original_ch: char,
     pub unknown: bool,
-    pub tolerate_mismatch: bool,
 }
 
 impl OverlayCell {
@@ -28,14 +27,12 @@ impl OverlayCell {
             min_echo_ack: 0,
             original_ch: '\0',
             unknown: false,
-            tolerate_mismatch: false,
         }
     }
 
     pub fn reset(&mut self) {
         self.active = false;
         self.unknown = false;
-        self.tolerate_mismatch = false;
     }
 }
 
@@ -62,7 +59,6 @@ pub struct PredictedCursor {
     pub epoch: u64,
     pub min_echo_ack: u64,
     pub created_at: Instant,
-    pub tolerate_mismatch: bool,
 }
 
 pub struct PaneOverlay {
@@ -145,9 +141,14 @@ impl PaneOverlay {
                 .rows
                 .values()
                 .any(|r| r.cells.iter().any(|c| c.active && c.epoch == epoch));
-            let keep_tolerant = cur.tolerate_mismatch
+            // Hidden-edit overlays carry only a cursor + local_edit_start (no
+            // cells in `rows`), so reaping the cursor whenever there's no peer
+            // cell would destroy them on every server sync. Keep the cursor
+            // alive while local_edit_start is set; the standard timeout still
+            // bounds its lifetime.
+            let keep_for_edit_start = self.local_edit_start.is_some()
                 && now.duration_since(cur.created_at).as_secs() < PREDICTION_TIMEOUT_SECS;
-            if !has_peer && !keep_tolerant {
+            if !has_peer && !keep_for_edit_start {
                 self.cursor = None;
             }
         }

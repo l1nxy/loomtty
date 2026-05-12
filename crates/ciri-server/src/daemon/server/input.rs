@@ -24,11 +24,15 @@ impl Server {
                 } else {
                     false
                 };
-                // Track highest input_seq for echo-ack, only if pane exists
-                // (prevents malicious clients from bloating the HashMap).
+                // Stash the seq as *received*. It only gets promoted to the
+                // ack-able `max_input_seq` once the pane's PTY produces output
+                // (see `Session::promote_received_input_seqs`), so clients
+                // don't see an echo_ack until the framebuffer reflects this
+                // input. Gated on pane existence to prevent malicious clients
+                // from bloating the HashMap.
                 if pane_exists {
                     if let Some(client) = self.clients.get_mut(&_client_id) {
-                        let entry = client.max_input_seq.entry(pane_id).or_insert(0);
+                        let entry = client.received_input_seq.entry(pane_id).or_insert(0);
                         if input_seq > *entry {
                             *entry = input_seq;
                         }

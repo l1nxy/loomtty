@@ -26,13 +26,22 @@ import { hexToBytes } from "./__fixtures__/hex.js";
 
 function colorFromJson(arr: [string, ...number[]]): PackedColor {
   const kind = arr[0];
+  function num(i: number): number {
+    const v = arr[i];
+    if (typeof v !== "number") {
+      throw new Error(
+        `malformed color fixture: expected number at index ${i} of ${JSON.stringify(arr)}`,
+      );
+    }
+    return v;
+  }
   switch (kind) {
     case "named":
-      return { kind: "named", index: arr[1]! };
+      return { kind: "named", index: num(1) };
     case "indexed":
-      return { kind: "indexed", index: arr[1]! };
+      return { kind: "indexed", index: num(1) };
     case "rgb":
-      return { kind: "rgb", r: arr[1]!, g: arr[2]!, b: arr[3]! };
+      return { kind: "rgb", r: num(1), g: num(2), b: num(3) };
     default:
       throw new Error(`unknown color kind: ${kind}`);
   }

@@ -22,6 +22,17 @@ import { decompressLz4Payload } from "./lz4.js";
 
 const FRAME_HEADER_LEN = 5;
 
+/// Frame direction tags.
+///
+/// In the typical browser-client deployment the gateway is a one-way
+/// receiver: `server-msg`, `cell-delta`, and `full-pane-sync` are the
+/// only kinds the client should receive from the wire. `client-msg`
+/// (tag 0x01) is what the *client* sends *to* the server — receiving
+/// it on the client side means the server is buggy or hostile, and
+/// callers should treat it as an error rather than dispatching to the
+/// server-message handler. The decoder still surfaces the kind so the
+/// caller can implement that policy (e.g., disconnect on bad
+/// direction).
 export type FrameKind =
   | "client-msg"
   | "server-msg"
@@ -52,6 +63,7 @@ export class FrameReader {
   // caller that retries `next()` gets a deterministic error rather
   // than spinning on the same fault.
   private poisonReason: string | null = null;
+  private poisonCause: unknown = undefined;
 
   /// Append raw bytes (typically the payload of one WS Binary message).
   /// Always copies the inbound chunk (the caller may reuse its buffer
@@ -60,7 +72,9 @@ export class FrameReader {
   /// `.slice()` instead of an alloc-then-copy of `old + new`.
   push(chunk: Uint8Array): void {
     if (this.poisonReason !== null) {
-      throw new Error(`FrameReader is poisoned: ${this.poisonReason}`);
+      throw new Error(`FrameReader is poisoned: ${this.poisonReason}`, {
+        cause: this.poisonCause,
+      });
     }
     if (chunk.length === 0) return;
     if (this.buf.length === 0) {
@@ -81,7 +95,9 @@ export class FrameReader {
   /// re-throw immediately with a "poisoned" message.
   next(): RawFrame | null {
     if (this.poisonReason !== null) {
-      throw new Error(`FrameReader is poisoned: ${this.poisonReason}`);
+      throw new Error(`FrameReader is poisoned: ${this.poisonReason}`, {
+        cause: this.poisonCause,
+      });
     }
     if (this.buf.length < FRAME_HEADER_LEN) return null;
     const tag = this.buf[0]!;
@@ -116,8 +132,13 @@ export class FrameReader {
           : this.buf.slice(total);
       return decodeFrame(tag, payload);
     } catch (e) {
+      // Preserve the original error and stash both its message (for
+      // subsequent `isPoisoned`/throw diagnostics) and the error
+      // itself (as `cause` on later re-throws) so root-cause analysis
+      // survives across the poisoned boundary.
       this.poisonReason =
         e instanceof Error ? e.message : "unknown frame decode error";
+      this.poisonCause = e;
       // Drop the buffer too: there is no recovery path that could
       // ever consume those bytes, and keeping them alive misleads
       // `pending()` callers into thinking work is outstanding.

@@ -65,8 +65,11 @@ function decodeCellChar(bytes: Uint8Array): string {
 }
 
 /// Decode an SM opcode stream into exactly `expected` cells. Throws if
-/// the stream is malformed, the cell count mismatches `expected`, or
-/// the buffer is truncated mid-opcode.
+/// the stream is malformed, the cell count mismatches `expected`, the
+/// buffer is truncated mid-opcode, or the stream ends without an
+/// `OP_END` terminator (a buffer that runs out of bytes without
+/// `OP_END` indicates wire corruption and must surface as an error,
+/// not as a silent partial decode).
 export function decodeSmCells(
   data: Uint8Array,
   expected: number,
@@ -90,6 +93,10 @@ export function decodeSmCells(
 /// Lower-level entry point: write into a pre-allocated array up to
 /// `limit` cells and return the actual count produced. Used by
 /// CellDelta (per-region) where each region knows its own width.
+///
+/// Throws if the stream contains an unknown opcode, is truncated
+/// mid-opcode, exceeds `limit` cells, or ends without an `OP_END`
+/// terminator.
 ///
 /// Preconditions:
 /// - `cells.length >= limit` — the caller must have allocated room
@@ -118,6 +125,10 @@ export function decodeSmCellsInto(
     data.byteOffset,
     data.byteLength,
   );
+  // OP_END is the explicit stream terminator; without it we can't
+  // distinguish "valid stream that happens to fill the buffer" from
+  // "truncated stream of N cells". Track and require it.
+  let sawEnd = false;
 
   // Helpers — read N bytes, advancing `pos`, with a truncation guard.
   const need = (n: number, ctx: string) => {
@@ -273,11 +284,21 @@ export function decodeSmCellsInto(
         break;
       }
       case OP_END:
-        return ci;
+        sawEnd = true;
+        // Don't return early — fall out of the `while` so the
+        // terminator check below runs and verifies no garbage opcodes
+        // followed `OP_END` either.
+        break;
       default:
         throw new Error(`unknown SM opcode: 0x${(op ?? 0).toString(16)}`);
     }
+    if (sawEnd) break;
   }
 
+  if (!sawEnd) {
+    throw new Error(
+      `SM stream ended without OP_END (decoded ${ci} cells, ${data.length - pos} trailing bytes)`,
+    );
+  }
   return ci;
 }

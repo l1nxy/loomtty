@@ -236,6 +236,14 @@ describe("decodeSmCells", () => {
     expect(() => decodeSmCells(data, 2)).toThrow(/expected 2/);
   });
 
+  test("stream without OP_END terminator is rejected", () => {
+    // Without OP_END, the decoder cannot distinguish a legitimately-
+    // complete stream from one that was truncated at exactly the
+    // wrong byte. Require the terminator unconditionally.
+    const data = bytes(OP_CHAR1, 0x61, 0, 0, 0); // no OP_END
+    expect(() => decodeSmCells(data, 1)).toThrow(/without OP_END/);
+  });
+
   test("count=0 opcodes consume their header bytes but emit nothing", () => {
     // Pathological-but-not-malformed stream: zero-count OP_CHARS,
     // OP_CHARS_LONG, OP_ASCII, OP_REPEAT, OP_ASCII_REPEAT all advance

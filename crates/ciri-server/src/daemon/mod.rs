@@ -253,7 +253,7 @@ pub async fn prepare_daemon() -> Result<DaemonState> {
 }
 
 /// Run the accept loop. Call after `prepare_daemon`.
-pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
+pub async fn run_daemon_loop(mut ds: DaemonState) -> Result<()> {
     let state = ds.state;
     let shutdown = ds.shutdown;
     let server_exited = ds.server_exited;
@@ -264,6 +264,19 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
     let pipe_name = ds.pipe_name;
     #[cfg(windows)]
     let mut pipe_server = ds.pipe_server;
+
+    // Port collision check (runtime gate; schema-level can't see across
+    // RemoteConfig and WebConfig with derive-Validate).
+    if ds.config.remote.enabled
+        && ds.config.web.enabled
+        && ds.config.remote.port == ds.config.web.port
+    {
+        anyhow::bail!(
+            "remote.port and web.port both set to {} — pick distinct ports \
+             (defaults are 7890/7891)",
+            ds.config.remote.port,
+        );
+    }
 
     let tcp_listener = if ds.config.remote.enabled {
         let addr = format!("127.0.0.1:{}", ds.config.remote.port);
@@ -320,6 +333,14 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
             );
         }
         let origins = Arc::new(ds.config.web.allowed_origins.clone());
+        // The raw config string still holds a plaintext copy of the
+        // secret; the zeroized SharedToken only covers our runtime
+        // copy. Wipe the source so a core dump or post-startup memory
+        // read can't recover the token from `ds.config`. (Operationally
+        // this is best-effort: the allocator may have reused the
+        // buffer before we got here, but it's free defense.)
+        use zeroize::Zeroize;
+        ds.config.web.token.zeroize();
         (Some(tcp), Some(token), origins)
     } else {
         (None, None, Arc::new(Vec::new()))
@@ -412,6 +433,14 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
                 result = pipe_server.connect() => {
                     if let Err(e) = result {
                         log::error!("named pipe accept error: {e}");
+                        // `connect()` is one-shot; once it fails, the
+                        // existing pipe_server handle is unusable. Build
+                        // a fresh one so the next loop iteration has a
+                        // working listener (without this, the daemon
+                        // silently stops accepting pipe clients).
+                        pipe_server = ServerOptions::new()
+                            .reject_remote_clients(true)
+                            .create(&pipe_name)?;
                         continue;
                     }
                 }

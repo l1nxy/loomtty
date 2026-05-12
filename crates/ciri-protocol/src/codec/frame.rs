@@ -248,7 +248,11 @@ pub(crate) fn decompress_lz4_payload(payload: &[u8]) -> io::Result<Vec<u8>> {
             "LZ4 payload claims non-zero uncompressed length with zero compressed bytes",
         ));
     }
-    if compressed_len > 0 && uncompressed_len / compressed_len > MAX_LZ4_RATIO {
+    // Multiplication form: `uncompressed > MAX_LZ4_RATIO * compressed`
+    // avoids the integer-truncation gap of the division form (e.g.,
+    // 193 / 3 == 64 would pass the `> 64` check even though the real
+    // ratio is 64.33:1).
+    if compressed_len > 0 && uncompressed_len > MAX_LZ4_RATIO.saturating_mul(compressed_len) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!(

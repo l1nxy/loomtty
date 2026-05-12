@@ -1022,8 +1022,14 @@ fn looks_like_origin(value: &str) -> bool {
     else {
         return false;
     };
-    // Reject trailing slash / path — Origin is scheme + host[:port].
-    !rest.is_empty() && !rest.contains('/')
+    // Origin is exactly `scheme://host[:port]` — reject any path,
+    // query, or fragment that would never appear in a real browser
+    // `Origin` header (and that the exact-match runtime check would
+    // silently fail against).
+    !rest.is_empty()
+        && !rest.contains('/')
+        && !rest.contains('?')
+        && !rest.contains('#')
 }
 
 #[cfg(test)]

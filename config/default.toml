@@ -207,7 +207,10 @@ n = "dismiss_paste_confirm"
 # bytes; generate one with `openssl rand -hex 16`.
 [web]
 enabled = false
-bind = "127.0.0.1"
+# Empty string is the loopback placeholder — the daemon substitutes
+# 127.0.0.1 at bind time. Matches WebConfig::default() so a config
+# round-tripped through serde produces no diff.
+bind = ""
 port = 7891
 # Generate with `openssl rand -hex 16` (32 hex chars) and paste the
 # value between the quotes. Leave as "" while `enabled = false`.

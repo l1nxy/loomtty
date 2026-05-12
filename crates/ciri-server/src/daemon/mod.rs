@@ -277,16 +277,13 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
         None
     };
 
-    let (ws_listener, ws_token) = if ds.config.web.enabled {
-        // Take ownership of the trimmed token: surrounding whitespace from
-        // shell-generated secrets (a trailing newline is the classic case)
-        // must NOT survive into the compare path, otherwise a client that
-        // sends the visible token without padding fails authentication
-        // against a correctly configured secret. The helper also enforces
-        // a 16-byte floor — see ws::MIN_WEB_TOKEN_BYTES.
+    let (ws_listener, ws_token, ws_allowed_origins) = if ds.config.web.enabled {
+        // Token: trimmed, zeroized-on-drop, refcounted. The helper enforces
+        // the 16-byte floor and any surrounding whitespace is stripped so
+        // a trailing newline in the config does not silently break auth.
         let token = ws::prepare_web_token(&ds.config.web.token)?;
-        // `bind` has already passed `validate_web_bind` (which accepts
-        // either empty or a parseable IpAddr) — empty means "use loopback".
+        // `bind` has already passed schema validation (accepts empty or a
+        // parseable IpAddr) — empty means "use loopback".
         let parsed_bind: std::net::IpAddr = if ds.config.web.bind.is_empty() {
             std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
         } else {
@@ -297,6 +294,18 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
                 )
             })?
         };
+        // Origin policy: an empty allowlist is only safe on loopback,
+        // because only same-host pages can reach the listener. On a
+        // non-loopback bind, an unscoped allowlist invites CSRF from any
+        // page in the browser — refuse to start.
+        if !parsed_bind.is_loopback() && ds.config.web.allowed_origins.is_empty() {
+            anyhow::bail!(
+                "[web] bind={parsed_bind} is not loopback but allowed_origins is empty. \
+                 Add the browser origin(s) you intend to serve (e.g. \
+                 allowed_origins = [\"https://terminal.example.com\"]) before exposing \
+                 the gateway."
+            );
+        }
         // Construct the listener from the canonical IpAddr so the logged
         // address and the loopback check agree on a single normalised
         // form (matters for IPv6: `::0001` and `::1` parse to the same
@@ -310,9 +319,10 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
                  and ensure the token is rotated; the gateway speaks plain ws://"
             );
         }
-        (Some(tcp), token)
+        let origins = Arc::new(ds.config.web.allowed_origins.clone());
+        (Some(tcp), Some(token), origins)
     } else {
-        (None, String::new())
+        (None, None, Arc::new(Vec::new()))
     };
 
     let ws_handshake_sem = Arc::new(Semaphore::new(MAX_IN_FLIGHT_WS_HANDSHAKES));
@@ -369,13 +379,22 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
                         }
                     };
                     stream.set_nodelay(true).ok();
+                    // ws_listener is only Some when ws_token is also Some
+                    // (set together in prepare phase); the .as_ref()/.clone()
+                    // here is cheap (Arc refcount bump) so the unwrap is
+                    // load-bearing only for the type system's benefit.
+                    let token = ws_token
+                        .as_ref()
+                        .expect("ws_listener Some implies ws_token Some")
+                        .clone();
                     spawn_ws_client(
                         stream,
                         addr,
                         state.clone(),
                         shutdown.clone(),
                         input_notify.clone(),
-                        ws_token.clone(),
+                        token,
+                        ws_allowed_origins.clone(),
                         ws_handshake_sem.clone(),
                     );
                 }
@@ -416,13 +435,22 @@ pub async fn run_daemon_loop(ds: DaemonState) -> Result<()> {
                         }
                     };
                     stream.set_nodelay(true).ok();
+                    // ws_listener is only Some when ws_token is also Some
+                    // (set together in prepare phase); the .as_ref()/.clone()
+                    // here is cheap (Arc refcount bump) so the unwrap is
+                    // load-bearing only for the type system's benefit.
+                    let token = ws_token
+                        .as_ref()
+                        .expect("ws_listener Some implies ws_token Some")
+                        .clone();
                     spawn_ws_client(
                         stream,
                         addr,
                         state.clone(),
                         shutdown.clone(),
                         input_notify.clone(),
-                        ws_token.clone(),
+                        token,
+                        ws_allowed_origins.clone(),
                         ws_handshake_sem.clone(),
                     );
                     continue;
@@ -485,13 +513,15 @@ const MAX_IN_FLIGHT_WS_HANDSHAKES: usize = 64;
 /// the handshake (bad token, malformed upgrade, etc.) are logged and
 /// the connection is dropped — the accept loop must stay responsive
 /// for other clients regardless of any single peer's misbehaviour.
+#[allow(clippy::too_many_arguments)]
 fn spawn_ws_client(
     stream: tokio::net::TcpStream,
     addr: std::net::SocketAddr,
     state: Arc<Mutex<Server>>,
     shutdown: Arc<Notify>,
     input_notify: Arc<Notify>,
-    token: String,
+    token: ws::SharedToken,
+    allowed_origins: Arc<Vec<String>>,
     handshake_sem: Arc<Semaphore>,
 ) {
     // `try_acquire_owned` is non-blocking: when the cap is reached we
@@ -511,7 +541,7 @@ fn spawn_ws_client(
 
     tokio::spawn(async move {
         log::debug!("ws TCP accept from {addr}; starting handshake");
-        let ws_stream = match ws::accept_ws(stream, &token).await {
+        let ws_stream = match ws::accept_ws(stream, token, allowed_origins).await {
             Ok(ws) => ws,
             Err(e) => {
                 log::warn!("ws handshake from {addr} failed: {e}");

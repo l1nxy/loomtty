@@ -217,3 +217,10 @@ port = 7891
 # need no escaping.
 # token = "0123456789abcdef0123456789abcdef"
 token = ""
+# Exact-match Origin allowlist for browser clients (CSRF defense).
+# Empty + loopback bind = permissive (fine for local dev). Empty +
+# non-loopback bind = daemon refuses to start. Non-empty = each
+# inbound upgrade's Origin header must match one of these entries.
+# Examples: "http://localhost:5173", "https://terminal.example.com",
+# or the literal "null" for file:// / sandboxed origins.
+allowed_origins = []

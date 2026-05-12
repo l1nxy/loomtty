@@ -15,16 +15,26 @@ use percent_encoding::percent_decode_str;
 use std::borrow::Cow;
 use std::io;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
+use subtle::ConstantTimeEq;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
 use tokio_tungstenite::tungstenite::http::StatusCode;
 use tokio_tungstenite::tungstenite::protocol::{Message, WebSocketConfig};
 use tokio_tungstenite::{WebSocketStream, accept_hdr_async_with_config};
+use zeroize::Zeroizing;
 
+use ciri_config::schema::MIN_WEB_TOKEN_BYTES;
 use ciri_protocol::codec::MAX_DATA_FRAME_LEN;
+
+/// Shared, zeroized-on-drop bearer token. The Arc lets every spawned
+/// handshake task hold a refcount instead of cloning the secret bytes;
+/// the inner `Zeroizing<String>` ensures the heap buffer is wiped
+/// when the last refcount goes away.
+pub(crate) type SharedToken = Arc<Zeroizing<String>>;
 
 /// Cap on a single inbound WS message. Sourced directly from the
 /// protocol payload cap so a malicious or buggy peer cannot exhaust
@@ -50,35 +60,32 @@ const MAX_WS_WRITE_BYTES: usize = MAX_DATA_FRAME_LEN as usize + 64;
 /// and then stop talking.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Minimum byte-length for `web.token` when the gateway is enabled.
-/// `openssl rand -hex 16` produces 32 bytes, well above this; the floor
-/// is the byte-length lower bound that the constant-time compare's
-/// length-leak fast path still leaves brute-forceable. The check is on
-/// raw UTF-8 byte count (not codepoint count), matching the wire
-/// representation of the secret.
-pub(crate) const MIN_WEB_TOKEN_BYTES: usize = 16;
-
 /// Validate the configured web token before the gateway accepts the
-/// first connection. Returns the trimmed, owned token on success — that
-/// is the value that must reach `accept_ws`, not the raw config string,
-/// since surrounding whitespace would silently break authentication.
-pub(crate) fn prepare_web_token(raw: &str) -> Result<String> {
-    let token = raw.trim().to_string();
-    if token.is_empty() {
+/// first connection. Returns the trimmed, zeroized-on-drop, refcounted
+/// token on success — callers should treat the returned `SharedToken`
+/// as the canonical handle and clone it (cheap, refcount only) for
+/// every spawned handshake task.
+///
+/// Schema-level validation in `ciri-config::WebConfig::validate` runs
+/// the same length floor; this function is the runtime backstop and
+/// the only path that allocates the zeroizing container.
+pub(crate) fn prepare_web_token(raw: &str) -> Result<SharedToken> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
         return Err(anyhow!(
             "[web] enabled but token is empty — refusing to start. \
              Set a non-trivial value for web.token in your config."
         ));
     }
-    if token.len() < MIN_WEB_TOKEN_BYTES {
+    if trimmed.len() < MIN_WEB_TOKEN_BYTES {
         return Err(anyhow!(
             "[web] token is {} bytes — refusing to start. \
              Minimum is {MIN_WEB_TOKEN_BYTES} bytes (generate one with \
              `openssl rand -hex 16` or `pwgen -s 32 1`).",
-            token.len(),
+            trimmed.len(),
         ));
     }
-    Ok(token)
+    Ok(Arc::new(Zeroizing::new(trimmed.to_string())))
 }
 
 /// Adapter exposing a binary WebSocket as `AsyncRead + AsyncWrite`.
@@ -112,18 +119,25 @@ impl<S> WsStream<S> {
     }
 }
 
-/// Perform the WebSocket handshake and validate the bearer token.
+/// Perform the WebSocket handshake, validate the bearer token, and
+/// enforce the configured Origin allowlist.
 ///
-/// The token may be supplied as `Authorization: Bearer <token>` (preferred
-/// for non-browser clients — does not leak into request logs, browser
-/// history, or `Referer`) or as `?token=…` on the upgrade URL (the only
-/// option for browsers, which cannot set custom headers on a `WebSocket`
-/// upgrade).
+/// Authentication:
+/// The token may be supplied as `Authorization: Bearer <token>`
+/// (preferred for non-browser clients — does not leak into request
+/// logs, browser history, or `Referer`) or as `?token=…` on the
+/// upgrade URL (the only option for browsers, which cannot set custom
+/// headers on a `WebSocket` upgrade). Compare uses `subtle`'s
+/// constant-time XOR accumulator; length mismatch still short-circuits
+/// (length is leaked by design, mitigated by the daemon's 16-byte
+/// floor).
 ///
-/// The byte-wise compare is constant-time **for inputs of the same byte
-/// length**; the fast path on length mismatch leaks the secret's length
-/// through timing. Generate tokens at a fixed length (e.g. 32 hex chars)
-/// to neutralise this side channel.
+/// Origin policy:
+/// - `allowed_origins` empty → no Origin check. The daemon only allows
+///   this path when `bind` is loopback (a non-loopback gateway with no
+///   policy is refused at startup).
+/// - non-empty → the request's `Origin` header must exact-match one of
+///   the entries; missing, non-UTF-8, or unlisted Origin → 401.
 ///
 /// On failure the response is `401 Unauthorized` so the client sees a
 /// deterministic error instead of a generic protocol close.
@@ -133,7 +147,8 @@ impl<S> WsStream<S> {
 #[allow(clippy::result_large_err)]
 pub(crate) async fn accept_ws(
     tcp: TcpStream,
-    expected_token: &str,
+    expected_token: SharedToken,
+    allowed_origins: Arc<Vec<String>>,
 ) -> Result<WsStream<TcpStream>> {
     if expected_token.is_empty() {
         // Defensive: the daemon already rejects empty tokens at startup,
@@ -141,15 +156,13 @@ pub(crate) async fn accept_ws(
         // request rather than accepting all of them.
         return Err(anyhow!("refusing ws handshake: empty expected token"));
     }
-    let expected = expected_token.as_bytes().to_vec();
 
     // Tungstenite's default `max_message_size` is 64 MiB and
     // `max_write_buffer_size` is unlimited; without overrides a slow
     // peer could force a 64 MiB read allocation, or unbounded growth
     // of the internal send buffer when the TCP socket is congested.
-    // Cap both axes (read + frame size, write buffer high-water mark)
-    // at MAX_WS_MESSAGE_BYTES so tungstenite applies the rejection /
-    // backpressure at its own framing layer.
+    // Cap both axes at MAX_WS_MESSAGE_BYTES so tungstenite applies the
+    // rejection / backpressure at its own framing layer.
     let ws_config = WebSocketConfig {
         max_message_size: Some(MAX_WS_MESSAGE_BYTES),
         max_frame_size: Some(MAX_WS_MESSAGE_BYTES),
@@ -157,18 +170,19 @@ pub(crate) async fn accept_ws(
         ..Default::default()
     };
 
+    let token_for_closure = expected_token.clone();
+    let origins_for_closure = allowed_origins.clone();
     let handshake = accept_hdr_async_with_config(
         tcp,
         move |req: &Request, response: Response| {
+            if !origin_allowed(req, &origins_for_closure) {
+                return Err(unauthorized());
+            }
             let token_ok = extract_bearer(req)
-                .map(|t| constant_time_eq(t.as_bytes(), &expected))
+                .map(|t| bool::from(t.as_bytes().ct_eq(token_for_closure.as_bytes())))
                 .unwrap_or(false);
             if !token_ok {
-                let err: ErrorResponse = tokio_tungstenite::tungstenite::http::Response::builder()
-                    .status(StatusCode::UNAUTHORIZED)
-                    .body(Some("unauthorized".to_string()))
-                    .expect("static error response builds");
-                return Err(err);
+                return Err(unauthorized());
             }
             Ok(response)
         },
@@ -181,6 +195,30 @@ pub(crate) async fn accept_ws(
         .map_err(|e| anyhow!("ws handshake failed: {e}"))?;
 
     Ok(WsStream::new(ws))
+}
+
+fn unauthorized() -> ErrorResponse {
+    tokio_tungstenite::tungstenite::http::Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .body(Some("unauthorized".to_string()))
+        .expect("static error response builds")
+}
+
+/// Returns true if the upgrade request's Origin satisfies the
+/// configured policy. An empty `allowed_origins` is permissive (the
+/// daemon only allows that on loopback); a non-empty list requires
+/// the Origin header to be present, UTF-8, and an exact match.
+fn origin_allowed(req: &Request, allowed_origins: &[String]) -> bool {
+    if allowed_origins.is_empty() {
+        return true;
+    }
+    let Some(value) = req.headers().get("origin") else {
+        return false;
+    };
+    let Ok(origin) = value.to_str() else {
+        return false;
+    };
+    allowed_origins.iter().any(|o| o == origin)
 }
 
 /// Pull the bearer token from `Authorization: Bearer <token>` if present,
@@ -247,19 +285,12 @@ fn extract_token_query(query: &str) -> Option<Cow<'_, str>> {
     None
 }
 
-/// Length-aware constant-time byte compare. Length mismatches fast-exit
-/// (this leaks the secret's length); for equal lengths every byte is
-/// examined regardless of where they first differ.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff: u8 = 0;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
-}
+// The byte compare uses `subtle::ConstantTimeEq` directly at the call
+// site in `accept_ws`. The crate's slice impl short-circuits on length
+// mismatch (length is leaked by design — see the `accept_ws` doc) but
+// for equal lengths runs a barrier-protected XOR loop that the
+// compiler is not allowed to short-circuit, which the previous
+// hand-rolled implementation could not guarantee.
 
 impl<S> AsyncRead for WsStream<S>
 where
@@ -586,7 +617,7 @@ mod tests {
         // must trim and return the visible secret.
         let token = prepare_web_token("  deadbeefcafebabe1234  \n")
             .expect("valid token must accept");
-        assert_eq!(token, "deadbeefcafebabe1234");
+        assert_eq!(token.as_str(), "deadbeefcafebabe1234");
     }
 
     #[test]
@@ -597,12 +628,18 @@ mod tests {
     }
 
     #[test]
-    fn constant_time_eq_matches_only_exact_input() {
-        assert!(constant_time_eq(b"hello", b"hello"));
-        assert!(!constant_time_eq(b"hello", b"hellp"));
-        assert!(!constant_time_eq(b"hello", b"helloworld"));
-        assert!(!constant_time_eq(b"", b"x"));
-        assert!(constant_time_eq(b"", b""));
+    fn subtle_ct_eq_matches_only_exact_input() {
+        // `subtle::ConstantTimeEq` replaces the previous hand-rolled
+        // compare. Sanity-check the same equivalence classes the local
+        // function used to cover; the crate itself has thorough tests
+        // upstream — these just guard against an accidental import
+        // regression at the call site in `accept_ws`.
+        let eq = |a: &[u8], b: &[u8]| bool::from(a.ct_eq(b));
+        assert!(eq(b"hello", b"hello"));
+        assert!(!eq(b"hello", b"hellp"));
+        assert!(!eq(b"hello", b"helloworld"));
+        assert!(!eq(b"", b"x"));
+        assert!(eq(b"", b""));
     }
 
     /// Build a back-to-back WS server/client pair over an in-memory
@@ -678,6 +715,148 @@ mod tests {
         let mut chunk = [0u8; 16];
         let n = server.read(&mut chunk).await.unwrap();
         assert_eq!(n, 0, "close frame should surface as EOF");
+    }
+
+    // ─── accept_ws end-to-end handshake integration ────────────────
+
+    /// Build a fixed-length test token that satisfies the 16-byte floor.
+    fn test_token() -> SharedToken {
+        prepare_web_token("0123456789abcdef0123456789abcdef").unwrap()
+    }
+
+    /// Spin up a single-shot WS server, return its bound address and a
+    /// JoinHandle that resolves to whatever `accept_ws` produced. The
+    /// caller drives the client side and inspects the handshake result.
+    async fn spawn_server(
+        token: SharedToken,
+        allowed_origins: Arc<Vec<String>>,
+    ) -> (
+        std::net::SocketAddr,
+        tokio::task::JoinHandle<Result<WsStream<TcpStream>>>,
+    ) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            stream.set_nodelay(true).ok();
+            accept_ws(stream, token, allowed_origins).await
+        });
+        (addr, handle)
+    }
+
+    #[tokio::test]
+    async fn handshake_succeeds_with_query_token() {
+        let token = test_token();
+        let (addr, server) = spawn_server(token.clone(), Arc::new(Vec::new())).await;
+
+        let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let url = format!("ws://{addr}/?token={}", token.as_str());
+        let client = tokio_tungstenite::client_async(&url, tcp).await;
+        assert!(client.is_ok(), "client handshake should succeed: {:?}", client.err());
+        assert!(server.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn handshake_succeeds_with_bearer_header() {
+        let token = test_token();
+        let (addr, server) = spawn_server(token.clone(), Arc::new(Vec::new())).await;
+
+        let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let req = tokio_tungstenite::tungstenite::http::Request::builder()
+            .uri(format!("ws://{addr}/"))
+            .header("Host", addr.to_string())
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .header("Sec-WebSocket-Version", "13")
+            .header("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+            .header("Authorization", format!("Bearer {}", token.as_str()))
+            .body(())
+            .unwrap();
+        let client = tokio_tungstenite::client_async(req, tcp).await;
+        assert!(client.is_ok(), "client handshake should succeed: {:?}", client.err());
+        assert!(server.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn handshake_fails_with_missing_token() {
+        let token = test_token();
+        let (addr, server) = spawn_server(token, Arc::new(Vec::new())).await;
+
+        let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let url = format!("ws://{addr}/");
+        let result = tokio_tungstenite::client_async(&url, tcp).await;
+        assert!(result.is_err(), "missing token must be rejected");
+        assert!(server.await.unwrap().is_err());
+    }
+
+    #[tokio::test]
+    async fn handshake_fails_with_wrong_token() {
+        let token = test_token();
+        let (addr, server) = spawn_server(token, Arc::new(Vec::new())).await;
+
+        let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let url = format!("ws://{addr}/?token=wrongtokenwrongtokenwrong");
+        let result = tokio_tungstenite::client_async(&url, tcp).await;
+        assert!(result.is_err(), "wrong token must be rejected");
+        assert!(server.await.unwrap().is_err());
+    }
+
+    #[tokio::test]
+    async fn handshake_fails_with_origin_not_in_allowlist() {
+        let token = test_token();
+        let allowed = Arc::new(vec!["https://terminal.example.com".to_string()]);
+        let (addr, server) = spawn_server(token.clone(), allowed).await;
+
+        let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let req = tokio_tungstenite::tungstenite::http::Request::builder()
+            .uri(format!("ws://{addr}/?token={}", token.as_str()))
+            .header("Host", addr.to_string())
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .header("Sec-WebSocket-Version", "13")
+            .header("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+            .header("Origin", "https://attacker.example.com")
+            .body(())
+            .unwrap();
+        let result = tokio_tungstenite::client_async(req, tcp).await;
+        assert!(result.is_err(), "off-allowlist origin must be rejected");
+        assert!(server.await.unwrap().is_err());
+    }
+
+    #[tokio::test]
+    async fn handshake_succeeds_with_matching_origin() {
+        let token = test_token();
+        let allowed = Arc::new(vec!["https://terminal.example.com".to_string()]);
+        let (addr, server) = spawn_server(token.clone(), allowed).await;
+
+        let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let req = tokio_tungstenite::tungstenite::http::Request::builder()
+            .uri(format!("ws://{addr}/?token={}", token.as_str()))
+            .header("Host", addr.to_string())
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .header("Sec-WebSocket-Version", "13")
+            .header("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+            .header("Origin", "https://terminal.example.com")
+            .body(())
+            .unwrap();
+        let result = tokio_tungstenite::client_async(req, tcp).await;
+        assert!(result.is_ok(), "matching origin must pass: {:?}", result.err());
+        assert!(server.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn handshake_fails_when_origin_missing_under_strict_policy() {
+        let token = test_token();
+        let allowed = Arc::new(vec!["https://terminal.example.com".to_string()]);
+        let (addr, server) = spawn_server(token.clone(), allowed).await;
+
+        // No Origin header at all → with a non-empty allowlist this must fail.
+        let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let url = format!("ws://{addr}/?token={}", token.as_str());
+        let result = tokio_tungstenite::client_async(&url, tcp).await;
+        assert!(result.is_err(), "missing Origin under strict policy must be rejected");
+        assert!(server.await.unwrap().is_err());
     }
 
     #[tokio::test]

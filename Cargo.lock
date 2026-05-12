@@ -957,12 +957,14 @@ dependencies = [
  "percent-encoding",
  "rmp-serde",
  "rstest",
+ "subtle",
  "tempfile",
  "tokio",
  "tokio-tungstenite",
  "tray-icon",
  "windows-sys 0.59.0",
  "winreg 0.55.0",
+ "zeroize",
 ]
 
 [[package]]
@@ -4547,6 +4549,12 @@ dependencies = [
  "rustversion",
  "syn 2.0.117",
 ]
+
+[[package]]
+name = "subtle"
+version = "2.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "syn"

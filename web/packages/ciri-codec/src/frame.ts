@@ -46,17 +46,24 @@ export class FrameReader {
   // frame; for small frames this is fine, and large frames (CellDelta
   // / FullPaneSync) are usually one-per-WS-message anyway.
   private buf: Uint8Array = new Uint8Array(0);
+  // Once a parse fault is observed (oversize frame, unknown tag, LZ4
+  // garbage) the reader cannot continue: it has no way to advance
+  // past the offending bytes safely. Stay in a poisoned state so a
+  // caller that retries `next()` gets a deterministic error rather
+  // than spinning on the same fault.
+  private poisonReason: string | null = null;
 
   /// Append raw bytes (typically the payload of one WS Binary message).
-  /// Fast-path the common case where the buffer is currently empty —
-  /// this is the steady-state for any WS message that carries an exact
-  /// integral number of frames, and avoids a per-message copy of the
-  /// inbound chunk.
+  /// Always copies the inbound chunk (the caller may reuse its buffer
+  /// — e.g. a pooled WS receive backing — so we must own the bytes);
+  /// when the internal buffer is empty the copy collapses to a single
+  /// `.slice()` instead of an alloc-then-copy of `old + new`.
   push(chunk: Uint8Array): void {
+    if (this.poisonReason !== null) {
+      throw new Error(`FrameReader is poisoned: ${this.poisonReason}`);
+    }
     if (chunk.length === 0) return;
     if (this.buf.length === 0) {
-      // `slice()` is mandatory: the caller may reuse the chunk array
-      // (e.g. a pooled WS receive buffer), so we must own the bytes.
       this.buf = chunk.slice();
       return;
     }
@@ -69,11 +76,15 @@ export class FrameReader {
   /// Pull the next complete frame, or `null` if the buffer doesn't hold
   /// at least one full frame yet. Throws on a frame whose declared
   /// length exceeds the protocol cap or whose tag is unknown — both
-  /// indicate a peer the caller should disconnect from.
+  /// indicate a peer the caller should disconnect from. After any
+  /// throw the reader is poisoned and all subsequent calls will
+  /// re-throw immediately with a "poisoned" message.
   next(): RawFrame | null {
+    if (this.poisonReason !== null) {
+      throw new Error(`FrameReader is poisoned: ${this.poisonReason}`);
+    }
     if (this.buf.length < FRAME_HEADER_LEN) return null;
-    const tag = this.buf[0];
-    if (tag === undefined) return null;
+    const tag = this.buf[0]!;
     const view = new DataView(
       this.buf.buffer,
       this.buf.byteOffset,
@@ -81,27 +92,39 @@ export class FrameReader {
     );
     const payloadLen = view.getUint32(1, /* littleEndian */ true);
 
-    const limit = limitForTag(tag);
-    if (payloadLen > limit) {
-      throw new Error(
-        `frame too large: tag=0x${tag.toString(16)}, len=${payloadLen}, limit=${limit}`,
-      );
+    try {
+      const limit = limitForTag(tag);
+      if (payloadLen > limit) {
+        throw new Error(
+          `frame too large: tag=0x${tag.toString(16)}, len=${payloadLen}, limit=${limit}`,
+        );
+      }
+      const total = FRAME_HEADER_LEN + payloadLen;
+      if (this.buf.length < total) return null;
+
+      const payload = this.buf.subarray(FRAME_HEADER_LEN, total);
+      const frame = decodeFrame(tag, payload);
+
+      // Advance: slice off everything we just consumed. Use slice (not
+      // subarray) so the underlying ArrayBuffer can shrink eventually.
+      this.buf = this.buf.slice(total);
+      return frame;
+    } catch (e) {
+      this.poisonReason =
+        e instanceof Error ? e.message : "unknown frame decode error";
+      throw e;
     }
-    const total = FRAME_HEADER_LEN + payloadLen;
-    if (this.buf.length < total) return null;
-
-    const payload = this.buf.subarray(FRAME_HEADER_LEN, total);
-    const frame = decodeFrame(tag, payload);
-
-    // Advance: slice off everything we just consumed. Use slice (not
-    // subarray) so the underlying ArrayBuffer can shrink eventually.
-    this.buf = this.buf.slice(total);
-    return frame;
   }
 
   /// Number of bytes still buffered (incomplete frame or empty).
   pending(): number {
     return this.buf.length;
+  }
+
+  /// True after any parse fault has terminated the reader. Once
+  /// poisoned, every `push` / `next` throws.
+  isPoisoned(): boolean {
+    return this.poisonReason !== null;
   }
 }
 

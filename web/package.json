@@ -8,9 +8,7 @@
     "packages/*"
   ],
   "scripts": {
-    "gen:constants": "cd .. && cargo run -p ciri-protocol --example dump_constants > web/packages/ciri-codec/src/constants.ts",
-    "gen:fixtures": "cd .. && cargo run -p ciri-protocol --example sm_fixtures > web/packages/ciri-codec/src/__fixtures__/sm.json",
-    "gen": "npm run gen:constants && npm run gen:fixtures",
+    "gen": "node scripts/gen.mjs",
     "test": "npm -ws --if-present run test",
     "build": "npm -ws --if-present run build",
     "lint": "npm -ws --if-present run lint"

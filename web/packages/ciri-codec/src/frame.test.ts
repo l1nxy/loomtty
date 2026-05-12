@@ -20,13 +20,7 @@ interface Lz4Fixture {
   original_hex: string;
   payload_hex: string;
 }
-function hexToBytes(hex: string): Uint8Array {
-  const out = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < out.length; i += 1) {
-    out[i] = parseInt(hex.substr(i * 2, 2), 16);
-  }
-  return out;
-}
+import { hexToBytes } from "./__fixtures__/hex.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const LZ4_FIXTURES: Lz4Fixture[] = JSON.parse(
   readFileSync(join(__dirname, "__fixtures__", "lz4.json"), "utf-8"),
@@ -104,6 +98,32 @@ describe("FrameReader", () => {
     expect(() => reader.next()).toThrow(/unknown frame tag/);
   });
 
+  test("reader is poisoned after a throw — subsequent calls re-throw", () => {
+    const reader = new FrameReader();
+    reader.push(new Uint8Array([0x7f, 0, 0, 0, 0]));
+    expect(() => reader.next()).toThrow(/unknown frame tag/);
+    expect(reader.isPoisoned()).toBe(true);
+    expect(() => reader.next()).toThrow(/poisoned/);
+    expect(() => reader.push(new Uint8Array([1]))).toThrow(/poisoned/);
+  });
+
+  test("pending() tracks the unconsumed byte count", () => {
+    const reader = new FrameReader();
+    expect(reader.pending()).toBe(0);
+
+    // Only the 5-byte header, payload missing.
+    reader.push(new Uint8Array([TAG_SERVER_MSG, 5, 0, 0, 0]));
+    expect(reader.pending()).toBe(5);
+    expect(reader.next()).toBeNull();
+    expect(reader.pending()).toBe(5);
+
+    // Complete the frame; next() consumes it.
+    reader.push(new Uint8Array([1, 2, 3, 4, 5]));
+    expect(reader.pending()).toBe(10);
+    expect(reader.next()).not.toBeNull();
+    expect(reader.pending()).toBe(0);
+  });
+
   test("oversize control frame throws before allocating", () => {
     const reader = new FrameReader();
     // payload_len bytes encode u32 LE = 0x00200000 = 2 MiB, which
@@ -160,6 +180,10 @@ describe("FrameReader", () => {
     const reader = new FrameReader();
     reader.push(frame(TAG_CELL_DELTA_LZ4, payload));
     expect(() => reader.next()).toThrow(/exceeds limit 64:1/);
+  });
+
+  test("hex helper rejects odd-length input", () => {
+    expect(() => hexToBytes("abc")).toThrow(/odd length/);
   });
 
   test("LZ4 payload claiming an oversize uncompressed length is rejected", () => {

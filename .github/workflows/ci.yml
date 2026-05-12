@@ -104,14 +104,14 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Regenerate web constants + fixtures from Rust
-        run: |
-          cargo run -p ciri-protocol --example dump_constants \
-              > web/packages/ciri-codec/src/constants.ts
-          cargo run -p ciri-protocol --example sm_fixtures \
-              > web/packages/ciri-codec/src/__fixtures__/sm.json
+        # Uses the same cross-platform Node helper contributors run
+        # locally — keeps CI and developer flows in lockstep and
+        # covers constants.ts + sm.json + lz4.json in one pass.
+        working-directory: web
+        run: node scripts/gen.mjs
 
       - name: Fail if committed copies drifted from Rust
-        run: git -C . diff --exit-code -- web/
+        run: git -C . diff --exit-code -- web/packages/ciri-codec/src/
 
       - name: Install + test
         working-directory: web

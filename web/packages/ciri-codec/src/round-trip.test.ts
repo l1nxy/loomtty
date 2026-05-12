@@ -22,13 +22,7 @@ interface FixtureCase {
   }[];
 }
 
-function hexToBytes(hex: string): Uint8Array {
-  const out = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < out.length; i += 1) {
-    out[i] = parseInt(hex.substr(i * 2, 2), 16);
-  }
-  return out;
-}
+import { hexToBytes } from "./__fixtures__/hex.js";
 
 function colorFromJson(arr: [string, ...number[]]): PackedColor {
   const kind = arr[0];

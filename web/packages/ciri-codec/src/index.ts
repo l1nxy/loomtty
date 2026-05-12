@@ -9,6 +9,6 @@
 
 export * from "./constants.js";
 export * from "./types.js";
-export { FrameReader, type RawFrame, type FrameKind } from "./frame.js";
+export { FrameReader, type FrameKind, type RawFrame } from "./frame.js";
 export { decodeSmCells, decodeSmCellsInto } from "./state-machine.js";
 export { decompressLz4Payload } from "./lz4.js";

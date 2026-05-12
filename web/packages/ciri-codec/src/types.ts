@@ -59,8 +59,16 @@ export function packedColorEq(a: PackedColor, b: PackedColor): boolean {
 }
 
 /// Default fg/bg per `DEFAULT_FOREGROUND` / `DEFAULT_BACKGROUND`.
-export const DEFAULT_FG: PackedColor = { kind: "named", index: 16 };
-export const DEFAULT_BG: PackedColor = { kind: "named", index: 17 };
+/// Frozen so a careless `DEFAULT_FG.index = 0` somewhere downstream
+/// cannot poison the module-global default for every subsequent decode.
+export const DEFAULT_FG: Readonly<PackedColor> = Object.freeze({
+  kind: "named",
+  index: 16,
+});
+export const DEFAULT_BG: Readonly<PackedColor> = Object.freeze({
+  kind: "named",
+  index: 17,
+});
 export const DEFAULT_CELL: Readonly<PackedCell> = Object.freeze({
   ch: " ",
   fg: DEFAULT_FG,

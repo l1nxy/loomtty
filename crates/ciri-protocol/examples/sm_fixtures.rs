@@ -54,6 +54,17 @@ fn main() {
         c.push(coloured('x', orange, DEFAULT_BACKGROUND));
     })));
 
+    // Exercise OP_SET_FG_BG: the encoder only emits that opcode when
+    // both fg and bg change in the same step and BOTH are RGB. A
+    // single coloured cell here is enough — the encoder's first
+    // push() sees fg/bg differ from defaults simultaneously and emits
+    // SET_FG_BG rather than two SET_FG / SET_BG opcodes.
+    cases.push(case("rgb_fg_and_bg", &cells_from(|c| {
+        let fg = PackedColor::rgb(0xff, 0x88, 0x00);
+        let bg = PackedColor::rgb(0x11, 0x22, 0x33);
+        c.push(coloured('y', fg, bg));
+    })));
+
     println!("[\n{}\n]", cases.join(",\n"));
 }
 

@@ -252,6 +252,15 @@ describe("decodeSmCells", () => {
     expect(() => decodeSmCells(data, 1)).toThrow(/trailing byte/);
   });
 
+  test("multi-scalar cell slot is rejected (would mis-render as two cells)", () => {
+    // Cell slot holds `ab` with no inter-char NUL — Rust's encoder
+    // never produces this, so on the wire it indicates corruption.
+    // Without the guard the decoder would return `"ab"` and the
+    // renderer would silently paint two glyphs in one cell.
+    const data = bytes(OP_CHAR1, 0x61, 0x62, 0x00, 0x00, OP_END);
+    expect(() => decodeSmCells(data, 1)).toThrow(/exactly one Unicode scalar/);
+  });
+
   test("count=0 opcodes consume their header bytes but emit nothing", () => {
     // Pathological-but-not-malformed stream: zero-count OP_CHARS,
     // OP_CHARS_LONG, OP_ASCII, OP_REPEAT, OP_ASCII_REPEAT all advance

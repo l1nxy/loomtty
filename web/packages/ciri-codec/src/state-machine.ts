@@ -53,8 +53,9 @@ function decodeCellChar(bytes: Uint8Array): string {
   let len = 4;
   while (len > 0 && bytes[len - 1] === 0) len -= 1;
   if (len === 0) return "\0";
+  let s: string;
   try {
-    return utf8Decoder.decode(bytes.subarray(0, len));
+    s = utf8Decoder.decode(bytes.subarray(0, len));
   } catch (e) {
     throw new Error(
       `invalid UTF-8 in cell character slot: ${
@@ -62,6 +63,22 @@ function decodeCellChar(bytes: Uint8Array): string {
       }`,
     );
   }
+  // The Rust encoder writes exactly ONE Unicode scalar into the
+  // 4-byte slot (max codepoint U+10FFFF → 4 UTF-8 bytes). A slot
+  // that decodes to two or more scalars — e.g. `a` followed by `b`
+  // with no NUL between — is a wire-format corruption that
+  // downstream renderers will silently mis-display as a multi-char
+  // cell. Surface it explicitly. Iterating the string by codepoint
+  // (`[...s]`) handles supplementary-plane scalars correctly: a
+  // single 4-byte UTF-8 emoji is one element, not two surrogate
+  // halves.
+  const scalars = [...s];
+  if (scalars.length !== 1) {
+    throw new Error(
+      `cell character slot must hold exactly one Unicode scalar; got ${scalars.length} (${JSON.stringify(s)})`,
+    );
+  }
+  return s;
 }
 
 /// Decode an SM opcode stream into exactly `expected` cells. Throws if

@@ -55,6 +55,7 @@ impl App {
         const MAX_DRAIN: std::time::Duration = std::time::Duration::from_millis(12);
         let drain_start = std::time::Instant::now();
         let mut needs_redraw = false;
+        let mut terminal_activity = false;
 
         // Drain buffered events from restored slots first (they arrived
         // while the slot was backgrounded and must be replayed in order).
@@ -397,6 +398,7 @@ impl App {
                             generation: sync.meta.generation,
                         });
                         // grid.dirty is set by apply_full_sync — no need to remove cached view
+                        terminal_activity = true;
                         needs_redraw = true;
                     }
                     ServerEvent::CellDelta(delta) => {
@@ -421,6 +423,7 @@ impl App {
                                 generation: delta.meta.generation,
                             });
                             // grid.dirty is set by apply_delta_borrowed — no need to remove cached view
+                            terminal_activity = true;
                             needs_redraw = true;
                         }
                     }
@@ -474,6 +477,9 @@ impl App {
             }
         } // end loop
 
+        if terminal_activity {
+            self.reset_cursor_blink();
+        }
         self.core.server_rx = Some(rx);
         needs_redraw
     }
@@ -746,8 +752,8 @@ mod tests {
     use crate::connection::ServerEvent;
     use ciri_config::config::CiriConfig;
     use ciri_protocol::message::{
-        FullPaneSync, GraphemeExtras, HyperlinkExtras, LayoutState, PackedCell, ServerMessage,
-        SessionInfo, WorkspaceState,
+        CellDeltaBorrowed, FullPaneSync, GraphemeExtras, HyperlinkExtras, LayoutState, PackedCell,
+        ServerMessage, SessionInfo, WorkspaceState,
     };
 
     use ciri_anim::manager::AnimationManager;
@@ -828,6 +834,57 @@ mod tests {
             cwd: None,
         };
         ciri_protocol::codec::full_pane_sync_to_borrowed(&sync).unwrap()
+    }
+
+    #[test]
+    fn full_sync_resets_cursor_blink() {
+        let mut app = make_app();
+        let (event_tx, rx) = crossbeam_channel::unbounded();
+        app.core.server_rx = Some(rx);
+        app.core.expected_pane_ids.insert(7);
+        app.cursor_blink_visible = false;
+        app.cursor_blink_timer = std::time::Instant::now() - std::time::Duration::from_secs(10);
+
+        event_tx
+            .send(ServerEvent::FullPaneSync(blank_full_sync(7, 1, "pane")))
+            .unwrap();
+
+        assert!(app.process_server_events());
+        assert!(app.cursor_blink_visible);
+        assert!(app.cursor_blink_timer.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    fn cell_delta_resets_cursor_blink() {
+        let mut app = make_app();
+        let (event_tx, rx) = crossbeam_channel::unbounded();
+        app.core.server_rx = Some(rx);
+        app.core.expected_pane_ids.insert(7);
+        app.core
+            .pane_grids
+            .insert(7, crate::grid::ClientPaneGrid::new(2, 1, 100));
+        app.cursor_blink_visible = false;
+        app.cursor_blink_timer = std::time::Instant::now() - std::time::Duration::from_secs(10);
+
+        let delta = CellDeltaBorrowed::new(
+            PaneFrameMeta {
+                pane_id: 7,
+                generation: 2,
+                cursor_line: 0,
+                cursor_col: 1,
+                cursor_shape: CURSOR_BLOCK,
+                mode_flags: 0,
+                echo_ack: 0,
+            },
+            2,
+            Vec::new(),
+            Vec::new(),
+        );
+        event_tx.send(ServerEvent::CellDelta(delta)).unwrap();
+
+        assert!(app.process_server_events());
+        assert!(app.cursor_blink_visible);
+        assert!(app.cursor_blink_timer.elapsed() < std::time::Duration::from_secs(1));
     }
 
     #[test]

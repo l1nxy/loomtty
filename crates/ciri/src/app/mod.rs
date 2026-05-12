@@ -350,6 +350,11 @@ impl App {
     const COMMAND_PALETTE_INPUT_PAD_Y: f32 = 4.0;
     const COMMAND_PALETTE_BOTTOM_PAD: f32 = 4.0;
 
+    pub(crate) fn reset_cursor_blink(&mut self) {
+        self.cursor_blink_visible = true;
+        self.cursor_blink_timer = Instant::now();
+    }
+
     fn transformed_tile_rect_for_zoom(
         tile_rect: GeoRect,
         zoom: f32,

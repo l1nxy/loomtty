@@ -181,6 +181,67 @@ impl Session {
         Ok(id)
     }
 
+    /// Create a new pane and stack it as a tile in the active column.
+    /// Initial grid size is approximate; `resize_all_panes` reflows the column
+    /// after the tile is appended.
+    pub(crate) fn create_tile_in_active_column(
+        &mut self,
+        next_pane_id: &mut u64,
+        clients: &mut HashMap<u64, ClientState>,
+    ) -> Result<u64> {
+        let id = *next_pane_id;
+        *next_pane_id += 1;
+        let cwd = self.active_pane_cwd();
+        let vw = self.workspaces.view_size.width;
+        let vh = self.workspaces.view_size.height;
+        let (_, _, cw, ch) = Self::effective_dims_from(clients, &self.session_name);
+
+        let ws = self.workspaces.active();
+        let inner_vw = ws.inner_viewport_width();
+        let (col_px, est_tile_h) = if let Some(col) = ws.columns.get(ws.active_column_idx) {
+            // After this call there will be `tiles.len() + 1` tiles, with
+            // `tiles.len()` inter-tile gaps eating into the available height.
+            let next_tile_count = (col.tiles.len() + 1) as f32;
+            let gap_total = ws.column_gap * col.tiles.len() as f32;
+            (
+                col.effective_width(inner_vw),
+                ((ws.inner_height() - gap_total) / next_tile_count).max(ch),
+            )
+        } else {
+            (vw, vh)
+        };
+        let (cols, rows) = self.pane_grid_size_with_cells(col_px, est_tile_h, cw, ch);
+
+        let mut pane = Pane::new_with_notify(
+            id,
+            cols,
+            rows,
+            &self.default_shell,
+            None,
+            cwd.as_deref().map(std::path::Path::new),
+            self.pty_notify.clone(),
+        )?;
+        pane.set_cell_size(cw, ch);
+        pane.init_colors(&self.terminal_colors);
+        self.panes.insert(id, pane);
+        self.generation.insert(id, 0);
+        let stacked = self
+            .workspaces
+            .active_mut()
+            .add_tile_to_active_column(id, self.default_column_width);
+        if !stacked {
+            // Reachable when the active workspace is empty (e.g. user pressed
+            // Shift+D after `switch_to` landed on a blank). The pane lands in
+            // a fresh column instead of a stack — graceful fallback, not an
+            // error condition.
+            log::debug!(
+                "create_tile_in_active_column {id}: active workspace had no columns; opened a new column instead of stacking"
+            );
+        }
+        Self::mark_full_damage(clients, &self.session_name, id);
+        Ok(id)
+    }
+
     /// Create a new pane in a new workspace below the active one (SplitDown).
     pub(crate) fn create_pane_in_new_workspace(
         &mut self,
@@ -800,6 +861,32 @@ mod tests {
         let dims = Session::effective_dims_from(&clients, "alpha");
 
         assert_eq!(dims, (900.0, 700.0, 8.0, 16.0));
+    }
+
+    #[test]
+    fn create_tile_in_active_column_stacks_into_existing_column() {
+        let mut session = Session::new("default", test_shell(), 8.0, TerminalColors::default());
+        let mut next_pane_id = 1;
+        let mut clients = HashMap::new();
+        clients.insert(1, test_client(1, "default"));
+
+        let base_id = session
+            .create_pane(&mut next_pane_id, &mut clients)
+            .expect("base pane");
+        let stacked_id = session
+            .create_tile_in_active_column(&mut next_pane_id, &mut clients)
+            .expect("stacked tile");
+
+        assert_ne!(base_id, stacked_id);
+        assert!(session.panes.contains_key(&stacked_id));
+        assert_eq!(session.generation.get(&stacked_id).copied(), Some(0));
+
+        let ws = session.workspaces.active();
+        assert_eq!(ws.columns.len(), 1, "stacked tile must reuse the column");
+        let col = &ws.columns[ws.active_column_idx];
+        assert_eq!(col.tiles.len(), 2);
+        assert_eq!(col.tiles[1].pane_id, stacked_id);
+        assert_eq!(ws.active_pane_id(), Some(stacked_id));
     }
 
     #[test]

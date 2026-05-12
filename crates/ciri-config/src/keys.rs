@@ -25,6 +25,7 @@ impl Default for KeybindConfig {
         let mut bindings = HashMap::new();
         bindings.insert("n".to_string(), "new_column_right".to_string());
         bindings.insert("d".to_string(), "new_row_below".to_string());
+        bindings.insert("shift+d".to_string(), "new_tile_below".to_string());
         bindings.insert("x".to_string(), "close_pane".to_string());
         bindings.insert("h".to_string(), "focus_left".to_string());
         bindings.insert("l".to_string(), "focus_right".to_string());

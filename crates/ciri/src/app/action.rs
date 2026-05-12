@@ -31,6 +31,9 @@ impl App {
             Action::NewWorkspaceBelow => {
                 self.send(ClientMessage::SplitDown);
             }
+            Action::NewTileBelow => {
+                self.send(ClientMessage::NewTileBelow);
+            }
             Action::ClosePane => {
                 if let Some(pane_id) = self.core.workspaces.active_mut().active_pane_id() {
                     self.send(ClientMessage::ClosePane { pane_id });

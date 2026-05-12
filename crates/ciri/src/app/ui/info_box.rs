@@ -37,6 +37,7 @@ pub(super) fn action_short_label(action: &str) -> &str {
         "move_pane_right" => "move \u{2192}",
         "new_column_right" => "new pane",
         "new_row_below" | "new_workspace_below" | "split_down" => "split \u{2193}",
+        "new_tile_below" | "stack_pane" => "stack \u{2193}",
         "close_pane" => "close",
         "column_width_decrease" => "shrink",
         "column_width_increase" => "grow",

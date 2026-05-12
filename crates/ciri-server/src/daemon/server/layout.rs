@@ -44,6 +44,23 @@ impl Server {
                     self.sessions.insert(session_name.to_string(), session);
                 }
             }
+            ClientMessage::NewTileBelow => {
+                if let Some(mut session) = self.sessions.remove(session_name) {
+                    match session
+                        .create_tile_in_active_column(&mut self.next_pane_id, &mut self.clients)
+                    {
+                        Ok(id) => Self::create_pane_and_sync_layout(
+                            &mut session,
+                            &mut self.clients,
+                            session_name,
+                            id,
+                            responses,
+                        ),
+                        Err(e) => log::error!("failed to create stacked tile: {e}"),
+                    }
+                    self.sessions.insert(session_name.to_string(), session);
+                }
+            }
             ClientMessage::ClosePane { pane_id } => {
                 self.with_session(session_name, |session, clients| {
                     Self::close_pane_and_sync_layout(

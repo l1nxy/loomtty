@@ -457,6 +457,14 @@ function decodeValue(raw: unknown, ty: SchemaType): unknown {
       if (typeof raw !== "number") {
         throw new CodecError(`${ty.kind} expected number, got ${typeofTag(raw)}`);
       }
+      // Symmetric with the encoder: a buggy or hostile peer that
+      // sends `NaN` / `Infinity` for a layout-math float (e.g.
+      // `ColumnState.widthProportion`, `TileState.weight`) must not
+      // pollute downstream computation. Surface the corruption as a
+      // CodecError rather than passing it through.
+      if (!Number.isFinite(raw)) {
+        throw new CodecError(`${ty.kind} wire value is not finite: ${raw}`);
+      }
       return raw;
     case "char":
     case "str":

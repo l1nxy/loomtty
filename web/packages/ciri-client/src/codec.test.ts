@@ -189,6 +189,72 @@ describe("decodeServerMessage", () => {
     ]);
     expect(() => decodeServerMessage(buf)).toThrow(/u64 wire value out of range/);
   });
+
+  test("rejects NaN in a wire float field nested under StateSync", () => {
+    // Build msgpack for:
+    //   {"StateSync": [
+    //     {workspaces: [{
+    //       columns: [{tiles: [], active_tile_idx: 0,
+    //                  width_proportion: NaN, width_fixed_px: nil}],
+    //       active_column_idx: 0
+    //     }], active_workspace_idx: 0},
+    //     pane_ids: []
+    //   ]}
+    // Where width_proportion = msgpack f64 NaN.
+    // Hand-build the bytes so the malformed value lands on the
+    // wire even though our encoder would reject NaN locally.
+    const enc = new TextEncoder();
+    const variantName = enc.encode("StateSync");
+    const w = (() => {
+      // Inner ColumnState as a 4-element array:
+      //   [tiles=[], active_tile_idx=0, width_proportion=NaN, width_fixed_px=nil]
+      const colBuf = new Uint8Array(1 + 1 + 1 + 9 + 1);
+      let p = 0;
+      colBuf[p++] = 0x94; // fixarray-4
+      colBuf[p++] = 0x90; // tiles = []
+      colBuf[p++] = 0x00; // active_tile_idx = 0
+      colBuf[p++] = 0xcb; // f64 marker
+      // NaN f64 bytes: 0x7ff8000000000000
+      const nanView = new DataView(colBuf.buffer, p);
+      nanView.setUint32(0, 0x7ff80000, false);
+      nanView.setUint32(4, 0, false);
+      p += 8;
+      colBuf[p++] = 0xc0; // width_fixed_px = nil
+      // WorkspaceState: [columns=[col], active_column_idx=0]
+      const wsBuf = new Uint8Array(1 + 1 + colBuf.length + 1);
+      let q = 0;
+      wsBuf[q++] = 0x92; // fixarray-2
+      wsBuf[q++] = 0x91; // columns: fixarray-1
+      wsBuf.set(colBuf, q);
+      q += colBuf.length;
+      wsBuf[q++] = 0x00; // active_column_idx = 0
+      // LayoutState: [workspaces=[ws], active_workspace_idx=0]
+      const layoutBuf = new Uint8Array(1 + 1 + wsBuf.length + 1);
+      let r = 0;
+      layoutBuf[r++] = 0x92;
+      layoutBuf[r++] = 0x91;
+      layoutBuf.set(wsBuf, r);
+      r += wsBuf.length;
+      layoutBuf[r++] = 0x00;
+      // StateSync body: [layout, pane_ids=[]]
+      const bodyBuf = new Uint8Array(1 + layoutBuf.length + 1);
+      let s = 0;
+      bodyBuf[s++] = 0x92;
+      bodyBuf.set(layoutBuf, s);
+      s += layoutBuf.length;
+      bodyBuf[s++] = 0x90;
+      return bodyBuf;
+    })();
+    // Outer: {"StateSync": <body>}
+    const out = new Uint8Array(1 + 1 + variantName.length + w.length);
+    let p = 0;
+    out[p++] = 0x81; // fixmap-1
+    out[p++] = 0xa0 | variantName.length;
+    out.set(variantName, p);
+    p += variantName.length;
+    out.set(w, p);
+    expect(() => decodeServerMessage(out)).toThrow(/not finite/);
+  });
 });
 
 describe("round-trip via encode + decode (client direction)", () => {

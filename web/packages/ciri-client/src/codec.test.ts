@@ -98,6 +98,38 @@ describe("encodeClientMessage", () => {
       }),
     ).toThrow(/u64 out of range/);
   });
+
+  test("f64 field rejects NaN", () => {
+    expect(() =>
+      encodeClientMessage({
+        tag: "AdjustColumnSplit",
+        delta: Number.NaN,
+      }),
+    ).toThrow(/finite number/);
+  });
+
+  test("f64 field rejects Infinity", () => {
+    expect(() =>
+      encodeClientMessage({
+        tag: "AdjustColumnSplit",
+        delta: Number.POSITIVE_INFINITY,
+      }),
+    ).toThrow(/finite number/);
+  });
+
+  test("f32 field rejects NaN (cell_width on Resize)", () => {
+    expect(() =>
+      encodeClientMessage({
+        tag: "Resize",
+        cols: 80,
+        rows: 24,
+        width: 1280,
+        height: 720,
+        cellWidth: Number.NaN,
+        cellHeight: 18,
+      }),
+    ).toThrow(/finite number/);
+  });
 });
 
 describe("decodeServerMessage", () => {

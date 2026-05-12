@@ -335,6 +335,56 @@ describe("CiriClient session tracking", () => {
   });
 });
 
+describe("CiriClient resize-replay safety", () => {
+  test("invalid Resize doesn't poison the replay ClientHello", () => {
+    vi.useFakeTimers();
+    try {
+      const { c, sockets, events } = setup({ reconnect: true });
+      c.start();
+      sockets[0]!.simulateOpen();
+      sockets[0]!.simulateData(serverHelloBytes());
+
+      // First Resize: valid, lands in the replay hello.
+      c.send({
+        tag: "Resize",
+        cols: 100,
+        rows: 30,
+        width: 1600,
+        height: 900,
+        cellWidth: 10,
+        cellHeight: 18,
+      });
+
+      // Second Resize: width=0 (canvas hidden) — server tolerates,
+      // but encodeClientHello would reject. The replay hello must
+      // hold onto the previous good values.
+      c.send({
+        tag: "Resize",
+        cols: 0,
+        rows: 0,
+        width: 0,
+        height: 0,
+        cellWidth: 10,
+        cellHeight: 18,
+      });
+
+      sockets[0]!.simulateClose(1006, "drop");
+      vi.advanceTimersByTime(1100);
+      expect(sockets).toHaveLength(2);
+      sockets[1]!.simulateOpen();
+      // Reconnect succeeded (Hello bytes on the wire start with magic
+      // "C"). If the bad Resize had been cached, encodeClientHello
+      // inside `handleSocketOpen` would have thrown.
+      expect(sockets[1]!.sent[0]!.bytes[0]).toBe(0x43);
+      // No error events were emitted from the reconnect path.
+      expect(events.filter((e) => e.kind === "error")).toHaveLength(0);
+      void c;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("CiriClient reconnect", () => {
   test("replays ClientHello on each reconnect open", () => {
     vi.useFakeTimers();

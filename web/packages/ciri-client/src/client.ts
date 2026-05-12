@@ -178,14 +178,32 @@ export class CiriClient {
     // constructor-time snapshot. The server reads ClientHello before
     // generating the initial sync, so stale dimensions there cause a
     // visible re-flow.
+    //
+    // Validate first: the Rust server tolerates a malformed `Resize`
+    // (it ignores out-of-range values), but `encodeClientHello`
+    // doesn't — if we silently cached `width: 0` (which happens when
+    // the canvas is hidden) or a non-finite cell dimension, the next
+    // reconnect would `throw HandshakeError` and the transport would
+    // close, stranding the client. Round-trip through
+    // `encodeClientHello` so we use the exact same validation path
+    // the handshake will later use.
     if (msg.tag === "Resize") {
-      this.hello = {
+      const candidate: ClientHello = {
         sessionName: this.hello.sessionName,
         width: msg.width,
         height: msg.height,
         cellWidth: msg.cellWidth,
         cellHeight: msg.cellHeight,
       };
+      try {
+        encodeClientHello(candidate);
+        this.hello = candidate;
+      } catch {
+        // Skip the update. The bad Resize still goes on the wire —
+        // the server tolerates and ignores it — but the replay
+        // hello keeps the last-known-good dims so reconnect still
+        // succeeds.
+      }
     }
     this.transport.send(frameClientMsg(payload));
   }

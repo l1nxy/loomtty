@@ -189,11 +189,23 @@ function encodeValueInto(w: MsgpackWriter, value: unknown, ty: SchemaType): void
       if (typeof value !== "number") {
         throw new CodecError(`${ty.kind} expected number, got ${typeofTag(value)}`);
       }
+      if (!Number.isFinite(value)) {
+        // `NaN` / `Infinity` are valid msgpack floats but corrupt
+        // every Rust layout-math consumer (column proportions,
+        // weights, cell metrics) the moment they land. The integer
+        // path already rejects out-of-range / non-integer values;
+        // mirror that here so a bad caller can't poison the server
+        // state via a layout message.
+        throw new CodecError(`${ty.kind} expected finite number, got ${value}`);
+      }
       w.writeFloat32(value);
       return;
     case "f64":
       if (typeof value !== "number") {
         throw new CodecError(`${ty.kind} expected number, got ${typeofTag(value)}`);
+      }
+      if (!Number.isFinite(value)) {
+        throw new CodecError(`${ty.kind} expected finite number, got ${value}`);
       }
       w.writeFloat64(value);
       return;

@@ -126,6 +126,14 @@ export class WebSocketTransport {
       this.ws.send(bytes);
       return;
     }
+    if (this.intentionallyClosed) {
+      // Caller called close() but is still pushing bytes (e.g. a
+      // synchronous input handler firing after a teardown). Drop
+      // them on the floor: if a future `start()` brings the same
+      // transport back up, those stale bytes must NOT flush into
+      // the new connection.
+      return;
+    }
     this.enqueue(bytes);
   }
 
@@ -220,10 +228,18 @@ export class WebSocketTransport {
 
     const willReconnect = !this.intentionallyClosed && this.opts.reconnect !== false;
     this._state = "closed";
-    this.cbs.onClose?.({ code, reason, reconnecting: willReconnect });
+    // Schedule the reconnect BEFORE invoking onClose. If the caller
+    // calls `start()` from inside the callback (to retry
+    // immediately), `start()` clears the pending timer via
+    // `clearReconnectTimer()` and the callback path wins. Doing this
+    // in the other order (callback first, then schedule) means a
+    // start() inside the callback opens a new socket AND we then
+    // queue a second timer, producing duplicate live sockets when
+    // the timer eventually fires.
     if (willReconnect) {
       this.scheduleReconnect();
     }
+    this.cbs.onClose?.({ code, reason, reconnecting: willReconnect });
     // `wasOpen` reserved for future telemetry — keep the local until
     // we actually need to distinguish "never opened" from "drop after
     // open" to the caller.

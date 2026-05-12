@@ -389,6 +389,61 @@ describe("WebSocketTransport", () => {
     expect(Array.from(sockets[0]!.sent[0]!.bytes)).toEqual([0xaa, 0xbb, 0xcc]);
   });
 
+  test("send() after intentional close drops bytes (no replay on next start)", () => {
+    const { factory, sockets } = makeFakeFactory();
+    const t = new WebSocketTransport(
+      { url: "ws://example.test", reconnect: false, webSocketFactory: factory },
+    );
+    t.start();
+    sockets[0]!.simulateOpen();
+    t.close();
+    // A teardown might race with the last synchronous input.
+    t.send(new Uint8Array([0x01, 0x02, 0x03]));
+    // Re-start: the dropped bytes must NOT show up on the new socket.
+    t.start();
+    sockets[1]!.simulateOpen();
+    expect(sockets[1]!.sent).toHaveLength(0);
+  });
+
+  test("start() inside onClose callback cancels the queued reconnect timer", () => {
+    // Without the schedule-before-callback order, the manual restart
+    // would open one socket immediately AND the queued backoff
+    // timer would later open a second, leaving two live sockets.
+    vi.useFakeTimers();
+    try {
+      const { factory, sockets } = makeFakeFactory();
+      let restartedOnce = false;
+      const t = new WebSocketTransport(
+        {
+          url: "ws://example.test",
+          reconnect: true,
+          initialReconnectDelayMs: 200,
+          webSocketFactory: factory,
+        },
+        {
+          onClose: () => {
+            if (!restartedOnce) {
+              restartedOnce = true;
+              t.start();
+            }
+          },
+        },
+      );
+      t.start();
+      sockets[0]!.simulateOpen();
+      sockets[0]!.simulateClose(1006, "drop"); // → onClose → manual restart
+      // After the callback we expect exactly TWO sockets — the
+      // original + the manual restart. The 200 ms backoff timer
+      // must have been cancelled by `clearReconnectTimer()` inside
+      // `start()`.
+      expect(sockets).toHaveLength(2);
+      vi.advanceTimersByTime(10_000);
+      expect(sockets).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("close() is idempotent — second call is a no-op", () => {
     const { factory, sockets } = makeFakeFactory();
     const closes: unknown[] = [];

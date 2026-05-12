@@ -38,6 +38,10 @@ pub(crate) struct Session {
     pub(crate) last_agent_save: Option<Instant>,
     /// Last-known cursor state per pane, for detecting cursor-only changes.
     pub(crate) last_cursor: HashMap<u64, (i16, u16, u8, u16)>,
+    /// Last content fingerprint per viewport row. Alacritty reports the cursor
+    /// row as damaged after reset even when cell content is unchanged; this
+    /// keeps that noise from becoming row deltas.
+    pub(crate) last_row_fingerprints: HashMap<u64, HashMap<u16, u64>>,
     /// Last-known pane title, for detecting title changes (OSC 0/2).
     pub(crate) last_title: HashMap<u64, String>,
     /// Optional callback to wake the tick loop when PTY output is available.
@@ -75,6 +79,7 @@ impl Session {
             detected_agents: HashMap::new(),
             last_agent_save: None,
             last_cursor: HashMap::new(),
+            last_row_fingerprints: HashMap::new(),
             last_title: HashMap::new(),
             pty_notify: None,
             last_tick_had_pty_data: false,
@@ -363,6 +368,7 @@ impl Session {
                         );
                         if old_cols != cols || old_rows != rows {
                             pane.resize(cols, rows);
+                            self.last_row_fingerprints.remove(pane_id);
                             let g = self.generation.entry(*pane_id).or_insert(0);
                             *g += 1;
                             Self::mark_resize_damage(clients, &self.session_name, *pane_id);
@@ -385,6 +391,7 @@ impl Session {
         self.generation.remove(&pane_id);
         self.detected_agents.remove(&pane_id);
         self.last_cursor.remove(&pane_id);
+        self.last_row_fingerprints.remove(&pane_id);
         self.last_title.remove(&pane_id);
         for client in clients.values_mut() {
             if client.session_name == self.session_name {
@@ -684,7 +691,42 @@ impl Session {
             if cursor_changed {
                 self.last_cursor.insert(pane_id, cur_cursor);
             }
-            if let Some(ranges) = pane.extract_damage() {
+            let raw_damage = pane.extract_damage().map(|ranges| {
+                let row_fingerprints = ranges
+                    .iter()
+                    .map(|&(line, _, _)| (line, pane.viewport_row_fingerprint(line)))
+                    .collect::<Vec<_>>();
+                (ranges, row_fingerprints)
+            });
+            if let Some((ranges, row_fingerprints)) = raw_damage {
+                let fingerprints = self.last_row_fingerprints.entry(pane_id).or_default();
+                let mut content_ranges = Vec::with_capacity(ranges.len());
+                for ((line, left, right), (_, current_fp)) in
+                    ranges.into_iter().zip(row_fingerprints)
+                {
+                    if let Some(fp) = current_fp {
+                        let changed = fingerprints.get(&line).copied() != Some(fp);
+                        fingerprints.insert(line, fp);
+                        if !changed {
+                            continue;
+                        }
+                    }
+                    content_ranges.push((line, left, right));
+                }
+
+                if content_ranges.is_empty() {
+                    if cursor_changed {
+                        // No cell damage, but cursor position/shape/mode changed.
+                        for client in clients.values_mut() {
+                            if client.session_name == self.session_name {
+                                let acc = client.damage.entry(pane_id).or_default();
+                                acc.cursor_dirty = true;
+                            }
+                        }
+                    }
+                    continue;
+                }
+
                 // Bump generation
                 let g = self.generation.entry(pane_id).or_insert(0);
                 *g += 1;
@@ -692,7 +734,7 @@ impl Session {
                 for client in clients.values_mut() {
                     if client.session_name == self.session_name {
                         let acc = client.damage.entry(pane_id).or_default();
-                        acc.merge_ranges(&ranges);
+                        acc.merge_ranges(&content_ranges);
                         acc.cursor_dirty = true;
                     }
                 }
@@ -890,14 +932,9 @@ mod tests {
     }
 
     #[test]
-    // The cursor-row damage suppression optimisation this test exercised was
-    // removed in 36c4490 ("change log and remove the optimize, it has bug!!"),
-    // but the test was kept around. `process_pty_and_damage` now bumps the
-    // generation on every `extract_damage()`, so the suppression assertion
-    // fails on every platform. Keep the test body for reference until the
-    // suppression is reintroduced (or the test is intentionally rewritten),
-    // and ignore it in the meantime so the workspace stays green.
-    #[ignore = "cursor-row suppression optimisation removed in 36c4490; reintroduce or rewrite"]
+    // Alacritty keeps reporting the cursor row as damaged even when its cells
+    // are unchanged. The server should suppress that noise and only emit a
+    // cursor-only update when the cursor state actually changes.
     fn repeated_cursor_row_damage_does_not_bump_generation() {
         let mut session = Session::new("default", test_shell(), 8.0, TerminalColors::default());
         let mut next_pane_id = 1;

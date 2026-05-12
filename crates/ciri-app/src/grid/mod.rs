@@ -120,7 +120,7 @@ impl ClientPaneGrid {
     }
 
     /// Mark a single row as dirty (idempotent).
-    pub(super) fn mark_row_dirty(&mut self, line: usize) {
+    pub fn mark_row_dirty(&mut self, line: usize) {
         if line < self.dirty_rows.len() && !self.dirty_rows[line] {
             self.dirty_rows[line] = true;
             self.dirty_row_count += 1;

@@ -734,7 +734,7 @@ impl App {
         }
     }
 
-    fn handle_focus_follows_mouse(&mut self, mx: f32, my: f32) {
+    pub(crate) fn handle_focus_follows_mouse(&mut self, mx: f32, my: f32) {
         if !self.core.config.input.focus_follows_mouse
             || self.mouse_left_held
             || self.core.search_state.is_some()
@@ -774,7 +774,12 @@ impl App {
         }
 
         self.last_focus_follows_mouse = Some((pane_id, now));
-        self.remember_workspace_pane(self.core.workspaces.active_workspace_idx, pane_id);
+        let workspace_idx = self.core.workspaces.active_workspace_idx;
+        if self.focus_workspace_pane_local(workspace_idx, pane_id) {
+            self.animate_to_active();
+            self.schedule_redraw();
+        }
+        self.remember_workspace_pane(workspace_idx, pane_id);
         self.send_lossy(ClientMessage::FocusPane { pane_id });
     }
 
@@ -1267,6 +1272,30 @@ mod tests {
                 app.content_origin_y() + 12.0
             ),
             None
+        );
+    }
+
+    #[test]
+    fn focus_follows_mouse_updates_local_focus_immediately() {
+        let mut app = make_hover_app(TabBarPosition::Integrated);
+        app.core.config.input.focus_follows_mouse = true;
+        app.core
+            .workspaces
+            .active_mut()
+            .add_column_right(2, ColumnWidth::Proportion(0.5));
+        app.core.workspaces.active_mut().active_column_idx = 0;
+        app.pending_redraw = false;
+
+        let ws = app.core.workspaces.active();
+        let mx = ws.column_x(1) + 10.0;
+        let my = app.content_origin_y() + ws.inner_top() + 10.0;
+
+        app.handle_focus_follows_mouse(mx, my);
+
+        assert_eq!(app.core.workspaces.active().active_pane_id(), Some(2));
+        assert!(
+            app.pending_redraw,
+            "local pane focus should repaint without waiting for the server LayoutUpdate"
         );
     }
 }

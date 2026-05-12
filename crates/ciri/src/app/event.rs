@@ -9,6 +9,87 @@ use winit::window::{Icon, WindowAttributes, WindowId};
 
 use super::App;
 
+#[cfg(target_os = "windows")]
+fn current_cursor_pos_in_window(window: &winit::window::Window) -> Option<(f32, f32)> {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    #[repr(C)]
+    struct Point {
+        x: i32,
+        y: i32,
+    }
+
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn GetCursorPos(point: *mut Point) -> i32;
+        fn ScreenToClient(hwnd: *mut std::ffi::c_void, point: *mut Point) -> i32;
+    }
+
+    let raw = window.window_handle().ok()?.as_raw();
+    let hwnd = match raw {
+        RawWindowHandle::Win32(handle) => handle.hwnd.get() as *mut std::ffi::c_void,
+        _ => return None,
+    };
+
+    let mut point = Point { x: 0, y: 0 };
+    unsafe {
+        if GetCursorPos(&mut point) == 0 || ScreenToClient(hwnd, &mut point) == 0 {
+            return None;
+        }
+    }
+
+    let size = window.inner_size();
+    if point.x < 0 || point.y < 0 || point.x >= size.width as i32 || point.y >= size.height as i32 {
+        return None;
+    }
+
+    Some((point.x as f32, point.y as f32))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn current_cursor_pos_in_window(_window: &winit::window::Window) -> Option<(f32, f32)> {
+    None
+}
+
+impl App {
+    fn refresh_current_cursor_pos_from_window(&mut self) {
+        let pos = self
+            .window
+            .as_ref()
+            .and_then(|window| current_cursor_pos_in_window(window));
+        if let Some(pos) = pos {
+            self.last_mouse_pos = Some(pos);
+        }
+    }
+
+    pub(crate) fn handle_window_focus_changed(&mut self, focused: bool) {
+        use ciri_protocol::message::ClientMessage;
+
+        self.window_focused = focused;
+        self.send(ClientMessage::FocusChange { focused });
+
+        if focused {
+            // On Windows, activating an unfocused window can deliver Focused(true)
+            // without a fresh CursorMoved event. Re-evaluate focus-follows-mouse
+            // from the last known cursor position so the pane focus updates in
+            // the same frame as window focus.
+            self.last_focus_follows_mouse = None;
+            self.refresh_current_cursor_pos_from_window();
+            if let Some((mx, my)) = self.last_mouse_pos {
+                self.handle_focus_follows_mouse(mx, my);
+            }
+        } else {
+            // Dismiss every modal-ish overlay on focus loss — alt-tabbing back
+            // into a stale palette / search / paste dialog and discovering the
+            // first keystrokes went there is bad UX. Drag teardown handles the
+            // case where the finalising mouse-up lands in another window.
+            self.enter_modal_close_peers(ModalKind::None);
+        }
+
+        self.schedule_redraw();
+    }
+}
+
 fn load_window_icon() -> Option<Icon> {
     let png_bytes = include_bytes!("../../../../assets/icons/icon.png");
     let img = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png).ok()?;
@@ -533,6 +614,11 @@ impl ApplicationHandler for App {
                 self.handle_cursor_moved(position);
             }
 
+            WindowEvent::CursorLeft { .. } => {
+                self.last_focus_follows_mouse = None;
+                self.schedule_redraw();
+            }
+
             WindowEvent::MouseInput {
                 state,
                 button: winit::event::MouseButton::Left,
@@ -569,6 +655,11 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::MouseWheel { delta, phase, .. } => {
+                self.refresh_current_cursor_pos_from_window();
+                self.last_focus_follows_mouse = None;
+                if let Some((mx, my)) = self.last_mouse_pos {
+                    self.handle_focus_follows_mouse(mx, my);
+                }
                 self.handle_mouse_wheel(delta, phase);
             }
 
@@ -590,17 +681,7 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::Focused(focused) => {
-                self.window_focused = focused;
-                self.send(ClientMessage::FocusChange { focused });
-                if !focused {
-                    // Dismiss every modal-ish overlay on focus loss
-                    // — alt-tabbing back into a stale palette /
-                    // search / paste dialog and discovering the
-                    // first keystrokes went there is bad UX. Drag
-                    // teardown handles the case where the
-                    // finalising mouse-up lands in another window.
-                    self.enter_modal_close_peers(ModalKind::None);
-                }
+                self.handle_window_focus_changed(focused);
             }
 
             WindowEvent::DroppedFile(path) => {
@@ -618,5 +699,38 @@ impl ApplicationHandler for App {
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
         self.flush_pending_redraw();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::App;
+    use ciri_config::config::CiriConfig;
+
+    #[test]
+    fn focus_change_schedules_redraw() {
+        let mut app = App::new(CiriConfig::default(), "test-session");
+        app.pending_redraw = false;
+        app.window_focused = false;
+
+        app.handle_window_focus_changed(true);
+
+        assert!(app.window_focused);
+        assert!(
+            app.pending_redraw,
+            "focus changes affect the rendered focus state and must not wait for the next blink tick"
+        );
+    }
+
+    #[test]
+    fn focus_restore_preserves_last_mouse_pos_and_resets_debounce() {
+        let mut app = App::new(CiriConfig::default(), "test-session");
+        app.last_mouse_pos = Some((12.0, 34.0));
+        app.last_focus_follows_mouse = Some((7, std::time::Instant::now()));
+
+        app.handle_window_focus_changed(true);
+
+        assert_eq!(app.last_mouse_pos, Some((12.0, 34.0)));
+        assert_eq!(app.last_focus_follows_mouse, None);
     }
 }

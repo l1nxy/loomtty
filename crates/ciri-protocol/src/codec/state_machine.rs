@@ -275,8 +275,7 @@ impl StateEncoder {
                     // wrapped count's worth of cells, mis-parsing the
                     // rest of the stream as garbage opcodes.
                     self.out.push(OP_CHARS_LONG);
-                    self.out
-                        .extend_from_slice(&(u16::MAX as u16).to_le_bytes());
+                    self.out.extend_from_slice(&u16::MAX.to_le_bytes());
                     let end = start + u16::MAX as usize;
                     for j in start..end {
                         self.out.extend_from_slice(&self.char_buf[j]);

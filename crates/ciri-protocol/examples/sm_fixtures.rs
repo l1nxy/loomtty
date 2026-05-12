@@ -74,7 +74,7 @@ fn case(name: &str, cells: &[PackedCell]) -> String {
         enc.push_cell(cell);
     }
     let bytes = enc.finish();
-    let hex = bytes_to_hex(&bytes);
+    let hex = bytes_to_hex(bytes);
     let cells_json = cells
         .iter()
         .map(cell_to_json)

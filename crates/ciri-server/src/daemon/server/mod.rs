@@ -384,6 +384,7 @@ impl Server {
             // Pane/layout management
             ClientMessage::CreatePane
             | ClientMessage::SplitDown
+            | ClientMessage::NewTileBelow
             | ClientMessage::ClosePane { .. }
             | ClientMessage::FocusLeft
             | ClientMessage::FocusRight

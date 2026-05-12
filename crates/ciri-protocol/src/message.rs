@@ -332,6 +332,8 @@ pub enum ClientMessage {
     CreatePane,
     /// Request to split the active column vertically (new row).
     SplitDown,
+    /// Add a new pane as a stacked tile in the active column.
+    NewTileBelow,
     /// Close a pane.
     ClosePane {
         pane_id: u64,

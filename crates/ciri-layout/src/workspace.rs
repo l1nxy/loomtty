@@ -1,6 +1,6 @@
 use crate::column::{Column, ColumnWidth};
 use crate::geometry::{Rect, ViewSize};
-use crate::tile::{PaneId, TileHeight};
+use crate::tile::{PaneId, Tile, TileHeight};
 
 const MIN_COLUMN_PROPORTION: f64 = 0.05;
 /// One outer gap on each side (left+right, or top+bottom) frames the content.
@@ -320,6 +320,25 @@ impl Workspace {
                 col.effective_width(inner_vw)
             );
         }
+    }
+
+    /// Add a new pane as a stacked tile at the bottom of the active column.
+    /// Focus moves to the new tile. If there are no columns (defensive — server
+    /// should always have at least one), falls through to `add_column_right`
+    /// with the supplied default width.
+    pub fn add_tile_to_active_column(
+        &mut self,
+        pane_id: PaneId,
+        default_width: ColumnWidth,
+    ) -> bool {
+        if self.columns.is_empty() {
+            self.add_column_right(pane_id, default_width);
+            return false;
+        }
+        let col = &mut self.columns[self.active_column_idx];
+        col.tiles.push(Tile::new(pane_id));
+        col.active_tile_idx = col.tiles.len() - 1;
+        true
     }
 
     /// Close a pane. If the pane is in a multi-tile column, only that tile is
@@ -816,6 +835,51 @@ mod tests {
         assert!((w.columns[0].proportion(w.view_size.width) - 0.5).abs() < 1e-6);
         assert!((w.columns[1].proportion(w.view_size.width) - 0.5).abs() < 1e-6);
         assert!((w.columns[2].proportion(w.view_size.width) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn add_tile_to_active_column_pushes_and_focuses() {
+        let mut w = ws();
+        w.add_test_column(1);
+        w.add_test_column(2);
+        // Active column is the rightmost (index 1, pane 2).
+        let added = w.add_tile_to_active_column(99, ColumnWidth::Proportion(0.5));
+        assert!(added);
+        assert_eq!(w.columns.len(), 2);
+        let col = &w.columns[1];
+        assert_eq!(col.tiles.len(), 2);
+        assert_eq!(col.tiles[1].pane_id, 99);
+        assert_eq!(col.active_tile_idx, 1);
+        assert_eq!(w.active_pane_id(), Some(99));
+    }
+
+    #[test]
+    fn add_tile_targets_active_column_not_last() {
+        let mut w = ws();
+        w.add_test_column(1);
+        w.add_test_column(2);
+        w.add_test_column(3);
+        // Focus the middle column (index 1, pane 2). The new tile must stack
+        // into that column, not into the rightmost column (index 2, pane 3).
+        w.focus_left();
+        assert_eq!(w.active_column_idx, 1);
+        w.add_tile_to_active_column(99, ColumnWidth::Proportion(0.5));
+        assert_eq!(w.columns.len(), 3);
+        assert_eq!(w.columns[0].tiles.len(), 1);
+        assert_eq!(w.columns[1].tiles.len(), 2);
+        assert_eq!(w.columns[1].tiles[1].pane_id, 99);
+        assert_eq!(w.columns[2].tiles.len(), 1);
+        assert_eq!(w.active_column_idx, 1);
+        assert_eq!(w.active_pane_id(), Some(99));
+    }
+
+    #[test]
+    fn add_tile_with_no_columns_falls_back_to_new_column() {
+        let mut w = ws();
+        let added = w.add_tile_to_active_column(1, ColumnWidth::Proportion(0.5));
+        assert!(!added);
+        assert_eq!(w.columns.len(), 1);
+        assert_eq!(w.active_pane_id(), Some(1));
     }
 
     #[test]

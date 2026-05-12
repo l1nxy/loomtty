@@ -107,6 +107,7 @@ leader = "ctrl+w"
 [keys.bindings]
 n = "new_column_right"
 d = "new_row_below"
+"shift+d" = "new_tile_below"
 x = "close_pane"
 h = "focus_left"
 l = "focus_right"

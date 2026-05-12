@@ -5,6 +5,8 @@ pub enum Action {
     NewColumnRight,
     /// New workspace below with a new pane.
     NewWorkspaceBelow,
+    /// New pane stacked as a tile in the active column (current workspace).
+    NewTileBelow,
     ClosePane,
     /// h/l: navigate columns within the current workspace.
     FocusLeft,
@@ -172,6 +174,7 @@ impl Action {
         vec![
             (Action::NewColumnRight, "New Column Right"),
             (Action::NewWorkspaceBelow, "New Workspace Below"),
+            (Action::NewTileBelow, "New Stacked Tile Below"),
             (Action::ClosePane, "Close Pane"),
             (Action::FocusLeft, "Focus Left"),
             (Action::FocusRight, "Focus Right"),
@@ -225,6 +228,7 @@ fn parse_named_action(name: &str) -> Option<Action> {
     match name {
         "new_column_right" => Some(Action::NewColumnRight),
         "split_down" | "new_row_below" | "new_workspace_below" => Some(Action::NewWorkspaceBelow),
+        "new_tile_below" | "stack_pane" => Some(Action::NewTileBelow),
         "close_pane" => Some(Action::ClosePane),
         "focus_left" => Some(Action::FocusLeft),
         "focus_right" => Some(Action::FocusRight),
@@ -333,6 +337,14 @@ mod tests {
         assert_eq!(
             Action::from_name("new_row_below"),
             Some(Action::NewWorkspaceBelow)
+        );
+        assert_eq!(
+            Action::from_name("new_tile_below"),
+            Some(Action::NewTileBelow)
+        );
+        assert_eq!(
+            Action::from_name("stack_pane"),
+            Some(Action::NewTileBelow)
         );
         assert_eq!(Action::from_name("toggle_lock"), Some(Action::ToggleLock));
     }

@@ -672,12 +672,6 @@ fn draw_block_element(
 mod tests {
     use super::*;
 
-    fn count(ch: char) -> usize {
-        let mut v = Vec::new();
-        emit(ch, 0.0, 0.0, 16.0, 32.0, [1.0; 4], &mut v);
-        v.len()
-    }
-
     fn x_span(rs: &[Rect]) -> (f32, f32) {
         rs.iter()
             .filter(|r| r.h > 0.0)

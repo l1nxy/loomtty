@@ -7,11 +7,14 @@
 
 use ciri_render::shaper::{ShapingOptions, TextShaper};
 use std::path::Path;
-use std::process::Command;
 
 fn fontconfig_match(family: &str) -> Option<String> {
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     {
+        // `fc-match` is only invoked on systems that ship fontconfig;
+        // import inside the cfg block so non-Linux targets don't trip
+        // the `unused_imports` lint when CI runs with `-D warnings`.
+        use std::process::Command;
         let output = Command::new("fc-match")
             .args(["--format=%{file}", family])
             .output()

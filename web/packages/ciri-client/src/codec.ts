@@ -137,10 +137,15 @@ function encodeEnumVariantInto(
     return;
   }
   // Externally-tagged with payload: 1-entry msgpack map keyed by the
-  // variant name, body in the schema's container shape.
+  // variant name, body in the schema's container shape. Strip the
+  // discriminant from the payload before recursing so a future
+  // struct field literally named `tag` (camelCase) can't be
+  // shadowed by our discriminant string at encode time.
+  const { tag: _discriminant, ...payload } = tagged;
+  void _discriminant;
   w.writeMapHeader(1);
   w.writeString(variant.name);
-  encodeContainerInto(w, tagged, variant.shape);
+  encodeContainerInto(w, payload, variant.shape);
 }
 
 function encodeValueInto(w: MsgpackWriter, value: unknown, ty: SchemaType): void {

@@ -89,6 +89,28 @@ describe("CiriClient handshake", () => {
     expect(events.filter((e) => e.kind === "open")).toHaveLength(1);
   });
 
+  test("final hello chunk + leading frame bytes in the same WS message", () => {
+    // Exercises the leftover-byte path in consumeHandshake: the
+    // chunk that completes the 8-byte ServerHello also carries the
+    // start of the first framed payload. The transport must hand
+    // those leftover bytes straight to the FrameReader.
+    const { c, sockets, events } = setup({ reconnect: false });
+    c.start();
+    sockets[0]!.simulateOpen();
+    const hello = serverHelloBytes();
+    sockets[0]!.simulateData(hello.subarray(0, 5)); // partial hello
+    const bell = SERVER_FIXTURES.find((s) => s.name === "Bell")!;
+    const framed = frameOf(TAG_SERVER_MSG, hexToBytes(bell.hex));
+    const tail = new Uint8Array(hello.length - 5 + framed.length);
+    tail.set(hello.subarray(5), 0);
+    tail.set(framed, hello.length - 5);
+    sockets[0]!.simulateData(tail);
+    const kinds = events.map((e) => e.kind);
+    expect(kinds).toContain("open");
+    expect(kinds.filter((k) => k === "server-msg")).toHaveLength(1);
+    void c;
+  });
+
   test("frame bytes that arrive in the same chunk as ServerHello are still parsed", () => {
     const { c, sockets, events } = setup({ reconnect: false });
     c.start();

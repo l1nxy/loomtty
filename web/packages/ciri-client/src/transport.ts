@@ -193,13 +193,21 @@ export class WebSocketTransport {
 
   private handleMessage(data: ArrayBuffer | string): void {
     if (typeof data === "string") {
-      // The ciri gateway never speaks text frames. Treat as fatal
-      // peer-protocol violation: forward an error and close so the
-      // caller's policy can decide whether to reconnect.
+      // The ciri gateway never speaks text frames — protocol violation.
+      // Treat as PERMANENT: pummeling a misbehaving server with
+      // identical handshakes hoping for a different outcome would
+      // chew through the reconnect budget and trip the server's
+      // per-token handshake semaphore.
       this.cbs.onError?.(
         new Error("WebSocket: unexpected text frame from server"),
       );
+      this.intentionallyClosed = true;
+      // Detach listeners synchronously so any frames the browser has
+      // already buffered between `close()` and the eventual
+      // `onclose` event can't re-fire `onError`/`onData`.
+      this.detachListeners();
       this.ws?.close(1003, "text frame rejected");
+      this.handleClose(1003, "text frame rejected");
       return;
     }
     this.cbs.onData?.(new Uint8Array(data));

@@ -22,6 +22,13 @@ export class MsgpackWriter {
   private pos = 0;
 
   constructor(initialCapacity = 256) {
+    if (initialCapacity <= 0 || !Number.isFinite(initialCapacity)) {
+      // The growth loop in `ensure` is `cap *= 2`; a zero-or-negative
+      // start would spin forever. Surface the error at construction.
+      throw new RangeError(
+        `MsgpackWriter: initialCapacity must be > 0 (got ${initialCapacity})`,
+      );
+    }
     this.buf = new Uint8Array(initialCapacity);
     this.view = new DataView(this.buf.buffer);
   }

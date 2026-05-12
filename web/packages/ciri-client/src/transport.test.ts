@@ -124,18 +124,64 @@ describe("WebSocketTransport", () => {
     expect(seen[0]).toEqual(new Uint8Array([0x10, 0x20, 0x30]));
   });
 
-  test("text frames are rejected as protocol error", () => {
+  test("text frames are rejected as protocol error and do NOT trigger reconnect", () => {
+    vi.useFakeTimers();
+    try {
+      const { factory, sockets } = makeFakeFactory();
+      const errors: Error[] = [];
+      const closes: { reconnecting: boolean }[] = [];
+      const t = new WebSocketTransport(
+        {
+          url: "ws://example.test",
+          // Leave `reconnect` at its default (true) — that's exactly
+          // the configuration where the bug bites if the policy is
+          // wrong.
+          initialReconnectDelayMs: 50,
+          webSocketFactory: factory,
+        },
+        {
+          onError: (e) => errors.push(e),
+          onClose: (i) => closes.push({ reconnecting: i.reconnecting }),
+        },
+      );
+      t.start();
+      sockets[0]!.simulateOpen();
+      sockets[0]!.simulateText("nope");
+      expect(errors[0]!.message).toMatch(/text frame/);
+      expect(sockets[0]!.closeCalls).toHaveLength(1);
+      expect(closes).toEqual([{ reconnecting: false }]);
+      // Wait through several would-be reconnect intervals — no new
+      // sockets must be created.
+      vi.advanceTimersByTime(5_000);
+      expect(sockets).toHaveLength(1);
+      expect(t.state).toBe("closed");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("text-frame rejection doesn't double-fire onError if more frames are buffered", () => {
     const { factory, sockets } = makeFakeFactory();
     const errors: Error[] = [];
     const t = new WebSocketTransport(
-      { url: "ws://example.test", webSocketFactory: factory },
+      {
+        url: "ws://example.test",
+        reconnect: false,
+        webSocketFactory: factory,
+      },
       { onError: (e) => errors.push(e) },
     );
     t.start();
     sockets[0]!.simulateOpen();
-    sockets[0]!.simulateText("nope");
-    expect(errors[0]!.message).toMatch(/text frame/);
-    expect(sockets[0]!.closeCalls).toHaveLength(1);
+    sockets[0]!.simulateText("first");
+    // Simulate a stale buffered message arriving after we called
+    // close() — real browsers can deliver onmessage events between
+    // close() and the eventual onclose. The transport must have
+    // detached listeners by this point so the second text frame is
+    // dropped silently.
+    sockets[0]!.simulateText("buffered after close");
+    sockets[0]!.simulateData(new Uint8Array([0x01, 0x02]));
+    expect(errors).toHaveLength(1);
   });
 
   test("reconnect: schedules retry on transient close, exponential backoff", () => {

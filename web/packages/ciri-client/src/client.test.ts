@@ -278,6 +278,63 @@ describe("CiriClient viewport tracking", () => {
   });
 });
 
+describe("CiriClient session tracking", () => {
+  test("SessionSwitched updates stored ClientHello so reconnect attaches to new session", () => {
+    vi.useFakeTimers();
+    try {
+      const { c, sockets } = setup({ reconnect: true });
+      c.start();
+      sockets[0]!.simulateOpen();
+      sockets[0]!.simulateData(serverHelloBytes());
+
+      // Hand-build the msgpack bytes for
+      // `ServerMessage::SessionSwitched { session_name: "other-session" }`.
+      // The schema-driven encoder only knows ClientMessage variants,
+      // so going through it would fail; pinning the wire bytes
+      // directly is the smallest and clearest fixture for this case.
+      //   81             = fixmap-1
+      //   af "SessionSwitched" (15 bytes, fixstr-15)
+      //   91             = fixarray-1
+      //   ad "other-session" (13 bytes, fixstr-13)
+      const enc = new TextEncoder();
+      const variant = enc.encode("SessionSwitched");
+      const sessName = enc.encode("other-session");
+      const wire = new Uint8Array(
+        1 + 1 + variant.length + 1 + 1 + sessName.length,
+      );
+      let p = 0;
+      wire[p++] = 0x81;
+      wire[p++] = 0xa0 | variant.length;
+      wire.set(variant, p);
+      p += variant.length;
+      wire[p++] = 0x91;
+      wire[p++] = 0xa0 | sessName.length;
+      wire.set(sessName, p);
+      sockets[0]!.simulateData(frameOf(TAG_SERVER_MSG, wire));
+
+      // Drop and reconnect — replayed ClientHello must carry the new
+      // session name `other-session` (13 bytes, fixstr).
+      sockets[0]!.simulateClose(1006, "drop");
+      vi.advanceTimersByTime(1100);
+      expect(sockets).toHaveLength(2);
+      sockets[1]!.simulateOpen();
+      const hello = sockets[1]!.sent[0]!.bytes;
+      const view = new DataView(
+        hello.buffer,
+        hello.byteOffset,
+        hello.byteLength,
+      );
+      const nameLen = view.getUint16(9, true);
+      expect(nameLen).toBe("other-session".length);
+      const name = new TextDecoder().decode(hello.subarray(11, 11 + nameLen));
+      expect(name).toBe("other-session");
+      void c;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("CiriClient reconnect", () => {
   test("replays ClientHello on each reconnect open", () => {
     vi.useFakeTimers();

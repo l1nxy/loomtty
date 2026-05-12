@@ -312,6 +312,14 @@ export class CiriClient {
           this.onEvent({ kind: "error", error: err });
           return;
         }
+        // Keep the replay ClientHello in sync with the server's view
+        // of which session we're attached to. After `SwitchSession`
+        // (or an auto-switch following `KillSession`), the server
+        // sends `SessionSwitched`; without this update, a later
+        // reconnect would silently reattach to the OLD session.
+        if (msg.tag === "SessionSwitched") {
+          this.hello = { ...this.hello, sessionName: msg.sessionName };
+        }
         this.onEvent({ kind: "server-msg", msg });
         return;
       }

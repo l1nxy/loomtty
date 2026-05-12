@@ -237,6 +237,17 @@ pub(crate) fn decompress_lz4_payload(payload: &[u8]) -> io::Result<Vec<u8>> {
     // Reject decompression bombs: if the claimed uncompressed size is vastly
     // larger than the compressed data, this is likely an attack.
     let compressed_len = payload.len() - 4;
+    // Reject zero-length compressed payloads that claim non-zero
+    // uncompressed output. Otherwise the ratio guard below skips
+    // (compressed_len > 0 is false), and lz4_flex::decompress would
+    // attempt to allocate `uncompressed_len` bytes from an empty input
+    // — a free-form OOM amplifier for malicious peers.
+    if compressed_len == 0 && uncompressed_len > 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "LZ4 payload claims non-zero uncompressed length with zero compressed bytes",
+        ));
+    }
     if compressed_len > 0 && uncompressed_len / compressed_len > MAX_LZ4_RATIO {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,

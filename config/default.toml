@@ -215,7 +215,9 @@ port = 7891
 # `+`, `;`, `=`, `&`, `%` must be percent-encoded by the client or
 # they will silently truncate / mis-split the value. Hex tokens
 # need no escaping.
-# token = "0123456789abcdef0123456789abcdef"
+# Do NOT ship the example below — it is a placeholder string that
+# the schema validator rejects as too short / well-known.
+# token = "REPLACE_WITH_OUTPUT_OF_openssl_rand_hex_16"
 token = ""
 # Exact-match Origin allowlist for browser clients (CSRF defense).
 # Empty + loopback bind = permissive (fine for local dev). Empty +

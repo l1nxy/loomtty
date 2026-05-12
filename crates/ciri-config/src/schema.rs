@@ -927,22 +927,31 @@ impl garde::Validate for WebConfig {
         parent: &mut dyn FnMut() -> garde::Path,
         report: &mut garde::Report,
     ) {
-        if self.port < 1 {
+        if self.port == 0 {
             report.append(
                 parent().join("port"),
-                garde::Error::new("port must be >= 1 (port 0 is OS-assigned ephemeral)"),
+                garde::Error::new("port 0 is OS-assigned ephemeral; pick an explicit port"),
             );
         }
 
-        if !self.bind.is_empty() && self.bind.parse::<std::net::IpAddr>().is_err() {
-            report.append(
-                parent().join("bind"),
-                garde::Error::new(format!(
-                    "`bind` must be an IP address, got {:?}",
-                    self.bind,
-                )),
-            );
-        }
+        let parsed_bind = if self.bind.is_empty() {
+            // Empty means "default to loopback" at daemon bind time.
+            Some(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
+        } else {
+            match self.bind.parse::<std::net::IpAddr>() {
+                Ok(ip) => Some(ip),
+                Err(_) => {
+                    report.append(
+                        parent().join("bind"),
+                        garde::Error::new(format!(
+                            "`bind` must be an IP address, got {:?}",
+                            self.bind,
+                        )),
+                    );
+                    None
+                }
+            }
+        };
 
         if self.enabled {
             let trimmed = self.token.trim();
@@ -958,6 +967,23 @@ impl garde::Validate for WebConfig {
                         "token is {} bytes (after trim); minimum is {MIN_WEB_TOKEN_BYTES} \
                          bytes when web.enabled = true",
                         trimmed.len(),
+                    )),
+                );
+            }
+
+            // Non-loopback bind with no Origin allowlist invites CSRF
+            // from any browser tab. Enforce at schema level so
+            // config-only validation (e.g., a future --check-config
+            // CLI) catches it without booting the daemon.
+            if let Some(ip) = parsed_bind
+                && !ip.is_loopback()
+                && self.allowed_origins.is_empty()
+            {
+                report.append(
+                    parent().join("allowed_origins"),
+                    garde::Error::new(format!(
+                        "bind {ip} is not loopback — set allowed_origins to the \
+                         browser origin(s) you intend to serve"
                     )),
                 );
             }
@@ -981,13 +1007,18 @@ fn looks_like_origin(value: &str) -> bool {
     // Cheap structural check; defers full RFC 6454 parsing to the
     // browser. `null` is the sentinel sandboxed contexts send (RFC
     // 6454 §6).
+    //
+    // Only http/https are accepted. Per RFC 6454 the Origin header
+    // always carries an HTTP-origin even for WebSocket connections —
+    // browsers re-derive the HTTP scheme from the page's URL. A
+    // configured `ws://` / `wss://` entry would never match a real
+    // browser handshake and would silently break authentication.
     if value == "null" {
         return true;
     }
-    let schemes = ["http://", "https://", "ws://", "wss://"];
-    let Some(rest) = schemes
-        .iter()
-        .find_map(|s| value.strip_prefix(s))
+    let Some(rest) = value
+        .strip_prefix("http://")
+        .or_else(|| value.strip_prefix("https://"))
     else {
         return false;
     };
@@ -1101,7 +1132,6 @@ mod web_config_tests {
             allowed_origins: vec![
                 "http://localhost:5173".to_string(),
                 "https://terminal.example.com".to_string(),
-                "ws://127.0.0.1:7891".to_string(),
                 "null".to_string(),
             ],
             ..WebConfig::default()
@@ -1116,6 +1146,8 @@ mod web_config_tests {
             "http://example.com/path",  // path attached
             "http://",                  // no host
             "",                         // empty
+            "ws://127.0.0.1:7891",      // browsers never send ws:// Origin
+            "wss://example.com",        // ditto for wss://
         ] {
             let cfg = WebConfig {
                 allowed_origins: vec![bad.to_string()],
@@ -1124,6 +1156,37 @@ mod web_config_tests {
             cfg.validate()
                 .expect_err(&format!("origin={bad:?} must fail"));
         }
+    }
+
+    #[test]
+    fn rejects_non_loopback_bind_without_allowed_origins() {
+        let cfg = WebConfig {
+            enabled: true,
+            token: "0123456789abcdef0123456789abcdef".to_string(),
+            bind: "0.0.0.0".to_string(),
+            allowed_origins: Vec::new(),
+            ..WebConfig::default()
+        };
+        let err = cfg
+            .validate()
+            .expect_err("non-loopback bind + empty origins must fail");
+        assert!(
+            err.to_string().contains("allowed_origins"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn accepts_non_loopback_bind_with_explicit_origins() {
+        let cfg = WebConfig {
+            enabled: true,
+            token: "0123456789abcdef0123456789abcdef".to_string(),
+            bind: "0.0.0.0".to_string(),
+            allowed_origins: vec!["https://terminal.example.com".to_string()],
+            ..WebConfig::default()
+        };
+        cfg.validate()
+            .expect("non-loopback bind with explicit origins is fine");
     }
 }
 

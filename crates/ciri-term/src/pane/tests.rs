@@ -889,3 +889,57 @@ fn osc133_two_cycles_record_two_marks_with_monotonic_lines() {
         first.prompt_line,
     );
 }
+
+/// Regression: when `drain_output()` returns several PTY chunks in one
+/// pass, each chunk's OSC 133 mark must be stamped at the cursor row as
+/// of *that* chunk — not the row before any of the chunks ran. Earlier
+/// code computed all per-chunk rows in one loop, then advanced the
+/// processor in a second loop, so every chunk in the batch saw the
+/// pre-batch cursor and `list-prompts` reported identical rows for
+/// `output_line` / `done_line` despite intervening output.
+#[test]
+fn multi_chunk_drain_stamps_marks_after_intervening_output() {
+    let mut pane =
+        Pane::new_with_opts(84, 80, 8, shell_path(), None, None).expect("create pane");
+    // Let the shell settle so any initial PROMPT_COMMAND noise lands first.
+    std::thread::sleep(Duration::from_millis(150));
+    pane.process_pty_output();
+
+    let row_before = pane.current_abs_line();
+
+    // Three chunks in one batch:
+    //   1. OSC 133;A  → prompt_line at row_before
+    //   2. five `\n`  → cursor moves down five rows
+    //   3. OSC 133;C then OSC 133;D;0 → output_line / done_line must
+    //      reflect the post-chunk-2 cursor row.
+    let chunks: Vec<Vec<u8>> = vec![
+        b"\x1b]133;A\x07".to_vec(),
+        b"\n\n\n\n\n".to_vec(),
+        b"\x1b]133;C\x07\x1b]133;D;0\x07".to_vec(),
+    ];
+    pane.process_chunks(&chunks);
+
+    let mark = pane
+        .prompt_marks
+        .iter()
+        .filter(|m| m.done_line.is_some())
+        .last()
+        .copied()
+        .expect("completed mark recorded");
+    assert_eq!(
+        mark.prompt_line, row_before,
+        "prompt_line should match the cursor row before any chunk ran"
+    );
+    let output_line = mark.output_line.expect("OSC 133;C set output_line");
+    let done_line = mark.done_line.expect("OSC 133;D set done_line");
+    assert!(
+        output_line >= row_before + 5,
+        "output_line ({}) should reflect the five \\n in chunk 2 (row_before={})",
+        output_line,
+        row_before,
+    );
+    assert_eq!(
+        done_line, output_line,
+        "C and D in the same chunk share that chunk's pre-advance row"
+    );
+}

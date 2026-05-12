@@ -252,33 +252,37 @@ impl Pane {
         if chunks.is_empty() {
             return false;
         }
+        self.process_chunks(&chunks);
+        true
+    }
 
-        for chunk in &chunks {
-            // Snapshot the absolute line BEFORE advancing this chunk. Shells
-            // emit OSC 133 sequences at chunk boundaries (precmd/preexec
-            // hooks fire as standalone PTY writes), so this is the correct
-            // row for every OSC 133 event observed within the chunk.
+    /// Apply a drained batch of PTY chunks to the terminal, in order. Each
+    /// chunk's OSC 133 events must be stamped against the cursor row as of
+    /// the moment *that* chunk starts — which means we have to interleave
+    /// `scan_control` / `processor.advance` per chunk rather than running
+    /// them as two separate passes. With separate passes, every chunk in
+    /// the batch sees the pre-batch cursor and `list-prompts` reports
+    /// identical rows for events that actually straddled new output.
+    pub(super) fn process_chunks(&mut self, chunks: &[Vec<u8>]) {
+        for chunk in chunks {
             let abs_line_at_chunk_start = self.current_abs_line();
             let osc133_events = self.parsers.scan_control(chunk);
             for event in osc133_events {
                 self.apply_osc133_event(event, abs_line_at_chunk_start);
             }
             self.scan_osc_notifications(chunk);
-        }
 
-        let cursors: Vec<(u16, u16)> = chunks
-            .iter()
-            .map(|chunk| {
-                self.processor.advance(&mut self.term, chunk);
-                let cursor = self.term.grid().cursor.point;
-                (cursor.column.0 as u16, cursor.line.0.max(0) as u16)
-            })
-            .collect();
+            self.processor.advance(&mut self.term, chunk);
+            let cursor = self.term.grid().cursor.point;
+            let cursor_col = cursor.column.0 as u16;
+            let cursor_row = cursor.line.0.max(0) as u16;
 
-        for (chunk, &(cursor_col, cursor_row)) in chunks.iter().zip(cursors.iter()) {
-            let (kitty_result, sixel_placements) =
-                self.parsers
-                    .scan_images(chunk, cursor_col, cursor_row, self.images.active_mut());
+            let (kitty_result, sixel_placements) = self.parsers.scan_images(
+                chunk,
+                cursor_col,
+                cursor_row,
+                self.images.active_mut(),
+            );
             if kitty_result.deleted {
                 self.images.clear_on_delete();
             }
@@ -287,7 +291,6 @@ impl Pane {
         }
 
         self.images.cap_active();
-        true
     }
 
     /// Absolute grid line of the current cursor position. "Absolute" here

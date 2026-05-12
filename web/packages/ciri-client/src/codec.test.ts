@@ -159,6 +159,36 @@ describe("decodeServerMessage", () => {
     // 0xc1 is `never used` in msgpack — guaranteed to fail decoding.
     expect(() => decodeServerMessage(new Uint8Array([0xc1]))).toThrow(CodecError);
   });
+
+  test("rejects out-of-range u16 in PaneCreated.cols on the wire", () => {
+    // Hand-build `{"PaneCreated": [1, 0, 70000, 24]}` — `cols` is u16
+    // but msgpack uint32 (0xce) carries 70000. The decoder must not
+    // silently accept the impossible value.
+    //   81 ab "PaneCreated" 94 01 00 ce 00 01 11 70 18
+    const buf = new Uint8Array([
+      0x81,
+      0xab,
+      0x50, 0x61, 0x6e, 0x65, 0x43, 0x72, 0x65, 0x61, 0x74, 0x65, 0x64,
+      0x94,
+      0x01, // pane_id = 1
+      0x00, // column_idx = 0
+      0xce, 0x00, 0x01, 0x11, 0x70, // cols = 70000 (uint32)
+      0x18, // rows = 24
+    ]);
+    expect(() => decodeServerMessage(buf)).toThrow(/u16 wire value out of range/);
+  });
+
+  test("rejects negative bigint in a u64 slot on the wire", () => {
+    // Hand-build `{"Bell": [-1i64]}`:
+    //   81 a4 "Bell" 91 d3 ff ff ff ff ff ff ff ff
+    const buf = new Uint8Array([
+      0x81,
+      0xa4, 0x42, 0x65, 0x6c, 0x6c,
+      0x91,
+      0xd3, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    ]);
+    expect(() => decodeServerMessage(buf)).toThrow(/u64 wire value out of range/);
+  });
 });
 
 describe("round-trip via encode + decode (client direction)", () => {

@@ -334,8 +334,38 @@ export class WebSocketTransport {
 
   private composeUrl(): string {
     if (this.opts.token === undefined) return this.opts.url;
-    const sep = this.opts.url.includes("?") ? "&" : "?";
-    return `${this.opts.url}${sep}token=${encodeURIComponent(this.opts.token)}`;
+    // Manual query-string surgery (not `URLSearchParams.set`) for two
+    // reasons:
+    //   1. We need to REPLACE any pre-existing `token` param so a
+    //      caller rotating credentials with a stale URL doesn't
+    //      double-send and authenticate with the wrong value (the
+    //      gateway's query parser takes the FIRST `token=`).
+    //   2. `URLSearchParams.toString()` form-encodes (space → `+`,
+    //      `!`/`'`/`*` → `%XX`); the gateway's `percent_decode_str`
+    //      handles `%XX` but does NOT translate `+` back to space,
+    //      so a token containing a space would silently break auth.
+    //      `encodeURIComponent` uses the encoding the percent
+    //      decoder expects.
+    const encoded = encodeURIComponent(this.opts.token);
+    const queryStart = this.opts.url.indexOf("?");
+    if (queryStart < 0) {
+      return `${this.opts.url}?token=${encoded}`;
+    }
+    const fragmentStart = this.opts.url.indexOf("#", queryStart);
+    const queryEnd =
+      fragmentStart >= 0 ? fragmentStart : this.opts.url.length;
+    const query = this.opts.url.slice(queryStart + 1, queryEnd);
+    const prefix = this.opts.url.slice(0, queryStart);
+    const fragment = fragmentStart >= 0 ? this.opts.url.slice(fragmentStart) : "";
+    // Drop any existing `token=...` segment; preserve the caller's
+    // own encoding for everything else.
+    const filtered = query
+      .split("&")
+      .filter((p) => p.length > 0 && !/^token=/.test(p))
+      .join("&");
+    const newQuery =
+      filtered.length > 0 ? `${filtered}&token=${encoded}` : `token=${encoded}`;
+    return `${prefix}?${newQuery}${fragment}`;
   }
 }
 

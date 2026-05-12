@@ -55,6 +55,25 @@ describe("WebSocketTransport", () => {
     expect(sockets[0]!.url).toBe("ws://example.test/ws?foo=1&token=abc");
   });
 
+  test("token in opts overrides any pre-existing token query param", () => {
+    // A caller rotating credentials might pass a fresh token alongside
+    // a URL that still has the stale value. The gateway's query parser
+    // takes the FIRST `token=`, so the rotation would silently fail
+    // if we just appended.
+    const { factory, sockets } = makeFakeFactory();
+    const t = new WebSocketTransport(
+      {
+        url: "ws://example.test/ws?token=stale&foo=1",
+        token: "fresh",
+        webSocketFactory: factory,
+      },
+    );
+    t.start();
+    const url = new URL(sockets[0]!.url);
+    expect(url.searchParams.getAll("token")).toEqual(["fresh"]);
+    expect(url.searchParams.get("foo")).toBe("1");
+  });
+
   test("send buffers payloads before open and flushes on open", () => {
     const { factory, sockets } = makeFakeFactory();
     const t = new WebSocketTransport(

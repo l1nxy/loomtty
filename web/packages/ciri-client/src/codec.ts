@@ -394,30 +394,63 @@ function decodeValue(raw: unknown, ty: SchemaType): unknown {
     case "u8":
     case "u16":
     case "u32": {
-      if (typeof raw === "number") return raw;
-      if (typeof raw === "bigint") {
+      // Range-check on the decode side too: a hostile or buggy peer
+      // could send `PaneCreated.cols = 70000` as msgpack uint32 and
+      // the JS-side `number` would silently accept it, only to
+      // produce impossible values downstream. The encoder enforces
+      // the same range via `requireIntLike`; this is the symmetric
+      // guard on the wire-in side.
+      let coerced: number;
+      if (typeof raw === "number") {
+        coerced = raw;
+      } else if (typeof raw === "bigint") {
         // Small u64 values may come back as bigint with `useBigInt64`;
         // narrow back to number for the int32-and-below slots so the
         // typed JS API uses plain `number`.
-        return Number(raw);
+        coerced = Number(raw);
+      } else {
+        throw new CodecError(`${ty.kind} expected number, got ${typeofTag(raw)}`);
       }
-      throw new CodecError(`${ty.kind} expected number, got ${typeofTag(raw)}`);
+      if (!Number.isInteger(coerced)) {
+        throw new CodecError(`${ty.kind} got non-integer wire value: ${coerced}`);
+      }
+      const [min, max] = intRange(ty.kind);
+      const bi = BigInt(coerced);
+      if (bi < min || bi > max) {
+        throw new CodecError(
+          `${ty.kind} wire value out of range: ${coerced} (allowed ${min}..=${max})`,
+        );
+      }
+      return coerced;
     }
     case "i64":
     case "i128":
     case "u64":
     case "u128": {
-      if (typeof raw === "bigint") return raw;
-      if (typeof raw === "number") {
+      let bi: bigint;
+      if (typeof raw === "bigint") {
+        bi = raw;
+      } else if (typeof raw === "number") {
         // @msgpack/msgpack falls back to JS number for ints inside the
         // safe range — widen so the typed API uniformly hands out
         // `bigint` for u64-sized fields.
         if (!Number.isInteger(raw)) {
           throw new CodecError(`${ty.kind} got non-integer ${raw}`);
         }
-        return BigInt(raw);
+        bi = BigInt(raw);
+      } else {
+        throw new CodecError(`${ty.kind} expected bigint/number, got ${typeofTag(raw)}`);
       }
-      throw new CodecError(`${ty.kind} expected bigint/number, got ${typeofTag(raw)}`);
+      // Range guard: a peer that sends a negative msgpack int into a
+      // `u64` slot (or a value past 2^63-1 into `i64`) would silently
+      // be accepted as a JS bigint without this check.
+      const [min, max] = intRange(ty.kind);
+      if (bi < min || bi > max) {
+        throw new CodecError(
+          `${ty.kind} wire value out of range: ${bi} (allowed ${min}..=${max})`,
+        );
+      }
+      return bi;
     }
     case "f32":
     case "f64":

@@ -44,7 +44,14 @@ const MAX_SESSION_NAME_LEN: usize = 255;
 ///   1 = initial codec layout
 ///   2 = mode_flags expanded from u8 to u16 (kitty keyboard levels 1-5)
 ///   3 = echo_ack (u64) added to PaneFrameMeta for input prediction timing
-pub const WIRE_PROTOCOL_VERSION: u8 = 3;
+///   4 = ColumnState.width_fixed_px is now always serialized (the previous
+///       `skip_serializing_if = Option::is_none` was incompatible with the
+///       schema-driven TS web client, which expects a fixed-arity tuple).
+///       A new v4 client speaking to a v3 server would receive a 3-element
+///       ColumnState and the TS schema decoder would reject it; the wire-
+///       version mismatch surfaces in the handshake instead so the failure
+///       is crisp rather than silent.
+pub const WIRE_PROTOCOL_VERSION: u8 = 4;
 
 /// Version compatibility result.
 #[derive(Debug, Clone, PartialEq, Eq)]

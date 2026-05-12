@@ -304,6 +304,24 @@ describe("WebSocketTransport", () => {
     }
   });
 
+  test("close() clears the pre-open send queue (no stale flush on restart)", () => {
+    const { factory, sockets } = makeFakeFactory();
+    const t = new WebSocketTransport(
+      { url: "ws://example.test", reconnect: false, webSocketFactory: factory },
+    );
+    t.start();
+    // Queue bytes before the (first) socket ever opens.
+    t.send(new Uint8Array([0xaa, 0xbb]));
+    t.send(new Uint8Array([0xcc, 0xdd]));
+    expect(sockets[0]!.sent).toHaveLength(0);
+    // Intentional close before any open: those queued payloads MUST
+    // NOT be replayed against the next socket the user opens.
+    t.close();
+    t.start();
+    sockets[1]!.simulateOpen();
+    expect(sockets[1]!.sent).toHaveLength(0);
+  });
+
   test("close() is idempotent — second call is a no-op", () => {
     const { factory, sockets } = makeFakeFactory();
     const closes: unknown[] = [];

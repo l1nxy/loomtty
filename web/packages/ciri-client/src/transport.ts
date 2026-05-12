@@ -132,6 +132,13 @@ export class WebSocketTransport {
     if (this.intentionallyClosed) return;
     this.intentionallyClosed = true;
     this.clearReconnectTimer();
+    // Drop anything still in the pre-open send queue: `start()` is
+    // explicitly allowed after a `close()`, and stale frames left
+    // here from the previous connection would otherwise flush on
+    // the next `open` — replaying input or commands at the server
+    // it knows nothing about, possibly against a different session.
+    this.sendQueue.length = 0;
+    this.queuedBytes = 0;
     if (this.ws && (this._state === "open" || this._state === "connecting")) {
       this._state = "closing";
       this.ws.close(code, reason);

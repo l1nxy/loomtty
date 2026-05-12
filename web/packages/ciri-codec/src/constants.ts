@@ -2,7 +2,7 @@
 // Do not edit by hand. Regenerate after touching the Rust constants.
 
 // ── Handshake / framing ───────────────────────────────
-export const WIRE_PROTOCOL_VERSION = 3;
+export const WIRE_PROTOCOL_VERSION = 4;
 export const SERVER_HELLO_LEN = 8;
 export const MAX_DATA_FRAME_LEN = 16777216;
 export const MAX_CONTROL_FRAME_LEN = 1048576;

@@ -849,16 +849,41 @@ impl GlyphCache {
                 };
             }
 
-            for (face, px, try_color) in &candidates {
+            let sys_face = self
+                .dwrite_resolver
+                .as_ref()
+                .and_then(|r| r.get_system_face(ch));
+
+            // Try the configured faces in resolved order, but slot the cached
+            // system face in *just before* the Emoji candidate when the
+            // preferred class is non-emoji. `MapCharacters` (with our VS-15
+            // hint) picked sys_face as the authoritative text-style mapping
+            // for this codepoint — e.g. Segoe UI Symbol for ↔ U+2194. Without
+            // this, a configured emoji font (which usually contains arrows /
+            // checkmarks too) would win for text-presentation symbols and
+            // render them as wide color glyphs. Primary/Cjk still come first
+            // so a Nerd Font primary keeps its custom coverage.
+            for (resolved, (face, px, try_color)) in order.iter().zip(&candidates) {
+                if matches!(resolved, ResolvedFont::Emoji)
+                    && !matches!(preferred, ResolvedFont::Emoji)
+                    && let Some(ref sf) = sys_face
+                {
+                    try_dwrite_face!(sf, self.pixel_size, true);
+                }
                 if let Some(face) = face {
                     try_dwrite_face!(face, *px, *try_color);
                 }
             }
 
-            if let Some(ref resolver) = self.dwrite_resolver
-                && let Some(sys_face) = resolver.get_system_face(ch)
+            // Fallback path when preferred == Emoji: the configured emoji
+            // font (or any user candidate) didn't render, so try the cached
+            // system emoji face (e.g. Segoe UI Emoji when the user didn't
+            // configure `[font.emoji]`). `try_color = true` keeps COLR/CPAL
+            // layers.
+            if matches!(preferred, ResolvedFont::Emoji)
+                && let Some(ref face) = sys_face
             {
-                try_dwrite_face!(&sys_face, self.pixel_size, false);
+                try_dwrite_face!(face, self.pixel_size, true);
             }
 
             self.cache.insert(key, GlyphEntry::EMPTY);

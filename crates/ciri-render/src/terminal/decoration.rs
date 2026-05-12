@@ -79,8 +79,8 @@ pub(super) fn render_cell(
         if entry.width == 0 || entry.height == 0 {
             return;
         }
-        let color_span = super::glyph::color_glyph_cell_span(cell.ch, cell.is_wide);
-        let glyph = if entry.is_color && color_span > 1 {
+        let color_span = super::glyph::color_glyph_cell_span(cell.ch, cell.is_wide).max(2);
+        let glyph = if entry.is_color {
             super::glyph::constrain_color_glyph_to_cells(
                 &entry,
                 px,

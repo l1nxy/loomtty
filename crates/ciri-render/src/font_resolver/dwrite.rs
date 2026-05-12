@@ -118,7 +118,18 @@ impl DWriteResolver {
         let fallback = self.fallback.as_ref()?;
         let collection = self.base_collection.as_ref()?;
 
-        let text: Vec<u16> = ch.encode_utf16(&mut [0u16; 2]).to_vec();
+        // For codepoints that default to text presentation per UTR #51
+        // (e.g. ↔ U+2194, → U+2192, ✓ U+2713), append VS-15 (U+FE0E) so
+        // DWrite picks a text-style font (Segoe UI Symbol, Cambria Math …)
+        // rather than Segoe UI Emoji. Without this, primary fonts missing
+        // these glyphs cause MapCharacters to return the color emoji font,
+        // whose glyphs are em-sized and overflow the monospace cell.
+        // True emojis (Emoji_Presentation=Yes) keep the bare codepoint so
+        // MapCharacters still returns the emoji font for them.
+        let mut text: Vec<u16> = ch.encode_utf16(&mut [0u16; 2]).to_vec();
+        if !super::cmap::is_default_emoji_presentation(ch) {
+            text.push(0xFE0E);
+        }
         let source = SimpleTextSource::new(&text);
 
         let mut mapped_length = 0u32;

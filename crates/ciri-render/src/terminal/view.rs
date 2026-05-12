@@ -633,14 +633,14 @@ fn rebuild_row_render_data(
                     let py = row as f32 * grid.metrics.ch;
                     let is_cjk_text_wide =
                         props.is_wide && !entry.is_color && Some(glyph_font_id) == grid.cjk_font_id;
-                    let g = if entry.is_color && display_cols > 1 {
+                    let g = if entry.is_color {
                         constrain_color_glyph_to_cells(
                             &entry,
                             px,
                             py,
                             grid.metrics,
                             props.fg,
-                            display_cols,
+                            display_cols.max(2),
                         )
                     } else if is_cjk_text_wide {
                         constrain_wide_text_glyph(&entry, px, py, grid.metrics, props.fg)
@@ -682,8 +682,8 @@ fn rebuild_row_render_data(
                         let py = row as f32 * grid.metrics.ch;
                         let is_cjk_text_wide =
                             is_wide && !entry.is_color && Some(font_id) == grid.cjk_font_id;
-                        let color_span = color_glyph_cell_span(props.ch, is_wide);
-                        let g = if entry.is_color && color_span > 1 {
+                        let color_span = color_glyph_cell_span(props.ch, is_wide).max(2);
+                        let g = if entry.is_color {
                             constrain_color_glyph_to_cells(
                                 &entry,
                                 px,

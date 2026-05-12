@@ -138,7 +138,7 @@ fn extract_cmap(data: &[u8], face_index: u32) -> HashSet<u32> {
 ///
 /// Characters with this property should default to emoji-style rendering
 /// (color glyphs) rather than text-style (monochrome).
-fn is_default_emoji_presentation(ch: char) -> bool {
+pub(super) fn is_default_emoji_presentation(ch: char) -> bool {
     use unicode_properties::EmojiStatus::*;
     use unicode_properties::UnicodeEmoji;
     matches!(

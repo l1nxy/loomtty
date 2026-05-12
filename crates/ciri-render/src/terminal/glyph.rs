@@ -142,8 +142,15 @@ pub(super) fn emit_glyph(
         }
         let px = col as f32 * m.cw;
         let py = row as f32 * m.ch;
-        let color_span = color_glyph_cell_span(cell.ch, cell.is_wide);
-        let g = if entry.is_color && color_span > 1 {
+        let color_span = color_glyph_cell_span(cell.ch, cell.is_wide).max(2);
+        let g = if entry.is_color {
+            // Color glyphs (emoji) are rasterized at the full emoji-font em
+            // size and look the right "weight" when sized to two cells —
+            // matching kitty / WezTerm. Forcing a 2-cell minimum is intentional
+            // even for text-presentation codepoints that fall back to a color
+            // font (e.g. ↔ U+2194 → Segoe UI Emoji): a one-cell scale renders
+            // them as a tiny dot. The next cell may visually overlap, but the
+            // grid still advances one column.
             constrain_color_glyph_to_cells(&entry, px, py, m, cell.fg, color_span)
         } else {
             make_relative_glyph(&entry, px, py, m, cell.fg)

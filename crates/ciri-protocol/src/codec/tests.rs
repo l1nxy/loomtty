@@ -2192,4 +2192,118 @@ mod network_edge_cases {
             ),
         }
     }
+
+    // ──── OSC 133 prompt-marks IPC wire format ────────────────────────
+
+    #[test]
+    fn client_message_list_prompts_wire_format_pinned() {
+        let msg = ClientMessage::ListPrompts {
+            session_name: "s".into(),
+            pane_id: 1,
+        };
+        let bytes = rmp_serde::to_vec(&msg).unwrap();
+        // Expected layout:
+        //   0x81                  fixmap of size 1
+        //   0xAB                  fixstr length 11 ("ListPrompts")
+        //   "ListPrompts"         11 bytes of UTF-8
+        //   0x92                  fixarray of size 2 (session_name, pane_id)
+        assert_eq!(bytes[0], 0x81, "expected fixmap-of-size-1 prefix");
+        assert_eq!(bytes[1], 0xAB, "expected fixstr length 11 (ListPrompts)");
+        assert_eq!(
+            &bytes[2..13],
+            b"ListPrompts",
+            "variant NAME bytes must stay 'ListPrompts' on the wire"
+        );
+        assert_eq!(
+            bytes[13], 0x92,
+            "struct payload must be fixarray of size 2"
+        );
+
+        let decoded: ClientMessage = rmp_serde::from_slice(&bytes).unwrap();
+        assert!(matches!(decoded, ClientMessage::ListPrompts { .. }));
+    }
+
+    #[test]
+    fn server_message_prompt_list_reply_wire_format_pinned() {
+        let msg = ServerMessage::PromptListReply {
+            session_name: "s".into(),
+            pane_id: 1,
+            marks: Vec::new(),
+        };
+        let bytes = rmp_serde::to_vec(&msg).unwrap();
+        // Expected layout:
+        //   0x81                  fixmap of size 1
+        //   0xB0                  fixstr length 16 ("PromptListReply")
+        //                         actually 15 chars -> 0xAF
+        //   "PromptListReply"     15 bytes of UTF-8
+        //   0x93                  fixarray of size 3 (session_name, pane_id, marks)
+        assert_eq!(bytes[0], 0x81);
+        assert_eq!(
+            bytes[1], 0xAF,
+            "expected fixstr length 15 (PromptListReply)"
+        );
+        assert_eq!(
+            &bytes[2..17],
+            b"PromptListReply",
+            "variant NAME bytes must stay 'PromptListReply' on the wire"
+        );
+        assert_eq!(
+            bytes[17], 0x93,
+            "struct payload must be fixarray of size 3 \
+             (session_name, pane_id, marks)"
+        );
+
+        let decoded: ServerMessage = rmp_serde::from_slice(&bytes).unwrap();
+        assert!(matches!(decoded, ServerMessage::PromptListReply { .. }));
+    }
+
+    #[test]
+    fn prompt_mark_info_default_wire_shape_pinned() {
+        use crate::message::PromptMarkInfo;
+        let bytes = rmp_serde::to_vec(&PromptMarkInfo::default()).unwrap();
+        // Expected: fixarray-5 [u64=0, nil, nil, nil, nil]
+        //   0x95                fixarray of size 5
+        //   0x00                positive fixint 0   (prompt_line)
+        //   0xC0 0xC0 0xC0 0xC0 nil ×4              (output/done/exit/duration)
+        assert_eq!(
+            bytes.as_slice(),
+            &[0x95, 0x00, 0xC0, 0xC0, 0xC0, 0xC0],
+            "PromptMarkInfo default wire shape drifted — field order or \
+             types changed?"
+        );
+    }
+
+    #[test]
+    fn prompt_mark_info_full_payload_round_trips() {
+        use crate::message::PromptMarkInfo;
+        let full = PromptMarkInfo {
+            prompt_line: 100,
+            output_line: Some(101),
+            done_line: Some(105),
+            exit_code: Some(0),
+            duration_ms: Some(42),
+        };
+        let bytes = rmp_serde::to_vec(&full).unwrap();
+        let decoded: PromptMarkInfo = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(decoded, full);
+    }
+
+    #[test]
+    fn prompt_mark_info_partial_array_defaults_trailing_fields() {
+        use crate::message::PromptMarkInfo;
+        // An older sender that didn't have `duration_ms` yet emits a 4-array.
+        // The trailing field must default to None.
+        //   0x94                  fixarray-4
+        //   0x64                  positive fixint 100  (prompt_line)
+        //   0xC0                  nil                 (output_line=None)
+        //   0xC0                  nil                 (done_line=None)
+        //   0xD1 0x00 0x2A        int16 42 (exit_code=Some(42))
+        let bytes = [0x94u8, 0x64, 0xC0, 0xC0, 0xD1, 0x00, 0x2A];
+        let decoded: PromptMarkInfo = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(decoded.prompt_line, 100);
+        assert_eq!(decoded.output_line, None);
+        assert_eq!(decoded.done_line, None);
+        assert_eq!(decoded.exit_code, Some(42));
+        assert_eq!(decoded.duration_ms, None);
+    }
 }

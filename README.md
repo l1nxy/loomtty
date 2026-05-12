@@ -122,6 +122,13 @@ ciritty msg capture-pane SESSION PANE_ID            # active grid to stdout
 #   no effect (the primary buffer's history is unreachable).
 # • Output is capped at ~900 KiB to fit a single control frame; very
 #   wide panes with deep scrollback get fewer rows than requested.
+ciritty msg list-prompts SESSION PANE_ID [--json]   # OSC 133 shell-integration history
+# • One entry per command boundary: prompt_line, output_line, done_line
+#   (absolute-line numbers; monotonic), exit_code, duration_ms.
+# • Empty when the pane hasn't observed OSC 133 — i.e. shell integration
+#   isn't active in the foreground program.
+# • Default text format prints a fixed-width table; --json emits a JSON
+#   array suitable for jq / scripting.
 
 # Templates
 ciritty tpl ls                     # List templates

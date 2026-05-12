@@ -375,6 +375,91 @@ fn capture_pane_rejects_unknown_pane_id_in_known_session() {
 }
 
 #[test]
+fn list_prompts_returns_empty_marks_for_fresh_pane() {
+    // A brand-new pane has not yet observed any OSC 133. The reply should
+    // be an empty marks vector — that's how callers detect "shell
+    // integration not active" without needing a separate query.
+    let mut server = Server::new("", 8.0, TerminalColors::default());
+    let session_name = "prompts-empty".to_string();
+    server.clients.insert(1, test_client(1, "__control__"));
+    let target_pane = {
+        let session = server.get_or_create_session(&session_name);
+        session.workspaces.active().active_pane_id().unwrap()
+    };
+
+    let responses = server.handle_message(
+        ClientMessage::ListPrompts {
+            session_name: session_name.clone(),
+            pane_id: target_pane,
+        },
+        1,
+    );
+
+    let [ServerResponse::SendToClient(
+        1,
+        ServerMessage::PromptListReply {
+            session_name: sn,
+            pane_id: pid,
+            marks,
+        },
+    )] = responses.as_slice()
+    else {
+        panic!(
+            "expected exactly one PromptListReply, got {} response(s)",
+            responses.len()
+        );
+    };
+    assert_eq!(sn, &session_name);
+    assert_eq!(*pid, target_pane);
+    assert!(
+        marks.is_empty(),
+        "fresh pane should have no prompt marks; got {marks:?}"
+    );
+}
+
+#[test]
+fn list_prompts_rejects_unknown_session() {
+    let mut server = Server::new("", 8.0, TerminalColors::default());
+    server.clients.insert(1, test_client(1, "__control__"));
+
+    let responses = server.handle_message(
+        ClientMessage::ListPrompts {
+            session_name: "ghost".to_string(),
+            pane_id: 1,
+        },
+        1,
+    );
+
+    assert!(matches!(
+        responses.as_slice(),
+        [ServerResponse::SendToClient(1, ServerMessage::Error { message })]
+            if message.contains("ghost")
+    ));
+}
+
+#[test]
+fn list_prompts_rejects_unknown_pane_id_in_known_session() {
+    let mut server = Server::new("", 8.0, TerminalColors::default());
+    let session_name = "prompts-bad-pane".to_string();
+    server.clients.insert(1, test_client(1, "__control__"));
+    server.get_or_create_session(&session_name);
+
+    let responses = server.handle_message(
+        ClientMessage::ListPrompts {
+            session_name: session_name.clone(),
+            pane_id: 88_888,
+        },
+        1,
+    );
+
+    assert!(matches!(
+        responses.as_slice(),
+        [ServerResponse::SendToClient(1, ServerMessage::Error { message })]
+            if message.contains("88888") && message.contains("prompts-bad-pane")
+    ));
+}
+
+#[test]
 fn focus_pane_by_id_returns_layout_update_and_command_result() {
     let mut server = Server::new("", 8.0, TerminalColors::default());
     let session_name = "alpha".to_string();

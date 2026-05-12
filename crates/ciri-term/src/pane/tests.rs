@@ -766,3 +766,180 @@ fn capture_text_join_wrapped_merges_softwraps_but_keeps_hard_newlines() {
         "default capture must not collapse hard \\n; got:\n{split}"
     );
 }
+
+#[test]
+fn osc133_full_cycle_records_a_completed_prompt_mark() {
+    // Drive a complete OSC 133 A→C→D cycle through `printf` (the shell
+    // echoes the literal command line first, then the printf writes the
+    // real escape bytes to the PTY output stream where our parser sees
+    // them).
+    let mut pane =
+        Pane::new_with_opts(81, 80, 8, shell_path(), None, None).expect("create pane");
+    // Let the shell settle so any initial PROMPT_COMMAND noise lands
+    // before we run the test command.
+    std::thread::sleep(Duration::from_millis(150));
+    pane.process_pty_output();
+    let marks_before = pane.prompt_marks.len();
+
+    pane.write_to_pty(
+        b"printf '\\033]133;A\\007\\033]133;C\\007CIRI133_OUT\\n\\033]133;D;0\\007'\n",
+    );
+
+    let saw_done = wait_until(&mut pane, Duration::from_secs(3), |p| {
+        p.prompt_marks
+            .iter()
+            .any(|m| m.done_line.is_some() && m.exit_code == Some(0))
+    });
+    assert!(
+        saw_done,
+        "expected a completed PromptMark with exit_code=0; ring={:?}",
+        pane.prompt_marks.iter().copied().collect::<Vec<_>>()
+    );
+
+    let new_marks: Vec<PromptMark> = pane
+        .prompt_marks
+        .iter()
+        .skip(marks_before)
+        .copied()
+        .collect();
+    let completed = new_marks
+        .iter()
+        .find(|m| m.done_line.is_some() && m.exit_code == Some(0))
+        .expect("completed mark exists");
+    assert!(
+        completed.output_line.is_some(),
+        "OSC 133;C should have set output_line; got {completed:?}"
+    );
+    assert!(
+        completed.duration().is_some(),
+        "duration between C and D should be recorded; got {completed:?}"
+    );
+}
+
+#[test]
+fn osc133_exit_code_nonzero_propagates_to_prompt_mark() {
+    let mut pane =
+        Pane::new_with_opts(82, 80, 8, shell_path(), None, None).expect("create pane");
+    std::thread::sleep(Duration::from_millis(150));
+    pane.process_pty_output();
+
+    pane.write_to_pty(
+        b"printf '\\033]133;A\\007\\033]133;C\\007\\033]133;D;42\\007'\n",
+    );
+
+    let saw = wait_until(&mut pane, Duration::from_secs(3), |p| {
+        p.prompt_marks
+            .iter()
+            .any(|m| m.exit_code == Some(42))
+    });
+    assert!(saw, "expected exit_code=42 in some prompt mark");
+}
+
+#[test]
+fn osc133_two_cycles_record_two_marks_with_monotonic_lines() {
+    let mut pane =
+        Pane::new_with_opts(83, 80, 10, shell_path(), None, None).expect("create pane");
+    std::thread::sleep(Duration::from_millis(150));
+    pane.process_pty_output();
+    let marks_before = pane.prompt_marks.len();
+
+    // Two separate commands, each emitting a full cycle. The second
+    // command's prompt_line must be strictly greater than the first's
+    // — abs_line is `scrollback_total + cursor.line`, which only goes
+    // up as new output is appended.
+    pane.write_to_pty(
+        b"printf '\\033]133;A\\007\\033]133;C\\007ONE\\n\\033]133;D;0\\007'\n",
+    );
+    let saw_first = wait_until(&mut pane, Duration::from_secs(3), |p| {
+        p.prompt_marks.len() >= marks_before + 1
+            && p.prompt_marks
+                .iter()
+                .skip(marks_before)
+                .any(|m| m.done_line.is_some())
+    });
+    assert!(saw_first, "first cycle should record a completed mark");
+
+    pane.write_to_pty(
+        b"printf '\\033]133;A\\007\\033]133;C\\007TWO\\n\\033]133;D;0\\007'\n",
+    );
+    let saw_second = wait_until(&mut pane, Duration::from_secs(3), |p| {
+        p.prompt_marks
+            .iter()
+            .skip(marks_before)
+            .filter(|m| m.done_line.is_some())
+            .count()
+            >= 2
+    });
+    assert!(saw_second, "second cycle should also record a completed mark");
+
+    let new_done: Vec<PromptMark> = pane
+        .prompt_marks
+        .iter()
+        .skip(marks_before)
+        .filter(|m| m.done_line.is_some())
+        .copied()
+        .collect();
+    assert!(new_done.len() >= 2);
+    let first = &new_done[0];
+    let second = &new_done[1];
+    assert!(
+        second.prompt_line > first.prompt_line,
+        "second prompt_line ({}) should exceed first ({})",
+        second.prompt_line,
+        first.prompt_line,
+    );
+}
+
+/// Regression: when `drain_output()` returns several PTY chunks in one
+/// pass, each chunk's OSC 133 mark must be stamped at the cursor row as
+/// of *that* chunk — not the row before any of the chunks ran. Earlier
+/// code computed all per-chunk rows in one loop, then advanced the
+/// processor in a second loop, so every chunk in the batch saw the
+/// pre-batch cursor and `list-prompts` reported identical rows for
+/// `output_line` / `done_line` despite intervening output.
+#[test]
+fn multi_chunk_drain_stamps_marks_after_intervening_output() {
+    let mut pane =
+        Pane::new_with_opts(84, 80, 8, shell_path(), None, None).expect("create pane");
+    // Let the shell settle so any initial PROMPT_COMMAND noise lands first.
+    std::thread::sleep(Duration::from_millis(150));
+    pane.process_pty_output();
+
+    let row_before = pane.current_abs_line();
+
+    // Three chunks in one batch:
+    //   1. OSC 133;A  → prompt_line at row_before
+    //   2. five `\n`  → cursor moves down five rows
+    //   3. OSC 133;C then OSC 133;D;0 → output_line / done_line must
+    //      reflect the post-chunk-2 cursor row.
+    let chunks: Vec<Vec<u8>> = vec![
+        b"\x1b]133;A\x07".to_vec(),
+        b"\n\n\n\n\n".to_vec(),
+        b"\x1b]133;C\x07\x1b]133;D;0\x07".to_vec(),
+    ];
+    pane.process_chunks(&chunks);
+
+    let mark = pane
+        .prompt_marks
+        .iter()
+        .filter(|m| m.done_line.is_some())
+        .last()
+        .copied()
+        .expect("completed mark recorded");
+    assert_eq!(
+        mark.prompt_line, row_before,
+        "prompt_line should match the cursor row before any chunk ran"
+    );
+    let output_line = mark.output_line.expect("OSC 133;C set output_line");
+    let done_line = mark.done_line.expect("OSC 133;D set done_line");
+    assert!(
+        output_line >= row_before + 5,
+        "output_line ({}) should reflect the five \\n in chunk 2 (row_before={})",
+        output_line,
+        row_before,
+    );
+    assert_eq!(
+        done_line, output_line,
+        "C and D in the same chunk share that chunk's pre-advance row"
+    );
+}

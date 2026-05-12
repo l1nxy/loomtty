@@ -272,6 +272,31 @@ impl Server {
                     );
                 }
             }
+            ClientMessage::ListPrompts {
+                session_name: target,
+                pane_id,
+            } => {
+                let Some(session) = self.resolve_session(&target, client_id, responses) else {
+                    return;
+                };
+                if let Some(pane) = session.panes.get(&pane_id) {
+                    let marks = pane.prompt_marks_for_ipc();
+                    responses.push(ServerResponse::SendToClient(
+                        client_id,
+                        ServerMessage::PromptListReply {
+                            session_name: target,
+                            pane_id,
+                            marks,
+                        },
+                    ));
+                } else {
+                    Self::push_error(
+                        client_id,
+                        format!("pane {} not found in session '{}'", pane_id, target),
+                        responses,
+                    );
+                }
+            }
             _ => {}
         }
     }

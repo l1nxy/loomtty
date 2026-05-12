@@ -7,7 +7,7 @@ pub mod types;
 
 pub use cell::{pack_cell, pack_color};
 pub use colors::TerminalColors;
-pub use types::{ImagePlacement, PaneId, SemanticZone, ShellState};
+pub use types::{ImagePlacement, PaneId, PromptMark, PromptMarkRing, SemanticZone, ShellState};
 
 use alacritty_terminal::event::{Event, WindowSize};
 use alacritty_terminal::grid::Dimensions;
@@ -25,6 +25,7 @@ use crate::image_store::ImageStore;
 use crate::parser_suite::ParserSuite;
 use crate::pending_events::PendingEvents;
 use crate::pty::Pty;
+use crate::shell_integration::Osc133Event;
 use cell::round_cell_size;
 use colors::default_color;
 
@@ -102,6 +103,10 @@ pub struct Pane {
     pub id: PaneId,
     pub title: String,
     pub shell_state: ShellState,
+    /// History of OSC 133 prompt boundaries — see [`PromptMark`]. Bounded
+    /// ring; oldest entries fall off when full or when their prompt row is
+    /// evicted from the grid's scrollback.
+    pub prompt_marks: PromptMarkRing,
 
     term: Term<PtyEventListener>,
     processor: Processor,
@@ -188,6 +193,7 @@ impl Pane {
                 output_line: None,
                 command_start: None,
             },
+            prompt_marks: PromptMarkRing::new(),
             term,
             processor: Processor::new(),
             event_rx,
@@ -246,29 +252,37 @@ impl Pane {
         if chunks.is_empty() {
             return false;
         }
+        self.process_chunks(&chunks);
+        true
+    }
 
-        for chunk in &chunks {
-            self.parsers.scan_control(
-                chunk,
-                &mut self.shell_state,
-                &mut self.events.command_completion,
-            );
+    /// Apply a drained batch of PTY chunks to the terminal, in order. Each
+    /// chunk's OSC 133 events must be stamped against the cursor row as of
+    /// the moment *that* chunk starts — which means we have to interleave
+    /// `scan_control` / `processor.advance` per chunk rather than running
+    /// them as two separate passes. With separate passes, every chunk in
+    /// the batch sees the pre-batch cursor and `list-prompts` reports
+    /// identical rows for events that actually straddled new output.
+    pub(super) fn process_chunks(&mut self, chunks: &[Vec<u8>]) {
+        for chunk in chunks {
+            let abs_line_at_chunk_start = self.current_abs_line();
+            let osc133_events = self.parsers.scan_control(chunk);
+            for event in osc133_events {
+                self.apply_osc133_event(event, abs_line_at_chunk_start);
+            }
             self.scan_osc_notifications(chunk);
-        }
 
-        let cursors: Vec<(u16, u16)> = chunks
-            .iter()
-            .map(|chunk| {
-                self.processor.advance(&mut self.term, chunk);
-                let cursor = self.term.grid().cursor.point;
-                (cursor.column.0 as u16, cursor.line.0.max(0) as u16)
-            })
-            .collect();
+            self.processor.advance(&mut self.term, chunk);
+            let cursor = self.term.grid().cursor.point;
+            let cursor_col = cursor.column.0 as u16;
+            let cursor_row = cursor.line.0.max(0) as u16;
 
-        for (chunk, &(cursor_col, cursor_row)) in chunks.iter().zip(cursors.iter()) {
-            let (kitty_result, sixel_placements) =
-                self.parsers
-                    .scan_images(chunk, cursor_col, cursor_row, self.images.active_mut());
+            let (kitty_result, sixel_placements) = self.parsers.scan_images(
+                chunk,
+                cursor_col,
+                cursor_row,
+                self.images.active_mut(),
+            );
             if kitty_result.deleted {
                 self.images.clear_on_delete();
             }
@@ -277,7 +291,65 @@ impl Pane {
         }
 
         self.images.cap_active();
-        true
+    }
+
+    /// Absolute grid line of the current cursor position. "Absolute" here
+    /// means `scrollback_total + cursor.line` — a monotonically non-decreasing
+    /// row counter on the primary screen that stays stable as rows scroll
+    /// into history. See [`PromptMark`] for why this matters.
+    fn current_abs_line(&self) -> u64 {
+        let cursor_line = self.term.grid().cursor.point.line.0 as i64;
+        let base = self.scrollback_total() as i64;
+        (base + cursor_line).max(0) as u64
+    }
+
+    fn apply_osc133_event(&mut self, event: Osc133Event, abs_line: u64) {
+        match event {
+            Osc133Event::PromptStart => {
+                self.shell_state.zone = SemanticZone::Prompt;
+                // `prompt_line.is_some()` is the long-standing "shell
+                // integration is active" sentinel checked by
+                // `mode_flags_from_term`. The actual per-command line
+                // numbers live in `prompt_marks`.
+                self.shell_state.prompt_line = Some(0);
+                self.shell_state.command_start = None;
+                self.prompt_marks.begin_prompt(abs_line);
+            }
+            Osc133Event::CommandInput => {
+                self.shell_state.zone = SemanticZone::Input;
+            }
+            Osc133Event::CommandOutput => {
+                self.shell_state.zone = SemanticZone::Output;
+                self.shell_state.output_line = Some(0);
+                self.shell_state.command_start = Some(std::time::Instant::now());
+                self.prompt_marks.mark_output(abs_line);
+            }
+            Osc133Event::Done { exit_code } => {
+                self.shell_state.zone = SemanticZone::Prompt;
+                self.shell_state.last_exit_code = exit_code;
+                let duration = self
+                    .shell_state
+                    .command_start
+                    .take()
+                    .map(|s| s.elapsed());
+                if let Some(d) = duration {
+                    self.events.command_completion = Some(d);
+                }
+                self.prompt_marks.mark_done(abs_line, exit_code, duration);
+                // Prune only on `Done` (not on every event): the ring's
+                // fixed capacity bounds memory regardless, and `Done` is
+                // the natural cadence — one prune per completed command,
+                // matching when fresh entries actually become candidates
+                // for eviction. A pane that runs a never-completing
+                // process won't prune until the user kills it and the
+                // shell sends `Done`, which is fine (the ring caps at
+                // 1024 entries by default).
+                let history_cap = self.term.grid().history_size() as u64;
+                let scrollback_total = self.scrollback_total() as u64;
+                let min_reachable = scrollback_total.saturating_sub(history_cap);
+                self.prompt_marks.prune_below(min_reachable);
+            }
+        }
     }
 
     fn process_terminal_events(&mut self) {
@@ -495,6 +567,22 @@ impl Pane {
 
     pub fn history_size(&self) -> usize {
         self.term.grid().history_size()
+    }
+
+    /// Snapshot the recorded OSC 133 marks in wire-protocol shape (oldest
+    /// first). The output is independent of the internal storage layout
+    /// of [`PromptMark`] — see [`PromptMarkInfo`] for the wire contract.
+    pub fn prompt_marks_for_ipc(&self) -> Vec<PromptMarkInfo> {
+        self.prompt_marks
+            .iter()
+            .map(|m| PromptMarkInfo {
+                prompt_line: m.prompt_line,
+                output_line: m.output_line,
+                done_line: m.done_line,
+                exit_code: m.exit_code,
+                duration_ms: m.duration().map(|d| d.as_millis() as u64),
+            })
+            .collect()
     }
 
     /// Count of rows currently represented by the primary screen's scrollback

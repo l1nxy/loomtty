@@ -152,6 +152,16 @@ pub enum MsgCommand {
         #[arg(long)]
         preserve_trailing_spaces: bool,
     },
+    /// List recorded OSC 133 prompt boundaries (shell-integration history).
+    ///
+    /// Each entry reports the absolute line of OSC 133;A (prompt start),
+    /// OSC 133;C (output start), and OSC 133;D (done), plus exit code and
+    /// duration. Empty when the pane has never observed OSC 133 — that's
+    /// the signal that shell integration isn't active in this pane.
+    ListPrompts {
+        session_name: String,
+        pane_id: u64,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -249,6 +259,13 @@ pub fn resolve(cli: Cli) -> CliCommand {
                     scrollback_rows,
                     join_wrapped,
                     preserve_trailing_spaces,
+                },
+                MsgCommand::ListPrompts {
+                    session_name,
+                    pane_id,
+                } => MsgSubcommand::ListPrompts {
+                    session_name,
+                    pane_id,
                 },
             };
             CliCommand::Msg {
@@ -355,6 +372,10 @@ pub enum MsgSubcommand {
         scrollback_rows: u32,
         join_wrapped: bool,
         preserve_trailing_spaces: bool,
+    },
+    ListPrompts {
+        session_name: String,
+        pane_id: u64,
     },
 }
 

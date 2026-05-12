@@ -494,6 +494,16 @@ pub enum ClientMessage {
         #[serde(default)]
         opts: CapturePaneOpts,
     },
+    /// IPC: list OSC 133 prompt boundaries for a pane.
+    ///
+    /// Returns one [`PromptMarkInfo`] per recorded command (oldest first).
+    /// Empty when the pane never observed OSC 133 — that's the signal to the
+    /// caller that shell integration is not active. See [`PromptMarkInfo`]
+    /// for the line-numbering convention.
+    ListPrompts {
+        session_name: String,
+        pane_id: u64,
+    },
 }
 
 /// Control messages from server to client (msgpack encoded, tags 0x10-0x1F).
@@ -604,6 +614,13 @@ pub enum ServerMessage {
         #[serde(default)]
         truncated: bool,
     },
+    /// IPC response: list of OSC 133 prompt boundaries (response to
+    /// `ListPrompts`). Oldest first. See [`PromptMarkInfo`].
+    PromptListReply {
+        session_name: String,
+        pane_id: u64,
+        marks: Vec<PromptMarkInfo>,
+    },
 }
 
 /// Direction of the edge bounce.
@@ -683,6 +700,42 @@ pub struct CapturePaneOpts {
     /// (matches tmux's no-flag behavior on the visible buffer).
     #[serde(default)]
     pub preserve_trailing_spaces: bool,
+}
+
+/// One entry in `ServerMessage::PromptListReply`. Captured from OSC 133
+/// shell integration.
+///
+/// Line numbers are in **absolute-line** space: `scrollback_total +
+/// cursor.line` at the moment the OSC 133 sequence was observed. The
+/// value is monotonic on the primary screen, so an old mark still
+/// identifies the same content after the pane has accumulated more
+/// output. A mark whose `prompt_line` is below
+/// `scrollback_total - history_size` has aged out of the scrollback
+/// ring and its content is no longer reachable via `CapturePane`.
+///
+/// **Wire-format invariant.** rmp-serde serialises this struct as a
+/// positional msgpack array. Appending fields is safe (older senders
+/// emit a shorter array that fills with defaults); reordering or
+/// removing fields breaks every peer built against an older revision.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PromptMarkInfo {
+    /// Absolute line where OSC 133;A was observed (prompt start).
+    pub prompt_line: u64,
+    /// Absolute line where OSC 133;C was observed (command output start).
+    /// `None` when the user submitted an empty command or D arrived first.
+    #[serde(default)]
+    pub output_line: Option<u64>,
+    /// Absolute line where OSC 133;D was observed (command done).
+    /// `None` while the command is still running.
+    #[serde(default)]
+    pub done_line: Option<u64>,
+    /// Exit code from OSC 133;D parameters, when present.
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+    /// Milliseconds between OSC 133;C and OSC 133;D.
+    /// `None` when either bookend wasn't observed.
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
 }
 
 /// Template info returned in TemplateList.

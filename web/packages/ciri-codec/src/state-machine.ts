@@ -300,5 +300,15 @@ export function decodeSmCellsInto(
       `SM stream ended without OP_END (decoded ${ci} cells, ${data.length - pos} trailing bytes)`,
     );
   }
+  if (pos !== data.length) {
+    // The Rust encoder always emits exactly one OP_END at the end of
+    // the stream; any extra bytes mean the peer's framing is wrong
+    // (or the buffer was over-extended on accident). The comment on
+    // the OP_END arm promises this check exists — without it a
+    // corrupted stream with a valid prefix would decode silently.
+    throw new Error(
+      `SM stream has ${data.length - pos} trailing byte(s) after OP_END`,
+    );
+  }
   return ci;
 }

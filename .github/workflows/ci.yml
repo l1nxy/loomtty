@@ -127,7 +127,13 @@ jobs:
 
       - name: Install + test
         working-directory: web
+        # `@ciri/client` imports `@ciri/codec`, whose `package.json`
+        # points `types`/`exports` at `./dist/index.*`. On a fresh
+        # CI checkout `dist/` is gitignored, so the client's
+        # typecheck (and tests via Node module resolution) would
+        # fail with TS2307 unless we build the codec first.
         run: |
           npm ci
+          npm -w @ciri/codec run build
           npm --workspaces --if-present run typecheck
           npm --workspaces --if-present run test

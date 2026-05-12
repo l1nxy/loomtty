@@ -244,6 +244,14 @@ describe("decodeSmCells", () => {
     expect(() => decodeSmCells(data, 1)).toThrow(/without OP_END/);
   });
 
+  test("trailing bytes after OP_END are rejected", () => {
+    // Garbage bytes following the terminator must not be silently
+    // dropped — they mean the framing is wrong or the buffer was
+    // over-extended.
+    const data = bytes(OP_CHAR1, 0x61, 0, 0, 0, OP_END, 0xff, 0xff);
+    expect(() => decodeSmCells(data, 1)).toThrow(/trailing byte/);
+  });
+
   test("count=0 opcodes consume their header bytes but emit nothing", () => {
     // Pathological-but-not-malformed stream: zero-count OP_CHARS,
     // OP_CHARS_LONG, OP_ASCII, OP_REPEAT, OP_ASCII_REPEAT all advance

@@ -10,7 +10,7 @@ mod remote_validate;
 use anyhow::Result;
 use app::App;
 use ciri_config::config::CiriConfig;
-use ciri_protocol::message::ClientMessage;
+use ciri_protocol::message::{CapturePaneOpts, ClientMessage};
 use clap::Parser;
 use cli::CliCommand;
 use std::path::PathBuf;
@@ -92,6 +92,21 @@ fn main() -> Result<()> {
                     session_name,
                     command,
                     cwd: None,
+                },
+                MsgSubcommand::CapturePane {
+                    session_name,
+                    pane_id,
+                    scrollback_rows,
+                    join_wrapped,
+                    preserve_trailing_spaces,
+                } => ClientMessage::CapturePane {
+                    session_name,
+                    pane_id,
+                    opts: CapturePaneOpts {
+                        scrollback_rows,
+                        join_wrapped,
+                        preserve_trailing_spaces,
+                    },
                 },
             };
             return control::run_control_command(msg, json);

@@ -123,6 +123,35 @@ pub enum MsgCommand {
         session_name: String,
         command: String,
     },
+    /// Capture a pane's active grid (and optional scrollback) as text to stdout.
+    ///
+    /// Note: when an alt-screen TUI is foregrounded (vim/less/htop), the alt
+    /// buffer is captured and `--scrollback-rows` has no effect (the primary
+    /// buffer's history is not reachable). Only ASCII spaces are trimmed
+    /// from row tails by default; pass `--preserve-trailing-spaces` to keep them.
+    CapturePane {
+        session_name: String,
+        pane_id: u64,
+        /// Include this many rows of scrollback above the viewport (0 = viewport only).
+        /// Clamped to: the pane's actual history, an absolute row cap (100k),
+        /// and a byte budget (~900 KiB) to fit a single control frame. Wide panes
+        /// with deep scrollback get fewer rows than requested.
+        /// Intentionally an unsigned count, NOT the signed `start-line` semantics
+        /// of `tmux capture-pane -S`.
+        #[arg(long, default_value_t = 0)]
+        scrollback_rows: u32,
+        /// Join soft-wrapped lines (omit the newline between rows that the
+        /// terminal soft-wrapped). Equivalent to tmux's `capture-pane -J`:
+        /// trailing spaces on wrapping rows are kept (so content connects
+        /// correctly across the join), while non-wrap rows still get trimmed.
+        #[arg(long)]
+        join_wrapped: bool,
+        /// Keep trailing ASCII-space cells on each row (default trims them).
+        /// Only ASCII U+0020 is trimmed; tabs, NBSP, U+3000 and other
+        /// non-ASCII whitespace are preserved either way.
+        #[arg(long)]
+        preserve_trailing_spaces: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -207,6 +236,19 @@ pub fn resolve(cli: Cli) -> CliCommand {
                 } => MsgSubcommand::RunCommand {
                     session_name,
                     command,
+                },
+                MsgCommand::CapturePane {
+                    session_name,
+                    pane_id,
+                    scrollback_rows,
+                    join_wrapped,
+                    preserve_trailing_spaces,
+                } => MsgSubcommand::CapturePane {
+                    session_name,
+                    pane_id,
+                    scrollback_rows,
+                    join_wrapped,
+                    preserve_trailing_spaces,
                 },
             };
             CliCommand::Msg {
@@ -306,6 +348,13 @@ pub enum MsgSubcommand {
     RunCommand {
         session_name: String,
         command: String,
+    },
+    CapturePane {
+        session_name: String,
+        pane_id: u64,
+        scrollback_rows: u32,
+        join_wrapped: bool,
+        preserve_trailing_spaces: bool,
     },
 }
 

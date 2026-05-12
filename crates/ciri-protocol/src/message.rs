@@ -480,6 +480,18 @@ pub enum ClientMessage {
         seq: u64,
         client_time_us: u64,
     },
+    /// IPC: Capture a pane's grid (and optionally scrollback) as plain text.
+    ///
+    /// Wire-format note: rmp-serde encodes enum variants by NAME (not by
+    /// position), so variant order here is for human readability only.
+    /// Renaming the variant breaks every old peer, however. Inner-struct
+    /// fields are positional (msgpack array); never reorder, only append.
+    CapturePane {
+        session_name: String,
+        pane_id: u64,
+        #[serde(default)]
+        opts: CapturePaneOpts,
+    },
 }
 
 /// Control messages from server to client (msgpack encoded, tags 0x10-0x1F).
@@ -570,6 +582,26 @@ pub enum ServerMessage {
     BounceEdge { direction: BounceDirection },
     /// RTT measurement pong (echo of client Ping).
     Pong { seq: u64, client_time_us: u64 },
+    /// IPC response: captured pane text (response to `CapturePane`).
+    ///
+    /// See `ClientMessage::CapturePane` for the wire-format note about
+    /// variant naming vs positional fields.
+    PaneCapture {
+        session_name: String,
+        pane_id: u64,
+        text: String,
+        /// `true` when the server returned fewer rows than the caller
+        /// could have used. Fires in two cases:
+        /// 1. **Pre-loop clamp**: requested scrollback was clipped by
+        ///    the byte budget or hard-cap before iteration; `text`
+        ///    contains no marker because the cutoff happened before any
+        ///    content was produced.
+        /// 2. **Mid-loop truncation**: iteration hit the byte budget
+        ///    mid-capture; trailing rows are dropped and `text` ends
+        ///    with a printable marker line.
+        #[serde(default)]
+        truncated: bool,
+    },
 }
 
 /// Direction of the edge bounce.
@@ -616,6 +648,39 @@ pub struct PaneDetailInfo {
     pub workspace_idx: usize,
     pub column_idx: usize,
     pub tile_idx: usize,
+}
+
+/// Options for `ClientMessage::CapturePane`.
+///
+/// Default: capture the visible viewport of the *active* grid (alt-screen
+/// when an alt-screen TUI is foregrounded, primary otherwise), trim trailing
+/// ASCII spaces per row, preserve a `\n` after every row (including
+/// soft-wrapped ones).
+///
+/// **Wire-format invariant.** rmp-serde serialises structs as positional
+/// msgpack arrays. New fields MUST be appended at the end of this struct,
+/// and each MUST carry `#[serde(default)]` so older senders that emit a
+/// shorter array still deserialise into the new layout. Re-ordering or
+/// removing existing fields breaks the wire format for any peer built
+/// against an older revision.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CapturePaneOpts {
+    /// Include this many rows of scrollback above the viewport (`0` =
+    /// viewport only). Clamped to the pane's actual history size, and
+    /// further capped by the server (see
+    /// `ciri_term::pane::capture::MAX_CAPTURE_SCROLLBACK_ROWS`). On
+    /// alt-screen panes, history is effectively 0 — the primary buffer's
+    /// scrollback is not accessible via this call.
+    #[serde(default)]
+    pub scrollback_rows: u32,
+    /// When a row's WRAPLINE flag indicates it soft-wrapped into the next
+    /// row, omit the newline so the two rows render as one logical line.
+    #[serde(default)]
+    pub join_wrapped: bool,
+    /// Keep trailing ASCII-space cells on each row. Default trims them
+    /// (matches tmux's no-flag behavior on the visible buffer).
+    #[serde(default)]
+    pub preserve_trailing_spaces: bool,
 }
 
 /// Template info returned in TemplateList.

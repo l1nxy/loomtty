@@ -112,6 +112,16 @@ ciritty msg focus-pane SESSION PANE_ID
 ciritty msg close-pane SESSION PANE_ID
 ciritty msg create-pane SESSION
 ciritty msg get-layout SESSION
+ciritty msg capture-pane SESSION PANE_ID            # active grid to stdout
+  [--scrollback-rows N]                             #   include N rows of scrollback (clamped server-side)
+  [--join-wrapped]                                  #   merge soft-wrapped rows (drops the \n between them)
+  [--preserve-trailing-spaces]                      #   keep trailing ASCII spaces on each row
+  [--json]                                          #   wrap in JSON {session_name, pane_id, text, truncated}
+# • Captures the *active* buffer: when an alt-screen TUI (vim/less/htop)
+#   is foregrounded, you'll get its buffer and `--scrollback-rows` has
+#   no effect (the primary buffer's history is unreachable).
+# • Output is capped at ~900 KiB to fit a single control frame; very
+#   wide panes with deep scrollback get fewer rows than requested.
 
 # Templates
 ciritty tpl ls                     # List templates

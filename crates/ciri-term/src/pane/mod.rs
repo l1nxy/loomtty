@@ -1,3 +1,4 @@
+pub mod capture;
 pub mod cell;
 pub mod colors;
 mod notify;

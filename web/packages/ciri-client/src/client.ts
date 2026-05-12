@@ -23,6 +23,7 @@
 
 import {
   FrameReader,
+  MAX_CONTROL_FRAME_LEN,
   TAG_CLIENT_MSG,
   type RawFrame,
 } from "@ciri/codec";
@@ -157,9 +158,17 @@ export class CiriClient {
 
   /** Send a typed ClientMessage. If we're not yet open, the encoded
    *  frame bytes go through the transport's send queue and flush on
-   *  the next successful handshake. */
+   *  the next successful handshake. Throws if the encoded payload
+   *  exceeds the server's control-frame cap — better a local error
+   *  than letting the server drop the connection on the oversize
+   *  frame header. */
   send(msg: ClientMessage): void {
     const payload = encodeClientMessage(msg);
+    if (payload.length > MAX_CONTROL_FRAME_LEN) {
+      throw new Error(
+        `ClientMessage payload ${payload.length}B exceeds MAX_CONTROL_FRAME_LEN ${MAX_CONTROL_FRAME_LEN}; the server would reject this frame and disconnect`,
+      );
+    }
     this.transport.send(frameClientMsg(payload));
   }
 

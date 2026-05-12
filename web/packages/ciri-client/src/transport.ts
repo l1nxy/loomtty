@@ -108,6 +108,12 @@ export class WebSocketTransport {
     if (this._state !== "idle" && this._state !== "closed") {
       throw new Error(`WebSocketTransport.start: bad state ${this._state}`);
     }
+    // Cancel any reconnect timer left over from a previous transient
+    // drop. Without this, a `start()` called during the backoff
+    // window opens a fresh socket immediately AND the queued timer
+    // later opens a second one because its callback only checks
+    // `intentionallyClosed`.
+    this.clearReconnectTimer();
     this.intentionallyClosed = false;
     this.openSocket();
   }

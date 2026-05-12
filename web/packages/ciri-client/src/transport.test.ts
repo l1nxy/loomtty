@@ -322,6 +322,34 @@ describe("WebSocketTransport", () => {
     expect(sockets[1]!.sent).toHaveLength(0);
   });
 
+  test("start() during reconnect backoff cancels the pending timer", () => {
+    // If start() forgot to cancel the timer, the backoff callback
+    // would later fire openSocket() too, producing a second live
+    // WebSocket on top of the one start() just created.
+    vi.useFakeTimers();
+    try {
+      const { factory, sockets } = makeFakeFactory();
+      const t = new WebSocketTransport(
+        {
+          url: "ws://example.test",
+          reconnect: true,
+          initialReconnectDelayMs: 200,
+          webSocketFactory: factory,
+        },
+      );
+      t.start();
+      sockets[0]!.simulateOpen();
+      sockets[0]!.simulateClose(1006, "drop"); // schedules reconnect
+      vi.advanceTimersByTime(50); // mid-backoff
+      t.start(); // manual restart — must cancel the queued timer
+      expect(sockets).toHaveLength(2);
+      vi.advanceTimersByTime(10_000);
+      expect(sockets).toHaveLength(2); // no third socket from the stale timer
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("close() is idempotent — second call is a no-op", () => {
     const { factory, sockets } = makeFakeFactory();
     const closes: unknown[] = [];

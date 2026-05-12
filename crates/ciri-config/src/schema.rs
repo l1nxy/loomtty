@@ -969,6 +969,21 @@ impl garde::Validate for WebConfig {
                         trimmed.len(),
                     )),
                 );
+            } else if is_placeholder_token(trimmed) {
+                // The sample in `config/default.toml` is longer than
+                // MIN_WEB_TOKEN_BYTES, so it passes the length floor
+                // and would otherwise start the gateway with a token
+                // every clone of this repo knows. On the default
+                // loopback bind + empty origins policy, any local
+                // browser tab could then authenticate to the daemon.
+                report.append(
+                    parent().join("token"),
+                    garde::Error::new(
+                        "token looks like the documented placeholder; \
+                         replace it with a real secret (e.g. \
+                         `openssl rand -hex 16`)",
+                    ),
+                );
             }
 
             // Non-loopback bind with no Origin allowlist invites CSRF
@@ -1017,6 +1032,22 @@ impl garde::Validate for WebConfig {
 
 fn origin_contains_uppercase(value: &str) -> bool {
     value.chars().any(|c| c.is_ascii_uppercase())
+}
+
+/// Reject the documented sample token (and a handful of obvious
+/// near-variants) so a user who uncomments the example in
+/// `config/default.toml` without replacing the value can't start a
+/// gateway with a secret every clone of this repo knows.
+fn is_placeholder_token(trimmed: &str) -> bool {
+    const PLACEHOLDERS: &[&str] = &[
+        "REPLACE_WITH_OUTPUT_OF_openssl_rand_hex_16",
+        "replace_with_output_of_openssl_rand_hex_16",
+        "CHANGE_ME",
+        "changeme",
+        "TODO",
+        "placeholder",
+    ];
+    PLACEHOLDERS.iter().any(|p| trimmed.eq_ignore_ascii_case(p))
 }
 
 fn looks_like_origin(value: &str) -> bool {

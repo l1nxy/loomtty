@@ -51,6 +51,53 @@ describe("encodeClientMessage", () => {
       encodeClientMessage({ tag: "Input", paneId: 1n }),
     ).toThrow(/missing required field/);
   });
+
+  test("u8 field rejects out-of-range integer (local error, not server disconnect)", () => {
+    expect(() =>
+      encodeClientMessage({
+        tag: "MouseInput",
+        paneId: 1n,
+        button: 300, // u8 max is 255
+        col: 0,
+        row: 0,
+        pressed: true,
+        modifiers: 0,
+      }),
+    ).toThrow(/u8 out of range/);
+  });
+
+  test("u16 field rejects out-of-range integer", () => {
+    expect(() =>
+      encodeClientMessage({
+        tag: "Resize",
+        cols: 70_000, // u16 max is 65535
+        rows: 24,
+        width: 1280,
+        height: 720,
+        cellWidth: 9.5,
+        cellHeight: 18.0,
+      }),
+    ).toThrow(/u16 out of range/);
+  });
+
+  test("u64 field accepts the full unsigned range", () => {
+    // Top of u64; would overflow Number but bigint handles it.
+    const top = (1n << 64n) - 1n;
+    const bytes = encodeClientMessage({
+      tag: "Ack",
+      generation: top,
+    });
+    expect(bytes[0]).toBe(0x81);
+  });
+
+  test("u64 field rejects values past 2^64-1", () => {
+    expect(() =>
+      encodeClientMessage({
+        tag: "Ack",
+        generation: 1n << 64n, // one past the max
+      }),
+    ).toThrow(/u64 out of range/);
+  });
 });
 
 describe("decodeServerMessage", () => {

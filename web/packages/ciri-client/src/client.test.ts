@@ -210,6 +210,24 @@ describe("CiriClient outbound send", () => {
   });
 });
 
+describe("CiriClient frame-size cap", () => {
+  test("rejects ClientMessage payloads larger than MAX_CONTROL_FRAME_LEN", async () => {
+    const { c, sockets } = setup({ reconnect: false });
+    c.start();
+    sockets[0]!.simulateOpen();
+    sockets[0]!.simulateData(serverHelloBytes());
+    // Construct an Input payload whose msgpack encoding will overflow
+    // the 1 MiB control-frame cap. Each byte in `data` encodes as a
+    // single msgpack fixint, so just over 1 MiB of bytes is enough
+    // to trip the guard without resorting to giant headers.
+    const huge = new Uint8Array(2 * 1024 * 1024);
+    expect(() =>
+      c.send({ tag: "Input", paneId: 1n, data: huge, inputSeq: 1n }),
+    ).toThrow(/MAX_CONTROL_FRAME_LEN/);
+    void c;
+  });
+});
+
 describe("CiriClient reconnect", () => {
   test("replays ClientHello on each reconnect open", () => {
     vi.useFakeTimers();

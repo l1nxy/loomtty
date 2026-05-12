@@ -527,10 +527,13 @@ function requireArray(value: unknown, label: string): unknown[] {
 }
 
 /** Normalise either a JS `number` or `bigint` into something the
- *  `MsgpackWriter` accepts for both width-flexible writers. The
- *  caller's `signed` flag drives the sign check; the actual fit-in-N-
- *  bits decision happens inside the writer once the wire form is
- *  chosen, so we don't redo it here. */
+ *  `MsgpackWriter` accepts. The caller's `signed` flag drives the
+ *  sign check and `ty` drives the upper-bound check. Without the
+ *  range check, a value like `MouseInput.button = 300` would encode
+ *  as msgpack uint16 and round-trip through the wire only to be
+ *  rejected by the server's `rmp_serde::from_slice` while decoding
+ *  the `u8` field — collapsing the connection instead of throwing a
+ *  local `CodecError`. */
 function requireIntLike(
   value: unknown,
   ty: string,
@@ -547,6 +550,16 @@ function requireIntLike(
   } else {
     throw new CodecError(`${ty} expected number or bigint, got ${typeofTag(value)}`);
   }
+  const [min, max] = intRange(ty);
+  if (typeof coerced === "bigint") {
+    if (coerced < min || coerced > max) {
+      throw new CodecError(`${ty} out of range: ${coerced} (allowed ${min}..=${max})`);
+    }
+  } else {
+    if (BigInt(coerced) < min || BigInt(coerced) > max) {
+      throw new CodecError(`${ty} out of range: ${coerced} (allowed ${min}..=${max})`);
+    }
+  }
   if (!signed) {
     const negative = typeof coerced === "bigint" ? coerced < 0n : coerced < 0;
     if (negative) {
@@ -554,6 +567,35 @@ function requireIntLike(
     }
   }
   return coerced;
+}
+
+/** Inclusive `[min, max]` for each integer SchemaType kind. */
+function intRange(ty: string): [bigint, bigint] {
+  switch (ty) {
+    case "u8":
+      return [0n, 0xffn];
+    case "u16":
+      return [0n, 0xffffn];
+    case "u32":
+      return [0n, 0xffffffffn];
+    case "u64":
+      return [0n, 0xffffffffffffffffn];
+    case "u128":
+      return [0n, (1n << 128n) - 1n];
+    case "i8":
+      return [-0x80n, 0x7fn];
+    case "i16":
+      return [-0x8000n, 0x7fffn];
+    case "i32":
+      return [-0x80000000n, 0x7fffffffn];
+    case "i64":
+      return [-(1n << 63n), (1n << 63n) - 1n];
+    case "i128":
+      return [-(1n << 127n), (1n << 127n) - 1n];
+    default:
+      // Caller restricts to integer kinds, so anything else is a bug.
+      throw new CodecError(`intRange: not an integer type: ${ty}`);
+  }
 }
 
 function typeofTag(v: unknown): string {

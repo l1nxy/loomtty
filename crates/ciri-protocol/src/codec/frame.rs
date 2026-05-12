@@ -251,8 +251,12 @@ pub(crate) fn decompress_lz4_payload(payload: &[u8]) -> io::Result<Vec<u8>> {
     // Multiplication form: `uncompressed > MAX_LZ4_RATIO * compressed`
     // avoids the integer-truncation gap of the division form (e.g.,
     // 193 / 3 == 64 would pass the `> 64` check even though the real
-    // ratio is 64.33:1).
-    if compressed_len > 0 && uncompressed_len > MAX_LZ4_RATIO.saturating_mul(compressed_len) {
+    // ratio is 64.33:1). Cast to u64 so the multiplication can't
+    // saturate to usize::MAX on a 32-bit target and silently disable
+    // the guard (`MAX_LZ4_RATIO * 16 MiB` fits in u64 on every
+    // architecture we support).
+    let bomb_threshold = (MAX_LZ4_RATIO as u64).saturating_mul(compressed_len as u64);
+    if compressed_len > 0 && (uncompressed_len as u64) > bomb_threshold {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!(

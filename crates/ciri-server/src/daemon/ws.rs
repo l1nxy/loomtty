@@ -248,9 +248,17 @@ fn origin_allowed(req: &Request, allowed_origins: &[String]) -> bool {
 /// at the cost that a buggy proxy mangling the header to non-UTF-8 will
 /// route authentication through the query parameter.
 fn extract_bearer(req: &Request) -> Option<Cow<'_, str>> {
-    let header_token = req
-        .headers()
-        .get("authorization")
+    let header_raw = req.headers().get("authorization");
+    // A header present but non-UTF-8 silently routes auth through the
+    // query path; surface a debug log so operators chasing auth
+    // failures can see the fallback fired (the secret itself is not
+    // logged — only the fact that a header existed and was unusable).
+    if let Some(v) = header_raw
+        && v.to_str().is_err()
+    {
+        log::debug!("ws auth: Authorization header is not valid UTF-8 — falling back to query");
+    }
+    let header_token = header_raw
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.split_once(' '))
         .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("Bearer"))
@@ -858,6 +866,36 @@ mod tests {
         let result = tokio_tungstenite::client_async(req, tcp).await;
         assert!(result.is_err(), "off-allowlist origin must be rejected");
         assert!(server.await.unwrap().is_err());
+    }
+
+    #[test]
+    fn origin_allowed_empty_allowlist_is_permissive() {
+        // Empty allowlist = no Origin check. The daemon refuses to
+        // start this combo on a non-loopback bind; on loopback any
+        // Origin (or none) must pass.
+        let req = req_with(&[], None);
+        assert!(origin_allowed(&req, &[]));
+
+        let req = req_with(&[("origin", "http://anywhere.example")], None);
+        assert!(origin_allowed(&req, &[]));
+
+        let req = req_with(&[("origin", "null")], None);
+        assert!(origin_allowed(&req, &[]));
+    }
+
+    #[test]
+    fn origin_allowed_strict_allowlist_requires_match() {
+        let allowed = vec!["https://terminal.example.com".to_string()];
+
+        let req = req_with(&[("origin", "https://terminal.example.com")], None);
+        assert!(origin_allowed(&req, &allowed));
+
+        let req = req_with(&[("origin", "https://attacker.example.com")], None);
+        assert!(!origin_allowed(&req, &allowed));
+
+        // No Origin under strict policy must fail.
+        let req = req_with(&[], None);
+        assert!(!origin_allowed(&req, &allowed));
     }
 
     #[tokio::test]

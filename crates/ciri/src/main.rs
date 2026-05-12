@@ -108,6 +108,13 @@ fn main() -> Result<()> {
                         preserve_trailing_spaces,
                     },
                 },
+                MsgSubcommand::ListPrompts {
+                    session_name,
+                    pane_id,
+                } => ClientMessage::ListPrompts {
+                    session_name,
+                    pane_id,
+                },
             };
             return control::run_control_command(msg, json);
         }

@@ -312,6 +312,47 @@ pub fn run_control_command(msg: ClientMessage, json: bool) -> Result<()> {
                         }
                         return Ok(());
                     }
+                    ServerMessage::PromptListReply {
+                        session_name: _,
+                        pane_id: _,
+                        marks,
+                    } => {
+                        if json {
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&marks).unwrap_or_default()
+                            );
+                        } else if marks.is_empty() {
+                            println!("no prompt marks (shell integration not active?)");
+                        } else {
+                            println!(
+                                "{:<10} {:<10} {:<10} {:<6} {:<10}",
+                                "PROMPT", "OUTPUT", "END", "EXIT", "DURATION"
+                            );
+                            for m in &marks {
+                                let fmt_line = |o: Option<u64>| {
+                                    o.map(|v| v.to_string()).unwrap_or_else(|| "-".to_string())
+                                };
+                                let fmt_dur = match m.duration_ms {
+                                    Some(ms) => format!("{ms}ms"),
+                                    None => "-".to_string(),
+                                };
+                                let fmt_exit = m
+                                    .exit_code
+                                    .map(|c| c.to_string())
+                                    .unwrap_or_else(|| "-".to_string());
+                                println!(
+                                    "{:<10} {:<10} {:<10} {:<6} {:<10}",
+                                    m.prompt_line,
+                                    fmt_line(m.output_line),
+                                    fmt_line(m.done_line),
+                                    fmt_exit,
+                                    fmt_dur,
+                                );
+                            }
+                        }
+                        return Ok(());
+                    }
                     _ => {
                         // Skip other messages (StateSync etc from initial connect)
                         continue;

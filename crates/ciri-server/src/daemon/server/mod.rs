@@ -421,7 +421,8 @@ impl Server {
             | ClientMessage::CreatePaneIn { .. }
             | ClientMessage::RunCommand { .. }
             | ClientMessage::GetLayout { .. }
-            | ClientMessage::CapturePane { .. } => {
+            | ClientMessage::CapturePane { .. }
+            | ClientMessage::ListPrompts { .. } => {
                 self.handle_ipc(msg, client_id, &mut responses);
             }
 

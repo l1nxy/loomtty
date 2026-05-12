@@ -439,13 +439,13 @@ impl App {
                     | ServerEvent::Control(ServerMessage::PaneListReply { .. })
                     | ServerEvent::Control(ServerMessage::CommandResult { .. })
                     | ServerEvent::Control(ServerMessage::LayoutReply { .. })
-                    | ServerEvent::Control(ServerMessage::PaneCapture { .. }) => {
-                        // PaneCapture is a control-channel-only reply (sent
-                        // to `__control__` clients in response to `ciritty
-                        // msg capture-pane`). The GUI client should never
-                        // receive one; if it does (routing bug), drop it
-                        // silently — the alternative would be to surface a
-                        // toast, but the control channel is the
+                    | ServerEvent::Control(ServerMessage::PaneCapture { .. })
+                    | ServerEvent::Control(ServerMessage::PromptListReply { .. }) => {
+                        // Control-channel-only replies (sent to `__control__`
+                        // clients in response to `ciritty msg …`). The GUI
+                        // client should never receive these; if it does
+                        // (routing bug), drop silently — the alternative is
+                        // a toast, and the control channel is the
                         // authoritative path.
                     }
                     ServerEvent::Disconnected(reason) => {

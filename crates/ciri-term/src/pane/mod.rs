@@ -561,6 +561,22 @@ impl Pane {
         self.term.grid().history_size()
     }
 
+    /// Snapshot the recorded OSC 133 marks in wire-protocol shape (oldest
+    /// first). The output is independent of the internal storage layout
+    /// of [`PromptMark`] — see [`PromptMarkInfo`] for the wire contract.
+    pub fn prompt_marks_for_ipc(&self) -> Vec<PromptMarkInfo> {
+        self.prompt_marks
+            .iter()
+            .map(|m| PromptMarkInfo {
+                prompt_line: m.prompt_line,
+                output_line: m.output_line,
+                done_line: m.done_line,
+                exit_code: m.exit_code,
+                duration_ms: m.duration().map(|d| d.as_millis() as u64),
+            })
+            .collect()
+    }
+
     /// Count of rows currently represented by the primary screen's scrollback
     /// history: current `history_size` + rows evicted by ring-buffer
     /// saturation (`scrolled_past_limit`), read from the primary grid even

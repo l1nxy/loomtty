@@ -173,6 +173,24 @@ export class CiriClient {
         `ClientMessage payload ${payload.length}B exceeds MAX_CONTROL_FRAME_LEN ${MAX_CONTROL_FRAME_LEN}; the server would reject this frame and disconnect`,
       );
     }
+    // `Detach` is a one-way goodbye: the server reaps the client and
+    // closes the socket, but the underlying WS close still looks
+    // transient from the transport's POV — without this guard, the
+    // automatic reconnect would replay `ClientHello` against the
+    // server and silently re-attach. Mark the transport intentional
+    // BEFORE the bytes go out so the close path can't race ahead.
+    if (msg.tag === "Detach") {
+      // `close()` is idempotent (round 5) and synchronously sends
+      // its own close — but we WANT the server to read our Detach
+      // first. Drop the close *after* the send completes so the
+      // bytes land in the WS write buffer; the close immediately
+      // after still takes effect (real browsers flush pending
+      // sends before honoring the close).
+      this.transport.send(frameClientMsg(payload));
+      this.transport.close(1000, "client detached");
+      this._state = "closed";
+      return;
+    }
     // Track the latest accepted viewport so a later reconnect's
     // replayed ClientHello carries the current dimensions, not the
     // constructor-time snapshot. The server reads ClientHello before

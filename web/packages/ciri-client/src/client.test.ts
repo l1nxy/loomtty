@@ -195,18 +195,19 @@ describe("CiriClient outbound send", () => {
   test("send before open queues the payload via the transport's buffer", () => {
     const { c, sockets } = setup({ reconnect: false });
     c.start();
-    // No simulateOpen yet — send() goes through transport queue
-    // (since this fires before ClientHello, the *first* flushed
-    // payload after open is hello, *then* the queued Detach).
-    c.send({ tag: "Detach" });
+    // No simulateOpen yet — send() goes through transport queue.
+    // Pick a unit variant that DOESN'T trigger the Detach
+    // special-case (which intentionally closes the transport); a
+    // close before open would flush nothing.
+    c.send({ tag: "EqualizeColumnSplit" });
     sockets[0]!.simulateOpen();
     sockets[0]!.simulateData(serverHelloBytes());
-    // sent: [ClientHello, Detach frame].
+    // sent: [ClientHello, EqualizeColumnSplit frame].
     expect(sockets[0]!.sent.length).toBeGreaterThanOrEqual(2);
-    const detachFrame = sockets[0]!.sent[sockets[0]!.sent.length - 1]!.bytes;
-    expect(detachFrame[0]).toBe(0x01);
-    // Bare msgpack fixstr "Detach": 0xa6 + 6 ASCII bytes = 7 bytes.
-    expect(detachFrame.length).toBe(5 + 7);
+    const eqFrame = sockets[0]!.sent[sockets[0]!.sent.length - 1]!.bytes;
+    expect(eqFrame[0]).toBe(0x01);
+    // Bare msgpack fixstr "EqualizeColumnSplit": 0xb3 + 19 ASCII = 20.
+    expect(eqFrame.length).toBe(5 + 20);
   });
 });
 
@@ -329,6 +330,33 @@ describe("CiriClient session tracking", () => {
       const name = new TextDecoder().decode(hello.subarray(11, 11 + nameLen));
       expect(name).toBe("other-session");
       void c;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("CiriClient detach", () => {
+  test("Detach disables reconnect — server's socket close does NOT bounce us back", () => {
+    vi.useFakeTimers();
+    try {
+      const { c, sockets } = setup({ reconnect: true });
+      c.start();
+      sockets[0]!.simulateOpen();
+      sockets[0]!.simulateData(serverHelloBytes());
+
+      c.send({ tag: "Detach" });
+
+      // Server-side Detach handler reaps the client and closes the
+      // socket. Simulate that.
+      sockets[0]!.simulateClose(1000, "server reaped detached client");
+
+      // Without the round-14 fix the transport would treat this as
+      // transient and schedule a reconnect. With it, no further
+      // sockets are created.
+      vi.advanceTimersByTime(10_000);
+      expect(sockets).toHaveLength(1);
+      expect(c.state).toBe("closed");
     } finally {
       vi.useRealTimers();
     }

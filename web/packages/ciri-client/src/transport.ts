@@ -358,9 +358,16 @@ export class WebSocketTransport {
     const prefix = this.opts.url.slice(0, queryStart);
     const fragment = fragmentStart >= 0 ? this.opts.url.slice(fragmentStart) : "";
     // Drop any existing `token=...` segment; preserve the caller's
-    // own encoding for everything else.
+    // own encoding for everything else. The gateway's URL parser
+    // (`extract_token_query` in `crates/ciri-server/src/daemon/ws.rs`)
+    // accepts both `&` (RFC 3986) and `;` (HTML 4.01 §17.13.4 /
+    // legacy proxy rewrites) as query-pair separators, so we must
+    // filter on both — otherwise a URL like `?foo=1;token=stale`
+    // with `token: "fresh"` would still ship `token=stale` first on
+    // the wire and the server would authenticate against the stale
+    // value.
     const filtered = query
-      .split("&")
+      .split(/[&;]/)
       .filter((p) => p.length > 0 && !/^token=/.test(p))
       .join("&");
     const newQuery =

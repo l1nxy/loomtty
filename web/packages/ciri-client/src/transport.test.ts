@@ -74,6 +74,26 @@ describe("WebSocketTransport", () => {
     expect(url.searchParams.get("foo")).toBe("1");
   });
 
+  test("token override strips a semicolon-separated existing pair too", () => {
+    // The server's `extract_token_query` splits on both `&` and `;`
+    // (HTML 4.01 legacy separator). If we only filter `&`-pairs the
+    // stale value survives and the gateway authenticates against it.
+    const { factory, sockets } = makeFakeFactory();
+    const t = new WebSocketTransport(
+      {
+        url: "ws://example.test/ws?foo=1;token=stale",
+        token: "fresh",
+        webSocketFactory: factory,
+      },
+    );
+    t.start();
+    // URL.searchParams treats `;` as a literal — the parsed pairs
+    // see one key `foo` whose value is `1;token=stale`. So testing
+    // via URLSearchParams would be misleading; assert on the raw
+    // emitted URL instead.
+    expect(sockets[0]!.url).toBe("ws://example.test/ws?foo=1&token=fresh");
+  });
+
   test("send buffers payloads before open and flushes on open", () => {
     const { factory, sockets } = makeFakeFactory();
     const t = new WebSocketTransport(

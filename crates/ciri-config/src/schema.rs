@@ -889,7 +889,7 @@ impl Default for PredictionConfig {
 /// produces 32 bytes, well above this.
 pub const MIN_WEB_TOKEN_BYTES: usize = 16;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WebConfig {
     pub enabled: bool,
@@ -1023,13 +1023,14 @@ fn looks_like_origin(value: &str) -> bool {
         return false;
     };
     // Origin is exactly `scheme://host[:port]` — reject any path,
-    // query, or fragment that would never appear in a real browser
-    // `Origin` header (and that the exact-match runtime check would
-    // silently fail against).
+    // query, fragment, or userinfo that would never appear in a real
+    // browser `Origin` header (and that the exact-match runtime check
+    // would silently fail against).
     !rest.is_empty()
         && !rest.contains('/')
         && !rest.contains('?')
         && !rest.contains('#')
+        && !rest.contains('@')
 }
 
 #[cfg(test)]
@@ -1154,6 +1155,9 @@ mod web_config_tests {
             "",                         // empty
             "ws://127.0.0.1:7891",      // browsers never send ws:// Origin
             "wss://example.com",        // ditto for wss://
+            "http://user@example.com",  // userinfo never in real Origin
+            "http://example.com?foo=1", // query never in real Origin
+            "http://example.com#frag",  // fragment never in real Origin
         ] {
             let cfg = WebConfig {
                 allowed_origins: vec![bad.to_string()],
@@ -1207,6 +1211,29 @@ impl Default for WebConfig {
             token: String::new(),
             allowed_origins: Vec::new(),
         }
+    }
+}
+
+/// Custom `Debug` that redacts the bearer token. The `Debug` derive
+/// would otherwise let any `log::debug!("{config:?}")` (or a panic
+/// payload, or a `dbg!` left in by a careless reviewer) print the
+/// secret in plaintext into operator logs.
+impl std::fmt::Debug for WebConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebConfig")
+            .field("enabled", &self.enabled)
+            .field("bind", &self.bind)
+            .field("port", &self.port)
+            .field(
+                "token",
+                &if self.token.is_empty() {
+                    "<empty>"
+                } else {
+                    "<redacted>"
+                },
+            )
+            .field("allowed_origins", &self.allowed_origins)
+            .finish()
     }
 }
 

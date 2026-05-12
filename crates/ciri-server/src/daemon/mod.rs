@@ -331,6 +331,19 @@ pub async fn run_daemon_loop(mut ds: DaemonState) -> Result<()> {
                 "ws bind={parsed_bind} is not loopback — terminate TLS upstream \
                  and ensure the token is rotated; the gateway speaks plain ws://"
             );
+            // `"null"` is the Origin every sandboxed iframe, `data:` URI,
+            // local `file://` page, and some redirected cross-origin
+            // request shares — on a publicly-exposed bind, listing it in
+            // the allowlist comes close to "no Origin check at all" for
+            // anyone who can social-engineer a victim into opening a
+            // local file.
+            if ds.config.web.allowed_origins.iter().any(|o| o == "null") {
+                log::warn!(
+                    "ws allowed_origins contains \"null\" on a non-loopback bind — \
+                     this admits any sandboxed/file:// page in the user's browser; \
+                     remove it unless you intentionally accept that risk"
+                );
+            }
         }
         let origins = Arc::new(ds.config.web.allowed_origins.clone());
         // The raw config string still holds a plaintext copy of the

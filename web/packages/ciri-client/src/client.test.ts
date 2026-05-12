@@ -228,6 +228,56 @@ describe("CiriClient frame-size cap", () => {
   });
 });
 
+describe("CiriClient viewport tracking", () => {
+  test("Resize updates stored ClientHello so reconnect carries fresh dims", () => {
+    vi.useFakeTimers();
+    try {
+      const { c, sockets } = setup({ reconnect: true });
+      c.start();
+      sockets[0]!.simulateOpen();
+      sockets[0]!.simulateData(serverHelloBytes());
+
+      // User resizes the browser → app sends Resize. The client must
+      // mirror the new dims into its replay ClientHello.
+      c.send({
+        tag: "Resize",
+        cols: 100,
+        rows: 30,
+        width: 1600,
+        height: 900,
+        cellWidth: 10,
+        cellHeight: 18,
+      });
+
+      // Drop and reconnect.
+      sockets[0]!.simulateClose(1006, "drop");
+      vi.advanceTimersByTime(1100);
+      expect(sockets).toHaveLength(2);
+      sockets[1]!.simulateOpen();
+
+      // The replayed ClientHello carries width=1600 / height=900,
+      // not the constructor's 1280×720. Parse the bytes the client
+      // sent: header(11) + session "main"(4) + width u32 LE at
+      // offset 15.
+      const hello = sockets[1]!.sent[0]!.bytes;
+      const view = new DataView(
+        hello.buffer,
+        hello.byteOffset,
+        hello.byteLength,
+      );
+      // Layout: magic(4) + pkgVersion(4) + wire(1) + nameLen(2) +
+      // name(N) + width(4) + height(4) + cellW(4) + cellH(4).
+      const nameLen = view.getUint16(9, true);
+      const widthOffset = 11 + nameLen;
+      expect(view.getUint32(widthOffset, true)).toBe(1600);
+      expect(view.getUint32(widthOffset + 4, true)).toBe(900);
+      void c;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("CiriClient reconnect", () => {
   test("replays ClientHello on each reconnect open", () => {
     vi.useFakeTimers();

@@ -92,6 +92,20 @@ describe("ClientHello encoder", () => {
     ).toThrow(/start with '-'/);
   });
 
+  test("accepts the control-session escape (`__control__`)", () => {
+    // The Rust server exempts `__control__` from the lowercase rule
+    // so CLI/IPC callers can issue `ListSessions`, `RunCommand`,
+    // etc. without attaching to a pane. The TS validator must too.
+    const bytes = encodeClientHello({
+      sessionName: "__control__",
+      width: 800,
+      height: 600,
+      cellWidth: 9,
+      cellHeight: 18,
+    });
+    expect(bytes[0]).toBe(0x43); // magic "C"
+  });
+
   test("rejects non-finite cell dims", () => {
     expect(() =>
       encodeClientHello({

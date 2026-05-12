@@ -194,12 +194,20 @@ function validateClientHello(h: ClientHello): void {
   }
 }
 
+/** The server's IPC / CLI control path. Browser callers driving
+ *  `ListSessions`, `RunCommand`, etc. without attaching to a pane
+ *  go through this name, which the Rust server (`connection.rs`)
+ *  explicitly exempts from the lowercase-ASCII rule. */
+const CONTROL_SESSION = "__control__";
+
 /** Mirror of `ciri_session::names::validate_name` (the Rust server
  *  runs this check before sending ServerHello). Without it, a client
  *  with a bad name just sees the connection close cleanly with no
  *  diagnostic — we want a local error so the caller's UI can show
- *  the offending characters. */
+ *  the offending characters. The control-session escape mirrors
+ *  `crates/ciri-server/src/daemon/connection.rs`. */
 function validateSessionName(name: string): void {
+  if (name === CONTROL_SESSION) return;
   if (name.length === 0) {
     throw new HandshakeError("session name cannot be empty");
   }

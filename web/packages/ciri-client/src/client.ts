@@ -85,7 +85,11 @@ export class CiriClient {
   // (the reader has no in-place reset; once it's seen a fault it
   // stays poisoned for the life of the instance).
   private reader: FrameReader = new FrameReader();
-  private readonly hello: ClientHello;
+  // The handshake state is mutable so reconnects after a viewport
+  // resize replay the CURRENT dimensions, not the constructor-time
+  // snapshot. The `send()` path keeps it in lockstep with the
+  // server's view via `Resize` messages.
+  private hello: ClientHello;
   private handshakeBuf: Uint8Array = new Uint8Array(0);
   private nextInputSeq = 1n;
 
@@ -168,6 +172,20 @@ export class CiriClient {
       throw new Error(
         `ClientMessage payload ${payload.length}B exceeds MAX_CONTROL_FRAME_LEN ${MAX_CONTROL_FRAME_LEN}; the server would reject this frame and disconnect`,
       );
+    }
+    // Track the latest accepted viewport so a later reconnect's
+    // replayed ClientHello carries the current dimensions, not the
+    // constructor-time snapshot. The server reads ClientHello before
+    // generating the initial sync, so stale dimensions there cause a
+    // visible re-flow.
+    if (msg.tag === "Resize") {
+      this.hello = {
+        sessionName: this.hello.sessionName,
+        width: msg.width,
+        height: msg.height,
+        cellWidth: msg.cellWidth,
+        cellHeight: msg.cellHeight,
+      };
     }
     this.transport.send(frameClientMsg(payload));
   }

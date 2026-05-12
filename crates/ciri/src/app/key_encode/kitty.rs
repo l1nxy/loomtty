@@ -292,7 +292,7 @@ pub(crate) fn key_event_to_kitty_bytes(
 
         // Plain text keys without special modifiers: send as raw text (legacy compat).
         if let Some(bytes) = encode_kitty_legacy_text_bytes(
-            key_event_text_for_input(event),
+            key_event_text_for_input(event, shift).as_deref(),
             event.state,
             ctrl,
             alt,

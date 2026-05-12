@@ -69,7 +69,7 @@ pub(crate) fn key_event_to_pty_bytes(
         return bytes;
     }
 
-    if let Some(text) = key_event_text_for_input(event) {
+    if let Some(text) = key_event_text_for_input(event, shift) {
         return text.as_bytes().to_vec();
     }
 
@@ -163,8 +163,14 @@ fn encode_legacy_text_key(
     alt: bool,
 ) -> Option<Vec<u8>> {
     let base_char = key_event_base_char(event)?;
-    let text = key_event_text_for_input(event).unwrap_or_default();
-    encode_legacy_ascii_text_key(base_char, text, ctrl, shift, alt)
+    let text = key_event_text_for_input(event, shift);
+    encode_legacy_ascii_text_key(
+        base_char,
+        text.as_deref().unwrap_or_default(),
+        ctrl,
+        shift,
+        alt,
+    )
 }
 
 pub(super) fn encode_legacy_ascii_text_key(

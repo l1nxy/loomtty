@@ -418,10 +418,10 @@ impl App {
         if modifiers.ctrl {
             return; // Don't accumulate ctrl+key as text
         }
-        let Some(text) = key_event_text_for_input(event) else {
+        let Some(text) = key_event_text_for_input(event, modifiers.shift) else {
             return;
         };
-        let _ = self.append_text_to_overlay_input(text);
+        let _ = self.append_text_to_overlay_input(text.as_ref());
     }
 
     fn dismiss_context_menu_on_keypress(&mut self) -> bool {

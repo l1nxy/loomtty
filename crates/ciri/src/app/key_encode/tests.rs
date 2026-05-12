@@ -97,6 +97,22 @@ fn numpad_named_event(key: NamedKey, physical: KeyCode) -> TestEvent {
     )
 }
 
+fn char_key_event_with_text(
+    logical: &str,
+    physical: KeyCode,
+    text: Option<&str>,
+    state: ElementState,
+) -> TestEvent {
+    make_key_event(
+        Key::Character(winit::keyboard::SmolStr::new(logical)),
+        PhysicalKey::Code(physical),
+        text.map(winit::keyboard::SmolStr::new),
+        KeyLocation::Standard,
+        state,
+        false,
+    )
+}
+
 // ── Shared utility tests ────────────────────────────────────────────
 
 #[test]
@@ -143,6 +159,29 @@ fn physical_key_to_base_char_includes_symbol_keys() {
     );
 }
 
+#[test]
+fn shifted_ascii_text_falls_back_from_physical_key() {
+    let missing_text = char_key_event_with_text("/", KeyCode::Slash, None, ElementState::Pressed);
+    assert_eq!(
+        key_event_text_for_input(&missing_text, true).as_deref(),
+        Some("?")
+    );
+
+    let unshifted_text =
+        char_key_event_with_text("/", KeyCode::Slash, Some("/"), ElementState::Pressed);
+    assert_eq!(
+        key_event_text_for_input(&unshifted_text, true).as_deref(),
+        Some("?")
+    );
+
+    let correct_text =
+        char_key_event_with_text("?", KeyCode::Slash, Some("?"), ElementState::Pressed);
+    assert_eq!(
+        key_event_text_for_input(&correct_text, true).as_deref(),
+        Some("?")
+    );
+}
+
 // ── Legacy encoding tests ───────────────────────────────────────────
 
 #[test]
@@ -154,6 +193,22 @@ fn legacy_ascii_text_key_preserves_shifted_backslash_text() {
     assert_eq!(
         encode_legacy_ascii_text_key('\\', "|", false, true, true),
         Some(b"\x1b|".to_vec())
+    );
+}
+
+#[test]
+fn legacy_shift_slash_sends_question_mark_when_text_is_missing_or_unshifted() {
+    let missing_text = char_key_event_with_text("/", KeyCode::Slash, None, ElementState::Pressed);
+    assert_eq!(
+        key_event_to_pty_bytes(&missing_text, false, true, false, false, false),
+        b"?"
+    );
+
+    let unshifted_text =
+        char_key_event_with_text("/", KeyCode::Slash, Some("/"), ElementState::Pressed);
+    assert_eq!(
+        key_event_to_pty_bytes(&unshifted_text, false, true, false, false, false),
+        b"?"
     );
 }
 
@@ -457,6 +512,15 @@ fn kitty_level1_plain_char_stays_legacy() {
     assert_eq!(
         key_event_to_kitty_bytes(&e, false, false, false, false, false, false, LEVEL1),
         b"a"
+    );
+}
+
+#[test]
+fn kitty_level1_shift_slash_stays_question_mark_text() {
+    let e = char_key_event_with_text("/", KeyCode::Slash, None, ElementState::Pressed);
+    assert_eq!(
+        key_event_to_kitty_bytes(&e, false, true, false, false, false, false, LEVEL1),
+        b"?"
     );
 }
 

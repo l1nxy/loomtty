@@ -10,6 +10,7 @@ mod legacy;
 #[cfg(test)]
 mod tests;
 
+use std::borrow::Cow;
 use winit::keyboard::Key;
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
@@ -18,21 +19,31 @@ pub(crate) use legacy::key_event_to_pty_bytes;
 
 // ── Shared utilities ─────────────────────────────────────────────────
 
-pub(crate) fn key_event_text_for_input(event: &winit::event::KeyEvent) -> Option<&str> {
+pub(crate) fn key_event_text_for_input(
+    event: &winit::event::KeyEvent,
+    shift: bool,
+) -> Option<Cow<'_, str>> {
     // `event.text` is the authoritative text payload for printable keys.
     // Do NOT fall back to `text_with_all_modifiers()` — it produces partial
     // dead-key composition text which is incorrect for input.
     if let Some(text) = &event.text {
         let s: &str = text;
         if !s.is_empty() {
-            return Some(s);
+            if shift && let Some(shifted) = corrected_shifted_ascii_text(event, s) {
+                return Some(Cow::Borrowed(shifted));
+            }
+            return Some(Cow::Borrowed(s));
         }
+    }
+
+    if shift && let Some(shifted) = shifted_ascii_text(event.physical_key) {
+        return Some(Cow::Borrowed(shifted));
     }
 
     if let Key::Character(c) = &event.logical_key {
         let s = c.as_str();
         if !s.is_empty() {
-            return Some(s);
+            return Some(Cow::Borrowed(s));
         }
     }
 
@@ -55,6 +66,52 @@ fn with_meta_prefix(bytes: Vec<u8>, alt: bool) -> Vec<u8> {
     prefixed.push(0x1b);
     prefixed.extend_from_slice(&bytes);
     prefixed
+}
+
+fn corrected_shifted_ascii_text(
+    event: &winit::event::KeyEvent,
+    text: &str,
+) -> Option<&'static str> {
+    let shifted = shifted_ascii_text(event.physical_key)?;
+    let base = physical_key_to_base_char(event.physical_key)?;
+    let mut chars = text.chars();
+    let first = chars.next()?;
+    if chars.next().is_none() && first == base {
+        Some(shifted)
+    } else {
+        None
+    }
+}
+
+fn shifted_ascii_text(key: winit::keyboard::PhysicalKey) -> Option<&'static str> {
+    use winit::keyboard::{KeyCode, PhysicalKey};
+    match key {
+        PhysicalKey::Code(code) => match code {
+            KeyCode::Digit1 => Some("!"),
+            KeyCode::Digit2 => Some("@"),
+            KeyCode::Digit3 => Some("#"),
+            KeyCode::Digit4 => Some("$"),
+            KeyCode::Digit5 => Some("%"),
+            KeyCode::Digit6 => Some("^"),
+            KeyCode::Digit7 => Some("&"),
+            KeyCode::Digit8 => Some("*"),
+            KeyCode::Digit9 => Some("("),
+            KeyCode::Digit0 => Some(")"),
+            KeyCode::Minus => Some("_"),
+            KeyCode::Equal => Some("+"),
+            KeyCode::BracketLeft => Some("{"),
+            KeyCode::BracketRight => Some("}"),
+            KeyCode::Backslash | KeyCode::IntlBackslash => Some("|"),
+            KeyCode::Semicolon => Some(":"),
+            KeyCode::Quote => Some("\""),
+            KeyCode::Backquote => Some("~"),
+            KeyCode::Comma => Some("<"),
+            KeyCode::Period => Some(">"),
+            KeyCode::Slash => Some("?"),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// Encode "crash-safe" C0 keys using legacy byte sequences.

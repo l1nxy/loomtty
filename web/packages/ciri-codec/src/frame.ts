@@ -112,11 +112,18 @@ export class FrameReader {
     } catch (e) {
       this.poisonReason =
         e instanceof Error ? e.message : "unknown frame decode error";
+      // Drop the buffer too: there is no recovery path that could
+      // ever consume those bytes, and keeping them alive misleads
+      // `pending()` callers into thinking work is outstanding.
+      this.buf = new Uint8Array(0);
       throw e;
     }
   }
 
-  /// Number of bytes still buffered (incomplete frame or empty).
+  /// Number of bytes still buffered (incomplete frame or empty). A
+  /// poisoned reader always reports 0; the buffer is discarded on the
+  /// fault to keep this method's contract simple (`> 0` ⇒ a `next()`
+  /// call may still produce a frame).
   pending(): number {
     return this.buf.length;
   }

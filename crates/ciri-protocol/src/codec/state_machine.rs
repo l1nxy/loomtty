@@ -31,6 +31,13 @@ pub const OP_END: u8 = 0xFF;
 // ─── Encoder ─────────────────────────────────────────────────────────
 
 /// Encodes a stream of `PackedCell`s into a compact opcode stream.
+///
+/// Lifecycle: `new()` → `push_cell(...)` * N → `finish()` → reference
+/// bytes. After `finish()` the encoder is "sealed" — any further
+/// `push_cell` would append opcodes after the terminating `OP_END`,
+/// which the decoder would silently ignore. Call `reset()` to reuse
+/// the encoder; otherwise post-finish pushes panic in debug builds
+/// and are no-ops in release.
 pub struct StateEncoder {
     cur_fg: PackedColor,
     cur_bg: PackedColor,
@@ -39,6 +46,7 @@ pub struct StateEncoder {
     run_count: u16,
     char_buf: Vec<[u8; 4]>,
     out: Vec<u8>,
+    finished: bool,
 }
 
 fn default_cell_state() -> (PackedColor, PackedColor, u16) {
@@ -96,10 +104,16 @@ impl StateEncoder {
             run_count: 0,
             char_buf: Vec::new(),
             out: Vec::with_capacity(256),
+            finished: false,
         }
     }
 
     pub fn push_cell(&mut self, cell: &PackedCell) {
+        debug_assert!(
+            !self.finished,
+            "StateEncoder::push_cell called after finish() — call reset() first \
+             or any opcodes pushed here will be silently ignored by the decoder",
+        );
         let fg = cell.fg;
         let bg = cell.bg;
         let flags = cell.flags_u16();
@@ -276,9 +290,12 @@ impl StateEncoder {
     }
 
     pub fn finish(&mut self) -> &[u8] {
-        self.flush_run();
-        self.flush_char_buf();
-        self.out.push(OP_END);
+        if !self.finished {
+            self.flush_run();
+            self.flush_char_buf();
+            self.out.push(OP_END);
+            self.finished = true;
+        }
         &self.out
     }
 
@@ -291,6 +308,7 @@ impl StateEncoder {
         self.run_count = 0;
         self.char_buf.clear();
         self.out.clear();
+        self.finished = false;
     }
 }
 

@@ -150,16 +150,25 @@ describe("decodeSmCells", () => {
     expectCell(cells[0]!, "c", { kind: "rgb", r: 0xff, g: 0x88, b: 0x00 });
   });
 
-  test("OP_SET_FG_BG sets both colors in one opcode", () => {
+  test("OP_SET_FG_BG sets both colors in one opcode (RGB — production path)", () => {
+    // The Rust encoder only emits OP_SET_FG_BG when BOTH colors are
+    // COLOR_RGB; previously this test used Named colors, which the
+    // decoder accepts but the encoder never produces. Real wire
+    // traffic always carries RGB in this opcode.
     const data = bytes(
       OP_SET_FG_BG,
-      0, NAMED_RED, 0, 0,        // fg: named red
-      0, NAMED_FOREGROUND, 0, 0, // bg: named fg slot (just to test)
+      /* COLOR_RGB */ 1, 0xff, 0x88, 0x00, // fg = rgb(ff,88,00)
+      /* COLOR_RGB */ 1, 0x11, 0x22, 0x33, // bg = rgb(11,22,33)
       OP_CHAR1, 0x64, 0, 0, 0,
       OP_END,
     );
     const cells = decodeSmCells(data, 1);
-    expectCell(cells[0]!, "d", NAMED_RED_COLOR, NAMED_FG_COLOR);
+    expectCell(
+      cells[0]!,
+      "d",
+      { kind: "rgb", r: 0xff, g: 0x88, b: 0x00 },
+      { kind: "rgb", r: 0x11, g: 0x22, b: 0x33 },
+    );
   });
 
   test("OP_SET_FLAGS carries until reset", () => {
@@ -225,5 +234,23 @@ describe("decodeSmCells", () => {
   test("cell-count mismatch raises", () => {
     const data = bytes(OP_CHAR1, 0x61, 0, 0, 0, OP_END);
     expect(() => decodeSmCells(data, 2)).toThrow(/expected 2/);
+  });
+
+  test("count=0 opcodes consume their header bytes but emit nothing", () => {
+    // Pathological-but-not-malformed stream: zero-count OP_CHARS,
+    // OP_CHARS_LONG, OP_ASCII, OP_REPEAT, OP_ASCII_REPEAT all advance
+    // their counted argument bytes but never call writeCell. The
+    // outer cell-count check then catches the mismatch with `expected`.
+    const data = bytes(
+      OP_CHARS, 0,
+      OP_CHARS_LONG, 0, 0,
+      OP_ASCII, 0,
+      OP_REPEAT, 0, 0, 0x71, 0, 0, 0,         // count=0, ch='q'
+      OP_ASCII_REPEAT, 0, 0, 0x71,            // count=0, ch='q'
+      OP_CHAR1, 0x7a, 0, 0, 0,                // one real cell, 'z'
+      OP_END,
+    );
+    const cells = decodeSmCells(data, 1);
+    expectCell(cells[0]!, "z");
   });
 });

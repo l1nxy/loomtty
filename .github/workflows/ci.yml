@@ -111,7 +111,14 @@ jobs:
         run: node scripts/gen.mjs
 
       - name: Fail if committed copies drifted from Rust
-        run: git -C . diff --exit-code -- web/packages/ciri-codec/src/
+        # Narrow to the generated paths only — `gen.mjs` writes
+        # exactly these three files; any other under src/ is
+        # hand-maintained source and must not trigger drift.
+        run: |
+          git -C . diff --exit-code -- \
+            web/packages/ciri-codec/src/constants.ts \
+            web/packages/ciri-codec/src/__fixtures__/sm.json \
+            web/packages/ciri-codec/src/__fixtures__/lz4.json
 
       - name: Install + test
         working-directory: web

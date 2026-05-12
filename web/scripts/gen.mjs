@@ -31,11 +31,23 @@ const tasks = [
 
 for (const { example, out } of tasks) {
   process.stdout.write(`running cargo example: ${example} → ${out}\n`);
-  const stdout = execFileSync(
-    "cargo",
-    ["run", "--quiet", "-p", "ciri-protocol", "--example", example],
-    { cwd: repoRoot, encoding: "buffer", stdio: ["ignore", "pipe", "inherit"] },
-  );
+  let stdout;
+  try {
+    stdout = execFileSync(
+      "cargo",
+      ["run", "--quiet", "-p", "ciri-protocol", "--example", example],
+      { cwd: repoRoot, encoding: "buffer", stdio: ["ignore", "pipe", "inherit"] },
+    );
+  } catch (e) {
+    if (e && typeof e === "object" && "code" in e && e.code === "ENOENT") {
+      process.stderr.write(
+        "\nfailed to find `cargo` on PATH — install Rust (https://rustup.rs) " +
+          "and re-run.\n",
+      );
+      process.exit(1);
+    }
+    throw e;
+  }
   // Write as raw bytes so the UTF-8 output cargo wrote is preserved
   // byte-for-byte regardless of the host shell's default encoding.
   writeFileSync(out, stdout);

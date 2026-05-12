@@ -98,11 +98,15 @@ describe("FrameReader", () => {
     expect(() => reader.next()).toThrow(/unknown frame tag/);
   });
 
-  test("reader is poisoned after a throw — subsequent calls re-throw", () => {
+  test("reader is poisoned after a throw — subsequent calls re-throw, pending() reports 0", () => {
     const reader = new FrameReader();
     reader.push(new Uint8Array([0x7f, 0, 0, 0, 0]));
     expect(() => reader.next()).toThrow(/unknown frame tag/);
     expect(reader.isPoisoned()).toBe(true);
+    // Buffer is dropped on the fault so `pending() > 0` cannot mislead
+    // a caller into thinking a retry has any chance of producing a
+    // frame.
+    expect(reader.pending()).toBe(0);
     expect(() => reader.next()).toThrow(/poisoned/);
     expect(() => reader.push(new Uint8Array([1]))).toThrow(/poisoned/);
   });

@@ -69,11 +69,23 @@ export function decodeSmCells(
 /// Lower-level entry point: write into a pre-allocated array up to
 /// `limit` cells and return the actual count produced. Used by
 /// CellDelta (per-region) where each region knows its own width.
+///
+/// Preconditions:
+/// - `cells.length >= limit` — the caller must have allocated room
+///   for at least `limit` slots. Otherwise an over-limit write would
+///   silently extend the JS array (JS doesn't bounds-check array
+///   writes the way the Rust slice does), and downstream consumers
+///   would see `cells.length > limit` without any error from here.
 export function decodeSmCellsInto(
   data: Uint8Array,
   cells: PackedCell[],
   limit: number,
 ): number {
+  if (cells.length < limit) {
+    throw new Error(
+      `decodeSmCellsInto: cells.length=${cells.length} < limit=${limit}`,
+    );
+  }
   let fg: PackedColor = DEFAULT_FG;
   let bg: PackedColor = DEFAULT_BG;
   let flags = DEFAULT_CELL_FLAGS;

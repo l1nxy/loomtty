@@ -303,6 +303,17 @@ pub(crate) fn finalize_frame_compression(
     uncompressed_tag: u8,
     compressed_tag: u8,
 ) {
+    // The function unconditionally writes the tag at buf[0] and the
+    // 4-byte length placeholder at buf[1..5]. Callers must lay out
+    // `[tag][u32 len placeholder][payload...]` and pass `payload_start
+    // = 5`. Catch a future regression at debug time rather than letting
+    // it surface as an opaque index-out-of-bounds panic.
+    debug_assert!(
+        payload_start >= 5 && buf.len() >= payload_start,
+        "finalize_frame_compression: payload_start={payload_start} buf.len()={} — \
+         layout must be [tag (1B)][u32 LE len (4B)][payload]",
+        buf.len(),
+    );
     let payload = &buf[payload_start..];
     let payload_len = payload.len();
 

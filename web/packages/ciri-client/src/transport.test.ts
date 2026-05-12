@@ -350,6 +350,45 @@ describe("WebSocketTransport", () => {
     }
   });
 
+  test("close() drops late inbound messages buffered between close() and the WS onclose", () => {
+    // Real browsers may deliver onmessage events after `ws.close()`
+    // returns and before they fire onclose. Without synchronous
+    // listener detach, those messages would propagate to onData and
+    // potentially be misinterpreted as a fresh ServerHello on a
+    // higher layer.
+    const { factory, sockets } = makeFakeFactory();
+    const seen: Uint8Array[] = [];
+    const t = new WebSocketTransport(
+      { url: "ws://example.test", reconnect: false, webSocketFactory: factory },
+      { onData: (b) => seen.push(b) },
+    );
+    t.start();
+    sockets[0]!.simulateOpen();
+    sockets[0]!.simulateData(new Uint8Array([0x01]));
+    expect(seen).toHaveLength(1);
+    t.close();
+    // Late buffered messages: the listener is detached → no onData.
+    sockets[0]!.simulateData(new Uint8Array([0x02, 0x03]));
+    expect(seen).toHaveLength(1);
+  });
+
+  test("enqueue snapshots payloads so post-send mutation doesn't reach the wire", () => {
+    const { factory, sockets } = makeFakeFactory();
+    const t = new WebSocketTransport(
+      { url: "ws://example.test", reconnect: false, webSocketFactory: factory },
+    );
+    t.start();
+    const buf = new Uint8Array([0xaa, 0xbb, 0xcc]);
+    t.send(buf);
+    // Caller mutates the buffer before the flush happens at open.
+    // `WebSocket.send` snapshots at send-time; the queue must match.
+    buf[0] = 0xff;
+    buf[1] = 0xff;
+    sockets[0]!.simulateOpen();
+    expect(sockets[0]!.sent).toHaveLength(1);
+    expect(Array.from(sockets[0]!.sent[0]!.bytes)).toEqual([0xaa, 0xbb, 0xcc]);
+  });
+
   test("close() is idempotent — second call is a no-op", () => {
     const { factory, sockets } = makeFakeFactory();
     const closes: unknown[] = [];

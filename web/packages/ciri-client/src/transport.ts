@@ -147,9 +147,22 @@ export class WebSocketTransport {
     this.queuedBytes = 0;
     if (this.ws && (this._state === "open" || this._state === "connecting")) {
       this._state = "closing";
-      this.ws.close(code, reason);
-      // Real-browser `ws.close()` fires `onclose` asynchronously, so
-      // `handleClose` will deliver the `onClose` callback on its own.
+      // Detach listeners synchronously so any messages the browser
+      // has already buffered between this `close()` call and the
+      // eventual `onclose` event are dropped rather than forwarded
+      // upstream — otherwise the client could keep emitting frames
+      // (or, worse, a late `ServerHello` byte sequence) after the
+      // caller asked to shut down.
+      const ws = this.ws;
+      this.detachListeners();
+      this.ws = null;
+      ws.close(code, reason);
+      // We just cleared the listeners, so the browser's eventual
+      // `onclose` will never reach `handleClose`. Fire the terminal
+      // callback ourselves so the caller still sees a tidy
+      // `reconnecting: false` close event.
+      this._state = "closed";
+      this.cbs.onClose?.({ code, reason, reconnecting: false });
       return;
     }
     // No live socket — either we never started, or close() was
@@ -284,7 +297,13 @@ export class WebSocketTransport {
       const dropped = this.sendQueue.shift()!;
       this.queuedBytes -= dropped.length;
     }
-    this.sendQueue.push(bytes);
+    // `WebSocket.send` snapshots its argument at send time. We
+    // queue across an indefinite reconnect window, so a direct
+    // caller that reused or mutated the same Uint8Array between
+    // `send()` and the eventual flush would see the mutated bytes
+    // on the wire. Take an owned copy here to match the spec'd
+    // send-time-snapshot semantics.
+    this.sendQueue.push(bytes.slice());
     this.queuedBytes += bytes.length;
   }
 

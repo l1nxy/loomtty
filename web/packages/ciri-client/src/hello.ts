@@ -171,6 +171,7 @@ function formatVersion(v: number): string {
 }
 
 function validateClientHello(h: ClientHello): void {
+  validateSessionName(h.sessionName);
   if (!Number.isFinite(h.cellWidth) || h.cellWidth <= 0 || h.cellWidth > MAX_CELL_DIM) {
     throw new HandshakeError(`invalid cellWidth: ${h.cellWidth}`);
   }
@@ -190,5 +191,38 @@ function validateClientHello(h: ClientHello): void {
     h.height > MAX_VIEWPORT_DIM
   ) {
     throw new HandshakeError(`invalid height: ${h.height}`);
+  }
+}
+
+/** Mirror of `ciri_session::names::validate_name` (the Rust server
+ *  runs this check before sending ServerHello). Without it, a client
+ *  with a bad name just sees the connection close cleanly with no
+ *  diagnostic — we want a local error so the caller's UI can show
+ *  the offending characters. */
+function validateSessionName(name: string): void {
+  if (name.length === 0) {
+    throw new HandshakeError("session name cannot be empty");
+  }
+  // The server's validator counts bytes (`name.len()`); UTF-8 strings
+  // here may have multi-byte characters, but the lowercase-ASCII rule
+  // below rejects those anyway. Use `.length` (UTF-16 units) as a
+  // closer-to-the-server proxy for short ASCII names; for longer
+  // multi-byte names the character rule trips first.
+  if (name.length > 64) {
+    throw new HandshakeError(`session name too long (max 64 chars), got ${name.length}`);
+  }
+  if (name.startsWith("-")) {
+    throw new HandshakeError("session name cannot start with '-'");
+  }
+  for (let i = 0; i < name.length; i += 1) {
+    const ch = name.charCodeAt(i);
+    const isLower = ch >= 0x61 && ch <= 0x7a; // a-z
+    const isDigit = ch >= 0x30 && ch <= 0x39; // 0-9
+    const isHyphen = ch === 0x2d;
+    if (!isLower && !isDigit && !isHyphen) {
+      throw new HandshakeError(
+        `session name can only contain lowercase letters, digits, and hyphens (got ${JSON.stringify(name[i])} at offset ${i})`,
+      );
+    }
   }
 }

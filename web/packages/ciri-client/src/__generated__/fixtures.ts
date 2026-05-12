@@ -32,8 +32,8 @@ export interface HelloFixture {
 
 export const HELLO_FIXTURES: HelloFixture[] = [
   { name: "main", hex: "43495249000001000404006d61696e00050000d00200000000184100009041", hello: { sessionName: "main", width: 1280, height: 720, cellWidth: 9.5, cellHeight: 18.0 } },
-  { name: "", hex: "43495249000001000400002003000058020000000020410000a041", hello: { sessionName: "", width: 800, height: 600, cellWidth: 10.0, cellHeight: 20.0 } },
-  { name: "项目-A", hex: "4349524900000100040800e9a1b9e79bae2d4180070000380400000000004100008041", hello: { sessionName: "项目-A", width: 1920, height: 1080, cellWidth: 8.0, cellHeight: 16.0 } },
+  { name: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", hex: "4349524900000100044000616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612003000058020000000020410000a041", hello: { sessionName: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", width: 800, height: 600, cellWidth: 10.0, cellHeight: 20.0 } },
+  { name: "fresh-fox-12", hex: "4349524900000100040c0066726573682d666f782d313280070000380400000000004100008041", hello: { sessionName: "fresh-fox-12", width: 1920, height: 1080, cellWidth: 8.0, cellHeight: 16.0 } },
 ];
 
 export const CLIENT_FIXTURES: Fixture<ClientMessage>[] = [

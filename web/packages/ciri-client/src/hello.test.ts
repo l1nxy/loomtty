@@ -52,6 +52,46 @@ describe("ClientHello encoder", () => {
     ).toThrow(HandshakeError);
   });
 
+  test("rejects empty session name (server's validate_name does too)", () => {
+    expect(() =>
+      encodeClientHello({
+        sessionName: "",
+        width: 800,
+        height: 600,
+        cellWidth: 9,
+        cellHeight: 18,
+      }),
+    ).toThrow(/empty/);
+  });
+
+  test("rejects uppercase / non-ASCII characters in session name", () => {
+    for (const bad of ["Main", "session_1", "项目", "with space", "uri/path"]) {
+      expect(
+        () =>
+          encodeClientHello({
+            sessionName: bad,
+            width: 800,
+            height: 600,
+            cellWidth: 9,
+            cellHeight: 18,
+          }),
+        `should reject ${JSON.stringify(bad)}`,
+      ).toThrow(/lowercase letters, digits, and hyphens/);
+    }
+  });
+
+  test("rejects session name starting with '-'", () => {
+    expect(() =>
+      encodeClientHello({
+        sessionName: "-leading-dash",
+        width: 800,
+        height: 600,
+        cellWidth: 9,
+        cellHeight: 18,
+      }),
+    ).toThrow(/start with '-'/);
+  });
+
   test("rejects non-finite cell dims", () => {
     expect(() =>
       encodeClientHello({

@@ -624,6 +624,12 @@ fn encode_pkg_version(v: &str) -> u32 {
 }
 
 fn hello_fixtures() -> Vec<ClientHello> {
+    // All fixtures must satisfy `ciri_session::names::validate_name`
+    // — the server runs it before sending ServerHello and the TS
+    // `validateClientHello` mirrors it. Earlier drafts included an
+    // empty session name and a multi-byte UTF-8 name to stress the
+    // length-prefix encoding; both are rejected by the validator, so
+    // the wire-shape tests for them never reach the real handshake.
     vec![
         ClientHello {
             session_name: "main".into(),
@@ -633,19 +639,17 @@ fn hello_fixtures() -> Vec<ClientHello> {
             cell_height: 18.0,
         },
         ClientHello {
-            // Empty session name is the "default session" path the
-            // server still accepts; round-trip pulls in the
-            // zero-byte-length-prefix corner.
-            session_name: String::new(),
+            // 64-char name: max length, exercises the upper bound.
+            session_name: "a".repeat(64),
             width: 800,
             height: 600,
             cell_width: 10.0,
             cell_height: 20.0,
         },
         ClientHello {
-            // Multi-byte UTF-8 stresses both length-in-bytes encoding
-            // and the TS TextEncoder path.
-            session_name: "项目-A".into(),
+            // Digits + hyphen + lowercase: a "session-like" name from
+            // `random_name()` style generators.
+            session_name: "fresh-fox-12".into(),
             width: 1920,
             height: 1080,
             cell_width: 8.0,

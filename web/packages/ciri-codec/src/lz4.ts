@@ -3,11 +3,12 @@
 // header), and prepends a `u32 LE uncompressed_len` itself — see the
 // `decompress_lz4_payload` function in `ciri-protocol/src/codec/frame.rs`.
 //
-// `lz4js.decodeBlock(input, output, sIdx, eIdx)` reads the raw block and
-// writes into the caller-supplied `output` slice. We pre-allocate based
-// on the wire-supplied uncompressed length (which the Rust side has
-// already validated against `MAX_DATA_FRAME_LEN` + a bomb-ratio guard,
-// but we cap again here so a misbehaving server can't OOM the browser).
+// `lz4js.decompressBlock(src, dst, sIdx, sLen, dIdx)` reads the raw
+// block and writes into the caller-supplied `dst` slice, returning
+// the number of bytes written. We pre-allocate based on the wire-
+// supplied uncompressed length (which the Rust side has already
+// validated against `MAX_DATA_FRAME_LEN` + a bomb-ratio guard, but we
+// cap again here so a misbehaving server can't OOM the browser).
 
 // @ts-expect-error — lz4js ships without type defs. (When/if it
 // publishes them, this directive will start erroring — replace with

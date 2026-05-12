@@ -102,13 +102,19 @@ export class FrameReader {
       const total = FRAME_HEADER_LEN + payloadLen;
       if (this.buf.length < total) return null;
 
-      const payload = this.buf.subarray(FRAME_HEADER_LEN, total);
-      const frame = decodeFrame(tag, payload);
-
-      // Advance: slice off everything we just consumed. Use slice (not
-      // subarray) so the underlying ArrayBuffer can shrink eventually.
-      this.buf = this.buf.slice(total);
-      return frame;
+      // Take an owned copy of the payload BEFORE advancing the buffer,
+      // and advance via subarray on the original — that releases the
+      // old ArrayBuffer once both `payload` and the next-frame slice
+      // are independent. Previously the uncompressed branches did
+      // `this.buf.slice(total)` AND then `payload.slice()` inside
+      // decodeFrame, briefly holding two full copies of the payload
+      // (peak 2× the frame size for the ~ms duration of decodeFrame).
+      const payload = this.buf.slice(FRAME_HEADER_LEN, total);
+      this.buf =
+        this.buf.length === total
+          ? new Uint8Array(0)
+          : this.buf.slice(total);
+      return decodeFrame(tag, payload);
     } catch (e) {
       this.poisonReason =
         e instanceof Error ? e.message : "unknown frame decode error";
@@ -153,15 +159,19 @@ function limitForTag(tag: number): number {
 }
 
 function decodeFrame(tag: number, payload: Uint8Array): RawFrame {
+  // `payload` is already an owned copy of the bytes (taken via
+  // `this.buf.slice(...)` in FrameReader.next before this is called),
+  // so the uncompressed branches don't need to re-copy. The LZ4
+  // branches always allocate their own decompressed buffer.
   switch (tag) {
     case TAG_CLIENT_MSG:
-      return { kind: "client-msg", payload: payload.slice() };
+      return { kind: "client-msg", payload };
     case TAG_SERVER_MSG:
-      return { kind: "server-msg", payload: payload.slice() };
+      return { kind: "server-msg", payload };
     case TAG_CELL_DELTA:
-      return { kind: "cell-delta", payload: payload.slice() };
+      return { kind: "cell-delta", payload };
     case TAG_FULL_PANE_SYNC:
-      return { kind: "full-pane-sync", payload: payload.slice() };
+      return { kind: "full-pane-sync", payload };
     case TAG_CELL_DELTA_LZ4:
       return { kind: "cell-delta", payload: decompressLz4Payload(payload) };
     case TAG_FULL_PANE_SYNC_LZ4:

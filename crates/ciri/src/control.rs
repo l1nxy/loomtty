@@ -272,65 +272,43 @@ pub fn run_control_command(msg: ClientMessage, json: bool) -> Result<()> {
                         text,
                         truncated,
                     } => {
-                        if json {
+                        let stdout = std::io::stdout();
+                        let mut lock = stdout.lock();
+                        // Emit the truncation warning to stderr BEFORE the
+                        // write — a subsequent stdout BrokenPipe (`… | head`)
+                        // returns Ok early and would otherwise silently
+                        // swallow the signal that rows were clipped.
+                        if truncated {
+                            eprintln!(
+                                "ciritty: capture-pane response was truncated to fit \
+                                 the control-frame budget (some rows omitted)"
+                            );
+                        }
+                        let result: std::io::Result<()> = if json {
                             let obj = serde_json::json!({
                                 "session_name": session_name,
                                 "pane_id": pane_id,
                                 "text": text,
                                 "truncated": truncated,
                             });
-                            let rendered =
-                                serde_json::to_string_pretty(&obj).unwrap_or_default();
-                            // Match the raw-text path's BrokenPipe handling:
-                            // `println!` would panic on EPIPE, but a user
-                            // doing `… --json | head` should see exit 0.
-                            let stdout = std::io::stdout();
-                            let mut lock = stdout.lock();
-                            match lock
-                                .write_all(rendered.as_bytes())
-                                .and_then(|_| lock.write_all(b"\n"))
-                                .and_then(|_| lock.flush())
-                            {
-                                Ok(()) => {}
-                                Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
-                                    return Ok(());
-                                }
-                                Err(e) => return Err(e.into()),
-                            }
+                            // Stream-write to stdout. The `to_string_pretty`
+                            // alternative would buffer the entire rendered
+                            // JSON in a second `String` — ~900 KiB extra
+                            // heap for a max-size capture.
+                            (|| -> std::io::Result<()> {
+                                serde_json::to_writer_pretty(&mut lock, &obj)?;
+                                lock.write_all(b"\n")?;
+                                lock.flush()
+                            })()
                         } else {
-                            // Write raw text to stdout. `capture_text` emits
-                            // a `\n` after every row except when
-                            // `--join-wrapped` is set AND the final row
-                            // soft-wrapped — that corner case legitimately
-                            // ends without a newline. BrokenPipe
-                            // (`... | head -c 100`) is a clean termination
-                            // signal — exit 0 silently; other write errors
-                            // (including WriteZero, which is a real failure
-                            // and not just a closed pipe) propagate so
-                            // callers see them.
-                            let stdout = std::io::stdout();
-                            let mut lock = stdout.lock();
-                            // Emit the truncation warning to stderr
-                            // *before* potentially returning early on a
-                            // stdout BrokenPipe — otherwise the user
-                            // doing `... | head` silently loses the
-                            // signal that their capture was clipped.
-                            // (`truncated` fires from either a pre-loop
-                            // scrollback clamp or a mid-loop byte-budget
-                            // break — wording is neutral on which.)
-                            if truncated {
-                                eprintln!(
-                                    "ciritty: capture-pane response was truncated to fit \
-                                     the control-frame budget (some rows omitted)"
-                                );
+                            lock.write_all(text.as_bytes()).and_then(|_| lock.flush())
+                        };
+                        match result {
+                            Ok(()) => {}
+                            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
+                                return Ok(());
                             }
-                            match lock.write_all(text.as_bytes()).and_then(|_| lock.flush()) {
-                                Ok(()) => {}
-                                Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
-                                    return Ok(());
-                                }
-                                Err(e) => return Err(e.into()),
-                            }
+                            Err(e) => return Err(e.into()),
                         }
                         return Ok(());
                     }

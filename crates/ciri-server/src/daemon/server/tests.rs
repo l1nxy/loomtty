@@ -277,7 +277,7 @@ fn close_pane_emits_close_then_layout_update() {
 }
 
 #[test]
-fn capture_pane_returns_pane_capture_with_session_name() {
+fn capture_pane_emits_one_newline_per_grid_row() {
     let mut server = Server::new("", 8.0, TerminalColors::default());
     let session_name = "capture-ok".to_string();
     server.clients.insert(1, test_client(1, "__control__"));

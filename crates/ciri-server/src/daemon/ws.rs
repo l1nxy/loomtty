@@ -157,16 +157,32 @@ pub(crate) async fn accept_ws(
         return Err(anyhow!("refusing ws handshake: empty expected token"));
     }
 
-    // Tungstenite's default `max_message_size` is 64 MiB and
-    // `max_write_buffer_size` is unlimited; without overrides a slow
-    // peer could force a 64 MiB read allocation, or unbounded growth
-    // of the internal send buffer when the TCP socket is congested.
-    // Cap both axes at MAX_WS_MESSAGE_BYTES so tungstenite applies the
-    // rejection / backpressure at its own framing layer.
+    // Tungstenite defaults:
+    //   max_message_size:      64 MiB   — a slow peer could force a fresh
+    //                                     64 MiB read allocation per frame.
+    //   max_write_buffer_size: unlimited — congested TCP can grow the
+    //                                     internal send buffer without
+    //                                     bound.
+    //   write_buffer_size:     128 KiB  — tungstenite coalesces writes
+    //                                     up to this threshold before
+    //                                     pushing them to the TCP layer,
+    //                                     adding latency we don't want
+    //                                     since WsStream::poll_flush
+    //                                     already drives a single Binary
+    //                                     per call.
+    //
+    // Override every relevant axis so the inbound rejection and outbound
+    // backpressure both fire at the framing layer, and there is no
+    // surprise coalescing window between WsStream and the TCP socket.
+    // `max_write_buffer_size` is sized to match `MAX_WS_WRITE_BYTES`
+    // (which is `MAX_DATA_FRAME_LEN + 64` to cover the 5-byte codec
+    // frame header), so any write WsStream accepts will also fit in
+    // tungstenite's outbound queue.
     let ws_config = WebSocketConfig {
         max_message_size: Some(MAX_WS_MESSAGE_BYTES),
         max_frame_size: Some(MAX_WS_MESSAGE_BYTES),
-        max_write_buffer_size: MAX_WS_MESSAGE_BYTES,
+        max_write_buffer_size: MAX_WS_WRITE_BYTES,
+        write_buffer_size: 0,
         ..Default::default()
     };
 
@@ -536,6 +552,27 @@ mod tests {
         let req = req_with(&[("authorization", "Bearer")], Some("token=q"));
         // No space → split_once fails → falls back to query.
         assert_eq!(extract_bearer(&req).as_deref(), Some("q"));
+    }
+
+    #[test]
+    fn extract_bearer_header_wins_over_query_when_both_present() {
+        // Documented precedence: a valid Authorization header takes
+        // priority over `?token=`. A correct header with a wrong
+        // query value must authenticate via the header; a wrong header
+        // with a correct query must STILL try the header (and fail),
+        // so an attacker who can inject the header but not the query
+        // cannot break query-only clients silently — they get a 401.
+        let req = req_with(
+            &[("authorization", "Bearer correct")],
+            Some("token=wrong"),
+        );
+        assert_eq!(extract_bearer(&req).as_deref(), Some("correct"));
+
+        let req = req_with(
+            &[("authorization", "Bearer wrong")],
+            Some("token=correct"),
+        );
+        assert_eq!(extract_bearer(&req).as_deref(), Some("wrong"));
     }
 
     #[test]

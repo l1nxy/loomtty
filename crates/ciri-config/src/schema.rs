@@ -998,9 +998,25 @@ impl garde::Validate for WebConfig {
                          (expected scheme://host[:port] or the literal \"null\")"
                     )),
                 );
+            } else if origin != "null" && origin_contains_uppercase(origin) {
+                // Browsers normalise scheme/host to lowercase per RFC
+                // 6454 §6.2; an uppercase entry here would never match
+                // the inbound Origin header on a real handshake.
+                report.append(
+                    parent().join("allowed_origins").join(i),
+                    garde::Error::new(format!(
+                        "{origin:?} contains uppercase characters; \
+                         browsers always send lowercase scheme/host — \
+                         normalise this entry to lowercase"
+                    )),
+                );
             }
         }
     }
+}
+
+fn origin_contains_uppercase(value: &str) -> bool {
+    value.chars().any(|c| c.is_ascii_uppercase())
 }
 
 fn looks_like_origin(value: &str) -> bool {
@@ -1144,6 +1160,18 @@ mod web_config_tests {
             ..WebConfig::default()
         };
         cfg.validate().expect("valid origins must pass");
+    }
+
+    #[test]
+    fn allowed_origins_rejects_uppercase_host() {
+        // Browsers send lowercase scheme/host; an uppercase entry would
+        // never match.
+        let cfg = WebConfig {
+            allowed_origins: vec!["https://Terminal.Example.com".to_string()],
+            ..WebConfig::default()
+        };
+        cfg.validate()
+            .expect_err("uppercase origin host must be rejected");
     }
 
     #[test]

@@ -9,8 +9,10 @@
   ],
   "scripts": {
     "gen": "node scripts/gen.mjs",
-    "test": "npm -ws --if-present run test",
-    "build": "npm -ws --if-present run build",
+    "//order": "@ciri/client imports @ciri/codec via the codec's `exports` / `types`, which point at gitignored `./dist/index.*`. npm runs `-ws` in path order (client → codec), so without an explicit pre-step the client's tsc/vitest fails with TS2307 in a fresh checkout. Always build the codec first.",
+    "test": "npm -w @ciri/codec run build && npm -ws --if-present run test",
+    "build": "npm -w @ciri/codec run build && npm -ws --if-present run build",
+    "typecheck": "npm -w @ciri/codec run build && npm -ws --if-present run typecheck",
     "lint": "npm -ws --if-present run lint"
   },
   "devDependencies": {

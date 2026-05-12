@@ -8,7 +8,9 @@
     "packages/*"
   ],
   "scripts": {
-    "gen:constants": "cargo run --manifest-path ../Cargo.toml -p ciri-protocol --example dump_constants > packages/ciri-codec/src/constants.ts",
+    "gen:constants": "cd .. && cargo run -p ciri-protocol --example dump_constants > web/packages/ciri-codec/src/constants.ts",
+    "gen:fixtures": "cd .. && cargo run -p ciri-protocol --example sm_fixtures > web/packages/ciri-codec/src/__fixtures__/sm.json",
+    "gen": "npm run gen:constants && npm run gen:fixtures",
     "test": "npm -ws --if-present run test",
     "build": "npm -ws --if-present run build",
     "lint": "npm -ws --if-present run lint"

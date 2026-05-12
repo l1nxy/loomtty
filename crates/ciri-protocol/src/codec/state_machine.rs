@@ -248,12 +248,27 @@ impl StateEncoder {
                     for j in start..start + n {
                         self.out.extend_from_slice(&self.char_buf[j]);
                     }
-                } else {
+                } else if n <= u16::MAX as usize {
                     self.out.push(OP_CHARS_LONG);
                     self.out.extend_from_slice(&(n as u16).to_le_bytes());
                     for j in start..start + n {
                         self.out.extend_from_slice(&self.char_buf[j]);
                     }
+                } else {
+                    // Runs longer than 65 535 chars must split — the
+                    // count field is u16. Without the split a `n as u16`
+                    // truncates silently and the decoder reads only the
+                    // wrapped count's worth of cells, mis-parsing the
+                    // rest of the stream as garbage opcodes.
+                    self.out.push(OP_CHARS_LONG);
+                    self.out
+                        .extend_from_slice(&(u16::MAX as u16).to_le_bytes());
+                    let end = start + u16::MAX as usize;
+                    for j in start..end {
+                        self.out.extend_from_slice(&self.char_buf[j]);
+                    }
+                    i = end; // pick up the remainder in the next iteration
+                    continue;
                 }
             }
         }

@@ -85,3 +85,37 @@ jobs:
         run: cargo test --workspace
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings
+
+  # ── Web (TypeScript) ───────────────────────────────
+  # Catches drift between the Rust wire codec and the @ciri/codec TS
+  # decoder: regenerates constants.ts + sm.json fixtures from the live
+  # Rust source, fails if the committed copies disagree, then runs the
+  # vitest suite (per-opcode units + Rust-generated round-trips).
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Regenerate web constants + fixtures from Rust
+        run: |
+          cargo run -p ciri-protocol --example dump_constants \
+              > web/packages/ciri-codec/src/constants.ts
+          cargo run -p ciri-protocol --example sm_fixtures \
+              > web/packages/ciri-codec/src/__fixtures__/sm.json
+
+      - name: Fail if committed copies drifted from Rust
+        run: git -C . diff --exit-code -- web/
+
+      - name: Install + test
+        working-directory: web
+        run: |
+          npm ci
+          npm --workspaces --if-present run typecheck
+          npm --workspaces --if-present run test

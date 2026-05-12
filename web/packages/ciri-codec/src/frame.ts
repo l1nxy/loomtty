@@ -9,6 +9,7 @@
 // buffer doesn't hold a full frame.
 
 import {
+  MAX_CONTROL_FRAME_LEN,
   MAX_DATA_FRAME_LEN,
   TAG_CELL_DELTA,
   TAG_CELL_DELTA_LZ4,
@@ -20,12 +21,6 @@ import {
 import { decompressLz4Payload } from "./lz4.js";
 
 const FRAME_HEADER_LEN = 5;
-
-/// Control-message frames carry a 1 MiB cap on the Rust side (see
-/// `MAX_CONTROL_FRAME_LEN` in `codec/frame.rs`). Mirrored here as a
-/// local literal — the Rust constant is `pub(super)`, but the value is
-/// part of the wire contract and won't move without a protocol bump.
-const MAX_CONTROL_FRAME_LEN = 1024 * 1024;
 
 export type FrameKind =
   | "client-msg"
@@ -53,8 +48,18 @@ export class FrameReader {
   private buf: Uint8Array = new Uint8Array(0);
 
   /// Append raw bytes (typically the payload of one WS Binary message).
+  /// Fast-path the common case where the buffer is currently empty —
+  /// this is the steady-state for any WS message that carries an exact
+  /// integral number of frames, and avoids a per-message copy of the
+  /// inbound chunk.
   push(chunk: Uint8Array): void {
     if (chunk.length === 0) return;
+    if (this.buf.length === 0) {
+      // `slice()` is mandatory: the caller may reuse the chunk array
+      // (e.g. a pooled WS receive buffer), so we must own the bytes.
+      this.buf = chunk.slice();
+      return;
+    }
     const next = new Uint8Array(this.buf.length + chunk.length);
     next.set(this.buf, 0);
     next.set(chunk, this.buf.length);

@@ -5,9 +5,9 @@
 export const WIRE_PROTOCOL_VERSION = 3;
 export const SERVER_HELLO_LEN = 8;
 export const MAX_DATA_FRAME_LEN = 16777216;
+export const MAX_CONTROL_FRAME_LEN = 1048576;
 
 // Frame tag bytes (server → client + client → server).
-// These are stable wire values — see frame.rs for definitions.
 export const TAG_CLIENT_MSG = 0x01;
 export const TAG_SERVER_MSG = 0x10;
 export const TAG_CELL_DELTA = 0x20;

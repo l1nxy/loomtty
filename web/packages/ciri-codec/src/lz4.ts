@@ -56,30 +56,25 @@ export function decompressLz4Payload(payload: Uint8Array): Uint8Array {
   }
 
   const output = new Uint8Array(uncompressedLen);
-  // lz4js exposes a few overlapping decode functions across releases;
-  // probe for whichever exists at runtime.
-  if (typeof lz4.decodeBlock === "function") {
-    const written: number = lz4.decodeBlock(
-      compressed,
-      output,
-      0,
-      compressed.length,
+  // lz4js's raw-block decoder is `decompressBlock(src, dst, sIdx,
+  // sLen, dIdx)` — signature documented in the lz4js source. Some
+  // older releases use a shorter signature; the optional-arg overload
+  // below covers the common variants without depending on type defs
+  // we don't ship.
+  if (typeof lz4.decompressBlock !== "function") {
+    throw new Error("lz4js.decompressBlock missing — version mismatch?");
+  }
+  const written: number = lz4.decompressBlock(
+    compressed,
+    output,
+    0,
+    compressed.length,
+    0,
+  );
+  if (written !== uncompressedLen) {
+    throw new Error(
+      `lz4 decode produced ${written} bytes, expected ${uncompressedLen}`,
     );
-    if (written !== uncompressedLen) {
-      throw new Error(
-        `lz4 decode produced ${written} bytes, expected ${uncompressedLen}`,
-      );
-    }
-    return output;
   }
-  if (typeof lz4.uncompressBlock === "function") {
-    const written: number = lz4.uncompressBlock(compressed, output);
-    if (written !== uncompressedLen) {
-      throw new Error(
-        `lz4 decode produced ${written} bytes, expected ${uncompressedLen}`,
-      );
-    }
-    return output;
-  }
-  throw new Error("lz4js has no decodeBlock/uncompressBlock — version mismatch?");
+  return output;
 }

@@ -21,15 +21,17 @@ fn main() {
     println!("export const WIRE_PROTOCOL_VERSION = {WIRE_PROTOCOL_VERSION};");
     println!("export const SERVER_HELLO_LEN = {SERVER_HELLO_LEN};");
     println!("export const MAX_DATA_FRAME_LEN = {MAX_DATA_FRAME_LEN};");
+    println!("export const MAX_CONTROL_FRAME_LEN = {MAX_CONTROL_FRAME_LEN};");
     println!();
     println!("// Frame tag bytes (server → client + client → server).");
-    println!("// These are stable wire values — see frame.rs for definitions.");
-    println!("export const TAG_CLIENT_MSG = 0x01;");
-    println!("export const TAG_SERVER_MSG = 0x10;");
-    println!("export const TAG_CELL_DELTA = 0x20;");
-    println!("export const TAG_FULL_PANE_SYNC = 0x21;");
-    println!("export const TAG_CELL_DELTA_LZ4 = 0x22;");
-    println!("export const TAG_FULL_PANE_SYNC_LZ4 = 0x23;");
+    println!("export const TAG_CLIENT_MSG = 0x{TAG_CLIENT_MSG:02x};");
+    println!("export const TAG_SERVER_MSG = 0x{TAG_SERVER_MSG:02x};");
+    println!("export const TAG_CELL_DELTA = 0x{TAG_CELL_DELTA:02x};");
+    println!("export const TAG_FULL_PANE_SYNC = 0x{TAG_FULL_PANE_SYNC:02x};");
+    println!("export const TAG_CELL_DELTA_LZ4 = 0x{TAG_CELL_DELTA_LZ4:02x};");
+    println!(
+        "export const TAG_FULL_PANE_SYNC_LZ4 = 0x{TAG_FULL_PANE_SYNC_LZ4:02x};"
+    );
     println!();
     println!("// ── PackedCell layout ─────────────────────────────────");
     println!("export const PACKED_CELL_SIZE = {PACKED_CELL_SIZE};");

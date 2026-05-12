@@ -10,15 +10,15 @@ use super::full_sync::{decode_full_pane_sync_borrowed, encode_full_pane_sync_pay
 // ─── Frame tags ─────────────────────────────────────────────────────
 
 // Client → Server (msgpack)
-pub(super) const TAG_CLIENT_MSG: u8 = 0x01;
-pub(super) const TAG_SERVER_MSG: u8 = 0x10;
+pub const TAG_CLIENT_MSG: u8 = 0x01;
+pub const TAG_SERVER_MSG: u8 = 0x10;
 
 // Server → Client (custom binary, hot path)
-pub(super) const TAG_CELL_DELTA: u8 = 0x20;
-pub(super) const TAG_FULL_PANE_SYNC: u8 = 0x21;
+pub const TAG_CELL_DELTA: u8 = 0x20;
+pub const TAG_FULL_PANE_SYNC: u8 = 0x21;
 // LZ4-compressed variants (payload is [u32 LE uncompressed_len][lz4 data])
-pub(super) const TAG_CELL_DELTA_LZ4: u8 = 0x22;
-pub(super) const TAG_FULL_PANE_SYNC_LZ4: u8 = 0x23;
+pub const TAG_CELL_DELTA_LZ4: u8 = 0x22;
+pub const TAG_FULL_PANE_SYNC_LZ4: u8 = 0x23;
 
 /// Minimum payload size before LZ4 compression kicks in (bytes).
 /// Below this threshold, compression overhead exceeds savings.
@@ -31,7 +31,7 @@ const MAX_LZ4_RATIO: usize = 64;
 
 /// Maximum frame size for control messages (msgpack).  Control messages are
 /// small — 1 MiB is generous.
-pub(super) const MAX_CONTROL_FRAME_LEN: u32 = 1024 * 1024;
+pub const MAX_CONTROL_FRAME_LEN: u32 = 1024 * 1024;
 
 /// Maximum frame size for data frames (CellDelta, FullPaneSync).
 /// Large grids with scrollback can legitimately reach several MiB.

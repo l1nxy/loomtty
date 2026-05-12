@@ -2,13 +2,35 @@
 // straddling WS boundaries, and the tag → kind dispatch table.
 
 import { describe, expect, test } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   TAG_CELL_DELTA,
+  TAG_CELL_DELTA_LZ4,
   TAG_CLIENT_MSG,
   TAG_FULL_PANE_SYNC,
+  TAG_FULL_PANE_SYNC_LZ4,
   TAG_SERVER_MSG,
 } from "./constants.js";
 import { FrameReader } from "./frame.js";
+
+interface Lz4Fixture {
+  name: string;
+  original_hex: string;
+  payload_hex: string;
+}
+function hexToBytes(hex: string): Uint8Array {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i += 1) {
+    out[i] = parseInt(hex.substr(i * 2, 2), 16);
+  }
+  return out;
+}
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const LZ4_FIXTURES: Lz4Fixture[] = JSON.parse(
+  readFileSync(join(__dirname, "__fixtures__", "lz4.json"), "utf-8"),
+);
 
 function frame(tag: number, payload: Uint8Array): Uint8Array {
   const out = new Uint8Array(5 + payload.length);
@@ -84,8 +106,68 @@ describe("FrameReader", () => {
 
   test("oversize control frame throws before allocating", () => {
     const reader = new FrameReader();
-    // payload_len > MAX_CONTROL_FRAME_LEN (1 MiB).
+    // payload_len bytes encode u32 LE = 0x00200000 = 2 MiB, which
+    // exceeds the 1 MiB MAX_CONTROL_FRAME_LEN limit. Layout:
+    //   [tag][len byte 0][len byte 1][len byte 2][len byte 3]
+    //     01      00         00          20         00
     reader.push(new Uint8Array([TAG_CLIENT_MSG, 0, 0, 0x20, 0]));
     expect(() => reader.next()).toThrow(/frame too large/);
+  });
+
+  // ─── LZ4 frame variants ──────────────────────────────────
+  // Driven by `lz4_fixture.rs` (the same `lz4_flex::compress` the
+  // server uses). The JS encoders we tested (lz4js block APIs) round
+  // to subtly different formats; round-tripping against the real
+  // server encoder is the only meaningful coverage.
+
+  for (const fx of LZ4_FIXTURES) {
+    test(`LZ4 frame round-trips Rust fixture: ${fx.name}`, () => {
+      const original = hexToBytes(fx.original_hex);
+      const payload = hexToBytes(fx.payload_hex);
+      const reader = new FrameReader();
+      reader.push(frame(TAG_CELL_DELTA_LZ4, payload));
+      const f = reader.next();
+      expect(f?.kind).toBe("cell-delta");
+      expect(Array.from(f!.payload)).toEqual(Array.from(original));
+    });
+  }
+
+  test("TAG_FULL_PANE_SYNC_LZ4 dispatches to full-pane-sync kind", () => {
+    const fx = LZ4_FIXTURES[0]!;
+    const reader = new FrameReader();
+    reader.push(frame(TAG_FULL_PANE_SYNC_LZ4, hexToBytes(fx.payload_hex)));
+    const f = reader.next();
+    expect(f?.kind).toBe("full-pane-sync");
+    expect(Array.from(f!.payload)).toEqual(Array.from(hexToBytes(fx.original_hex)));
+  });
+
+  test("LZ4 payload with non-zero uncompressed length but empty compressed bytes is rejected", () => {
+    // 4-byte header claiming 100 uncompressed bytes, zero compressed
+    // bytes. Mirrors the zero-len bomb guard in the Rust codec.
+    const payload = new Uint8Array([100, 0, 0, 0]);
+    const reader = new FrameReader();
+    reader.push(frame(TAG_CELL_DELTA_LZ4, payload));
+    expect(() => reader.next()).toThrow(/zero compressed bytes/);
+  });
+
+  test("LZ4 payload with absurd compression ratio is rejected", () => {
+    // Header claims 10 MiB uncompressed; only 2 bytes of compressed
+    // data. Ratio is 5 MB:1, well above the 64:1 bomb guard.
+    const payload = new Uint8Array(6);
+    new DataView(payload.buffer).setUint32(0, 10 * 1024 * 1024, true);
+    payload[4] = 0xff;
+    payload[5] = 0xff;
+    const reader = new FrameReader();
+    reader.push(frame(TAG_CELL_DELTA_LZ4, payload));
+    expect(() => reader.next()).toThrow(/exceeds limit 64:1/);
+  });
+
+  test("LZ4 payload claiming an oversize uncompressed length is rejected", () => {
+    const payload = new Uint8Array(8);
+    // 32 MiB > MAX_DATA_FRAME_LEN (16 MiB).
+    new DataView(payload.buffer).setUint32(0, 32 * 1024 * 1024, true);
+    const reader = new FrameReader();
+    reader.push(frame(TAG_CELL_DELTA_LZ4, payload));
+    expect(() => reader.next()).toThrow(/exceeds MAX_DATA_FRAME_LEN/);
   });
 });

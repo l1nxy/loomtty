@@ -22,8 +22,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@msgpack/msgpack": "^3.0.0",
-    "lz4js": "^0.2.0"
+    "lz4js": "0.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

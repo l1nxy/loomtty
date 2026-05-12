@@ -1908,4 +1908,27 @@ mod network_edge_cases {
             other => panic!("frame 3: expected PaneClosed, got {other:?}"),
         }
     }
+
+    /// Non-ASCII runs longer than `u16::MAX` were previously truncated
+    /// when written to the `OP_CHARS_LONG` count field (silent
+    /// `as u16` wrap), leading the decoder to consume only the
+    /// truncated prefix and mis-parse the rest of the stream. Verify
+    /// the encoder now splits the run across multiple opcodes and the
+    /// decoded cell stream matches the input exactly.
+    #[test]
+    fn sm_encoder_splits_non_ascii_runs_longer_than_u16_max() {
+        let count: usize = 70_000;
+        let mut cells = Vec::with_capacity(count);
+        for i in 0..count {
+            // U+4E00 + (i % 1024) — varied CJK codepoints, 3-byte UTF-8.
+            let ch = char::from_u32(0x4E00 + (i as u32 % 1024)).unwrap();
+            cells.push(PackedCell::with_ch(ch));
+        }
+        let encoded = sm_encode_cells(&cells);
+        let decoded = super::state_machine::sm_decode_cells_vec(&encoded, count).unwrap();
+        assert_eq!(decoded.len(), count);
+        for (i, cell) in decoded.iter().enumerate() {
+            assert_eq!(cell.ch(), cells[i].ch(), "mismatch at i={i}");
+        }
+    }
 }

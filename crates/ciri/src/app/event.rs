@@ -604,14 +604,7 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::DroppedFile(path) => {
-                let path_str = path.to_string_lossy();
-                let quoted = if path_str
-                    .contains(|c: char| c.is_whitespace() || "\"'\\$`!#&|;(){}[]<>?*~".contains(c))
-                {
-                    format!("'{}'", path_str.replace('\'', "'\\''"))
-                } else {
-                    path_str.into_owned()
-                };
+                let quoted = super::clipboard_image::quote_path_for_shell(&path.to_string_lossy());
                 let text = format!("{quoted} ");
                 self.send_paste_to_active_pane(text.as_bytes());
                 self.schedule_redraw();

@@ -911,6 +911,7 @@ dependencies = [
  "rmp-serde",
  "serde_json",
  "taffy",
+ "tempfile",
  "tokio",
  "unicode-width",
  "winit",

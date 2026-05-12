@@ -41,3 +41,6 @@ notify-rust = "4"
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
+
+[dev-dependencies]
+tempfile = "3"

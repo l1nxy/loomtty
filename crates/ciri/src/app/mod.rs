@@ -1,5 +1,6 @@
 pub(crate) mod action;
 pub(crate) mod ciri_ui_adapter;
+pub(crate) mod clipboard_image;
 pub(crate) mod context_menu;
 pub(crate) mod debug_metrics;
 pub(crate) mod event;

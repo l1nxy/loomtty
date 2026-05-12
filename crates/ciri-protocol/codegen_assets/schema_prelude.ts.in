@@ -1,0 +1,47 @@
+// Runtime schema describing how to encode/decode ClientMessage,
+// ServerMessage, and the structs they reference. The shape mirrors
+// `serde_reflection::ContainerFormat` so the codec can stay generic
+// and walk this tree at runtime.
+
+/** Wire-format primitives + composite types. */
+export type SchemaType =
+  | { kind: "unit" }
+  | { kind: "bool" }
+  | { kind: "i8" } | { kind: "i16" } | { kind: "i32" } | { kind: "i64" } | { kind: "i128" }
+  | { kind: "u8" } | { kind: "u16" } | { kind: "u32" } | { kind: "u64" } | { kind: "u128" }
+  | { kind: "f32" } | { kind: "f64" }
+  | { kind: "char" }
+  | { kind: "str" }
+  | { kind: "bytes" }
+  | { kind: "ref"; name: string }
+  | { kind: "option"; of: SchemaType }
+  | { kind: "seq"; of: SchemaType }
+  | { kind: "tuple"; of: SchemaType[] }
+  | { kind: "tuple-array"; of: SchemaType; size: number }
+  | { kind: "map"; key: SchemaType; value: SchemaType };
+
+export interface FieldSpec {
+  /** Wire name (snake_case, as serde sees it). Diagnostics only — the
+   *  msgpack payload is a positional array, so we never read this
+   *  name off the wire. */
+  name: string;
+  /** JS-side property name (camelCase). The codec uses this to map
+   *  positional wire array elements to/from named TS objects. */
+  jsName: string;
+  type: SchemaType;
+}
+
+export interface VariantSpec {
+  name: string;
+  /** 0-based ordinal serde uses for this variant. Not on the wire for
+   *  externally-tagged enums, but kept for diagnostics. */
+  ordinal: number;
+  shape: ContainerSpec;
+}
+
+export type ContainerSpec =
+  | { kind: "unit-struct" }
+  | { kind: "newtype-struct"; of: SchemaType }
+  | { kind: "tuple-struct"; of: SchemaType[] }
+  | { kind: "struct"; fields: FieldSpec[] }
+  | { kind: "enum"; variants: VariantSpec[] };

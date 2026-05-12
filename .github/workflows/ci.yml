@@ -87,10 +87,12 @@ jobs:
         run: cargo clippy --workspace -- -D warnings
 
   # ── Web (TypeScript) ───────────────────────────────
-  # Catches drift between the Rust wire codec and the @ciri/codec TS
-  # decoder: regenerates constants.ts + sm.json fixtures from the live
-  # Rust source, fails if the committed copies disagree, then runs the
-  # vitest suite (per-opcode units + Rust-generated round-trips).
+  # Catches drift between the Rust wire codec and the TS packages: re-
+  # runs the Rust → TS code-gen (@ciri/codec constants/fixtures plus
+  # @ciri/client schema/types/fixtures derived via serde-reflection),
+  # fails if the committed copies disagree, then runs the full vitest
+  # suite (codec round-trips, hello bytes, message codec, transport,
+  # client lifecycle).
   web:
     runs-on: ubuntu-latest
     steps:
@@ -112,13 +114,16 @@ jobs:
 
       - name: Fail if committed copies drifted from Rust
         # Narrow to the generated paths only — `gen.mjs` writes
-        # exactly these three files; any other under src/ is
-        # hand-maintained source and must not trigger drift.
+        # exactly these files; any other under src/ is hand-maintained
+        # source and must not trigger drift.
         run: |
           git -C . diff --exit-code -- \
             web/packages/ciri-codec/src/constants.ts \
             web/packages/ciri-codec/src/__fixtures__/sm.json \
-            web/packages/ciri-codec/src/__fixtures__/lz4.json
+            web/packages/ciri-codec/src/__fixtures__/lz4.json \
+            web/packages/ciri-client/src/__generated__/schema.ts \
+            web/packages/ciri-client/src/__generated__/types.ts \
+            web/packages/ciri-client/src/__generated__/fixtures.ts
 
       - name: Install + test
         working-directory: web

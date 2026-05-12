@@ -648,7 +648,14 @@ pub struct ColumnState {
     pub active_tile_idx: usize,
     pub width_proportion: f64,
     /// If set, column uses a fixed pixel width instead of proportion.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ///
+    /// No `skip_serializing_if` here: the TS client decoder is
+    /// schema-driven on top of `serde-reflection`, which doesn't see
+    /// per-field skip annotations and would expect a 4-element wire
+    /// tuple even when this field is None. Keeping the field always
+    /// on the wire costs one byte (`c0` for `nil`) per ColumnState
+    /// with None — negligible since LayoutState is sent only on
+    /// connect / focus / resize.
     pub width_fixed_px: Option<f64>,
 }
 

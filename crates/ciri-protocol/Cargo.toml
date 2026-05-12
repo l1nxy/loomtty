@@ -19,6 +19,10 @@ criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1"
 tokio-test = "0.4"
 tokio = { workspace = true, features = ["full"] }
+# Used only by the `dump_messages` codegen example to extract a runtime
+# schema of ClientMessage / ServerMessage / nested structs for the TS
+# client. Not linked into the shipped crate.
+serde-reflection = "0.5"
 
 [[bench]]
 name = "protocol_decode"

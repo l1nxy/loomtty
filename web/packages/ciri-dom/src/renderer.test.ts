@@ -142,6 +142,63 @@ describe("PaneRenderer", () => {
     root.remove();
   });
 
+  test("javascript: hyperlink URIs render as plain span, not <a>", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root);
+    const grid = new PaneGrid(1n, 2, 1);
+    const sync = blankSync(2, 1);
+    sync.cells = [cell("a"), cell("b")];
+    sync.cellLinks = new Map([
+      [0, 1],
+      [1, 1],
+    ]);
+    sync.linkMap = new Map([[1, "javascript:alert(1)"]]);
+    grid.applyFullPaneSync(sync);
+    r.render(grid);
+    // No <a> tag — the unsafe scheme falls through to a span.
+    expect(root.querySelector("a")).toBeNull();
+    const span = root.querySelector("span")!;
+    expect(span.textContent).toBe("ab");
+    root.remove();
+  });
+
+  test("data: hyperlink URIs render as plain span", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root);
+    const grid = new PaneGrid(1n, 2, 1);
+    const sync = blankSync(2, 1);
+    sync.cells = [cell("a"), cell("b")];
+    sync.cellLinks = new Map([
+      [0, 1],
+      [1, 1],
+    ]);
+    sync.linkMap = new Map([[1, "data:text/html;base64,PHNjcmlwdD4="]]);
+    grid.applyFullPaneSync(sync);
+    r.render(grid);
+    expect(root.querySelector("a")).toBeNull();
+    root.remove();
+  });
+
+  test("mailto: hyperlink URIs render as <a>", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root);
+    const grid = new PaneGrid(1n, 2, 1);
+    const sync = blankSync(2, 1);
+    sync.cells = [cell("a"), cell("b")];
+    sync.cellLinks = new Map([
+      [0, 1],
+      [1, 1],
+    ]);
+    sync.linkMap = new Map([[1, "mailto:user@example.com"]]);
+    grid.applyFullPaneSync(sync);
+    r.render(grid);
+    expect(root.querySelector("a")).not.toBeNull();
+    root.remove();
+  });
+
   test("hyperlink cells render as <a target=_blank rel=noopener>", () => {
     const root = document.createElement("div");
     document.body.appendChild(root);

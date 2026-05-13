@@ -196,11 +196,20 @@ export class PaneRenderer {
   }
 
   private renderRun(run: SgrRun): HTMLElement {
-    const el = run.linkUri !== null
+    // OSC 8 URIs come from untrusted terminal output. A malicious app
+    // could emit `\e]8;;javascript:alert(1)\e\\` and turn the rendered
+    // text into a clickable XSS vector — `target=_blank` doesn't help
+    // here because `href` is evaluated on click. Restrict to a small
+    // allowlist of harmless schemes; anything else falls through to a
+    // plain `<span>` (the run text still renders, just not clickable).
+    const safeLink = run.linkUri !== null && isSafeLinkScheme(run.linkUri)
+      ? run.linkUri
+      : null;
+    const el = safeLink !== null
       ? this.doc.createElement("a")
       : this.doc.createElement("span");
-    if (run.linkUri !== null && el instanceof HTMLAnchorElement) {
-      el.href = run.linkUri;
+    if (safeLink !== null && el instanceof HTMLAnchorElement) {
+      el.href = safeLink;
       // OSC 8 links in real terminals open in a new context; mirror
       // that so a click can't accidentally navigate the host page.
       el.target = "_blank";
@@ -226,6 +235,33 @@ export class PaneRenderer {
     el.textContent = run.text;
     return el;
   }
+}
+
+// Schemes the OSC 8 renderer is willing to make clickable. Restricted
+// to navigation forms that a typical user expects from a terminal: web
+// links, email, file transfer. Everything else (`javascript:`, `data:`,
+// `vbscript:`, `file:`, `chrome:` …) is rendered as plain text.
+//
+// `tel:` and `sms:` are deliberately omitted — the desktop browser has
+// no useful behavior for them and they're a small but non-zero attack
+// surface against the host's "open link" dispatch. Add them back if a
+// real use case appears.
+const SAFE_LINK_SCHEMES = ["http", "https", "ftp", "ftps", "mailto"];
+
+function isSafeLinkScheme(uri: string): boolean {
+  // Parse via WHATWG URL with a known-safe base — letting the URL
+  // constructor handle protocol-relative and oddly-cased schemes for
+  // us. Anything that fails to parse cleanly (raw garbage, fragment-
+  // only, embedded control chars) falls through as not-safe.
+  let parsed: URL;
+  try {
+    parsed = new URL(uri);
+  } catch {
+    return false;
+  }
+  // `URL.protocol` returns the scheme with a trailing colon, e.g. "https:".
+  const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
+  return SAFE_LINK_SCHEMES.includes(scheme);
 }
 
 function mapUnderlineStyle(

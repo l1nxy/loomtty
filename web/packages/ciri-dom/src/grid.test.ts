@@ -518,8 +518,11 @@ describe("PaneGrid.applyFullPaneSync — extras rebase", () => {
     expect(g.cellLinks.get(3)).toBe(1);
 
     // Scrollback-only sync: appends 1 sb row (2 cells), viewport stays.
-    // Viewport extras at abs 2 + 3 must shift forward by syncSbCells=2
-    // to abs 4 + 5.
+    // Viewport graphemes at abs 2 must shift forward by syncSbCells=2
+    // to abs 4. cellLinks, however, are DROPPED — see round-4 codex
+    // finding: link IDs are not stable across syncs, so retaining old
+    // cellLinks could resolve them through the new linkMap's
+    // re-allocated IDs.
     g.applyFullPaneSync(
       makeSync({
         cols: 2,
@@ -531,11 +534,9 @@ describe("PaneGrid.applyFullPaneSync — extras rebase", () => {
       }),
     );
     expect(g.graphemeExtras.get(4)).toBe("́");
-    expect(g.cellLinks.get(5)).toBe(1);
-    // Original keys must NOT survive — without the shift the renderer
-    // would look up `viewportGlobalIndex(0,0)=4` against an empty map.
     expect(g.graphemeExtras.has(2)).toBe(false);
-    expect(g.cellLinks.has(3)).toBe(false);
+    // cellLinks at any key — wholesale dropped.
+    expect(g.cellLinks.size).toBe(0);
   });
 
   test("scrollback-only replace preserves old viewport extras rebased onto new sb", () => {

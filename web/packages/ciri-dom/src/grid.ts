@@ -255,7 +255,19 @@ export class PaneGrid {
       sync.scrollbackReplace,
       colsChanged,
       isScrollbackOnly,
+      // Preserve old viewport entries on scrollback-only syncs —
+      // grapheme overflows refer to the cell glyph (unchanged), not
+      // to a sync-allocated handle.
+      /* preserveOldViewportOnScrollbackOnly */ true,
     );
+    // `cellLinks` reference into `linkMap`, which the server allocates
+    // from 1 for each FullPaneSync — IDs are NOT globally stable.
+    // If we preserved old cellLinks across syncs, the next sync's
+    // linkMap might re-use the same ID for a different URI, making
+    // stale cells point at the wrong target (or nowhere, if the new
+    // sync omits the ID). Drop wholesale on every sync; the renderer
+    // re-derives hyperlinks from the new sync's data. Mirrors the
+    // Rust client's `apply_full_sync` (`hyperlink_cell_map.clear()`).
     this.cellLinks = rebaseExtras(
       this.cellLinks,
       sync.cellLinks,
@@ -264,6 +276,7 @@ export class PaneGrid {
       sync.scrollbackReplace,
       colsChanged,
       isScrollbackOnly,
+      /* preserveOldViewportOnScrollbackOnly */ false,
     );
     // linkMap is keyed by link-id (a global handle), not by cell
     // index, so no rebase is needed. Replace wholesale.
@@ -355,10 +368,11 @@ function rebaseExtras<V>(
   scrollbackReplace: boolean,
   colsChanged: boolean,
   isScrollbackOnly: boolean,
+  preserveOldViewportOnScrollbackOnly: boolean,
 ): Map<number, V> {
   const out = new Map<number, V>();
 
-  if (isScrollbackOnly) {
+  if (isScrollbackOnly && preserveOldViewportOnScrollbackOnly) {
     // Viewport cells were NOT replaced by this sync — their extras
     // must survive, just shifted to their new absolute position
     // after the scrollback delta.
@@ -388,6 +402,17 @@ function rebaseExtras<V>(
     // colsChanged + isScrollbackOnly shouldn't happen (a scrollback-
     // only sync doesn't carry a new geometry); fall through to drop
     // everything if it does.
+  } else if (isScrollbackOnly && !preserveOldViewportOnScrollbackOnly) {
+    // Scrollback-only sync, but the caller asked us NOT to preserve
+    // old viewport entries (e.g. cellLinks, where link IDs can collide
+    // across syncs). Old scrollback entries still survive at their
+    // original keys when scrollback wasn't wiped or reflowed; the rest
+    // is dropped.
+    if (!scrollbackReplace && !colsChanged) {
+      for (const [k, v] of oldMap) {
+        if (k < oldSbCells) out.set(k, v);
+      }
+    }
   } else if (!scrollbackReplace && !colsChanged) {
     // Normal viewport-replacing sync, no scrollback wipe, no reflow.
     // Old scrollback entries keep their absolute indices; old viewport

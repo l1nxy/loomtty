@@ -121,6 +121,7 @@ jobs:
             web/packages/ciri-codec/src/constants.ts \
             web/packages/ciri-codec/src/__fixtures__/sm.json \
             web/packages/ciri-codec/src/__fixtures__/lz4.json \
+            web/packages/ciri-codec/src/__generated__/frame-fixtures.ts \
             web/packages/ciri-client/src/__generated__/schema.ts \
             web/packages/ciri-client/src/__generated__/types.ts \
             web/packages/ciri-client/src/__generated__/fixtures.ts

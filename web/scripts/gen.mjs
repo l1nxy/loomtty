@@ -12,6 +12,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..");
 const codecSrc = resolve(repoRoot, "web", "packages", "ciri-codec", "src");
 const fixturesDir = resolve(codecSrc, "__fixtures__");
+const codecGen = resolve(codecSrc, "__generated__");
 const clientGen = resolve(
   repoRoot,
   "web",
@@ -21,6 +22,7 @@ const clientGen = resolve(
   "__generated__",
 );
 mkdirSync(fixturesDir, { recursive: true });
+mkdirSync(codecGen, { recursive: true });
 mkdirSync(clientGen, { recursive: true });
 
 // Each task runs one `cargo run --example ...` invocation and writes
@@ -53,6 +55,10 @@ const tasks = [
     example: "dump_messages",
     args: ["fixtures"],
     out: resolve(clientGen, "fixtures.ts"),
+  },
+  {
+    example: "dump_frame_fixtures",
+    out: resolve(codecGen, "frame-fixtures.ts"),
   },
 ];
 

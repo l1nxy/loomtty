@@ -55,6 +55,10 @@ export class PaneRenderer {
   private rowEls: HTMLElement[] = [];
   private theme: Theme;
   private destroyed = false;
+  /// Set by `setTheme()` so the next `render()` repaints every row
+  /// even if the grid itself has no pending damage — the run
+  /// grouper's color output depends on the active theme.
+  private rendererForcedRedraw = false;
 
   constructor(
     private readonly root: HTMLElement,
@@ -94,26 +98,41 @@ export class PaneRenderer {
       throw new Error("PaneRenderer: render called after destroy");
     }
     const dirty = grid.takeDirtyRows();
-    if (dirty.fullRedraw || this.rowEls.length !== grid.rows) {
+    // A theme change forces a complete repaint even when the grid
+    // has no pending damage of its own — every existing span's
+    // inline color came from the old theme.
+    const themeRedraw = this.rendererForcedRedraw;
+    this.rendererForcedRedraw = false;
+    const fullRedraw = dirty.fullRedraw || themeRedraw;
+    if (fullRedraw || this.rowEls.length !== grid.rows) {
       this.reconcileRowContainers(grid.rows);
     }
-    for (const r of dirty.rows) {
+    let rowsToRender: number[];
+    if (themeRedraw && !dirty.fullRedraw) {
+      // takeDirtyRows() returned the grid's diff (possibly empty);
+      // expand to all viewport rows so the theme change actually
+      // reaches the DOM. Don't trust `dirty.rows` to already cover
+      // everything — the grid may have been quiescent.
+      rowsToRender = new Array(grid.rows);
+      for (let i = 0; i < grid.rows; i += 1) rowsToRender[i] = i;
+    } else {
+      rowsToRender = dirty.rows;
+    }
+    for (const r of rowsToRender) {
       if (r < 0 || r >= grid.rows) continue;
       this.renderRow(grid, r);
     }
   }
 
-  /// Replace the active theme and force a full redraw on the next
-  /// `render()`. Returns void so callers can chain it from a UI
-  /// affordance.
+  /// Replace the active theme. Sets a renderer-level forced-redraw
+  /// flag so the next `render()` repaints every viewport row, since
+  /// each cell span's inline foreground/background was resolved
+  /// against the previous theme.
   setTheme(theme: Theme): void {
     this.theme = theme;
     this.wrapper.style.backgroundColor = theme.background;
     this.wrapper.style.color = theme.foreground;
-    // Mark every row stale so the next `render()` regenerates run
-    // colors. We don't have direct access to the grid here — the
-    // caller is expected to follow up with `grid.applyFullPaneSync` or
-    // similar; alternatively a future API can offer `forceRedraw()`.
+    this.rendererForcedRedraw = true;
   }
 
   /// Detach the wrapper from `root` and drop references. Idempotent —

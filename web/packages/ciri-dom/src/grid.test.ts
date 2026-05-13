@@ -248,6 +248,61 @@ describe("PaneGrid.applyCellDelta", () => {
     ).toThrow(/length=1/);
   });
 
+  test("evicts stale grapheme/link entries for overwritten cells", () => {
+    const g = new PaneGrid(1n, 4, 1);
+    g.applyFullPaneSync(
+      makeSync({
+        cols: 4,
+        rows: 1,
+        cells: [cell("a"), cell("b"), cell("c"), cell("d")],
+        scrollback: [],
+        scrollbackRows: 0,
+        scrollbackReplace: true,
+        graphemeExtras: new Map([[1, "́"]]), // 'b' has combining acute
+        cellLinks: new Map([[2, 1]]), // 'c' has a hyperlink
+        linkMap: new Map([[1, "https://example.com"]]),
+      }),
+    );
+    g.takeDirtyRows();
+
+    // Overwrite cells 1..2 (b and c) — both their extras must clear so
+    // the new glyphs don't inherit the old combining mark/link.
+    g.applyCellDelta(
+      makeDelta({
+        cols: 4,
+        regions: [{ line: 0, left: 1, right: 2, cells: [cell("X"), cell("Y")] }],
+      }),
+    );
+    expect(g.graphemeExtras.has(1)).toBe(false);
+    expect(g.cellLinks.has(2)).toBe(false);
+    // Linkmap is a global table; the link-id entry is left alone.
+    expect(g.linkMap.get(1)).toBe("https://example.com");
+  });
+
+  test("non-overwritten extras survive a CellDelta", () => {
+    const g = new PaneGrid(1n, 4, 1);
+    g.applyFullPaneSync(
+      makeSync({
+        cols: 4,
+        rows: 1,
+        cells: [cell("a"), cell("b"), cell("c"), cell("d")],
+        scrollback: [],
+        scrollbackRows: 0,
+        scrollbackReplace: true,
+        graphemeExtras: new Map([[1, "́"], [3, "̀"]]),
+      }),
+    );
+    g.takeDirtyRows();
+    g.applyCellDelta(
+      makeDelta({
+        cols: 4,
+        regions: [{ line: 0, left: 1, right: 1, cells: [cell("X")] }],
+      }),
+    );
+    expect(g.graphemeExtras.has(1)).toBe(false);
+    expect(g.graphemeExtras.get(3)).toBe("̀");
+  });
+
   test("multiple regions on the same row dedupe in dirty set", () => {
     const g = new PaneGrid(1n, 4, 2);
     g.takeDirtyRows(); // drain full-redraw

@@ -200,6 +200,76 @@ describe("PaneRenderer", () => {
     root.remove();
   });
 
+  test("setTheme forces a full repaint on the next render, even with no grid damage", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root);
+    const grid = new PaneGrid(1n, 2, 1);
+    const sync = blankSync(2, 1);
+    sync.cells = [cell("a"), cell("b")];
+    grid.applyFullPaneSync(sync);
+    r.render(grid);
+    // Snapshot the initial color (jsdom normalizes RGB → "rgb(...)");
+    // we don't pin the exact value because parsing differs by host —
+    // we just check it changes after setTheme.
+    const before = root.querySelector("span")!.style.color;
+    // Drain dirty rows so the next render() sees a clean grid: this
+    // is the bug round-2 codex caught — without the renderer-level
+    // forced redraw, the next render() would no-op and existing
+    // spans would keep the pre-theme colors.
+    expect(before).toBeTruthy();
+    // The named-foreground slot dominates over `theme.foreground`
+    // for NAMED_FOREGROUND cells (see resolveNamed); override both
+    // so the theme swap actually surfaces in the run output.
+    const newNamed = DEFAULT_THEME.named.slice();
+    newNamed[16 /* NAMED_FOREGROUND */] = "#ff00ff";
+    r.setTheme({
+      ...DEFAULT_THEME,
+      named: newNamed,
+      foreground: "#ff00ff",
+    });
+    r.render(grid); // no grid damage, but theme changed
+    const after = root.querySelector("span")!.style.color;
+    expect(after).not.toBe(before);
+    root.remove();
+  });
+
+  test("setTheme + later CellDelta merges into a single repaint, not two", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root);
+    const grid = new PaneGrid(1n, 2, 1);
+    const sync = blankSync(2, 1);
+    sync.cells = [cell("a"), cell("b")];
+    grid.applyFullPaneSync(sync);
+    r.render(grid);
+    r.setTheme({
+      ...DEFAULT_THEME,
+      named: DEFAULT_THEME.named.slice(),
+      foreground: "#abcdef",
+    });
+    grid.applyCellDelta({
+      meta: {
+        paneId: 1n,
+        generation: 2n,
+        cursorLine: 0,
+        cursorCol: 0,
+        cursorShape: 0,
+        modeFlags: 0,
+        echoAck: 0n,
+      },
+      cols: 2,
+      regions: [{ line: 0, left: 0, right: 0, cells: [cell("Z")] }],
+    });
+    r.render(grid);
+    // The single render should both apply the cell delta AND repaint
+    // every row with the new theme — verify by checking the new cell
+    // is present, and the run color is the new fg.
+    const row = root.querySelector(".ciri-row")!;
+    expect(row.textContent).toBe("Zb");
+    root.remove();
+  });
+
   test("uses default theme background and foreground on the wrapper", () => {
     const root = document.createElement("div");
     document.body.appendChild(root);

@@ -149,6 +149,20 @@ export class PaneGrid {
         );
       }
       const rowStart = region.line * this.cols;
+      // Evict stale extras for the cells we're about to overwrite.
+      // Without this, a new character that lands on a cell that
+      // previously had a combining grapheme or an OSC 8 hyperlink
+      // would silently inherit them (renderer looks up
+      // `viewportGlobalIndex(line, col)` in `graphemeExtras` and
+      // `cellLinks`, and those maps still hold the old bindings).
+      // Mirrors `apply_delta_borrowed` in `crates/ciri-app/src/grid/sync.rs:265-268`.
+      const sbLen = this.scrollback.length;
+      const globalStart = sbLen + rowStart + region.left;
+      const globalEnd = globalStart + region.cells.length;
+      for (let g = globalStart; g < globalEnd; g += 1) {
+        this.graphemeExtras.delete(g);
+        this.cellLinks.delete(g);
+      }
       for (let i = 0; i < region.cells.length; i += 1) {
         this.cells[rowStart + region.left + i] = region.cells[i]!;
       }

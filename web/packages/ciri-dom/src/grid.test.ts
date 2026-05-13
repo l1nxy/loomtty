@@ -265,6 +265,214 @@ describe("PaneGrid.applyCellDelta", () => {
   });
 });
 
+describe("PaneGrid.applyFullPaneSync — scrollback-only sync (rows=0)", () => {
+  // Server convention: a `FullPaneSync` with `rows = 0` and `cells = []`
+  // is a scrollback-only delivery — new history rows without touching
+  // the live viewport. Round-1 codex review caught this: my earlier
+  // code unconditionally wrote `this.rows = 0` and blanked the viewport.
+  test("preserves viewport geometry and cells", () => {
+    const g = new PaneGrid(1n, 3, 2);
+    g.applyFullPaneSync(
+      makeSync({
+        rows: 2,
+        cells: [
+          cell("a"), cell("b"), cell("c"),
+          cell("d"), cell("e"), cell("f"),
+        ],
+      }),
+    );
+    g.takeDirtyRows();
+
+    g.applyFullPaneSync(
+      makeSync({
+        rows: 0,
+        cells: [],
+        scrollback: [cell("o"), cell("l"), cell("d")],
+        scrollbackRows: 1,
+        scrollbackReplace: false,
+      }),
+    );
+
+    expect(g.rows).toBe(2);
+    expect(g.cols).toBe(3);
+    expect(g.cells).toHaveLength(6);
+    expect(g.cells.map((c) => c.ch)).toEqual(["a", "b", "c", "d", "e", "f"]);
+    expect(g.scrollbackRows).toBe(1);
+    expect(g.scrollback.map((c) => c.ch)).toEqual(["o", "l", "d"]);
+  });
+
+  test("doesn't reject a follow-up CellDelta after a scrollback-only sync", () => {
+    const g = new PaneGrid(1n, 3, 2);
+    g.applyFullPaneSync(makeSync());
+    g.takeDirtyRows();
+    g.applyFullPaneSync(
+      makeSync({
+        rows: 0,
+        cells: [],
+        scrollback: [cell("x"), cell("y"), cell("z")],
+        scrollbackRows: 1,
+        scrollbackReplace: false,
+      }),
+    );
+    // Without the rows=0 guard the previous call would have set
+    // rows=0; this delta would then throw `region.line=0 >= rows=0`.
+    g.applyCellDelta(
+      makeDelta({
+        cols: 3,
+        regions: [{ line: 0, left: 0, right: 0, cells: [cell("Q")] }],
+      }),
+    );
+    expect(g.cells[0]!.ch).toBe("Q");
+  });
+});
+
+describe("PaneGrid.applyFullPaneSync — extras rebase", () => {
+  // Sync extras keys live in `[sync.scrollback, sync.cells]`; after we
+  // splice that into the existing grid, the absolute cell index that
+  // each entry SHOULD point to has shifted forward by the existing
+  // scrollback length (for !scrollback_replace). Round-1 codex caught
+  // this — without the rebase, viewport graphemes land on stale cells.
+
+  test("appends sync graphemes into absolute indices after scrollback append", () => {
+    const g = new PaneGrid(1n, 2, 1);
+    // First sync builds initial state: 1 scrollback row (2 cells) +
+    // 1 viewport row (2 cells). No extras.
+    g.applyFullPaneSync(
+      makeSync({
+        cols: 2,
+        rows: 1,
+        cells: [cell("a"), cell("b")],
+        scrollback: [cell("s"), cell("t")],
+        scrollbackRows: 1,
+        scrollbackReplace: true,
+      }),
+    );
+    // Second sync: append 1 sb row + replace viewport. New sync
+    // carries a grapheme on its FIRST sb cell (index 0 in sync stream).
+    // After applying, that grapheme should be at absolute index 2
+    // (the existing scrollback is 2 cells long).
+    g.applyFullPaneSync(
+      makeSync({
+        cols: 2,
+        rows: 1,
+        cells: [cell("c"), cell("\u{1F600}")],
+        scrollback: [cell("u"), cell("v")],
+        scrollbackRows: 1,
+        scrollbackReplace: false,
+        // Sync's stream: [u, v, c, 😀].
+        //  - key 0 → 'u' in sync sb → absolute (oldSb=2) + 0 = 2
+        //  - key 3 → '😀' in sync cells → absolute (oldSb=2) + (3-syncSb=2) + syncSb=2
+        //    = oldSb + key = 2 + 3 = 5
+        // Cleaner: viewport entry at key 3 is at sync-vp-offset 1,
+        // post-sync absolute = newSbTotal(4) + 1 = 5.
+        graphemeExtras: new Map([
+          [0, "́"],
+          [3, "‍"],
+        ]),
+      }),
+    );
+    expect(g.graphemeExtras.get(2)).toBe("́");
+    expect(g.graphemeExtras.get(5)).toBe("‍");
+    // Original entries (none) shouldn't surface.
+    expect(g.graphemeExtras.size).toBe(2);
+  });
+
+  test("scrollback-only sync rebases sync sb graphemes by old scrollback length", () => {
+    const g = new PaneGrid(1n, 2, 1);
+    g.applyFullPaneSync(
+      makeSync({
+        cols: 2,
+        rows: 1,
+        cells: [cell("a"), cell("b")],
+        scrollback: [cell("s"), cell("t")],
+        scrollbackRows: 1,
+        scrollbackReplace: true,
+      }),
+    );
+    g.applyFullPaneSync(
+      makeSync({
+        cols: 2,
+        rows: 0,
+        cells: [],
+        scrollback: [cell("u"), cell("v")],
+        scrollbackRows: 1,
+        scrollbackReplace: false,
+        graphemeExtras: new Map([[0, "́"]]),
+      }),
+    );
+    // Sync's sb cell at index 0 is 'u'. After appending past old sb
+    // (2 cells), absolute index = 2.
+    expect(g.graphemeExtras.get(2)).toBe("́");
+    expect(g.graphemeExtras.size).toBe(1);
+  });
+
+  test("scrollback_replace drops old extras and uses sync indices as absolute", () => {
+    const g = new PaneGrid(1n, 2, 1);
+    // Seed an old extras entry.
+    g.applyFullPaneSync(
+      makeSync({
+        cols: 2,
+        rows: 1,
+        cells: [cell("a"), cell("b")],
+        scrollback: [cell("s"), cell("t")],
+        scrollbackRows: 1,
+        scrollbackReplace: true,
+        graphemeExtras: new Map([[0, "_old_"]]),
+      }),
+    );
+    expect(g.graphemeExtras.get(0)).toBe("_old_");
+
+    // New sync REPLACES scrollback. Old extras must be dropped — they
+    // pointed at scrollback cells that no longer exist.
+    g.applyFullPaneSync(
+      makeSync({
+        cols: 2,
+        rows: 1,
+        cells: [cell("c"), cell("d")],
+        scrollback: [cell("u"), cell("v")],
+        scrollbackRows: 1,
+        scrollbackReplace: true,
+        graphemeExtras: new Map([[2, "_new_"]]),
+      }),
+    );
+    // Sync's stream: [u, v, c, d]. Key 2 = 'c' in viewport, which is
+    // at absolute index 2 (sb=[u,v] is 2 cells).
+    expect(g.graphemeExtras.size).toBe(1);
+    expect(g.graphemeExtras.get(2)).toBe("_new_");
+    expect(g.graphemeExtras.has(0)).toBe(false);
+  });
+
+  test("rebases cellLinks the same way as graphemeExtras", () => {
+    const g = new PaneGrid(1n, 2, 1);
+    g.applyFullPaneSync(
+      makeSync({
+        cols: 2,
+        rows: 1,
+        cells: [cell("a"), cell("b")],
+        scrollback: [cell("s"), cell("t")],
+        scrollbackRows: 1,
+        scrollbackReplace: true,
+      }),
+    );
+    g.applyFullPaneSync(
+      makeSync({
+        cols: 2,
+        rows: 1,
+        cells: [cell("c"), cell("d")],
+        scrollback: [cell("u"), cell("v")],
+        scrollbackRows: 1,
+        scrollbackReplace: false,
+        cellLinks: new Map([[2, 1]]), // sync-key 2 = 'c' in viewport
+        linkMap: new Map([[1, "https://example.com"]]),
+      }),
+    );
+    // Sync stream: [u, v, c, d]. Key 2 ('c') → vp offset 0.
+    // Absolute = newSbTotal(4) + 0 = 4.
+    expect(g.cellLinks.get(4)).toBe(1);
+    expect(g.linkMap.get(1)).toBe("https://example.com");
+  });
+});
+
 describe("PaneGrid.rowCells + viewportGlobalIndex", () => {
   test("rowCells returns a slice that doesn't mutate the underlying grid", () => {
     const g = new PaneGrid(1n, 3, 2);

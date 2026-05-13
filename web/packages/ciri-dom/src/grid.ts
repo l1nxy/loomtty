@@ -157,9 +157,25 @@ export class PaneGrid {
     this.meta = delta.meta;
   }
 
-  /// Apply a FullPaneSync: replace the entire viewport state, scrollback,
-  /// and extras. Marks every viewport row dirty AND requests a full
-  /// redraw (row containers may need to be rebuilt for a new geometry).
+  /// Apply a FullPaneSync. Three cases:
+  ///
+  /// 1. `sync.rows > 0` and dimensions changed → full resize + replace.
+  /// 2. `sync.rows > 0` and dimensions match  → replace viewport in place.
+  /// 3. `sync.rows === 0`                     → scrollback-only sync:
+  ///    the server is appending (or replacing) scrollback rows without
+  ///    touching the live viewport. The viewport `cells`, `cols`, and
+  ///    `rows` are preserved; only scrollback, extras, and meta update.
+  ///
+  /// In case 3, mutating `this.cols`/`this.rows`/`this.cells` would
+  /// blank the screen on every normal scrolling tick — that was the
+  /// bug round-1 codex review flagged. Mirrors the Rust client's
+  /// `apply_full_sync` (`crates/ciri-app/src/grid/sync.rs`).
+  ///
+  /// Grapheme + hyperlink extras are rebased into the post-application
+  /// global cell-index space. The server keys both maps relative to
+  /// `[sync.scrollback, sync.cells]`; after we append/replace the
+  /// scrollback, those keys need shifting so they still point at the
+  /// right cells.
   applyFullPaneSync(sync: FullPaneSync): void {
     if (sync.meta.paneId !== this.paneId) {
       throw new GridShapeError(
@@ -179,42 +195,71 @@ export class PaneGrid {
       );
     }
 
-    this.cols = sync.cols;
-    this.rows = sync.rows;
-    // `slice()` rather than borrowing the input — the decoder hands us
-    // a freshly-allocated array, but a caller building syncs by hand
-    // might pass a shared reference. Copying keeps the grid's
-    // internal state isolated from the decoder's transient buffers.
-    this.cells = sync.cells.slice();
-    // Same isolation guarantee for scrollback. Append (default) vs
-    // replace (full-buffer overwrite) is decided here, not by the
-    // caller.
+    // Snapshot pre-sync state used by the extras rebase math below.
+    const oldSbCells = this.scrollback.length;
+    const colsChanged = sync.cols !== this.cols;
+    const isScrollbackOnly = sync.rows === 0;
+
+    if (!isScrollbackOnly) {
+      // `slice()` rather than borrowing the input — the decoder hands us
+      // a freshly-allocated array, but a caller building syncs by hand
+      // might pass a shared reference. Copying keeps the grid's
+      // internal state isolated from the decoder's transient buffers.
+      this.cols = sync.cols;
+      this.rows = sync.rows;
+      this.cells = sync.cells.slice();
+    }
+    // else: keep this.cols, this.rows, this.cells from before the sync.
+
+    // Scrollback handling. Append (default) vs replace (full-buffer
+    // overwrite) is decided here, not by the caller.
     if (sync.scrollbackReplace) {
       this.scrollback = sync.scrollback.slice();
       this.scrollbackRows = sync.scrollbackRows;
-    } else {
+    } else if (sync.scrollback.length > 0) {
       // The server's `scrollback_replace = false` means "the
       // following rows are NEW history to append on top of what the
-      // client already has." Pre-allocate and copy in place.
+      // client already has." Pre-allocate and copy in place. Skip
+      // the alloc when there's no incoming scrollback (the most
+      // common case — viewport-replacing syncs typically carry no
+      // history).
       const prev = this.scrollback;
-      const totalRows = this.scrollbackRows + sync.scrollbackRows;
-      this.scrollback = new Array(totalRows * sync.cols);
+      this.scrollback = new Array(prev.length + sync.scrollback.length);
       for (let i = 0; i < prev.length; i += 1) this.scrollback[i] = prev[i]!;
       const off = prev.length;
       for (let i = 0; i < sync.scrollback.length; i += 1) {
         this.scrollback[off + i] = sync.scrollback[i]!;
       }
-      this.scrollbackRows = totalRows;
+      this.scrollbackRows = this.scrollbackRows + sync.scrollbackRows;
     }
 
-    // Map copies — same reasoning: don't expose the decoder's buffer.
-    this.graphemeExtras = new Map(sync.graphemeExtras);
-    this.cellLinks = new Map(sync.cellLinks);
+    this.graphemeExtras = rebaseExtras(
+      this.graphemeExtras,
+      sync.graphemeExtras,
+      oldSbCells,
+      sync.scrollback.length,
+      sync.scrollbackReplace,
+      colsChanged,
+    );
+    this.cellLinks = rebaseExtras(
+      this.cellLinks,
+      sync.cellLinks,
+      oldSbCells,
+      sync.scrollback.length,
+      sync.scrollbackReplace,
+      colsChanged,
+    );
+    // linkMap is keyed by link-id (a global handle), not by cell
+    // index, so no rebase is needed. Replace wholesale.
     this.linkMap = new Map(sync.linkMap);
     this.meta = sync.meta;
     this.title = sync.title;
     this.cwd = sync.cwd;
 
+    // Even a scrollback-only sync may shift viewport extras forward
+    // (because Rust drops old viewport extras on every sync — see
+    // `rebase_grapheme_lookup`); to stay safe the renderer must
+    // repaint all viewport rows after every FullPaneSync.
     this.dirtyRows.clear();
     this.pendingFullRedraw = true;
   }
@@ -262,4 +307,56 @@ export class PaneGrid {
   viewportGlobalIndex(row: number, col: number): number {
     return this.scrollback.length + row * this.cols + col;
   }
+}
+
+/// Produce the post-sync map by rebasing sync entries into the
+/// concatenated `[scrollback..., viewport]` global index space.
+///
+/// Sync map keys live in `[sync.scrollback, sync.cells]`:
+///   - sync sb entries (key < syncSbCells) → new key = newScrollbackBase + key
+///   - sync vp entries (key >= syncSbCells) → new key = newScrollbackTotal + (key - syncSbCells)
+///
+/// Where:
+///   - `newScrollbackBase`  = where sync's *first* scrollback cell lands in the
+///                            post-sync absolute index space.
+///   - `newScrollbackTotal` = where the viewport starts in the post-sync
+///                            absolute index space (i.e., total sb cells).
+///
+/// Old entries are preserved only for the scrollback portion (Rust's
+/// `rebase_grapheme_lookup` drops `row >= old_scrollback_rows`); they're
+/// also dropped wholesale on `scrollbackReplace` or `colsChanged`
+/// because either invalidates their cell indices.
+function rebaseExtras<V>(
+  oldMap: Map<number, V>,
+  syncMap: Map<number, V>,
+  oldSbCells: number,
+  syncSbCells: number,
+  scrollbackReplace: boolean,
+  colsChanged: boolean,
+): Map<number, V> {
+  const out = new Map<number, V>();
+
+  if (!scrollbackReplace && !colsChanged) {
+    // Old scrollback entries (keys < oldSbCells) keep their absolute
+    // indices — the existing scrollback rows didn't move. Old
+    // viewport entries (keys >= oldSbCells) are dropped because the
+    // old viewport either got replaced by sync.cells or had stale
+    // grapheme bindings the server is now repopulating.
+    for (const [k, v] of oldMap) {
+      if (k < oldSbCells) out.set(k, v);
+    }
+  }
+
+  // Where sync's first sb cell lands in absolute index space.
+  const newScrollbackBase = scrollbackReplace ? 0 : oldSbCells;
+  const newScrollbackTotal = newScrollbackBase + syncSbCells;
+
+  for (const [k, v] of syncMap) {
+    if (k < syncSbCells) {
+      out.set(newScrollbackBase + k, v);
+    } else {
+      out.set(newScrollbackTotal + (k - syncSbCells), v);
+    }
+  }
+  return out;
 }

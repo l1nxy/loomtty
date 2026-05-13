@@ -13,12 +13,7 @@ impl<'a> WorkspaceIndicator<'a> {
     /// the slot edge-to-edge, no rounding — but a quieter colour so
     /// it doesn't fight the bright session block on the far left or
     /// the per-mode block on the far right.
-    pub(super) fn into_div(
-        self,
-        slot: UiRect,
-        accent: Color,
-        surface_elevated: Color,
-    ) -> Div {
+    pub(super) fn into_div(self, slot: UiRect, accent: Color, surface_elevated: Color) -> Div {
         if self.label.is_empty() || slot.is_empty() {
             return div();
         }

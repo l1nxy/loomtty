@@ -8,7 +8,7 @@ use crossfont::BitmapBuffer;
 #[cfg(target_os = "linux")]
 use freetype::face::LoadFlag;
 
-use super::atlas::{make_glyph_entry, AtlasRegion, PendingUpload};
+use super::atlas::{AtlasRegion, PendingUpload, make_glyph_entry};
 #[cfg(target_os = "linux")]
 use super::types::FontStyle;
 use super::types::GlyphEntry;

@@ -8,9 +8,7 @@ use super::tokens;
 use super::types::{UiContext, UiScene};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{
-    Div, ElevationIndex, IntoElement, Render, RenderCtx, Styled, deferred, div, text,
-};
+use ciri_ui::{Div, ElevationIndex, IntoElement, Render, RenderCtx, Styled, deferred, div, text};
 
 const DOT_PHASE_MS: u128 = 300;
 const DOT_PHASES: u32 = 4;
@@ -160,7 +158,11 @@ impl ConnectionStatusComponent {
         let bw = tokens::BORDER_THIN;
         let content_w = w - bw * 2.0;
         let animates = kind.animates();
-        let dots = if animates { dot_suffix(dot_phase()) } else { "" };
+        let dots = if animates {
+            dot_suffix(dot_phase())
+        } else {
+            ""
+        };
         let suffix_w = if animates {
             text_layout::measure(cx, "...")
         } else {

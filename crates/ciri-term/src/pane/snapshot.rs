@@ -44,11 +44,15 @@ impl Pane {
         let rows = grid.screen_lines();
         let content = term.renderable_content();
 
-        let (cells, mut grapheme_extras, hyperlink_extras) = collect_viewport_cells(grid, rows, cols);
-        let (sb_cells, mut sb_grapheme_extras) = collect_scrollback_cells(grid, cols, scrollback.rows);
+        let (cells, mut grapheme_extras, hyperlink_extras) =
+            collect_viewport_cells(grid, rows, cols);
+        let (sb_cells, mut sb_grapheme_extras) =
+            collect_scrollback_cells(grid, cols, scrollback.rows);
         let scrollback_cell_count = sb_cells.len() as u32;
         for (idx, extra) in grapheme_extras.0.drain(..) {
-            sb_grapheme_extras.0.push((scrollback_cell_count + idx, extra));
+            sb_grapheme_extras
+                .0
+                .push((scrollback_cell_count + idx, extra));
         }
         let grapheme_extras = sb_grapheme_extras;
 

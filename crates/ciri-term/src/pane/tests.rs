@@ -693,7 +693,10 @@ fn capture_text_with_scrollback_includes_scrolled_off_rows() {
             .text;
         history.contains("CIRI_SB_1") && !viewport.contains("CIRI_SB_1")
     });
-    assert!(settled, "row 1 should land in scrollback and leave viewport");
+    assert!(
+        settled,
+        "row 1 should land in scrollback and leave viewport"
+    );
 
     let viewport_only = pane.capture_text(&CapturePaneOpts::default());
     let with_history = pane.capture_text(&CapturePaneOpts {
@@ -731,9 +734,7 @@ fn capture_text_join_wrapped_merges_softwraps_but_keeps_hard_newlines() {
     // the echo is present — alacritty does not set WRAPLINE on a cell
     // that is immediately followed by a hard `\n`.
     let mut pane = Pane::new_with_opts(93, 8, 6, shell_path(), None, None).expect("create pane");
-    pane.write_to_pty(
-        b"stty -echo; printf 'CIRIWRAPMARK1234ABCDEFGH\\nNEXTROW\\n'; stty echo\n",
-    );
+    pane.write_to_pty(b"stty -echo; printf 'CIRIWRAPMARK1234ABCDEFGH\\nNEXTROW\\n'; stty echo\n");
 
     let saw = wait_until(&mut pane, Duration::from_secs(3), |p| {
         let t = p.capture_text(&CapturePaneOpts::default()).text;
@@ -741,10 +742,12 @@ fn capture_text_join_wrapped_merges_softwraps_but_keeps_hard_newlines() {
     });
     assert!(saw, "both markers should appear in output");
 
-    let joined = pane.capture_text(&CapturePaneOpts {
-        join_wrapped: true,
-        ..Default::default()
-    }).text;
+    let joined = pane
+        .capture_text(&CapturePaneOpts {
+            join_wrapped: true,
+            ..Default::default()
+        })
+        .text;
     let split = pane.capture_text(&CapturePaneOpts::default()).text;
 
     assert!(

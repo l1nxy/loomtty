@@ -157,13 +157,10 @@ impl TabBarComponent {
             );
         }
 
-        div().w(cx.viewport_w).h(cx.viewport_h).child(
-            rows.absolute()
-                .left(rect.x)
-                .top(rect.y)
-                .w(rect.w)
-                .h(rect.h),
-        )
+        div()
+            .w(cx.viewport_w)
+            .h(cx.viewport_h)
+            .child(rows.absolute().left(rect.x).top(rect.y).w(rect.w).h(rect.h))
     }
 
     fn build_tree(&self, cx: &RenderCtx<'_>) -> ciri_ui::Div {
@@ -226,11 +223,7 @@ impl TabBarComponent {
                 );
             }
 
-            let truncated = self
-                .truncated_labels
-                .get(idx)
-                .cloned()
-                .unwrap_or_default();
+            let truncated = self.truncated_labels.get(idx).cloned().unwrap_or_default();
 
             let mut row_el = div()
                 .w(content_w)
@@ -340,7 +333,6 @@ impl Render for TabBarComponent {
 }
 
 impl TabBarComponent {
-
     pub(crate) fn hit(
         &self,
         rect: UiRect,

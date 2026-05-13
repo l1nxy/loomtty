@@ -298,15 +298,17 @@ fn capture_pane_emits_one_newline_per_grid_row() {
     // Tighter than just shape: also verify the response carries
     // exactly one row per pane row + newline (i.e. capture_text was
     // actually executed end-to-end, not just stubbed).
-    let [ServerResponse::SendToClient(
-        1,
-        ServerMessage::PaneCapture {
-            session_name: sn,
-            pane_id: pid,
-            text,
-            truncated,
-        },
-    )] = responses.as_slice()
+    let [
+        ServerResponse::SendToClient(
+            1,
+            ServerMessage::PaneCapture {
+                session_name: sn,
+                pane_id: pid,
+                text,
+                truncated,
+            },
+        ),
+    ] = responses.as_slice()
     else {
         panic!(
             "expected exactly one PaneCapture response, got {} response(s)",
@@ -320,7 +322,10 @@ fn capture_pane_emits_one_newline_per_grid_row() {
     // join_wrapped is false (the default). With Default::default() opts
     // on a no-scrollback request, the newline count must equal the
     // viewport row count regardless of what the shell has written.
-    let pane = server.sessions[&session_name].panes.get(&target_pane).unwrap();
+    let pane = server.sessions[&session_name]
+        .panes
+        .get(&target_pane)
+        .unwrap();
     let expected_rows = pane.grid_rows() as usize;
     let newlines = text.matches('\n').count();
     assert_eq!(

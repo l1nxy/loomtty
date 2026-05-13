@@ -152,7 +152,10 @@ impl<'a> CiriUiTextShaper for HostTextShaper<'a> {
             bg_color,
             scale,
         };
-        let atlas = self.atlas.as_deref_mut().expect("atlas presence checked above");
+        let atlas = self
+            .atlas
+            .as_deref_mut()
+            .expect("atlas presence checked above");
         emit_status_text(
             atlas,
             self.shaper.as_deref_mut(),

@@ -59,8 +59,7 @@ pub(super) struct CellMetrics {
 impl CellMetrics {
     pub(super) fn new(atlas: &GlyphCache, config: &CiriConfig) -> Self {
         let base_thickness = 1.0_f32;
-        let ul_thick =
-            (base_thickness * config.font.adjust_underline_thickness.max(0.0)).max(1.0);
+        let ul_thick = (base_thickness * config.font.adjust_underline_thickness.max(0.0)).max(1.0);
         let st_thick =
             (base_thickness * config.font.adjust_strikethrough_thickness.max(0.0)).max(1.0);
         CellMetrics {

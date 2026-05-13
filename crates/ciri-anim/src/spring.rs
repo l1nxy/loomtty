@@ -29,8 +29,14 @@ impl SpringParams {
         // to themselves, silently defeating callers that rely on
         // `PartialEq` (e.g. `AnimProp::animate_to` preserves spring elapsed
         // only when params match — NaN in any field retargets every time).
-        debug_assert!(damping_ratio.is_finite(), "SpringParams: damping_ratio must be finite");
-        debug_assert!(stiffness.is_finite(), "SpringParams: stiffness must be finite");
+        debug_assert!(
+            damping_ratio.is_finite(),
+            "SpringParams: damping_ratio must be finite"
+        );
+        debug_assert!(
+            stiffness.is_finite(),
+            "SpringParams: stiffness must be finite"
+        );
         debug_assert!(epsilon.is_finite(), "SpringParams: epsilon must be finite");
 
         let damping_ratio = damping_ratio.max(0.001);

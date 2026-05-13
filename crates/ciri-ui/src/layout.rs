@@ -708,23 +708,35 @@ fn anchor_child_position(
     let [vw, vh] = viewport;
 
     // Preferred placement: the named corner of the child sits at the
-    // anchor point.
+    // anchor point. `*Center` variants align the named edge with the
+    // anchor and horizontally center the child on `point.x`.
     let (mut x, mut y) = match placement.corner {
         AnchorCorner::TopLeft => (ax, ay),
         AnchorCorner::TopRight => (ax - cw, ay),
         AnchorCorner::BottomLeft => (ax, ay - ch),
         AnchorCorner::BottomRight => (ax - cw, ay - ch),
+        AnchorCorner::TopCenter => (ax - cw * 0.5, ay),
+        AnchorCorner::BottomCenter => (ax - cw * 0.5, ay - ch),
     };
 
     // Per-axis edge flip. We only flip when (a) the preferred placement
     // would extend past the viewport edge AND (b) the opposite corner
     // has room. Both conditions matter: a child wider than the
     // viewport can't fit either way, so flipping wouldn't help and
-    // would just hide the anchor on the other side.
-    if x + cw > vw && (ax - cw) >= 0.0 {
-        x = ax - cw;
-    } else if x < 0.0 && ax + cw <= vw {
-        x = ax;
+    // would just hide the anchor on the other side. Center variants
+    // are symmetric on X so no horizontal flip is needed; the final
+    // clamp below pulls them back in when the centered placement would
+    // exceed the viewport.
+    let centered_x = matches!(
+        placement.corner,
+        AnchorCorner::TopCenter | AnchorCorner::BottomCenter,
+    );
+    if !centered_x {
+        if x + cw > vw && (ax - cw) >= 0.0 {
+            x = ax - cw;
+        } else if x < 0.0 && ax + cw <= vw {
+            x = ax;
+        }
     }
     if y + ch > vh && (ay - ch) >= 0.0 {
         y = ay - ch;
@@ -1605,13 +1617,11 @@ mod tests {
 
         const BG: Color = [0.2, 0.4, 0.8, 1.0];
         let mut shaper = RecordingShaper::default();
-        let root = div().w(200.0).h(40.0).bg(BG).child(
-            div()
-                .w(100.0)
-                .h(20.0)
-                .bg(TRANSPARENT)
-                .child(text("hello")),
-        );
+        let root = div()
+            .w(200.0)
+            .h(40.0)
+            .bg(BG)
+            .child(div().w(100.0).h(20.0).bg(TRANSPARENT).child(text("hello")));
         let _ = paint_tree(&root, &theme(), [800.0, 600.0], 1.0, &mut shaper);
         assert_eq!(shaper.calls.len(), 1);
         assert_eq!(

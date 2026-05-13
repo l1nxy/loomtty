@@ -185,7 +185,10 @@ impl OverviewActionBarComponent {
             .text_color(red)
             .hit_id(HIT_CLOSE)
             .cursor_pointer()
-            .hover(|s| s.bg(tokens::tint(red, tokens::ALPHA_PRIMARY_REST)).text_color(fg))
+            .hover(|s| {
+                s.bg(tokens::tint(red, tokens::ALPHA_PRIMARY_REST))
+                    .text_color(fg)
+            })
             .child(text("\u{2715} Close"));
 
         let focus_button = div()

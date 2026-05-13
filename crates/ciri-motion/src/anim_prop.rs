@@ -151,9 +151,7 @@ impl<T: Lerp> AnimProp<T> {
         // holds. Timed transitions always reset — a tween retarget that
         // inherited elapsed would skip part of its easing curve.
         let elapsed = match (self.anim, transition) {
-            (Some(prev), Transition::Spring(new_params))
-                if matches!(prev.transition, Transition::Spring(p) if p == new_params) =>
-            {
+            (Some(prev), Transition::Spring(new_params)) if matches!(prev.transition, Transition::Spring(p) if p == new_params) => {
                 prev.elapsed
             }
             _ => 0.0,

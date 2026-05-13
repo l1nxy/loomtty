@@ -42,14 +42,12 @@ fn create_headless_context() -> Option<gpu::Context> {
     match try_create_headless_context() {
         Ok(ctx) => Some(ctx),
         Err(e) if std::env::var("CIRI_SKIP_HEADLESS_GPU_TESTS").is_ok() => {
-            eprintln!(
-                "Headless GPU init failed; skipping (CIRI_SKIP_HEADLESS_GPU_TESTS set): {e}"
-            );
+            eprintln!("Headless GPU init failed; skipping (CIRI_SKIP_HEADLESS_GPU_TESTS set): {e}");
             None
         }
-        Err(e) => panic!(
-            "Headless GPU init failed (set CIRI_SKIP_HEADLESS_GPU_TESTS to skip): {e}"
-        ),
+        Err(e) => {
+            panic!("Headless GPU init failed (set CIRI_SKIP_HEADLESS_GPU_TESTS to skip): {e}")
+        }
     }
 }
 

@@ -976,7 +976,9 @@ impl GlBackgroundImagePipeline {
                 )
             })?;
         let loc_tex = gl.get_uniform_location(program, "u_tex").ok_or_else(|| {
-            crate::GpuError::ShaderCompile("u_tex uniform not found in background_image shader".into())
+            crate::GpuError::ShaderCompile(
+                "u_tex uniform not found in background_image shader".into(),
+            )
         })?;
 
         let vao = gl
@@ -1016,9 +1018,9 @@ impl GlBackgroundImagePipeline {
         if let Some(prev) = self.texture.take() {
             gl.delete_texture(prev.texture);
         }
-        let texture = gl
-            .create_texture()
-            .map_err(|e| crate::GpuError::ResourceCreate(format!("background_image texture: {e}")))?;
+        let texture = gl.create_texture().map_err(|e| {
+            crate::GpuError::ResourceCreate(format!("background_image texture: {e}"))
+        })?;
         gl.bind_texture(glow::TEXTURE_2D, Some(texture));
         // Non-sRGB internal format — the `BACKGROUND_IMAGE_FS` linearises
         // explicitly when `use_linear_blending` is on. The color glyph

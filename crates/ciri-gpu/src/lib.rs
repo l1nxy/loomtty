@@ -388,12 +388,7 @@ impl Renderer {
     /// `width` and `height` are in image pixels; `rgba.len()` must equal
     /// `width * height * 4`. Caller-side image decoding lives in
     /// `ciri::app::background_image`.
-    pub fn set_background_image(
-        &mut self,
-        rgba: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Result<()> {
+    pub fn set_background_image(&mut self, rgba: &[u8], width: u32, height: u32) -> Result<()> {
         match self {
             #[cfg(feature = "blade")]
             Renderer::Blade(r) => r

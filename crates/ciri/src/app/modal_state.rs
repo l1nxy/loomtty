@@ -33,6 +33,12 @@ impl App {
             // colocated with the rest of the cleanup, easier to read.
             self.close_search_restore_scroll();
         }
+        // Reset the context-menu scroll offset whenever we transition
+        // into a new context-menu modal — opening a fresh menu (even
+        // a different one) should land at the top of its item list.
+        if matches!(keep, ModalKind::ContextMenu(_)) {
+            self.core.context_menu_scroll_offset = 0;
+        }
         self.core.enter_modal_close_peers_core(keep);
         // Always cancel drag / selection: every modal opens a surface
         // (settings backdrop, palette overlay, context menu, paste
@@ -95,11 +101,7 @@ mod tests {
             app.enter_modal_close_peers(keep);
 
             assert!(!app.mouse_left_held, "{:?}: mouse_left_held", keep);
-            assert!(
-                app.drag.col_dragging.is_none(),
-                "{:?}: col_dragging",
-                keep
-            );
+            assert!(app.drag.col_dragging.is_none(), "{:?}: col_dragging", keep);
             assert!(
                 app.drag.tile_dragging.is_none(),
                 "{:?}: tile_dragging",

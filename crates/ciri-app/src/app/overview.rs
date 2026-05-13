@@ -47,7 +47,8 @@ impl AppModel {
             let target_x = self
                 .workspaces
                 .active()
-                .target_offset_for_active_with_strategy(center, current_x) as f64;
+                .target_offset_for_active_with_strategy(center, current_x)
+                as f64;
             let target_y = self.workspaces.target_offset_y() as f64;
             self.anim_mgr.view_offset_x.animate_to(target_x, sp);
             self.anim_mgr.view_offset_y.animate_to(target_y, sp);

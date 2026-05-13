@@ -299,9 +299,7 @@ impl PaletteComponent {
                         .items_center()
                         .child(div().w(text_pad).h(row_h));
                     if !is_header {
-                        row_div = row_div
-                            .hit_id(entry_hit_id(row.entry_idx))
-                            .cursor_pointer();
+                        row_div = row_div.hit_id(entry_hit_id(row.entry_idx)).cursor_pointer();
                         if row.is_selected {
                             row_div = row_div.bg(selected_bg).rounded(cx.theme.radius.sm);
                         } else {
@@ -319,20 +317,22 @@ impl PaletteComponent {
         // regardless of `show_no_matches` — Taffy then has no chance of
         // sizing the placeholder differently between the empty and
         // non-empty branches.
-        let rows_inner = div().w_full().flex_col().child(rows_col).when(
-            self.show_no_matches,
-            |d| {
-                d.child(
-                    div()
-                        .w_full()
-                        .h(row_h)
-                        .flex_row()
-                        .items_center()
-                        .child(div().w(text_pad).h(row_h))
-                        .child(text("No matching commands").color(dim_color)),
-                )
-            },
-        );
+        let rows_inner =
+            div()
+                .w_full()
+                .flex_col()
+                .child(rows_col)
+                .when(self.show_no_matches, |d| {
+                    d.child(
+                        div()
+                            .w_full()
+                            .h(row_h)
+                            .flex_row()
+                            .items_center()
+                            .child(div().w(text_pad).h(row_h))
+                            .child(text("No matching commands").color(dim_color)),
+                    )
+                });
         let mut rows_area = div().w_full().h(rows_area_h).flex_row().child(rows_inner);
 
         let mut panel = div()

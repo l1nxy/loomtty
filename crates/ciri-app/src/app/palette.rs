@@ -86,13 +86,7 @@ impl AppModel {
     /// `session_name` so future revisits can attach to the same session
     /// without re-prompting. Caller is responsible for persisting the
     /// updated list.
-    pub fn record_recent_host(
-        &mut self,
-        host: &str,
-        port: u16,
-        ssh_port: u16,
-        session_name: &str,
-    ) {
+    pub fn record_recent_host(&mut self, host: &str, port: u16, ssh_port: u16, session_name: &str) {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -142,10 +136,7 @@ impl AppModel {
     ///      orders by recency).
     ///   3. Empty list / probe error / no server → `"default"` so the
     ///      remote creates a fresh session.
-    pub fn pick_auto_connect_session(
-        preferred: Option<&str>,
-        probe: &RemoteProbeResult,
-    ) -> String {
+    pub fn pick_auto_connect_session(preferred: Option<&str>, probe: &RemoteProbeResult) -> String {
         let RemoteProbeResult::Sessions(sessions) = probe else {
             return "default".to_string();
         };
@@ -186,21 +177,33 @@ impl AppModel {
     ///     RemoteHost entries
     ///   + Connect to New Host...
     fn build_session_palette_entries(&self, entries: &mut Vec<PaletteEntry>) {
-        entries.push(PaletteEntry::new("Sessions".to_string(), PaletteEntryKind::SectionHeader("Sessions".to_string())));
+        entries.push(PaletteEntry::new(
+            "Sessions".to_string(),
+            PaletteEntryKind::SectionHeader("Sessions".to_string()),
+        ));
         self.push_flat_session_entries(entries);
 
         // ── New Session ── (always available, inline at end of sessions)
-        entries.push(PaletteEntry::new("+ New Session".to_string(), PaletteEntryKind::Action(Action::NewSession)));
+        entries.push(PaletteEntry::new(
+            "+ New Session".to_string(),
+            PaletteEntryKind::Action(Action::NewSession),
+        ));
 
         // ── Remote Hosts ── (configured in config but not connected yet)
         let remote_host_entries = self.build_remote_host_entries(true);
         if !remote_host_entries.is_empty() {
-            entries.push(PaletteEntry::new("Remote Hosts".to_string(), PaletteEntryKind::SectionHeader("Remote Hosts".to_string())));
+            entries.push(PaletteEntry::new(
+                "Remote Hosts".to_string(),
+                PaletteEntryKind::SectionHeader("Remote Hosts".to_string()),
+            ));
             entries.extend(remote_host_entries);
         }
 
         // ── Connect to New Host... ── always last.
-        entries.push(PaletteEntry::new("+ Connect to New Host...".to_string(), PaletteEntryKind::ConnectRemotePrompt));
+        entries.push(PaletteEntry::new(
+            "+ Connect to New Host...".to_string(),
+            PaletteEntryKind::ConnectRemotePrompt,
+        ));
     }
 
     /// Shared flat session list: every session on every slot (current + bg),
@@ -219,18 +222,24 @@ impl AppModel {
                 } else {
                     "  "
                 };
-                entries.push(PaletteEntry::new(format!("{}{}  [{}]", marker, s.name, current_loc), PaletteEntryKind::GoToSession {
+                entries.push(PaletteEntry::new(
+                    format!("{}{}  [{}]", marker, s.name, current_loc),
+                    PaletteEntryKind::GoToSession {
                         slot_id: active_slot.clone(),
                         session_name: s.name.clone(),
-                    }));
+                    },
+                ));
             }
         } else {
             // No cache yet (palette opened before list arrived): show at least
             // the active session so the user sees *something* useful.
-            entries.push(PaletteEntry::new(format!("● {}  [{}]", active_session, current_loc), PaletteEntryKind::GoToSession {
+            entries.push(PaletteEntry::new(
+                format!("● {}  [{}]", active_session, current_loc),
+                PaletteEntryKind::GoToSession {
                     slot_id: active_slot.clone(),
                     session_name: active_session.clone(),
-                }));
+                },
+            ));
         }
 
         // Background slot sessions (sorted by slot id for stable order)
@@ -243,18 +252,24 @@ impl AppModel {
                 && !sessions.is_empty()
             {
                 for s in sessions {
-                    entries.push(PaletteEntry::new(format!("  {}  [{}]", s.name, loc), PaletteEntryKind::GoToSession {
+                    entries.push(PaletteEntry::new(
+                        format!("  {}  [{}]", s.name, loc),
+                        PaletteEntryKind::GoToSession {
                             slot_id: slot_id.clone(),
                             session_name: s.name.clone(),
-                        }));
+                        },
+                    ));
                 }
             } else {
                 // No cached sessions for this slot — at least offer a single
                 // entry for the slot's last-active session.
-                entries.push(PaletteEntry::new(format!("  {}  [{}]", slot.session_name, loc), PaletteEntryKind::GoToSession {
+                entries.push(PaletteEntry::new(
+                    format!("  {}  [{}]", slot.session_name, loc),
+                    PaletteEntryKind::GoToSession {
                         slot_id: slot_id.clone(),
                         session_name: slot.session_name.clone(),
-                    }));
+                    },
+                ));
             }
         }
     }
@@ -269,32 +284,52 @@ impl AppModel {
     ///     All action entries
     fn build_command_palette_entries(&self, entries: &mut Vec<PaletteEntry>) {
         // ── Sessions ── (flat, tagged by location; no separate Connections)
-        entries.push(PaletteEntry::new("Sessions".to_string(), PaletteEntryKind::SectionHeader("Sessions".to_string())));
+        entries.push(PaletteEntry::new(
+            "Sessions".to_string(),
+            PaletteEntryKind::SectionHeader("Sessions".to_string()),
+        ));
         self.push_flat_session_entries(entries);
 
         // Kill entries only for current-slot sessions (remote kill unsupported).
         for s in &self.cached_local_sessions {
-            entries.push(PaletteEntry::new(format!("Kill: {}", s.name), PaletteEntryKind::KillSession(s.name.clone())));
+            entries.push(PaletteEntry::new(
+                format!("Kill: {}", s.name),
+                PaletteEntryKind::KillSession(s.name.clone()),
+            ));
         }
 
-        entries.push(PaletteEntry::new("+ New Session".to_string(), PaletteEntryKind::Action(Action::NewSession)));
+        entries.push(PaletteEntry::new(
+            "+ New Session".to_string(),
+            PaletteEntryKind::Action(Action::NewSession),
+        ));
 
         // ── Remote Hosts ── (configured but not connected — still probe-based
         // from command palette, contrast with session palette which skips probe)
         let remote_host_entries = self.build_remote_host_entries(false);
         if !remote_host_entries.is_empty() {
-            entries.push(PaletteEntry::new("Remote Hosts".to_string(), PaletteEntryKind::SectionHeader("Remote Hosts".to_string())));
+            entries.push(PaletteEntry::new(
+                "Remote Hosts".to_string(),
+                PaletteEntryKind::SectionHeader("Remote Hosts".to_string()),
+            ));
             entries.extend(remote_host_entries);
         }
-        entries.push(PaletteEntry::new("+ Connect to New Host...".to_string(), PaletteEntryKind::ConnectRemotePrompt));
+        entries.push(PaletteEntry::new(
+            "+ Connect to New Host...".to_string(),
+            PaletteEntryKind::ConnectRemotePrompt,
+        ));
 
         // ── Actions ──
         let action_entries: Vec<PaletteEntry> = Action::all_with_labels()
             .into_iter()
-            .map(|(action, label)| PaletteEntry::new(label.to_string(), PaletteEntryKind::Action(action)))
+            .map(|(action, label)| {
+                PaletteEntry::new(label.to_string(), PaletteEntryKind::Action(action))
+            })
             .collect();
         if !action_entries.is_empty() {
-            entries.push(PaletteEntry::new("Actions".to_string(), PaletteEntryKind::SectionHeader("Actions".to_string())));
+            entries.push(PaletteEntry::new(
+                "Actions".to_string(),
+                PaletteEntryKind::SectionHeader("Actions".to_string()),
+            ));
             entries.extend(action_entries);
         }
     }
@@ -326,29 +361,38 @@ impl AppModel {
                 match probe {
                     RemoteProbeResult::Sessions(sessions) => {
                         if sessions.is_empty() {
-                            entries.push(PaletteEntry::new(format!("{} > (new session)", rh.name), PaletteEntryKind::RemoteSession {
+                            entries.push(PaletteEntry::new(
+                                format!("{} > (new session)", rh.name),
+                                PaletteEntryKind::RemoteSession {
                                     host: rh.host.clone(),
                                     port: rh.port,
                                     ssh_port: rh.ssh_port,
                                     session_name: "default".to_string(),
-                                }));
+                                },
+                            ));
                         } else {
                             for s in sessions {
-                                entries.push(PaletteEntry::new(format!("{} > {}", rh.name, s.name), PaletteEntryKind::RemoteSession {
+                                entries.push(PaletteEntry::new(
+                                    format!("{} > {}", rh.name, s.name),
+                                    PaletteEntryKind::RemoteSession {
                                         host: rh.host.clone(),
                                         port: rh.port,
                                         ssh_port: rh.ssh_port,
                                         session_name: s.name.clone(),
-                                    }));
+                                    },
+                                ));
                             }
                         }
                     }
                     RemoteProbeResult::NoServer => {
-                        entries.push(PaletteEntry::new(format!("SSH: {} (no ciritty-server)", rh.name), PaletteEntryKind::SshShell {
+                        entries.push(PaletteEntry::new(
+                            format!("SSH: {} (no ciritty-server)", rh.name),
+                            PaletteEntryKind::SshShell {
                                 name: rh.name.clone(),
                                 host: rh.host.clone(),
                                 ssh_port: rh.ssh_port,
-                            }));
+                            },
+                        ));
                     }
                     RemoteProbeResult::Error(_) => {
                         // Error results are shown via palette.remote_error, not as entries
@@ -358,19 +402,25 @@ impl AppModel {
             }
 
             if sessions_only {
-                entries.push(PaletteEntry::new(format!("Connect: {} ({}) [remote]", rh.name, rh.host), PaletteEntryKind::DirectConnect {
+                entries.push(PaletteEntry::new(
+                    format!("Connect: {} ({}) [remote]", rh.name, rh.host),
+                    PaletteEntryKind::DirectConnect {
                         name: rh.name.clone(),
                         host: rh.host.clone(),
                         port: rh.port,
                         ssh_port: rh.ssh_port,
-                    }));
+                    },
+                ));
             } else {
-                entries.push(PaletteEntry::new(format!("Remote: {} ({})", rh.name, rh.host), PaletteEntryKind::RemoteHost {
+                entries.push(PaletteEntry::new(
+                    format!("Remote: {} ({})", rh.name, rh.host),
+                    PaletteEntryKind::RemoteHost {
                         name: rh.name.clone(),
                         host: rh.host.clone(),
                         port: rh.port,
                         ssh_port: rh.ssh_port,
-                    }));
+                    },
+                ));
             }
         }
 

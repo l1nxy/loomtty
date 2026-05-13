@@ -203,9 +203,7 @@ mod tests {
         // PendingPaste over CommandPalette must keep the palette
         // alive (the user is pasting INTO it).
         let mut m = fixture();
-        m.enter_modal_close_peers_core(ModalKind::PendingPaste(
-            PendingPasteTarget::CommandPalette,
-        ));
+        m.enter_modal_close_peers_core(ModalKind::PendingPaste(PendingPasteTarget::CommandPalette));
         assert!(
             m.command_palette.is_some(),
             "paste-over-palette must NOT close the underlying palette",
@@ -215,9 +213,7 @@ mod tests {
         // ContextMenu(OverSettings) must keep settings alive (theme
         // dropdown is a child of the panel).
         let mut m = fixture();
-        m.enter_modal_close_peers_core(ModalKind::ContextMenu(
-            ContextMenuParent::OverSettings,
-        ));
+        m.enter_modal_close_peers_core(ModalKind::ContextMenu(ContextMenuParent::OverSettings));
         assert!(
             m.settings_panel_visible,
             "theme dropdown must NOT close its parent settings panel",

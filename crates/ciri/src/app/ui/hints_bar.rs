@@ -55,8 +55,8 @@ impl HintsBarComponent {
             if i > 0 {
                 hints_total_w += hint_spacing;
             }
-            hints_total_w += text_layout::measure(cx, &key)
-                + text_layout::measure(cx, &format!(" {}", label));
+            hints_total_w +=
+                text_layout::measure(cx, &key) + text_layout::measure(cx, &format!(" {}", label));
             hints.push(HintItem { key, label });
         }
 

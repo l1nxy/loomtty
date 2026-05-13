@@ -342,10 +342,7 @@ mod tests {
             Action::from_name("new_tile_below"),
             Some(Action::NewTileBelow)
         );
-        assert_eq!(
-            Action::from_name("stack_pane"),
-            Some(Action::NewTileBelow)
-        );
+        assert_eq!(Action::from_name("stack_pane"), Some(Action::NewTileBelow));
         assert_eq!(Action::from_name("toggle_lock"), Some(Action::ToggleLock));
     }
 

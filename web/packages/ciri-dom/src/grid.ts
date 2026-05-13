@@ -254,6 +254,7 @@ export class PaneGrid {
       sync.scrollback.length,
       sync.scrollbackReplace,
       colsChanged,
+      isScrollbackOnly,
     );
     this.cellLinks = rebaseExtras(
       this.cellLinks,
@@ -262,6 +263,7 @@ export class PaneGrid {
       sync.scrollback.length,
       sync.scrollbackReplace,
       colsChanged,
+      isScrollbackOnly,
     );
     // linkMap is keyed by link-id (a global handle), not by cell
     // index, so no rebase is needed. Replace wholesale.
@@ -336,10 +338,15 @@ export class PaneGrid {
 ///   - `newScrollbackTotal` = where the viewport starts in the post-sync
 ///                            absolute index space (i.e., total sb cells).
 ///
-/// Old entries are preserved only for the scrollback portion (Rust's
-/// `rebase_grapheme_lookup` drops `row >= old_scrollback_rows`); they're
-/// also dropped wholesale on `scrollbackReplace` or `colsChanged`
-/// because either invalidates their cell indices.
+/// Old-entry handling depends on whether the viewport was replaced:
+///   - **Normal sync** (rows > 0): the new viewport replaces the old, so
+///     old viewport entries are stale; preserve only the old scrollback
+///     portion (and only when neither `scrollbackReplace` nor
+///     `colsChanged` invalidates the index space).
+///   - **Scrollback-only sync** (rows === 0): the viewport cells are
+///     intentionally preserved, so old viewport entries must follow them
+///     — shifted forward by the appended scrollback length, or rebased
+///     onto the new scrollback base when `scrollbackReplace` is true.
 function rebaseExtras<V>(
   oldMap: Map<number, V>,
   syncMap: Map<number, V>,
@@ -347,19 +354,50 @@ function rebaseExtras<V>(
   syncSbCells: number,
   scrollbackReplace: boolean,
   colsChanged: boolean,
+  isScrollbackOnly: boolean,
 ): Map<number, V> {
   const out = new Map<number, V>();
 
-  if (!scrollbackReplace && !colsChanged) {
-    // Old scrollback entries (keys < oldSbCells) keep their absolute
-    // indices — the existing scrollback rows didn't move. Old
-    // viewport entries (keys >= oldSbCells) are dropped because the
-    // old viewport either got replaced by sync.cells or had stale
-    // grapheme bindings the server is now repopulating.
+  if (isScrollbackOnly) {
+    // Viewport cells were NOT replaced by this sync — their extras
+    // must survive, just shifted to their new absolute position
+    // after the scrollback delta.
+    if (!colsChanged) {
+      if (scrollbackReplace) {
+        // Old scrollback is wiped; viewport now starts at syncSbCells.
+        // Old scrollback-indexed entries (keys < oldSbCells) are dropped;
+        // old viewport-indexed entries (keys >= oldSbCells) rebase to
+        // `syncSbCells + (key - oldSbCells)`.
+        for (const [k, v] of oldMap) {
+          if (k >= oldSbCells) {
+            out.set(syncSbCells + (k - oldSbCells), v);
+          }
+        }
+      } else {
+        // Append: old scrollback stays at its current keys; the new
+        // scrollback cells push the viewport forward by `syncSbCells`.
+        for (const [k, v] of oldMap) {
+          if (k < oldSbCells) {
+            out.set(k, v);
+          } else {
+            out.set(k + syncSbCells, v);
+          }
+        }
+      }
+    }
+    // colsChanged + isScrollbackOnly shouldn't happen (a scrollback-
+    // only sync doesn't carry a new geometry); fall through to drop
+    // everything if it does.
+  } else if (!scrollbackReplace && !colsChanged) {
+    // Normal viewport-replacing sync, no scrollback wipe, no reflow.
+    // Old scrollback entries keep their absolute indices; old viewport
+    // entries are dropped because sync.cells replaces them.
     for (const [k, v] of oldMap) {
       if (k < oldSbCells) out.set(k, v);
     }
   }
+  // else: scrollbackReplace or colsChanged with a real viewport sync —
+  // drop everything; sync's entries below are the new world.
 
   // Where sync's first sb cell lands in absolute index space.
   const newScrollbackBase = scrollbackReplace ? 0 : oldSbCells;

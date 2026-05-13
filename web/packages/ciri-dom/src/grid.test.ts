@@ -497,6 +497,79 @@ describe("PaneGrid.applyFullPaneSync — extras rebase", () => {
     expect(g.graphemeExtras.has(0)).toBe(false);
   });
 
+  test("scrollback-only append preserves old viewport extras shifted forward", () => {
+    const g = new PaneGrid(1n, 2, 1);
+    // First sync seeds 2-cell scrollback + 2-cell viewport, with a
+    // grapheme on the viewport's first cell and a link on its second.
+    g.applyFullPaneSync(
+      makeSync({
+        cols: 2,
+        rows: 1,
+        cells: [cell("a"), cell("b")],
+        scrollback: [cell("s"), cell("t")],
+        scrollbackRows: 1,
+        scrollbackReplace: true,
+        graphemeExtras: new Map([[2, "́"]]), // 'a' at viewport index 0 → abs 2
+        cellLinks: new Map([[3, 1]]), // 'b' at viewport index 1 → abs 3
+        linkMap: new Map([[1, "https://example.com"]]),
+      }),
+    );
+    expect(g.graphemeExtras.get(2)).toBe("́");
+    expect(g.cellLinks.get(3)).toBe(1);
+
+    // Scrollback-only sync: appends 1 sb row (2 cells), viewport stays.
+    // Viewport extras at abs 2 + 3 must shift forward by syncSbCells=2
+    // to abs 4 + 5.
+    g.applyFullPaneSync(
+      makeSync({
+        cols: 2,
+        rows: 0,
+        cells: [],
+        scrollback: [cell("u"), cell("v")],
+        scrollbackRows: 1,
+        scrollbackReplace: false,
+      }),
+    );
+    expect(g.graphemeExtras.get(4)).toBe("́");
+    expect(g.cellLinks.get(5)).toBe(1);
+    // Original keys must NOT survive — without the shift the renderer
+    // would look up `viewportGlobalIndex(0,0)=4` against an empty map.
+    expect(g.graphemeExtras.has(2)).toBe(false);
+    expect(g.cellLinks.has(3)).toBe(false);
+  });
+
+  test("scrollback-only replace preserves old viewport extras rebased onto new sb", () => {
+    const g = new PaneGrid(1n, 2, 1);
+    g.applyFullPaneSync(
+      makeSync({
+        cols: 2,
+        rows: 1,
+        cells: [cell("a"), cell("b")],
+        scrollback: [cell("s"), cell("t"), cell("u"), cell("v")],
+        scrollbackRows: 2,
+        scrollbackReplace: true,
+        graphemeExtras: new Map([[5, "́"]]), // 'b' at viewport[1] → abs 4+1=5
+      }),
+    );
+    expect(g.graphemeExtras.get(5)).toBe("́");
+
+    // rows=0 + scrollback_replace=true: new sb has 1 row (2 cells),
+    // viewport cells preserved but now start at abs 2 (was abs 4).
+    g.applyFullPaneSync(
+      makeSync({
+        cols: 2,
+        rows: 0,
+        cells: [],
+        scrollback: [cell("x"), cell("y")],
+        scrollbackRows: 1,
+        scrollbackReplace: true,
+      }),
+    );
+    // 'b' moved from abs 5 to abs 2 + (5-4) = 3.
+    expect(g.graphemeExtras.get(3)).toBe("́");
+    expect(g.graphemeExtras.has(5)).toBe(false);
+  });
+
   test("rebases cellLinks the same way as graphemeExtras", () => {
     const g = new PaneGrid(1n, 2, 1);
     g.applyFullPaneSync(

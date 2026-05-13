@@ -910,7 +910,10 @@ mod font_feature_tests {
 
     #[test]
     fn pads_short_tags_to_four_bytes() {
-        assert_eq!(parse_feature_string("aa"), Some(([b'a', b'a', b' ', b' '], 1)));
+        assert_eq!(
+            parse_feature_string("aa"),
+            Some(([b'a', b'a', b' ', b' '], 1))
+        );
     }
 
     #[test]

@@ -13,6 +13,33 @@ enum ColumnSnap {
     Round,
 }
 
+/// Map a wheel delta to a signed row step (positive = down). Wraps
+/// the LineDelta / PixelDelta dispatch the palette-side handler has
+/// historically inlined; the threshold-three constant is what feels
+/// like one wheel notch on Windows trackpads we've tested.
+fn wheel_steps_from_delta(delta: MouseScrollDelta) -> i32 {
+    match delta {
+        MouseScrollDelta::LineDelta(_, y) => {
+            if y > 0.0 {
+                -1
+            } else if y < 0.0 {
+                1
+            } else {
+                0
+            }
+        }
+        MouseScrollDelta::PixelDelta(pos) => {
+            if pos.y > 3.0 {
+                -1
+            } else if pos.y < -3.0 {
+                1
+            } else {
+                0
+            }
+        }
+    }
+}
+
 impl App {
     // ── Coordinate conversion ──
 
@@ -165,6 +192,12 @@ impl App {
         let my = position.y as f32;
         self.last_mouse_pos = Some((mx, my));
 
+        // Context-menu scrollbar drag wins over everything else while
+        // active: the cursor may have left the thumb / menu entirely,
+        // but the drag should still update the offset.
+        if self.apply_context_menu_scrollbar_drag(my) {
+            return;
+        }
         if self.core.overview.active && self.core.overview.dragging {
             self.handle_overview_cursor_moved(mx, my);
         } else if self.handle_ui_cursor_hover(mx, my) {
@@ -198,6 +231,16 @@ impl App {
                 // currently return Some — others dismiss on click and
                 // would never have a frame to render the active style.
                 self.active_hit_id = self.capture_active_press_hit_id(mx, my);
+                // Context menu scrollbar interactions run BEFORE the
+                // standard click dispatch so the menu's click handler
+                // (which would treat thumb/track as "click on Menu" —
+                // no-op) doesn't swallow the press silently. Drag
+                // takes over from here; page jumps just shift the
+                // offset and stay open.
+                if self.try_start_context_menu_scrollbar_interaction(mx, my) {
+                    self.schedule_redraw();
+                    return;
+                }
                 if self.dispatch_ui_click(mx, my) {
                     self.schedule_redraw();
                     return;
@@ -417,6 +460,14 @@ impl App {
         let passthrough = self.mouse_left_passthrough;
         self.mouse_left_held = false;
         self.mouse_left_passthrough = false;
+        // Release any in-flight context-menu scrollbar drag first —
+        // separate from `finish_resize_drag` (which only clears the
+        // pane scrollbar / column / tile drags) so the two stay
+        // independent.
+        if self.drag.context_menu_scrollbar_dragging.take().is_some() {
+            self.request_mouse_redraw();
+            return;
+        }
         if self.finish_resize_drag() {
             return;
         }
@@ -478,7 +529,7 @@ impl App {
     }
 
     fn handle_mouse_wheel_inner(&mut self, delta: MouseScrollDelta, phase: TouchPhase) {
-        if self.dismiss_context_menu_on_scroll() {
+        if self.dismiss_context_menu_on_scroll(delta) {
             return;
         }
 
@@ -841,12 +892,136 @@ impl App {
         }
     }
 
-    fn dismiss_context_menu_on_scroll(&mut self) -> bool {
+    fn dismiss_context_menu_on_scroll(&mut self, delta: MouseScrollDelta) -> bool {
         if !self.core.context_menu.visible {
             return false;
         }
+        // Scrollable menu (font picker, etc.) → adjust the offset and
+        // stay open. Short menus keep the historic dismiss-on-scroll
+        // behaviour because there's nothing to scroll there.
+        let steps = wheel_steps_from_delta(delta);
+        if self.scroll_context_menu(steps) {
+            self.request_mouse_redraw();
+            return true;
+        }
         self.core.context_menu.visible = false;
         self.request_mouse_redraw();
+        true
+    }
+
+    /// Mouse-press over the context menu scrollbar — either seeds a
+    /// thumb drag or applies a page jump on the track. Returns
+    /// `true` when the press was consumed (caller short-circuits
+    /// the usual click dispatch). All other context menu clicks
+    /// fall through to `dispatch_ui_click`.
+    fn try_start_context_menu_scrollbar_interaction(&mut self, mx: f32, my: f32) -> bool {
+        if !self.core.context_menu.visible {
+            return false;
+        }
+        // Probe the scrollbar in a scope-confined immutable borrow so
+        // the subsequent `self.drag.…` / `self.core.…` writes don't
+        // overlap. All values copied out are `Copy`.
+        let probe: Option<(
+            crate::app::ui::context_menu::ScrollbarHit,
+            f32,
+            f32,
+            usize,
+            usize,
+        )> = {
+            let cx = self.ui_context();
+            crate::app::ui::context_menu::ContextMenuComponent::capture(self, &cx).and_then(
+                |menu| {
+                    menu.scrollbar_hit(mx, my, &cx).map(|hit| {
+                        (
+                            hit,
+                            menu.scrollbar_track_height(),
+                            menu.scrollbar_thumb_height(),
+                            menu.visible_rows(),
+                            menu.max_scroll_offset(),
+                        )
+                    })
+                },
+            )
+        };
+        let Some((hit, track_h, thumb_h, visible, max_offset)) = probe else {
+            return false;
+        };
+        if max_offset == 0 {
+            return false;
+        }
+        match hit {
+            crate::app::ui::context_menu::ScrollbarHit::Thumb => {
+                let thumb_travel = (track_h - thumb_h).max(1.0);
+                self.drag.context_menu_scrollbar_dragging =
+                    Some(ciri_app::app::ContextMenuScrollbarDrag {
+                        start_my: my,
+                        start_offset: self.core.context_menu_scroll_offset,
+                        thumb_travel,
+                        max_offset,
+                    });
+            }
+            crate::app::ui::context_menu::ScrollbarHit::TrackAbove => {
+                let new_offset =
+                    self.core.context_menu_scroll_offset.saturating_sub(visible);
+                self.core.context_menu_scroll_offset = new_offset.min(max_offset);
+            }
+            crate::app::ui::context_menu::ScrollbarHit::TrackBelow => {
+                let new_offset = self.core.context_menu_scroll_offset.saturating_add(visible);
+                self.core.context_menu_scroll_offset = new_offset.min(max_offset);
+            }
+        }
+        true
+    }
+
+    /// Apply an in-flight context-menu scrollbar drag. Returns `true`
+    /// when a drag is active (caller short-circuits other move
+    /// handlers — e.g. focus-follows-mouse hover). Math mirrors the
+    /// thumb-positioning formula in `build_tree`: row delta scales
+    /// linearly with pixel delta over the thumb's travel range.
+    fn apply_context_menu_scrollbar_drag(&mut self, my: f32) -> bool {
+        let Some(drag) = self.drag.context_menu_scrollbar_dragging.as_ref() else {
+            return false;
+        };
+        if drag.max_offset == 0 || drag.thumb_travel <= 0.0 {
+            return true;
+        }
+        let delta_y = my - drag.start_my;
+        let delta_rows = delta_y / drag.thumb_travel * drag.max_offset as f32;
+        let next = (drag.start_offset as f32 + delta_rows)
+            .round()
+            .clamp(0.0, drag.max_offset as f32) as usize;
+        if next != self.core.context_menu_scroll_offset {
+            self.core.context_menu_scroll_offset = next;
+            self.request_mouse_redraw();
+        }
+        true
+    }
+
+    /// Advance the open context menu's scroll offset by `steps` rows
+    /// (positive = scroll down). Returns `true` if the menu is
+    /// scrollable (more items than visible rows). Clamps to the
+    /// valid range. Capture-then-mutate avoids overlapping borrows
+    /// of `self` between the model peek and the offset write.
+    fn scroll_context_menu(&mut self, steps: i32) -> bool {
+        let (total, visible) = {
+            let cx = self.ui_context();
+            let Some(menu) = crate::app::ui::context_menu::ContextMenuComponent::capture(self, &cx) else {
+                return false;
+            };
+            (menu.total_rows(), menu.visible_rows())
+        };
+        if total <= visible {
+            return false;
+        }
+        if steps == 0 {
+            // Menu IS scrollable but the wheel tick contributed 0
+            // steps — still report "handled" so the caller doesn't
+            // fall through to dismiss.
+            return true;
+        }
+        let max_offset = (total - visible) as i32;
+        let next = (self.core.context_menu_scroll_offset as i32 + steps).clamp(0, max_offset);
+        self.core.context_menu_scroll_offset = next as usize;
         true
     }
 

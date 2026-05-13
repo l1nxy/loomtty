@@ -9,11 +9,12 @@ use super::overview::{self, OverviewComponent};
 use super::palette::PaletteComponent;
 use super::paste_dialog::PasteDialogComponent;
 use super::settings_panel::SettingsPanelComponent;
+use super::settings_panel::hit::SettingsHit;
 use super::tab_bar::TabBarComponent;
 use super::top_bar::TopBarComponent;
 use super::types::{
     UiAction, UiContext, UiContextMenuHit, UiOverviewHit, UiPaletteHit, UiPasteDialogHit, UiRect,
-    UiScene, UiSettingsHit, UiTopBarHit,
+    UiScene, UiTopBarHit,
 };
 use crate::app::top_bar::TopBarLayout;
 use crate::app::{App, PasteButton, TopBarHoverRegion};
@@ -314,16 +315,32 @@ impl UiFrame {
         }
 
         if let Some(component) = &self.settings_panel {
-            // Pointer cursor on any interactive hit (close button, theme
-            // dropdown trigger, opacity steppers, "Open settings.toml"
-            // link). Background body / outside fall back to default.
-            let pointer = match component.hit_test(mx, my, cx) {
-                UiSettingsHit::Close
-                | UiSettingsHit::OpenToml
-                | UiSettingsHit::ThemeDropdown
-                | UiSettingsHit::PaneOpacityDec
-                | UiSettingsHit::PaneOpacityInc => true,
-                UiSettingsHit::Dialog | UiSettingsHit::None => false,
+            // Pointer cursor on any interactive hit (sidebar tab, row
+            // control, close button, "Open settings.toml" link).
+            // Schema-driven panel: any decoded hit that isn't the
+            // bare panel body is interactive.
+            //
+            // Compute the raw hit_id via `hover_hit_id` (not
+            // `hit_test`) so we can stash it on the App for the
+            // render path's `current_settings_hover` to reuse —
+            // otherwise that path re-runs the same layout pass per
+            // frame. Decoding happens here for the pointer-shape
+            // check; the cached raw value is what the chrome cache
+            // hash needs.
+            let raw = component.hover_hit_id(mx, my, cx);
+            app.cached_settings_hover
+                .set(Some(crate::app::SettingsHoverCacheEntry {
+                    mouse_pos_bits: (mx.to_bits(), my.to_bits()),
+                    category: app.core.settings_category,
+                    visible: true,
+                    viewport_bits: (cx.viewport_w.to_bits(), cx.viewport_h.to_bits()),
+                    hit_id: raw,
+                }));
+            let pointer = match raw.and_then(super::settings_panel::hit::decode) {
+                Some(SettingsHit::Chrome(super::settings_panel::hit::ChromeOp::Dialog)) | None => {
+                    false
+                }
+                Some(_) => true,
             };
             return UiFrameHover::Settings { pointer };
         }
@@ -384,12 +401,7 @@ impl UiFrame {
     /// Mode indicator is also skipped because it has no hover
     /// styling — adding `.active()` without `.hover()` would feel
     /// inconsistent with the rest of the bar.
-    pub(super) fn active_press_hit_id(
-        &self,
-        mx: f32,
-        my: f32,
-        cx: &UiContext<'_>,
-    ) -> Option<u64> {
+    pub(super) fn active_press_hit_id(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<u64> {
         // Same precedence as `UiFrame::click` / `UiFrame::hover`:
         // Overlay-tier popups first, then Base-tier modals, then bars.
         // Without this gate `capture_active_press_hit_id` would record
@@ -411,11 +423,12 @@ impl UiFrame {
         // suppresses spurious top-bar press tint that would otherwise
         // bleed through the panel's translucent backdrop.
         if let Some(panel) = &self.settings_panel {
-            return match panel.hit_test(mx, my, cx) {
-                UiSettingsHit::PaneOpacityDec => Some(super::settings_panel::HIT_OPACITY_DEC),
-                UiSettingsHit::PaneOpacityInc => Some(super::settings_panel::HIT_OPACITY_INC),
-                _ => None,
-            };
+            // Schema-driven press feedback: only stepper +/- buttons
+            // opt in (panel stays open after each nudge so the
+            // `.active()` style has a frame to render). Switch /
+            // dropdown trigger / close button all dismiss-or-toggle
+            // on click so per-frame press tint isn't worth threading.
+            return panel.stepper_hit_id_at(mx, my, cx);
         }
         // Paste dialog has Paste / Cancel buttons but they dismiss
         // the dialog on click, so press tint per-frame isn't worth

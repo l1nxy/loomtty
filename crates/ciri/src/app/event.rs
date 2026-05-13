@@ -211,8 +211,25 @@ impl ApplicationHandler for App {
             if let Some(rx) = &self.config_change_rx
                 && rx.try_recv().is_ok()
             {
-                self.reload_config();
-                needs_redraw = true;
+                let now = Instant::now();
+                let echoed_self_write = self
+                    .pending_self_config_write_deadline
+                    .is_some_and(|deadline| now <= deadline);
+                // Always clear the deadline once we've made a decision:
+                // either we just consumed the echo (skip), or it
+                // expired without one (and the next reload should not
+                // be silently skipped if it arrives shortly after).
+                self.pending_self_config_write_deadline = None;
+                if echoed_self_write {
+                    // We just wrote this file ourselves; the in-memory
+                    // config already holds the new value. Skip the
+                    // reload to avoid clobbering an in-flight stepper
+                    // press / dropdown selection that landed between
+                    // write and watcher fire.
+                } else {
+                    self.reload_config();
+                    needs_redraw = true;
+                }
             }
 
             // Auto-reconnect
@@ -441,26 +458,59 @@ impl ApplicationHandler for App {
             }
         }
 
-        // Config hot-reload watcher
+        // Config hot-reload watcher. Watches the config file's
+        // PARENT directory rather than the file itself: our writer
+        // saves atomically (write to `*.tmp`, then `rename` over the
+        // target), which replaces the file's inode. On Linux inotify
+        // the watch follows the inode, so a watch installed on the
+        // file directly dies the first time the settings panel
+        // persists a change — every later external edit then goes
+        // unobserved until restart. Watching the directory keeps the
+        // observation live across rename-style saves; we filter the
+        // events by file name so unrelated dir activity doesn't
+        // trigger reloads.
         {
             let (ctx, crx) = crossbeam_channel::bounded(1);
+            let path = ciri_config::config::config_path();
+            let target_name = path.file_name().map(|n| n.to_os_string());
             let watcher = notify::recommended_watcher(move |res: Result<notify::Event, _>| {
-                if let Ok(evt) = res
-                    && evt.kind.is_modify()
-                {
+                let Ok(evt) = res else { return };
+                // Accept Modify (in-place editor save), Create (the
+                // new file landing after our atomic rename, or an
+                // external rename-based editor), and Remove (the old
+                // inode being unlinked during a replace). Any one
+                // of them indicates the file we care about changed.
+                if !(evt.kind.is_modify() || evt.kind.is_create() || evt.kind.is_remove()) {
+                    return;
+                }
+                let touches_config = match &target_name {
+                    Some(name) => evt.paths.iter().any(|p| p.file_name() == Some(name)),
+                    None => true,
+                };
+                if touches_config {
                     let _ = ctx.try_send(());
                 }
             })
             .ok();
             if let Some(mut w) = watcher {
                 use notify::Watcher;
-                let path = ciri_config::config::config_path();
-                if let Err(e) = w.watch(&path, notify::RecursiveMode::NonRecursive) {
-                    log::warn!("failed to watch config: {e}");
+                let watch_target = path.parent().unwrap_or(&path).to_path_buf();
+                // Ensure the parent dir exists — first run before
+                // any save would otherwise fail the watch attempt.
+                let _ = std::fs::create_dir_all(&watch_target);
+                if let Err(e) = w.watch(&watch_target, notify::RecursiveMode::NonRecursive) {
+                    log::warn!(
+                        "failed to watch config dir {}: {e}",
+                        watch_target.display()
+                    );
                 } else {
                     self.config_watcher = Some(w);
                     self.config_change_rx = Some(crx);
-                    log::info!("config watcher active: {}", path.display());
+                    log::info!(
+                        "config watcher active: {} (watching parent {})",
+                        path.display(),
+                        watch_target.display(),
+                    );
                 }
             }
         }

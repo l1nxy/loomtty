@@ -651,6 +651,9 @@ impl App {
             menu.x.to_bits().hash(hasher);
             menu.y.to_bits().hash(hasher);
             menu.target_pane_id.hash(hasher);
+            // Scroll offset — the rendered slice depends on it, so
+            // wheel ticks must invalidate the cached chrome scene.
+            self.core.context_menu_scroll_offset.hash(hasher);
             // Derived hover (no stored field) — same pattern as
             // `current_palette_hover`. Invalidates the chrome cache
             // when the cursor crosses a menu row so the declarative
@@ -683,6 +686,15 @@ impl App {
     fn hash_settings_panel(&self, hasher: &mut DefaultHasher) {
         self.core.settings_panel_visible.hash(hasher);
         if self.core.settings_panel_visible {
+            // Active sidebar tab — the body re-renders entirely when
+            // this flips, so the cached chrome scene MUST invalidate.
+            // Without this, a sidebar click sets `settings_category`
+            // and schedules a redraw, but the hash stays identical
+            // (hovered sidebar row's hit_id is the same before and
+            // after the click) so the cache returns the previous
+            // category's body until some other invalidator (motion
+            // ticker tick, hover hit_id change) happens to fire.
+            self.core.settings_category.hash(hasher);
             // The displayed Theme dropdown label and Pane Opacity
             // value are snapshotted at capture time — hash both so
             // live edits invalidate the chrome cache and the panel
@@ -969,14 +981,19 @@ impl App {
         self.hash_command_palette(&mut hasher);
         self.hash_context_menu(&mut hasher);
         self.hash_pending_paste(&mut hasher);
-        // `hash_settings_panel` deliberately NOT called here — the
-        // settings panel UI lives entirely in `ui_scene_hash`'s chrome
-        // cache. This snapshot hash gates the pane-render path; it
-        // only needs the bits the panel can mutate that affect pane
-        // tiles (currently just `pane_opacity`, hashed below).
-        // Skipping the panel hash here also avoids running
-        // `current_settings_hover` (and its `build_tree`) twice per
-        // frame.
+        // `hash_settings_panel` MUST be called here. This hash is the
+        // input to `damage_skip` in `render()`; when it doesn't change,
+        // the entire frame is skipped — including `build_ui`, which is
+        // where `ui_scene_hash`'s chrome cache lives. If we leave panel
+        // hover / category / visibility out, the user hovers settings
+        // rows, hash stays equal to the prior frame, `damage_skip`
+        // fires, `build_ui` never runs, and the chrome cache never gets
+        // a chance to invalidate — the panel freezes mid-frame and the
+        // window stops responding to clicks. The cost is one extra
+        // `current_settings_hover` (≈ one `build_tree`) per frame,
+        // which is cheap relative to the cache miss we'd otherwise
+        // never detect.
+        self.hash_settings_panel(&mut hasher);
         self.core
             .config
             .appearance
@@ -2703,8 +2720,7 @@ impl App {
         // overlay-tier batch (transient widgets like search_bar /
         // bell_flash / ime_preedit don't co-exist with palette /
         // context_menu and don't introduce a third layer).
-        let chrome_base_alpha_glyph_end =
-            pane_glyph_end + self.cached_ui_scene.base_glyph_end;
+        let chrome_base_alpha_glyph_end = pane_glyph_end + self.cached_ui_scene.base_glyph_end;
         let chrome_base_color_glyph_end =
             pane_color_glyph_end + self.cached_ui_scene.base_color_glyph_end;
         let pane_sdf_len = ui_sdf_rects.len();
@@ -2807,12 +2823,7 @@ impl App {
                 // the textured-quad draw entirely. Applies in both
                 // normal and overview modes — `pane_opacity` controls
                 // how much of it shows through panes in normal mode.
-                background_image_opacity: if self
-                    .core
-                    .config
-                    .appearance
-                    .background_image
-                    .is_empty()
+                background_image_opacity: if self.core.config.appearance.background_image.is_empty()
                 {
                     0.0
                 } else {

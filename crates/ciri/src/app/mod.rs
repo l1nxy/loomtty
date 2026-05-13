@@ -1,4 +1,5 @@
 pub(crate) mod action;
+pub(crate) mod background_image;
 pub(crate) mod ciri_ui_adapter;
 pub(crate) mod context_menu;
 pub(crate) mod debug_metrics;
@@ -11,7 +12,6 @@ pub(crate) mod mouse;
 pub(crate) mod notification;
 pub(crate) mod open;
 pub(crate) mod overview;
-pub(crate) mod background_image;
 pub(crate) mod palette;
 pub(crate) mod paste_dialog;
 pub(crate) mod paste_guard;
@@ -35,7 +35,7 @@ use ciri_render::terminal::{ColorTable, TerminalView};
 use crossbeam_channel::{Receiver, Sender};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use winit::event_loop::EventLoopProxy;
 use winit::keyboard::ModifiersState;
 use winit::window::Window;
@@ -231,6 +231,21 @@ pub(crate) struct App {
     pub window_focused: bool,
     pub config_watcher: Option<notify::RecommendedWatcher>,
     pub config_change_rx: Option<crossbeam_channel::Receiver<()>>,
+    /// Deadline after a settings.toml self-write before which any
+    /// `config_change_rx` tick is assumed to be that write's notify
+    /// echo. Lets us skip a redundant reload without clobbering the
+    /// in-memory live preview from a stepper / dropdown press. Used
+    /// instead of a counter so a missed echo (notify backends may
+    /// emit `Create`/`Remove`/`Rename` for an atomic temp-file
+    /// rename, none of which match the watcher's `is_modify()`
+    /// filter) can't permanently swallow a future external edit —
+    /// the deadline expires and reload resumes.
+    pub pending_self_config_write_deadline: Option<std::time::Instant>,
+    /// Whether settings-panel mutations write back to `settings.toml`.
+    /// `true` in production; tests flip it off so exercising the
+    /// dispatcher doesn't touch the developer's real config file or
+    /// race other tests on the user-wide temp-sibling path.
+    pub persist_settings_to_disk: bool,
     /// In-flight background-image decode. The worker thread spawned by
     /// `reload_background_image` decodes a (possibly multi-MB) image
     /// off the main thread, then sends the result back here + wakes the
@@ -241,7 +256,9 @@ pub(crate) struct App {
     /// upload.
     pub pending_background_image_decode: Option<(
         String,
-        crossbeam_channel::Receiver<anyhow::Result<Option<crate::app::background_image::DecodedImage>>>,
+        crossbeam_channel::Receiver<
+            anyhow::Result<Option<crate::app::background_image::DecodedImage>>,
+        >,
     )>,
     /// Latest pending resize event and its timestamp.
     pub pending_resize: Option<(winit::dpi::PhysicalSize<u32>, Instant)>,
@@ -339,12 +356,41 @@ pub(crate) struct App {
     /// element's id remains stable; entries can be flushed via
     /// `ElementStates::clear_id` when an element is permanently gone.
     pub ui_states: std::cell::RefCell<ciri_ui::ElementStates>,
+
+    /// Single-slot cache of the settings panel's hover hit_id at a
+    /// given cursor position. The hover handler (`dispatch_ui_hover`)
+    /// runs a full layout pass per mouse move to compute the hit_id;
+    /// the render path's `current_settings_hover` would do the same
+    /// layout again to feed the chrome cache hash. With this cache,
+    /// `frame.hover`'s Settings branch writes the result here and the
+    /// render path reads it for free as long as `(mouse_pos,
+    /// category, visible, viewport)` matches. Cache key auto-
+    /// invalidates on any of those changing — no explicit flush
+    /// needed.
+    pub cached_settings_hover: std::cell::Cell<Option<SettingsHoverCacheEntry>>,
+}
+
+/// Cache entry for [`App::cached_settings_hover`]. Matched by every
+/// field; a single mismatch (cursor moved, category switched, panel
+/// closed, viewport resized) treats it as a miss and recomputes.
+#[derive(Clone, Copy, Debug)]
+pub struct SettingsHoverCacheEntry {
+    /// `(mx, my)` in `f32::to_bits()` so the entry can derive `Eq`
+    /// without an `f32` epsilon dance — the cursor coords come
+    /// straight from winit, so bit equality across frames is exact
+    /// when the mouse hasn't moved.
+    pub mouse_pos_bits: (u32, u32),
+    pub category: ciri_app::app::SettingsCategory,
+    pub visible: bool,
+    /// `(vw, vh)` in `f32::to_bits()` so a resize invalidates the
+    /// cache (panel geometry is a function of viewport size).
+    pub viewport_bits: (u32, u32),
+    pub hit_id: Option<u64>,
 }
 
 impl App {
     const COMMAND_PALETTE_MIN_WIDTH: f32 = 300.0;
     const COMMAND_PALETTE_EDGE_MARGIN: f32 = 20.0;
-    const COMMAND_PALETTE_TOP_RATIO: f32 = 0.15;
     const COMMAND_PALETTE_MAX_HEIGHT_RATIO: f32 = 0.6;
     const COMMAND_PALETTE_INPUT_PAD_X: f32 = 8.0;
     const COMMAND_PALETTE_INPUT_PAD_Y: f32 = 4.0;
@@ -585,6 +631,8 @@ impl App {
             window_focused: true,
             config_watcher: None,
             config_change_rx: None,
+            pending_self_config_write_deadline: None,
+            persist_settings_to_disk: true,
             pending_background_image_decode: None,
             pending_resize: None,
             pending_dpi: None,
@@ -602,6 +650,7 @@ impl App {
                 tile_dragging: None,
                 tile_start_y: 0.0,
                 scrollbar_dragging: None,
+                context_menu_scrollbar_dragging: None,
             },
             gestures: ciri_app::app::GestureState {
                 scroll_accum: 0.0,
@@ -620,6 +669,7 @@ impl App {
             // grows automatically if a frame outsizes it.
             ui_arena: std::cell::RefCell::new(ciri_ui::Arena::new(256 * 1024)),
             ui_states: std::cell::RefCell::new(ciri_ui::ElementStates::new()),
+            cached_settings_hover: std::cell::Cell::new(None),
         }
     }
 
@@ -820,6 +870,7 @@ impl App {
             tile_dragging: None,
             tile_start_y: 0.0,
             scrollbar_dragging: None,
+            context_menu_scrollbar_dragging: None,
         };
         self.gestures = GestureState {
             scroll_accum: 0.0,
@@ -1178,7 +1229,6 @@ impl App {
             .min(vw - Self::COMMAND_PALETTE_EDGE_MARGIN);
         let panel_max_h = vh * Self::COMMAND_PALETTE_MAX_HEIGHT_RATIO;
         let panel_x = (vw - panel_w) / 2.0;
-        let panel_y = vh * Self::COMMAND_PALETTE_TOP_RATIO;
         let ui_line_h = self
             .ui_shaper
             .as_ref()
@@ -1191,6 +1241,13 @@ impl App {
         let visible_rows = ((panel_max_h - input_row_h) / row_h).floor().max(1.0) as usize;
         let entry_count = palette.filtered.len().min(visible_rows);
         let panel_h = input_row_h + entry_count as f32 * row_h + Self::COMMAND_PALETTE_BOTTOM_PAD;
+        // Vertically center the palette the same way the settings
+        // panel and paste dialog do — every modal in the chrome now
+        // anchors at the viewport midpoint instead of the historical
+        // "top-15%" position the palette used. `panel_y` is computed
+        // AFTER `panel_h` because the palette's height is
+        // entry-count-dependent.
+        let panel_y = ((vh - panel_h) / 2.0).max(0.0);
         let text_x = panel_x + Self::COMMAND_PALETTE_INPUT_PAD_X;
         let text_y = panel_y + Self::COMMAND_PALETTE_INPUT_PAD_Y;
         let sep_y = panel_y + input_row_h;
@@ -1306,10 +1363,44 @@ impl App {
             return None;
         }
         let (mx, my) = self.last_mouse_pos?;
+        let (vw, vh) = self.command_palette_viewport_size();
+        let key = (
+            (mx.to_bits(), my.to_bits()),
+            self.core.settings_category,
+            true,
+            (vw.to_bits(), vh.to_bits()),
+        );
+        // Hot path: the hover handler already ran a full layout pass
+        // for this exact cursor position to compute the same hit_id.
+        // Reuse that result here so we don't burn a second layout
+        // pass per frame just to feed the chrome cache hash.
+        if let Some(cache) = self.cached_settings_hover.get()
+            && (
+                cache.mouse_pos_bits,
+                cache.category,
+                cache.visible,
+                cache.viewport_bits,
+            ) == key
+        {
+            return cache.hit_id;
+        }
+        // Cold path: this fires when render runs before any
+        // dispatch_ui_hover for the current cursor — for example,
+        // when the panel was just opened, or after a category switch
+        // without an intervening mouse move. Compute, populate the
+        // cache for the next reader, return.
         let cx = self.ui_context();
-        let component =
-            crate::app::ui::settings_panel::SettingsPanelComponent::capture(self, &cx)?;
-        component.hover_hit_id(mx, my, &cx)
+        let component = crate::app::ui::settings_panel::SettingsPanelComponent::capture(self, &cx)?;
+        let hit_id = component.hover_hit_id(mx, my, &cx);
+        self.cached_settings_hover
+            .set(Some(SettingsHoverCacheEntry {
+                mouse_pos_bits: (mx.to_bits(), my.to_bits()),
+                category: self.core.settings_category,
+                visible: true,
+                viewport_bits: (vw.to_bits(), vh.to_bits()),
+                hit_id,
+            }));
+        hit_id
     }
 
     /// Which paste-dialog button (`Paste` / `Cancel`) the cursor is over.
@@ -1793,6 +1884,7 @@ impl App {
         self.drag.col_dragging = None;
         self.drag.tile_dragging = None;
         self.drag.scrollbar_dragging = None;
+        self.drag.context_menu_scrollbar_dragging = None;
         // Deactivate any in-flight terminal selection drag too —
         // clearing `mouse_left_held` alone leaves `selection.active`
         // set, so the next mouse-up still triggers copy-on-select on
@@ -1806,6 +1898,20 @@ impl App {
 
     pub fn schedule_redraw(&mut self) {
         self.pending_redraw = true;
+    }
+
+    /// Mark that we just wrote `settings.toml` ourselves so a
+    /// near-immediate file-watcher tick is treated as our own echo
+    /// instead of triggering `reload_config()`. Called by paths that
+    /// persist a panel-driven edit; keeps the in-memory live preview
+    /// from being clobbered by a re-parse of the file we just wrote.
+    ///
+    /// 500 ms is the suppression window — comfortably longer than any
+    /// notify backend's debounce while short enough that a real
+    /// external edit hitting the same window is implausible.
+    pub fn suppress_next_config_reload(&mut self) {
+        const SUPPRESS_WINDOW: Duration = Duration::from_millis(500);
+        self.pending_self_config_write_deadline = Some(Instant::now() + SUPPRESS_WINDOW);
     }
 
     pub fn flush_pending_redraw(&mut self) {

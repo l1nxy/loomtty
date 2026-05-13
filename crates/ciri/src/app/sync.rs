@@ -7,6 +7,102 @@ use crate::connection::ServerEvent;
 use crate::grid::ClientPaneGrid;
 
 impl App {
+    pub(crate) fn reload_input_config(&mut self) {
+        self.core.input.reload_bindings(
+            &self.core.config.keys.leader,
+            match self.core.config.input.mode {
+                ciri_config::config::InputMode::Prefix => "prefix",
+                ciri_config::config::InputMode::Sticky => "sticky",
+            },
+            &self.core.config.keys.bindings,
+            &self.core.config.keys.modes,
+            &self.core.config.keys.direct_bindings,
+        );
+        Self::rebuild_binding_set(&mut self.core.input, &self.core.config);
+    }
+
+    pub(crate) fn update_prediction_config(&mut self) {
+        self.core.prediction.update_config(
+            self.core.config.prediction.mode,
+            self.core.config.prediction.threshold_ms,
+            self.core.config.prediction.show_underline,
+        );
+    }
+
+    pub(crate) fn apply_font_config_change(&mut self) -> bool {
+        self.destroy_gpu_resources();
+        if let Some(renderer) = &mut self.renderer {
+            let shaper = ciri_render::shaper::TextShaper::with_options(
+                &self.core.config.font.family,
+                &ciri_render::shaper::ShapingOptions {
+                    preferred_weight: self.core.config.font.weight,
+                    features: self.core.config.font.parsed_features(),
+                },
+            );
+            let ui_init = App::resolve_ui_font_init(&self.core.config, self.dpi_scale);
+            let (cache, atlas_gpu) =
+                match renderer.create_atlas(&ciri_render::glyph_cache::FontInitParams {
+                    font_size_pt: self.core.config.font.size,
+                    dpi_scale: self.dpi_scale,
+                    family_name: &self.core.config.font.family,
+                    ui_family_name: self
+                        .core
+                        .config
+                        .font
+                        .ui
+                        .as_ref()
+                        .and_then(|ui| (!ui.family.is_empty()).then_some(ui.family.as_str())),
+                    primary_font_path: shaper.primary_font_path(),
+                    emoji_font_path: shaper.emoji_font_path(),
+                    emoji_font_id: shaper.emoji_font_id(),
+                    cjk_font_path: shaper.cjk_font_path(),
+                    cjk_font_id: shaper.cjk_font_id(),
+                    ui_font_path: ui_init.path.clone(),
+                    ui_font_id: ui_init.id,
+                    ui_pixel_size: ui_init.pixel_size,
+                    render_config: &self.core.config.render,
+                    font_resolver: shaper.font_resolver(),
+                    #[cfg(windows)]
+                    dwrite_resolver: shaper.dwrite_resolver(),
+                    cell_width_scale: Some(self.core.config.font.adjust_cell_width),
+                    cell_height_scale: Some(self.core.config.font.adjust_cell_height),
+                }) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        log::error!("failed to recreate glyph atlas on font change: {e}");
+                        return false;
+                    }
+                };
+            let ui_shaper = App::build_ui_shaper(
+                &ui_init,
+                &shaper,
+                self.core.config.font.size,
+                self.dpi_scale,
+                cache.cell_width,
+                cache.cell_height,
+            );
+            self.glyph_cache = Some(cache);
+            self.glyph_atlas_gpu = Some(atlas_gpu);
+            self.text_shaper = Some(shaper);
+            self.ui_shaper = Some(std::cell::RefCell::new(ui_shaper));
+        }
+        self.clear_render_caches();
+        for grid in self.core.pane_grids.values_mut() {
+            grid.dirty = true;
+        }
+        let (cw, ch) = self.cell_dimensions();
+        let view = &self.core.workspaces.view_size;
+        self.send(ClientMessage::Resize {
+            cols: 0,
+            rows: 0,
+            width: view.width as u32,
+            height: view.height as u32,
+            cell_width: cw,
+            cell_height: ch,
+        });
+        true
+    }
+
     fn finalize_authoritative_session_switch(&mut self, pane_ids: &[u64]) {
         let Some(session_name) = self.core.pending_session_name.take() else {
             return;
@@ -631,105 +727,23 @@ impl App {
                             .abs()
                             > f32::EPSILON
                 };
-                let background_image_changed = self
-                    .core
-                    .config
-                    .appearance
-                    .background_image
+                let background_image_changed = self.core.config.appearance.background_image
                     != new_config.appearance.background_image;
                 self.core.config = new_config;
                 self.cached_color_table = ciri_render::terminal::ColorTable::new(&self.core.config);
                 self.cached_resolved_theme.reload(&self.core.config.theme);
-                self.core.input.reload_bindings(
-                    &self.core.config.keys.leader,
-                    match self.core.config.input.mode {
-                        ciri_config::config::InputMode::Prefix => "prefix",
-                        ciri_config::config::InputMode::Sticky => "sticky",
-                    },
-                    &self.core.config.keys.bindings,
-                    &self.core.config.keys.modes,
-                    &self.core.config.keys.direct_bindings,
-                );
-                Self::rebuild_binding_set(&mut self.core.input, &self.core.config);
+                self.reload_input_config();
                 if font_changed {
-                    self.destroy_gpu_resources();
-                    if let Some(renderer) = &mut self.renderer {
-                        let shaper = ciri_render::shaper::TextShaper::with_options(
-                            &self.core.config.font.family,
-                            &ciri_render::shaper::ShapingOptions {
-                                preferred_weight: self.core.config.font.weight,
-                                features: self.core.config.font.parsed_features(),
-                            },
-                        );
-                        let ui_init = App::resolve_ui_font_init(&self.core.config, self.dpi_scale);
-                        let (cache, atlas_gpu) =
-                            match renderer.create_atlas(&ciri_render::glyph_cache::FontInitParams {
-                                font_size_pt: self.core.config.font.size,
-                                dpi_scale: self.dpi_scale,
-                                family_name: &self.core.config.font.family,
-                                ui_family_name: self.core.config.font.ui.as_ref().and_then(|ui| {
-                                    (!ui.family.is_empty()).then_some(ui.family.as_str())
-                                }),
-                                primary_font_path: shaper.primary_font_path(),
-                                emoji_font_path: shaper.emoji_font_path(),
-                                emoji_font_id: shaper.emoji_font_id(),
-                                cjk_font_path: shaper.cjk_font_path(),
-                                cjk_font_id: shaper.cjk_font_id(),
-                                ui_font_path: ui_init.path.clone(),
-                                ui_font_id: ui_init.id,
-                                ui_pixel_size: ui_init.pixel_size,
-                                render_config: &self.core.config.render,
-                                font_resolver: shaper.font_resolver(),
-                                #[cfg(windows)]
-                                dwrite_resolver: shaper.dwrite_resolver(),
-                                cell_width_scale: Some(self.core.config.font.adjust_cell_width),
-                                cell_height_scale: Some(self.core.config.font.adjust_cell_height),
-                            }) {
-                                Ok(v) => v,
-                                Err(e) => {
-                                    log::error!(
-                                        "failed to recreate glyph atlas on font change: {e}"
-                                    );
-                                    return;
-                                }
-                            };
-                        let ui_shaper = App::build_ui_shaper(
-                            &ui_init,
-                            &shaper,
-                            self.core.config.font.size,
-                            self.dpi_scale,
-                            cache.cell_width,
-                            cache.cell_height,
-                        );
-                        self.glyph_cache = Some(cache);
-                        self.glyph_atlas_gpu = Some(atlas_gpu);
-                        self.text_shaper = Some(shaper);
-                        self.ui_shaper = Some(std::cell::RefCell::new(ui_shaper));
+                    if !self.apply_font_config_change() {
+                        return;
                     }
                 }
                 self.clear_render_caches();
                 for grid in self.core.pane_grids.values_mut() {
                     grid.dirty = true;
                 }
-                // Notify server of new cell dimensions after font change
-                if font_changed {
-                    let (cw, ch) = self.cell_dimensions();
-                    let view = &self.core.workspaces.view_size;
-                    self.send(ClientMessage::Resize {
-                        cols: 0,
-                        rows: 0,
-                        width: view.width as u32,
-                        height: view.height as u32,
-                        cell_width: cw,
-                        cell_height: ch,
-                    });
-                }
                 log::info!("config reloaded");
-                self.core.prediction.update_config(
-                    self.core.config.prediction.mode,
-                    self.core.config.prediction.threshold_ms,
-                    self.core.config.prediction.show_underline,
-                );
+                self.update_prediction_config();
                 if background_image_changed {
                     self.reload_background_image();
                 }

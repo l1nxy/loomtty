@@ -46,10 +46,7 @@ pub fn expand_config_path(path: &str) -> PathBuf {
     if p.is_absolute() {
         return p;
     }
-    config_path()
-        .parent()
-        .map(|dir| dir.join(&p))
-        .unwrap_or(p)
+    config_path().parent().map(|dir| dir.join(&p)).unwrap_or(p)
 }
 
 pub fn config_path() -> PathBuf {
@@ -185,9 +182,7 @@ mod tests {
             ("background_dim=-0.1", |c| {
                 c.appearance.background_dim = -0.1
             }),
-            ("background_dim=1.1", |c| {
-                c.appearance.background_dim = 1.1
-            }),
+            ("background_dim=1.1", |c| c.appearance.background_dim = 1.1),
             ("pane_opacity=-0.1", |c| c.appearance.pane_opacity = -0.1),
             ("pane_opacity=1.1", |c| c.appearance.pane_opacity = 1.1),
         ];

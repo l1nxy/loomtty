@@ -29,17 +29,17 @@ use crate::theme::ResolvedTheme;
 const TOTAL_W: f32 = 144.0;
 // Tracks Dropdown::ROW_H so the two button-class controls share a
 // vertical baseline when they appear in the same settings row.
-const ROW_H: f32 = 40.0;
-// Square buttons (40 × 40) — matches the row height so the dec/inc
+const ROW_H: f32 = 48.0;
+// Square buttons (48 × 48) — matches the row height so the dec/inc
 // regions read as proper press targets, not narrow strips.
-const BTN_W: f32 = 40.0;
-const VALUE_W: f32 = TOTAL_W - BTN_W * 2.0;
+const BTN_W: f32 = 48.0;
 const HAIRLINE: f32 = 1.0;
 
 pub struct NumberField {
     dec_hit_id: u64,
     inc_hit_id: u64,
     value: SharedString,
+    width: f32,
 }
 
 impl NumberField {
@@ -51,6 +51,7 @@ impl NumberField {
             dec_hit_id,
             inc_hit_id,
             value: SharedString::default(),
+            width: TOTAL_W,
         }
     }
 
@@ -61,6 +62,15 @@ impl NumberField {
         self
     }
 
+    /// Override the overall stepper width (defaults to 144 px). The
+    /// dec / inc buttons stay 40 × 40; the value cell absorbs any
+    /// extra width. Settings rows use this to keep every control
+    /// column the same width so the right edges align.
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = width.max(BTN_W * 2.0 + HAIRLINE * 2.0);
+        self
+    }
+
     pub fn into_div(self, theme: &ResolvedTheme) -> Div {
         let outer_bg = theme.surface_sunken;
         let border_color = theme.border;
@@ -68,16 +78,17 @@ impl NumberField {
         let hover_bg = theme.element_hover;
         let press_bg = theme.element_active;
 
+        // Value cell expands to fill whatever's left after the two
+        // 40×40 buttons + two hairline dividers — keeps the stepper
+        // stretchable for unified-width settings rows without changing
+        // the dec/inc hit-area sizes.
+        let value_w = (self.width - BTN_W * 2.0 - HAIRLINE * 2.0).max(0.0);
+
         // Vertical hairline between segments — gives the dec / value /
         // inc tri-cell the obvious "stepper buttons" silhouette so the
         // hit areas are visually discoverable, not just clickable rect
         // regions hiding inside an otherwise undivided box.
-        let hairline = || {
-            div()
-                .w(HAIRLINE)
-                .h(ROW_H)
-                .bg(border_color)
-        };
+        let hairline = || div().w(HAIRLINE).h(ROW_H).bg(border_color);
 
         let dec_btn = div()
             .w(BTN_W)
@@ -93,7 +104,7 @@ impl NumberField {
             .child(text("−").color(fg));
 
         let value_cell = div()
-            .w(VALUE_W - HAIRLINE * 2.0)
+            .w(value_w)
             .h(ROW_H)
             .flex_none()
             .flex_row()
@@ -118,7 +129,7 @@ impl NumberField {
             .flex_none()
             .flex_row()
             .items_center()
-            .w(TOTAL_W)
+            .w(self.width)
             .h(ROW_H)
             .bg(outer_bg)
             .border(1.0, border_color)

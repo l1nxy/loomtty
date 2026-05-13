@@ -254,6 +254,7 @@ fn cell_delta_sm_roundtrip() {
         cursor_col: 10,
         cursor_shape: 0,
         mode_flags: 0,
+        received_ack: 0,
         echo_ack: 0,
     };
     encode_cell_delta_streaming_framed(
@@ -306,6 +307,7 @@ fn full_pane_sync_roundtrip() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
+            received_ack: 0,
             echo_ack: 0,
         },
         cols: 80,
@@ -349,6 +351,7 @@ fn full_pane_sync_with_scrollback() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
+            received_ack: 0,
             echo_ack: 0,
         },
         cols: 10,
@@ -379,6 +382,7 @@ fn full_pane_sync_rejects_truncated_mandatory_sections() {
             cursor_col: 2,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
+            received_ack: 0,
             echo_ack: 0,
         },
         cols: 4,
@@ -421,6 +425,7 @@ fn full_pane_sync_ignores_truncated_optional_extras() {
             cursor_col: 1,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
+            received_ack: 0,
             echo_ack: 0,
         },
         cols: 2,
@@ -477,6 +482,7 @@ fn full_pane_sync_rejects_oversized_visible_metadata() {
             cursor_col: 0,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
+            received_ack: 0,
             echo_ack: 0,
         },
         cols: 1,
@@ -543,6 +549,7 @@ async fn frame_roundtrip_cell_delta_sm() {
         cursor_col: 0,
         cursor_shape: 0,
         mode_flags: 0,
+        received_ack: 0,
         echo_ack: 0,
     };
     encode_cell_delta_streaming_framed(
@@ -617,6 +624,7 @@ async fn frame_roundtrip_full_pane_sync_lz4() {
             cursor_col: 10,
             cursor_shape: CURSOR_BLOCK,
             mode_flags: 0,
+            received_ack: 0,
             echo_ack: 0,
         },
         cols: 80,
@@ -671,6 +679,7 @@ async fn frame_roundtrip_cell_delta_lz4() {
         cursor_col: 0,
         cursor_shape: 0,
         mode_flags: 0,
+        received_ack: 0,
         echo_ack: 0,
     };
     // 10 regions × 20 cells each — well above 128 bytes
@@ -733,6 +742,7 @@ fn decode_cell_delta_rejects_inverted_region_bounds() {
     payload.extend_from_slice(&0u16.to_le_bytes()); // cursor_col
     payload.push(0); // cursor_shape
     payload.extend_from_slice(&0u16.to_le_bytes()); // mode_flags (u16)
+    payload.extend_from_slice(&0u64.to_le_bytes()); // received_ack
     payload.extend_from_slice(&0u64.to_le_bytes()); // echo_ack
     payload.extend_from_slice(&80u16.to_le_bytes()); // cols
     payload.extend_from_slice(&1u16.to_le_bytes()); // num_regions
@@ -755,6 +765,7 @@ fn decode_cell_delta_rejects_truncated_region_data() {
     payload.extend_from_slice(&0u16.to_le_bytes()); // cursor_col
     payload.push(0); // cursor_shape
     payload.extend_from_slice(&0u16.to_le_bytes()); // mode_flags (u16)
+    payload.extend_from_slice(&0u64.to_le_bytes()); // received_ack
     payload.extend_from_slice(&0u64.to_le_bytes()); // echo_ack
     payload.extend_from_slice(&80u16.to_le_bytes()); // cols
     payload.extend_from_slice(&1u16.to_le_bytes()); // num_regions
@@ -1362,6 +1373,7 @@ mod proptest_roundtrips {
                     cursor_col: cols.saturating_sub(1),
                     cursor_shape: CURSOR_BEAM,
                     mode_flags,
+                    received_ack: 7,
                     echo_ack: 7,
                 },
                 cols,
@@ -1418,6 +1430,7 @@ mod proptest_roundtrips {
                 cursor_col,
                 cursor_shape: CURSOR_BLOCK,
                 mode_flags: 0,
+                received_ack: echo_ack,
                 echo_ack,
             };
             let mut buf = Vec::new();
@@ -1709,6 +1722,7 @@ mod network_edge_cases {
                 cursor_col: 20,
                 cursor_shape: CURSOR_BLOCK,
                 mode_flags: MODE_ALT_SCREEN,
+                received_ack: 42,
                 echo_ack: 42,
             },
             cols: 120,
@@ -1818,6 +1832,7 @@ mod network_edge_cases {
                 cursor_col: 0,
                 cursor_shape: CURSOR_BLOCK,
                 mode_flags: 0,
+                received_ack: 0,
                 echo_ack: 0,
             },
             cols: 80,
@@ -1869,6 +1884,7 @@ mod network_edge_cases {
                 cursor_col: 0,
                 cursor_shape: CURSOR_BLOCK,
                 mode_flags: 0,
+                received_ack: 0,
                 echo_ack: 0,
             },
             cols: 4,

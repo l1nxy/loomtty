@@ -66,6 +66,7 @@ fn write_full_pane_sync_header(
     buf.extend_from_slice(&sync.meta.cursor_col.to_le_bytes());
     buf.push(sync.meta.cursor_shape);
     buf.extend_from_slice(&sync.meta.mode_flags.to_le_bytes());
+    buf.extend_from_slice(&sync.meta.received_ack.to_le_bytes());
     buf.extend_from_slice(&sync.meta.echo_ack.to_le_bytes());
     buf.extend_from_slice(&(title_bytes.len() as u16).to_le_bytes());
     buf.extend_from_slice(title_bytes);
@@ -281,6 +282,7 @@ pub fn decode_full_pane_sync(payload: &[u8]) -> io::Result<FullPaneSync> {
         cursor_col: hdr.cursor_col.get(),
         cursor_shape: hdr.cursor_shape,
         mode_flags: hdr.mode_flags.get(),
+        received_ack: hdr.received_ack.get(),
         echo_ack: hdr.echo_ack.get(),
     };
 
@@ -365,6 +367,7 @@ pub fn decode_full_pane_sync_borrowed(payload: Vec<u8>) -> io::Result<FullPaneSy
         cursor_col: hdr.cursor_col.get(),
         cursor_shape: hdr.cursor_shape,
         mode_flags: hdr.mode_flags.get(),
+        received_ack: hdr.received_ack.get(),
         echo_ack: hdr.echo_ack.get(),
     };
 

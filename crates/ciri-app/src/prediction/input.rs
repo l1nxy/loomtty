@@ -3,7 +3,7 @@ use std::time::Instant;
 use unicode_width::UnicodeWidthChar;
 
 use super::PredictionEngine;
-use super::overlay::{PaneOverlay, PredictedCursor};
+use super::overlay::PaneOverlay;
 use crate::grid::ClientPaneGrid;
 
 impl PredictionEngine {
@@ -45,6 +45,15 @@ impl PredictionEngine {
         show_ul: bool,
     ) -> u16 {
         let char_width = ch.width().unwrap_or(1) as u16;
+        if char_width == 0 {
+            // Combining marks / zero-width chars: predicting them in-place would
+            // overwrite the host glyph (rather than composing onto it). Mosh
+            // takes the same out — see `terminaloverlay.cc` `new_user_byte`
+            // bailing on `wcwidth(ch) != 1`. Bump the epoch so a following
+            // visible prediction waits for the real echo.
+            overlay.increment_epoch();
+            return 0;
+        }
         if ccol + char_width > grid.cols {
             overlay.increment_epoch();
             return 0;
@@ -249,6 +258,13 @@ impl PredictionEngine {
             return;
         }
 
+        // Re-evaluate hysteresis with the pre-mutation overlay set. If SRTT
+        // had dropped below LOW while no overlays existed and no render
+        // happened in the interim, this is the last chance to disarm before
+        // we create a hidden-track / force-visible overlay that would mask
+        // the empty state from `has_active_overlay()`.
+        self.refresh_display_armed();
+
         self.bump_visual_serial_for_pane(pane_id);
 
         let show_ul = self.show_underline
@@ -272,6 +288,12 @@ impl PredictionEngine {
             overlay.increment_epoch();
             return;
         }
+        // The hidden-track / Never-mode path needs an anchor for follow-up
+        // `force_visible` Backspaces (so they snap back instead of walking
+        // past the original prompt position). The standard prediction path
+        // doesn't need this — Backspace bounds come from the dual-ack
+        // protocol's `received_ack`-driven cursor cap inside
+        // `on_server_sync_dual` instead.
         if force_track
             && !force_visible
             && overlay.local_edit_start.is_none()
@@ -300,13 +322,7 @@ impl PredictionEngine {
                 ccol += 1;
             }
             if ccol < cols {
-                overlay.cursor = Some(PredictedCursor {
-                    row: crow,
-                    col: ccol,
-                    epoch: overlay.prediction_epoch,
-                    min_echo_ack: min_ack,
-                    created_at: Instant::now(),
-                });
+                overlay.set_or_push_cursor(crow, ccol, min_ack, Instant::now());
             }
             return;
         }
@@ -314,17 +330,20 @@ impl PredictionEngine {
             if ccol > 0 {
                 ccol -= 1;
             }
-            overlay.cursor = Some(PredictedCursor {
-                row: crow,
-                col: ccol,
-                epoch: overlay.prediction_epoch,
-                min_echo_ack: min_ack,
-                created_at: Instant::now(),
-            });
+            overlay.set_or_push_cursor(crow, ccol, min_ack, Instant::now());
             return;
         }
 
-        for &byte in data {
+        let last_byte_idx = data.len().saturating_sub(1);
+        // Track cap_floor-only batches. If the loop's *only* effect is being
+        // muted by `cap_floor` (no shifts, no rewrap, no CR/LF) we skip the
+        // end-of-loop cursor push to avoid a redundant visual-serial bump
+        // and a stray cursor entry per held-Backspace keystroke. Any
+        // genuinely-acting branch sets `did_other_work` so the end push still
+        // fires for legitimate predictions in the same batch.
+        let mut hit_cap_floor = false;
+        let mut did_other_work = false;
+        for (byte_idx, &byte) in data.iter().enumerate() {
             match byte {
                 0x20..=0x7E => {
                     let w = Self::predict_char(
@@ -339,7 +358,33 @@ impl PredictionEngine {
                     if w == 0 {
                         return;
                     }
+                    did_other_work = true;
                     ccol += w;
+                    if ccol >= cols {
+                        // alacritty's pending-wrap: cursor stays on the last
+                        // column until the next printable forces an actual
+                        // wrap. Speculatively advancing rows mispredicts the
+                        // cursor for the whole ack window.
+                        //
+                        // Only pin when this wrap byte is the LAST byte in
+                        // the input buffer — that's the only case where the
+                        // server will end up at `(row, cols-1)` with pending
+                        // wrap. If more bytes follow, the server will keep
+                        // processing them, advancing its cursor past the
+                        // wrap; pinning here would force a guaranteed
+                        // catastrophic mismatch when `echo_ack` reaches this
+                        // buffer's seq, wiping hidden-edit state with it.
+                        overlay.increment_epoch();
+                        if byte_idx == last_byte_idx {
+                            overlay.set_or_push_cursor(
+                                crow,
+                                cols - 1,
+                                min_ack,
+                                Instant::now(),
+                            );
+                        }
+                        return;
+                    }
                 }
                 0xC2..=0xDF | 0xE0..=0xEF | 0xF0..=0xF4 => {
                     overlay.utf8.start(byte);
@@ -358,25 +403,48 @@ impl PredictionEngine {
                         if w == 0 {
                             return;
                         }
+                        did_other_work = true;
                         ccol += w;
+                        if ccol >= cols {
+                            overlay.increment_epoch();
+                            if byte_idx == last_byte_idx {
+                                overlay.set_or_push_cursor(
+                                    crow,
+                                    cols - 1,
+                                    min_ack,
+                                    Instant::now(),
+                                );
+                            }
+                            return;
+                        }
                     }
                 }
                 0x08 | 0x7F => {
-                    if force_visible {
-                        if let Some(start) = overlay.local_edit_start {
-                            if Self::cursor_at_or_before(crow, ccol, start) {
-                                crow = start.0;
-                                ccol = start.1;
-                                overlay.cursor = Some(PredictedCursor {
-                                    row: crow,
-                                    col: ccol,
-                                    epoch: overlay.prediction_epoch,
-                                    min_echo_ack: min_ack,
-                                    created_at: Instant::now(),
-                                });
-                                continue;
-                            }
-                        }
+                    // `force_visible` snap-back: in Never-mode / alt-screen
+                    // hidden-edit flows we have a recorded anchor; a Backspace
+                    // that crosses it is clamped to the anchor instead of
+                    // walking further left.
+                    if force_visible
+                        && let Some(start) = overlay.local_edit_start
+                        && Self::cursor_at_or_before(crow, ccol, start)
+                    {
+                        crow = start.0;
+                        ccol = start.1;
+                        overlay.set_or_push_cursor(crow, ccol, min_ack, Instant::now());
+                        did_other_work = true;
+                        continue;
+                    }
+                    // Sticky cap: a previous Backspace was capped here.
+                    // Skip predicting any further left-walk until the server
+                    // cursor moves off the floor (which clears it inside
+                    // `on_server_sync`). Prevents the "predict → server cap →
+                    // visual rubber-band" cycle on each held Backspace.
+                    if let Some(floor) = overlay.cap_floor
+                        && Self::cursor_at_or_before(crow, ccol, floor)
+                    {
+                        hit_cap_floor = true;
+                        overlay.increment_epoch();
+                        continue;
                     }
                     if ccol == 0 {
                         if crow <= 0 {
@@ -387,6 +455,7 @@ impl PredictionEngine {
                         ccol = cols;
                     }
                     ccol -= 1;
+                    did_other_work = true;
                     let row_idx = crow as u16;
 
                     let del_cell = overlay.effective_cell(grid, row_idx, ccol);
@@ -453,10 +522,12 @@ impl PredictionEngine {
                     ccol = 0;
                     overlay.local_edit_start = None;
                     overlay.increment_epoch();
+                    did_other_work = true;
                 }
                 0x0A => {
                     if crow < grid.rows as i16 - 1 {
                         crow += 1;
+                        did_other_work = true;
                     } else {
                         overlay.increment_epoch();
                         return;
@@ -475,14 +546,9 @@ impl PredictionEngine {
             }
         }
 
-        if ccol < cols {
-            overlay.cursor = Some(PredictedCursor {
-                row: crow,
-                col: ccol,
-                epoch: overlay.prediction_epoch,
-                min_echo_ack: min_ack,
-                created_at: Instant::now(),
-            });
+        let suppress = hit_cap_floor && !did_other_work;
+        if !suppress && ccol < cols {
+            overlay.set_or_push_cursor(crow, ccol, min_ack, Instant::now());
         }
     }
 }

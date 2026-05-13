@@ -35,6 +35,7 @@ where
     buf.extend_from_slice(&meta.cursor_col.to_le_bytes());
     buf.push(meta.cursor_shape);
     buf.extend_from_slice(&meta.mode_flags.to_le_bytes());
+    buf.extend_from_slice(&meta.received_ack.to_le_bytes());
     buf.extend_from_slice(&meta.echo_ack.to_le_bytes());
     buf.extend_from_slice(&cols.to_le_bytes());
     buf.extend_from_slice(&(regions.len() as u16).to_le_bytes());
@@ -69,6 +70,7 @@ pub fn decode_cell_delta_borrowed(payload: Vec<u8>) -> io::Result<CellDeltaBorro
         cursor_col: hdr.cursor_col.get(),
         cursor_shape: hdr.cursor_shape,
         mode_flags: hdr.mode_flags.get(),
+        received_ack: hdr.received_ack.get(),
         echo_ack: hdr.echo_ack.get(),
     };
     let cols = hdr.cols.get();

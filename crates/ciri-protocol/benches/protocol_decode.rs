@@ -34,6 +34,7 @@ fn make_full_pane_sync(cols: u16, rows: u16, scrollback_rows: u32) -> FullPaneSy
             cursor_col: 5,
             cursor_shape: 0,
             mode_flags: 0,
+            received_ack: 100,
             echo_ack: 100,
         },
         cols,
@@ -98,6 +99,7 @@ fn bench_cell_delta_decode(c: &mut Criterion) {
             cursor_col: 5,
             cursor_shape: 0,
             mode_flags: 0,
+            received_ack: 100,
             echo_ack: 100,
         };
         let region_list: Vec<(u16, u16, u16)> =

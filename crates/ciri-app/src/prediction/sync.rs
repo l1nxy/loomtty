@@ -8,12 +8,27 @@ use super::{
 use crate::grid::ClientPaneGrid;
 
 impl PredictionEngine {
-    /// Validate predictions against authoritative server state.
+    /// Validate predictions against authoritative server state using **dual ack**:
+    ///   - `received_ack`: highest seq the server has *received* (Overwatch-style
+    ///     packet-level ack, bumped synchronously in `handle_input` without
+    ///     waiting for PTY output). Used for cursor validation, because the
+    ///     server's reported cursor is authoritative the moment the input was
+    ///     received — even when the shell silently drops the byte (Backspace at
+    ///     prompt boundary, where late_ack would never advance).
+    ///   - `echo_ack`: highest seq with PTY output drained. Used for cell
+    ///     validation, since only echoed output reveals what the shell actually
+    ///     wrote to its grid.
     ///
     /// Two-pass algorithm:
     /// 1. Confirm correct predictions, update glitch trigger, propagate renditions
     /// 2. Detect wrong predictions — kill epoch or reset entirely
-    pub fn on_server_sync(&mut self, pane_id: u64, grid: &ClientPaneGrid, echo_ack: u64) {
+    pub fn on_server_sync(
+        &mut self,
+        pane_id: u64,
+        grid: &ClientPaneGrid,
+        received_ack: u64,
+        echo_ack: u64,
+    ) {
         if self.overlays.contains_key(&pane_id) {
             self.bump_visual_serial_for_pane(pane_id);
         }
@@ -30,7 +45,16 @@ impl PredictionEngine {
         let Some(overlay) = self.overlays.get_mut(&pane_id) else {
             return;
         };
-        if overlay.is_empty() {
+        // Clear the cap floor as soon as the server cursor moves off it.
+        // The floor is only authoritative while the shell stays put; once
+        // it moves, subsequent Backspaces become legitimately predictable
+        // again.
+        if let Some(floor) = overlay.cap_floor {
+            if (grid.cursor_line, grid.cursor_col) != floor {
+                overlay.cap_floor = None;
+            }
+        }
+        if overlay.is_empty() && overlay.cap_floor.is_none() {
             return;
         }
 
@@ -182,30 +206,103 @@ impl PredictionEngine {
             overlay.kill_epoch(epoch);
         }
 
-        // Validate cursor prediction. echo_ack from the server is now a
-        // `late_ack` (only bumped after the pane's PTY has flowed output back
-        // — see ciri-server `process_pty_and_damage`), so once
-        // `echo_ack >= min_echo_ack` the grid is guaranteed to reflect the
-        // input that produced this cursor. Match → confirmed; mismatch → the
-        // prediction was simply wrong, reset.
-        if let Some(ref cur) = overlay.cursor {
-            if echo_ack >= cur.min_echo_ack {
-                if cur.row == grid.cursor_line && cur.col == grid.cursor_col {
-                    overlay.cursor = None;
-                } else {
-                    self.overlays.remove(&pane_id);
-                    self.force_visible_panes.remove(&pane_id);
-                    return;
-                }
+        // Validate cursor predictions in epoch order. Use `received_ack`
+        // (server-acked-on-receipt) instead of `echo_ack` for cursor decisions:
+        // the server's reported cursor reflects PTY truth the moment the
+        // input was received, so we don't need to wait for PTY output to
+        // catch a misprediction. This is the fix for "hold Backspace at the
+        // prompt boundary makes the predicted cursor walk past column 0
+        // forever" — `echo_ack` would never advance there because the shell
+        // emits nothing, but `received_ack` advances on every keystroke.
+        //
+        // Mismatch policy:
+        //   - **Predicted past server cursor** (Backspace-past-prompt case):
+        //     prediction was too aggressive; the shell silently rejected it.
+        //     Kill the cursor's epoch (drops the bad cells + cursor without
+        //     blowing up the whole overlay). Other epochs survive.
+        //   - **Otherwise** (e.g. shell jumped cursor unexpectedly):
+        //     keep the old behaviour — drop older mismatched cursors silently;
+        //     catastrophic-reset on a back-cursor mismatch.
+        let cursor_count = overlay.cursors.len();
+        let mut catastrophic = false;
+        let mut idx = 0;
+        while idx < overlay.cursors.len() {
+            let cur = &overlay.cursors[idx];
+            let matched = cur.row == grid.cursor_line && cur.col == grid.cursor_col;
+            let predicted_past_server = (cur.row, cur.col) < (grid.cursor_line, grid.cursor_col);
+            let received = received_ack >= cur.min_echo_ack;
+            let echoed = echo_ack >= cur.min_echo_ack;
+            let is_back = idx + 1 == overlay.cursors.len();
+
+            if !received {
+                idx += 1;
+                continue;
             }
+
+            if matched {
+                // Server confirms the position — drop and move on.
+                overlay.cursors.remove(idx);
+                continue;
+            }
+
+            if predicted_past_server {
+                // Soft cap: server received the input but its cursor is
+                // *forward* of our prediction. The only way this happens is
+                // when the shell silently rejected what we predicted to
+                // delete (Backspace at the prompt boundary). Kill the bad
+                // epoch's cells and cursor; preserve hidden-edit anchors and
+                // other epochs.
+                //
+                // Record `cap_floor` so the input path can refuse follow-up
+                // Backspaces before they cause another predict-then-cap
+                // round trip (the rubber-banding artefact).
+                let bad_epoch = cur.epoch;
+                overlay.cap_floor = Some((grid.cursor_line, grid.cursor_col));
+                overlay.kill_epoch(bad_epoch);
+                continue;
+            }
+
+            // Predicted cursor is *ahead* of the server cursor. This is the
+            // normal forward-speculation case — server may not have echoed
+            // PTY yet. Wait for `echo_ack` before declaring this wrong.
+            if !echoed {
+                idx += 1;
+                continue;
+            }
+
+            // PTY drained past this seq AND the cursor still doesn't match
+            // — the prediction was genuinely wrong. Old behaviour: drop
+            // history cursors silently, catastrophic-reset on the back.
+            if is_back && cursor_count > 0 {
+                catastrophic = true;
+                break;
+            }
+            overlay.cursors.remove(idx);
+        }
+        if catastrophic {
+            self.overlays.remove(&pane_id);
+            self.force_visible_panes.remove(&pane_id);
+            return;
         }
 
         if let Some(overlay) = self.overlays.get_mut(&pane_id) {
             overlay.gc_rows();
             if overlay.is_empty() {
                 self.force_visible_panes.remove(&pane_id);
-                if overlay.local_edit_start.is_none() {
+                if overlay.local_edit_start.is_none() && overlay.cap_floor.is_none() {
                     self.overlays.remove(&pane_id);
+                } else {
+                    // The overlay is being kept around purely as the
+                    // anchor for a follow-up force_visible Backspace.
+                    // Advance `prediction_epoch` past `confirmed_epoch`
+                    // so the *next* input lands in a fresh, tentative
+                    // epoch — without this, ciri's Adaptive/Always
+                    // contract that "a freshly typed character starts
+                    // tentative after a sync" would silently break
+                    // whenever local_edit_start was set.
+                    if overlay.prediction_epoch <= overlay.confirmed_epoch {
+                        overlay.prediction_epoch = overlay.confirmed_epoch + 1;
+                    }
                 }
             }
         }

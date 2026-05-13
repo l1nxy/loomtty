@@ -405,6 +405,7 @@ impl App {
                         self.core.prediction.on_server_sync(
                             sync.meta.pane_id,
                             grid,
+                            sync.meta.received_ack,
                             sync.meta.echo_ack,
                         );
                         for row in prediction_dirty_rows {
@@ -439,6 +440,7 @@ impl App {
                             self.core.prediction.on_server_sync(
                                 delta.meta.pane_id,
                                 grid,
+                                delta.meta.received_ack,
                                 delta.meta.echo_ack,
                             );
                             for row in prediction_dirty_rows {
@@ -852,6 +854,7 @@ mod tests {
                 cursor_col: 0,
                 cursor_shape: 0,
                 mode_flags: 0,
+                received_ack: 0,
                 echo_ack: 0,
             },
             cols: 2,
@@ -906,6 +909,7 @@ mod tests {
                 cursor_col: 1,
                 cursor_shape: CURSOR_BLOCK,
                 mode_flags: 0,
+                received_ack: 0,
                 echo_ack: 0,
             },
             2,
@@ -939,6 +943,7 @@ mod tests {
                 cursor_col: 1,
                 cursor_shape: CURSOR_BLOCK,
                 mode_flags: MODE_ALT_SCREEN,
+                received_ack: 0,
                 echo_ack: 0,
             },
             2,

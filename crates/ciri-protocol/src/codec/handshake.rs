@@ -44,7 +44,9 @@ const MAX_SESSION_NAME_LEN: usize = 255;
 ///   1 = initial codec layout
 ///   2 = mode_flags expanded from u8 to u16 (kitty keyboard levels 1-5)
 ///   3 = echo_ack (u64) added to PaneFrameMeta for input prediction timing
-pub const WIRE_PROTOCOL_VERSION: u8 = 3;
+///   4 = received_ack (u64) added — early ack for cursor prediction validation
+///       (Overwatch-style packet-level ack, decoupled from PTY drain)
+pub const WIRE_PROTOCOL_VERSION: u8 = 4;
 
 /// Version compatibility result.
 #[derive(Debug, Clone, PartialEq, Eq)]

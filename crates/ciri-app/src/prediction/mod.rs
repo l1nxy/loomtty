@@ -7,6 +7,7 @@ pub use overlay::{PaneOverlay, PredictedCursor};
 
 use ciri_config::config::PredictionMode;
 use ciri_protocol::message::*;
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
@@ -37,6 +38,13 @@ pub struct PredictionEngine {
     pub(super) glitch_trigger: u32,
     pub(super) last_quick_confirm: Option<Instant>,
     pub(super) flagging: bool,
+    /// Hysteretic arm state for `should_display` in Adaptive mode.
+    /// Mosh's `srtt_trigger` only arms above the HIGH threshold and only
+    /// disarms once SRTT drops back to LOW AND no predictions are pending.
+    /// Tracking this independently keeps hidden-track / force-visible paths
+    /// (which create overlays even when display is off) from spuriously
+    /// arming the show trigger.
+    display_armed: Cell<bool>,
 }
 
 impl PredictionEngine {
@@ -57,6 +65,7 @@ impl PredictionEngine {
             glitch_trigger: 0,
             last_quick_confirm: None,
             flagging: false,
+            display_armed: Cell::new(false),
         }
     }
 
@@ -74,6 +83,7 @@ impl PredictionEngine {
         self.glitch_trigger = 0;
         self.last_quick_confirm = None;
         self.flagging = false;
+        self.display_armed.set(false);
     }
 
     pub fn next_input_seq(&mut self) -> u64 {
@@ -86,6 +96,8 @@ impl PredictionEngine {
         self.mode = mode;
         self.threshold_ms = threshold_ms;
         self.show_underline = show_underline;
+        // Threshold changed → previous armed state is no longer meaningful.
+        self.display_armed.set(false);
         self.bump_visual_serial();
         for serial in self.pane_visual_serials.values_mut() {
             *serial = serial.wrapping_add(1);
@@ -101,9 +113,44 @@ impl PredictionEngine {
             PredictionMode::Always => true,
             PredictionMode::Never => false,
             PredictionMode::Adaptive => {
-                self.srtt_us / 1000 > self.threshold_ms || self.glitch_trigger > 0
+                if self.glitch_trigger > 0 {
+                    return true;
+                }
+                self.refresh_display_armed();
+                self.display_armed.get()
             }
         }
+    }
+
+    /// Re-evaluate Adaptive arm/disarm hysteresis. Idempotent and uses
+    /// interior mutability so it can run from any context.
+    ///
+    /// Must be called *before* a new overlay entry is created in response to
+    /// user input — otherwise the disarm check below sees the freshly-added
+    /// overlay as "active" and keeps a stale armed state from a high-RTT
+    /// session even after RTT has recovered.
+    pub(super) fn refresh_display_armed(&self) {
+        if self.mode != PredictionMode::Adaptive {
+            return;
+        }
+        let srtt_ms = self.srtt_us / 1000;
+        let low = self.threshold_ms.saturating_sub(self.threshold_ms / 3);
+        let mut armed = self.display_armed.get();
+        if srtt_ms > self.threshold_ms {
+            // Above HIGH: arm.
+            armed = true;
+        } else if srtt_ms <= low && !self.has_active_overlay() {
+            // Below LOW with nothing actually in flight: disarm.
+            // We can't use `overlays.is_empty()` here — hidden-edit overlays
+            // persist with `local_edit_start` even after all their
+            // cells/cursors have been confirmed, so the map entry hangs
+            // around indefinitely. Mirrors mosh's `srtt_trigger` clearing
+            // only when `!active()` AND below LOW.
+            armed = false;
+        }
+        // In the hysteresis band (LOW < srtt <= HIGH) the previous armed
+        // state is preserved.
+        self.display_armed.set(armed);
     }
 
     pub fn maybe_send_ping(&mut self) -> Option<ClientMessage> {
@@ -138,6 +185,10 @@ impl PredictionEngine {
         } else {
             self.srtt_us = (self.srtt_us * 7 + sample) / 8;
         }
+        // SRTT just moved — re-evaluate hysteresis now so a disarm can land
+        // before the next keystroke creates a hidden overlay that would
+        // make `!has_active_overlay()` false.
+        self.refresh_display_armed();
     }
 
     // ---- Public overlay access ----
@@ -168,7 +219,7 @@ impl PredictionEngine {
             return None;
         }
         let overlay = self.overlays.get(&pane_id)?;
-        let cur = overlay.cursor.as_ref()?;
+        let cur = overlay.latest_cursor()?;
         if force_visible
             || self.mode == PredictionMode::Always
             || cur.epoch <= overlay.confirmed_epoch
@@ -204,6 +255,14 @@ impl PredictionEngine {
         }
         self.force_visible_panes.remove(&pane_id);
         self.pane_visual_serials.remove(&pane_id);
+    }
+
+    /// Whether any overlay holds *active* prediction state (cells or cursors).
+    /// Confirmed hidden-edit overlays linger in the map only via
+    /// `local_edit_start`, so `overlays.is_empty()` is not a faithful proxy
+    /// for "predictions in flight".
+    fn has_active_overlay(&self) -> bool {
+        self.overlays.values().any(|o| !o.is_empty())
     }
 
     fn bump_visual_serial(&mut self) {

@@ -268,7 +268,7 @@ pub const FLAG_HYPERLINK: u16 = 1 << 13;
 
 // ─── Zerocopy wire headers (fixed-layout decode targets) ───────────
 
-/// CellDelta fixed header (35 bytes). Matches the wire layout exactly.
+/// CellDelta fixed header (43 bytes). Matches the wire layout exactly.
 #[derive(Debug, Clone, Copy, zerocopy::FromBytes, zerocopy::KnownLayout, zerocopy::Immutable)]
 #[repr(C, packed)]
 pub struct CellDeltaHeader {
@@ -278,12 +278,13 @@ pub struct CellDeltaHeader {
     pub cursor_col: zerocopy::little_endian::U16,
     pub cursor_shape: u8,
     pub mode_flags: zerocopy::little_endian::U16,
+    pub received_ack: zerocopy::little_endian::U64,
     pub echo_ack: zerocopy::little_endian::U64,
     pub cols: zerocopy::little_endian::U16,
     pub num_regions: zerocopy::little_endian::U16,
 }
 
-const _: () = assert!(size_of::<CellDeltaHeader>() == 35);
+const _: () = assert!(size_of::<CellDeltaHeader>() == 43);
 
 /// CellDelta per-region header (10 bytes).
 #[derive(Debug, Clone, Copy, zerocopy::FromBytes, zerocopy::KnownLayout, zerocopy::Immutable)]
@@ -297,7 +298,7 @@ pub struct CellDeltaRegionHeader {
 
 const _: () = assert!(size_of::<CellDeltaRegionHeader>() == 10);
 
-/// FullPaneSync fixed header (37 bytes). Everything before the variable-length title.
+/// FullPaneSync fixed header (45 bytes). Everything before the variable-length title.
 #[derive(Debug, Clone, Copy, zerocopy::FromBytes, zerocopy::KnownLayout, zerocopy::Immutable)]
 #[repr(C, packed)]
 pub struct FullPaneSyncHeader {
@@ -309,11 +310,12 @@ pub struct FullPaneSyncHeader {
     pub cursor_col: zerocopy::little_endian::U16,
     pub cursor_shape: u8,
     pub mode_flags: zerocopy::little_endian::U16,
+    pub received_ack: zerocopy::little_endian::U64,
     pub echo_ack: zerocopy::little_endian::U64,
     pub title_len: zerocopy::little_endian::U16,
 }
 
-const _: () = assert!(size_of::<FullPaneSyncHeader>() == 37);
+const _: () = assert!(size_of::<FullPaneSyncHeader>() == 45);
 
 // ─── Wire messages ─���─────────────────────��──────────────────────────
 
@@ -821,14 +823,19 @@ pub struct PaneFrameMeta {
     pub cursor_shape: u8,
     /// Terminal mode flags (mouse mode, alt screen, kitty keyboard levels, etc.)
     pub mode_flags: u16,
-    /// Highest input_seq from this client that has been late-acked for this
-    /// pane. The server advances this only after `process_pty_output()`
-    /// drains PTY output following the input, on the premise that the
-    /// resulting framebuffer state typically reflects those inputs by then.
-    /// Coalesced bursts may over-ack a suffix (PTY echo trails the write);
-    /// the client treats over-acks as ordinary mispredictions and resets the
-    /// overlay rather than holding stale state. See ciri-server
-    /// `process_pty_and_damage`.
+    /// Highest input_seq the server has *received* for this pane, regardless of
+    /// whether the PTY has produced output yet. Bumped synchronously inside
+    /// `handle_input`. Used by the client to validate cursor predictions early
+    /// (Overwatch/Quake-style packet-level ack) — particularly the case where
+    /// the shell silently rejects a Backspace at the prompt boundary, producing
+    /// no PTY output. Without this, late_ack never advances and a hold-Backspace
+    /// session predicts unboundedly past column 0.
+    pub received_ack: u64,
+    /// Highest input_seq that has been *late-acked* — i.e. the PTY has drained
+    /// output following that input. Used to validate cell predictions, since
+    /// only after PTY echo can the client compare predicted characters against
+    /// authoritative server cells. Coalesced bursts may over-ack a suffix; the
+    /// client treats that as ordinary misprediction.
     pub echo_ack: u64,
 }
 

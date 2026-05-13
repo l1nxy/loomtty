@@ -237,6 +237,17 @@ pub(crate) async fn run_tick_loop(
                         };
                         let client_echo_ack =
                             client_ref.max_input_seq.get(&pane_id).copied().unwrap_or(0);
+                        // Early ack: server has *received* the input but the
+                        // PTY may not have echoed yet. Used by the client to
+                        // validate cursor predictions promptly even when the
+                        // shell silently drops the input (e.g. Backspace at
+                        // the prompt boundary, where no PTY output flows back
+                        // and `client_echo_ack` would never advance).
+                        let client_received_ack = client_ref
+                            .received_input_seq
+                            .get(&pane_id)
+                            .copied()
+                            .unwrap_or(0);
 
                         if damage.full {
                             if let Some(pane) = session.panes.get(&pane_id) {
@@ -258,6 +269,7 @@ pub(crate) async fn run_tick_loop(
                                 } else {
                                     build_scrollback_sync(pane, pgen, last_sent, current_total)
                                 };
+                                sync.meta.received_ack = client_received_ack;
                                 sync.meta.echo_ack = client_echo_ack;
                                 pending_sends.push(PendingSend {
                                     client_id: cid,
@@ -291,6 +303,7 @@ pub(crate) async fn run_tick_loop(
                                     last_sent,
                                     current_total,
                                 );
+                                sync.meta.received_ack = client_received_ack;
                                 sync.meta.echo_ack = client_echo_ack;
                                 pending_sends.push(PendingSend {
                                     client_id: cid,
@@ -319,6 +332,7 @@ pub(crate) async fn run_tick_loop(
                                         cursor_col,
                                         cursor_shape,
                                         mode_flags,
+                                        received_ack: client_received_ack,
                                         echo_ack: client_echo_ack,
                                     };
                                     let mut buf = frame_pool.pop().unwrap_or_default();
@@ -361,6 +375,7 @@ pub(crate) async fn run_tick_loop(
                                     cursor_col,
                                     cursor_shape,
                                     mode_flags,
+                                    received_ack: client_received_ack,
                                     echo_ack: client_echo_ack,
                                 };
                                 let mut buf = frame_pool.pop().unwrap_or_default();

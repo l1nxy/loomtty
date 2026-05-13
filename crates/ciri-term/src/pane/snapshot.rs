@@ -60,6 +60,7 @@ impl Pane {
                 cursor_col: content.cursor.point.column.0 as u16,
                 cursor_shape: cursor_shape_to_u8(content.cursor.shape),
                 mode_flags: self.mode_flags_from_term(term),
+                received_ack: 0,
                 echo_ack: 0,
             },
             cols: cols as u16,

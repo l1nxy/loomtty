@@ -1140,6 +1140,31 @@ describe("CiriApp — error reporting", () => {
     expect(onErrorCalls.length).toBe(1);
   });
 
+  test("body decode error closes the client and poisons further frames (round-2)", () => {
+    // Phase 2.6 round-2 codex fix: previously we just surfaced the
+    // error and kept the WebSocket alive, so the next FullPaneSync /
+    // CellDelta would be applied to a half-broken grid baseline.
+    // Now any FrameBodyDecodeError closes the underlying client and
+    // drops every subsequent frame from the same wire stream.
+    const { app, fire, onErrorCalls, state } = bootstrap();
+    app.start();
+    expect(state.closed).toBe(false);
+    fire({ kind: "cell-delta", payload: new Uint8Array([0x00]) });
+    expect(onErrorCalls.length).toBe(1);
+    expect(state.closed).toBe(true);
+    // A well-formed FullPaneSync that arrives after the poison should
+    // NOT be applied — the wire is no longer trusted.
+    fire({
+      kind: "full-pane-sync",
+      payload: hexToBytes(FULL_SYNC_3X2.hex),
+    });
+    expect(app.hasGrid(1n)).toBe(false);
+    // Same for a subsequent cell-delta (even valid hex would be
+    // dropped without re-reporting the error).
+    fire({ kind: "cell-delta", payload: new Uint8Array([0x00]) });
+    expect(onErrorCalls.length).toBe(1);
+  });
+
   test("close event surfaces via callback", () => {
     const root = document.createElement("div");
     document.body.appendChild(root);

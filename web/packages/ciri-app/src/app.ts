@@ -118,6 +118,14 @@ export class CiriApp {
   /// applyLayout regardless of what the server promotes (the server
   /// is authoritative once a new layout arrives).
   private pendingFocusedPaneId: bigint | null = null;
+  /// Set to `true` after a `FrameBodyDecodeError` to mark the wire
+  /// stream as no-longer-trustworthy. Subsequent frames are dropped
+  /// even if they parse fine, because the partial CellDelta /
+  /// FullPaneSync that failed mid-decode may have left grid state
+  /// inconsistent with what the server thinks the client has.
+  /// Cleared only on `destroy()` — recovery requires reconstructing
+  /// the CiriApp.
+  private connectionPoisoned = false;
   private cellSize: CellSize;
   private readonly theme: Theme;
   private readonly fontFamily: string;
@@ -812,6 +820,7 @@ export class CiriApp {
   }
 
   private handleCellDeltaBytes(bytes: Uint8Array): void {
+    if (this.connectionPoisoned) return;
     let cd;
     try {
       cd = decodeCellDelta(bytes);
@@ -839,6 +848,7 @@ export class CiriApp {
   }
 
   private handleFullPaneSyncBytes(bytes: Uint8Array): void {
+    if (this.connectionPoisoned) return;
     let sync;
     try {
       sync = decodeFullPaneSync(bytes);
@@ -899,7 +909,20 @@ export class CiriApp {
 
   private reportBodyDecodeError(e: unknown): void {
     if (e instanceof FrameBodyDecodeError) {
+      // Wire-level decode failure → the byte stream is corrupted or
+      // a version mismatch shipped an unparseable frame. Either way
+      // the server still thinks the client has the now-half-applied
+      // state, so applying any further CellDelta / FullPaneSync
+      // would build on the wrong baseline. Poison the connection,
+      // close the transport, and surface to the caller; recovery is
+      // a fresh `new CiriApp(...)`.
+      this.connectionPoisoned = true;
       this.handlerOnError?.(e);
+      try {
+        this.client.close();
+      } catch {
+        // close is idempotent; swallow.
+      }
       return;
     }
     // Anything else is a programming error — let it bubble so a real

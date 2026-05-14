@@ -14,7 +14,15 @@
 // untouched rows. Functional-style "replace innerHTML" would force a
 // full repaint on every `render()`.
 
-import type { PackedCell } from "@ciri/codec";
+import {
+  CURSOR_BEAM,
+  CURSOR_BLOCK,
+  CURSOR_HIDDEN,
+  CURSOR_HOLLOW_BLOCK,
+  CURSOR_UNDERLINE,
+  NAMED_CURSOR,
+  type PackedCell,
+} from "@ciri/codec";
 import type { PaneGrid } from "./grid.js";
 import { DEFAULT_THEME, type Theme } from "./theme.js";
 import {
@@ -31,6 +39,11 @@ export interface RendererOptions {
   fontFamily?: string;
   /// CSS font-size applied to the wrapper, e.g. `"14px"`.
   fontSize?: string;
+  /// Blink the cursor via the Web Animations API. Defaults to `true`.
+  /// Disabling produces a static cursor that may be easier for users
+  /// who find blinking distracting; callers can also override with a
+  /// `prefers-reduced-motion` media query at the page level.
+  cursorBlink?: boolean;
 }
 
 const DEFAULT_FONT_FAMILY = `"JetBrains Mono", "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace`;
@@ -72,6 +85,16 @@ export class PaneRenderer {
   /// toward the live bottom on every append). `null` means "not yet
   /// observed" — the first render skips the delta check.
   private lastScrollbackRows: number | null = null;
+  /// Cursor overlay element. Absolute-positioned inside the wrapper;
+  /// hidden until the first render with a usable meta. Position is
+  /// driven by `grid.meta.cursorLine` / `cursorCol`, sized via
+  /// CSS `ch` (column width) + `em` line height so the overlay tracks
+  /// the same metrics the cell grid lays out against.
+  private readonly cursorEl: HTMLElement;
+  private readonly cursorBlink: boolean;
+  /// Set when the cursor is actively blinking — used by `destroy()`
+  /// to cancel the Web Animations API handle.
+  private cursorAnim: Animation | null = null;
 
   constructor(
     private readonly root: HTMLElement,
@@ -96,11 +119,23 @@ export class PaneRenderer {
     this.wrapper.style.backgroundColor = this.theme.background;
     this.wrapper.style.color = this.theme.foreground;
     this.wrapper.style.lineHeight = "1.2";
+    // Make the wrapper the positioning context for the cursor
+    // overlay (which is absolute-positioned inside it).
+    this.wrapper.style.position = "relative";
     // The cell font and the cell size combine to set the character
     // grid; keeping line-height a fixed ratio (1.2) means a future
     // resize math layer can derive cellHeight from the rendered
     // font-size without a `getBoundingClientRect` roundtrip.
     this.root.appendChild(this.wrapper);
+
+    this.cursorBlink = opts.cursorBlink ?? true;
+    this.cursorEl = this.doc.createElement("div");
+    this.cursorEl.className = "ciri-cursor";
+    this.cursorEl.style.position = "absolute";
+    this.cursorEl.style.pointerEvents = "none";
+    this.cursorEl.style.boxSizing = "border-box";
+    this.cursorEl.style.display = "none";
+    this.wrapper.appendChild(this.cursorEl);
   }
 
   /// Apply pending grid state to the DOM. Reads
@@ -168,6 +203,11 @@ export class PaneRenderer {
       if (d < 0 || d >= grid.rows) continue;
       this.renderDisplayRow(grid, d);
     }
+    // Cursor sits on top of the cell grid; refresh on every render so
+    // a CellDelta that only updated meta (cursor moved without
+    // visible cell churn) still repositions the overlay. Cheap —
+    // mostly a handful of inline-style assignments.
+    this.updateCursor(grid);
   }
 
   /// Set the number of rows to shift the display upward into
@@ -203,6 +243,7 @@ export class PaneRenderer {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.stopCursorBlink();
     // `Element.remove()` is supported on every browser engine; we
     // don't gate on parentNode because the wrapper is owned by the
     // renderer and we know it was appended in the constructor.
@@ -229,6 +270,100 @@ export class PaneRenderer {
     while (this.rowEls.length > targetRows) {
       const drop = this.rowEls.pop();
       if (drop !== undefined) drop.remove();
+    }
+  }
+
+  private updateCursor(grid: PaneGrid): void {
+    const { cursorLine, cursorCol, cursorShape } = grid.meta;
+    // Cursor belongs to the live viewport row; it has no meaning over
+    // scrollback. Map viewport row → display row using the same
+    // scrollOffset math used by `renderDisplayRow`.
+    const displayRow = cursorLine + this.scrollOffset;
+    if (
+      cursorShape === CURSOR_HIDDEN ||
+      displayRow < 0 ||
+      displayRow >= grid.rows ||
+      cursorCol < 0 ||
+      cursorCol >= grid.cols
+    ) {
+      this.cursorEl.style.display = "none";
+      this.stopCursorBlink();
+      return;
+    }
+
+    const color =
+      this.theme.named[NAMED_CURSOR] ?? this.theme.foreground;
+    // Reset prior shape styling so a shape change (block → beam etc.)
+    // doesn't leak the previous look. We re-apply per-shape below.
+    this.cursorEl.style.backgroundColor = "";
+    this.cursorEl.style.border = "";
+    this.cursorEl.style.opacity = "";
+    this.cursorEl.style.left = `${cursorCol}ch`;
+    // Multiply on the JS side; JSDOM (and at least one Chromium build)
+    // normalizes `calc(N * 1.2em)` down to `calc(N.Mem)`, so emitting
+    // the resolved value avoids round-trip surprises in the inline
+    // `style.top` string.
+    this.cursorEl.style.top = `${displayRow * 1.2}em`;
+    this.cursorEl.style.width = "1ch";
+    this.cursorEl.style.height = "1.2em";
+    this.cursorEl.style.display = "block";
+
+    switch (cursorShape) {
+      case CURSOR_BLOCK:
+        this.cursorEl.style.backgroundColor = color;
+        // Semi-transparent so the underlying glyph remains legible
+        // (real terminals invert the glyph color, but that requires
+        // touching the cell's span; matched-Rust opaque would hide
+        // the cell. 0.6 is the best-effort fallback for v1).
+        this.cursorEl.style.opacity = "0.6";
+        break;
+      case CURSOR_UNDERLINE:
+        // 2px stripe at the cell bottom. Use a thick border-bottom
+        // rather than positioning a separate sub-element.
+        this.cursorEl.style.border = `0`;
+        this.cursorEl.style.borderBottom = `2px solid ${color}`;
+        break;
+      case CURSOR_BEAM:
+        this.cursorEl.style.width = "2px";
+        this.cursorEl.style.backgroundColor = color;
+        break;
+      case CURSOR_HOLLOW_BLOCK:
+        this.cursorEl.style.border = `1px solid ${color}`;
+        break;
+      default:
+        // Unknown shape — fall back to a translucent block so the
+        // user sees *something* rather than an invisible cursor.
+        this.cursorEl.style.backgroundColor = color;
+        this.cursorEl.style.opacity = "0.6";
+        break;
+    }
+    // Class tag for caller-level styling overrides (e.g. theme
+    // designers who want a custom beam thickness).
+    this.cursorEl.className = `ciri-cursor ciri-cursor-${cursorShapeName(cursorShape)}`;
+    this.startCursorBlinkIfEnabled();
+  }
+
+  private startCursorBlinkIfEnabled(): void {
+    if (!this.cursorBlink) return;
+    if (this.cursorAnim !== null) return;
+    // Web Animations API. Not all hosts ship it (older jsdom doesn't)
+    // — fall back to a static cursor on those.
+    if (typeof (this.cursorEl as Element).animate !== "function") return;
+    this.cursorAnim = this.cursorEl.animate(
+      [
+        { opacity: this.cursorEl.style.opacity || "1" },
+        { opacity: this.cursorEl.style.opacity || "1" },
+        { opacity: "0" },
+        { opacity: "0" },
+      ],
+      { duration: 1000, iterations: Infinity, easing: "steps(1, end)" },
+    );
+  }
+
+  private stopCursorBlink(): void {
+    if (this.cursorAnim !== null) {
+      this.cursorAnim.cancel();
+      this.cursorAnim = null;
     }
   }
 
@@ -337,6 +472,25 @@ function isSafeLinkScheme(uri: string): boolean {
   // `URL.protocol` returns the scheme with a trailing colon, e.g. "https:".
   const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
   return SAFE_LINK_SCHEMES.includes(scheme);
+}
+
+/// Class-suffix string for a cursor shape constant, used to tag the
+/// overlay element so callers can override per-shape styling in CSS.
+function cursorShapeName(shape: number): string {
+  switch (shape) {
+    case CURSOR_BLOCK:
+      return "block";
+    case CURSOR_UNDERLINE:
+      return "underline";
+    case CURSOR_BEAM:
+      return "beam";
+    case CURSOR_HIDDEN:
+      return "hidden";
+    case CURSOR_HOLLOW_BLOCK:
+      return "hollow";
+    default:
+      return "unknown";
+  }
 }
 
 function mapUnderlineStyle(

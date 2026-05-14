@@ -454,6 +454,31 @@ describe("CiriApp — keyboard routes to active pane", () => {
     expect(inputs.find((i) => i.paneId === 2n && i.data[0] === 0x79)).toBeUndefined();
   });
 
+  test("DECCKM (MODE_APP_CURSOR) flips arrow encoding from CSI to SS3", () => {
+    // Without app-cursor mode: ArrowUp → ESC[A (CSI).
+    // With app-cursor mode: ArrowUp → ESCOA (SS3). vim/less/htop
+    // enable this; we read the per-pane meta flag for every keystroke.
+    const { root, app, fire, inputs } = bootstrap();
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    // Default fixture has modeFlags = 0 → CSI path.
+    root.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+    expect(inputs.length).toBe(1);
+    expect(Array.from(inputs[0]!.data)).toEqual([0x1b, 0x5b, 0x41]); // ESC[A
+    // Now toggle MODE_APP_CURSOR via direct grid-meta poke (Rust
+    // would toggle this in response to DECSET 1; we simulate the
+    // post-decode effect here).
+    const grid = app.paneGrid(1n)!;
+    grid.meta = { ...grid.meta, modeFlags: 0x2000 /* MODE_APP_CURSOR */ };
+    root.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+    expect(inputs.length).toBe(2);
+    expect(Array.from(inputs[1]!.data)).toEqual([0x1b, 0x4f, 0x41]); // ESCOA
+  });
+
   test("modifier-only and metaKey events are ignored", () => {
     const { root, app, fire, inputs } = bootstrap();
     app.start();
@@ -582,6 +607,201 @@ describe("CiriApp — mouse + wheel", () => {
     });
     tile.dispatchEvent(evt);
     expect(evt.defaultPrevented).toBe(false);
+  });
+});
+
+describe("CiriApp — title sync", () => {
+  test("TitleChanged updates grid.title, tile data-title, and document.title (when active)", () => {
+    const { app, fire } = bootstrap();
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    fire({
+      kind: "server-msg",
+      msg: { tag: "TitleChanged", paneId: 1n, title: "vim ~/notes.md" },
+    });
+    expect(app.paneGrid(1n)!.title).toBe("vim ~/notes.md");
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    expect(tile.dataset["title"]).toBe("vim ~/notes.md");
+    expect(document.title).toBe("vim ~/notes.md");
+  });
+
+  test("TitleChanged for an inactive pane updates grid.title but NOT document.title", () => {
+    const { app, fire } = bootstrap();
+    app.start();
+    // pane 1 active, pane 2 inactive
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_HYPER.hex) });
+    document.title = "before";
+    fire({
+      kind: "server-msg",
+      msg: { tag: "TitleChanged", paneId: 2n, title: "htop" },
+    });
+    expect(app.paneGrid(2n)!.title).toBe("htop");
+    expect(document.title).toBe("before"); // unchanged
+    const tile2 = document.querySelector<HTMLElement>("[data-pane-id='2']")!;
+    expect(tile2.dataset["title"]).toBe("htop");
+  });
+
+  test("LayoutUpdate switches document.title to the new active pane's title", () => {
+    const { app, fire } = bootstrap();
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_HYPER.hex) });
+    fire({
+      kind: "server-msg",
+      msg: { tag: "TitleChanged", paneId: 1n, title: "alpha" },
+    });
+    fire({
+      kind: "server-msg",
+      msg: { tag: "TitleChanged", paneId: 2n, title: "beta" },
+    });
+    expect(document.title).toBe("alpha"); // 1 active
+    // Switch active to pane 2.
+    fire({
+      kind: "server-msg",
+      msg: {
+        tag: "LayoutUpdate",
+        layout: {
+          activeWorkspaceIdx: 0n,
+          workspaces: [
+            {
+              activeColumnIdx: 1n,
+              columns: [
+                {
+                  activeTileIdx: 0n,
+                  widthProportion: 0.5,
+                  widthFixedPx: null,
+                  tiles: [{ paneId: 1n, weight: 1.0 }],
+                },
+                {
+                  activeTileIdx: 0n,
+                  widthProportion: 0.5,
+                  widthFixedPx: null,
+                  tiles: [{ paneId: 2n, weight: 1.0 }],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    });
+    expect(document.title).toBe("beta");
+  });
+
+  test("FullPaneSync's embedded title flows through to data-title on next layout", () => {
+    const { app, fire } = bootstrap();
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(2n) },
+    });
+    // FULL_SYNC_HYPER (paneId=2) carries title="shell" per the fixture.
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_HYPER.hex) });
+    // The layout was set BEFORE the grid existed, so the tile's
+    // data-title was empty at that point. A subsequent LayoutUpdate
+    // (typical when server re-publishes) picks up the title.
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(2n) },
+    });
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='2']")!;
+    expect(tile.dataset["title"]).toBe("shell");
+    expect(document.title).toBe("shell");
+  });
+});
+
+describe("CiriApp — bell", () => {
+  test("Bell adds .ciri-tile-bell to the pane's tile and clears it after a timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const { app, fire } = bootstrap();
+      app.start();
+      fire({
+        kind: "server-msg",
+        msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+      });
+      fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+      const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+      expect(tile.classList.contains("ciri-tile-bell")).toBe(false);
+      fire({ kind: "server-msg", msg: { tag: "Bell", paneId: 1n } });
+      expect(tile.classList.contains("ciri-tile-bell")).toBe(true);
+      // Run the flash window's clear timer.
+      vi.advanceTimersByTime(1000);
+      expect(tile.classList.contains("ciri-tile-bell")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("repeat Bell on the same pane keeps the class through the burst", () => {
+    vi.useFakeTimers();
+    try {
+      const { app, fire } = bootstrap();
+      app.start();
+      fire({
+        kind: "server-msg",
+        msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+      });
+      fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+      const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+      fire({ kind: "server-msg", msg: { tag: "Bell", paneId: 1n } });
+      vi.advanceTimersByTime(500); // halfway through first timer
+      fire({ kind: "server-msg", msg: { tag: "Bell", paneId: 1n } }); // re-arm
+      vi.advanceTimersByTime(500); // would have fired the FIRST timer here
+      expect(tile.classList.contains("ciri-tile-bell")).toBe(true);
+      vi.advanceTimersByTime(500); // now 1s after the re-arm
+      expect(tile.classList.contains("ciri-tile-bell")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("Bell for a pane outside the active workspace is a no-op (no slot to flash)", () => {
+    const { app, fire } = bootstrap();
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    // pane 99 isn't in the layout; Bell shouldn't throw or affect
+    // any tile.
+    expect(() =>
+      fire({ kind: "server-msg", msg: { tag: "Bell", paneId: 99n } }),
+    ).not.toThrow();
+    expect(document.querySelector(".ciri-tile-bell")).toBeNull();
+  });
+
+  test("destroy() cancels pending bell-flash timers without erroring", () => {
+    vi.useFakeTimers();
+    try {
+      const { app, fire } = bootstrap();
+      app.start();
+      fire({
+        kind: "server-msg",
+        msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+      });
+      fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+      fire({ kind: "server-msg", msg: { tag: "Bell", paneId: 1n } });
+      app.destroy();
+      // The timer would have run a callback against a now-detached
+      // tile DOM node. Make sure no exception escapes the timer.
+      expect(() => vi.advanceTimersByTime(2000)).not.toThrow();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

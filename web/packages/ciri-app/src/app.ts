@@ -32,6 +32,7 @@ import {
   decodeCellDelta,
   decodeFullPaneSync,
   FrameBodyDecodeError,
+  MODE_APP_CURSOR,
 } from "@ciri/codec";
 import {
   DEFAULT_THEME,
@@ -40,7 +41,7 @@ import {
   PaneRenderer,
   type Theme,
 } from "@ciri/dom";
-import { encodeKeyboardEvent, type KeyEncoderOptions } from "./input.js";
+import { encodeKeyboardEvent } from "./input.js";
 import { LayoutManager } from "./layout.js";
 import {
   cellsForViewport,
@@ -97,6 +98,9 @@ export interface CiriAppOptions {
 
 const DEFAULT_FONT_FAMILY = `"JetBrains Mono", "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace`;
 const DEFAULT_FONT_SIZE = "14px";
+/// How long the `ciri-tile-bell` class lingers after a Bell event.
+/// Themes typically animate a brief opacity pulse over this window.
+const BELL_FLASH_MS = 1000;
 
 export class CiriApp {
   private readonly doc: Document;
@@ -121,12 +125,8 @@ export class CiriApp {
   private readonly client: CiriAppClientLike;
   private destroyed = false;
   private resizeObserver: ResizeObserver | null = null;
-  /// DECCKM tracking. v1 hard-codes normal-mode cursor keys; a later
-  /// phase reads the active pane's `mode_flags` and flips this per
-  /// keystroke.
-  private readonly keyOpts: KeyEncoderOptions = {
-    applicationCursorKeys: false,
-  };
+  // DECCKM tracking is now per-keystroke and per-pane — `onKeyDown`
+  // reads the target pane's `meta.modeFlags & MODE_APP_CURSOR`.
   private readonly handlerOnOpen?: () => void;
   private readonly handlerOnClose?: (reason: string, reconnecting: boolean) => void;
   private readonly handlerOnError?: (err: Error) => void;
@@ -137,6 +137,10 @@ export class CiriApp {
   private readonly onKeyDownHandler: (e: KeyboardEvent) => void;
   private readonly onWheelHandler: (e: WheelEvent) => void;
   private readonly onMouseDownHandler: () => void;
+  /// Pending bell-flash clear timers, keyed by paneId-as-string so a
+  /// repeat bell on the same pane re-arms cleanly instead of leaving
+  /// the class permanently stuck.
+  private readonly bellTimers = new Map<string, ReturnType<Window["setTimeout"]>>();
 
   constructor(
     private readonly root: HTMLElement,
@@ -178,6 +182,7 @@ export class CiriApp {
     this.layout = new LayoutManager(this.root, {
       onPaneClick: (id) => this.onPaneClicked(id),
       onWorkspaceClick: (idx) => this.onWorkspaceClicked(idx),
+      paneTitleFor: (id) => this.grids.get(id.toString())?.title ?? "",
     });
 
     this.installInteractionHandlers();
@@ -215,6 +220,13 @@ export class CiriApp {
     this.root.removeEventListener("keydown", this.onKeyDownHandler);
     this.root.removeEventListener("wheel", this.onWheelHandler);
     this.root.removeEventListener("mousedown", this.onMouseDownHandler);
+    // Cancel pending bell-flash clears so we don't run callbacks
+    // against torn-down DOM.
+    const win = this.doc.defaultView;
+    for (const t of this.bellTimers.values()) {
+      win?.clearTimeout(t);
+    }
+    this.bellTimers.clear();
     this.client.close();
     for (const r of this.renderers.values()) r.destroy();
     this.renderers.clear();
@@ -252,6 +264,13 @@ export class CiriApp {
   /// renderer is attached to a layout slot.
   hasGrid(paneId: bigint): boolean {
     return this.grids.has(paneId.toString());
+  }
+
+  /// Read-only access to a pane's grid. Used by tests to inspect
+  /// (and occasionally tweak) meta state without going through the
+  /// full wire path. Returns `undefined` for unknown panes.
+  paneGrid(paneId: bigint): PaneGrid | undefined {
+    return this.grids.get(paneId.toString());
   }
 
   /// Read-only handle to the LayoutManager. Tests use this to inspect
@@ -352,8 +371,6 @@ export class CiriApp {
   }
 
   private onKeyDown(e: KeyboardEvent): void {
-    const r = encodeKeyboardEvent(e, this.keyOpts);
-    if (r === null) return;
     // Prefer the pending-focus target over the layout-derived active
     // pane so a click-then-type sequence reaches the just-clicked
     // pane even before the server's LayoutUpdate has confirmed the
@@ -368,7 +385,15 @@ export class CiriApp {
     // pending target whose pane closed). Sending to a missing pane
     // is harmless on the server side, but suppressing here avoids
     // generating ack traffic for ghost cursors.
-    if (!this.grids.has(target.toString())) return;
+    const grid = this.grids.get(target.toString());
+    if (grid === undefined) return;
+    // DECCKM: arrows + Home/End emit SS3 (`ESC O X`) instead of CSI
+    // when the active pane's terminal app has set application-cursor
+    // mode (vim, less, htop, …). Read the bit per keystroke since a
+    // single session toggles freely as apps come and go.
+    const appCursor = (grid.meta.modeFlags & MODE_APP_CURSOR) !== 0;
+    const r = encodeKeyboardEvent(e, { applicationCursorKeys: appCursor });
+    if (r === null) return;
     if (r.preventDefault) e.preventDefault();
     this.client.sendInput(target, r.bytes);
   }
@@ -449,10 +474,58 @@ export class CiriApp {
       case "PaneClosed":
         this.destroyPane(msg.paneId);
         return;
-      default:
-        // v1: ignore everything else (TitleChanged, Bell, ImagePlacement,
-        // SessionList, … — those grow their own handlers in later phases).
+      case "TitleChanged":
+        this.handleTitleChanged(msg.paneId, msg.title);
         return;
+      case "Bell":
+        this.handleBell(msg.paneId);
+        return;
+      default:
+        // v1: ignore everything else (Bell, ImagePlacement,
+        // SessionList, … — those grow their own handlers in later
+        // phases).
+        return;
+    }
+  }
+
+  /// Server Bell event. Add a transient CSS class to the pane's tile
+  /// so a theme can flash a visual indicator; clears automatically
+  /// after `BELL_FLASH_MS`. Panes outside the active workspace have
+  /// no slot to flash — for now we drop the visual cue on them; a
+  /// later phase can surface a badge on the workspace tab.
+  private handleBell(paneId: bigint): void {
+    const slot = this.layout.getSlot(paneId);
+    if (slot === null) return;
+    slot.classList.add("ciri-tile-bell");
+    // Re-arm the timer on a repeat bell — terminal apps can ring
+    // many times in quick succession (e.g. tab-completion failure
+    // spam), and we want the class to stay applied through the
+    // whole burst rather than briefly dropping it between rings.
+    const existingTimer = this.bellTimers.get(paneId.toString());
+    if (existingTimer !== undefined) {
+      this.doc.defaultView?.clearTimeout(existingTimer);
+    }
+    const win = this.doc.defaultView;
+    if (win === null) return;
+    const t = win.setTimeout(() => {
+      slot.classList.remove("ciri-tile-bell");
+      this.bellTimers.delete(paneId.toString());
+    }, BELL_FLASH_MS);
+    this.bellTimers.set(paneId.toString(), t);
+  }
+
+  private handleTitleChanged(paneId: bigint, title: string): void {
+    const grid = this.grids.get(paneId.toString());
+    if (grid !== undefined) grid.title = title;
+    this.layout.setTileTitle(paneId, title);
+    // Reflect the active pane's title on `document.title` so the
+    // browser tab / window chrome updates without the caller having
+    // to subscribe to a separate event.
+    if (
+      this.currentLayout !== null &&
+      LayoutManager.activePaneId(this.currentLayout) === paneId
+    ) {
+      this.doc.title = title;
     }
   }
 
@@ -481,6 +554,12 @@ export class CiriApp {
       if (r.container.parentNode !== this.orphanRoot) {
         this.orphanRoot.appendChild(r.container);
       }
+    }
+    // Keep document.title in sync with the active pane's known title.
+    const activeId = LayoutManager.activePaneId(layout);
+    if (activeId !== null) {
+      const t = this.grids.get(activeId.toString())?.title ?? "";
+      this.doc.title = t;
     }
   }
 

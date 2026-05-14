@@ -669,6 +669,156 @@ describe("PaneRenderer", () => {
     root.remove();
   });
 
+  // ── cursor overlay ───────────────────────────────────────────────
+
+  test("cursor element exists and is initially hidden until first render", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    new PaneRenderer(root);
+    const c = root.querySelector(".ciri-cursor") as HTMLElement;
+    expect(c).not.toBeNull();
+    expect(c.style.display).toBe("none");
+    root.remove();
+  });
+
+  test("render positions cursor at (cursorCol, cursorLine) of the live viewport", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root, { cursorBlink: false });
+    const grid = new PaneGrid(1n, 4, 3);
+    const sync = blankSync(4, 3);
+    sync.meta.cursorLine = 2;
+    sync.meta.cursorCol = 3;
+    sync.meta.cursorShape = 0; // block
+    grid.applyFullPaneSync(sync);
+    r.render(grid);
+    const c = root.querySelector(".ciri-cursor") as HTMLElement;
+    expect(c.style.display).toBe("block");
+    expect(c.style.left).toBe("3ch");
+    // top uses calc(displayRow * 1.2em); displayRow = cursorLine + offset = 2.
+    expect(c.style.top).toBe("2.4em");
+    expect(c.className).toContain("ciri-cursor-block");
+    root.remove();
+  });
+
+  test("cursor shape switches CSS class and styling", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root, { cursorBlink: false });
+    const grid = new PaneGrid(1n, 2, 1);
+    const sync = blankSync(2, 1);
+    sync.meta.cursorLine = 0;
+    sync.meta.cursorCol = 0;
+
+    for (const [shape, name] of [
+      [0, "block"],
+      [1, "underline"],
+      [2, "beam"],
+      [4, "hollow"],
+    ] as const) {
+      sync.meta = { ...sync.meta, cursorShape: shape };
+      const g = new PaneGrid(1n, 2, 1);
+      g.applyFullPaneSync(sync);
+      r.render(g);
+      const c = root.querySelector(".ciri-cursor") as HTMLElement;
+      expect(c.className).toBe(`ciri-cursor ciri-cursor-${name}`);
+    }
+    root.remove();
+  });
+
+  test("CURSOR_HIDDEN hides the overlay", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root, { cursorBlink: false });
+    const grid = new PaneGrid(1n, 2, 1);
+    const sync = blankSync(2, 1);
+    sync.meta.cursorShape = 3; // hidden
+    grid.applyFullPaneSync(sync);
+    r.render(grid);
+    const c = root.querySelector(".ciri-cursor") as HTMLElement;
+    expect(c.style.display).toBe("none");
+    root.remove();
+  });
+
+  test("cursor out-of-bounds (past cols or rows) hides the overlay", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root, { cursorBlink: false });
+    const grid = new PaneGrid(1n, 2, 1);
+    const sync = blankSync(2, 1);
+    sync.meta.cursorLine = 99;
+    sync.meta.cursorCol = 0;
+    grid.applyFullPaneSync(sync);
+    r.render(grid);
+    const c = root.querySelector(".ciri-cursor") as HTMLElement;
+    expect(c.style.display).toBe("none");
+    root.remove();
+  });
+
+  test("CellDelta cursor move repositions the overlay without a full repaint", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root, { cursorBlink: false });
+    const grid = new PaneGrid(1n, 4, 2);
+    const sync = blankSync(4, 2);
+    sync.meta.cursorLine = 0;
+    sync.meta.cursorCol = 0;
+    grid.applyFullPaneSync(sync);
+    r.render(grid);
+    const cursor = root.querySelector(".ciri-cursor") as HTMLElement;
+    expect(cursor.style.left).toBe("0ch");
+    // CellDelta carrying only a meta cursor move.
+    grid.applyCellDelta({
+      meta: {
+        paneId: 1n,
+        generation: 2n,
+        cursorLine: 1,
+        cursorCol: 2,
+        cursorShape: 0,
+        modeFlags: 0,
+        echoAck: 0n,
+      },
+      cols: 4,
+      regions: [],
+    });
+    r.render(grid);
+    expect(cursor.style.left).toBe("2ch");
+    expect(cursor.style.top).toBe("1.2em");
+    root.remove();
+  });
+
+  test("scroll offset shifts the cursor display row alongside the viewport", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root, { cursorBlink: false });
+    const grid = new PaneGrid(1n, 2, 2);
+    grid.applyFullPaneSync(syncWithScrollback(2, 2, 2));
+    // Cursor at viewport row 1 — currently at the live bottom.
+    grid.applyCellDelta({
+      meta: {
+        paneId: 1n,
+        generation: 2n,
+        cursorLine: 1,
+        cursorCol: 0,
+        cursorShape: 0,
+        modeFlags: 0,
+        echoAck: 0n,
+      },
+      cols: 2,
+      regions: [],
+    });
+    r.render(grid);
+    const c = root.querySelector(".ciri-cursor") as HTMLElement;
+    // Offset 0 → displayRow 1.
+    expect(c.style.top).toBe("1.2em");
+    // Scroll up by 1 — displayRow becomes 2, which is OUTSIDE the
+    // 2-row viewport → hide.
+    r.setScrollOffset(1);
+    r.render(grid);
+    expect(c.style.display).toBe("none");
+    root.remove();
+  });
+
   test("uses default theme background and foreground on the wrapper", () => {
     const root = document.createElement("div");
     document.body.appendChild(root);

@@ -40,6 +40,12 @@ export interface LayoutManagerOptions {
   /// Fired when the user clicks a workspace tab — typically wired to
   /// `client.send({ tag: "SwitchWorkspace", workspaceIdx })`.
   onWorkspaceClick?: (idx: bigint) => void;
+  /// Optional resolver that returns the current title for a pane,
+  /// used to populate the tile's `data-title` attribute on layout
+  /// reshape. Defaults to empty. Themes can read this attribute via
+  /// `[data-title]::before` to render a title bar without the
+  /// renderer or layout owning the chrome.
+  paneTitleFor?: (paneId: bigint) => string;
 }
 
 export class LayoutManager {
@@ -141,6 +147,11 @@ export class LayoutManager {
         tileEl.style.overflow = "hidden";
         const paneIdStr = tile.paneId.toString();
         tileEl.dataset["paneId"] = paneIdStr;
+        // Surface the latest known title for theme-level rendering;
+        // empty string when no resolver was provided or the pane has
+        // no title yet.
+        const title = this.opts.paneTitleFor?.(tile.paneId) ?? "";
+        tileEl.dataset["title"] = title;
         const paneIdBig = tile.paneId;
         // `mousedown` (not `click`) so focus moves before the click's
         // default text-selection start; matches how native terminals
@@ -162,6 +173,17 @@ export class LayoutManager {
   /// caller mounts a renderer container into this slot.
   getSlot(paneId: bigint): HTMLElement | null {
     return this.slots.get(paneId.toString()) ?? null;
+  }
+
+  /// Update a tile's `data-title` attribute in-place without
+  /// rebuilding the chrome. Used by `TitleChanged` so the title bar
+  /// (rendered by a theme via `[data-title]::before`) refreshes
+  /// without a layout reshape. No-op when the pane isn't in the
+  /// active workspace.
+  setTileTitle(paneId: bigint, title: string): void {
+    const slot = this.slots.get(paneId.toString());
+    if (slot === undefined) return;
+    slot.dataset["title"] = title;
   }
 
   /// Pane IDs currently rendered in the chrome (i.e. live in the

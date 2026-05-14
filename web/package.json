@@ -12,7 +12,7 @@
     "//order": "Inter-package imports resolve via `exports`/`types` that point at the gitignored `./dist/index.*` outputs. npm runs `-ws` scripts in path order, which does NOT match the dependency graph — without an explicit chain the downstream packages' tsc/vitest fail with TS2307 in a fresh checkout. Pre-build the chain: codec → client + dom → app.",
     "prebuild-chain": "npm -w @ciri/codec run build && npm -w @ciri/client run build && npm -w @ciri/dom run build",
     "test": "npm run prebuild-chain && npm -ws --if-present run test",
-    "build": "npm -w @ciri/codec run build && npm -ws --if-present run build",
+    "build": "npm run prebuild-chain && npm -ws --if-present run build",
     "typecheck": "npm run prebuild-chain && npm -ws --if-present run typecheck",
     "lint": "npm -ws --if-present run lint"
   },

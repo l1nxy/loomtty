@@ -128,13 +128,15 @@ jobs:
 
       - name: Install + test
         working-directory: web
-        # `@ciri/client` imports `@ciri/codec`, whose `package.json`
-        # points `types`/`exports` at `./dist/index.*`. On a fresh
-        # CI checkout `dist/` is gitignored, so the client's
-        # typecheck (and tests via Node module resolution) would
-        # fail with TS2307 unless we build the codec first.
+        # Inter-package imports resolve via `exports`/`types` that
+        # point at gitignored `./dist/index.*`. npm runs `-ws` scripts
+        # in path order, which doesn't match the dependency graph —
+        # codec → client + dom → app. The root `prebuild-chain`
+        # script encodes that order, so we run it (and the root
+        # `typecheck` / `test` aliases, which already invoke it) here
+        # instead of hand-rolling a single-package build that misses
+        # `@ciri/client` and `@ciri/dom`.
         run: |
           npm ci
-          npm -w @ciri/codec run build
-          npm --workspaces --if-present run typecheck
-          npm --workspaces --if-present run test
+          npm run typecheck
+          npm run test

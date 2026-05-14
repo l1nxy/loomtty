@@ -819,6 +819,154 @@ describe("PaneRenderer", () => {
     root.remove();
   });
 
+  // ── selection overlay ─────────────────────────────────────────────
+
+  test("setSelection on a single row paints one .ciri-selection-row rect", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root, { cursorBlink: false });
+    const grid = new PaneGrid(1n, 5, 2);
+    grid.applyFullPaneSync(blankSync(5, 2));
+    r.setSelection({
+      start: { col: 1, srcRow: 0 },
+      end: { col: 3, srcRow: 0 },
+      active: false,
+    });
+    r.render(grid);
+    const rows = root.querySelectorAll(".ciri-selection-row");
+    expect(rows.length).toBe(1);
+    const rect = rows[0] as HTMLElement;
+    expect(rect.style.left).toBe("1ch");
+    expect(rect.style.width).toBe("3ch"); // cols 1..3 → 3 cells wide
+    expect(rect.style.top).toBe("0em");
+    expect(rect.style.height).toBe("1.2em");
+    root.remove();
+  });
+
+  test("multi-row selection paints three rects with correct slices", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root, { cursorBlink: false });
+    const grid = new PaneGrid(1n, 4, 3);
+    grid.applyFullPaneSync(blankSync(4, 3));
+    // Row 0 from col 2; row 1 full width; row 2 up to col 1.
+    r.setSelection({
+      start: { col: 2, srcRow: 0 },
+      end: { col: 1, srcRow: 2 },
+      active: true,
+    });
+    r.render(grid);
+    const rows = root.querySelectorAll<HTMLElement>(".ciri-selection-row");
+    expect(rows.length).toBe(3);
+    expect(rows[0]!.style.left).toBe("2ch");
+    expect(rows[0]!.style.width).toBe("2ch"); // cols 2..3
+    expect(rows[1]!.style.left).toBe("0ch");
+    expect(rows[1]!.style.width).toBe("4ch"); // full row
+    expect(rows[2]!.style.left).toBe("0ch");
+    expect(rows[2]!.style.width).toBe("2ch"); // cols 0..1
+    root.remove();
+  });
+
+  test("setSelection(null) clears all rects on next render", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root, { cursorBlink: false });
+    const grid = new PaneGrid(1n, 4, 1);
+    grid.applyFullPaneSync(blankSync(4, 1));
+    r.setSelection({
+      start: { col: 0, srcRow: 0 },
+      end: { col: 3, srcRow: 0 },
+      active: false,
+    });
+    r.render(grid);
+    expect(root.querySelectorAll(".ciri-selection-row").length).toBe(1);
+    r.setSelection(null);
+    r.render(grid);
+    expect(root.querySelectorAll(".ciri-selection-row").length).toBe(0);
+    root.remove();
+  });
+
+  test("reversed start/end produces the same paint as forward", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root, { cursorBlink: false });
+    const grid = new PaneGrid(1n, 4, 2);
+    grid.applyFullPaneSync(blankSync(4, 2));
+    r.setSelection({
+      start: { col: 3, srcRow: 1 },
+      end: { col: 0, srcRow: 0 },
+      active: false,
+    });
+    r.render(grid);
+    const rows = root.querySelectorAll<HTMLElement>(".ciri-selection-row");
+    expect(rows.length).toBe(2);
+    expect(rows[0]!.style.top).toBe("0em");
+    expect(rows[1]!.style.top).toBe("1.2em");
+    root.remove();
+  });
+
+  test("selection rows outside the visible viewport are skipped", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root, { cursorBlink: false });
+    const grid = new PaneGrid(1n, 2, 2);
+    grid.applyFullPaneSync(syncWithScrollback(2, 2, 2));
+    // sb rows 0,1 + vp rows 2,3 (srcRow indices).
+    r.setSelection({
+      start: { col: 0, srcRow: 0 },
+      end: { col: 1, srcRow: 3 },
+      active: true,
+    });
+    r.setScrollOffset(0); // shows vp rows (srcRow 2,3).
+    r.render(grid);
+    // Only 2 rects (srcRow 2 + 3 land in display rows 0 + 1).
+    expect(root.querySelectorAll(".ciri-selection-row").length).toBe(2);
+    root.remove();
+  });
+
+  test("theme.selectionBackground is honored", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root, {
+      cursorBlink: false,
+      theme: {
+        ...DEFAULT_THEME,
+        named: DEFAULT_THEME.named.slice(),
+        selectionBackground: "rgba(255, 0, 0, 0.5)",
+      },
+    });
+    const grid = new PaneGrid(1n, 2, 1);
+    grid.applyFullPaneSync(blankSync(2, 1));
+    r.setSelection({
+      start: { col: 0, srcRow: 0 },
+      end: { col: 1, srcRow: 0 },
+      active: false,
+    });
+    r.render(grid);
+    const rect = root.querySelector<HTMLElement>(".ciri-selection-row")!;
+    // jsdom normalizes rgba but should preserve the channels.
+    expect(rect.style.backgroundColor.replace(/\s/g, "")).toContain("rgba(255,0,0,0.5)");
+    root.remove();
+  });
+
+  test("destroy clears selection state and removes overlay rects", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root, { cursorBlink: false });
+    const grid = new PaneGrid(1n, 4, 1);
+    grid.applyFullPaneSync(blankSync(4, 1));
+    r.setSelection({
+      start: { col: 0, srcRow: 0 },
+      end: { col: 3, srcRow: 0 },
+      active: false,
+    });
+    r.render(grid);
+    expect(root.querySelector(".ciri-selection-row")).not.toBeNull();
+    r.destroy();
+    expect(document.querySelector(".ciri-selection-row")).toBeNull();
+    expect(r.currentSelection).toBeNull();
+  });
+
   test("uses default theme background and foreground on the wrapper", () => {
     const root = document.createElement("div");
     document.body.appendChild(root);

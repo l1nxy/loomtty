@@ -6,6 +6,7 @@
 // modules; this barrel re-exports the public surface in one place.
 
 export {
+  DEFAULT_SELECTION_BACKGROUND,
   DEFAULT_THEME,
   resolveColor,
   type ColorString,
@@ -15,8 +16,12 @@ export {
   DEFAULT_MAX_SCROLLBACK_ROWS,
   GridShapeError,
   PaneGrid,
+  normalizeSelectionEnds,
+  selectionRangeEquals,
   type DirtyRows,
   type PaneGridOptions,
+  type SelectionAnchor,
+  type SelectionRange,
 } from "./grid.js";
 export {
   rowRuns,

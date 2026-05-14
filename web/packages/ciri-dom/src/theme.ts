@@ -53,7 +53,18 @@ export interface Theme {
   /// means "no override; use the standard derivation" (e.g. the cursor
   /// slot defaults to fg, dim variants compute from their base).
   named: (ColorString | null)[];
+  /// Background color of the mouse-drag selection overlay. Rendered as
+  /// a semi-transparent rect on top of the cell grid; pick an `rgba`
+  /// value (or any CSS color with alpha) so the underlying glyphs
+  /// stay visible. Optional — defaults to a translucent blue when
+  /// omitted.
+  selectionBackground?: ColorString;
 }
+
+/// Default selection overlay color. Picked to mirror xterm.js / vte's
+/// "selection blue" look while staying transparent enough that cell
+/// text reads through at any contrast level.
+export const DEFAULT_SELECTION_BACKGROUND = "rgba(64, 113, 196, 0.4)";
 
 /// Default 16-color ANSI palette. Picked to match the Rust renderer's
 /// fallback theme so a freshly-attached browser client paints the

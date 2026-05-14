@@ -17,6 +17,7 @@
 
 import {
   DEFAULT_CELL,
+  FLAG_WIDE_CHAR_SPACER,
   type CellDelta,
   type FullPaneSync,
   type PackedCell,
@@ -37,6 +38,44 @@ export interface DirtyRows {
   /// True when the renderer should also clear stale row containers
   /// (e.g., after a resize that shrank the grid).
   fullRedraw: boolean;
+}
+
+/// One end of a selection range in the concatenated
+/// `[scrollback..., viewport]` cell stream. `col` is the column
+/// (0..cols), `srcRow` the row in the combined buffer (0..totalRows).
+export interface SelectionAnchor {
+  col: number;
+  srcRow: number;
+}
+
+/// A selection in a pane's combined buffer space. `start` and `end`
+/// may arrive in either order; consumers should normalize before
+/// reasoning about which end is the anchor vs the cursor. The
+/// `active` flag is `true` while the user is actively dragging.
+export interface SelectionRange {
+  start: SelectionAnchor;
+  end: SelectionAnchor;
+  active: boolean;
+}
+
+/// True when `a` and `b` describe the same span (regardless of which
+/// end is anchor vs cursor). Used by the renderer to skip a needless
+/// overlay rebuild when a mousemove produced no movement.
+export function selectionRangeEquals(
+  a: SelectionRange | null,
+  b: SelectionRange | null,
+): boolean {
+  if (a === null && b === null) return true;
+  if (a === null || b === null) return false;
+  if (a.active !== b.active) return false;
+  return (
+    (anchorsEqual(a.start, b.start) && anchorsEqual(a.end, b.end)) ||
+    (anchorsEqual(a.start, b.end) && anchorsEqual(a.end, b.start))
+  );
+}
+
+function anchorsEqual(a: SelectionAnchor, b: SelectionAnchor): boolean {
+  return a.col === b.col && a.srcRow === b.srcRow;
 }
 
 /// Default cap on scrollback rows kept in the browser-side buffer.
@@ -405,6 +444,69 @@ export class PaneGrid {
   viewportGlobalIndex(row: number, col: number): number {
     return this.scrollback.length + row * this.cols + col;
   }
+
+  /// Extract plain text for a selection range in the combined buffer.
+  /// Mirrors the Rust client's `text_in_range`
+  /// (`crates/ciri-app/src/grid/cell_ops.rs:110`):
+  /// - normalize start/end so start is the earlier of the pair,
+  /// - per row, take `[startCol..=endCol]` (first row from start, last
+  ///   row up to end, intermediate rows the full width),
+  /// - skip cells whose flags have `FLAG_WIDE_CHAR_SPACER` (the
+  ///   companion to a preceding wide cell — its glyph is already in
+  ///   the wide cell's `ch`),
+  /// - apply grapheme extras when present,
+  /// - trim each row's trailing whitespace,
+  /// - join rows with `\n`.
+  extractText(start: SelectionAnchor, end: SelectionAnchor): string {
+    const [a, b] = normalizeSelectionEnds(start, end);
+    if (this.cols === 0) return "";
+    const total = this.totalRows();
+    const out: string[] = [];
+    for (let row = a.srcRow; row <= b.srcRow; row += 1) {
+      if (row < 0 || row >= total) continue;
+      const cells = this.combinedRowCells(row);
+      const left = row === a.srcRow ? clamp(a.col, 0, this.cols - 1) : 0;
+      const right = row === b.srcRow ? clamp(b.col, 0, this.cols - 1) : this.cols - 1;
+      const rowGlobalStart = row * this.cols;
+      let line = "";
+      for (let col = left; col <= right; col += 1) {
+        const cell = cells[col];
+        if (cell === undefined) break;
+        if ((cell.flags & FLAG_WIDE_CHAR_SPACER) !== 0) continue;
+        const ch = cell.ch;
+        if (ch === " ") continue;
+        const extra = this.graphemeExtras.get(rowGlobalStart + col);
+        line += extra === undefined ? ch : ch + extra;
+      }
+      // Trim trailing whitespace — Rust does the same so a copy of a
+      // line with only the first few cells filled doesn't pull in
+      // hundreds of pad spaces.
+      out.push(line.replace(/[ \t]+$/u, ""));
+    }
+    return out.join("\n");
+  }
+}
+
+/// Normalize a (start, end) pair so the returned `[first, last]`
+/// always has `first` no later than `last` in reading order
+/// (top-to-bottom, then left-to-right). Used by `extractText` and
+/// the selection-overlay renderer.
+export function normalizeSelectionEnds(
+  start: SelectionAnchor,
+  end: SelectionAnchor,
+): [SelectionAnchor, SelectionAnchor] {
+  if (
+    start.srcRow < end.srcRow ||
+    (start.srcRow === end.srcRow && start.col <= end.col)
+  ) {
+    return [start, end];
+  }
+  return [end, start];
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  if (hi < lo) return lo;
+  return n < lo ? lo : n > hi ? hi : n;
 }
 
 /// Produce the post-sync map by rebasing sync entries into the

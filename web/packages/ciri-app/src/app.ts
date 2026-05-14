@@ -33,12 +33,14 @@ import {
   decodeFullPaneSync,
   FrameBodyDecodeError,
   MODE_APP_CURSOR,
+  MODE_BRACKETED_PASTE,
 } from "@ciri/codec";
 import {
   DEFAULT_THEME,
   GridShapeError,
   PaneGrid,
   PaneRenderer,
+  type SelectionAnchor,
   type Theme,
 } from "@ciri/dom";
 import { encodeKeyboardEvent } from "./input.js";
@@ -136,11 +138,22 @@ export class CiriApp {
   // the same root would double-fire every keystroke.
   private readonly onKeyDownHandler: (e: KeyboardEvent) => void;
   private readonly onWheelHandler: (e: WheelEvent) => void;
-  private readonly onMouseDownHandler: () => void;
+  private readonly onMouseDownHandler: (e: MouseEvent) => void;
   /// Pending bell-flash clear timers, keyed by paneId-as-string so a
   /// repeat bell on the same pane re-arms cleanly instead of leaving
   /// the class permanently stuck.
   private readonly bellTimers = new Map<string, ReturnType<Window["setTimeout"]>>();
+  /// In-flight mouse drag state, recorded on mousedown and updated on
+  /// each window-level mousemove. `null` when no drag is active.
+  private dragState: {
+    paneId: bigint;
+    renderer: PaneRenderer;
+    grid: PaneGrid;
+    anchor: SelectionAnchor;
+    moved: boolean;
+  } | null = null;
+  private readonly onWindowMouseMove: (e: MouseEvent) => void;
+  private readonly onWindowMouseUp: (e: MouseEvent) => void;
 
   constructor(
     private readonly root: HTMLElement,
@@ -164,11 +177,14 @@ export class CiriApp {
     if (opts.onError !== undefined) this.handlerOnError = opts.onError;
     this.onKeyDownHandler = (e) => this.onKeyDown(e);
     this.onWheelHandler = (e) => this.onWheel(e);
-    this.onMouseDownHandler = () => {
+    this.onMouseDownHandler = (e) => {
+      this.handleRootMouseDown(e);
       queueMicrotask(() => {
         if (!this.destroyed) this.root.focus();
       });
     };
+    this.onWindowMouseMove = (e) => this.handleWindowMouseMove(e);
+    this.onWindowMouseUp = (e) => this.handleWindowMouseUp(e);
 
     // Hidden container for pane renderers whose tile isn't currently
     // mounted (inactive workspaces, transient layout reshapes).
@@ -220,9 +236,14 @@ export class CiriApp {
     this.root.removeEventListener("keydown", this.onKeyDownHandler);
     this.root.removeEventListener("wheel", this.onWheelHandler);
     this.root.removeEventListener("mousedown", this.onMouseDownHandler);
+    const win = this.doc.defaultView;
+    if (win !== null) {
+      win.removeEventListener("mousemove", this.onWindowMouseMove);
+      win.removeEventListener("mouseup", this.onWindowMouseUp);
+    }
+    this.dragState = null;
     // Cancel pending bell-flash clears so we don't run callbacks
     // against torn-down DOM.
-    const win = this.doc.defaultView;
     for (const t of this.bellTimers.values()) {
       win?.clearTimeout(t);
     }
@@ -296,7 +317,128 @@ export class CiriApp {
     });
     // Refocus the root after any inner mousedown so workspace-tab or
     // pane-tile clicks don't steal keyboard focus from the terminal.
+    // Also starts the selection drag when the mousedown landed on a
+    // tile (see `handleRootMouseDown`).
     this.root.addEventListener("mousedown", this.onMouseDownHandler);
+  }
+
+  /// Cell pixel size used for hit-testing mouse coords into (col,
+  /// srcRow). Exposed so tests can stub it; production callers should
+  /// not override.
+  private get measuredCellSize(): CellSize {
+    return this.cellSize;
+  }
+
+  /// Map a viewport `MouseEvent` to a `(col, srcRow)` anchor inside
+  /// `renderer.container`. Returns `null` when the click landed
+  /// outside the cell grid (e.g. between panes) or when the renderer
+  /// has zero size (jsdom). Clamps col/displayRow to the grid bounds.
+  private hitTestAnchor(
+    e: MouseEvent,
+    renderer: PaneRenderer,
+    grid: PaneGrid,
+  ): SelectionAnchor | null {
+    const rect = renderer.container.getBoundingClientRect();
+    const offsetX = e.clientX - rect.left;
+    const offsetY = e.clientY - rect.top;
+    if (offsetX < 0 || offsetY < 0) return null;
+    const { cellWidth, cellHeight } = this.measuredCellSize;
+    if (cellWidth <= 0 || cellHeight <= 0) return null;
+    const rawCol = Math.floor(offsetX / cellWidth);
+    const rawDisplayRow = Math.floor(offsetY / cellHeight);
+    const col = clampNumber(rawCol, 0, Math.max(0, grid.cols - 1));
+    const displayRow = clampNumber(
+      rawDisplayRow,
+      0,
+      Math.max(0, grid.rows - 1),
+    );
+    const srcRow =
+      displayRow + grid.scrollbackRows - renderer.scrollOffsetRows;
+    return { col, srcRow };
+  }
+
+  private handleRootMouseDown(e: MouseEvent): void {
+    // Only the primary mouse button starts a selection; secondary
+    // (right) is reserved for a future context menu, middle for
+    // X-style paste.
+    if (e.button !== 0) return;
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    const tileEl = target.closest(".ciri-tile");
+    if (!(tileEl instanceof HTMLElement)) return;
+    const paneIdStr = tileEl.dataset["paneId"];
+    if (paneIdStr === undefined) return;
+    const renderer = this.renderers.get(paneIdStr);
+    const grid = this.grids.get(paneIdStr);
+    if (renderer === undefined || grid === undefined) return;
+    const anchor = this.hitTestAnchor(e, renderer, grid);
+    if (anchor === null) return;
+    // Existing selection from a previous drag is replaced wholesale —
+    // the user is starting a fresh selection at the new anchor.
+    this.dragState = {
+      paneId: BigInt(paneIdStr),
+      renderer,
+      grid,
+      anchor,
+      moved: false,
+    };
+    renderer.setSelection({
+      start: anchor,
+      end: anchor,
+      active: true,
+    });
+    renderer.render(grid);
+    // Listen on the window so a drag that leaves the tile (or even
+    // the document) still gets the matching `mouseup`.
+    const win = this.doc.defaultView;
+    if (win !== null) {
+      win.addEventListener("mousemove", this.onWindowMouseMove);
+      win.addEventListener("mouseup", this.onWindowMouseUp);
+    }
+  }
+
+  private handleWindowMouseMove(e: MouseEvent): void {
+    const drag = this.dragState;
+    if (drag === null) return;
+    const anchor = this.hitTestAnchor(e, drag.renderer, drag.grid);
+    if (anchor === null) return;
+    if (
+      anchor.col !== drag.anchor.col ||
+      anchor.srcRow !== drag.anchor.srcRow
+    ) {
+      drag.moved = true;
+    }
+    drag.renderer.setSelection({
+      start: drag.anchor,
+      end: anchor,
+      active: true,
+    });
+    drag.renderer.render(drag.grid);
+  }
+
+  private handleWindowMouseUp(_e: MouseEvent): void {
+    const drag = this.dragState;
+    if (drag === null) return;
+    const win = this.doc.defaultView;
+    if (win !== null) {
+      win.removeEventListener("mousemove", this.onWindowMouseMove);
+      win.removeEventListener("mouseup", this.onWindowMouseUp);
+    }
+    if (!drag.moved) {
+      // No drag motion — treat as a plain focus click. Clear the
+      // empty selection so a stray block-on-anchor doesn't linger
+      // visually.
+      drag.renderer.setSelection(null);
+      drag.renderer.render(drag.grid);
+    } else {
+      // Finalize: drop the `active` flag.
+      const cur = drag.renderer.currentSelection;
+      if (cur !== null) {
+        drag.renderer.setSelection({ ...cur, active: false });
+        drag.renderer.render(drag.grid);
+      }
+    }
+    this.dragState = null;
   }
 
   private installResizeObserver(): void {
@@ -371,6 +513,12 @@ export class CiriApp {
   }
 
   private onKeyDown(e: KeyboardEvent): void {
+    // Clipboard chords intercept *before* the encoder runs: the
+    // encoder rejects Ctrl+Shift+anything and Cmd+anything (the
+    // browser-reserved escape hatches), but Ctrl+Shift+C / Cmd+C /
+    // Ctrl+Shift+V / Cmd+V are the canonical terminal copy/paste
+    // bindings and we DO want to handle them.
+    if (this.tryHandleClipboardChord(e)) return;
     // Prefer the pending-focus target over the layout-derived active
     // pane so a click-then-type sequence reaches the just-clicked
     // pane even before the server's LayoutUpdate has confirmed the
@@ -420,6 +568,106 @@ export class CiriApp {
     const next = Math.max(0, renderer.scrollOffsetRows + linesUp);
     renderer.setScrollOffset(next);
     renderer.render(grid);
+  }
+
+  /// Intercept the Ctrl+Shift+C / Cmd+C copy and Ctrl+Shift+V /
+  /// Cmd+V paste chords before the regular keystroke encoder gets a
+  /// chance to reject them. Returns `true` if the event was handled
+  /// (and `preventDefault` invoked).
+  private tryHandleClipboardChord(e: KeyboardEvent): boolean {
+    const key = e.key.toLowerCase();
+    // metaKey on macOS Safari/Chrome maps to Cmd. We also accept the
+    // Windows/Linux equivalent (Win key) — though typing Win+C there
+    // is unusual, the symmetry mirrors how the encoder defers to the
+    // platform clipboard via `metaKey`. ctrlKey + shiftKey is the
+    // canonical web-terminal binding on Linux/Win.
+    const isCmdChord = e.metaKey && !e.altKey && !e.ctrlKey && !e.shiftKey;
+    const isCtrlShift = e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey;
+    if (key === "c" && (isCtrlShift || isCmdChord)) {
+      const copied = this.copySelectionToClipboard();
+      if (copied) {
+        e.preventDefault();
+        return true;
+      }
+      // No selection to copy → let the browser do whatever its
+      // default is (which for Cmd+C is the system copy, harmless).
+      return false;
+    }
+    if (key === "v" && (isCtrlShift || isCmdChord)) {
+      e.preventDefault();
+      void this.pasteFromClipboard();
+      return true;
+    }
+    return false;
+  }
+
+  /// Snapshot the first pane with a non-null selection and write its
+  /// text content to `navigator.clipboard`. Returns whether anything
+  /// was actually written — callers use this to decide whether to
+  /// suppress the browser's default behavior.
+  private copySelectionToClipboard(): boolean {
+    for (const [key, renderer] of this.renderers) {
+      const sel = renderer.currentSelection;
+      if (sel === null) continue;
+      const grid = this.grids.get(key);
+      if (grid === undefined) continue;
+      const text = grid.extractText(sel.start, sel.end);
+      if (text.length === 0) continue;
+      const clipboard = this.doc.defaultView?.navigator?.clipboard;
+      if (clipboard === undefined) return false;
+      // `writeText` returns a Promise; surface failures through
+      // `onError` rather than throwing into the event loop.
+      clipboard.writeText(text).catch((err: unknown) => {
+        const e = err instanceof Error ? err : new Error(String(err));
+        this.handlerOnError?.(e);
+      });
+      return true;
+    }
+    return false;
+  }
+
+  /// Read the system clipboard and send its text into the active
+  /// pane's PTY, wrapping in `ESC[200~ ... ESC[201~` when the pane's
+  /// terminal app has set `MODE_BRACKETED_PASTE` (mirror of the Rust
+  /// client's paste path in `context_menu.rs`).
+  private async pasteFromClipboard(): Promise<void> {
+    if (this.currentLayout === null) return;
+    const activePaneId =
+      this.pendingFocusedPaneId ?? LayoutManager.activePaneId(this.currentLayout);
+    if (activePaneId === null) return;
+    const grid = this.grids.get(activePaneId.toString());
+    if (grid === undefined) return;
+    const win = this.doc.defaultView;
+    const clipboard = win?.navigator?.clipboard;
+    if (clipboard === undefined || typeof clipboard.readText !== "function") {
+      return;
+    }
+    let text: string;
+    try {
+      text = await clipboard.readText();
+    } catch (err: unknown) {
+      // User-denied permission or browser without clipboard support —
+      // surface but don't crash.
+      const e = err instanceof Error ? err : new Error(String(err));
+      this.handlerOnError?.(e);
+      return;
+    }
+    if (this.destroyed) return;
+    if (text.length === 0) return;
+    const enc = new TextEncoder();
+    const body = enc.encode(text);
+    const bracketed = (grid.meta.modeFlags & MODE_BRACKETED_PASTE) !== 0;
+    if (!bracketed) {
+      this.client.sendInput(activePaneId, body);
+      return;
+    }
+    const prefix = enc.encode("\x1b[200~");
+    const suffix = enc.encode("\x1b[201~");
+    const wrapped = new Uint8Array(prefix.length + body.length + suffix.length);
+    wrapped.set(prefix, 0);
+    wrapped.set(body, prefix.length);
+    wrapped.set(suffix, prefix.length + body.length);
+    this.client.sendInput(activePaneId, wrapped);
   }
 
   private onPaneClicked(paneId: bigint): void {
@@ -659,6 +907,11 @@ export class CiriApp {
     // swallowed by the wire path.
     throw e;
   }
+}
+
+function clampNumber(n: number, lo: number, hi: number): number {
+  if (hi < lo) return lo;
+  return n < lo ? lo : n > hi ? hi : n;
 }
 
 /// Translate a `WheelEvent` to a row count: positive = scroll up

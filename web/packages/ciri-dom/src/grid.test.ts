@@ -10,7 +10,13 @@ import {
   type FullPaneSync,
   type PackedCell,
 } from "@ciri/codec";
-import { GridShapeError, PaneGrid } from "./grid.js";
+import {
+  GridShapeError,
+  PaneGrid,
+  normalizeSelectionEnds,
+  selectionRangeEquals,
+} from "./grid.js";
+import { FLAG_WIDE_CHAR, FLAG_WIDE_CHAR_SPACER } from "@ciri/codec";
 
 function cell(ch: string, fg = DEFAULT_FG, bg = DEFAULT_BG, flags = 0): PackedCell {
   return { ch, fg, bg, flags };
@@ -795,6 +801,183 @@ describe("PaneGrid.rowCells + viewportGlobalIndex", () => {
       expect(() => new PaneGrid(1n, 2, 1, { maxScrollbackRows: 1.5 })).toThrow(
         GridShapeError,
       );
+    });
+  });
+
+  describe("selection helpers", () => {
+    test("normalizeSelectionEnds returns the same pair when already ordered", () => {
+      const [a, b] = normalizeSelectionEnds(
+        { col: 1, srcRow: 0 },
+        { col: 3, srcRow: 2 },
+      );
+      expect(a).toEqual({ col: 1, srcRow: 0 });
+      expect(b).toEqual({ col: 3, srcRow: 2 });
+    });
+
+    test("normalizeSelectionEnds swaps when end is earlier than start", () => {
+      const [a, b] = normalizeSelectionEnds(
+        { col: 4, srcRow: 5 },
+        { col: 2, srcRow: 1 },
+      );
+      expect(a).toEqual({ col: 2, srcRow: 1 });
+      expect(b).toEqual({ col: 4, srcRow: 5 });
+    });
+
+    test("normalizeSelectionEnds breaks ties on the same row by column", () => {
+      const [a, b] = normalizeSelectionEnds(
+        { col: 7, srcRow: 3 },
+        { col: 2, srcRow: 3 },
+      );
+      expect(a).toEqual({ col: 2, srcRow: 3 });
+      expect(b).toEqual({ col: 7, srcRow: 3 });
+    });
+
+    test("selectionRangeEquals ignores end-swap and respects active flag", () => {
+      const r1 = {
+        start: { col: 1, srcRow: 0 },
+        end: { col: 3, srcRow: 2 },
+        active: true,
+      };
+      const r2 = {
+        start: { col: 3, srcRow: 2 },
+        end: { col: 1, srcRow: 0 },
+        active: true,
+      };
+      const r3 = { ...r1, active: false };
+      expect(selectionRangeEquals(r1, r2)).toBe(true);
+      expect(selectionRangeEquals(r1, r3)).toBe(false);
+      expect(selectionRangeEquals(null, null)).toBe(true);
+      expect(selectionRangeEquals(r1, null)).toBe(false);
+    });
+  });
+
+  describe("PaneGrid.extractText", () => {
+    function syncText(rows: string[]): FullPaneSync {
+      // Build a viewport-only sync where each row is rows[i] padded
+      // to `cols` with spaces, no scrollback, paneId=1.
+      const cols = rows.reduce((m, r) => Math.max(m, r.length), 0);
+      const cells: PackedCell[] = [];
+      for (const r of rows) {
+        for (let c = 0; c < cols; c += 1) {
+          cells.push(cell(r[c] ?? " "));
+        }
+      }
+      return makeSync({
+        cols,
+        rows: rows.length,
+        cells,
+        graphemeExtras: new Map(),
+        cellLinks: new Map(),
+        linkMap: new Map(),
+      });
+    }
+
+    test("single-row selection takes [left..=right] and trims trailing space", () => {
+      const g = new PaneGrid(1n, 5, 1);
+      g.applyFullPaneSync(syncText(["hello"]));
+      const text = g.extractText({ col: 1, srcRow: 0 }, { col: 3, srcRow: 0 });
+      expect(text).toBe("ell");
+    });
+
+    test("multi-row selection: first row from start, last row to end, full intermediate rows", () => {
+      const g = new PaneGrid(1n, 4, 3);
+      g.applyFullPaneSync(syncText(["abcd", "efgh", "ijkl"]));
+      const text = g.extractText(
+        { col: 2, srcRow: 0 },
+        { col: 1, srcRow: 2 },
+      );
+      expect(text).toBe("cd\nefgh\nij");
+    });
+
+    test("reversed start/end produces the same text as forward", () => {
+      const g = new PaneGrid(1n, 4, 2);
+      g.applyFullPaneSync(syncText(["abcd", "efgh"]));
+      const fwd = g.extractText(
+        { col: 0, srcRow: 0 },
+        { col: 3, srcRow: 1 },
+      );
+      const rev = g.extractText(
+        { col: 3, srcRow: 1 },
+        { col: 0, srcRow: 0 },
+      );
+      expect(fwd).toBe(rev);
+    });
+
+    test("trailing spaces inside the selection are stripped per row", () => {
+      const g = new PaneGrid(1n, 5, 2);
+      g.applyFullPaneSync(syncText(["hi   ", "bye  "]));
+      const text = g.extractText({ col: 0, srcRow: 0 }, { col: 4, srcRow: 1 });
+      expect(text).toBe("hi\nbye");
+    });
+
+    test("FLAG_WIDE_CHAR_SPACER cells are skipped (no duplicate glyph)", () => {
+      const g = new PaneGrid(1n, 4, 1);
+      const sync = makeSync({
+        cols: 4,
+        rows: 1,
+        cells: [
+          cell("中", DEFAULT_FG, DEFAULT_BG, FLAG_WIDE_CHAR),
+          cell(" ", DEFAULT_FG, DEFAULT_BG, FLAG_WIDE_CHAR_SPACER),
+          cell("a"),
+          cell("b"),
+        ],
+      });
+      g.applyFullPaneSync(sync);
+      const text = g.extractText({ col: 0, srcRow: 0 }, { col: 3, srcRow: 0 });
+      expect(text).toBe("中ab");
+    });
+
+    test("grapheme extras are concatenated", () => {
+      const g = new PaneGrid(1n, 3, 1);
+      const sync = makeSync({
+        cols: 3,
+        rows: 1,
+        cells: [cell("a"), cell("e"), cell("o")],
+        graphemeExtras: new Map([[1, "́"]]), // e + acute accent
+      });
+      g.applyFullPaneSync(sync);
+      const text = g.extractText({ col: 0, srcRow: 0 }, { col: 2, srcRow: 0 });
+      expect(text).toBe("aéo");
+    });
+
+    test("selection spanning scrollback + viewport reads the combined buffer", () => {
+      const g = new PaneGrid(1n, 3, 2);
+      g.applyFullPaneSync(
+        makeSync({
+          cols: 3,
+          rows: 2,
+          scrollback: [
+            cell("o"), cell("l"), cell("d"),
+          ],
+          scrollbackRows: 1,
+          scrollbackReplace: true,
+          cells: [
+            cell("n"), cell("e"), cell("w"),
+            cell("y"), cell("e"), cell("s"),
+          ],
+        }),
+      );
+      // scrollback row 0 (srcRow=0), viewport row 0 (srcRow=1).
+      const text = g.extractText(
+        { col: 0, srcRow: 0 },
+        { col: 2, srcRow: 1 },
+      );
+      expect(text).toBe("old\nnew");
+    });
+
+    test("out-of-range rows are skipped, no throw", () => {
+      const g = new PaneGrid(1n, 2, 1);
+      g.applyFullPaneSync(syncText(["ab"]));
+      // srcRow 99 is past totalRows; should just return what fits.
+      const text = g.extractText({ col: 0, srcRow: 0 }, { col: 1, srcRow: 99 });
+      expect(text).toBe("ab");
+    });
+
+    test("col values outside [0, cols) are clamped to the row's edges", () => {
+      const g = new PaneGrid(1n, 3, 1);
+      g.applyFullPaneSync(syncText(["xyz"]));
+      const text = g.extractText({ col: -5, srcRow: 0 }, { col: 99, srcRow: 0 });
+      expect(text).toBe("xyz");
     });
   });
 });

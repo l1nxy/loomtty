@@ -805,6 +805,325 @@ describe("CiriApp — bell", () => {
   });
 });
 
+describe("CiriApp — selection + clipboard", () => {
+  /// Mock getBoundingClientRect for cell-grid hit-testing. We pretend
+  /// every `.ciri-pane` wrapper is anchored at (0,0) with a generous
+  /// 800×600 size so the renderer's pixel math becomes deterministic.
+  /// cellSize defaults to (8.5, 16.8) from the measure fallback —
+  /// stub the renderer container rect; CiriApp's `measuredCellSize`
+  /// stays at that fallback because the measure probe also lands on
+  /// jsdom's zero-size body.
+  function stubContainerRect(): void {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element): DOMRect {
+        if (this.classList?.contains("ciri-pane")) {
+          return {
+            x: 0, y: 0, top: 0, left: 0, right: 800, bottom: 600,
+            width: 800, height: 600, toJSON: () => ({}),
+          } as DOMRect;
+        }
+        return {
+          x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0,
+          width: 0, height: 0, toJSON: () => ({}),
+        } as DOMRect;
+      },
+    );
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("mousedown + drag inside one pane creates a selection range", () => {
+    stubContainerRect();
+    const { app, fire } = bootstrap();
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    // Mousedown at pixel (10, 10).
+    tile.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, clientX: 10, clientY: 10 }),
+    );
+    // Drag to (50, 30).
+    window.dispatchEvent(
+      new MouseEvent("mousemove", { clientX: 50, clientY: 30 }),
+    );
+    window.dispatchEvent(
+      new MouseEvent("mouseup", { clientX: 50, clientY: 30 }),
+    );
+    const renderer = app.paneGrid(1n);
+    expect(renderer).toBeDefined();
+    // Selection rects appeared in the DOM during the drag.
+    // Sanity: the pane has a renderer with a non-null selection that
+    // is finalized (active=false).
+    const rects = document.querySelectorAll(".ciri-selection-row");
+    expect(rects.length).toBeGreaterThan(0);
+  });
+
+  test("mousedown + mouseup without movement clears any selection", () => {
+    stubContainerRect();
+    const { fire } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    tile.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, clientX: 10, clientY: 10 }),
+    );
+    // Same coords on mouseup — no movement registered.
+    window.dispatchEvent(
+      new MouseEvent("mouseup", { clientX: 10, clientY: 10 }),
+    );
+    expect(document.querySelectorAll(".ciri-selection-row").length).toBe(0);
+  });
+
+  test("drag is bounded by grid.cols / grid.rows; mouse outside clamps to edges", () => {
+    stubContainerRect();
+    const { fire } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    // 3x2 grid. With cellSize fallback ~ (8.5, 16.8), pixel (10, 10)
+    // lands inside col 1, displayRow 0. (1000, 1000) clamps to
+    // col=2, displayRow=1.
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    tile.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, clientX: 10, clientY: 10 }),
+    );
+    window.dispatchEvent(
+      new MouseEvent("mousemove", { clientX: 1000, clientY: 1000 }),
+    );
+    window.dispatchEvent(
+      new MouseEvent("mouseup", { clientX: 1000, clientY: 1000 }),
+    );
+    // Two rows fully selected → two row rects.
+    const rects = document.querySelectorAll(".ciri-selection-row");
+    expect(rects.length).toBe(2);
+  });
+
+  function installClipboardMock(): {
+    written: string[];
+    setReadValue: (s: string) => void;
+  } {
+    const written: string[] = [];
+    let readValue = "";
+    const clipboard = {
+      writeText: vi.fn(async (s: string) => {
+        written.push(s);
+      }),
+      readText: vi.fn(async () => readValue),
+    };
+    Object.defineProperty(window.navigator, "clipboard", {
+      value: clipboard,
+      configurable: true,
+    });
+    return {
+      written,
+      setReadValue(s: string) {
+        readValue = s;
+      },
+    };
+  }
+
+  test("Ctrl+Shift+C copies the selection's extracted text to the clipboard", async () => {
+    stubContainerRect();
+    const cb = installClipboardMock();
+    const { app, fire } = bootstrap();
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    // FULL_SYNC_3X2 has 3x2 of empty cells — not very interesting to
+    // copy, but the test just needs to verify wiring. Drive the
+    // selection directly via the renderer to keep the test scope
+    // tight to the chord handler.
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_HYPER.hex) });
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(2n) },
+    });
+    // FULL_SYNC_HYPER (paneId=2) cells = "a😀bc". Select [0..3].
+    // Selection state — use the renderer setter directly since the
+    // mouse-drag path is covered above.
+    const grid = app.paneGrid(2n)!;
+    // Look up renderer via the layout slot's child.
+    const slot = document.querySelector("[data-pane-id='2']")!;
+    const pane = slot.querySelector(".ciri-pane") as HTMLElement | null;
+    expect(pane).not.toBeNull();
+    // The renderer's `setSelection` is exposed via paneRenderer
+    // lookup; the simplest path is to dispatch a click-drag to set
+    // it via the mouse path. Use simulated coords for a 4-col row.
+    const tile = slot as HTMLElement;
+    tile.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, clientX: 0, clientY: 0 }),
+    );
+    // cellWidth fallback ≈ 8.5; col 3 ~ pixel 25.5. Use 100 to be
+    // safely past col 3 (would clamp to cols-1 = 3).
+    window.dispatchEvent(
+      new MouseEvent("mousemove", { clientX: 100, clientY: 0 }),
+    );
+    window.dispatchEvent(
+      new MouseEvent("mouseup", { clientX: 100, clientY: 0 }),
+    );
+    // Now Ctrl+Shift+C on the root.
+    const root = document.querySelector(".ciri-app")!.parentElement as HTMLElement;
+    root.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "C",
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+      }),
+    );
+    // The Promise chain inside copySelectionToClipboard resolves on
+    // the next microtask.
+    await Promise.resolve();
+    expect(cb.written.length).toBe(1);
+    // Text comes from extractText on the full first row "a😀bc"; the
+    // wide-char spacer collapses to "a😀bc" (4 cells but 3 graphemes).
+    expect(cb.written[0]).toContain("a");
+    expect(cb.written[0]).toContain("bc");
+    // Touch the unused locals to satisfy strict TS.
+    void grid;
+    void pane;
+  });
+
+  test("Cmd+C (metaKey) on macOS-style keybinds also triggers copy", async () => {
+    stubContainerRect();
+    const cb = installClipboardMock();
+    const { fire } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(2n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_HYPER.hex) });
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(2n) },
+    });
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='2']")!;
+    tile.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, clientX: 0, clientY: 0 }),
+    );
+    window.dispatchEvent(
+      new MouseEvent("mousemove", { clientX: 100, clientY: 0 }),
+    );
+    window.dispatchEvent(
+      new MouseEvent("mouseup", { clientX: 100, clientY: 0 }),
+    );
+    const root = document.querySelector(".ciri-app")!.parentElement as HTMLElement;
+    root.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "c", metaKey: true, bubbles: true }),
+    );
+    await Promise.resolve();
+    expect(cb.written.length).toBe(1);
+  });
+
+  test("Ctrl+Shift+C with no selection is a no-op (browser default not preempted)", async () => {
+    const cb = installClipboardMock();
+    const { fire } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    const root = document.querySelector(".ciri-app")!.parentElement as HTMLElement;
+    root.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "C",
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+      }),
+    );
+    await Promise.resolve();
+    expect(cb.written.length).toBe(0);
+  });
+
+  test("Ctrl+Shift+V reads the clipboard and sends Input to the active pane", async () => {
+    const cb = installClipboardMock();
+    cb.setReadValue("hello");
+    const { fire, inputs } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    const root = document.querySelector(".ciri-app")!.parentElement as HTMLElement;
+    root.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "V",
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+      }),
+    );
+    // Two microtasks: the .readText() Promise + the awaiting handler.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(inputs.length).toBe(1);
+    expect(inputs[0]!.paneId).toBe(1n);
+    expect(new TextDecoder().decode(inputs[0]!.data)).toBe("hello");
+  });
+
+  test("Ctrl+Shift+V with MODE_BRACKETED_PASTE wraps the payload in ESC[200~/ESC[201~", async () => {
+    const cb = installClipboardMock();
+    cb.setReadValue("safe");
+    const { app, fire, inputs } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    // Bracketed-paste flag bit.
+    const grid = app.paneGrid(1n)!;
+    grid.meta = { ...grid.meta, modeFlags: 0x0010 /* MODE_BRACKETED_PASTE */ };
+    const root = document.querySelector(".ciri-app")!.parentElement as HTMLElement;
+    root.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "v",
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+      }),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(inputs.length).toBe(1);
+    expect(new TextDecoder().decode(inputs[0]!.data)).toBe("\x1b[200~safe\x1b[201~");
+  });
+
+  test("destroy() detaches window mousemove/mouseup listeners", () => {
+    stubContainerRect();
+    const { app, fire } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    tile.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, clientX: 10, clientY: 10 }),
+    );
+    app.destroy();
+    // After destroy, window-level move/up should be inert. Dispatch
+    // them and verify nothing throws.
+    expect(() => {
+      window.dispatchEvent(new MouseEvent("mousemove", { clientX: 50, clientY: 30 }));
+      window.dispatchEvent(new MouseEvent("mouseup", { clientX: 50, clientY: 30 }));
+    }).not.toThrow();
+  });
+});
+
 describe("CiriApp — error reporting", () => {
   test("invalid cell-delta bytes go to onError, no crash", () => {
     const { app, fire, onErrorCalls } = bootstrap();

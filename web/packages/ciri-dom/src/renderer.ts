@@ -23,8 +23,17 @@ import {
   NAMED_CURSOR,
   type PackedCell,
 } from "@ciri/codec";
-import type { PaneGrid } from "./grid.js";
-import { DEFAULT_THEME, type Theme } from "./theme.js";
+import {
+  normalizeSelectionEnds,
+  selectionRangeEquals,
+  type PaneGrid,
+  type SelectionRange,
+} from "./grid.js";
+import {
+  DEFAULT_SELECTION_BACKGROUND,
+  DEFAULT_THEME,
+  type Theme,
+} from "./theme.js";
 import {
   rowRuns,
   type SgrRun,
@@ -95,6 +104,13 @@ export class PaneRenderer {
   /// Set when the cursor is actively blinking — used by `destroy()`
   /// to cancel the Web Animations API handle.
   private cursorAnim: Animation | null = null;
+  /// Active selection (or `null` for no selection). Rendered as a set
+  /// of absolute-positioned overlay rects layered on top of the cell
+  /// grid. The renderer doesn't own the *interpretation* of the
+  /// selection (e.g. "what text does this cover"); it just paints
+  /// rects per its anchors. `app` derives text via `grid.extractText`.
+  private selection: SelectionRange | null = null;
+  private readonly selectionRowEls: HTMLElement[] = [];
 
   constructor(
     private readonly root: HTMLElement,
@@ -208,6 +224,26 @@ export class PaneRenderer {
     // visible cell churn) still repositions the overlay. Cheap —
     // mostly a handful of inline-style assignments.
     this.updateCursor(grid);
+    // Selection overlay last so it lays cleanly over the cursor's
+    // shape (visually consistent with native terminals — a selection
+    // includes the cursor cell).
+    this.updateSelection(grid);
+  }
+
+  /// Set (or clear, with `null`) the selection overlay. The renderer
+  /// repaints the overlay on the next `render()` call; calling
+  /// `setSelection` does NOT immediately repaint so callers can
+  /// coalesce a selection update with the next CellDelta-driven
+  /// render.
+  setSelection(range: SelectionRange | null): void {
+    if (selectionRangeEquals(this.selection, range)) return;
+    this.selection = range === null ? null : { ...range };
+  }
+
+  /// Current selection (or `null`). Read-only view for tests and
+  /// app-level introspection.
+  get currentSelection(): SelectionRange | null {
+    return this.selection;
   }
 
   /// Set the number of rows to shift the display upward into
@@ -249,6 +285,8 @@ export class PaneRenderer {
     // renderer and we know it was appended in the constructor.
     this.wrapper.remove();
     this.rowEls = [];
+    this.selectionRowEls.length = 0;
+    this.selection = null;
   }
 
   /// Public read-only handle to the wrapper element — useful for
@@ -358,6 +396,41 @@ export class PaneRenderer {
       ],
       { duration: 1000, iterations: Infinity, easing: "steps(1, end)" },
     );
+  }
+
+  private updateSelection(grid: PaneGrid): void {
+    // Rebuild row rects from scratch. The set is bounded by viewport
+    // rows so even a full-screen selection costs O(rows) divs —
+    // cheaper than maintaining a row-keyed map with diffing.
+    for (const el of this.selectionRowEls) el.remove();
+    this.selectionRowEls.length = 0;
+    if (this.selection === null) return;
+
+    const [first, last] = normalizeSelectionEnds(
+      this.selection.start,
+      this.selection.end,
+    );
+    const bg = this.theme.selectionBackground ?? DEFAULT_SELECTION_BACKGROUND;
+    for (let srcRow = first.srcRow; srcRow <= last.srcRow; srcRow += 1) {
+      // Same display-row mapping as `renderDisplayRow`.
+      const displayRow = srcRow - grid.scrollbackRows + this.scrollOffset;
+      if (displayRow < 0 || displayRow >= grid.rows) continue;
+      const left = srcRow === first.srcRow ? Math.max(0, first.col) : 0;
+      const rawRight =
+        srcRow === last.srcRow ? Math.min(grid.cols - 1, last.col) : grid.cols - 1;
+      if (rawRight < left) continue;
+      const el = this.doc.createElement("div");
+      el.className = "ciri-selection-row";
+      el.style.position = "absolute";
+      el.style.pointerEvents = "none";
+      el.style.left = `${left}ch`;
+      el.style.top = `${displayRow * 1.2}em`;
+      el.style.width = `${rawRight - left + 1}ch`;
+      el.style.height = "1.2em";
+      el.style.backgroundColor = bg;
+      this.wrapper.appendChild(el);
+      this.selectionRowEls.push(el);
+    }
   }
 
   private stopCursorBlink(): void {

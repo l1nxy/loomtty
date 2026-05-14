@@ -157,6 +157,55 @@ describe("resolveColor", () => {
     );
   });
 
+  test("NAMED_DIM_RED resolves to dim(red) even without DIM flag (Phase 2.6 round-1)", () => {
+    // Round-1 of Phase 2.6 codex review: the wire can carry a packed
+    // color tagged NAMED with idx 19..26 / 28 (alacritty emits these
+    // for `NamedColor::Dim*`). The resolver must compute base * 0.67
+    // rather than falling back to plain foreground, otherwise the
+    // visual cell color silently mismatches the native Rust client.
+    const dimRed: PackedColor = { kind: "named", index: 20 /* NAMED_DIM_RED */ };
+    const baseRed = DEFAULT_THEME.named[NAMED_RED]!;
+    expect(resolveColor(dimRed, true, 0, DEFAULT_THEME)).toBe(dim(baseRed));
+  });
+
+  test("NAMED_DIM_FOREGROUND resolves to dim(foreground)", () => {
+    const c: PackedColor = { kind: "named", index: 28 /* NAMED_DIM_FOREGROUND */ };
+    expect(resolveColor(c, true, 0, DEFAULT_THEME)).toBe(
+      dim(DEFAULT_THEME.foreground),
+    );
+  });
+
+  test("all NAMED_DIM_* slots (19..=26) map to dim(named[idx-19])", () => {
+    for (let i = 19; i <= 26; i += 1) {
+      const c: PackedColor = { kind: "named", index: i };
+      const base = DEFAULT_THEME.named[i - 19]!;
+      expect(resolveColor(c, true, 0, DEFAULT_THEME)).toBe(dim(base));
+    }
+  });
+
+  test("NAMED_BRIGHT_FOREGROUND (27) and NAMED_CURSOR (18) resolve to plain foreground", () => {
+    const bright: PackedColor = { kind: "named", index: 27 };
+    const cursor: PackedColor = { kind: "named", index: 18 };
+    expect(resolveColor(bright, true, 0, DEFAULT_THEME)).toBe(
+      DEFAULT_THEME.foreground,
+    );
+    expect(resolveColor(cursor, true, 0, DEFAULT_THEME)).toBe(
+      DEFAULT_THEME.foreground,
+    );
+  });
+
+  test("NAMED_DIM with FLAG_DIM produces dim²(base) — matches Rust apply_color_modifiers", () => {
+    // Cell carries NAMED_DIM_RED *and* SGR-2 sets FLAG_DIM: Rust
+    // resolves to dim_colors[red] then multiplies by 0.67 again
+    // (color.rs:66 → apply_color_modifiers). The web path mirrors:
+    // resolveNamed returns dim(red); the outer resolveColor applies
+    // dimifyHex on top.
+    const c: PackedColor = { kind: "named", index: 20 /* DIM_RED */ };
+    const result = resolveColor(c, true, FLAG_DIM, DEFAULT_THEME);
+    const baseRed = DEFAULT_THEME.named[NAMED_RED]!;
+    expect(result).toBe(dim(dim(baseRed)));
+  });
+
   test("non-hex theme color passes through DIM unchanged (parser doesn't crash)", () => {
     // Themes that stored an `rgb(...)` or CSS keyword (not supported
     // by our resolver's contract but worth guarding against) fall

@@ -18,6 +18,7 @@ import {
   NAMED_BRIGHT_BLACK,
   NAMED_BRIGHT_BLUE,
   NAMED_BRIGHT_CYAN,
+  NAMED_BRIGHT_FOREGROUND,
   NAMED_BRIGHT_GREEN,
   NAMED_BRIGHT_MAGENTA,
   NAMED_BRIGHT_RED,
@@ -25,6 +26,9 @@ import {
   NAMED_BRIGHT_YELLOW,
   NAMED_CURSOR,
   NAMED_CYAN,
+  NAMED_DIM_BLACK,
+  NAMED_DIM_FOREGROUND,
+  NAMED_DIM_WHITE,
   NAMED_FOREGROUND,
   NAMED_GREEN,
   NAMED_MAGENTA,
@@ -156,16 +160,41 @@ function resolveNamed(
   isForeground: boolean,
   theme: Theme,
 ): ColorString {
-  if (idx === NAMED_FOREGROUND) {
+  // Mirror `ColorTable::resolve_packed` in
+  // `crates/ciri-render/src/terminal/color.rs:57-80`.
+  //
+  // The wire's NAMED slot space carries 5 logical groups:
+  //   * 0..=15           plain ANSI / Bright variants
+  //   * 16 (FG), 27 (BRIGHT_FG)  → always theme foreground
+  //   * 17 (BG)                  → always theme background
+  //   * 18 (CURSOR)              → fg as a cell paint color (the
+  //                                cursor overlay reads
+  //                                `theme.named[NAMED_CURSOR]` directly)
+  //   * 19..=26 (DIM_*)          → dim(named[idx - 19])
+  //   * 28 (DIM_FOREGROUND)      → dim(theme foreground)
+  // Anything outside these ranges falls back to foreground so we
+  // never return an empty string.
+  if (
+    idx === NAMED_FOREGROUND ||
+    idx === NAMED_BRIGHT_FOREGROUND ||
+    idx === NAMED_CURSOR
+  ) {
     return theme.named[NAMED_FOREGROUND] ?? theme.foreground;
   }
   if (idx === NAMED_BACKGROUND) {
     return theme.named[NAMED_BACKGROUND] ?? theme.background;
   }
+  if (idx === NAMED_DIM_FOREGROUND) {
+    const fg = theme.named[NAMED_FOREGROUND] ?? theme.foreground;
+    return dimifyHex(fg);
+  }
+  if (idx >= NAMED_DIM_BLACK && idx <= NAMED_DIM_WHITE) {
+    const base = theme.named[idx - NAMED_DIM_BLACK];
+    if (base !== null && base !== undefined) return dimifyHex(base);
+    return isForeground ? theme.foreground : theme.background;
+  }
   const slot = theme.named[idx];
   if (slot !== null && slot !== undefined) return slot;
-  // Unset named slot falls through to the default fg/bg so the
-  // renderer never returns an empty string.
   return isForeground ? theme.foreground : theme.background;
 }
 

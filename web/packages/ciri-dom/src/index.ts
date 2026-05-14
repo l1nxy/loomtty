@@ -12,9 +12,11 @@ export {
   type Theme,
 } from "./theme.js";
 export {
+  DEFAULT_MAX_SCROLLBACK_ROWS,
   GridShapeError,
   PaneGrid,
   type DirtyRows,
+  type PaneGridOptions,
 } from "./grid.js";
 export {
   rowRuns,

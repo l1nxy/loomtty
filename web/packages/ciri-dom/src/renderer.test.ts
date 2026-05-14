@@ -540,6 +540,135 @@ describe("PaneRenderer", () => {
     root.remove();
   });
 
+  test("appending scrollback under a scrolled-up user keeps the same content visible", () => {
+    // Round-2 codex fix: previously a `scrollback_replace=false`
+    // append grew `scrollbackRows` while the renderer's
+    // `scrollOffset` stayed put, so the visible window drifted toward
+    // the live bottom on every output line. The renderer now bumps
+    // `scrollOffset` by the scrollback growth to preserve the
+    // historical position.
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root);
+    const grid = new PaneGrid(1n, 2, 1);
+    // 2 rows of scrollback (a, b), 1 row of viewport (A).
+    grid.applyFullPaneSync(syncWithScrollback(2, 2, 1));
+    r.setScrollOffset(2); // top of display = scrollback row 0 ("a")
+    r.render(grid);
+    expect(root.querySelector(".ciri-row")!.textContent).toBe("aa");
+    // Append 1 new history row (c) — server's scrollbackReplace=false.
+    grid.applyFullPaneSync({
+      meta: {
+        paneId: 1n,
+        generation: 2n,
+        cursorLine: 0,
+        cursorCol: 0,
+        cursorShape: 0,
+        modeFlags: 0,
+        echoAck: 0n,
+      },
+      cols: 2,
+      rows: 1,
+      title: "",
+      scrollback: [cell("c"), cell("c")],
+      scrollbackRows: 1,
+      scrollbackReplace: false,
+      cells: [cell("D"), cell("D")],
+      graphemeExtras: new Map(),
+      cellLinks: new Map(),
+      linkMap: new Map(),
+      cwd: null,
+    });
+    r.render(grid);
+    // User should still see "aa", not "bb" or "cc" — the historical
+    // row didn't move under them.
+    expect(root.querySelector(".ciri-row")!.textContent).toBe("aa");
+    expect(r.scrollOffsetRows).toBe(3);
+    root.remove();
+  });
+
+  test("appending scrollback while pinned at bottom keeps following live", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root);
+    const grid = new PaneGrid(1n, 2, 1);
+    grid.applyFullPaneSync(syncWithScrollback(2, 1, 1)); // sb: a ; vp: A
+    // scrollOffset stays 0 (default → pinned to live).
+    r.render(grid);
+    expect(root.querySelector(".ciri-row")!.textContent).toBe("AA");
+    grid.applyFullPaneSync({
+      meta: {
+        paneId: 1n,
+        generation: 2n,
+        cursorLine: 0,
+        cursorCol: 0,
+        cursorShape: 0,
+        modeFlags: 0,
+        echoAck: 0n,
+      },
+      cols: 2,
+      rows: 1,
+      title: "",
+      scrollback: [cell("b"), cell("b")],
+      scrollbackRows: 1,
+      scrollbackReplace: false,
+      cells: [cell("C"), cell("C")],
+      graphemeExtras: new Map(),
+      cellLinks: new Map(),
+      linkMap: new Map(),
+      cwd: null,
+    });
+    r.render(grid);
+    expect(root.querySelector(".ciri-row")!.textContent).toBe("CC");
+    expect(r.scrollOffsetRows).toBe(0);
+    root.remove();
+  });
+
+  test("scrollback shrink (eviction) pulls scrollOffset back to keep view", () => {
+    // PaneGrid trims oldest rows when an append would push past
+    // maxScrollbackRows. The renderer must mirror that by reducing
+    // scrollOffset so the same surviving rows remain visible (or
+    // clamping when the visible row was itself trimmed).
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root);
+    const grid = new PaneGrid(1n, 2, 1, { maxScrollbackRows: 2 });
+    // Seed: 2 sb rows (a, b), 1 viewport (A). Scroll up to view "a".
+    grid.applyFullPaneSync(syncWithScrollback(2, 2, 1));
+    r.setScrollOffset(2);
+    r.render(grid);
+    expect(root.querySelector(".ciri-row")!.textContent).toBe("aa");
+    // Now an append of 1 row pushes to 3 rows → cap evicts row 0 ("a").
+    // Surviving sb = ("b", new). The user's "a" is gone — clamp to top.
+    grid.applyFullPaneSync({
+      meta: {
+        paneId: 1n,
+        generation: 2n,
+        cursorLine: 0,
+        cursorCol: 0,
+        cursorShape: 0,
+        modeFlags: 0,
+        echoAck: 0n,
+      },
+      cols: 2,
+      rows: 1,
+      title: "",
+      scrollback: [cell("c"), cell("c")],
+      scrollbackRows: 1,
+      scrollbackReplace: false,
+      cells: [cell("D"), cell("D")],
+      graphemeExtras: new Map(),
+      cellLinks: new Map(),
+      linkMap: new Map(),
+      cwd: null,
+    });
+    r.render(grid);
+    // Top of display now shows "b" — was at index 1, now index 0.
+    expect(root.querySelector(".ciri-row")!.textContent).toBe("bb");
+    expect(r.scrollOffsetRows).toBe(2);
+    root.remove();
+  });
+
   test("uses default theme background and foreground on the wrapper", () => {
     const root = document.createElement("div");
     document.body.appendChild(root);

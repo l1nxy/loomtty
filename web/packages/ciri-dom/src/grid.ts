@@ -39,11 +39,31 @@ export interface DirtyRows {
   fullRedraw: boolean;
 }
 
+/// Default cap on scrollback rows kept in the browser-side buffer.
+/// Long-running sessions can produce millions of rows of history; the
+/// server keeps a bounded buffer (typically 10k rows) but a fresh
+/// client could see incremental append syncs forever without ever
+/// receiving a `scrollback_replace = true` reset. Without a cap on
+/// the client side the JS heap would grow without bound. 10k rows
+/// at 80 cols × 16 bytes ≈ 12 MB — comfortable headroom for normal
+/// terminal use.
+export const DEFAULT_MAX_SCROLLBACK_ROWS = 10_000;
+
+export interface PaneGridOptions {
+  /// Maximum number of scrollback rows to retain. Older rows are
+  /// evicted from the front (oldest history first) when an append
+  /// would push past this limit. Defaults to
+  /// [`DEFAULT_MAX_SCROLLBACK_ROWS`].
+  maxScrollbackRows?: number;
+}
+
 export class PaneGrid {
   readonly paneId: bigint;
 
   cols: number;
   rows: number;
+  /// Hard cap on retained scrollback rows. See `PaneGridOptions`.
+  readonly maxScrollbackRows: number;
 
   /// Row-major viewport: index = row * cols + col. Length = rows * cols.
   /// Always a flat `PackedCell[]` so the renderer can take row slices
@@ -84,13 +104,23 @@ export class PaneGrid {
   /// row from scratch, also drop any stale row containers."
   private pendingFullRedraw = false;
 
-  constructor(paneId: bigint, cols: number, rows: number) {
+  constructor(
+    paneId: bigint,
+    cols: number,
+    rows: number,
+    opts: PaneGridOptions = {},
+  ) {
     if (cols < 0 || rows < 0 || !Number.isInteger(cols) || !Number.isInteger(rows)) {
       throw new GridShapeError(`invalid grid shape: cols=${cols}, rows=${rows}`);
+    }
+    const max = opts.maxScrollbackRows ?? DEFAULT_MAX_SCROLLBACK_ROWS;
+    if (max < 0 || !Number.isInteger(max)) {
+      throw new GridShapeError(`invalid maxScrollbackRows: ${max}`);
     }
     this.paneId = paneId;
     this.cols = cols;
     this.rows = rows;
+    this.maxScrollbackRows = max;
     this.cells = new Array(cols * rows).fill(DEFAULT_CELL);
     this.scrollback = [];
     this.scrollbackRows = 0;
@@ -285,6 +315,20 @@ export class PaneGrid {
     this.title = sync.title;
     this.cwd = sync.cwd;
 
+    // Cap scrollback growth. Incremental append syncs (the common case
+    // during long-running output) never carry `scrollbackReplace`, so
+    // without an explicit trim the JS heap would grow without bound.
+    // Drop the oldest rows from the front and rebase extras into the
+    // new absolute index space.
+    if (this.scrollbackRows > this.maxScrollbackRows) {
+      const trimRows = this.scrollbackRows - this.maxScrollbackRows;
+      const trimCells = trimRows * this.cols;
+      this.scrollback = this.scrollback.slice(trimCells);
+      this.scrollbackRows = this.maxScrollbackRows;
+      this.graphemeExtras = shiftExtrasDown(this.graphemeExtras, trimCells);
+      this.cellLinks = shiftExtrasDown(this.cellLinks, trimCells);
+    }
+
     // Even a scrollback-only sync may shift viewport extras forward
     // (because Rust drops old viewport extras on every sync — see
     // `rebase_grapheme_lookup`); to stay safe the renderer must
@@ -385,6 +429,18 @@ export class PaneGrid {
 ///     intentionally preserved, so old viewport entries must follow them
 ///     — shifted forward by the appended scrollback length, or rebased
 ///     onto the new scrollback base when `scrollbackReplace` is true.
+/// Drop extras whose key is below `dropFloor` (the cells got trimmed
+/// from the front of the buffer) and shift the rest down by
+/// `dropFloor` to land in the new absolute index space.
+function shiftExtrasDown<V>(m: Map<number, V>, dropFloor: number): Map<number, V> {
+  if (dropFloor === 0) return m;
+  const out = new Map<number, V>();
+  for (const [k, v] of m) {
+    if (k >= dropFloor) out.set(k - dropFloor, v);
+  }
+  return out;
+}
+
 function rebaseExtras<V>(
   oldMap: Map<number, V>,
   syncMap: Map<number, V>,

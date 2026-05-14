@@ -80,6 +80,11 @@ export interface CiriAppOptions {
   /// browser's deltaMode = "line" path and as the floor for the pixel
   /// path). Defaults to 3 — same as native xterm.
   scrollLinesPerWheelTick?: number;
+  /// Maximum scrollback rows retained per pane. See
+  /// `DEFAULT_MAX_SCROLLBACK_ROWS` for the default. Lowering this
+  /// trades scrollback depth for memory; raising it costs JS heap
+  /// proportional to `max × cols`.
+  maxScrollbackRows?: number;
   /// Inject an alternative client factory. The default constructs a
   /// real `CiriClient`. Tests pass in a fake to capture outgoing
   /// messages and feed synthetic events back.
@@ -105,6 +110,7 @@ export class CiriApp {
   private readonly fontFamily: string;
   private readonly fontSize: string;
   private readonly scrollLinesPerWheelTick: number;
+  private readonly maxScrollbackRows: number | undefined;
   private readonly client: CiriAppClientLike;
   private destroyed = false;
   private resizeObserver: ResizeObserver | null = null;
@@ -134,6 +140,7 @@ export class CiriApp {
       1,
       Math.floor(opts.scrollLinesPerWheelTick ?? 3),
     );
+    this.maxScrollbackRows = opts.maxScrollbackRows;
     if (opts.onOpen !== undefined) this.handlerOnOpen = opts.onOpen;
     if (opts.onClose !== undefined) this.handlerOnClose = opts.onClose;
     if (opts.onError !== undefined) this.handlerOnError = opts.onError;
@@ -464,7 +471,14 @@ export class CiriApp {
       // row so the renderer has something to reconcile against; the
       // next non-empty sync will re-size correctly.
       const initialRows = sync.rows > 0 ? sync.rows : 1;
-      grid = new PaneGrid(sync.meta.paneId, sync.cols || 1, initialRows);
+      grid = new PaneGrid(
+        sync.meta.paneId,
+        sync.cols || 1,
+        initialRows,
+        this.maxScrollbackRows !== undefined
+          ? { maxScrollbackRows: this.maxScrollbackRows }
+          : {},
+      );
       this.grids.set(key, grid);
     }
     if (renderer === undefined) {

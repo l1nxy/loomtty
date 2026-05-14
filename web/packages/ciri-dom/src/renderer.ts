@@ -65,6 +65,13 @@ export class PaneRenderer {
   /// equivalent to "user scrolled back by N rows" in a typical
   /// terminal UI. Clamped to `grid.scrollbackRows` at render time.
   private scrollOffset = 0;
+  /// Last `grid.scrollbackRows` observed by `render()`. When scrollback
+  /// grows under a scrolled-up user, `scrollOffset` is bumped by the
+  /// delta so the same historical rows stay visible (otherwise
+  /// `srcRow = scrollbackRows - scrollOffset + displayRow` would drift
+  /// toward the live bottom on every append). `null` means "not yet
+  /// observed" — the first render skips the delta check.
+  private lastScrollbackRows: number | null = null;
 
   constructor(
     private readonly root: HTMLElement,
@@ -103,6 +110,22 @@ export class PaneRenderer {
     if (this.destroyed) {
       throw new Error("PaneRenderer: render called after destroy");
     }
+    // Keep the user's scrolled-up view locked when scrollback grows
+    // underneath them: a FullPaneSync that appends N new history rows
+    // shifts every historical row's absolute index forward by N, so
+    // without a matching bump to `scrollOffset` the display drifts
+    // toward live. When the user is pinned at the live bottom
+    // (scrollOffset === 0) we leave it alone so they keep following
+    // new output. Symmetric on shrink (eviction trim): pull the
+    // offset back so the same rows stay visible if they still exist.
+    if (this.lastScrollbackRows !== null) {
+      const delta = grid.scrollbackRows - this.lastScrollbackRows;
+      if (this.scrollOffset > 0 && delta !== 0) {
+        this.scrollOffset = Math.max(0, this.scrollOffset + delta);
+        this.rendererForcedRedraw = true;
+      }
+    }
+    this.lastScrollbackRows = grid.scrollbackRows;
     // Clamp scrollOffset against the current grid: a FullPaneSync may
     // have shrunk scrollback to fewer rows than the user previously
     // scrolled into, and `setScrollOffset` couldn't see that yet. Any

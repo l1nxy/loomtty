@@ -623,4 +623,135 @@ describe("PaneGrid.rowCells + viewportGlobalIndex", () => {
     expect(g.viewportGlobalIndex(0, 0)).toBe(3);
     expect(g.viewportGlobalIndex(1, 1)).toBe(3 + 3 + 1);
   });
+
+  describe("scrollback cap (max-rows trim)", () => {
+    /// Build a one-row scrollback whose every cell encodes the row
+    /// number as its `ch` — lets a test verify which rows survived
+    /// after a trim without juggling positions.
+    function sbRow(idx: number, cols: number): PackedCell[] {
+      const ch = String(idx % 10);
+      const out: PackedCell[] = new Array(cols);
+      for (let i = 0; i < cols; i += 1) out[i] = cell(ch);
+      return out;
+    }
+
+    test("appending past maxScrollbackRows evicts oldest rows from the front", () => {
+      const g = new PaneGrid(1n, 2, 1, { maxScrollbackRows: 3 });
+      // Seed: 3 rows of history (0,1,2), at the cap.
+      g.applyFullPaneSync(
+        makeSync({
+          cols: 2,
+          rows: 1,
+          scrollback: [...sbRow(0, 2), ...sbRow(1, 2), ...sbRow(2, 2)],
+          scrollbackRows: 3,
+          scrollbackReplace: true,
+          cells: [cell("L"), cell("L")],
+        }),
+      );
+      expect(g.scrollbackRows).toBe(3);
+      // Append 2 more (3,4) — would push to 5 rows; cap at 3 means
+      // rows 0,1 get trimmed, surviving order = 2, 3, 4.
+      g.applyFullPaneSync(
+        makeSync({
+          cols: 2,
+          rows: 1,
+          scrollback: [...sbRow(3, 2), ...sbRow(4, 2)],
+          scrollbackRows: 2,
+          scrollbackReplace: false,
+          cells: [cell("L"), cell("L")],
+        }),
+      );
+      expect(g.scrollbackRows).toBe(3);
+      // Read each scrollback row's first cell to verify identity.
+      expect(g.combinedRowCells(0)[0]!.ch).toBe("2");
+      expect(g.combinedRowCells(1)[0]!.ch).toBe("3");
+      expect(g.combinedRowCells(2)[0]!.ch).toBe("4");
+    });
+
+    test("trim rebases grapheme + hyperlink extras into the new index space", () => {
+      const g = new PaneGrid(1n, 2, 1, { maxScrollbackRows: 2 });
+      // Seed: 2 rows (0, 1), graphemeExtra at row 1 (global index 2)
+      // and a cellLink at row 0 (global index 0).
+      g.applyFullPaneSync(
+        makeSync({
+          cols: 2,
+          rows: 1,
+          scrollback: [...sbRow(0, 2), ...sbRow(1, 2)],
+          scrollbackRows: 2,
+          scrollbackReplace: true,
+          graphemeExtras: new Map([[2, "́"]]),
+          cellLinks: new Map([[0, 1]]),
+          linkMap: new Map([[1, "https://example.com"]]),
+          cells: [cell("L"), cell("L")],
+        }),
+      );
+      // Sanity: keys live at their absolute indices.
+      expect(g.graphemeExtras.get(2)).toBe("́");
+      expect(g.cellLinks.get(0)).toBe(1);
+      // Append 1 more row (2) — cap of 2 trims row 0. Surviving
+      // scrollback = row 1 (now at index 0) + row 2 (now at index 1).
+      // graphemeExtras key 2 → key 0 (row 1, col 0). cellLinks key
+      // 0 sat on row 0 → trimmed, dropped.
+      g.applyFullPaneSync(
+        makeSync({
+          cols: 2,
+          rows: 1,
+          scrollback: [...sbRow(2, 2)],
+          scrollbackRows: 1,
+          scrollbackReplace: false,
+          cells: [cell("L"), cell("L")],
+        }),
+      );
+      expect(g.scrollbackRows).toBe(2);
+      expect(g.graphemeExtras.get(0)).toBe("́");
+      expect(g.graphemeExtras.size).toBe(1);
+      expect(g.cellLinks.size).toBe(0);
+    });
+
+    test("explicit maxScrollbackRows=0 disables scrollback entirely", () => {
+      const g = new PaneGrid(1n, 2, 1, { maxScrollbackRows: 0 });
+      g.applyFullPaneSync(
+        makeSync({
+          cols: 2,
+          rows: 1,
+          scrollback: [...sbRow(0, 2), ...sbRow(1, 2)],
+          scrollbackRows: 2,
+          scrollbackReplace: true,
+          cells: [cell("L"), cell("L")],
+        }),
+      );
+      expect(g.scrollbackRows).toBe(0);
+      expect(g.scrollback.length).toBe(0);
+    });
+
+    test("default maxScrollbackRows is large enough that normal use never trims", () => {
+      const g = new PaneGrid(1n, 2, 1); // default cap
+      const rows = 5_000;
+      const cells: PackedCell[] = new Array(rows * 2);
+      for (let r = 0; r < rows; r += 1) {
+        cells[r * 2] = cell("a");
+        cells[r * 2 + 1] = cell("b");
+      }
+      g.applyFullPaneSync(
+        makeSync({
+          cols: 2,
+          rows: 1,
+          scrollback: cells,
+          scrollbackRows: rows,
+          scrollbackReplace: true,
+          cells: [cell("L"), cell("L")],
+        }),
+      );
+      expect(g.scrollbackRows).toBe(rows);
+    });
+
+    test("invalid maxScrollbackRows throws", () => {
+      expect(() => new PaneGrid(1n, 2, 1, { maxScrollbackRows: -1 })).toThrow(
+        GridShapeError,
+      );
+      expect(() => new PaneGrid(1n, 2, 1, { maxScrollbackRows: 1.5 })).toThrow(
+        GridShapeError,
+      );
+    });
+  });
 });

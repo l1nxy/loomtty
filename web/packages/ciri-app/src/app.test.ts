@@ -614,4 +614,39 @@ describe("CiriApp — resize integration", () => {
     expect(after.length).toBeGreaterThan(0);
     expect(sent.length).toBeGreaterThan(before);
   });
+
+  test("Resize uses the workspace viewport rect, not the root (excludes tab strip)", () => {
+    // Round-6 codex fix: if Resize measured the outer root, it would
+    // over-count by the tab-strip height and the PTY would think it
+    // has more rows than the actual cell grid does. Mock both rects
+    // distinctly and check the Resize message reflects the viewport.
+    const { app, sent } = bootstrap();
+    // Stub getBoundingClientRect: root pretends to be 800×600,
+    // viewport pretends to be 800×560 (the missing 40px is the tab
+    // strip). The wrong implementation would send height=600.
+    const root = app.layoutManager.viewportEl.closest(".ciri-app")
+      ?.parentElement as HTMLElement;
+    const viewport = app.layoutManager.viewportEl;
+    // Both nodes share Element.prototype, so spy with conditional
+    // returns keyed by element identity.
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element): DOMRect {
+        if (this === root) {
+          return { x: 0, y: 0, top: 0, left: 0, right: 800, bottom: 600, width: 800, height: 600, toJSON: () => ({}) } as DOMRect;
+        }
+        if (this === viewport) {
+          return { x: 0, y: 40, top: 40, left: 0, right: 800, bottom: 600, width: 800, height: 560, toJSON: () => ({}) } as DOMRect;
+        }
+        return { x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, toJSON: () => ({}) } as DOMRect;
+      },
+    );
+    app.start();
+    const resize = sent.find((m) => m.tag === "Resize");
+    expect(resize).toBeDefined();
+    if (resize?.tag === "Resize") {
+      expect(resize.width).toBe(800);
+      expect(resize.height).toBe(560); // viewport, not root's 600
+    }
+    vi.restoreAllMocks();
+  });
 });

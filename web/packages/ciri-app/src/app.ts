@@ -281,7 +281,10 @@ export class CiriApp {
     this.resizeObserver = new ResizeObserver(() => {
       if (!this.destroyed) this.sendResize();
     });
-    this.resizeObserver.observe(this.root);
+    // Observe the workspace viewport so a tab-strip height change
+    // (or anything else outside the cell grid) doesn't trigger a
+    // spurious resize. Round-6 codex fix.
+    this.resizeObserver.observe(this.layout.viewportEl);
   }
 
   private measureCellsOrFallback(): CellSize {
@@ -300,7 +303,7 @@ export class CiriApp {
   }
 
   private computeViewport(sessionName: string): ClientHello {
-    const rect = this.root.getBoundingClientRect();
+    const rect = this.viewportRect();
     // jsdom reports {0,0} layout; clamp to >= 1 so `encodeClientHello`
     // doesn't bounce the value. The first real ResizeObserver tick
     // re-sends a proper Resize.
@@ -316,7 +319,7 @@ export class CiriApp {
   }
 
   private sendResize(): void {
-    const rect = this.root.getBoundingClientRect();
+    const rect = this.viewportRect();
     const width = Math.max(1, Math.floor(rect.width));
     const height = Math.max(1, Math.floor(rect.height));
     const { cols, rows } = cellsForViewport(width, height, this.cellSize);
@@ -329,6 +332,16 @@ export class CiriApp {
       cellWidth: this.cellSize.cellWidth,
       cellHeight: this.cellSize.cellHeight,
     });
+  }
+
+  /// Bounds of the area actually used to paint pane content — i.e.
+  /// the active-workspace container, NOT the outer root that also
+  /// includes the workspace tab strip and any future chrome (status
+  /// bar, banner). Using the outer root would over-count vertical
+  /// pixels and the server-allocated rows would push the bottom
+  /// terminal lines past the visible area. Round-6 codex fix.
+  private viewportRect(): DOMRect {
+    return this.layout.viewportEl.getBoundingClientRect();
   }
 
   private onKeyDown(e: KeyboardEvent): void {

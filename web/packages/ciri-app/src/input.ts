@@ -133,6 +133,22 @@ export function encodeKeyboardEvent(
       break;
   }
 
+  // AltGr (and macOS Option) often produce a printable grapheme
+  // while the browser sets *both* `ctrlKey` and `altKey` (Windows /
+  // Linux AltGr maps to Right Alt + synthetic Left Ctrl). The same
+  // event can also flag `getModifierState("AltGraph")`. Detect that
+  // shape before the Ctrl-chord branch — otherwise `@`, `{`, `€` and
+  // friends would be misencoded as `Ctrl+@` (NUL), `Ctrl+[` (ESC),
+  // etc. Send the produced grapheme straight through as UTF-8 with
+  // no ESC prefix; this is *not* the xterm "meta sends escape"
+  // path because the user did not press a meta modifier — the
+  // AltGr was needed just to compose the printable.
+  const isAltGr =
+    (e.ctrlKey && e.altKey) || e.getModifierState("AltGraph");
+  if (isAltGr && isPrintableKey(e.key)) {
+    return { bytes: TEXT_ENCODER.encode(e.key), preventDefault: true };
+  }
+
   // Ctrl + char (and bare `\` etc.) → C0 control byte.
   if (e.ctrlKey) {
     const ctrlByte = ctrlChord(e.key);

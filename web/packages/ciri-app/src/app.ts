@@ -123,6 +123,13 @@ export class CiriApp {
   private readonly handlerOnOpen?: () => void;
   private readonly handlerOnClose?: (reason: string, reconnecting: boolean) => void;
   private readonly handlerOnError?: (err: Error) => void;
+  // DOM event handlers stored as instance fields so `destroy()` can
+  // remove them. Anonymous arrows installed at construction time
+  // would otherwise stick around forever and a remounted CiriApp on
+  // the same root would double-fire every keystroke.
+  private readonly onKeyDownHandler: (e: KeyboardEvent) => void;
+  private readonly onWheelHandler: (e: WheelEvent) => void;
+  private readonly onMouseDownHandler: () => void;
 
   constructor(
     private readonly root: HTMLElement,
@@ -144,6 +151,13 @@ export class CiriApp {
     if (opts.onOpen !== undefined) this.handlerOnOpen = opts.onOpen;
     if (opts.onClose !== undefined) this.handlerOnClose = opts.onClose;
     if (opts.onError !== undefined) this.handlerOnError = opts.onError;
+    this.onKeyDownHandler = (e) => this.onKeyDown(e);
+    this.onWheelHandler = (e) => this.onWheel(e);
+    this.onMouseDownHandler = () => {
+      queueMicrotask(() => {
+        if (!this.destroyed) this.root.focus();
+      });
+    };
 
     // Hidden container for pane renderers whose tile isn't currently
     // mounted (inactive workspaces, transient layout reshapes).
@@ -189,6 +203,11 @@ export class CiriApp {
     this.destroyed = true;
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
+    // Detach interaction handlers before closing the client so a
+    // late-arriving DOM event can't try to send through it.
+    this.root.removeEventListener("keydown", this.onKeyDownHandler);
+    this.root.removeEventListener("wheel", this.onWheelHandler);
+    this.root.removeEventListener("mousedown", this.onMouseDownHandler);
     this.client.close();
     for (const r of this.renderers.values()) r.destroy();
     this.renderers.clear();
@@ -245,17 +264,13 @@ export class CiriApp {
     queueMicrotask(() => {
       if (!this.destroyed) this.root.focus();
     });
-    this.root.addEventListener("keydown", (e) => this.onKeyDown(e));
-    this.root.addEventListener("wheel", (e) => this.onWheel(e), {
+    this.root.addEventListener("keydown", this.onKeyDownHandler);
+    this.root.addEventListener("wheel", this.onWheelHandler, {
       passive: false,
     });
     // Refocus the root after any inner mousedown so workspace-tab or
     // pane-tile clicks don't steal keyboard focus from the terminal.
-    this.root.addEventListener("mousedown", () => {
-      queueMicrotask(() => {
-        if (!this.destroyed) this.root.focus();
-      });
-    });
+    this.root.addEventListener("mousedown", this.onMouseDownHandler);
   }
 
   private installResizeObserver(): void {

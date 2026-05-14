@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { encodeKeyboardEvent } from "./input.js";
 
 /// Build a `KeyboardEvent` via jsdom's constructor — `key` plus
@@ -178,6 +178,46 @@ describe("encodeKeyboardEvent — Ctrl chord", () => {
     // v1. The arrow / function-key cases above don't drop because
     // they have a non-modified encoding regardless.
     expect(encodeKeyboardEvent(ev("§", { ctrlKey: true }))).toBeNull();
+  });
+});
+
+describe("encodeKeyboardEvent — AltGr (Ctrl+Alt printable)", () => {
+  test("Ctrl+Alt+printable is treated as plain UTF-8, not a Ctrl chord", () => {
+    // Round-3 codex regression: Windows / Linux AltGr layouts emit
+    // KeyboardEvent { ctrlKey: true, altKey: true, key: "@" } for the
+    // German keyboard's `@`. The encoder must NOT take this through
+    // ctrlChord("@") = 0x00.
+    const r = encodeKeyboardEvent(ev("@", { ctrlKey: true, altKey: true }))!;
+    expect(decodeUtf8(r.bytes)).toBe("@");
+  });
+
+  test("AltGr produces non-ASCII (€) as multi-byte UTF-8, no ESC prefix", () => {
+    const r = encodeKeyboardEvent(ev("€", { ctrlKey: true, altKey: true }))!;
+    expect(Array.from(r.bytes)).toEqual([0xe2, 0x82, 0xac]);
+  });
+
+  test("getModifierState('AltGraph') alone also treats key as printable", () => {
+    // Some browsers (Chrome on certain Linux setups) report only the
+    // AltGraph modifier without setting ctrl+alt. Honor that signal
+    // so the keystroke still encodes to its printable bytes.
+    const e = ev("{", { ctrlKey: true });
+    vi.spyOn(e, "getModifierState").mockImplementation(
+      (m) => m === "AltGraph",
+    );
+    const r = encodeKeyboardEvent(e)!;
+    expect(decodeUtf8(r.bytes)).toBe("{");
+  });
+
+  test("Ctrl+Alt with non-printable key still resolves to a control byte", () => {
+    // Ctrl+Alt+Backspace shouldn't be misclassified as "AltGr". The
+    // printability check protects this path: Backspace is a named
+    // key, not printable, so we fall through to its dedicated entry.
+    const r = encodeKeyboardEvent(
+      ev("Backspace", { ctrlKey: true, altKey: true }),
+    )!;
+    // Ctrl+Backspace path → BS (0x08); the altKey is otherwise
+    // irrelevant for the Backspace branch.
+    expect(r.bytes).toEqual(new Uint8Array([0x08]));
   });
 });
 

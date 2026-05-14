@@ -171,6 +171,33 @@ describe("CiriApp lifecycle", () => {
     app.destroy();
     expect(() => app.start()).toThrow(/destroy/);
   });
+
+  test("destroy() unregisters root DOM listeners", () => {
+    // Round-3 codex fix: anonymous handler arrows couldn't be
+    // removeEventListener'd. A SPA tearing CiriApp down and recreating
+    // it on the same root previously double-fired every keystroke and
+    // forwarded events into the closed client.
+    const { app, root, fire, inputs } = bootstrap();
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({
+      kind: "full-pane-sync",
+      payload: hexToBytes(FULL_SYNC_3X2.hex),
+    });
+    // Sanity check: a key on the live app forwards to the client.
+    root.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+    expect(inputs.length).toBe(1);
+    // Destroy and replay — the listener should be detached, so the
+    // event reaches no handler.
+    app.destroy();
+    root.dispatchEvent(new KeyboardEvent("keydown", { key: "b", bubbles: true }));
+    root.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, bubbles: true }));
+    root.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(inputs.length).toBe(1); // unchanged
+  });
 });
 
 describe("CiriApp — layout + full-pane-sync", () => {

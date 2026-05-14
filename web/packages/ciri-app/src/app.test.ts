@@ -393,6 +393,67 @@ describe("CiriApp — keyboard routes to active pane", () => {
     expect(inputs.length).toBe(0);
   });
 
+  test("click-then-type routes the keystroke to the just-clicked pane, not the previous active (round-7)", () => {
+    // Round-7 codex race: before the server's LayoutUpdate confirms
+    // the focus change, the new key would still target the stale
+    // currentLayout's active pane. The app now optimistically routes
+    // to the most-recently-clicked pane until the next LayoutUpdate.
+    const { root, app, fire, inputs } = bootstrap();
+    app.start();
+    // Bootstrap two-pane layout, active=pane1; create grids for both
+    // so the input pre-flight check has something to find.
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    // Set up pane 2 too. Construct a sync for pane 2 by reusing the
+    // FULL_SYNC_2X1 fixture (paneId=3) — we need ANY grid for paneId
+    // 2 so the input pre-flight passes. Build a minimal payload via
+    // the typed decoder by feeding through handleClientEvent with a
+    // hand-crafted typed value. Simpler: feed FULL_SYNC_HYPER which
+    // has paneId=2.
+    fire({
+      kind: "full-pane-sync",
+      payload: hexToBytes(FULL_SYNC_HYPER.hex),
+    });
+    expect(app.hasGrid(2n)).toBe(true);
+    // User clicks pane 2 — no server response yet.
+    const tile2 = document.querySelector<HTMLElement>("[data-pane-id='2']")!;
+    tile2.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    // Type immediately.
+    root.dispatchEvent(new KeyboardEvent("keydown", { key: "x", bubbles: true }));
+    // The keystroke should land on pane 2, not pane 1.
+    const xInputs = inputs.filter((i) => i.paneId === 2n && i.data[0] === 0x78);
+    expect(xInputs.length).toBe(1);
+    expect(inputs.find((i) => i.paneId === 1n && i.data[0] === 0x78)).toBeUndefined();
+  });
+
+  test("LayoutUpdate clears the pending click-focus so server stays authoritative", () => {
+    const { root, app, fire, inputs } = bootstrap();
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_HYPER.hex) });
+    // Click pane 2 (optimistic pending = 2).
+    const tile2 = document.querySelector<HTMLElement>("[data-pane-id='2']")!;
+    tile2.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    // Server replies with a LayoutUpdate that, for whatever reason,
+    // keeps pane 1 active. The pending optimistic state must clear.
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    root.dispatchEvent(new KeyboardEvent("keydown", { key: "y", bubbles: true }));
+    // The "y" key should reach pane 1 (current active), not the
+    // stale pane-2 click target.
+    expect(inputs.find((i) => i.paneId === 1n && i.data[0] === 0x79)).toBeDefined();
+    expect(inputs.find((i) => i.paneId === 2n && i.data[0] === 0x79)).toBeUndefined();
+  });
+
   test("modifier-only and metaKey events are ignored", () => {
     const { root, app, fire, inputs } = bootstrap();
     app.start();

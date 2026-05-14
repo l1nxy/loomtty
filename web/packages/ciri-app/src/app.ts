@@ -105,6 +105,13 @@ export class CiriApp {
   private readonly grids = new Map<string, PaneGrid>();
   private readonly renderers = new Map<string, PaneRenderer>();
   private currentLayout: LayoutState | null = null;
+  /// Pane the user just clicked, waiting for the server's
+  /// `LayoutUpdate` ack to officially mark it active. Until then,
+  /// `onKeyDown` routes keystrokes here so a quick click-then-type
+  /// doesn't land on the previously-active pane. Cleared on the next
+  /// applyLayout regardless of what the server promotes (the server
+  /// is authoritative once a new layout arrives).
+  private pendingFocusedPaneId: bigint | null = null;
   private cellSize: CellSize;
   private readonly theme: Theme;
   private readonly fontFamily: string;
@@ -347,11 +354,23 @@ export class CiriApp {
   private onKeyDown(e: KeyboardEvent): void {
     const r = encodeKeyboardEvent(e, this.keyOpts);
     if (r === null) return;
-    if (this.currentLayout === null) return;
-    const activePaneId = LayoutManager.activePaneId(this.currentLayout);
-    if (activePaneId === null) return;
+    // Prefer the pending-focus target over the layout-derived active
+    // pane so a click-then-type sequence reaches the just-clicked
+    // pane even before the server's LayoutUpdate has confirmed the
+    // focus change. Round-7 codex fix.
+    const target =
+      this.pendingFocusedPaneId ??
+      (this.currentLayout !== null
+        ? LayoutManager.activePaneId(this.currentLayout)
+        : null);
+    if (target === null) return;
+    // Drop bytes for panes the app doesn't know about (e.g. a stale
+    // pending target whose pane closed). Sending to a missing pane
+    // is harmless on the server side, but suppressing here avoids
+    // generating ack traffic for ghost cursors.
+    if (!this.grids.has(target.toString())) return;
     if (r.preventDefault) e.preventDefault();
-    this.client.sendInput(activePaneId, r.bytes);
+    this.client.sendInput(target, r.bytes);
   }
 
   private onWheel(e: WheelEvent): void {
@@ -379,6 +398,11 @@ export class CiriApp {
   }
 
   private onPaneClicked(paneId: bigint): void {
+    // Record the local intent so the *next* keystroke routes to the
+    // just-clicked pane, not the layout-derived active one. The
+    // server is asked to confirm via FocusPane; the next LayoutUpdate
+    // clears the pending state.
+    this.pendingFocusedPaneId = paneId;
     this.client.send({ tag: "FocusPane", paneId });
   }
 
@@ -434,6 +458,11 @@ export class CiriApp {
 
   private applyLayout(layout: LayoutState): void {
     this.currentLayout = layout;
+    // Server is authoritative once a new layout arrives: clear the
+    // optimistic click-to-focus shortcut regardless of whether the
+    // server actually promoted the pending pane to active. Anything
+    // else can drift the local view past what the server reports.
+    this.pendingFocusedPaneId = null;
     this.layout.setLayout(layout);
     // Move renderer containers into their new slots; park orphans.
     const live = new Set<string>();

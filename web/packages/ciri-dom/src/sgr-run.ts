@@ -95,13 +95,17 @@ export function rowRuns(
     const text = readCellText(cell, globalIdx, extras.graphemeExtras);
     const linkUri = readCellLink(globalIdx, extras.cellLinks, extras.linkMap);
 
-    const inverse = (cell.flags & FLAG_INVERSE) !== 0;
-    const fg = inverse
-      ? resolveColor(cell.bg, /* isForeground */ true, cell.flags, theme)
-      : resolveColor(cell.fg, /* isForeground */ true, cell.flags, theme);
-    const bg = inverse
-      ? resolveColor(cell.fg, /* isForeground */ false, cell.flags, theme)
-      : resolveColor(cell.bg, /* isForeground */ false, cell.flags, theme);
+    // Resolve fg / bg in their original roles first so DIM (applied by
+    // `resolveColor` when `isForeground` is true) lands on the cell's
+    // *original* foreground, then swap for INVERSE. This mirrors
+    // Rust's `apply_color_modifiers` order — `dim → inverse` — so a
+    // DIM+INVERSE cell renders the originally-fg color (now dimmed)
+    // as the background, not the originally-bg color.
+    let fg = resolveColor(cell.fg, /* isForeground */ true, cell.flags, theme);
+    let bg = resolveColor(cell.bg, /* isForeground */ false, cell.flags, theme);
+    if ((cell.flags & FLAG_INVERSE) !== 0) {
+      [fg, bg] = [bg, fg];
+    }
 
     const bold = (cell.flags & FLAG_BOLD) !== 0;
     const italic = (cell.flags & FLAG_ITALIC) !== 0;

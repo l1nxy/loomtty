@@ -2,8 +2,8 @@
 //   - rgb → hex passthrough
 //   - named slot lookup
 //   - named-foreground fallback to theme.foreground
-//   - bold-promotion of basic-ANSI to bright
-//   - dim-promotion of basic-ANSI to dim
+//   - BOLD does NOT change color (font weight only — matches Rust)
+//   - DIM multiplies fg channels by 0.67 (matches Rust)
 //   - indexed 6×6×6 cube derivation
 //   - indexed grayscale ramp derivation
 
@@ -12,7 +12,6 @@ import {
   FLAG_BOLD,
   FLAG_DIM,
   NAMED_BACKGROUND,
-  NAMED_BRIGHT_RED,
   NAMED_FOREGROUND,
   NAMED_RED,
   type PackedColor,
@@ -47,13 +46,16 @@ describe("resolveColor", () => {
     );
   });
 
-  test("named red with bold promotes to bright-red", () => {
+  test("bold does NOT brighten color (Rust parity: font weight only)", () => {
+    // Round-4 codex fix: previously this promoted red → bright-red,
+    // which the native renderer explicitly stopped doing. SGR 1 +
+    // foreground red should stay plain red.
     expect(resolveColor(NAMED_RED_C, true, FLAG_BOLD, DEFAULT_THEME)).toBe(
-      DEFAULT_THEME.named[NAMED_BRIGHT_RED],
+      DEFAULT_THEME.named[NAMED_RED],
     );
   });
 
-  test("background does not bold-promote", () => {
+  test("bold on background also leaves color unchanged", () => {
     expect(resolveColor(NAMED_RED_C, false, FLAG_BOLD, DEFAULT_THEME)).toBe(
       DEFAULT_THEME.named[NAMED_RED],
     );
@@ -87,18 +89,89 @@ describe("resolveColor", () => {
     expect(resolveColor(c, true, 0, DEFAULT_THEME)).toBe("#eeeeee");
   });
 
-  test("dim flag falls through to theme.foreground when DIM_FOREGROUND unset", () => {
+  /// Helper: compute the expected `#rrggbb` for a hex×0.67 channel
+  /// multiply, matching the resolver's rounding.
+  function dim(hex: string): string {
+    const r = Math.round(Number.parseInt(hex.slice(1, 3), 16) * 0.67);
+    const g = Math.round(Number.parseInt(hex.slice(3, 5), 16) * 0.67);
+    const b = Math.round(Number.parseInt(hex.slice(5, 7), 16) * 0.67);
+    const h = (n: number) => n.toString(16).padStart(2, "0");
+    return `#${h(r)}${h(g)}${h(b)}`;
+  }
+
+  test("DIM on named foreground multiplies channels by 0.67", () => {
+    // Round-4 codex fix: previously this honored the NAMED_DIM_*
+    // theme slots. Rust's apply_color_modifiers ignores those slots
+    // and always multiplies the resolved foreground by 0.67.
     expect(resolveColor(NAMED_FG, true, FLAG_DIM, DEFAULT_THEME)).toBe(
-      DEFAULT_THEME.foreground,
+      dim(DEFAULT_THEME.foreground),
     );
   });
 
-  test("custom theme with DIM_FOREGROUND set: dim flag uses it", () => {
+  test("DIM on RGB foreground multiplies channels by 0.67", () => {
+    // Round-4 codex fix: RGB used to short-circuit through `flags`
+    // and ignore DIM entirely.
+    expect(resolveColor(RGB_ORANGE, true, FLAG_DIM, DEFAULT_THEME)).toBe(
+      dim("#ff8800"),
+    );
+  });
+
+  test("DIM on indexed foreground multiplies channels by 0.67", () => {
+    const c: PackedColor = { kind: "indexed", index: 196 }; // #ff0000 from cube
+    expect(resolveColor(c, true, FLAG_DIM, DEFAULT_THEME)).toBe(
+      dim("#ff0000"),
+    );
+  });
+
+  test("DIM on named red multiplies channels by 0.67", () => {
+    const baseRed = DEFAULT_THEME.named[NAMED_RED]!;
+    expect(resolveColor(NAMED_RED_C, true, FLAG_DIM, DEFAULT_THEME)).toBe(
+      dim(baseRed),
+    );
+  });
+
+  test("DIM is ignored on background colors (Rust only dims fg)", () => {
+    expect(resolveColor(NAMED_RED_C, false, FLAG_DIM, DEFAULT_THEME)).toBe(
+      DEFAULT_THEME.named[NAMED_RED],
+    );
+  });
+
+  test("DIM + BOLD combine: bold no-op, dim still applies", () => {
+    expect(
+      resolveColor(NAMED_RED_C, true, FLAG_DIM | FLAG_BOLD, DEFAULT_THEME),
+    ).toBe(dim(DEFAULT_THEME.named[NAMED_RED]!));
+  });
+
+  test("custom theme: DIM_FOREGROUND slot no longer overrides the multiplier", () => {
+    // Round-4 codex fix: a custom theme that set NAMED_DIM_FOREGROUND
+    // used to take precedence, but Rust never honored it — the slot
+    // is now unused for SGR DIM. The renderer always multiplies by
+    // 0.67 regardless of theme.
     const theme: Theme = {
       ...DEFAULT_THEME,
       named: DEFAULT_THEME.named.slice(),
     };
     theme.named[28 /* NAMED_DIM_FOREGROUND */] = "#777777";
-    expect(resolveColor(NAMED_FG, true, FLAG_DIM, theme)).toBe("#777777");
+    expect(resolveColor(NAMED_FG, true, FLAG_DIM, theme)).toBe(
+      dim(theme.foreground),
+    );
+  });
+
+  test("non-hex theme color passes through DIM unchanged (parser doesn't crash)", () => {
+    // Themes that stored an `rgb(...)` or CSS keyword (not supported
+    // by our resolver's contract but worth guarding against) fall
+    // through verbatim — better than returning NaN-tinged garbage.
+    // Clear the NAMED_FOREGROUND slot so the resolver falls all the
+    // way through to theme.foreground.
+    const named = DEFAULT_THEME.named.slice();
+    named[NAMED_FOREGROUND] = null;
+    const theme: Theme = {
+      ...DEFAULT_THEME,
+      foreground: "rgb(255, 128, 0)",
+      named,
+    };
+    expect(resolveColor(NAMED_FG, true, FLAG_DIM, theme)).toBe(
+      "rgb(255, 128, 0)",
+    );
   });
 });

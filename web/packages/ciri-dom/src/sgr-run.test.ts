@@ -5,6 +5,7 @@ import {
   DEFAULT_BG,
   DEFAULT_FG,
   FLAG_BOLD,
+  FLAG_DIM,
   FLAG_HIDDEN,
   FLAG_INVERSE,
   FLAG_ITALIC,
@@ -75,13 +76,39 @@ describe("rowRuns", () => {
     expect(runs[0]!.underline).toBe("curly");
   });
 
-  test("inverse swaps fg/bg before resolution", () => {
+  test("inverse swaps fg/bg after resolution", () => {
     const cells = [cell("R", RED, DEFAULT_BG, FLAG_INVERSE)];
     const runs = rowRuns(cells, 0, emptyExtras(), DEFAULT_THEME);
     // Inverted: the run's fg is what the original bg resolved to,
     // and vice-versa.
     expect(runs[0]!.fg).toBe(DEFAULT_THEME.background);
     expect(runs[0]!.bg).toBe(DEFAULT_THEME.named[NAMED_RED]);
+  });
+
+  test("dim + inverse: dim applies to the original fg, then swap", () => {
+    // Rust's order is dim-then-inverse. So a cell with fg=red,
+    // bg=default, DIM+INVERSE should render with:
+    //   * run.fg = original bg → theme.background (NOT dimmed)
+    //   * run.bg = dimmed original fg → dimify(red)
+    // Round-4 codex regression: the previous arg-swap-before-resolve
+    // path would have dimmed the wrong color.
+    const baseRed = DEFAULT_THEME.named[NAMED_RED]!;
+    const r = Math.round(Number.parseInt(baseRed.slice(1, 3), 16) * 0.67);
+    const g = Math.round(Number.parseInt(baseRed.slice(3, 5), 16) * 0.67);
+    const b = Math.round(Number.parseInt(baseRed.slice(5, 7), 16) * 0.67);
+    const dimRed = `#${[r, g, b].map((n) => n.toString(16).padStart(2, "0")).join("")}`;
+    const cells = [cell("R", RED, DEFAULT_BG, FLAG_INVERSE | FLAG_DIM)];
+    const runs = rowRuns(cells, 0, emptyExtras(), DEFAULT_THEME);
+    expect(runs[0]!.fg).toBe(DEFAULT_THEME.background);
+    expect(runs[0]!.bg).toBe(dimRed);
+  });
+
+  test("dim alone: original fg is dimmed, bg unchanged", () => {
+    const cells = [cell("R", RED, DEFAULT_BG, FLAG_DIM)];
+    const runs = rowRuns(cells, 0, emptyExtras(), DEFAULT_THEME);
+    const baseRed = DEFAULT_THEME.named[NAMED_RED]!;
+    expect(runs[0]!.fg).not.toBe(baseRed); // dimmed
+    expect(runs[0]!.bg).toBe(DEFAULT_THEME.background);
   });
 
   test("hidden flag renders a space in the text", () => {

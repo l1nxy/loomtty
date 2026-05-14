@@ -59,6 +59,12 @@ export class PaneRenderer {
   /// even if the grid itself has no pending damage — the run
   /// grouper's color output depends on the active theme.
   private rendererForcedRedraw = false;
+  /// Rows above the live bottom of the viewport. `0` pins the display
+  /// to the current grid (the default). `N > 0` shifts the display up
+  /// by N rows so the top of the viewport shows scrollback rows;
+  /// equivalent to "user scrolled back by N rows" in a typical
+  /// terminal UI. Clamped to `grid.scrollbackRows` at render time.
+  private scrollOffset = 0;
 
   constructor(
     private readonly root: HTMLElement,
@@ -97,31 +103,65 @@ export class PaneRenderer {
     if (this.destroyed) {
       throw new Error("PaneRenderer: render called after destroy");
     }
+    // Clamp scrollOffset against the current grid: a FullPaneSync may
+    // have shrunk scrollback to fewer rows than the user previously
+    // scrolled into, and `setScrollOffset` couldn't see that yet. Any
+    // adjustment also forces a full repaint because the visible window
+    // shifted.
+    if (this.scrollOffset > grid.scrollbackRows) {
+      this.scrollOffset = grid.scrollbackRows;
+      this.rendererForcedRedraw = true;
+    }
     const dirty = grid.takeDirtyRows();
-    // A theme change forces a complete repaint even when the grid
-    // has no pending damage of its own — every existing span's
-    // inline color came from the old theme.
+    // A theme change (or a scroll-offset clamp / setScrollOffset call)
+    // forces a complete repaint even when the grid has no pending
+    // damage of its own — every existing span's inline color came from
+    // the old theme, and a scroll shift remaps every display row.
     const themeRedraw = this.rendererForcedRedraw;
     this.rendererForcedRedraw = false;
     const fullRedraw = dirty.fullRedraw || themeRedraw;
     if (fullRedraw || this.rowEls.length !== grid.rows) {
       this.reconcileRowContainers(grid.rows);
     }
-    let rowsToRender: number[];
-    if (themeRedraw && !dirty.fullRedraw) {
-      // takeDirtyRows() returned the grid's diff (possibly empty);
-      // expand to all viewport rows so the theme change actually
-      // reaches the DOM. Don't trust `dirty.rows` to already cover
-      // everything — the grid may have been quiescent.
-      rowsToRender = new Array(grid.rows);
-      for (let i = 0; i < grid.rows; i += 1) rowsToRender[i] = i;
+    let displayRowsToRender: number[];
+    if (fullRedraw) {
+      // Repaint every display row regardless of dirty diff.
+      displayRowsToRender = new Array(grid.rows);
+      for (let i = 0; i < grid.rows; i += 1) displayRowsToRender[i] = i;
     } else {
-      rowsToRender = dirty.rows;
+      // Translate viewport-row damage into display-row positions.
+      // A viewport row `r` shows at display row `r + scrollOffset`
+      // (because scrolling up shifts existing viewport content down on
+      // the screen). When offset = 0 this is a no-op pass-through; when
+      // offset > 0 some dirty rows fall below the visible window and
+      // are skipped.
+      displayRowsToRender = [];
+      for (const r of dirty.rows) {
+        const d = r + this.scrollOffset;
+        if (d >= 0 && d < grid.rows) displayRowsToRender.push(d);
+      }
     }
-    for (const r of rowsToRender) {
-      if (r < 0 || r >= grid.rows) continue;
-      this.renderRow(grid, r);
+    for (const d of displayRowsToRender) {
+      if (d < 0 || d >= grid.rows) continue;
+      this.renderDisplayRow(grid, d);
     }
+  }
+
+  /// Set the number of rows to shift the display upward into
+  /// scrollback. `0` pins to the live viewport bottom (default).
+  /// Clamped to `[0, +∞)` here; the actual upper bound is enforced
+  /// against `grid.scrollbackRows` at render time, since the renderer
+  /// has no live handle on a grid.
+  setScrollOffset(rows: number): void {
+    const clamped = Math.max(0, Math.floor(rows));
+    if (clamped === this.scrollOffset) return;
+    this.scrollOffset = clamped;
+    this.rendererForcedRedraw = true;
+  }
+
+  /// Current scroll offset (rows above the live bottom).
+  get scrollOffsetRows(): number {
+    return this.scrollOffset;
   }
 
   /// Replace the active theme. Sets a renderer-level forced-redraw
@@ -169,11 +209,23 @@ export class PaneRenderer {
     }
   }
 
-  private renderRow(grid: PaneGrid, row: number): void {
-    const rowEl = this.rowEls[row];
+  private renderDisplayRow(grid: PaneGrid, displayRow: number): void {
+    const rowEl = this.rowEls[displayRow];
     if (rowEl === undefined) return;
-    const cells: PackedCell[] = grid.rowCells(row);
-    const globalStart = grid.viewportGlobalIndex(row, 0);
+    // Display row → source row in the concatenated buffer:
+    //   srcRow = scrollbackRows - scrollOffset + displayRow
+    // When scrollOffset = 0 and scrollbackRows = 0 this is just the
+    // viewport row; the offset/scrollback math only kicks in when the
+    // user has scrolled up.
+    const srcRow = grid.scrollbackRows - this.scrollOffset + displayRow;
+    // Guard the source-row math: a stale grid handed to a renderer
+    // with a now-out-of-range offset would otherwise throw inside
+    // `combinedRowCells`. We've already clamped at render-time entry,
+    // but defend against per-cell math edge cases (e.g. scrollback
+    // wiped between clamp and this call by a re-entrant flow).
+    if (srcRow < 0 || srcRow >= grid.totalRows()) return;
+    const cells: PackedCell[] = grid.combinedRowCells(srcRow);
+    const globalStart = srcRow * grid.cols;
     const runs = rowRuns(
       cells,
       globalStart,

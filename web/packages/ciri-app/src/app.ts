@@ -1,0 +1,537 @@
+// CiriApp — top-level orchestrator for the web client.
+//
+// Owns:
+//   - one `LayoutManager` mounted under the caller-supplied root
+//   - one `PaneGrid` + `PaneRenderer` per known pane (keyed by paneId)
+//   - one `CiriClient` (transport + codec) — constructed via a
+//     pluggable factory so tests can swap in a fake
+//   - the keyboard / mouse / wheel / ResizeObserver glue
+//
+// What CiriApp does NOT own:
+//   - the WebSocket itself (delegated to `CiriClient`)
+//   - the cell-level grid model (delegated to `PaneGrid`)
+//   - the row diff + DOM rendering (delegated to `PaneRenderer`)
+//   - the leader / modal / palette / selection layers (deferred past v1)
+//
+// Lifecycle:
+//   const app = new CiriApp(rootEl, { url, sessionName, ... });
+//   app.start();                  // connects, sends ClientHello
+//   ...                            // events flow; renderers update
+//   app.destroy();                // closes socket, tears down DOM
+
+import {
+  CiriClient,
+  type CiriClientOptions,
+  type CiriEvent,
+  type ClientHello,
+  type ClientMessage,
+  type LayoutState,
+  type ServerMessage,
+} from "@ciri/client";
+import {
+  decodeCellDelta,
+  decodeFullPaneSync,
+  FrameBodyDecodeError,
+} from "@ciri/codec";
+import {
+  DEFAULT_THEME,
+  GridShapeError,
+  PaneGrid,
+  PaneRenderer,
+  type Theme,
+} from "@ciri/dom";
+import { encodeKeyboardEvent, type KeyEncoderOptions } from "./input.js";
+import { LayoutManager } from "./layout.js";
+import {
+  cellsForViewport,
+  measureCellSize,
+  type CellSize,
+} from "./measure.js";
+
+/// Minimal client surface CiriApp consumes — everything the
+/// orchestrator needs to drive a session. The default factory wraps
+/// `CiriClient`; tests pass a custom factory that returns a fake.
+export interface CiriAppClientLike {
+  start(): void;
+  close(): void;
+  send(msg: ClientMessage): void;
+  sendInput(paneId: bigint, data: Uint8Array): bigint;
+}
+
+export type CiriClientFactory = (
+  opts: CiriClientOptions,
+  onEvent: (e: CiriEvent) => void,
+) => CiriAppClientLike;
+
+export interface CiriAppOptions {
+  /// WebSocket URL.
+  url: string;
+  /// Session name to attach to.
+  sessionName: string;
+  /// Optional auth token forwarded to the transport.
+  token?: string;
+  /// CSS font-family for terminal cells.
+  fontFamily?: string;
+  /// CSS font-size for terminal cells, e.g. `"14px"`.
+  fontSize?: string;
+  /// Color palette. Defaults to `DEFAULT_THEME`.
+  theme?: Theme;
+  /// How many lines a wheel "tick" should scroll (used for the
+  /// browser's deltaMode = "line" path and as the floor for the pixel
+  /// path). Defaults to 3 — same as native xterm.
+  scrollLinesPerWheelTick?: number;
+  /// Inject an alternative client factory. The default constructs a
+  /// real `CiriClient`. Tests pass in a fake to capture outgoing
+  /// messages and feed synthetic events back.
+  clientFactory?: CiriClientFactory;
+  /// Lifecycle callbacks. Optional — defaults are silent.
+  onOpen?: () => void;
+  onClose?: (reason: string, reconnecting: boolean) => void;
+  onError?: (err: Error) => void;
+}
+
+const DEFAULT_FONT_FAMILY = `"JetBrains Mono", "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace`;
+const DEFAULT_FONT_SIZE = "14px";
+
+export class CiriApp {
+  private readonly doc: Document;
+  private readonly orphanRoot: HTMLElement;
+  private readonly layout: LayoutManager;
+  private readonly grids = new Map<string, PaneGrid>();
+  private readonly renderers = new Map<string, PaneRenderer>();
+  private currentLayout: LayoutState | null = null;
+  private cellSize: CellSize;
+  private readonly theme: Theme;
+  private readonly fontFamily: string;
+  private readonly fontSize: string;
+  private readonly scrollLinesPerWheelTick: number;
+  private readonly client: CiriAppClientLike;
+  private destroyed = false;
+  private resizeObserver: ResizeObserver | null = null;
+  /// DECCKM tracking. v1 hard-codes normal-mode cursor keys; a later
+  /// phase reads the active pane's `mode_flags` and flips this per
+  /// keystroke.
+  private readonly keyOpts: KeyEncoderOptions = {
+    applicationCursorKeys: false,
+  };
+  private readonly handlerOnOpen?: () => void;
+  private readonly handlerOnClose?: (reason: string, reconnecting: boolean) => void;
+  private readonly handlerOnError?: (err: Error) => void;
+
+  constructor(
+    private readonly root: HTMLElement,
+    opts: CiriAppOptions,
+  ) {
+    const doc = root.ownerDocument;
+    if (doc === null) {
+      throw new Error("CiriApp: root element is not attached to a document");
+    }
+    this.doc = doc;
+    this.theme = opts.theme ?? DEFAULT_THEME;
+    this.fontFamily = opts.fontFamily ?? DEFAULT_FONT_FAMILY;
+    this.fontSize = opts.fontSize ?? DEFAULT_FONT_SIZE;
+    this.scrollLinesPerWheelTick = Math.max(
+      1,
+      Math.floor(opts.scrollLinesPerWheelTick ?? 3),
+    );
+    if (opts.onOpen !== undefined) this.handlerOnOpen = opts.onOpen;
+    if (opts.onClose !== undefined) this.handlerOnClose = opts.onClose;
+    if (opts.onError !== undefined) this.handlerOnError = opts.onError;
+
+    // Hidden container for pane renderers whose tile isn't currently
+    // mounted (inactive workspaces, transient layout reshapes).
+    this.orphanRoot = doc.createElement("div");
+    this.orphanRoot.className = "ciri-orphan-panes";
+    this.orphanRoot.style.display = "none";
+    doc.body.appendChild(this.orphanRoot);
+
+    this.cellSize = this.measureCellsOrFallback();
+
+    this.layout = new LayoutManager(this.root, {
+      onPaneClick: (id) => this.onPaneClicked(id),
+      onWorkspaceClick: (idx) => this.onWorkspaceClicked(idx),
+    });
+
+    this.installInteractionHandlers();
+
+    const initialViewport = this.computeViewport(opts.sessionName);
+    const clientOpts: CiriClientOptions = {
+      url: opts.url,
+      sessionName: opts.sessionName,
+      viewport: initialViewport,
+      ...(opts.token !== undefined ? { token: opts.token } : {}),
+    };
+    const factory: CiriClientFactory =
+      opts.clientFactory ??
+      ((o, h) => new CiriClient(o, h));
+    this.client = factory(clientOpts, (e) => this.onClientEvent(e));
+  }
+
+  /// Start the underlying transport + install the ResizeObserver.
+  /// Separate from the constructor so the caller has a chance to
+  /// wire additional listeners (e.g. forwarding error events to a
+  /// UI banner) before the first `open` lands.
+  start(): void {
+    if (this.destroyed) throw new Error("CiriApp: start called after destroy");
+    this.client.start();
+    this.installResizeObserver();
+  }
+
+  destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
+    this.client.close();
+    for (const r of this.renderers.values()) r.destroy();
+    this.renderers.clear();
+    this.grids.clear();
+    this.layout.destroy();
+    this.orphanRoot.remove();
+  }
+
+  /// Re-measure cell size and notify the server. Call this after a
+  /// font has finished loading (`document.fonts.ready.then(...)`),
+  /// since the original measurement may have been done with a
+  /// fallback font that has different metrics.
+  remeasureCells(): void {
+    if (this.destroyed) return;
+    const size = this.measureCellsOrFallback();
+    this.cellSize = size;
+    this.sendResize();
+  }
+
+  /// Public entrypoint that funnels into the internal handler. Useful
+  /// for tests / replay code that wants to feed synthetic events
+  /// without a real transport.
+  handleClientEvent(e: CiriEvent): void {
+    this.onClientEvent(e);
+  }
+
+  // ─── Test surface ────────────────────────────────────────────────
+
+  /// Number of pane renderers currently alive.
+  get paneCount(): number {
+    return this.renderers.size;
+  }
+
+  /// True if a grid exists for `paneId`. Doesn't say whether the
+  /// renderer is attached to a layout slot.
+  hasGrid(paneId: bigint): boolean {
+    return this.grids.has(paneId.toString());
+  }
+
+  /// Read-only handle to the LayoutManager. Tests use this to inspect
+  /// slot DOM nodes; application code should not need it.
+  get layoutManager(): LayoutManager {
+    return this.layout;
+  }
+
+  // ─── Interaction wiring ──────────────────────────────────────────
+
+  private installInteractionHandlers(): void {
+    // Make the root focusable so it captures keyboard events even
+    // when the inner buttons / spans steal focus on click.
+    this.root.tabIndex = 0;
+    // `queueMicrotask` rather than synchronous focus — jsdom can
+    // assert during construction if the element isn't yet visible.
+    queueMicrotask(() => {
+      if (!this.destroyed) this.root.focus();
+    });
+    this.root.addEventListener("keydown", (e) => this.onKeyDown(e));
+    this.root.addEventListener("wheel", (e) => this.onWheel(e), {
+      passive: false,
+    });
+    // Refocus the root after any inner mousedown so workspace-tab or
+    // pane-tile clicks don't steal keyboard focus from the terminal.
+    this.root.addEventListener("mousedown", () => {
+      queueMicrotask(() => {
+        if (!this.destroyed) this.root.focus();
+      });
+    });
+  }
+
+  private installResizeObserver(): void {
+    // Some test environments (and older jsdom builds) don't ship
+    // ResizeObserver. Skip silently — the caller can poll
+    // `remeasureCells()` manually if needed.
+    if (typeof ResizeObserver === "undefined") return;
+    this.resizeObserver = new ResizeObserver(() => {
+      if (!this.destroyed) this.sendResize();
+    });
+    this.resizeObserver.observe(this.root);
+  }
+
+  private measureCellsOrFallback(): CellSize {
+    try {
+      return measureCellSize({
+        fontFamily: this.fontFamily,
+        fontSize: this.fontSize,
+        document: this.doc,
+      });
+    } catch {
+      // Font hasn't loaded yet (or we're in a layout-less env like
+      // jsdom). Fall back to typical 14px monospace metrics — the
+      // first real ResizeObserver tick re-measures.
+      return { cellWidth: 8.5, cellHeight: 16.8 };
+    }
+  }
+
+  private computeViewport(sessionName: string): ClientHello {
+    const rect = this.root.getBoundingClientRect();
+    // jsdom reports {0,0} layout; clamp to >= 1 so `encodeClientHello`
+    // doesn't bounce the value. The first real ResizeObserver tick
+    // re-sends a proper Resize.
+    const width = Math.max(1, Math.floor(rect.width));
+    const height = Math.max(1, Math.floor(rect.height));
+    return {
+      sessionName,
+      width,
+      height,
+      cellWidth: this.cellSize.cellWidth,
+      cellHeight: this.cellSize.cellHeight,
+    };
+  }
+
+  private sendResize(): void {
+    const rect = this.root.getBoundingClientRect();
+    const width = Math.max(1, Math.floor(rect.width));
+    const height = Math.max(1, Math.floor(rect.height));
+    const { cols, rows } = cellsForViewport(width, height, this.cellSize);
+    this.client.send({
+      tag: "Resize",
+      cols,
+      rows,
+      width,
+      height,
+      cellWidth: this.cellSize.cellWidth,
+      cellHeight: this.cellSize.cellHeight,
+    });
+  }
+
+  private onKeyDown(e: KeyboardEvent): void {
+    const r = encodeKeyboardEvent(e, this.keyOpts);
+    if (r === null) return;
+    if (this.currentLayout === null) return;
+    const activePaneId = LayoutManager.activePaneId(this.currentLayout);
+    if (activePaneId === null) return;
+    if (r.preventDefault) e.preventDefault();
+    this.client.sendInput(activePaneId, r.bytes);
+  }
+
+  private onWheel(e: WheelEvent): void {
+    // Ctrl+wheel is browser zoom; don't hijack it.
+    if (e.ctrlKey) return;
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    const tileEl = target.closest(".ciri-tile");
+    if (!(tileEl instanceof HTMLElement)) return;
+    const paneIdStr = tileEl.dataset["paneId"];
+    if (paneIdStr === undefined) return;
+    const renderer = this.renderers.get(paneIdStr);
+    const grid = this.grids.get(paneIdStr);
+    if (renderer === undefined || grid === undefined) return;
+    e.preventDefault();
+    const linesUp = wheelDeltaToLines(
+      e,
+      this.cellSize.cellHeight,
+      this.scrollLinesPerWheelTick,
+    );
+    if (linesUp === 0) return;
+    const next = Math.max(0, renderer.scrollOffsetRows + linesUp);
+    renderer.setScrollOffset(next);
+    renderer.render(grid);
+  }
+
+  private onPaneClicked(paneId: bigint): void {
+    this.client.send({ tag: "FocusPane", paneId });
+  }
+
+  private onWorkspaceClicked(idx: bigint): void {
+    this.client.send({ tag: "SwitchWorkspace", workspaceIdx: idx });
+  }
+
+  // ─── Inbound client events ───────────────────────────────────────
+
+  private onClientEvent(e: CiriEvent): void {
+    switch (e.kind) {
+      case "open":
+        this.handlerOnOpen?.();
+        return;
+      case "close":
+        this.handlerOnClose?.(e.reason, e.reconnecting);
+        return;
+      case "error":
+        this.handlerOnError?.(e.error);
+        return;
+      case "server-msg":
+        this.handleServerMsg(e.msg);
+        return;
+      case "cell-delta":
+        this.handleCellDeltaBytes(e.payload);
+        return;
+      case "full-pane-sync":
+        this.handleFullPaneSyncBytes(e.payload);
+        return;
+      default: {
+        const _exhaustive: never = e;
+        return _exhaustive;
+      }
+    }
+  }
+
+  private handleServerMsg(msg: ServerMessage): void {
+    switch (msg.tag) {
+      case "StateSync":
+      case "LayoutUpdate":
+      case "LayoutReply":
+        this.applyLayout(msg.layout);
+        return;
+      case "PaneClosed":
+        this.destroyPane(msg.paneId);
+        return;
+      default:
+        // v1: ignore everything else (TitleChanged, Bell, ImagePlacement,
+        // SessionList, … — those grow their own handlers in later phases).
+        return;
+    }
+  }
+
+  private applyLayout(layout: LayoutState): void {
+    this.currentLayout = layout;
+    this.layout.setLayout(layout);
+    // Move renderer containers into their new slots; park orphans.
+    const live = new Set<string>();
+    for (const paneId of this.layout.paneIdsInLayout()) {
+      const key = paneId.toString();
+      live.add(key);
+      const r = this.renderers.get(key);
+      if (r === undefined) continue;
+      const slot = this.layout.getSlot(paneId);
+      if (slot !== null && r.container.parentNode !== slot) {
+        slot.appendChild(r.container);
+      }
+    }
+    for (const [key, r] of this.renderers) {
+      if (live.has(key)) continue;
+      if (r.container.parentNode !== this.orphanRoot) {
+        this.orphanRoot.appendChild(r.container);
+      }
+    }
+  }
+
+  private handleCellDeltaBytes(bytes: Uint8Array): void {
+    let cd;
+    try {
+      cd = decodeCellDelta(bytes);
+    } catch (e) {
+      this.reportBodyDecodeError(e);
+      return;
+    }
+    const key = cd.meta.paneId.toString();
+    const grid = this.grids.get(key);
+    const renderer = this.renderers.get(key);
+    // CellDelta arriving before the first FullPaneSync for this pane:
+    // drop it. The server resends a sync on attach + on any reflow,
+    // so the next sync will reconcile.
+    if (grid === undefined || renderer === undefined) return;
+    try {
+      grid.applyCellDelta(cd);
+    } catch (e) {
+      if (e instanceof GridShapeError) {
+        this.handlerOnError?.(e);
+        return;
+      }
+      throw e;
+    }
+    renderer.render(grid);
+  }
+
+  private handleFullPaneSyncBytes(bytes: Uint8Array): void {
+    let sync;
+    try {
+      sync = decodeFullPaneSync(bytes);
+    } catch (e) {
+      this.reportBodyDecodeError(e);
+      return;
+    }
+    const key = sync.meta.paneId.toString();
+    let grid = this.grids.get(key);
+    let renderer = this.renderers.get(key);
+    if (grid === undefined) {
+      // Scrollback-only first-sync (rows = 0) is theoretically
+      // possible but unexpected — give the grid a single placeholder
+      // row so the renderer has something to reconcile against; the
+      // next non-empty sync will re-size correctly.
+      const initialRows = sync.rows > 0 ? sync.rows : 1;
+      grid = new PaneGrid(sync.meta.paneId, sync.cols || 1, initialRows);
+      this.grids.set(key, grid);
+    }
+    if (renderer === undefined) {
+      // Mount in the orphan root; `applyLayout` will move into a
+      // proper slot if the layout has one ready.
+      renderer = new PaneRenderer(this.orphanRoot, {
+        theme: this.theme,
+        fontFamily: this.fontFamily,
+        fontSize: this.fontSize,
+      });
+      this.renderers.set(key, renderer);
+      const slot = this.layout.getSlot(sync.meta.paneId);
+      if (slot !== null) slot.appendChild(renderer.container);
+    }
+    try {
+      grid.applyFullPaneSync(sync);
+    } catch (e) {
+      if (e instanceof GridShapeError) {
+        this.handlerOnError?.(e);
+        return;
+      }
+      throw e;
+    }
+    renderer.render(grid);
+  }
+
+  private destroyPane(paneId: bigint): void {
+    const key = paneId.toString();
+    const r = this.renderers.get(key);
+    if (r !== undefined) r.destroy();
+    this.renderers.delete(key);
+    this.grids.delete(key);
+  }
+
+  private reportBodyDecodeError(e: unknown): void {
+    if (e instanceof FrameBodyDecodeError) {
+      this.handlerOnError?.(e);
+      return;
+    }
+    // Anything else is a programming error — let it bubble so a real
+    // crash trace lands in dev tools instead of being silently
+    // swallowed by the wire path.
+    throw e;
+  }
+}
+
+/// Translate a `WheelEvent` to a row count: positive = scroll up
+/// (into scrollback), negative = scroll down (toward the live
+/// bottom). Handles the three `deltaMode` values browsers may emit.
+function wheelDeltaToLines(
+  e: WheelEvent,
+  cellHeight: number,
+  linesPerTick: number,
+): number {
+  if (e.deltaMode === 1 /* DOM_DELTA_LINE */) {
+    return -Math.round(e.deltaY * linesPerTick);
+  }
+  if (e.deltaMode === 2 /* DOM_DELTA_PAGE */) {
+    // Treat a page as ~10 lines. The real PTU rarely reports DELTA_PAGE
+    // events, so this is a safety net rather than a hot path.
+    return -Math.round(e.deltaY * 10);
+  }
+  // DOM_DELTA_PIXEL (the common case on modern browsers).
+  if (cellHeight > 0) {
+    return -Math.round(e.deltaY / cellHeight);
+  }
+  // Pathological — cellHeight should never be zero given the
+  // measurement fallback, but if it is, fall back to fixed-line.
+  return e.deltaY < 0 ? linesPerTick : -linesPerTick;
+}

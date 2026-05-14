@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./fixtures": {
+      "types": "./dist/__generated__/frame-fixtures.d.ts",
+      "default": "./dist/__generated__/frame-fixtures.js"
     }
   },
   "files": [

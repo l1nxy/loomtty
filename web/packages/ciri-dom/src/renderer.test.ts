@@ -327,6 +327,219 @@ describe("PaneRenderer", () => {
     root.remove();
   });
 
+  // ── scrollback offset ────────────────────────────────────────────
+
+  /// Build a sync with both scrollback and viewport, each row filled
+  /// with a single distinct character so a test can identify which
+  /// source row rendered into which display row.
+  function syncWithScrollback(
+    cols: number,
+    scrollbackRows: number,
+    viewportRows: number,
+  ): FullPaneSync {
+    const sync = blankSync(cols, viewportRows);
+    sync.scrollback = [];
+    for (let r = 0; r < scrollbackRows; r += 1) {
+      const ch = String.fromCharCode("a".charCodeAt(0) + r);
+      for (let c = 0; c < cols; c += 1) sync.scrollback.push(cell(ch));
+    }
+    sync.scrollbackRows = scrollbackRows;
+    sync.scrollbackReplace = true;
+    sync.cells = [];
+    for (let r = 0; r < viewportRows; r += 1) {
+      const ch = String.fromCharCode("A".charCodeAt(0) + r);
+      for (let c = 0; c < cols; c += 1) sync.cells.push(cell(ch));
+    }
+    return sync;
+  }
+
+  test("scroll offset 0 (default) shows the live viewport, not scrollback", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root);
+    const grid = new PaneGrid(1n, 2, 2);
+    // 3 scrollback rows (a,b,c) + 2 viewport rows (A,B).
+    grid.applyFullPaneSync(syncWithScrollback(2, 3, 2));
+    r.render(grid);
+    const rows = Array.from(root.querySelectorAll(".ciri-row"));
+    expect(rows.length).toBe(2);
+    expect(rows[0]!.textContent).toBe("AA");
+    expect(rows[1]!.textContent).toBe("BB");
+    root.remove();
+  });
+
+  test("setScrollOffset shifts display into scrollback", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root);
+    const grid = new PaneGrid(1n, 2, 2);
+    grid.applyFullPaneSync(syncWithScrollback(2, 3, 2));
+    r.render(grid);
+    // Offset 1: top row becomes "last scrollback row" (c), bottom row
+    // becomes "first viewport row" (A).
+    r.setScrollOffset(1);
+    r.render(grid);
+    const rows = Array.from(root.querySelectorAll(".ciri-row"));
+    expect(rows[0]!.textContent).toBe("cc");
+    expect(rows[1]!.textContent).toBe("AA");
+    // Offset 2: both scrollback rows b, c.
+    r.setScrollOffset(2);
+    r.render(grid);
+    const rows2 = Array.from(root.querySelectorAll(".ciri-row"));
+    expect(rows2[0]!.textContent).toBe("bb");
+    expect(rows2[1]!.textContent).toBe("cc");
+    root.remove();
+  });
+
+  test("setScrollOffset(0) returns to the live viewport bottom", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root);
+    const grid = new PaneGrid(1n, 2, 2);
+    grid.applyFullPaneSync(syncWithScrollback(2, 3, 2));
+    r.setScrollOffset(2);
+    r.render(grid);
+    r.setScrollOffset(0);
+    r.render(grid);
+    const rows = Array.from(root.querySelectorAll(".ciri-row"));
+    expect(rows[0]!.textContent).toBe("AA");
+    expect(rows[1]!.textContent).toBe("BB");
+    root.remove();
+  });
+
+  test("render clamps scroll offset that exceeds available scrollback", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root);
+    const grid = new PaneGrid(1n, 2, 2);
+    grid.applyFullPaneSync(syncWithScrollback(2, 1, 2));
+    // User asked to scroll up by 5, but only 1 row of scrollback exists.
+    r.setScrollOffset(5);
+    r.render(grid);
+    expect(r.scrollOffsetRows).toBe(1);
+    const rows = Array.from(root.querySelectorAll(".ciri-row"));
+    expect(rows[0]!.textContent).toBe("aa"); // the one scrollback row
+    expect(rows[1]!.textContent).toBe("AA"); // first viewport row
+    root.remove();
+  });
+
+  test("negative or non-integer setScrollOffset is clamped at 0", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root);
+    r.setScrollOffset(-5);
+    expect(r.scrollOffsetRows).toBe(0);
+    r.setScrollOffset(1.7);
+    expect(r.scrollOffsetRows).toBe(1);
+    root.remove();
+  });
+
+  test("dirty viewport row maps to display row r + scrollOffset", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root);
+    const grid = new PaneGrid(1n, 2, 3);
+    grid.applyFullPaneSync(syncWithScrollback(2, 2, 3)); // sb: a,b ; vp: A,B,C
+    r.setScrollOffset(1);
+    r.render(grid);
+    // At offset 1 the display window shows: b, A, B.
+    {
+      const rows = Array.from(root.querySelectorAll(".ciri-row"));
+      expect(rows[0]!.textContent).toBe("bb");
+      expect(rows[1]!.textContent).toBe("AA");
+      expect(rows[2]!.textContent).toBe("BB");
+    }
+    // Now dirty viewport row 0 (the "A" row). With offset 1 it should
+    // appear at display row 1.
+    grid.applyCellDelta({
+      meta: {
+        paneId: 1n,
+        generation: 2n,
+        cursorLine: 0,
+        cursorCol: 0,
+        cursorShape: 0,
+        modeFlags: 0,
+        echoAck: 0n,
+      },
+      cols: 2,
+      regions: [{ line: 0, left: 0, right: 1, cells: [cell("X"), cell("X")] }],
+    });
+    r.render(grid);
+    const rows = Array.from(root.querySelectorAll(".ciri-row"));
+    expect(rows[0]!.textContent).toBe("bb"); // top untouched
+    expect(rows[1]!.textContent).toBe("XX"); // dirty row 0 now at display 1
+    expect(rows[2]!.textContent).toBe("BB"); // bottom unchanged
+    root.remove();
+  });
+
+  test("dirty viewport row that falls below the visible window is skipped", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root);
+    const grid = new PaneGrid(1n, 2, 2);
+    grid.applyFullPaneSync(syncWithScrollback(2, 2, 2)); // sb: a,b ; vp: A,B
+    r.setScrollOffset(2); // window now shows a, b — viewport off-screen
+    r.render(grid);
+    // Dirty bottom viewport row — it would map to display row 1+2 = 3,
+    // which is outside [0, grid.rows). Must NOT throw and must not
+    // change the visible "a, b" display.
+    grid.applyCellDelta({
+      meta: {
+        paneId: 1n,
+        generation: 2n,
+        cursorLine: 0,
+        cursorCol: 0,
+        cursorShape: 0,
+        modeFlags: 0,
+        echoAck: 0n,
+      },
+      cols: 2,
+      regions: [{ line: 1, left: 0, right: 1, cells: [cell("X"), cell("X")] }],
+    });
+    r.render(grid);
+    const rows = Array.from(root.querySelectorAll(".ciri-row"));
+    expect(rows[0]!.textContent).toBe("aa");
+    expect(rows[1]!.textContent).toBe("bb");
+    root.remove();
+  });
+
+  test("FullPaneSync that shrinks scrollback clamps the offset", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root);
+    const grid = new PaneGrid(1n, 2, 2);
+    grid.applyFullPaneSync(syncWithScrollback(2, 3, 2));
+    r.setScrollOffset(3); // exactly at the top
+    r.render(grid);
+    // Now another sync wipes scrollback entirely (scrollbackReplace + 0 rows).
+    grid.applyFullPaneSync(syncWithScrollback(2, 0, 2));
+    r.render(grid);
+    expect(r.scrollOffsetRows).toBe(0);
+    const rows = Array.from(root.querySelectorAll(".ciri-row"));
+    expect(rows[0]!.textContent).toBe("AA");
+    expect(rows[1]!.textContent).toBe("BB");
+    root.remove();
+  });
+
+  test("setScrollOffset is a no-op when value matches current offset", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root);
+    const grid = new PaneGrid(1n, 2, 2);
+    grid.applyFullPaneSync(syncWithScrollback(2, 2, 2));
+    r.setScrollOffset(1);
+    r.render(grid);
+    // Snapshot a row element identity. Calling setScrollOffset with
+    // the same value MUST NOT force a redraw — verify by checking that
+    // the row's first child stays the same node when nothing dirty.
+    const child0Before = root.querySelector(".ciri-row")!.children[0]!;
+    r.setScrollOffset(1);
+    r.render(grid);
+    const child0After = root.querySelector(".ciri-row")!.children[0]!;
+    expect(child0After).toBe(child0Before);
+    root.remove();
+  });
+
   test("uses default theme background and foreground on the wrapper", () => {
     const root = document.createElement("div");
     document.body.appendChild(root);

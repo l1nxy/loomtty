@@ -321,6 +321,31 @@ export class PaneGrid {
     return this.cells.slice(row * this.cols, (row + 1) * this.cols);
   }
 
+  /// Total addressable rows when treating scrollback and viewport as a
+  /// single buffer. Used by the renderer to map a scroll position into
+  /// the concatenated `[scrollback..., cells]` index space.
+  totalRows(): number {
+    return this.scrollbackRows + this.rows;
+  }
+
+  /// Read one row's worth of cells from the concatenated
+  /// `[scrollback..., cells]` buffer. `srcRow` in
+  /// `0..scrollbackRows+rows`. Scrollback rows occupy the lower half;
+  /// viewport rows occupy the upper. Same no-mutate rule as `rowCells`.
+  combinedRowCells(srcRow: number): PackedCell[] {
+    const total = this.totalRows();
+    if (srcRow < 0 || srcRow >= total) {
+      throw new GridShapeError(
+        `srcRow=${srcRow} out of range 0..${total}`,
+      );
+    }
+    if (srcRow < this.scrollbackRows) {
+      return this.scrollback.slice(srcRow * this.cols, (srcRow + 1) * this.cols);
+    }
+    const vpRow = srcRow - this.scrollbackRows;
+    return this.cells.slice(vpRow * this.cols, (vpRow + 1) * this.cols);
+  }
+
   /// Look up the full grapheme string for a cell. Falls back to
   /// `cell.ch` when no extra is present. The lookup is over the
   /// [scrollback..., viewport] index space so callers can hand in any

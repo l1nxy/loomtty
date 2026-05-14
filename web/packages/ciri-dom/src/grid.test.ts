@@ -539,6 +539,49 @@ describe("PaneGrid.applyFullPaneSync — extras rebase", () => {
     expect(g.cellLinks.size).toBe(0);
   });
 
+  test("scrollback-only sync also drops cellLinks anchored in old scrollback (round-5)", () => {
+    // Round-5 codex fix: previously cellLinks whose key was inside
+    // the existing scrollback (k < oldSbCells) survived the rebase
+    // branch even though linkMap is replaced wholesale. With
+    // per-sync ID re-allocation, that link would silently re-resolve
+    // to a different URI (or to nothing).
+    const g = new PaneGrid(1n, 2, 1);
+    g.applyFullPaneSync(
+      makeSync({
+        cols: 2,
+        rows: 1,
+        cells: [cell("a"), cell("b")],
+        scrollback: [cell("s"), cell("t")],
+        scrollbackRows: 1,
+        scrollbackReplace: true,
+        cellLinks: new Map([[0, 1]]), // 's' at scrollback index 0
+        linkMap: new Map([[1, "https://old.example.com"]]),
+      }),
+    );
+    expect(g.cellLinks.get(0)).toBe(1);
+    // Scrollback-only sync (rows=0). Same sync re-uses link id 1 for
+    // a DIFFERENT URL — without the round-5 fix, the old scrollback
+    // link would survive and re-resolve to the new URL.
+    g.applyFullPaneSync(
+      makeSync({
+        cols: 2,
+        rows: 0,
+        cells: [],
+        scrollback: [cell("u"), cell("v")],
+        scrollbackRows: 1,
+        scrollbackReplace: false,
+        cellLinks: new Map([[1, 1]]), // sync's own link on its sb cell at index 1
+        linkMap: new Map([[1, "https://NEW.example.com"]]),
+      }),
+    );
+    // Old scrollback link at key 0 must be gone.
+    expect(g.cellLinks.has(0)).toBe(false);
+    // Only the sync's new link survives, rebased onto the new
+    // absolute index space.
+    expect(g.cellLinks.size).toBe(1);
+    expect(g.linkMap.get(1)).toBe("https://NEW.example.com");
+  });
+
   test("scrollback-only replace preserves old viewport extras rebased onto new sb", () => {
     const g = new PaneGrid(1n, 2, 1);
     g.applyFullPaneSync(

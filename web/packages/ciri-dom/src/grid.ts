@@ -485,15 +485,15 @@ function rebaseExtras<V>(
     // everything if it does.
   } else if (isScrollbackOnly && !preserveOldViewportOnScrollbackOnly) {
     // Scrollback-only sync, but the caller asked us NOT to preserve
-    // old viewport entries (e.g. cellLinks, where link IDs can collide
-    // across syncs). Old scrollback entries still survive at their
-    // original keys when scrollback wasn't wiped or reflowed; the rest
-    // is dropped.
-    if (!scrollbackReplace && !colsChanged) {
-      for (const [k, v] of oldMap) {
-        if (k < oldSbCells) out.set(k, v);
-      }
-    }
+    // old viewport entries. Used only for `cellLinks`: hyperlink IDs
+    // are server-allocated per-sync from 1, and the matching
+    // `linkMap` is wholesale replaced on every sync (see the call
+    // site in `applyFullPaneSync`). So even an old *scrollback*
+    // cellLink, whose cell content is unchanged, points to an ID
+    // that may now resolve to a completely different URI in the new
+    // linkMap (or to nothing) — drop EVERY old entry. Round-5 codex
+    // fix: previously this branch kept `k < oldSbCells` entries,
+    // which silently re-pointed historical links at new sync IDs.
   } else if (!scrollbackReplace && !colsChanged) {
     // Normal viewport-replacing sync, no scrollback wipe, no reflow.
     // Old scrollback entries keep their absolute indices; old viewport

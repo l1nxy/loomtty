@@ -1361,7 +1361,7 @@ describe("CiriApp — IME composition", () => {
     void app;
   });
 
-  test("compositionend with empty data (canceled) sends nothing", () => {
+  test("compositionend with empty data (canceled) sends nothing", async () => {
     const { root, app, fire, inputs } = bootstrap();
     app.start();
     fire({
@@ -1376,6 +1376,11 @@ describe("CiriApp — IME composition", () => {
     expect(inputs.length).toBe(0);
     const p = document.querySelector<HTMLElement>(".ciri-preedit")!;
     expect(p.style.display).toBe("none");
+    // Empty compositionend.data triggers a deferred re-check (round-4
+    // codex fix for Firefox-style event order). After the macrotask
+    // resolves with still no captured commit, nothing is sent.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(inputs.length).toBe(0);
     void app;
   });
 
@@ -1515,7 +1520,7 @@ describe("CiriApp — IME composition", () => {
     expect(sink.value).toBe("");
   });
 
-  test("cancel with dirty sink does NOT commit (filtered inputType)", () => {
+  test("cancel with dirty sink does NOT commit (filtered inputType)", async () => {
     // Round-3 codex: blindly using sink.value as a fallback would
     // turn a cancel-with-dirty-sink into an erroneous commit. The
     // beforeinput path filters intermediate `insertCompositionText`
@@ -1544,9 +1549,144 @@ describe("CiriApp — IME composition", () => {
     );
     sink.value = "ni"; // dirty sink, as some IMEs leave it after cancel
     root.dispatchEvent(compositionEvent("compositionend", ""));
+    // Deferred re-check still runs (round-4 codex). After the
+    // macrotask there's still no commit because the filtered
+    // intermediate-update never populated `compositionCommitData`.
+    await new Promise((r) => setTimeout(r, 0));
     expect(inputs.length).toBe(0);
-    // Sink still cleared on compositionend.
+    // Sink cleared after the deferred path runs.
     expect(sink.value).toBe("");
+  });
+
+  test("Firefox-style order: input fires after compositionend, deferred commit catches it", async () => {
+    // Round-4 codex P1: Firefox fires `compositionend` BEFORE the
+    // non-composing `input`, so a synchronous decision in
+    // `compositionend` would miss the commit. The deferred macrotask
+    // re-check picks up the post-event `compositionCommitData`.
+    const { root, fire, inputs } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    const sink = root.querySelector<HTMLTextAreaElement>(
+      "textarea.ciri-composition-sink",
+    )!;
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    root.dispatchEvent(compositionEvent("compositionupdate", "ni"));
+    // compositionend fires FIRST with empty data (Firefox order).
+    root.dispatchEvent(compositionEvent("compositionend", ""));
+    expect(inputs.length).toBe(0);
+    // Then the post-compositionend input fires with the commit.
+    sink.dispatchEvent(
+      new InputEvent("beforeinput", {
+        inputType: "insertText",
+        data: "你",
+        isComposing: false,
+        bubbles: true,
+      }),
+    );
+    // Allow the deferred macrotask to fire.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(inputs.length).toBe(1);
+    expect(Array.from(inputs[0]!.data)).toEqual([0xe4, 0xbd, 0xa0]);
+  });
+
+  test("generation guard: new composition between compositionend and deferred fire abandons the deferred commit", async () => {
+    // Round-4 codex P1 corollary: a new `compositionstart` arrives
+    // before the deferred macrotask fires (rapid back-to-back IME
+    // sessions). The deferred work for the previous session must
+    // abandon — otherwise it could leak a stale commit into the new
+    // session.
+    const { root, fire, inputs } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    const sink = root.querySelector<HTMLTextAreaElement>(
+      "textarea.ciri-composition-sink",
+    )!;
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    root.dispatchEvent(compositionEvent("compositionend", ""));
+    // Populate stale commit data BEFORE the deferred fires — this is
+    // what would otherwise leak.
+    sink.dispatchEvent(
+      new InputEvent("beforeinput", {
+        inputType: "insertText",
+        data: "你",
+        isComposing: false,
+        bubbles: true,
+      }),
+    );
+    // A new composition begins before the previous deferred task
+    // gets its turn. Generation bumps; stale deferred should bail.
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(inputs.length).toBe(0);
+  });
+
+  test("LayoutUpdate during composition immediately transfers the preedit overlay (no compositionupdate needed)", () => {
+    // Round-4 codex P3: when active pane changes mid-composition via
+    // a server-driven LayoutUpdate, the overlay must move
+    // immediately. Waiting for the next `compositionupdate` (which
+    // may never arrive before compositionend) leaves the overlay on
+    // pane A while the commit routes to pane B.
+    const { root, fire } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_HYPER.hex) });
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    root.dispatchEvent(compositionEvent("compositionupdate", "ni"));
+    const tile1 = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    expect(
+      tile1.querySelector<HTMLElement>(".ciri-preedit")!.textContent,
+    ).toBe("ni");
+    // Server promotes pane 2 to active. NO subsequent compositionupdate.
+    fire({
+      kind: "server-msg",
+      msg: {
+        tag: "LayoutUpdate",
+        layout: {
+          activeWorkspaceIdx: 0n,
+          workspaces: [
+            {
+              activeColumnIdx: 1n,
+              columns: [
+                {
+                  activeTileIdx: 0n,
+                  widthProportion: 0.5,
+                  widthFixedPx: null,
+                  tiles: [{ paneId: 1n, weight: 1.0 }],
+                },
+                {
+                  activeTileIdx: 0n,
+                  widthProportion: 0.5,
+                  widthFixedPx: null,
+                  tiles: [{ paneId: 2n, weight: 1.0 }],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    });
+    // Overlay should have transferred already.
+    const tile2After = document.querySelector<HTMLElement>(
+      "[data-pane-id='2']",
+    )!;
+    const p2 = tile2After.querySelector<HTMLElement>(".ciri-preedit")!;
+    expect(p2.textContent).toBe("ni");
+    expect(p2.style.display).toBe("block");
+    const tile1After = document.querySelector<HTMLElement>(
+      "[data-pane-id='1']",
+    )!;
+    expect(
+      tile1After.querySelector<HTMLElement>(".ciri-preedit")!.style.display,
+    ).toBe("none");
   });
 
   test("preedit overlay follows the active pane when LayoutUpdate changes focus mid-composition", () => {

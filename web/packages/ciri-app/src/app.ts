@@ -161,6 +161,10 @@ export class CiriApp {
   private readonly onCompositionUpdateHandler: (e: CompositionEvent) => void;
   private readonly onCompositionEndHandler: (e: CompositionEvent) => void;
   private readonly onSinkBeforeInputHandler: (e: Event) => void;
+  /// `input`-event sibling of `beforeinput`. Some Safari/mobile
+  /// builds skip `beforeinput` for IME commits and only surface them
+  /// here. Listening to both eliminates the per-engine guesswork.
+  private readonly onSinkInputHandler: (e: Event) => void;
   /// `true` between `compositionstart` and `compositionend`. Used as a
   /// backstop so keydown events that slip through `e.isComposing` (an
   /// older spec quirk in some browsers — the flag isn't always set on
@@ -174,14 +178,22 @@ export class CiriApp {
   /// Rust's behavior of storing preedit state globally and anchoring
   /// the paint on the active pane).
   private composingPaneId: bigint | null = null;
-  /// Most recent committed text inferred from a `beforeinput` event
-  /// on the sink. Used as a fallback when `compositionend.data` is
-  /// empty (Safari + a handful of mobile IMEs surface the commit
-  /// only through the editable-element input path). Reset on every
-  /// `compositionstart`; set only on commit-signaling `inputType`
-  /// values, not on intermediate `insertCompositionText` ticks, so a
-  /// cancel-with-dirty-sink doesn't silently turn into a commit.
+  /// Most recent committed text inferred from a `beforeinput` /
+  /// `input` event on the sink. Used as a fallback when
+  /// `compositionend.data` is empty (Safari + a handful of mobile
+  /// IMEs surface the commit only through the editable-element input
+  /// path). Reset on every `compositionstart`; set only on commit-
+  /// signaling `inputType` values, not on intermediate
+  /// `insertCompositionText` ticks, so a cancel-with-dirty-sink
+  /// doesn't silently turn into a commit.
   private compositionCommitData: string | null = null;
+  /// Bumps on every `compositionstart`. Used by deferred commit
+  /// finalization (see `onCompositionEnd`) to detect when a new
+  /// composition session has begun in the gap between
+  /// `compositionend` and the post-event input fire — in that case
+  /// the deferred work for the previous session should silently
+  /// abandon rather than committing into the new one.
+  private compositionGeneration = 0;
   /// Pending bell-flash clear timers, keyed by paneId-as-string so a
   /// repeat bell on the same pane re-arms cleanly instead of leaving
   /// the class permanently stuck.
@@ -232,6 +244,7 @@ export class CiriApp {
     this.onCompositionUpdateHandler = (e) => this.onCompositionUpdate(e);
     this.onCompositionEndHandler = (e) => this.onCompositionEnd(e);
     this.onSinkBeforeInputHandler = (e) => this.onSinkBeforeInput(e);
+    this.onSinkInputHandler = (e) => this.onSinkBeforeInput(e);
 
     // Hidden container for pane renderers whose tile isn't currently
     // mounted (inactive workspaces, transient layout reshapes).
@@ -327,6 +340,10 @@ export class CiriApp {
     this.compositionSinkEl.removeEventListener(
       "beforeinput",
       this.onSinkBeforeInputHandler,
+    );
+    this.compositionSinkEl.removeEventListener(
+      "input",
+      this.onSinkInputHandler,
     );
     const win = this.doc.defaultView;
     if (win !== null) {
@@ -437,14 +454,22 @@ export class CiriApp {
     this.root.addEventListener("compositionstart", this.onCompositionStartHandler);
     this.root.addEventListener("compositionupdate", this.onCompositionUpdateHandler);
     this.root.addEventListener("compositionend", this.onCompositionEndHandler);
-    // `beforeinput` on the sink lets us pick up the commit text on
-    // browsers that surface it via the editable-element input path
-    // (Safari, some mobile IMEs) rather than via `compositionend.data`.
-    // We don't listen on the root because the spec doesn't guarantee
-    // bubbling for `beforeinput` from form controls in every engine.
+    // `beforeinput` + `input` on the sink let us pick up the commit
+    // text on browsers that surface it via the editable-element
+    // input path (Safari, some mobile IMEs) rather than via
+    // `compositionend.data`. Listening on both is intentional: some
+    // engines skip `beforeinput` for IME paths, others fire `input`
+    // after `compositionend` (Firefox's order — see the deferred
+    // finalization in `onCompositionEnd`). We don't listen on the
+    // root because the spec doesn't guarantee bubbling for
+    // `beforeinput` from form controls in every engine.
     this.compositionSinkEl.addEventListener(
       "beforeinput",
       this.onSinkBeforeInputHandler,
+    );
+    this.compositionSinkEl.addEventListener(
+      "input",
+      this.onSinkInputHandler,
     );
   }
 
@@ -689,6 +714,9 @@ export class CiriApp {
     this.composing = true;
     this.composingPaneId = this.activePaneId();
     this.compositionCommitData = null;
+    // Bump the generation so any deferred finalization scheduled by a
+    // previous `compositionend` knows its session is over and bails.
+    this.compositionGeneration += 1;
     this.repositionCompositionSink();
   }
 
@@ -758,42 +786,64 @@ export class CiriApp {
     this.composingPaneId = null;
     // Clear the overlay on whatever pane was showing it (which may or
     // may not be the eventual commit target — see below).
-    if (preeditPane !== null) {
-      const key = preeditPane.toString();
-      const renderer = this.renderers.get(key);
-      const grid = this.grids.get(key);
-      if (renderer !== undefined) {
-        renderer.setPreedit(null);
-        if (grid !== undefined) renderer.render(grid);
-      }
+    if (preeditPane !== null) this.clearPreeditOn(preeditPane);
+
+    const eventData = e.data ?? "";
+    if (eventData.length > 0) {
+      // Spec-compliant path: `compositionend.data` carries the commit.
+      this.finalizeCompositionCommit(eventData);
+      return;
     }
-    // Resolve the committed text. Spec-compliant browsers expose it
-    // on `e.data`; Safari + some mobile IMEs leave `e.data` empty
-    // and only surface the commit through the editable-element
-    // `beforeinput` path, which `onSinkBeforeInput` captures into
-    // `compositionCommitData`. Filtering `inputType` in that
-    // handler avoids the cancel-with-dirty-sink trap that
-    // a blind `sink.value` fallback would create.
-    let data = e.data ?? "";
-    if (data.length === 0 && this.compositionCommitData !== null) {
-      data = this.compositionCommitData;
+    if (this.compositionCommitData !== null) {
+      // Chrome-style order: `beforeinput`/`input` fired BEFORE
+      // `compositionend`, so the commit is already captured.
+      this.finalizeCompositionCommit(this.compositionCommitData);
+      return;
     }
+    // Empty data and no captured commit yet. Could be either:
+    //   (a) a real cancel (Esc out of the candidate list), or
+    //   (b) Firefox-style order where the commit-signaling `input`
+    //       event hasn't fired yet — it'll arrive on a later task.
+    // Defer one macrotask to give (b) a chance. The generation
+    // counter guards against a new composition starting in the
+    // interim (in which case this deferred work belongs to a stale
+    // session and must abandon).
+    const generation = this.compositionGeneration;
+    const win = this.doc.defaultView;
+    if (win === null) {
+      // No window in the test environment — finalize synchronously
+      // as cancel; tests can opt into deferred behavior by using
+      // their own fake timers.
+      this.compositionCommitData = null;
+      this.compositionSinkEl.value = "";
+      return;
+    }
+    win.setTimeout(() => {
+      if (this.destroyed) return;
+      if (generation !== this.compositionGeneration) return;
+      const captured = this.compositionCommitData;
+      this.compositionCommitData = null;
+      this.compositionSinkEl.value = "";
+      if (captured === null || captured.length === 0) return;
+      this.finalizeCompositionCommit(captured);
+    }, 0);
+  }
+
+  /// Send a composition commit through `sendInput`. Resolves the
+  /// commit target at commit time, mirroring the native Rust
+  /// client's `Ime::Commit` path in `app/ime.rs:36-41` which reads
+  /// `active_pane_id()` inside the commit branch. In practice most
+  /// browsers fire `compositionend` BEFORE the focus change a click
+  /// would otherwise effect, so this reads the same pane that was
+  /// active when composition began — but a server-driven
+  /// LayoutUpdate that promotes a different pane mid-composition
+  /// will reroute the commit to wherever the user's attention has
+  /// moved. Centralizing the logic here keeps the synchronous and
+  /// deferred-finalization branches of `onCompositionEnd` consistent.
+  private finalizeCompositionCommit(data: string): void {
     this.compositionCommitData = null;
-    // The textarea may have accumulated the composed glyph during
-    // IME interaction. Clear it so the next composition starts fresh
-    // and the hidden control doesn't grow unbounded over a long
-    // session.
     this.compositionSinkEl.value = "";
     if (data.length === 0) return;
-    // Resolve the commit target *at commit time*, mirroring the
-    // native Rust client's `Ime::Commit` path in `app/ime.rs:36-41`
-    // which reads `active_pane_id()` inside the commit branch. In
-    // practice most browsers fire `compositionend` BEFORE the focus
-    // change a click would otherwise effect, so this reads the same
-    // pane that was active when composition began — but a server-
-    // driven LayoutUpdate that promotes a different pane mid-
-    // composition will reroute the commit to wherever the user's
-    // attention has moved.
     const target = this.activePaneId();
     if (target === null) return;
     // Drop bytes for unknown panes — same guard as the regular
@@ -1136,6 +1186,32 @@ export class CiriApp {
     if (activeId !== null) {
       const t = this.grids.get(activeId.toString())?.title ?? "";
       this.doc.title = t;
+    }
+    // If a composition is in flight and the LayoutUpdate promoted a
+    // different pane to active, transfer the preedit overlay to the
+    // new active pane immediately — don't wait for the next
+    // `compositionupdate` (which may never arrive before the user
+    // commits). Keeps the visible overlay and the eventual commit
+    // destination consistent.
+    if (
+      this.composing &&
+      this.composingPaneId !== null &&
+      activeId !== null &&
+      activeId !== this.composingPaneId
+    ) {
+      const oldId = this.composingPaneId;
+      const oldRenderer = this.renderers.get(oldId.toString());
+      const preeditText = oldRenderer?.currentPreedit ?? null;
+      this.clearPreeditOn(oldId);
+      this.composingPaneId = activeId;
+      if (preeditText !== null && preeditText.length > 0) {
+        const newRenderer = this.renderers.get(activeId.toString());
+        const newGrid = this.grids.get(activeId.toString());
+        if (newRenderer !== undefined && newGrid !== undefined) {
+          newRenderer.setPreedit(preeditText);
+          newRenderer.render(newGrid);
+        }
+      }
     }
   }
 

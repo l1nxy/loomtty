@@ -1483,13 +1483,13 @@ describe("CiriApp — IME composition", () => {
     void app;
   });
 
-  test("commit falls back to the sink textarea value when compositionend.data is empty (Safari quirk)", () => {
+  test("commit falls back to beforeinput-tracked data when compositionend.data is empty (Safari quirk)", () => {
     // Some browsers (notably Safari + a handful of mobile IMEs)
-    // surface the committed glyph through the textarea's `input`
-    // event rather than `compositionend.data`. By the time
-    // compositionend fires the glyph already lives in `sink.value`
-    // with an empty `e.data`. Treating empty data uniformly as
-    // "canceled" would silently drop those commits.
+    // surface the committed glyph only through the textarea's
+    // `beforeinput` event with `inputType=insertFromComposition`
+    // (or a post-composition `insertText`) and leave
+    // `compositionend.data` empty. Treating empty data uniformly
+    // as "canceled" would silently drop those commits.
     const { root, fire, inputs } = bootstrap();
     fire({
       kind: "server-msg",
@@ -1501,15 +1501,157 @@ describe("CiriApp — IME composition", () => {
     )!;
     root.dispatchEvent(compositionEvent("compositionstart", ""));
     root.dispatchEvent(compositionEvent("compositionupdate", "ni"));
-    // Mid-composition the browser populated the sink with the final
-    // glyph (simulating `inputType=insertCompositionText`).
-    sink.value = "你";
-    // …but compositionend arrives with empty data.
+    // Simulate Safari's "commit via insertFromComposition" path.
+    const beforeInput = new InputEvent("beforeinput", {
+      inputType: "insertFromComposition",
+      data: "你",
+      bubbles: true,
+    });
+    sink.dispatchEvent(beforeInput);
+    // compositionend arrives with empty data — the fallback kicks in.
     root.dispatchEvent(compositionEvent("compositionend", ""));
     expect(inputs.length).toBe(1);
     expect(Array.from(inputs[0]!.data)).toEqual([0xe4, 0xbd, 0xa0]);
-    // Sink is cleared regardless of which source the commit came from.
     expect(sink.value).toBe("");
+  });
+
+  test("cancel with dirty sink does NOT commit (filtered inputType)", () => {
+    // Round-3 codex: blindly using sink.value as a fallback would
+    // turn a cancel-with-dirty-sink into an erroneous commit. The
+    // beforeinput path filters intermediate `insertCompositionText`
+    // (which fires on every candidate-list keystroke) and only
+    // honors `insertFromComposition` / post-composition `insertText`
+    // — so this Esc-style cancel path stays empty.
+    const { root, fire, inputs } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    const sink = root.querySelector<HTMLTextAreaElement>(
+      "textarea.ciri-composition-sink",
+    )!;
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    // Intermediate composition step: fires beforeinput with the
+    // *preedit* text, NOT a commit. Must be ignored by the commit
+    // tracker.
+    sink.dispatchEvent(
+      new InputEvent("beforeinput", {
+        inputType: "insertCompositionText",
+        data: "ni",
+        bubbles: true,
+      }),
+    );
+    sink.value = "ni"; // dirty sink, as some IMEs leave it after cancel
+    root.dispatchEvent(compositionEvent("compositionend", ""));
+    expect(inputs.length).toBe(0);
+    // Sink still cleared on compositionend.
+    expect(sink.value).toBe("");
+  });
+
+  test("preedit overlay follows the active pane when LayoutUpdate changes focus mid-composition", () => {
+    // Codex round 3 P3: the overlay was previously pinned to the
+    // pane captured at compositionstart while commit routing
+    // resolved at commit time — a server-driven mid-composition
+    // promotion could show the preedit on pane A and commit to
+    // pane B. The overlay now tracks `activePaneId()` on every
+    // update so the visible glyph and the eventual commit
+    // destination stay consistent.
+    const { root, fire } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_HYPER.hex) });
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    root.dispatchEvent(compositionEvent("compositionupdate", "ni"));
+    const tile1 = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    // Preedit lands on the initially active pane (pane 1).
+    const p1Before = tile1.querySelector<HTMLElement>(".ciri-preedit")!;
+    expect(p1Before.textContent).toBe("ni");
+    expect(p1Before.style.display).toBe("block");
+    // Server promotes pane 2 to active.
+    fire({
+      kind: "server-msg",
+      msg: {
+        tag: "LayoutUpdate",
+        layout: {
+          activeWorkspaceIdx: 0n,
+          workspaces: [
+            {
+              activeColumnIdx: 1n,
+              columns: [
+                {
+                  activeTileIdx: 0n,
+                  widthProportion: 0.5,
+                  widthFixedPx: null,
+                  tiles: [{ paneId: 1n, weight: 1.0 }],
+                },
+                {
+                  activeTileIdx: 0n,
+                  widthProportion: 0.5,
+                  widthFixedPx: null,
+                  tiles: [{ paneId: 2n, weight: 1.0 }],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    });
+    // Next compositionupdate transfers the overlay.
+    root.dispatchEvent(compositionEvent("compositionupdate", "ni"));
+    // applyLayout may have rebuilt the tile DOM nodes, so re-query.
+    const tile2After = document.querySelector<HTMLElement>(
+      "[data-pane-id='2']",
+    )!;
+    const p2 = tile2After.querySelector<HTMLElement>(".ciri-preedit")!;
+    expect(p2.textContent).toBe("ni");
+    expect(p2.style.display).toBe("block");
+    const tile1After = document.querySelector<HTMLElement>(
+      "[data-pane-id='1']",
+    )!;
+    const p1After = tile1After.querySelector<HTMLElement>(".ciri-preedit")!;
+    expect(p1After.style.display).toBe("none");
+  });
+
+  test("compositionstart anchors the sink near the cursor (IME candidate window positioning)", () => {
+    // Round-3 codex P2: the OS-level IME candidate window anchors
+    // to the editable's caret. With the sink pinned at (0, 0) the
+    // popup would appear at the page corner. Mirror's
+    // `set_ime_cursor_area` in the native client.
+    const { root, fire } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    // Stub getBoundingClientRect so jsdom gives us a non-zero rect
+    // and the reposition path takes effect.
+    const tile = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    const pane = tile.querySelector<HTMLElement>(".ciri-pane")!;
+    vi.spyOn(pane, "getBoundingClientRect").mockReturnValue({
+      x: 100,
+      y: 200,
+      left: 100,
+      top: 200,
+      right: 500,
+      bottom: 400,
+      width: 400,
+      height: 200,
+      toJSON: () => ({}),
+    } as DOMRect);
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    const sink = root.querySelector<HTMLTextAreaElement>(
+      "textarea.ciri-composition-sink",
+    )!;
+    expect(sink.style.position).toBe("fixed");
+    // cursorLine/cursorCol both = 0 in the fixture, so the anchor
+    // is just at the pane's top-left.
+    expect(sink.style.left).toBe("100px");
+    expect(sink.style.top).toBe("200px");
+    vi.restoreAllMocks();
   });
 
   test("destroy() removes the composition sink from the root", () => {

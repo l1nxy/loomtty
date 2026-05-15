@@ -160,16 +160,28 @@ export class CiriApp {
   private readonly onCompositionStartHandler: (e: CompositionEvent) => void;
   private readonly onCompositionUpdateHandler: (e: CompositionEvent) => void;
   private readonly onCompositionEndHandler: (e: CompositionEvent) => void;
+  private readonly onSinkBeforeInputHandler: (e: Event) => void;
   /// `true` between `compositionstart` and `compositionend`. Used as a
   /// backstop so keydown events that slip through `e.isComposing` (an
   /// older spec quirk in some browsers — the flag isn't always set on
   /// the `compositionstart`-triggering keydown itself) still get
   /// suppressed.
   private composing = false;
-  /// Pane the composition is targeting. Captured at `compositionstart`
-  /// so a click that re-focuses mid-composition doesn't route the
-  /// commit to a different pane. Cleared on `compositionend`.
+  /// Pane currently displaying the pre-edit overlay. Updated on every
+  /// `compositionupdate` to follow the user's active focus, so a
+  /// server-driven LayoutUpdate that promotes a different pane mid-
+  /// composition pulls the visible preedit along with it (matches
+  /// Rust's behavior of storing preedit state globally and anchoring
+  /// the paint on the active pane).
   private composingPaneId: bigint | null = null;
+  /// Most recent committed text inferred from a `beforeinput` event
+  /// on the sink. Used as a fallback when `compositionend.data` is
+  /// empty (Safari + a handful of mobile IMEs surface the commit
+  /// only through the editable-element input path). Reset on every
+  /// `compositionstart`; set only on commit-signaling `inputType`
+  /// values, not on intermediate `insertCompositionText` ticks, so a
+  /// cancel-with-dirty-sink doesn't silently turn into a commit.
+  private compositionCommitData: string | null = null;
   /// Pending bell-flash clear timers, keyed by paneId-as-string so a
   /// repeat bell on the same pane re-arms cleanly instead of leaving
   /// the class permanently stuck.
@@ -219,6 +231,7 @@ export class CiriApp {
     this.onCompositionStartHandler = (e) => this.onCompositionStart(e);
     this.onCompositionUpdateHandler = (e) => this.onCompositionUpdate(e);
     this.onCompositionEndHandler = (e) => this.onCompositionEnd(e);
+    this.onSinkBeforeInputHandler = (e) => this.onSinkBeforeInput(e);
 
     // Hidden container for pane renderers whose tile isn't currently
     // mounted (inactive workspaces, transient layout reshapes).
@@ -310,6 +323,10 @@ export class CiriApp {
     this.root.removeEventListener(
       "compositionend",
       this.onCompositionEndHandler,
+    );
+    this.compositionSinkEl.removeEventListener(
+      "beforeinput",
+      this.onSinkBeforeInputHandler,
     );
     const win = this.doc.defaultView;
     if (win !== null) {
@@ -420,6 +437,15 @@ export class CiriApp {
     this.root.addEventListener("compositionstart", this.onCompositionStartHandler);
     this.root.addEventListener("compositionupdate", this.onCompositionUpdateHandler);
     this.root.addEventListener("compositionend", this.onCompositionEndHandler);
+    // `beforeinput` on the sink lets us pick up the commit text on
+    // browsers that surface it via the editable-element input path
+    // (Safari, some mobile IMEs) rather than via `compositionend.data`.
+    // We don't listen on the root because the spec doesn't guarantee
+    // bubbling for `beforeinput` from form controls in every engine.
+    this.compositionSinkEl.addEventListener(
+      "beforeinput",
+      this.onSinkBeforeInputHandler,
+    );
   }
 
   /// Cell pixel size used for hit-testing mouse coords into (col,
@@ -656,27 +682,68 @@ export class CiriApp {
   }
 
   /// Composition just started — the user has begun a multi-keystroke
-  /// glyph entry (Pinyin sequence, IME prompt, dead-key chain). Lock
-  /// the target pane to whatever is currently focused so a mid-
-  /// composition click can't reroute the eventual commit.
+  /// glyph entry (Pinyin sequence, IME prompt, dead-key chain). Note
+  /// the target pane (used to drive the overlay) but allow it to
+  /// follow active focus on subsequent updates / layout changes.
   private onCompositionStart(_e: CompositionEvent): void {
     this.composing = true;
     this.composingPaneId = this.activePaneId();
+    this.compositionCommitData = null;
+    this.repositionCompositionSink();
   }
 
   /// In-progress preedit text. Browsers fire one of these per
   /// candidate-list keystroke; `data` is the cumulative preedit
   /// string. Drive the renderer overlay; do NOT touch the wire (the
-  /// commit happens on `compositionend`).
+  /// commit happens on `compositionend`). Routes the overlay to
+  /// whatever pane is currently active so a mid-composition focus
+  /// change (e.g. server-driven LayoutUpdate) pulls the visible
+  /// preedit along with it — keeps overlay and commit destinations
+  /// in sync, since commit also resolves against `activePaneId()`.
   private onCompositionUpdate(e: CompositionEvent): void {
-    const target = this.composingPaneId;
+    const target = this.activePaneId();
     if (target === null) return;
+    // If active pane changed since the last update, clear the overlay
+    // from the previous pane so the preedit doesn't ghost on both.
+    if (
+      this.composingPaneId !== null &&
+      this.composingPaneId !== target
+    ) {
+      this.clearPreeditOn(this.composingPaneId);
+    }
+    this.composingPaneId = target;
     const key = target.toString();
     const renderer = this.renderers.get(key);
     const grid = this.grids.get(key);
     if (renderer === undefined || grid === undefined) return;
     renderer.setPreedit(e.data);
     renderer.render(grid);
+    this.repositionCompositionSink();
+  }
+
+  /// Capture the commit text from an editable-element `beforeinput`
+  /// path. Browsers that don't ship a useful `compositionend.data`
+  /// (Safari, certain mobile IMEs) surface the committed glyph here
+  /// via `inputType=insertFromComposition` or via a post-composition
+  /// `insertText`. Intermediate `insertCompositionText` ticks fire
+  /// while the user is still picking a candidate — those carry
+  /// preedit content, not a commit, so we filter them out: otherwise
+  /// a cancel-with-dirty-sink would incorrectly send the last
+  /// preedit text to the PTY.
+  private onSinkBeforeInput(e: Event): void {
+    const ie = e as InputEvent;
+    const data = ie.data;
+    if (typeof data !== "string" || data.length === 0) return;
+    if (ie.inputType === "insertFromComposition") {
+      this.compositionCommitData = data;
+      return;
+    }
+    if (ie.inputType === "insertText" && !ie.isComposing) {
+      this.compositionCommitData = data;
+    }
+    // Deliberate skip: `insertCompositionText` is an intermediate
+    // preedit step (NOT a commit) per the Input Events spec; using
+    // it as commit data would conflate cancel with commit.
   }
 
   /// Composition ended. `e.data` carries the final committed text
@@ -701,14 +768,17 @@ export class CiriApp {
       }
     }
     // Resolve the committed text. Spec-compliant browsers expose it
-    // on `e.data`, but Safari (and a handful of mobile IMEs) leave
-    // `e.data` empty and only surface the commit via the textarea's
-    // own `input` event with `inputType === "insertCompositionText"`
-    // — by that path the glyph already lives in `sink.value`. Fall
-    // back to the sink contents when the event is empty so those
-    // commits aren't silently dropped. Read BEFORE clearing.
+    // on `e.data`; Safari + some mobile IMEs leave `e.data` empty
+    // and only surface the commit through the editable-element
+    // `beforeinput` path, which `onSinkBeforeInput` captures into
+    // `compositionCommitData`. Filtering `inputType` in that
+    // handler avoids the cancel-with-dirty-sink trap that
+    // a blind `sink.value` fallback would create.
     let data = e.data ?? "";
-    if (data.length === 0) data = this.compositionSinkEl.value;
+    if (data.length === 0 && this.compositionCommitData !== null) {
+      data = this.compositionCommitData;
+    }
+    this.compositionCommitData = null;
     // The textarea may have accumulated the composed glyph during
     // IME interaction. Clear it so the next composition starts fresh
     // and the hidden control doesn't grow unbounded over a long
@@ -745,13 +815,63 @@ export class CiriApp {
   /// Move keyboard focus to the composition sink so the browser
   /// engages its IME engine. jsdom occasionally throws from `focus()`
   /// if the element isn't fully attached yet; swallow because a
-  /// missed focus only matters for the first keystroke.
+  /// missed focus only matters for the first keystroke. Also
+  /// repositions the sink to anchor any subsequent IME candidate
+  /// window at the active cursor.
   private focusInputSink(): void {
     try {
       this.compositionSinkEl.focus({ preventScroll: true });
     } catch {
       // Swallow — see method doc.
     }
+    this.repositionCompositionSink();
+  }
+
+  /// Clear any preedit overlay currently shown on the given pane,
+  /// triggering a render so the change is visible. Used when active
+  /// focus moves mid-composition and the overlay needs to transfer
+  /// to a different pane.
+  private clearPreeditOn(paneId: bigint): void {
+    const key = paneId.toString();
+    const renderer = this.renderers.get(key);
+    const grid = this.grids.get(key);
+    if (renderer === undefined) return;
+    renderer.setPreedit(null);
+    if (grid !== undefined) renderer.render(grid);
+  }
+
+  /// Anchor the hidden composition sink at the active pane's cursor
+  /// screen position so the OS IME candidate window (Pinyin lookup
+  /// list, Kana suggestions, …) appears near the actual caret
+  /// instead of the top-left of the page. Mirrors what the native
+  /// Rust client does via `window.set_ime_cursor_area(...)` (see
+  /// `crates/ciri/src/app/render.rs` — search for `ime_input_anchor`).
+  ///
+  /// Uses `position: fixed` so the math is straight viewport
+  /// coordinates and doesn't depend on the root having a particular
+  /// CSS containing block. When there's no active pane (initial
+  /// state, no layout yet) we leave the sink at its initial corner
+  /// — composition can't actually start in that state anyway.
+  private repositionCompositionSink(): void {
+    if (this.currentLayout === null) return;
+    const activeId = this.activePaneId();
+    if (activeId === null) return;
+    const key = activeId.toString();
+    const renderer = this.renderers.get(key);
+    const grid = this.grids.get(key);
+    if (renderer === undefined || grid === undefined) return;
+    const rect = renderer.container.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) {
+      // jsdom or off-screen renderer: skip positioning rather than
+      // anchor at (0, 0), which would defeat the purpose.
+      return;
+    }
+    const { cursorLine, cursorCol } = grid.meta;
+    const left = rect.left + cursorCol * this.cellSize.cellWidth;
+    const top = rect.top + cursorLine * this.cellSize.cellHeight;
+    this.compositionSinkEl.style.position = "fixed";
+    this.compositionSinkEl.style.left = `${left}px`;
+    this.compositionSinkEl.style.top = `${top}px`;
   }
 
   private onWheel(e: WheelEvent): void {

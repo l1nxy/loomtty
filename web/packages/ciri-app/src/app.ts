@@ -793,12 +793,14 @@ export class CiriApp {
     if (renderer === undefined || grid === undefined) return;
     renderer.setPreedit(e.data);
     renderer.render(grid);
-    // Clear the sink's accumulated value so a Ctrl+C while composing
-    // can't copy the partial preedit text out of the hidden textarea.
-    // The commit-data path uses `beforeinput.data`, not `sink.value`,
-    // so clearing here doesn't lose anything we depend on. Round-8
-    // codex P2 mitigation.
-    this.compositionSinkEl.value = "";
+    // NOTE: do NOT mutate `compositionSinkEl.value` here. The
+    // browser owns an active composition range on this textarea
+    // during preedit; assigning to `.value` invalidates that range
+    // and can cancel or corrupt the in-flight composition on real
+    // engines (round-10 codex P2 — round-8's clipboard-leak
+    // mitigation reverted; the cure was worse than the disease).
+    // The sink is cleared on compositionend instead, which is
+    // when the composition range is gone anyway.
     this.repositionCompositionSink();
   }
 

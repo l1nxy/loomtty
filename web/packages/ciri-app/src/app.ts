@@ -1388,6 +1388,12 @@ export class CiriApp {
           }
         }
       }
+      // The pane / cursor screen position may have moved as a
+      // result of this layout shuffle. Re-anchor the sink so the
+      // OS IME candidate popup follows. Mirrors Rust's
+      // `ime_input_anchor()` recalc on every render in
+      // `crates/ciri/src/app/render.rs`. Round-12 codex P3.
+      if (this.composing) this.repositionCompositionSink();
     }
   }
 

@@ -119,6 +119,19 @@ export class PaneRenderer {
   /// will land. The actual commit goes through `client.sendInput`
   /// from the application layer (this renderer never touches the
   /// wire).
+  ///
+  /// Caret-within-preedit gap (Rust parity): the native client
+  /// renders a caret *inside* the preedit panel at the IME's
+  /// reported cursor position (winit's
+  /// `Ime::Preedit(text, Some((start, end)))` → `preedit_cursor` in
+  /// `crates/ciri/src/app/ime.rs:45-48`). The browser DOM
+  /// `CompositionEvent` interface has no equivalent: there is no
+  /// standard property surfacing the in-preedit caret position. The
+  /// newer `EditContext` API does expose it but is Chrome-only and
+  /// behind an opt-in. Until EditContext is broadly available we
+  /// render only the text run with a trailing underline; consumers
+  /// who need the in-preedit caret can layer it themselves once a
+  /// richer composition source is plumbed in.
   private readonly preeditEl: HTMLElement;
   /// Active preedit content (`null` when no composition in flight).
   private preedit: { text: string } | null = null;

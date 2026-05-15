@@ -331,6 +331,11 @@ export class CiriApp {
     this.grids.clear();
     this.layout.destroy();
     this.orphanRoot.remove();
+    // The composition sink was appended to `root` (which is owned by
+    // the caller, not us), so we own its lifecycle explicitly.
+    // Repeated mount/destroy cycles on the same root would otherwise
+    // leave a stack of inert hidden textareas inside it.
+    this.compositionSinkEl.remove();
   }
 
   /// Re-measure cell size and notify the server. Call this after a
@@ -695,13 +700,21 @@ export class CiriApp {
         if (grid !== undefined) renderer.render(grid);
       }
     }
+    // Resolve the committed text. Spec-compliant browsers expose it
+    // on `e.data`, but Safari (and a handful of mobile IMEs) leave
+    // `e.data` empty and only surface the commit via the textarea's
+    // own `input` event with `inputType === "insertCompositionText"`
+    // — by that path the glyph already lives in `sink.value`. Fall
+    // back to the sink contents when the event is empty so those
+    // commits aren't silently dropped. Read BEFORE clearing.
+    let data = e.data ?? "";
+    if (data.length === 0) data = this.compositionSinkEl.value;
     // The textarea may have accumulated the composed glyph during
     // IME interaction. Clear it so the next composition starts fresh
     // and the hidden control doesn't grow unbounded over a long
     // session.
     this.compositionSinkEl.value = "";
-    const data = e.data;
-    if (data === null || data.length === 0) return;
+    if (data.length === 0) return;
     // Resolve the commit target *at commit time*, mirroring the
     // native Rust client's `Ime::Commit` path in `app/ime.rs:36-41`
     // which reads `active_pane_id()` inside the commit branch. In

@@ -1483,6 +1483,48 @@ describe("CiriApp — IME composition", () => {
     void app;
   });
 
+  test("commit falls back to the sink textarea value when compositionend.data is empty (Safari quirk)", () => {
+    // Some browsers (notably Safari + a handful of mobile IMEs)
+    // surface the committed glyph through the textarea's `input`
+    // event rather than `compositionend.data`. By the time
+    // compositionend fires the glyph already lives in `sink.value`
+    // with an empty `e.data`. Treating empty data uniformly as
+    // "canceled" would silently drop those commits.
+    const { root, fire, inputs } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    const sink = root.querySelector<HTMLTextAreaElement>(
+      "textarea.ciri-composition-sink",
+    )!;
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    root.dispatchEvent(compositionEvent("compositionupdate", "ni"));
+    // Mid-composition the browser populated the sink with the final
+    // glyph (simulating `inputType=insertCompositionText`).
+    sink.value = "你";
+    // …but compositionend arrives with empty data.
+    root.dispatchEvent(compositionEvent("compositionend", ""));
+    expect(inputs.length).toBe(1);
+    expect(Array.from(inputs[0]!.data)).toEqual([0xe4, 0xbd, 0xa0]);
+    // Sink is cleared regardless of which source the commit came from.
+    expect(sink.value).toBe("");
+  });
+
+  test("destroy() removes the composition sink from the root", () => {
+    // Round-2 codex: the sink lives inside the user-owned root, so
+    // `destroy()` must remove it explicitly — otherwise repeated
+    // mount/destroy cycles on the same root leave a stack of
+    // hidden textareas.
+    const { app, root } = bootstrap();
+    expect(
+      root.querySelector("textarea.ciri-composition-sink"),
+    ).not.toBeNull();
+    app.destroy();
+    expect(root.querySelector("textarea.ciri-composition-sink")).toBeNull();
+  });
+
   test("destroy() unregisters composition handlers", () => {
     const { root, app, fire, inputs } = bootstrap();
     app.start();

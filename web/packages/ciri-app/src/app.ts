@@ -135,6 +135,16 @@ export class CiriApp {
   private readonly client: CiriAppClientLike;
   private destroyed = false;
   private resizeObserver: ResizeObserver | null = null;
+  /// Hidden textarea that owns keyboard focus so the browser actually
+  /// dispatches IME composition events. Modern Chrome/Firefox will fire
+  /// composition events on any focused element, but Safari + most
+  /// mobile browsers require an editable target (textarea or
+  /// contenteditable) before the IME engine engages. We route all
+  /// `.focus()` calls here; keyboard / composition events bubble up
+  /// to the root listeners, so the rest of the dispatch path is
+  /// unchanged. Off-screen + `aria-hidden` so it never appears in the
+  /// visual layout or assistive-tech tree.
+  private readonly compositionSinkEl: HTMLTextAreaElement;
   // DECCKM tracking is now per-keystroke and per-pane — `onKeyDown`
   // reads the target pane's `meta.modeFlags & MODE_APP_CURSOR`.
   private readonly handlerOnOpen?: () => void;
@@ -201,7 +211,7 @@ export class CiriApp {
     this.onMouseDownHandler = (e) => {
       this.handleRootMouseDown(e);
       queueMicrotask(() => {
-        if (!this.destroyed) this.root.focus();
+        if (!this.destroyed) this.focusInputSink();
       });
     };
     this.onWindowMouseMove = (e) => this.handleWindowMouseMove(e);
@@ -216,6 +226,35 @@ export class CiriApp {
     this.orphanRoot.className = "ciri-orphan-panes";
     this.orphanRoot.style.display = "none";
     doc.body.appendChild(this.orphanRoot);
+
+    // Composition sink — see field doc for why this exists. Tab order
+    // is `-1` so a sighted keyboard user tabbing through the page
+    // can't accidentally focus it; programmatic `.focus()` still
+    // works. `autocomplete=off` + `spellcheck=false` so neither the
+    // browser nor the OS adds suggestions overlay that could leak
+    // visual artifacts. `aria-hidden=true` keeps it out of screen
+    // reader navigation; the terminal UI is the actual semantic
+    // surface, not this textarea.
+    this.compositionSinkEl = doc.createElement("textarea");
+    this.compositionSinkEl.className = "ciri-composition-sink";
+    this.compositionSinkEl.setAttribute("aria-hidden", "true");
+    this.compositionSinkEl.setAttribute("autocomplete", "off");
+    this.compositionSinkEl.setAttribute("autocorrect", "off");
+    this.compositionSinkEl.setAttribute("autocapitalize", "off");
+    this.compositionSinkEl.spellcheck = false;
+    this.compositionSinkEl.tabIndex = -1;
+    this.compositionSinkEl.style.position = "absolute";
+    this.compositionSinkEl.style.left = "0";
+    this.compositionSinkEl.style.top = "0";
+    this.compositionSinkEl.style.width = "1em";
+    this.compositionSinkEl.style.height = "1em";
+    this.compositionSinkEl.style.opacity = "0";
+    this.compositionSinkEl.style.pointerEvents = "none";
+    this.compositionSinkEl.style.zIndex = "-1";
+    this.compositionSinkEl.style.resize = "none";
+    this.compositionSinkEl.style.border = "0";
+    this.compositionSinkEl.style.padding = "0";
+    this.compositionSinkEl.style.overflow = "hidden";
 
     this.cellSize = this.measureCellsOrFallback();
 
@@ -342,12 +381,21 @@ export class CiriApp {
 
   private installInteractionHandlers(): void {
     // Make the root focusable so it captures keyboard events even
-    // when the inner buttons / spans steal focus on click.
+    // when the inner buttons / spans steal focus on click — and so
+    // CSS `:focus-within` selectors can style the active terminal.
     this.root.tabIndex = 0;
+    // Mount the composition sink. It lives inside the root so a
+    // `:focus-within` from the textarea cascades up; keyboard +
+    // composition events that fire on it bubble to the root's
+    // listeners.
+    this.root.appendChild(this.compositionSinkEl);
     // `queueMicrotask` rather than synchronous focus — jsdom can
     // assert during construction if the element isn't yet visible.
+    // Focus targets the composition sink so the browser engages its
+    // IME engine. Keyboard events bubble to the root listener via
+    // the normal capture/bubble path.
     queueMicrotask(() => {
-      if (!this.destroyed) this.root.focus();
+      if (!this.destroyed) this.focusInputSink();
     });
     this.root.addEventListener("keydown", this.onKeyDownHandler);
     this.root.addEventListener("wheel", this.onWheelHandler, {
@@ -633,11 +681,13 @@ export class CiriApp {
   /// they would have seen from a non-IME keystroke. Always clear the
   /// preedit overlay regardless.
   private onCompositionEnd(e: CompositionEvent): void {
-    const target = this.composingPaneId;
+    const preeditPane = this.composingPaneId;
     this.composing = false;
     this.composingPaneId = null;
-    if (target !== null) {
-      const key = target.toString();
+    // Clear the overlay on whatever pane was showing it (which may or
+    // may not be the eventual commit target — see below).
+    if (preeditPane !== null) {
+      const key = preeditPane.toString();
       const renderer = this.renderers.get(key);
       const grid = this.grids.get(key);
       if (renderer !== undefined) {
@@ -645,13 +695,27 @@ export class CiriApp {
         if (grid !== undefined) renderer.render(grid);
       }
     }
-    if (target === null) return;
+    // The textarea may have accumulated the composed glyph during
+    // IME interaction. Clear it so the next composition starts fresh
+    // and the hidden control doesn't grow unbounded over a long
+    // session.
+    this.compositionSinkEl.value = "";
     const data = e.data;
     if (data === null || data.length === 0) return;
-    // IME commits are *typed input*, not pasted text — terminal apps
-    // running in bracketed-paste mode still expect `data` raw, no
-    // `ESC[200~...ESC[201~` envelope. Mirrors the native Rust
-    // client's `Ime::Commit` path in `app/ime.rs:17-44`.
+    // Resolve the commit target *at commit time*, mirroring the
+    // native Rust client's `Ime::Commit` path in `app/ime.rs:36-41`
+    // which reads `active_pane_id()` inside the commit branch. In
+    // practice most browsers fire `compositionend` BEFORE the focus
+    // change a click would otherwise effect, so this reads the same
+    // pane that was active when composition began — but a server-
+    // driven LayoutUpdate that promotes a different pane mid-
+    // composition will reroute the commit to wherever the user's
+    // attention has moved.
+    const target = this.activePaneId();
+    if (target === null) return;
+    // Drop bytes for unknown panes — same guard as the regular
+    // keystroke path (a pane may have closed mid-composition).
+    if (this.grids.get(target.toString()) === undefined) return;
     this.client.sendInput(target, new TextEncoder().encode(data));
   }
 
@@ -663,6 +727,18 @@ export class CiriApp {
     if (this.pendingFocusedPaneId !== null) return this.pendingFocusedPaneId;
     if (this.currentLayout === null) return null;
     return LayoutManager.activePaneId(this.currentLayout);
+  }
+
+  /// Move keyboard focus to the composition sink so the browser
+  /// engages its IME engine. jsdom occasionally throws from `focus()`
+  /// if the element isn't fully attached yet; swallow because a
+  /// missed focus only matters for the first keystroke.
+  private focusInputSink(): void {
+    try {
+      this.compositionSinkEl.focus({ preventScroll: true });
+    } catch {
+      // Swallow — see method doc.
+    }
   }
 
   private onWheel(e: WheelEvent): void {

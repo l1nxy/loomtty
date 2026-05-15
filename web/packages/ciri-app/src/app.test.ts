@@ -1286,6 +1286,43 @@ describe("CiriApp — IME composition", () => {
     return new CompositionEvent(type, { data, bubbles: true });
   }
 
+  test("constructor mounts a hidden composition sink textarea", () => {
+    // Codex round-1: a focusable <div> alone isn't enough to engage
+    // the browser's IME engine on Safari and most mobile browsers.
+    // The textarea sink is the canonical fix (xterm.js, hyper, …):
+    // off-screen + opacity=0 so it's invisible, tabIndex=-1 so it
+    // never appears in the keyboard tab order.
+    const { root } = bootstrap();
+    const sink = root.querySelector<HTMLTextAreaElement>(
+      "textarea.ciri-composition-sink",
+    );
+    expect(sink).not.toBeNull();
+    expect(sink!.tabIndex).toBe(-1);
+    expect(sink!.getAttribute("aria-hidden")).toBe("true");
+    expect(sink!.spellcheck).toBe(false);
+    expect(sink!.style.opacity).toBe("0");
+  });
+
+  test("compositionend clears the sink textarea contents", () => {
+    // Some IMEs leave the composed glyph in the textarea after
+    // commit; clearing it prevents unbounded growth over a long
+    // session and keeps the next composition fresh.
+    const { root, fire } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    const sink = root.querySelector<HTMLTextAreaElement>(
+      "textarea.ciri-composition-sink",
+    )!;
+    sink.value = "ni";
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    root.dispatchEvent(compositionEvent("compositionupdate", "ni"));
+    root.dispatchEvent(compositionEvent("compositionend", "你"));
+    expect(sink.value).toBe("");
+  });
+
   test("compositionstart + update show the preedit on the active pane", () => {
     const { root, app, fire, inputs } = bootstrap();
     app.start();
@@ -1371,11 +1408,12 @@ describe("CiriApp — IME composition", () => {
     void app;
   });
 
-  test("compositionend routes to the pane that was active at compositionstart, not the current active", () => {
-    // Lock the target pane at compositionstart: a click that
-    // re-focuses mid-composition must NOT redirect the eventual
-    // commit. Mirror of the Rust client's behavior where IME state
-    // belongs to the focused pane.
+  test("compositionend resolves the commit target at commit time (Rust parity)", () => {
+    // Rust's `Ime::Commit` path (crates/ciri/src/app/ime.rs:36-41)
+    // reads `active_pane_id()` inside the commit branch, NOT a value
+    // captured at composition start. Match that: if a server-driven
+    // LayoutUpdate promotes a new active pane between compositionstart
+    // and compositionend, the commit follows the new active pane.
     const { root, app, fire, inputs } = bootstrap();
     app.start();
     fire({
@@ -1384,15 +1422,64 @@ describe("CiriApp — IME composition", () => {
     });
     fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
     fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_HYPER.hex) });
+    // Start composing with pane 1 active.
     root.dispatchEvent(compositionEvent("compositionstart", ""));
     root.dispatchEvent(compositionEvent("compositionupdate", "ni"));
-    // Now the user clicks pane 2 mid-composition. The pending focus
-    // changes, but the composition target should stay locked.
-    const tile2 = document.querySelector<HTMLElement>("[data-pane-id='2']")!;
-    tile2.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    // Server promotes pane 2 to active (e.g. a leader-driven focus
+    // change). The preedit overlay was visible on pane 1, but the
+    // commit should now land on pane 2.
+    fire({
+      kind: "server-msg",
+      msg: {
+        tag: "LayoutUpdate",
+        layout: {
+          activeWorkspaceIdx: 0n,
+          workspaces: [
+            {
+              activeColumnIdx: 1n,
+              columns: [
+                {
+                  activeTileIdx: 0n,
+                  widthProportion: 0.5,
+                  widthFixedPx: null,
+                  tiles: [{ paneId: 1n, weight: 1.0 }],
+                },
+                {
+                  activeTileIdx: 0n,
+                  widthProportion: 0.5,
+                  widthFixedPx: null,
+                  tiles: [{ paneId: 2n, weight: 1.0 }],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    });
     root.dispatchEvent(compositionEvent("compositionend", "你"));
     expect(inputs.length).toBe(1);
-    expect(inputs[0]!.paneId).toBe(1n);
+    expect(inputs[0]!.paneId).toBe(2n);
+    void app;
+  });
+
+  test("compositionend drops bytes when the target pane has been closed", () => {
+    // Pane closure mid-composition: the commit target resolved at
+    // commit time (Rust parity) points to a pane the app no longer
+    // tracks. Skip the send rather than crashing or sending to a
+    // ghost pane.
+    const { root, app, fire, inputs } = bootstrap();
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    root.dispatchEvent(compositionEvent("compositionupdate", "ni"));
+    // Server kills the pane while the IME is still composing.
+    fire({ kind: "server-msg", msg: { tag: "PaneClosed", paneId: 1n } });
+    root.dispatchEvent(compositionEvent("compositionend", "你"));
+    expect(inputs.length).toBe(0);
     void app;
   });
 

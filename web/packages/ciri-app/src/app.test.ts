@@ -1558,6 +1558,60 @@ describe("CiriApp — IME composition", () => {
     expect(sink.value).toBe("");
   });
 
+  test("mid-composition click + subsequent compositionupdate does NOT reroute (round-7 P1)", () => {
+    // Round-7 codex P1: even with the commit-time snapshot from
+    // round 5, a `compositionupdate` arriving AFTER a mid-
+    // composition click would re-resolve `composingPaneId` via
+    // `activePaneId()` (pending-aware) and route the commit to
+    // the just-clicked pane. The update path now uses the locked
+    // `composingPaneId` directly and only `applyLayout` retargets.
+    const { root, fire, inputs } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_HYPER.hex) });
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    root.dispatchEvent(compositionEvent("compositionupdate", "n"));
+    // User clicks pane 2 mid-composition (no server LayoutUpdate
+    // has arrived to confirm the focus change yet).
+    const tile2 = document.querySelector<HTMLElement>("[data-pane-id='2']")!;
+    tile2.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    // The browser fires another compositionupdate before
+    // compositionend (rare but possible — some IMEs allow editing
+    // through a focus change).
+    root.dispatchEvent(compositionEvent("compositionupdate", "ni"));
+    // Preedit should STILL be on pane 1 (the locked composing pane).
+    const tile1After = document.querySelector<HTMLElement>(
+      "[data-pane-id='1']",
+    )!;
+    const p1 = tile1After.querySelector<HTMLElement>(".ciri-preedit")!;
+    expect(p1.textContent).toBe("ni");
+    expect(p1.style.display).toBe("block");
+    // Commit lands on pane 1, not on pane 2.
+    root.dispatchEvent(compositionEvent("compositionend", "你"));
+    expect(inputs.length).toBe(1);
+    expect(inputs[0]!.paneId).toBe(1n);
+  });
+
+  test("root.focus() redirects keyboard focus to the composition sink (round-7 P2)", async () => {
+    // Round-7 codex P2: a user who tabs into the terminal or host
+    // code that calls `root.focus()` should land on the editable
+    // sink so the browser engages its IME engine. Without this,
+    // Safari and most mobile builds won't start composition.
+    const { root } = bootstrap();
+    const sink = root.querySelector<HTMLTextAreaElement>(
+      "textarea.ciri-composition-sink",
+    )!;
+    root.focus();
+    // Redirect is deferred via microtask to avoid focus-from-focus
+    // re-entrancy on some engines. Flush.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(document.activeElement).toBe(sink);
+  });
+
   test("mid-composition click does NOT reroute the commit to the clicked pane", () => {
     // Round-5 codex P2: `pendingFocusedPaneId` optimistically routes
     // KEYSTROKES to a just-clicked pane before the server has

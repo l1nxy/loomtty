@@ -165,6 +165,13 @@ export class CiriApp {
   /// builds skip `beforeinput` for IME commits and only surface them
   /// here. Listening to both eliminates the per-engine guesswork.
   private readonly onSinkInputHandler: (e: Event) => void;
+  /// Redirects keyboard focus to the composition sink whenever the
+  /// root receives focus directly (Tab navigation, programmatic
+  /// `root.focus()`). Without this, a user who tabs into the
+  /// terminal lands on the focusable root and never engages the
+  /// IME — Safari/mobile especially won't fire composition events
+  /// on a non-editable element.
+  private readonly onRootFocusHandler: (e: FocusEvent) => void;
   /// `true` between `compositionstart` and `compositionend`. Used as a
   /// backstop so keydown events that slip through `e.isComposing` (an
   /// older spec quirk in some browsers — the flag isn't always set on
@@ -257,6 +264,7 @@ export class CiriApp {
     this.onCompositionEndHandler = (e) => this.onCompositionEnd(e);
     this.onSinkBeforeInputHandler = (e) => this.onSinkBeforeInput(e);
     this.onSinkInputHandler = (e) => this.onSinkBeforeInput(e);
+    this.onRootFocusHandler = (e) => this.onRootFocus(e);
 
     // Hidden container for pane renderers whose tile isn't currently
     // mounted (inactive workspaces, transient layout reshapes).
@@ -357,6 +365,7 @@ export class CiriApp {
       "input",
       this.onSinkInputHandler,
     );
+    this.root.removeEventListener("focus", this.onRootFocusHandler);
     const win = this.doc.defaultView;
     if (win !== null) {
       win.removeEventListener("mousemove", this.onWindowMouseMove);
@@ -485,6 +494,11 @@ export class CiriApp {
       "input",
       this.onSinkInputHandler,
     );
+    // `focus` doesn't bubble, so listening on root catches only
+    // focus events whose target is the root itself (Tab-in, or a
+    // programmatic `root.focus()` from host code). Inner focus
+    // (textarea, tile elements) doesn't reach here.
+    this.root.addEventListener("focus", this.onRootFocusHandler);
   }
 
   /// Cell pixel size used for hit-testing mouse coords into (col,
@@ -741,23 +755,21 @@ export class CiriApp {
   /// In-progress preedit text. Browsers fire one of these per
   /// candidate-list keystroke; `data` is the cumulative preedit
   /// string. Drive the renderer overlay; do NOT touch the wire (the
-  /// commit happens on `compositionend`). Routes the overlay to
-  /// whatever pane is currently active so a mid-composition focus
-  /// change (e.g. server-driven LayoutUpdate) pulls the visible
-  /// preedit along with it — keeps overlay and commit destinations
-  /// in sync, since commit also resolves against `activePaneId()`.
+  /// commit happens on `compositionend`).
+  ///
+  /// Critically: this handler does NOT re-resolve the composing
+  /// pane via `activePaneId()` (round-7 codex P1 fix). Once
+  /// composition is in flight, the target is locked to whatever
+  /// was captured at `compositionstart` plus any *server-driven*
+  /// retargets via `applyLayout`. Consulting `activePaneId()` here
+  /// would route the preedit (and the eventual commit) through
+  /// `pendingFocusedPaneId`, the optimistic local click shortcut,
+  /// which means a mid-composition click on another pane could
+  /// steer the user's in-flight glyph to the wrong terminal —
+  /// potentially leaking command text or secrets across panes.
   private onCompositionUpdate(e: CompositionEvent): void {
-    const target = this.activePaneId();
+    const target = this.composingPaneId;
     if (target === null) return;
-    // If active pane changed since the last update, clear the overlay
-    // from the previous pane so the preedit doesn't ghost on both.
-    if (
-      this.composingPaneId !== null &&
-      this.composingPaneId !== target
-    ) {
-      this.clearPreeditOn(this.composingPaneId);
-    }
-    this.composingPaneId = target;
     const key = target.toString();
     const renderer = this.renderers.get(key);
     const grid = this.grids.get(key);
@@ -919,6 +931,25 @@ export class CiriApp {
     if (this.pendingFocusedPaneId !== null) return this.pendingFocusedPaneId;
     if (this.currentLayout === null) return null;
     return LayoutManager.activePaneId(this.currentLayout);
+  }
+
+  /// Root received keyboard focus directly (Tab into the terminal,
+  /// or a host caller invoking `root.focus()`). Redirect to the
+  /// composition sink so subsequent keystrokes route through the
+  /// editable target that engages browser IME. No-op if root focus
+  /// arrives via a child (focus on textarea / a tile would not
+  /// reach this handler because `focus` doesn't bubble — we only
+  /// listen on root itself).
+  private onRootFocus(e: FocusEvent): void {
+    if (this.destroyed) return;
+    if (e.target !== this.root) return;
+    // Defer to a microtask so the browser settles the focus state
+    // before we move it again; some browsers (Firefox) get angry
+    // about synchronous focus-from-focus re-entrancy.
+    queueMicrotask(() => {
+      if (this.destroyed) return;
+      this.focusInputSink();
+    });
   }
 
   /// Move keyboard focus to the composition sink so the browser

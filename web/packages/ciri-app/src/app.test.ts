@@ -1809,6 +1809,40 @@ describe("CiriApp — IME composition", () => {
     expect(inputs.length).toBe(0);
   });
 
+  test("LayoutUpdate with null active pane mid-composition clears IME state (round-9 P2)", () => {
+    // Round-9 codex: the server can send a LayoutUpdate that has
+    // no active pane (workspace emptied, all panes closed). Rust's
+    // `Ime::Commit` short-circuits via `active_pane_id()?` and
+    // sends nothing. The web app must mirror: clear the composition
+    // state so a later compositionend doesn't commit into a pane
+    // the layout no longer considers active.
+    const { root, fire, inputs } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    root.dispatchEvent(compositionEvent("compositionupdate", "ni"));
+    // Server sends an empty layout (no workspaces / no active).
+    fire({
+      kind: "server-msg",
+      msg: {
+        tag: "LayoutUpdate",
+        layout: {
+          activeWorkspaceIdx: 0n,
+          workspaces: [],
+        },
+      },
+    });
+    // Subsequent compositionend MUST drop the commit (no active
+    // pane to send to).
+    root.dispatchEvent(compositionEvent("compositionend", "你"));
+    expect(inputs.length).toBe(0);
+    // Preedit overlay cleared.
+    expect(document.querySelector(".ciri-preedit")?.style.display).toBe("none");
+  });
+
   test("LayoutUpdate during composition immediately transfers the preedit overlay (no compositionupdate needed)", () => {
     // Round-4 codex P3: when active pane changes mid-composition via
     // a server-driven LayoutUpdate, the overlay must move

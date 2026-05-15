@@ -1348,29 +1348,36 @@ export class CiriApp {
       const t = this.grids.get(activeId.toString())?.title ?? "";
       this.doc.title = t;
     }
-    // If a composition is in flight and the LayoutUpdate promoted a
-    // different pane to active, transfer the preedit overlay to the
-    // new active pane immediately — don't wait for the next
-    // `compositionupdate` (which may never arrive before the user
-    // commits). Keeps the visible overlay and the eventual commit
-    // destination consistent.
-    if (
-      this.composing &&
-      this.composingPaneId !== null &&
-      activeId !== null &&
-      activeId !== this.composingPaneId
-    ) {
-      const oldId = this.composingPaneId;
-      const oldRenderer = this.renderers.get(oldId.toString());
-      const preeditText = oldRenderer?.currentPreedit ?? null;
-      this.clearPreeditOn(oldId);
-      this.composingPaneId = activeId;
-      if (preeditText !== null && preeditText.length > 0) {
-        const newRenderer = this.renderers.get(activeId.toString());
-        const newGrid = this.grids.get(activeId.toString());
-        if (newRenderer !== undefined && newGrid !== undefined) {
-          newRenderer.setPreedit(preeditText);
-          newRenderer.render(newGrid);
+    // If a composition is in flight and the LayoutUpdate moved the
+    // active pane, retarget. Two sub-cases:
+    //   (1) activeId !== null AND differs from composingPaneId:
+    //       transfer the preedit overlay to the new active pane,
+    //       and commit will follow at compositionend.
+    //   (2) activeId === null (no active pane in the new layout —
+    //       e.g. workspace emptied, or all panes closed mid-
+    //       composition): clear the composition entirely so a later
+    //       compositionend doesn't commit into the previously
+    //       focused (and now logically detached) pane. Round-9
+    //       codex P2 fix; matches the spirit of Rust's
+    //       `active_pane_id()?` short-circuit in
+    //       `crates/ciri/src/app/ime.rs:36`.
+    if (this.composing && this.composingPaneId !== null) {
+      if (activeId === null) {
+        this.clearPreeditOn(this.composingPaneId);
+        this.composingPaneId = null;
+      } else if (activeId !== this.composingPaneId) {
+        const oldId = this.composingPaneId;
+        const oldRenderer = this.renderers.get(oldId.toString());
+        const preeditText = oldRenderer?.currentPreedit ?? null;
+        this.clearPreeditOn(oldId);
+        this.composingPaneId = activeId;
+        if (preeditText !== null && preeditText.length > 0) {
+          const newRenderer = this.renderers.get(activeId.toString());
+          const newGrid = this.grids.get(activeId.toString());
+          if (newRenderer !== undefined && newGrid !== undefined) {
+            newRenderer.setPreedit(preeditText);
+            newRenderer.render(newGrid);
+          }
         }
       }
     }
@@ -1459,6 +1466,11 @@ export class CiriApp {
       throw e;
     }
     renderer.render(grid);
+    // A full sync may have moved the cursor or reshaped the pane —
+    // mirror the cell-delta path and refresh the sink anchor while
+    // composing so the OS IME candidate popup tracks the new
+    // cursor. Round-9 codex P2.
+    if (this.composing) this.repositionCompositionSink();
   }
 
   private destroyPane(paneId: bigint): void {

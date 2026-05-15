@@ -223,7 +223,6 @@ impl PredictionEngine {
         //   - **Otherwise** (e.g. shell jumped cursor unexpectedly):
         //     keep the old behaviour — drop older mismatched cursors silently;
         //     catastrophic-reset on a back-cursor mismatch.
-        let cursor_count = overlay.cursors.len();
         let mut catastrophic = false;
         let mut idx = 0;
         while idx < overlay.cursors.len() {
@@ -273,7 +272,7 @@ impl PredictionEngine {
             // PTY drained past this seq AND the cursor still doesn't match
             // — the prediction was genuinely wrong. Old behaviour: drop
             // history cursors silently, catastrophic-reset on the back.
-            if is_back && cursor_count > 0 {
+            if is_back {
                 catastrophic = true;
                 break;
             }

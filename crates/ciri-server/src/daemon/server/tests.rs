@@ -23,6 +23,7 @@ fn test_client(id: u64, session_name: &str) -> ClientState {
         viewport_width: 1024.0,
         viewport_height: 768.0,
         session_name: session_name.to_string(),
+        last_sent_cursor: HashMap::new(),
     }
 }
 

@@ -12,7 +12,7 @@ use ciri_term::pane::TerminalColors;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use super::client::ClientState;
+use super::client::{ClientState, CursorDebounce};
 use super::damage::DamageAccumulator;
 use super::session::Session;
 
@@ -236,6 +236,73 @@ impl Server {
         }
     }
 
+    /// Debounce cursor position+shape for inline TUIs (Codex, aider, …)
+    /// that emit several `set_cursor_position` calls per frame and visit
+    /// transient rows between stable ones. Only triples observed unchanged
+    /// for `APP_CURSOR_DEBOUNCE` propagate; cell damage and `mode_flags`
+    /// are unthrottled — `mode_flags` carries `password_input` and other
+    /// gates the client uses for prediction/broadcast suppression, so it
+    /// must reach the client immediately.
+    ///
+    /// Alt-screen TUIs (Neovim, vim, htop, …) bypass the debounce — their
+    /// cursor is the authoritative editing position and continuous typing
+    /// would keep resetting the dwell, freezing the cursor and shape.
+    /// Returns `(sent_cursor, held)`. `held = true` means the dwell
+    /// suppressed a fresher cursor; the caller must re-mark cursor damage
+    /// so the next tick revisits this pane and commits once the dwell
+    /// elapses. Without the re-mark, an isolated cursor move followed by
+    /// silence would stay debounced forever.
+    pub(super) fn throttle_cursor_for_app_mode(
+        clients: &mut HashMap<u64, ClientState>,
+        client_id: u64,
+        pane_id: u64,
+        actual: (i16, u16, u8),
+        mode_flags: u16,
+    ) -> ((i16, u16, u8), bool) {
+        const APP_CURSOR_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(80);
+        const INLINE_APP_MODE_MASK: u16 = MODE_MOUSE_REPORT
+            | MODE_BRACKETED_PASTE
+            | MODE_KITTY_KEYBOARD
+            | MODE_KITTY_REPORT_EVENTS
+            | MODE_KITTY_REPORT_ALTERNATES
+            | MODE_KITTY_REPORT_ALL
+            | MODE_KITTY_REPORT_TEXT
+            | MODE_SYNCHRONIZED_OUTPUT;
+        let Some(client) = clients.get_mut(&client_id) else {
+            return (actual, false);
+        };
+        let inline_app_mode = mode_flags & INLINE_APP_MODE_MASK != 0
+            && mode_flags & MODE_ALT_SCREEN == 0;
+        if !inline_app_mode {
+            client.last_sent_cursor.remove(&pane_id);
+            return (actual, false);
+        }
+        let now = std::time::Instant::now();
+        let state = client
+            .last_sent_cursor
+            .entry(pane_id)
+            .or_insert(CursorDebounce {
+                sent: actual,
+                pending: actual,
+                pending_since: now,
+            });
+        // Only commit when `actual` still matches `pending`. If the tick
+        // loop was delayed past the dwell, the cursor may have moved past
+        // `pending` — committing it then would publish a transient that
+        // was never actually observed for the full dwell.
+        if actual == state.pending
+            && state.pending != state.sent
+            && now.duration_since(state.pending_since) >= APP_CURSOR_DEBOUNCE
+        {
+            state.sent = state.pending;
+        }
+        if actual != state.pending {
+            state.pending = actual;
+            state.pending_since = now;
+        }
+        (state.sent, state.pending != state.sent)
+    }
+
     pub(super) fn close_pane_and_sync_layout(
         session: &mut Session,
         clients: &mut HashMap<u64, ClientState>,
@@ -293,6 +360,7 @@ impl Server {
             client.session_name = session_name.to_string();
             client.damage.clear();
             client.history_sent.clear();
+            client.last_sent_cursor.clear();
             client.last_acked_generation = 0;
             client.send_failures = 0;
         }

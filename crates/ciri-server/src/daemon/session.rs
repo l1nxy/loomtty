@@ -399,6 +399,7 @@ impl Session {
                 client.history_sent.remove(&pane_id);
                 client.max_input_seq.remove(&pane_id);
                 client.received_input_seq.remove(&pane_id);
+                client.last_sent_cursor.remove(&pane_id);
             }
         }
     }
@@ -885,6 +886,7 @@ mod tests {
             viewport_width: 900.0,
             viewport_height: 700.0,
             session_name: session_name.to_string(),
+            last_sent_cursor: HashMap::new(),
         }
     }
 

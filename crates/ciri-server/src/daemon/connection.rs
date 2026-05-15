@@ -128,7 +128,7 @@ pub(crate) async fn handle_client<R, W>(
                 damage: HashMap::new(),
                 last_acked_generation: 0,
                 max_input_seq: HashMap::new(),
-            received_input_seq: HashMap::new(),
+                received_input_seq: HashMap::new(),
                 history_sent: HashMap::new(),
                 send_failures: 0,
                 cell_width: client_cell_w,
@@ -136,6 +136,7 @@ pub(crate) async fn handle_client<R, W>(
                 viewport_width: client_viewport_w,
                 viewport_height: client_viewport_h,
                 session_name: requested_session.clone(),
+                last_sent_cursor: HashMap::new(),
             },
         );
 

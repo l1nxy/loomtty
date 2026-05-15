@@ -16,9 +16,6 @@ impl Server {
                 data,
                 input_seq,
             } => {
-                // Capture alt-screen state while we have pane access; used
-                // below to decide whether to poke `cursor_dirty` for the
-                // received_ack flow.
                 let (pane_exists, pane_in_alt_screen) =
                     if let Some(session) = self.sessions.get_mut(session_name)
                         && let Some(pane) = session.panes.get_mut(&pane_id)
@@ -28,31 +25,22 @@ impl Server {
                     } else {
                         (false, false)
                     };
-                // Stash the seq as *received*. It only gets promoted to the
-                // ack-able `max_input_seq` once the pane's PTY produces output
-                // (see `Session::promote_received_input_seqs`), so clients
-                // don't see an echo_ack until the framebuffer reflects this
-                // input. Gated on pane existence to prevent malicious clients
-                // from bloating the HashMap.
+                // Stash the seq as *received*; promotion to `max_input_seq`
+                // happens later in `process_pty_and_damage` once the PTY
+                // drain proves the framebuffer reflects the input.
                 //
-                // We also mark the pane's damage accumulator as `cursor_dirty`
-                // so the tick loop (which only sends frames for panes with
-                // non-empty damage, see `tick.rs:218`) actually pushes a frame
-                // carrying the new `received_ack`. Without that poke, a
-                // shell-rejected Backspace at the prompt boundary produces no
-                // PTY drain → no damage → no frame → received_ack never
-                // reaches the client and the predicted cursor keeps walking
-                // past the prompt.
+                // Off alt-screen, also poke `cursor_dirty` so the tick loop
+                // emits a frame carrying the new `received_ack` even when
+                // the shell produced no PTY output (Backspace at the prompt
+                // boundary). Without this poke the client never learns the
+                // input was rejected and `cap_floor` never fires, letting
+                // the predicted cursor walk past the boundary indefinitely.
                 //
-                // **But skip the poke in alt-screen mode.** The prediction
-                // engine doesn't speculate in alt-screen (see
-                // `prediction/input.rs` mode gates), so received_ack has no
-                // consumer there. And — crucial — TUI apps like Codex sit in
-                // alt-screen and redraw continuously with hide/show cursor
-                // bracketing each frame. Forcing an extra frame on every
-                // keystroke causes the server to sample alacritty mid-redraw,
-                // catching transient CURSOR_HIDDEN states and flickering the
-                // client cursor off.
+                // In alt-screen we skip the poke: predictions are disabled
+                // there (see `prediction/input.rs` mode gates), so
+                // `received_ack` has no consumer, and forcing a frame per
+                // keystroke would sample alacritty mid-redraw in TUI apps
+                // that hide/show the cursor each frame, flickering it off.
                 if pane_exists {
                     if let Some(client) = self.clients.get_mut(&_client_id) {
                         let entry = client.received_input_seq.entry(pane_id).or_insert(0);

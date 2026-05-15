@@ -52,8 +52,10 @@ pub(crate) async fn run_tick_loop(
     let mut session_names: Vec<String> = Vec::new();
 
     let mut had_pty_data: bool;
+    let mut cursor_held_pending: bool;
     loop {
         had_pty_data = false;
+        cursor_held_pending = false;
         // Sleep until notified (PTY output or client input)
         input_notify.notified().await;
 
@@ -271,6 +273,21 @@ pub(crate) async fn run_tick_loop(
                                 };
                                 sync.meta.received_ack = client_received_ack;
                                 sync.meta.echo_ack = client_echo_ack;
+                                let ((cline, ccol, cshape), cursor_held) =
+                                    Server::throttle_cursor_for_app_mode(
+                                        &mut s.clients,
+                                        cid,
+                                        pane_id,
+                                        (
+                                            sync.meta.cursor_line,
+                                            sync.meta.cursor_col,
+                                            sync.meta.cursor_shape,
+                                        ),
+                                        sync.meta.mode_flags,
+                                    );
+                                sync.meta.cursor_line = cline;
+                                sync.meta.cursor_col = ccol;
+                                sync.meta.cursor_shape = cshape;
                                 pending_sends.push(PendingSend {
                                     client_id: cid,
                                     session_name: session_name.clone(),
@@ -281,6 +298,16 @@ pub(crate) async fn run_tick_loop(
                                         force_scrollback_replace,
                                     },
                                 });
+                                if cursor_held
+                                    && let Some(client) = s.clients.get_mut(&cid)
+                                {
+                                    client
+                                        .damage
+                                        .entry(pane_id)
+                                        .or_default()
+                                        .cursor_dirty = true;
+                                    cursor_held_pending = true;
+                                }
                             }
                         } else if let Some(pane) = session.panes.get(&pane_id) {
                             // Track the primary-screen scrollback watermark
@@ -305,6 +332,21 @@ pub(crate) async fn run_tick_loop(
                                 );
                                 sync.meta.received_ack = client_received_ack;
                                 sync.meta.echo_ack = client_echo_ack;
+                                let ((cline, ccol, cshape), cursor_held) =
+                                    Server::throttle_cursor_for_app_mode(
+                                        &mut s.clients,
+                                        cid,
+                                        pane_id,
+                                        (
+                                            sync.meta.cursor_line,
+                                            sync.meta.cursor_col,
+                                            sync.meta.cursor_shape,
+                                        ),
+                                        sync.meta.mode_flags,
+                                    );
+                                sync.meta.cursor_line = cline;
+                                sync.meta.cursor_col = ccol;
+                                sync.meta.cursor_shape = cshape;
                                 pending_sends.push(PendingSend {
                                     client_id: cid,
                                     session_name: session_name.clone(),
@@ -315,10 +357,28 @@ pub(crate) async fn run_tick_loop(
                                         force_scrollback_replace: false,
                                     },
                                 });
+                                if cursor_held
+                                    && let Some(client) = s.clients.get_mut(&cid)
+                                {
+                                    client
+                                        .damage
+                                        .entry(pane_id)
+                                        .or_default()
+                                        .cursor_dirty = true;
+                                    cursor_held_pending = true;
+                                }
                                 // Also send CellDelta for any viewport damage
                                 if !damage.line_damage.is_empty() {
-                                    let (cursor_line, cursor_col, cursor_shape, mode_flags) =
-                                        pane.cursor_info();
+                                    let info = pane.cursor_info();
+                                    let ((cursor_line, cursor_col, cursor_shape), held) =
+                                        Server::throttle_cursor_for_app_mode(
+                                            &mut s.clients,
+                                            cid,
+                                            pane_id,
+                                            (info.0, info.1, info.2),
+                                            info.3,
+                                        );
+                                    let mode_flags = info.3;
                                     let regions: Vec<(u16, u16, u16)> = damage
                                         .line_damage
                                         .iter()
@@ -355,11 +415,29 @@ pub(crate) async fn run_tick_loop(
                                     } else if frame_pool.len() < FRAME_POOL_CAP {
                                         frame_pool.push(buf);
                                     }
+                                    if held
+                                        && let Some(client) = s.clients.get_mut(&cid)
+                                    {
+                                        client
+                                            .damage
+                                            .entry(pane_id)
+                                            .or_default()
+                                            .cursor_dirty = true;
+                                        cursor_held_pending = true;
+                                    }
                                 }
                             } else {
                                 // No new scrollback — send lightweight CellDelta
-                                let (cursor_line, cursor_col, cursor_shape, mode_flags) =
-                                    pane.cursor_info();
+                                let info = pane.cursor_info();
+                                let ((cursor_line, cursor_col, cursor_shape), cursor_held) =
+                                    Server::throttle_cursor_for_app_mode(
+                                        &mut s.clients,
+                                        cid,
+                                        pane_id,
+                                        (info.0, info.1, info.2),
+                                        info.3,
+                                    );
+                                let mode_flags = info.3;
 
                                 let regions: Vec<(u16, u16, u16)> = damage
                                     .line_damage
@@ -398,6 +476,16 @@ pub(crate) async fn run_tick_loop(
                                     });
                                 } else if frame_pool.len() < FRAME_POOL_CAP {
                                     frame_pool.push(buf);
+                                }
+                                if cursor_held
+                                    && let Some(client) = s.clients.get_mut(&cid)
+                                {
+                                    client
+                                        .damage
+                                        .entry(pane_id)
+                                        .or_default()
+                                        .cursor_dirty = true;
+                                    cursor_held_pending = true;
                                 }
                             }
                         }
@@ -579,6 +667,15 @@ pub(crate) async fn run_tick_loop(
             input_notify.notify_one();
         } else {
             tokio::time::sleep(frame_interval).await;
+            // After the frame interval, wake the loop if a cursor debounce
+            // is still holding a pending value. Re-marked `cursor_dirty`
+            // alone would otherwise wait on `input_notify` indefinitely,
+            // leaving the held cursor uncommitted until unrelated activity
+            // arrives. This polls at frame cadence (16ms) until the 80ms
+            // dwell elapses and the debounce commits — bounded ~5 ticks.
+            if cursor_held_pending {
+                input_notify.notify_one();
+            }
         }
     }
 }

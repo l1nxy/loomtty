@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use std::collections::HashMap;
+use std::time::Instant;
 use tokio::sync::mpsc;
 
 use super::damage::DamageAccumulator;
@@ -36,4 +37,15 @@ pub(crate) struct ClientState {
     pub(crate) viewport_height: f32,
     /// Which session this client is attached to.
     pub(crate) session_name: String,
+    /// Per-pane cursor debounce state for app-mode panes. See
+    /// [`Server::throttle_cursor_for_app_mode`] for the rationale; the
+    /// entry is absent when the pane is not in app mode.
+    pub(crate) last_sent_cursor: HashMap<u64, CursorDebounce>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct CursorDebounce {
+    pub(crate) sent: (i16, u16, u8),
+    pub(crate) pending: (i16, u16, u8),
+    pub(crate) pending_since: Instant,
 }

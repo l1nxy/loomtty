@@ -186,9 +186,13 @@ impl PredictionEngine {
         char_width
     }
 
-    /// Process user keyboard input and generate predictions.
+    /// Process user keyboard input and generate predictions, claiming a
+    /// fresh input seq from the engine's counter. Production callers
+    /// supply their own `min_ack` via [`new_user_input_with_min_ack`] so
+    /// the seq stays in sync with what the server has acked.
     pub fn new_user_input(&mut self, pane_id: u64, data: &[u8], grid: &ClientPaneGrid) {
-        self.new_user_input_internal(pane_id, data, grid, self.next_input_seq, false, false);
+        let seq = self.next_input_seq();
+        self.new_user_input_internal(pane_id, data, grid, seq, false, false);
     }
 
     /// Process user keyboard input and generate predictions tied to a specific input ack.
@@ -293,7 +297,7 @@ impl PredictionEngine {
         // past the original prompt position). The standard prediction path
         // doesn't need this — Backspace bounds come from the dual-ack
         // protocol's `received_ack`-driven cursor cap inside
-        // `on_server_sync_dual` instead.
+        // `on_server_sync` instead.
         if force_track
             && !force_visible
             && overlay.local_edit_start.is_none()

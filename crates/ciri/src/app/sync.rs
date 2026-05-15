@@ -66,7 +66,6 @@ impl App {
         let drain_start = std::time::Instant::now();
         let mut needs_redraw = false;
         let mut normal_terminal_activity = false;
-        let mut app_terminal_activity = false;
 
         // Drain buffered events from restored slots first (they arrived
         // while the slot was backgrounded and must be replayed in order).
@@ -414,10 +413,7 @@ impl App {
                         self.send_lossy(ClientMessage::Ack {
                             generation: sync.meta.generation,
                         });
-                        // grid.dirty is set by apply_full_sync — no need to remove cached view
-                        if Self::app_like_mode_flags(sync.meta.mode_flags) {
-                            app_terminal_activity = true;
-                        } else {
+                        if !Self::app_like_mode_flags(sync.meta.mode_flags) {
                             normal_terminal_activity = true;
                         }
                         needs_redraw = true;
@@ -449,10 +445,7 @@ impl App {
                             self.send_lossy(ClientMessage::Ack {
                                 generation: delta.meta.generation,
                             });
-                            // grid.dirty is set by apply_delta_borrowed — no need to remove cached view
-                            if Self::app_like_mode_flags(delta.meta.mode_flags) {
-                                app_terminal_activity = true;
-                            } else {
+                            if !Self::app_like_mode_flags(delta.meta.mode_flags) {
                                 normal_terminal_activity = true;
                             }
                             needs_redraw = true;
@@ -508,11 +501,12 @@ impl App {
             }
         } // end loop
 
+        // Reset blink only on shell-style activity. App-mode panes
+        // (Codex et al.) deliberately leave the blink timer alone so the
+        // natural off-half of each cycle masks per-frame cursor jitter
+        // that the server's debounce can't fully smooth.
         if normal_terminal_activity {
             self.reset_cursor_blink();
-        } else if app_terminal_activity && self.core.config.terminal.cursor_blink {
-            self.cursor_blink_visible = false;
-            self.cursor_blink_timer = std::time::Instant::now();
         }
         self.core.server_rx = Some(rx);
         needs_redraw
@@ -924,7 +918,7 @@ mod tests {
     }
 
     #[test]
-    fn app_mode_cell_delta_does_not_force_cursor_visible() {
+    fn app_mode_cell_delta_leaves_blink_state_untouched() {
         let mut app = make_app();
         let (event_tx, rx) = crossbeam_channel::unbounded();
         app.core.server_rx = Some(rx);
@@ -932,8 +926,9 @@ mod tests {
         app.core
             .pane_grids
             .insert(7, crate::grid::ClientPaneGrid::new(2, 1, 100));
+        let stale_timer = std::time::Instant::now() - std::time::Duration::from_secs(10);
         app.cursor_blink_visible = true;
-        app.cursor_blink_timer = std::time::Instant::now() - std::time::Duration::from_secs(10);
+        app.cursor_blink_timer = stale_timer;
 
         let delta = CellDeltaBorrowed::new(
             PaneFrameMeta {
@@ -953,8 +948,10 @@ mod tests {
         event_tx.send(ServerEvent::CellDelta(delta)).unwrap();
 
         assert!(app.process_server_events());
-        assert!(!app.cursor_blink_visible);
-        assert!(app.cursor_blink_timer.elapsed() < std::time::Duration::from_secs(1));
+        // App-mode activity must not touch the blink timer — the natural
+        // off-half of the cycle is what masks per-frame cursor jitter.
+        assert!(app.cursor_blink_visible);
+        assert_eq!(app.cursor_blink_timer, stale_timer);
     }
 
     #[test]

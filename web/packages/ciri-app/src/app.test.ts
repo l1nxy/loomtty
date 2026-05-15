@@ -1558,6 +1558,40 @@ describe("CiriApp — IME composition", () => {
     expect(sink.value).toBe("");
   });
 
+  test("mid-composition click does NOT reroute the commit to the clicked pane", () => {
+    // Round-5 codex P2: `pendingFocusedPaneId` optimistically routes
+    // KEYSTROKES to a just-clicked pane before the server has
+    // acked, which is correct for keys but wrong for IME commits.
+    // A user composing in pane A who clicks pane B has not asked
+    // for their in-flight glyph to teleport — most browsers fire
+    // `compositionend` on blur from the click, and the commit
+    // should still land where the preedit was actually shown.
+    const { root, fire, inputs } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_HYPER.hex) });
+    // Start composing on pane 1 (the layout's active).
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    root.dispatchEvent(compositionEvent("compositionupdate", "ni"));
+    // User clicks pane 2 mid-composition. This sets
+    // `pendingFocusedPaneId=2n` — the same shortcut that lets a
+    // click-then-type sequence reach pane 2 without a server
+    // round-trip. The IME commit MUST ignore it.
+    const tile2 = document.querySelector<HTMLElement>("[data-pane-id='2']")!;
+    tile2.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    // Browser fires compositionend on the focus blur (with the
+    // committed glyph).
+    root.dispatchEvent(compositionEvent("compositionend", "你"));
+    expect(inputs.length).toBe(1);
+    // Commit lands on pane 1 (where the preedit was shown), NOT
+    // pane 2 (which the optimistic click shortcut would have
+    // steered toward).
+    expect(inputs[0]!.paneId).toBe(1n);
+  });
+
   test("Firefox-style order: input fires after compositionend, deferred commit catches it", async () => {
     // Round-4 codex P1: Firefox fires `compositionend` BEFORE the
     // non-composing `input`, so a synchronous decision in

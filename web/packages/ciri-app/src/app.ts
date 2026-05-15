@@ -781,23 +781,33 @@ export class CiriApp {
   /// they would have seen from a non-IME keystroke. Always clear the
   /// preedit overlay regardless.
   private onCompositionEnd(e: CompositionEvent): void {
-    const preeditPane = this.composingPaneId;
+    // Snapshot the commit target — the pane the preedit was on at
+    // composition end. Deliberately NOT `activePaneId()`: that helper
+    // honors the optimistic `pendingFocusedPaneId` shortcut used to
+    // route keystrokes immediately after a click, but a mid-
+    // composition click would then mis-route the commit to a pane
+    // the user wasn't composing in (round-5 codex fix —
+    // wrong-terminal-input bug). `composingPaneId` tracks the
+    // overlay's actual pane and is kept in sync by `applyLayout`
+    // when a server-driven LayoutUpdate moves the active pane
+    // during composition, so server-driven retargets still flow
+    // through.
+    const target = this.composingPaneId;
     this.composing = false;
     this.composingPaneId = null;
-    // Clear the overlay on whatever pane was showing it (which may or
-    // may not be the eventual commit target — see below).
-    if (preeditPane !== null) this.clearPreeditOn(preeditPane);
+    // Clear the overlay on whatever pane was showing it.
+    if (target !== null) this.clearPreeditOn(target);
 
     const eventData = e.data ?? "";
     if (eventData.length > 0) {
       // Spec-compliant path: `compositionend.data` carries the commit.
-      this.finalizeCompositionCommit(eventData);
+      this.finalizeCompositionCommit(eventData, target);
       return;
     }
     if (this.compositionCommitData !== null) {
       // Chrome-style order: `beforeinput`/`input` fired BEFORE
       // `compositionend`, so the commit is already captured.
-      this.finalizeCompositionCommit(this.compositionCommitData);
+      this.finalizeCompositionCommit(this.compositionCommitData, target);
       return;
     }
     // Empty data and no captured commit yet. Could be either:
@@ -825,26 +835,31 @@ export class CiriApp {
       this.compositionCommitData = null;
       this.compositionSinkEl.value = "";
       if (captured === null || captured.length === 0) return;
-      this.finalizeCompositionCommit(captured);
+      // Use the snapshotted target — by now the user may have clicked
+      // elsewhere and `activePaneId()` would lie.
+      this.finalizeCompositionCommit(captured, target);
     }, 0);
   }
 
-  /// Send a composition commit through `sendInput`. Resolves the
-  /// commit target at commit time, mirroring the native Rust
-  /// client's `Ime::Commit` path in `app/ime.rs:36-41` which reads
-  /// `active_pane_id()` inside the commit branch. In practice most
-  /// browsers fire `compositionend` BEFORE the focus change a click
-  /// would otherwise effect, so this reads the same pane that was
-  /// active when composition began — but a server-driven
-  /// LayoutUpdate that promotes a different pane mid-composition
-  /// will reroute the commit to wherever the user's attention has
-  /// moved. Centralizing the logic here keeps the synchronous and
-  /// deferred-finalization branches of `onCompositionEnd` consistent.
-  private finalizeCompositionCommit(data: string): void {
+  /// Send a composition commit through `sendInput`. The target is
+  /// snapshotted at `compositionend` (or commit-data capture) time
+  /// rather than re-resolved here: the optimistic
+  /// `pendingFocusedPaneId` would otherwise steer commits to a pane
+  /// the user clicked into mid-composition rather than the one they
+  /// were actually composing in. Server-driven active-pane changes
+  /// during composition still propagate through `applyLayout`, which
+  /// keeps `composingPaneId` (the snapshot source) in sync.
+  /// Mirrors the spirit of the native Rust client's `Ime::Commit`
+  /// path in `app/ime.rs:36-41` — Rust has no equivalent of the
+  /// "pending click" optimistic state, so its `active_pane_id()`
+  /// already reflects server truth.
+  private finalizeCompositionCommit(
+    data: string,
+    target: bigint | null,
+  ): void {
     this.compositionCommitData = null;
     this.compositionSinkEl.value = "";
     if (data.length === 0) return;
-    const target = this.activePaneId();
     if (target === null) return;
     // Drop bytes for unknown panes — same guard as the regular
     // keystroke path (a pane may have closed mid-composition).

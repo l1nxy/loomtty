@@ -182,11 +182,14 @@ export class CiriApp {
   /// `input` event on the sink. Used as a fallback when
   /// `compositionend.data` is empty (Safari + a handful of mobile
   /// IMEs surface the commit only through the editable-element input
-  /// path). Reset on every `compositionstart`; set only on commit-
-  /// signaling `inputType` values, not on intermediate
-  /// `insertCompositionText` ticks, so a cancel-with-dirty-sink
-  /// doesn't silently turn into a commit.
-  private compositionCommitData: string | null = null;
+  /// path). Tagged with the composition generation it was captured
+  /// in so a late event from a previous session can't be consumed
+  /// by a new one. Reset on every `compositionstart`; set only on
+  /// commit-signaling `inputType` values during the appropriate
+  /// state window, not on intermediate `insertCompositionText`
+  /// ticks, so a cancel-with-dirty-sink doesn't silently turn into
+  /// a commit.
+  private compositionCommitData: { generation: number; text: string } | null = null;
   /// Bumps on every `compositionstart`. Used by deferred commit
   /// finalization (see `onCompositionEnd`) to detect when a new
   /// composition session has begun in the gap between
@@ -194,6 +197,15 @@ export class CiriApp {
   /// the deferred work for the previous session should silently
   /// abandon rather than committing into the new one.
   private compositionGeneration = 0;
+  /// Non-null only while we're inside the brief deferred-commit
+  /// window: `compositionend` fired with empty data, the macrotask
+  /// hasn't fired yet, and a Firefox-style post-compositionend
+  /// `input` is expected. Used to gate acceptance of
+  /// `insertText`/`insertFromComposition` events outside of an
+  /// active composition — stale events from previous sessions
+  /// that arrive after a new `compositionstart` (which wipes this
+  /// flag) are rejected. Round-6 codex fix.
+  private pendingLateCommit: { generation: number } | null = null;
   /// Pending bell-flash clear timers, keyed by paneId-as-string so a
   /// repeat bell on the same pane re-arms cleanly instead of leaving
   /// the class permanently stuck.
@@ -353,6 +365,8 @@ export class CiriApp {
     this.dragState = null;
     this.composing = false;
     this.composingPaneId = null;
+    this.pendingLateCommit = null;
+    this.compositionCommitData = null;
     // Cancel pending bell-flash clears so we don't run callbacks
     // against torn-down DOM.
     for (const t of this.bellTimers.values()) {
@@ -714,6 +728,10 @@ export class CiriApp {
     this.composing = true;
     this.composingPaneId = this.activePaneId();
     this.compositionCommitData = null;
+    // Close the deferred-commit window for any previous session —
+    // a stale late `input` arriving now must be rejected rather
+    // than allowed to leak into this session's commit slot.
+    this.pendingLateCommit = null;
     // Bump the generation so any deferred finalization scheduled by a
     // previous `compositionend` knows its session is over and bails.
     this.compositionGeneration += 1;
@@ -758,16 +776,36 @@ export class CiriApp {
   /// preedit content, not a commit, so we filter them out: otherwise
   /// a cancel-with-dirty-sink would incorrectly send the last
   /// preedit text to the PTY.
+  ///
+  /// Each accepted commit-signal is tagged with the current
+  /// `compositionGeneration`, and the two `inputType` branches
+  /// require distinct state windows so a stale event from a
+  /// previous session can't populate the next session's commit
+  /// slot (round-6 codex fix):
+  ///   - `insertFromComposition` is only honored while
+  ///     `this.composing` is true.
+  ///   - `insertText` with `!isComposing` is only honored while
+  ///     `this.pendingLateCommit` is set (we're inside the brief
+  ///     post-compositionend window). The `compositionstart` of a
+  ///     new session wipes that flag.
   private onSinkBeforeInput(e: Event): void {
     const ie = e as InputEvent;
     const data = ie.data;
     if (typeof data !== "string" || data.length === 0) return;
     if (ie.inputType === "insertFromComposition") {
-      this.compositionCommitData = data;
+      if (!this.composing) return; // stale / anomalous
+      this.compositionCommitData = {
+        generation: this.compositionGeneration,
+        text: data,
+      };
       return;
     }
     if (ie.inputType === "insertText" && !ie.isComposing) {
-      this.compositionCommitData = data;
+      if (this.pendingLateCommit === null) return; // not in late-commit window
+      this.compositionCommitData = {
+        generation: this.pendingLateCommit.generation,
+        text: data,
+      };
     }
     // Deliberate skip: `insertCompositionText` is an intermediate
     // preedit step (NOT a commit) per the Input Events spec; using
@@ -798,32 +836,35 @@ export class CiriApp {
     // Clear the overlay on whatever pane was showing it.
     if (target !== null) this.clearPreeditOn(target);
 
+    const generation = this.compositionGeneration;
     const eventData = e.data ?? "";
     if (eventData.length > 0) {
       // Spec-compliant path: `compositionend.data` carries the commit.
       this.finalizeCompositionCommit(eventData, target);
       return;
     }
-    if (this.compositionCommitData !== null) {
+    const captured = this.compositionCommitData;
+    if (captured !== null && captured.generation === generation) {
       // Chrome-style order: `beforeinput`/`input` fired BEFORE
       // `compositionend`, so the commit is already captured.
-      this.finalizeCompositionCommit(this.compositionCommitData, target);
+      this.finalizeCompositionCommit(captured.text, target);
       return;
     }
     // Empty data and no captured commit yet. Could be either:
     //   (a) a real cancel (Esc out of the candidate list), or
     //   (b) Firefox-style order where the commit-signaling `input`
     //       event hasn't fired yet — it'll arrive on a later task.
-    // Defer one macrotask to give (b) a chance. The generation
-    // counter guards against a new composition starting in the
-    // interim (in which case this deferred work belongs to a stale
-    // session and must abandon).
-    const generation = this.compositionGeneration;
+    // Open the late-commit window and defer one macrotask to give
+    // (b) a chance. The generation counter guards against a new
+    // composition starting in the interim (in which case this
+    // deferred work belongs to a stale session and must abandon).
+    this.pendingLateCommit = { generation };
     const win = this.doc.defaultView;
     if (win === null) {
       // No window in the test environment — finalize synchronously
       // as cancel; tests can opt into deferred behavior by using
       // their own fake timers.
+      this.pendingLateCommit = null;
       this.compositionCommitData = null;
       this.compositionSinkEl.value = "";
       return;
@@ -831,13 +872,16 @@ export class CiriApp {
     win.setTimeout(() => {
       if (this.destroyed) return;
       if (generation !== this.compositionGeneration) return;
-      const captured = this.compositionCommitData;
+      // Always close the late-commit window — even if no late input
+      // arrived, the window for this session is over.
+      this.pendingLateCommit = null;
+      const late = this.compositionCommitData;
       this.compositionCommitData = null;
       this.compositionSinkEl.value = "";
-      if (captured === null || captured.length === 0) return;
+      if (late === null || late.generation !== generation) return;
       // Use the snapshotted target — by now the user may have clicked
       // elsewhere and `activePaneId()` would lie.
-      this.finalizeCompositionCommit(captured, target);
+      this.finalizeCompositionCommit(late.text, target);
     }, 0);
   }
 
@@ -932,8 +976,26 @@ export class CiriApp {
       return;
     }
     const { cursorLine, cursorCol } = grid.meta;
-    const left = rect.left + cursorCol * this.cellSize.cellWidth;
-    const top = rect.top + cursorLine * this.cellSize.cellHeight;
+    // Display row mirrors the renderer's cursor + preedit math
+    // (renderer.ts updateCursor / updatePreedit): when the user has
+    // scrolled back into history the live cursor shifts DOWN in
+    // display coordinates by `scrollOffset`. If the live cursor
+    // sits past the viewport bottom — i.e. the user scrolled so
+    // far that the live row is no longer visible — we can't paint
+    // the IME anchor anywhere sensible. Pin the sink at the
+    // viewport's bottom-left so OS candidate windows stay within
+    // the terminal rather than anchoring over unrelated scrollback.
+    // Round-6 codex P3 fix.
+    const displayRow = cursorLine + renderer.scrollOffsetRows;
+    let left: number;
+    let top: number;
+    if (displayRow < 0 || displayRow >= grid.rows) {
+      left = rect.left;
+      top = rect.bottom - this.cellSize.cellHeight;
+    } else {
+      left = rect.left + cursorCol * this.cellSize.cellWidth;
+      top = rect.top + displayRow * this.cellSize.cellHeight;
+    }
     this.compositionSinkEl.style.position = "fixed";
     this.compositionSinkEl.style.left = `${left}px`;
     this.compositionSinkEl.style.top = `${top}px`;

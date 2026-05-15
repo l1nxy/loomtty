@@ -710,12 +710,25 @@ export class CiriApp {
     // `isComposing` isn't set on the very first keydown that
     // triggered `compositionstart`.
     if (e.isComposing || this.composing) return;
-    // If a deferred late-commit is pending, flush it synchronously
-    // now so any IME commit bytes hit the wire BEFORE this
-    // keystroke. Without this, the macrotask order means the
-    // keystroke would arrive at the PTY first, scrambling
-    // user-perceived input order. Round-8 codex P1 fix.
-    if (this.pendingLateCommit !== null) {
+    // If a deferred late-commit is pending AND its commit data has
+    // already been captured (Chrome-style: `beforeinput` fired
+    // before this keystroke), flush synchronously so the IME bytes
+    // hit the wire BEFORE this keystroke. Without this, the
+    // macrotask order would scramble user-perceived input order.
+    //
+    // If the commit data hasn't been captured yet (Firefox-style:
+    // `input` fires AFTER `compositionend`), do NOT flush — that
+    // would close the late-commit window prematurely and DROP the
+    // committed glyph entirely. Let the macrotask handle it; the
+    // wire order may end up keystroke-then-commit, which is a
+    // visible weirdness the user can correct, while dropping the
+    // commit is silent data loss. Round-13 codex P2 trade-off
+    // (refines round-8's blanket flush).
+    if (
+      this.pendingLateCommit !== null &&
+      this.compositionCommitData !== null &&
+      this.compositionCommitData.generation === this.pendingLateCommit.generation
+    ) {
       this.flushPendingLateCommit();
     }
     // Clipboard chords intercept *before* the encoder runs: the
@@ -1373,6 +1386,17 @@ export class CiriApp {
       if (activeId === null) {
         this.clearPreeditOn(this.composingPaneId);
         this.composingPaneId = null;
+        // Also drop the in-app `composing` flag so subsequent
+        // keystrokes aren't suppressed by `onKeyDown`'s `composing`
+        // guard. The browser's IME session may still be active
+        // (e.isComposing would still be true on a keystroke from
+        // that session — the encoder's own `isComposing` short-
+        // circuit covers that), but from our perspective there's
+        // no longer a target to render or commit against.
+        // Round-13 codex P3.
+        this.composing = false;
+        this.pendingLateCommit = null;
+        this.compositionCommitData = null;
       } else if (activeId !== this.composingPaneId) {
         const oldId = this.composingPaneId;
         const oldRenderer = this.renderers.get(oldId.toString());

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ciritty — web demo</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        background: #000;
+        color: #d3d7cf;
+        font-family: "JetBrains Mono", "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+      #status {
+        flex: 0 0 auto;
+        padding: 4px 12px;
+        font-size: 12px;
+        line-height: 18px;
+        background: #1a1a1a;
+        border-bottom: 1px solid #333;
+        color: #9aa;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      #status .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #888;
+        flex: 0 0 auto;
+      }
+      #status.connected .dot {
+        background: #4e9a06;
+      }
+      #status.error .dot {
+        background: #ef2929;
+      }
+      #status.connecting .dot {
+        background: #c4a000;
+      }
+      #status .url {
+        opacity: 0.6;
+      }
+      #status .err {
+        color: #ef2929;
+        margin-left: auto;
+        max-width: 50ch;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #app {
+        flex: 1 1 auto;
+        min-height: 0;
+        position: relative;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="status" class="connecting">
+      <span class="dot"></span>
+      <span class="state">connecting…</span>
+      <span class="url"></span>
+      <span class="err"></span>
+    </div>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

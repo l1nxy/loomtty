@@ -10,13 +10,18 @@
   "scripts": {
     "gen": "node scripts/gen.mjs",
     "//order": "Inter-package imports resolve via `exports`/`types` that point at the gitignored `./dist/index.*` outputs. npm runs `-ws` scripts in path order, which does NOT match the dependency graph — without an explicit chain the downstream packages' tsc/vitest fail with TS2307 in a fresh checkout. Pre-build the chain: codec → client + dom → app.",
-    "prebuild-chain": "npm -w @ciri/codec run build && npm -w @ciri/client run build && npm -w @ciri/dom run build",
+    "prebuild-chain": "npm -w @ciri/codec run build && npm -w @ciri/client run build && npm -w @ciri/dom run build && npm -w @ciri/app run build",
     "test": "npm run prebuild-chain && npm -ws --if-present run test",
     "build": "npm run prebuild-chain && npm -ws --if-present run build",
     "typecheck": "npm run prebuild-chain && npm -ws --if-present run typecheck",
-    "lint": "npm -ws --if-present run lint"
+    "lint": "npm -ws --if-present run lint",
+    "//dev": "Starts the dev bridge (ws ↔ ciri-server TCP) and the vite demo server concurrently. Requires `ciri-server` to be running separately with `[remote] enabled = true` (default port 7890). See README.md.",
+    "dev": "npm run prebuild-chain && concurrently --kill-others-on-fail --names bridge,demo --prefix-colors blue,green \"npm -w @ciri/bridge run start\" \"npm -w @ciri/demo run dev\"",
+    "dev:bridge": "npm -w @ciri/bridge run start",
+    "dev:demo": "npm -w @ciri/demo run dev"
   },
   "devDependencies": {
+    "concurrently": "^9.1.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
   }

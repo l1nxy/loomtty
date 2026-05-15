@@ -1,0 +1,16 @@
+{
+  "name": "@ciri/bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dev-time WebSocket↔TCP bridge so the browser can talk to ciri-server (which speaks ciri-protocol over raw TCP / Unix socket / Named Pipe). Not for production use — no auth, no TLS.",
+  "type": "module",
+  "bin": {
+    "ciri-bridge": "./src/index.mjs"
+  },
+  "scripts": {
+    "start": "node src/index.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

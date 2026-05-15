@@ -1977,6 +1977,138 @@ describe("CiriApp — IME composition", () => {
     vi.restoreAllMocks();
   });
 
+  test("keystroke during late-commit window flushes the pending commit first (preserves wire order)", async () => {
+    // Round-8 codex P1: without a synchronous flush on keydown, a
+    // user typing immediately after a Firefox-order
+    // compositionend(empty) could land their keystroke at the PTY
+    // BEFORE the deferred IME commit fires — scrambling
+    // user-perceived input order. `onKeyDown` now drains the
+    // pending late commit synchronously before encoding the
+    // keystroke.
+    const { root, fire, inputs } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    const sink = root.querySelector<HTMLTextAreaElement>(
+      "textarea.ciri-composition-sink",
+    )!;
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    root.dispatchEvent(compositionEvent("compositionupdate", "ni"));
+    root.dispatchEvent(compositionEvent("compositionend", ""));
+    // Late `input` populates compositionCommitData.
+    sink.dispatchEvent(
+      new InputEvent("beforeinput", {
+        inputType: "insertText",
+        data: "你",
+        isComposing: false,
+        bubbles: true,
+      }),
+    );
+    // User types BEFORE the deferred macrotask fires.
+    root.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "x", bubbles: true }),
+    );
+    // The IME commit lands first, then the keystroke.
+    expect(inputs.length).toBe(2);
+    expect(Array.from(inputs[0]!.data)).toEqual([0xe4, 0xbd, 0xa0]); // "你"
+    expect(Array.from(inputs[1]!.data)).toEqual([0x78]); // "x"
+    // Let the now-orphaned macrotask drain.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(inputs.length).toBe(2);
+  });
+
+  test("repositionCompositionSink prefers composingPaneId over pending click target (round-8 P1)", () => {
+    // Round-8 codex P1: if the IME candidate-window anchor honors
+    // `pendingFocusedPaneId`, the OS popup appears next to the
+    // clicked pane while the commit (and overlay) stay on the
+    // original composing pane. The sink must follow the locked
+    // composing pane while a composition is in flight.
+    const { root, fire } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_HYPER.hex) });
+    const tile1 = document.querySelector<HTMLElement>("[data-pane-id='1']")!;
+    const tile2 = document.querySelector<HTMLElement>("[data-pane-id='2']")!;
+    const pane1 = tile1.querySelector<HTMLElement>(".ciri-pane")!;
+    const pane2 = tile2.querySelector<HTMLElement>(".ciri-pane")!;
+    vi.spyOn(pane1, "getBoundingClientRect").mockReturnValue({
+      x: 0, y: 0, left: 0, top: 0, right: 400, bottom: 100,
+      width: 400, height: 100, toJSON: () => ({}),
+    } as DOMRect);
+    vi.spyOn(pane2, "getBoundingClientRect").mockReturnValue({
+      x: 500, y: 0, left: 500, top: 0, right: 900, bottom: 100,
+      width: 400, height: 100, toJSON: () => ({}),
+    } as DOMRect);
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    root.dispatchEvent(compositionEvent("compositionupdate", "ni"));
+    // Click pane 2 mid-composition — pendingFocusedPaneId=2,
+    // queueMicrotask focuses sink which calls repositionCompositionSink.
+    tile2.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    // Fire a fresh compositionupdate so the sink reposition path
+    // re-runs synchronously (the queueMicrotask-driven focus is
+    // harder to schedule deterministically in a test).
+    root.dispatchEvent(compositionEvent("compositionupdate", "ni"));
+    const sink = root.querySelector<HTMLTextAreaElement>(
+      "textarea.ciri-composition-sink",
+    )!;
+    // Sink anchor MUST be at pane 1's coordinates (left=0), NOT
+    // pane 2's (left=500).
+    expect(sink.style.left).toBe("0px");
+    vi.restoreAllMocks();
+  });
+
+  test("destroyPane on the composing pane clears IME state", () => {
+    // Round-8 codex P1/P2 housekeeping: if the pane being composed
+    // in closes mid-session, the IME state must reset so a stale
+    // compositionend doesn't try to render on a destroyed renderer
+    // or commit bytes into a ghost pane.
+    const { app, root, fire, inputs } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    root.dispatchEvent(compositionEvent("compositionupdate", "ni"));
+    expect(app.hasGrid(1n)).toBe(true);
+    fire({ kind: "server-msg", msg: { tag: "PaneClosed", paneId: 1n } });
+    expect(app.hasGrid(1n)).toBe(false);
+    // A subsequent compositionend for the now-dead session must
+    // not crash, must not send bytes (no grid → drop), and must
+    // not leave a stray preedit overlay.
+    root.dispatchEvent(compositionEvent("compositionend", "你"));
+    expect(inputs.length).toBe(0);
+    expect(document.querySelector(".ciri-preedit")).toBeNull();
+  });
+
+  test("variation selectors contribute zero width in preedit display (round-8 P2)", () => {
+    // `❤️` is the cluster `U+2764 U+FE0F`; without the FE00..FE0F
+    // zero-width range it measures 2 cells (1 from heart, 1 from
+    // VS16) when the rendered glyph occupies just 1.
+    // Use the renderer test surface to confirm.
+    // The actual assertion runs in renderer.test.ts; here we just
+    // smoke-check that a preedit string with a variation selector
+    // round-trips intact via the overlay textContent.
+    const { root, fire } = bootstrap();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    root.dispatchEvent(compositionEvent("compositionupdate", "❤️"));
+    const p = document.querySelector<HTMLElement>(".ciri-preedit")!;
+    expect(p.textContent).toBe("❤️");
+    // Width should be 1 cell (heart, with VS16 selector counting as
+    // zero); without the round-8 fix this would have been 2ch.
+    expect(p.style.width).toBe("1ch");
+  });
+
   test("destroy() removes the composition sink from the root", () => {
     // Round-2 codex: the sink lives inside the user-owned root, so
     // `destroy()` must remove it explicitly — otherwise repeated

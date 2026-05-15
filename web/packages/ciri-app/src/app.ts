@@ -211,8 +211,12 @@ export class CiriApp {
   /// `insertText`/`insertFromComposition` events outside of an
   /// active composition — stale events from previous sessions
   /// that arrive after a new `compositionstart` (which wipes this
-  /// flag) are rejected. Round-6 codex fix.
-  private pendingLateCommit: { generation: number } | null = null;
+  /// flag) are rejected. Carries the snapshotted commit target
+  /// so `flushPendingLateCommit()` can route consistently with
+  /// the macrotask path. Round-6/8 codex fix.
+  private pendingLateCommit:
+    | { generation: number; target: bigint | null }
+    | null = null;
   /// Pending bell-flash clear timers, keyed by paneId-as-string so a
   /// repeat bell on the same pane re-arms cleanly instead of leaving
   /// the class permanently stuck.
@@ -626,7 +630,12 @@ export class CiriApp {
     // `remeasureCells()` manually if needed.
     if (typeof ResizeObserver === "undefined") return;
     this.resizeObserver = new ResizeObserver(() => {
-      if (!this.destroyed) this.sendResize();
+      if (this.destroyed) return;
+      this.sendResize();
+      // Re-anchor the sink: a window resize moves the pane rect
+      // and thus the absolute cursor coords the sink relies on.
+      // Round-8 codex P2.
+      if (this.composing) this.repositionCompositionSink();
     });
     // Observe the workspace viewport so a tab-strip height change
     // (or anything else outside the cell grid) doesn't trigger a
@@ -701,6 +710,14 @@ export class CiriApp {
     // `isComposing` isn't set on the very first keydown that
     // triggered `compositionstart`.
     if (e.isComposing || this.composing) return;
+    // If a deferred late-commit is pending, flush it synchronously
+    // now so any IME commit bytes hit the wire BEFORE this
+    // keystroke. Without this, the macrotask order means the
+    // keystroke would arrive at the PTY first, scrambling
+    // user-perceived input order. Round-8 codex P1 fix.
+    if (this.pendingLateCommit !== null) {
+      this.flushPendingLateCommit();
+    }
     // Clipboard chords intercept *before* the encoder runs: the
     // encoder rejects Ctrl+Shift+anything and Cmd+anything (the
     // browser-reserved escape hatches), but Ctrl+Shift+C / Cmd+C /
@@ -776,6 +793,12 @@ export class CiriApp {
     if (renderer === undefined || grid === undefined) return;
     renderer.setPreedit(e.data);
     renderer.render(grid);
+    // Clear the sink's accumulated value so a Ctrl+C while composing
+    // can't copy the partial preedit text out of the hidden textarea.
+    // The commit-data path uses `beforeinput.data`, not `sink.value`,
+    // so clearing here doesn't lose anything we depend on. Round-8
+    // codex P2 mitigation.
+    this.compositionSinkEl.value = "";
     this.repositionCompositionSink();
   }
 
@@ -814,6 +837,12 @@ export class CiriApp {
     }
     if (ie.inputType === "insertText" && !ie.isComposing) {
       if (this.pendingLateCommit === null) return; // not in late-commit window
+      // Single-acceptance: the first matching late `input` wins.
+      // Subsequent insertText events during the same window are
+      // likely stray keystrokes / dead-key processing — don't let
+      // them overwrite the legitimate IME commit. Round-8 codex
+      // P2 defense.
+      if (this.compositionCommitData !== null) return;
       this.compositionCommitData = {
         generation: this.pendingLateCommit.generation,
         text: data,
@@ -870,7 +899,10 @@ export class CiriApp {
     // (b) a chance. The generation counter guards against a new
     // composition starting in the interim (in which case this
     // deferred work belongs to a stale session and must abandon).
-    this.pendingLateCommit = { generation };
+    // Store the snapshotted target on the pending record so a
+    // synchronous flush triggered by an interleaved keystroke can
+    // route to the same pane the macrotask would have used.
+    this.pendingLateCommit = { generation, target };
     const win = this.doc.defaultView;
     if (win === null) {
       // No window in the test environment — finalize synchronously
@@ -884,17 +916,25 @@ export class CiriApp {
     win.setTimeout(() => {
       if (this.destroyed) return;
       if (generation !== this.compositionGeneration) return;
-      // Always close the late-commit window — even if no late input
-      // arrived, the window for this session is over.
-      this.pendingLateCommit = null;
-      const late = this.compositionCommitData;
-      this.compositionCommitData = null;
-      this.compositionSinkEl.value = "";
-      if (late === null || late.generation !== generation) return;
-      // Use the snapshotted target — by now the user may have clicked
-      // elsewhere and `activePaneId()` would lie.
-      this.finalizeCompositionCommit(late.text, target);
+      this.flushPendingLateCommit();
     }, 0);
+  }
+
+  /// Finalize a pending late commit synchronously. Used both by the
+  /// macrotask deferred path and by `onKeyDown` to ensure that any
+  /// IME commit bytes hit the wire BEFORE the keystroke that
+  /// arrived next — preserves the user-perceived input order.
+  /// Idempotent: a no-op when no late commit is pending. Round-8
+  /// codex P1 fix.
+  private flushPendingLateCommit(): void {
+    const pending = this.pendingLateCommit;
+    if (pending === null) return;
+    this.pendingLateCommit = null;
+    const late = this.compositionCommitData;
+    this.compositionCommitData = null;
+    this.compositionSinkEl.value = "";
+    if (late === null || late.generation !== pending.generation) return;
+    this.finalizeCompositionCommit(late.text, pending.target);
   }
 
   /// Send a composition commit through `sendInput`. The target is
@@ -994,7 +1034,16 @@ export class CiriApp {
   /// — composition can't actually start in that state anyway.
   private repositionCompositionSink(): void {
     if (this.currentLayout === null) return;
-    const activeId = this.activePaneId();
+    // While composing, anchor at the locked composing pane — NOT
+    // `activePaneId()` (which honors the optimistic
+    // `pendingFocusedPaneId`). Otherwise the OS IME candidate
+    // popup would shift to a just-clicked pane while the actual
+    // commit (and preedit overlay) stays on the original target,
+    // leaving the user with a misaligned UI and possible
+    // wrong-terminal mental model. Round-8 codex P1 fix.
+    const activeId = this.composing
+      ? this.composingPaneId
+      : this.activePaneId();
     if (activeId === null) return;
     const key = activeId.toString();
     const renderer = this.renderers.get(key);
@@ -1054,6 +1103,10 @@ export class CiriApp {
     const next = Math.max(0, renderer.scrollOffsetRows + linesUp);
     renderer.setScrollOffset(next);
     renderer.render(grid);
+    // Sink anchor depends on the cursor's display row, which shifts
+    // when scrollback moves. Refresh while composing so the OS IME
+    // candidate popup tracks the visible cursor. Round-8 codex P2.
+    if (this.composing) this.repositionCompositionSink();
   }
 
   /// Intercept the Ctrl+Shift+C / Cmd+C copy and Ctrl+Shift+V /
@@ -1349,6 +1402,11 @@ export class CiriApp {
       throw e;
     }
     renderer.render(grid);
+    // Cursor may have moved as a side effect of terminal output —
+    // refresh the sink anchor while composing so the OS IME
+    // candidate popup tracks the new cursor position. Round-8
+    // codex P2.
+    if (this.composing) this.repositionCompositionSink();
   }
 
   private handleFullPaneSyncBytes(bytes: Uint8Array): void {
@@ -1409,6 +1467,18 @@ export class CiriApp {
     if (r !== undefined) r.destroy();
     this.renderers.delete(key);
     this.grids.delete(key);
+    // Composing in a pane that just closed: bail the IME session
+    // entirely. The downstream guards (grid existence check in
+    // `finalizeCompositionCommit`) cover the safety hole, but
+    // explicit cleanup keeps the invariants self-documenting and
+    // avoids dispatching ghost preedit renders against a destroyed
+    // renderer. Round-8 codex P1/P2 housekeeping.
+    if (this.composingPaneId === paneId) {
+      this.composing = false;
+      this.composingPaneId = null;
+      this.pendingLateCommit = null;
+      this.compositionCommitData = null;
+    }
   }
 
   private reportBodyDecodeError(e: unknown): void {

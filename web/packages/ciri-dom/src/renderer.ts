@@ -690,6 +690,12 @@ function displayWidth(s: string): number {
       (cp >= 0x0300 && cp <= 0x036f) ||
       // Zero-width / direction marks.
       (cp >= 0x200b && cp <= 0x200f) ||
+      // Variation selectors (e.g. `U+FE0E` text presentation,
+      // `U+FE0F` emoji presentation). These attach to the
+      // preceding glyph cluster and contribute zero advance — a
+      // sequence like `❤️` is `U+2764 U+FE0F` and renders as one
+      // visible cluster, not two cells. Round-8 codex P2.
+      (cp >= 0xfe00 && cp <= 0xfe0f) ||
       cp === 0xfeff
     ) {
       // width 0

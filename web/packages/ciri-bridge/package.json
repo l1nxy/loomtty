@@ -8,9 +8,11 @@
     "ciri-bridge": "./src/index.mjs"
   },
   "scripts": {
-    "start": "node src/index.mjs"
+    "start": "node src/index.mjs",
+    "probe": "node src/probe.mjs"
   },
   "dependencies": {
+    "@ciri/client": "*",
     "ws": "^8.18.0"
   }
 }

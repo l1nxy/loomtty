@@ -763,6 +763,12 @@ export class CiriApp {
     // a stale late `input` arriving now must be rejected rather
     // than allowed to leak into this session's commit slot.
     this.pendingLateCommit = null;
+    // Also flush any leftover text in the sink. The macrotask
+    // scheduled by a previous `compositionend` would normally clear
+    // it, but a generation mismatch (rapid back-to-back sessions)
+    // makes the macrotask bail before doing so. Clearing here
+    // closes that gap. Round-11 codex P3.
+    this.compositionSinkEl.value = "";
     // Bump the generation so any deferred finalization scheduled by a
     // previous `compositionend` knows its session is over and bails.
     this.compositionGeneration += 1;

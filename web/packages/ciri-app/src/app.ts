@@ -147,6 +147,19 @@ export class CiriApp {
   private readonly onKeyDownHandler: (e: KeyboardEvent) => void;
   private readonly onWheelHandler: (e: WheelEvent) => void;
   private readonly onMouseDownHandler: (e: MouseEvent) => void;
+  private readonly onCompositionStartHandler: (e: CompositionEvent) => void;
+  private readonly onCompositionUpdateHandler: (e: CompositionEvent) => void;
+  private readonly onCompositionEndHandler: (e: CompositionEvent) => void;
+  /// `true` between `compositionstart` and `compositionend`. Used as a
+  /// backstop so keydown events that slip through `e.isComposing` (an
+  /// older spec quirk in some browsers — the flag isn't always set on
+  /// the `compositionstart`-triggering keydown itself) still get
+  /// suppressed.
+  private composing = false;
+  /// Pane the composition is targeting. Captured at `compositionstart`
+  /// so a click that re-focuses mid-composition doesn't route the
+  /// commit to a different pane. Cleared on `compositionend`.
+  private composingPaneId: bigint | null = null;
   /// Pending bell-flash clear timers, keyed by paneId-as-string so a
   /// repeat bell on the same pane re-arms cleanly instead of leaving
   /// the class permanently stuck.
@@ -193,6 +206,9 @@ export class CiriApp {
     };
     this.onWindowMouseMove = (e) => this.handleWindowMouseMove(e);
     this.onWindowMouseUp = (e) => this.handleWindowMouseUp(e);
+    this.onCompositionStartHandler = (e) => this.onCompositionStart(e);
+    this.onCompositionUpdateHandler = (e) => this.onCompositionUpdate(e);
+    this.onCompositionEndHandler = (e) => this.onCompositionEnd(e);
 
     // Hidden container for pane renderers whose tile isn't currently
     // mounted (inactive workspaces, transient layout reshapes).
@@ -244,12 +260,26 @@ export class CiriApp {
     this.root.removeEventListener("keydown", this.onKeyDownHandler);
     this.root.removeEventListener("wheel", this.onWheelHandler);
     this.root.removeEventListener("mousedown", this.onMouseDownHandler);
+    this.root.removeEventListener(
+      "compositionstart",
+      this.onCompositionStartHandler,
+    );
+    this.root.removeEventListener(
+      "compositionupdate",
+      this.onCompositionUpdateHandler,
+    );
+    this.root.removeEventListener(
+      "compositionend",
+      this.onCompositionEndHandler,
+    );
     const win = this.doc.defaultView;
     if (win !== null) {
       win.removeEventListener("mousemove", this.onWindowMouseMove);
       win.removeEventListener("mouseup", this.onWindowMouseUp);
     }
     this.dragState = null;
+    this.composing = false;
+    this.composingPaneId = null;
     // Cancel pending bell-flash clears so we don't run callbacks
     // against torn-down DOM.
     for (const t of this.bellTimers.values()) {
@@ -328,6 +358,15 @@ export class CiriApp {
     // Also starts the selection drag when the mousedown landed on a
     // tile (see `handleRootMouseDown`).
     this.root.addEventListener("mousedown", this.onMouseDownHandler);
+    // IME composition. Browsers fire these on any focusable element
+    // that receives keyboard input — the root is `tabIndex=0`, so the
+    // events bubble here while the user is composing (Pinyin, Kana,
+    // dead-keys, …). The commit goes through `sendInput` on
+    // `compositionend`; intermediate state drives the pre-edit
+    // overlay on the active pane's renderer.
+    this.root.addEventListener("compositionstart", this.onCompositionStartHandler);
+    this.root.addEventListener("compositionupdate", this.onCompositionUpdateHandler);
+    this.root.addEventListener("compositionend", this.onCompositionEndHandler);
   }
 
   /// Cell pixel size used for hit-testing mouse coords into (col,
@@ -521,6 +560,15 @@ export class CiriApp {
   }
 
   private onKeyDown(e: KeyboardEvent): void {
+    // While an IME composition is in flight the keystrokes belong to
+    // the input method — Enter/Space "select candidate", Esc "cancel",
+    // arrow keys "navigate candidate list". Forwarding them to the
+    // PTY would double-send characters as the candidate moves. The
+    // encoder itself also drops `isComposing` events; this is the
+    // outer layer that also guards against the rare event where
+    // `isComposing` isn't set on the very first keydown that
+    // triggered `compositionstart`.
+    if (e.isComposing || this.composing) return;
     // Clipboard chords intercept *before* the encoder runs: the
     // encoder rejects Ctrl+Shift+anything and Cmd+anything (the
     // browser-reserved escape hatches), but Ctrl+Shift+C / Cmd+C /
@@ -552,6 +600,69 @@ export class CiriApp {
     if (r === null) return;
     if (r.preventDefault) e.preventDefault();
     this.client.sendInput(target, r.bytes);
+  }
+
+  /// Composition just started — the user has begun a multi-keystroke
+  /// glyph entry (Pinyin sequence, IME prompt, dead-key chain). Lock
+  /// the target pane to whatever is currently focused so a mid-
+  /// composition click can't reroute the eventual commit.
+  private onCompositionStart(_e: CompositionEvent): void {
+    this.composing = true;
+    this.composingPaneId = this.activePaneId();
+  }
+
+  /// In-progress preedit text. Browsers fire one of these per
+  /// candidate-list keystroke; `data` is the cumulative preedit
+  /// string. Drive the renderer overlay; do NOT touch the wire (the
+  /// commit happens on `compositionend`).
+  private onCompositionUpdate(e: CompositionEvent): void {
+    const target = this.composingPaneId;
+    if (target === null) return;
+    const key = target.toString();
+    const renderer = this.renderers.get(key);
+    const grid = this.grids.get(key);
+    if (renderer === undefined || grid === undefined) return;
+    renderer.setPreedit(e.data);
+    renderer.render(grid);
+  }
+
+  /// Composition ended. `e.data` carries the final committed text
+  /// (empty string when the user canceled — e.g. Esc out of the
+  /// candidate list). On commit, push the bytes through the regular
+  /// `sendInput` path so server-side terminal apps see the same UTF-8
+  /// they would have seen from a non-IME keystroke. Always clear the
+  /// preedit overlay regardless.
+  private onCompositionEnd(e: CompositionEvent): void {
+    const target = this.composingPaneId;
+    this.composing = false;
+    this.composingPaneId = null;
+    if (target !== null) {
+      const key = target.toString();
+      const renderer = this.renderers.get(key);
+      const grid = this.grids.get(key);
+      if (renderer !== undefined) {
+        renderer.setPreedit(null);
+        if (grid !== undefined) renderer.render(grid);
+      }
+    }
+    if (target === null) return;
+    const data = e.data;
+    if (data === null || data.length === 0) return;
+    // IME commits are *typed input*, not pasted text — terminal apps
+    // running in bracketed-paste mode still expect `data` raw, no
+    // `ESC[200~...ESC[201~` envelope. Mirrors the native Rust
+    // client's `Ime::Commit` path in `app/ime.rs:17-44`.
+    this.client.sendInput(target, new TextEncoder().encode(data));
+  }
+
+  /// Best-effort active-pane resolver: prefer the pending click
+  /// target (so a click-then-IME-compose sequence routes to the
+  /// just-clicked pane even before the server has acked the focus
+  /// change), fall back to the server-reported active pane.
+  private activePaneId(): bigint | null {
+    if (this.pendingFocusedPaneId !== null) return this.pendingFocusedPaneId;
+    if (this.currentLayout === null) return null;
+    return LayoutManager.activePaneId(this.currentLayout);
   }
 
   private onWheel(e: WheelEvent): void {

@@ -1275,3 +1275,142 @@ describe("CiriApp — resize integration", () => {
     vi.restoreAllMocks();
   });
 });
+
+describe("CiriApp — IME composition", () => {
+  /// Build a CompositionEvent. jsdom supports the constructor but
+  /// requires the `data` field via the init dict.
+  function compositionEvent(
+    type: "compositionstart" | "compositionupdate" | "compositionend",
+    data: string,
+  ): CompositionEvent {
+    return new CompositionEvent(type, { data, bubbles: true });
+  }
+
+  test("compositionstart + update show the preedit on the active pane", () => {
+    const { root, app, fire, inputs } = bootstrap();
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    root.dispatchEvent(compositionEvent("compositionupdate", "ni"));
+    const p = document.querySelector<HTMLElement>(".ciri-preedit")!;
+    expect(p.style.display).toBe("block");
+    expect(p.textContent).toBe("ni");
+    // No bytes are written to the wire during composition.
+    expect(inputs.length).toBe(0);
+    void app;
+  });
+
+  test("compositionend sends the committed text and clears the overlay", () => {
+    const { root, app, fire, inputs } = bootstrap();
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    root.dispatchEvent(compositionEvent("compositionupdate", "ni"));
+    root.dispatchEvent(compositionEvent("compositionend", "你"));
+    expect(inputs.length).toBe(1);
+    expect(inputs[0]!.paneId).toBe(1n);
+    // UTF-8 of "你" → e4 bd a0
+    expect(Array.from(inputs[0]!.data)).toEqual([0xe4, 0xbd, 0xa0]);
+    const p = document.querySelector<HTMLElement>(".ciri-preedit")!;
+    expect(p.style.display).toBe("none");
+    void app;
+  });
+
+  test("compositionend with empty data (canceled) sends nothing", () => {
+    const { root, app, fire, inputs } = bootstrap();
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    root.dispatchEvent(compositionEvent("compositionupdate", "ni"));
+    // User pressed Esc / clicked outside the candidate list → empty data.
+    root.dispatchEvent(compositionEvent("compositionend", ""));
+    expect(inputs.length).toBe(0);
+    const p = document.querySelector<HTMLElement>(".ciri-preedit")!;
+    expect(p.style.display).toBe("none");
+    void app;
+  });
+
+  test("keydown during composition is suppressed (composing flag)", () => {
+    const { root, app, fire, inputs } = bootstrap();
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    // Mid-composition keystroke: even without `isComposing` set the
+    // app's own flag suppresses it.
+    root.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "a", bubbles: true }),
+    );
+    // And explicitly with `isComposing` true.
+    const e = new KeyboardEvent("keydown", { key: "Enter", bubbles: true });
+    Object.defineProperty(e, "isComposing", { value: true });
+    root.dispatchEvent(e);
+    expect(inputs.length).toBe(0);
+    // After composition ends the keystroke path resumes.
+    root.dispatchEvent(compositionEvent("compositionend", ""));
+    root.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "a", bubbles: true }),
+    );
+    expect(inputs.length).toBe(1);
+    expect(Array.from(inputs[0]!.data)).toEqual([0x61]);
+    void app;
+  });
+
+  test("compositionend routes to the pane that was active at compositionstart, not the current active", () => {
+    // Lock the target pane at compositionstart: a click that
+    // re-focuses mid-composition must NOT redirect the eventual
+    // commit. Mirror of the Rust client's behavior where IME state
+    // belongs to the focused pane.
+    const { root, app, fire, inputs } = bootstrap();
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutTwo(1n, 2n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_HYPER.hex) });
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    root.dispatchEvent(compositionEvent("compositionupdate", "ni"));
+    // Now the user clicks pane 2 mid-composition. The pending focus
+    // changes, but the composition target should stay locked.
+    const tile2 = document.querySelector<HTMLElement>("[data-pane-id='2']")!;
+    tile2.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    root.dispatchEvent(compositionEvent("compositionend", "你"));
+    expect(inputs.length).toBe(1);
+    expect(inputs[0]!.paneId).toBe(1n);
+    void app;
+  });
+
+  test("destroy() unregisters composition handlers", () => {
+    const { root, app, fire, inputs } = bootstrap();
+    app.start();
+    fire({
+      kind: "server-msg",
+      msg: { tag: "LayoutUpdate", layout: mkLayoutSingle(1n) },
+    });
+    fire({ kind: "full-pane-sync", payload: hexToBytes(FULL_SYNC_3X2.hex) });
+    app.destroy();
+    // Post-destroy composition events must not push bytes through the
+    // (now-closed) client. Mirror of the destroy-listener teardown
+    // round-3 codex fix for keydown/wheel/mousedown.
+    root.dispatchEvent(compositionEvent("compositionstart", ""));
+    root.dispatchEvent(compositionEvent("compositionupdate", "ni"));
+    root.dispatchEvent(compositionEvent("compositionend", "你"));
+    expect(inputs.length).toBe(0);
+  });
+});

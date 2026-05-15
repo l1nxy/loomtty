@@ -268,6 +268,26 @@ describe("encodeKeyboardEvent — browser-reserved fall-through", () => {
   });
 });
 
+describe("encodeKeyboardEvent — IME composition", () => {
+  test("isComposing=true short-circuits to null", () => {
+    // The composing keystroke (Pinyin candidate select, etc.) is
+    // delivered to the IME, not the PTY — we must drop it even if it
+    // looks like a printable. The committed text arrives separately
+    // via `compositionend` and is sent through `sendInput`.
+    const e = ev("a");
+    Object.defineProperty(e, "isComposing", { value: true });
+    expect(encodeKeyboardEvent(e)).toBeNull();
+  });
+
+  test("isComposing=true on Enter also returns null", () => {
+    // Enter during composition typically "select candidate" or
+    // "commit" — must not produce CR on the wire.
+    const e = ev("Enter");
+    Object.defineProperty(e, "isComposing", { value: true });
+    expect(encodeKeyboardEvent(e)).toBeNull();
+  });
+});
+
 describe("encodeKeyboardEvent — preventDefault flag", () => {
   test("Every produced encoding requests preventDefault=true", () => {
     // The contract is uniform: if we hand back bytes, the caller must

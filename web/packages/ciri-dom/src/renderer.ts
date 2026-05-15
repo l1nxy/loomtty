@@ -111,6 +111,17 @@ export class PaneRenderer {
   /// rects per its anchors. `app` derives text via `grid.extractText`.
   private selection: SelectionRange | null = null;
   private readonly selectionRowEls: HTMLElement[] = [];
+  /// IME pre-edit overlay. Shown above cell content at the cursor's
+  /// position while the user is composing a glyph through an input
+  /// method (Pinyin, Kana, Hangul Jamo, dead-key chains, …). Text is
+  /// driven by `setPreedit`; positioning tracks `grid.meta.cursorLine`
+  /// / `cursorCol` so the box always lines up with where the commit
+  /// will land. The actual commit goes through `client.sendInput`
+  /// from the application layer (this renderer never touches the
+  /// wire).
+  private readonly preeditEl: HTMLElement;
+  /// Active preedit content (`null` when no composition in flight).
+  private preedit: { text: string } | null = null;
 
   constructor(
     private readonly root: HTMLElement,
@@ -152,6 +163,25 @@ export class PaneRenderer {
     this.cursorEl.style.boxSizing = "border-box";
     this.cursorEl.style.display = "none";
     this.wrapper.appendChild(this.cursorEl);
+
+    // IME pre-edit overlay. Painted on top of cells but under the
+    // cursor caret would normally be — so we append AFTER the cursor
+    // and rely on later-sibling z-stacking. (Cursor blink animates
+    // opacity, not z-index, so the preedit sits above the dimmed
+    // cursor cell without flicker.) The visual treatment mirrors the
+    // native Rust client's `ImePreeditComponent`: dark translucent
+    // box, light text, blue underline.
+    this.preeditEl = this.doc.createElement("div");
+    this.preeditEl.className = "ciri-preedit";
+    this.preeditEl.style.position = "absolute";
+    this.preeditEl.style.pointerEvents = "none";
+    this.preeditEl.style.display = "none";
+    this.preeditEl.style.boxSizing = "content-box";
+    this.preeditEl.style.backgroundColor = "rgba(38, 38, 64, 0.95)";
+    this.preeditEl.style.color = "#ffffff";
+    this.preeditEl.style.borderBottom = "2px solid #80b3ff";
+    this.preeditEl.style.whiteSpace = "pre";
+    this.wrapper.appendChild(this.preeditEl);
   }
 
   /// Apply pending grid state to the DOM. Reads
@@ -228,6 +258,10 @@ export class PaneRenderer {
     // shape (visually consistent with native terminals — a selection
     // includes the cursor cell).
     this.updateSelection(grid);
+    // Pre-edit overlay sits on top of the cursor + selection: the
+    // composing glyph must be visible even when its target cell falls
+    // inside an active selection (rare in practice but possible).
+    this.updatePreedit(grid);
   }
 
   /// Set (or clear, with `null`) the selection overlay. The renderer
@@ -244,6 +278,27 @@ export class PaneRenderer {
   /// app-level introspection.
   get currentSelection(): SelectionRange | null {
     return this.selection;
+  }
+
+  /// Set (or clear, with `null` / empty string) the IME pre-edit
+  /// overlay. The renderer repaints the overlay on the next `render()`
+  /// call. Empty string clears (matches winit's `Ime::Preedit("", ...)`
+  /// idiom for "composition ended without a commit"). Passing the
+  /// same text twice in a row is a no-op.
+  setPreedit(text: string | null): void {
+    if (text === null || text.length === 0) {
+      if (this.preedit === null) return;
+      this.preedit = null;
+      return;
+    }
+    if (this.preedit !== null && this.preedit.text === text) return;
+    this.preedit = { text };
+  }
+
+  /// Current pre-edit text (or `null`). Read-only view for tests and
+  /// app-level introspection.
+  get currentPreedit(): string | null {
+    return this.preedit === null ? null : this.preedit.text;
   }
 
   /// Set the number of rows to shift the display upward into
@@ -287,6 +342,7 @@ export class PaneRenderer {
     this.rowEls = [];
     this.selectionRowEls.length = 0;
     this.selection = null;
+    this.preedit = null;
   }
 
   /// Public read-only handle to the wrapper element — useful for
@@ -433,6 +489,38 @@ export class PaneRenderer {
     }
   }
 
+  private updatePreedit(grid: PaneGrid): void {
+    if (this.preedit === null) {
+      this.preeditEl.style.display = "none";
+      this.preeditEl.textContent = "";
+      return;
+    }
+    const { cursorLine, cursorCol } = grid.meta;
+    // Pre-edit anchors to the cursor cell, same scroll-offset math as
+    // `updateCursor`. If the cursor has scrolled out of the visible
+    // viewport (user paged back into scrollback), hide the overlay —
+    // the commit will still land at the live position, but visually
+    // showing the preedit on top of unrelated scrollback rows is more
+    // confusing than helpful.
+    const displayRow = cursorLine + this.scrollOffset;
+    if (
+      displayRow < 0 ||
+      displayRow >= grid.rows ||
+      cursorCol < 0 ||
+      cursorCol >= grid.cols
+    ) {
+      this.preeditEl.style.display = "none";
+      return;
+    }
+    const cols = Math.max(1, displayWidth(this.preedit.text));
+    this.preeditEl.textContent = this.preedit.text;
+    this.preeditEl.style.left = `${cursorCol}ch`;
+    this.preeditEl.style.top = `${displayRow * 1.2}em`;
+    this.preeditEl.style.width = `${cols}ch`;
+    this.preeditEl.style.height = "1.2em";
+    this.preeditEl.style.display = "block";
+  }
+
   private stopCursorBlink(): void {
     if (this.cursorAnim !== null) {
       this.cursorAnim.cancel();
@@ -564,6 +652,55 @@ function cursorShapeName(shape: number): string {
     default:
       return "unknown";
   }
+}
+
+/// Best-effort display width for an IME pre-edit string in terminal
+/// cells. Mirrors `unicode-width::UnicodeWidthStr::width` for the
+/// ranges the input methods we care about actually produce — full
+/// CJK Unified Ideographs, kana, Hangul syllables, fullwidth ASCII,
+/// the supplementary CJK extensions. Combining marks and zero-width
+/// joiners contribute zero so they don't push the box wider than the
+/// final glyph cluster. Anything outside the table contributes 1
+/// (the safe default for Latin and most non-wide scripts).
+///
+/// This function never has to be *exactly* right — the preedit box
+/// is a visual hint, not a layout-critical measurement. Off-by-one
+/// at extremes (some emoji, ZWJ sequences) is acceptable. The wire
+/// commit goes through the regular UTF-8 path; this width math only
+/// affects the local overlay.
+function displayWidth(s: string): number {
+  let w = 0;
+  for (const ch of s) {
+    const cp = ch.codePointAt(0)!;
+    if (
+      // Combining marks (Mn).
+      (cp >= 0x0300 && cp <= 0x036f) ||
+      // Zero-width / direction marks.
+      (cp >= 0x200b && cp <= 0x200f) ||
+      cp === 0xfeff
+    ) {
+      // width 0
+    } else if (
+      (cp >= 0x1100 && cp <= 0x115f) || // Hangul Jamo init.
+      (cp >= 0x2e80 && cp <= 0x303e) || // CJK Radicals / Kangxi / punctuation
+      (cp >= 0x3041 && cp <= 0x33ff) || // Hiragana, Katakana, Bopomofo, Hangul Compat …
+      (cp >= 0x3400 && cp <= 0x4dbf) || // CJK Extension A
+      (cp >= 0x4e00 && cp <= 0x9fff) || // CJK Unified Ideographs
+      (cp >= 0xa000 && cp <= 0xa4cf) || // Yi
+      (cp >= 0xac00 && cp <= 0xd7a3) || // Hangul Syllables
+      (cp >= 0xf900 && cp <= 0xfaff) || // CJK Compatibility Ideographs
+      (cp >= 0xfe30 && cp <= 0xfe4f) || // CJK Compatibility Forms
+      (cp >= 0xff00 && cp <= 0xff60) || // Fullwidth ASCII
+      (cp >= 0xffe0 && cp <= 0xffe6) || // Fullwidth signs
+      (cp >= 0x20000 && cp <= 0x2fffd) || // CJK Ext B..F
+      (cp >= 0x30000 && cp <= 0x3fffd) // CJK Ext G
+    ) {
+      w += 2;
+    } else {
+      w += 1;
+    }
+  }
+  return w;
 }
 
 function mapUnderlineStyle(

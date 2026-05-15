@@ -60,6 +60,11 @@ export function encodeKeyboardEvent(
   e: KeyboardEvent,
   opts?: KeyEncoderOptions,
 ): KeyEncoding | null {
+  // IME composition in progress: the keystrokes belong to the input
+  // method, not the terminal. The composition's `compositionend.data`
+  // is what we'll actually send. Drop the keydown silently — the
+  // browser will still fire the composition events.
+  if (e.isComposing) return null;
   // Modifier-only events fire on press *and* release of Shift/Ctrl/...
   // by themselves; the terminal expects nothing on those. "Dead" is
   // the in-progress dead key (e.g. accent before vowel on a French

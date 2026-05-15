@@ -980,4 +980,126 @@ describe("PaneRenderer", () => {
     expect(DEFAULT_THEME.background).toBeTruthy();
     root.remove();
   });
+
+  // ── pre-edit overlay (IME) ───────────────────────────────────────
+
+  test("preedit element exists and is initially hidden", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root);
+    const p = root.querySelector(".ciri-preedit") as HTMLElement;
+    expect(p).not.toBeNull();
+    expect(p.style.display).toBe("none");
+    expect(r.currentPreedit).toBeNull();
+    root.remove();
+  });
+
+  test("setPreedit shows the overlay at the cursor position", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root, { cursorBlink: false });
+    const grid = new PaneGrid(1n, 10, 3);
+    const sync = blankSync(10, 3);
+    sync.meta.cursorLine = 1;
+    sync.meta.cursorCol = 4;
+    grid.applyFullPaneSync(sync);
+    r.setPreedit("ni");
+    r.render(grid);
+    const p = root.querySelector(".ciri-preedit") as HTMLElement;
+    expect(p.style.display).toBe("block");
+    expect(p.style.left).toBe("4ch");
+    expect(p.style.top).toBe(`${1 * 1.2}em`);
+    expect(p.textContent).toBe("ni");
+    // "ni" is two ASCII cells wide.
+    expect(p.style.width).toBe("2ch");
+    expect(r.currentPreedit).toBe("ni");
+    root.remove();
+  });
+
+  test("setPreedit width counts CJK as double-width", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root, { cursorBlink: false });
+    const grid = new PaneGrid(1n, 10, 1);
+    grid.applyFullPaneSync(blankSync(10, 1));
+    r.setPreedit("你好");
+    r.render(grid);
+    const p = root.querySelector<HTMLElement>(".ciri-preedit")!;
+    // Two CJK glyphs → 4 cells.
+    expect(p.style.width).toBe("4ch");
+    expect(p.textContent).toBe("你好");
+    root.remove();
+  });
+
+  test("setPreedit(null) hides the overlay on next render", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root, { cursorBlink: false });
+    const grid = new PaneGrid(1n, 4, 1);
+    grid.applyFullPaneSync(blankSync(4, 1));
+    r.setPreedit("ab");
+    r.render(grid);
+    expect(
+      (root.querySelector(".ciri-preedit") as HTMLElement).style.display,
+    ).toBe("block");
+    r.setPreedit(null);
+    r.render(grid);
+    const p = root.querySelector(".ciri-preedit") as HTMLElement;
+    expect(p.style.display).toBe("none");
+    expect(r.currentPreedit).toBeNull();
+    root.remove();
+  });
+
+  test("setPreedit(empty string) is treated as a clear", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root, { cursorBlink: false });
+    const grid = new PaneGrid(1n, 4, 1);
+    grid.applyFullPaneSync(blankSync(4, 1));
+    r.setPreedit("x");
+    r.render(grid);
+    r.setPreedit("");
+    r.render(grid);
+    expect(r.currentPreedit).toBeNull();
+    expect(
+      (root.querySelector(".ciri-preedit") as HTMLElement).style.display,
+    ).toBe("none");
+    root.remove();
+  });
+
+  test("preedit overlay hides when cursor is out of viewport bounds", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root, { cursorBlink: false });
+    const grid = new PaneGrid(1n, 4, 2);
+    const sync = blankSync(4, 2);
+    sync.meta.cursorLine = 99; // past the bottom
+    sync.meta.cursorCol = 0;
+    grid.applyFullPaneSync(sync);
+    r.setPreedit("test");
+    r.render(grid);
+    const p = root.querySelector(".ciri-preedit") as HTMLElement;
+    // overlay element still exists but is hidden because the cursor
+    // landed outside the visible rows.
+    expect(p.style.display).toBe("none");
+    // The preedit *state* survives — when the cursor moves back into
+    // range the overlay should reappear.
+    expect(r.currentPreedit).toBe("test");
+    root.remove();
+  });
+
+  test("destroy clears preedit state", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const r = new PaneRenderer(root, { cursorBlink: false });
+    const grid = new PaneGrid(1n, 4, 1);
+    grid.applyFullPaneSync(blankSync(4, 1));
+    r.setPreedit("zh");
+    r.render(grid);
+    expect(root.querySelector(".ciri-preedit")).not.toBeNull();
+    r.destroy();
+    // Wrapper is gone, so the preedit element goes with it.
+    expect(document.querySelector(".ciri-preedit")).toBeNull();
+    expect(r.currentPreedit).toBeNull();
+  });
 });

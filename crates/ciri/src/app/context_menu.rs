@@ -103,6 +103,26 @@ impl App {
                 ContextMenuAction::SetThemePreset(name) => {
                     self.apply_theme_preset(name.clone());
                 }
+                ContextMenuAction::SetSettingsEnum { field_id, value } => {
+                    // Decode the opaque field id back into a typed
+                    // `SettingsField` and route through the settings
+                    // dispatcher — same code path as a panel-side
+                    // toggle/nudge, including disk persistence and
+                    // any field-specific side-effects (theme reload,
+                    // cache invalidates).
+                    use crate::app::ui::settings_panel::dispatch::SettingsControl;
+                    use crate::app::ui::settings_panel::schema::SettingsField;
+                    if let Some(field) = SettingsField::from_id(*field_id) {
+                        self.apply_settings_control(SettingsControl::SetEnum {
+                            field,
+                            value: value.clone(),
+                        });
+                    } else {
+                        log::warn!(
+                            "context_menu: SetSettingsEnum with unknown field_id {field_id}",
+                        );
+                    }
+                }
             }
         }
         self.core.context_menu.visible = false;

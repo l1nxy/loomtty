@@ -209,11 +209,5 @@ impl<'a> PaneTabsElement<'a> {
 }
 
 fn abs_rect(x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) -> Div {
-    div()
-        .absolute()
-        .left(x)
-        .top(y)
-        .w(w)
-        .h(h)
-        .bg(color)
+    div().absolute().left(x).top(y).w(w).h(h).bg(color)
 }

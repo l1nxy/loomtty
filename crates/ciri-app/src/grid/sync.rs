@@ -89,12 +89,7 @@ impl ClientPaneGrid {
         let mut rebased_grapheme_map = if cols_changed || sync.scrollback_replace {
             HashMap::new()
         } else {
-            rebase_grapheme_lookup(
-                &old_grapheme_map,
-                old_scrollback_rows,
-                old_cols,
-                trim_count,
-            )
+            rebase_grapheme_lookup(&old_grapheme_map, old_scrollback_rows, old_cols, trim_count)
         };
 
         let sb_expected = appended_scrollback_rows * new_cols;

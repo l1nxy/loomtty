@@ -5,13 +5,13 @@ pub(super) mod debug_panel;
 mod frame;
 mod hints_bar;
 pub(super) mod ime_preedit;
-mod interaction;
 pub(super) mod info_box;
+mod interaction;
 pub(crate) mod overview;
 mod palette;
 mod paste_dialog;
 pub(super) mod search_bar;
-pub(super) mod settings_panel;
+pub(crate) mod settings_panel;
 mod tab_bar;
 mod text_layout;
 pub(crate) mod tokens;
@@ -19,9 +19,9 @@ mod top_bar;
 mod transient;
 pub(crate) mod types;
 
+use frame::UiFrame;
 #[cfg(test)]
 pub(crate) use frame::chrome_rects;
-use frame::UiFrame;
 pub(crate) use types::*;
 
 use ciri_render::glyph_cache::GlyphInstance;
@@ -151,7 +151,6 @@ impl App {
             cell_h * self.core.config.statusbar.text_baseline,
         )
     }
-
 }
 
 #[cfg(test)]
@@ -377,8 +376,13 @@ mod tests {
         // friendly set — adding press feedback alone (no hover) would
         // feel inconsistent with the rest of the bar.
         let cx = app.ui_context();
-        let layout =
-            app.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h, cx.ui_shaper);
+        let layout = app.top_bar_layout(
+            cx.viewport_w,
+            cx.viewport_h,
+            cx.cell_w,
+            cx.cell_h,
+            cx.ui_shaper,
+        );
         let mode_x = cx.viewport_w - 4.0;
         assert_eq!(
             app.capture_active_press_hit_id(mode_x, layout.bar_y + 2.0),
@@ -398,10 +402,16 @@ mod tests {
 
         let app = make_app();
         let cx = app.ui_context();
-        let layout =
-            app.top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h, cx.ui_shaper);
+        let layout = app.top_bar_layout(
+            cx.viewport_w,
+            cx.viewport_h,
+            cx.cell_w,
+            cx.cell_h,
+            cx.ui_shaper,
+        );
         let bar_y = layout.bar_y + layout.bar_height * 0.5;
-        let bar_rect = super::types::UiRect::new(0.0, layout.bar_y, cx.viewport_w, layout.bar_height);
+        let bar_rect =
+            super::types::UiRect::new(0.0, layout.bar_y, cx.viewport_w, layout.bar_height);
         let component = TopBarComponent::capture(&app, layout, &cx);
         let slots = component.row_slots(bar_rect, &cx);
 
@@ -580,9 +590,7 @@ mod tests {
     /// this regression and a prior critic round caught it.
     #[test]
     fn execute_palette_action_entry_does_not_double_close_new_modal() {
-        use ciri_app::app::{
-            CommandPaletteState, PaletteEntry, PaletteEntryKind,
-        };
+        use ciri_app::app::{CommandPaletteState, PaletteEntry, PaletteEntryKind};
         use ciri_input::action::Action;
 
         let mut app = make_app();
@@ -628,9 +636,7 @@ mod tests {
     /// via mouse flashes the panel open then immediately closed.
     #[test]
     fn ui_execute_palette_entry_does_not_double_close_new_modal() {
-        use ciri_app::app::{
-            CommandPaletteState, PaletteEntry, PaletteEntryKind,
-        };
+        use ciri_app::app::{CommandPaletteState, PaletteEntry, PaletteEntryKind};
         use ciri_input::action::Action;
 
         let mut app = make_app();
@@ -945,46 +951,12 @@ mod tests {
         assert!(app.core.search_state.is_none());
     }
 
-    /// `NudgePaneOpacity` clamps at the documented floor (0.05) — fully
-    /// transparent panes are intentionally disallowed via the panel
-    /// (users wanting opacity 0 edit settings.toml directly).
-    #[test]
-    fn nudge_pane_opacity_clamps_at_floor() {
-        use crate::app::ui::types::NudgeDirection;
-
-        let mut app = make_app();
-        app.core.config.appearance.pane_opacity = 0.10;
-        app.apply_ui_action(UiAction::NudgePaneOpacity(NudgeDirection::Decrement));
-        assert!(
-            (app.core.config.appearance.pane_opacity - 0.05).abs() < 1e-6,
-            "single decrement from 0.10 should land on 0.05: {}",
-            app.core.config.appearance.pane_opacity,
-        );
-        // Further decrements stay clamped — no underflow into negative
-        // values.
-        for _ in 0..5 {
-            app.apply_ui_action(UiAction::NudgePaneOpacity(NudgeDirection::Decrement));
-        }
-        assert!(
-            (app.core.config.appearance.pane_opacity - 0.05).abs() < 1e-6,
-            "decrement past the floor must clamp at 0.05",
-        );
-    }
-
-    #[test]
-    fn nudge_pane_opacity_clamps_at_ceiling() {
-        use crate::app::ui::types::NudgeDirection;
-
-        let mut app = make_app();
-        app.core.config.appearance.pane_opacity = 0.97;
-        for _ in 0..5 {
-            app.apply_ui_action(UiAction::NudgePaneOpacity(NudgeDirection::Increment));
-        }
-        assert!(
-            (app.core.config.appearance.pane_opacity - 1.0).abs() < 1e-6,
-            "increment past 1.0 must clamp at 1.0",
-        );
-    }
+    // Stepper clamp behaviour now lives in the schema module
+    // (`schema::tests::nudge_clamps_at_bounds`) since the dispatcher is
+    // a thin wrapper. The integration shape — that pressing the
+    // dispatcher's button at the floor doesn't underflow — is covered
+    // there for every Float field; no need to re-prove it per UiAction
+    // variant.
 
     /// `SettingsPanelComponent::capture` returns `None` while the panel
     /// is hidden — gates the rest of the chrome paint pipeline.
@@ -1010,8 +982,8 @@ mod tests {
         let mut app = make_app();
         app.core.settings_panel_visible = true;
         let cx = app.ui_context();
-        let component = SettingsPanelComponent::capture(&app, &cx)
-            .expect("panel visible after toggle");
+        let component =
+            SettingsPanelComponent::capture(&app, &cx).expect("panel visible after toggle");
         // (0, 0) is reliably outside the centred panel for any
         // non-trivial viewport.
         let action = component.click(0.0, 0.0, &cx);
@@ -1019,19 +991,10 @@ mod tests {
     }
 
     /// Click on the panel body (not on any interactive child) returns
-    /// `None` — the click is absorbed and does NOT dismiss settings.
-    /// Pins the `Dialog` no-op contract; without this guard a future
-    /// hit_id reordering could silently turn panel-body clicks into
-    /// dismissals.
-    ///
-    /// Sweeps a small grid of candidate "panel body" coordinates and
-    /// requires at least one to land on the panel and produce `None`.
-    /// Without this self-check the test could silently move from
-    /// "click landed on Dialog" to "click landed on backdrop" if
-    /// future layout changes shift the spacer position; both happen
-    /// to return `None`-as-Action but for different reasons (Dialog
-    /// → no-op vs None → CloseSettings via the click handler's
-    /// `None | Close` arm).
+    /// `SettingsNoOp` — the click is absorbed and does NOT dismiss
+    /// settings. Pins the `Dialog` no-op contract; without this guard
+    /// a future hit_id reordering could silently turn panel-body
+    /// clicks into dismissals.
     #[test]
     fn settings_dialog_body_click_is_no_op() {
         use crate::app::ui::settings_panel::SettingsPanelComponent;
@@ -1039,90 +1002,24 @@ mod tests {
         let mut app = make_app();
         app.core.settings_panel_visible = true;
         let cx = app.ui_context();
-        let component = SettingsPanelComponent::capture(&app, &cx)
-            .expect("panel visible after toggle");
-        // Probe multiple "likely panel body" points so the test still
-        // works if flex-spacer geometry shifts slightly with future
-        // layout tweaks. Centre is the most reliable; the offsets
-        // sample around it. The assertion verifies the click hit the
-        // Dialog hit_id (panel body) AND returned no action.
+        let component =
+            SettingsPanelComponent::capture(&app, &cx).expect("panel visible after toggle");
+        // Probe several "likely panel body" points (region between
+        // sidebar and right edge, mid-vertical). At least one must
+        // land on the body and produce SettingsNoOp.
         let cx_w = cx.viewport_w;
         let cx_h = cx.viewport_h;
         let candidates: &[(f32, f32)] = &[
-            (cx_w * 0.5, cx_h * 0.5),
-            (cx_w * 0.5, cx_h * 0.55),
-            (cx_w * 0.5, cx_h * 0.45),
+            (cx_w * 0.7, cx_h * 0.85),
+            (cx_w * 0.7, cx_h * 0.82),
+            (cx_w * 0.6, cx_h * 0.85),
         ];
-        let any_dialog_hit = candidates.iter().any(|&(mx, my)| {
-            component.hover_hit_id(mx, my, &cx)
-                == Some(crate::app::ui::settings_panel::settings_panel_hit_dialog_for_test())
-                && component.click(mx, my, &cx).is_none()
-        });
+        let any_dialog_hit = candidates
+            .iter()
+            .any(|&(mx, my)| component.click(mx, my, &cx) == Some(UiAction::SettingsNoOp));
         assert!(
             any_dialog_hit,
-            "at least one panel-body candidate must hit Dialog and absorb the click",
-        );
-    }
-
-    /// Opacity stepper buttons opt into press-state styling via
-    /// `active_press_hit_id`. The negative case
-    /// (`capture_active_press_hit_id_returns_none_outside_press_friendly_chrome`)
-    /// already covers content area; this is the positive case so a
-    /// future hit_id collision or `pub(super)` visibility change can't
-    /// silently break the press-state wiring.
-    #[test]
-    fn capture_active_press_hit_id_matches_opacity_steppers() {
-        use crate::app::ui::settings_panel::SettingsPanelComponent;
-
-        let mut app = make_app();
-        app.core.settings_panel_visible = true;
-        let cx = app.ui_context();
-        let component = SettingsPanelComponent::capture(&app, &cx)
-            .expect("panel visible after toggle");
-
-        // Sweep the panel for the dec / inc hit_ids — concrete
-        // coordinates depend on layout. `hover_hit_id` reports the
-        // walker's hit, then `capture_active_press_hit_id` is asked to
-        // return the same id for press-state tracking.
-        let mut found_dec = false;
-        let mut found_inc = false;
-        for ix in 0..40 {
-            for iy in 0..40 {
-                let mx = (ix as f32 + 0.5) / 40.0 * cx.viewport_w;
-                let my = (iy as f32 + 0.5) / 40.0 * cx.viewport_h;
-                match component.hover_hit_id(mx, my, &cx) {
-                    Some(id)
-                        if id
-                            == crate::app::ui::settings_panel::HIT_OPACITY_DEC =>
-                    {
-                        assert_eq!(
-                            app.capture_active_press_hit_id(mx, my),
-                            Some(crate::app::ui::settings_panel::HIT_OPACITY_DEC),
-                            "opacity dec must register for press-state styling",
-                        );
-                        found_dec = true;
-                    }
-                    Some(id)
-                        if id
-                            == crate::app::ui::settings_panel::HIT_OPACITY_INC =>
-                    {
-                        assert_eq!(
-                            app.capture_active_press_hit_id(mx, my),
-                            Some(crate::app::ui::settings_panel::HIT_OPACITY_INC),
-                            "opacity inc must register for press-state styling",
-                        );
-                        found_inc = true;
-                    }
-                    _ => {}
-                }
-                if found_dec && found_inc {
-                    return;
-                }
-            }
-        }
-        panic!(
-            "couldn't locate opacity stepper hit_ids on the rendered panel — \
-             dec_found={found_dec} inc_found={found_inc}",
+            "at least one panel-body candidate must absorb the click as SettingsNoOp",
         );
     }
 }

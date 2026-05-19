@@ -291,28 +291,28 @@ fn draw_lines(spec: LineSpec, m: &Metrics, x: f32, y: f32, color: [f32; 4], out:
 const fn line_spec(cp: u32) -> Option<LineSpec> {
     let s = match cp {
         // ── Pure horizontals & verticals ─────────────────────────
-        0x2500 => ls(L0, Light, L0, Light),    // ─
-        0x2501 => ls(L0, Heavy, L0, Heavy),    // ━
-        0x2502 => ls(Light, L0, Light, L0),    // │
-        0x2503 => ls(Heavy, L0, Heavy, L0),    // ┃
+        0x2500 => ls(L0, Light, L0, Light), // ─
+        0x2501 => ls(L0, Heavy, L0, Heavy), // ━
+        0x2502 => ls(Light, L0, Light, L0), // │
+        0x2503 => ls(Heavy, L0, Heavy, L0), // ┃
 
         // ── Right-angle corners (light/light) ────────────────────
-        0x250C => ls(L0, Light, Light, L0),    // ┌
-        0x250D => ls(L0, Heavy, Light, L0),    // ┍
-        0x250E => ls(L0, Light, Heavy, L0),    // ┎
-        0x250F => ls(L0, Heavy, Heavy, L0),    // ┏
-        0x2510 => ls(L0, L0, Light, Light),    // ┐
-        0x2511 => ls(L0, L0, Light, Heavy),    // ┑
-        0x2512 => ls(L0, L0, Heavy, Light),    // ┒
-        0x2513 => ls(L0, L0, Heavy, Heavy),    // ┓
-        0x2514 => ls(Light, Light, L0, L0),    // └
-        0x2515 => ls(Light, Heavy, L0, L0),    // ┕
-        0x2516 => ls(Heavy, Light, L0, L0),    // ┖
-        0x2517 => ls(Heavy, Heavy, L0, L0),    // ┗
-        0x2518 => ls(Light, L0, L0, Light),    // ┘
-        0x2519 => ls(Light, L0, L0, Heavy),    // ┙
-        0x251A => ls(Heavy, L0, L0, Light),    // ┚
-        0x251B => ls(Heavy, L0, L0, Heavy),    // ┛
+        0x250C => ls(L0, Light, Light, L0), // ┌
+        0x250D => ls(L0, Heavy, Light, L0), // ┍
+        0x250E => ls(L0, Light, Heavy, L0), // ┎
+        0x250F => ls(L0, Heavy, Heavy, L0), // ┏
+        0x2510 => ls(L0, L0, Light, Light), // ┐
+        0x2511 => ls(L0, L0, Light, Heavy), // ┑
+        0x2512 => ls(L0, L0, Heavy, Light), // ┒
+        0x2513 => ls(L0, L0, Heavy, Heavy), // ┓
+        0x2514 => ls(Light, Light, L0, L0), // └
+        0x2515 => ls(Light, Heavy, L0, L0), // ┕
+        0x2516 => ls(Heavy, Light, L0, L0), // ┖
+        0x2517 => ls(Heavy, Heavy, L0, L0), // ┗
+        0x2518 => ls(Light, L0, L0, Light), // ┘
+        0x2519 => ls(Light, L0, L0, Heavy), // ┙
+        0x251A => ls(Heavy, L0, L0, Light), // ┚
+        0x251B => ls(Heavy, L0, L0, Heavy), // ┛
 
         // ── Vertical T-junctions (left bar) ──────────────────────
         0x251C => ls(Light, Light, Light, L0), // ├
@@ -373,34 +373,34 @@ const fn line_spec(cp: u32) -> Option<LineSpec> {
         0x254B => ls(Heavy, Heavy, Heavy, Heavy), // ╋
 
         // ── Double-line family ───────────────────────────────────
-        0x2550 => ls(L0, Double, L0, Double),       // ═
-        0x2551 => ls(Double, L0, Double, L0),       // ║
-        0x2552 => ls(L0, Double, Light, L0),        // ╒
-        0x2553 => ls(L0, Light, Double, L0),        // ╓
-        0x2554 => ls(L0, Double, Double, L0),       // ╔
-        0x2555 => ls(L0, L0, Light, Double),        // ╕
-        0x2556 => ls(L0, L0, Double, Light),        // ╖
-        0x2557 => ls(L0, L0, Double, Double),       // ╗
-        0x2558 => ls(Light, Double, L0, L0),        // ╘
-        0x2559 => ls(Double, Light, L0, L0),        // ╙
-        0x255A => ls(Double, Double, L0, L0),       // ╚
-        0x255B => ls(Light, L0, L0, Double),        // ╛
-        0x255C => ls(Double, L0, L0, Light),        // ╜
-        0x255D => ls(Double, L0, L0, Double),       // ╝
-        0x255E => ls(Light, Double, Light, L0),     // ╞
-        0x255F => ls(Double, Light, Double, L0),    // ╟
-        0x2560 => ls(Double, Double, Double, L0),   // ╠
-        0x2561 => ls(Light, L0, Light, Double),     // ╡
-        0x2562 => ls(Double, L0, Double, Light),    // ╢
-        0x2563 => ls(Double, L0, Double, Double),   // ╣
-        0x2564 => ls(L0, Double, Light, Double),    // ╤
-        0x2565 => ls(L0, Light, Double, Light),     // ╥
-        0x2566 => ls(L0, Double, Double, Double),   // ╦
-        0x2567 => ls(Light, Double, L0, Double),    // ╧
-        0x2568 => ls(Double, Light, L0, Light),     // ╨
-        0x2569 => ls(Double, Double, L0, Double),   // ╩
-        0x256A => ls(Light, Double, Light, Double), // ╪
-        0x256B => ls(Double, Light, Double, Light), // ╫
+        0x2550 => ls(L0, Double, L0, Double),         // ═
+        0x2551 => ls(Double, L0, Double, L0),         // ║
+        0x2552 => ls(L0, Double, Light, L0),          // ╒
+        0x2553 => ls(L0, Light, Double, L0),          // ╓
+        0x2554 => ls(L0, Double, Double, L0),         // ╔
+        0x2555 => ls(L0, L0, Light, Double),          // ╕
+        0x2556 => ls(L0, L0, Double, Light),          // ╖
+        0x2557 => ls(L0, L0, Double, Double),         // ╗
+        0x2558 => ls(Light, Double, L0, L0),          // ╘
+        0x2559 => ls(Double, Light, L0, L0),          // ╙
+        0x255A => ls(Double, Double, L0, L0),         // ╚
+        0x255B => ls(Light, L0, L0, Double),          // ╛
+        0x255C => ls(Double, L0, L0, Light),          // ╜
+        0x255D => ls(Double, L0, L0, Double),         // ╝
+        0x255E => ls(Light, Double, Light, L0),       // ╞
+        0x255F => ls(Double, Light, Double, L0),      // ╟
+        0x2560 => ls(Double, Double, Double, L0),     // ╠
+        0x2561 => ls(Light, L0, Light, Double),       // ╡
+        0x2562 => ls(Double, L0, Double, Light),      // ╢
+        0x2563 => ls(Double, L0, Double, Double),     // ╣
+        0x2564 => ls(L0, Double, Light, Double),      // ╤
+        0x2565 => ls(L0, Light, Double, Light),       // ╥
+        0x2566 => ls(L0, Double, Double, Double),     // ╦
+        0x2567 => ls(Light, Double, L0, Double),      // ╧
+        0x2568 => ls(Double, Light, L0, Light),       // ╨
+        0x2569 => ls(Double, Double, L0, Double),     // ╩
+        0x256A => ls(Light, Double, Light, Double),   // ╪
+        0x256B => ls(Double, Light, Double, Light),   // ╫
         0x256C => ls(Double, Double, Double, Double), // ╬
         _ => return None,
     };
@@ -754,7 +754,15 @@ mod tests {
     #[test]
     fn shaded_blocks_attenuate_alpha() {
         let mut v = Vec::new();
-        emit('\u{2592}', 0.0, 0.0, 16.0, 32.0, [1.0, 1.0, 1.0, 1.0], &mut v);
+        emit(
+            '\u{2592}',
+            0.0,
+            0.0,
+            16.0,
+            32.0,
+            [1.0, 1.0, 1.0, 1.0],
+            &mut v,
+        );
         assert_eq!(v.len(), 1);
         assert_eq!(v[0].color[3], 0.5, "▒ should be ~50% alpha");
     }

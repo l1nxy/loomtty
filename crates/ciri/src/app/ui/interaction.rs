@@ -181,79 +181,16 @@ impl App {
                 // panel — no per-child cleanup list to maintain.
                 self.enter_modal_close_peers(ModalKind::None);
             }
-            UiAction::OpenThemeDropdown => {
-                // Reuse the existing context_menu popup as the dropdown
-                // surface — its anchored / outside-click / hit-walker
-                // pipeline is already production-tested. Items populate
-                // with the built-in preset list; clicking one fires
-                // `ContextMenuAction::SetThemePreset(name)` which the
-                // standard dispatch handles via `apply_theme_preset`.
-                //
-                // Anchor at the cursor; fall back to the viewport
-                // centre rather than `(0, 0)` (which would put the
-                // popup at the top-left corner) when `last_mouse_pos`
-                // is None — that path is reachable if the action ever
-                // gets dispatched from a non-mouse trigger.
-                // Anchor popup BELOW the trigger row so it doesn't
-                // visually overlap the dropdown's value text. The GPU
-                // pipeline batches by primitive type (rects then
-                // glyphs across the whole frame), so chrome glyphs
-                // emitted earlier — including the Dropdown trigger
-                // value — paint *after* the menu rect. Without this
-                // offset the trigger glyphs bleed through the popup.
-                //
-                // 44 px is slightly larger than `Dropdown::ROW_H`
-                // (40 px) — a fixed offset is enough since the panel's
-                // dropdown row sits at a known Y, and `anchored()`
-                // edge-flips upward if the offset would clip the
-                // popup off the bottom of the viewport.
-                const POPUP_OFFSET_Y: f32 = 44.0;
-                let (mx, my) = self.last_mouse_pos.map(|(x, y)| (x, y + POPUP_OFFSET_Y))
-                    .unwrap_or_else(|| {
-                        let (vw, vh) = self.command_palette_viewport_size();
-                        (vw * 0.5, vh * 0.5)
-                    });
-                let current = self.core.config.theme.preset.clone();
-                // Preset names come from `ThemeConfig::preset_names()`
-                // so adding / renaming a preset there flows through
-                // automatically — no second source-of-truth list to
-                // keep in sync.
-                let presets = ciri_config::theme::ThemeConfig::preset_names();
-                let items = presets
-                    .iter()
-                    .copied()
-                    .map(|name| {
-                        let active = name == current
-                            || (current.is_empty() && name == "ciri_dark");
-                        let label = if active {
-                            format!("\u{2713} {}", name)
-                        } else {
-                            format!("  {}", name)
-                        };
-                        crate::app::ContextMenuItem {
-                            label,
-                            action: crate::app::ContextMenuAction::SetThemePreset(
-                                name.to_string(),
-                            ),
-                            enabled: true,
-                        }
-                    })
-                    .collect();
-                // Theme dropdown reuses `context_menu` as a submodal
-                // anchored under settings. The `OverSettings` payload
-                // tells the gate to preserve `settings_panel_visible`
-                // (the parent) rather than tearing it down.
-                self.enter_modal_close_peers(ModalKind::ContextMenu(
-                    ContextMenuParent::OverSettings,
-                ));
-                self.core.context_menu = crate::app::ContextMenu {
-                    visible: true,
-                    x: mx,
-                    y: my,
-                    target_pane_id: None,
-                    items,
-                };
+            UiAction::OpenSettingsDropdown(field) => {
+                self.open_settings_enum_dropdown(field);
             }
+            UiAction::SelectSettingsCategory(cat) => {
+                self.select_settings_category(cat);
+            }
+            UiAction::SettingsControl(payload) => {
+                self.apply_settings_control(payload.into_dispatch());
+            }
+            UiAction::SettingsNoOp => {}
             UiAction::OpenSettingsToml => {
                 // v1 escape hatch: open the user's settings.toml so
                 // they can persist any change the panel doesn't yet
@@ -296,10 +233,7 @@ impl App {
                 if let Some(target) = to_open
                     && let Err(e) = crate::app::open::open_trusted_path(&target)
                 {
-                    log::warn!(
-                        "failed to open settings location {}: {e}",
-                        target.display(),
-                    );
+                    log::warn!("failed to open settings location {}: {e}", target.display(),);
                 }
                 // Same shape as `UiAction::CloseSettings` — the theme
                 // dropdown could be alive as a submodal at the moment
@@ -309,31 +243,72 @@ impl App {
                 // floating orphaned over the terminal.
                 self.enter_modal_close_peers(ModalKind::None);
             }
-            UiAction::NudgePaneOpacity(direction) => {
-                // 0.05 step — coarse enough to feel each press, fine
-                // enough to land on common values (0.80, 0.85, 0.90).
-                // Clamp to [0, 1]; below 0 hides the pane entirely and
-                // above 1 has no further effect.
-                const STEP: f32 = 0.05;
-                let delta = match direction {
-                    super::types::NudgeDirection::Decrement => -STEP,
-                    super::types::NudgeDirection::Increment => STEP,
-                };
-                // Floor at 0.05 — fully transparent panes leave the
-                // user staring at the desktop with no visual indication
-                // panes still exist. The settings stepper exposes the
-                // useful translucency range (0.05–1.00) instead of the
-                // full clamp; users wanting opacity 0 can edit
-                // settings.toml directly.
-                let next = (self.core.config.appearance.pane_opacity + delta).clamp(0.05, 1.0);
-                self.core.config.appearance.pane_opacity = next;
-                // Per-pane tile glyph and bg caches embed the previous
-                // opacity into rect alphas; clear so the new value
-                // reaches the GPU on the next paint.
-                self.clear_render_caches();
-                self.schedule_redraw();
-            }
         }
+    }
+
+    /// Spawn the `context_menu` popup as a settings-anchored dropdown
+    /// for an enum-typed field. Items dispatch
+    /// `ContextMenuAction::SetSettingsEnum { field_id, value }`; the
+    /// theme preset reuses the same path (its `apply_theme_preset`
+    /// side-effect chain runs in the dispatcher).
+    fn open_settings_enum_dropdown(&mut self, field: super::settings_panel::schema::SettingsField) {
+        // Anchor BELOW the cursor so the popup doesn't visually
+        // overlap the trigger row's value text. Same 44 px offset as
+        // the v1 path — slightly larger than `Dropdown::ROW_H` (40),
+        // which gives `anchored()` room to edge-flip upward when the
+        // bottom of the viewport would clip.
+        //
+        // X anchors on the field-control column's horizontal center
+        // (not the cursor click X) so the popup's midpoint matches
+        // the trigger's midpoint — `context_menu.rs::capture` picks
+        // `AnchorCorner::TopCenter` when `settings_panel_visible`, so
+        // this point is treated as the top edge midpoint of the popup.
+        // Falls back to viewport center if the panel can't be captured
+        // (shouldn't happen — the dropdown is only reachable through
+        // the panel — but keep the fallback to avoid a panic in tests).
+        const POPUP_OFFSET_Y: f32 = 44.0;
+        let cursor_y = self
+            .last_mouse_pos
+            .map(|(_, y)| y)
+            .unwrap_or_else(|| self.command_palette_viewport_size().1 * 0.5);
+        let trigger_x = {
+            let cx = self.ui_context();
+            super::settings_panel::SettingsPanelComponent::capture(self, &cx)
+                .map(|c| c.control_center_x())
+                .unwrap_or_else(|| self.command_palette_viewport_size().0 * 0.5)
+        };
+        let mx = trigger_x;
+        let my = cursor_y + POPUP_OFFSET_Y;
+        let current = super::settings_panel::schema::read_enum(field, &self.core.config);
+        let variants = super::settings_panel::schema::enum_variants(field);
+        let field_id = field.id();
+        let items = variants
+            .into_iter()
+            .map(|name| {
+                let active = name == current;
+                let label = if active {
+                    format!("\u{2713} {}", name)
+                } else {
+                    format!("  {}", name)
+                };
+                crate::app::ContextMenuItem {
+                    label,
+                    action: crate::app::ContextMenuAction::SetSettingsEnum {
+                        field_id,
+                        value: name,
+                    },
+                    enabled: true,
+                }
+            })
+            .collect();
+        self.enter_modal_close_peers(ModalKind::ContextMenu(ContextMenuParent::OverSettings));
+        self.core.context_menu = crate::app::ContextMenu {
+            visible: true,
+            x: mx,
+            y: my,
+            target_pane_id: None,
+            items,
+        };
     }
 
     pub(crate) fn dispatch_ui_hover(&mut self, mx: f32, my: f32) -> UiHoverOutcome {
@@ -426,17 +401,15 @@ impl App {
                     needs_redraw: true,
                 }
             }
-            UiFrameHover::SideTab { tab } => {
-                UiHoverOutcome {
-                    handled: true,
-                    cursor: if tab.is_some() {
-                        CursorIcon::Pointer
-                    } else {
-                        CursorIcon::Default
-                    },
-                    needs_redraw: true,
-                }
-            }
+            UiFrameHover::SideTab { tab } => UiHoverOutcome {
+                handled: true,
+                cursor: if tab.is_some() {
+                    CursorIcon::Pointer
+                } else {
+                    CursorIcon::Default
+                },
+                needs_redraw: true,
+            },
             UiFrameHover::Overview { target } => {
                 // `action_hover` is derived at hash time (Step 26);
                 // `target` (which overview tile is hovered) still

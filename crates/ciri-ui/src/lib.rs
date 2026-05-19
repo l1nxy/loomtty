@@ -21,8 +21,8 @@
 //!     .child(text("…"));
 //! ```
 
-pub mod color;
 pub mod arena;
+pub mod color;
 pub mod components;
 pub mod element;
 pub mod elements;
@@ -39,6 +39,7 @@ pub use arena::{
     Arena, ArenaBox, ElementArenaScope, clear_fallback_element_arena, with_element_arena,
 };
 pub use color::Color;
+pub use components::{Banner, Dropdown, NumberField, Severity, Switch};
 pub use element::{
     AnchorCorner, AnchorPlacement, AnyElement, Element, ElementId, ElementStates, EventCtx,
     IntoElement, PaintCtx, Render, RenderCtx, UiCtx, UiEvent,
@@ -57,7 +58,6 @@ pub use style::{
     AlignItems, CursorStyle, Display, FlexDirection, JustifyContent, Length, Shadow, Style,
 };
 pub use styled::Styled;
-pub use components::{Banner, Dropdown, NumberField, Severity, Switch};
 pub use theme::{ElevationIndex, RadiusScale, ResolvedTheme, SpaceScale, TypeScale};
 
 pub use ciri_motion::Transition;

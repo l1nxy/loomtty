@@ -208,7 +208,10 @@ pub(super) fn ui_hit_id(
     })
 }
 
-#[cfg(test)]
+/// Look up the screen-space bounds `[x, y, w, h]` of the first
+/// element in `root` that carries `hit_id`. Used by interaction
+/// paths that need geometry (scrollbar track Y, etc.) — the same
+/// layout walk drives `ui_hit_id` so the values stay consistent.
 pub(super) fn ui_hit_bounds(
     root: &impl ciri_ui::Element,
     cx: &UiContext<'_>,
@@ -294,23 +297,25 @@ pub(crate) enum UiAction {
     StartOverviewDrag,
     /// Close the settings panel (Esc / outside click / × button).
     CloseSettings,
+    /// Click landed on a settings panel chrome region that should
+    /// absorb without dismissing (e.g. empty body, row gutter).
+    /// Distinguished from `CloseSettings` so the dispatcher can no-op.
+    SettingsNoOp,
     /// Reveal `settings.toml` in the OS file manager / open with editor.
-    /// Escape hatch for users who want to persist changes the v1 panel
-    /// doesn't write back yet.
     OpenSettingsToml,
-    /// Open the theme-preset dropdown — popup is rendered via
-    /// `context_menu` anchored at last-known mouse position. Items
-    /// dispatch `ContextMenuAction::SetThemePreset(name)` on click.
-    OpenThemeDropdown,
-    /// Nudge `appearance.pane_opacity`. Step size lives on the App
-    /// handler so settings rows don't have to know the increment.
-    NudgePaneOpacity(NudgeDirection),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum NudgeDirection {
-    Decrement,
-    Increment,
+    /// Sidebar nav: switch the panel to a different category page.
+    SelectSettingsCategory(ciri_app::app::SettingsCategory),
+    /// Settings row interaction — nudge a stepper or flip a toggle.
+    /// Enum dropdowns route through [`Self::OpenSettingsDropdown`]
+    /// instead so the popup machinery (`context_menu`) is reused.
+    SettingsControl(crate::app::ui::settings_panel::SettingsActionPayload),
+    /// Open the picker popup for an enum-typed settings row. The
+    /// `SettingsField` identifies which dropdown — the dispatcher
+    /// populates `context_menu` with the schema's `enum_variants`.
+    /// Theme preset reuses this path; clicked items dispatch
+    /// `ContextMenuAction::SetSettingsEnum { field_id, value }` so
+    /// the field round-trip stays opaque to `ciri-app`.
+    OpenSettingsDropdown(crate::app::ui::settings_panel::schema::SettingsField),
 }
 
 // Per-component hit enums — kept internal, used only within each component's
@@ -344,24 +349,6 @@ pub(super) enum UiPasteDialogHit {
     Paste,
     Cancel,
     Dialog,
-    None,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(super) enum UiSettingsHit {
-    /// Click anywhere on the panel body — no-op (don't close).
-    Dialog,
-    /// Top-right close button.
-    Close,
-    /// "Open settings.toml" link at the bottom of the panel.
-    OpenToml,
-    /// Theme preset dropdown trigger — opens the preset popup.
-    ThemeDropdown,
-    /// Pane opacity stepper — decrement button.
-    PaneOpacityDec,
-    /// Pane opacity stepper — increment button.
-    PaneOpacityInc,
-    /// Click outside the panel — closes settings.
     None,
 }
 

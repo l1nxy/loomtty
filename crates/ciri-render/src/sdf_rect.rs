@@ -19,7 +19,9 @@
 
 /// SDF chrome rect: rounded corners + optional border + optional shadow.
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Default, PartialEq, bytemuck_derive::Pod, bytemuck_derive::Zeroable)]
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, bytemuck_derive::Pod, bytemuck_derive::Zeroable,
+)]
 pub struct SdfRect {
     /// Top-left in screen-space (logical) pixels.
     pub pos: [f32; 2],
@@ -62,9 +64,8 @@ mod tests {
     #[test]
     fn vec4_fields_are_16_aligned() {
         // Matches the WGSL attribute offsets in the blade SDF shader.
-        let offset_of = |field_ptr: *const f32, base: *const SdfRect| {
-            (field_ptr as usize) - (base as usize)
-        };
+        let offset_of =
+            |field_ptr: *const f32, base: *const SdfRect| (field_ptr as usize) - (base as usize);
         let s = SdfRect::default();
         let base = &s as *const SdfRect;
         assert_eq!(offset_of(s.color.as_ptr(), base), 16);

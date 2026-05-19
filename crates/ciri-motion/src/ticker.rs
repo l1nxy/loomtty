@@ -40,11 +40,11 @@ impl Ticker {
     /// briefly see a huge active count and mistakenly keep requesting
     /// redraws.
     pub fn sleep(&self) {
-        let result = self.active.fetch_update(
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-            |v| if v == 0 { None } else { Some(v - 1) },
-        );
+        let result = self
+            .active
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                if v == 0 { None } else { Some(v - 1) }
+            });
         if result.is_err() {
             // Imbalanced wake/sleep — a programming error. Surface in
             // release logs so it doesn't stay invisible.

@@ -53,19 +53,25 @@ pub struct AppModel {
     pub search_state: Option<SearchState>,
     pub command_palette: Option<CommandPaletteState>,
     pub context_menu: ContextMenu,
+    /// Vertical scroll offset (in rows) for the open context menu.
+    /// Lives outside `ContextMenu` so the existing model-construction
+    /// sites don't need to thread it through; the open-menu sites
+    /// reset it to 0 themselves (see `App::reset_context_menu_scroll`).
+    pub context_menu_scroll_offset: usize,
     /// Settings panel visibility. Simple bool for v1; will grow into a
     /// struct when the panel needs internal state (open dropdowns,
     /// scroll position, focused row).
     pub settings_panel_visible: bool,
+    /// Which sidebar category the panel is currently showing. Defaults
+    /// to `Appearance` on first open and persists across open/close so
+    /// reopening the panel returns to the user's last view.
+    pub settings_category: SettingsCategory,
     pub ime: ImeState,
 
     pub selection: Option<Selection>,
     pub pending_paste: Option<PendingPaste>,
     pub broadcast_mode: bool,
     pub should_exit: bool,
-
-
-
 
     pub workspace_last_pane_ids: HashMap<usize, u64>,
     pub last_left_click: Option<LastLeftClick>,
@@ -170,7 +176,9 @@ impl AppModel {
             search_state: None,
             command_palette: None,
             context_menu: ContextMenu::default(),
+            context_menu_scroll_offset: 0,
             settings_panel_visible: false,
+            settings_category: SettingsCategory::default(),
             ime: ImeState {
                 preedit_active: false,
                 preedit_text: String::new(),

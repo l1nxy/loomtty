@@ -32,6 +32,64 @@ pub enum ContextMenuAction {
     /// so the Theme dropdown reuses it instead of duplicating that
     /// machinery.
     SetThemePreset(String),
+    /// Pick a value for one of the settings panel's enum dropdowns.
+    /// `field_id` is the [`SettingsField`] discriminant (see the
+    /// settings_panel schema in `crates/ciri/src/app/ui/settings_panel/
+    /// schema.rs`); `value` is the kebab-case variant the user picked.
+    /// Carrying an opaque u16 here keeps `ciri-app` from depending on
+    /// the UI-side schema enum.
+    SetSettingsEnum {
+        field_id: u16,
+        value: String,
+    },
+}
+
+/// Sidebar category currently selected in the settings panel.
+/// `Default` resolves to [`Self::Appearance`] so the panel's first
+/// open lands on the most visually-impactful section.
+///
+/// The actual rows shown for each category, plus the read/write/clamp
+/// behaviour for every field, live in the UI-side schema table — this
+/// enum is purely the navigation discriminant the panel persists on
+/// `AppModel.settings_category`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum SettingsCategory {
+    #[default]
+    Appearance,
+    Font,
+    Terminal,
+    Layout,
+    Animation,
+    Input,
+    StatusBar,
+    Prediction,
+}
+
+impl SettingsCategory {
+    /// Sidebar order — also doubles as the iteration order for tests.
+    pub const ALL: &'static [SettingsCategory] = &[
+        Self::Appearance,
+        Self::Font,
+        Self::Terminal,
+        Self::Layout,
+        Self::Animation,
+        Self::Input,
+        Self::StatusBar,
+        Self::Prediction,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Appearance => "Appearance",
+            Self::Font => "Font",
+            Self::Terminal => "Terminal",
+            Self::Layout => "Layout",
+            Self::Animation => "Animation",
+            Self::Input => "Input",
+            Self::StatusBar => "Status Bar",
+            Self::Prediction => "Prediction",
+        }
+    }
 }
 
 /// Context menu state.
@@ -271,6 +329,21 @@ pub struct ScrollbarDragInfo {
     pub visible_rows: u16,
 }
 
+/// Context menu scrollbar drag tracking state. Lives alongside the
+/// pane scrollbar drag so the existing mouse-up tear-down covers both.
+pub struct ContextMenuScrollbarDrag {
+    /// Mouse Y at the moment the drag started — used as the reference
+    /// for offset deltas during move events.
+    pub start_my: f32,
+    /// `context_menu_scroll_offset` at the moment the drag started.
+    pub start_offset: usize,
+    /// Pixel range the thumb can travel through (`track_h - thumb_h`).
+    /// Combined with `max_offset` it gives the rows-per-pixel rate.
+    pub thumb_travel: f32,
+    /// Maximum legal offset (`total_rows - visible_rows`).
+    pub max_offset: usize,
+}
+
 /// Column/tile border drag resize state.
 pub struct ResizeDragState {
     pub col_dragging: Option<usize>,
@@ -281,6 +354,8 @@ pub struct ResizeDragState {
     pub tile_dragging: Option<(usize, usize)>,
     pub tile_start_y: f32,
     pub scrollbar_dragging: Option<ScrollbarDragInfo>,
+    /// Drag state for the context menu's own scrollbar thumb.
+    pub context_menu_scrollbar_dragging: Option<ContextMenuScrollbarDrag>,
 }
 
 /// Overview zoom mode state.
@@ -480,7 +555,6 @@ impl DisconnectReason {
                 | Cancelled
         )
     }
-
 }
 
 impl std::fmt::Display for DisconnectReason {
@@ -562,10 +636,7 @@ mod move_selection_tests {
 
     #[test]
     fn single_step_skips_section_header() {
-        let mut s = state(
-            vec![action("a"), header("h"), action("b"), action("c")],
-            0,
-        );
+        let mut s = state(vec![action("a"), header("h"), action("b"), action("c")], 0);
         s.move_selection(1, true);
         assert_eq!(s.selected_idx, 2, "single-step down jumps over the header");
     }
@@ -590,7 +661,10 @@ mod move_selection_tests {
     fn wrap_at_bottom_when_wrap_true() {
         let mut s = state(vec![action("a"), action("b"), action("c")], 2);
         s.move_selection(1, true);
-        assert_eq!(s.selected_idx, 0, "Down at bottom with wrap=true wraps to first");
+        assert_eq!(
+            s.selected_idx, 0,
+            "Down at bottom with wrap=true wraps to first"
+        );
     }
 
     #[test]
@@ -627,7 +701,10 @@ mod move_selection_tests {
         // after `len` iterations rather than spinning forever.
         let mut s = state(vec![header("a"), header("b"), header("c")], 0);
         s.move_selection(1, true);
-        assert_eq!(s.selected_idx, 0, "no selectable target → selection unchanged");
+        assert_eq!(
+            s.selected_idx, 0,
+            "no selectable target → selection unchanged"
+        );
     }
 
     #[test]
@@ -637,7 +714,10 @@ mod move_selection_tests {
         // just a (clamped) huge upward step.
         let mut s = state(vec![action("a"), action("b"), action("c")], 2);
         s.move_selection(i32::MIN, false);
-        assert_eq!(s.selected_idx, 0, "huge upward delta clamps to top with wrap=false");
+        assert_eq!(
+            s.selected_idx, 0,
+            "huge upward delta clamps to top with wrap=false"
+        );
     }
 
     #[test]
@@ -646,7 +726,13 @@ mod move_selection_tests {
         // first and second. delta=2 from index 0 must skip both headers
         // and the second selectable, landing on the third (index 4).
         let mut s = state(
-            vec![action("a"), header("h1"), header("h2"), action("b"), action("c")],
+            vec![
+                action("a"),
+                header("h1"),
+                header("h2"),
+                action("b"),
+                action("c"),
+            ],
             0,
         );
         s.move_selection(2, true);

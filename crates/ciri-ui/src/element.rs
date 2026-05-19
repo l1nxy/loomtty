@@ -33,6 +33,14 @@ pub enum AnchorCorner {
     TopRight,
     BottomLeft,
     BottomRight,
+    /// Top edge anchored, horizontally centered on the anchor point —
+    /// the popup hangs below the anchor with its horizontal midpoint
+    /// at `point.x`. Used by dropdown popups that should center on
+    /// their trigger rather than slide out to the right.
+    TopCenter,
+    /// Bottom edge anchored, horizontally centered. Mirror of
+    /// `TopCenter` for popups that open upward.
+    BottomCenter,
 }
 
 /// Placement metadata for [`crate::elements::Anchored`] — the anchor

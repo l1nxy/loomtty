@@ -225,9 +225,8 @@ impl AppModel {
         // has no sibling layout to redistribute against. Overrides
         // ws_changed's skip-anim path — the flag is only set after an
         // authoritative session switch.
-        let equalize = self.anim_mgr.col_widths_equalize_pending
-            && self.config.animation.enabled
-            && ncols > 1;
+        let equalize =
+            self.anim_mgr.col_widths_equalize_pending && self.config.animation.enabled && ncols > 1;
         self.anim_mgr.col_widths_equalize_pending = false;
         let skip_anim = !self.config.animation.enabled || (ws_changed && !equalize);
         let spring = if equalize {

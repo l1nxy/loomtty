@@ -18,6 +18,7 @@ use std::sync::Arc;
 use winit::window::Window;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use windows::Win32::Foundation::WAIT_TIMEOUT;
 use windows::Win32::Foundation::{BOOL, HANDLE, RECT};
 use windows::Win32::Graphics::Direct2D::Common::*;
 use windows::Win32::Graphics::Direct2D::*;
@@ -28,7 +29,6 @@ use windows::Win32::Graphics::DirectWrite::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Dxgi::*;
 use windows::Win32::System::Threading::WaitForSingleObjectEx;
-use windows::Win32::Foundation::WAIT_TIMEOUT;
 use windows::core::*;
 
 use ciri_render::glyph_cache::PendingDwriteGlyph;
@@ -1929,13 +1929,11 @@ impl Renderer {
     /// Upload the background image texture. Replaces any previously
     /// uploaded image. Mirrors the public `Renderer::set_background_image`
     /// signature; the lib-level wrapper converts errors into `GpuError`.
-    pub fn set_background_image(
-        &mut self,
-        rgba: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Result<()> {
-        unsafe { self.background_image.upload(&self.device, rgba, width, height) }
+    pub fn set_background_image(&mut self, rgba: &[u8], width: u32, height: u32) -> Result<()> {
+        unsafe {
+            self.background_image
+                .upload(&self.device, rgba, width, height)
+        }
     }
 
     /// Drop the wallpaper texture, if any.
@@ -1985,8 +1983,7 @@ impl Renderer {
             .expect("alpha atlas creation failed")
         };
 
-        let color_ps = COLOR_PS_HLSL
-            .replace("// HLSL_CORNER_FUNCS_PLACEHOLDER", HLSL_CORNER_FUNCS);
+        let color_ps = COLOR_PS_HLSL.replace("// HLSL_CORNER_FUNCS_PLACEHOLDER", HLSL_CORNER_FUNCS);
         debug_assert!(
             !color_ps.contains("PLACEHOLDER"),
             "shader source still contains unfilled placeholder after all replacements"
@@ -2079,12 +2076,9 @@ impl Renderer {
             // image sits behind everything else. Returns true iff a draw
             // was actually issued — used below to suppress the prepended
             // baseline rect (which would otherwise erase the image).
-            let wallpaper_drawn = self.background_image.draw(
-                &self.ctx,
-                vw,
-                vh,
-                scene.background_image_opacity,
-            );
+            let wallpaper_drawn =
+                self.background_image
+                    .draw(&self.ctx, vw, vh, scene.background_image_opacity);
 
             // 1. Upload all background rects (clear + pane + overlay) once.
             // The prepended full-viewport rect is normally a redundant
@@ -2194,17 +2188,19 @@ impl Renderer {
                 self.ctx.RSSetScissorRects(Some(&[full_rect]));
                 let active_bg_ranges =
                     split_ranges(&all_bg_ranges, active_bg_idx, overlay_bg_idx.min(total_bg));
-                self.rects
-                    .draw_ranges(&self.ctx, &active_bg_ranges, vw, vh);
+                self.rects.draw_ranges(&self.ctx, &active_bg_ranges, vw, vh);
             }
 
             // 6. Draw active pane glyphs (scissored, no re-upload).
             atlas_gpu
                 .alpha
                 .draw_batches(&self.ctx, alpha_count, &vp, scene.active_glyph_batches);
-            atlas_gpu
-                .color
-                .draw_batches(&self.ctx, color_count, &vp, scene.active_color_glyph_batches);
+            atlas_gpu.color.draw_batches(
+                &self.ctx,
+                color_count,
+                &vp,
+                scene.active_color_glyph_batches,
+            );
 
             // 7. Overlay background rects.
             let overlay_bg_count = total_bg.saturating_sub(overlay_bg_idx);

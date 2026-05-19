@@ -19,17 +19,21 @@ fn inspect_box_drawing_metrics() {
     let cmap_dash: u16 = face.glyph_index('\u{2500}').map(|g| g.0).unwrap_or(0);
     let cmap_eq: u16 = face.glyph_index('=').map(|g| g.0).unwrap_or(0);
 
-    let dash_advance = face.glyph_hor_advance(ttf_parser::GlyphId(cmap_dash)).unwrap_or(0);
-    let dash_lsb = face.glyph_hor_side_bearing(ttf_parser::GlyphId(cmap_dash)).unwrap_or(0);
+    let dash_advance = face
+        .glyph_hor_advance(ttf_parser::GlyphId(cmap_dash))
+        .unwrap_or(0);
+    let dash_lsb = face
+        .glyph_hor_side_bearing(ttf_parser::GlyphId(cmap_dash))
+        .unwrap_or(0);
     let dash_bbox = face.glyph_bounding_box(ttf_parser::GlyphId(cmap_dash));
-    let eq_advance = face.glyph_hor_advance(ttf_parser::GlyphId(cmap_eq)).unwrap_or(0);
+    let eq_advance = face
+        .glyph_hor_advance(ttf_parser::GlyphId(cmap_eq))
+        .unwrap_or(0);
     let eq_bbox = face.glyph_bounding_box(ttf_parser::GlyphId(cmap_eq));
 
     eprintln!("units_per_em={units_per_em}");
     eprintln!(
         "─ (U+2500): glyph={cmap_dash} advance={dash_advance} lsb={dash_lsb} bbox={dash_bbox:?}"
     );
-    eprintln!(
-        "= (U+003D): glyph={cmap_eq} advance={eq_advance} bbox={eq_bbox:?}"
-    );
+    eprintln!("= (U+003D): glyph={cmap_eq} advance={eq_advance} bbox={eq_bbox:?}");
 }

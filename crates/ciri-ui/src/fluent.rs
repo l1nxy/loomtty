@@ -29,11 +29,7 @@ pub trait FluentBuilder: Sized {
     /// unchanged. Useful for state-conditional styles.
     #[inline]
     fn when(self, cond: bool, then: impl FnOnce(Self) -> Self) -> Self {
-        if cond {
-            then(self)
-        } else {
-            self
-        }
+        if cond { then(self) } else { self }
     }
 
     /// Apply `then(self, value)` if `option` is `Some(value)`; otherwise
@@ -51,11 +47,7 @@ pub trait FluentBuilder: Sized {
     /// unchanged. The mirror of [`when_some`] for fall-through cases.
     #[inline]
     fn when_none<T>(self, option: &Option<T>, then: impl FnOnce(Self) -> Self) -> Self {
-        if option.is_none() {
-            then(self)
-        } else {
-            self
-        }
+        if option.is_none() { then(self) } else { self }
     }
 
     /// Pipe `self` through an arbitrary closure. Lets a builder branch

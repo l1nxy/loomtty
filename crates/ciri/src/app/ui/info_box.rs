@@ -5,9 +5,7 @@ use super::tokens;
 use super::types::{UiContext, UiScene};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
-use ciri_ui::{
-    Div, ElevationIndex, IntoElement, Render, RenderCtx, Styled, deferred, div, text,
-};
+use ciri_ui::{Div, ElevationIndex, IntoElement, Render, RenderCtx, Styled, deferred, div, text};
 
 pub(crate) struct InfoBoxComponent {
     title: String,

@@ -1,9 +1,9 @@
 //! Action dispatch: maps `Action` enum variants to App method calls.
 
+use ciri_app::app::ModalKind;
 use ciri_config::config::CiriConfig;
 use ciri_input::action::Action;
 use ciri_input::keybind::{BindingSet, KeybindMap};
-use ciri_app::app::ModalKind;
 use ciri_input::leader::InputHandler;
 use ciri_protocol::message::*;
 

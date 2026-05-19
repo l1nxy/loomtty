@@ -82,7 +82,12 @@ impl DebugPanelComponent {
         rows.push(timing_row("Key", snap.key, budget_ms, Grading::CpuOnly));
         rows.push(timing_row("Mouse", snap.mouse, budget_ms, Grading::CpuOnly));
         rows.push(timing_row("Build", snap.build, budget_ms, Grading::CpuOnly));
-        rows.push(timing_row("Layout", snap.layout, budget_ms, Grading::CpuOnly));
+        rows.push(timing_row(
+            "Layout",
+            snap.layout,
+            budget_ms,
+            Grading::CpuOnly,
+        ));
         rows.push(timing_row("Paint", snap.paint, budget_ms, Grading::CpuOnly));
         rows.push(timing_row(
             "Render",
@@ -143,7 +148,13 @@ impl DebugPanelComponent {
         // overlay never collides with the session/workspace chrome.
         // When the bar is at the bottom, tuck against the top edge.
         let top_bar_h = app
-            .top_bar_layout(cx.viewport_w, cx.viewport_h, cx.cell_w, cx.cell_h, cx.ui_shaper)
+            .top_bar_layout(
+                cx.viewport_w,
+                cx.viewport_h,
+                cx.cell_w,
+                cx.cell_h,
+                cx.ui_shaper,
+            )
             .bar_height;
         let y = match cx.config.statusbar.position {
             StatusBarPosition::Top => top_bar_h + margin,
@@ -184,7 +195,10 @@ impl DebugPanelComponent {
         let fg = cx.theme.on_surface;
         let dim = cx.theme.on_surface_muted;
 
-        let sunk = tokens::surface_sink([bg_base[0], bg_base[1], bg_base[2], 1.0], tokens::SURFACE_SINK);
+        let sunk = tokens::surface_sink(
+            [bg_base[0], bg_base[1], bg_base[2], 1.0],
+            tokens::SURFACE_SINK,
+        );
         let bg = [sunk[0], sunk[1], sunk[2], 0.92];
 
         let bw = tokens::BORDER_THIN;
@@ -224,19 +238,13 @@ impl DebugPanelComponent {
 
         // Column header row.
         panel = panel.child(self.row_frame(content_w, pad, inner_w, row_h, gap, |row| {
-            row.child(
-                div()
-                    .w(self.label_col_w)
-                    .h(row_h)
-                    .flex_row()
-                    .items_center(),
-            )
-            .child(div().w(gap).h(row_h))
-            .child(self.value_cell(row_h, COL_HEADERS[0], dim))
-            .child(div().w(gap).h(row_h))
-            .child(self.value_cell(row_h, COL_HEADERS[1], dim))
-            .child(div().w(gap).h(row_h))
-            .child(self.value_cell(row_h, COL_HEADERS[2], dim))
+            row.child(div().w(self.label_col_w).h(row_h).flex_row().items_center())
+                .child(div().w(gap).h(row_h))
+                .child(self.value_cell(row_h, COL_HEADERS[0], dim))
+                .child(div().w(gap).h(row_h))
+                .child(self.value_cell(row_h, COL_HEADERS[1], dim))
+                .child(div().w(gap).h(row_h))
+                .child(self.value_cell(row_h, COL_HEADERS[2], dim))
         }));
 
         for (i, r) in self.rows.iter().enumerate() {
@@ -261,7 +269,11 @@ impl DebugPanelComponent {
                 .child(div().w(gap).h(row_h))
                 .child(self.value_cell(row_h, &values[1], color_for(cx, fg, severities[1])))
                 .child(div().w(gap).h(row_h))
-                .child(self.value_cell(row_h, &values[2], color_for(cx, fg, severities[2])))
+                .child(self.value_cell(
+                    row_h,
+                    &values[2],
+                    color_for(cx, fg, severities[2]),
+                ))
             }));
         }
 

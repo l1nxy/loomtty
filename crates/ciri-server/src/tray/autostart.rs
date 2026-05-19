@@ -133,8 +133,8 @@ fn set_enabled_macos(enable: bool) -> Result<()> {
 
 #[cfg(windows)]
 fn is_enabled_windows() -> bool {
-    use winreg::enums::*;
     use winreg::RegKey;
+    use winreg::enums::*;
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let Ok(run) = hkcu.open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Run") else {
@@ -145,8 +145,8 @@ fn is_enabled_windows() -> bool {
 
 #[cfg(windows)]
 fn set_enabled_windows(enable: bool) -> Result<()> {
-    use winreg::enums::*;
     use winreg::RegKey;
+    use winreg::enums::*;
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let run = hkcu.open_subkey_with_flags(

@@ -9,7 +9,7 @@
 
 use super::text_layout;
 use super::tokens;
-use super::types::{UiAction, UiContext, UiContextMenuHit, UiScene, ui_hit_id};
+use super::types::{UiAction, UiContext, UiContextMenuHit, UiScene, ui_hit_bounds, ui_hit_id};
 use crate::app::App;
 use crate::app::ciri_ui_adapter::paint_element_tree;
 use ciri_ui::{
@@ -17,6 +17,8 @@ use ciri_ui::{
 };
 
 const HIT_MENU: u64 = 1;
+const HIT_SCROLLBAR_THUMB: u64 = 2;
+const HIT_SCROLLBAR_TRACK: u64 = 3;
 const HIT_ENTRY_BASE: u64 = 1_000_000;
 
 fn entry_hit_id(index: usize) -> u64 {
@@ -25,10 +27,29 @@ fn entry_hit_id(index: usize) -> u64 {
 
 fn context_menu_hit_from_id(hit_id: Option<u64>) -> UiContextMenuHit {
     match hit_id {
-        Some(HIT_MENU) => UiContextMenuHit::Menu,
+        // Scrollbar thumb / track route to `Menu` so the click /
+        // outside-click logic treats them as "inside the menu" — no
+        // close, no entry selection. The mouse-press path picks them
+        // up separately via `scrollbar_drag_init` to start the drag.
+        Some(HIT_MENU) | Some(HIT_SCROLLBAR_THUMB) | Some(HIT_SCROLLBAR_TRACK) => {
+            UiContextMenuHit::Menu
+        }
         Some(id) if id >= HIT_ENTRY_BASE => UiContextMenuHit::Entry((id - HIT_ENTRY_BASE) as usize),
         _ => UiContextMenuHit::None,
     }
+}
+
+/// Whether a click at `(mx, my)` landed on the scrollbar thumb or
+/// track, and how to seed a drag. Caller (mouse-press handler)
+/// converts this into a `ContextMenuScrollbarDrag` placed on `App`.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub(crate) enum ScrollbarHit {
+    /// Click on the thumb — start a drag using the cursor's Y delta.
+    Thumb,
+    /// Click on the track above the thumb — page up by `visible_rows`.
+    TrackAbove,
+    /// Click on the track below the thumb — page down by `visible_rows`.
+    TrackBelow,
 }
 
 struct ContextMenuRow {
@@ -43,6 +64,17 @@ pub(crate) struct ContextMenuComponent {
     menu_height: f32,
     item_height: f32,
     rows: Vec<ContextMenuRow>,
+    /// Which corner of the menu sits at `(x, y)`. Right-click menus
+    /// pin their top-left to the cursor (`TopLeft`); the settings-panel
+    /// enum dropdown pins its top edge centered on the trigger so the
+    /// popup's midpoint matches the trigger's midpoint (`TopCenter`).
+    anchor: AnchorCorner,
+    /// Row offset of the topmost visible item. `0` when the menu fits
+    /// entirely; clamped to `rows.len() - visible_rows` otherwise.
+    scroll_offset: usize,
+    /// How many item rows fit inside the (possibly capped) menu body.
+    /// `rows.len()` when nothing overflows.
+    visible_rows: usize,
 }
 
 impl ContextMenuComponent {
@@ -72,11 +104,40 @@ impl ContextMenuComponent {
         // labels don't kiss the panel edge or the rounded corner.
         // Floor 240 px so short pane-context items (Copy / Paste / …)
         // still read as a comfortable menu rather than a tiny strip.
+        // Settings-panel dropdowns bump the floor to 280 px so the
+        // popup is clearly wider than the 200 px trigger box (Zed-
+        // style: the popup hangs out past both edges of the trigger).
         let chrome_w = padding * 2.0 + tokens::BORDER_THIN * 2.0;
+        let floor = if app.core.settings_panel_visible {
+            280.0
+        } else {
+            240.0
+        };
         let menu_width = (widest_label + chrome_w + tokens::SPACE_4)
-            .max(240.0)
+            .max(floor)
             .min(max_menu_width);
-        let menu_height = app.core.context_menu.items.len() as f32 * item_height + padding * 2.0;
+        // Cap the menu at ~60% of the viewport height so long lists
+        // (font family picker → hundreds of entries) stay on-screen.
+        // `visible_rows` is the integer item count that fits inside
+        // `max_h`; the rendered tree only paints that slice and shows
+        // a scrollbar on the side when there's more.
+        let total_rows = app.core.context_menu.items.len();
+        let max_h = (cx.viewport_h * 0.6).max(item_height * 4.0 + padding * 2.0);
+        let usable_h = (max_h - padding * 2.0).max(0.0);
+        let mut visible_rows = (usable_h / item_height).floor() as usize;
+        if visible_rows == 0 {
+            visible_rows = 1;
+        }
+        if visible_rows > total_rows {
+            visible_rows = total_rows;
+        }
+        let menu_height = visible_rows as f32 * item_height + padding * 2.0;
+        // Clamp the model's offset to the valid range — opening a
+        // new menu resets the offset to `0` (see
+        // `enter_modal_close_peers`), but a model that's stale by a
+        // frame could land here with an out-of-range value.
+        let max_offset = total_rows.saturating_sub(visible_rows);
+        let scroll_offset = app.core.context_menu_scroll_offset.min(max_offset);
         // Capture raw click point — `anchored()` in `build_tree`
         // handles viewport-aware placement (edge-flips on the right /
         // bottom, final clamp if neither corner fits). The pre-Step-42
@@ -97,6 +158,17 @@ impl ContextMenuComponent {
                 enabled: item.enabled,
             })
             .collect();
+        // Settings-panel dropdown → `TopCenter` (popup centered on the
+        // trigger). All other context menus → `TopLeft` (cursor at the
+        // popup's top-left corner, the classic right-click behaviour).
+        // The settings panel is the only Base-tier modal under which a
+        // context menu can be open, so the visibility flag is a clean
+        // signal.
+        let anchor = if app.core.settings_panel_visible {
+            AnchorCorner::TopCenter
+        } else {
+            AnchorCorner::TopLeft
+        };
         Some(Self {
             x,
             y,
@@ -104,7 +176,70 @@ impl ContextMenuComponent {
             menu_height,
             item_height,
             rows,
+            anchor,
+            scroll_offset,
+            visible_rows,
         })
+    }
+
+    /// Total item count irrespective of scroll. Used by mouse-wheel
+    /// handling to clamp scroll offsets.
+    pub(crate) fn total_rows(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// Rows currently visible in the menu body (may be < total).
+    pub(crate) fn visible_rows(&self) -> usize {
+        self.visible_rows
+    }
+
+    /// Scrollbar track height in pixels — `visible_rows * item_h`.
+    /// Public so the mouse-press handler can seed a drag without
+    /// reproducing the layout math.
+    pub(crate) fn scrollbar_track_height(&self) -> f32 {
+        self.visible_rows as f32 * self.item_height
+    }
+
+    /// Scrollbar thumb height — proportional to `visible / total`,
+    /// floored at half a row so the thumb stays grabbable on very
+    /// long lists.
+    pub(crate) fn scrollbar_thumb_height(&self) -> f32 {
+        let track_h = self.scrollbar_track_height();
+        let total = self.rows.len().max(1) as f32;
+        (track_h * (self.visible_rows as f32 / total)).max(self.item_height * 0.5)
+    }
+
+    /// Maximum legal `scroll_offset` (`total - visible`, ≥ 1 when
+    /// scrollable). Returns `0` when the menu fits entirely.
+    pub(crate) fn max_scroll_offset(&self) -> usize {
+        self.rows.len().saturating_sub(self.visible_rows)
+    }
+
+    /// Where the mouse-press at `(mx, my)` landed within the scrollbar
+    /// region — `None` if it didn't hit the bar at all. `TrackAbove`
+    /// / `TrackBelow` are derived by comparing the press Y against the
+    /// thumb's current screen-space midpoint (found via
+    /// `ui_hit_bounds` on the thumb's hit_id).
+    pub(crate) fn scrollbar_hit(
+        &self,
+        mx: f32,
+        my: f32,
+        cx: &UiContext<'_>,
+    ) -> Option<ScrollbarHit> {
+        let render_cx = Self::render_cx(cx);
+        let root = self.build_tree(&render_cx);
+        match ui_hit_id(&root, cx, mx, my)? {
+            HIT_SCROLLBAR_THUMB => Some(ScrollbarHit::Thumb),
+            HIT_SCROLLBAR_TRACK => {
+                let thumb_mid = ui_hit_bounds(&root, cx, HIT_SCROLLBAR_THUMB)
+                    .map(|[_, y, _, h]| y + h * 0.5);
+                match thumb_mid {
+                    Some(mid) if my < mid => Some(ScrollbarHit::TrackAbove),
+                    _ => Some(ScrollbarHit::TrackBelow),
+                }
+            }
+            _ => None,
+        }
     }
 
     /// Project ciri's `UiContext` to the minimal `RenderCtx` the
@@ -136,11 +271,9 @@ impl ContextMenuComponent {
     /// corner.
     pub(crate) fn hover_index(&self, mx: f32, my: f32, cx: &UiContext<'_>) -> Option<usize> {
         match self.hit_test(mx, my, cx) {
-            UiContextMenuHit::Entry(idx) => self
-                .rows
-                .get(idx)
-                .filter(|row| row.enabled)
-                .map(|_| idx),
+            UiContextMenuHit::Entry(idx) => {
+                self.rows.get(idx).filter(|row| row.enabled).map(|_| idx)
+            }
             UiContextMenuHit::Menu | UiContextMenuHit::None => None,
         }
     }
@@ -174,6 +307,16 @@ impl ContextMenuComponent {
         let content_w = self.menu_width - bw * 2.0;
         let item_h = self.item_height;
         let text_pad = (padding - bw).max(0.0);
+        let scrollable = self.rows.len() > self.visible_rows;
+        // Reserve room on the right for the scrollbar track when the
+        // menu has more items than visible rows. The accent thumb
+        // sits inside this column so it doesn't overlap the row text.
+        let scrollbar_col_w = if scrollable {
+            tokens::SPACE_1 * 2.0
+        } else {
+            0.0
+        };
+        let row_content_w = (content_w - scrollbar_col_w).max(0.0);
         // Panel sizes itself; positioning is delegated to `anchored()`
         // below. No `.absolute().left().top()` because the anchored
         // wrapper overrides `parent_local` at drain time based on the
@@ -197,43 +340,87 @@ impl ContextMenuComponent {
             .hit_id(HIT_MENU)
             .child(div().w(content_w).h(padding));
 
-        for (index, row) in self.rows.iter().enumerate() {
-            // Single declarative branch: every row carries hit_id +
-            // cursor + hover, then `.disabled(!row.enabled, ...)`
-            // clears hit_id + cursor and overlays the dim text colour
-            // when the row is disabled. The Text node has no
-            // `.color()` so it inherits from whichever style wins
-            // (base `fg_color`, or disabled refinement `dim_color`)
-            // via the walker's refinement-aware text-color thread.
+        // Only render the slice of rows that fits inside the menu.
+        // Absolute row indices are preserved in the hit_id so click
+        // routing still maps to the right item regardless of scroll.
+        let start = self.scroll_offset;
+        let end = (start + self.visible_rows).min(self.rows.len());
+        let mut body = div().w(content_w).flex_row();
+        let mut rows_col = div().flex_col();
+        for (rel_index, row) in self.rows[start..end].iter().enumerate() {
+            let abs_index = start + rel_index;
             let row_el = div()
-                .w(content_w)
+                .w(row_content_w)
                 .h(item_h)
                 .flex_row()
                 .items_center()
                 .text_color(fg_color)
-                .hit_id(entry_hit_id(index))
+                .hit_id(entry_hit_id(abs_index))
                 .cursor_pointer()
                 .hover(|s| s.bg(hover_bg))
                 .disabled(!row.enabled, |s| s.text_color(dim_color))
                 .child(div().w(text_pad).h(item_h))
                 .child(text(row.label.clone()));
-            panel = panel.child(row_el);
+            rows_col = rows_col.child(row_el);
         }
-        panel = panel.child(div().w(content_w).h(padding));
+        body = body.child(rows_col);
+
+        if scrollable {
+            // Scrollbar track + thumb, same shape as the command
+            // palette's. Thumb height proportional to visible / total;
+            // top position proportional to scroll offset within the
+            // [0, max_offset] range. The track and thumb each carry a
+            // dedicated hit_id so the mouse-press handler can decide
+            // between "start drag" (thumb) and "page jump" (track).
+            let track_w = tokens::SPACE_1;
+            let track_h = self.scrollbar_track_height();
+            let thumb_h = self.scrollbar_thumb_height();
+            let max_offset = self.rows.len().saturating_sub(self.visible_rows).max(1);
+            let thumb_top =
+                (track_h - thumb_h).max(0.0) * (self.scroll_offset as f32 / max_offset as f32);
+            // The thumb hit area widens to the full scrollbar column so
+            // users don't have to land on the 4 px rail exactly. The
+            // visible thumb still rides at `track_w` so the bar reads
+            // as a slim accent.
+            let track_col = div()
+                .w(scrollbar_col_w)
+                .h(track_h)
+                .flex_row()
+                .items_center()
+                .justify_center()
+                .hit_id(HIT_SCROLLBAR_TRACK)
+                .child(
+                    div()
+                        .w(track_w)
+                        .h(track_h)
+                        .bg(tokens::tint(border_color, tokens::ALPHA_SCROLL_TRACK))
+                        .child(
+                            div()
+                                .w(track_w)
+                                .h(thumb_h)
+                                .translate(0.0, thumb_top)
+                                .hit_id(HIT_SCROLLBAR_THUMB)
+                                .bg(tokens::tint(
+                                    cx.theme.accent,
+                                    tokens::ALPHA_SCROLL_THUMB,
+                                )),
+                        ),
+                );
+            body = body.child(track_col);
+        }
+
+        panel = panel.child(body).child(div().w(content_w).h(padding));
 
         // `anchored()` is `deferred()` with viewport-aware
         // positioning — drain reads the panel's measured size and
         // edge-flips when the click point near the bottom-right
         // would extend the menu off-screen. Replaces the manual
         // `.clamp(...)` previously applied at capture time.
-        let root = div()
-            .w(cx.viewport[0])
-            .h(cx.viewport[1])
-            .child(anchored(
-                panel,
-                [self.x, self.y],
-                AnchorCorner::TopLeft,
-            ));
+        let root = div().w(cx.viewport[0]).h(cx.viewport[1]).child(anchored(
+            panel,
+            [self.x, self.y],
+            self.anchor,
+        ));
 
         root
     }

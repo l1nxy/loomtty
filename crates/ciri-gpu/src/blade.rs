@@ -188,8 +188,7 @@ impl RectPipeline {
     ) -> u64 {
         let offset = slot as u64 * BLADE_UNIFORM_STRIDE;
         debug_assert!(
-            offset + RECT_UNIFORM_RECORD_SIZE
-                <= BLADE_UNIFORM_STRIDE * MAX_RECT_PANE_RANGES as u64
+            offset + RECT_UNIFORM_RECORD_SIZE <= BLADE_UNIFORM_STRIDE * MAX_RECT_PANE_RANGES as u64
         );
         let viewport = [viewport_w, viewport_h, 0.0f32, 0.0f32];
         unsafe {
@@ -1399,21 +1398,16 @@ impl Renderer {
     /// command encoder for the staging-buffer transfer (the encoder
     /// is idle between `draw_frame` calls, so a one-shot start +
     /// submit here is safe). Replaces any previously-uploaded image.
-    pub fn set_background_image(
-        &mut self,
-        rgba: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Result<()> {
+    pub fn set_background_image(&mut self, rgba: &[u8], width: u32, height: u32) -> Result<()> {
         // Make sure the GPU is done reading the previous wallpaper texture
         // before destroying it (`upload` will free the prior slot).
         if let Some(ref sp) = self.last_sync {
             self.context.wait_for(sp, 5000);
         }
         self.encoder.start();
-        let staging = self
-            .background_image
-            .upload(&self.context, &mut self.encoder, rgba, width, height)?;
+        let staging =
+            self.background_image
+                .upload(&self.context, &mut self.encoder, rgba, width, height)?;
         let sync = self.context.submit(&mut self.encoder);
         // Wait so the GPU has consumed the staging buffer's contents,
         // then free it — keeping it around would just hold ~size_of_image

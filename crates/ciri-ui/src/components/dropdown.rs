@@ -26,10 +26,10 @@ use crate::theme::ResolvedTheme;
 const DEFAULT_W: f32 = 160.0;
 // Row height tracks NumberField::ROW_H so dropdowns and steppers
 // share a control-class baseline and align vertically when they
-// share a settings row. 40 px is the standard "comfortable button"
-// height in Zed/Linear-style settings — large enough to read as a
-// primary control next to a single-line label, not a dense list cell.
-const ROW_H: f32 = 40.0;
+// share a settings row. 48 px is a generous "primary action button"
+// height — the trigger reads as a proper button (not a list cell)
+// and the value text gets vertical breathing room.
+const ROW_H: f32 = 48.0;
 const PAD_X: f32 = 12.0;
 
 pub struct Dropdown {

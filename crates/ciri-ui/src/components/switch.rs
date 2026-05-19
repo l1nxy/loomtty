@@ -23,11 +23,14 @@ use crate::elements::{Div, div};
 use crate::styled::Styled;
 use crate::theme::ResolvedTheme;
 
-/// Logical track / thumb metrics. Picked once so settings rows align
-/// vertically and the thumb stays inset from the track edge.
-const TRACK_W: f32 = 36.0;
-const TRACK_H: f32 = 20.0;
-const THUMB_SIZE: f32 = 14.0;
+/// Logical track / thumb metrics. Picked to sit comfortably inside
+/// the 48 px settings-panel control row — visually weighty enough to
+/// match Dropdown / NumberField triggers without ballooning into a
+/// "toggle the size of a button" caricature. Aspect ~1.86 matches
+/// the iOS / Material switch family.
+const TRACK_W: f32 = 52.0;
+const TRACK_H: f32 = 28.0;
+const THUMB_SIZE: f32 = 22.0;
 const INNER_PAD: f32 = (TRACK_H - THUMB_SIZE) / 2.0;
 
 pub struct Switch {

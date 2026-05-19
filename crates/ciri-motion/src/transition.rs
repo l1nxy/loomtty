@@ -56,9 +56,7 @@ impl Transition {
                 let raw = (elapsed / *duration_secs).clamp(0.0, 1.0);
                 curve.apply(raw) as f32
             }
-            Self::Spring(params) => {
-                spring_envelope_progress(*params, elapsed) as f32
-            }
+            Self::Spring(params) => spring_envelope_progress(*params, elapsed) as f32,
         }
     }
 
@@ -180,7 +178,10 @@ mod tests {
             for i in 0..=600 {
                 let elapsed = f64::from(i) * 0.005;
                 let v = t.eval(elapsed);
-                assert!(v >= 0.0 && v <= 1.0, "{name}: out of range at {elapsed}: {v}");
+                assert!(
+                    v >= 0.0 && v <= 1.0,
+                    "{name}: out of range at {elapsed}: {v}"
+                );
                 assert!(
                     v + 1e-6 >= prev,
                     "{name}: regressed at {elapsed}: {prev} -> {v}"

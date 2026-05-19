@@ -18,8 +18,7 @@ const MAX_CAPTURE_TEXT_BYTES: usize = 900 * 1024;
 
 /// Printable marker (no ESC) appended when rows are dropped, so the
 /// non-`--json` path stays safe to dump to a user's terminal.
-const TRUNC_MARKER: &str =
-    "--- ciritty: capture truncated to fit control-frame budget ---\n";
+const TRUNC_MARKER: &str = "--- ciritty: capture truncated to fit control-frame budget ---\n";
 
 /// Pre-reserves room for the marker inside the byte budget.
 const SAFE_BUDGET: usize = MAX_CAPTURE_TEXT_BYTES - TRUNC_MARKER.len();
@@ -116,9 +115,10 @@ impl Pane {
                 // `preserve_trailing_spaces`. WRAPLINE on the spacer
                 // is still recovered after the loop, since the spacer
                 // sits at `last_col` like any other terminal cell.
-                if cell.flags.intersects(
-                    CellFlags::WIDE_CHAR_SPACER | CellFlags::LEADING_WIDE_CHAR_SPACER,
-                ) {
+                if cell
+                    .flags
+                    .intersects(CellFlags::WIDE_CHAR_SPACER | CellFlags::LEADING_WIDE_CHAR_SPACER)
+                {
                     continue;
                 }
 

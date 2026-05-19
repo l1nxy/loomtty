@@ -14,7 +14,7 @@
 //! after every non-deferred sibling, on the same queue, sorted by
 //! priority. Anchored is essentially "deferred + reposition".
 
-use crate::element::{AnchorPlacement, AnchorCorner, AnyElement, Element, IntoElement, PaintCtx};
+use crate::element::{AnchorCorner, AnchorPlacement, AnyElement, Element, IntoElement, PaintCtx};
 use smallvec::SmallVec;
 
 /// Build an anchored wrapper around `child` at the given anchor point,

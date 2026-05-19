@@ -236,71 +236,80 @@ impl Server {
         }
     }
 
-    /// Debounce cursor position+shape for inline TUIs (Codex, aider, …)
-    /// that emit several `set_cursor_position` calls per frame and visit
-    /// transient rows between stable ones. Only triples observed unchanged
-    /// for `APP_CURSOR_DEBOUNCE` propagate; cell damage and `mode_flags`
-    /// are unthrottled — `mode_flags` carries `password_input` and other
-    /// gates the client uses for prediction/broadcast suppression, so it
-    /// must reach the client immediately.
+    /// Debounce cursor position+shape across consecutive ticks.
+    ///
+    /// Inline TUIs like Codex/aider spread a single frame across multiple
+    /// PTY drains (async writes), so each tick samples a different
+    /// "transient" cursor mid-frame. Without throttling, those transients
+    /// leak to the client and the cursor flickers between unrelated
+    /// positions each frame.
+    ///
+    /// Rule: a cursor triple only propagates after **two consecutive
+    /// ticks observe the same value** — a frame in flight keeps moving
+    /// the cursor and resets the pending value, so transients are
+    /// squashed. Once PTY activity quiets for one tick (~16ms at
+    /// frame cadence), the cursor settles and emits.
+    ///
+    /// Cell damage does **not** flush the cursor: Codex's frame pattern
+    /// is `hide cursor → write cells → show cursor at final position`,
+    /// and the mid-frame `write cells` fragment carries a transient
+    /// cursor at the end of the last write. Flushing on cell damage
+    /// would re-emit that exact transient.
     ///
     /// Alt-screen TUIs (Neovim, vim, htop, …) bypass the debounce — their
-    /// cursor is the authoritative editing position and continuous typing
-    /// would keep resetting the dwell, freezing the cursor and shape.
-    /// Returns `(sent_cursor, held)`. `held = true` means the dwell
-    /// suppressed a fresher cursor; the caller must re-mark cursor damage
-    /// so the next tick revisits this pane and commits once the dwell
-    /// elapses. Without the re-mark, an isolated cursor move followed by
-    /// silence would stay debounced forever.
-    pub(super) fn throttle_cursor_for_app_mode(
+    /// cursor is the authoritative editing position and the cross-tick
+    /// fragmentation that motivates the dwell doesn't occur there in
+    /// practice. (`hjkl` in vim must remain zero-lag.)
+    ///
+    /// Returns `(sent_cursor, held)`. `held = true` means a fresher
+    /// cursor is pending; the caller must re-mark `cursor_dirty` so the
+    /// next tick revisits this pane and commits once the value confirms.
+    ///
+    /// **Call at most once per tick per `(client_id, pane_id)`.** The
+    /// 2-tick dwell relies on consecutive *ticks*, not consecutive calls.
+    /// Two same-tick invocations both observe the same cursor (same
+    /// alacritty snapshot), and the second would falsely satisfy
+    /// `pending == Some(actual)` — leaking a transient that was meant to
+    /// be held. If multiple frames in the same tick (e.g. scrollback
+    /// FullSync + viewport CellDelta) need the cursor, throttle once and
+    /// reuse the returned triple in both.
+    pub(super) fn throttle_cursor(
         clients: &mut HashMap<u64, ClientState>,
         client_id: u64,
         pane_id: u64,
         actual: (i16, u16, u8),
-        mode_flags: u16,
+        alt_screen: bool,
     ) -> ((i16, u16, u8), bool) {
-        const APP_CURSOR_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(80);
-        const INLINE_APP_MODE_MASK: u16 = MODE_MOUSE_REPORT
-            | MODE_BRACKETED_PASTE
-            | MODE_KITTY_KEYBOARD
-            | MODE_KITTY_REPORT_EVENTS
-            | MODE_KITTY_REPORT_ALTERNATES
-            | MODE_KITTY_REPORT_ALL
-            | MODE_KITTY_REPORT_TEXT
-            | MODE_SYNCHRONIZED_OUTPUT;
         let Some(client) = clients.get_mut(&client_id) else {
             return (actual, false);
         };
-        let inline_app_mode = mode_flags & INLINE_APP_MODE_MASK != 0
-            && mode_flags & MODE_ALT_SCREEN == 0;
-        if !inline_app_mode {
+        if alt_screen {
+            // Alt-screen apps re-render on every keystroke; the dwell
+            // would freeze cursor/shape during continuous typing.
             client.last_sent_cursor.remove(&pane_id);
             return (actual, false);
         }
-        let now = std::time::Instant::now();
         let state = client
             .last_sent_cursor
             .entry(pane_id)
             .or_insert(CursorDebounce {
                 sent: actual,
-                pending: actual,
-                pending_since: now,
+                pending: None,
             });
-        // Only commit when `actual` still matches `pending`. If the tick
-        // loop was delayed past the dwell, the cursor may have moved past
-        // `pending` — committing it then would publish a transient that
-        // was never actually observed for the full dwell.
-        if actual == state.pending
-            && state.pending != state.sent
-            && now.duration_since(state.pending_since) >= APP_CURSOR_DEBOUNCE
-        {
-            state.sent = state.pending;
+        if actual == state.sent {
+            state.pending = None;
+            return (state.sent, false);
         }
-        if actual != state.pending {
-            state.pending = actual;
-            state.pending_since = now;
+        if state.pending == Some(actual) {
+            // Same value observed for two consecutive ticks — settled.
+            state.sent = actual;
+            state.pending = None;
+            return (actual, false);
         }
-        (state.sent, state.pending != state.sent)
+        // First observation of this value (or value changed again
+        // while pending). Hold and let the next tick confirm.
+        state.pending = Some(actual);
+        (state.sent, true)
     }
 
     pub(super) fn close_pane_and_sync_layout(

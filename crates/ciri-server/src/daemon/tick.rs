@@ -274,7 +274,7 @@ pub(crate) async fn run_tick_loop(
                                 sync.meta.received_ack = client_received_ack;
                                 sync.meta.echo_ack = client_echo_ack;
                                 let ((cline, ccol, cshape), cursor_held) =
-                                    Server::throttle_cursor_for_app_mode(
+                                    Server::throttle_cursor(
                                         &mut s.clients,
                                         cid,
                                         pane_id,
@@ -283,7 +283,7 @@ pub(crate) async fn run_tick_loop(
                                             sync.meta.cursor_col,
                                             sync.meta.cursor_shape,
                                         ),
-                                        sync.meta.mode_flags,
+                                        sync.meta.mode_flags & MODE_ALT_SCREEN != 0,
                                     );
                                 sync.meta.cursor_line = cline;
                                 sync.meta.cursor_col = ccol;
@@ -333,7 +333,7 @@ pub(crate) async fn run_tick_loop(
                                 sync.meta.received_ack = client_received_ack;
                                 sync.meta.echo_ack = client_echo_ack;
                                 let ((cline, ccol, cshape), cursor_held) =
-                                    Server::throttle_cursor_for_app_mode(
+                                    Server::throttle_cursor(
                                         &mut s.clients,
                                         cid,
                                         pane_id,
@@ -342,7 +342,7 @@ pub(crate) async fn run_tick_loop(
                                             sync.meta.cursor_col,
                                             sync.meta.cursor_shape,
                                         ),
-                                        sync.meta.mode_flags,
+                                        sync.meta.mode_flags & MODE_ALT_SCREEN != 0,
                                     );
                                 sync.meta.cursor_line = cline;
                                 sync.meta.cursor_col = ccol;
@@ -367,18 +367,15 @@ pub(crate) async fn run_tick_loop(
                                         .cursor_dirty = true;
                                     cursor_held_pending = true;
                                 }
-                                // Also send CellDelta for any viewport damage
+                                // Also send CellDelta for any viewport damage.
+                                // Reuse the cursor we already throttled above:
+                                // `throttle_cursor` MUST be called at most once
+                                // per tick per (client, pane) — a second call
+                                // with the same `actual` in this same tick would
+                                // hit `pending == Some(actual)` and falsely
+                                // satisfy the 2-tick dwell, leaking a transient.
                                 if !damage.line_damage.is_empty() {
-                                    let info = pane.cursor_info();
-                                    let ((cursor_line, cursor_col, cursor_shape), held) =
-                                        Server::throttle_cursor_for_app_mode(
-                                            &mut s.clients,
-                                            cid,
-                                            pane_id,
-                                            (info.0, info.1, info.2),
-                                            info.3,
-                                        );
-                                    let mode_flags = info.3;
+                                    let mode_flags = pane.cursor_info().3;
                                     let regions: Vec<(u16, u16, u16)> = damage
                                         .line_damage
                                         .iter()
@@ -388,9 +385,9 @@ pub(crate) async fn run_tick_loop(
                                     let meta = PaneFrameMeta {
                                         pane_id,
                                         generation: pgen,
-                                        cursor_line,
-                                        cursor_col,
-                                        cursor_shape,
+                                        cursor_line: cline,
+                                        cursor_col: ccol,
+                                        cursor_shape: cshape,
                                         mode_flags,
                                         received_ack: client_received_ack,
                                         echo_ack: client_echo_ack,
@@ -415,29 +412,22 @@ pub(crate) async fn run_tick_loop(
                                     } else if frame_pool.len() < FRAME_POOL_CAP {
                                         frame_pool.push(buf);
                                     }
-                                    if held
-                                        && let Some(client) = s.clients.get_mut(&cid)
-                                    {
-                                        client
-                                            .damage
-                                            .entry(pane_id)
-                                            .or_default()
-                                            .cursor_dirty = true;
-                                        cursor_held_pending = true;
-                                    }
+                                    // cursor_held was already wired above for
+                                    // the FullSync; the CellDelta ships the
+                                    // same value so no extra re-mark needed.
                                 }
                             } else {
                                 // No new scrollback — send lightweight CellDelta
                                 let info = pane.cursor_info();
+                                let mode_flags = info.3;
                                 let ((cursor_line, cursor_col, cursor_shape), cursor_held) =
-                                    Server::throttle_cursor_for_app_mode(
+                                    Server::throttle_cursor(
                                         &mut s.clients,
                                         cid,
                                         pane_id,
                                         (info.0, info.1, info.2),
-                                        info.3,
+                                        mode_flags & MODE_ALT_SCREEN != 0,
                                     );
-                                let mode_flags = info.3;
 
                                 let regions: Vec<(u16, u16, u16)> = damage
                                     .line_damage
@@ -671,8 +661,8 @@ pub(crate) async fn run_tick_loop(
             // is still holding a pending value. Re-marked `cursor_dirty`
             // alone would otherwise wait on `input_notify` indefinitely,
             // leaving the held cursor uncommitted until unrelated activity
-            // arrives. This polls at frame cadence (16ms) until the 80ms
-            // dwell elapses and the debounce commits — bounded ~5 ticks.
+            // arrives. The 2-tick dwell needs exactly one extra wake so
+            // the second observation can confirm the pending value.
             if cursor_held_pending {
                 input_notify.notify_one();
             }

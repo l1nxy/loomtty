@@ -1465,3 +1465,190 @@ fn resize_marks_next_full_sync_to_replace_scrollback() {
         "resize full sync should rebuild visible scrollback instead of appending by watermark"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Cursor debounce: 2-tick dwell, cell-damage independence
+// ═══════════════════════════════════════════════════════════════════
+
+/// Alt-screen panes must never hold the cursor — `hjkl` in vim is
+/// cursor-only motion that must remain zero-lag, and the cross-tick
+/// frame fragmentation that motivates the dwell doesn't happen there.
+#[test]
+fn cursor_debounce_alt_screen_never_holds() {
+    let mut clients = HashMap::new();
+    clients.insert(1, test_client(1, "s"));
+
+    let (sent, held) = Server::throttle_cursor(&mut clients, 1, 42, (5, 10, 0), true);
+    assert_eq!(sent, (5, 10, 0));
+    assert!(!held, "alt-screen must never report held");
+
+    // Subsequent change also passes through immediately.
+    let (sent, held) = Server::throttle_cursor(&mut clients, 1, 42, (7, 20, 0), true);
+    assert_eq!(sent, (7, 20, 0));
+    assert!(!held);
+
+    // Alt-screen path should not leave per-pane state behind.
+    assert!(
+        !clients
+            .get(&1)
+            .unwrap()
+            .last_sent_cursor
+            .contains_key(&42)
+    );
+}
+
+/// Cross-tick CUPs from an inline TUI (codex/aider pattern: each fragment
+/// of a frame arrives on its own tick) must coalesce: transient positions
+/// observed once are never propagated; only a value seen on two consecutive
+/// ticks emits.
+#[test]
+fn cursor_debounce_cross_tick_cups_suppresses_transient() {
+    let mut clients = HashMap::new();
+    clients.insert(1, test_client(1, "s"));
+
+    // First call seeds `sent` to the initial baseline; nothing held.
+    let (sent, held) = Server::throttle_cursor(&mut clients, 1, 42, (0, 0, 0), false);
+    assert_eq!(sent, (0, 0, 0));
+    assert!(!held);
+
+    // Tick 1: transient cursor — first observation, hold.
+    let (sent, held) = Server::throttle_cursor(&mut clients, 1, 42, (3, 1, 0), false);
+    assert_eq!(sent, (0, 0, 0), "transient must not propagate on first sight");
+    assert!(held);
+
+    // Tick 2: different transient — pending replaced, still held, (3,1) was
+    // never emitted.
+    let (sent, held) = Server::throttle_cursor(&mut clients, 1, 42, (5, 10, 0), false);
+    assert_eq!(sent, (0, 0, 0), "transient (3,1) leaked despite being superseded");
+    assert!(held);
+
+    // Tick 3: same final value — settles, emits.
+    let (sent, held) = Server::throttle_cursor(&mut clients, 1, 42, (5, 10, 0), false);
+    assert_eq!(sent, (5, 10, 0));
+    assert!(!held);
+}
+
+/// Bash typing pattern: each keystroke moves the cursor to a stable
+/// position. Two consecutive ticks with the same value (one observed
+/// when the keystroke lands, one on the next idle tick) must emit.
+#[test]
+fn cursor_debounce_stable_position_emits_after_one_tick() {
+    let mut clients = HashMap::new();
+    clients.insert(1, test_client(1, "s"));
+
+    // Seed baseline.
+    Server::throttle_cursor(&mut clients, 1, 42, (0, 0, 0), false);
+
+    // Tick 1: cursor moved to (0, 1) (typed 'a'). Held.
+    let (sent, held) = Server::throttle_cursor(&mut clients, 1, 42, (0, 1, 0), false);
+    assert_eq!(sent, (0, 0, 0));
+    assert!(held);
+
+    // Tick 2: still (0, 1) — emits.
+    let (sent, held) = Server::throttle_cursor(&mut clients, 1, 42, (0, 1, 0), false);
+    assert_eq!(sent, (0, 1, 0));
+    assert!(!held);
+
+    // Tick 3: unchanged, no-op.
+    let (sent, held) = Server::throttle_cursor(&mut clients, 1, 42, (0, 1, 0), false);
+    assert_eq!(sent, (0, 1, 0));
+    assert!(!held);
+}
+
+/// Shape-only changes (e.g., DECSCUSR bar↔block from a shell prompt
+/// arriving) go through the same dwell: 1-tick delay, then settle.
+#[test]
+fn cursor_debounce_shape_only_change_holds_one_tick() {
+    let mut clients = HashMap::new();
+    clients.insert(1, test_client(1, "s"));
+
+    // Seed at (10, 5) shape=0 (block).
+    Server::throttle_cursor(&mut clients, 1, 42, (10, 5, 0), false);
+
+    // Tick 1: shape changed to 1 (bar). Held.
+    let (sent, held) = Server::throttle_cursor(&mut clients, 1, 42, (10, 5, 1), false);
+    assert_eq!(sent, (10, 5, 0));
+    assert!(held);
+
+    // Tick 2: same shape — settles.
+    let (sent, held) = Server::throttle_cursor(&mut clients, 1, 42, (10, 5, 1), false);
+    assert_eq!(sent, (10, 5, 1));
+    assert!(!held);
+}
+
+/// Switching between alt-screen and inline must not strand stale dwell
+/// state: when alt-screen is entered while a pending value is held, the
+/// pending value must be cleared (alt-screen path returns `actual`
+/// authoritatively and removes the per-pane entry).
+#[test]
+fn cursor_debounce_alt_screen_clears_pending() {
+    let mut clients = HashMap::new();
+    clients.insert(1, test_client(1, "s"));
+
+    Server::throttle_cursor(&mut clients, 1, 42, (0, 0, 0), false);
+    let (_, held) = Server::throttle_cursor(&mut clients, 1, 42, (3, 1, 0), false);
+    assert!(held, "inline pending should be active");
+
+    // App switches to alt-screen mid-dwell. Cursor must pass through and
+    // pending state evaporate.
+    let (sent, held) = Server::throttle_cursor(&mut clients, 1, 42, (7, 20, 0), true);
+    assert_eq!(sent, (7, 20, 0));
+    assert!(!held);
+    assert!(
+        !clients
+            .get(&1)
+            .unwrap()
+            .last_sent_cursor
+            .contains_key(&42)
+    );
+}
+
+/// Exiting alt-screen back to inline must re-seed `sent = actual` and
+/// propagate the exit position immediately, with no 1-tick dwell. The
+/// alt-screen branch removed the per-pane entry on the way out; the next
+/// inline call therefore lands in `.or_insert(...)` where `sent == actual`
+/// is structurally true, so the first inline tick after exit emits.
+#[test]
+fn cursor_debounce_alt_screen_exit_resumes_inline_without_dwell() {
+    let mut clients = HashMap::new();
+    clients.insert(1, test_client(1, "s"));
+
+    // App in alt-screen at (10, 5, 0).
+    let (sent, held) = Server::throttle_cursor(&mut clients, 1, 42, (10, 5, 0), true);
+    assert_eq!(sent, (10, 5, 0));
+    assert!(!held);
+
+    // App exits alt-screen — first inline tick at the resume position
+    // must emit immediately. (User should see the cursor reappear, not
+    // miss a frame waiting on dwell.)
+    let (sent, held) = Server::throttle_cursor(&mut clients, 1, 42, (3, 0, 0), false);
+    assert_eq!(sent, (3, 0, 0));
+    assert!(!held);
+}
+
+/// Documents the same-tick invariant that the production tick loop must
+/// uphold (see `throttle_cursor` doc): two consecutive calls with the
+/// same `actual` settle on the second call. The tick loop therefore MUST
+/// call `throttle_cursor` at most once per (client, pane) per tick — a
+/// second same-tick call would prematurely confirm a transient.
+///
+/// This is a state-machine contract test; the integration-level guard
+/// is the comment + reuse pattern at the scrollback + cell-delta path
+/// in `tick.rs`.
+#[test]
+fn cursor_debounce_two_consecutive_calls_settle() {
+    let mut clients = HashMap::new();
+    clients.insert(1, test_client(1, "s"));
+
+    Server::throttle_cursor(&mut clients, 1, 42, (0, 0, 0), false);
+
+    // Two calls with the same new value: the second hits
+    // `pending == Some(actual)` and emits. Across two real ticks this is
+    // exactly what we want; within one tick the loop must NOT make the
+    // second call (it would be reading the same alacritty snapshot).
+    let (_, held1) = Server::throttle_cursor(&mut clients, 1, 42, (5, 10, 0), false);
+    let (sent2, held2) = Server::throttle_cursor(&mut clients, 1, 42, (5, 10, 0), false);
+    assert!(held1, "first call must hold");
+    assert!(!held2, "second observation of same value settles");
+    assert_eq!(sent2, (5, 10, 0));
+}

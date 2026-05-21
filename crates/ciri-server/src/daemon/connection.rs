@@ -13,6 +13,12 @@ use super::damage::DamageAccumulator;
 use super::server::{Server, ServerResponse};
 
 const CONTROL_SESSION: &str = "__control__";
+/// Handshake sentinel: "attach me to whatever session makes sense"
+/// (most-recently-attached, else a fresh one). Resolved server-side so
+/// clients that can't run the desktop's pre-handshake session-picking
+/// (notably the browser) still get bare-`ciritty` behavior. The real
+/// name is reported back via `SessionSwitched` once resolved.
+const AUTO_SESSION: &str = "__auto__";
 
 /// Perform graceful shutdown: save all sessions, notify all clients, remove socket.
 /// Idempotent — safe to call multiple times (second call is a no-op).
@@ -89,12 +95,15 @@ pub(crate) async fn handle_client<R, W>(
         }
     };
 
-    let requested_session = hello.session_name.clone();
+    let mut requested_session = hello.session_name.clone();
     log::info!("client requested session: {}", requested_session);
 
-    // Validate session name (allow __control__ for CLI commands)
+    // Validate session name (allow __control__ for CLI commands, and the
+    // __auto__ sentinel which is resolved to a real name below). Both are
+    // `__`-prefixed and would otherwise be rejected by `validate_name`.
     let is_control = requested_session == CONTROL_SESSION;
-    if !is_control && ciri_session::names::validate_name(&requested_session).is_err() {
+    let is_auto = requested_session == AUTO_SESSION;
+    if !is_control && !is_auto && ciri_session::names::validate_name(&requested_session).is_err() {
         log::error!("invalid session name from client: {:?}", requested_session);
         return;
     }
@@ -118,6 +127,14 @@ pub(crate) async fn handle_client<R, W>(
         let mut s = state.lock().await;
         client_id = s.next_client_id;
         s.next_client_id += 1;
+
+        // Resolve the __auto__ sentinel to a concrete session before it's
+        // used as a key anywhere below. The client is told the real name
+        // via the SessionSwitched frame prepended to the initial sync.
+        if is_auto {
+            requested_session = s.resolve_auto_session();
+            log::info!("auto-attach resolved to session: {}", requested_session);
+        }
 
         // Register client with session affinity
         s.clients.insert(
@@ -174,6 +191,19 @@ pub(crate) async fn handle_client<R, W>(
                 "client {client_id} connected to session '{}'",
                 requested_session
             );
+
+            // For auto-attach, tell the client the real session name up
+            // front (before any pane paints) so it can pin its replay
+            // ClientHello and update its URL. SessionSwitched is the same
+            // message the live `SwitchSession` path uses, so the client
+            // already knows how to handle it.
+            if is_auto {
+                if let Some(frame) = codec::frame_server_msg(&ServerMessage::SessionSwitched {
+                    session_name: requested_session.clone(),
+                }) {
+                    frames.push(frame);
+                }
+            }
 
             let (sync_msg, pane_syncs, image_events) = session.build_state_sync();
             if let Some(frame) = codec::frame_server_msg(&sync_msg) {

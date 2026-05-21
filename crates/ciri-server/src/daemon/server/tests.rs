@@ -230,6 +230,49 @@ fn switch_session_to_new_session_refreshes_attach_ordering_for_list_sessions() {
 }
 
 #[test]
+fn resolve_auto_session_creates_unique_name_when_no_sessions_exist() {
+    let server = Server::new("", 8.0, TerminalColors::default());
+    let name = server.resolve_auto_session();
+    assert!(
+        ciri_session::names::validate_name(&name).is_ok(),
+        "auto-resolved name {name:?} should be a valid session name"
+    );
+    assert!(
+        !name.starts_with("__"),
+        "auto-resolved name {name:?} must not collide with internal __-sessions"
+    );
+}
+
+#[test]
+fn resolve_auto_session_picks_most_recently_attached() {
+    let mut server = Server::new("", 8.0, TerminalColors::default());
+    server.get_or_create_session("alpha");
+    std::thread::sleep(std::time::Duration::from_millis(1));
+    server.get_or_create_session("beta");
+
+    assert_eq!(
+        server.resolve_auto_session(),
+        "beta",
+        "auto-attach should land on the most-recently-attached session"
+    );
+}
+
+#[test]
+fn resolve_auto_session_ignores_dunder_sessions() {
+    let mut server = Server::new("", 8.0, TerminalColors::default());
+    server.get_or_create_session("alpha");
+    std::thread::sleep(std::time::Duration::from_millis(1));
+    // A more-recent internal session must not be chosen.
+    server.get_or_create_session("__control__");
+
+    assert_eq!(
+        server.resolve_auto_session(),
+        "alpha",
+        "auto-attach must skip __-prefixed internal sessions"
+    );
+}
+
+#[test]
 #[cfg_attr(
     windows,
     ignore = "ConPTY + PowerShell prompt rendering eats the second printf in a small pane; see 9e5d317"
